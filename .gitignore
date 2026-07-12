@@ -1,0 +1,12 @@
+# macOS metadata
+.DS_Store
+
+# Editor / IDE state
+.idea/
+.vscode/
+*~
+
+# Build output (each instrument also ignores its own build dirs)
+/build*/
+/out/
+/cmake-build-*/
