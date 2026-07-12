@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch/PR cancels the older, still-running check.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dsp-tests:
+    name: DSP tests (JUCE-free, Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S vocalor -B vocalor/build-dsp
+          -DCMAKE_BUILD_TYPE=Release
+          -DVOCALOR_BUILD_PLUGIN=OFF
+          -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build vocalor/build-dsp --parallel
+
+      - name: Test
+        run: ctest --test-dir vocalor/build-dsp --output-on-failure
+
+  plugin-macos:
+    name: Plug-in build (macOS, native arch)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Native-arch only keeps per-push CI fast; the nightly workflow builds
+      # the full arm64 + x86_64 universal binaries. Uses the same Xcode-based
+      # build script developers run locally, and runs the DSP tests.
+      - name: Build plug-in and run tests
+        working-directory: vocalor
+        env:
+          BUILD_UNIVERSAL: "OFF"
+        run: ./scripts/build-macos.sh

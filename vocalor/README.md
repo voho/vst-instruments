@@ -11,6 +11,11 @@ The project builds three products from one JUCE codebase:
 - Audio Unit v2 music device for Logic Pro and GarageBand
 - Standalone application for direct MIDI-keyboard testing
 
+> **Just want to try it?** Prebuilt (ad-hoc signed, un-notarized) macOS bundles
+> are published for every day's `main` on the
+> [nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly).
+> To build from source instead, continue below.
+
 ## Sound engine
 
 The JUCE-free C++20 DSP core uses a low-latency, source-filter vocal model. A

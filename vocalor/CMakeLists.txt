@@ -16,7 +16,10 @@ if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
     endif()
 endif()
 
-project(Vocalor VERSION 1.0.0 LANGUAGES CXX)
+# C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
+# compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
+# generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
+project(Vocalor VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

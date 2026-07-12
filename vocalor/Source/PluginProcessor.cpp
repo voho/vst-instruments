@@ -78,7 +78,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
                                                    .withValueFromStringFunction ([] (const juce::String& s)
                                                    {
                                                        return s.getFloatValue() / 100.0f;
-                                                   }));
+                                                   })));
     };
 
     addPercent (breath, "Breath", 0.30f);

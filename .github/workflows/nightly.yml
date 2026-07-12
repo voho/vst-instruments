@@ -1,0 +1,73 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC daily
+  workflow_dispatch: # allow manual runs from the Actions tab
+
+# Refresh the rolling "nightly" release so the latest build is always available.
+permissions:
+  contents: write
+
+# Never interrupt an in-progress publish; just don't run two at once.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  build-macos:
+    name: Universal build, package, publish
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Full arm64 + x86_64 universal build (script default) plus DSP tests.
+      - name: Build universal plug-in and run tests
+        working-directory: vocalor
+        run: ./scripts/build-macos.sh
+
+      # Ad-hoc signs the bundles and produces a ZIP + .pkg under build-macos/dist.
+      - name: Package (ad-hoc signed)
+        working-directory: vocalor
+        run: ./scripts/sign-and-package-macos.sh
+
+      # Retained on the workflow run itself (downloadable by anyone with repo access).
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vocalor-nightly-macOS-universal
+          path: |
+            vocalor/build-macos/dist/*.zip
+            vocalor/build-macos/dist/*.pkg
+          if-no-files-found: error
+          retention-days: 14
+
+      # Publish a single rolling "nightly" release so there is always a stable
+      # public download URL pointing at the latest build.
+      - name: Publish rolling "nightly" release
+        working-directory: vocalor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          DATE="$(date -u +%Y-%m-%d)"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+
+          # Move the rolling tag to the commit that was actually built.
+          gh release delete nightly --yes --cleanup-tag || true
+
+          gh release create nightly \
+            build-macos/dist/*.zip \
+            build-macos/dist/*.pkg \
+            --title "Vocalor nightly ($DATE)" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --notes "Automated universal (arm64 + x86_64) macOS build of Vocalor from \`main\` ($SHORT_SHA).
+
+          **These bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally, clear the quarantine flag after unzipping, e.g.:
+
+          \`\`\`bash
+          xattr -dr com.apple.quarantine Vocalor.vst3 Vocalor.component Vocalor.app
+          \`\`\`
+
+          Not intended for production distribution."

@@ -1,5 +1,8 @@
 # vst-instruments
 
+[![CI](https://github.com/voho/vst-instruments/actions/workflows/ci.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/ci.yml)
+[![Nightly](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml)
+
 A collection of original audio plug-in instruments. Each instrument lives in its
 own sub-directory as a self-contained project with its own source, build system,
 tests, and documentation.
@@ -13,6 +16,23 @@ rendering audio.
 | Instrument | Description | Formats | Platform | Docs |
 | --- | --- | --- | --- | --- |
 | [Vocalor](vocalor/) | Real-time vocal & choir synthesizer — turns MIDI notes into expressive `aah` / `ooh` / `uuh` voices, from a single singer to an ensemble or major/minor chord. | VST3 · AU · Standalone | macOS 11+ | [README](vocalor/README.md) |
+
+## Download (nightly)
+
+Prebuilt macOS bundles are published automatically from `main` to a single
+rolling **[nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly)**,
+so the latest build is always one click away — no need to compile anything.
+
+These bundles are **ad-hoc signed and not notarized**, so Gatekeeper will warn.
+After unzipping, clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine Vocalor.vst3 Vocalor.component Vocalor.app
+```
+
+For anything beyond local testing, build from source (below) with your own
+Developer ID signing and notarization — see the
+[distribution guide](vocalor/README.md#sign-package-and-notarize).
 
 ## Building
 
