@@ -51,7 +51,7 @@ jobs:
         run: ./scripts/sign-and-package-macos.sh
 
       # Retained on the workflow run itself (downloadable by anyone with repo
-      # access). Explicit filenames prevent one instrument's output from
+      # access). Instrument-specific patterns prevent one output from
       # accidentally satisfying the other instrument's artifact check.
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -62,12 +62,12 @@ jobs:
             vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.pkg
             drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.zip
             drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg
-            mars/build-macos/dist/Mars-1.0.0-macOS-universal.zip
-            mars/build-macos/dist/Mars-1.0.0-macOS-universal.pkg
+            mars/build-macos/dist/Mars-*-macOS-universal.zip
+            mars/build-macos/dist/Mars-*-macOS-universal.pkg
           if-no-files-found: error
           retention-days: 14
 
-      # Publish a single rolling "nightly" release so both instruments share a
+      # Publish a single rolling "nightly" release so all three instruments share a
       # stable public download URL.
       - name: Publish rolling "nightly" release
         env:
@@ -82,8 +82,8 @@ jobs:
             "vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.pkg"
             "drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.zip"
             "drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg"
-            "mars/build-macos/dist/Mars-1.0.0-macOS-universal.zip"
-            "mars/build-macos/dist/Mars-1.0.0-macOS-universal.pkg"
+            mars/build-macos/dist/Mars-*-macOS-universal.zip
+            mars/build-macos/dist/Mars-*-macOS-universal.pkg
           )
           for asset in "${assets[@]}"; do
             if [[ ! -f "$asset" ]]; then

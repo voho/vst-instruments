@@ -14,6 +14,97 @@ Enum enumFromParameter (const std::atomic<float>* value, int maximum) noexcept
     return static_cast<Enum> (juce::jlimit (0, maximum,
                                            juce::roundToInt (value->load (std::memory_order_relaxed))));
 }
+
+float valueOf (const std::atomic<float>* value) noexcept
+{
+    return value->load (std::memory_order_relaxed);
+}
+
+juce::String percentText (float value, int)
+{
+    return juce::String (juce::roundToInt (value * 100.0f)) + "%";
+}
+
+float percentValue (const juce::String& text)
+{
+    return text.retainCharacters ("0123456789.-").getFloatValue() / 100.0f;
+}
+
+juce::String bipolarPercentText (float value, int)
+{
+    return (value > 0.0f ? "+" : "")
+         + juce::String (juce::roundToInt (value * 100.0f)) + "%";
+}
+
+juce::String centsText (float value, int)
+{
+    return (value > 0.0f ? "+" : "") + juce::String (value, 1) + "ct";
+}
+
+juce::String octaveDepthText (float value, int)
+{
+    return juce::String (value, 3) + "oct";
+}
+
+juce::String decibelsText (float value, int)
+{
+    return (value > 0.0f ? "+" : "") + juce::String (value, 1) + "dB";
+}
+
+float plainNumericValue (const juce::String& text)
+{
+    return text.retainCharacters ("0123456789.-").getFloatValue();
+}
+
+juce::String frequencyText (float value, int)
+{
+    if (value >= 1000.0f)
+        return juce::String (value / 1000.0f, value >= 10000.0f ? 1 : 2) + " kHz";
+    return juce::String (value, value < 10.0f ? 2 : 1) + " Hz";
+}
+
+float frequencyValue (const juce::String& text)
+{
+    const auto value = text.retainCharacters ("0123456789.-").getFloatValue();
+    return text.containsIgnoreCase ("k") ? value * 1000.0f : value;
+}
+
+juce::String timeText (float value, int)
+{
+    if (value < 1.0f)
+        return juce::String (juce::roundToInt (value * 1000.0f)) + " ms";
+    return juce::String (value, value < 10.0f ? 2 : 1) + " s";
+}
+
+float timeValue (const juce::String& text)
+{
+    const auto value = text.retainCharacters ("0123456789.-").getFloatValue();
+    return text.containsIgnoreCase ("ms") ? value / 1000.0f : value;
+}
+
+juce::AudioParameterFloatAttributes percentAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withLabel ("%")
+        .withStringFromValueFunction (percentText)
+        .withValueFromStringFunction (percentValue);
+}
+
+juce::AudioParameterFloatAttributes bipolarPercentAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withLabel ("%")
+        .withStringFromValueFunction (bipolarPercentText)
+        .withValueFromStringFunction (percentValue);
+}
+
+juce::AudioParameterFloatAttributes timeAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withLabel ("s")
+        .withStringFromValueFunction (timeText)
+        .withValueFromStringFunction (timeValue);
+}
 } // namespace
 
 MarsAudioProcessor::MarsAudioProcessor()
@@ -22,21 +113,48 @@ MarsAudioProcessor::MarsAudioProcessor()
 {
     using namespace mars::parameters;
 
-    parameterPointers.profile      = parameters.getRawParameterValue (profile);
-    parameterPointers.mode         = parameters.getRawParameterValue (mode);
-    parameterPointers.vowel        = parameters.getRawParameterValue (vowel);
-    parameterPointers.chordQuality = parameters.getRawParameterValue (chordQuality);
-    parameterPointers.choirSize    = parameters.getRawParameterValue (choirSize);
-    parameterPointers.breath       = parameters.getRawParameterValue (breath);
-    parameterPointers.resonance    = parameters.getRawParameterValue (resonance);
-    parameterPointers.vibrato      = parameters.getRawParameterValue (vibrato);
-    parameterPointers.humanize     = parameters.getRawParameterValue (humanize);
-    parameterPointers.spread       = parameters.getRawParameterValue (spread);
-    parameterPointers.tension      = parameters.getRawParameterValue (tension);
-    parameterPointers.room         = parameters.getRawParameterValue (room);
-    parameterPointers.output       = parameters.getRawParameterValue (output);
+    parameterPointers.osc1Wave        = parameters.getRawParameterValue (osc1Wave);
+    parameterPointers.osc1Octave      = parameters.getRawParameterValue (osc1Octave);
+    parameterPointers.osc2Wave        = parameters.getRawParameterValue (osc2Wave);
+    parameterPointers.osc2Octave      = parameters.getRawParameterValue (osc2Octave);
+    parameterPointers.osc2Tune        = parameters.getRawParameterValue (osc2Tune);
+    parameterPointers.osc2Fine        = parameters.getRawParameterValue (osc2Fine);
+    parameterPointers.oscMix          = parameters.getRawParameterValue (oscMix);
+    parameterPointers.pulseWidth      = parameters.getRawParameterValue (pulseWidth);
+    parameterPointers.subLevel        = parameters.getRawParameterValue (subLevel);
+    parameterPointers.noiseLevel      = parameters.getRawParameterValue (noiseLevel);
+    parameterPointers.crossMod        = parameters.getRawParameterValue (crossMod);
+    parameterPointers.filterModel     = parameters.getRawParameterValue (filterModel);
+    parameterPointers.cutoff          = parameters.getRawParameterValue (cutoff);
+    parameterPointers.resonance       = parameters.getRawParameterValue (resonance);
+    parameterPointers.filterDrive     = parameters.getRawParameterValue (filterDrive);
+    parameterPointers.filterShape     = parameters.getRawParameterValue (filterShape);
+    parameterPointers.filterEnvAmount = parameters.getRawParameterValue (filterEnvAmount);
+    parameterPointers.keyTrack        = parameters.getRawParameterValue (keyTrack);
+    parameterPointers.fAttack         = parameters.getRawParameterValue (fAttack);
+    parameterPointers.fDecay          = parameters.getRawParameterValue (fDecay);
+    parameterPointers.fSustain        = parameters.getRawParameterValue (fSustain);
+    parameterPointers.fRelease        = parameters.getRawParameterValue (fRelease);
+    parameterPointers.aAttack         = parameters.getRawParameterValue (aAttack);
+    parameterPointers.aDecay          = parameters.getRawParameterValue (aDecay);
+    parameterPointers.aSustain        = parameters.getRawParameterValue (aSustain);
+    parameterPointers.aRelease        = parameters.getRawParameterValue (aRelease);
+    parameterPointers.lfoWave         = parameters.getRawParameterValue (lfoWave);
+    parameterPointers.lfoRate         = parameters.getRawParameterValue (lfoRate);
+    parameterPointers.lfoPitch        = parameters.getRawParameterValue (lfoPitch);
+    parameterPointers.lfoFilter       = parameters.getRawParameterValue (lfoFilter);
+    parameterPointers.lfoPwm          = parameters.getRawParameterValue (lfoPwm);
+    parameterPointers.voiceMode       = parameters.getRawParameterValue (voiceMode);
+    parameterPointers.unisonVoices    = parameters.getRawParameterValue (unisonVoices);
+    parameterPointers.drift           = parameters.getRawParameterValue (drift);
+    parameterPointers.spread          = parameters.getRawParameterValue (spread);
+    parameterPointers.glide           = parameters.getRawParameterValue (glide);
+    parameterPointers.velocity        = parameters.getRawParameterValue (velocity);
+    parameterPointers.chorusMix       = parameters.getRawParameterValue (chorusMix);
+    parameterPointers.chorusRate      = parameters.getRawParameterValue (chorusRate);
+    parameterPointers.output          = parameters.getRawParameterValue (output);
 
-    jassert (parameterPointers.profile != nullptr && parameterPointers.output != nullptr);
+    jassert (parameterPointers.osc1Wave != nullptr && parameterPointers.output != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -49,50 +167,142 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
 {
     using namespace mars::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
+    result.reserve (40);
 
-    result.push_back (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { profile, 1 }, "Oscillator alloy",
-        juce::StringArray { "Saturn", "Phobos" }, 0));
-    result.push_back (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { mode, 1 }, "Voice mode",
-        juce::StringArray { "Single", "Stack", "Fifth" }, 0));
-    result.push_back (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { vowel, 1 }, "FilterType",
-        juce::StringArray { "Ladder", "SVF", "Poles" }, 0));
-    result.push_back (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { chordQuality, 1 }, "Drift mode",
-        juce::StringArray { "Free", "Locked" }, 0));
-    result.push_back (std::make_unique<juce::AudioParameterInt> (
-        juce::ParameterID { choirSize, 1 }, "Stack depth", 2, 16, 8));
-
-    const auto addPercent = [&result] (const char* id, const char* name, float defaultValue)
+    const auto addChoice = [&result] (const char* id, const char* name,
+                                      juce::StringArray choices, int defaultIndex)
+    {
+        result.push_back (std::make_unique<juce::AudioParameterChoice> (
+            juce::ParameterID { id, 1 }, name, std::move (choices), defaultIndex));
+    };
+    const auto addInt = [&result] (
+        const char* id, const char* name, int minimum, int maximum, int defaultValue,
+        juce::AudioParameterIntAttributes attributes = {})
+    {
+        result.push_back (std::make_unique<juce::AudioParameterInt> (
+            juce::ParameterID { id, 1 }, name, minimum, maximum, defaultValue,
+            std::move (attributes)));
+    };
+    const auto addFloat = [&result] (const char* id, const char* name,
+                                     juce::NormalisableRange<float> range, float defaultValue,
+                                     juce::AudioParameterFloatAttributes attributes = {})
     {
         result.push_back (std::make_unique<juce::AudioParameterFloat> (
-            juce::ParameterID { id, 1 }, name,
-            juce::NormalisableRange<float> { 0.0f, 1.0f, 0.001f }, defaultValue,
-            juce::AudioParameterFloatAttributes().withLabel ("%")
-                                                   .withStringFromValueFunction ([] (float v, int)
-                                                   {
-                                                       return juce::String (juce::roundToInt (v * 100.0f));
-                                                   })
-                                                   .withValueFromStringFunction ([] (const juce::String& s)
-                                                   {
-                                                       return s.getFloatValue() / 100.0f;
-                                                   })));
+            juce::ParameterID { id, 1 }, name, range, defaultValue, std::move (attributes)));
+    };
+    const auto addPercent = [&addFloat] (const char* id, const char* name,
+                                         float defaultValue, float minimum = 0.0f,
+                                         float maximum = 1.0f)
+    {
+        addFloat (id, name, { minimum, maximum, 0.001f }, defaultValue,
+                  minimum < 0.0f ? bipolarPercentAttributes() : percentAttributes());
     };
 
-    addPercent (breath, "Osc 2 blend", 0.30f);
-    addPercent (resonance, "Filter resonance", 0.64f);
-    addPercent (vibrato, "LFO vibrato", 0.38f);
-    addPercent (humanize, "Component age", 0.52f);
-    addPercent (spread, "Stereo width", 0.62f);
-    addPercent (tension, "Circuit drive", 0.36f);
-    addPercent (room, "Plate bloom", 0.24f);
+    const auto signedIntegerAttributes = [] (juce::String suffix)
+    {
+        return juce::AudioParameterIntAttributes()
+            .withLabel (suffix)
+            .withStringFromValueFunction (
+                [suffix] (int value, int)
+                {
+                    return (value > 0 ? "+" : "") + juce::String (value) + suffix;
+                })
+            .withValueFromStringFunction (
+                [] (const juce::String& text)
+                {
+                    return text.retainCharacters ("0123456789.-").getIntValue();
+                });
+    };
 
-    result.push_back (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { output, 1 }, "Output",
-        juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -6.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("dB")));
+    addChoice (osc1Wave, "VCO I waveform", { "Saw", "Pulse", "Triangle" }, 0);
+    addInt (osc1Octave, "VCO I octave", -2, 2, 0, signedIntegerAttributes ("oct"));
+    addChoice (osc2Wave, "VCO II waveform", { "Saw", "Pulse", "Triangle" }, 1);
+    addInt (osc2Octave, "VCO II octave", -2, 2, 0, signedIntegerAttributes ("oct"));
+    addInt (osc2Tune, "VCO II tune", -12, 12, 0, signedIntegerAttributes ("st"));
+    addFloat (osc2Fine, "VCO II fine tune", { -50.0f, 50.0f, 0.1f }, 0.0f,
+              juce::AudioParameterFloatAttributes()
+                  .withLabel ("ct")
+                  .withStringFromValueFunction (centsText)
+                  .withValueFromStringFunction (plainNumericValue));
+    addPercent (oscMix, "Oscillator balance", 0.46f);
+    addPercent (pulseWidth, "Pulse width", 0.50f, 0.05f, 0.95f);
+    addPercent (subLevel, "Sub oscillator level", 0.16f);
+    addPercent (noiseLevel, "Noise level", 0.025f);
+    addPercent (crossMod, "Cross modulation", 0.06f);
+
+    addChoice (filterModel, "Filter model", { "Ladder", "Orbit" }, 0);
+
+    auto cutoffRange = juce::NormalisableRange<float> { 20.0f, 20000.0f, 0.0f };
+    cutoffRange.setSkewForCentre (1000.0f);
+    addFloat (cutoff, "Filter cutoff", cutoffRange, 4200.0f,
+              juce::AudioParameterFloatAttributes()
+                  .withLabel ("Hz")
+                  .withStringFromValueFunction (frequencyText)
+                  .withValueFromStringFunction (frequencyValue));
+    addPercent (resonance, "Filter resonance", 0.28f);
+    addPercent (filterDrive, "Filter drive", 0.22f);
+    addPercent (filterShape, "Filter shape", 0.35f);
+    addPercent (filterEnvAmount, "Filter envelope amount", 0.46f, -1.0f, 1.0f);
+    addPercent (keyTrack, "Filter key tracking", 0.50f);
+
+    auto attackRange = juce::NormalisableRange<float> { 0.001f, 8.0f, 0.0f };
+    attackRange.setSkewForCentre (0.18f);
+    auto decayRange = juce::NormalisableRange<float> { 0.010f, 8.0f, 0.0f };
+    decayRange.setSkewForCentre (0.55f);
+    auto releaseRange = juce::NormalisableRange<float> { 0.010f, 12.0f, 0.0f };
+    releaseRange.setSkewForCentre (0.75f);
+
+    addFloat (fAttack, "Filter envelope attack", attackRange, 0.012f, timeAttributes());
+    addFloat (fDecay, "Filter envelope decay", decayRange, 0.45f, timeAttributes());
+    addPercent (fSustain, "Filter envelope sustain", 0.34f);
+    addFloat (fRelease, "Filter envelope release", releaseRange, 0.62f, timeAttributes());
+    addFloat (aAttack, "Amp envelope attack", attackRange, 0.008f, timeAttributes());
+    addFloat (aDecay, "Amp envelope decay", decayRange, 0.38f, timeAttributes());
+    addPercent (aSustain, "Amp envelope sustain", 0.78f);
+    addFloat (aRelease, "Amp envelope release", releaseRange, 0.55f, timeAttributes());
+
+    auto lfoRateRange = juce::NormalisableRange<float> { 0.05f, 30.0f, 0.0f };
+    lfoRateRange.setSkewForCentre (3.0f);
+    addChoice (lfoWave, "LFO waveform", { "Triangle", "Sine", "Sample & hold" }, 0);
+    addFloat (lfoRate, "LFO rate", lfoRateRange, 4.8f,
+              juce::AudioParameterFloatAttributes()
+                  .withLabel ("Hz")
+                  .withStringFromValueFunction (frequencyText)
+                  .withValueFromStringFunction (frequencyValue));
+    addFloat (lfoPitch, "LFO pitch depth", { 0.0f, 100.0f, 0.1f }, 8.0f,
+              juce::AudioParameterFloatAttributes()
+                  .withLabel ("ct")
+                  .withStringFromValueFunction (centsText)
+                  .withValueFromStringFunction (plainNumericValue));
+    addFloat (lfoFilter, "LFO filter depth", { 0.0f, 4.0f, 0.001f }, 0.18f,
+              juce::AudioParameterFloatAttributes()
+                  .withLabel ("oct")
+                  .withStringFromValueFunction (octaveDepthText)
+                  .withValueFromStringFunction (plainNumericValue));
+    addPercent (lfoPwm, "LFO PWM depth", 0.16f);
+
+    addChoice (voiceMode, "Voice mode", { "Poly", "Unison", "Fifth" }, 0);
+    addInt (unisonVoices, "Unison voices", 2, 8, 4);
+    addPercent (drift, "Voice-card drift", 0.28f);
+    addPercent (spread, "Stereo spread", 0.58f);
+    auto glideRange = juce::NormalisableRange<float> { 0.0f, 2.0f, 0.0f };
+    glideRange.setSkewForCentre (0.10f);
+    addFloat (glide, "Glide time", glideRange, 0.0f, timeAttributes());
+    addPercent (velocity, "Velocity response", 0.68f);
+
+    addPercent (chorusMix, "Ensemble mix", 0.30f);
+    auto chorusRateRange = juce::NormalisableRange<float> { 0.05f, 2.0f, 0.0f };
+    chorusRateRange.setSkewForCentre (0.42f);
+    addFloat (chorusRate, "Ensemble rate", chorusRateRange, 0.38f,
+              juce::AudioParameterFloatAttributes()
+                  .withLabel ("Hz")
+                  .withStringFromValueFunction (frequencyText)
+                  .withValueFromStringFunction (frequencyValue));
+    addFloat (output, "Output level", { -24.0f, 6.0f, 0.1f }, -6.0f,
+              juce::AudioParameterFloatAttributes()
+                  .withLabel ("dB")
+                  .withStringFromValueFunction (decibelsText)
+                  .withValueFromStringFunction (plainNumericValue));
 
     return { result.begin(), result.end() };
 }
@@ -101,8 +311,13 @@ void MarsAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engineReady.store (false, std::memory_order_release);
     engine.prepare (sampleRate, samplesPerBlock);
-    engine.reset();
     updateEngineParameters();
+    engine.reset();
+    engine.setPitchBend (0.0f);
+    engine.setModWheel (0.0f);
+    engine.setSustainPedal (false);
+    discardUiMidiEvents();
+    panicRequested.store (false, std::memory_order_release);
     displaySampleRate.store (sampleRate, std::memory_order_relaxed);
     activeVoiceCount.store (0, std::memory_order_relaxed);
     engineReady.store (true, std::memory_order_release);
@@ -111,9 +326,15 @@ void MarsAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 void MarsAudioProcessor::releaseResources()
 {
     engineReady.store (false, std::memory_order_release);
+    engine.setPitchBend (0.0f);
+    engine.setModWheel (0.0f);
+    engine.setSustainPedal (false);
     engine.allNotesOff();
     engine.reset();
+    discardUiMidiEvents();
+    panicRequested.store (false, std::memory_order_release);
     activeVoiceCount.store (0, std::memory_order_relaxed);
+    displaySampleRate.store (0.0, std::memory_order_relaxed);
 }
 
 bool MarsAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -123,7 +344,7 @@ bool MarsAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) con
 }
 
 void MarsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
-                                         juce::MidiBuffer& midiMessages)
+                                       juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
@@ -134,7 +355,10 @@ void MarsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     updateEngineParameters();
 
     if (panicRequested.exchange (false, std::memory_order_acq_rel))
-        engine.allNotesOff();
+    {
+        engine.reset();
+        discardUiMidiEvents();
+    }
 
     // GUI notes enter through a bounded lock-free queue and start at the next
     // block boundary. This avoids allocating or locking in the audio callback.
@@ -189,40 +413,96 @@ void MarsAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBytes
     else if (kind == 0xb0u && numBytes >= 3)
     {
         const auto controller = data[1] & 0x7fu;
-        if (controller == 120u || controller == 123u)
+        const auto controllerValue = data[2] & 0x7fu;
+        if (controller == 1u)
+            engine.setModWheel (static_cast<float> (controllerValue) / 127.0f);
+        else if (controller == 64u)
+            engine.setSustainPedal (controllerValue >= 64u);
+        else if (controller == 121u)
+        {
+            engine.setPitchBend (0.0f);
+            engine.setModWheel (0.0f);
+            engine.setSustainPedal (false);
+        }
+        else if (controller == 120u)
+        {
+            // MIDI All Sound Off is an immediate mute, like the front-panel
+            // Panic control. The parameter targets survive the engine reset.
+            engine.reset();
+        }
+        else if (controller == 123u)
+        {
+            // All Notes Off behaves like releasing the held keys, so the amp
+            // envelope and ensemble tail remain musical. Hold 1 remains in
+            // force until its own controller is released.
             engine.allNotesOff();
+        }
+    }
+    else if (kind == 0xe0u && numBytes >= 3)
+    {
+        const auto value14 = static_cast<int> (data[1] & 0x7fu)
+                           | (static_cast<int> (data[2] & 0x7fu) << 7);
+        const auto bend = value14 < 8192
+            ? static_cast<float> (value14 - 8192) / 8192.0f
+            : static_cast<float> (value14 - 8192) / 8191.0f;
+        engine.setPitchBend (juce::jlimit (-1.0f, 1.0f, bend));
     }
 }
 
 void MarsAudioProcessor::updateEngineParameters() noexcept
 {
     mars::EngineParameters next;
-    next.profile = enumFromParameter<mars::VoiceProfile> (parameterPointers.profile, 1);
-    next.mode = enumFromParameter<mars::PerformanceMode> (parameterPointers.mode, 2);
-    next.vowel = enumFromParameter<mars::FilterType> (parameterPointers.vowel, 2);
-    next.chordQuality = enumFromParameter<mars::FifthQuality> (parameterPointers.chordQuality, 1);
-    next.choirSize = juce::jlimit (2, 16, juce::roundToInt (
-        parameterPointers.choirSize->load (std::memory_order_relaxed)));
-    next.breath = parameterPointers.breath->load (std::memory_order_relaxed);
-    next.resonance = parameterPointers.resonance->load (std::memory_order_relaxed);
-    next.vibrato = parameterPointers.vibrato->load (std::memory_order_relaxed);
-    next.humanize = parameterPointers.humanize->load (std::memory_order_relaxed);
-    next.spread = parameterPointers.spread->load (std::memory_order_relaxed);
-    next.tension = parameterPointers.tension->load (std::memory_order_relaxed);
-    next.room = parameterPointers.room->load (std::memory_order_relaxed);
-    next.outputGain = juce::Decibels::decibelsToGain (
-        parameterPointers.output->load (std::memory_order_relaxed));
+    next.osc1Wave = enumFromParameter<mars::OscillatorWave> (parameterPointers.osc1Wave, 2);
+    next.osc1Octave = juce::jlimit (-2, 2, juce::roundToInt (valueOf (parameterPointers.osc1Octave)));
+    next.osc2Wave = enumFromParameter<mars::OscillatorWave> (parameterPointers.osc2Wave, 2);
+    next.osc2Octave = juce::jlimit (-2, 2, juce::roundToInt (valueOf (parameterPointers.osc2Octave)));
+    next.osc2Semitones = juce::jlimit (-12, 12, juce::roundToInt (valueOf (parameterPointers.osc2Tune)));
+    next.osc2FineCents = valueOf (parameterPointers.osc2Fine);
+    next.oscMix = valueOf (parameterPointers.oscMix);
+    next.pulseWidth = valueOf (parameterPointers.pulseWidth);
+    next.subLevel = valueOf (parameterPointers.subLevel);
+    next.noiseLevel = valueOf (parameterPointers.noiseLevel);
+    next.crossMod = valueOf (parameterPointers.crossMod);
+    next.filterModel = enumFromParameter<mars::FilterModel> (parameterPointers.filterModel, 1);
+    next.cutoffHz = valueOf (parameterPointers.cutoff);
+    next.resonance = valueOf (parameterPointers.resonance);
+    next.filterDrive = valueOf (parameterPointers.filterDrive);
+    next.filterShape = valueOf (parameterPointers.filterShape);
+    next.filterEnvAmount = valueOf (parameterPointers.filterEnvAmount);
+    next.filterKeyTrack = valueOf (parameterPointers.keyTrack);
+    next.filterAttack = valueOf (parameterPointers.fAttack);
+    next.filterDecay = valueOf (parameterPointers.fDecay);
+    next.filterSustain = valueOf (parameterPointers.fSustain);
+    next.filterRelease = valueOf (parameterPointers.fRelease);
+    next.ampAttack = valueOf (parameterPointers.aAttack);
+    next.ampDecay = valueOf (parameterPointers.aDecay);
+    next.ampSustain = valueOf (parameterPointers.aSustain);
+    next.ampRelease = valueOf (parameterPointers.aRelease);
+    next.lfoWave = enumFromParameter<mars::LfoWaveform> (parameterPointers.lfoWave, 2);
+    next.lfoRateHz = valueOf (parameterPointers.lfoRate);
+    next.lfoPitchCents = valueOf (parameterPointers.lfoPitch);
+    next.lfoFilterOctaves = valueOf (parameterPointers.lfoFilter);
+    next.lfoPwm = valueOf (parameterPointers.lfoPwm);
+    next.voiceMode = enumFromParameter<mars::VoiceMode> (parameterPointers.voiceMode, 2);
+    next.unisonVoices = juce::jlimit (2, 8, juce::roundToInt (valueOf (parameterPointers.unisonVoices)));
+    next.drift = valueOf (parameterPointers.drift);
+    next.spread = valueOf (parameterPointers.spread);
+    next.glideSeconds = valueOf (parameterPointers.glide);
+    next.velocityAmount = valueOf (parameterPointers.velocity);
+    next.chorusMix = valueOf (parameterPointers.chorusMix);
+    next.chorusRateHz = valueOf (parameterPointers.chorusRate);
+    next.outputGain = juce::Decibels::decibelsToGain (valueOf (parameterPointers.output));
     engine.setParameters (next);
 }
 
 void MarsAudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int,
-                                         int midiNoteNumber, float velocity)
+                                       int midiNoteNumber, float velocity)
 {
     enqueueUiMidiEvent (midiNoteNumber, velocity, true);
 }
 
 void MarsAudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int,
-                                          int midiNoteNumber, float velocity)
+                                        int midiNoteNumber, float velocity)
 {
     enqueueUiMidiEvent (midiNoteNumber, velocity, false);
 }
@@ -259,6 +539,12 @@ void MarsAudioProcessor::dispatchUiMidiEvents() noexcept
     }
 
     uiReadIndex.store (read, std::memory_order_release);
+}
+
+void MarsAudioProcessor::discardUiMidiEvents() noexcept
+{
+    uiReadIndex.store (uiWriteIndex.load (std::memory_order_acquire),
+                       std::memory_order_release);
 }
 
 void MarsAudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)

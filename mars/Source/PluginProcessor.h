@@ -9,25 +9,52 @@
 
 namespace mars::parameters
 {
-inline constexpr auto profile      = "profile";
-inline constexpr auto mode         = "mode";
-inline constexpr auto vowel        = "vowel";
-inline constexpr auto chordQuality = "chordQuality";
-inline constexpr auto choirSize    = "choirSize";
-inline constexpr auto breath       = "breath";
-inline constexpr auto resonance    = "resonance";
-inline constexpr auto vibrato      = "vibrato";
-inline constexpr auto humanize     = "humanize";
-inline constexpr auto spread       = "spread";
-inline constexpr auto tension      = "tension";
-inline constexpr auto room         = "room";
-inline constexpr auto output       = "output";
+inline constexpr auto osc1Wave        = "osc1Wave";
+inline constexpr auto osc1Octave      = "osc1Octave";
+inline constexpr auto osc2Wave        = "osc2Wave";
+inline constexpr auto osc2Octave      = "osc2Octave";
+inline constexpr auto osc2Tune        = "osc2Tune";
+inline constexpr auto osc2Fine        = "osc2Fine";
+inline constexpr auto oscMix          = "oscMix";
+inline constexpr auto pulseWidth      = "pulseWidth";
+inline constexpr auto subLevel        = "subLevel";
+inline constexpr auto noiseLevel      = "noiseLevel";
+inline constexpr auto crossMod        = "crossMod";
+inline constexpr auto filterModel     = "filterModel";
+inline constexpr auto cutoff          = "cutoff";
+inline constexpr auto resonance       = "resonance";
+inline constexpr auto filterDrive     = "filterDrive";
+inline constexpr auto filterShape     = "filterShape";
+inline constexpr auto filterEnvAmount = "filterEnvAmount";
+inline constexpr auto keyTrack        = "keyTrack";
+inline constexpr auto fAttack         = "fAttack";
+inline constexpr auto fDecay          = "fDecay";
+inline constexpr auto fSustain        = "fSustain";
+inline constexpr auto fRelease        = "fRelease";
+inline constexpr auto aAttack         = "aAttack";
+inline constexpr auto aDecay          = "aDecay";
+inline constexpr auto aSustain        = "aSustain";
+inline constexpr auto aRelease        = "aRelease";
+inline constexpr auto lfoWave         = "lfoWave";
+inline constexpr auto lfoRate         = "lfoRate";
+inline constexpr auto lfoPitch        = "lfoPitch";
+inline constexpr auto lfoFilter       = "lfoFilter";
+inline constexpr auto lfoPwm          = "lfoPwm";
+inline constexpr auto voiceMode       = "voiceMode";
+inline constexpr auto unisonVoices    = "unisonVoices";
+inline constexpr auto drift           = "drift";
+inline constexpr auto spread          = "spread";
+inline constexpr auto glide           = "glide";
+inline constexpr auto velocity        = "velocity";
+inline constexpr auto chorusMix       = "chorusMix";
+inline constexpr auto chorusRate      = "chorusRate";
+inline constexpr auto output          = "output";
 } // namespace mars::parameters
 
 class MarsAudioProcessorEditor;
 
 class MarsAudioProcessor final : public juce::AudioProcessor,
-                                   private juce::MidiKeyboardState::Listener
+                                 private juce::MidiKeyboardState::Listener
 {
 public:
     MarsAudioProcessor();
@@ -45,7 +72,7 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 4.0; }
+    double getTailLengthSeconds() const override { return 14.0; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -72,18 +99,45 @@ public:
 private:
     struct ParameterPointers
     {
-        std::atomic<float>* profile = nullptr;
-        std::atomic<float>* mode = nullptr;
-        std::atomic<float>* vowel = nullptr;
-        std::atomic<float>* chordQuality = nullptr;
-        std::atomic<float>* choirSize = nullptr;
-        std::atomic<float>* breath = nullptr;
+        std::atomic<float>* osc1Wave = nullptr;
+        std::atomic<float>* osc1Octave = nullptr;
+        std::atomic<float>* osc2Wave = nullptr;
+        std::atomic<float>* osc2Octave = nullptr;
+        std::atomic<float>* osc2Tune = nullptr;
+        std::atomic<float>* osc2Fine = nullptr;
+        std::atomic<float>* oscMix = nullptr;
+        std::atomic<float>* pulseWidth = nullptr;
+        std::atomic<float>* subLevel = nullptr;
+        std::atomic<float>* noiseLevel = nullptr;
+        std::atomic<float>* crossMod = nullptr;
+        std::atomic<float>* filterModel = nullptr;
+        std::atomic<float>* cutoff = nullptr;
         std::atomic<float>* resonance = nullptr;
-        std::atomic<float>* vibrato = nullptr;
-        std::atomic<float>* humanize = nullptr;
+        std::atomic<float>* filterDrive = nullptr;
+        std::atomic<float>* filterShape = nullptr;
+        std::atomic<float>* filterEnvAmount = nullptr;
+        std::atomic<float>* keyTrack = nullptr;
+        std::atomic<float>* fAttack = nullptr;
+        std::atomic<float>* fDecay = nullptr;
+        std::atomic<float>* fSustain = nullptr;
+        std::atomic<float>* fRelease = nullptr;
+        std::atomic<float>* aAttack = nullptr;
+        std::atomic<float>* aDecay = nullptr;
+        std::atomic<float>* aSustain = nullptr;
+        std::atomic<float>* aRelease = nullptr;
+        std::atomic<float>* lfoWave = nullptr;
+        std::atomic<float>* lfoRate = nullptr;
+        std::atomic<float>* lfoPitch = nullptr;
+        std::atomic<float>* lfoFilter = nullptr;
+        std::atomic<float>* lfoPwm = nullptr;
+        std::atomic<float>* voiceMode = nullptr;
+        std::atomic<float>* unisonVoices = nullptr;
+        std::atomic<float>* drift = nullptr;
         std::atomic<float>* spread = nullptr;
-        std::atomic<float>* tension = nullptr;
-        std::atomic<float>* room = nullptr;
+        std::atomic<float>* glide = nullptr;
+        std::atomic<float>* velocity = nullptr;
+        std::atomic<float>* chorusMix = nullptr;
+        std::atomic<float>* chorusRate = nullptr;
         std::atomic<float>* output = nullptr;
     } parameterPointers;
 
@@ -104,6 +158,7 @@ private:
     void handleNoteOff (juce::MidiKeyboardState*, int midiChannel,
                         int midiNoteNumber, float velocity) override;
     void enqueueUiMidiEvent (int note, float velocity, bool isNoteOn) noexcept;
+    void discardUiMidiEvents() noexcept;
     void dispatchUiMidiEvents() noexcept;
     void dispatchMidiData (const juce::uint8* data, int numBytes) noexcept;
     void updateEngineParameters() noexcept;

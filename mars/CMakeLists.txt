@@ -79,6 +79,11 @@ if(MARS_BUILD_PLUGIN)
         set(MARS_PLUGIN_FORMATS VST3 Standalone)
     endif()
 
+    juce_add_binary_data(MarsAssets
+        HEADER_NAME MarsAssets.h
+        NAMESPACE MarsAssets
+        SOURCES Assets/mars-panel-texture.png)
+
     juce_add_plugin(Mars
         VERSION ${PROJECT_VERSION}
         COMPANY_NAME "Mars Audio"
@@ -86,7 +91,7 @@ if(MARS_BUILD_PLUGIN)
         PLUGIN_MANUFACTURER_CODE Mars
         PLUGIN_CODE Mar1
         PRODUCT_NAME "Mars"
-        DESCRIPTION "Mars vintage component-modeled polysynth"
+        DESCRIPTION "Mars nonlinear virtual-analog polysynth"
         FORMATS ${MARS_PLUGIN_FORMATS}
         VST3_CATEGORIES Instrument Synth
         AU_MAIN_TYPE kAudioUnitType_MusicDevice
@@ -109,6 +114,7 @@ if(MARS_BUILD_PLUGIN)
     target_link_libraries(Mars
         PRIVATE
             MarsDSP
+            MarsAssets
             juce::juce_audio_utils
             juce::juce_dsp
         PUBLIC
@@ -137,4 +143,24 @@ if(BUILD_TESTING)
 
     add_test(NAME Mars.MarsEngine COMMAND MarsEngineTests)
     set_tests_properties(Mars.MarsEngine PROPERTIES TIMEOUT 30)
+
+    if(MARS_BUILD_PLUGIN)
+        add_executable(MarsPluginProcessorTests Tests/PluginProcessorTests.cpp)
+        target_link_libraries(MarsPluginProcessorTests PRIVATE Mars)
+        target_include_directories(MarsPluginProcessorTests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source"
+            "$<TARGET_PROPERTY:Mars,JUCE_GENERATED_SOURCES_DIRECTORY>"
+            "$<TARGET_PROPERTY:Mars,INCLUDE_DIRECTORIES>")
+        target_compile_features(MarsPluginProcessorTests PRIVATE cxx_std_20)
+
+        if(MSVC)
+            target_compile_options(MarsPluginProcessorTests PRIVATE /W4 /permissive-)
+        else()
+            target_compile_options(MarsPluginProcessorTests PRIVATE
+                -Wall -Wextra -Wpedantic)
+        endif()
+
+        add_test(NAME Mars.PluginProcessor COMMAND MarsPluginProcessorTests)
+        set_tests_properties(Mars.PluginProcessor PROPERTIES TIMEOUT 30)
+    endif()
 endif()

@@ -1,6 +1,7 @@
 # Third-party notices
 
-Mars's original source code is covered by the repository's `LICENSE` file.
+Mars's original source code is covered by the `LICENSE` file included with each
+source or binary distribution.
 The build downloads or consumes the separate dependency below; that dependency
 is not relicensed by Mars.
 

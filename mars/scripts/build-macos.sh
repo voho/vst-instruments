@@ -21,6 +21,10 @@ command -v xcodebuild >/dev/null 2>&1 || {
     echo "error: full Xcode is required" >&2
     exit 1
 }
+command -v codesign >/dev/null 2>&1 || {
+    echo "error: codesign is required" >&2
+    exit 1
+}
 xcodebuild -version >/dev/null 2>&1 || {
     echo "error: select a full Xcode installation with xcode-select" >&2
     echo "Example: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
@@ -51,8 +55,24 @@ cmake "${cmake_args[@]}"
 cmake --build "${BUILD_DIR}" --config "${CONFIG}" --parallel
 ctest --test-dir "${BUILD_DIR}" -C "${CONFIG}" --output-on-failure
 
+ARTIFACT_DIR="${BUILD_DIR}/Mars_artefacts/${CONFIG}"
+artifacts=(
+    "${ARTIFACT_DIR}/VST3/Mars.vst3"
+    "${ARTIFACT_DIR}/AU/Mars.component"
+    "${ARTIFACT_DIR}/Standalone/Mars.app"
+)
+
+for artifact in "${artifacts[@]}"; do
+    if [[ ! -d "${artifact}" ]]; then
+        echo "error: expected build artifact is missing: ${artifact}" >&2
+        exit 1
+    fi
+    codesign --force --sign - "${artifact}"
+    codesign --verify --deep --strict --verbose=2 "${artifact}"
+done
+
 echo
 echo "Build complete. Artifacts:"
-echo "  ${BUILD_DIR}/Mars_artefacts/${CONFIG}/VST3/Mars.vst3"
-echo "  ${BUILD_DIR}/Mars_artefacts/${CONFIG}/AU/Mars.component"
-echo "  ${BUILD_DIR}/Mars_artefacts/${CONFIG}/Standalone/Mars.app"
+for artifact in "${artifacts[@]}"; do
+    echo "  ${artifact}"
+done

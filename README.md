@@ -17,11 +17,11 @@ service while rendering audio.
 | --- | --- | --- | --- | --- |
 | [Vocalor](vocalor/) | Real-time vocal and choir synthesizer: expressive `aah`, `ooh`, and `uuh` voices from a single singer to an ensemble or chord. | VST3 · AU · Standalone | macOS 11+ | [README](vocalor/README.md) |
 | [Drumalor](drumalor/) | Thirteen-voice organic drum synthesizer with bounded per-hit component drift, circuit-inspired vintage coloration, and an original hardware-style interface. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
-| [Mars](mars/) | Vintage component-modeled polysynth with direct knobs/sliders, no arpeggiator, oscillator-card drift, analog filter color, and original Mars styling. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
+| [Mars](mars/) | Dual-oscillator virtual-analog polysynth with event-corrected waveforms, a nonlinear delay-free ladder, a TPT Orbit filter, deterministic voice cards, direct controls, and no arpeggiator or matrix. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
 
 ## Download (nightly)
 
-Prebuilt macOS bundles for both instruments are published automatically from
+Prebuilt macOS bundles for all three instruments are published automatically from
 `main` to a single rolling
 **[nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly)**,
 so the latest build is always available without compiling it locally.
@@ -46,16 +46,16 @@ xattr -dr com.apple.quarantine \
 
 For public distribution, build from source with your own Developer ID signing
 and notarization. Each instrument README contains its own distribution guide:
-[Vocalor](vocalor/README.md#sign-package-and-notarize) and
+[Vocalor](vocalor/README.md#sign-package-and-notarize),
 [Drumalor](drumalor/README.md#sign-package-and-notarize), and
 [Mars](mars/README.md#sign-package-and-notarize).
 
 ## Building
 
 There is no top-level build. Build each instrument from its own directory.
-Both helpers configure Xcode, compile universal `arm64`/`x86_64` binaries, run
-the instrument's CTest suite (including Drumalor's JUCE processor contracts),
-and write VST3, Audio Unit, and Standalone bundles under that instrument's
+Each helper configures Xcode, compiles universal `arm64`/`x86_64` binaries, runs
+the instrument's CTest suite (including JUCE processor contracts where present),
+and writes VST3, Audio Unit, and Standalone bundles under that instrument's
 `build-macos/` directory.
 
 **Vocalor** ([full instructions](vocalor/README.md#build-on-macos)):
@@ -90,7 +90,7 @@ script's `JUCE_PATH` variable.
 LICENSE       Repository license (Apache-2.0)
 vocalor/      Vocalor vocal and choir synthesizer (self-contained JUCE project)
 drumalor/     Drumalor thirteen-voice drum synthesizer (self-contained JUCE project)
-mars/         Mars vintage component-modeled polysynth (self-contained JUCE project)
+mars/         Mars nonlinear virtual-analog polysynth (self-contained JUCE project)
 ```
 
 New instruments are added as additional top-level directories and linked from
