@@ -16,7 +16,7 @@ service while rendering audio.
 | Instrument | Description | Formats | Platform | Docs |
 | --- | --- | --- | --- | --- |
 | [Vocalor](vocalor/) | Real-time vocal and choir synthesizer: expressive `aah`, `ooh`, and `uuh` voices from a single singer to an ensemble or chord. | VST3 · AU · Standalone | macOS 11+ | [README](vocalor/README.md) |
-| [Drumalor](drumalor/) | Thirteen-voice synthesized drum instrument with kick, snare, clap, two hi-hats, ride, crash, three toms, shaker, and two percussion voices. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
+| [Drumalor](drumalor/) | Thirteen-voice organic drum synthesizer with bounded per-hit component drift, circuit-inspired vintage coloration, and an original hardware-style interface. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
 | [Mars](mars/) | Vintage component-modeled polysynth with direct knobs/sliders, no arpeggiator, oscillator-card drift, analog filter color, and original Mars styling. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
 
 ## Download (nightly)

@@ -14,6 +14,7 @@
 namespace
 {
 constexpr int defaultBlockSize = 257;
+constexpr double analysisPi = 3.1415926535897932384626433832795;
 int failureCount = 0;
 
 void expect (bool condition, const std::string& message)
@@ -72,6 +73,25 @@ RenderMetrics renderMetrics (drumalor::DrumEngine& engine, int numSamples,
     return metrics;
 }
 
+RenderMetrics metricsForInterleaved (const std::vector<float>& samples)
+{
+    RenderMetrics metrics;
+    for (const float value : samples)
+    {
+        metrics.finite = metrics.finite && std::isfinite (value);
+        if (std::isfinite (value))
+        {
+            const double magnitude = std::abs (static_cast<double> (value));
+            metrics.peak = std::max (metrics.peak, magnitude);
+            metrics.sumOfSquares += static_cast<double> (value) * value;
+            if (magnitude > 1.0e-9)
+                ++metrics.nonZeroCount;
+        }
+        ++metrics.sampleCount;
+    }
+    return metrics;
+}
+
 std::vector<float> renderInterleaved (drumalor::DrumEngine& engine, int numSamples,
                                       int blockSize)
 {
@@ -110,10 +130,282 @@ double meanAbsoluteMagnitude (const std::vector<float>& values)
     return values.empty() ? 0.0 : magnitude / static_cast<double> (values.size());
 }
 
-double decibelSpread (const std::array<double, 4>& values)
+struct AnalysisBiquad
+{
+    double b0 { 1.0 };
+    double b1 { 0.0 };
+    double b2 { 0.0 };
+    double a1 { 0.0 };
+    double a2 { 0.0 };
+    double z1 { 0.0 };
+    double z2 { 0.0 };
+
+    [[nodiscard]] double tick (double input) noexcept
+    {
+        const double output = b0 * input + z1;
+        z1 = b1 * input - a1 * output + z2;
+        z2 = b2 * input - a2 * output;
+        return output;
+    }
+};
+
+AnalysisBiquad makeAnalysisLowpass (double sampleRate, double frequency)
+{
+    const double omega = 2.0 * analysisPi * frequency / sampleRate;
+    const double cosine = std::cos (omega);
+    const double sine = std::sin (omega);
+    const double alpha = sine / (2.0 * std::sqrt (0.5));
+    const double inverseA0 = 1.0 / (1.0 + alpha);
+    return { 0.5 * (1.0 - cosine) * inverseA0,
+             (1.0 - cosine) * inverseA0,
+             0.5 * (1.0 - cosine) * inverseA0,
+             -2.0 * cosine * inverseA0,
+             (1.0 - alpha) * inverseA0 };
+}
+
+AnalysisBiquad makeAnalysisHighpass (double sampleRate, double frequency)
+{
+    const double omega = 2.0 * analysisPi * frequency / sampleRate;
+    const double cosine = std::cos (omega);
+    const double sine = std::sin (omega);
+    const double alpha = sine / (2.0 * std::sqrt (0.5));
+    const double inverseA0 = 1.0 / (1.0 + alpha);
+    return { 0.5 * (1.0 + cosine) * inverseA0,
+             -(1.0 + cosine) * inverseA0,
+             0.5 * (1.0 + cosine) * inverseA0,
+             -2.0 * cosine * inverseA0,
+             (1.0 - alpha) * inverseA0 };
+}
+
+std::vector<float> renderMonoHit (double sampleRate,
+                                  drumalor::Instrument instrument,
+                                  const drumalor::InstrumentParameters& parameters,
+                                  double durationSeconds = 0.75,
+                                  float velocity = 0.95f)
+{
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+    engine.setInstrumentParameters (instrument, parameters);
+    engine.trigger (instrument, velocity);
+    const int sampleCount = static_cast<int> (std::ceil (durationSeconds * sampleRate));
+    const auto interleaved = renderInterleaved (engine, sampleCount, defaultBlockSize);
+    std::vector<float> mono (static_cast<std::size_t> (sampleCount));
+    for (int sample = 0; sample < sampleCount; ++sample)
+    {
+        const auto index = static_cast<std::size_t> (sample) * 2u;
+        mono[static_cast<std::size_t> (sample)] = 0.5f
+            * (interleaved[index] + interleaved[index + 1u]);
+    }
+    return mono;
+}
+
+double rmsInRange (const std::vector<float>& samples, std::size_t begin, std::size_t end)
+{
+    begin = std::min (begin, samples.size());
+    end = std::clamp (end, begin, samples.size());
+    double sumOfSquares = 0.0;
+    for (std::size_t sample = begin; sample < end; ++sample)
+        sumOfSquares += static_cast<double> (samples[sample]) * samples[sample];
+    return begin == end ? 0.0
+                        : std::sqrt (sumOfSquares / static_cast<double> (end - begin));
+}
+
+double meanInRange (const std::vector<float>& samples, std::size_t begin, std::size_t end)
+{
+    begin = std::min (begin, samples.size());
+    end = std::clamp (end, begin, samples.size());
+    double sum = 0.0;
+    for (std::size_t sample = begin; sample < end; ++sample)
+        sum += samples[sample];
+    return begin == end ? 0.0 : sum / static_cast<double> (end - begin);
+}
+
+double peakInRange (const std::vector<float>& samples, std::size_t begin, std::size_t end)
+{
+    begin = std::min (begin, samples.size());
+    end = std::clamp (end, begin, samples.size());
+    double peak = 0.0;
+    for (std::size_t sample = begin; sample < end; ++sample)
+        peak = std::max (peak, std::abs (static_cast<double> (samples[sample])));
+    return peak;
+}
+
+std::vector<float> filterForAnalysis (const std::vector<float>& samples,
+                                      double sampleRate,
+                                      double highpassFrequency,
+                                      double lowpassFrequency)
+{
+    auto highpass = makeAnalysisHighpass (sampleRate, std::max (1.0, highpassFrequency));
+    auto lowpass = makeAnalysisLowpass (
+        sampleRate, std::min (0.45 * sampleRate, std::max (1.0, lowpassFrequency)));
+    std::vector<float> result (samples.size());
+    for (std::size_t sample = 0; sample < samples.size(); ++sample)
+    {
+        double value = samples[sample];
+        if (highpassFrequency > 0.0)
+            value = highpass.tick (value);
+        if (lowpassFrequency > 0.0)
+            value = lowpass.tick (value);
+        result[sample] = static_cast<float> (value);
+    }
+    return result;
+}
+
+double estimateSettledFundamental (const std::vector<float>& samples,
+                                   double sampleRate,
+                                   double minimumFrequency,
+                                   double maximumFrequency)
+{
+    // Removing upper harmonics before finding positive-going crossings keeps
+    // the estimator stable when Drive intentionally changes the waveshape.
+    const auto smoothed = filterForAnalysis (
+        samples, sampleRate, 0.0, std::min (180.0, 0.42 * sampleRate));
+    const std::size_t begin = std::min (
+        smoothed.size(), static_cast<std::size_t> (std::ceil (0.080 * sampleRate)));
+    const std::size_t end = std::min (
+        smoothed.size(), static_cast<std::size_t> (std::ceil (0.32 * sampleRate)));
+    std::vector<double> crossings;
+    for (std::size_t sample = begin + 1u; sample < end; ++sample)
+    {
+        const double before = smoothed[sample - 1u];
+        const double after = smoothed[sample];
+        if (before <= 0.0 && after > 0.0)
+        {
+            const double denominator = after - before;
+            const double fraction = denominator == 0.0 ? 0.0 : -before / denominator;
+            const double crossing = static_cast<double> (sample - 1u) + fraction;
+            if (crossings.empty()
+                || crossing - crossings.back() >= 0.72 * sampleRate / maximumFrequency)
+                crossings.push_back (crossing);
+        }
+    }
+    if (crossings.size() < 3u)
+        return 0.0;
+
+    std::vector<double> periods;
+    periods.reserve (crossings.size() - 1u);
+    const double minimumPeriod = sampleRate / maximumFrequency;
+    const double maximumPeriod = sampleRate / minimumFrequency;
+    for (std::size_t crossing = 1; crossing < crossings.size(); ++crossing)
+    {
+        const double period = crossings[crossing] - crossings[crossing - 1u];
+        if (period >= minimumPeriod && period <= maximumPeriod)
+            periods.push_back (period);
+    }
+    if (periods.size() < 2u)
+        return 0.0;
+    std::sort (periods.begin(), periods.end());
+    const double medianPeriod = periods[periods.size() / 2u];
+    return sampleRate / medianPeriod;
+}
+
+double windowedMagnitude (const std::vector<float>& samples,
+                          double sampleRate,
+                          double frequency,
+                          double beginSeconds = 0.10,
+                          double endSeconds = 0.42)
+{
+    const std::size_t begin = std::min (
+        samples.size(), static_cast<std::size_t> (std::ceil (beginSeconds * sampleRate)));
+    const std::size_t end = std::min (
+        samples.size(), static_cast<std::size_t> (std::ceil (endSeconds * sampleRate)));
+    if (end <= begin + 1u)
+        return 0.0;
+    const double mean = meanInRange (samples, begin, end);
+    double real = 0.0;
+    double imaginary = 0.0;
+    double windowSum = 0.0;
+    for (std::size_t sample = begin; sample < end; ++sample)
+    {
+        const double normalized = static_cast<double> (sample - begin)
+            / static_cast<double> (end - begin - 1u);
+        const double window = 0.5 - 0.5 * std::cos (2.0 * analysisPi * normalized);
+        const double phase = 2.0 * analysisPi * frequency
+            * static_cast<double> (sample) / sampleRate;
+        const double value = (static_cast<double> (samples[sample]) - mean) * window;
+        real += value * std::cos (phase);
+        imaginary -= value * std::sin (phase);
+        windowSum += window;
+    }
+    return 2.0 * std::hypot (real, imaginary) / std::max (1.0, windowSum);
+}
+
+double harmonicRichness (const std::vector<float>& samples,
+                         double sampleRate,
+                         double fundamental,
+                         int highestHarmonic = 6)
+{
+    const double fundamentalMagnitude = windowedMagnitude (
+        samples, sampleRate, fundamental);
+    double harmonicPower = 0.0;
+    for (int harmonic = 2; harmonic <= highestHarmonic; ++harmonic)
+    {
+        const double magnitude = windowedMagnitude (
+            samples, sampleRate, fundamental * static_cast<double> (harmonic));
+        harmonicPower += magnitude * magnitude;
+    }
+    return std::sqrt (harmonicPower) / std::max (1.0e-12, fundamentalMagnitude);
+}
+
+struct KickAnalysis
+{
+    double fundamentalHz { 0.0 };
+    double fullRms { 0.0 };
+    double lowRms { 0.0 };
+    double midRms { 0.0 };
+    double transientHighRms { 0.0 };
+    double transientRms { 0.0 };
+    double peak { 0.0 };
+    double mean { 0.0 };
+    bool finite { true };
+};
+
+KickAnalysis analyseKick (const std::vector<float>& samples, double sampleRate,
+                          double minimumFrequency = 35.0,
+                          double maximumFrequency = 130.0)
+{
+    KickAnalysis result;
+    const auto low = filterForAnalysis (samples, sampleRate, 20.0, 100.0);
+    const auto mid = filterForAnalysis (samples, sampleRate, 130.0, 2000.0);
+    const auto high = filterForAnalysis (samples, sampleRate, 2000.0, 0.0);
+    const std::size_t bodyEnd = std::min (
+        samples.size(), static_cast<std::size_t> (std::ceil (0.60 * sampleRate)));
+    const std::size_t transientEnd = std::min (
+        samples.size(), static_cast<std::size_t> (std::ceil (0.030 * sampleRate)));
+    result.fundamentalHz = estimateSettledFundamental (
+        samples, sampleRate, minimumFrequency, maximumFrequency);
+    result.fullRms = rmsInRange (samples, 0, bodyEnd);
+    result.lowRms = rmsInRange (low, 0, bodyEnd);
+    result.midRms = rmsInRange (mid, 0, bodyEnd);
+    result.transientHighRms = rmsInRange (high, 0, transientEnd);
+    result.transientRms = rmsInRange (samples, 0, transientEnd);
+    result.peak = peakInRange (samples, 0, samples.size());
+    result.mean = meanInRange (samples, 0, samples.size());
+    result.finite = std::all_of (samples.begin(), samples.end(), [] (float value)
+    {
+        return std::isfinite (value);
+    });
+    return result;
+}
+
+template <std::size_t size>
+double decibelSpread (const std::array<double, size>& values)
 {
     const auto [minimum, maximum] = std::minmax_element (values.begin(), values.end());
     return 20.0 * std::log10 (*maximum / std::max (1.0e-12, *minimum));
+}
+
+template <std::size_t size>
+std::string describeValues (const std::array<double, size>& values)
+{
+    std::string result;
+    for (const double value : values)
+    {
+        if (! result.empty())
+            result += ", ";
+        result += std::to_string (value);
+    }
+    return result;
 }
 
 int renderUntilInactive (drumalor::DrumEngine& engine, int maximumSamples,
@@ -127,6 +419,51 @@ int renderUntilInactive (drumalor::DrumEngine& engine, int maximumSamples,
         rendered += count;
     }
     return rendered;
+}
+
+struct IsolatedHit
+{
+    std::vector<float> samples;
+    RenderMetrics metrics;
+    int activeSamples { 0 };
+    bool terminated { false };
+};
+
+IsolatedHit renderIsolatedHit (drumalor::DrumEngine& engine,
+                               drumalor::Instrument instrument,
+                               float velocity,
+                               int captureSamples = 8192)
+{
+    constexpr int probeBlockSize = 64;
+    constexpr int maximumSamples = static_cast<int> (
+        48000.0 * drumalor::maximumTailSeconds);
+    IsolatedHit result;
+    result.samples.resize (static_cast<std::size_t> (captureSamples) * 2u);
+    std::array<float, probeBlockSize> left {};
+    std::array<float, probeBlockSize> right {};
+
+    engine.trigger (instrument, velocity);
+    while (engine.getActiveVoiceCount() > 0 && result.activeSamples < maximumSamples)
+    {
+        const int count = std::min (probeBlockSize, maximumSamples - result.activeSamples);
+        engine.process (left.data(), right.data(), count);
+
+        if (result.activeSamples < captureSamples)
+        {
+            const int copied = std::min (count, captureSamples - result.activeSamples);
+            for (int sample = 0; sample < copied; ++sample)
+            {
+                const auto target = static_cast<std::size_t> (result.activeSamples + sample) * 2u;
+                result.samples[target] = left[static_cast<std::size_t> (sample)];
+                result.samples[target + 1u] = right[static_cast<std::size_t> (sample)];
+            }
+        }
+        result.activeSamples += count;
+    }
+
+    result.terminated = engine.getActiveVoiceCount() == 0;
+    result.metrics = metricsForInterleaved (result.samples);
+    return result;
 }
 
 void testMetadataAndMidiMapping()
@@ -357,35 +694,270 @@ void testDeterminismAndBlockPartitioning()
     expect (oneSampleBlocks == irregularBlocks,
             "render changed when the same stream was partitioned into different blocks");
 
-    drumalor::DrumEngine resetEngine;
-    resetEngine.prepare (48000.0, 512);
-    auto shakerParameters = drumalor::getInstrumentMetadata (
-        drumalor::Instrument::Shaker).defaultParameters;
-    shakerParameters.decay = 0.0f;
-    resetEngine.setInstrumentParameters (drumalor::Instrument::Shaker, shakerParameters);
+    const auto renderStaggeredSequence = [] (int blockSize)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, 512);
+        std::vector<float> sequence;
+        constexpr int spacingSamples = 997;
+        sequence.reserve (drumalor::instrumentCount
+                          * static_cast<std::size_t> (spacingSamples) * 2u);
+        for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+        {
+            engine.trigger (static_cast<drumalor::Instrument> (index), 0.73f);
+            auto segment = renderInterleaved (engine, spacingSamples, blockSize);
+            sequence.insert (sequence.end(), segment.begin(), segment.end());
+        }
+        return sequence;
+    };
+    expect (renderStaggeredSequence (1) == renderStaggeredSequence (383),
+            "staggered organic hit sequence changed with process block partitioning");
+}
 
-    resetEngine.trigger (drumalor::Instrument::Shaker, 0.81f);
-    const auto firstHit = renderInterleaved (resetEngine, 4096, 127);
-    renderUntilInactive (resetEngine, static_cast<int> (48000.0 * drumalor::maximumTailSeconds));
-    renderMetrics (resetEngine, 4096);
+void testOrganicAnalogVariation()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr std::size_t hitCount = 6;
+    constexpr float velocity = 0.81f;
 
-    resetEngine.trigger (drumalor::Instrument::Shaker, 0.81f);
-    const auto successiveHit = renderInterleaved (resetEngine, 4096, 127);
-    const double successiveDifference = meanAbsoluteDifference (firstHit, successiveHit);
-    expect (successiveDifference > 0.02 * meanAbsoluteMagnitude (firstHit),
-            "successive same-instrument hits reused the same noise/phase sequence");
+    for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+    {
+        const auto instrument = static_cast<drumalor::Instrument> (index);
+        const std::string label (drumalor::getInstrumentDisplayName (instrument));
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        auto parameters = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+        parameters.decay = 0.35f;
+        engine.setInstrumentParameters (instrument, parameters);
 
-    resetEngine.reset();
-    resetEngine.trigger (drumalor::Instrument::Shaker, 0.81f);
-    const auto postResetHit = renderInterleaved (resetEngine, 4096, 127);
-    expect (firstHit == postResetHit,
-            "reset did not restore the initial deterministic noise and phase state");
+        std::array<IsolatedHit, hitCount> firstPass;
+        std::array<double, hitCount> rmsValues {};
+        std::array<double, hitCount> peakValues {};
+        std::array<int, hitCount> activeSamples {};
+        for (std::size_t hit = 0; hit < hitCount; ++hit)
+        {
+            firstPass[hit] = renderIsolatedHit (engine, instrument, velocity);
+            const auto& result = firstPass[hit];
+            rmsValues[hit] = result.metrics.rms();
+            peakValues[hit] = result.metrics.peak;
+            activeSamples[hit] = result.activeSamples;
+
+            expect (result.terminated, label + " organic hit exceeded the maximum tail");
+            expect (result.metrics.finite, label + " organic hit produced NaN or infinity");
+            expect (result.metrics.nonZeroCount > 10 && result.metrics.rms() > 1.0e-7,
+                    label + " organic hit was effectively silent");
+            expect (result.metrics.peak <= 1.001,
+                    label + " organic hit exceeded the output safety bound");
+
+            if (hit != 0)
+            {
+                const auto& previous = firstPass[hit - 1u].samples;
+                const double difference = meanAbsoluteDifference (previous, result.samples);
+                const double reference = std::max (meanAbsoluteMagnitude (previous),
+                                                    meanAbsoluteMagnitude (result.samples));
+                expect (difference > std::max (1.0e-7, 0.002 * reference),
+                        label + " repeated an effectively identical equal-velocity hit");
+            }
+        }
+
+        const double rmsSpreadDb = decibelSpread (rmsValues);
+        const double peakSpreadDb = decibelSpread (peakValues);
+        expect (rmsSpreadDb < 4.0,
+                label + " organic RMS variation exceeded 4 dB (observed "
+                    + std::to_string (rmsSpreadDb) + " dB from "
+                    + describeValues (rmsValues) + ")");
+        expect (peakSpreadDb < 6.0,
+                label + " organic peak variation exceeded 6 dB (observed "
+                    + std::to_string (peakSpreadDb) + " dB from "
+                    + describeValues (peakValues) + ")");
+        const auto [shortest, longest] = std::minmax_element (
+            activeSamples.begin(), activeSamples.end());
+        expect (static_cast<double> (*longest)
+                    <= 1.35 * static_cast<double> (std::max (1, *shortest)) + 128.0,
+                label + " organic tail duration varied by more than 35 percent");
+
+        engine.reset();
+        for (std::size_t hit = 0; hit < hitCount; ++hit)
+        {
+            const auto replay = renderIsolatedHit (engine, instrument, velocity);
+            expect (replay.samples == firstPass[hit].samples,
+                    label + " reset did not reproduce its modeled hit sequence exactly");
+            expect (replay.activeSamples == firstPass[hit].activeSamples,
+                    label + " reset did not reproduce its modeled tail sequence exactly");
+        }
+    }
+}
+
+void testDeepAnalogKickContract()
+{
+    constexpr std::array sampleRates { 8000.0, 44100.0, 48000.0, 96000.0, 192000.0 };
+    const auto defaults = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Kick).defaultParameters;
+    std::array<double, sampleRates.size()> fundamentals {};
+    std::array<double, sampleRates.size()> rmsLevels {};
+    std::array<double, sampleRates.size()> peaks {};
+    std::array<double, sampleRates.size()> strongDriveLevels {};
+
+    for (std::size_t index = 0; index < sampleRates.size(); ++index)
+    {
+        const double sampleRate = sampleRates[index];
+        const auto samples = renderMonoHit (
+            sampleRate, drumalor::Instrument::Kick, defaults);
+        const auto metrics = analyseKick (samples, sampleRate);
+        fundamentals[index] = metrics.fundamentalHz;
+        rmsLevels[index] = metrics.fullRms;
+        peaks[index] = metrics.peak;
+        const double subToMid = metrics.lowRms / std::max (1.0e-12, metrics.midRms);
+        const double transientHighShare = metrics.transientHighRms
+            / std::max (1.0e-12, metrics.transientRms);
+        const double crest = metrics.peak / std::max (1.0e-12, metrics.fullRms);
+        const std::string label = "default Kick at "
+            + std::to_string (static_cast<int> (sampleRate)) + " Hz";
+
+        expect (metrics.finite, label + " produced NaN or infinity");
+        expect (metrics.fundamentalHz >= 43.0 && metrics.fundamentalHz <= 55.0,
+                label + " settled outside the 43-55 Hz deep-kick range (observed "
+                    + std::to_string (metrics.fundamentalHz) + " Hz)");
+        expect (metrics.fullRms >= 0.040,
+                label + " lacked sustained body (RMS "
+                    + std::to_string (metrics.fullRms) + ")");
+        expect (metrics.peak >= 0.25 && metrics.peak <= 1.001,
+                label + " did not maintain a strong, safe peak (observed "
+                    + std::to_string (metrics.peak) + ")");
+        expect (subToMid >= 1.80,
+                label + " lacked dominant sub-100 Hz energy (sub/mid RMS ratio "
+                    + std::to_string (subToMid) + ")");
+        expect (transientHighShare >= 0.003 && transientHighShare <= 0.35,
+                label + " transient was missing or excessively bright (high-band share "
+                    + std::to_string (transientHighShare) + ")");
+        expect (crest >= 2.5 && crest <= 8.0,
+                label + " had an implausible crest factor (observed "
+                    + std::to_string (crest) + ")");
+        expect (std::abs (metrics.mean) <= 0.002,
+                label + " retained excessive DC (mean "
+                    + std::to_string (metrics.mean) + ")");
+
+        auto strongDrive = defaults;
+        strongDrive.characterB = 1.0f;
+        const auto strongDriveMetrics = analyseKick (renderMonoHit (
+            sampleRate, drumalor::Instrument::Kick, strongDrive), sampleRate);
+        strongDriveLevels[index] = strongDriveMetrics.fullRms;
+        expect (strongDriveMetrics.finite && strongDriveMetrics.fullRms >= 0.035
+                    && strongDriveMetrics.peak >= 0.25
+                    && strongDriveMetrics.peak <= 1.001
+                    && std::abs (strongDriveMetrics.mean) <= 0.002,
+                "strong-drive " + label
+                    + " was unstable, weak, clipped, or DC-biased (RMS/peak/mean "
+                    + std::to_string (strongDriveMetrics.fullRms) + "/"
+                    + std::to_string (strongDriveMetrics.peak) + "/"
+                    + std::to_string (strongDriveMetrics.mean) + ")");
+    }
+
+    expect (decibelSpread (rmsLevels) < 0.75,
+            "default Kick body varied by more than 0.75 dB across sample rates ("
+                + describeValues (rmsLevels) + ")");
+    expect (decibelSpread (peaks) < 0.75,
+            "default Kick peak varied by more than 0.75 dB across sample rates ("
+                + describeValues (peaks) + ")");
+    expect (decibelSpread (strongDriveLevels) < 0.75,
+            "strong-drive Kick body varied by more than 0.75 dB across sample rates ("
+                + describeValues (strongDriveLevels) + ")");
+    const auto [minimumFundamental, maximumFundamental] = std::minmax_element (
+        fundamentals.begin(), fundamentals.end());
+    expect (*maximumFundamental - *minimumFundamental < 0.25,
+            "default Kick fundamental moved by 0.25 Hz or more across sample rates ("
+                + describeValues (fundamentals) + ")");
+
+    auto lowPunch = defaults;
+    auto highPunch = defaults;
+    lowPunch.characterA = 0.0f;
+    highPunch.characterA = 1.0f;
+    const auto lowPunchMetrics = analyseKick (
+        renderMonoHit (48000.0, drumalor::Instrument::Kick, lowPunch), 48000.0);
+    const auto highPunchMetrics = analyseKick (
+        renderMonoHit (48000.0, drumalor::Instrument::Kick, highPunch), 48000.0);
+    expect (highPunchMetrics.transientHighRms
+                > 1.75 * lowPunchMetrics.transientHighRms,
+            "Kick Punch did not materially strengthen the high-frequency attack (low/high "
+                + std::to_string (lowPunchMetrics.transientHighRms) + "/"
+                + std::to_string (highPunchMetrics.transientHighRms) + ")");
+
+    auto lowDrive = defaults;
+    auto highDrive = defaults;
+    lowDrive.characterB = 0.0f;
+    highDrive.characterB = 1.0f;
+    const auto lowDriveSamples = renderMonoHit (
+        48000.0, drumalor::Instrument::Kick, lowDrive);
+    const auto highDriveSamples = renderMonoHit (
+        48000.0, drumalor::Instrument::Kick, highDrive);
+    const double lowDriveFundamental = estimateSettledFundamental (
+        lowDriveSamples, 48000.0, 35.0, 70.0);
+    const double highDriveFundamental = estimateSettledFundamental (
+        highDriveSamples, 48000.0, 35.0, 70.0);
+    const double lowDriveHarmonicRatio = windowedMagnitude (
+        lowDriveSamples, 48000.0, 2.0 * lowDriveFundamental)
+        / std::max (1.0e-12, windowedMagnitude (
+            lowDriveSamples, 48000.0, lowDriveFundamental));
+    const double highDriveHarmonicRatio = windowedMagnitude (
+        highDriveSamples, 48000.0, 2.0 * highDriveFundamental)
+        / std::max (1.0e-12, windowedMagnitude (
+            highDriveSamples, 48000.0, highDriveFundamental));
+    const double lowDriveRichness = harmonicRichness (
+        lowDriveSamples, 48000.0, lowDriveFundamental);
+    const double highDriveRichness = harmonicRichness (
+        highDriveSamples, 48000.0, highDriveFundamental);
+    const auto highDriveHighBand = filterForAnalysis (
+        highDriveSamples, 48000.0, 8000.0, 0.0);
+    constexpr std::size_t settledBegin = 4800u;
+    constexpr std::size_t settledEnd = 20160u;
+    const double settledHighBandShare = rmsInRange (
+        highDriveHighBand, settledBegin, settledEnd)
+        / std::max (1.0e-12, rmsInRange (
+            highDriveSamples, settledBegin, settledEnd));
+    expect (highDriveHarmonicRatio > lowDriveHarmonicRatio + 0.020
+                && highDriveHarmonicRatio > 2.0 * lowDriveHarmonicRatio,
+            "Kick Drive did not materially enrich its second harmonic (low/high ratio "
+                + std::to_string (lowDriveHarmonicRatio) + "/"
+                + std::to_string (highDriveHarmonicRatio) + ")");
+    expect (highDriveRichness >= 0.030 && highDriveRichness <= 0.35
+                && highDriveRichness > lowDriveRichness + 0.020,
+            "Kick Drive did not provide controlled 2nd-6th harmonic translation (low/high "
+                + std::to_string (lowDriveRichness) + "/"
+                + std::to_string (highDriveRichness) + ")");
+    expect (settledHighBandShare < 0.003,
+            "strong-drive Kick produced excessive settled energy above 8 kHz (share "
+                + std::to_string (settledHighBandShare) + ")");
+
+    auto lowPitch = defaults;
+    auto highPitch = defaults;
+    lowPitch.pitch = -12.0f;
+    highPitch.pitch = 12.0f;
+    const double lowFrequency = estimateSettledFundamental (
+        renderMonoHit (48000.0, drumalor::Instrument::Kick, lowPitch),
+        48000.0, 20.0, 40.0);
+    const double centreFrequency = fundamentals[2];
+    const double highFrequency = estimateSettledFundamental (
+        renderMonoHit (48000.0, drumalor::Instrument::Kick, highPitch),
+        48000.0, 75.0, 130.0);
+    const double lowerRatio = lowFrequency / std::max (1.0e-12, centreFrequency);
+    const double upperRatio = highFrequency / std::max (1.0e-12, centreFrequency);
+    expect (lowFrequency >= 21.5 && lowFrequency <= 29.0
+                && highFrequency >= 90.0 && highFrequency <= 115.0,
+            "Kick octave offsets left the useful bass range (low/centre/high "
+                + std::to_string (lowFrequency) + "/"
+                + std::to_string (centreFrequency) + "/"
+                + std::to_string (highFrequency) + " Hz)");
+    expect (lowerRatio >= 0.48 && lowerRatio <= 0.52
+                && upperRatio >= 1.94 && upperRatio <= 2.06,
+            "Kick pitch did not track semitone ratios accurately (ratios "
+                + std::to_string (lowerRatio) + "/"
+                + std::to_string (upperRatio) + ")");
 }
 
 void testLowFrequencyTailAndVoiceStealing()
 {
     constexpr double sampleRate = 48000.0;
-    constexpr int recentWindowSamples = 2400; // 50 ms, longer than a 13 Hz peak interval.
+    constexpr int recentWindowSamples = 2400; // 50 ms, longer than a 12 Hz peak interval.
     drumalor::DrumEngine lowKick;
     lowKick.prepare (sampleRate, 1);
     auto kickParameters = drumalor::getInstrumentMetadata (
@@ -618,6 +1190,8 @@ int main()
     testTailsTerminate();
     testHatChokeAndPanic();
     testDeterminismAndBlockPartitioning();
+    testOrganicAnalogVariation();
+    testDeepAnalogKickContract();
     testLowFrequencyTailAndVoiceStealing();
     testParameterInfluence();
     testInvalidValuesAndStressPerformance();

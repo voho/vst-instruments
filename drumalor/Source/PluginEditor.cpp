@@ -1,5 +1,7 @@
 #include "PluginEditor.h"
 
+#include <DrumalorAssets.h>
+
 #include <algorithm>
 #include <cmath>
 #include <string_view>
@@ -8,14 +10,17 @@
 
 namespace
 {
-constexpr auto accent = 0xffffb34d;
-constexpr auto accentHot = 0xffff5c78;
-constexpr auto accentCool = 0xff64d9ff;
-constexpr auto panel = 0xff11161e;
-constexpr auto panelRaised = 0xff171e28;
-constexpr auto panelEdge = 0xff303947;
-constexpr auto textBright = 0xfff4f4ef;
-constexpr auto textDim = 0xff8996a4;
+// An original late-1970s palette: aged enamel, tobacco Bakelite, ochre ink,
+// oxide red, and warm ivory.  The colours deliberately avoid any single
+// historical machine's trade dress.
+constexpr auto accent = 0xffd6a14a;
+constexpr auto accentHot = 0xffb85b3f;
+constexpr auto accentCool = 0xff9caf8b;
+constexpr auto panel = 0xe82c2a24;
+constexpr auto panelRaised = 0xff3a382f;
+constexpr auto panelEdge = 0xff746b56;
+constexpr auto textBright = 0xfff2e5c5;
+constexpr auto textDim = 0xffbaad91;
 
 juce::Colour colour (juce::uint32 argb)
 {
@@ -54,10 +59,63 @@ void styleHeaderLabel (juce::Label& label, float size, juce::Colour labelColour)
 void drawPanel (juce::Graphics& graphics, juce::Rectangle<int> bounds)
 {
     const auto area = bounds.toFloat();
-    graphics.setColour (colour (panel));
-    graphics.fillRoundedRectangle (area, 11.0f);
-    graphics.setColour (colour (panelEdge));
-    graphics.drawRoundedRectangle (area.reduced (0.5f), 11.0f, 1.0f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.28f));
+    graphics.fillRoundedRectangle (area.translated (0.0f, 3.0f), 8.0f);
+
+    juce::ColourGradient enamel (colour (0xf23d392e), area.getTopLeft(),
+                                 colour (panel), area.getBottomRight(), false);
+    enamel.addColour (0.48, colour (0xef302e27));
+    graphics.setGradientFill (enamel);
+    graphics.fillRoundedRectangle (area, 8.0f);
+
+    graphics.setColour (colour (0x95d4c49d));
+    graphics.drawRoundedRectangle (area.reduced (0.5f), 8.0f, 1.0f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.38f));
+    graphics.drawRoundedRectangle (area.reduced (2.0f), 6.5f, 1.0f);
+}
+
+void drawHardwareScrew (juce::Graphics& graphics, juce::Point<float> centre)
+{
+    constexpr float radius = 4.5f;
+    const auto screw = juce::Rectangle<float> (radius * 2.0f, radius * 2.0f)
+                           .withCentre (centre);
+    graphics.setColour (juce::Colours::black.withAlpha (0.42f));
+    graphics.fillEllipse (screw.translated (0.5f, 1.0f));
+
+    juce::ColourGradient metal (colour (0xffd0c29f), screw.getTopLeft(),
+                                colour (0xff5e5849), screw.getBottomRight(), false);
+    graphics.setGradientFill (metal);
+    graphics.fillEllipse (screw);
+    graphics.setColour (colour (0xff39362e));
+    graphics.drawLine (centre.x - 2.4f, centre.y, centre.x + 2.4f, centre.y, 1.0f);
+}
+
+void drawScaledBackground (juce::Graphics& graphics, const juce::Image& image,
+                           juce::Rectangle<float> destination)
+{
+    if (! image.isValid())
+        return;
+
+    auto source = image.getBounds().toFloat();
+    const auto sourceAspect = source.getWidth() / source.getHeight();
+    const auto destinationAspect = destination.getWidth() / destination.getHeight();
+    if (sourceAspect > destinationAspect)
+        source = source.withSizeKeepingCentre (source.getHeight() * destinationAspect,
+                                               source.getHeight());
+    else
+        source = source.withSizeKeepingCentre (source.getWidth(),
+                                               source.getWidth() / destinationAspect);
+
+    graphics.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
+    graphics.drawImage (image,
+                        juce::roundToInt (destination.getX()),
+                        juce::roundToInt (destination.getY()),
+                        juce::roundToInt (destination.getWidth()),
+                        juce::roundToInt (destination.getHeight()),
+                        juce::roundToInt (source.getX()),
+                        juce::roundToInt (source.getY()),
+                        juce::roundToInt (source.getWidth()),
+                        juce::roundToInt (source.getHeight()), false);
 }
 
 class DrumalorPadAccessibilityHandler final : public juce::AccessibilityHandler
@@ -112,7 +170,7 @@ void DrumalorLookAndFeel::drawRotarySlider (juce::Graphics& graphics,
                                             float sliderPos, float rotaryStartAngle,
                                             float rotaryEndAngle, juce::Slider& slider)
 {
-    const auto diameter = static_cast<float> (juce::jmin (width, height)) - 15.0f;
+    const auto diameter = static_cast<float> (juce::jmin (width, height)) - 17.0f;
     const auto radius = diameter * 0.5f;
     const auto centre = juce::Point<float> (
         static_cast<float> (x) + static_cast<float> (width) * 0.5f,
@@ -120,45 +178,67 @@ void DrumalorLookAndFeel::drawRotarySlider (juce::Graphics& graphics,
     const auto bounds = juce::Rectangle<float> (diameter, diameter).withCentre (centre);
     const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    graphics.setColour (colour (0x2affb34d));
-    graphics.fillEllipse (bounds.expanded (3.0f));
+    // Printed calibration marks around a dense, slightly glossy Bakelite cap.
+    constexpr int tickCount = 11;
+    for (int tick = 0; tick < tickCount; ++tick)
+    {
+        const auto proportion = static_cast<float> (tick) /
+                                static_cast<float> (tickCount - 1);
+        const auto tickAngle = rotaryStartAngle
+                             + proportion * (rotaryEndAngle - rotaryStartAngle);
+        const auto outer = centre.getPointOnCircumference (radius + 4.5f, tickAngle);
+        const auto inner = centre.getPointOnCircumference (
+            radius + (tick % 5 == 0 ? 0.5f : 1.8f), tickAngle);
+        graphics.setColour (colour (textDim).withAlpha (tick % 5 == 0 ? 0.88f : 0.52f));
+        graphics.drawLine ({ inner, outer }, tick % 5 == 0 ? 1.4f : 1.0f);
+    }
 
     juce::Path track;
-    track.addCentredArc (centre.x, centre.y, radius - 3.0f, radius - 3.0f, 0.0f,
+    track.addCentredArc (centre.x, centre.y, radius - 1.5f, radius - 1.5f, 0.0f,
                          rotaryStartAngle, rotaryEndAngle, true);
     graphics.setColour (slider.findColour (juce::Slider::rotarySliderOutlineColourId));
-    graphics.strokePath (track, juce::PathStrokeType (4.0f,
+    graphics.strokePath (track, juce::PathStrokeType (2.6f,
                                                       juce::PathStrokeType::curved,
                                                       juce::PathStrokeType::rounded));
 
     juce::Path valueArc;
-    valueArc.addCentredArc (centre.x, centre.y, radius - 3.0f, radius - 3.0f, 0.0f,
+    valueArc.addCentredArc (centre.x, centre.y, radius - 1.5f, radius - 1.5f, 0.0f,
                             rotaryStartAngle, angle, true);
-    juce::ColourGradient arcGradient (colour (accentHot), bounds.getBottomLeft(),
-                                      colour (accent), bounds.getTopRight(), false);
-    graphics.setGradientFill (arcGradient);
-    graphics.strokePath (valueArc, juce::PathStrokeType (4.2f,
+    graphics.setColour (colour (accent));
+    graphics.strokePath (valueArc, juce::PathStrokeType (3.2f,
                                                          juce::PathStrokeType::curved,
                                                          juce::PathStrokeType::rounded));
 
-    graphics.setColour (colour (0xff090d12));
-    graphics.fillEllipse (bounds.reduced (9.0f));
-    graphics.setColour (colour (0xff3b4654));
-    graphics.drawEllipse (bounds.reduced (9.0f), 1.2f);
+    const auto cap = bounds.reduced (8.5f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.45f));
+    graphics.fillEllipse (cap.translated (1.5f, 2.2f));
+    juce::ColourGradient bakelite (colour (0xff403b31), cap.getTopLeft(),
+                                   colour (0xff151410), cap.getBottomRight(), false);
+    bakelite.addColour (0.38, colour (0xff302c24));
+    graphics.setGradientFill (bakelite);
+    graphics.fillEllipse (cap);
+    graphics.setColour (colour (0xff80745c));
+    graphics.drawEllipse (cap, 1.0f);
+
+    // A subtle grip ring and centre boss keep the knob legible at small sizes.
+    graphics.setColour (juce::Colours::black.withAlpha (0.48f));
+    graphics.drawEllipse (cap.reduced (4.5f), 1.0f);
+    graphics.setColour (colour (0xff4d483b));
+    graphics.fillEllipse (cap.reduced (cap.getWidth() * 0.36f));
 
     juce::Path pointer;
-    const auto pointerLength = radius * 0.43f;
-    pointer.addRoundedRectangle (-1.5f, -pointerLength, 3.0f,
-                                 pointerLength * 0.58f, 1.5f);
+    const auto pointerLength = radius * 0.39f;
+    pointer.addRoundedRectangle (-1.25f, -pointerLength, 2.5f,
+                                 pointerLength * 0.55f, 1.2f);
     pointer.applyTransform (juce::AffineTransform::rotation (angle)
                                 .translated (centre.x, centre.y));
-    graphics.setColour (colour (textBright));
+    graphics.setColour (colour (0xffffedc4));
     graphics.fillPath (pointer);
 
     if (slider.hasKeyboardFocus (true))
     {
         graphics.setColour (colour (accentCool));
-        graphics.drawEllipse (bounds.expanded (2.0f), 1.6f);
+        graphics.drawEllipse (bounds.expanded (2.5f), 1.6f);
     }
 }
 
@@ -169,20 +249,20 @@ void DrumalorLookAndFeel::drawButtonBackground (juce::Graphics& graphics,
                                                 bool isDown)
 {
     auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
-    auto fill = colour (0xff18151b);
+    auto fill = colour (0xff4a2924);
     if (isHighlighted)
         fill = fill.brighter (0.08f);
     if (isDown)
         fill = fill.darker (0.12f);
 
     graphics.setColour (fill);
-    graphics.fillRoundedRectangle (bounds, 6.0f);
-    graphics.setColour (colour (accentHot).withAlpha (isHighlighted ? 0.9f : 0.55f));
-    graphics.drawRoundedRectangle (bounds, 6.0f, 1.2f);
+    graphics.fillRoundedRectangle (bounds, 4.0f);
+    graphics.setColour (colour (0xffd6b186).withAlpha (isHighlighted ? 0.90f : 0.48f));
+    graphics.drawRoundedRectangle (bounds, 4.0f, 1.0f);
     if (button.hasKeyboardFocus (true))
     {
         graphics.setColour (colour (accentCool));
-        graphics.drawRoundedRectangle (bounds.reduced (2.5f), 4.5f, 1.5f);
+        graphics.drawRoundedRectangle (bounds.reduced (2.5f), 2.5f, 1.5f);
     }
 }
 
@@ -245,8 +325,8 @@ void DrumalorPad::paintButton (juce::Graphics& graphics,
                                bool isButtonDown)
 {
     auto bounds = getLocalBounds().toFloat().reduced (1.0f);
-    auto top = selected ? colour (0xff2b2420) : colour (panelRaised);
-    auto bottom = selected ? colour (0xff17171d) : colour (0xff10151c);
+    auto top = selected ? colour (0xff57412e) : colour (panelRaised);
+    auto bottom = selected ? colour (0xff2f271e) : colour (0xff24231e);
 
     if (isMouseOverButton)
     {
@@ -263,33 +343,45 @@ void DrumalorPad::paintButton (juce::Graphics& graphics,
     juce::ColourGradient fill (top, bounds.getTopLeft(), bottom,
                                bounds.getBottomLeft(), false);
     graphics.setGradientFill (fill);
-    graphics.fillRoundedRectangle (bounds, 8.0f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.42f));
+    graphics.fillRoundedRectangle (bounds.translated (0.0f, 2.0f), 5.0f);
+
+    graphics.setGradientFill (fill);
+    graphics.fillRoundedRectangle (bounds, 5.0f);
+
+    // Inner bevel suggests the thick rubber strike buttons of a hardware unit.
+    graphics.setColour (colour (0x54f2e5c5));
+    graphics.drawLine (bounds.getX() + 5.0f, bounds.getY() + 1.0f,
+                       bounds.getRight() - 5.0f, bounds.getY() + 1.0f, 1.0f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.40f));
+    graphics.drawLine (bounds.getX() + 5.0f, bounds.getBottom() - 1.0f,
+                       bounds.getRight() - 5.0f, bounds.getBottom() - 1.0f, 1.0f);
 
     if (flashLevel > 0.0f)
     {
-        graphics.setColour (colour (accent).withAlpha (0.10f + 0.50f * flashLevel));
-        graphics.fillRoundedRectangle (bounds.reduced (1.0f), 7.5f);
+        graphics.setColour (colour (accent).withAlpha (0.08f + 0.42f * flashLevel));
+        graphics.fillRoundedRectangle (bounds.reduced (1.0f), 4.0f);
     }
 
     graphics.setColour (selected ? colour (accent) : colour (panelEdge));
-    graphics.drawRoundedRectangle (bounds.reduced (0.5f), 8.0f,
+    graphics.drawRoundedRectangle (bounds.reduced (0.5f), 5.0f,
                                    selected ? 1.8f : 1.0f);
     if (hasKeyboardFocus (true))
     {
         graphics.setColour (colour (accentCool));
-        graphics.drawRoundedRectangle (bounds.reduced (2.5f), 6.5f, 1.5f);
+        graphics.drawRoundedRectangle (bounds.reduced (2.5f), 3.0f, 1.5f);
     }
 
-    const auto strip = bounds.withHeight (4.0f).reduced (8.0f, 0.0f);
+    const auto strip = bounds.withHeight (5.0f).reduced (8.0f, 0.0f);
     graphics.setColour ((selected ? colour (accent) : colour (accentHot))
-                            .withAlpha (selected ? 0.95f : 0.36f + 0.35f * flashLevel));
-    graphics.fillRoundedRectangle (strip, 2.0f);
+                            .withAlpha (selected ? 0.96f : 0.48f + 0.30f * flashLevel));
+    graphics.fillRect (strip);
 
     auto textArea = getLocalBounds().reduced (9, 9);
     textArea.removeFromTop (4);
     auto noteArea = textArea.removeFromBottom (20);
     graphics.setColour (colour (textBright));
-    graphics.setFont (juce::Font (juce::FontOptions (13.0f, juce::Font::bold)));
+    graphics.setFont (juce::Font (juce::FontOptions (12.5f, juce::Font::bold)));
     graphics.drawFittedText (nameText.toUpperCase(), textArea,
                              juce::Justification::centred, 2, 0.82f);
 
@@ -406,18 +498,18 @@ void DrumalorStatusDisplay::setStatus (int activeVoices, bool ready, double samp
 void DrumalorStatusDisplay::paint (juce::Graphics& graphics)
 {
     auto bounds = getLocalBounds().toFloat().reduced (1.0f);
-    graphics.setColour (colour (panel));
-    graphics.fillRoundedRectangle (bounds, 6.0f);
-    graphics.setColour (colour (panelEdge));
-    graphics.drawRoundedRectangle (bounds, 6.0f, 1.0f);
+    graphics.setColour (colour (0xff171914));
+    graphics.fillRoundedRectangle (bounds, 3.0f);
+    graphics.setColour (colour (0xff756e58));
+    graphics.drawRoundedRectangle (bounds, 3.0f, 1.0f);
 
     const auto light = juce::Rectangle<float> (bounds.getX() + 11.0f,
                                                bounds.getCentreY() - 4.0f, 8.0f, 8.0f);
-    graphics.setColour (isReady ? colour (accent) : colour (0xff59616a));
+    graphics.setColour (isReady ? colour (0xffd4a944) : colour (0xff5d5b4f));
     graphics.fillEllipse (light);
     if (isReady)
     {
-        graphics.setColour (colour (0x36ffb34d));
+        graphics.setColour (colour (0x45d4a944));
         graphics.fillEllipse (light.expanded (5.0f));
     }
 
@@ -435,7 +527,10 @@ void DrumalorStatusDisplay::paint (juce::Graphics& graphics)
 }
 
 DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcessor& p)
-    : AudioProcessorEditor (&p), audioProcessor (p)
+    : AudioProcessorEditor (&p), audioProcessor (p),
+      vintagePanel (juce::ImageFileFormat::loadFrom (
+          DrumalorAssets::vintagepanel_png,
+          static_cast<std::size_t> (DrumalorAssets::vintagepanel_pngSize)))
 {
     setLookAndFeel (&lookAndFeel);
     setOpaque (true);
@@ -446,15 +541,15 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
     logoLabel.setTitle ("Drumalor drum synthesizer");
     addAndMakeVisible (logoLabel);
 
-    editionLabel.setText ("13-VOICE SYNTHETIC DRUM MACHINE  ·  NO SAMPLES",
+    editionLabel.setText ("THIRTEEN VOICE  |  ORGANIC ANALOG-MODELLED DRUM MACHINE",
                           juce::dontSendNotification);
     styleHeaderLabel (editionLabel, 10.5f, colour (textDim));
     addAndMakeVisible (editionLabel);
 
     addAndMakeVisible (statusDisplay);
 
-    panicButton.setColour (juce::TextButton::textColourOffId, colour (0xffffaab7));
-    panicButton.setName ("Panic — stop all drum tails");
+    panicButton.setColour (juce::TextButton::textColourOffId, colour (0xffffd6bf));
+    panicButton.setName ("Panic - stop all drum tails");
     panicButton.setTitle ("Panic");
     panicButton.setDescription ("Immediately stop every sounding drum voice");
     panicButton.onClick = [this]
@@ -534,7 +629,7 @@ void DrumalorAudioProcessorEditor::selectInstrument (drumalor::Instrument instru
     const auto midiNote = drumalor::getStandardMidiNote (selectedInstrument);
 
     selectedInstrumentLabel.setText (
-        "EDITING  " + name.toUpperCase() + "   ·   GM " + juce::String (midiNote),
+        "EDITING  " + name.toUpperCase() + "   |   GM " + juce::String (midiNote),
         juce::dontSendNotification);
     characterAKnob.setLabelText (characterA.toUpperCase(),
                                  "Adjust " + name + " " + characterA.toLowerCase());
@@ -620,32 +715,43 @@ DrumalorAudioProcessorEditor::calculateLayout() const
 
 void DrumalorAudioProcessorEditor::paint (juce::Graphics& graphics)
 {
-    juce::ColourGradient background (colour (0xff0e1218), 0.0f, 0.0f,
-                                     colour (0xff080b10), 0.0f,
-                                     static_cast<float> (getHeight()), false);
-    background.addColour (0.46, colour (0xff15141a));
-    graphics.setGradientFill (background);
+    graphics.fillAll (colour (0xff29261f));
+    drawScaledBackground (graphics, vintagePanel, getLocalBounds().toFloat());
+
+    // The image provides natural patina; a warm veil keeps control contrast
+    // consistent even when the editor is resized and the image crop changes.
+    juce::ColourGradient backgroundVeil (colour (0x28252119), 0.0f, 0.0f,
+                                         colour (0x90302d25), 0.0f,
+                                         static_cast<float> (getHeight()), false);
+    backgroundVeil.addColour (0.48, colour (0x4e353127));
+    graphics.setGradientFill (backgroundVeil);
     graphics.fillAll();
 
-    graphics.setColour (colour (0x137b8c9f));
-    const auto spacing = juce::jmax (24, getWidth() / 45);
-    for (int x = 20; x < getWidth(); x += spacing)
-        graphics.drawVerticalLine (x, 68.0f, static_cast<float> (getHeight() - 18));
+    const auto frame = getLocalBounds().toFloat().reduced (7.0f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.38f));
+    graphics.drawRoundedRectangle (frame.translated (0.0f, 1.0f), 8.0f, 4.0f);
+    graphics.setColour (colour (0xbbbdae8b));
+    graphics.drawRoundedRectangle (frame, 8.0f, 1.2f);
+
+    drawHardwareScrew (graphics, frame.getTopLeft() + juce::Point<float> (10.0f, 10.0f));
+    drawHardwareScrew (graphics, frame.getTopRight() + juce::Point<float> (-10.0f, 10.0f));
+    drawHardwareScrew (graphics, frame.getBottomLeft() + juce::Point<float> (10.0f, -10.0f));
+    drawHardwareScrew (graphics, frame.getBottomRight() + juce::Point<float> (-10.0f, -10.0f));
 
     const auto layout = calculateLayout();
     drawPanel (graphics, layout.pads);
     drawPanel (graphics, layout.controls);
 
-    graphics.setColour (colour (accent));
+    graphics.setColour (colour (accentHot));
     graphics.fillRect (layout.header.getX(), layout.header.getBottom() - 2,
                        juce::jmax (110, getWidth() / 7), 2);
-    graphics.setColour (colour (accentHot));
+    graphics.setColour (colour (accent));
     graphics.fillRect (layout.header.getX() + juce::jmax (110, getWidth() / 7),
                        layout.header.getBottom() - 2, 52, 2);
 
     graphics.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
     graphics.setColour (colour (textDim));
-    graphics.drawText ("13-VOICE KIT   ·   CLICK A PAD TO SELECT + AUDITION",
+    graphics.drawText ("INSTRUMENT BANK   |   CLICK A PAD TO SELECT + AUDITION",
                        layout.pads.reduced (14).removeFromTop (22),
                        juce::Justification::centredLeft);
 
@@ -657,7 +763,7 @@ void DrumalorAudioProcessorEditor::paint (juce::Graphics& graphics)
     graphics.drawVerticalLine (outputSeparatorX,
                                static_cast<float> (controlContent.getY() + 8),
                                static_cast<float> (controlContent.getBottom() - 8));
-    graphics.setColour (colour (accentCool).withAlpha (0.58f));
+    graphics.setColour (colour (accentCool).withAlpha (0.76f));
     graphics.fillEllipse (static_cast<float> (outputSeparatorX + 10),
                           static_cast<float> (controlContent.getY() + 11), 5.0f, 5.0f);
 }

@@ -98,6 +98,7 @@ private:
 
     DrumalorAudioProcessor& audioProcessor;
     DrumalorLookAndFeel lookAndFeel;
+    juce::Image vintagePanel;
 
     juce::Label logoLabel;
     juce::Label editionLabel;

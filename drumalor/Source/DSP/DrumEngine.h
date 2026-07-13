@@ -116,6 +116,18 @@ private:
         void clear() noexcept;
     };
 
+    struct HitVariation
+    {
+        float pitchCents { 0.0f };
+        float decayScale { 1.0f };
+        float characterAOffset { 0.0f };
+        float characterBOffset { 0.0f };
+        float transientScale { 1.0f };
+        float circuitDriveOffset { 0.0f };
+        float circuitBias { 0.0f };
+        float phaseOffset { 0.0f };
+    };
+
     struct Voice
     {
         bool active { false };
@@ -141,6 +153,16 @@ private:
         float transientMultiplier { 0.99f };
         float pitchEnvelope { 1.0f };
         float pitchEnvelopeMultiplier { 0.99f };
+        float transientScale { 1.0f };
+        float circuitDrive { 1.2f };
+        float circuitBias { 0.0f };
+        float analogPreviousInput { 0.0f };
+        float supplySag { 0.0f };
+        float kickStateX { 0.0f };
+        float kickStateY { 0.0f };
+        float kickCharge { 0.0f };
+        float kickChargeMultiplier { 0.0f };
+        float kickBaseRadius { 0.0f };
         float chokeGain { 1.0f };
         float chokeMultiplier { 1.0f };
         float recentPeak { 0.0f };
@@ -168,7 +190,8 @@ private:
     [[nodiscard]] float decaySecondsFor (Instrument instrument, float normalizedDecay) const noexcept;
     [[nodiscard]] int findVoiceSlot() const noexcept;
     void initialiseVoice (Voice& voice, Instrument instrument, float velocity,
-                          const InstrumentParameters& parameters, std::uint32_t seed) noexcept;
+                          const InstrumentParameters& parameters, std::uint32_t seed,
+                          const HitVariation& variation) noexcept;
     void initialiseModalVoice (Voice& voice, const float* ratios, int modeCount,
                                float baseFrequency, float decaySeconds,
                                float spread, float brightness) noexcept;
@@ -196,7 +219,8 @@ private:
     [[nodiscard]] static float nextNoise (Voice& voice) noexcept;
     [[nodiscard]] float nextModalNoise (Voice& voice) const noexcept;
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;
-    [[nodiscard]] static float softClip (float value) noexcept;
+    [[nodiscard]] static float signedUnitFromHash (std::uint32_t value) noexcept;
+    [[nodiscard]] float applyAnalogOutputStage (Voice& voice, float input) const noexcept;
     void configureLowpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureHighpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureBandpass (Biquad& filter, float frequency, float q) const noexcept;
@@ -205,6 +229,7 @@ private:
 
     std::array<AtomicInstrumentParameters, instrumentCount> parameters_ {};
     std::array<std::uint64_t, instrumentCount> triggerCounters_ {};
+    std::array<float, instrumentCount> componentDrift_ {};
     std::array<Voice, maxVoices> voices_ {};
     std::array<Voice, retiringVoiceCount> retiringVoices_ {};
     std::array<float, sineTableSize> sineTable_ {};
@@ -222,6 +247,8 @@ private:
     float peakReleaseMultiplier_ { 0.999f };
     float retirementFadeMultiplier_ { 0.999f };
     float forcedFadeMultiplier_ { 0.999f };
+    float sagAttackCoefficient_ { 0.01f };
+    float sagReleaseCoefficient_ { 0.001f };
     float modalNoiseScale_ { 1.0f };
     float modalNoisePhaseIncrement_ { 1.0f };
     float smoothedOutputGain_ { 0.82f };
@@ -229,6 +256,8 @@ private:
     float dcInputRight_ { 0.0f };
     float dcOutputLeft_ { 0.0f };
     float dcOutputRight_ { 0.0f };
+    float masterAdaaPreviousLeft_ { 0.0f };
+    float masterAdaaPreviousRight_ { 0.0f };
 };
 
 } // namespace drumalor

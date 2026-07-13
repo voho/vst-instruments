@@ -78,6 +78,11 @@ if(DRUMALOR_BUILD_PLUGIN)
         set(DRUMALOR_PLUGIN_FORMATS VST3 Standalone)
     endif()
 
+    juce_add_binary_data(DrumalorAssets
+        HEADER_NAME DrumalorAssets.h
+        NAMESPACE DrumalorAssets
+        SOURCES Assets/vintage-panel.png)
+
     juce_add_plugin(Drumalor
         VERSION ${PROJECT_VERSION}
         COMPANY_NAME "Drumalor Audio"
@@ -108,6 +113,7 @@ if(DRUMALOR_BUILD_PLUGIN)
     target_link_libraries(Drumalor
         PRIVATE
             DrumalorDSP
+            DrumalorAssets
             juce::juce_audio_utils
             juce::juce_dsp
         PUBLIC

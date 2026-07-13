@@ -1,3 +1,4 @@
+#include "PluginEditor.h"
 #include "PluginProcessor.h"
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <set>
 #include <string>
 
@@ -279,16 +281,69 @@ void testUiQueueAndLifecycle()
     expect (processor.getTriggerCounter (drumalor::Instrument::Clap) == 0u,
             "UI trigger was accepted after release");
 }
+
+void testEditorRendering()
+{
+    DrumalorAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr, "processor did not create an editor");
+    if (editor == nullptr)
+        return;
+
+    expect (editor->getWidth() >= 900 && editor->getHeight() >= 600,
+            "editor opened below its usable design size");
+
+    juce::Image snapshot (juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true);
+    juce::Graphics graphics (snapshot);
+    editor->paintEntireComponent (graphics, true);
+
+    std::set<juce::uint32> sampledColours;
+    int opaqueSamples = 0;
+    int sampledPixels = 0;
+    for (int y = 4; y < snapshot.getHeight(); y += 8)
+    {
+        for (int x = 4; x < snapshot.getWidth(); x += 8)
+        {
+            const auto pixel = snapshot.getPixelAt (x, y);
+            sampledColours.insert (pixel.getARGB());
+            opaqueSamples += pixel.getAlpha() >= 250 ? 1 : 0;
+            ++sampledPixels;
+        }
+    }
+
+    expect (sampledPixels > 0 && opaqueSamples == sampledPixels,
+            "opaque editor left transparent pixels in its rendered surface");
+    expect (sampledColours.size() > 512u,
+            "editor snapshot lacks the embedded vintage texture or visual detail");
+
+    const auto snapshotPath = juce::SystemStats::getEnvironmentVariable (
+        "DRUMALOR_EDITOR_SNAPSHOT", {});
+    if (snapshotPath.isNotEmpty())
+    {
+        juce::FileOutputStream output { juce::File (snapshotPath) };
+        juce::PNGImageFormat png;
+        const bool wroteSnapshot = output.openedOk()
+            && png.writeImageToStream (snapshot, output);
+        output.flush();
+        expect (wroteSnapshot, "could not write requested editor snapshot");
+    }
+
+    editor.reset();
+    processor.releaseResources();
+}
 } // namespace
 
 int main()
 {
+    juce::ScopedJuceInitialiser_GUI guiInitialiser;
     testParameterLayoutAndDefaults();
     testStateRoundTrip();
     testSampleAccurateMidiAndMappings();
     testInitialOutputGain();
     testAllNotesOff();
     testUiQueueAndLifecycle();
+    testEditorRendering();
 
     if (failureCount != 0)
     {

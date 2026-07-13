@@ -2,9 +2,10 @@
 
 Drumalor is a real-time procedural drum instrument for macOS. It uses classic
 analogue-drum synthesis techniques as a starting point, then generates every
-hit locally from oscillators, noise, filters, envelopes, and nonlinear shaping.
-It does not load samples, copy a ROM, model a particular machine circuit, or
-contact a service while rendering audio.
+hit locally from oscillators, noise, filters, envelopes, resonators, and
+circuit-inspired nonlinear shaping. It does not load samples, copy a ROM,
+emulate a particular branded machine, or contact a service while rendering
+audio.
 
 The original brief called this a “10-sound” instrument, but its explicit sound
 list expands to **13 separately playable synthesized voices**: the low, mid, and
@@ -63,9 +64,72 @@ partials for hats and cymbals, and compact stochastic or resonant models for the
 shaker and percussion voices. Voice-specific controls move several related
 synthesis values together so each voice remains useful across the full range.
 
+Every trigger also advances a slowly correlated component-drift model for that
+instrument, then applies tightly bounded hit-level tolerances to oscillator
+pitch and starting phase, envelope decay, transient energy, tone, circuit drive,
+and bias. This makes repeated equal-velocity notes differ in timbre and feel
+without turning them into random changes of kit, level, or timing. The sequence
+is deterministic: resetting the engine or reopening the same project starts the
+same variation sequence again, and audio remains independent of host block size.
+
+Each voice finishes through a lightweight asymmetric diode/transistor-style
+transfer with a variable operating point and a virtual supply rail that sags
+quickly on strong transients and recovers more slowly. First-order analytic
+antiderivative antialiasing (ADAA) is applied to these nonlinear stages and the
+stereo output shaper, reducing fold-back artifacts without an oversampled audio
+path. The undelayed linear component is preserved so quiet hits keep their
+transient definition.
+
+The Kick has a dedicated charged-energy model: a virtual capacitor discharges
+into a contractive two-state resonator whose frequency and loss change with the
+stored energy. Its default body settles around 48 Hz, while **Punch** controls
+the initial pitch movement and contact noise and **Drive** moves the nonlinear
+operating point, branch mismatch, harmonic density, and modest makeup gain. The
+resonator update is an explicit rotation followed by contraction, so even rapid
+pitch modulation cannot inject unbounded state energy.
+
+These are circuit-inspired behavioral models, not a claim of
+component-for-component emulation of a TR-808, TR-909, or another specific
+machine. No neural-network weights are needed, so the audio path stays
+allocation-free, deterministic, and suitable for real-time use.
+
 All synthesis happens in the audio callback without sample files. The engine is
 prepared for the host sample rate, accepts sample-accurate MIDI event offsets,
 and clears completed one-shot voices after their tails finish.
+
+## Vintage interface
+
+The editor combines an original aged-enamel faceplate texture with code-drawn
+Bakelite-style knobs, calibration marks, rubber pads, hardware details, and
+accessible focus states. The texture is compiled into the plug-in as binary data;
+there is no external image file to install or locate at runtime. The visual
+direction is intentionally era-inspired rather than a copy of any historical
+drum machine's panel or trade dress.
+
+## Research influences and modeling scope
+
+The implementation follows recent virtual-analog work where it fits a
+self-contained real-time instrument:
+
+- Gabrielli and Squartini's [2025 ADAA study](https://www.dafx.de/paper-archive/2025/DAFx25_paper_30.pdf)
+  motivates antiderivative treatment of nonlinear stages as a lower-cost route
+  to reduced aliasing.
+- Pines' [2025 diode-VCA model](https://dafx25.dii.univpm.it/wp-content/uploads/2025/07/DAFx25_paper_44.pdf)
+  motivates explicit fixed nonlinearities with variable operating points.
+- Werner, Abel, and Smith's [physically informed bass-drum analysis](https://dafx.de/paper-archive/2014/dafx14_kurt_james_werner_a_physically_informed%2C_ci.pdf)
+  and Germain's [time-varying numerical study](https://www.dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_43.pdf)
+  motivate charged state, resonant feedback, changing pitch/loss, and stable
+  time-varying updates for the Kick.
+- Esqueda and Murai's [2025 antialiased recurrent model](https://dafx25.dii.univpm.it/wp-content/uploads/2025/09/DAFx25_paper_61.pdf)
+  shows that compact learned state-space models can run in real time. Drumalor
+  deliberately does not use one: without measurements from a defined target
+  circuit, weights would be an uncalibrated black box rather than a more
+  defensible analog model.
+
+The result is a modern behavioral VA design with original sound architecture,
+not a calibrated hardware replica. Listening comparisons and profiling on the
+oldest supported Mac remain part of release qualification even though the
+automated stability, performance, and spectral contracts pass.
 
 ## Requirements
 
@@ -138,10 +202,17 @@ ctest --test-dir build-dsp --output-on-failure
 The JUCE-free regression executable renders every voice from 8 to 192 kHz. It
 checks finite, non-silent, bounded output, completed tails, hi-hat choking, all
 four controls on every voice, sample-rate consistency, saturated voice stealing,
-and a generous offline performance guardrail. Plug-in builds add a JUCE-backed
-processor contract suite for parameter defaults and state, sample-accurate MIDI,
-CC panic, and the UI-trigger lifecycle. These checks do not replace listening
-tests, host automation tests, or profiling on the oldest supported Mac.
+and a generous offline performance guardrail. Organic-model contracts verify
+that six equal strikes differ for all 13 voices while RMS, peak, and natural-tail
+spread stay bounded; they also verify bit-exact reset replay and block-partition
+invariance. Kick-specific contracts cover a 43–55 Hz settled body, dominant
+sub-100 Hz energy, controlled transient and crest factor, Drive harmonics without
+excess settled energy above 8 kHz, pitch tracking, DC safety, and consistency
+from 8 to 192 kHz. Plug-in builds add a JUCE-backed processor contract suite for
+parameter defaults and state, sample-accurate MIDI, CC panic, the UI-trigger
+lifecycle, and off-screen rendering of the embedded vintage editor. These checks
+do not replace listening tests, host automation tests, or profiling on the oldest
+supported Mac.
 
 ## Install locally
 
@@ -259,6 +330,7 @@ CMake project version and packaging-script version in sync for each release.
 Source/DSP/              JUCE-free synthesis engine and voice metadata
 Source/PluginProcessor.* MIDI mapping, parameters, state, and audio bridge
 Source/PluginEditor.*    Thirteen-pad editor and four-knob voice controls
+Assets/                  Embedded original vintage faceplate texture
 Tests/                   DSP and JUCE processor-contract regression tests
 Presets/                 Preset guidance and future factory presets
 scripts/                 macOS build and release helpers
