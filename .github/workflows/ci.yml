@@ -25,6 +25,9 @@ jobs:
           - name: Drumalor
             directory: drumalor
             build_plugin_option: DRUMALOR_BUILD_PLUGIN
+          - name: Mars
+            directory: mars
+            build_plugin_option: MARS_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@v4
 
@@ -54,6 +57,8 @@ jobs:
             directory: vocalor
           - name: Drumalor
             directory: drumalor
+          - name: Mars
+            directory: mars
     steps:
       - uses: actions/checkout@v4
 

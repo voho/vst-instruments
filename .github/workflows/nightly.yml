@@ -42,6 +42,14 @@ jobs:
         working-directory: drumalor
         run: ./scripts/sign-and-package-macos.sh
 
+      - name: Build Mars and run tests
+        working-directory: mars
+        run: ./scripts/build-macos.sh
+
+      - name: Package Mars (ad-hoc signed)
+        working-directory: mars
+        run: ./scripts/sign-and-package-macos.sh
+
       # Retained on the workflow run itself (downloadable by anyone with repo
       # access). Explicit filenames prevent one instrument's output from
       # accidentally satisfying the other instrument's artifact check.
@@ -54,6 +62,8 @@ jobs:
             vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.pkg
             drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.zip
             drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg
+            mars/build-macos/dist/Mars-1.0.0-macOS-universal.zip
+            mars/build-macos/dist/Mars-1.0.0-macOS-universal.pkg
           if-no-files-found: error
           retention-days: 14
 
@@ -72,6 +82,8 @@ jobs:
             "vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.pkg"
             "drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.zip"
             "drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg"
+            "mars/build-macos/dist/Mars-1.0.0-macOS-universal.zip"
+            "mars/build-macos/dist/Mars-1.0.0-macOS-universal.pkg"
           )
           for asset in "${assets[@]}"; do
             if [[ ! -f "$asset" ]]; then
@@ -81,13 +93,14 @@ jobs:
           done
 
           TITLE="VST instruments nightly ($DATE)"
-          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor and Drumalor from \`main\` ($SHORT_SHA).
+          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, and Mars from \`main\` ($SHORT_SHA).
 
           **These bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally, clear the quarantine flag after unzipping, e.g.:
 
           \`\`\`bash
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Vocalor.vst3 Library/Audio/Plug-Ins/Components/Vocalor.component Applications/Vocalor.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Drumalor.vst3 Library/Audio/Plug-Ins/Components/Drumalor.component Applications/Drumalor.app
+          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Mars.vst3 Library/Audio/Plug-Ins/Components/Mars.component Applications/Mars.app
           \`\`\`
 
           Not intended for production distribution."
