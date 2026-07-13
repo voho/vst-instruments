@@ -1,26 +1,32 @@
 #include "PluginEditor.h"
 
-#include <MarsAssets.h>
-
 #include <cmath>
 #include <initializer_list>
 #include <utility>
 
 namespace
 {
-constexpr auto coal = 0xff100b0e;
-constexpr auto walnut = 0xff2a1119;
-constexpr auto walnutLight = 0xff431923;
-constexpr auto panel = 0xff21191b;
-constexpr auto panelRaised = 0xff352127;
-constexpr auto panelEdge = 0xff65483d;
-constexpr auto brass = 0xffc58a3c;
-constexpr auto brassBright = 0xffe0b66c;
-constexpr auto rust = 0xffa7432f;
-constexpr auto lamp = 0xffffb85a;
-constexpr auto textBright = 0xffffeed0;
-constexpr auto textDim = 0xffb9a486;
-constexpr auto screen = 0xff151a16;
+// JUNO-era instruments used a restrained charcoal chassis with high-contrast
+// ivory legends and small, functional colour bands. Keep Mars recognisably its
+// own instrument while borrowing that hierarchy: orange for signal/action,
+// cyan for modulation/quality, and red only for warnings or filter emphasis.
+constexpr auto coal = 0xff101414;
+constexpr auto panel = 0xff1c2021;
+constexpr auto panelRaised = 0xff292f30;
+constexpr auto panelEdge = 0xff596263;
+constexpr auto accentOrange = 0xffdf7834;
+constexpr auto accentAmber = 0xfff0a23d;
+constexpr auto accentBlue = 0xff3497b7;
+constexpr auto accentBlueBright = 0xff68c2d5;
+constexpr auto accentBlueDark = 0xff1c5668;
+constexpr auto signalRed = 0xffd24d40;
+constexpr auto lamp = 0xfff4c54c;
+constexpr auto textBright = 0xfff0eee5;
+constexpr auto textDim = 0xffb8c0bb;
+constexpr auto screen = 0xff101a1b;
+constexpr auto knobRimLight = 0xffa9afa9;
+constexpr auto knobRimMid = 0xff6d7471;
+constexpr auto knobRimDark = 0xff303637;
 
 juce::Colour c (juce::uint32 argb) { return juce::Colour (argb); }
 
@@ -35,23 +41,23 @@ juce::String numericText (double value, MarsValueFormat format)
                  + juce::String (juce::roundToInt (value * 100.0)) + "%";
         case MarsValueFormat::Hertz:
             if (value >= 1000.0)
-                return juce::String (value / 1000.0, value >= 10000.0 ? 1 : 2) + "k";
-            return juce::String (value, value < 10.0 ? 2 : 0) + "Hz";
+                return juce::String (value / 1000.0, value >= 10000.0 ? 1 : 2) + " kHz";
+            return juce::String (value, value < 10.0 ? 2 : 0) + " Hz";
         case MarsValueFormat::Seconds:
             if (value < 1.0)
-                return juce::String (juce::roundToInt (value * 1000.0)) + "ms";
-            return juce::String (value, value < 10.0 ? 2 : 1) + "s";
+                return juce::String (juce::roundToInt (value * 1000.0)) + " ms";
+            return juce::String (value, value < 10.0 ? 2 : 1) + " s";
         case MarsValueFormat::Cents:
-            return (value > 0.0 ? "+" : "") + juce::String (value, 1) + "ct";
+            return (value > 0.0 ? "+" : "") + juce::String (value, 1) + " ct";
         case MarsValueFormat::Semitones:
-            return (value > 0.0 ? "+" : "") + juce::String (juce::roundToInt (value)) + "st";
+            return (value > 0.0 ? "+" : "") + juce::String (juce::roundToInt (value)) + " st";
         case MarsValueFormat::Octaves:
             if (std::abs (value - std::round (value)) < 0.001)
                 return (value > 0.0 ? "+" : "")
-                     + juce::String (juce::roundToInt (value)) + "oct";
-            return juce::String (value, 2) + "oct";
+                     + juce::String (juce::roundToInt (value)) + " oct";
+            return juce::String (value, 2) + " oct";
         case MarsValueFormat::Decibels:
-            return (value > 0.0 ? "+" : "") + juce::String (value, 1) + "dB";
+            return (value > 0.0 ? "+" : "") + juce::String (value, 1) + " dB";
         case MarsValueFormat::Integer:
             return juce::String (juce::roundToInt (value));
     }
@@ -113,75 +119,155 @@ void distributeHorizontally (juce::Rectangle<int> area,
             area.removeFromLeft (gap);
     }
 }
+
+void drawChassisSurface (juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    juce::ColourGradient base (c (0xff272d2e), bounds.getTopLeft(), c (coal),
+                               bounds.getBottomRight(), false);
+    base.addColour (0.18, c (0xff202627));
+    base.addColour (0.62, c (0xff14191a));
+    base.addColour (0.88, c (0xff1b2021));
+    g.setGradientFill (base);
+    g.fillRect (bounds);
+
+    g.saveState();
+    g.reduceClipRegion (bounds.getSmallestIntegerContainer());
+    for (int y = juce::roundToInt (bounds.getY()) + 4;
+         y < juce::roundToInt (bounds.getBottom()); y += 5)
+    {
+        juce::Path grain;
+        const auto yf = static_cast<float> (y);
+        grain.startNewSubPath (bounds.getX(), yf);
+        for (float x = bounds.getX() + 24.0f; x <= bounds.getRight() + 24.0f; x += 24.0f)
+        {
+            const auto wobble = 0.65f * std::sin (x * 0.031f + yf * 0.17f)
+                              + 0.28f * std::sin (x * 0.083f - yf * 0.09f);
+            grain.lineTo (x, yf + wobble);
+        }
+
+        const auto highlight = ((y / 5) % 3) == 0;
+        g.setColour ((highlight ? c (accentBlueBright) : juce::Colours::black)
+                         .withAlpha (highlight ? 0.018f : 0.045f));
+        g.strokePath (grain, juce::PathStrokeType (highlight ? 0.7f : 1.0f));
+    }
+    g.restoreState();
+}
 } // namespace
 
 MarsLookAndFeel::MarsLookAndFeel()
 {
     setColour (juce::Slider::textBoxTextColourId, c (textBright));
-    setColour (juce::Slider::textBoxBackgroundColourId, c (0x80150f0b));
-    setColour (juce::Slider::textBoxOutlineColourId, c (0xff4a3b2c));
-    setColour (juce::Slider::rotarySliderFillColourId, c (brass));
-    setColour (juce::Slider::rotarySliderOutlineColourId, c (0xff514334));
+    setColour (juce::Slider::textBoxBackgroundColourId, c (0xc0121718));
+    setColour (juce::Slider::textBoxOutlineColourId, c (0xff4d5859));
+    setColour (juce::Slider::rotarySliderFillColourId, c (accentOrange));
+    setColour (juce::Slider::rotarySliderOutlineColourId, c (0xff50595a));
     setColour (juce::TextButton::textColourOffId, c (textDim));
     setColour (juce::TextButton::textColourOnId, c (textBright));
-    setColour (juce::MidiKeyboardComponent::whiteNoteColourId, c (0xffeee1c9));
-    setColour (juce::MidiKeyboardComponent::blackNoteColourId, c (0xff211a16));
-    setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId, c (0xff5e4d3b));
-    setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId, c (0x45e0a04c));
-    setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, c (0xb5bd4931));
-    setColour (juce::MidiKeyboardComponent::textLabelColourId, c (0xff6f5b45));
+    setColour (juce::MidiKeyboardComponent::whiteNoteColourId, c (0xffe7e6dc));
+    setColour (juce::MidiKeyboardComponent::blackNoteColourId, c (0xff191e1f));
+    setColour (juce::MidiKeyboardComponent::keySeparatorLineColourId, c (0xff555f60));
+    setColour (juce::MidiKeyboardComponent::mouseOverKeyOverlayColourId, c (0xe5488797));
+    setColour (juce::MidiKeyboardComponent::keyDownOverlayColourId, c (0xe8c65332));
+    setColour (juce::MidiKeyboardComponent::textLabelColourId, c (0xff596263));
+    setColour (juce::MidiKeyboardComponent::shadowColourId, juce::Colours::black.withAlpha (0.62f));
+    setColour (juce::KeyboardComponentBase::upDownButtonBackgroundColourId, c (0xff202627));
+    setColour (juce::KeyboardComponentBase::upDownButtonArrowColourId, c (accentBlueBright));
 }
 
 void MarsLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                         float sliderPos, float rotaryStartAngle,
                                         float rotaryEndAngle, juce::Slider& slider)
 {
-    const auto diameter = juce::jmax (10.0f,
-        static_cast<float> (juce::jmin (width, height)) - 12.0f);
+    const auto diameter = juce::jmax (22.0f,
+        static_cast<float> (juce::jmin (width, height)) - 5.0f);
     const auto radius = diameter * 0.5f;
     const auto centre = juce::Point<float> (
         static_cast<float> (x) + static_cast<float> (width) * 0.5f,
-        static_cast<float> (y) + static_cast<float> (height) * 0.5f - 1.0f);
-    const auto bounds = juce::Rectangle<float> (diameter, diameter).withCentre (centre);
+        static_cast<float> (y) + static_cast<float> (height) * 0.5f);
+    const auto dialBounds = juce::Rectangle<float> (diameter * 0.72f, diameter * 0.72f)
+                                .withCentre (centre);
     const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
+    for (int tick = 0; tick <= 10; ++tick)
+    {
+        const auto proportion = static_cast<float> (tick) / 10.0f;
+        const auto tickAngle = rotaryStartAngle
+                             + proportion * (rotaryEndAngle - rotaryStartAngle);
+        const auto tickOuter = centre.getPointOnCircumference (radius * 0.98f, tickAngle);
+        const auto tickInner = centre.getPointOnCircumference (
+            radius * (tick == 0 || tick == 5 || tick == 10 ? 0.82f : 0.86f), tickAngle);
+        g.setColour (c (tick <= juce::roundToInt (sliderPos * 10.0f)
+                           ? accentAmber : panelEdge).withAlpha (0.88f));
+        g.drawLine ({ tickInner, tickOuter }, tick % 5 == 0 ? 1.55f : 1.0f);
+    }
+
     juce::Path track;
-    track.addCentredArc (centre.x, centre.y, radius - 2.0f, radius - 2.0f, 0.0f,
+    track.addCentredArc (centre.x, centre.y, radius * 0.77f, radius * 0.77f, 0.0f,
                          rotaryStartAngle, rotaryEndAngle, true);
     g.setColour (slider.findColour (juce::Slider::rotarySliderOutlineColourId));
-    g.strokePath (track, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved,
+    g.strokePath (track, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
 
     juce::Path valueArc;
-    valueArc.addCentredArc (centre.x, centre.y, radius - 2.0f, radius - 2.0f, 0.0f,
+    valueArc.addCentredArc (centre.x, centre.y, radius * 0.77f, radius * 0.77f, 0.0f,
                             rotaryStartAngle, angle, true);
-    g.setColour (c (brassBright));
-    g.strokePath (valueArc, juce::PathStrokeType (3.2f, juce::PathStrokeType::curved,
+    g.setColour (c (accentOrange));
+    g.strokePath (valueArc, juce::PathStrokeType (2.8f, juce::PathStrokeType::curved,
                                                   juce::PathStrokeType::rounded));
 
-    g.setColour (juce::Colours::black.withAlpha (0.42f));
-    g.fillEllipse (bounds.reduced (7.0f).translated (0.0f, 2.5f));
+    g.setColour (juce::Colours::black.withAlpha (0.62f));
+    g.fillEllipse (dialBounds.expanded (2.0f, 1.0f).translated (0.0f, 3.0f));
 
-    juce::ColourGradient rim (c (0xffb58a55), bounds.getTopLeft(), c (0xff4a3524),
-                              bounds.getBottomRight(), false);
+    juce::ColourGradient rim (c (knobRimLight), dialBounds.getTopLeft(), c (knobRimDark),
+                              dialBounds.getBottomRight(), false);
+    rim.addColour (0.46, c (knobRimMid));
+    rim.addColour (0.72, c (0xff444b4a));
     g.setGradientFill (rim);
-    g.fillEllipse (bounds.reduced (7.0f));
-    g.setColour (c (0xff160f0c));
-    g.fillEllipse (bounds.reduced (11.0f));
-    g.setColour (c (0xff5e4935));
-    g.drawEllipse (bounds.reduced (11.0f), 1.0f);
+    g.fillEllipse (dialBounds);
+    g.setColour (juce::Colours::black.withAlpha (0.62f));
+    g.drawEllipse (dialBounds, 1.2f);
 
-    const auto pointerStart = centre.getPointOnCircumference (radius * 0.14f, angle);
-    const auto pointerEnd = centre.getPointOnCircumference (radius * 0.48f, angle);
+    const auto gripRadius = dialBounds.getWidth() * 0.5f;
+    for (int groove = 0; groove < 18; ++groove)
+    {
+        const auto grooveAngle = juce::MathConstants<float>::twoPi
+                               * static_cast<float> (groove) / 18.0f;
+        const auto grooveOuter = centre.getPointOnCircumference (gripRadius * 0.91f,
+                                                                 grooveAngle);
+        const auto grooveInner = centre.getPointOnCircumference (gripRadius * 0.76f,
+                                                                 grooveAngle);
+        g.setColour ((grooveAngle < juce::MathConstants<float>::pi
+                         ? c (0xffc6cbc5) : c (0xff242a2b)).withAlpha (0.52f));
+        g.drawLine ({ grooveInner, grooveOuter }, 1.0f);
+    }
+
+    auto capBounds = dialBounds.reduced (dialBounds.getWidth() * 0.17f);
+    juce::ColourGradient cap (c (0xff3c4344), capBounds.getX() + capBounds.getWidth() * 0.28f,
+                              capBounds.getY() + capBounds.getHeight() * 0.22f,
+                              c (0xff0f1415), capBounds.getRight(), capBounds.getBottom(), true);
+    cap.addColour (0.58, c (0xff202627));
+    g.setGradientFill (cap);
+    g.fillEllipse (capBounds);
+    g.setColour (c (0xff687172).withAlpha (0.72f));
+    g.drawEllipse (capBounds, 1.0f);
+
+    const auto pointerStart = centre.getPointOnCircumference (gripRadius * 0.18f, angle);
+    const auto pointerEnd = centre.getPointOnCircumference (gripRadius * 0.60f, angle);
+    g.setColour (juce::Colours::black.withAlpha (0.65f));
+    g.drawLine ({ pointerStart.translated (0.0f, 1.2f), pointerEnd.translated (0.0f, 1.2f) },
+                juce::jmax (2.0f, gripRadius * 0.075f));
     g.setColour (c (textBright));
-    g.drawLine ({ pointerStart, pointerEnd }, juce::jmax (1.4f, radius * 0.055f));
-    g.setColour (c (rust));
-    g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre (centre));
+    g.drawLine ({ pointerStart, pointerEnd }, juce::jmax (1.6f, gripRadius * 0.052f));
+    g.setColour (c (signalRed));
+    g.fillEllipse (juce::Rectangle<float> (juce::jmax (3.0f, gripRadius * 0.12f),
+                                            juce::jmax (3.0f, gripRadius * 0.12f))
+                       .withCentre (centre));
 
     if (slider.hasKeyboardFocus (true))
     {
         g.setColour (c (lamp));
-        g.drawEllipse (bounds.reduced (3.5f), 1.6f);
+        g.drawEllipse (juce::Rectangle<float> (diameter, diameter).withCentre (centre)
+                           .reduced (1.5f), 1.35f);
     }
 }
 
@@ -190,18 +276,24 @@ void MarsLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& but
 {
     auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
     const auto active = button.getToggleState();
-    auto fill = active ? c (0xff743526) : c (0xff201a15);
+    const auto panic = button.getButtonText() == "PANIC";
+    auto fill = panic ? c (0xff551f1d) : active ? c (accentBlueDark) : c (0xff1a2021);
     if (highlighted)
-        fill = fill.brighter (0.09f);
+        fill = fill.brighter (0.12f);
     if (down)
-        fill = fill.darker (0.14f);
+        fill = fill.darker (0.18f);
 
-    g.setColour (juce::Colours::black.withAlpha (0.3f));
-    g.fillRoundedRectangle (bounds.translated (0.0f, 1.5f), 3.0f);
-    g.setColour (fill);
+    g.setColour (juce::Colours::black.withAlpha (0.55f));
+    g.fillRoundedRectangle (bounds.translated (0.0f, 2.0f), 3.5f);
+    juce::ColourGradient face (fill.brighter (0.10f), bounds.getTopLeft(),
+                               fill.darker (0.25f), bounds.getBottomLeft(), false);
+    g.setGradientFill (face);
     g.fillRoundedRectangle (bounds, 3.0f);
-    g.setColour (active ? c (brassBright) : c (panelEdge));
-    g.drawRoundedRectangle (bounds, 3.0f, active ? 1.4f : 1.0f);
+    g.setColour (panic ? c (signalRed) : active ? c (accentBlueBright) : c (panelEdge));
+    g.drawRoundedRectangle (bounds, 3.0f, active || panic ? 1.35f : 1.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.07f));
+    g.drawLine (bounds.getX() + 4.0f, bounds.getY() + 2.0f,
+                bounds.getRight() - 4.0f, bounds.getY() + 2.0f, 1.0f);
 
     if (active)
     {
@@ -214,6 +306,26 @@ void MarsLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& but
         g.setColour (c (lamp));
         g.drawRoundedRectangle (bounds.reduced (2.5f), 2.0f, 1.4f);
     }
+}
+
+void MarsLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
+                                      bool, bool isDown)
+{
+    const auto active = button.getToggleState();
+    auto colour = button.findColour (active ? juce::TextButton::textColourOnId
+                                            : juce::TextButton::textColourOffId);
+    if (isDown)
+        colour = colour.darker (0.12f);
+
+    auto bounds = button.getLocalBounds().reduced (5, 1);
+    if (isDown)
+        bounds.translate (0, 1);
+    g.setFont (getTextButtonFont (button, button.getHeight()));
+    g.setColour (juce::Colours::black.withAlpha (0.55f));
+    g.drawFittedText (button.getButtonText(), bounds.translated (0, 1),
+                      juce::Justification::centred, 1);
+    g.setColour (colour);
+    g.drawFittedText (button.getButtonText(), bounds, juce::Justification::centred, 1);
 }
 
 void MarsLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
@@ -236,26 +348,44 @@ void MarsLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int wid
     if (style == juce::Slider::LinearVertical)
     {
         const auto cx = static_cast<float> (x) + static_cast<float> (width) * 0.5f;
-        const auto top = static_cast<float> (y + 4);
-        const auto bottom = static_cast<float> (y + height - 4);
-        g.setColour (c (0xff100c09));
-        g.drawLine (cx, top, cx, bottom, 6.0f);
-        g.setColour (c (0xff574331));
-        g.drawLine (cx, top, cx, bottom, 2.0f);
-        g.setColour (c (brass));
-        g.drawLine (cx, sliderPos, cx, bottom, 2.3f);
+        const auto top = static_cast<float> (y + 7);
+        const auto bottom = static_cast<float> (y + height - 7);
+        for (int tick = 0; tick <= 8; ++tick)
+        {
+            const auto ty = top + (bottom - top) * static_cast<float> (tick) / 8.0f;
+            const auto tickWidth = tick % 4 == 0 ? 7.0f : 4.0f;
+            g.setColour (c (panelEdge).withAlpha (0.72f));
+            g.drawLine (cx - tickWidth - 5.0f, ty, cx - 5.0f, ty, 1.0f);
+            g.drawLine (cx + 5.0f, ty, cx + tickWidth + 5.0f, ty, 1.0f);
+        }
+
+        g.setColour (juce::Colours::black.withAlpha (0.78f));
+        g.drawLine (cx, top, cx, bottom, 8.0f);
+        g.setColour (c (0xff5b6566));
+        g.drawLine (cx, top, cx, bottom, 3.0f);
+        g.setColour (c (0xff111718));
+        g.drawLine (cx, top, cx, bottom, 1.2f);
+        g.setColour (c (accentOrange));
+        g.drawLine (cx, sliderPos, cx, bottom, 2.0f);
 
         auto thumb = juce::Rectangle<float> (
-                         juce::jmin (24.0f, static_cast<float> (width) * 0.58f), 12.0f)
+                         juce::jmin (28.0f, static_cast<float> (width) * 0.68f), 14.0f)
                          .withCentre ({ cx, sliderPos });
-        g.setColour (juce::Colours::black.withAlpha (0.4f));
-        g.fillRoundedRectangle (thumb.translated (0.0f, 2.0f), 2.5f);
-        g.setColour (c (0xffd0a15e));
+        g.setColour (juce::Colours::black.withAlpha (0.62f));
+        g.fillRoundedRectangle (thumb.translated (0.0f, 2.5f), 2.8f);
+        juce::ColourGradient cap (c (accentBlueBright), thumb.getTopLeft(), c (accentBlueDark),
+                                  thumb.getBottomLeft(), false);
+        cap.addColour (0.46, c (accentBlue));
+        g.setGradientFill (cap);
         g.fillRoundedRectangle (thumb, 2.5f);
-        g.setColour (c (0xff493422));
+        g.setColour (c (0xff183c44));
         g.drawRoundedRectangle (thumb, 2.5f, 1.0f);
-        g.drawLine (thumb.getX() + 4.0f, thumb.getCentreY(), thumb.getRight() - 4.0f,
-                    thumb.getCentreY(), 1.0f);
+        g.setColour (c (0xff245c68).withAlpha (0.82f));
+        for (float grip = thumb.getX() + 5.0f; grip < thumb.getRight() - 3.0f; grip += 4.0f)
+            g.drawLine (grip, thumb.getY() + 3.0f, grip, thumb.getBottom() - 3.0f, 0.8f);
+        g.setColour (c (textBright).withAlpha (0.45f));
+        g.drawLine (thumb.getX() + 3.0f, thumb.getCentreY(), thumb.getRight() - 3.0f,
+                    thumb.getCentreY(), 0.8f);
         drawFocusRing();
         return;
     }
@@ -265,20 +395,70 @@ void MarsLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int wid
         const auto cy = static_cast<float> (y) + static_cast<float> (height) * 0.5f;
         const auto left = static_cast<float> (x + 4);
         const auto right = static_cast<float> (x + width - 4);
-        g.setColour (c (0xff100c09));
-        g.drawLine (left, cy, right, cy, 6.0f);
-        g.setColour (c (brass));
-        g.drawLine (left, cy, sliderPos, cy, 2.4f);
-        g.setColour (c (brassBright));
-        g.fillEllipse (sliderPos - 5.0f, cy - 5.0f, 10.0f, 10.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.78f));
+        g.drawLine (left, cy, right, cy, 8.0f);
+        g.setColour (c (0xff596465));
+        g.drawLine (left, cy, right, cy, 3.0f);
+        g.setColour (c (accentOrange));
+        g.drawLine (left, cy, sliderPos, cy, 2.0f);
+        auto thumb = juce::Rectangle<float> (14.0f,
+                                              juce::jmin (28.0f, static_cast<float> (height) * 0.7f))
+                         .withCentre ({ sliderPos, cy });
+        juce::ColourGradient cap (c (accentBlueBright), thumb.getTopLeft(), c (accentBlueDark),
+                                  thumb.getBottomRight(), false);
+        g.setGradientFill (cap);
+        g.fillRoundedRectangle (thumb, 2.5f);
+        g.setColour (c (0xff183c44));
+        g.drawRoundedRectangle (thumb, 2.5f, 1.0f);
         drawFocusRing();
     }
+}
+
+void MarsLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
+{
+    if (dynamic_cast<juce::Slider*> (label.getParentComponent()) == nullptr)
+    {
+        juce::LookAndFeel_V4::drawLabel (g, label);
+        return;
+    }
+
+    auto bounds = label.getLocalBounds().toFloat().reduced (0.5f);
+    g.setColour (juce::Colours::black.withAlpha (0.58f));
+    g.fillRoundedRectangle (bounds.translated (0.0f, 1.0f), 2.5f);
+    juce::ColourGradient inset (c (0xff0e1314), bounds.getTopLeft(), c (0xff202627),
+                                bounds.getBottomLeft(), false);
+    g.setGradientFill (inset);
+    g.fillRoundedRectangle (bounds, 2.2f);
+    g.setColour (label.hasKeyboardFocus (true) ? c (lamp) : c (0xff596566));
+    g.drawRoundedRectangle (bounds, 2.2f, label.hasKeyboardFocus (true) ? 1.2f : 0.8f);
+
+    if (! label.isBeingEdited())
+    {
+        g.setFont (label.getFont());
+        // The containing control already carries the disabled alpha. Applying a
+        // second fade here made small value text nearly disappear.
+        g.setColour (label.findColour (juce::Label::textColourId));
+        g.drawFittedText (label.getText(), label.getLocalBounds().reduced (3, 0),
+                          label.getJustificationType(), 1, 0.78f);
+    }
+}
+
+juce::Label* MarsLookAndFeel::createSliderTextBox (juce::Slider& slider)
+{
+    auto* label = juce::LookAndFeel_V4::createSliderTextBox (slider);
+    label->setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+    label->setJustificationType (juce::Justification::centred);
+    label->setColour (juce::Label::textColourId, c (textBright));
+    label->setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+    label->setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
+    label->setColour (juce::Label::textWhenEditingColourId, c (textBright));
+    return label;
 }
 
 juce::Font MarsLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
 {
     return juce::Font (juce::FontOptions (
-        juce::jlimit (8.0f, 11.5f, static_cast<float> (buttonHeight) * 0.38f),
+        juce::jlimit (8.5f, 11.5f, static_cast<float> (buttonHeight) * 0.40f),
                                           juce::Font::bold));
 }
 
@@ -344,13 +524,13 @@ MarsKnob::MarsKnob (juce::String name, MarsValueFormat format)
 {
     label.setText (name, juce::dontSendNotification);
     label.setJustificationType (juce::Justification::centred);
-    label.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    label.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
     label.setColour (juce::Label::textColourId, c (textDim));
     label.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (label);
 
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 58, 17);
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 58, 18);
     slider.setName (name);
     slider.setTitle (name);
     slider.setDescription ("Adjust " + name.toLowerCase());
@@ -364,7 +544,9 @@ MarsKnob::MarsKnob (juce::String name, MarsValueFormat format)
 void MarsKnob::resized()
 {
     auto area = getLocalBounds();
-    label.setBounds (area.removeFromTop (15));
+    label.setBounds (area.removeFromTop (16));
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false,
+                            juce::jlimit (40, 64, getWidth() - 4), 18);
     slider.setBounds (area);
 }
 
@@ -372,13 +554,13 @@ MarsFader::MarsFader (juce::String name, MarsValueFormat format)
 {
     label.setText (name, juce::dontSendNotification);
     label.setJustificationType (juce::Justification::centred);
-    label.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    label.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
     label.setColour (juce::Label::textColourId, c (textDim));
     label.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (label);
 
     slider.setSliderStyle (juce::Slider::LinearVertical);
-    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 57, 17);
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 50, 18);
     slider.setName (name);
     slider.setTitle (name);
     slider.setDescription ("Adjust " + name.toLowerCase());
@@ -391,6 +573,8 @@ void MarsFader::resized()
 {
     auto area = getLocalBounds();
     label.setBounds (area.removeFromTop (16));
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false,
+                            juce::jlimit (38, 58, getWidth() - 4), 18);
     slider.setBounds (area);
 }
 
@@ -411,12 +595,12 @@ void MarsStatusDisplay::paint (juce::Graphics& g)
     auto bounds = getLocalBounds().toFloat().reduced (1.0f);
     g.setColour (c (screen));
     g.fillRoundedRectangle (bounds, 4.0f);
-    g.setColour (c (0xff64523b));
+    g.setColour (c (accentBlueDark));
     g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
 
     const auto light = juce::Rectangle<float> (bounds.getX() + 10.0f,
                                                bounds.getCentreY() - 3.5f, 7.0f, 7.0f);
-    g.setColour (isReady ? c (lamp) : c (0xff5b554b));
+    g.setColour (isReady ? c (lamp) : c (0xff566164));
     g.fillEllipse (light);
     if (isReady)
     {
@@ -439,8 +623,6 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
 {
     setLookAndFeel (&lookAndFeel);
     setOpaque (true);
-    panelTexture = juce::ImageCache::getFromMemory (
-        MarsAssets::marspaneltexture_png, MarsAssets::marspaneltexture_pngSize);
 
     logoLabel.setText ("MARS", juce::dontSendNotification);
     styleHeaderLabel (logoLabel, 29.0f, c (textBright));
@@ -450,14 +632,14 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
 
     editionLabel.setText ("POLYPHONIC ANALOG ENGINE  |  DIRECT CONTROL EDITION",
                           juce::dontSendNotification);
-    styleHeaderLabel (editionLabel, 10.0f, c (textDim));
+    styleHeaderLabel (editionLabel, 10.0f, c (accentBlueBright));
     addAndMakeVisible (editionLabel);
 
     addAndMakeVisible (statusDisplay);
     statusDisplay.setAccessible (true);
     statusDisplay.setTitle ("Mars engine status");
     statusDisplay.setDescription ("Displays active voice count, engine state, and sample rate");
-    panicButton.setColour (juce::TextButton::textColourOffId, c (0xffffb7a2));
+    panicButton.setColour (juce::TextButton::textColourOffId, c (0xfff8d4ce));
     panicButton.setName ("Panic — stop all voices");
     panicButton.setDescription ("Immediately mute every sounding voice");
     panicButton.onClick = [this]
@@ -466,6 +648,35 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
         marsProcessor.requestPanic();
     };
     addAndMakeVisible (panicButton);
+
+    oversamplingButton.setClickingTogglesState (true);
+    oversamplingButton.setWantsKeyboardFocus (true);
+    oversamplingButton.setName ("HQ oversampling");
+    oversamplingButton.setTitle ("High-quality oversampling");
+    oversamplingButton.setDescription (
+        "Run the nonlinear path at 2x through 48 kHz, native above; changes wait for silence");
+    oversamplingButton.setColour (juce::TextButton::textColourOffId, c (textDim));
+    oversamplingButton.setColour (juce::TextButton::textColourOnId, c (textBright));
+    oversamplingButton.onStateChange = [this] { updateConditionalControls(); };
+    addAndMakeVisible (oversamplingButton);
+
+    const auto configureOscillatorPower = [this] (juce::TextButton& button,
+                                                   const juce::String& oscillatorName)
+    {
+        button.setClickingTogglesState (true);
+        button.setWantsKeyboardFocus (true);
+        button.setComponentID ("oscillator-power");
+        button.setName (oscillatorName + " mixer feed");
+        button.setTitle (oscillatorName + " audible mixer feed");
+        button.setDescription ("Enable or disable " + oscillatorName
+                               + " in the audible mixer; modulation remains active");
+        button.setColour (juce::TextButton::textColourOffId, c (textDim));
+        button.setColour (juce::TextButton::textColourOnId, c (textBright));
+        button.onStateChange = [this] { updateConditionalControls(); };
+        addAndMakeVisible (button);
+    };
+    configureOscillatorPower (osc1EnableButton, "VCO I");
+    configureOscillatorPower (osc2EnableButton, "VCO II");
 
     for (auto* strip : { &osc1WaveStrip, &osc2WaveStrip, &filterModelStrip,
                          &lfoWaveStrip, &voiceModeStrip })
@@ -486,8 +697,8 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
                          &ampSustainFader, &ampReleaseFader })
         addAndMakeVisible (*fader);
 
-    keyboard.setAvailableRange (24, 96);
-    keyboard.setLowestVisibleKey (36);
+    keyboard.setAvailableRange (0, 127);
+    keyboard.setLowestVisibleKey (24);
     keyboard.setKeyWidth (23.0f);
     keyboard.setScrollButtonsVisible (true);
     keyboard.setOctaveForMiddleC (4);
@@ -497,9 +708,9 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     keyboard.setDescription ("Play notes with the mouse or computer keyboard");
     addAndMakeVisible (keyboard);
 
-    keyboardHintLabel.setText ("PLAY C1-C7  |  COMPUTER KEYS: A W S E D F T G Y H U J K",
+    keyboardHintLabel.setText ("MOUSE: MIDI 0-127  |  COMPUTER KEYS: A W S E D F T G Y H U J K O L P ;",
                                juce::dontSendNotification);
-    keyboardHintLabel.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    keyboardHintLabel.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
     keyboardHintLabel.setColour (juce::Label::textColourId, c (textDim));
     keyboardHintLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (keyboardHintLabel);
@@ -528,12 +739,16 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
 
     choiceAttachments.reserve (5);
     sliderAttachments.reserve (35);
+    buttonAttachments.reserve (3);
 
     attachChoice (osc1WaveStrip, mars::parameters::osc1Wave);
     attachChoice (osc2WaveStrip, mars::parameters::osc2Wave);
     attachChoice (filterModelStrip, mars::parameters::filterModel);
     attachChoice (lfoWaveStrip, mars::parameters::lfoWave);
     attachChoice (voiceModeStrip, mars::parameters::voiceMode);
+    attachButton (osc1EnableButton, mars::parameters::osc1Enabled);
+    attachButton (osc2EnableButton, mars::parameters::osc2Enabled);
+    attachButton (oversamplingButton, mars::parameters::hqOversampling);
 
     attachSlider (osc1OctaveKnob.slider, mars::parameters::osc1Octave);
     attachSlider (osc2OctaveKnob.slider, mars::parameters::osc2Octave);
@@ -572,8 +787,8 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     attachSlider (outputKnob.slider, mars::parameters::output);
 
     setResizable (true, true);
-    setResizeLimits (1180, 820, 1900, 1180);
-    setSize (1280, 840);
+    setResizeLimits (1240, 820, 1960, 1260);
+    setSize (1400, 900);
     statusDisplay.setStatus (marsProcessor.getActiveVoiceCount(),
                              marsProcessor.isEngineReady(),
                              marsProcessor.getCurrentSampleRateForDisplay(), false);
@@ -623,67 +838,115 @@ void MarsAudioProcessorEditor::attachSlider (juce::Slider& slider, const char* p
         marsProcessor.parameters, parameterId, slider));
 }
 
+void MarsAudioProcessorEditor::attachButton (juce::Button& button, const char* parameterId)
+{
+    jassert (marsProcessor.parameters.getParameter (parameterId) != nullptr);
+    buttonAttachments.push_back (std::make_unique<ButtonAttachment> (
+        marsProcessor.parameters, parameterId, button));
+}
+
 void MarsAudioProcessorEditor::updateConditionalControls()
 {
+    constexpr float disabledControlAlpha = 0.62f;
+    const auto osc1Enabled = osc1EnableButton.getToggleState();
+    const auto osc2Enabled = osc2EnableButton.getToggleState();
+    osc1EnableButton.setButtonText (osc1Enabled ? "ON" : "OFF");
+    osc2EnableButton.setButtonText (osc2Enabled ? "ON" : "OFF");
+    const auto hqRequested = oversamplingButton.getToggleState();
+    const auto hqEffective = marsProcessor.getEffectiveOversamplingFactor() > 1;
+    const auto hostRate = marsProcessor.getCurrentSampleRateForDisplay();
+    if (hqRequested != hqEffective && hostRate > 0.0 && hostRate <= 48000.0)
+        oversamplingButton.setButtonText ("HQ WAIT");
+    else if (! hqRequested)
+        oversamplingButton.setButtonText ("HQ OFF");
+    else if (hqEffective)
+        oversamplingButton.setButtonText ("HQ 2X");
+    else
+        oversamplingButton.setButtonText ("HQ AUTO");
+
+    const auto bothOscillatorsEnabled = osc1Enabled && osc2Enabled;
+    oscMixKnob.setEnabled (bothOscillatorsEnabled);
+    oscMixKnob.setAlpha (bothOscillatorsEnabled ? 1.0f : disabledControlAlpha);
+
     const auto unisonMode = voiceModeStrip.getSelectedIndex() == 1;
     unisonVoicesKnob.setEnabled (unisonMode);
-    unisonVoicesKnob.setAlpha (unisonMode ? 1.0f : 0.38f);
+    unisonVoicesKnob.setAlpha (unisonMode ? 1.0f : disabledControlAlpha);
 
-    const auto orbitFilter = filterModelStrip.getSelectedIndex() == 1;
-    filterShapeKnob.setEnabled (orbitFilter);
-    filterShapeKnob.setAlpha (orbitFilter ? 1.0f : 0.38f);
+    const auto semFilter = filterModelStrip.getSelectedIndex() == 1;
+    filterShapeKnob.setEnabled (semFilter);
+    filterShapeKnob.setAlpha (semFilter ? 1.0f : disabledControlAlpha);
 
     const auto pulseActive = osc1WaveStrip.getSelectedIndex() == 1
                           || osc2WaveStrip.getSelectedIndex() == 1;
     pulseWidthKnob.setEnabled (pulseActive);
-    pulseWidthKnob.setAlpha (pulseActive ? 1.0f : 0.38f);
+    pulseWidthKnob.setAlpha (pulseActive ? 1.0f : disabledControlAlpha);
     lfoPwmKnob.setEnabled (pulseActive);
-    lfoPwmKnob.setAlpha (pulseActive ? 1.0f : 0.38f);
+    lfoPwmKnob.setAlpha (pulseActive ? 1.0f : disabledControlAlpha);
 }
 
 void MarsAudioProcessorEditor::timerCallback()
 {
     statusDisplay.setStatus (marsProcessor.getActiveVoiceCount(), marsProcessor.isEngineReady(),
                              marsProcessor.getCurrentSampleRateForDisplay());
+    updateConditionalControls();
 }
 
 void MarsAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    if (panelTexture.isValid())
-        g.drawImageWithin (panelTexture, 0, 0, getWidth(), getHeight(),
-                           juce::RectanglePlacement::stretchToFit);
-    else
-        g.fillAll (c (coal));
+    const auto fullBounds = getLocalBounds().toFloat();
+    g.fillAll (c (coal));
+    drawChassisSurface (g, fullBounds);
 
-    g.setColour (c (coal).withAlpha (0.32f));
-    g.fillAll();
+    juce::ColourGradient vignette (juce::Colours::transparentBlack,
+                                   fullBounds.getCentreX(), fullBounds.getCentreY(),
+                                   c (coal).withAlpha (0.72f), fullBounds.getRight(),
+                                   fullBounds.getBottom(), true);
+    vignette.addColour (0.72, c (coal).withAlpha (0.10f));
+    g.setGradientFill (vignette);
+    g.fillRect (fullBounds);
 
-    juce::ColourGradient background (c (walnutLight).withAlpha (0.40f), 0.0f, 0.0f,
-                                     c (coal).withAlpha (0.54f), 0.0f,
-                                     static_cast<float> (getHeight()), false);
-    background.addColour (0.22, c (walnut).withAlpha (0.30f));
-    background.addColour (0.72, c (0xff160f12).withAlpha (0.46f));
-    g.setGradientFill (background);
-    g.fillAll();
+    const auto outerFrame = fullBounds.reduced (5.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.76f));
+    g.drawRoundedRectangle (outerFrame.translated (0.0f, 2.0f), 7.0f, 5.0f);
+    g.setColour (c (0xff0b0f10));
+    g.drawRoundedRectangle (outerFrame, 7.0f, 4.0f);
+    g.setColour (c (0xff4b5557));
+    g.drawRoundedRectangle (outerFrame.reduced (2.0f), 6.0f, 1.5f);
+    g.setColour (c (accentBlueBright).withAlpha (0.34f));
+    g.drawRoundedRectangle (outerFrame.reduced (4.0f), 5.0f, 0.8f);
 
-    // The generated bitmap contributes only material and patina. Legends and
-    // controls remain native components, so scaling and accessibility stay crisp.
-    for (int y = 4; y < getHeight(); y += 7)
-    {
-        const auto alpha = 0.025f + 0.012f * std::sin (static_cast<float> (y) * 0.37f);
-        g.setColour (c (brassBright).withAlpha (alpha));
-        g.drawHorizontalLine (y, 0.0f, static_cast<float> (getWidth()));
-    }
-
-    g.setColour (c (0xff100b08).withAlpha (0.72f));
-    g.fillRect (10, 0, 8, getHeight());
-    g.fillRect (getWidth() - 18, 0, 8, getHeight());
-    g.setColour (c (brass).withAlpha (0.58f));
-    g.fillRect (18, 62, getWidth() - 36, 2);
+    const auto headerHeight = juce::jlimit (58, 74, getHeight() / 11);
+    auto headerPlate = juce::Rectangle<float> (20.0f, 10.0f,
+                                               static_cast<float> (getWidth() - 40),
+                                               static_cast<float> (headerHeight - 17));
+    juce::ColourGradient headerGradient (c (0xff292f31).withAlpha (0.94f),
+                                          headerPlate.getTopLeft(),
+                                          c (0xff151a1b).withAlpha (0.96f),
+                                          headerPlate.getBottomLeft(), false);
+    g.setGradientFill (headerGradient);
+    g.fillRoundedRectangle (headerPlate, 4.0f);
+    g.setColour (c (panelEdge).withAlpha (0.74f));
+    g.drawRoundedRectangle (headerPlate, 4.0f, 1.0f);
+    const auto headerRailX = 22.0f;
+    const auto headerRailY = static_cast<float> (headerHeight - 2);
+    const auto headerRailWidth = static_cast<float> (getWidth() - 44);
+    const auto blueWidth = headerRailWidth * 0.48f;
+    const auto redWidth = headerRailWidth * 0.30f;
+    g.setColour (c (accentBlue).withAlpha (0.92f));
+    g.fillRect (headerRailX, headerRailY, blueWidth, 1.5f);
+    g.setColour (c (signalRed).withAlpha (0.92f));
+    g.fillRect (headerRailX + blueWidth, headerRailY, redWidth, 1.5f);
+    g.setColour (c (accentAmber).withAlpha (0.92f));
+    g.fillRect (headerRailX + blueWidth + redWidth, headerRailY,
+                headerRailWidth - blueWidth - redWidth, 1.5f);
 
     static constexpr std::array<const char*, sectionCount> names {
         "VCO I", "VCO II", "MIX", "VCF", "LFO / VOICE",
         "FILTER ENV", "AMP ENV", "ENSEMBLE / MASTER"
+    };
+    static constexpr std::array<juce::uint32, sectionCount> sectionAccents {
+        accentOrange, accentOrange, accentBlue, signalRed,
+        accentBlue, accentOrange, signalRed, accentBlue
     };
 
     for (int i = 0; i < sectionCount; ++i)
@@ -692,17 +955,26 @@ void MarsAudioProcessorEditor::paint (juce::Graphics& g)
         if (bounds.isEmpty())
             continue;
 
-        g.setColour (juce::Colours::black.withAlpha (0.30f));
-        g.fillRoundedRectangle (bounds.translated (0.0f, 2.0f), 6.0f);
-        g.setColour (c (panel));
+        g.setColour (juce::Colours::black.withAlpha (0.62f));
+        g.fillRoundedRectangle (bounds.translated (0.0f, 3.0f), 6.0f);
+        juce::ColourGradient panelGradient (c (0xff252a2b), bounds.getTopLeft(), c (panel),
+                                            bounds.getBottomLeft(), false);
+        panelGradient.addColour (0.32, c (0xff202526));
+        g.setGradientFill (panelGradient);
         g.fillRoundedRectangle (bounds, 6.0f);
-        g.setColour (c (panelRaised).withAlpha (0.7f));
+
+        juce::ColourGradient sectionHeaderGradient (c (0xff353c3e), bounds.getTopLeft(),
+                                                    c (panelRaised),
+                                                    { bounds.getX(), bounds.getY() + 27.0f }, false);
+        g.setGradientFill (sectionHeaderGradient);
         g.fillRoundedRectangle (bounds.reduced (2.0f).withHeight (26.0f), 4.0f);
         g.setColour (c (panelEdge));
-        g.drawRoundedRectangle (bounds.reduced (0.5f), 6.0f, 1.0f);
-        g.setColour (c (brass).withAlpha (0.72f));
+        g.drawRoundedRectangle (bounds.reduced (0.5f), 6.0f, 1.15f);
+        g.setColour (juce::Colours::white.withAlpha (0.045f));
+        g.drawRoundedRectangle (bounds.reduced (2.5f), 4.5f, 0.8f);
+        g.setColour (c (sectionAccents[static_cast<size_t> (i)]).withAlpha (0.92f));
         g.fillRect (bounds.getX() + 9.0f, bounds.getY() + 25.0f,
-                    juce::jmax (18.0f, bounds.getWidth() * 0.18f), 1.0f);
+                    juce::jmax (22.0f, bounds.getWidth() * 0.22f), 1.5f);
         g.setColour (c (textBright));
         g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
         g.drawText (names[static_cast<size_t> (i)],
@@ -712,7 +984,7 @@ void MarsAudioProcessorEditor::paint (juce::Graphics& g)
         for (const auto corner : { bounds.getTopLeft(), bounds.getTopRight(),
                                    bounds.getBottomLeft(), bounds.getBottomRight() })
         {
-            g.setColour (c (0xff9a7950));
+            g.setColour (c (0xff7d8785));
             g.fillEllipse (juce::Rectangle<float> (3.0f, 3.0f).withCentre (
                 corner + juce::Point<float> { corner.x < bounds.getCentreX() ? 7.0f : -7.0f,
                                                corner.y < bounds.getCentreY() ? 7.0f : -7.0f }));
@@ -728,6 +1000,8 @@ void MarsAudioProcessorEditor::resized()
     editionLabel.setBounds (header.removeFromLeft (juce::jmin (480, header.getWidth() / 2)));
     panicButton.setBounds (header.removeFromRight (72).reduced (1, 6));
     header.removeFromRight (9);
+    oversamplingButton.setBounds (header.removeFromRight (82).reduced (0, 6));
+    header.removeFromRight (9);
     statusDisplay.setBounds (header.removeFromRight (190).reduced (0, 5));
 
     auto body = getLocalBounds();
@@ -738,6 +1012,10 @@ void MarsAudioProcessorEditor::resized()
     auto keyboardArea = body.removeFromBottom (keyboardHeight);
     keyboardHintLabel.setBounds (keyboardArea.removeFromTop (19));
     keyboard.setBounds (keyboardArea.reduced (0, 2));
+    // MIDI 0..127 contains 75 white keys. Keep useful-sized keys at normal editor
+    // sizes, but expand them when the full range would otherwise leave a blank tail.
+    keyboard.setKeyWidth (juce::jmax (23.0f,
+                                      static_cast<float> (keyboard.getWidth()) / 75.0f));
     body.removeFromBottom (gap);
 
     auto rowOne = body.removeFromTop ((body.getHeight() - gap) / 2);
@@ -758,8 +1036,8 @@ void MarsAudioProcessorEditor::resized()
     sectionBounds[filterSection] = rowOne;
 
     const auto rowTwoAvailable = rowTwo.getWidth() - gap * 3;
-    const auto lfoVoiceWidth = rowTwoAvailable * 36 / 100;
-    const auto envelopeWidth = rowTwoAvailable * 18 / 100;
+    const auto lfoVoiceWidth = rowTwoAvailable * 34 / 100;
+    const auto envelopeWidth = rowTwoAvailable * 20 / 100;
     sectionBounds[lfoVoiceSection] = rowTwo.removeFromLeft (lfoVoiceWidth);
     rowTwo.removeFromLeft (gap);
     sectionBounds[filterEnvelopeSection] = rowTwo.removeFromLeft (envelopeWidth);
@@ -767,6 +1045,15 @@ void MarsAudioProcessorEditor::resized()
     sectionBounds[ampEnvelopeSection] = rowTwo.removeFromLeft (envelopeWidth);
     rowTwo.removeFromLeft (gap);
     sectionBounds[masterSection] = rowTwo;
+
+    const auto powerButtonBounds = [this] (Section section)
+    {
+        auto area = sectionBounds[static_cast<size_t> (section)].reduced (8, 4)
+                        .removeFromTop (18);
+        return area.removeFromRight (46);
+    };
+    osc1EnableButton.setBounds (powerButtonBounds (oscillator1Section));
+    osc2EnableButton.setBounds (powerButtonBounds (oscillator2Section));
 
     const auto sectionContent = [this] (Section section)
     {

@@ -105,6 +105,39 @@ juce::AudioParameterFloatAttributes timeAttributes()
         .withStringFromValueFunction (timeText)
         .withValueFromStringFunction (timeValue);
 }
+
+bool containsParameterState (const juce::ValueTree& state, const char* parameterId)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+
+    for (const auto& child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId)
+            return true;
+
+    return false;
+}
+
+void addDefaultParameterStateIfMissing (
+    juce::ValueTree& state, juce::AudioProcessorValueTreeState& parameters,
+    const char* parameterId)
+{
+    if (containsParameterState (state, parameterId))
+        return;
+
+    if (const auto* parameter = parameters.getParameter (parameterId))
+    {
+        static const juce::Identifier parameterType { "PARAM" };
+        static const juce::Identifier idProperty { "id" };
+        static const juce::Identifier valueProperty { "value" };
+        juce::ValueTree parameterState { parameterType };
+        parameterState.setProperty (idProperty, parameterId, nullptr);
+        parameterState.setProperty (
+            valueProperty, parameter->convertFrom0to1 (parameter->getDefaultValue()), nullptr);
+        state.appendChild (parameterState, nullptr);
+    }
+}
 } // namespace
 
 MarsAudioProcessor::MarsAudioProcessor()
@@ -153,8 +186,14 @@ MarsAudioProcessor::MarsAudioProcessor()
     parameterPointers.chorusMix       = parameters.getRawParameterValue (chorusMix);
     parameterPointers.chorusRate      = parameters.getRawParameterValue (chorusRate);
     parameterPointers.output          = parameters.getRawParameterValue (output);
+    parameterPointers.osc1Enabled     = parameters.getRawParameterValue (osc1Enabled);
+    parameterPointers.osc2Enabled     = parameters.getRawParameterValue (osc2Enabled);
+    parameterPointers.hqOversampling  = parameters.getRawParameterValue (hqOversampling);
 
-    jassert (parameterPointers.osc1Wave != nullptr && parameterPointers.output != nullptr);
+    jassert (parameterPointers.osc1Wave != nullptr
+             && parameterPointers.osc1Enabled != nullptr
+             && parameterPointers.osc2Enabled != nullptr
+             && parameterPointers.hqOversampling != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -167,7 +206,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
 {
     using namespace mars::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (40);
+    result.reserve (43);
 
     const auto addChoice = [&result] (const char* id, const char* name,
                                       juce::StringArray choices, int defaultIndex)
@@ -230,7 +269,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
     addPercent (noiseLevel, "Noise level", 0.025f);
     addPercent (crossMod, "Cross modulation", 0.06f);
 
-    addChoice (filterModel, "Filter model", { "Ladder", "Orbit" }, 0);
+    addChoice (filterModel, "Filter model", { "Ladder", "SEM" }, 0);
 
     auto cutoffRange = juce::NormalisableRange<float> { 20.0f, 20000.0f, 0.0f };
     cutoffRange.setSkewForCentre (1000.0f);
@@ -304,13 +343,39 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
                   .withStringFromValueFunction (decibelsText)
                   .withValueFromStringFunction (plainNumericValue));
 
+    // Version-2 parameters are appended so every version-1 host parameter
+    // retains both its identifier and its position in the processor list.
+    // The higher hint also keeps AUv2 automation ordering backward compatible.
+    result.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { osc1Enabled, 2 }, "VCO I enabled", true));
+    result.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { osc2Enabled, 2 }, "VCO II enabled", true));
+
+    // This quality switch is persisted with plug-in state, but is deliberately
+    // not automatable: changing the internal nonlinear timebase is deferred
+    // until the engine has been idle long enough to remain click-free.
+    result.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { hqOversampling, 3 }, "HQ oversampling", true,
+        juce::AudioParameterBoolAttributes()
+            .withAutomatable (false)
+            .withStringFromValueFunction (
+                [] (bool enabled, int) { return enabled ? "On" : "Off"; })
+            .withValueFromStringFunction (
+                [] (const juce::String& text)
+                {
+                    return text.containsIgnoreCase ("2")
+                        || text.containsIgnoreCase ("on")
+                        || text.containsIgnoreCase ("hq");
+                })));
+
     return { result.begin(), result.end() };
 }
 
 void MarsAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     engineReady.store (false, std::memory_order_release);
-    engine.prepare (sampleRate, samplesPerBlock);
+    const bool hqEnabled = valueOf (parameterPointers.hqOversampling) >= 0.5f;
+    engine.prepare (sampleRate, samplesPerBlock, hqEnabled);
     updateEngineParameters();
     engine.reset();
     engine.setPitchBend (0.0f);
@@ -319,6 +384,8 @@ void MarsAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     discardUiMidiEvents();
     panicRequested.store (false, std::memory_order_release);
     displaySampleRate.store (sampleRate, std::memory_order_relaxed);
+    displayOversamplingFactor.store (engine.getOversamplingFactor(),
+                                     std::memory_order_relaxed);
     activeVoiceCount.store (0, std::memory_order_relaxed);
     engineReady.store (true, std::memory_order_release);
 }
@@ -335,6 +402,7 @@ void MarsAudioProcessor::releaseResources()
     panicRequested.store (false, std::memory_order_release);
     activeVoiceCount.store (0, std::memory_order_relaxed);
     displaySampleRate.store (0.0, std::memory_order_relaxed);
+    displayOversamplingFactor.store (1, std::memory_order_relaxed);
 }
 
 bool MarsAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -388,6 +456,8 @@ void MarsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                         numSamples - renderedTo);
 
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
+    displayOversamplingFactor.store (engine.getOversamplingFactor(),
+                                     std::memory_order_relaxed);
 }
 
 void MarsAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBytes) noexcept
@@ -492,6 +562,10 @@ void MarsAudioProcessor::updateEngineParameters() noexcept
     next.chorusMix = valueOf (parameterPointers.chorusMix);
     next.chorusRateHz = valueOf (parameterPointers.chorusRate);
     next.outputGain = juce::Decibels::decibelsToGain (valueOf (parameterPointers.output));
+    next.osc1Enabled = valueOf (parameterPointers.osc1Enabled) >= 0.5f;
+    next.osc2Enabled = valueOf (parameterPointers.osc2Enabled) >= 0.5f;
+    engine.setOversamplingEnabled (
+        valueOf (parameterPointers.hqOversampling) >= 0.5f);
     engine.setParameters (next);
 }
 
@@ -558,7 +632,18 @@ void MarsAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
     {
-        parameters.replaceState (juce::ValueTree::fromXml (*xml));
+        auto restoredState = juce::ValueTree::fromXml (*xml);
+
+        // APVTS preserves the current raw value when a parameter child is
+        // absent from a replacement tree. Explicitly restore the declared
+        // defaults for legacy states, otherwise loading an old preset after a
+        // newer one could leave later switches at the newer state's values.
+        for (const auto* parameterId : { mars::parameters::osc1Enabled,
+                                         mars::parameters::osc2Enabled,
+                                         mars::parameters::hqOversampling })
+            addDefaultParameterStateIfMissing (restoredState, parameters, parameterId);
+
+        parameters.replaceState (restoredState);
         requestPanic();
     }
 }

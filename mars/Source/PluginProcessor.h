@@ -49,6 +49,9 @@ inline constexpr auto velocity        = "velocity";
 inline constexpr auto chorusMix       = "chorusMix";
 inline constexpr auto chorusRate      = "chorusRate";
 inline constexpr auto output          = "output";
+inline constexpr auto osc1Enabled     = "osc1Enabled";
+inline constexpr auto osc2Enabled     = "osc2Enabled";
+inline constexpr auto hqOversampling  = "hqOversampling";
 } // namespace mars::parameters
 
 class MarsAudioProcessorEditor;
@@ -88,6 +91,14 @@ public:
     double getCurrentSampleRateForDisplay() const noexcept
     {
         return displaySampleRate.load (std::memory_order_relaxed);
+    }
+    int getOversamplingFactorForDisplay() const noexcept
+    {
+        return displayOversamplingFactor.load (std::memory_order_relaxed);
+    }
+    int getEffectiveOversamplingFactor() const noexcept
+    {
+        return getOversamplingFactorForDisplay();
     }
     bool isEngineReady() const noexcept { return engineReady.load (std::memory_order_acquire); }
 
@@ -139,6 +150,9 @@ private:
         std::atomic<float>* chorusMix = nullptr;
         std::atomic<float>* chorusRate = nullptr;
         std::atomic<float>* output = nullptr;
+        std::atomic<float>* osc1Enabled = nullptr;
+        std::atomic<float>* osc2Enabled = nullptr;
+        std::atomic<float>* hqOversampling = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
@@ -168,6 +182,7 @@ private:
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<double> displaySampleRate { 0.0 };
+    std::atomic<int> displayOversamplingFactor { 1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MarsAudioProcessor)
 };

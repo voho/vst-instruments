@@ -19,9 +19,13 @@ public:
                            juce::Slider&) override;
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
                                bool isHighlighted, bool isDown) override;
+    void drawButtonText (juce::Graphics&, juce::TextButton&,
+                         bool isHighlighted, bool isDown) override;
     void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
                            float sliderPos, float minSliderPos, float maxSliderPos,
                            juce::Slider::SliderStyle, juce::Slider&) override;
+    void drawLabel (juce::Graphics&, juce::Label&) override;
+    juce::Label* createSliderTextBox (juce::Slider&) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 };
 
@@ -105,6 +109,7 @@ public:
 
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     enum Section
     {
@@ -122,21 +127,24 @@ private:
     void timerCallback() override;
     void attachChoice (MarsChoiceStrip&, const char* parameterId, float firstValue = 0.0f);
     void attachSlider (juce::Slider&, const char* parameterId);
+    void attachButton (juce::Button&, const char* parameterId);
     void updateConditionalControls();
 
     MarsAudioProcessor& marsProcessor;
     MarsLookAndFeel lookAndFeel;
-    juce::Image panelTexture;
 
     juce::Label logoLabel;
     juce::Label editionLabel;
     juce::Label keyboardHintLabel;
     MarsStatusDisplay statusDisplay;
     juce::TextButton panicButton { "PANIC" };
+    juce::TextButton oversamplingButton { "HQ 2X" };
+    juce::TextButton osc1EnableButton { "ON" };
+    juce::TextButton osc2EnableButton { "ON" };
 
     MarsChoiceStrip osc1WaveStrip { "VCO I WAVE", { "SAW", "PULSE", "TRI" } };
     MarsChoiceStrip osc2WaveStrip { "VCO II WAVE", { "SAW", "PULSE", "TRI" } };
-    MarsChoiceStrip filterModelStrip { "FILTER MODEL", { "LADDER", "ORBIT" } };
+    MarsChoiceStrip filterModelStrip { "FILTER MODEL", { "LADDER", "SEM" } };
     MarsChoiceStrip lfoWaveStrip { "LFO WAVE", { "TRI", "SINE", "S & H" } };
     MarsChoiceStrip voiceModeStrip { "VOICE MODE", { "POLY", "UNISON", "FIFTH" } };
 
@@ -184,6 +192,7 @@ private:
 
     std::vector<std::unique_ptr<juce::ParameterAttachment>> choiceAttachments;
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
+    std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;
     std::array<juce::Rectangle<int>, sectionCount> sectionBounds {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MarsAudioProcessorEditor)

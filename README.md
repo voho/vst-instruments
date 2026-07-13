@@ -22,7 +22,7 @@ service while rendering audio.
 | --- | --- | --- | --- | --- |
 | [Vocalor](vocalor/) | Source-filter vocal and choir synthesizer with solo, ensemble, and chord performance modes across three sustained vowels. | VST3 · AU · Standalone | macOS 11+ | [README](vocalor/README.md) |
 | [Drumalor](drumalor/) | Thirteen-voice procedural drum synthesizer with deterministic organic variation, circuit-inspired colour, and GM-oriented MIDI mapping. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
-| [Mars](mars/) | Dual-oscillator virtual-analog polysynth with event-corrected waveforms, two nonlinear filters, deterministic voice cards, and a direct 40-control panel. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
+| [Mars](mars/) | Dual-oscillator virtual-analog polysynth with switchable VCO mixer feeds, measured saw contouring, nonlinear Moog-ladder and SEM-inspired filters, deterministic voice cards, 42 direct sound controls, and persisted HQ oversampling. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
 
 ## Download (nightly)
 

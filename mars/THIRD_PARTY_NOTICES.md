@@ -1,9 +1,22 @@
 # Third-party notices
 
 Mars's original source code is covered by the `LICENSE` file included with each
-source or binary distribution.
-The build downloads or consumes the separate dependency below; that dependency
-is not relicensed by Mars.
+source or binary distribution. Mars builds against one separately licensed
+framework, which is not relicensed by Mars. The research attribution below does
+not identify bundled third-party source code.
+
+## Generalized nonlinear Moog ladder research
+
+Mars's four-stage `Ladder` is informed by Stefano D'Angelo and Vesa Valimaki's
+paper *Generalized Moog Ladder Filter: Part II - Explicit Nonlinear Model
+through a Novel Delay-Free Loop Implementation Method*:
+
+<https://doi.org/10.1109/TASLP.2014.2352556>
+
+Mars independently solves the original implicit bilinear transistor equations
+with a bounded, residual-decreasing damped Newton method. It does not copy or
+adapt the paper's separately published `moog_ladder_nonlinear.m` reference
+implementation, and that implementation is not included in this repository.
 
 ## JUCE 8.0.14
 

@@ -8,7 +8,7 @@ namespace mars
 {
 
 enum class OscillatorWave { Saw, Pulse, Triangle };
-enum class FilterModel { Ladder, Orbit };
+enum class FilterModel { Ladder, Sem };
 enum class VoiceMode { Poly, Unison, Fifth };
 enum class LfoWaveform { Triangle, Sine, SampleHold };
 
@@ -19,6 +19,8 @@ struct EngineParameters
     FilterModel filterModel { FilterModel::Ladder };
     VoiceMode voiceMode { VoiceMode::Poly };
     LfoWaveform lfoWave { LfoWaveform::Triangle };
+    bool osc1Enabled { true };
+    bool osc2Enabled { true };
     int osc1Octave { 0 };
     int osc2Octave { 0 };
     int osc2Semitones { 0 };
@@ -61,7 +63,9 @@ class MarsEngine
 public:
     MarsEngine() noexcept;
 
-    void prepare(double sampleRate, int maxBlockSize);
+    void prepare(double sampleRate, int maxBlockSize,
+                 bool oversamplingEnabled = true);
+    bool setOversamplingEnabled(bool enabled) noexcept;
     void reset();
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
@@ -72,9 +76,20 @@ public:
     void setSustainPedal(bool down) noexcept;
     void process(float* left, float* right, int numSamples);
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
+    [[nodiscard]] int getOversamplingFactor() const noexcept { return oversampling_; }
+    [[nodiscard]] bool isOversamplingEnabled() const noexcept
+    {
+        return oversamplingRequested_;
+    }
 
 private:
+    // The JUCE-free regression suite uses this narrow friend to inspect one
+    // ladder step and verify the private implicit state against an independent
+    // double-precision solve. It is not part of the plug-in API.
+    friend struct MarsEngineTestAccess;
+
     static constexpr int oversampleFactor = 2;
+    static constexpr double maximumOversampledHostRate = 48000.0;
     static constexpr int maxVoices = 32;
     static constexpr int controlPeriod = 8;
     static constexpr int chorusBufferSize = 16384;
@@ -101,15 +116,24 @@ private:
     {
         float phase { 0.0f };
         float triangle { -1.0f };
+        float previousSawInput { 0.0f };
+        float previousSawOutput { 0.0f };
+        bool sawContourInitialised { false };
     };
 
     struct LadderFilter
     {
-        std::array<float, 4> state {};
+        std::array<float, 4> stageVoltage {};
+        std::array<float, 4> stageTanh {};
+        float previousInputVoltage { 0.0f };
+        float previousFeedbackTanh { 0.0f };
+        float cachedFeedbackGain { 0.0f };
+        bool stageTanhValid { true };
+        bool feedbackTanhValid { false };
 
         void reset() noexcept;
-        float process(float input, float integratorGain, float resonance,
-                      float drive) noexcept;
+        float process(float inputVoltage, float frequencyTangent,
+                      float feedbackGain, float frequencyScale) noexcept;
     };
 
     struct StateVariableFilter
@@ -118,7 +142,7 @@ private:
         float ic2eq { 0.0f };
 
         void reset() noexcept;
-        void process(float input, float g, float resonance, float drive,
+        void process(float input, float g, float resonance,
                      float& low, float& band, float& high) noexcept;
     };
 
@@ -179,6 +203,8 @@ private:
         float ladderGainStep { 0.0f };
         float stateGainStep { 0.0f };
         float resonance { 0.0f };
+        float ladderFeedbackGain { 0.0f };
+        float ladderFrequencyScale { 1.0f };
         float drive { 0.0f };
         float noiseColour { 0.0f };
         float ampAttackCoefficient { 1.0f };
@@ -207,6 +233,7 @@ private:
     static float adaaShape(float value) noexcept;
     static float adaaAntiderivative(float value) noexcept;
     static float processAdaaMixer(float value, Voice& voice) noexcept;
+    static float filterInputVoltage(float value, float drive) noexcept;
     static float wrapPhase(float phase) noexcept;
     static float smoothStep(float value) noexcept;
     static float envelopeCoefficient(float seconds, float sampleRate) noexcept;
@@ -224,14 +251,14 @@ private:
                             float lfoValue) noexcept;
     float renderOscillator(Oscillator& oscillator, OscillatorWave waveform,
                            float increment, float pulseWidth,
-                           float phaseOffset, bool& wrapped) noexcept;
+                           bool& wrapped) noexcept;
     float renderVoiceOversample(Voice& voice, const EngineParameters& parameters,
                                 float lfoValue) noexcept;
     void downsampleStereo(float firstLeft, float firstRight,
                           float secondLeft, float secondRight,
                           float& outputLeft, float& outputRight) noexcept;
     int layersForMode(const EngineParameters& parameters) const noexcept;
-    int orbitIntervalForLayer(int layer) const noexcept;
+    int fifthIntervalForLayer(int layer) const noexcept;
     int findFreeVoice() const noexcept;
     void makeRoomFor(int required) noexcept;
     void updateActiveVoiceCount() noexcept;
@@ -244,6 +271,8 @@ private:
                        float& outputLeft, float& outputRight) noexcept;
     float processDcBlocker(float input, float& previousInput,
                            float& previousOutput) const noexcept;
+    void updateProcessingRate() noexcept;
+    bool applyPendingOversamplingIfIdle() noexcept;
 
     EngineParameters targetParameters_ {};
     EngineParameters smoothedParameters_ {};
@@ -251,6 +280,9 @@ private:
     float inverseSampleRate_ { 1.0f / 48000.0f };
     float oversampledRate_ { 96000.0f };
     int oversampling_ { 2 };
+    bool oversamplingEnabled_ { true };
+    bool oversamplingRequested_ { true };
+    int oversamplingIdleSamples_ { 0 };
     int filterCrossfadeSamples_ { 288 };
     bool prepared_ { false };
     std::uint64_t generation_ { 0 };

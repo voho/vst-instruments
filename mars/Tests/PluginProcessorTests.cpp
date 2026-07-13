@@ -25,7 +25,7 @@ struct ParameterExpectation
     float tolerance;
 };
 
-constexpr std::array<ParameterExpectation, 40> expectedParameters {{
+constexpr std::array<ParameterExpectation, 43> expectedParameters {{
     { mars::parameters::osc1Wave,         0.0f,   1.0e-5f },
     { mars::parameters::osc1Octave,       0.0f,   1.0e-5f },
     { mars::parameters::osc2Wave,         1.0f,   1.0e-5f },
@@ -66,7 +66,12 @@ constexpr std::array<ParameterExpectation, 40> expectedParameters {{
     { mars::parameters::chorusMix,        0.30f,  1.0e-5f },
     { mars::parameters::chorusRate,       0.38f,  1.0e-5f },
     { mars::parameters::output,          -6.0f,   1.0e-5f },
+    { mars::parameters::osc1Enabled,      1.0f,   1.0e-5f },
+    { mars::parameters::osc2Enabled,      1.0f,   1.0e-5f },
+    { mars::parameters::hqOversampling,   1.0f,   1.0e-5f },
 }};
+
+constexpr std::size_t version1ParameterCount = 40;
 
 void expect (bool condition, const std::string& message)
 {
@@ -150,14 +155,16 @@ void useShortReleases (MarsAudioProcessor& processor)
 void testParameterLayoutAndDefaults()
 {
     MarsAudioProcessor processor;
-    expect (expectedParameters.size() == 40u,
-            "test parameter manifest does not contain exactly 40 entries");
+    expect (expectedParameters.size() == 43u,
+            "test parameter manifest does not contain exactly 43 entries");
     expect (processor.getParameters().size() == static_cast<int> (expectedParameters.size()),
-            "processor does not expose exactly 40 APVTS parameters");
+            "processor does not expose exactly 43 APVTS parameters");
 
     std::set<std::string> uniqueIds;
-    for (const auto& expected : expectedParameters)
+    const auto& hostParameters = processor.getParameters();
+    for (std::size_t index = 0; index < expectedParameters.size(); ++index)
     {
+        const auto& expected = expectedParameters[index];
         expect (uniqueIds.insert (expected.id).second,
                 std::string ("duplicate APVTS id ") + expected.id);
 
@@ -173,10 +180,31 @@ void testParameterLayoutAndDefaults()
         expect (approximatelyEqual (parameterValue (processor, expected.id),
                                     expected.defaultValue, expected.tolerance),
                 std::string ("wrong initial value for ") + expected.id);
+
+        const auto* hostParameter = hostParameters[static_cast<int> (index)];
+        const auto* parameterWithId = dynamic_cast<const juce::AudioProcessorParameterWithID*> (
+            hostParameter);
+        expect (parameterWithId != nullptr,
+                std::string ("host parameter has no stable id at index ")
+                    + std::to_string (index));
+        if (parameterWithId != nullptr)
+            expect (parameterWithId->paramID == expected.id,
+                    std::string ("host parameter order changed at index ")
+                        + std::to_string (index));
+
+        const auto expectedVersionHint = index < version1ParameterCount ? 1
+                                       : index < 42u ? 2 : 3;
+        expect (hostParameter->getVersionHint() == expectedVersionHint,
+                std::string ("wrong parameter version hint for ") + expected.id);
+
+        const bool shouldBeAutomatable = std::string (expected.id)
+                                      != mars::parameters::hqOversampling;
+        expect (hostParameter->isAutomatable() == shouldBeAutomatable,
+                std::string ("wrong automation contract for ") + expected.id);
     }
 
     expect (uniqueIds.size() == expectedParameters.size(),
-            "the 40-entry APVTS manifest contains duplicate ids");
+            "the 43-entry APVTS manifest contains duplicate ids");
 }
 
 void testParameterTextFormatting()
@@ -187,8 +215,13 @@ void testParameterTextFormatting()
     expectParameterText (processor, mars::parameters::osc1Octave, 1.0f, "+1oct");
     expectParameterText (processor, mars::parameters::osc2Tune, -7.0f, "-7st");
     expectParameterText (processor, mars::parameters::osc2Fine, 12.3f, "+12.3ct");
+    expectParameterText (processor, mars::parameters::filterModel, 1.0f, "SEM");
     expectParameterText (processor, mars::parameters::lfoFilter, 0.18f, "0.180oct");
     expectParameterText (processor, mars::parameters::output, -6.0f, "-6.0dB");
+    expectParameterText (processor, mars::parameters::osc1Enabled, 0.0f, "Off");
+    expectParameterText (processor, mars::parameters::osc2Enabled, 1.0f, "On");
+    expectParameterText (processor, mars::parameters::hqOversampling, 0.0f, "Off");
+    expectParameterText (processor, mars::parameters::hqOversampling, 1.0f, "On");
 }
 
 void testStateRoundTrip()
@@ -200,6 +233,9 @@ void testStateRoundTrip()
     setParameterValue (source, mars::parameters::filterEnvAmount, -0.37f);
     setParameterValue (source, mars::parameters::voiceMode, 2.0f);
     setParameterValue (source, mars::parameters::output, 2.3f);
+    setParameterValue (source, mars::parameters::osc1Enabled, 0.0f);
+    setParameterValue (source, mars::parameters::osc2Enabled, 0.0f);
+    setParameterValue (source, mars::parameters::hqOversampling, 0.0f);
 
     juce::MemoryBlock state;
     source.getStateInformation (state);
@@ -223,6 +259,135 @@ void testStateRoundTrip()
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::output),
                                 2.3f, 0.051f),
             "output level did not survive state round-trip");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::osc1Enabled), 0.0f),
+            "VCO I enabled state did not survive state round-trip");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::osc2Enabled), 0.0f),
+            "VCO II enabled state did not survive state round-trip");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::hqOversampling), 0.0f),
+            "HQ oversampling state did not survive state round-trip");
+}
+
+bool isParameterState (const juce::ValueTree& child, const char* parameterId)
+{
+    return child.hasType ("PARAM")
+        && child.getProperty ("id").toString() == parameterId;
+}
+
+void removeParameterState (juce::ValueTree& state, const char* parameterId)
+{
+    for (int index = state.getNumChildren(); --index >= 0;)
+        if (isParameterState (state.getChild (index), parameterId))
+            state.removeChild (index, nullptr);
+}
+
+bool containsParameterState (const juce::ValueTree& state, const char* parameterId)
+{
+    for (const auto& child : state)
+        if (isParameterState (child, parameterId))
+            return true;
+    return false;
+}
+
+void testLegacyStateDefaultsNewParameters()
+{
+    MarsAudioProcessor legacySource;
+    setParameterValue (legacySource, mars::parameters::cutoff, 1234.0f);
+    auto legacyState = legacySource.parameters.copyState();
+    removeParameterState (legacyState, mars::parameters::osc1Enabled);
+    removeParameterState (legacyState, mars::parameters::osc2Enabled);
+    removeParameterState (legacyState, mars::parameters::hqOversampling);
+    expect (! containsParameterState (legacyState, mars::parameters::osc1Enabled)
+                && ! containsParameterState (legacyState, mars::parameters::osc2Enabled)
+                && ! containsParameterState (legacyState, mars::parameters::hqOversampling),
+            "could not construct a version-1 state without later parameters");
+
+    juce::MemoryBlock binaryState;
+    if (const auto xml = legacyState.createXml())
+        juce::AudioProcessor::copyXmlToBinary (*xml, binaryState);
+    expect (binaryState.getSize() > 0, "could not serialise version-1 state fixture");
+
+    MarsAudioProcessor restored;
+    setParameterValue (restored, mars::parameters::osc1Enabled, 0.0f);
+    setParameterValue (restored, mars::parameters::osc2Enabled, 0.0f);
+    setParameterValue (restored, mars::parameters::hqOversampling, 0.0f);
+    restored.setStateInformation (binaryState.getData(), static_cast<int> (binaryState.getSize()));
+
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::osc1Enabled), 1.0f),
+            "version-1 state did not default the missing VCO I enable to On");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::osc2Enabled), 1.0f),
+            "version-1 state did not default the missing VCO II enable to On");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::hqOversampling), 1.0f),
+            "legacy state did not default missing HQ oversampling to On");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::cutoff),
+                                1234.0f, 0.5f),
+            "version-1 migration did not restore existing parameter values");
+
+    const auto upgradedState = restored.parameters.copyState();
+    expect (containsParameterState (upgradedState, mars::parameters::osc1Enabled)
+                && containsParameterState (upgradedState, mars::parameters::osc2Enabled)
+                && containsParameterState (upgradedState, mars::parameters::hqOversampling),
+            "migrated state did not persist the appended parameters");
+}
+
+void testOversamplingConfigurationAndDeferredSwitch()
+{
+    MarsAudioProcessor defaultQuality;
+    useShortReleases (defaultQuality);
+    defaultQuality.prepareToPlay (sampleRate, blockSize);
+    expect (defaultQuality.getOversamplingFactorForDisplay() == 2,
+            "default HQ setting did not prepare the 48 kHz engine at 2x");
+
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (
+                       1, 48, static_cast<juce::uint8> (112)), 0);
+    renderBlock (defaultQuality, audio, midi);
+    expect (defaultQuality.getActiveVoiceCount() > 0,
+            "oversampling switch test did not start its held note");
+
+    setParameterValue (defaultQuality, mars::parameters::hqOversampling, 0.0f);
+    midi.clear();
+    renderBlock (defaultQuality, audio, midi);
+    expect (defaultQuality.getOversamplingFactorForDisplay() == 2,
+            "HQ switch changed the processing rate while a note was held");
+    expect (defaultQuality.getActiveVoiceCount() > 0,
+            "HQ switch killed the held note instead of deferring");
+    expect (peakInRange (audio, 0, blockSize) > 1.0e-7f,
+            "held note became silent while the HQ switch was pending");
+
+    midi.addEvent (juce::MidiMessage::noteOff (1, 48), 0);
+    renderBlock (defaultQuality, audio, midi);
+    expect (renderUntilVoicesStop (defaultQuality, audio),
+            "oversampling switch test voice did not finish after note-off");
+
+    // The engine deliberately waits for 25 ms of silence before changing its
+    // nonlinear timebase. A handful of 512-sample blocks exceeds that at 48 kHz.
+    for (int block = 0;
+         block < 8 && defaultQuality.getOversamplingFactorForDisplay() != 1;
+         ++block)
+    {
+        midi.clear();
+        renderBlock (defaultQuality, audio, midi);
+    }
+    expect (defaultQuality.getOversamplingFactorForDisplay() == 1,
+            "pending HQ-Off setting did not apply after release and idle");
+    defaultQuality.releaseResources();
+
+    MarsAudioProcessor preparedWithoutHq;
+    setParameterValue (preparedWithoutHq, mars::parameters::hqOversampling, 0.0f);
+    preparedWithoutHq.prepareToPlay (sampleRate, blockSize);
+    expect (preparedWithoutHq.getOversamplingFactorForDisplay() == 1,
+            "HQ-Off setting did not prepare the 48 kHz engine at 1x");
+    preparedWithoutHq.releaseResources();
+
+    for (const double highRate : { 96000.0, 192000.0 })
+    {
+        MarsAudioProcessor highRateProcessor;
+        highRateProcessor.prepareToPlay (highRate, blockSize);
+        expect (highRateProcessor.getOversamplingFactorForDisplay() == 1,
+                "high host rate performed unnecessary internal oversampling");
+        highRateProcessor.releaseResources();
+    }
 }
 
 void testBusAndPluginContract()
@@ -517,15 +682,15 @@ void testEditorRenderingAtDefaultAndMinimumSize()
         return;
 
     expect (editor->isOpaque(), "editor does not advertise an opaque surface");
-    expect (editor->getWidth() == 1280 && editor->getHeight() == 840,
-            "editor did not open at its 1280x840 default size");
+    expect (editor->getWidth() == 1400 && editor->getHeight() == 900,
+            "editor did not open at its 1400x900 default size");
     const auto defaultSnapshot = renderEditorSnapshot (*editor);
     expectDetailedOpaqueSnapshot (defaultSnapshot, "default-size");
 
-    editor->setSize (1180, 820);
+    editor->setSize (1240, 820);
     editor->resized();
-    expect (editor->getWidth() == 1180 && editor->getHeight() == 820,
-            "editor did not honour its 1180x820 minimum size");
+    expect (editor->getWidth() == 1240 && editor->getHeight() == 820,
+            "editor did not honour its 1240x820 minimum size");
     const auto minimumSnapshot = renderEditorSnapshot (*editor);
     expectDetailedOpaqueSnapshot (minimumSnapshot, "minimum-size");
 
@@ -555,6 +720,8 @@ int main()
     testParameterLayoutAndDefaults();
     testParameterTextFormatting();
     testStateRoundTrip();
+    testLegacyStateDefaultsNewParameters();
+    testOversamplingConfigurationAndDeferredSwitch();
     testBusAndPluginContract();
     testSampleAccurateNoteOn();
     testMidiControllersAndVoiceLifecycle();

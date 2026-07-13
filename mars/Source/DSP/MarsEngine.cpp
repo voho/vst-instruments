@@ -11,6 +11,45 @@ namespace
 constexpr float pi = 3.14159265358979323846f;
 constexpr float twoPi = 2.0f * pi;
 constexpr float envelopeRange = 6.90775527898f; // -60 dB in the requested time.
+constexpr float thermalVoltage = 0.026f;
+constexpr float twiceThermalVoltage = 2.0f * thermalVoltage;
+constexpr std::size_t transistorPairTableIntervals = 1024;
+constexpr float transistorPairTableLimit = 7.0f;
+const std::array<float, transistorPairTableIntervals + 1> transistorPairTable = []
+{
+    std::array<float, transistorPairTableIntervals + 1> values {};
+    for (std::size_t index = 0; index < values.size(); ++index)
+        values[index] = std::tanh(
+            transistorPairTableLimit * static_cast<float>(index)
+            / static_cast<float>(transistorPairTableIntervals));
+    return values;
+}();
+
+float transistorPairTanh(float value) noexcept
+{
+    // The ladder evaluates transistor differential pairs throughout its bounded
+    // nonlinear solve. Linear interpolation through a dense 4 KiB table of
+    // exact tanh points keeps that physical transfer practical at full
+    // polyphony. An exhaustive float-domain check measured less than 4.6e-6
+    // absolute error (the analytic interpolation bound is 4.7e-6);
+    // outside +/-7 the reference is already within 1.7e-6 of its asymptote.
+    const float magnitude = std::abs(value);
+    if (magnitude < 0.000244140625f)
+        return value;
+    if (magnitude >= transistorPairTableLimit)
+        return std::copysign(1.0f, value);
+
+    constexpr float tableScale = static_cast<float>(transistorPairTableIntervals)
+                               / transistorPairTableLimit;
+    const float position = magnitude * tableScale;
+    const auto index = std::min(static_cast<std::size_t>(position),
+                                transistorPairTableIntervals - 1);
+    const float t = position - static_cast<float>(index);
+    const float y0 = transistorPairTable[index];
+    const float y1 = transistorPairTable[index + 1];
+    const float interpolated = y0 + t * (y1 - y0);
+    return std::copysign(interpolated, value);
+}
 
 float finiteOr(float value, float fallback) noexcept
 {
@@ -101,53 +140,246 @@ float MarsEngine::Envelope::tick(float attackCoefficient, float decayCoefficient
 
 void MarsEngine::LadderFilter::reset() noexcept
 {
-    state.fill(0.0f);
+    stageVoltage.fill(0.0f);
+    stageTanh.fill(0.0f);
+    previousInputVoltage = 0.0f;
+    previousFeedbackTanh = 0.0f;
+    cachedFeedbackGain = 0.0f;
+    stageTanhValid = true;
+    feedbackTanhValid = false;
 }
 
-float MarsEngine::LadderFilter::process(float input, float integratorGain,
-                                        float resonance, float drive) noexcept
+/*
+    The four-stage nonlinear ladder below solves the bilinear-discretised
+    implicit circuit equations from:
+
+    S. D'Angelo and V. Valimaki, "Generalized Moog Ladder Filter: Part II--
+    Explicit Nonlinear Model through a Novel Delay-Free Loop Implementation
+    Method," IEEE/ACM TASLP, vol. 22, no. 12, 2014.
+
+    The authors' non-iterative reference implementation is excellent inside its
+    documented range, but its finite-precision evaluation is reported coherent
+    only through fc <= fs/8. Mars exposes a 20 kHz cutoff even in native-rate
+    mode, so it solves the original implicit equations with a residual-decreasing
+    damped Newton method instead. Its small cyclic-bidiagonal Jacobian is solved
+    analytically. Both the Newton and backtracking counts have fixed maxima, so
+    no allocation, unbounded iteration, or artificial delay is introduced.
+*/
+float MarsEngine::LadderFilter::process(float inputVoltage,
+                                        float frequencyTangent,
+                                        float feedbackGain,
+                                        float frequencyScale) noexcept
 {
-    const float g = std::clamp(integratorGain, 0.00001f, 0.92f);
-    const float complement = 1.0f - g;
+    inputVoltage = std::clamp(inputVoltage, -0.8f, 0.8f);
+    frequencyTangent = std::clamp(frequencyTangent, 0.00001f, 8.0f);
+    const float k = std::clamp(feedbackGain, 0.0f, 3.98f);
+    const float g = frequencyTangent * std::clamp(frequencyScale, 0.5f, 2.0f);
 
-    // Express the output of the four TPT one-poles as P*u + S. That permits
-    // the feedback path to be solved at the current sample rather than delayed.
-    float feedforward = 1.0f;
-    float stateContribution = 0.0f;
-    for (const float poleState : state)
+    const auto previous = stageVoltage;
+    std::array<float, 4> estimate = previous;
+    std::array<float, 4> previousTanh = stageTanh;
+    if (!stageTanhValid)
+        for (std::size_t stage = 0; stage < previous.size(); ++stage)
+            previousTanh[stage] = transistorPairTanh(
+                previous[stage] / twiceThermalVoltage);
+    const float historyFeedbackTanh = feedbackTanhValid && cachedFeedbackGain == k
+        ? previousFeedbackTanh
+        : transistorPairTanh(
+            (previousInputVoltage + k * previous.back()) / twiceThermalVoltage);
+
+    struct Evaluation
     {
-        stateContribution = g * stateContribution + complement * poleState;
-        feedforward *= g;
+        std::array<float, 4> currentTanh {};
+        std::array<float, 4> residual {};
+        float feedbackTanh { 0.0f };
+        float squaredResidual { std::numeric_limits<float>::infinity() };
+        float maximumResidual { std::numeric_limits<float>::infinity() };
+        bool finite { false };
+    };
+
+    const auto evaluate = [&] (const std::array<float, 4>& candidate,
+                               const std::array<float, 4>* knownTanh = nullptr) noexcept
+    {
+        Evaluation result;
+        result.finite = std::all_of(candidate.begin(), candidate.end(),
+                                    [] (float value) noexcept
+                                    {
+                                        return std::isfinite(value);
+                                    });
+        if (!result.finite)
+            return result;
+
+        if (knownTanh != nullptr)
+            result.currentTanh = *knownTanh;
+        else
+            for (std::size_t stage = 0; stage < candidate.size(); ++stage)
+                result.currentTanh[stage] = transistorPairTanh(
+                    candidate[stage] / twiceThermalVoltage);
+
+        result.feedbackTanh = transistorPairTanh(
+            (inputVoltage + k * candidate.back()) / twiceThermalVoltage);
+        result.residual[0] = candidate[0] - previous[0]
+                           + twiceThermalVoltage * g
+                               * (result.currentTanh[0] + previousTanh[0]
+                                  + result.feedbackTanh + historyFeedbackTanh);
+        for (std::size_t stage = 1; stage < result.residual.size(); ++stage)
+            result.residual[stage] = candidate[stage] - previous[stage]
+                                   - twiceThermalVoltage * g
+                                       * (result.currentTanh[stage - 1]
+                                          + previousTanh[stage - 1]
+                                          - result.currentTanh[stage]
+                                          - previousTanh[stage]);
+
+        result.squaredResidual = 0.0f;
+        result.maximumResidual = 0.0f;
+        for (const float value : result.residual)
+        {
+            result.squaredResidual += value * value;
+            result.maximumResidual = std::max(result.maximumResidual,
+                                              std::abs(value));
+        }
+        result.finite = std::isfinite(result.squaredResidual)
+                     && std::isfinite(result.maximumResidual);
+        return result;
+    };
+
+    // Starting at the previous state is a good predictor for ordinary audio,
+    // but a high-cutoff full-scale discontinuity can make an unrestricted
+    // Newton step cross several saturated tanh regions. Accepting only a step
+    // that reduces ||residual||^2 prevents that divergence. Typical musical
+    // samples finish in the first bounded pass. A second pass with deeper
+    // backtracking is reserved for hostile input/control jumps, so its stronger
+    // global-convergence protection adds no cost to the normal path.
+    constexpr int normalNewtonUpdates = 16;
+    constexpr int normalBacktrackingSteps = 8;
+    constexpr int rescueNewtonUpdates = 16;
+    constexpr int rescueBacktrackingSteps = 20;
+    // The 1024-segment tanh interpolator itself contributes at most about
+    // 1.7e-4 of normalized equation residual at the reachable maximum g. A
+    // target of the same order keeps the combined exact-tanh residual beneath
+    // the independently tested 6e-4 bound without wasting another update.
+    constexpr float residualTolerance = twiceThermalVoltage * 3.0e-4f;
+    Evaluation evaluation = evaluate(estimate, &previousTanh);
+    const auto improve = [&] (int maximumUpdates,
+                              int maximumBacktrackingSteps) noexcept
+    {
+        for (int iteration = 0;
+             iteration < maximumUpdates
+                 && evaluation.finite
+                 && evaluation.maximumResidual > residualTolerance;
+             ++iteration)
+        {
+            const auto& residual = evaluation.residual;
+            std::array<float, 4> derivative {};
+            for (std::size_t stage = 0; stage < derivative.size(); ++stage)
+                derivative[stage] = 1.0f
+                                  - evaluation.currentTanh[stage]
+                                      * evaluation.currentTanh[stage];
+            const float feedbackDerivative = 1.0f
+                                           - evaluation.feedbackTanh
+                                               * evaluation.feedbackTanh;
+
+            // Solve J * delta = -residual. Rows 1..3 are lower-bidiagonal;
+            // row zero adds only the cyclic feedback term in column three.
+            const float diagonal0 = 1.0f + g * derivative[0];
+            const float feedbackCoupling = g * k * feedbackDerivative;
+            std::array<float, 4> slope {};
+            std::array<float, 4> offset {};
+            for (std::size_t stage = 1; stage < slope.size(); ++stage)
+            {
+                const float lower = -g * derivative[stage - 1];
+                const float diagonal = 1.0f + g * derivative[stage];
+                const float previousSlope = stage == 1 ? 1.0f : slope[stage - 1];
+                const float previousOffset = stage == 1 ? 0.0f : offset[stage - 1];
+                slope[stage] = -lower * previousSlope / diagonal;
+                offset[stage] = (-residual[stage] - lower * previousOffset) / diagonal;
+            }
+
+            const float denominator = diagonal0 + feedbackCoupling * slope[3];
+            const float delta0 = (-residual[0] - feedbackCoupling * offset[3])
+                               / std::max(denominator, 1.0e-8f);
+            std::array<float, 4> delta {};
+            delta[0] = delta0;
+            for (std::size_t stage = 1; stage < estimate.size(); ++stage)
+                delta[stage] = slope[stage] * delta0 + offset[stage];
+
+            float stepScale = 1.0f;
+            bool accepted = false;
+            for (int backtrack = 0;
+                 backtrack < maximumBacktrackingSteps;
+                 ++backtrack)
+            {
+                std::array<float, 4> candidate {};
+                for (std::size_t stage = 0; stage < candidate.size(); ++stage)
+                    candidate[stage] = estimate[stage] + stepScale * delta[stage];
+
+                auto trial = evaluate(candidate);
+                if (trial.finite
+                    && trial.squaredResidual < evaluation.squaredResidual)
+                {
+                    estimate = candidate;
+                    evaluation = trial;
+                    accepted = true;
+                    break;
+                }
+                stepScale *= 0.5f;
+            }
+
+            if (!accepted)
+                break;
+        }
+    };
+
+    improve(normalNewtonUpdates, normalBacktrackingSteps);
+    if (evaluation.finite && evaluation.maximumResidual > residualTolerance)
+    {
+        improve(rescueNewtonUpdates, rescueBacktrackingSteps);
     }
 
-    const float feedback = 4.18f * std::clamp(resonance, 0.0f, 0.995f);
-    const float driveGain = 1.0f + 4.5f * std::clamp(drive, 0.0f, 1.0f);
-    const float driven = input * driveGain;
-
-    float u = MarsEngine::softSaturate(driven - feedback * stateContribution);
-    for (int iteration = 0; iteration < 2; ++iteration)
+    if (!evaluation.finite)
     {
-        const float predictedOutput = feedforward * u + stateContribution;
-        const float feedbackInput = driven - feedback * predictedOutput;
-        const float saturated = MarsEngine::softSaturate(feedbackInput);
-        const float derivative = MarsEngine::softSaturateDerivative(feedbackInput);
-        const float function = u - saturated;
-        const float slope = std::max(0.08f, 1.0f + feedback * feedforward * derivative);
-        u -= function / slope;
+        reset();
+        return 0.0f;
     }
 
-    float stageInput = u;
-    for (auto& poleState : state)
+    // Never publish a state that failed the documented LUT-equation residual
+    // ceiling. The previous committed state/input/cache remain a coherent,
+    // finite one-sample hold; the next sample gets a fresh bounded solve. This
+    // is an emergency guard after both fixed-cost solve passes, not a normal
+    // approximation path.
+    if (evaluation.maximumResidual > residualTolerance)
     {
-        const float v = (stageInput - poleState) * g;
-        const float output = v + poleState;
-        poleState = output + v;
-        stageInput = output;
+        return (previous.back() / twiceThermalVoltage) * (1.0f + k);
     }
 
-    const float compensated = stageInput * (1.0f + 0.72f * resonance)
-                            / (1.0f + 0.52f * drive);
-    return MarsEngine::softSaturate(compensated * (1.0f + 0.55f * drive));
+    stageVoltage = estimate;
+    stageTanh = evaluation.currentTanh;
+    stageTanhValid = true;
+    previousInputVoltage = inputVoltage;
+    previousFeedbackTanh = evaluation.feedbackTanh;
+    cachedFeedbackGain = k;
+    feedbackTanhValid = true;
+
+    constexpr float silenceVoltage = twiceThermalVoltage * 1.0e-4f;
+    if (std::abs(inputVoltage) < 1.0e-12f
+        && std::all_of(stageVoltage.begin(), stageVoltage.end(),
+                       [] (float value) noexcept
+                       {
+                           return std::abs(value) < silenceVoltage;
+                       }))
+    {
+        reset();
+        return 0.0f;
+    }
+
+    // The circuit state is expressed in volts. The reference implementation's
+    // optional DC compensation multiplies by (1 + k), cancelling the ladder's
+    // otherwise severe passband loss as resonance rises. The raw loss is a
+    // genuine ladder property, but at Mars' default resonance it removes about
+    // 6.5 dB from bass fundamentals and sounds more broken than characterful.
+    // Nonlinear resonance and self-oscillation remain; only the static low-band
+    // attenuation is restored before the bounded VCA stage.
+    return (stageVoltage.back() / twiceThermalVoltage) * (1.0f + k);
 }
 
 void MarsEngine::StateVariableFilter::reset() noexcept
@@ -157,17 +389,17 @@ void MarsEngine::StateVariableFilter::reset() noexcept
 }
 
 void MarsEngine::StateVariableFilter::process(float input, float g,
-                                              float resonance, float drive,
+                                              float resonance,
                                               float& low, float& band,
                                               float& high) noexcept
 {
     g = std::clamp(g, 0.00001f, 8.0f);
     resonance = std::clamp(resonance, 0.0f, 0.995f);
-    drive = std::clamp(drive, 0.0f, 1.0f);
 
-    const float driveGain = 1.0f + 3.6f * drive;
-    const float driven = MarsEngine::softSaturate(input * driveGain)
-                       / (0.86f + 0.34f * drive);
+    // This remains a stable TPT state-variable approximation rather than a
+    // component-level SEM clone. Nonlinearity is applied once, at the shared
+    // physical-voltage filter input, before this method is called.
+    const float driven = input;
     const float damping = 2.0f - 1.94f * resonance;
     const float a1 = 1.0f / (1.0f + g * (g + damping));
     const float a2 = g * a1;
@@ -178,10 +410,10 @@ void MarsEngine::StateVariableFilter::process(float input, float g,
     ic1eq = 2.0f * v1 - ic1eq;
     ic2eq = 2.0f * v2 - ic2eq;
 
-    band = MarsEngine::softSaturate(v1 * (1.0f + 0.35f * resonance));
-    low = MarsEngine::softSaturate(v2 * (1.0f + 0.48f * resonance));
+    band = v1;
+    low = v2;
     const float highRaw = driven - damping * v1 - v2;
-    high = MarsEngine::softSaturate(highRaw * (0.92f + 0.22f * resonance));
+    high = highRaw;
 }
 
 MarsEngine::MarsEngine() noexcept
@@ -204,7 +436,7 @@ EngineParameters MarsEngine::sanitise(const EngineParameters& source) noexcept
         p.osc1Wave = OscillatorWave::Saw;
     if (!validWave(p.osc2Wave))
         p.osc2Wave = OscillatorWave::Pulse;
-    if (p.filterModel != FilterModel::Ladder && p.filterModel != FilterModel::Orbit)
+    if (p.filterModel != FilterModel::Ladder && p.filterModel != FilterModel::Sem)
         p.filterModel = FilterModel::Ladder;
     if (p.lfoWave != LfoWaveform::Triangle && p.lfoWave != LfoWaveform::Sine
         && p.lfoWave != LfoWaveform::SampleHold)
@@ -247,13 +479,12 @@ EngineParameters MarsEngine::sanitise(const EngineParameters& source) noexcept
     return p;
 }
 
-void MarsEngine::prepare(double sampleRate, int maxBlockSize)
+void MarsEngine::updateProcessingRate() noexcept
 {
-    (void) maxBlockSize;
-    sampleRate = std::isfinite(sampleRate) ? sampleRate : 48000.0;
-    sampleRate_ = std::clamp(sampleRate, 8000.0, maximumSupportedSampleRate);
-    inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
-    oversampling_ = sampleRate_ <= 96000.0 ? oversampleFactor : 1;
+    // HQ doubles host rates through 48 kHz (88.2/96 kHz internally for the
+    // common 44.1/48 kHz cases), then stays native at higher production rates.
+    oversampling_ = oversamplingEnabled_ && sampleRate_ <= maximumOversampledHostRate
+        ? oversampleFactor : 1;
     oversampledRate_ = static_cast<float>(sampleRate_ * static_cast<double>(oversampling_));
     filterCrossfadeSamples_ = std::max(1, static_cast<int>(std::lround(
         0.003 * static_cast<double>(oversampledRate_))));
@@ -262,11 +493,59 @@ void MarsEngine::prepare(double sampleRate, int maxBlockSize)
     // voice, and fixed state keeps the note-on path allocation-free.
     stealTailCoefficient_ = std::exp(-envelopeRange
         / (0.002f * std::max(oversampledRate_, 1.0f)));
-    dcCoefficient_ = std::exp(-twoPi * 8.0f * inverseSampleRate_);
+}
+
+void MarsEngine::prepare(double sampleRate, int maxBlockSize,
+                         bool oversamplingEnabled)
+{
+    (void) maxBlockSize;
+    sampleRate = std::isfinite(sampleRate) ? sampleRate : 48000.0;
+    sampleRate_ = std::clamp(sampleRate, 8000.0, maximumSupportedSampleRate);
+    inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
+    oversamplingEnabled_ = oversamplingEnabled;
+    oversamplingRequested_ = oversamplingEnabled;
+    updateProcessingRate();
+    // A 1.5 Hz servo still removes accumulated DC while retaining sub-octave
+    // fundamentals on the bottom MIDI octave. The former 8 Hz corner was
+    // already 3 dB down at the sub oscillator's lowest musically useful notes.
+    dcCoefficient_ = std::exp(-twoPi * 1.5f * inverseSampleRate_);
 
     buildVoiceCards();
     prepared_ = true;
     reset();
+}
+
+bool MarsEngine::setOversamplingEnabled(bool enabled) noexcept
+{
+    if (oversamplingRequested_ == enabled)
+        return false;
+
+    oversamplingRequested_ = enabled;
+    return applyPendingOversamplingIfIdle();
+}
+
+bool MarsEngine::applyPendingOversamplingIfIdle() noexcept
+{
+    if (oversamplingEnabled_ == oversamplingRequested_)
+        return false;
+
+    const int quietSamplesRequired = std::max(
+        1, static_cast<int>(std::lround(0.025 * sampleRate_)));
+    if (activeVoiceCount_ != 0 || oversamplingIdleSamples_ < quietSamplesRequired)
+        return false;
+
+    oversamplingEnabled_ = oversamplingRequested_;
+    const int previousFactor = oversampling_;
+    updateProcessingRate();
+    if (oversampling_ == previousFactor)
+        return false;
+
+    // Quality changes are non-automatable and deferred until the engine and
+    // short ensemble tail have been idle for 25 ms. Reinitialising only then
+    // avoids interpreting oscillator, envelope, and nonlinear-filter states at
+    // a different timebase without cutting a held note or producing a click.
+    reset();
+    return true;
 }
 
 void MarsEngine::reset()
@@ -295,12 +574,22 @@ void MarsEngine::reset()
     modWheel_ = 0.0f;
     sustainPedalDown_ = false;
     smoothedParameters_ = targetParameters_;
-    oscillator1MixGain_ = std::sqrt(std::max(0.0f, 1.0f - smoothedParameters_.oscMix));
-    oscillator2MixGain_ = std::sqrt(std::max(0.0f, smoothedParameters_.oscMix));
+    if (smoothedParameters_.osc1Enabled && smoothedParameters_.osc2Enabled)
+    {
+        oscillator1MixGain_ = std::sqrt(std::max(0.0f, 1.0f - smoothedParameters_.oscMix));
+        oscillator2MixGain_ = std::sqrt(std::max(0.0f, smoothedParameters_.oscMix));
+    }
+    else
+    {
+        oscillator1MixGain_ = smoothedParameters_.osc1Enabled ? 1.0f : 0.0f;
+        oscillator2MixGain_ = smoothedParameters_.osc2Enabled ? 1.0f : 0.0f;
+    }
     stealTailLeft_ = 0.0f;
     stealTailRight_ = 0.0f;
     generation_ = 0;
     activeVoiceCount_ = 0;
+    oversamplingIdleSamples_ = std::max(
+        1, static_cast<int>(std::lround(0.025 * sampleRate_)));
     lastPlayedMidi_ = 60.0f;
     hasLastPlayedMidi_ = false;
 }
@@ -442,6 +731,19 @@ float MarsEngine::processAdaaMixer(float value, Voice& voice) noexcept
     return output;
 }
 
+float MarsEngine::filterInputVoltage(float value, float drive) noexcept
+{
+    value = std::clamp(finiteOr(value, 0.0f), -4.0f, 4.0f);
+    drive = std::clamp(finiteOr(drive, 0.0f), 0.0f, 1.0f);
+
+    // The D'Angelo-Valimaki circuit equations operate in volts and use a
+    // transistor thermal voltage of 26 mV. This maps the panel's 0..1 drive
+    // range to roughly -5 dB .. +13 dB around 2*VT, once and only once at the
+    // filter input. Mixer and VCA transfer functions do not follow this knob.
+    const float levelInThermalPairs = 0.55f * std::exp2(3.0f * drive);
+    return value * twiceThermalVoltage * levelInThermalPairs;
+}
+
 int MarsEngine::layersForMode(const EngineParameters& parameters) const noexcept
 {
     if (parameters.voiceMode == VoiceMode::Unison)
@@ -451,7 +753,7 @@ int MarsEngine::layersForMode(const EngineParameters& parameters) const noexcept
     return 1;
 }
 
-int MarsEngine::orbitIntervalForLayer(int layer) const noexcept
+int MarsEngine::fifthIntervalForLayer(int layer) const noexcept
 {
     return layer == 0 ? 0 : 7;
 }
@@ -617,7 +919,7 @@ void MarsEngine::noteOn(int midiNote, float velocity)
         if (slot < 0)
             break;
         const int interval = parameters.voiceMode == VoiceMode::Fifth
-            ? orbitIntervalForLayer(layer) : 0;
+            ? fifthIntervalForLayer(layer) : 0;
         const int soundingMidi = std::clamp(midiNote + interval, 0, 127);
         initialiseVoice(voices_[static_cast<std::size_t>(slot)], slot, midiNote,
                         soundingMidi, layer, layerCount, velocity, parameters);
@@ -839,7 +1141,7 @@ void MarsEngine::updateVoiceControl(Voice& voice,
                                                 + lfoOctaves + componentOctaves),
                                     18.0f, maximumCutoff);
     const float stateTarget = std::tan(pi * cutoff / oversampledRate_);
-    const float ladderTarget = stateTarget / (1.0f + stateTarget);
+    const float ladderTarget = stateTarget;
 
     const float panMotion = parameters.voiceMode == VoiceMode::Fifth
         ? 0.16f * std::sin(twoPi * (voice.driftPhase + 0.19f * static_cast<float>(voice.layer)))
@@ -872,6 +1174,17 @@ void MarsEngine::updateVoiceControl(Voice& voice,
     voice.panRightStep = (targetRight - voice.panRight) / period;
     voice.resonance = std::clamp(parameters.resonance
                                  + 0.045f * ageScale * card.resonanceError, 0.0f, 0.995f);
+    // D'Angelo-Valimaki resonance compensation is constant between control
+    // updates. Hoisting its square roots out of every oversampled ladder step
+    // materially reduces the 32-voice worst-case cost without changing the
+    // circuit equations.
+    constexpr float cosPiOverFour = 0.7071067811865475f;
+    voice.ladderFeedbackGain = 4.0f * voice.resonance;
+    const float fourthRootK = std::sqrt(std::sqrt(voice.ladderFeedbackGain));
+    const float alphaSquared = 1.0f + std::sqrt(voice.ladderFeedbackGain)
+                             - 2.0f * fourthRootK * cosPiOverFour;
+    voice.ladderFrequencyScale = 1.0f
+                               / std::sqrt(std::max(alphaSquared, 1.0e-8f));
     voice.drive = std::clamp(parameters.filterDrive
                              * (1.0f + 0.16f * ageScale * card.driveError), 0.0f, 1.0f);
 
@@ -893,14 +1206,15 @@ void MarsEngine::updateVoiceControl(Voice& voice,
 
 float MarsEngine::renderOscillator(Oscillator& oscillator, OscillatorWave waveform,
                                    float increment, float pulseWidth,
-                                   float phaseOffset, bool& wrapped) noexcept
+                                   bool& wrapped) noexcept
 {
     increment = std::clamp(increment, 0.0000001f, 0.45f);
     pulseWidth = std::clamp(pulseWidth, 0.05f, 0.95f);
-    const float phase = wrapPhase(oscillator.phase + phaseOffset);
+    const float phase = oscillator.phase;
     float output = 0.0f;
     if (waveform == OscillatorWave::Pulse)
     {
+        oscillator.sawContourInitialised = false;
         const float shiftedPulsePhase = wrapPhase(phase - pulseWidth);
         output = (phase < pulseWidth ? 1.0f : -1.0f)
                + polyBlep(phase, increment)
@@ -909,6 +1223,7 @@ float MarsEngine::renderOscillator(Oscillator& oscillator, OscillatorWave wavefo
     }
     else if (waveform == OscillatorWave::Triangle)
     {
+        oscillator.sawContourInitialised = false;
         // A one-pole leaky integrator of the BLEP-corrected square is the
         // standard stable polyBLEP triangle construction. Unlike an unbounded
         // accumulator it cannot collect floating-point DC error over long pads.
@@ -925,6 +1240,63 @@ float MarsEngine::renderOscillator(Oscillator& oscillator, OscillatorWave wavefo
     {
         output = 2.0f * phase - 1.0f - polyBlep(phase, increment);
         oscillator.triangle = 0.25f * triangleAtPhase(phase);
+
+        // Frequency-dependent first-order post-equalisation fitted by
+        // Pekonen et al. to recorded Minimoog Voyager sawtooth spectra:
+        // J. Pekonen et al., "Discrete-Time Modelling of the Moog Sawtooth
+        // Oscillator Waveform," EURASIP JASP, 2011, Article 785103.
+        // Their coefficients below are for an ideally bandlimited saw source;
+        // Mars applies the same stable contour to its polyBLEP saw while making
+        // no measured-hardware claim for pulse or triangle.
+        const float oscillatorFrequency = increment * oversampledRate_;
+        const float fittedFrequency = std::clamp(oscillatorFrequency, 86.0f, 8300.0f);
+        const float frequencySquared = fittedFrequency * fittedFrequency;
+        const float referenceGain = 0.5400f + 4.473e-5f * fittedFrequency;
+        const float referenceZero = 0.3894f - 3.102e-4f * fittedFrequency
+                                  + 2.417e-8f * frequencySquared;
+        const float referencePole = 0.6398f - 2.417e-4f * fittedFrequency
+                                  + 1.335e-8f * frequencySquared;
+
+        // The identified coefficients use a 44.1 kHz discrete-time base.
+        // Bilinear-remap their pole and zero to the current internal rate, then
+        // restore the fitted DC gain. Without this step, enabling oversampling
+        // moves the contour's analogue corner and changes the same note's tone.
+        constexpr float referenceRate = 44100.0f;
+        const float rateRatio = referenceRate / oversampledRate_;
+        const auto remapCoefficient = [rateRatio] (float coefficient) noexcept
+        {
+            return ((1.0f + rateRatio) * coefficient + (1.0f - rateRatio))
+                 / ((1.0f - rateRatio) * coefficient + (1.0f + rateRatio));
+        };
+        const float zero = remapCoefficient(referenceZero);
+        const float pole = remapCoefficient(referencePole);
+        const float referenceDcGain = referenceGain * (1.0f - referenceZero)
+                                    / (1.0f - referencePole);
+        const float gain = referenceDcGain * (1.0f - pole) / (1.0f - zero);
+
+        if (!oscillator.sawContourInitialised)
+        {
+            oscillator.previousSawInput = output;
+            oscillator.previousSawOutput = output;
+            oscillator.sawContourInitialised = true;
+        }
+        else
+        {
+            const float rawSaw = output;
+            const float contoured = gain
+                                  * (rawSaw - zero * oscillator.previousSawInput)
+                                  + pole * oscillator.previousSawOutput;
+            oscillator.previousSawInput = rawSaw;
+            oscillator.previousSawOutput = std::isfinite(contoured) ? contoured : rawSaw;
+
+            // Pekonen et al.'s fitted coefficients begin at about 86 Hz. Fade
+            // back to the neutral antialiased saw over the octave below that
+            // boundary instead of freezing an out-of-range analogue contour
+            // across every deep note. This keeps bass pitch and weight clean
+            // while preserving the measured character throughout its domain.
+            const float contourBlend = smoothStep((oscillatorFrequency - 43.0f) / 43.0f);
+            output = rawSaw + contourBlend * (oscillator.previousSawOutput - rawSaw);
+        }
     }
 
     oscillator.phase += increment;
@@ -974,26 +1346,41 @@ float MarsEngine::renderVoiceOversample(Voice& voice,
                                         0.05f, 0.95f);
 
     bool oscillator2Wrapped = false;
-    const float oscillator2 = renderOscillator(voice.oscillator2, parameters.osc2Wave,
-                                               voice.oscillator2Increment, pulseWidth,
-                                               0.0f, oscillator2Wrapped);
+    float oscillator2 = renderOscillator(voice.oscillator2, parameters.osc2Wave,
+                                         voice.oscillator2Increment, pulseWidth,
+                                         oscillator2Wrapped);
     (void) oscillator2Wrapped;
-    const float phaseModulation = 0.068f * parameters.crossMod * oscillator2;
+
+    // Cross-mod changes VCO I's instantaneous frequency while VCO II keeps
+    // running independently of its audio mixer gate. The lower bound prevents
+    // phase reversal and the effective increment is also the value seen by the
+    // BLEP event correction.
+    // A variable-width pulse has mean 2*PW-1. Keep that physical DC in the
+    // audio mixer/filter path, but remove it from the exponential-frequency
+    // modulation source so PWM changes timbre rather than average VCO I pitch.
+    const float modulationOscillator = parameters.osc2Wave == OscillatorWave::Pulse
+        ? oscillator2 - (2.0f * pulseWidth - 1.0f)
+        : oscillator2;
+    const float frequencyModulation = std::clamp(
+        1.0f + 0.72f * parameters.crossMod * modulationOscillator, 0.20f, 1.80f);
+    const float oscillator1Increment = voice.oscillator1Increment
+                                     * frequencyModulation;
     bool oscillator1Wrapped = false;
     float oscillator1 = renderOscillator(voice.oscillator1, parameters.osc1Wave,
-                                         voice.oscillator1Increment, pulseWidth,
-                                         phaseModulation, oscillator1Wrapped);
+                                         oscillator1Increment, pulseWidth,
+                                         oscillator1Wrapped);
 
     (void) oscillator1Wrapped;
 
     bool subWrapped = false;
     const float sub = renderOscillator(voice.subOscillator, OscillatorWave::Pulse,
-                                       voice.subIncrement, 0.5f, 0.0f, subWrapped);
+                                       voice.subIncrement, 0.5f, subWrapped);
     (void) subWrapped;
 
     const float shaping = 1.05f + 0.28f * parameters.drift;
     const float normalisation = std::max(0.2f, softSaturate(shaping));
     oscillator1 = softSaturate(oscillator1 * shaping) / normalisation;
+    oscillator2 = softSaturate(oscillator2 * shaping) / normalisation;
 
     const float whiteNoise = nextNoise(voice);
     const float noiseCoefficient = std::clamp(twoPi * 5200.0f / oversampledRate_, 0.001f, 0.42f);
@@ -1003,14 +1390,12 @@ float MarsEngine::renderVoiceOversample(Voice& voice,
                        + oscillator2MixGain_ * oscillator2
                        + parameters.subLevel * 0.72f * sub
                        + parameters.noiseLevel * filteredNoise;
-    const float mixerGain = 0.62f + 1.9f * voice.drive;
-    const float mixed = processAdaaMixer(rawMix * mixerGain, voice)
-                      / (0.92f + 0.46f * voice.drive);
+    const float mixed = processAdaaMixer(rawMix, voice);
 
     if (!voice.filterModelInitialised)
     {
         voice.activeFilterModel = parameters.filterModel;
-        voice.filterBlend = parameters.filterModel == FilterModel::Orbit ? 1.0f : 0.0f;
+        voice.filterBlend = parameters.filterModel == FilterModel::Sem ? 1.0f : 0.0f;
         voice.filterBlendStep = 0.0f;
         voice.filterCrossfadeRemaining = 0;
         voice.filterModelInitialised = true;
@@ -1031,51 +1416,48 @@ float MarsEngine::renderVoiceOversample(Voice& voice,
 
         voice.activeFilterModel = parameters.filterModel;
         voice.filterCrossfadeRemaining = filterCrossfadeSamples_;
-        const float targetBlend = parameters.filterModel == FilterModel::Orbit ? 1.0f : 0.0f;
+        const float targetBlend = parameters.filterModel == FilterModel::Sem ? 1.0f : 0.0f;
         voice.filterBlendStep = (targetBlend - voice.filterBlend)
                               / static_cast<float>(filterCrossfadeSamples_);
     }
 
     float filtered = 0.0f;
-    const auto processLadder = [&voice, mixed]() noexcept
+    const float inputVoltage = filterInputVoltage(mixed, voice.drive);
+    const auto processLadder = [&voice, inputVoltage]() noexcept
     {
-        return voice.ladder.process(mixed, voice.ladderGain,
-                                    voice.resonance, voice.drive);
+        return voice.ladder.process(inputVoltage, voice.ladderGain,
+                                    voice.ladderFeedbackGain,
+                                    voice.ladderFrequencyScale);
     };
-    const auto processOrbit = [&voice, &parameters, mixed]() noexcept
+    const auto processSem = [&voice, &parameters, inputVoltage]() noexcept
     {
         float low = 0.0f;
         float band = 0.0f;
         float high = 0.0f;
-        voice.stateVariable.process(mixed, voice.stateGain, voice.resonance,
-                                    voice.drive, low, band, high);
+        const float semInput = softSaturate(inputVoltage / twiceThermalVoltage);
+        voice.stateVariable.process(semInput, voice.stateGain, voice.resonance,
+                                    low, band, high);
 
-        // ORBIT traverses LP -> BP -> HP in two equal-power crossfades. The
-        // modest gain trims equalise perceived loudness without flattening the
-        // deliberately different responses at the three anchor positions.
+        // The original SEM's 50 kOhm mode pot is a linear crossfade between
+        // simultaneous low- and high-pass outputs. Its centre is therefore a
+        // half-level notch sum, 0.5 * (low + high), rather than band-pass.
+        // The filter core remains SEM-inspired rather than component-level.
+        (void) band;
         const float shape = std::clamp(parameters.filterShape, 0.0f, 1.0f);
-        if (shape < 0.5f)
-        {
-            const float blend = shape * 2.0f;
-            return std::cos(0.5f * pi * blend) * low
-                 + std::sin(0.5f * pi * blend) * (1.22f * band);
-        }
-        const float blend = (shape - 0.5f) * 2.0f;
-        return std::cos(0.5f * pi * blend) * (1.22f * band)
-             + std::sin(0.5f * pi * blend) * (0.92f * high);
+        return (1.0f - shape) * low + shape * high;
     };
 
     if (voice.filterCrossfadeRemaining > 0)
     {
         const float ladderOutput = processLadder();
-        const float orbitOutput = processOrbit();
+        const float semOutput = processSem();
         filtered = (1.0f - voice.filterBlend) * ladderOutput
-                 + voice.filterBlend * orbitOutput;
+                 + voice.filterBlend * semOutput;
 
         --voice.filterCrossfadeRemaining;
         if (voice.filterCrossfadeRemaining == 0)
         {
-            voice.filterBlend = voice.activeFilterModel == FilterModel::Orbit ? 1.0f : 0.0f;
+            voice.filterBlend = voice.activeFilterModel == FilterModel::Sem ? 1.0f : 0.0f;
             voice.filterBlendStep = 0.0f;
         }
         else
@@ -1087,13 +1469,12 @@ float MarsEngine::renderVoiceOversample(Voice& voice,
     else if (voice.activeFilterModel == FilterModel::Ladder)
         filtered = processLadder();
     else
-        filtered = processOrbit();
+        filtered = processSem();
 
     const float velocityCurve = std::sqrt(voice.velocity);
     const float velocityGain = 1.0f + parameters.velocityAmount * (velocityCurve - 1.0f);
     const float vcaInput = filtered * ampEnvelope * velocityGain * voice.groupGain;
-    const float output = softSaturate(vcaInput * (1.0f + 0.48f * voice.drive))
-                       / (1.0f + 0.18f * voice.drive);
+    const float output = softSaturate(vcaInput);
     voice.lastOutput = output;
     ++voice.ageSamples;
 
@@ -1185,6 +1566,12 @@ float MarsEngine::processDcBlocker(float input, float& previousInput,
                                    float& previousOutput) const noexcept
 {
     const float output = input - previousInput + dcCoefficient_ * previousOutput;
+    if (std::abs(input) < 1.0e-10f && std::abs(output) < 1.0e-4f)
+    {
+        previousInput = 0.0f;
+        previousOutput = 0.0f;
+        return 0.0f;
+    }
     previousInput = input;
     previousOutput = output;
     return output;
@@ -1197,10 +1584,14 @@ void MarsEngine::process(float* left, float* right, int numSamples)
     if (!prepared_)
         prepare(sampleRate_, numSamples);
 
+    applyPendingOversamplingIfIdle();
+
     const EngineParameters targets = targetParameters_;
     smoothedParameters_.voiceMode = targets.voiceMode;
     smoothedParameters_.osc1Wave = targets.osc1Wave;
     smoothedParameters_.osc2Wave = targets.osc2Wave;
+    smoothedParameters_.osc1Enabled = targets.osc1Enabled;
+    smoothedParameters_.osc2Enabled = targets.osc2Enabled;
     smoothedParameters_.filterModel = targets.filterModel;
     smoothedParameters_.lfoWave = targets.lfoWave;
     smoothedParameters_.unisonVoices = targets.unisonVoices;
@@ -1210,6 +1601,7 @@ void MarsEngine::process(float* left, float* right, int numSamples)
 
     const float smoothing = 1.0f - std::exp(-inverseSampleRate_ / 0.014f);
     const float performanceSmoothing = 1.0f - std::exp(-inverseSampleRate_ / 0.005f);
+    const float mixerGateSmoothing = 1.0f - std::exp(-inverseSampleRate_ / 0.004f);
     for (int sample = 0; sample < numSamples; ++sample)
     {
         const auto smooth = [smoothing](float& current, float target)
@@ -1249,10 +1641,32 @@ void MarsEngine::process(float* left, float* right, int numSamples)
         smooth(smoothedParameters_.outputGain, targets.outputGain);
         pitchBend_ += performanceSmoothing * (pitchBendTarget_ - pitchBend_);
         modWheel_ += performanceSmoothing * (modWheelTarget_ - modWheel_);
-        // One pair of square roots per host sample provides a true equal-power
-        // oscillator law without repeating transcendental work per voice.
-        oscillator1MixGain_ = std::sqrt(std::max(0.0f, 1.0f - smoothedParameters_.oscMix));
-        oscillator2MixGain_ = std::sqrt(std::max(0.0f, smoothedParameters_.oscMix));
+        // Balance is equal-power only while both mixer inputs are enabled.
+        // A lone VCO is unity-gain at every Balance setting, matching a
+        // hardware mixer switch. The VCOs themselves keep advancing and the
+        // roughly 4 ms gain transition makes host automation click-resistant.
+        float oscillator1TargetGain = 0.0f;
+        float oscillator2TargetGain = 0.0f;
+        if (smoothedParameters_.osc1Enabled && smoothedParameters_.osc2Enabled)
+        {
+            oscillator1TargetGain = std::sqrt(
+                std::max(0.0f, 1.0f - smoothedParameters_.oscMix));
+            oscillator2TargetGain = std::sqrt(
+                std::max(0.0f, smoothedParameters_.oscMix));
+        }
+        else
+        {
+            oscillator1TargetGain = smoothedParameters_.osc1Enabled ? 1.0f : 0.0f;
+            oscillator2TargetGain = smoothedParameters_.osc2Enabled ? 1.0f : 0.0f;
+        }
+        oscillator1MixGain_ += mixerGateSmoothing
+                             * (oscillator1TargetGain - oscillator1MixGain_);
+        oscillator2MixGain_ += mixerGateSmoothing
+                             * (oscillator2TargetGain - oscillator2MixGain_);
+        if (std::abs(oscillator1MixGain_ - oscillator1TargetGain) < 1.0e-5f)
+            oscillator1MixGain_ = oscillator1TargetGain;
+        if (std::abs(oscillator2MixGain_ - oscillator2TargetGain) < 1.0e-5f)
+            oscillator2MixGain_ = oscillator2TargetGain;
 
         const float lfoValue = nextLfoValue(smoothedParameters_);
         float dryLeft = 0.0f;
@@ -1294,9 +1708,9 @@ void MarsEngine::process(float* left, float* right, int numSamples)
         }
         else
         {
-            // Above 96 kHz the host rate is already high enough for the
-            // nonlinear island; running exactly one internal step preserves
-            // pitch and envelope timing without needless CPU work.
+            // Above 48 kHz the host rate is already in the HQ nonlinear-island
+            // range; running exactly one internal step preserves pitch and
+            // envelope timing without needless CPU work.
             for (auto& voice : voices_)
             {
                 if (!voice.active)
@@ -1333,6 +1747,12 @@ void MarsEngine::process(float* left, float* right, int numSamples)
     }
 
     updateActiveVoiceCount();
+    if (activeVoiceCount_ == 0)
+        oversamplingIdleSamples_ = std::min(
+            oversamplingIdleSamples_ + numSamples,
+            std::max(1, static_cast<int>(std::lround(0.025 * sampleRate_))));
+    else
+        oversamplingIdleSamples_ = 0;
 }
 
 int MarsEngine::getActiveVoiceCount() const noexcept

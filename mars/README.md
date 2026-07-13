@@ -1,22 +1,27 @@
 # Mars
 
 Mars is an original virtual-analog polyphonic synthesizer built around a direct,
-one-panel workflow. It combines broad dual-oscillator tone, calibrated
-voice-to-voice movement, two complementary nonlinear filters, and a global
-stereo ensemble without reproducing a particular vintage product or circuit.
+one-panel workflow. It combines independently switchable dual-VCO tone,
+controlled voice-to-voice movement, a published nonlinear Moog-ladder model,
+an SEM-inspired multimode filter, and a global stereo ensemble. The individual
+models have named research and hardware references; Mars does not claim to be a
+complete clone of any one vintage instrument.
 
 There is **no arpeggiator** and **no modulation matrix**. Every sound parameter
 is exposed as a front-panel knob, slider, or switch and as a host-automatable
-parameter.
+parameter. The separate HQ oversampling switch is persisted with the plug-in
+state but intentionally cannot be automated.
 
 ![Mars Standalone instrument interface](Docs/screenshots/mars-standalone.png)
 
 The screenshot is the actual Standalone application built from this source;
-the VST3 and Audio Unit use the same resizable JUCE editor. Its generated panel
-texture is stored at
-[`Assets/mars-panel-texture.png`](Assets/mars-panel-texture.png) and compiled
-into the plug-in. Labels and interactive controls remain native JUCE components
-for crisp resizing, automation, keyboard operation, and accessibility.
+the VST3 and Audio Unit use the same resizable JUCE editor. Panel materials,
+hardware pots, faders, switches, calibration marks, and shadows are drawn as
+resolution-independent JUCE graphics, so the background and controls scale
+together. Interactive controls remain native components for automation,
+keyboard operation, and accessibility. The graphite-and-ivory chassis, orange
+signal markings, cyan controls, and restrained red accents nod to early-1980s
+Japanese polysynths without reproducing a branded hardware panel.
 
 > **Just want to try it?** The scheduled Nightly workflow publishes the latest
 > successful universal build from `main` to the rolling
@@ -26,30 +31,47 @@ for crisp resizing, automation, keyboard operation, and accessibility.
 
 ## Sound architecture
 
-- **Two event-corrected oscillators per render slot:** VCO I and VCO II provide
-  saw, pulse, and stable leaky-integrated triangle waveforms. Standard polyBLEP
-  correction is applied to saw resets and both pulse edges. VCO II has octave,
-  semitone, and fine tuning; the mixer also includes pulse-width control, a
-  pulse sub oscillator one octave below VCO I, noise, and bounded phase
-  modulation from VCO II to VCO I.
-- **Antialiased nonlinear mixer:** equal-power oscillator balance feeds a
-  driven soft saturator implemented with first-order ADAA. This reduces
-  waveshaper aliasing without a neural runtime or a full circuit solve.
-- **Two filter models:** `Ladder` is a bounded nonlinear four-stage/four-pole
-  ladder-inspired filter with a two-iteration delay-free feedback solve and
-  finite fallback. `Orbit` is a two-integrator TPT state-variable filter;
-  `Filter shape` sweeps low-pass through band-pass to high-pass. A 3 ms
+- **Two analog-conditioned, event-corrected oscillators per render slot:** VCO I
+  and VCO II provide saw, pulse, and stable leaky-integrated triangle waveforms.
+  Standard polyBLEP correction is applied to saw resets and both pulse edges;
+  the saw then receives the frequency-dependent first-order contour published
+  for measured Minimoog Voyager waveforms. Its 44.1 kHz pole and zero are
+  bilinear-remapped to the active internal rate, while notes below the measured
+  86 Hz boundary blend toward the neutral antialiased saw. Both VCO paths use
+  the same bounded output-stage shaping. VCO II has octave, semitone, and fine
+  tuning, while the mixer adds pulse width, a pulse sub oscillator one octave
+  below VCO I, noise, and bounded VCO II-to-I cross modulation.
+- **Independent VCO mixer switches:** each VCO can be removed from the audible
+  mix without stopping its phase. VCO II therefore remains available to cross
+  modulation while its audio switch is Off, and sub/noise remain independent.
+  A lone enabled VCO runs at unity regardless of `Balance`; changes use a short
+  gain ramp rather than a hard sample edge.
+- **Antialiased nonlinear mixer:** the active oscillator feeds, sub, and noise
+  pass through a fixed first-order ADAA soft saturator. This reduces waveshaper
+  aliasing without coupling the filter's `Drive` control into multiple stages.
+- **Two filter models:** `Ladder` uses a bounded, residual-decreasing damped
+  Newton solution of the original implicit bilinear four-stage transistor-
+  ladder equations described by D'Angelo and Valimaki. A differential-pair
+  nonlinearity remains inside every stage; feedback has no artificial sample
+  delay, no state above the documented equation-residual ceiling is committed,
+  the full 20 kHz control range remains stable, and `(1 + k)` DC-gain
+  compensation restores the severe low-band loss that otherwise accompanies
+  rising resonance. `SEM` is a
+  nonlinear, two-integrator TPT state-variable design inspired by the Oberheim
+  topology; `Filter shape` sweeps low-pass through notch to high-pass. A 3 ms
   transition runs both models to prevent switching clicks; at steady state the
-  voice executes only the selected algorithm, keeping nonlinear work bounded
-  as polyphony grows.
-- **Rate-aware oversampling:** at host rates up to and including 96 kHz, the
-  complete per-slot voice paths run at 2x, are summed, and return through one
-  stereo 15-tap halfband FIR. Above 96 kHz they run at 1x. The global ensemble
-  remains at host rate.
-- **Deterministic voice cards:** 32 render slots carry fixed calibration offsets
-  for tuning, cutoff, resonance, drive, envelope time, pan, pulse skew, and
-  slow per-card drift. The same state and MIDI input render deterministically;
-  there is no simulated-parts-wear control.
+  voice executes only the selected algorithm.
+- **Configurable rate-aware oversampling:** HQ is persisted, non-automatable,
+  and On by default. At host rates through 48 kHz, On runs complete per-slot
+  voice paths at 2x and returns their stereo sum through a 15-tap halfband FIR;
+  above 48 kHz the host is already in the target high-rate range, so it runs
+  natively. Off always runs natively. A requested change waits until the engine
+  is idle before its processing rate changes, so held notes are never reset.
+  The global ensemble remains at host rate.
+- **Deterministic voice cards:** 32 render slots carry controlled
+  component-like offsets for tuning, cutoff, resonance, drive, envelope time,
+  pan, pulse skew, and slow per-card drift. The same state and MIDI input
+  render deterministically; there is no simulated-parts-wear control.
 - **Dedicated modulation:** separate filter and amplifier ADSRs sit beside a
   triangle, sine, or sample-and-hold LFO with direct pitch, filter, and PWM
   depths. The mod wheel deepens those fixed LFO routes; it does not open a
@@ -59,10 +81,15 @@ for crisp resizing, automation, keyboard operation, and accessibility.
   ±2-semitone pitch bend, MIDI CC 1 mod wheel, and MIDI CC 64 sustain are
   implemented. CC 123 follows note-off and sustain-pedal semantics; CC 120 and
   the panel Panic button mute immediately.
+- **Full-range on-screen keyboard:** all MIDI notes 0–127 are reachable with
+  scroll controls; key width follows the editor size so the keyboard does not
+  terminate in an unused blank panel. The computer-key map is printed on the
+  panel.
 - **Global stereo ensemble:** a cross-fed, low-pass-shaped modulated delay has
   direct `Ensemble mix` and `Ensemble rate` controls. It is one global
   algorithm rather than a selectable family, with no additional hidden spatial
-  stages.
+  stages. A 1.5 Hz output servo removes accumulated DC without thinning deep
+  notes and sub-octave fundamentals.
 
 The modeling rationale, primary papers, neural-modeling decision, and precise
 claims boundary are in
@@ -84,22 +111,28 @@ then the oldest held group. Retriggers and steals preserve a fixed 2 ms fading
 tail to avoid a hard sample discontinuity. `Unison voices` is active only in
 `Unison` mode.
 
-## Exact 40-control contract
+## Exact 43-parameter contract
 
 | Section | Front-panel controls (parameter IDs) |
 | --- | --- |
-| VCO I | Waveform (`osc1Wave`), octave (`osc1Octave`) |
-| VCO II | Waveform (`osc2Wave`), octave (`osc2Octave`), tune (`osc2Tune`), fine tune (`osc2Fine`) |
+| VCO I | Mixer feed On/Off (`osc1Enabled`), waveform (`osc1Wave`), octave (`osc1Octave`) |
+| VCO II | Mixer feed On/Off (`osc2Enabled`), waveform (`osc2Wave`), octave (`osc2Octave`), tune (`osc2Tune`), fine tune (`osc2Fine`) |
 | Mixer | Oscillator balance (`oscMix`), pulse width (`pulseWidth`), sub level (`subLevel`), noise level (`noiseLevel`), cross modulation (`crossMod`) |
-| Filter | Model: `Ladder` / `Orbit` (`filterModel`), cutoff (`cutoff`), resonance (`resonance`), drive (`filterDrive`), Orbit shape (`filterShape`), envelope amount (`filterEnvAmount`), key tracking (`keyTrack`) |
+| Filter | Model: `Ladder` / `SEM` (`filterModel`), cutoff (`cutoff`), resonance (`resonance`), drive (`filterDrive`), SEM shape (`filterShape`), envelope amount (`filterEnvAmount`), key tracking (`keyTrack`) |
 | Filter envelope | Attack (`fAttack`), decay (`fDecay`), sustain (`fSustain`), release (`fRelease`) |
 | Amplifier envelope | Attack (`aAttack`), decay (`aDecay`), sustain (`aSustain`), release (`aRelease`) |
 | LFO | Waveform: triangle / sine / sample & hold (`lfoWave`), rate (`lfoRate`), pitch depth (`lfoPitch`), filter depth (`lfoFilter`), PWM depth (`lfoPwm`) |
 | Voice | Mode: `Poly` / `Unison` / `Fifth` (`voiceMode`), unison voices (`unisonVoices`), voice-card drift (`drift`), stereo spread (`spread`), glide time (`glide`), velocity response (`velocity`) |
 | Output | Ensemble mix (`chorusMix`), ensemble rate (`chorusRate`), output level (`output`) |
+| Quality | HQ oversampling (`hqOversampling`): persisted, non-automatable, default On |
 
-These are the complete host parameter IDs for version 1. There are no other
-sound controls hidden behind a matrix or alternate panel.
+These are the complete host parameter IDs for version 1.2: 42 automatable sound
+controls plus one persisted quality setting. The original 40 IDs retain their
+order and version hint; `osc1Enabled` and `osc2Enabled` are appended as
+version-2 automation parameters, and non-automatable `hqOversampling` is
+appended with version hint 3. States that predate any appended parameter migrate
+the missing VCO switches and HQ oversampling to On. There are no other sound
+controls hidden behind a matrix or alternate panel.
 
 ## Build products
 
@@ -181,10 +214,15 @@ ctest --test-dir build-dsp --output-on-failure
 ```
 
 The DSP tests cover rates through 384 kHz, finite output, release completion,
-long-note triangle stability, deterministic rendering, distinct oscillator and
-filter responses, click-resistant steals and model changes, meaningful glide
-and modulation, voice-mode allocation, and a CPU regression guardrail. Plug-in
-builds additionally test the parameter, state, MIDI, and editor contract.
+deep-note and long-triangle stability, deterministic rendering, distinct
+oscillator and filter responses, the Ladder's full cutoff range, bass-gain
+compensation, and implicit-equation residual/state error against an independent
+double-precision reference, an adversarial ladder control-jump regression, VCO
+mixer isolation and clickless switching, cross modulation with VCO II's audio
+feed disabled, deferred HQ mode changes,
+meaningful glide and modulation, voice-mode allocation, and a CPU regression
+guardrail. Plug-in builds additionally test the 43-parameter, persistence,
+migration, MIDI, and editor contracts.
 
 ## Install and validate locally
 
@@ -240,7 +278,6 @@ distribution artifact.
 ## Project layout
 
 ```text
-Assets/                  Bundled generated panel artwork
 Docs/                    Real interface screenshots, research, and modeling decisions
 Source/DSP/              JUCE-free synthesis engine
 Source/PluginProcessor.* MIDI, automation, state, and engine bridge

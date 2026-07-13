@@ -1,9 +1,12 @@
 # Mars sound-design recipes
 
 Mars state is stored by the host. These original recipes are starting points
-for the exact version-1 control set; percentages are approximate and are meant
-to be adjusted by ear. Controls not listed in a recipe remain at their
-version-1 defaults; see the [complete 40-control contract](../README.md#exact-40-control-contract).
+for the exact version-1.2 parameter set; percentages are approximate and are
+meant to be adjusted by ear. Parameters not listed in a recipe remain at their
+version-1.2 defaults; see the [complete 43-parameter contract](../README.md#exact-43-parameter-contract).
+Both VCO mixer switches and HQ oversampling are On unless a recipe says
+otherwise. HQ is a persisted quality setting, not part of the sound-design
+control count, and changes take effect after the engine becomes idle.
 
 ## Red Planet Brass
 
@@ -20,7 +23,7 @@ version-1 defaults; see the [complete 40-control contract](../README.md#exact-40
 
 - VCO I `Pulse`, VCO II `Saw`, VCO II fine -8 ct; pulse width 42%, oscillator
   balance 44%, noise 3%.
-- `Orbit`; shape 18% (mostly low-pass), cutoff 2.6 kHz, resonance 32%, drive
+- `SEM`; shape 18% (mostly low-pass), cutoff 2.6 kHz, resonance 32%, drive
   16%, filter envelope amount +24%, key tracking 48%.
 - Filter ADSR 420 ms / 1.8 s / 55% / 2.2 s; amplifier ADSR 680 ms / 1.5 s / 82%
   / 3.0 s.
@@ -42,8 +45,8 @@ version-1 defaults; see the [complete 40-control contract](../README.md#exact-40
 
 - VCO I `Triangle`; VCO II `Pulse`, octave +1, fine -11 ct; oscillator balance
   58%, pulse width 56%, noise 5%.
-- `Orbit`; shape 58% (band-pass side of centre), cutoff 4.2 kHz, resonance 44%,
-  drive 18%, filter envelope amount -18%, key tracking 40%.
+- `SEM`; shape 58% (notch-to-high-pass side of centre), cutoff 4.2 kHz,
+  resonance 44%, drive 18%, filter envelope amount -18%, key tracking 40%.
 - Filter ADSR 1.4 s / 3.1 s / 66% / 4.5 s; amplifier ADSR 1.8 s / 2.4 s / 86%
   / 5.0 s.
 - Triangle LFO at 0.11 Hz, pitch depth 3 ct, filter depth 0.12 oct, PWM depth
@@ -54,7 +57,7 @@ version-1 defaults; see the [complete 40-control contract](../README.md#exact-40
 
 - `Fifth` voice mode; VCO I `Saw`, VCO II `Triangle`, fine +5 ct; oscillator
   balance 43%, cross modulation 8%, sub level 8%.
-- `Orbit`; shape 10%, cutoff 3.2 kHz, resonance 26%, drive 24%, filter envelope
+- `SEM`; shape 10%, cutoff 3.2 kHz, resonance 26%, drive 24%, filter envelope
   amount +38%, key tracking 65%.
 - Filter ADSR 18 ms / 720 ms / 28% / 900 ms; amplifier ADSR 10 ms / 620 ms /
   74% / 1.1 s.
@@ -75,7 +78,7 @@ version-1 defaults; see the [complete 40-control contract](../README.md#exact-40
 
 - VCO I `Pulse`, VCO II `Pulse`, VCO II tune +7, fine -6 ct; pulse width 36%,
   oscillator balance 52%, cross modulation 16%.
-- `Orbit`; shape 48% (near band-pass), cutoff 2.1 kHz, resonance 52%, drive
+- `SEM`; shape 48% (near notch), cutoff 2.1 kHz, resonance 52%, drive
   28%, filter envelope amount +22%, key tracking 35%.
 - Sample & hold LFO at 2.7 Hz, filter depth 0.42 oct, PWM depth 20%, pitch depth
   4 ct.
@@ -86,7 +89,7 @@ version-1 defaults; see the [complete 40-control contract](../README.md#exact-40
 
 - VCO I `Triangle`, octave 0; VCO II `Triangle`, octave 0, tune +12, fine +2
   ct; oscillator balance 50%, noise 1%, cross modulation 2%.
-- `Orbit`; shape 82% (toward high-pass), cutoff 5.8 kHz, resonance 18%, drive
+- `SEM`; shape 82% (toward high-pass), cutoff 5.8 kHz, resonance 18%, drive
   8%, filter envelope amount +14%, key tracking 72%.
 - Filter ADSR 16 ms / 1.2 s / 48% / 1.6 s; amplifier ADSR 12 ms / 1.1 s / 72%
   / 2.2 s.
