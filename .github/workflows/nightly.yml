@@ -91,6 +91,10 @@ jobs:
               exit 1
             fi
           done
+          expected_asset_names=()
+          for asset in "${assets[@]}"; do
+            expected_asset_names+=("${asset##*/}")
+          done
 
           TITLE="VST instruments nightly ($DATE)"
           NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, and Mars from \`main\` ($SHORT_SHA).
@@ -108,6 +112,27 @@ jobs:
           if gh release view nightly >/dev/null 2>&1; then
             # Keep the existing public release available if an upload fails.
             gh release upload nightly "${assets[@]}" --clobber
+
+            # --clobber replaces equal filenames but cannot remove assets whose
+            # versioned names changed. Prune only after all current uploads
+            # succeed, so a failed build/upload never empties the rolling release.
+            while IFS=$'\t' read -r asset_id asset_name; do
+              is_expected=0
+              for expected_name in "${expected_asset_names[@]}"; do
+                if [[ "$asset_name" == "$expected_name" ]]; then
+                  is_expected=1
+                  break
+                fi
+              done
+              if (( is_expected == 0 )); then
+                echo "Removing stale nightly asset: $asset_name"
+                gh api --method DELETE \
+                  "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+              fi
+            done < <(gh api \
+              "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" \
+              --jq '.assets[] | [.id, .name] | @tsv')
+
             gh api --method PATCH \
               "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" \
               -f sha="$GITHUB_SHA" -F force=true >/dev/null
