@@ -2,7 +2,8 @@
 
 Mars state is stored by the host. These original recipes are starting points
 for the exact version-1 control set; percentages are approximate and are meant
-to be adjusted by ear.
+to be adjusted by ear. Controls not listed in a recipe remain at their
+version-1 defaults; see the [complete 40-control contract](../README.md#exact-40-control-contract).
 
 ## Red Planet Brass
 

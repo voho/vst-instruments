@@ -7,10 +7,15 @@ circuit-inspired nonlinear shaping. It does not load samples, copy a ROM,
 emulate a particular branded machine, or contact a service while rendering
 audio.
 
-The original brief called this a “10-sound” instrument, but its explicit sound
-list expands to **13 separately playable synthesized voices**: the low, mid, and
-high toms are three voices, followed by shaker, Perc 1, and Perc 2. Drumalor
-implements all 13 rather than dropping entries to force the total to ten.
+![Drumalor Standalone instrument interface](Docs/screenshots/drumalor-standalone.png)
+
+The screenshot is the actual Standalone application built from this source.
+The VST3 and Audio Unit use the same resizable JUCE editor.
+
+Drumalor provides **13 separately playable synthesized voices**: Kick, Snare,
+Clap, Closed and Open Hats, Ride, Crash, Low/Mid/High Toms, Shaker, and two
+percussion voices. Each has its own MIDI mapping, synthesis character, pitch,
+and decay controls.
 
 The project builds three products from one JUCE codebase:
 
@@ -18,9 +23,11 @@ The project builds three products from one JUCE codebase:
 - Audio Unit v2 music device for Logic Pro and GarageBand
 - Standalone application for direct MIDI-pad and on-screen-pad testing
 
-> **Just want to try it?** Prebuilt ad-hoc-signed, un-notarized macOS bundles
-> are published from `main` on the repository's rolling
+> **Just want to try it?** The scheduled Nightly workflow publishes the latest
+> successful universal build from `main` to the rolling
 > [nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly).
+> The bundles are ad-hoc signed and not notarized; check the repository's Nightly
+> badge for the latest workflow result.
 
 ## Voices, MIDI notes, and controls
 
@@ -29,7 +36,8 @@ controls hit strength.
 
 Each row has exactly four automatable controls: two voice-specific character
 controls, **Pitch** from -24 to +24 semitones, and **Decay**. Character and decay
-controls run from 0% to 100%.
+controls run from 0% to 100%. A separate global **Output** parameter spans -24
+to +6 dB, for 53 host parameters in total: 52 voice parameters plus Output.
 
 | Voice | GM note | General MIDI assignment | Character A | Character B |
 | --- | ---: | --- | --- | --- |
@@ -136,8 +144,9 @@ automated stability, performance, and spectral contracts pass.
 - macOS 11 or newer for running the built products
 - A current full Xcode installation selected for command-line use
 - CMake 3.22 or newer
-- Git and internet access for the default first configure, or a local JUCE
-  8.0.14 checkout supplied with `DRUMALOR_JUCE_PATH`
+- Internet access for the default first configure, or a local JUCE 8.0.14
+  checkout supplied through `JUCE_PATH` to the helper
+  (`DRUMALOR_JUCE_PATH` when configuring CMake directly)
 
 JUCE 8.0.14 is fetched at configure time and is not vendored into this
 repository.
@@ -331,6 +340,7 @@ Source/DSP/              JUCE-free synthesis engine and voice metadata
 Source/PluginProcessor.* MIDI mapping, parameters, state, and audio bridge
 Source/PluginEditor.*    Thirteen-pad editor and four-knob voice controls
 Assets/                  Embedded original vintage faceplate texture
+Docs/                    Real interface screenshots and supporting documentation
 Tests/                   DSP and JUCE processor-contract regression tests
 Presets/                 Preset guidance and future factory presets
 scripts/                 macOS build and release helpers

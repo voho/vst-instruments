@@ -5,16 +5,37 @@ original `aah`, `ooh`, and `uuh` voices, from a single singer to an ensemble or
 major/minor chord. The engine is procedural and runs locally: it does not clone
 a named singer, load recordings, or contact a service while rendering audio.
 
+![Vocalor Standalone instrument interface](Docs/screenshots/vocalor-standalone.png)
+
+The screenshot is the actual Standalone application built from this source.
+The VST3 and Audio Unit use the same resizable JUCE editor.
+
 The project builds three products from one JUCE codebase:
 
 - VST3 instrument for hosts such as Ableton Live, REAPER, Cubase, and Bitwig
 - Audio Unit v2 music device for Logic Pro and GarageBand
 - Standalone application for direct MIDI-keyboard testing
 
-> **Just want to try it?** Prebuilt (ad-hoc signed, un-notarized) macOS bundles
-> are published for every day's `main` on the
+> **Just want to try it?** The scheduled Nightly workflow publishes the latest
+> successful universal build from `main` to the rolling
 > [nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly).
-> To build from source instead, continue below.
+> The bundles are ad-hoc signed and not notarized; check the repository's Nightly
+> badge for the latest workflow result.
+
+## Interface and controls
+
+Vocalor exposes 13 version-1 host parameters. The top row selects **Voice
+profile** (`Female` or `Male`), **Performance mode** (`Solo`, `Choir`, or
+`Chord`), **Vowel** (`AAH`, `OOH`, or `UUH`), and major/minor chord quality.
+**Ensemble size** is available from 2 to 16; the current engine renders Choir
+in 4-, 8-, or 12-singer tiers and Chord as six singers distributed across the
+triad.
+
+Seven continuous controls shape **Breath**, **Resonance**, **Vibrato**,
+**Humanize**, **Stereo spread**, **Vocal tension**, and **Room**, followed by a
+-24 to +6 dB **Output** control. The status display reports active voices and
+sample rate, the Panic button mutes immediately, and the on-screen keyboard is
+also mapped to the computer keys shown above it.
 
 ## Sound engine
 
@@ -34,8 +55,9 @@ to sustained vowels and expressive musical parts; it does not generate words.
 - macOS 11 or newer for running the built products
 - A current full Xcode installation selected for command-line use
 - CMake 3.22 or newer
-- Git and internet access for the default first configure, or a local JUCE
-  8.0.14 checkout supplied with `VOCALOR_JUCE_PATH`
+- Internet access for the default first configure, or a local JUCE 8.0.14
+  checkout supplied through `JUCE_PATH` to the helper
+  (`VOCALOR_JUCE_PATH` when configuring CMake directly)
 
 JUCE 8.0.14 is fetched at configure time and is not vendored into this
 repository.
@@ -90,6 +112,7 @@ any C++20 development machine without downloading the application framework:
 
 ```bash
 cmake -S . -B build-dsp \
+  -DCMAKE_BUILD_TYPE=Release \
   -DVOCALOR_BUILD_PLUGIN=OFF \
   -DBUILD_TESTING=ON
 cmake --build build-dsp --parallel
@@ -162,7 +185,10 @@ For local testing, the packaging helper uses ad-hoc signing by default:
 ```
 
 It stages the VST3, AU, and standalone app, verifies their signatures, and
-creates a ZIP and installer package under `build-macos/dist/`.
+creates a ZIP and installer package under `build-macos/dist/`. The current
+helper's filenames use the `macOS-universal` suffix, so run it only after the
+default universal build and confirm all three executables report both `arm64`
+and `x86_64` with `lipo -archs` before publishing.
 
 For public distribution, first import valid `Developer ID Application` and
 `Developer ID Installer` certificates. Store notarization credentials once in
@@ -185,6 +211,10 @@ NOTARY_PROFILE="vocalor-notary" \
 ./scripts/sign-and-package-macos.sh
 ```
 
+With `NOTARY_PROFILE` set, the helper submits and staples the installer package.
+The ZIP still contains signed bundles but is not itself the notarized
+distribution artifact.
+
 Before publishing, verify the package from a clean user account and inspect it:
 
 ```bash
@@ -204,7 +234,8 @@ recall the correct plug-in.
 Source/DSP/              JUCE-free synthesis engine
 Source/PluginProcessor.* MIDI, parameters, state, and audio bridge
 Source/PluginEditor.*    Keyboard and editor UI
-Tests/                   Standalone DSP regression tests
+Docs/                    Real interface screenshots and supporting documentation
+Tests/                   JUCE-free DSP regression tests
 Presets/                 Preset guidance and future factory presets
 scripts/                 macOS build and release helpers
 ```

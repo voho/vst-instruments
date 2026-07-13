@@ -9,12 +9,20 @@ There is **no arpeggiator** and **no modulation matrix**. Every sound parameter
 is exposed as a front-panel knob, slider, or switch and as a host-automatable
 parameter.
 
-![Generated Mars vintage panel artwork](Assets/mars-panel-texture.png)
+![Mars Standalone instrument interface](Docs/screenshots/mars-standalone.png)
 
-The generated panel artwork is stored at
+The screenshot is the actual Standalone application built from this source;
+the VST3 and Audio Unit use the same resizable JUCE editor. Its generated panel
+texture is stored at
 [`Assets/mars-panel-texture.png`](Assets/mars-panel-texture.png) and compiled
 into the plug-in. Labels and interactive controls remain native JUCE components
 for crisp resizing, automation, keyboard operation, and accessibility.
+
+> **Just want to try it?** The scheduled Nightly workflow publishes the latest
+> successful universal build from `main` to the rolling
+> [nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly).
+> The bundles are ad-hoc signed and not notarized; check the repository's Nightly
+> badge for the latest workflow result.
 
 ## Sound architecture
 
@@ -225,11 +233,15 @@ optionally a `NOTARY_PROFILE` created for `xcrun notarytool`. Replace the sample
 bundle identifier and manufacturer/plugin codes with identifiers
 controlled by the publisher before shipping public binaries.
 
+With `NOTARY_PROFILE` set, the helper submits and staples the installer package.
+The ZIP still contains signed bundles but is not itself the notarized
+distribution artifact.
+
 ## Project layout
 
 ```text
 Assets/                  Bundled generated panel artwork
-Docs/                    Research and modeling decisions
+Docs/                    Real interface screenshots, research, and modeling decisions
 Source/DSP/              JUCE-free synthesis engine
 Source/PluginProcessor.* MIDI, automation, state, and engine bridge
 Source/PluginEditor.*    Resizable direct-control hardware panel

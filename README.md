@@ -1,30 +1,36 @@
-# vst-instruments
+# VST Instruments
 
 [![CI](https://github.com/voho/vst-instruments/actions/workflows/ci.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/ci.yml)
 [![Nightly](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml)
 
-A collection of original audio plug-in instruments. Each instrument lives in its
-own sub-directory as a self-contained project with its own source, build system,
-tests, and documentation.
+A collection of three original macOS instruments built on one shared technical
+contract: JUCE 8.0.14, CMake 3.22+, C++20, CTest, and VST3, Audio Unit, and
+Standalone targets. Each instrument remains a self-contained project with its
+own DSP core, interface, tests, release helpers, and documentation.
 
 Every instrument here is **procedural and original**: synthesis runs locally
 without loading samples, cloning a named artist or product, or contacting a
 service while rendering audio.
 
+| [Vocalor](vocalor/) | [Drumalor](drumalor/) | [Mars](mars/) |
+| :---: | :---: | :---: |
+| [![Vocalor standalone interface](vocalor/Docs/screenshots/vocalor-standalone.png)](vocalor/README.md) | [![Drumalor standalone interface](drumalor/Docs/screenshots/drumalor-standalone.png)](drumalor/README.md) | [![Mars standalone interface](mars/Docs/screenshots/mars-standalone.png)](mars/README.md) |
+
 ## Instruments
 
 | Instrument | Description | Formats | Platform | Docs |
 | --- | --- | --- | --- | --- |
-| [Vocalor](vocalor/) | Real-time vocal and choir synthesizer: expressive `aah`, `ooh`, and `uuh` voices from a single singer to an ensemble or chord. | VST3 · AU · Standalone | macOS 11+ | [README](vocalor/README.md) |
-| [Drumalor](drumalor/) | Thirteen-voice organic drum synthesizer with bounded per-hit component drift, circuit-inspired vintage coloration, and an original hardware-style interface. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
-| [Mars](mars/) | Dual-oscillator virtual-analog polysynth with event-corrected waveforms, a nonlinear delay-free ladder, a TPT Orbit filter, deterministic voice cards, direct controls, and no arpeggiator or matrix. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
+| [Vocalor](vocalor/) | Source-filter vocal and choir synthesizer with solo, ensemble, and chord performance modes across three sustained vowels. | VST3 · AU · Standalone | macOS 11+ | [README](vocalor/README.md) |
+| [Drumalor](drumalor/) | Thirteen-voice procedural drum synthesizer with deterministic organic variation, circuit-inspired colour, and GM-oriented MIDI mapping. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
+| [Mars](mars/) | Dual-oscillator virtual-analog polysynth with event-corrected waveforms, two nonlinear filters, deterministic voice cards, and a direct 40-control panel. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
 
 ## Download (nightly)
 
-Prebuilt macOS bundles for all three instruments are published automatically from
-`main` to a single rolling
-**[nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly)**,
-so the latest build is always available without compiling it locally.
+The scheduled and manually dispatchable Nightly workflow builds and tests all
+three instruments as universal `arm64`/`x86_64` binaries. Only after every build,
+test, package, and six-file manifest check succeeds does it refresh the single
+rolling **[nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly)**.
+Check the Nightly badge above for the latest workflow result before downloading.
 
 These bundles are ad-hoc signed and not notarized, so Gatekeeper will warn.
 After unzipping, clear the quarantine flag for the instrument you want to run:
@@ -52,11 +58,12 @@ and notarization. Each instrument README contains its own distribution guide:
 
 ## Building
 
-There is no top-level build. Build each instrument from its own directory.
-Each helper configures Xcode, compiles universal `arm64`/`x86_64` binaries, runs
-the instrument's CTest suite (including JUCE processor contracts where present),
-and writes VST3, Audio Unit, and Standalone bundles under that instrument's
-`build-macos/` directory.
+There is no top-level CMake target: build each self-contained instrument from its
+own directory. All three helpers use the same Xcode/CMake/JUCE toolchain,
+compile universal `arm64`/`x86_64` binaries, run the instrument's CTest suite,
+and write VST3, Audio Unit, and Standalone bundles below that instrument's
+`build-macos/` directory. Drumalor and Mars additionally include JUCE processor
+contract tests; Vocalor currently exercises its JUCE-free DSP suite.
 
 **Vocalor** ([full instructions](vocalor/README.md#build-on-macos)):
 
@@ -79,10 +86,25 @@ cd mars
 ./scripts/build-macos.sh
 ```
 
-All projects require CMake 3.22+, a full Xcode installation selected for
-command-line use, and internet access on first configure to fetch JUCE 8.0.14.
-A local checkout of that exact JUCE release can be supplied through each build
-script's `JUCE_PATH` variable.
+Full plug-in builds require CMake 3.22+ and a full Xcode installation selected
+for command-line use. The JUCE-free DSP targets need only a C++20 toolchain and
+CMake, which is the path exercised by Linux CI. First-time plug-in configuration
+also needs internet access to fetch JUCE 8.0.14; a local checkout of that exact
+release can instead be supplied through each build script's `JUCE_PATH` variable.
+
+## Continuous integration
+
+The two GitHub Actions workflows cover every instrument explicitly:
+
+- **CI** runs the JUCE-free DSP build and tests on Linux, plus a native-architecture
+  macOS plug-in build and CTest run, for every pull request and push to `main`.
+- **Nightly** runs the same macOS helpers in universal mode, packages ad-hoc-signed
+  ZIP and PKG artifacts, retains a combined workflow artifact for 14 days, and
+  updates the rolling public release only after the complete job succeeds.
+
+The JUCE source dependency is pinned to an immutable 8.0.14 archive and SHA-256
+checksum in every project. Runner images and Xcode are supplied by GitHub Actions,
+so the workflow badges remain the source of truth for the current hosted build.
 
 ## Repository layout
 
@@ -91,6 +113,7 @@ LICENSE       Repository license (Apache-2.0)
 vocalor/      Vocalor vocal and choir synthesizer (self-contained JUCE project)
 drumalor/     Drumalor thirteen-voice drum synthesizer (self-contained JUCE project)
 mars/         Mars nonlinear virtual-analog polysynth (self-contained JUCE project)
+.github/      Per-push CI and universal Nightly release workflows
 ```
 
 New instruments are added as additional top-level directories and linked from
