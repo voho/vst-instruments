@@ -32,7 +32,7 @@ to sustained vowels and expressive musical parts; it does not generate words.
 ## Requirements
 
 - macOS 11 or newer for running the built products
-- A current Xcode command-line toolchain with a macOS SDK
+- A current full Xcode installation selected for command-line use
 - CMake 3.22 or newer
 - Git and internet access for the default first configure, or a local JUCE
   8.0.14 checkout supplied with `VOCALOR_JUCE_PATH`

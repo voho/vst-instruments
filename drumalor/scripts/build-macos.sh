@@ -32,8 +32,8 @@ cmake_args=(
     -B "${BUILD_DIR}"
     -G Xcode
     "-DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET}"
-    "-DVOCALOR_BUILD_UNIVERSAL=${BUILD_UNIVERSAL}"
-    -DVOCALOR_BUILD_PLUGIN=ON
+    "-DDRUMALOR_BUILD_UNIVERSAL=${BUILD_UNIVERSAL}"
+    -DDRUMALOR_BUILD_PLUGIN=ON
     -DBUILD_TESTING=ON
 )
 
@@ -44,7 +44,7 @@ else
 fi
 
 if [[ -n "${JUCE_PATH:-}" ]]; then
-    cmake_args+=("-DVOCALOR_JUCE_PATH=${JUCE_PATH}")
+    cmake_args+=("-DDRUMALOR_JUCE_PATH=${JUCE_PATH}")
 fi
 
 cmake "${cmake_args[@]}"
@@ -53,6 +53,6 @@ ctest --test-dir "${BUILD_DIR}" -C "${CONFIG}" --output-on-failure
 
 echo
 echo "Build complete. Artifacts:"
-echo "  ${BUILD_DIR}/Vocalor_artefacts/${CONFIG}/VST3/Vocalor.vst3"
-echo "  ${BUILD_DIR}/Vocalor_artefacts/${CONFIG}/AU/Vocalor.component"
-echo "  ${BUILD_DIR}/Vocalor_artefacts/${CONFIG}/Standalone/Vocalor.app"
+echo "  ${BUILD_DIR}/Drumalor_artefacts/${CONFIG}/VST3/Drumalor.vst3"
+echo "  ${BUILD_DIR}/Drumalor_artefacts/${CONFIG}/AU/Drumalor.component"
+echo "  ${BUILD_DIR}/Drumalor_artefacts/${CONFIG}/Standalone/Drumalor.app"

@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
 
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+
 option(VOCALOR_BUILD_UNIVERSAL "Build arm64 and x86_64 slices on macOS" ON)
 
 # These must be established before project() so CMake's compiler checks use the
@@ -62,10 +66,10 @@ if(VOCALOR_BUILD_PLUGIN)
         include(FetchContent)
         FetchContent_Declare(
             JUCE
-            GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-            GIT_TAG 8.0.14
-            GIT_SHALLOW TRUE
-            GIT_PROGRESS TRUE)
+            # JUCE 8.0.14, pinned to its immutable release commit and archive
+            # checksum so automated release builds cannot follow a moved tag.
+            URL https://github.com/juce-framework/JUCE/archive/2cdfca8feb300fb424002ba2c2751569e5bacb64.tar.gz
+            URL_HASH SHA256=814019716960a16f8f850a1593eeb56e2f21910aff2d673f7d3513b4ebaf251d)
         FetchContent_MakeAvailable(JUCE)
     endif()
 

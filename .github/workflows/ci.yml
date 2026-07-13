@@ -13,35 +13,55 @@ concurrency:
 
 jobs:
   dsp-tests:
-    name: DSP tests (JUCE-free, Linux)
+    name: DSP tests (${{ matrix.name }}, JUCE-free, Linux)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Vocalor
+            directory: vocalor
+            build_plugin_option: VOCALOR_BUILD_PLUGIN
+          - name: Drumalor
+            directory: drumalor
+            build_plugin_option: DRUMALOR_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@v4
 
       - name: Configure
-        run: >
-          cmake -S vocalor -B vocalor/build-dsp
-          -DCMAKE_BUILD_TYPE=Release
-          -DVOCALOR_BUILD_PLUGIN=OFF
-          -DBUILD_TESTING=ON
+        run: |
+          cmake \
+            -S "${{ matrix.directory }}" \
+            -B "${{ matrix.directory }}/build-dsp" \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-D${{ matrix.build_plugin_option }}=OFF" \
+            -DBUILD_TESTING=ON
 
       - name: Build
-        run: cmake --build vocalor/build-dsp --parallel
+        run: cmake --build "${{ matrix.directory }}/build-dsp" --parallel
 
       - name: Test
-        run: ctest --test-dir vocalor/build-dsp --output-on-failure
+        run: ctest --test-dir "${{ matrix.directory }}/build-dsp" --output-on-failure
 
   plugin-macos:
-    name: Plug-in build (macOS, native arch)
+    name: Plug-in build (${{ matrix.name }}, macOS native arch)
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Vocalor
+            directory: vocalor
+          - name: Drumalor
+            directory: drumalor
     steps:
       - uses: actions/checkout@v4
 
       # Native-arch only keeps per-push CI fast; the nightly workflow builds
       # the full arm64 + x86_64 universal binaries. Uses the same Xcode-based
-      # build script developers run locally, and runs the DSP tests.
+      # build script developers run locally, and runs each project's tests.
       - name: Build plug-in and run tests
-        working-directory: vocalor
+        working-directory: ${{ matrix.directory }}
         env:
           BUILD_UNIVERSAL: "OFF"
         run: ./scripts/build-macos.sh

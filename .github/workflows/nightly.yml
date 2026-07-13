@@ -16,36 +16,50 @@ concurrency:
 
 jobs:
   build-macos:
-    name: Universal build, package, publish
+    if: github.ref == 'refs/heads/main'
+    name: Universal builds, packages, and rolling release
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Build-time FetchContent code must not inherit the write credential.
+          persist-credentials: false
 
-      # Full arm64 + x86_64 universal build (script default) plus DSP tests.
-      - name: Build universal plug-in and run tests
+      # Full arm64 + x86_64 universal builds (script default) plus project tests.
+      - name: Build Vocalor and run tests
         working-directory: vocalor
         run: ./scripts/build-macos.sh
 
-      # Ad-hoc signs the bundles and produces a ZIP + .pkg under build-macos/dist.
-      - name: Package (ad-hoc signed)
+      - name: Package Vocalor (ad-hoc signed)
         working-directory: vocalor
         run: ./scripts/sign-and-package-macos.sh
 
-      # Retained on the workflow run itself (downloadable by anyone with repo access).
+      - name: Build Drumalor and run tests
+        working-directory: drumalor
+        run: ./scripts/build-macos.sh
+
+      - name: Package Drumalor (ad-hoc signed)
+        working-directory: drumalor
+        run: ./scripts/sign-and-package-macos.sh
+
+      # Retained on the workflow run itself (downloadable by anyone with repo
+      # access). Explicit filenames prevent one instrument's output from
+      # accidentally satisfying the other instrument's artifact check.
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Vocalor-nightly-macOS-universal
+          name: vst-instruments-nightly-macOS-universal
           path: |
-            vocalor/build-macos/dist/*.zip
-            vocalor/build-macos/dist/*.pkg
+            vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.zip
+            vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.pkg
+            drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.zip
+            drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg
           if-no-files-found: error
           retention-days: 14
 
-      # Publish a single rolling "nightly" release so there is always a stable
-      # public download URL pointing at the latest build.
+      # Publish a single rolling "nightly" release so both instruments share a
+      # stable public download URL.
       - name: Publish rolling "nightly" release
-        working-directory: vocalor
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -53,21 +67,42 @@ jobs:
           DATE="$(date -u +%Y-%m-%d)"
           SHORT_SHA="${GITHUB_SHA:0:7}"
 
-          # Move the rolling tag to the commit that was actually built.
-          gh release delete nightly --yes --cleanup-tag || true
+          assets=(
+            "vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.zip"
+            "vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.pkg"
+            "drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.zip"
+            "drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg"
+          )
+          for asset in "${assets[@]}"; do
+            if [[ ! -f "$asset" ]]; then
+              echo "error: missing release asset: $asset" >&2
+              exit 1
+            fi
+          done
 
-          gh release create nightly \
-            build-macos/dist/*.zip \
-            build-macos/dist/*.pkg \
-            --title "Vocalor nightly ($DATE)" \
-            --target "$GITHUB_SHA" \
-            --prerelease \
-            --notes "Automated universal (arm64 + x86_64) macOS build of Vocalor from \`main\` ($SHORT_SHA).
+          TITLE="VST instruments nightly ($DATE)"
+          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor and Drumalor from \`main\` ($SHORT_SHA).
 
           **These bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally, clear the quarantine flag after unzipping, e.g.:
 
           \`\`\`bash
-          xattr -dr com.apple.quarantine Vocalor.vst3 Vocalor.component Vocalor.app
+          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Vocalor.vst3 Library/Audio/Plug-Ins/Components/Vocalor.component Applications/Vocalor.app
+          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Drumalor.vst3 Library/Audio/Plug-Ins/Components/Drumalor.component Applications/Drumalor.app
           \`\`\`
 
           Not intended for production distribution."
+
+          if gh release view nightly >/dev/null 2>&1; then
+            # Keep the existing public release available if an upload fails.
+            gh release upload nightly "${assets[@]}" --clobber
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null
+            gh release edit nightly --title "$TITLE" --prerelease --notes "$NOTES"
+          else
+            gh release create nightly "${assets[@]}" \
+              --title "$TITLE" \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --notes "$NOTES"
+          fi
