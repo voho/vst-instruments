@@ -205,7 +205,7 @@ accumulated offset while preserving the weight and tuning of bottom-octave and
 sub-octave fundamentals. The suite exercises rates through 384 kHz; the engine
 guards API input up to 768 kHz.
 
-Mars owns 32 fixed render slots. Each receives a deterministic voice card, so
+Mars owns 16 fixed render voices. Each receives a deterministic voice card, so
 identical state, MIDI, and automation produce identical audio. `Drift` scales
 the fixed component-like spread and slow motion; it does not simulate worn
 parts or randomize a saved sound on each playback.
@@ -218,7 +218,7 @@ set covering oscillator wave, pitch, PWM, cutoff, resonance, drive, modulation,
 temperature, and state history. A generic network would therefore add opaque
 behavior rather than verified fidelity. The present analytic blocks are
 auditable, deterministic, allocation-free in the audio path, and practical
-across 32 render slots.
+across 16 render voices.
 
 Neural or differentiable methods remain useful for offline fitting once a
 target and calibration chain exist. Any future runtime surrogate must beat the
@@ -234,9 +234,9 @@ stability, bass-gain compensation, implicit-equation residual and state error
 against an independent double-precision reference, click-resistant steals and
 filter changes, VCO switch isolation and smoothing, lone-VCO unity behavior,
 cross-modulation with VCO II audio disabled, deferred HQ mode changes,
-MIDI/state migration, and a 32-slot CPU guardrail.
+MIDI/state migration, and a 16-voice CPU guardrail.
 
-The Release CPU fixture renders all 32 slots at a 96 kHz host rate with HQ On,
+The Release CPU fixture renders all 16 voices at a 96 kHz host rate with HQ On,
 which correctly selects the native high-rate path. It warms the engine and uses
 the best of three equal renders to reject scheduler interruptions. Every run
 keeps a loose portable runaway ceiling, and the Ladder must remain below `2.5x`

@@ -90,7 +90,7 @@ private:
 
     static constexpr int oversampleFactor = 2;
     static constexpr double maximumOversampledHostRate = 48000.0;
-    static constexpr int maxVoices = 32;
+    static constexpr int maxVoices = 16;
     static constexpr int controlPeriod = 8;
     static constexpr int chorusBufferSize = 16384;
     // JUCE hosts commonly top out at 384 kHz. Keeping an explicit ceiling well

@@ -62,6 +62,22 @@ float coefficientForTime (float seconds, float sampleRate) noexcept
     return std::exp (minusSixtyDb / std::max (1.0f, seconds * sampleRate));
 }
 
+float polyBlep (float phase, float phaseIncrement) noexcept
+{
+    phaseIncrement = std::clamp (phaseIncrement, 1.0e-6f, 0.49f);
+    if (phase < phaseIncrement)
+    {
+        const float normalized = phase / phaseIncrement;
+        return normalized + normalized - normalized * normalized - 1.0f;
+    }
+    if (phase > 1.0f - phaseIncrement)
+    {
+        const float normalized = (phase - 1.0f) / phaseIncrement;
+        return normalized * normalized + normalized + normalized + 1.0f;
+    }
+    return 0.0f;
+}
+
 float constantPowerLeft (float pan) noexcept
 {
     return std::sqrt (0.5f * (1.0f - std::clamp (pan, -1.0f, 1.0f)));
@@ -415,6 +431,55 @@ float DrumEngine::oscillator (Voice& voice, int oscillatorIndex) const noexcept
     return sineLookup (voice.phases[index]);
 }
 
+float DrumEngine::bandLimitedPulse (Voice& voice, int oscillatorIndex) const noexcept
+{
+    const auto index = static_cast<std::size_t> (
+        std::clamp (oscillatorIndex, 0, oscillatorCount - 1));
+    const float increment = std::clamp (voice.phaseIncrements[index], 0.0f, 0.45f);
+    float phase = voice.phases[index] + increment;
+    phase -= std::floor (phase);
+    voice.phases[index] = phase;
+
+    // The HD14584 oscillator bank measured in the TR-808 settles near a
+    // 47.98% duty cycle. Correct both pulse edges with PolyBLEP so its dense
+    // upper spectrum remains useful without a bank of aliased naive squares.
+    constexpr float duty = 0.4798f;
+    float output = phase < duty ? 1.0f : -1.0f;
+    output += polyBlep (phase, increment);
+    float fallingPhase = phase - duty;
+    if (fallingPhase < 0.0f)
+        fallingPhase += 1.0f;
+    output -= polyBlep (fallingPhase, increment);
+    return output;
+}
+
+float DrumEngine::cymbalOscillatorBank (Voice& voice) const noexcept
+{
+    float sum = 0.0f;
+    for (int oscillatorIndex = 0; oscillatorIndex < 6; ++oscillatorIndex)
+        sum += bandLimitedPulse (voice, oscillatorIndex);
+    return sum * (1.0f / 6.0f);
+}
+
+float DrumEngine::nextCymbalPcm (Voice& voice, float source) const noexcept
+{
+    // The TR-909 cymbals replayed compressed PCM at roughly 30 kHz. Drumalor
+    // remains fully synthesized, but this voice-local clock and 63-level
+    // quantizer contribute the same held-DAC grain to a generated oscillator/
+    // noise composite. No sample or copyrighted ROM data is embedded.
+    const float clockIncrement = std::min (
+        1.0f, 30000.0f * inverseSampleRate_);
+    voice.cymbalClockPhase += clockIncrement;
+    if (voice.cymbalClockPhase >= 1.0f)
+    {
+        voice.cymbalClockPhase -= std::floor (voice.cymbalClockPhase);
+        const float decorrelation = 0.18f * nextNoise (voice);
+        const float composite = std::clamp (source + decorrelation, -1.0f, 1.0f);
+        voice.cymbalPcmValue = std::round (31.0f * composite) * (1.0f / 31.0f);
+    }
+    return voice.cymbalPcmValue;
+}
+
 void DrumEngine::configureLowpass (Biquad& filter, float frequency, float q) const noexcept
 {
     frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
@@ -681,8 +746,21 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     }
 
     static constexpr float hatRatios[6] { 1.0f, 1.342f, 1.778f, 2.133f, 2.697f, 3.415f };
-    static constexpr float rideRatios[10] { 1.0f, 1.41f, 1.73f, 2.12f, 2.70f, 3.16f, 4.11f, 5.32f, 6.47f, 7.83f };
-    static constexpr float crashRatios[12] { 1.0f, 1.34f, 1.68f, 2.05f, 2.63f, 3.11f, 3.78f, 4.41f, 5.38f, 6.27f, 7.15f, 8.40f };
+    // Measured nominal HD14584 oscillator frequencies from the TR-808 cymbal
+    // source. The two trimmer oscillators are represented by 800 and 540 Hz.
+    static constexpr float cymbalFrequencies[6] {
+        205.3f, 369.6f, 304.4f, 522.7f, 800.0f, 540.0f
+    };
+    // Short, increasingly dense acoustic modes give the synthetic 909 layer
+    // body without allowing a handful of low partials to cling for the tail.
+    static constexpr float rideRatios[12] {
+        1.0f, 1.431f, 2.097f, 3.042f, 4.181f, 5.528f,
+        6.958f, 8.694f, 10.736f, 12.944f, 15.347f, 17.778f
+    };
+    static constexpr float crashRatios[12] {
+        1.0f, 1.468f, 2.129f, 3.032f, 4.161f, 5.548f,
+        7.177f, 9.032f, 11.129f, 13.387f, 15.968f, 18.871f
+    };
 
     switch (instrument)
     {
@@ -770,22 +848,81 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
         }
 
         case Instrument::Ride:
-            initialiseModalVoice (voice, rideRatios, 10, 335.0f * voice.pitchRatio,
-                                  voice.decaySeconds, 0.28f, voice.characterB);
-            configureHighpass (voice.filterA, 260.0f, 0.70f);
-            configureBandpass (voice.filterB, 4300.0f + 5500.0f * voice.characterB, 0.80f);
-            voice.transientMultiplier = coefficientForTime (0.006f + 0.012f * voice.characterA,
-                                                             static_cast<float> (sampleRate_));
+        {
+            for (int oscillatorIndex = 0; oscillatorIndex < 6; ++oscillatorIndex)
+            {
+                const float tolerance = oscillatorIndex < 4 ? 0.0040f : 0.020f;
+                const float offset = signedUnitFromHash (
+                    seed ^ static_cast<std::uint32_t> (
+                        0x51ed270bu + oscillatorIndex * 0x9e3779b9u));
+                const float frequency = cymbalFrequencies[oscillatorIndex]
+                    * voice.pitchRatio * (1.0f + tolerance * offset);
+                voice.phaseIncrements[static_cast<std::size_t> (oscillatorIndex)] =
+                    std::min (0.45f, frequency * inverseSampleRate_);
+                voice.phases[static_cast<std::size_t> (oscillatorIndex)] +=
+                    0.137f * static_cast<float> (oscillatorIndex);
+            }
+
+            const float modalPitch = std::pow (voice.pitchRatio, 0.74f);
+            const float modalDecay = 0.16f + voice.decaySeconds
+                * (0.13f + 0.08f * voice.characterA);
+            initialiseModalVoice (voice, rideRatios, 12, 720.0f * modalPitch,
+                                  modalDecay, 0.09f, 0.56f + 0.28f * voice.characterB);
+            const float filterPitch = std::pow (voice.pitchRatio, 0.46f);
+            configureBandpass (voice.filterA, 3440.0f * filterPitch, 0.68f);
+            configureBandpass (voice.filterB, 7100.0f * filterPitch, 0.76f);
+            configureBandpass (voice.filterC, 10500.0f * filterPitch, 0.90f);
+            voice.envelopeMultiplier = coefficientForTime (
+                voice.decaySeconds * 0.88f, static_cast<float> (sampleRate_));
+            voice.auxiliaryMultiplier = coefficientForTime (
+                voice.decaySeconds * 1.06f, static_cast<float> (sampleRate_));
+            voice.transientMultiplier = coefficientForTime (
+                0.0022f + 0.0038f * voice.characterA,
+                static_cast<float> (sampleRate_));
             break;
+        }
 
         case Instrument::Crash:
-            initialiseModalVoice (voice, crashRatios, 12, 255.0f * voice.pitchRatio,
-                                  voice.decaySeconds, voice.characterA, voice.characterB);
-            configureHighpass (voice.filterA, 300.0f + 500.0f * voice.characterB, 0.65f);
-            configureBandpass (voice.filterB, 3400.0f + 6200.0f * voice.characterB, 0.72f);
-            voice.transientMultiplier = coefficientForTime (0.015f + 0.025f * voice.characterA,
-                                                             static_cast<float> (sampleRate_));
+        {
+            for (int oscillatorIndex = 0; oscillatorIndex < 6; ++oscillatorIndex)
+            {
+                const float tolerance = oscillatorIndex < 4
+                    ? 0.004f + 0.004f * voice.characterA
+                    : 0.018f + 0.012f * voice.characterA;
+                const float offset = signedUnitFromHash (
+                    seed ^ static_cast<std::uint32_t> (
+                        0xa24baed4u + oscillatorIndex * 0x85ebca6bu));
+                const float spreadDetune = 1.0f + tolerance * offset;
+                const float frequency = cymbalFrequencies[oscillatorIndex]
+                    * 0.94f * voice.pitchRatio * spreadDetune;
+                voice.phaseIncrements[static_cast<std::size_t> (oscillatorIndex)] =
+                    std::min (0.45f, frequency * inverseSampleRate_);
+                voice.phases[static_cast<std::size_t> (oscillatorIndex)] +=
+                    0.173f * static_cast<float> (oscillatorIndex);
+            }
+
+            const float modalPitch = std::pow (voice.pitchRatio, 0.72f);
+            const float modalDecay = 0.12f + voice.decaySeconds
+                * (0.10f + 0.08f * voice.characterA);
+            initialiseModalVoice (voice, crashRatios, 12, 620.0f * modalPitch,
+                                  modalDecay, 0.12f + 0.36f * voice.characterA,
+                                  0.58f + 0.30f * voice.characterB);
+            const float filterPitch = std::pow (voice.pitchRatio, 0.44f);
+            configureBandpass (voice.filterA, 3440.0f * filterPitch, 0.62f);
+            configureBandpass (voice.filterB, 7100.0f * filterPitch, 0.72f);
+            configureBandpass (voice.filterC, 10500.0f * filterPitch, 0.84f);
+            voice.envelopeMultiplier = coefficientForTime (
+                voice.decaySeconds * 0.80f, static_cast<float> (sampleRate_));
+            voice.auxiliaryMultiplier = coefficientForTime (
+                voice.decaySeconds * 1.12f, static_cast<float> (sampleRate_));
+            voice.transientMultiplier = coefficientForTime (
+                0.0035f + 0.0065f * voice.characterA,
+                static_cast<float> (sampleRate_));
+            voice.pitchEnvelopeMultiplier = coefficientForTime (
+                0.010f + 0.020f * voice.characterA,
+                static_cast<float> (sampleRate_));
             break;
+        }
 
         case Instrument::LowTom:
         case Instrument::MidTom:
@@ -1020,39 +1157,87 @@ float DrumEngine::renderHat (Voice& voice) noexcept
 
 float DrumEngine::renderRide (Voice& voice) noexcept
 {
+    const float oscillatorBank = cymbalOscillatorBank (voice);
     const float noise = nextModalNoise (voice);
-    // A hard mallet/metal contact provides repeatable energy; a quieter noise
-    // burst varies the grain without making the perceived strike level wander.
+    const float pcm = nextCymbalPcm (
+        voice, 0.68f * oscillatorBank + 0.24f * noise);
+
+    // Three circuit bands mirror the useful structure of the 808 cymbal,
+    // while the quantized generated layer fills the continuous spectrum that
+    // made the sample-based 909 ride sit easily in a mix.
+    const float bodyBand = voice.filterA.tick (
+        0.78f * oscillatorBank + 0.22f * pcm);
+    const float shimmerBand = voice.filterB.tick (
+        0.58f * oscillatorBank + 0.42f * pcm);
+    const float airBand = voice.filterC.tick (
+        0.34f * oscillatorBank + 0.66f * pcm);
+
     const float contact = voice.ageSamples == 0u
-        ? 2.8f * voice.transientScale : 0.0f;
-    const float excitation = contact + 0.18f * modalNoiseScale_ * noise
-        * voice.transientEnvelope * voice.transientScale
-        * (0.30f + 0.70f * voice.characterA);
+        ? 2.15f * voice.transientScale
+        : 0.055f * modalNoiseScale_ * noise * voice.transientEnvelope
+            * voice.transientScale;
     float modes = 0.0f;
-    for (std::size_t mode = 0; mode < 10; ++mode)
+    for (std::size_t mode = 0; mode < resonatorCount; ++mode)
     {
         float gain = voice.modeGains[mode];
-        if (mode < 3)
-            gain *= 0.65f + 1.25f * voice.characterA;
-        modes += gain * voice.resonators[mode].tick (excitation);
+        gain *= mode < 4
+            ? 0.50f + 1.40f * voice.characterA
+            : 0.90f - 0.25f * voice.characterA;
+        modes += gain * voice.resonators[mode].tick (contact);
     }
-    const float wash = voice.filterB.tick (noise) * voice.auxiliaryEnvelope
-        * (0.28f * (1.0f - voice.characterA));
-    return 0.82f * voice.filterA.tick (modes + wash);
+
+    const float bell = voice.characterA;
+    const float tone = voice.characterB;
+    const float body = (0.46f + 0.38f * bell - 0.10f * tone)
+        * bodyBand * voice.envelope;
+    const float shimmer = (0.18f + 0.34f * tone)
+        * shimmerBand * voice.auxiliaryEnvelope;
+    const float air = (0.065f + 0.255f * tone)
+        * airBand * voice.auxiliaryEnvelope;
+    const float bellModes = (0.12f + 0.42f * bell) * modes;
+    return 1.12f * (body + shimmer + air + bellModes);
 }
 
 float DrumEngine::renderCrash (Voice& voice) noexcept
 {
+    const float oscillatorBank = cymbalOscillatorBank (voice);
     const float noise = nextModalNoise (voice);
-    const float excitation = modalNoiseScale_ * noise
-        * (0.25f * voice.transientEnvelope * voice.transientScale
-           + 0.035f * voice.envelope);
+    const float pcm = nextCymbalPcm (
+        voice, 0.52f * oscillatorBank + 0.34f * noise);
+    const float spread = voice.characterA;
+    const float coherent = 0.68f - 0.28f * spread;
+    const float quantized = 0.32f + 0.18f * spread;
+    const float diffuse = 0.10f * spread;
+    const float source = coherent * oscillatorBank + quantized * pcm
+                       + diffuse * noise;
+
+    const float bodyBand = voice.filterA.tick (source);
+    const float shimmerBand = voice.filterB.tick (
+        (0.86f - 0.18f * spread) * source + 0.18f * spread * noise);
+    const float airBand = voice.filterC.tick (
+        (0.72f - 0.20f * spread) * source + 0.28f * spread * noise);
+
+    // The modal layer is struck briefly and then left alone. The long tail is
+    // carried by diffuse oscillator/PCM bands, avoiding the old continuously
+    // driven resonators that exposed a handful of clinging pitches.
+    const float excitation = voice.ageSamples == 0u
+        ? 1.75f * voice.transientScale
+        : 0.075f * modalNoiseScale_ * noise * voice.transientEnvelope
+            * voice.transientScale;
     float modes = 0.0f;
     for (std::size_t mode = 0; mode < resonatorCount; ++mode)
         modes += voice.modeGains[mode] * voice.resonators[mode].tick (excitation);
-    const float wash = voice.filterB.tick (noise) * voice.auxiliaryEnvelope
-        * (0.14f + 0.22f * voice.characterA);
-    return 0.88f * voice.filterA.tick (modes + wash);
+
+    const float brightness = voice.characterB;
+    const float bloom = 0.34f + 0.66f * (1.0f - voice.pitchEnvelope);
+    const float body = (0.43f - 0.11f * brightness)
+        * bodyBand * voice.envelope;
+    const float shimmer = (0.17f + 0.38f * brightness)
+        * shimmerBand * voice.auxiliaryEnvelope * bloom;
+    const float air = (0.07f + 0.32f * brightness)
+        * airBand * voice.auxiliaryEnvelope * bloom;
+    const float struckMetal = (0.20f - 0.07f * spread) * modes;
+    return 1.18f * (body + shimmer + air + struckMetal);
 }
 
 float DrumEngine::renderTom (Voice& voice) noexcept

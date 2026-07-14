@@ -10,17 +10,20 @@
 
 namespace
 {
-// An original late-1970s palette: aged enamel, tobacco Bakelite, ochre ink,
-// oxide red, and warm ivory.  The colours deliberately avoid any single
-// historical machine's trade dress.
-constexpr auto accent = 0xffd6a14a;
-constexpr auto accentHot = 0xffb85b3f;
-constexpr auto accentCool = 0xff9caf8b;
-constexpr auto panel = 0xe82c2a24;
-constexpr auto panelRaised = 0xff3a382f;
-constexpr auto panelEdge = 0xff746b56;
-constexpr auto textBright = 0xfff2e5c5;
-constexpr auto textDim = 0xffbaad91;
+// TR-808-inspired colour rhythm without copying its branding or panel layout:
+// charcoal hardware, warm legends, and ordered red/orange/yellow/cream voice
+// accents. Accent colours identify signal/state; the hardware stays neutral.
+constexpr auto trRed = 0xffe15d44;
+constexpr auto trOrange = 0xffe47624;
+constexpr auto trYellow = 0xffe5b83a;
+constexpr auto trCream = 0xffded4b8;
+constexpr auto focusRing = 0xfffff0c7;
+constexpr auto chassis = 0xff0e100f;
+constexpr auto panel = 0xf71b1e1c;
+constexpr auto panelRaised = 0xff262a27;
+constexpr auto panelEdge = 0xff616761;
+constexpr auto textBright = 0xffeee8d8;
+constexpr auto textDim = 0xffaaa99f;
 
 juce::Colour colour (juce::uint32 argb)
 {
@@ -59,19 +62,19 @@ void styleHeaderLabel (juce::Label& label, float size, juce::Colour labelColour)
 void drawPanel (juce::Graphics& graphics, juce::Rectangle<int> bounds)
 {
     const auto area = bounds.toFloat();
-    graphics.setColour (juce::Colours::black.withAlpha (0.28f));
-    graphics.fillRoundedRectangle (area.translated (0.0f, 3.0f), 8.0f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.46f));
+    graphics.fillRoundedRectangle (area.translated (0.0f, 4.0f), 7.0f);
 
-    juce::ColourGradient enamel (colour (0xf23d392e), area.getTopLeft(),
+    juce::ColourGradient enamel (colour (0xfb262a27), area.getTopLeft(),
                                  colour (panel), area.getBottomRight(), false);
-    enamel.addColour (0.48, colour (0xef302e27));
+    enamel.addColour (0.48, colour (0xfa202421));
     graphics.setGradientFill (enamel);
-    graphics.fillRoundedRectangle (area, 8.0f);
+    graphics.fillRoundedRectangle (area, 7.0f);
 
-    graphics.setColour (colour (0x95d4c49d));
-    graphics.drawRoundedRectangle (area.reduced (0.5f), 8.0f, 1.0f);
-    graphics.setColour (juce::Colours::black.withAlpha (0.38f));
-    graphics.drawRoundedRectangle (area.reduced (2.0f), 6.5f, 1.0f);
+    graphics.setColour (colour (panelEdge).withAlpha (0.70f));
+    graphics.drawRoundedRectangle (area.reduced (0.5f), 7.0f, 1.1f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.55f));
+    graphics.drawRoundedRectangle (area.reduced (2.0f), 5.5f, 1.0f);
 }
 
 void drawHardwareScrew (juce::Graphics& graphics, juce::Point<float> centre)
@@ -82,16 +85,16 @@ void drawHardwareScrew (juce::Graphics& graphics, juce::Point<float> centre)
     graphics.setColour (juce::Colours::black.withAlpha (0.42f));
     graphics.fillEllipse (screw.translated (0.5f, 1.0f));
 
-    juce::ColourGradient metal (colour (0xffd0c29f), screw.getTopLeft(),
-                                colour (0xff5e5849), screw.getBottomRight(), false);
+    juce::ColourGradient metal (colour (0xffb7bbb4), screw.getTopLeft(),
+                                colour (0xff555a56), screw.getBottomRight(), false);
     graphics.setGradientFill (metal);
     graphics.fillEllipse (screw);
-    graphics.setColour (colour (0xff39362e));
+    graphics.setColour (colour (0xff242724));
     graphics.drawLine (centre.x - 2.4f, centre.y, centre.x + 2.4f, centre.y, 1.0f);
 }
 
 void drawScaledBackground (juce::Graphics& graphics, const juce::Image& image,
-                           juce::Rectangle<float> destination)
+                           juce::Rectangle<float> destination, float opacity)
 {
     if (! image.isValid())
         return;
@@ -106,6 +109,8 @@ void drawScaledBackground (juce::Graphics& graphics, const juce::Image& image,
         source = source.withSizeKeepingCentre (source.getWidth(),
                                                source.getWidth() / destinationAspect);
 
+    const juce::Graphics::ScopedSaveState saveState (graphics);
+    graphics.setOpacity (juce::jlimit (0.0f, 1.0f, opacity));
     graphics.setImageResamplingQuality (juce::Graphics::mediumResamplingQuality);
     graphics.drawImage (image,
                         juce::roundToInt (destination.getX()),
@@ -116,6 +121,33 @@ void drawScaledBackground (juce::Graphics& graphics, const juce::Image& image,
                         juce::roundToInt (source.getY()),
                         juce::roundToInt (source.getWidth()),
                         juce::roundToInt (source.getHeight()), false);
+}
+
+juce::Colour padAccentFor (drumalor::Instrument instrument)
+{
+    switch (instrument)
+    {
+        case drumalor::Instrument::Kick:
+        case drumalor::Instrument::Snare:
+        case drumalor::Instrument::Clap:
+            return colour (trRed);
+        case drumalor::Instrument::ClosedHat:
+        case drumalor::Instrument::OpenHat:
+        case drumalor::Instrument::Ride:
+        case drumalor::Instrument::Crash:
+            return colour (trOrange);
+        case drumalor::Instrument::LowTom:
+        case drumalor::Instrument::MidTom:
+        case drumalor::Instrument::HighTom:
+            return colour (trYellow);
+        case drumalor::Instrument::Shaker:
+        case drumalor::Instrument::Perc1:
+        case drumalor::Instrument::Perc2:
+            return colour (trCream);
+        case drumalor::Instrument::Count:
+            break;
+    }
+    return colour (panelEdge);
 }
 
 class DrumalorPadAccessibilityHandler final : public juce::AccessibilityHandler
@@ -159,7 +191,7 @@ DrumalorLookAndFeel::DrumalorLookAndFeel()
     setColour (juce::Slider::textBoxTextColourId, colour (textBright));
     setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
     setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    setColour (juce::Slider::rotarySliderFillColourId, colour (accent));
+    setColour (juce::Slider::rotarySliderFillColourId, colour (trOrange));
     setColour (juce::Slider::rotarySliderOutlineColourId, colour (panelEdge));
     setColour (juce::TextButton::textColourOffId, colour (textDim));
     setColour (juce::TextButton::textColourOnId, colour (textBright));
@@ -170,15 +202,18 @@ void DrumalorLookAndFeel::drawRotarySlider (juce::Graphics& graphics,
                                             float sliderPos, float rotaryStartAngle,
                                             float rotaryEndAngle, juce::Slider& slider)
 {
-    const auto diameter = static_cast<float> (juce::jmin (width, height)) - 17.0f;
+    const bool isMaster = slider.getName().containsIgnoreCase ("MASTER");
+    const auto available = static_cast<float> (juce::jmin (width, height)) - 18.0f;
+    const auto diameter = juce::jlimit (72.0f, isMaster ? 112.0f : 132.0f,
+                                        available);
     const auto radius = diameter * 0.5f;
     const auto centre = juce::Point<float> (
         static_cast<float> (x) + static_cast<float> (width) * 0.5f,
-        static_cast<float> (y) + static_cast<float> (height) * 0.5f - 1.0f);
+        static_cast<float> (y) + static_cast<float> (height) * 0.5f);
     const auto bounds = juce::Rectangle<float> (diameter, diameter).withCentre (centre);
     const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
-    // Printed calibration marks around a dense, slightly glossy Bakelite cap.
+    // Crisp silkscreen calibration around a metal collar and Bakelite cap.
     constexpr int tickCount = 11;
     for (int tick = 0; tick < tickCount; ++tick)
     {
@@ -186,59 +221,61 @@ void DrumalorLookAndFeel::drawRotarySlider (juce::Graphics& graphics,
                                 static_cast<float> (tickCount - 1);
         const auto tickAngle = rotaryStartAngle
                              + proportion * (rotaryEndAngle - rotaryStartAngle);
-        const auto outer = centre.getPointOnCircumference (radius + 4.5f, tickAngle);
+        const auto outer = centre.getPointOnCircumference (radius + 7.5f, tickAngle);
         const auto inner = centre.getPointOnCircumference (
-            radius + (tick % 5 == 0 ? 0.5f : 1.8f), tickAngle);
-        graphics.setColour (colour (textDim).withAlpha (tick % 5 == 0 ? 0.88f : 0.52f));
-        graphics.drawLine ({ inner, outer }, tick % 5 == 0 ? 1.4f : 1.0f);
+            radius + (tick % 5 == 0 ? 2.0f : 3.5f), tickAngle);
+        graphics.setColour (colour (textDim).withAlpha (tick % 5 == 0 ? 0.90f : 0.56f));
+        graphics.drawLine ({ inner, outer }, tick % 5 == 0 ? 1.5f : 1.0f);
     }
 
     juce::Path track;
-    track.addCentredArc (centre.x, centre.y, radius - 1.5f, radius - 1.5f, 0.0f,
+    track.addCentredArc (centre.x, centre.y, radius + 0.5f, radius + 0.5f, 0.0f,
                          rotaryStartAngle, rotaryEndAngle, true);
     graphics.setColour (slider.findColour (juce::Slider::rotarySliderOutlineColourId));
-    graphics.strokePath (track, juce::PathStrokeType (2.6f,
+    graphics.strokePath (track, juce::PathStrokeType (2.0f,
                                                       juce::PathStrokeType::curved,
                                                       juce::PathStrokeType::rounded));
 
     juce::Path valueArc;
-    valueArc.addCentredArc (centre.x, centre.y, radius - 1.5f, radius - 1.5f, 0.0f,
+    valueArc.addCentredArc (centre.x, centre.y, radius + 0.5f, radius + 0.5f, 0.0f,
                             rotaryStartAngle, angle, true);
-    graphics.setColour (colour (accent));
-    graphics.strokePath (valueArc, juce::PathStrokeType (3.2f,
+    graphics.setColour (slider.findColour (juce::Slider::rotarySliderFillColourId));
+    graphics.strokePath (valueArc, juce::PathStrokeType (3.0f,
                                                          juce::PathStrokeType::curved,
                                                          juce::PathStrokeType::rounded));
 
-    const auto cap = bounds.reduced (8.5f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.52f));
+    graphics.fillEllipse (bounds.translated (1.5f, 2.5f));
+    juce::ColourGradient collar (colour (0xff858a83), bounds.getTopLeft(),
+                                 colour (0xff303431), bounds.getBottomRight(), false);
+    collar.addColour (0.44, colour (0xff5d625d));
+    graphics.setGradientFill (collar);
+    graphics.fillEllipse (bounds);
+    graphics.setColour (colour (0xffa3a79f).withAlpha (0.72f));
+    graphics.drawEllipse (bounds.reduced (0.6f), 1.1f);
+
+    const auto cap = bounds.reduced (7.0f);
     graphics.setColour (juce::Colours::black.withAlpha (0.45f));
-    graphics.fillEllipse (cap.translated (1.5f, 2.2f));
-    juce::ColourGradient bakelite (colour (0xff403b31), cap.getTopLeft(),
-                                   colour (0xff151410), cap.getBottomRight(), false);
-    bakelite.addColour (0.38, colour (0xff302c24));
+    graphics.fillEllipse (cap.translated (0.8f, 1.4f));
+    const auto capTop = isMaster ? colour (0xff342724) : colour (0xff303330);
+    juce::ColourGradient bakelite (capTop, cap.getTopLeft(),
+                                   colour (0xff0d0f0e), cap.getBottomRight(), false);
+    bakelite.addColour (0.42, isMaster ? colour (0xff281b19) : colour (0xff202320));
     graphics.setGradientFill (bakelite);
     graphics.fillEllipse (cap);
-    graphics.setColour (colour (0xff80745c));
+    graphics.setColour (colour (panelEdge).withAlpha (0.78f));
     graphics.drawEllipse (cap, 1.0f);
 
-    // A subtle grip ring and centre boss keep the knob legible at small sizes.
-    graphics.setColour (juce::Colours::black.withAlpha (0.48f));
-    graphics.drawEllipse (cap.reduced (4.5f), 1.0f);
-    graphics.setColour (colour (0xff4d483b));
-    graphics.fillEllipse (cap.reduced (cap.getWidth() * 0.36f));
-
-    juce::Path pointer;
-    const auto pointerLength = radius * 0.39f;
-    pointer.addRoundedRectangle (-1.25f, -pointerLength, 2.5f,
-                                 pointerLength * 0.55f, 1.2f);
-    pointer.applyTransform (juce::AffineTransform::rotation (angle)
-                                .translated (centre.x, centre.y));
-    graphics.setColour (colour (0xffffedc4));
-    graphics.fillPath (pointer);
+    const auto pointerStart = centre.getPointOnCircumference (radius * 0.18f, angle);
+    const auto pointerEnd = centre.getPointOnCircumference (radius * 0.76f, angle);
+    graphics.setColour (isMaster ? colour (trYellow) : colour (0xfff4edda));
+    graphics.drawLine ({ pointerStart, pointerEnd }, isMaster ? 2.4f : 2.8f);
+    graphics.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre (centre));
 
     if (slider.hasKeyboardFocus (true))
     {
-        graphics.setColour (colour (accentCool));
-        graphics.drawEllipse (bounds.expanded (2.5f), 1.6f);
+        graphics.setColour (colour (focusRing));
+        graphics.drawEllipse (bounds.expanded (3.0f), 2.0f);
     }
 }
 
@@ -249,7 +286,7 @@ void DrumalorLookAndFeel::drawButtonBackground (juce::Graphics& graphics,
                                                 bool isDown)
 {
     auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
-    auto fill = colour (0xff4a2924);
+    auto fill = colour (0xff7f3027);
     if (isHighlighted)
         fill = fill.brighter (0.08f);
     if (isDown)
@@ -257,11 +294,11 @@ void DrumalorLookAndFeel::drawButtonBackground (juce::Graphics& graphics,
 
     graphics.setColour (fill);
     graphics.fillRoundedRectangle (bounds, 4.0f);
-    graphics.setColour (colour (0xffd6b186).withAlpha (isHighlighted ? 0.90f : 0.48f));
+    graphics.setColour (colour (trRed).withAlpha (isHighlighted ? 0.96f : 0.72f));
     graphics.drawRoundedRectangle (bounds, 4.0f, 1.0f);
     if (button.hasKeyboardFocus (true))
     {
-        graphics.setColour (colour (accentCool));
+        graphics.setColour (colour (focusRing));
         graphics.drawRoundedRectangle (bounds.reduced (2.5f), 2.5f, 1.5f);
     }
 }
@@ -324,82 +361,117 @@ void DrumalorPad::paintButton (juce::Graphics& graphics,
                                bool isMouseOverButton,
                                bool isButtonDown)
 {
-    auto bounds = getLocalBounds().toFloat().reduced (1.0f);
-    auto top = selected ? colour (0xff57412e) : colour (panelRaised);
-    auto bottom = selected ? colour (0xff2f271e) : colour (0xff24231e);
+    auto bounds = getLocalBounds().toFloat().reduced (1.5f);
+    const auto channelColour = padAccentFor (drum);
+    auto top = selected
+        ? channelColour.interpolatedWith (colour (panelRaised), 0.76f)
+        : colour (0xff242724);
+    auto bottom = selected
+        ? channelColour.interpolatedWith (colour (0xff151816), 0.82f)
+        : colour (0xff121513);
 
     if (isMouseOverButton)
     {
-        top = top.brighter (0.08f);
-        bottom = bottom.brighter (0.05f);
+        top = top.brighter (0.10f);
+        bottom = bottom.brighter (0.07f);
     }
     if (isButtonDown)
     {
-        top = top.darker (0.12f);
-        bottom = bottom.darker (0.12f);
-        bounds = bounds.reduced (1.5f);
+        top = top.darker (0.16f);
+        bottom = bottom.darker (0.16f);
+        bounds = bounds.reduced (1.2f).translated (0.0f, 1.0f);
     }
 
+    graphics.setColour (juce::Colours::black.withAlpha (0.58f));
+    graphics.fillRoundedRectangle (bounds.translated (0.0f, 3.0f), 5.0f);
+
+    const auto frame = bounds;
+    juce::ColourGradient metal (colour (0xff666b65), frame.getTopLeft(),
+                                colour (0xff292d2a), frame.getBottomRight(), false);
+    graphics.setGradientFill (metal);
+    graphics.fillRoundedRectangle (frame, 5.0f);
+
+    auto face = frame.reduced (3.0f);
     juce::ColourGradient fill (top, bounds.getTopLeft(), bottom,
                                bounds.getBottomLeft(), false);
     graphics.setGradientFill (fill);
-    graphics.setColour (juce::Colours::black.withAlpha (0.42f));
-    graphics.fillRoundedRectangle (bounds.translated (0.0f, 2.0f), 5.0f);
+    graphics.fillRoundedRectangle (face, 3.5f);
 
-    graphics.setGradientFill (fill);
-    graphics.fillRoundedRectangle (bounds, 5.0f);
-
-    // Inner bevel suggests the thick rubber strike buttons of a hardware unit.
-    graphics.setColour (colour (0x54f2e5c5));
-    graphics.drawLine (bounds.getX() + 5.0f, bounds.getY() + 1.0f,
-                       bounds.getRight() - 5.0f, bounds.getY() + 1.0f, 1.0f);
-    graphics.setColour (juce::Colours::black.withAlpha (0.40f));
-    graphics.drawLine (bounds.getX() + 5.0f, bounds.getBottom() - 1.0f,
-                       bounds.getRight() - 5.0f, bounds.getBottom() - 1.0f, 1.0f);
+    // Convex rubber face: a restrained top reflection and deep lower edge.
+    graphics.setColour (colour (0x36eee8d8));
+    graphics.drawLine (face.getX() + 5.0f, face.getY() + 1.0f,
+                       face.getRight() - 5.0f, face.getY() + 1.0f, 1.0f);
+    graphics.setColour (juce::Colours::black.withAlpha (0.62f));
+    graphics.drawLine (face.getX() + 5.0f, face.getBottom() - 1.0f,
+                       face.getRight() - 5.0f, face.getBottom() - 1.0f, 1.2f);
 
     if (flashLevel > 0.0f)
     {
-        graphics.setColour (colour (accent).withAlpha (0.08f + 0.42f * flashLevel));
-        graphics.fillRoundedRectangle (bounds.reduced (1.0f), 4.0f);
+        graphics.setColour (channelColour.withAlpha (0.05f + 0.24f * flashLevel));
+        graphics.fillRoundedRectangle (face, 3.5f);
     }
 
-    graphics.setColour (selected ? colour (accent) : colour (panelEdge));
-    graphics.drawRoundedRectangle (bounds.reduced (0.5f), 5.0f,
-                                   selected ? 1.8f : 1.0f);
+    graphics.setColour (selected ? channelColour : colour (0xff555b56));
+    graphics.drawRoundedRectangle (frame.reduced (0.5f), 5.0f,
+                                   selected ? 1.8f : 0.9f);
     if (hasKeyboardFocus (true))
     {
-        graphics.setColour (colour (accentCool));
-        graphics.drawRoundedRectangle (bounds.reduced (2.5f), 3.0f, 1.5f);
+        graphics.setColour (colour (focusRing));
+        graphics.drawRoundedRectangle (frame.expanded (0.5f), 5.5f, 2.0f);
     }
 
-    const auto strip = bounds.withHeight (5.0f).reduced (8.0f, 0.0f);
-    graphics.setColour ((selected ? colour (accent) : colour (accentHot))
-                            .withAlpha (selected ? 0.96f : 0.48f + 0.30f * flashLevel));
-    graphics.fillRect (strip);
+    const auto led = juce::Rectangle<float> (6.0f, 6.0f)
+                         .withCentre ({ face.getRight() - 9.0f, face.getY() + 9.0f });
+    graphics.setColour (juce::Colours::black.withAlpha (0.72f));
+    graphics.fillEllipse (led.expanded (1.5f));
+    graphics.setColour (channelColour.withAlpha (
+        selected ? 0.96f : 0.34f + 0.60f * flashLevel));
+    graphics.fillEllipse (led);
+    if (selected || flashLevel > 0.25f)
+    {
+        graphics.setColour (channelColour.withAlpha (0.18f + 0.18f * flashLevel));
+        graphics.fillEllipse (led.expanded (4.0f));
+    }
 
-    auto textArea = getLocalBounds().reduced (9, 9);
-    textArea.removeFromTop (4);
-    auto noteArea = textArea.removeFromBottom (20);
+    const auto rail = face.withHeight (4.0f).withY (face.getBottom() - 4.0f)
+                          .reduced (5.0f, 0.0f);
+    graphics.setColour (channelColour.withAlpha (
+        selected ? 0.98f : 0.58f + 0.36f * flashLevel));
+    graphics.fillRoundedRectangle (rail, 1.5f);
+
+    auto textArea = face.toNearestInt().reduced (9, 7);
+    auto utilityRow = textArea.removeFromTop (15);
+    auto noteArea = textArea.removeFromBottom (17);
+    graphics.setColour (colour (textDim).withAlpha (0.80f));
+    graphics.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    graphics.drawText (
+        juce::String (static_cast<int> (drum) + 1).paddedLeft ('0', 2),
+        utilityRow, juce::Justification::centredLeft);
+
     graphics.setColour (colour (textBright));
-    graphics.setFont (juce::Font (juce::FontOptions (12.5f, juce::Font::bold)));
+    graphics.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
     graphics.drawFittedText (nameText.toUpperCase(), textArea,
-                             juce::Justification::centred, 2, 0.82f);
+                             juce::Justification::centred, 2, 0.78f);
 
-    graphics.setColour (selected ? colour (accent) : colour (textDim));
-    graphics.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+    graphics.setColour (selected ? colour (textBright) : colour (textDim));
+    graphics.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
     graphics.drawText (noteText, noteArea, juce::Justification::centred);
 }
 
 DrumalorKnob::DrumalorKnob (juce::String name, ValueStyle style)
 {
     label.setJustificationType (juce::Justification::centred);
-    label.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
-    label.setColour (juce::Label::textColourId, colour (textDim));
+    label.setFont (juce::Font (juce::FontOptions (11.5f, juce::Font::bold)));
+    label.setColour (juce::Label::textColourId, colour (textBright));
     label.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (label);
 
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 78, 21);
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 82, 23);
+    slider.setColour (juce::Slider::textBoxBackgroundColourId, colour (0xff101210));
+    slider.setColour (juce::Slider::textBoxOutlineColourId,
+                      colour (panelEdge).withAlpha (0.72f));
+    slider.setColour (juce::Slider::textBoxTextColourId, colour (textBright));
     slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f,
                                 juce::MathConstants<float>::pi * 2.75f, true);
 
@@ -459,7 +531,7 @@ void DrumalorKnob::setLabelText (const juce::String& text,
 void DrumalorKnob::resized()
 {
     auto area = getLocalBounds();
-    label.setBounds (area.removeFromTop (19));
+    label.setBounds (area.removeFromTop (22));
     slider.setBounds (area);
 }
 
@@ -498,18 +570,18 @@ void DrumalorStatusDisplay::setStatus (int activeVoices, bool ready, double samp
 void DrumalorStatusDisplay::paint (juce::Graphics& graphics)
 {
     auto bounds = getLocalBounds().toFloat().reduced (1.0f);
-    graphics.setColour (colour (0xff171914));
+    graphics.setColour (colour (0xff121513));
     graphics.fillRoundedRectangle (bounds, 3.0f);
-    graphics.setColour (colour (0xff756e58));
+    graphics.setColour (colour (0xff555b56));
     graphics.drawRoundedRectangle (bounds, 3.0f, 1.0f);
 
     const auto light = juce::Rectangle<float> (bounds.getX() + 11.0f,
                                                bounds.getCentreY() - 4.0f, 8.0f, 8.0f);
-    graphics.setColour (isReady ? colour (0xffd4a944) : colour (0xff5d5b4f));
+    graphics.setColour (isReady ? colour (trYellow) : colour (0xff5a5f5b));
     graphics.fillEllipse (light);
     if (isReady)
     {
-        graphics.setColour (colour (0x45d4a944));
+        graphics.setColour (colour (trYellow).withAlpha (0.27f));
         graphics.fillEllipse (light.expanded (5.0f));
     }
 
@@ -529,26 +601,26 @@ void DrumalorStatusDisplay::paint (juce::Graphics& graphics)
 DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p),
       vintagePanel (juce::ImageFileFormat::loadFrom (
-          DrumalorAssets::vintagepanel_png,
-          static_cast<std::size_t> (DrumalorAssets::vintagepanel_pngSize)))
+          DrumalorAssets::vintagepanel_jpg,
+          static_cast<std::size_t> (DrumalorAssets::vintagepanel_jpgSize)))
 {
     setLookAndFeel (&lookAndFeel);
     setOpaque (true);
 
     logoLabel.setText ("DRUMALOR", juce::dontSendNotification);
-    styleHeaderLabel (logoLabel, 25.0f, colour (textBright));
+    styleHeaderLabel (logoLabel, 29.0f, colour (textBright));
     logoLabel.setAccessible (true);
     logoLabel.setTitle ("Drumalor drum synthesizer");
     addAndMakeVisible (logoLabel);
 
-    editionLabel.setText ("THIRTEEN VOICE  |  ORGANIC ANALOG-MODELLED DRUM MACHINE",
+    editionLabel.setText ("13-VOICE  |  ANALOG DRUM SYNTHESIZER",
                           juce::dontSendNotification);
-    styleHeaderLabel (editionLabel, 10.5f, colour (textDim));
+    styleHeaderLabel (editionLabel, 11.0f, colour (trOrange));
     addAndMakeVisible (editionLabel);
 
     addAndMakeVisible (statusDisplay);
 
-    panicButton.setColour (juce::TextButton::textColourOffId, colour (0xffffd6bf));
+    panicButton.setColour (juce::TextButton::textColourOffId, colour (trCream));
     panicButton.setName ("Panic - stop all drum tails");
     panicButton.setTitle ("Panic");
     panicButton.setDescription ("Immediately stop every sounding drum voice");
@@ -580,7 +652,7 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
     }
 
     selectedInstrumentLabel.setFont (
-        juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
+        juce::Font (juce::FontOptions (17.0f, juce::Font::bold)));
     selectedInstrumentLabel.setColour (juce::Label::textColourId, colour (textBright));
     selectedInstrumentLabel.setJustificationType (juce::Justification::centredLeft);
     selectedInstrumentLabel.setInterceptsMouseClicks (false, false);
@@ -593,11 +665,18 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
     outputAttachment = std::make_unique<SliderAttachment> (
         audioProcessor.parameters, drumalor::parameters::output, outputKnob.slider);
     outputKnob.slider.setTextValueSuffix (" dB");
+    outputKnob.slider.setColour (juce::Slider::rotarySliderFillColourId,
+                                 colour (trRed));
+    outputKnob.slider.setColour (juce::Slider::rotarySliderOutlineColourId,
+                                 colour (0xff555b56));
 
     selectInstrument (selectedInstrument);
+    statusDisplay.setStatus (audioProcessor.getActiveVoiceCount(),
+                             audioProcessor.isEngineReady(),
+                             audioProcessor.getCurrentSampleRateForDisplay());
 
     setResizable (true, true);
-    setResizeLimits (900, 640, 1600, 1000);
+    setResizeLimits (900, 640, 1600, 900);
     setSize (1180, 780);
     startTimerHz (30);
 }
@@ -629,7 +708,7 @@ void DrumalorAudioProcessorEditor::selectInstrument (drumalor::Instrument instru
     const auto midiNote = drumalor::getStandardMidiNote (selectedInstrument);
 
     selectedInstrumentLabel.setText (
-        "EDITING  " + name.toUpperCase() + "   |   GM " + juce::String (midiNote),
+        name.toUpperCase() + "   |   MIDI " + juce::String (midiNote),
         juce::dontSendNotification);
     characterAKnob.setLabelText (characterA.toUpperCase(),
                                  "Adjust " + name + " " + characterA.toLowerCase());
@@ -637,6 +716,10 @@ void DrumalorAudioProcessorEditor::selectInstrument (drumalor::Instrument instru
                                  "Adjust " + name + " " + characterB.toLowerCase());
     pitchKnob.setLabelText ("PITCH", "Transpose " + name + " by semitones");
     decayKnob.setLabelText ("DECAY", "Adjust " + name + " decay time");
+
+    const auto voiceAccent = padAccentFor (selectedInstrument);
+    for (auto* knob : { &characterAKnob, &characterBKnob, &pitchKnob, &decayKnob })
+        knob->slider.setColour (juce::Slider::rotarySliderFillColourId, voiceAccent);
 
     if (needsAttachmentRefresh)
         rebuildSelectedAttachments();
@@ -703,34 +786,34 @@ DrumalorAudioProcessorEditor::calculateLayout() const
 {
     auto content = getLocalBounds().reduced (18);
     LayoutAreas layout;
-    layout.header = content.removeFromTop (52);
-    content.removeFromTop (12);
+    layout.header = content.removeFromTop (64);
+    content.removeFromTop (10);
 
-    const auto padHeight = juce::jlimit (230, 345, content.getHeight() * 48 / 100);
+    const auto padHeight = juce::jlimit (205, 244, content.getHeight() * 38 / 100);
     layout.pads = content.removeFromTop (padHeight);
-    content.removeFromTop (12);
+    content.removeFromTop (10);
     layout.controls = content;
     return layout;
 }
 
 void DrumalorAudioProcessorEditor::paint (juce::Graphics& graphics)
 {
-    graphics.fillAll (colour (0xff29261f));
-    drawScaledBackground (graphics, vintagePanel, getLocalBounds().toFloat());
+    graphics.fillAll (colour (chassis));
+    // The generated plate is now material only. Runtime geometry is the sole
+    // layout source, so resizing cannot reveal a second set of panels/knobs.
+    drawScaledBackground (graphics, vintagePanel, getLocalBounds().toFloat(), 0.15f);
 
-    // The image provides natural patina; a warm veil keeps control contrast
-    // consistent even when the editor is resized and the image crop changes.
-    juce::ColourGradient backgroundVeil (colour (0x28252119), 0.0f, 0.0f,
-                                         colour (0x90302d25), 0.0f,
+    juce::ColourGradient backgroundVeil (colour (0x520e100f), 0.0f, 0.0f,
+                                         colour (0x76121413), 0.0f,
                                          static_cast<float> (getHeight()), false);
-    backgroundVeil.addColour (0.48, colour (0x4e353127));
+    backgroundVeil.addColour (0.50, colour (0x64181b18));
     graphics.setGradientFill (backgroundVeil);
     graphics.fillAll();
 
     const auto frame = getLocalBounds().toFloat().reduced (7.0f);
-    graphics.setColour (juce::Colours::black.withAlpha (0.38f));
+    graphics.setColour (juce::Colours::black.withAlpha (0.58f));
     graphics.drawRoundedRectangle (frame.translated (0.0f, 1.0f), 8.0f, 4.0f);
-    graphics.setColour (colour (0xbbbdae8b));
+    graphics.setColour (colour (panelEdge).withAlpha (0.78f));
     graphics.drawRoundedRectangle (frame, 8.0f, 1.2f);
 
     drawHardwareScrew (graphics, frame.getTopLeft() + juce::Point<float> (10.0f, 10.0f));
@@ -742,67 +825,97 @@ void DrumalorAudioProcessorEditor::paint (juce::Graphics& graphics)
     drawPanel (graphics, layout.pads);
     drawPanel (graphics, layout.controls);
 
-    graphics.setColour (colour (accentHot));
-    graphics.fillRect (layout.header.getX(), layout.header.getBottom() - 2,
-                       juce::jmax (110, getWidth() / 7), 2);
-    graphics.setColour (colour (accent));
-    graphics.fillRect (layout.header.getX() + juce::jmax (110, getWidth() / 7),
-                       layout.header.getBottom() - 2, 52, 2);
+    auto brandPlate = layout.header.toFloat().reduced (0.0f, 4.0f);
+    brandPlate.setWidth (juce::jmin (310.0f, brandPlate.getWidth() * 0.34f));
+    graphics.setColour (juce::Colours::black.withAlpha (0.45f));
+    graphics.fillRoundedRectangle (brandPlate.translated (0.0f, 2.0f), 5.0f);
+    juce::ColourGradient brandFill (colour (0xff242724), brandPlate.getTopLeft(),
+                                    colour (0xff101210), brandPlate.getBottomRight(), false);
+    graphics.setGradientFill (brandFill);
+    graphics.fillRoundedRectangle (brandPlate, 5.0f);
+    graphics.setColour (colour (panelEdge));
+    graphics.drawRoundedRectangle (brandPlate.reduced (0.5f), 5.0f, 1.1f);
 
-    graphics.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+    const auto railY = static_cast<float> (layout.header.getBottom() - 5);
+    const auto railX = static_cast<float> (layout.header.getX());
+    const auto railSegment = brandPlate.getWidth() * 0.25f;
+    graphics.setColour (colour (trRed));
+    graphics.fillRect (railX, railY, railSegment, 3.0f);
+    graphics.setColour (colour (trOrange));
+    graphics.fillRect (railX + railSegment, railY, railSegment, 3.0f);
+    graphics.setColour (colour (trYellow));
+    graphics.fillRect (railX + railSegment * 2.0f, railY, railSegment, 3.0f);
+    graphics.setColour (colour (trCream));
+    graphics.fillRect (railX + railSegment * 3.0f, railY, railSegment, 3.0f);
+
+    graphics.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
     graphics.setColour (colour (textDim));
-    graphics.drawText ("INSTRUMENT BANK   |   CLICK A PAD TO SELECT + AUDITION",
+    graphics.drawText ("INSTRUMENT CHANNELS   |   SELECT + AUDITION",
                        layout.pads.reduced (14).removeFromTop (22),
                        juce::Justification::centredLeft);
 
     auto controlContent = layout.controls.reduced (15);
-    controlContent.removeFromTop (39);
-    const auto outputSeparatorX = controlContent.getX()
-                                + controlContent.getWidth() * 4 / 5;
-    graphics.setColour (colour (panelEdge));
-    graphics.drawVerticalLine (outputSeparatorX,
-                               static_cast<float> (controlContent.getY() + 8),
-                               static_cast<float> (controlContent.getBottom() - 8));
-    graphics.setColour (colour (accentCool).withAlpha (0.76f));
-    graphics.fillEllipse (static_cast<float> (outputSeparatorX + 10),
-                          static_cast<float> (controlContent.getY() + 11), 5.0f, 5.0f);
+    auto controlHeader = controlContent.removeFromTop (42);
+    const auto masterWidth = juce::jlimit (150, 220, controlContent.getWidth() / 5);
+    auto masterDeck = controlContent.removeFromRight (masterWidth);
+    controlContent.removeFromRight (10);
+    auto voiceDeck = controlContent;
+
+    for (const auto deck : { voiceDeck, masterDeck })
+    {
+        const auto area = deck.toFloat();
+        graphics.setColour (juce::Colours::black.withAlpha (0.24f));
+        graphics.fillRoundedRectangle (area, 5.0f);
+        graphics.setColour (colour (panelEdge).withAlpha (0.42f));
+        graphics.drawRoundedRectangle (area.reduced (0.5f), 5.0f, 1.0f);
+    }
+
+    graphics.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    graphics.setColour (colour (trOrange));
+    graphics.drawText ("VOICE CIRCUIT", controlHeader.removeFromLeft (105),
+                       juce::Justification::centredLeft);
+    graphics.setColour (colour (trRed));
+    graphics.drawText ("MASTER BUS", masterDeck.getX(), layout.controls.getY() + 14,
+                       masterDeck.getWidth(), 22, juce::Justification::centred);
 }
 
 void DrumalorAudioProcessorEditor::resized()
 {
     const auto layout = calculateLayout();
 
-    auto header = layout.header.reduced (6, 3);
-    logoLabel.setBounds (header.removeFromLeft (178));
-    statusDisplay.setBounds (header.removeFromRight (210).reduced (0, 5));
+    auto header = layout.header.reduced (8, 5);
+    auto brand = header.removeFromLeft (juce::jmin (286, header.getWidth() * 34 / 100));
+    logoLabel.setBounds (brand.removeFromTop (34));
+    editionLabel.setBounds (brand);
+
+    statusDisplay.setBounds (header.removeFromRight (juce::jmin (210, header.getWidth() / 2))
+                                 .reduced (0, 7));
     header.removeFromRight (10);
-    panicButton.setBounds (header.removeFromRight (78).reduced (0, 5));
-    header.removeFromRight (12);
-    editionLabel.setBounds (header);
+    panicButton.setBounds (header.removeFromRight (78).reduced (0, 7));
 
     auto padContent = layout.pads.reduced (14);
-    padContent.removeFromTop (27);
+    padContent.removeFromTop (28);
     constexpr int rowGap = 8;
     auto firstRow = padContent.removeFromTop ((padContent.getHeight() - rowGap) / 2);
     padContent.removeFromTop (rowGap);
     auto secondRow = padContent;
 
-    const auto layoutPadRow = [this] (juce::Rectangle<int> row,
-                                      std::size_t firstIndex,
-                                      std::size_t count)
+    constexpr int gap = 7;
+    const auto padWidth = juce::jmax (1, (firstRow.getWidth() - gap * 6) / 7);
+    const auto layoutPadRow = [this, padWidth] (juce::Rectangle<int> row,
+                                                std::size_t firstIndex,
+                                                std::size_t count)
     {
-        constexpr int gap = 7;
-        const auto usableWidth = row.getWidth() - gap * (static_cast<int> (count) - 1);
-        const auto padWidth = usableWidth / static_cast<int> (count);
+        constexpr int padGap = 7;
+        const auto totalWidth = padWidth * static_cast<int> (count)
+                              + padGap * (static_cast<int> (count) - 1);
+        row = row.withSizeKeepingCentre (totalWidth, row.getHeight());
         for (std::size_t offset = 0; offset < count; ++offset)
         {
-            const auto targetWidth = offset + 1 == count
-                ? row.getWidth()
-                : juce::jmax (1, padWidth);
             pads[firstIndex + offset]->setBounds (
-                row.removeFromLeft (targetWidth));
+                row.removeFromLeft (padWidth));
             if (offset + 1 < count)
-                row.removeFromLeft (gap);
+                row.removeFromLeft (padGap);
         }
     };
 
@@ -810,18 +923,32 @@ void DrumalorAudioProcessorEditor::resized()
     layoutPadRow (secondRow, 7, drumalor::instrumentCount - 7);
 
     auto controls = layout.controls.reduced (15);
-    selectedInstrumentLabel.setBounds (controls.removeFromTop (31));
-    controls.removeFromTop (8);
+    auto controlHeader = controls.removeFromTop (42);
+    const auto masterWidth = juce::jlimit (150, 220, controls.getWidth() / 5);
+    auto masterDeck = controls.removeFromRight (masterWidth);
+    controls.removeFromRight (10);
+    auto voiceDeck = controls;
 
-    constexpr int knobCount = 5;
-    const auto knobWidth = controls.getWidth() / knobCount;
-    DrumalorKnob* knobs[] = { &characterAKnob, &characterBKnob, &pitchKnob,
-                              &decayKnob, &outputKnob };
-    for (int index = 0; index < knobCount; ++index)
+    controlHeader.removeFromLeft (105);
+    controlHeader.removeFromRight (masterWidth + 10);
+    selectedInstrumentLabel.setBounds (controlHeader);
+
+    auto voiceKnobRow = voiceDeck.reduced (8, 5);
+    voiceKnobRow = voiceKnobRow.withSizeKeepingCentre (
+        voiceKnobRow.getWidth(), juce::jmin (260, voiceKnobRow.getHeight()));
+    constexpr int voiceKnobCount = 4;
+    const auto knobWidth = voiceKnobRow.getWidth() / voiceKnobCount;
+    DrumalorKnob* knobs[] = { &characterAKnob, &characterBKnob,
+                              &pitchKnob, &decayKnob };
+    for (int index = 0; index < voiceKnobCount; ++index)
     {
-        auto cell = controls.removeFromLeft (
-            index == knobCount - 1 ? controls.getWidth() : knobWidth);
-        const auto leftInset = index == knobCount - 1 ? 14 : 4;
-        knobs[index]->setBounds (cell.reduced (leftInset, 1));
+        auto cell = voiceKnobRow.removeFromLeft (
+            index == voiceKnobCount - 1 ? voiceKnobRow.getWidth() : knobWidth);
+        knobs[index]->setBounds (cell.reduced (4, 0));
     }
+
+    auto masterKnob = masterDeck.reduced (8, 5);
+    masterKnob = masterKnob.withSizeKeepingCentre (
+        masterKnob.getWidth(), juce::jmin (238, masterKnob.getHeight()));
+    outputKnob.setBounds (masterKnob);
 }

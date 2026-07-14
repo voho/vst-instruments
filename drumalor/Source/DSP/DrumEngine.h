@@ -170,6 +170,8 @@ private:
         float modalNoiseCurrent { 0.0f };
         float modalNoiseNext { 0.0f };
         float modalNoisePhase { 0.0f };
+        float cymbalClockPhase { 1.0f };
+        float cymbalPcmValue { 0.0f };
         float baseFrequency { 100.0f };
         float sweepAmount { 0.0f };
         float panLeft { 0.70710678f };
@@ -215,6 +217,9 @@ private:
     [[nodiscard]] float renderPerc2 (Voice& voice) noexcept;
 
     [[nodiscard]] float oscillator (Voice& voice, int oscillatorIndex) const noexcept;
+    [[nodiscard]] float bandLimitedPulse (Voice& voice, int oscillatorIndex) const noexcept;
+    [[nodiscard]] float cymbalOscillatorBank (Voice& voice) const noexcept;
+    [[nodiscard]] float nextCymbalPcm (Voice& voice, float source) const noexcept;
     [[nodiscard]] float sineLookup (float phase) const noexcept;
     [[nodiscard]] static float nextNoise (Voice& voice) noexcept;
     [[nodiscard]] float nextModalNoise (Voice& voice) const noexcept;

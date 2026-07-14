@@ -101,13 +101,12 @@ void styleHeaderLabel (juce::Label& label, float size, juce::Colour colour)
 
 void distributeHorizontally (juce::Rectangle<int> area,
                              std::initializer_list<juce::Component*> components,
-                             int gap = 3)
+                             int gap)
 {
     const auto count = static_cast<int> (components.size());
     if (count == 0)
         return;
 
-    area = area.reduced (1, 0);
     const auto available = juce::jmax (0, area.getWidth() - gap * (count - 1));
     int index = 0;
     for (auto* component : components)
@@ -543,8 +542,12 @@ MarsKnob::MarsKnob (juce::String name, MarsValueFormat format)
 
 void MarsKnob::resized()
 {
-    auto area = getLocalBounds();
+    constexpr int maximumControlStackHeight = 134;
+    constexpr int labelToDialGap = 4;
+    auto area = getLocalBounds().withSizeKeepingCentre (
+        getWidth(), juce::jmin (maximumControlStackHeight, getHeight()));
     label.setBounds (area.removeFromTop (16));
+    area.removeFromTop (labelToDialGap);
     slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false,
                             juce::jlimit (40, 64, getWidth() - 4), 18);
     slider.setBounds (area);
@@ -994,6 +997,12 @@ void MarsAudioProcessorEditor::paint (juce::Graphics& g)
 
 void MarsAudioProcessorEditor::resized()
 {
+    const auto panelGap = juce::jlimit (10, 12, getWidth() / 115);
+    const auto controlRowGap = juce::jlimit (6, 8, getHeight() / 125);
+    const auto choiceToControlsGap = juce::jlimit (5, 6, getHeight() / 150);
+    const auto controlColumnGap = juce::jlimit (7, 8, getWidth() / 175);
+    const auto faderColumnGap = juce::jlimit (4, 5, getWidth() / 280);
+
     const auto headerHeight = juce::jlimit (58, 74, getHeight() / 11);
     auto header = getLocalBounds().removeFromTop (headerHeight).reduced (24, 8);
     logoLabel.setBounds (header.removeFromLeft (150));
@@ -1006,107 +1015,120 @@ void MarsAudioProcessorEditor::resized()
 
     auto body = getLocalBounds();
     body.removeFromTop (headerHeight);
-    body.reduce (22, 10);
-    const auto gap = juce::jlimit (7, 11, getWidth() / 120);
+    body.reduce (24, 10);
     const auto keyboardHeight = juce::jlimit (125, 190, getHeight() * 19 / 100);
     auto keyboardArea = body.removeFromBottom (keyboardHeight);
-    keyboardHintLabel.setBounds (keyboardArea.removeFromTop (19));
+    keyboardHintLabel.setBounds (keyboardArea.removeFromTop (20));
+    keyboardArea.removeFromTop (2);
     keyboard.setBounds (keyboardArea.reduced (0, 2));
     // MIDI 0..127 contains 75 white keys. Keep useful-sized keys at normal editor
     // sizes, but expand them when the full range would otherwise leave a blank tail.
     keyboard.setKeyWidth (juce::jmax (23.0f,
                                       static_cast<float> (keyboard.getWidth()) / 75.0f));
-    body.removeFromBottom (gap);
+    body.removeFromBottom (panelGap);
 
-    auto rowOne = body.removeFromTop ((body.getHeight() - gap) / 2);
-    body.removeFromTop (gap);
+    auto rowOne = body.removeFromTop ((body.getHeight() - panelGap) / 2);
+    body.removeFromTop (panelGap);
     auto rowTwo = body;
 
-    const auto rowOneAvailable = rowOne.getWidth() - gap * 3;
+    const auto rowOneAvailable = rowOne.getWidth() - panelGap * 3;
     const auto osc1Width = rowOneAvailable * 15 / 100;
     const auto osc2Width = rowOneAvailable * 21 / 100;
     const auto mixerWidth = rowOneAvailable * 25 / 100;
 
     sectionBounds[oscillator1Section] = rowOne.removeFromLeft (osc1Width);
-    rowOne.removeFromLeft (gap);
+    rowOne.removeFromLeft (panelGap);
     sectionBounds[oscillator2Section] = rowOne.removeFromLeft (osc2Width);
-    rowOne.removeFromLeft (gap);
+    rowOne.removeFromLeft (panelGap);
     sectionBounds[mixerSection] = rowOne.removeFromLeft (mixerWidth);
-    rowOne.removeFromLeft (gap);
+    rowOne.removeFromLeft (panelGap);
     sectionBounds[filterSection] = rowOne;
 
-    const auto rowTwoAvailable = rowTwo.getWidth() - gap * 3;
-    const auto lfoVoiceWidth = rowTwoAvailable * 34 / 100;
+    const auto rowTwoAvailable = rowTwo.getWidth() - panelGap * 3;
+    const auto lfoVoiceWidth = rowTwoAvailable * 37 / 100;
     const auto envelopeWidth = rowTwoAvailable * 20 / 100;
     sectionBounds[lfoVoiceSection] = rowTwo.removeFromLeft (lfoVoiceWidth);
-    rowTwo.removeFromLeft (gap);
+    rowTwo.removeFromLeft (panelGap);
     sectionBounds[filterEnvelopeSection] = rowTwo.removeFromLeft (envelopeWidth);
-    rowTwo.removeFromLeft (gap);
+    rowTwo.removeFromLeft (panelGap);
     sectionBounds[ampEnvelopeSection] = rowTwo.removeFromLeft (envelopeWidth);
-    rowTwo.removeFromLeft (gap);
+    rowTwo.removeFromLeft (panelGap);
     sectionBounds[masterSection] = rowTwo;
 
     const auto powerButtonBounds = [this] (Section section)
     {
-        auto area = sectionBounds[static_cast<size_t> (section)].reduced (8, 4)
-                        .removeFromTop (18);
-        return area.removeFromRight (46);
+        auto area = sectionBounds[static_cast<size_t> (section)].reduced (10, 3)
+                        .removeFromTop (22);
+        return area.removeFromRight (52);
     };
     osc1EnableButton.setBounds (powerButtonBounds (oscillator1Section));
     osc2EnableButton.setBounds (powerButtonBounds (oscillator2Section));
 
     const auto sectionContent = [this] (Section section)
     {
-        auto area = sectionBounds[static_cast<size_t> (section)].reduced (9, 7);
-        area.removeFromTop (23);
+        auto area = sectionBounds[static_cast<size_t> (section)].reduced (12, 10);
+        area.removeFromTop (20);
         return area;
     };
 
     auto osc1 = sectionContent (oscillator1Section);
     osc1WaveStrip.setBounds (osc1.removeFromTop (juce::jlimit (38, 49, osc1.getHeight() / 4)));
+    osc1.removeFromTop (choiceToControlsGap);
     osc1OctaveKnob.setBounds (osc1.withSizeKeepingCentre (juce::jmin (110, osc1.getWidth()),
                                                          osc1.getHeight()));
 
     auto osc2 = sectionContent (oscillator2Section);
     osc2WaveStrip.setBounds (osc2.removeFromTop (juce::jlimit (38, 49, osc2.getHeight() / 4)));
-    distributeHorizontally (osc2, { &osc2OctaveKnob, &osc2TuneKnob, &osc2FineKnob });
+    osc2.removeFromTop (choiceToControlsGap);
+    distributeHorizontally (osc2, { &osc2OctaveKnob, &osc2TuneKnob, &osc2FineKnob },
+                            controlColumnGap);
 
     auto mixer = sectionContent (mixerSection);
-    auto mixerTop = mixer.removeFromTop (mixer.getHeight() / 2);
-    distributeHorizontally (mixerTop, { &oscMixKnob, &pulseWidthKnob, &crossModKnob });
-    distributeHorizontally (mixer, { &subLevelKnob, &noiseLevelKnob });
+    auto mixerTop = mixer.removeFromTop ((mixer.getHeight() - controlRowGap) / 2);
+    mixer.removeFromTop (controlRowGap);
+    distributeHorizontally (mixerTop, { &oscMixKnob, &pulseWidthKnob, &crossModKnob },
+                            controlColumnGap);
+    distributeHorizontally (mixer, { &subLevelKnob, &noiseLevelKnob }, controlColumnGap);
 
     auto filter = sectionContent (filterSection);
     filterModelStrip.setBounds (filter.removeFromTop (juce::jlimit (38, 45, filter.getHeight() / 5)));
-    const auto filterGap = 2;
-    auto filterTop = filter.removeFromTop ((filter.getHeight() - filterGap) / 2);
-    filter.removeFromTop (filterGap);
-    distributeHorizontally (filterTop, { &cutoffKnob, &resonanceKnob, &filterDriveKnob });
-    distributeHorizontally (filter, { &filterShapeKnob, &filterEnvKnob, &keyTrackKnob });
+    filter.removeFromTop (choiceToControlsGap);
+    auto filterTop = filter.removeFromTop ((filter.getHeight() - controlRowGap) / 2);
+    filter.removeFromTop (controlRowGap);
+    distributeHorizontally (filterTop, { &cutoffKnob, &resonanceKnob, &filterDriveKnob },
+                            controlColumnGap);
+    distributeHorizontally (filter, { &filterShapeKnob, &filterEnvKnob, &keyTrackKnob },
+                            controlColumnGap);
 
     auto lfoVoice = sectionContent (lfoVoiceSection);
-    auto lfo = lfoVoice.removeFromLeft ((lfoVoice.getWidth() - gap) / 2);
-    lfoVoice.removeFromLeft (gap);
+    auto lfo = lfoVoice.removeFromLeft ((lfoVoice.getWidth() - panelGap) / 2);
+    lfoVoice.removeFromLeft (panelGap);
     auto voice = lfoVoice;
 
     lfoWaveStrip.setBounds (lfo.removeFromTop (juce::jlimit (38, 45, lfo.getHeight() / 5)));
-    auto lfoTop = lfo.removeFromTop (lfo.getHeight() / 2);
-    distributeHorizontally (lfoTop, { &lfoRateKnob, &lfoPitchKnob });
-    distributeHorizontally (lfo, { &lfoFilterKnob, &lfoPwmKnob });
+    lfo.removeFromTop (choiceToControlsGap);
+    auto lfoTop = lfo.removeFromTop ((lfo.getHeight() - controlRowGap) / 2);
+    lfo.removeFromTop (controlRowGap);
+    distributeHorizontally (lfoTop, { &lfoRateKnob, &lfoPitchKnob }, controlColumnGap);
+    distributeHorizontally (lfo, { &lfoFilterKnob, &lfoPwmKnob }, controlColumnGap);
 
     voiceModeStrip.setBounds (voice.removeFromTop (juce::jlimit (38, 45, voice.getHeight() / 5)));
-    auto voiceTop = voice.removeFromTop (voice.getHeight() / 2);
+    voice.removeFromTop (choiceToControlsGap);
+    auto voiceTop = voice.removeFromTop ((voice.getHeight() - controlRowGap) / 2);
+    voice.removeFromTop (controlRowGap);
     distributeHorizontally (voiceTop,
-                            { &unisonVoicesKnob, &driftKnob, &spreadKnob });
-    distributeHorizontally (voice, { &glideKnob, &velocityKnob });
+                            { &unisonVoicesKnob, &driftKnob, &spreadKnob },
+                            controlColumnGap);
+    distributeHorizontally (voice, { &glideKnob, &velocityKnob }, controlColumnGap);
 
     distributeHorizontally (sectionContent (filterEnvelopeSection),
                             { &filterAttackFader, &filterDecayFader,
-                              &filterSustainFader, &filterReleaseFader }, 1);
+                              &filterSustainFader, &filterReleaseFader }, faderColumnGap);
     distributeHorizontally (sectionContent (ampEnvelopeSection),
                             { &ampAttackFader, &ampDecayFader,
-                              &ampSustainFader, &ampReleaseFader }, 1);
+                              &ampSustainFader, &ampReleaseFader }, faderColumnGap);
 
     distributeHorizontally (sectionContent (masterSection),
-                            { &chorusMixKnob, &chorusRateKnob, &outputKnob });
+                            { &chorusMixKnob, &chorusRateKnob, &outputKnob },
+                            controlColumnGap);
 }

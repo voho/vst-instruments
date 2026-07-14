@@ -10,6 +10,11 @@ a named singer, load recordings, or contact a service while rendering audio.
 The screenshot is the actual Standalone application built from this source.
 The VST3 and Audio Unit use the same resizable JUCE editor.
 
+The interface remains fully resolution-independent: the layered hardware knobs,
+choice states, panel depth, spectral accents, and complete vocal-range keyboard
+are drawn as native JUCE graphics. This keeps labels and interaction crisp while
+resizing and avoids bitmap controls that would obscure automation or focus state.
+
 The project builds three products from one JUCE codebase:
 
 - VST3 instrument for hosts such as Ableton Live, REAPER, Cubase, and Bitwig

@@ -81,7 +81,7 @@ if(DRUMALOR_BUILD_PLUGIN)
     juce_add_binary_data(DrumalorAssets
         HEADER_NAME DrumalorAssets.h
         NAMESPACE DrumalorAssets
-        SOURCES Assets/vintage-panel.png)
+        SOURCES Assets/vintage-panel.jpg)
 
     juce_add_plugin(Drumalor
         VERSION ${PROJECT_VERSION}

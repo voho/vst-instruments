@@ -9,9 +9,10 @@ constexpr auto accent = 0xff6fffd5;
 constexpr auto accentBlue = 0xff66baff;
 constexpr auto ultraviolet = 0xffa477ff;
 constexpr auto panel = 0xff10151d;
-constexpr auto panelEdge = 0xff28313e;
+constexpr auto panelRaised = 0xff18212b;
+constexpr auto panelEdge = 0xff344250;
 constexpr auto textBright = 0xffedf7f5;
-constexpr auto textDim = 0xff7f909d;
+constexpr auto textDim = 0xff91a2ad;
 
 juce::Colour c (juce::uint32 argb) { return juce::Colour (argb); }
 
@@ -44,40 +45,84 @@ void VocalorLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int 
                                           float sliderPos, float rotaryStartAngle,
                                           float rotaryEndAngle, juce::Slider& slider)
 {
-    const auto diameter = static_cast<float> (juce::jmin (width, height)) - 13.0f;
+    const auto diameter = juce::jmax (
+        58.0f, static_cast<float> (juce::jmin (width, height)) - 12.0f);
     const auto radius = diameter * 0.5f;
-    const auto centre = juce::Point<float> (static_cast<float> (x) + width * 0.5f,
-                                            static_cast<float> (y) + height * 0.5f - 1.0f);
+    const auto centre = juce::Point<float> (
+        static_cast<float> (x) + static_cast<float> (width) * 0.5f,
+        static_cast<float> (y) + static_cast<float> (height) * 0.5f - 2.0f);
     const auto bounds = juce::Rectangle<float> (diameter, diameter).withCentre (centre);
+    const auto dialBounds = bounds.reduced (diameter * 0.105f);
     const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
 
+    constexpr int tickCount = 11;
+    for (int tick = 0; tick < tickCount; ++tick)
+    {
+        const auto proportion = static_cast<float> (tick)
+                              / static_cast<float> (tickCount - 1);
+        const auto tickAngle = rotaryStartAngle
+                             + proportion * (rotaryEndAngle - rotaryStartAngle);
+        const auto outer = centre.getPointOnCircumference (radius * 0.98f, tickAngle);
+        const auto inner = centre.getPointOnCircumference (
+            radius * (tick % 5 == 0 ? 0.86f : 0.89f), tickAngle);
+        const auto active = proportion <= sliderPos;
+        g.setColour ((active ? c (accentBlue) : c (panelEdge))
+                         .withAlpha (active ? 0.82f : 0.62f));
+        g.drawLine ({ inner, outer }, tick % 5 == 0 ? 1.45f : 0.9f);
+    }
+
     juce::Path track;
-    track.addCentredArc (centre.x, centre.y, radius - 2.5f, radius - 2.5f, 0.0f,
+    track.addCentredArc (centre.x, centre.y, radius * 0.80f, radius * 0.80f, 0.0f,
                          rotaryStartAngle, rotaryEndAngle, true);
     g.setColour (slider.findColour (juce::Slider::rotarySliderOutlineColourId));
-    g.strokePath (track, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved,
+    g.strokePath (track, juce::PathStrokeType (2.4f, juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
 
     juce::Path valueArc;
-    valueArc.addCentredArc (centre.x, centre.y, radius - 2.5f, radius - 2.5f, 0.0f,
+    valueArc.addCentredArc (centre.x, centre.y, radius * 0.80f, radius * 0.80f, 0.0f,
                             rotaryStartAngle, angle, true);
     juce::ColourGradient glow (c (accentBlue), bounds.getBottomLeft(), c (accent),
                                bounds.getTopRight(), false);
     g.setGradientFill (glow);
-    g.strokePath (valueArc, juce::PathStrokeType (3.2f, juce::PathStrokeType::curved,
+    g.strokePath (valueArc, juce::PathStrokeType (3.3f, juce::PathStrokeType::curved,
                                                   juce::PathStrokeType::rounded));
 
-    g.setColour (c (0xff080c12));
-    g.fillEllipse (bounds.reduced (8.0f));
-    g.setColour (c (0xff303b47));
-    g.drawEllipse (bounds.reduced (8.0f), 1.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.66f));
+    g.fillEllipse (dialBounds.translated (1.2f, 3.0f));
 
-    juce::Path pointer;
-    const auto pointerLength = radius * 0.46f;
-    pointer.addRoundedRectangle (-1.3f, -pointerLength, 2.6f, pointerLength * 0.55f, 1.3f);
-    pointer.applyTransform (juce::AffineTransform::rotation (angle).translated (centre.x, centre.y));
+    juce::ColourGradient bezel (c (0xff596877), dialBounds.getTopLeft(),
+                                c (0xff1b2430), dialBounds.getBottomRight(), false);
+    bezel.addColour (0.42, c (0xff344452));
+    g.setGradientFill (bezel);
+    g.fillEllipse (dialBounds);
+    g.setColour (c (0xff7b8b97).withAlpha (0.70f));
+    g.drawEllipse (dialBounds.reduced (0.5f), 1.0f);
+
+    const auto face = dialBounds.reduced (5.0f);
+    juce::ColourGradient glass (c (0xff17212c), face.getTopLeft(),
+                                c (0xff050910), face.getBottomRight(), false);
+    glass.addColour (0.36, c (0xff0e1721));
+    g.setGradientFill (glass);
+    g.fillEllipse (face);
+    g.setColour (c (accentBlue).withAlpha (0.16f));
+    g.drawEllipse (face.reduced (1.0f), 1.1f);
+
+    const auto pointerStart = centre.getPointOnCircumference (radius * 0.16f, angle);
+    const auto pointerEnd = centre.getPointOnCircumference (radius * 0.58f, angle);
+    g.setColour (juce::Colours::black.withAlpha (0.64f));
+    g.drawLine ({ pointerStart.translated (0.0f, 1.2f),
+                  pointerEnd.translated (0.0f, 1.2f) }, 3.0f);
     g.setColour (c (textBright));
-    g.fillPath (pointer);
+    g.drawLine ({ pointerStart, pointerEnd }, 2.2f);
+    g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre (centre));
+
+    if (slider.hasKeyboardFocus (true) || slider.isMouseOver())
+    {
+        g.setColour (c (slider.hasKeyboardFocus (true) ? ultraviolet : accent)
+                         .withAlpha (slider.hasKeyboardFocus (true) ? 0.95f : 0.46f));
+        g.drawEllipse (dialBounds.expanded (2.6f),
+                       slider.hasKeyboardFocus (true) ? 1.8f : 1.1f);
+    }
 }
 
 void VocalorLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,
@@ -85,19 +130,36 @@ void VocalorLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& 
 {
     auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
     const auto active = button.getToggleState();
-    auto fill = active ? c (0xff173a3c) : c (0xff111720);
+    const auto panic = button.getName().containsIgnoreCase ("panic");
+    auto fill = panic ? c (0xff3f1822)
+                      : active ? c (0xff173a3c) : c (0xff111720);
     if (highlighted) fill = fill.brighter (0.07f);
     if (down) fill = fill.darker (0.10f);
 
     g.setColour (fill);
     g.fillRoundedRectangle (bounds, 5.0f);
-    g.setColour (active ? c (accent) : c (panelEdge));
-    g.drawRoundedRectangle (bounds, 5.0f, active ? 1.4f : 1.0f);
+    g.setColour (panic ? c (0xffff7383) : active ? c (accent) : c (panelEdge));
+    g.drawRoundedRectangle (bounds, 5.0f, active || panic ? 1.4f : 1.0f);
+
+    if (active && ! panic)
+    {
+        g.setColour (c (accent));
+        g.fillRoundedRectangle (bounds.withHeight (3.0f)
+                                    .withY (bounds.getBottom() - 3.0f)
+                                    .reduced (6.0f, 0.0f), 1.4f);
+    }
+
+    if (button.hasKeyboardFocus (true))
+    {
+        g.setColour (c (ultraviolet));
+        g.drawRoundedRectangle (bounds.reduced (2.5f), 3.0f, 1.5f);
+    }
 }
 
 juce::Font VocalorLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
 {
-    return juce::Font (juce::FontOptions (juce::jmin (13.0f, buttonHeight * 0.38f),
+    return juce::Font (juce::FontOptions (juce::jmin (
+                                          13.0f, static_cast<float> (buttonHeight) * 0.38f),
                                           juce::Font::bold));
 }
 
@@ -131,6 +193,7 @@ VocalorChoiceStrip::VocalorChoiceStrip (juce::String title, juce::StringArray ch
         button->setName (titleText + " " + choices[index]);
         button->setTitle (choices[index]);
         button->setDescription ("Select " + choices[index] + " for " + titleText.toLowerCase());
+        button->setWantsKeyboardFocus (true);
         button->setClickingTogglesState (false);
         button->onClick = [this, index]
         {
@@ -183,6 +246,10 @@ VocalorKnob::VocalorKnob (juce::String name, juce::String suffix)
 
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 66, 19);
+    slider.setColour (juce::Slider::textBoxBackgroundColourId, c (0xe0090e15));
+    slider.setColour (juce::Slider::textBoxOutlineColourId,
+                      c (panelEdge).withAlpha (0.82f));
+    slider.setColour (juce::Slider::textBoxTextColourId, c (textBright));
     slider.setNumDecimalPlacesToDisplay (suffix == "dB" ? 1 : 0);
     if (suffix == "%")
     {
@@ -300,9 +367,10 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
         addAndMakeVisible (*knob);
 
     keyboard.setAvailableRange (36, 84);
-    keyboard.setLowestVisibleKey (43);
-    keyboard.setKeyWidth (25.0f);
-    keyboard.setScrollButtonsVisible (true);
+    keyboard.setLowestVisibleKey (36);
+    keyboard.setKeyWidth (30.0f);
+    keyboard.setScrollButtonsVisible (false);
+    keyboard.setOctaveForMiddleC (5);
     keyboard.setKeyPressBaseOctave (3);
     keyboard.setName ("Playable piano keyboard");
     keyboard.setTitle ("Playable keyboard");
@@ -341,7 +409,7 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
         processor.parameters, vocalor::parameters::output, outputKnob.slider);
 
     setResizable (true, true);
-    setResizeLimits (900, 620, 1500, 960);
+    setResizeLimits (900, 620, 1500, 840);
     setSize (1160, 750);
     startTimerHz (12);
     updateConditionalControls();
@@ -380,11 +448,11 @@ void VocalorAudioProcessorEditor::updateConditionalControls()
     const auto chordMode = mode == 2;
     const auto ensembleMode = mode != 0;
     chordStrip.setEnabled (chordMode);
-    chordStrip.setAlpha (chordMode ? 1.0f : 0.38f);
+    chordStrip.setAlpha (chordMode ? 1.0f : 0.66f);
     choirSizeSlider.setEnabled (ensembleMode);
     choirSizeLabel.setEnabled (ensembleMode);
-    choirSizeSlider.setAlpha (ensembleMode ? 1.0f : 0.38f);
-    choirSizeLabel.setAlpha (ensembleMode ? 1.0f : 0.38f);
+    choirSizeSlider.setAlpha (ensembleMode ? 1.0f : 0.62f);
+    choirSizeLabel.setAlpha (ensembleMode ? 1.0f : 0.62f);
 }
 
 void VocalorAudioProcessorEditor::timerCallback()
@@ -395,34 +463,104 @@ void VocalorAudioProcessorEditor::timerCallback()
 
 void VocalorAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    juce::ColourGradient background (c (0xff0d1118), 0.0f, 0.0f,
-                                     c (0xff090c12), 0.0f, static_cast<float> (getHeight()), false);
-    background.addColour (0.48, c (0xff121521));
+    juce::ColourGradient background (c (0xff101720), 0.0f, 0.0f,
+                                     c (0xff070b11), 0.0f,
+                                     static_cast<float> (getHeight()), false);
+    background.addColour (0.46, c (0xff111824));
     g.setGradientFill (background);
     g.fillAll();
 
-    const auto scale = getWidth() / 1160.0f;
-    g.setColour (c (0x117a8da0));
-    for (float x = 22.0f; x < getWidth(); x += 26.0f * scale)
-        g.drawVerticalLine (juce::roundToInt (x), 72.0f, static_cast<float> (getHeight() - 25));
+    juce::ColourGradient cyanAura (c (accent).withAlpha (0.095f),
+                                   static_cast<float> (getWidth()) * 0.22f, 38.0f,
+                                   juce::Colours::transparentBlack,
+                                   static_cast<float> (getWidth()) * 0.58f,
+                                   static_cast<float> (getHeight()) * 0.62f, true);
+    g.setGradientFill (cyanAura);
+    g.fillAll();
+
+    juce::ColourGradient violetAura (c (ultraviolet).withAlpha (0.055f),
+                                     static_cast<float> (getWidth()) * 0.82f, 95.0f,
+                                     juce::Colours::transparentBlack,
+                                     static_cast<float> (getWidth()) * 0.56f,
+                                     static_cast<float> (getHeight()) * 0.54f, true);
+    g.setGradientFill (violetAura);
+    g.fillAll();
+
+    for (int contour = 0; contour < 4; ++contour)
+    {
+        const auto offset = static_cast<float> (contour) * 13.0f;
+        juce::Path line;
+        line.startNewSubPath (-20.0f, 122.0f + offset);
+        line.cubicTo (static_cast<float> (getWidth()) * 0.28f, 75.0f + offset,
+                      static_cast<float> (getWidth()) * 0.67f, 165.0f - offset,
+                      static_cast<float> (getWidth()) + 20.0f, 104.0f + offset);
+        g.setColour (c (contour % 2 == 0 ? accentBlue : ultraviolet)
+                         .withAlpha (0.025f));
+        g.strokePath (line, juce::PathStrokeType (1.0f));
+    }
 
     auto drawPanel = [&g] (juce::Rectangle<int> bounds)
     {
         auto b = bounds.toFloat();
-        g.setColour (c (0xa810151d));
+        g.setColour (juce::Colours::black.withAlpha (0.50f));
+        g.fillRoundedRectangle (b.translated (0.0f, 3.0f), 9.0f);
+        juce::ColourGradient panelFill (c (panelRaised).withAlpha (0.95f), b.getTopLeft(),
+                                        c (0xf00b1017), b.getBottomLeft(), false);
+        panelFill.addColour (0.38, c (0xf1121922));
+        g.setGradientFill (panelFill);
         g.fillRoundedRectangle (b, 10.0f);
-        g.setColour (c (panelEdge));
+        g.setColour (c (panelEdge).withAlpha (0.82f));
         g.drawRoundedRectangle (b.reduced (0.5f), 10.0f, 1.0f);
+        g.setColour (c (textBright).withAlpha (0.035f));
+        g.drawRoundedRectangle (b.reduced (2.0f), 8.0f, 0.8f);
     };
 
     drawPanel (juce::Rectangle<int> (18, 82, getWidth() - 36, 150));
     drawPanel (juce::Rectangle<int> (18, 245, getWidth() - 36, 235));
     drawPanel (juce::Rectangle<int> (18, 514, getWidth() - 36, getHeight() - 532));
 
-    g.setColour (c (accent));
-    g.fillRect (18, 67, juce::jmax (90, getWidth() / 8), 2);
-    g.setColour (c (ultraviolet));
-    g.fillRect (18 + juce::jmax (90, getWidth() / 8), 67, 45, 2);
+    const auto railWidth = static_cast<float> (juce::jmax (210, getWidth() / 5));
+    juce::ColourGradient rail (c (accent), 18.0f, 0.0f,
+                               c (ultraviolet), 18.0f + railWidth, 0.0f, false);
+    rail.addColour (0.58, c (accentBlue));
+    g.setGradientFill (rail);
+    g.fillRect (18.0f, 67.0f, railWidth, 2.5f);
+
+    const auto knobContentX = 31.0f;
+    const auto knobContentWidth = static_cast<float> (getWidth() - 62);
+    const auto knobCellWidth = knobContentWidth / 8.0f;
+    const auto groupTop = 250.0f;
+    const auto groupBottom = 469.0f;
+    g.setColour (c (accent).withAlpha (0.022f));
+    g.fillRoundedRectangle (knobContentX, groupTop, knobCellWidth * 4.0f,
+                            groupBottom - groupTop, 7.0f);
+    g.setColour (c (accentBlue).withAlpha (0.020f));
+    g.fillRect (knobContentX + knobCellWidth * 4.0f, groupTop,
+                knobCellWidth * 3.0f, groupBottom - groupTop);
+    g.setColour (c (ultraviolet).withAlpha (0.026f));
+    g.fillRoundedRectangle (knobContentX + knobCellWidth * 7.0f, groupTop,
+                            knobCellWidth, groupBottom - groupTop, 7.0f);
+
+    for (const auto dividerX : { knobContentX + knobCellWidth * 4.0f,
+                                 knobContentX + knobCellWidth * 7.0f })
+    {
+        g.setColour (c (panelEdge).withAlpha (0.64f));
+        g.drawVerticalLine (juce::roundToInt (dividerX), 259.0f, 463.0f);
+    }
+
+    g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    g.setColour (c (accent).withAlpha (0.86f));
+    g.drawText ("VOICE CHARACTER", juce::roundToInt (knobContentX + 12.0f), 252,
+                juce::roundToInt (knobCellWidth * 4.0f - 24.0f), 18,
+                juce::Justification::centredLeft);
+    g.setColour (c (accentBlue).withAlpha (0.88f));
+    g.drawText ("WIDTH + SPACE", juce::roundToInt (knobContentX + knobCellWidth * 4.0f + 12.0f),
+                252, juce::roundToInt (knobCellWidth * 3.0f - 24.0f), 18,
+                juce::Justification::centredLeft);
+    g.setColour (c (ultraviolet).withAlpha (0.90f));
+    g.drawText ("MASTER", juce::roundToInt (knobContentX + knobCellWidth * 7.0f + 12.0f),
+                252, juce::roundToInt (knobCellWidth - 24.0f), 18,
+                juce::Justification::centredLeft);
 }
 
 void VocalorAudioProcessorEditor::resized()
@@ -452,7 +590,7 @@ void VocalorAudioProcessorEditor::resized()
     choirSizeLabel.setBounds (contentX, 172, 104, 27);
     choirSizeSlider.setBounds (contentX + 106, 169, juce::jmin (360, contentWidth / 3), 31);
 
-    auto knobArea = juce::Rectangle<int> (31, 264, getWidth() - 62, 196);
+    auto knobArea = juce::Rectangle<int> (31, 274, getWidth() - 62, 186);
     constexpr int knobCount = 8;
     const auto knobWidth = knobArea.getWidth() / knobCount;
     VocalorKnob* knobs[] = { &breathKnob, &resonanceKnob, &vibratoKnob, &humanizeKnob,
@@ -465,4 +603,8 @@ void VocalorAudioProcessorEditor::resized()
 
     keyboardHintLabel.setBounds (32, 488, getWidth() - 64, 20);
     keyboard.setBounds (31, 530, getWidth() - 62, juce::jmax (70, getHeight() - 554));
+    // The available 36..84 range contains 29 white keys. Scale them to fill the
+    // deck instead of leaving an inert blank tail at wider editor sizes.
+    keyboard.setKeyWidth (juce::jmax (24.0f,
+                                      static_cast<float> (keyboard.getWidth()) / 29.0f));
 }

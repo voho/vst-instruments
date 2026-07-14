@@ -68,7 +68,7 @@ Japanese polysynths without reproducing a branded hardware panel.
   natively. Off always runs natively. A requested change waits until the engine
   is idle before its processing rate changes, so held notes are never reset.
   The global ensemble remains at host rate.
-- **Deterministic voice cards:** 32 render slots carry controlled
+- **Deterministic voice cards:** 16 render voices carry controlled
   component-like offsets for tuning, cutoff, resonance, drive, envelope time,
   pan, pulse skew, and slow per-card drift. The same state and MIDI input
   render deterministically; there is no simulated-parts-wear control.
@@ -76,8 +76,8 @@ Japanese polysynths without reproducing a branded hardware panel.
   triangle, sine, or sample-and-hold LFO with direct pitch, filter, and PWM
   depths. The mod wheel deepens those fixed LFO routes; it does not open a
   hidden routing matrix.
-- **Performance controls:** `Poly`, `Unison`, and `Fifth` allocate the 32 render
-  slots in different groups. Glide, velocity response, stereo spread, fixed
+- **Performance controls:** `Poly`, `Unison`, and `Fifth` allocate the 16 render
+  voices in different groups. Glide, velocity response, stereo spread, fixed
   ±2-semitone pitch bend, MIDI CC 1 mod wheel, and MIDI CC 64 sustain are
   implemented. CC 123 follows note-off and sustain-pedal semantics; CC 120 and
   the panel Panic button mute immediately.
@@ -97,19 +97,20 @@ claims boundary are in
 
 ## Polyphony and slot allocation
 
-Mars has 32 DSP render slots and a maximum of 16 simultaneously held note
-groups. Allocation depends on `Voice mode`:
+Mars has a hard performance ceiling of 16 simultaneous DSP render voices.
+Allocation depends on `Voice mode` and always keeps a note group atomic:
 
 | Mode | Slots per note group | Maximum note groups |
 | --- | ---: | ---: |
 | `Poly` | 1 | 16 |
-| `Unison` | selected `Unison voices` value, 2–8 | `min(16, floor(32 / voices))` |
-| `Fifth` | 2: root plus a perfect fifth | 16 |
+| `Unison` | selected `Unison voices` value, 2–8 | `floor(16 / voices)` |
+| `Fifth` | 2: root plus a perfect fifth | 8 |
 
-When a new group needs room, Mars steals the oldest released group first and
-then the oldest held group. Retriggers and steals preserve a fixed 2 ms fading
-tail to avoid a hard sample discontinuity. `Unison voices` is active only in
-`Unison` mode.
+When a new group needs room, Mars admits it by stealing the newest released
+group first and then the newest remaining active group. Every layer in the
+selected group is removed together. Retriggers and steals preserve a fixed
+2 ms fading tail to avoid a hard sample discontinuity. `Unison voices` is
+active only in `Unison` mode.
 
 ## Exact 43-parameter contract
 

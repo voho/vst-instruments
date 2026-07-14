@@ -775,14 +775,15 @@ void MarsEngine::makeRoomFor(int required) noexcept
     while (freeVoices < required)
     {
         int candidate = -1;
-        std::uint64_t oldestGeneration = std::numeric_limits<std::uint64_t>::max();
+        std::uint64_t newestGeneration = 0;
         for (int i = 0; i < maxVoices; ++i)
         {
             const auto& voice = voices_[static_cast<std::size_t>(i)];
-            if (voice.active && voice.releasing && voice.generation < oldestGeneration)
+            if (voice.active && voice.releasing
+                && (candidate < 0 || voice.generation > newestGeneration))
             {
                 candidate = i;
-                oldestGeneration = voice.generation;
+                newestGeneration = voice.generation;
             }
         }
         if (candidate < 0)
@@ -790,10 +791,11 @@ void MarsEngine::makeRoomFor(int required) noexcept
             for (int i = 0; i < maxVoices; ++i)
             {
                 const auto& voice = voices_[static_cast<std::size_t>(i)];
-                if (voice.active && voice.generation < oldestGeneration)
+                if (voice.active
+                    && (candidate < 0 || voice.generation > newestGeneration))
                 {
                     candidate = i;
-                    oldestGeneration = voice.generation;
+                    newestGeneration = voice.generation;
                 }
             }
         }
@@ -891,25 +893,6 @@ void MarsEngine::noteOn(int midiNote, float velocity)
     for (auto& voice : voices_)
         if (voice.active && voice.rootMidi == midiNote)
             silenceVoice(voice, true);
-
-    for (;;)
-    {
-        int heldGroups = 0;
-        std::uint64_t oldest = std::numeric_limits<std::uint64_t>::max();
-        for (const auto& voice : voices_)
-        {
-            if (voice.active && voice.keyDown && voice.layer == 0)
-            {
-                ++heldGroups;
-                oldest = std::min(oldest, voice.generation);
-            }
-        }
-        if (heldGroups < 16 || oldest == std::numeric_limits<std::uint64_t>::max())
-            break;
-        for (auto& voice : voices_)
-            if (voice.active && voice.generation == oldest)
-                silenceVoice(voice, true);
-    }
 
     makeRoomFor(layerCount);
     ++generation_;
@@ -1176,7 +1159,7 @@ void MarsEngine::updateVoiceControl(Voice& voice,
                                  + 0.045f * ageScale * card.resonanceError, 0.0f, 0.995f);
     // D'Angelo-Valimaki resonance compensation is constant between control
     // updates. Hoisting its square roots out of every oversampled ladder step
-    // materially reduces the 32-voice worst-case cost without changing the
+    // materially reduces the 16-voice worst-case cost without changing the
     // circuit equations.
     constexpr float cosPiOverFour = 0.7071067811865475f;
     voice.ladderFeedbackGain = 4.0f * voice.resonance;
@@ -1514,7 +1497,7 @@ void MarsEngine::downsampleStereo(float firstLeft, float firstRight,
     };
 
     // 15-tap Kaiser-windowed half-band low-pass, cutoff at the eventual output
-    // Nyquist. It follows the summed nonlinear voices, which both avoids 32
+    // Nyquist. It follows the summed nonlinear voices, which both avoids 16
     // redundant FIRs and prevents their out-of-band products from folding.
     outputLeft = filter(oversampleLeftHistory_);
     outputRight = filter(oversampleRightHistory_);

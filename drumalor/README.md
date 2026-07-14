@@ -7,7 +7,7 @@ circuit-inspired nonlinear shaping. It does not load samples, copy a ROM,
 emulate a particular branded machine, or contact a service while rendering
 audio.
 
-![Drumalor Standalone instrument interface](Docs/screenshots/drumalor-standalone.png)
+![Drumalor instrument interface](Docs/screenshots/drumalor-standalone.png)
 
 The screenshot is the actual Standalone application built from this source.
 The VST3 and Audio Unit use the same resizable JUCE editor.
@@ -96,6 +96,20 @@ operating point, branch mismatch, harmonic density, and modest makeup gain. The
 resonator update is an explicit rotation followed by contraction, so even rapid
 pitch modulation cannot inject unbounded state energy.
 
+Ride and Crash use a deliberately hybrid cymbal architecture. Six independently
+toleranced, 47.98%-duty PolyBLEP pulse oscillators reproduce the dense metallic
+source and 3.44/7.1/10.5 kHz band structure associated with classic analogue
+cymbal circuits. A separate voice-local 30 kHz clock quantizes a generated
+oscillator/noise composite to 63 symmetric levels, adding the grain and diffuse
+continuity of early PCM cymbals without loading a sample or copying ROM data.
+Short, high-spread acoustic modes supply stick/bell/body energy, while the long
+tail comes from three independently weighted wash bands instead of continuously
+driven low resonators. This removes the former hollow spectral gap and lingering
+pitched “cling.” **Bell** preserves a broad Ride wash while bringing the body
+forward; **Spread** moves Crash from coherent pulse metal toward a wider,
+less-periodic tail. **Tone** and **Brightness** tilt the three bands rather than
+moving a single narrow filter.
+
 These are circuit-inspired behavioral models, not a claim of
 component-for-component emulation of a TR-808, TR-909, or another specific
 machine. No neural-network weights are needed, so the audio path stays
@@ -107,12 +121,18 @@ and clears completed one-shot voices after their tails finish.
 
 ## Vintage interface
 
-The editor combines an original aged-enamel faceplate texture with code-drawn
-Bakelite-style knobs, calibration marks, rubber pads, hardware details, and
-accessible focus states. The texture is compiled into the plug-in as binary data;
-there is no external image file to install or locate at runtime. The visual
-direction is intentionally era-inspired rather than a copy of any historical
-drum machine's panel or trade dress.
+The editor uses a generated geometry-free powder-coat plate only as a restrained
+material texture; all panel geometry is rendered by the responsive JUCE layout. A
+compact equal-width channel grid, illuminated selection rails, separate Voice
+Circuit and Master decks, scaled metal-collared Bakelite knobs, recessed value
+readouts, and clearer typography create a denser hardware hierarchy without
+losing accessibility or resize support. Its near-black face, neutral hardware,
+warm legends, and ordered red/orange/yellow/cream channel accents borrow the
+colour rhythm associated with classic early-1980s rhythm composers while
+retaining Drumalor's own branding and layout. The texture is compiled into the
+plug-in as binary data, so there is no external image to install. The visual
+direction is era-inspired rather than a copy of any historical drum machine's
+panel or trade dress.
 
 ## Research influences and modeling scope
 
@@ -128,6 +148,13 @@ self-contained real-time instrument:
   and Germain's [time-varying numerical study](https://www.dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_43.pdf)
   motivate charged state, resonant feedback, changing pitch/loss, and stable
   time-varying updates for the Kick.
+- Werner, Abel, and Smith's [TR-808 cymbal circuit analysis](https://pureadmin.qub.ac.uk/ws/portalfiles/portal/125044847/tr_808_cymbal_a_physically_informed_circuit_bendable_digital.pdf)
+  supplies the measured six-oscillator frequencies, pulse duty cycle, and
+  multi-band filter structure used by the synthesized cymbal source. The
+  [TR-909 service notes](https://www.polynominal.com/site/studio/gear/drum/roland-tr909/roland-tr909-service-manual.pdf)
+  document its real-cymbal PCM memories and envelope restoration; Drumalor
+  models that early clock/DAC character with newly generated data rather than
+  embedding the original recordings.
 - Esqueda and Murai's [2025 antialiased recurrent model](https://dafx25.dii.univpm.it/wp-content/uploads/2025/09/DAFx25_paper_61.pdf)
   shows that compact learned state-space models can run in real time. Drumalor
   deliberately does not use one: without measurements from a defined target
@@ -217,7 +244,10 @@ spread stay bounded; they also verify bit-exact reset replay and block-partition
 invariance. Kick-specific contracts cover a 43–55 Hz settled body, dominant
 sub-100 Hz energy, controlled transient and crest factor, Drive harmonics without
 excess settled energy above 8 kHz, pitch tracking, DC safety, and consistency
-from 8 to 192 kHz. Plug-in builds add a JUCE-backed processor contract suite for
+from 8 to 192 kHz. Cymbal contracts reject hollow midrange gaps and sparse
+ringing tails, require retained Ride wash at maximum Bell, verify directional
+Tone/Brightness response, and keep Crash Spread diffusion level-matched. Plug-in
+builds add a JUCE-backed processor contract suite for
 parameter defaults and state, sample-accurate MIDI, CC panic, the UI-trigger
 lifecycle, and off-screen rendering of the embedded vintage editor. These checks
 do not replace listening tests, host automation tests, or profiling on the oldest
@@ -339,7 +369,7 @@ CMake project version and packaging-script version in sync for each release.
 Source/DSP/              JUCE-free synthesis engine and voice metadata
 Source/PluginProcessor.* MIDI mapping, parameters, state, and audio bridge
 Source/PluginEditor.*    Thirteen-pad editor and four-knob voice controls
-Assets/                  Embedded original vintage faceplate texture
+Assets/                  Embedded geometry-free charcoal material texture
 Docs/                    Real interface screenshots and supporting documentation
 Tests/                   DSP and JUCE processor-contract regression tests
 Presets/                 Preset guidance and future factory presets

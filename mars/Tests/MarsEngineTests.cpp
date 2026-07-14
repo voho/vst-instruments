@@ -40,6 +40,21 @@ struct MarsEngineTestAccess
         return output;
     }
 
+    static int activeVoicesForRoot(const MarsEngine& engine, int midiNote) noexcept
+    {
+        return static_cast<int>(std::count_if(
+            engine.voices_.begin(), engine.voices_.end(),
+            [midiNote](const MarsEngine::Voice& voice)
+            {
+                return voice.active && voice.rootMidi == midiNote;
+            }));
+    }
+
+    static constexpr int maximumVoiceCount() noexcept
+    {
+        return MarsEngine::maxVoices;
+    }
+
 };
 } // namespace mars
 
@@ -1137,21 +1152,73 @@ void testVoiceAllocation()
     auto p = basicParameters();
     p.voiceMode = mars::VoiceMode::Poly;
     engine.setParameters(p);
-    for (int note = 36; note < 56; ++note)
+    for (int note = 36; note < 52; ++note)
         engine.noteOn(note, 0.7f);
     render(engine, blockSize);
     expect(engine.getActiveVoiceCount() == 16,
-           "poly mode did not enforce the 16-note logical limit");
+           "poly mode did not fill the 16-voice render limit");
+    expect(mars::MarsEngineTestAccess::maximumVoiceCount() == 16,
+           "the physical Mars voice pool is not capped at 16");
+
+    engine.noteOn(52, 0.7f);
+    expect(engine.getActiveVoiceCount() == 16,
+           "poly overflow exceeded the 16-voice render limit");
+    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 36) == 1
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 50) == 1
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 51) == 0
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 52) == 1,
+           "poly overflow did not replace the newest existing note group");
+
+    engine.reset();
+    engine.setParameters(p);
+    for (int note = 36; note < 52; ++note)
+        engine.noteOn(note, 0.7f);
+    engine.noteOff(50);
+    engine.noteOff(51);
+    engine.noteOn(52, 0.7f);
+    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 50) == 1
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 51) == 0
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 52) == 1,
+           "overflow did not replace the newest released note group first");
 
     engine.reset();
     p.voiceMode = mars::VoiceMode::Unison;
     p.unisonVoices = 8;
     engine.setParameters(p);
-    for (int note = 48; note < 53; ++note)
-        engine.noteOn(note, 0.7f);
+    engine.noteOn(48, 0.7f);
+    engine.noteOn(49, 0.7f);
+    engine.noteOn(50, 0.7f);
     render(engine, blockSize);
-    expect(engine.getActiveVoiceCount() == 32,
-           "8-layer unison did not use the 32-slot dynamic limit");
+    expect(engine.getActiveVoiceCount() == 16,
+           "8-layer unison exceeded the 16-voice render limit");
+    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 48) == 8
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 49) == 0
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 50) == 8,
+           "unison overflow did not replace the newest group atomically");
+
+    engine.reset();
+    p.unisonVoices = 3;
+    engine.setParameters(p);
+    for (int note = 48; note < 54; ++note)
+        engine.noteOn(note, 0.7f);
+    expect(engine.getActiveVoiceCount() == 15,
+           "3-layer unison did not preserve whole groups within 16 voices");
+    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 52) == 0
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 53) == 3,
+           "3-layer unison did not replace the newest complete group");
+
+    engine.reset();
+    p.voiceMode = mars::VoiceMode::Fifth;
+    engine.setParameters(p);
+    for (int note = 48; note < 56; ++note)
+        engine.noteOn(note, 0.7f);
+    engine.noteOn(56, 0.7f);
+    expect(engine.getActiveVoiceCount() == 16,
+           "fifth mode exceeded the 16-voice render limit");
+    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 48) == 2
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 55) == 0
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 56) == 2,
+           "fifth-mode overflow did not replace the newest group atomically");
 }
 
 void testSampleRateLevelConsistency()
@@ -1579,10 +1646,16 @@ void testClicklessRetriggerAndVoiceSteal()
         p.cutoffHz = 7000.0f;
         p.velocityAmount = 1.0f;
         engine.setParameters(p);
-        engine.noteOn(60, 1.0f);
         if (forceAllocationSteal)
-            for (int note = 61; note <= 75; ++note)
+        {
+            for (int note = 60; note < 75; ++note)
                 engine.noteOn(note, 1.0e-6f);
+            engine.noteOn(75, 1.0f);
+        }
+        else
+        {
+            engine.noteOn(60, 1.0f);
+        }
         render(engine, static_cast<int>(0.20 * rate));
 
         float boundarySample = 0.0f;
@@ -1604,7 +1677,7 @@ void testClicklessRetriggerAndVoiceSteal()
     expect(retrigger.second < 0.045,
            "same-note retrigger introduced an audible one-sample discontinuity");
     expect(steal.second < 0.045,
-           "oldest-group voice stealing introduced an audible discontinuity");
+           "newest-group voice stealing introduced an audible discontinuity");
 }
 
 void testClicklessFilterModelSwitch()
@@ -1734,7 +1807,7 @@ void testExtremeAutomationStability()
     }
     expect(metrics.finite, "extreme automation produced a NaN or infinity");
     expect(metrics.peak < 4.0, "extreme automation escaped the bounded output stage");
-    expect(engine.getActiveVoiceCount() <= 32,
+    expect(engine.getActiveVoiceCount() <= 16,
            "extreme automation exceeded the render-slot limit");
     engine.allNotesOff();
     render(engine, static_cast<int>(0.8 * rate));
@@ -1757,10 +1830,10 @@ double benchmarkCpuModel(mars::FilterModel filterModel)
     p.chorusMix = 0.7f;
     engine.setParameters(p);
     engine.reset();
-    for (int note = 36; note < 52; ++note)
+    for (int note = 36; note < 44; ++note)
         engine.noteOn(note, 0.85f);
-    expect(engine.getActiveVoiceCount() == 32,
-           "CPU regression did not fill all 32 render slots");
+    expect(engine.getActiveVoiceCount() == 16,
+           "CPU regression did not fill all 16 render slots");
 
     // Warm instruction/data caches and let parameter smoothing reach the
     // measured steady state. Release uses the best of three equal renders so a
@@ -1782,7 +1855,7 @@ double benchmarkCpuModel(mars::FilterModel filterModel)
     const auto* modelName = filterModel == mars::FilterModel::Ladder
         ? "Ladder" : "SEM";
     std::cout << std::fixed << std::setprecision(3) << modelName
-              << " 32-slot 96 kHz/native HQ render, best of " << trialCount
+              << " 16-slot 96 kHz/native HQ render, best of " << trialCount
               << ": " << bestElapsed << " s (" << ratio << "x real time)\n";
     expect(allTrialsValid,
            "CPU regression render was invalid or silent");
@@ -1794,10 +1867,10 @@ double benchmarkCpuModel(mars::FilterModel filterModel)
                                                         : 8.0;
     expect(ratio < maximumRatio,
            sanitizerBuild
-               ? "sanitized 32-slot nonlinear render exceeded its diagnostic guardrail"
+               ? "sanitized 16-slot nonlinear render exceeded its diagnostic guardrail"
                : strictRealtimeBenchmark
-                   ? "Release 32-slot nonlinear render lost its 5% real-time headroom"
-                   : "Release 32-slot nonlinear render exceeded the portable 8x ceiling");
+                   ? "Release 16-slot nonlinear render lost its 5% real-time headroom"
+                   : "Release 16-slot nonlinear render exceeded the portable 8x ceiling");
     return ratio;
 }
 

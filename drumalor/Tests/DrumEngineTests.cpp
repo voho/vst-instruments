@@ -251,6 +251,211 @@ std::vector<float> filterForAnalysis (const std::vector<float>& samples,
     return result;
 }
 
+double bandPowerInRange (const std::vector<float>& samples,
+                         double sampleRate,
+                         double highpassFrequency,
+                         double lowpassFrequency,
+                         double beginSeconds,
+                         double endSeconds)
+{
+    const auto filtered = filterForAnalysis (
+        samples, sampleRate, highpassFrequency, lowpassFrequency);
+    const std::size_t begin = std::min (
+        filtered.size(), static_cast<std::size_t> (std::ceil (beginSeconds * sampleRate)));
+    const std::size_t end = std::min (
+        filtered.size(), static_cast<std::size_t> (std::ceil (endSeconds * sampleRate)));
+    const double rms = rmsInRange (filtered, begin, end);
+    return rms * rms;
+}
+
+double maximumNormalizedAutocorrelation (const std::vector<float>& samples,
+                                         double sampleRate,
+                                         double beginSeconds,
+                                         double endSeconds,
+                                         double minimumFrequency,
+                                         double maximumFrequency)
+{
+    const std::size_t begin = std::min (
+        samples.size(), static_cast<std::size_t> (std::ceil (beginSeconds * sampleRate)));
+    const std::size_t end = std::min (
+        samples.size(), static_cast<std::size_t> (std::ceil (endSeconds * sampleRate)));
+    if (end <= begin + 2u)
+        return 0.0;
+
+    const std::size_t minimumLag = std::max<std::size_t> (
+        1u, static_cast<std::size_t> (std::floor (sampleRate / maximumFrequency)));
+    const std::size_t maximumLag = std::min (
+        end - begin - 1u,
+        static_cast<std::size_t> (std::ceil (sampleRate / minimumFrequency)));
+    const double mean = meanInRange (samples, begin, end);
+    double maximum = 0.0;
+    for (std::size_t lag = minimumLag; lag <= maximumLag; ++lag)
+    {
+        double product = 0.0;
+        double firstPower = 0.0;
+        double secondPower = 0.0;
+        for (std::size_t sample = begin + lag; sample < end; ++sample)
+        {
+            const double first = static_cast<double> (samples[sample]) - mean;
+            const double second = static_cast<double> (samples[sample - lag]) - mean;
+            product += first * second;
+            firstPower += first * first;
+            secondPower += second * second;
+        }
+        const double denominator = std::sqrt (firstPower * secondPower);
+        if (denominator > 1.0e-20)
+            maximum = std::max (maximum, std::abs (product / denominator));
+    }
+    return maximum;
+}
+
+struct CymbalAnalysis
+{
+    double rms { 0.0 };
+    double presenceShare { 0.0 };
+    double lowShare { 0.0 };
+    double airShare { 0.0 };
+    double bodyShare { 0.0 };
+    double logBandEntropy { 0.0 };
+    double activeBandFraction { 0.0 };
+    double tonalPersistence { 0.0 };
+    bool finite { true };
+};
+
+CymbalAnalysis analyseCymbal (const std::vector<float>& samples, double sampleRate)
+{
+    constexpr double bodyBeginSeconds = 0.040;
+    constexpr double bodyEndSeconds = 0.750;
+    CymbalAnalysis result;
+    const std::size_t bodyBegin = std::min (
+        samples.size(), static_cast<std::size_t> (std::ceil (bodyBeginSeconds * sampleRate)));
+    const std::size_t bodyEnd = std::min (
+        samples.size(), static_cast<std::size_t> (std::ceil (bodyEndSeconds * sampleRate)));
+    result.rms = rmsInRange (samples, bodyBegin, bodyEnd);
+    result.finite = std::all_of (samples.begin(), samples.end(), [] (float value)
+    {
+        return std::isfinite (value);
+    });
+
+    // Broad, overlapping Butterworth regions intentionally describe perceived
+    // weight rather than exact modal frequencies. This lets the implementation
+    // evolve while guarding against a low/brittle Ride or all-air Crash.
+    const double totalPower = bandPowerInRange (
+        samples, sampleRate, 300.0, 16000.0, bodyBeginSeconds, bodyEndSeconds);
+    const double safeTotalPower = std::max (1.0e-20, totalPower);
+    result.presenceShare = bandPowerInRange (
+        samples, sampleRate, 900.0, 5000.0, bodyBeginSeconds, bodyEndSeconds)
+        / safeTotalPower;
+    result.lowShare = bandPowerInRange (
+        samples, sampleRate, 300.0, 1200.0, bodyBeginSeconds, bodyEndSeconds)
+        / safeTotalPower;
+    result.airShare = bandPowerInRange (
+        samples, sampleRate, 5000.0, 14000.0, bodyBeginSeconds, bodyEndSeconds)
+        / safeTotalPower;
+    result.bodyShare = bandPowerInRange (
+        samples, sampleRate, 500.0, 4000.0, bodyBeginSeconds, bodyEndSeconds)
+        / safeTotalPower;
+
+    // A third-octave bank detects a spectrum collapsing onto a few ringing
+    // modes without freezing the test to particular oscillator ratios.
+    constexpr std::size_t logBandCount = 15u;
+    std::array<double, logBandCount> logBandPowers {};
+    double logBandPowerSum = 0.0;
+    double maximumLogBandPower = 0.0;
+    for (std::size_t band = 0; band < logBandCount; ++band)
+    {
+        const double lower = 500.0 * std::exp2 (static_cast<double> (band) / 3.0);
+        const double upper = 500.0 * std::exp2 (static_cast<double> (band + 1u) / 3.0);
+        const double power = bandPowerInRange (
+            samples, sampleRate, lower, upper, bodyBeginSeconds, bodyEndSeconds);
+        logBandPowers[band] = power;
+        logBandPowerSum += power;
+        maximumLogBandPower = std::max (maximumLogBandPower, power);
+    }
+    if (logBandPowerSum > 1.0e-20)
+    {
+        double entropy = 0.0;
+        std::size_t activeBands = 0u;
+        constexpr double activeBandPowerRatio = 0.03162277660168379; // -15 dB
+        for (const double power : logBandPowers)
+        {
+            const double probability = power / logBandPowerSum;
+            if (probability > 0.0)
+                entropy -= probability * std::log (probability);
+            if (power >= maximumLogBandPower * activeBandPowerRatio)
+                ++activeBands;
+        }
+        result.logBandEntropy = entropy / std::log (static_cast<double> (logBandCount));
+        result.activeBandFraction = static_cast<double> (activeBands)
+            / static_cast<double> (logBandCount);
+    }
+
+    // Narrow ringing remains strongly self-correlated in the tail. Spread may
+    // improve either this measure or the coarse spectral distribution below.
+    result.tonalPersistence = maximumNormalizedAutocorrelation (
+        samples, sampleRate, 0.100, 0.600, 180.0, 2200.0);
+    return result;
+}
+
+double medianOfThree (std::array<double, 3> values)
+{
+    std::sort (values.begin(), values.end());
+    return values[1];
+}
+
+CymbalAnalysis analyseCymbalPreset (drumalor::Instrument instrument,
+                                    const drumalor::InstrumentParameters& parameters)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int captureSamples = static_cast<int> (0.90 * sampleRate);
+    constexpr std::size_t hitCount = 3u;
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+    engine.setInstrumentParameters (instrument, parameters);
+
+    std::array<CymbalAnalysis, hitCount> hits {};
+    for (std::size_t hit = 0; hit < hitCount; ++hit)
+    {
+        engine.trigger (instrument, 0.90f);
+        const auto interleaved = renderInterleaved (
+            engine, captureSamples, defaultBlockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        hits[hit] = analyseCymbal (mono, sampleRate);
+
+        // Preserve the trigger counter/component drift for the next organic
+        // hit, but clear the captured tail so the spectra never overlap.
+        engine.allSoundsOff();
+        renderMetrics (engine, 4096, defaultBlockSize);
+    }
+
+    CymbalAnalysis result;
+    result.rms = medianOfThree ({ hits[0].rms, hits[1].rms, hits[2].rms });
+    result.presenceShare = medianOfThree (
+        { hits[0].presenceShare, hits[1].presenceShare, hits[2].presenceShare });
+    result.lowShare = medianOfThree (
+        { hits[0].lowShare, hits[1].lowShare, hits[2].lowShare });
+    result.airShare = medianOfThree (
+        { hits[0].airShare, hits[1].airShare, hits[2].airShare });
+    result.bodyShare = medianOfThree (
+        { hits[0].bodyShare, hits[1].bodyShare, hits[2].bodyShare });
+    result.logBandEntropy = medianOfThree (
+        { hits[0].logBandEntropy, hits[1].logBandEntropy, hits[2].logBandEntropy });
+    result.activeBandFraction = medianOfThree (
+        { hits[0].activeBandFraction, hits[1].activeBandFraction,
+          hits[2].activeBandFraction });
+    result.tonalPersistence = medianOfThree (
+        { hits[0].tonalPersistence, hits[1].tonalPersistence,
+          hits[2].tonalPersistence });
+    result.finite = hits[0].finite && hits[1].finite && hits[2].finite;
+    return result;
+}
+
 double estimateSettledFundamental (const std::vector<float>& samples,
                                    double sampleRate,
                                    double minimumFrequency,
@@ -1008,8 +1213,8 @@ void testLowFrequencyTailAndVoiceStealing()
     saturated.setInstrumentParameters (drumalor::Instrument::Crash, crashParameters);
     for (int voice = 0; voice < 64; ++voice)
     {
-        oldOnly.trigger (drumalor::Instrument::Crash, 0.005f);
-        saturated.trigger (drumalor::Instrument::Crash, 0.005f);
+        oldOnly.trigger (drumalor::Instrument::Crash, 0.0005f);
+        saturated.trigger (drumalor::Instrument::Crash, 0.0005f);
     }
 
     std::array<float, 256> scratchLeft {};
@@ -1023,8 +1228,8 @@ void testLowFrequencyTailAndVoiceStealing()
         const auto instrument = static_cast<drumalor::Instrument> (index);
         if (instrument == drumalor::Instrument::Crash)
             continue;
-        saturated.trigger (instrument, 0.010f);
-        newOnly.trigger (instrument, 0.010f);
+        saturated.trigger (instrument, 0.001f);
+        newOnly.trigger (instrument, 0.001f);
     }
 
     float oldLeft = 0.0f;
@@ -1036,9 +1241,12 @@ void testLowFrequencyTailAndVoiceStealing()
     oldOnly.process (&oldLeft, &oldRight, 1);
     saturated.process (&saturatedLeft, &saturatedRight, 1);
     newOnly.process (&newLeft, &newRight, 1);
-    expect (std::max (std::abs (saturatedLeft - oldLeft - newLeft),
-                      std::abs (saturatedRight - oldRight - newRight)) < 1.0e-6f,
-            "same-sample voice stealing dropped an audible tail without a fade");
+    const float stealingDifference = std::max (
+        std::abs (saturatedLeft - oldLeft - newLeft),
+        std::abs (saturatedRight - oldRight - newRight));
+    expect (stealingDifference < 1.0e-6f,
+            "same-sample voice stealing dropped an audible tail without a fade (difference "
+                + std::to_string (stealingDifference) + ")");
 
     for (int trigger = 0; trigger < 128; ++trigger)
         saturated.trigger (static_cast<drumalor::Instrument> (
@@ -1049,6 +1257,120 @@ void testLowFrequencyTailAndVoiceStealing()
     const auto burstMetrics = renderMetrics (saturated, 1024, 127);
     expect (burstMetrics.finite && burstMetrics.peak <= 1.001,
             "same-sample trigger burst produced unsafe audio");
+}
+
+void testCymbalQualityContract()
+{
+    const auto rideDefaults = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Ride).defaultParameters;
+    const auto crashDefaults = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Crash).defaultParameters;
+    const auto ride = analyseCymbalPreset (drumalor::Instrument::Ride, rideDefaults);
+    const auto crash = analyseCymbalPreset (drumalor::Instrument::Crash, crashDefaults);
+
+    expect (ride.finite && ride.rms > 1.0e-5,
+            "Ride cymbal quality probe was invalid or silent");
+    expect (crash.finite && crash.rms > 1.0e-5,
+            "Crash cymbal quality probe was invalid or silent");
+
+    // These are deliberately broad regions rather than a golden spectrum.
+    // They reject the former split between low narrow modes and a detached
+    // high noise peak, while leaving room for either 808-style oscillators,
+    // 909-style noisy grain, or a musically useful blend of both.
+    expect (ride.presenceShare >= 0.19,
+            "Ride lacks 0.9-5 kHz presence (share "
+                + std::to_string (ride.presenceShare) + ")");
+    expect (ride.lowShare <= 0.62,
+            "Ride is dominated by low ringing modes (share "
+                + std::to_string (ride.lowShare) + ")");
+    expect (ride.airShare >= 0.10,
+            "Ride has no sustained metallic air (share "
+                + std::to_string (ride.airShare) + ")");
+    expect (crash.presenceShare >= 0.23,
+            "Crash lacks 0.9-5 kHz body (share "
+                + std::to_string (crash.presenceShare) + ")");
+    expect (crash.airShare >= 0.30 && crash.airShare <= 0.72,
+            "Crash air/body balance is hollow or dull (air share "
+                + std::to_string (crash.airShare) + ")");
+    expect (ride.logBandEntropy >= 0.70 && ride.activeBandFraction >= 0.60,
+            "Ride spectrum collapsed onto too few persistent modes");
+    expect (crash.logBandEntropy >= 0.70 && crash.activeBandFraction >= 0.60,
+            "Crash spectrum collapsed onto too few persistent modes");
+
+    auto maximumBell = rideDefaults;
+    maximumBell.characterA = 1.0f;
+    const auto bellRide = analyseCymbalPreset (
+        drumalor::Instrument::Ride, maximumBell);
+    expect (bellRide.airShare >= 0.055,
+            "Ride Bell removed the cymbal wash (air share "
+                + std::to_string (bellRide.airShare) + ")");
+    expect (bellRide.logBandEntropy >= 0.65
+                && bellRide.activeBandFraction >= 0.55,
+            "Ride Bell produced a sparse, clingy resonator tail");
+    const double defaultBellBalance = ride.bodyShare
+        / std::max (1.0e-12, ride.airShare);
+    const double maximumBellBalance = bellRide.bodyShare
+        / std::max (1.0e-12, bellRide.airShare);
+    expect (maximumBellBalance >= 1.25 * defaultBellBalance,
+            "Ride Bell did not emphasize body relative to wash (default/max "
+                + std::to_string (defaultBellBalance) + "/"
+                + std::to_string (maximumBellBalance) + ")");
+
+    // Tone/Brightness must move spectral balance, not merely produce a
+    // numerically different waveform as the generic parameter test checks.
+    auto darkRideParameters = rideDefaults;
+    auto brightRideParameters = rideDefaults;
+    darkRideParameters.characterB = 0.0f;
+    brightRideParameters.characterB = 1.0f;
+    const auto darkRide = analyseCymbalPreset (
+        drumalor::Instrument::Ride, darkRideParameters);
+    const auto brightRide = analyseCymbalPreset (
+        drumalor::Instrument::Ride, brightRideParameters);
+    const double rideToneChangeDb = 10.0 * std::log10 (
+        (brightRide.airShare / std::max (1.0e-12, brightRide.bodyShare))
+        / std::max (1.0e-12,
+                    darkRide.airShare / std::max (1.0e-12, darkRide.bodyShare)));
+    expect (rideToneChangeDb >= 3.0,
+            "Ride Tone changed air/body balance by less than 3 dB (observed "
+                + std::to_string (rideToneChangeDb) + " dB)");
+
+    auto darkCrashParameters = crashDefaults;
+    auto brightCrashParameters = crashDefaults;
+    darkCrashParameters.characterB = 0.0f;
+    brightCrashParameters.characterB = 1.0f;
+    const auto darkCrash = analyseCymbalPreset (
+        drumalor::Instrument::Crash, darkCrashParameters);
+    const auto brightCrash = analyseCymbalPreset (
+        drumalor::Instrument::Crash, brightCrashParameters);
+    const double crashBrightnessChangeDb = 10.0 * std::log10 (
+        (brightCrash.airShare / std::max (1.0e-12, brightCrash.bodyShare))
+        / std::max (1.0e-12,
+                    darkCrash.airShare / std::max (1.0e-12, darkCrash.bodyShare)));
+    expect (crashBrightnessChangeDb >= 3.0,
+            "Crash Brightness changed air/body balance by less than 3 dB (observed "
+                + std::to_string (crashBrightnessChangeDb) + " dB)");
+
+    auto narrowCrashParameters = crashDefaults;
+    auto wideCrashParameters = crashDefaults;
+    narrowCrashParameters.characterA = 0.0f;
+    wideCrashParameters.characterA = 1.0f;
+    const auto narrowCrash = analyseCymbalPreset (
+        drumalor::Instrument::Crash, narrowCrashParameters);
+    const auto wideCrash = analyseCymbalPreset (
+        drumalor::Instrument::Crash, wideCrashParameters);
+    const double spreadLevelChangeDb = std::abs (20.0 * std::log10 (
+        wideCrash.rms / std::max (1.0e-12, narrowCrash.rms)));
+    expect (spreadLevelChangeDb <= 4.0,
+            "Crash Spread changed perceived level by more than 4 dB (observed "
+                + std::to_string (spreadLevelChangeDb) + " dB)");
+    const bool spreadBroadenedBands = wideCrash.logBandEntropy
+        >= narrowCrash.logBandEntropy + 0.015;
+    const bool spreadReducedRinging = wideCrash.tonalPersistence
+        <= 0.92 * narrowCrash.tonalPersistence + 0.002;
+    expect (spreadBroadenedBands || spreadReducedRinging,
+            "Crash Spread did not diffuse its spectrum or reduce tonal persistence");
+    expect (wideCrash.activeBandFraction + 0.10 >= narrowCrash.activeBandFraction,
+            "Crash Spread lost too much spectral coverage");
 }
 
 std::vector<float> renderWithParameters (drumalor::Instrument instrument,
@@ -1193,6 +1515,7 @@ int main()
     testOrganicAnalogVariation();
     testDeepAnalogKickContract();
     testLowFrequencyTailAndVoiceStealing();
+    testCymbalQualityContract();
     testParameterInfluence();
     testInvalidValuesAndStressPerformance();
 

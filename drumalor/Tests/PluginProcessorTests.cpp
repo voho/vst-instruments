@@ -317,6 +317,34 @@ void testEditorRendering()
     expect (sampledColours.size() > 512u,
             "editor snapshot lacks the embedded vintage texture or visual detail");
 
+    for (const auto size : std::array { juce::Point<int> { 900, 640 },
+                                        juce::Point<int> { 1600, 1000 } })
+    {
+        editor->setSize (size.x, size.y);
+        juce::Image resizedSnapshot (
+            juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true);
+        juce::Graphics resizedGraphics (resizedSnapshot);
+        editor->paintEntireComponent (resizedGraphics, true);
+
+        std::set<juce::uint32> resizeColours;
+        bool resizeOpaque = true;
+        for (int y = 5; y < resizedSnapshot.getHeight(); y += 13)
+        {
+            for (int x = 5; x < resizedSnapshot.getWidth(); x += 13)
+            {
+                const auto pixel = resizedSnapshot.getPixelAt (x, y);
+                resizeColours.insert (pixel.getARGB());
+                resizeOpaque = resizeOpaque && pixel.getAlpha() >= 250;
+            }
+        }
+        expect (resizeOpaque,
+                "resized editor left transparent pixels at "
+                    + std::to_string (size.x) + "x" + std::to_string (size.y));
+        expect (resizeColours.size() > 256u,
+                "resized editor lost visual structure at "
+                    + std::to_string (size.x) + "x" + std::to_string (size.y));
+    }
+
     const auto snapshotPath = juce::SystemStats::getEnvironmentVariable (
         "DRUMALOR_EDITOR_SNAPSHOT", {});
     if (snapshotPath.isNotEmpty())
