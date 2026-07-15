@@ -75,7 +75,12 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 14.0; }
+    // The 12 s maximum amp release reaches -60 dB at its nominal time. Voice-
+    // card envelope tolerance can stretch that to 13.68 s, and the engine does
+    // not retire the voice until -100 dB (about 22.8 s). The remaining margin
+    // covers the feed-forward ensemble delay and output servo settling.
+    static constexpr double maximumTailLengthSeconds = 24.0;
+    double getTailLengthSeconds() const override { return maximumTailLengthSeconds; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }

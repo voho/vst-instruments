@@ -72,6 +72,7 @@ public:
     [[nodiscard]] bool triggerMidi (int midiNote, float velocity) noexcept;
     void allSoundsOff() noexcept;
     void process (float* left, float* right, int numSamples) noexcept;
+    // Includes short fade-only tails retained to make voice stealing click-free.
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
 
 private:

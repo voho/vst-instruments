@@ -649,6 +649,8 @@ void DrumEngine::updateActiveVoiceCount() noexcept
     int count = 0;
     for (const auto& voice : voices_)
         count += voice.active ? 1 : 0;
+    for (const auto& voice : retiringVoices_)
+        count += voice.active ? 1 : 0;
     activeVoiceCount_.store (count, std::memory_order_relaxed);
 }
 

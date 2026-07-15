@@ -180,6 +180,36 @@ void testReleaseCompletes()
             "voice remained active 3.8 seconds after note-off");
 }
 
+void testAllSoundOffIsImmediate()
+{
+    constexpr auto sampleRate = 48000.0;
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, blockSize);
+
+    auto parameters = makeParameters (1, 0, 0, 0);
+    parameters.room = 1.0f;
+    engine.setParameters (parameters);
+    engine.noteOn (60, 0.9f);
+
+    const auto held = render (engine, static_cast<int> (sampleRate * 0.6));
+    engine.allNotesOff();
+    const auto releaseStart = render (engine, blockSize);
+
+    expect (held.rms() > 1.0e-6, "all-sound-off test note was silent");
+    expect (releaseStart.rms() > 1.0e-8,
+            "all-notes-off did not preserve the normal release path");
+    expect (engine.getActiveVoiceCount() > 0,
+            "all-notes-off unexpectedly hard-stopped the active voices");
+
+    engine.allSoundOff();
+    const auto stopped = render (engine, static_cast<int> (sampleRate * 0.1));
+
+    expect (engine.getActiveVoiceCount() == 0,
+            "all-sound-off left voices active");
+    expect (stopped.finite && stopped.peak == 0.0,
+            "all-sound-off left audible voice or room-tail samples");
+}
+
 void testRoughPerformance()
 {
     constexpr auto sampleRate = 96000.0;
@@ -216,6 +246,7 @@ int main()
 {
     testRenderMatrix();
     testReleaseCompletes();
+    testAllSoundOffIsImmediate();
     testRoughPerformance();
 
     if (failureCount != 0)

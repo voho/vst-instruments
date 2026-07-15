@@ -41,6 +41,7 @@ public:
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
     void allNotesOff();
+    void allSoundOff() noexcept;
     void process(float* left, float* right, int numSamples);
     [[nodiscard]] int getActiveVoiceCount() const;
 

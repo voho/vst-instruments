@@ -89,7 +89,8 @@ Japanese polysynths without reproducing a branded hardware panel.
   direct `Ensemble mix` and `Ensemble rate` controls. It is one global
   algorithm rather than a selectable family, with no additional hidden spatial
   stages. A 1.5 Hz output servo removes accumulated DC without thinning deep
-  notes and sub-octave fundamentals.
+  notes and sub-octave fundamentals. Mars reports a conservative 24-second host
+  tail so maximum-release notes are not truncated during offline rendering.
 
 The modeling rationale, primary papers, neural-modeling decision, and precise
 claims boundary are in

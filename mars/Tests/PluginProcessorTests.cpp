@@ -137,6 +137,14 @@ void renderBlock (MarsAudioProcessor& processor, juce::AudioBuffer<float>& audio
     processor.processBlock (audio, midi);
 }
 
+void renderBlock (MarsAudioProcessor& processor, juce::AudioBuffer<float>& audio,
+                  juce::MidiBuffer& midi, int numSamples)
+{
+    audio.setSize (2, numSamples, false, false, true);
+    audio.clear();
+    processor.processBlock (audio, midi);
+}
+
 bool renderUntilVoicesStop (MarsAudioProcessor& processor,
                             juce::AudioBuffer<float>& audio, int maximumBlocks = 256)
 {
@@ -144,6 +152,22 @@ bool renderUntilVoicesStop (MarsAudioProcessor& processor,
     for (int block = 0; block < maximumBlocks && processor.getActiveVoiceCount() > 0; ++block)
         renderBlock (processor, audio, emptyMidi);
     return processor.getActiveVoiceCount() == 0;
+}
+
+float renderEmptySamples (MarsAudioProcessor& processor,
+                          juce::AudioBuffer<float>& audio, int sampleCount)
+{
+    juce::MidiBuffer emptyMidi;
+    float finalBlockPeak = 0.0f;
+    int rendered = 0;
+    while (rendered < sampleCount)
+    {
+        const auto samplesThisBlock = std::min (blockSize, sampleCount - rendered);
+        renderBlock (processor, audio, emptyMidi, samplesThisBlock);
+        finalBlockPeak = peakInRange (audio, 0, audio.getNumSamples());
+        rendered += samplesThisBlock;
+    }
+    return finalBlockPeak;
 }
 
 void useShortReleases (MarsAudioProcessor& processor)
@@ -403,6 +427,9 @@ void testBusAndPluginContract()
     expect (! processor.producesMidi(), "instrument unexpectedly produces MIDI");
     expect (! processor.isMidiEffect(), "instrument identifies as a MIDI effect");
     expect (processor.hasEditor(), "instrument does not advertise its editor");
+    expect (std::abs (processor.getTailLengthSeconds()
+                         - MarsAudioProcessor::maximumTailLengthSeconds) < 1.0e-9,
+            "processor tail report drifted from the public Mars tail contract");
 
     const auto stereoLayout = processor.getBusesLayout();
     expect (processor.isBusesLayoutSupported (stereoLayout),
@@ -417,6 +444,61 @@ void testBusAndPluginContract()
     inputLayout.inputBuses.add (juce::AudioChannelSet::stereo());
     expect (! processor.isBusesLayoutSupported (inputLayout),
             "unsupported instrument input bus was accepted");
+}
+
+void testMaximumReleaseFitsReportedTail()
+{
+    MarsAudioProcessor processor;
+    setParameterValue (processor, mars::parameters::filterModel, 1.0f);
+    setParameterValue (processor, mars::parameters::cutoff, 20000.0f);
+    setParameterValue (processor, mars::parameters::resonance, 0.0f);
+    setParameterValue (processor, mars::parameters::filterEnvAmount, 0.0f);
+    setParameterValue (processor, mars::parameters::aAttack, 0.001f);
+    setParameterValue (processor, mars::parameters::aDecay, 0.010f);
+    setParameterValue (processor, mars::parameters::aSustain, 1.0f);
+    setParameterValue (processor, mars::parameters::aRelease, 12.0f);
+    setParameterValue (processor, mars::parameters::drift, 1.0f);
+    setParameterValue (processor, mars::parameters::chorusMix, 1.0f);
+    setParameterValue (processor, mars::parameters::output, 6.0f);
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+    for (int note = 48; note < 64; ++note)
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, note, static_cast<juce::uint8> (127)), 0);
+    renderBlock (processor, audio, midi);
+    expect (processor.getActiveVoiceCount() == 16,
+            "maximum-tail regression did not exercise every voice card");
+
+    midi.clear();
+    for (int note = 48; note < 64; ++note)
+        midi.addEvent (juce::MidiMessage::noteOff (1, note), 0);
+    renderBlock (processor, audio, midi);
+
+    constexpr double formerlyReportedTailSeconds = 14.0;
+    const auto oldTailSamples = static_cast<int> (
+        std::lround (formerlyReportedTailSeconds * sampleRate));
+    const auto reportedTailSamples = static_cast<int> (std::lround (
+        MarsAudioProcessor::maximumTailLengthSeconds * sampleRate));
+    // The note-off event was at offset zero, so its block already advanced the
+    // release by blockSize samples. Render only the remainder to land exactly
+    // on each advertised boundary rather than one block beyond it.
+    const auto peakAtOldTail = renderEmptySamples (
+        processor, audio, oldTailSamples - blockSize);
+    expect (processor.getActiveVoiceCount() > 0,
+            "maximum amp release no longer demonstrates the former 14-second under-report");
+    expect (peakAtOldTail > 1.0e-7f,
+            "maximum amp release produced no measurable signal at the former host tail");
+
+    const auto peakAtReportedTail = renderEmptySamples (
+        processor, audio, reportedTailSamples - oldTailSamples);
+    expect (processor.getActiveVoiceCount() == 0,
+            "maximum amp release outlasted the reported Mars host tail");
+    expect (peakAtReportedTail < 1.0e-7f,
+            "Mars still produced measurable output at its reported host tail boundary");
+
+    processor.releaseResources();
 }
 
 void testSampleAccurateNoteOn()
@@ -723,6 +805,7 @@ int main()
     testLegacyStateDefaultsNewParameters();
     testOversamplingConfigurationAndDeferredSwitch();
     testBusAndPluginContract();
+    testMaximumReleaseFitsReportedTail();
     testSampleAccurateNoteOn();
     testMidiControllersAndVoiceLifecycle();
     testOutputGainImpact();

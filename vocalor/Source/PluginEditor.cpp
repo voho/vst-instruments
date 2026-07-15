@@ -338,7 +338,7 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     addAndMakeVisible (statusDisplay);
     panicButton.setColour (juce::TextButton::textColourOffId, c (0xffffa4ad));
     panicButton.setName ("Panic — stop all voices");
-    panicButton.setDescription ("Immediately release every sounding voice");
+    panicButton.setDescription ("Immediately silence every sounding voice and room tail");
     panicButton.onClick = [this]
     {
         processor.keyboardState.reset();

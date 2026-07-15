@@ -77,12 +77,7 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
 
 void VoiceEngine::reset()
 {
-    for (auto& voice : voices_)
-        silenceVoice(voice);
-    roomLeft_.fill(0.0f);
-    roomRight_.fill(0.0f);
-    roomWriteIndex_ = 0;
-    roomDampingLeft_ = roomDampingRight_ = 0.0f;
+    allSoundOff();
     sharedPitchPhase_ = 0.173f;
     sharedRatePhase_ = 0.617f;
     sharedFormantPhase_ = 0.391f;
@@ -90,7 +85,6 @@ void VoiceEngine::reset()
     blockParameters_ = snapshotParameters();
     smoothedRoom_ = blockParameters_.room;
     smoothedGain_ = blockParameters_.outputGain;
-    activeVoiceCount_.store(0, std::memory_order_relaxed);
 
     // The singer LFOs keep a repeatable but non-aligned ensemble state.
     for (int i = 0; i < singerCount; ++i)
@@ -373,6 +367,17 @@ void VoiceEngine::allNotesOff()
     for (auto& voice : voices_)
         if (voice.active)
             voice.releasing = true;
+}
+
+void VoiceEngine::allSoundOff() noexcept
+{
+    for (auto& voice : voices_)
+        silenceVoice(voice);
+    roomLeft_.fill(0.0f);
+    roomRight_.fill(0.0f);
+    roomWriteIndex_ = 0;
+    roomDampingLeft_ = roomDampingRight_ = 0.0f;
+    activeVoiceCount_.store(0, std::memory_order_relaxed);
 }
 
 void VoiceEngine::silenceVoice(Voice& voice) noexcept

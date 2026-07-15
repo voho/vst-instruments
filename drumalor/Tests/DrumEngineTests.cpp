@@ -1232,6 +1232,10 @@ void testLowFrequencyTailAndVoiceStealing()
         newOnly.trigger (instrument, 0.001f);
     }
 
+    constexpr int replacementCount = static_cast<int> (drumalor::instrumentCount) - 1;
+    expect (saturated.getActiveVoiceCount() == 64 + replacementCount,
+            "active voice count omitted audible retirement-fade tails after stealing");
+
     float oldLeft = 0.0f;
     float oldRight = 0.0f;
     float saturatedLeft = 0.0f;
@@ -1252,8 +1256,8 @@ void testLowFrequencyTailAndVoiceStealing()
         saturated.trigger (static_cast<drumalor::Instrument> (
                                static_cast<std::size_t> (trigger) % drumalor::instrumentCount),
                            0.5f);
-    expect (saturated.getActiveVoiceCount() == 64,
-            "same-sample trigger burst exceeded the fixed primary voice capacity");
+    expect (saturated.getActiveVoiceCount() == 128,
+            "same-sample trigger burst did not report both primary and fading voices");
     const auto burstMetrics = renderMetrics (saturated, 1024, 127);
     expect (burstMetrics.finite && burstMetrics.peak <= 1.001,
             "same-sample trigger burst produced unsafe audio");
@@ -1499,7 +1503,8 @@ void testInvalidValuesAndStressPerformance()
     const double elapsed = std::chrono::duration<double> (
         std::chrono::steady_clock::now() - start).count();
     expect (finite && peak <= 1.001, "dense stress render produced unsafe audio");
-    expect (engine.getActiveVoiceCount() <= 64, "voice allocation exceeded its fixed capacity");
+    expect (engine.getActiveVoiceCount() <= 128,
+            "voice allocation exceeded its primary and retirement-pool capacity");
     expect (elapsed < 20.0, "one-second stress render exceeded the generous performance guardrail");
 }
 } // namespace

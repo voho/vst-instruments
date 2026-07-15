@@ -137,4 +137,17 @@ if(BUILD_TESTING)
 
     add_test(NAME Vocalor.VoiceEngine COMMAND VocalorVoiceEngineTests)
     set_tests_properties(Vocalor.VoiceEngine PROPERTIES TIMEOUT 30)
+
+    if(VOCALOR_BUILD_PLUGIN)
+        add_executable(VocalorPluginProcessorTests Tests/PluginProcessorTests.cpp)
+        target_link_libraries(VocalorPluginProcessorTests PRIVATE Vocalor)
+        target_include_directories(VocalorPluginProcessorTests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source"
+            "$<TARGET_PROPERTY:Vocalor,JUCE_GENERATED_SOURCES_DIRECTORY>"
+            "$<TARGET_PROPERTY:juce::juce_audio_utils,INTERFACE_INCLUDE_DIRECTORIES>")
+        target_compile_features(VocalorPluginProcessorTests PRIVATE cxx_std_20)
+
+        add_test(NAME Vocalor.PluginProcessor COMMAND VocalorPluginProcessorTests)
+        set_tests_properties(Vocalor.PluginProcessor PROPERTIES TIMEOUT 30)
+    endif()
 endif()

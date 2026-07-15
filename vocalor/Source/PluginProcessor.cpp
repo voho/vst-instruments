@@ -133,12 +133,12 @@ void VocalorAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
     updateEngineParameters();
 
-    if (panicRequested.exchange (false, std::memory_order_acq_rel))
-        engine.allNotesOff();
-
     // GUI notes enter through a bounded lock-free queue and start at the next
     // block boundary. This avoids allocating or locking in the audio callback.
     dispatchUiMidiEvents();
+
+    if (panicRequested.exchange (false, std::memory_order_acq_rel))
+        engine.allSoundOff();
 
     const auto numSamples = buffer.getNumSamples();
     int renderedTo = 0;
@@ -189,7 +189,9 @@ void VocalorAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
     else if (kind == 0xb0u && numBytes >= 3)
     {
         const auto controller = data[1] & 0x7fu;
-        if (controller == 120u || controller == 123u)
+        if (controller == 120u)
+            engine.allSoundOff();
+        else if (controller == 123u)
             engine.allNotesOff();
     }
 }
