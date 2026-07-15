@@ -19,6 +19,7 @@ struct EngineParameters
     OscillatorWave osc2Wave { OscillatorWave::Pulse };
     OscillatorModel osc1Model { OscillatorModel::Vco };
     OscillatorModel osc2Model { OscillatorModel::Vco };
+    bool chorusCompander { false };
     FilterModel filterModel { FilterModel::Ladder };
     VoiceMode voiceMode { VoiceMode::Poly };
     LfoWaveform lfoWave { LfoWaveform::Triangle };
@@ -123,6 +124,7 @@ private:
     struct Oscillator
     {
         float phase { 0.0f };
+        float dcoPhase { 0.0f };
         float triangle { -1.0f };
         float previousSawInput { 0.0f };
         float previousSawOutput { 0.0f };
@@ -132,9 +134,24 @@ private:
         std::array<float, 4> pulseCorrection {};
         std::array<float, 2> triangleSquareDelay {};
         std::array<float, 4> triangleSquareCorrection {};
-        std::array<float, 2> phaseDelay {};
+        std::array<float, 2> dcoSawDelay {};
+        std::array<float, 4> dcoSawCorrection {};
+        std::array<float, 2> dcoPulseDelay {};
+        std::array<float, 4> dcoPulseCorrection {};
+        std::array<float, 2> dcoTriangleSquareDelay {};
+        std::array<float, 4> dcoTriangleSquareCorrection {};
         float dcoIncrement { 0.001f };
-        float dcoClockError { 0.0f };
+        float dcoRampVolts { 0.0f };
+        float dcoHeldSlopeVoltsPerSecond { 5280.0f };
+        float dcoHeldPulseWidth { 0.5f };
+        float dcoPulseSlew { 1.0f };
+        float dcoRangeClockHz { 2000000.0f };
+        float dcoPendingRangeClockHz { 2000000.0f };
+        float dcoResetResidue { 0.0f };
+        float dcoChargeInjectionVolts { 0.014f };
+        float dcoTriangle { -0.25f };
+        float dcoExpectedPulseAtNextSample { 1.0f };
+        float dcoLastResetSamplesToNext { 0.0f };
         float expectedPulseAtNextSample { 1.0f };
         std::array<float, 3> dcoReconstruction {};
         std::array<bool, 3> dcoReconstructionInitialised {};
@@ -144,6 +161,9 @@ private:
         float modelBlendStep { 0.0f };
         int waveformCrossfadeRemaining { 0 };
         int modelCrossfadeRemaining { 0 };
+        int dcoControlCountdown { 0 };
+        std::uint32_t dcoTimerDivisor { 1u };
+        std::uint32_t dcoPendingDivisor { 1u };
         OscillatorWave activeWave { OscillatorWave::Saw };
         OscillatorModel activeModel { OscillatorModel::Vco };
         bool sawContourInitialised { false };
@@ -151,9 +171,14 @@ private:
         bool pulseBlepInitialised { false };
         bool expectedPulseInitialised { false };
         bool triangleSquareBlepInitialised { false };
-        bool phaseDelayInitialised { false };
+        bool dcoSawBlepInitialised { false };
+        bool dcoPulseBlepInitialised { false };
+        bool dcoTriangleSquareBlepInitialised { false };
+        bool dcoExpectedPulseInitialised { false };
+        bool dcoAnalogueInitialised { false };
         bool waveformInitialised { false };
         bool dcoClockInitialised { false };
+        bool dcoWrappedThisSample { false };
         bool modelInitialised { false };
     };
 
@@ -185,18 +210,36 @@ private:
     struct BbdLine
     {
         std::array<float, bbdStagePairs> cells {};
+        std::array<float, bbdStagePairs> transferLogHistory {};
         ParallelAnalogFilter inputFilter {};
         ParallelAnalogFilter outputFilter {};
         double clockPhase { 0.0 };
         float heldOutput { 0.0f };
+        float transferMemory { 0.0f };
+        float rollingTransferLog { 0.0f };
+        std::array<float, 4> feedthroughCorrection {};
         float previousFilteredInput { 0.0f };
+        std::uint32_t noiseState { 0x6d2b79f5u };
         int writeIndex { 0 };
         bool filteredInputInitialised { false };
 
         void configure(float sampleRate, float frequencyScale) noexcept;
         void reset(double initialClockPhase) noexcept;
         float process(float input, float clockFrequency,
-                      float sampleRate) noexcept;
+                      float sampleRate, float parasiticGain = 1.0f) noexcept;
+    };
+
+    struct BbdCompander
+    {
+        static constexpr float nominalLineGain = 1.30316678f;
+        float compressorEnvelope { 0.1f };
+        float expanderEnvelope { 0.1f * nominalLineGain };
+        float detectorCoefficient { 0.01f };
+
+        void configure(float sampleRate) noexcept;
+        void reset() noexcept;
+        float compress(float input) noexcept;
+        void expand(float& left, float& right) noexcept;
     };
 
     struct LadderFilter
@@ -309,6 +352,7 @@ private:
         float dcoSubReconstruction { 0.0f };
         bool dcoSubBlepInitialised { false };
         bool dcoSubReconstructionInitialised { false };
+        bool dcoSubActive { false };
         bool oscillator1CycleOdd { false };
         LadderFilter ladder {};
         StateVariableFilter stateVariable {};
@@ -348,7 +392,7 @@ private:
                             float lfoValue) noexcept;
     float renderOscillator(Oscillator& oscillator, OscillatorWave waveform,
                            OscillatorModel model, float increment, float pulseWidth,
-                           bool& wrapped) noexcept;
+                           float dcoRangeClockHz, bool& wrapped) noexcept;
     float renderVoiceOversample(Voice& voice, const EngineParameters& parameters,
                                 float lfoValue) noexcept;
     void downsamplePair(HalfbandDecimator& decimator,
@@ -391,6 +435,9 @@ private:
     int oscillatorModelCrossfadeSamples_ { 192 };
     int waveformCrossfadeSamples_ { 288 };
     float dcoReconstructionGain_ { 0.69f };
+    float dcoPulseRise_ { 0.8f };
+    float dcoPulseFall_ { 0.7f };
+    int dcoControlPeriodSamples_ { 806 };
     float velocitySmoothing_ { 0.02f };
     float outputEnergySmoothing_ { 0.01f };
     bool prepared_ { false };
@@ -428,7 +475,13 @@ private:
 
     BbdLine chorusLeft_ {};
     BbdLine chorusRight_ {};
+    BbdCompander chorusCompander_ {};
     float chorusPhase_ { 0.0f };
+    float chorusActivity_ { 0.0f };
+    float chorusActivityAttack_ { 0.05f };
+    float chorusActivityRelease_ { 0.99f };
+    float companderBlend_ { 0.0f };
+    float companderBlendCoefficient_ { 0.01f };
 
     float dcCoefficient_ { 0.9987f };
     float dcInputLeft_ { 0.0f };

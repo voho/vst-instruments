@@ -1,21 +1,23 @@
 # Mars sound-design recipes
 
 Mars state is stored by the host. These original recipes are starting points
-for the version-1.4 parameter set; percentages are approximate and are meant to
+for the version-1.5 parameter set; percentages are approximate and are meant to
 be adjusted by ear. Parameters not listed in a recipe remain at their
-version-1.4 defaults; see the [complete parameter contract](../README.md#exact-47-parameter-contract).
+version-1.5 defaults; see the [complete parameter contract](../README.md#exact-48-parameter-contract).
 Both oscillator mixer switches and HQ oversampling are On unless a recipe says
-otherwise. Oscillators use the Moog-like VCO model, Mono is Off, and polyphony
-is limited to 16 render voices unless a recipe says otherwise. HQ is a
+otherwise. Oscillators use the Moog-like VCO model, Mono and the non-Juno
+ensemble compander are Off, and polyphony is limited to 16 render voices unless
+a recipe says otherwise. HQ is a
 persisted quality setting, not part of preset randomization, and changes take
 effect after the engine becomes idle.
 
-These recipes assume the Mars 1.4 signal path. HQ runs the complete nonlinear
+These recipes assume the Mars 1.5 signal path. HQ runs the complete nonlinear
 voice, VCA, and dual variable-clock BBD ensemble at 4x in 44.1/48 kHz sessions,
 2x at 88.2/96 kHz, and natively at 176.4 kHz and above. The Moog-like VCO has
-the measured saw contour and full seeded pitch wander; the Juno-like DCO has
-clocked cycle timing, a divider-locked sub, prewarped reconstruction filtering,
-and much tighter fundamental drift. All oscillator discontinuities, including
+the measured saw contour and full seeded pitch wander; the Juno-like DCO has a
+held integer divider, an MC5534A-style 12 V analogue ramp/comparator, a
+divider-locked sub, prewarped reconstruction filtering, and much tighter
+fundamental drift. All oscillator discontinuities, including
 the triangle driver and DCO sub, receive the four-sample integrated B-spline
 correction. Because these are distinct running models rather than labels, model
 choice is an intentional part of every recipe below.

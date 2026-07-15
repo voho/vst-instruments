@@ -745,6 +745,17 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     monoButton.onStateChange = [this] { updateConditionalControls(); };
     addAndMakeVisible (monoButton);
 
+    companderButton.setClickingTogglesState (true);
+    companderButton.setWantsKeyboardFocus (true);
+    companderButton.setName ("Ensemble studio compander");
+    companderButton.setTitle ("Non-Juno BBD compander");
+    companderButton.setDescription (
+        "Enable an NE570-style compressor and expander around the BBD; the authentic Juno ensemble leaves this Off");
+    companderButton.setTooltip (companderButton.getDescription());
+    companderButton.setColour (juce::TextButton::textColourOffId, c (textDim));
+    companderButton.setColour (juce::TextButton::textColourOnId, c (textBright));
+    addAndMakeVisible (companderButton);
+
     for (auto* strip : { &osc1ModelStrip, &osc2ModelStrip, &osc1WaveStrip,
                          &osc2WaveStrip, &filterModelStrip, &lfoWaveStrip,
                          &voiceModeStrip })
@@ -831,7 +842,7 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
 
     choiceAttachments.reserve (7);
     sliderAttachments.reserve (36);
-    buttonAttachments.reserve (4);
+    buttonAttachments.reserve (5);
 
     attachChoice (osc1ModelStrip, mars::parameters::osc1Model);
     attachChoice (osc2ModelStrip, mars::parameters::osc2Model);
@@ -844,6 +855,7 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     attachButton (osc2EnableButton, mars::parameters::osc2Enabled);
     attachButton (oversamplingButton, mars::parameters::hqOversampling);
     attachButton (monoButton, mars::parameters::monoMode);
+    attachButton (companderButton, mars::parameters::chorusCompander);
 
     attachSlider (osc1OctaveKnob.slider, mars::parameters::osc1Octave);
     attachSlider (osc2OctaveKnob.slider, mars::parameters::osc2Octave);
@@ -1186,6 +1198,7 @@ void MarsAudioProcessorEditor::resized()
     };
     osc1EnableButton.setBounds (powerButtonBounds (oscillator1Section));
     osc2EnableButton.setBounds (powerButtonBounds (oscillator2Section));
+    companderButton.setBounds (powerButtonBounds (masterSection));
 
     const auto sectionContent = [this] (Section section)
     {

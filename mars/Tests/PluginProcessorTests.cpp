@@ -27,7 +27,7 @@ struct ParameterExpectation
     float tolerance;
 };
 
-constexpr std::array<ParameterExpectation, 47> expectedParameters {{
+constexpr std::array<ParameterExpectation, 48> expectedParameters {{
     { mars::parameters::osc1Wave,         0.0f,   1.0e-5f },
     { mars::parameters::osc1Octave,       0.0f,   1.0e-5f },
     { mars::parameters::osc2Wave,         1.0f,   1.0e-5f },
@@ -75,6 +75,7 @@ constexpr std::array<ParameterExpectation, 47> expectedParameters {{
     { mars::parameters::osc2Model,        0.0f,   1.0e-5f },
     { mars::parameters::polyphonyLimit,  16.0f,   1.0e-5f },
     { mars::parameters::monoMode,         0.0f,   1.0e-5f },
+    { mars::parameters::chorusCompander,  0.0f,   1.0e-5f },
 }};
 
 constexpr std::size_t version1ParameterCount = 40;
@@ -201,10 +202,10 @@ void useShortReleases (MarsAudioProcessor& processor)
 void testParameterLayoutAndDefaults()
 {
     MarsAudioProcessor processor;
-    expect (expectedParameters.size() == 47u,
-            "test parameter manifest does not contain exactly 47 entries");
+    expect (expectedParameters.size() == 48u,
+            "test parameter manifest does not contain exactly 48 entries");
     expect (processor.getParameters().size() == static_cast<int> (expectedParameters.size()),
-            "processor does not expose exactly 47 APVTS parameters");
+            "processor does not expose exactly 48 APVTS parameters");
 
     std::set<std::string> uniqueIds;
     const auto& hostParameters = processor.getParameters();
@@ -240,7 +241,8 @@ void testParameterLayoutAndDefaults()
 
         const auto expectedVersionHint = index < version1ParameterCount ? 1
                                        : index < 42u ? 2
-                                       : index == 42u ? 3 : 4;
+                                       : index == 42u ? 3
+                                       : index < 47u ? 4 : 5;
         expect (hostParameter->getVersionHint() == expectedVersionHint,
                 std::string ("wrong parameter version hint for ") + expected.id);
 
@@ -251,7 +253,7 @@ void testParameterLayoutAndDefaults()
     }
 
     expect (uniqueIds.size() == expectedParameters.size(),
-            "the 47-entry APVTS manifest contains duplicate ids");
+            "the 48-entry APVTS manifest contains duplicate ids");
 }
 
 void testParameterTextFormatting()
@@ -274,6 +276,8 @@ void testParameterTextFormatting()
     expectParameterText (processor, mars::parameters::polyphonyLimit, 8.0f, "8 voices");
     expectParameterText (processor, mars::parameters::monoMode, 0.0f, "Off");
     expectParameterText (processor, mars::parameters::monoMode, 1.0f, "On");
+    expectParameterText (processor, mars::parameters::chorusCompander, 0.0f, "Off");
+    expectParameterText (processor, mars::parameters::chorusCompander, 1.0f, "On");
 }
 
 void testStateRoundTrip()
@@ -292,6 +296,7 @@ void testStateRoundTrip()
     setParameterValue (source, mars::parameters::osc2Model, 1.0f);
     setParameterValue (source, mars::parameters::polyphonyLimit, 7.0f);
     setParameterValue (source, mars::parameters::monoMode, 1.0f);
+    setParameterValue (source, mars::parameters::chorusCompander, 1.0f);
 
     juce::MemoryBlock state;
     source.getStateInformation (state);
@@ -330,6 +335,9 @@ void testStateRoundTrip()
             "polyphony limit did not survive state round-trip");
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::monoMode), 1.0f),
             "mono mode did not survive state round-trip");
+    expect (approximatelyEqual (
+                parameterValue (restored, mars::parameters::chorusCompander), 1.0f),
+            "ensemble compander did not survive state round-trip");
 }
 
 bool isParameterState (const juce::ValueTree& child, const char* parameterId)
@@ -365,13 +373,16 @@ void testLegacyStateDefaultsNewParameters()
     removeParameterState (legacyState, mars::parameters::osc2Model);
     removeParameterState (legacyState, mars::parameters::polyphonyLimit);
     removeParameterState (legacyState, mars::parameters::monoMode);
+    removeParameterState (legacyState, mars::parameters::chorusCompander);
     expect (! containsParameterState (legacyState, mars::parameters::osc1Enabled)
                 && ! containsParameterState (legacyState, mars::parameters::osc2Enabled)
                 && ! containsParameterState (legacyState, mars::parameters::hqOversampling)
                 && ! containsParameterState (legacyState, mars::parameters::osc1Model)
                 && ! containsParameterState (legacyState, mars::parameters::osc2Model)
                 && ! containsParameterState (legacyState, mars::parameters::polyphonyLimit)
-                && ! containsParameterState (legacyState, mars::parameters::monoMode),
+                && ! containsParameterState (legacyState, mars::parameters::monoMode)
+                && ! containsParameterState (
+                    legacyState, mars::parameters::chorusCompander),
             "could not construct a version-1 state without later parameters");
 
     juce::MemoryBlock binaryState;
@@ -387,6 +398,7 @@ void testLegacyStateDefaultsNewParameters()
     setParameterValue (restored, mars::parameters::osc2Model, 1.0f);
     setParameterValue (restored, mars::parameters::polyphonyLimit, 3.0f);
     setParameterValue (restored, mars::parameters::monoMode, 1.0f);
+    setParameterValue (restored, mars::parameters::chorusCompander, 1.0f);
     restored.setStateInformation (binaryState.getData(), static_cast<int> (binaryState.getSize()));
 
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::osc1Enabled), 1.0f),
@@ -404,6 +416,9 @@ void testLegacyStateDefaultsNewParameters()
             "legacy state did not default the missing polyphony limit to 16");
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::monoMode), 0.0f),
             "legacy state did not default missing mono mode to Off");
+    expect (approximatelyEqual (
+                parameterValue (restored, mars::parameters::chorusCompander), 0.0f),
+            "legacy state did not default missing ensemble compander to Off");
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::cutoff),
                                 1234.0f, 0.5f),
             "version-1 migration did not restore existing parameter values");
@@ -415,7 +430,9 @@ void testLegacyStateDefaultsNewParameters()
                 && containsParameterState (upgradedState, mars::parameters::osc1Model)
                 && containsParameterState (upgradedState, mars::parameters::osc2Model)
                 && containsParameterState (upgradedState, mars::parameters::polyphonyLimit)
-                && containsParameterState (upgradedState, mars::parameters::monoMode),
+                && containsParameterState (upgradedState, mars::parameters::monoMode)
+                && containsParameterState (
+                    upgradedState, mars::parameters::chorusCompander),
             "migrated state did not persist the appended parameters");
 }
 

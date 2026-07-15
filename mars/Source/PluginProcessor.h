@@ -52,6 +52,7 @@ inline constexpr auto glide           = "glide";
 inline constexpr auto velocity        = "velocity";
 inline constexpr auto chorusMix       = "chorusMix";
 inline constexpr auto chorusRate      = "chorusRate";
+inline constexpr auto chorusCompander = "chorusCompander";
 inline constexpr auto output          = "output";
 inline constexpr auto osc1Enabled     = "osc1Enabled";
 inline constexpr auto osc2Enabled     = "osc2Enabled";
@@ -167,6 +168,7 @@ private:
         std::atomic<float>* velocity = nullptr;
         std::atomic<float>* chorusMix = nullptr;
         std::atomic<float>* chorusRate = nullptr;
+        std::atomic<float>* chorusCompander = nullptr;
         std::atomic<float>* output = nullptr;
         std::atomic<float>* osc1Enabled = nullptr;
         std::atomic<float>* osc2Enabled = nullptr;

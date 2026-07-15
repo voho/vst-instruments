@@ -39,20 +39,26 @@ Japanese polysynths without reproducing a branded hardware panel.
   integrated third-order B-spline PolyBLEP with the matching frequency-dependent
   first-order contour fitted to measured Minimoog Voyager waveforms, remapped
   from 44.1 kHz to the active internal rate. `Juno-like DCO`
-  chooses an integer period from a 2 MHz reference clock once per cycle and
-  uses first-order count-error feedback to alternate adjacent timer periods.
-  This preserves mean pitch while retaining deterministic clock signature. Its
-  waveform then passes through an endpoint-preserving analogue-ramp curvature
-  and prewarped TPT reconstruction pole; fundamental drift is much tighter than
-  the VCO while analogue edge and voice-card variation remain. Its sub path is
-  divider-locked to oscillator I's selected clock period. Saw reset, both pulse
-  edges, the triangle's square driver, and the derived DCO sub all use the same
+  follows the JUNO-106 chain: an 8 MHz master is range-divided to 1, 2, or
+  4 MHz, an 8253-style timer holds one integer divisor until the next control
+  write and terminal count, and an event-driven MC5534A surrogate generates
+  audio. The roughly 4.2 ms control scan holds pitch current and PWM voltage;
+  there is no invented adjacent-count dithering. The MC5534A path uses a 12 V
+  Miller ramp, finite reset recovery and charge injection, a held-threshold PWM
+  comparator with asymmetric output slew, and rate-invariant reconstruction.
+  Its sub path is divider-locked to oscillator I's selected clock period. Saw
+  reset, both pulse edges, the triangle's square driver, and the derived DCO sub
+  all use the same
   fractional-event, four-sample integrated B-spline correction. The LFO runs
-  inside the HQ island, and comparator moves that cross the current phase add
+  inside the HQ island, and comparator moves that cross the current ramp add
   their own correction instead of becoming untracked PWM steps. All three
-  waveform states stay warm and crossfade for 3 ms, while a separate 2 ms
-  phase-continuous crossfade protects automated model changes. Each oscillator
-  selects its model independently, so hybrid VCO/DCO patches are possible.
+  waveform states stay warm and crossfade for 3 ms. VCO and DCO own separate
+  clocks; a 2 ms audio crossfade seeds the destination phase, then lets both
+  advance at their physical rates during the transition. At a settled endpoint
+  the inactive analogue oscillator core is frozen. Triangle remains
+  an explicit Mars extension because the MC5534A exposes saw, pulse, and sub,
+  not triangle. Each oscillator selects its model independently, so hybrid
+  VCO/DCO patches are possible.
 - **Independent oscillator mixer switches:** each oscillator can be removed
   from the audible mix without stopping its phase. Oscillator II therefore
   remains available to cross modulation while its audio switch is Off, and
@@ -121,14 +127,24 @@ Japanese polysynths without reproducing a branded hardware panel.
   a generic interpolated chorus. Each path stores the 128 signal-bearing pairs
   of a two-phase 256-stage device, uses the
   measured Juno-60 fifth-order input/output-filter poles and residues, retains
-  the measured +2.3 dB BBD gain with restrained asymmetric transfer, and is
-  clocked from 26–74 kHz by an antiphase triangle LFO. This runs inside the HQ
+  the measured +2.3 dB reference gain after a provisionally fitted charge-loss
+  curve, and is
+  clocked from 26–74 kHz by an antiphase triangle LFO. An O(1) rolling history
+  follows clock-dependent charge retention, a BBD-rate pole captures incomplete
+  transfer, and independently seeded event noise sits inside each wet line.
+  Imperfect cancellation of the MN3009's complementary outputs produces a
+  fractional, two-phase clock-feedthrough residue before the physical output
+  filter; it is faded before low-rate Nyquist folding. This runs inside the HQ
   island and does not use a fractional-delay read pointer. Clock crossings use
   fractional-time input capture and time-weighted held-output integration, so
   HQ-Off operation does not shift several buckets with one quantized sample.
-  `Ensemble mix` and `Ensemble rate` remain direct modern controls; there are
-  no hidden spatial
-  stages or injected idle hiss. A 1.5 Hz output servo removes accumulated DC
+  `Ensemble mix` and `Ensemble rate` remain direct modern controls. The `COMP`
+  switch adds a nominal-gain-matched, click-smoothed NE570-style
+  compressor/expander around the BBD as an explicitly non-Juno studio option;
+  authentic mode leaves it Off.
+  Parasitics fade only after the signal and complete BBD tail disappear, then
+  snap to digital zero so hosts can suspend the instrument. A 1.5 Hz output
+  servo removes accumulated DC
   without thinning deep notes and sub-octave fundamentals. Mars reports a
   conservative 24-second host tail so maximum-release notes are not truncated
   during offline rendering.
@@ -162,7 +178,7 @@ preserve a fixed 2 ms fading tail to avoid a hard sample discontinuity.
 `Unison`; `Mono` overrides all three polyphonic allocation modes without
 changing their stored/automated value.
 
-## Exact 47-parameter contract
+## Exact 48-parameter contract
 
 | Section | Front-panel controls (parameter IDs) |
 | --- | --- |
@@ -174,17 +190,19 @@ changing their stored/automated value.
 | Amplifier envelope | Attack (`aAttack`), decay (`aDecay`), sustain (`aSustain`), release (`aRelease`) |
 | LFO | Waveform: triangle / sine / sample & hold (`lfoWave`), rate (`lfoRate`), pitch depth (`lfoPitch`), filter depth (`lfoFilter`), PWM depth (`lfoPwm`) |
 | Voice | Mode: `Poly` / `Unison` / `Fifth` (`voiceMode`), Mono override (`monoMode`), physical render-voice ceiling 1–16 (`polyphonyLimit`), unison voices (`unisonVoices`), voice-card drift (`drift`), stereo spread (`spread`), glide time (`glide`), velocity response (`velocity`) |
-| Output | Ensemble mix (`chorusMix`), ensemble rate (`chorusRate`), output level (`output`) |
+| Output | Ensemble mix (`chorusMix`), ensemble rate (`chorusRate`), non-Juno studio compander (`chorusCompander`), output level (`output`) |
 | Quality | HQ oversampling (`hqOversampling`): persisted, non-automatable, default On |
 
-These are the complete host parameter IDs for version 1.4: 46 automatable sound
+These are the complete host parameter IDs for version 1.5: 47 automatable sound
 and performance controls plus one persisted quality setting. The original 40
 IDs retain their order and version hint; `osc1Enabled` and `osc2Enabled` remain
 the version-2 additions, and non-automatable `hqOversampling` retains version
 hint 3. `osc1Model`, `osc2Model`, `polyphonyLimit`, and `monoMode` are appended
-with version hint 4, so every previously shipped host parameter keeps its index
-and normalized meaning. Legacy states default both models to Moog-like VCO,
-polyphony to 16, Mono to Off, both mixer switches to On, and HQ to On. The three
+with version hint 4. `chorusCompander` is appended with version hint 5 and
+defaults Off, so every previously shipped host parameter keeps its index and
+normalized meaning. Legacy states default both models to Moog-like VCO,
+polyphony to 16, Mono and the non-Juno compander to Off, both mixer switches to
+On, and HQ to On. The three
 randomizer buttons are commands rather than host parameters; there are no
 hidden sound controls behind a matrix or alternate panel.
 
@@ -270,10 +288,13 @@ ctest --test-dir build-dsp --output-on-failure
 The DSP tests cover rates through 384 kHz, finite output, release completion,
 deep-note and long-triangle stability, deterministic rendering, distinct
 VCO/DCO outputs, source-matched VCO saw contour, DCO clock/divider behavior,
+held 8253 divisors across the 1/2/4 MHz ranges,
 phase-continuous oscillator-model changes, oscillator and filter responses,
 the 137-tap return filter's coefficient symmetry, ripple, >100 dB stopband,
 exact 34/51-sample latency, the clocked BBD's N/(2*fClock) delay, fractional
 multi-crossing capture and +2.3 dB gain, moving-PWM correction, measured
+clock-dependent charge retention, deterministic gated feedthrough/noise,
+paired compander laws,
 high-note oscillator alias suppression, the Ladder's full cutoff range,
 bass-gain compensation, and implicit-equation residual/state error against an
 independent double-precision reference. They also cover an adversarial ladder
@@ -282,7 +303,7 @@ oscillator II's audio feed disabled, deferred HQ changes including large host
 blocks, meaningful glide and modulation, dynamic physical-voice limits, Mono
 mode-transition, duplicate-hold, legato/fallback/retrigger semantics,
 voice-mode allocation, and a CPU guardrail. Plug-in builds additionally test
-the 47-parameter order/default/text contract, legacy migration, all randomizer
+the 48-parameter order/default/text contract, legacy migration, all randomizer
 strengths and safety exclusions, MIDI, state, and editor rendering.
 
 ## Install and validate locally

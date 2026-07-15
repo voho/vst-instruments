@@ -191,6 +191,7 @@ MarsAudioProcessor::MarsAudioProcessor()
     parameterPointers.velocity        = parameters.getRawParameterValue (velocity);
     parameterPointers.chorusMix       = parameters.getRawParameterValue (chorusMix);
     parameterPointers.chorusRate      = parameters.getRawParameterValue (chorusRate);
+    parameterPointers.chorusCompander = parameters.getRawParameterValue (chorusCompander);
     parameterPointers.output          = parameters.getRawParameterValue (output);
     parameterPointers.osc1Enabled     = parameters.getRawParameterValue (osc1Enabled);
     parameterPointers.osc2Enabled     = parameters.getRawParameterValue (osc2Enabled);
@@ -201,6 +202,7 @@ MarsAudioProcessor::MarsAudioProcessor()
              && parameterPointers.osc2Model != nullptr
              && parameterPointers.monoMode != nullptr
              && parameterPointers.polyphonyLimit != nullptr
+             && parameterPointers.chorusCompander != nullptr
              && parameterPointers.osc1Enabled != nullptr
              && parameterPointers.osc2Enabled != nullptr
              && parameterPointers.hqOversampling != nullptr);
@@ -216,7 +218,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
 {
     using namespace mars::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (47);
+    result.reserve (48);
 
     const auto addChoice = [&result] (const char* id, const char* name,
                                       juce::StringArray choices, int defaultIndex)
@@ -407,6 +409,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
                 })));
     result.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { monoMode, 4 }, "Mono mode", false));
+
+    // The original JUNO chorus has no compander. Keep this separately named,
+    // appended version-5 studio option Off by default so existing automation,
+    // presets, and the authentic ensemble path retain their meaning.
+    result.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { chorusCompander, 5 },
+        "Ensemble compander (non-Juno)", false));
 
     return { result.begin(), result.end() };
 }
@@ -609,6 +618,7 @@ void MarsAudioProcessor::updateEngineParameters() noexcept
     next.velocityAmount = valueOf (parameterPointers.velocity);
     next.chorusMix = valueOf (parameterPointers.chorusMix);
     next.chorusRateHz = valueOf (parameterPointers.chorusRate);
+    next.chorusCompander = valueOf (parameterPointers.chorusCompander) >= 0.5f;
     next.outputGain = juce::Decibels::decibelsToGain (valueOf (parameterPointers.output));
     next.osc1Enabled = valueOf (parameterPointers.osc1Enabled) >= 0.5f;
     next.osc2Enabled = valueOf (parameterPointers.osc2Enabled) >= 0.5f;
@@ -692,7 +702,8 @@ void MarsAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
                                          mars::parameters::osc1Model,
                                          mars::parameters::osc2Model,
                                          mars::parameters::polyphonyLimit,
-                                         mars::parameters::monoMode })
+                                         mars::parameters::monoMode,
+                                         mars::parameters::chorusCompander })
             addDefaultParameterStateIfMissing (restoredState, parameters, parameterId);
 
         parameters.replaceState (restoredState);
@@ -727,7 +738,7 @@ void MarsAudioProcessor::randomizeParameters (float amount)
     // bounded by amount * legalRange and 100% is a true full-range draw. Using
     // normalised space also respects the perceptual skew of frequency and time
     // controls.
-    static constexpr std::array<const char*, 41> soundParameterIds {{
+    static constexpr std::array<const char*, 42> soundParameterIds {{
         mars::parameters::osc1Wave,
         mars::parameters::osc1Model,
         mars::parameters::osc1Octave,
@@ -769,6 +780,7 @@ void MarsAudioProcessor::randomizeParameters (float amount)
         mars::parameters::velocity,
         mars::parameters::chorusMix,
         mars::parameters::chorusRate,
+        mars::parameters::chorusCompander,
     }};
 
     static std::atomic<std::uint64_t> randomisationSequence { 0 };

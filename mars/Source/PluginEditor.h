@@ -144,6 +144,7 @@ private:
     juce::TextButton osc1EnableButton { "ON" };
     juce::TextButton osc2EnableButton { "ON" };
     juce::TextButton monoButton { "MONO" };
+    juce::TextButton companderButton { "COMP" };
     juce::TextButton randomize1Button { "1%" };
     juce::TextButton randomize10Button { "10%" };
     juce::TextButton randomize100Button { "100%" };

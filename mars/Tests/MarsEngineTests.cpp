@@ -104,7 +104,7 @@ struct MarsEngineTestAccess
         std::vector<float> output(static_cast<std::size_t>(sampleCount));
         for (int sample = 0; sample < sampleCount; ++sample)
             output[static_cast<std::size_t>(sample)] = line.process(
-                sample == 0 ? 1.0f : 0.0f, clockFrequency, sampleRate);
+                sample == 0 ? 1.0f : 0.0f, clockFrequency, sampleRate, 0.0f);
         return output;
     }
 
@@ -119,7 +119,8 @@ struct MarsEngineTestAccess
         double sum = 0.0;
         for (int sample = 0; sample < sampleCount; ++sample)
         {
-            const float output = line.process(input, clockFrequency, sampleRate);
+            const float output = line.process(
+                input, clockFrequency, sampleRate, 0.0f);
             if (sample >= sampleCount - averageCount)
                 sum += output;
         }
@@ -132,9 +133,141 @@ struct MarsEngineTestAccess
         MarsEngine::BbdLine line;
         line.configure(sampleRate, 1.0f);
         line.reset(0.0);
-        (void) line.process(0.0f, 18000.0f, sampleRate);
-        (void) line.process(1.0f, 90000.0f, sampleRate);
+        (void) line.process(0.0f, 18000.0f, sampleRate, 0.0f);
+        (void) line.process(1.0f, 90000.0f, sampleRate, 0.0f);
         return { line.cells[0], line.cells[1] };
+    }
+
+    static std::vector<float> renderBbdSilence(float parasiticGain,
+                                                double initialPhase)
+    {
+        constexpr float sampleRate = 192000.0f;
+        constexpr float clockFrequency = 50000.0f;
+        constexpr int sampleCount = 8192;
+        MarsEngine::BbdLine line;
+        line.configure(sampleRate, 1.0f);
+        line.reset(initialPhase);
+        std::vector<float> output(static_cast<std::size_t>(sampleCount));
+        for (auto& value : output)
+            value = line.process(0.0f, clockFrequency, sampleRate,
+                                 parasiticGain);
+        return output;
+    }
+
+    static std::array<float, 3> bbdChargeHistoryTransition()
+    {
+        constexpr float sampleRate = 192000.0f;
+        MarsEngine::BbdLine line;
+        line.configure(sampleRate, 1.0f);
+        line.reset(0.0);
+        const auto advanceTransfers = [&line](float clockFrequency, int eventCount)
+        {
+            int completed = 0;
+            int previousIndex = line.writeIndex;
+            while (completed < eventCount)
+            {
+                (void) line.process(0.03f, clockFrequency, sampleRate, 0.0f);
+                if (line.writeIndex != previousIndex)
+                {
+                    previousIndex = line.writeIndex;
+                    ++completed;
+                }
+            }
+        };
+        advanceTransfers(26000.0f, 256);
+        const float slowHistory = line.rollingTransferLog;
+        advanceTransfers(74000.0f, 1);
+        const float immediateHistory = line.rollingTransferLog;
+        advanceTransfers(74000.0f, 128);
+        return { slowHistory, immediateHistory, line.rollingTransferLog };
+    }
+
+    static std::array<double, 3> companderMetrics()
+    {
+        constexpr float sampleRate = 192000.0f;
+        constexpr float frequency = 997.0f;
+        constexpr int warmup = 96000;
+        constexpr int measure = 96000;
+        const auto compressedRms = [] (float amplitude)
+        {
+            MarsEngine::BbdCompander compander;
+            compander.configure(sampleRate);
+            compander.reset();
+            double sum = 0.0;
+            for (int sample = 0; sample < warmup + measure; ++sample)
+            {
+                const float input = amplitude * std::sin(
+                    2.0f * 3.14159265358979323846f * frequency
+                    * static_cast<float>(sample) / sampleRate);
+                const float output = compander.compress(input);
+                if (sample >= warmup)
+                    sum += static_cast<double>(output) * output;
+            }
+            return std::sqrt(sum / static_cast<double>(measure));
+        };
+
+        MarsEngine::BbdCompander pair;
+        pair.configure(sampleRate);
+        pair.reset();
+        double inputSum = 0.0;
+        double outputSum = 0.0;
+        for (int sample = 0; sample < warmup + measure; ++sample)
+        {
+            const float input = 0.24f * std::sin(
+                2.0f * 3.14159265358979323846f * frequency
+                * static_cast<float>(sample) / sampleRate);
+            // Exercise the pair around the nominal complete BBD gain. Without
+            // expander calibration this path produces G^2 instead of G.
+            float left = MarsEngine::BbdCompander::nominalLineGain
+                       * pair.compress(input);
+            float right = left;
+            pair.expand(left, right);
+            if (sample >= warmup)
+            {
+                inputSum += static_cast<double>(input) * input;
+                outputSum += static_cast<double>(left) * left;
+            }
+        }
+        return {
+            compressedRms(0.02f),
+            compressedRms(0.50f),
+            std::sqrt(outputSum / std::max(inputSum, 1.0e-20))
+                / MarsEngine::BbdCompander::nominalLineGain,
+        };
+    }
+
+    static double companderBbdLevelRatio()
+    {
+        constexpr float sampleRate = 192000.0f;
+        constexpr float clockFrequency = 50000.0f;
+        constexpr float frequency = 997.0f;
+        constexpr int warmup = 48000;
+        constexpr int measure = 48000;
+        const auto render = [] (bool enabled)
+        {
+            MarsEngine::BbdLine line;
+            line.configure(sampleRate, 1.0f);
+            line.reset(0.17);
+            MarsEngine::BbdCompander compander;
+            compander.configure(sampleRate);
+            compander.reset();
+            double energy = 0.0;
+            for (int sample = 0; sample < warmup + measure; ++sample)
+            {
+                const float input = 0.04f * std::sin(
+                    2.0f * 3.14159265358979323846f * frequency
+                    * static_cast<float>(sample) / sampleRate);
+                const float feed = enabled ? compander.compress(input) : input;
+                float left = line.process(feed, clockFrequency, sampleRate, 0.0f);
+                float right = left;
+                if (enabled)
+                    compander.expand(left, right);
+                if (sample >= warmup)
+                    energy += static_cast<double>(left) * left;
+            }
+            return std::sqrt(energy / static_cast<double>(measure));
+        };
+        return render(true) / std::max(render(false), 1.0e-20);
     }
 
     static std::vector<float> renderDecimatorImpulse(int factor, int outputCount)
@@ -205,8 +338,10 @@ struct MarsEngineTestAccess
             newest->velocity,
             newest->ampEnvelope.value,
             newest->filterEnvelope.value,
-            newest->oscillator1.phase,
-            newest->oscillator2.phase,
+            newest->oscillator1.activeModel == OscillatorModel::Dco
+                ? newest->oscillator1.dcoPhase : newest->oscillator1.phase,
+            newest->oscillator2.activeModel == OscillatorModel::Dco
+                ? newest->oscillator2.dcoPhase : newest->oscillator2.phase,
             newest->generation,
         };
     }
@@ -242,7 +377,7 @@ struct MarsEngineTestAccess
         {
             bool wrapped = false;
             output[static_cast<std::size_t>(sample)] = engine.renderOscillator(
-                oscillator, wave, model, increment, 0.47f, wrapped);
+                oscillator, wave, model, increment, 0.47f, 2000000.0f, wrapped);
         }
         return output;
     }
@@ -260,13 +395,14 @@ struct MarsEngineTestAccess
         bool wrapped = false;
         for (int sample = 0; sample < warmup; ++sample)
             (void) engine.renderOscillator(oscillator, wave, OscillatorModel::Vco,
-                                           increment, pulseWidth, wrapped);
+                                           increment, pulseWidth, 2000000.0f,
+                                           wrapped);
 
         std::vector<float> output(static_cast<std::size_t>(sampleCount));
         for (int sample = 0; sample < sampleCount; ++sample)
             output[static_cast<std::size_t>(sample)] = engine.renderOscillator(
                 oscillator, wave, OscillatorModel::Vco, increment,
-                pulseWidth, wrapped);
+                pulseWidth, 2000000.0f, wrapped);
         return output;
     }
 
@@ -279,10 +415,10 @@ struct MarsEngineTestAccess
         bool wrapped = false;
         (void) engine.renderOscillator(oscillator, OscillatorWave::Pulse,
                                       OscillatorModel::Vco, 0.0001f, 0.30f,
-                                      wrapped);
+                                      2000000.0f, wrapped);
         (void) engine.renderOscillator(oscillator, OscillatorWave::Pulse,
                                       OscillatorModel::Vco, 0.0001f, 0.50f,
-                                      wrapped);
+                                      2000000.0f, wrapped);
         float correction = 0.0f;
         for (const float value : oscillator.pulseCorrection)
             correction += std::abs(value);
@@ -297,21 +433,241 @@ struct MarsEngineTestAccess
         engine.prepare(48000.0, 64, false);
         MarsEngine::Oscillator oscillator;
         oscillator.phase = 0.173f;
+        oscillator.dcoPhase = oscillator.phase;
         float minimum = std::numeric_limits<float>::infinity();
         float maximum = 0.0f;
         for (int sample = 0; sample < sampleCount; ++sample)
         {
-            const float previousPhase = oscillator.phase;
+            const float previousPhase = model == OscillatorModel::Dco
+                ? oscillator.dcoPhase : oscillator.phase;
             bool wrapped = false;
             (void) engine.renderOscillator(oscillator, OscillatorWave::Saw,
-                                           model, increment, 0.47f, wrapped);
-            float actualIncrement = oscillator.phase - previousPhase;
+                                           model, increment, 0.47f,
+                                           2000000.0f, wrapped);
+            const float currentPhase = model == OscillatorModel::Dco
+                ? oscillator.dcoPhase : oscillator.phase;
+            float actualIncrement = currentPhase - previousPhase;
             if (wrapped)
                 actualIncrement += 1.0f;
             minimum = std::min(minimum, actualIncrement);
             maximum = std::max(maximum, actualIncrement);
         }
         return static_cast<double>(maximum - minimum);
+    }
+
+    static std::array<double, 3> dcoTimerState(float targetFrequency,
+                                                float rangeClock) noexcept
+    {
+        constexpr float sampleRate = 48000.0f;
+        MarsEngine engine;
+        engine.prepare(sampleRate, 64, false);
+        MarsEngine::Oscillator oscillator;
+        oscillator.phase = 0.173f;
+        oscillator.dcoPhase = oscillator.phase;
+        bool wrapped = false;
+        for (int sample = 0; sample < 4096; ++sample)
+            (void) engine.renderOscillator(
+                oscillator, OscillatorWave::Saw, OscillatorModel::Dco,
+                targetFrequency / sampleRate, 0.50f, rangeClock, wrapped);
+        return {
+            static_cast<double>(oscillator.dcoTimerDivisor),
+            static_cast<double>(oscillator.dcoPendingDivisor),
+            static_cast<double>(oscillator.dcoIncrement) * sampleRate,
+        };
+    }
+
+    static std::array<float, 2> dcoComparatorStates() noexcept
+    {
+        MarsEngine engine;
+        engine.prepare(192000.0, 16, false);
+        MarsEngine::Oscillator oscillator;
+        oscillator.phase = 0.45f;
+        oscillator.dcoPhase = oscillator.phase;
+        bool wrapped = false;
+        (void) engine.renderOscillator(oscillator,
+                                       OscillatorWave::Pulse,
+                                       OscillatorModel::Dco,
+                                       440.0f / 192000.0f,
+                                       0.50f,
+                                       2000000.0f,
+                                       wrapped);
+
+        // Phase says high but the physical ramp is above the held 6 V
+        // threshold: the comparator must be low.
+        oscillator.dcoPhase = 0.45f;
+        oscillator.dcoRampVolts = 6.5f;
+        (void) engine.renderOscillator(oscillator,
+                                       OscillatorWave::Pulse,
+                                       OscillatorModel::Dco,
+                                       440.0f / 192000.0f,
+                                       0.50f,
+                                       2000000.0f,
+                                       wrapped);
+        const float aboveThreshold = oscillator.dcoExpectedPulseAtNextSample;
+
+        // Phase says low but the physical ramp is below threshold: it must be
+        // high. This specifically prevents a regression to phase-derived PWM.
+        oscillator.dcoPhase = 0.75f;
+        oscillator.dcoRampVolts = 5.5f;
+        (void) engine.renderOscillator(oscillator,
+                                       OscillatorWave::Pulse,
+                                       OscillatorModel::Dco,
+                                       440.0f / 192000.0f,
+                                       0.50f,
+                                       2000000.0f,
+                                       wrapped);
+        return { aboveThreshold, oscillator.dcoExpectedPulseAtNextSample };
+    }
+
+    static std::array<double, 3> dcoReloadResidue() noexcept
+    {
+        constexpr float sampleRate = 48000.0f;
+        constexpr float rangeClock = 2000000.0f;
+        constexpr std::uint32_t oldDivisor = 4000u;
+        constexpr std::uint32_t newDivisor = 5000u;
+        MarsEngine engine;
+        engine.prepare(sampleRate, 16, false);
+        MarsEngine::Oscillator oscillator;
+        oscillator.modelInitialised = true;
+        oscillator.activeModel = OscillatorModel::Dco;
+        oscillator.modelBlend = 1.0f;
+        oscillator.dcoClockInitialised = true;
+        oscillator.dcoTimerDivisor = oldDivisor;
+        oscillator.dcoPendingDivisor = newDivisor;
+        oscillator.dcoRangeClockHz = rangeClock;
+        oscillator.dcoPendingRangeClockHz = rangeClock;
+        oscillator.dcoIncrement = rangeClock / (oldDivisor * sampleRate);
+        oscillator.dcoControlCountdown = 1000;
+        oscillator.dcoPhase = 1.0f - 0.25f * oscillator.dcoIncrement;
+        oscillator.phase = 0.31f;
+        bool wrapped = false;
+        (void) engine.renderOscillator(oscillator,
+                                       OscillatorWave::Saw,
+                                       OscillatorModel::Dco,
+                                       440.0f / sampleRate,
+                                       0.50f,
+                                       rangeClock,
+                                       wrapped);
+        const double newIncrement = static_cast<double>(rangeClock)
+                                  / (newDivisor * sampleRate);
+        return {
+            static_cast<double>(oscillator.dcoTimerDivisor),
+            static_cast<double>(oscillator.dcoPhase),
+            0.75 * newIncrement,
+        };
+    }
+
+    static float dcoTopRangeResetPulse() noexcept
+    {
+        constexpr float sampleRate = 192000.0f;
+        MarsEngine engine;
+        engine.prepare(sampleRate, 16, false);
+        MarsEngine::Oscillator oscillator;
+        oscillator.phase = 0.20f;
+        oscillator.dcoPhase = oscillator.phase;
+        bool wrapped = false;
+        (void) engine.renderOscillator(oscillator,
+                                       OscillatorWave::Pulse,
+                                       OscillatorModel::Dco,
+                                       1760.0f / sampleRate,
+                                       0.05f,
+                                       8000000.0f,
+                                       wrapped);
+        oscillator.dcoControlCountdown = 1000;
+        oscillator.dcoPhase = 1.0f - 0.25f * oscillator.dcoIncrement;
+        oscillator.dcoRampVolts = 12.0f;
+        (void) engine.renderOscillator(oscillator,
+                                       OscillatorWave::Pulse,
+                                       OscillatorModel::Dco,
+                                       1760.0f / sampleRate,
+                                       0.05f,
+                                       8000000.0f,
+                                       wrapped);
+        return oscillator.dcoExpectedPulseAtNextSample;
+    }
+
+    static std::array<float, 2> inactiveEndpointMovement() noexcept
+    {
+        MarsEngine engine;
+        engine.prepare(48000.0, 16, false);
+        bool wrapped = false;
+
+        MarsEngine::Oscillator dco;
+        dco.phase = 0.173f;
+        dco.dcoPhase = dco.phase;
+        const float frozenVcoPhase = dco.phase;
+        for (int sample = 0; sample < 512; ++sample)
+            (void) engine.renderOscillator(dco,
+                                           OscillatorWave::Saw,
+                                           OscillatorModel::Dco,
+                                           440.0f / 48000.0f,
+                                           0.50f,
+                                           2000000.0f,
+                                           wrapped);
+
+        MarsEngine::Oscillator vco;
+        vco.phase = 0.271f;
+        vco.dcoPhase = 0.619f;
+        const float frozenDcoPhase = vco.dcoPhase;
+        for (int sample = 0; sample < 512; ++sample)
+            (void) engine.renderOscillator(vco,
+                                           OscillatorWave::Saw,
+                                           OscillatorModel::Vco,
+                                           440.0f / 48000.0f,
+                                           0.50f,
+                                           2000000.0f,
+                                           wrapped);
+        return {
+            std::abs(dco.phase - frozenVcoPhase),
+            std::abs(vco.dcoPhase - frozenDcoPhase),
+        };
+    }
+
+    static std::array<int, 2> dcoDividerEventCounts() noexcept
+    {
+        MarsEngine engine;
+        engine.prepare(48000.0, 16, false);
+        EngineParameters parameters;
+        parameters.osc1Model = OscillatorModel::Dco;
+        parameters.osc1Enabled = true;
+        parameters.osc2Enabled = false;
+        parameters.subLevel = 1.0f;
+        parameters.chorusMix = 0.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(69, 0.8f);
+
+        int primaryResets = 0;
+        int dividerTransitions = 0;
+        bool previousParity = false;
+        bool parityInitialised = false;
+        float previousDcoPhase = 0.0f;
+        for (int sample = 0; sample < 48000; ++sample)
+        {
+            float left = 0.0f;
+            float right = 0.0f;
+            engine.process(&left, &right, 1);
+            for (const auto& voice : engine.voices_)
+            {
+                if (!voice.active)
+                    continue;
+                if (!parityInitialised)
+                {
+                    previousParity = voice.oscillator1CycleOdd;
+                    previousDcoPhase = voice.oscillator1.dcoPhase;
+                    parityInitialised = true;
+                }
+                else if (voice.oscillator1.dcoPhase < previousDcoPhase)
+                    ++primaryResets;
+                if (voice.oscillator1CycleOdd != previousParity)
+                {
+                    ++dividerTransitions;
+                    previousParity = voice.oscillator1CycleOdd;
+                }
+                previousDcoPhase = voice.oscillator1.dcoPhase;
+                break;
+            }
+        }
+        return { primaryResets, dividerTransitions };
     }
 
 };
@@ -1329,12 +1685,70 @@ void testHqReturnFilterAndBbdClockPath()
         bbdRate, bbdClock);
     expect(bbdDcGain > 1.28f && bbdDcGain < 1.33f,
            "BBD small-signal gain no longer matches the reported +2.3 dB");
+    const float lowClockGain = mars::MarsEngineTestAccess::renderBbdDcGain(
+        bbdRate, 26000.0f);
+    const float highClockGain = mars::MarsEngineTestAccess::renderBbdDcGain(
+        bbdRate, 74000.0f);
+    expect(lowClockGain / bbdDcGain > 0.97f
+               && lowClockGain / bbdDcGain < 0.995f,
+           "BBD charge loss did not increase subtly at the slow clock extreme");
+    expect(highClockGain / bbdDcGain > 1.003f
+               && highClockGain / bbdDcGain < 1.02f,
+           "BBD charge retention did not improve subtly at the fast clock extreme");
+    const auto chargeHistory = mars::MarsEngineTestAccess::bbdChargeHistoryTransition();
+    const float completeHistoryChange = chargeHistory[2] - chargeHistory[0];
+    expect(completeHistoryChange > 0.0f
+               && chargeHistory[1] > chargeHistory[0]
+               && chargeHistory[1] - chargeHistory[0] < 0.03f * completeHistoryChange,
+           "BBD charge loss ignored the preceding 128 transfer events");
     const auto fractionalCaptures
         = mars::MarsEngineTestAccess::renderFractionalBbdCaptures();
     expect(std::isfinite(fractionalCaptures[0])
                && std::isfinite(fractionalCaptures[1])
                && std::abs(fractionalCaptures[1] - fractionalCaptures[0]) > 1.0e-5f,
            "multiple BBD clock crossings reused one quantized input sample");
+
+    const auto gatedSilence = mars::MarsEngineTestAccess::renderBbdSilence(
+        0.0f, 0.17);
+    const auto parasiticsFirst = mars::MarsEngineTestAccess::renderBbdSilence(
+        1.0f, 0.17);
+    const auto parasiticsSecond = mars::MarsEngineTestAccess::renderBbdSilence(
+        1.0f, 0.17);
+    const auto parasiticsOtherLine = mars::MarsEngineTestAccess::renderBbdSilence(
+        1.0f, 0.63);
+    bool exactSilence = true;
+    double parasiticEnergy = 0.0;
+    double lineDifference = 0.0;
+    for (std::size_t sample = 0; sample < gatedSilence.size(); ++sample)
+    {
+        exactSilence = exactSilence && gatedSilence[sample] == 0.0f;
+        parasiticEnergy += static_cast<double>(parasiticsFirst[sample])
+                         * parasiticsFirst[sample];
+        lineDifference += std::abs(static_cast<double>(
+            parasiticsFirst[sample] - parasiticsOtherLine[sample]));
+    }
+    const double parasiticRms = std::sqrt(
+        parasiticEnergy / static_cast<double>(parasiticsFirst.size()));
+    expect(exactSilence,
+           "activity-gated BBD parasitics prevented exact digital silence");
+    expect(parasiticsFirst == parasiticsSecond,
+           "BBD clock feedthrough/noise was not deterministic after reset");
+    expect(parasiticRms > 1.0e-7 && parasiticRms < 1.0e-3,
+           "BBD parasitics were either absent or implausibly loud");
+    expect(lineDifference > 1.0e-5,
+           "stereo BBD lines reused one clock/noise realisation");
+
+    const auto compander = mars::MarsEngineTestAccess::companderMetrics();
+    const double inputAmplitudeRatio = 0.50 / 0.02;
+    const double compressedRatio = compander[1] / std::max(compander[0], 1.0e-12);
+    expect(compressedRatio > 0.75 * std::sqrt(inputAmplitudeRatio)
+               && compressedRatio < 1.35 * std::sqrt(inputAmplitudeRatio),
+           "optional BBD compressor did not follow its 2:1 amplitude law");
+    expect(compander[2] > 0.80 && compander[2] < 1.20,
+           "paired BBD compressor/expander did not reconstruct steady level");
+    const double companderLineRatio = mars::MarsEngineTestAccess::companderBbdLevelRatio();
+    expect(companderLineRatio > 0.90 && companderLineRatio < 1.10,
+           "COMP changed nominal BBD wet level instead of matching the +2.3 dB line gain");
 }
 
 void testFourthOrderOscillatorAliasSuppression()
@@ -1966,17 +2380,47 @@ void testOscillatorModelContracts()
                "VCO and DCO selections did not produce distinct oscillator behaviour");
     }
 
-    // A free-running VCO advances by one constant phase increment. The DCO's
-    // 2 MHz timer alternates adjacent integer periods via error feedback, leaving
-    // a small deterministic cycle-period signature while preserving mean pitch.
+    // Both endpoints advance deterministically at steady control. The DCO must
+    // hold one integer 8253 divisor until a control write/terminal count; it
+    // must not recreate pitch by alternating adjacent timer periods.
     const double vcoSpread = mars::MarsEngineTestAccess::oscillatorIncrementSpread(
         mars::OscillatorModel::Vco, increment, 48000);
     const double dcoSpread = mars::MarsEngineTestAccess::oscillatorIncrementSpread(
         mars::OscillatorModel::Dco, increment, 48000);
     expect(vcoSpread < 2.0e-7,
            "free-running VCO developed an unexpected clock-period signature");
-    expect(dcoSpread > 1.0e-6 && dcoSpread > 8.0 * vcoSpread,
-           "DCO did not expose its bounded adjacent-master-clock period signature");
+    expect(dcoSpread < 2.0e-7,
+           "DCO alternated adjacent timer counts instead of holding one divisor");
+
+    for (const auto [frequency, clock]
+         : { std::pair { 220.0f, 1000000.0f },
+             std::pair { 440.0f, 2000000.0f },
+             std::pair { 880.0f, 4000000.0f } })
+    {
+        const auto timer = mars::MarsEngineTestAccess::dcoTimerState(
+            frequency, clock);
+        const double expectedFrequency = static_cast<double>(clock) / 4545.0;
+        expect(timer[0] == 4545.0 && timer[1] == 4545.0,
+               "Juno DCO range clocks did not preserve the held integer divisor");
+        expect(std::abs(timer[2] - expectedFrequency) < 1.0e-4,
+               "DCO frequency did not equal range clock divided by active count");
+    }
+
+    const auto comparatorStates = mars::MarsEngineTestAccess::dcoComparatorStates();
+    expect(comparatorStates[0] < 0.0f && comparatorStates[1] > 0.0f,
+           "MC5534 PWM comparator followed ideal phase instead of the held analogue ramp");
+
+    const auto reloadResidue = mars::MarsEngineTestAccess::dcoReloadResidue();
+    expect(reloadResidue[0] == 5000.0,
+           "8253 pending divisor did not latch at terminal count");
+    expect(std::abs(reloadResidue[1] - reloadResidue[2]) < 1.0e-6,
+           "8253 reload retained the previous divisor's fractional phase residue");
+    expect(mars::MarsEngineTestAccess::dcoTopRangeResetPulse() > 0.0f,
+           "8 MHz extension reset residue suppressed the legal minimum PWM pulse");
+
+    const auto inactiveMovement = mars::MarsEngineTestAccess::inactiveEndpointMovement();
+    expect(inactiveMovement[0] == 0.0f && inactiveMovement[1] == 0.0f,
+           "settled oscillator model continued advancing its inactive endpoint");
 
     mars::MarsEngine dividerEngine;
     dividerEngine.prepare(48000.0, blockSize, false);
@@ -1993,6 +2437,9 @@ void testOscillatorModelContracts()
     }
     expect(dividerLockedSamples > 245,
            "Juno-like DCO sub did not follow oscillator I's divide-by-two clock period");
+    const auto dividerEvents = mars::MarsEngineTestAccess::dcoDividerEventCounts();
+    expect(dividerEvents[0] > 400 && dividerEvents[0] == dividerEvents[1],
+           "MC5534 divide-by-two flip-flop did not toggle exactly once per primary reset");
 
     constexpr double rate = 48000.0;
     const auto exerciseRoutedModel = [] (bool oscillatorOne)
@@ -2685,6 +3132,8 @@ void testExtremeAutomationStability()
     engine.prepare(rate, 64);
     auto p = basicParameters();
     p.voiceMode = mars::VoiceMode::Fifth;
+    p.osc1Model = mars::OscillatorModel::Dco;
+    p.osc2Model = mars::OscillatorModel::Dco;
     p.ampRelease = 0.04f;
     engine.setParameters(p);
     for (int note = 40; note < 52; ++note)
@@ -2709,6 +3158,7 @@ void testExtremeAutomationStability()
         p.pulseWidth = high ? 0.97f : 0.03f;
         p.lfoFilterOctaves = high ? 8.0f : -8.0f;
         p.chorusMix = high ? 1.0f : 0.0f;
+        p.chorusCompander = high;
         engine.setParameters(p);
         engine.setPitchBend(high ? 1.0f : -1.0f);
         engine.setModWheel(high ? 1.0f : 0.0f);
@@ -2738,6 +3188,8 @@ double benchmarkCpuModel(mars::FilterModel filterModel)
     engine.prepare(rate, blockSize);
     auto p = basicParameters();
     p.voiceMode = mars::VoiceMode::Fifth;
+    p.osc1Model = mars::OscillatorModel::Dco;
+    p.osc2Model = mars::OscillatorModel::Dco;
     p.filterModel = filterModel;
     p.filterDrive = 0.9f;
     p.resonance = 0.85f;
@@ -2769,7 +3221,7 @@ double benchmarkCpuModel(mars::FilterModel filterModel)
     const auto* modelName = filterModel == mars::FilterModel::Ladder
         ? "Ladder" : "SEM";
     std::cout << std::fixed << std::setprecision(3) << modelName
-              << " 16-slot 96 kHz/2x HQ render, best of " << trialCount
+              << " + MC5534 16-slot 96 kHz/2x HQ render, best of " << trialCount
               << ": " << bestElapsed << " s (" << ratio << "x real time)\n";
     expect(allTrialsValid,
            "CPU regression render was invalid or silent");

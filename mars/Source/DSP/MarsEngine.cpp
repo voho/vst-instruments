@@ -14,6 +14,15 @@ constexpr float envelopeRange = 6.90775527898f; // -60 dB in the requested time.
 constexpr float thermalVoltage = 0.026f;
 constexpr float twiceThermalVoltage = 2.0f * thermalVoltage;
 constexpr float bbdMeasuredGain = 1.30316678f; // +2.3 dB, Holters/Parker 2018.
+// A subtle, provisionally fitted -0.45 dB of charge-transfer loss is present at the
+// 50 kHz reference clock. The analogue gain calibration below compensates it,
+// so the complete line still measures the published +2.3 dB at that clock.
+// Clock-history variation remains audible instead of being double-counted as
+// a second fixed insertion loss.
+constexpr float bbdReferenceChargeGain = 0.949511f;
+constexpr float bbdCompensatedGain = bbdMeasuredGain / bbdReferenceChargeGain;
+constexpr float bbdReferenceClockHz = 50000.0f;
+constexpr float decibelsToNaturalLog = 0.11512925465f;
 constexpr std::size_t transistorPairTableIntervals = 1024;
 constexpr float transistorPairTableLimit = 7.0f;
 // 137-tap equal-ripple half-band decimator. The omitted even taps are exactly
@@ -207,8 +216,7 @@ float MarsEngine::ParallelAnalogFilter::process(float input) noexcept
     return std::isfinite(output) ? output : 0.0f;
 }
 
-void MarsEngine::BbdLine::configure(float sampleRate,
-                                    float frequencyScale) noexcept
+void MarsEngine::BbdLine::configure(float sampleRate, float frequencyScale) noexcept
 {
     inputFilter.configure(sampleRate, true, frequencyScale);
     outputFilter.configure(sampleRate, false, frequencyScale);
@@ -217,17 +225,25 @@ void MarsEngine::BbdLine::configure(float sampleRate,
 void MarsEngine::BbdLine::reset(double initialClockPhase) noexcept
 {
     cells.fill(0.0f);
+    transferLogHistory.fill(0.0f);
     inputFilter.reset();
     outputFilter.reset();
     clockPhase = initialClockPhase - std::floor(initialClockPhase);
     heldOutput = 0.0f;
+    transferMemory = 0.0f;
+    rollingTransferLog = 0.0f;
+    feedthroughCorrection.fill(0.0f);
     previousFilteredInput = 0.0f;
+    const auto phaseSeed = static_cast<std::uint32_t>(std::llround(clockPhase * 4294967295.0));
+    noiseState = MarsEngine::hash32(phaseSeed ^ 0x6d2b79f5u);
     writeIndex = 0;
     filteredInputInitialised = false;
 }
 
-float MarsEngine::BbdLine::process(float input, float clockFrequency,
-                                   float sampleRate) noexcept
+float MarsEngine::BbdLine::process(float input,
+                                   float clockFrequency,
+                                   float sampleRate,
+                                   float parasiticGain) noexcept
 {
     const float filteredInput = inputFilter.process(input);
     if (!filteredInputInitialised)
@@ -237,56 +253,185 @@ float MarsEngine::BbdLine::process(float input, float clockFrequency,
     }
     clockFrequency = std::clamp(clockFrequency, 18000.0f, 90000.0f);
     sampleRate = std::max(sampleRate, 8000.0f);
+    parasiticGain = std::clamp(finiteOr(parasiticGain, 0.0f), 0.0f, 1.0f);
 
-    // A short chorus BBD does not need the heavy compander of a long echo.
-    // Retain the measured +2.3 dB chip gain and a restrained, bias-asymmetric
-    // transfer before the measured reconstruction network.
+    // Retain the measured +2.3 dB complete-line gain at the 50 kHz reference
+    // while putting a small, clock-history-dependent charge loss inside the
+    // device model. A restrained bias-asymmetric transfer follows it before
+    // the measured reconstruction network.
     constexpr float drive = 1.045f;
     constexpr float bias = 0.009f;
     // Normalise by the local transfer slope, not its full-scale value: the
     // small-signal gain then remains the measured +2.3 dB instead of the
     // colour stage accidentally contributing another roughly +2.4 dB.
-    const float normalisation = drive
-        * MarsEngine::softSaturateDerivative(bias);
+    const float normalisation = drive * MarsEngine::softSaturateDerivative(bias);
     const auto colour = [normalisation](float held) noexcept
     {
-        return (MarsEngine::softSaturate(
-                    drive * bbdMeasuredGain * held + bias)
+        return (MarsEngine::softSaturate(drive * bbdCompensatedGain * held + bias)
                 - MarsEngine::softSaturate(bias))
-             / std::max(normalisation, 0.1f);
+               / std::max(normalisation, 0.1f);
     };
 
-    // Resolve each variable-clock crossing at its fractional position inside
-    // this audio interval. Buckets capture a linearly interpolated input at
-    // the event time, and the reconstruction filter receives the time-weighted
-    // mean of the piecewise-held output. This removes the extra sample-grid
-    // jitter of an integer crossing and remains bounded when HQ is Off and
-    // several clock events occur during one host sample.
+    // Resolve every complementary half-clock edge at its fractional position.
+    // Full-clock boundaries transfer charge; both phases inject a tiny,
+    // opposing cancellation residue. A compact fractional cubic kernel places
+    // each residual between audio samples before the physical output filter;
+    // this is both cheaper and safer than emitting a digital clock waveform,
+    // particularly when multiple edges fall inside one sample.
     const double advance = static_cast<double>(clockFrequency / sampleRate);
     const double startPhase = clockPhase;
-    double nextEventDistance = 1.0 - startPhase;
+    std::int64_t halfEdgeOrdinal = static_cast<std::int64_t>(std::floor(2.0 * startPhase)) + 1;
+    double nextEventDistance = 0.5 * static_cast<double>(halfEdgeOrdinal) - startPhase;
     double segmentStart = 0.0;
-    double integratedOutput = 0.0;
+    double integratedOutput = feedthroughCorrection[0];
+    for (std::size_t index = 1; index < feedthroughCorrection.size(); ++index)
+        feedthroughCorrection[index - 1] = feedthroughCorrection[index];
+    feedthroughCorrection.back() = 0.0f;
     float colouredHold = colour(heldOutput);
+
+    const auto integrateSegment =
+        [&integratedOutput, &segmentStart, &colouredHold](double segmentEnd) noexcept
+    {
+        const double segmentLength = std::max(0.0, segmentEnd - segmentStart);
+        integratedOutput += segmentLength * static_cast<double>(colouredHold);
+        segmentStart = segmentEnd;
+    };
+    const auto scheduleFeedthrough = [this](float amplitude, float eventTime) noexcept
+    {
+        const float t = std::clamp(eventTime, 0.0f, 1.0f);
+        const float oneMinusT = 1.0f - t;
+        const float t2 = t * t;
+        const float t3 = t2 * t;
+        const float oneMinusT2 = oneMinusT * oneMinusT;
+        const float oneMinusT3 = oneMinusT2 * oneMinusT;
+        const std::array<float, 4> weights{{
+            oneMinusT3 / 6.0f,
+            2.0f / 3.0f - t2 + 0.5f * t3,
+            2.0f / 3.0f - oneMinusT2 + 0.5f * oneMinusT3,
+            t3 / 6.0f,
+        }};
+        for (std::size_t index = 0; index < feedthroughCorrection.size(); ++index)
+            feedthroughCorrection[index] += amplitude * weights[index];
+    };
+
+    // Fade the ultrasonic carrier before it can fold around a low host
+    // Nyquist frequency. With default HQ processing the whole range remains
+    // represented at 176.4/192 kHz and is subsequently removed by the measured
+    // analogue network and the half-band return filter.
+    const float clockRatio = clockFrequency / sampleRate;
+    const float feedthroughHeadroom = std::clamp((0.48f - clockRatio) / 0.10f, 0.0f, 1.0f);
+    const float antialiasGain =
+        feedthroughHeadroom * feedthroughHeadroom * (3.0f - 2.0f * feedthroughHeadroom);
+    const float rootClockRatio = std::sqrt(clockFrequency / bbdReferenceClockHz);
+    const float eventLogLoss =
+        -0.45f / rootClockRatio * decibelsToNaturalLog / static_cast<float>(bbdStagePairs);
+    const float normalisedClock = clockFrequency / bbdReferenceClockHz;
+    const float transferCoefficient =
+        std::clamp(0.90f + 0.035f * (normalisedClock - 1.0f), 0.84f, 0.95f);
+    // Provisional cancellation-mismatch voicing, deliberately isolated for
+    // later fitting to multi-unit clock-residue captures.
+    constexpr float feedthroughChargeArea = 9.4e-9f;
+    const float feedthroughScale =
+        parasiticGain * antialiasGain * feedthroughChargeArea * sampleRate * rootClockRatio;
+
     while (nextEventDistance <= advance)
     {
-        const double eventTime = std::clamp(nextEventDistance / advance,
-                                            segmentStart, 1.0);
-        integratedOutput += (eventTime - segmentStart) * colouredHold;
-        const float capture = previousFilteredInput
-            + static_cast<float>(eventTime) * (filteredInput - previousFilteredInput);
-        heldOutput = cells[static_cast<std::size_t>(writeIndex)];
-        cells[static_cast<std::size_t>(writeIndex)] = capture;
-        writeIndex = (writeIndex + 1) & (bbdStagePairs - 1);
-        colouredHold = colour(heldOutput);
-        segmentStart = eventTime;
-        nextEventDistance += 1.0;
+        const double eventTime = std::clamp(nextEventDistance / advance, segmentStart, 1.0);
+        integrateSegment(eventTime);
+
+        const bool transferEdge = (halfEdgeOrdinal & 1) == 0;
+        if (transferEdge)
+        {
+            const float capture =
+                previousFilteredInput
+                + static_cast<float>(eventTime) * (filteredInput - previousFilteredInput);
+
+            // One log-efficiency value per transfer and a rolling 128-event
+            // sum reproduce the complete packet history in O(1), even while
+            // the clock is being modulated. The modest clock curve is a
+            // conservative datasheet-informed calibration target pending
+            // multi-unit hardware captures.
+            const auto cellIndex = static_cast<std::size_t>(writeIndex);
+            rollingTransferLog -= transferLogHistory[cellIndex];
+            transferLogHistory[cellIndex] = eventLogLoss;
+            rollingTransferLog += eventLogLoss;
+            const float chargeGain = std::exp(std::clamp(rollingTransferLog, -1.0f, 0.0f));
+            const float chargedOutput = cells[cellIndex] * chargeGain;
+
+            // A single BBD-rate pole captures incomplete charge transfer. It
+            // has unity DC gain and becomes slightly slower at the bottom of
+            // the modulated clock range, avoiding a 256-device runtime loop.
+            transferMemory += transferCoefficient * (chargedOutput - transferMemory);
+
+            noiseState = MarsEngine::hash32(noiseState + 0x9e3779b9u);
+            const float firstUniform = static_cast<float>(noiseState & 0x00ffffffu) / 16777216.0f;
+            noiseState = MarsEngine::hash32(noiseState + 0x9e3779b9u);
+            const float secondUniform = static_cast<float>(noiseState & 0x00ffffffu) / 16777216.0f;
+            constexpr float unitRmsTpdf = 2.449489743f;
+            // Compensates the following small-signal colour/output-filter gain
+            // for an approximately -88 dBFS output-referred provisional target.
+            constexpr float eventNoiseRms = 5.27e-5f;
+            const float eventNoise =
+                eventNoiseRms * unitRmsTpdf * (firstUniform + secondUniform - 1.0f);
+            heldOutput = transferMemory + parasiticGain * eventNoise;
+            cells[cellIndex] = capture;
+            writeIndex = (writeIndex + 1) & (bbdStagePairs - 1);
+            colouredHold = colour(heldOutput);
+        }
+
+        const float polarity = (halfEdgeOrdinal & 1) != 0 ? 1.0f : -1.0f;
+        const float injection = polarity * feedthroughScale * (1.0f + 0.06f * std::abs(heldOutput));
+        scheduleFeedthrough(injection, static_cast<float>(eventTime));
+
+        ++halfEdgeOrdinal;
+        nextEventDistance += 0.5;
     }
-    integratedOutput += (1.0 - segmentStart) * colouredHold;
+    integrateSegment(1.0);
     clockPhase = startPhase + advance;
     clockPhase -= std::floor(clockPhase);
     previousFilteredInput = filteredInput;
     return outputFilter.process(static_cast<float>(integratedOutput));
+}
+
+void MarsEngine::BbdCompander::configure(float sampleRate) noexcept
+{
+    sampleRate = std::max(sampleRate, 8000.0f);
+    detectorCoefficient = 1.0f - std::exp(-1.0f / (0.0047f * sampleRate));
+}
+
+void MarsEngine::BbdCompander::reset() noexcept
+{
+    compressorEnvelope = 0.125f;
+    expanderEnvelope = 0.125f * nominalLineGain;
+}
+
+float MarsEngine::BbdCompander::compress(float input) noexcept
+{
+    constexpr float reference = 0.125f;
+    constexpr float detectorFloor = 1.0e-4f;
+    compressorEnvelope += detectorCoefficient * (std::abs(input) - compressorEnvelope);
+    if (std::abs(input) < 1.0e-12f && compressorEnvelope < 1.0e-10f)
+        compressorEnvelope = 0.0f;
+    const float gain =
+        std::clamp(std::sqrt(reference / std::max(compressorEnvelope, detectorFloor)), 0.25f, 4.0f);
+    const float output = input * gain;
+    return std::isfinite(output) ? output : 0.0f;
+}
+
+void MarsEngine::BbdCompander::expand(float &left, float &right) noexcept
+{
+    constexpr float reference = 0.125f;
+    const float detectorInput = 0.5f * (std::abs(left) + std::abs(right));
+    expanderEnvelope += detectorCoefficient * (detectorInput - expanderEnvelope);
+    if (detectorInput < 1.0e-12f && expanderEnvelope < 1.0e-10f)
+        expanderEnvelope = 0.0f;
+    // The complete MN3009 line is calibrated to +2.3 dB. Companding around a
+    // fixed-gain channel otherwise squares that gain, so reference the
+    // expander to the actual nominal line and preserve level when COMP toggles.
+    const float gain =
+        std::clamp(expanderEnvelope / (reference * nominalLineGain), 0.05f, 4.0f);
+    left = std::isfinite(left * gain) ? left * gain : 0.0f;
+    right = std::isfinite(right * gain) ? right * gain : 0.0f;
 }
 
 void MarsEngine::Envelope::reset() noexcept
@@ -707,31 +852,35 @@ void MarsEngine::updateProcessingRate() noexcept
     // sessions. Power-of-two staging lets the same measured half-band return
     // filter serve every host rate without an ad-hoc wide transition band.
     oversampling_ = 1;
-    while (oversamplingEnabled_
-           && oversampling_ < maximumOversampleFactor
-           && sampleRate_ * static_cast<double>(oversampling_)
-                < minimumHqProcessingRate)
+    while (oversamplingEnabled_ && oversampling_ < maximumOversampleFactor
+           && sampleRate_ * static_cast<double>(oversampling_) < minimumHqProcessingRate)
         oversampling_ *= 2;
     oversampledRate_ = static_cast<float>(sampleRate_ * static_cast<double>(oversampling_));
-    filterCrossfadeSamples_ = std::max(1, static_cast<int>(std::lround(
-        0.003 * static_cast<double>(oversampledRate_))));
-    oscillatorModelCrossfadeSamples_ = std::max(1, static_cast<int>(std::lround(
-        0.002 * static_cast<double>(oversampledRate_))));
-    waveformCrossfadeSamples_ = std::max(1, static_cast<int>(std::lround(
-        0.003 * static_cast<double>(oversampledRate_))));
+    filterCrossfadeSamples_ =
+        std::max(1, static_cast<int>(std::lround(0.003 * static_cast<double>(oversampledRate_))));
+    oscillatorModelCrossfadeSamples_ =
+        std::max(1, static_cast<int>(std::lround(0.002 * static_cast<double>(oversampledRate_))));
+    waveformCrossfadeSamples_ =
+        std::max(1, static_cast<int>(std::lround(0.003 * static_cast<double>(oversampledRate_))));
     const float dcoBandwidth = std::min(18500.0f, 0.42f * oversampledRate_);
     const float prewarped = std::tan(pi * dcoBandwidth / oversampledRate_);
-    dcoReconstructionGain_ = std::clamp(prewarped / (1.0f + prewarped),
-                                        0.01f, 0.99f);
+    dcoReconstructionGain_ = std::clamp(prewarped / (1.0f + prewarped), 0.01f, 0.99f);
+    dcoPulseRise_ = 1.0f - std::exp(-1.0f / (2.4e-6f * oversampledRate_));
+    dcoPulseFall_ = 1.0f - std::exp(-1.0f / (3.1e-6f * oversampledRate_));
+    dcoControlPeriodSamples_ =
+        std::max(1, static_cast<int>(std::lround(0.0042 * static_cast<double>(oversampledRate_))));
     velocitySmoothing_ = 1.0f - std::exp(-1.0f / (0.005f * oversampledRate_));
     outputEnergySmoothing_ = 1.0f - std::exp(-1.0f / (0.008f * oversampledRate_));
     chorusLeft_.configure(oversampledRate_, 0.994f);
     chorusRight_.configure(oversampledRate_, 1.006f);
+    chorusCompander_.configure(oversampledRate_);
+    chorusActivityAttack_ = 1.0f - std::exp(-1.0f / (0.002f * oversampledRate_));
+    chorusActivityRelease_ = std::exp(-9.210340372f / (0.020f * oversampledRate_));
+    companderBlendCoefficient_ = 1.0f - std::exp(-1.0f / (0.020f * oversampledRate_));
     // A stolen voice contributes its last sample to this -60 dB / 2 ms tail.
     // It is short enough to remain a transient treatment rather than another
     // voice, and fixed state keeps the note-on path allocation-free.
-    stealTailCoefficient_ = std::exp(-envelopeRange
-        / (0.002f * std::max(oversampledRate_, 1.0f)));
+    stealTailCoefficient_ = std::exp(-envelopeRange / (0.002f * std::max(oversampledRate_, 1.0f)));
 }
 
 int MarsEngine::getProcessingLatencySamples() const noexcept
@@ -743,8 +892,7 @@ int MarsEngine::getProcessingLatencySamples() const noexcept
     constexpr int halfbandGroupDelay = (halfbandTaps - 1) / 2;
     int maximumFactor = 1;
     while (maximumFactor < maximumOversampleFactor
-           && sampleRate_ * static_cast<double>(maximumFactor)
-                < minimumHqProcessingRate)
+           && sampleRate_ * static_cast<double>(maximumFactor) < minimumHqProcessingRate)
         maximumFactor *= 2;
     int latency = 0;
     for (int rateFactor = maximumFactor; rateFactor > 1; rateFactor /= 2)
@@ -752,8 +900,7 @@ int MarsEngine::getProcessingLatencySamples() const noexcept
     return latency;
 }
 
-void MarsEngine::prepare(double sampleRate, int maxBlockSize,
-                         bool oversamplingEnabled)
+void MarsEngine::prepare(double sampleRate, int maxBlockSize, bool oversamplingEnabled)
 {
     (void) maxBlockSize;
     sampleRate = std::isfinite(sampleRate) ? sampleRate : 48000.0;
@@ -817,7 +964,9 @@ void MarsEngine::reset()
     latencyDelayWriteIndex_ = 0;
     chorusLeft_.reset(0.17);
     chorusRight_.reset(0.63);
+    chorusCompander_.reset();
     chorusPhase_ = 0.173f;
+    chorusActivity_ = 0.0f;
     dcInputLeft_ = dcInputRight_ = 0.0f;
     dcOutputLeft_ = dcOutputRight_ = 0.0f;
     lfoPhase_ = 0.0f;
@@ -829,6 +978,7 @@ void MarsEngine::reset()
     modWheel_ = 0.0f;
     sustainPedalDown_ = false;
     smoothedParameters_ = targetParameters_;
+    companderBlend_ = smoothedParameters_.chorusCompander ? 1.0f : 0.0f;
     if (smoothedParameters_.osc1Enabled && smoothedParameters_.osc2Enabled)
     {
         oscillator1MixGain_ = std::sqrt(std::max(0.0f, 1.0f - smoothedParameters_.oscMix));
@@ -1421,6 +1571,8 @@ void MarsEngine::initialiseVoice(Voice& voice, int slot, int rootMidi,
     voice.noiseState = seed;
     voice.oscillator1.phase = wrapPhase(0.17f + 0.37f * (0.5f + 0.5f * hashBipolar(seed + 1u)));
     voice.oscillator2.phase = wrapPhase(0.53f + 0.41f * (0.5f + 0.5f * hashBipolar(seed + 2u)));
+    voice.oscillator1.dcoPhase = voice.oscillator1.phase;
+    voice.oscillator2.dcoPhase = voice.oscillator2.phase;
     voice.subOscillator.phase = wrapPhase(voice.oscillator1.phase * 0.5f);
     // The leaky polyBLEP triangle stores the low-pass integrator state, whose
     // steady-state amplitude is approximately one quarter of the output.
@@ -1728,8 +1880,8 @@ void MarsEngine::updateVoiceControl(Voice& voice,
     // lower-amplitude fast component. They are advanced globally above, so
     // this note reads a continuously free-running card history.
     const float driftValue = 0.84f * card.driftSlow + 0.16f * card.driftFast;
-    voice.driftPhase = wrapPhase(voice.driftPhase
-                               + card.driftRate * static_cast<float>(controlPeriod) / oversampledRate_);
+    voice.driftPhase = wrapPhase(
+        voice.driftPhase + card.driftRate * static_cast<float>(controlPeriod) / oversampledRate_);
 
     if (parameters.glideSeconds <= 0.0005f)
     {
@@ -1737,67 +1889,63 @@ void MarsEngine::updateVoiceControl(Voice& voice,
     }
     else
     {
-        const float glideCoefficient = 1.0f - std::exp(
-            -envelopeRange * static_cast<float>(controlPeriod)
-            / (parameters.glideSeconds * oversampledRate_));
+        const float glideCoefficient = 1.0f
+                                       - std::exp(-envelopeRange * static_cast<float>(controlPeriod)
+                                                  / (parameters.glideSeconds * oversampledRate_));
         voice.currentMidi += glideCoefficient * (voice.targetMidi - voice.currentMidi);
     }
 
     const float wanderCents = parameters.drift * card.driftDepth * (2.25f * driftValue);
-    const float lfoCents = (parameters.lfoPitchCents + 40.0f * modWheel_)
-                         * lfoFade * lfoValue;
+    const float lfoCents = (parameters.lfoPitchCents + 40.0f * modWheel_) * lfoFade * lfoValue;
     // A free-running VCO inherits component calibration error and slow thermal
     // wander. A DCO still has an analogue waveform path, but its fundamental is
-    // timed by a shared digital clock, so only a small residual of that pitch
-    // error remains. Intentional unison detune, panel tuning, bend, and LFO
-    // modulation remain identical between models.
+    // timed by a shared digital clock, so per-card analogue pitch error does
+    // not enter the timer count. Intentional unison detune, panel tuning, bend,
+    // and LFO modulation remain identical between models.
     const float oscillator1AnalogueCents = parameters.osc1Model == OscillatorModel::Vco
-        ? ageScale * card.osc1Cents + wanderCents
-        : 0.055f * ageScale * card.osc1Cents + 0.025f * wanderCents;
+                                               ? ageScale * card.osc1Cents + wanderCents
+                                               : 0.0f;
     const float oscillator2AnalogueCents = parameters.osc2Model == OscillatorModel::Vco
-        ? ageScale * card.osc2Cents - 0.72f * wanderCents
-        : 0.055f * ageScale * card.osc2Cents - 0.018f * wanderCents;
-    const float oscillator1Cents = voice.unisonCents + oscillator1AnalogueCents
-                                 + lfoCents;
-    const float oscillator2Cents = -0.37f * voice.unisonCents + parameters.osc2FineCents
-                                 + oscillator2AnalogueCents + lfoCents;
+                                               ? ageScale * card.osc2Cents - 0.72f * wanderCents
+                                               : 0.0f;
+    const float oscillator1Cents = voice.unisonCents + oscillator1AnalogueCents + lfoCents;
+    const float oscillator2Cents =
+        -0.37f * voice.unisonCents + parameters.osc2FineCents + oscillator2AnalogueCents + lfoCents;
     const float bendSemitones = 2.0f * pitchBend_;
     const float oscillator1Note = voice.currentMidi + static_cast<float>(12 * parameters.osc1Octave)
-                                + bendSemitones
-                                + oscillator1Cents / 100.0f;
-    const float oscillator2Note = voice.currentMidi
-                                + static_cast<float>(12 * parameters.osc2Octave
-                                                     + parameters.osc2Semitones)
-                                + bendSemitones
-                                + oscillator2Cents / 100.0f;
-    const float oscillator1Target = std::clamp(midiToHz(oscillator1Note) / oversampledRate_,
-                                               0.0000001f, 0.45f);
-    const float oscillator2Target = std::clamp(midiToHz(oscillator2Note) / oversampledRate_,
-                                               0.0000001f, 0.45f);
+                                  + bendSemitones + oscillator1Cents / 100.0f;
+    const float oscillator2Note =
+        voice.currentMidi
+        + static_cast<float>(12 * parameters.osc2Octave + parameters.osc2Semitones) + bendSemitones
+        + oscillator2Cents / 100.0f;
+    const float oscillator1Target =
+        std::clamp(midiToHz(oscillator1Note) / oversampledRate_, 0.0000001f, 0.45f);
+    const float oscillator2Target =
+        std::clamp(midiToHz(oscillator2Note) / oversampledRate_, 0.0000001f, 0.45f);
     const float subTarget = std::max(0.0000001f, 0.5f * oscillator1Target);
 
-    const float keyOctaves = parameters.filterKeyTrack
-                           * (voice.currentMidi - 60.0f) / 12.0f;
-    const float envelopeOctaves = 5.4f * parameters.filterEnvAmount
-                                * voice.filterEnvelope.value;
-    const float lfoOctaves = (parameters.lfoFilterOctaves + 0.5f * modWheel_)
-                           * lfoFade * lfoValue;
-    const float componentOctaves = ageScale * (0.075f * card.cutoffError)
-                                 + parameters.drift * 0.028f * driftValue;
+    const float keyOctaves = parameters.filterKeyTrack * (voice.currentMidi - 60.0f) / 12.0f;
+    const float envelopeOctaves = 5.4f * parameters.filterEnvAmount * voice.filterEnvelope.value;
+    const float lfoOctaves = (parameters.lfoFilterOctaves + 0.5f * modWheel_) * lfoFade * lfoValue;
+    const float componentOctaves =
+        ageScale * (0.075f * card.cutoffError) + parameters.drift * 0.028f * driftValue;
     const float maximumCutoff = 0.45f * static_cast<float>(sampleRate_);
-    const float cutoff = std::clamp(parameters.cutoffHz
-                                    * std::exp2(keyOctaves + envelopeOctaves
-                                                + lfoOctaves + componentOctaves),
-                                    18.0f, maximumCutoff);
+    const float cutoff =
+        std::clamp(parameters.cutoffHz
+                       * std::exp2(keyOctaves + envelopeOctaves + lfoOctaves + componentOctaves),
+                   18.0f,
+                   maximumCutoff);
     const float stateTarget = std::tan(pi * cutoff / oversampledRate_);
     const float ladderTarget = stateTarget;
 
-    const float panMotion = parameters.voiceMode == VoiceMode::Fifth
-        ? 0.16f * std::sin(twoPi * (voice.driftPhase + 0.19f * static_cast<float>(voice.layer)))
-        : 0.0f;
-    const float pan = std::clamp(parameters.spread
-                                 * (voice.panBase + panMotion + 0.12f * ageScale * card.panError),
-                                 -1.0f, 1.0f);
+    const float panMotion =
+        parameters.voiceMode == VoiceMode::Fifth
+            ? 0.16f * std::sin(twoPi * (voice.driftPhase + 0.19f * static_cast<float>(voice.layer)))
+            : 0.0f;
+    const float pan = std::clamp(
+        parameters.spread * (voice.panBase + panMotion + 0.12f * ageScale * card.panError),
+        -1.0f,
+        1.0f);
     const float targetLeft = std::sqrt(0.5f * (1.0f - pan));
     const float targetRight = std::sqrt(0.5f * (1.0f + pan));
 
@@ -1821,8 +1969,8 @@ void MarsEngine::updateVoiceControl(Voice& voice,
     voice.stateGainStep = (stateTarget - voice.stateGain) / period;
     voice.panLeftStep = (targetLeft - voice.panLeft) / period;
     voice.panRightStep = (targetRight - voice.panRight) / period;
-    voice.resonance = std::clamp(parameters.resonance
-                                 + 0.045f * ageScale * card.resonanceError, 0.0f, 0.995f);
+    voice.resonance =
+        std::clamp(parameters.resonance + 0.045f * ageScale * card.resonanceError, 0.0f, 0.995f);
     // D'Angelo-Valimaki resonance compensation is constant between control
     // updates. Hoisting its square roots out of every oversampled ladder step
     // materially reduces the 16-voice worst-case cost without changing the
@@ -1830,35 +1978,39 @@ void MarsEngine::updateVoiceControl(Voice& voice,
     constexpr float cosPiOverFour = 0.7071067811865475f;
     voice.ladderFeedbackGain = 4.0f * voice.resonance;
     const float fourthRootK = std::sqrt(std::sqrt(voice.ladderFeedbackGain));
-    const float alphaSquared = 1.0f + std::sqrt(voice.ladderFeedbackGain)
-                             - 2.0f * fourthRootK * cosPiOverFour;
-    voice.ladderFrequencyScale = 1.0f
-                               / std::sqrt(std::max(alphaSquared, 1.0e-8f));
-    voice.drive = std::clamp(parameters.filterDrive
-                             * (1.0f + 0.16f * ageScale * card.driveError), 0.0f, 1.0f);
+    const float alphaSquared =
+        1.0f + std::sqrt(voice.ladderFeedbackGain) - 2.0f * fourthRootK * cosPiOverFour;
+    voice.ladderFrequencyScale = 1.0f / std::sqrt(std::max(alphaSquared, 1.0e-8f));
+    voice.drive = std::clamp(
+        parameters.filterDrive * (1.0f + 0.16f * ageScale * card.driveError), 0.0f, 1.0f);
 
-    const float envelopeScale = std::clamp(1.0f + 0.14f * ageScale * card.envelopeError,
-                                           0.72f, 1.28f);
-    voice.ampAttackCoefficient = envelopeCoefficient(parameters.ampAttack * envelopeScale,
-                                                      oversampledRate_);
-    voice.ampDecayCoefficient = envelopeCoefficient(parameters.ampDecay * envelopeScale,
-                                                     oversampledRate_);
-    voice.ampReleaseCoefficient = envelopeCoefficient(parameters.ampRelease * envelopeScale,
-                                                       oversampledRate_);
-    voice.filterAttackCoefficient = envelopeCoefficient(parameters.filterAttack * envelopeScale,
-                                                         oversampledRate_);
-    voice.filterDecayCoefficient = envelopeCoefficient(parameters.filterDecay * envelopeScale,
-                                                        oversampledRate_);
-    voice.filterReleaseCoefficient = envelopeCoefficient(parameters.filterRelease * envelopeScale,
-                                                          oversampledRate_);
+    const float envelopeScale =
+        std::clamp(1.0f + 0.14f * ageScale * card.envelopeError, 0.72f, 1.28f);
+    voice.ampAttackCoefficient =
+        envelopeCoefficient(parameters.ampAttack * envelopeScale, oversampledRate_);
+    voice.ampDecayCoefficient =
+        envelopeCoefficient(parameters.ampDecay * envelopeScale, oversampledRate_);
+    voice.ampReleaseCoefficient =
+        envelopeCoefficient(parameters.ampRelease * envelopeScale, oversampledRate_);
+    voice.filterAttackCoefficient =
+        envelopeCoefficient(parameters.filterAttack * envelopeScale, oversampledRate_);
+    voice.filterDecayCoefficient =
+        envelopeCoefficient(parameters.filterDecay * envelopeScale, oversampledRate_);
+    voice.filterReleaseCoefficient =
+        envelopeCoefficient(parameters.filterRelease * envelopeScale, oversampledRate_);
 }
 
-float MarsEngine::renderOscillator(Oscillator& oscillator, OscillatorWave waveform,
-                                   OscillatorModel model, float increment,
-                                   float pulseWidth, bool& wrapped) noexcept
+float MarsEngine::renderOscillator(Oscillator &oscillator,
+                                   OscillatorWave waveform,
+                                   OscillatorModel model,
+                                   float increment,
+                                   float pulseWidth,
+                                   float dcoRangeClockHz,
+                                   bool &wrapped) noexcept
 {
     increment = std::clamp(increment, 0.0000001f, 0.45f);
     pulseWidth = std::clamp(pulseWidth, 0.05f, 0.95f);
+    dcoRangeClockHz = std::clamp(finiteOr(dcoRangeClockHz, 2000000.0f), 500000.0f, 8000000.0f);
 
     const int requestedWave = waveformIndex(waveform);
     if (!oscillator.waveformInitialised)
@@ -1875,9 +2027,8 @@ float MarsEngine::renderOscillator(Oscillator& oscillator, OscillatorWave wavefo
         for (std::size_t index = 0; index < oscillator.waveformBlend.size(); ++index)
         {
             const float target = static_cast<int>(index) == requestedWave ? 1.0f : 0.0f;
-            oscillator.waveformBlendStep[index]
-                = (target - oscillator.waveformBlend[index])
-                / static_cast<float>(waveformCrossfadeSamples_);
+            oscillator.waveformBlendStep[index] = (target - oscillator.waveformBlend[index])
+                                                  / static_cast<float>(waveformCrossfadeSamples_);
         }
     }
 
@@ -1885,218 +2036,430 @@ float MarsEngine::renderOscillator(Oscillator& oscillator, OscillatorWave wavefo
     {
         oscillator.activeModel = model;
         oscillator.modelBlend = model == OscillatorModel::Dco ? 1.0f : 0.0f;
+        if (model == OscillatorModel::Dco)
+            oscillator.dcoPhase = oscillator.phase;
         oscillator.modelInitialised = true;
     }
     else if (oscillator.activeModel != model)
     {
+        const bool wasCrossfading = oscillator.modelCrossfadeRemaining > 0;
         oscillator.activeModel = model;
         oscillator.modelCrossfadeRemaining = oscillatorModelCrossfadeSamples_;
         const float targetBlend = model == OscillatorModel::Dco ? 1.0f : 0.0f;
         oscillator.modelBlendStep = (targetBlend - oscillator.modelBlend)
-                                  / static_cast<float>(oscillatorModelCrossfadeSamples_);
+                                    / static_cast<float>(oscillatorModelCrossfadeSamples_);
+        if (!wasCrossfading && model == OscillatorModel::Dco)
+        {
+            // The inactive analogue endpoint is frozen at the settled VCO
+            // endpoint. Seed it analytically from the live cycle when the
+            // crossfade begins instead of paying its full cost continuously.
+            oscillator.dcoPhase = oscillator.phase;
+            oscillator.dcoClockInitialised = false;
+            oscillator.dcoAnalogueInitialised = false;
+            oscillator.dcoControlCountdown = 0;
+        }
+        else if (!wasCrossfading && model == OscillatorModel::Vco)
+        {
+            oscillator.phase = oscillator.dcoPhase;
+            oscillator.triangle = 0.25f * triangleAtPhase(oscillator.phase);
+            oscillator.sawContourInitialised = false;
+            oscillator.vcoSawBlepInitialised = false;
+            oscillator.pulseBlepInitialised = false;
+            oscillator.expectedPulseInitialised = false;
+            oscillator.triangleSquareBlepInitialised = false;
+        }
     }
 
-    // Juno-family DCOs derive cycle timing from a shared digital clock while
-    // retaining an analogue ramp/comparator signal path. Mars models that
-    // hybrid boundary with an integer master-clock period chosen once per
-    // cycle. First-order error feedback alternates adjacent timer counts, so
-    // the long-term pitch remains correct without erasing the deterministic
-    // period jitter that distinguishes a clocked DCO from a free-running VCO.
-    const auto chooseDcoPeriod = [this, &oscillator] (float desiredIncrement) noexcept
+    // Roland's pitch path is an 8 MHz master divided to a range clock, an
+    // 8253-style integer interval timer, then the MC5534A analogue wave
+    // generator. Control writes update a pending count at the documented
+    // multiplexed-control cadence; the active count remains untouched until
+    // terminal count. There is deliberately no adjacent-count dithering.
+    const auto writeDcoControl =
+        [this, &oscillator, dcoRangeClockHz, pulseWidth](float desiredIncrement) noexcept
     {
-        constexpr double masterClockHz = 2000000.0;
-        const double desiredFrequency = std::max(
-            0.001, static_cast<double>(desiredIncrement) * oversampledRate_);
-        const double idealTicks = std::clamp(masterClockHz / desiredFrequency,
-                                             4.0, 2000000.0);
-        const double lowerTicks = std::floor(idealTicks);
-        const float fraction = static_cast<float>(idealTicks - lowerTicks);
-        oscillator.dcoClockError += fraction;
-        double selectedTicks = lowerTicks;
-        if (oscillator.dcoClockError >= 1.0f)
+        const double desiredFrequency =
+            std::max(0.001, static_cast<double>(desiredIncrement) * oversampledRate_);
+        // Counts above the physical 16-bit envelope are a documented Mars
+        // prescaler extension for MIDI notes below the original keyboard
+        // range; the hardware-accurate region still uses ordinary 2..65536
+        // counts and the exact 1/2/4 MHz range clocks.
+        constexpr double maximumExtendedCount = 1048576.0;
+        const double idealTicks = std::clamp(
+            static_cast<double>(dcoRangeClockHz) / desiredFrequency, 2.0, maximumExtendedCount);
+        oscillator.dcoPendingDivisor = static_cast<std::uint32_t>(std::llround(idealTicks));
+        oscillator.dcoPendingRangeClockHz = dcoRangeClockHz;
+        oscillator.dcoHeldSlopeVoltsPerSecond = 12.0f * static_cast<float>(desiredFrequency);
+        oscillator.dcoHeldPulseWidth = pulseWidth;
+        oscillator.dcoControlCountdown = dcoControlPeriodSamples_;
+    };
+
+    const auto latchDcoTimer = [this, &oscillator]() noexcept
+    {
+        const bool rangeChanged = !oscillator.dcoClockInitialised
+                                  || std::abs(oscillator.dcoRangeClockHz
+                                              - oscillator.dcoPendingRangeClockHz) > 0.5f;
+        oscillator.dcoTimerDivisor = std::max(2u, oscillator.dcoPendingDivisor);
+        oscillator.dcoRangeClockHz = oscillator.dcoPendingRangeClockHz;
+        oscillator.dcoIncrement =
+            std::clamp(oscillator.dcoRangeClockHz
+                           / (static_cast<float>(oscillator.dcoTimerDivisor) * oversampledRate_),
+                       0.0000001f,
+                       0.45f);
+        if (rangeChanged)
         {
-            selectedTicks += 1.0;
-            oscillator.dcoClockError -= 1.0f;
+            constexpr float resetTimeConstantSeconds = 45.0e-9f;
+            // The 8 MHz outer octave is a Mars timer extension; keep the
+            // proprietary analogue reset drive within the documented 4 MHz
+            // MC5534 range so every legal PWM threshold still resets high.
+            const float analogueResetClock =
+                std::clamp(oscillator.dcoRangeClockHz, 1.0f, 4000000.0f);
+            const float resetDuration = 1.0f / analogueResetClock;
+            oscillator.dcoResetResidue =
+                std::exp(-resetDuration / resetTimeConstantSeconds);
+            oscillator.dcoChargeInjectionVolts =
+                0.012f
+                + 0.004f
+                      * std::clamp(oscillator.dcoRangeClockHz / 4000000.0f, 0.0f, 1.0f);
         }
-        oscillator.dcoIncrement = std::clamp(
-            static_cast<float>(masterClockHz
-                / (selectedTicks * static_cast<double>(oversampledRate_))),
-            0.0000001f, 0.45f);
         oscillator.dcoClockInitialised = true;
     };
-    if (!oscillator.dcoClockInitialised)
-        chooseDcoPeriod(increment);
 
-    const float phaseIncrement = std::clamp(
-        increment + oscillator.modelBlend * (oscillator.dcoIncrement - increment),
-        0.0000001f, 0.45f);
-    const float phase = oscillator.phase;
-
-    // Keep every waveform generator warm. The same causal integrated
-    // third-order B-spline correction now bandlimits the saw reset, both pulse
-    // edges, and the square driver integrated into the triangle. This matters
-    // most under PWM and cross-mod, where the former compact two-sample BLEP
-    // was the weakest oscillator path. Warm parallel states also make preset
-    // randomisation and host waveform automation crossfade without a click.
-    const float rawSaw = 2.0f * phase - 1.0f;
-    const float rawPulse = phase < pulseWidth ? 1.0f : -1.0f;
-    const float rawTriangleSquare = phase < 0.5f ? 1.0f : -1.0f;
-    if (!oscillator.expectedPulseInitialised)
+    const bool needsDco = model == OscillatorModel::Dco || oscillator.modelBlend > 0.0f
+                          || oscillator.modelCrossfadeRemaining > 0;
+    if (needsDco)
     {
-        oscillator.expectedPulseAtNextSample = rawPulse;
-        oscillator.expectedPulseInitialised = true;
-    }
-    else if (rawPulse != oscillator.expectedPulseAtNextSample)
-    {
-        // A moving PWM comparator can cross the already-advanced phase even
-        // when the previous sample's constant-width prediction saw no edge.
-        // Schedule that threshold-motion step at the sample boundary; the
-        // two-sample causal B-spline delay leaves the correction on time.
-        addFourthOrderBlep(oscillator.pulseCorrection,
-                           rawPulse - oscillator.expectedPulseAtNextSample,
-                           0.0f);
-    }
-    const float bandlimitedSaw = processFourthOrderBlep(
-        rawSaw, oscillator.vcoSawDelay, oscillator.vcoSawCorrection,
-        oscillator.vcoSawBlepInitialised);
-    const float bandlimitedPulse = processFourthOrderBlep(
-        rawPulse, oscillator.pulseDelay, oscillator.pulseCorrection,
-        oscillator.pulseBlepInitialised);
-    const float bandlimitedTriangleSquare = processFourthOrderBlep(
-        rawTriangleSquare, oscillator.triangleSquareDelay,
-        oscillator.triangleSquareCorrection,
-        oscillator.triangleSquareBlepInitialised);
-
-    if (!oscillator.phaseDelayInitialised)
-    {
-        oscillator.phaseDelay.fill(phase);
-        oscillator.phaseDelayInitialised = true;
-    }
-    const float delayedPhase = oscillator.phaseDelay[0];
-    oscillator.phaseDelay[0] = oscillator.phaseDelay[1];
-    oscillator.phaseDelay[1] = phase;
-
-    oscillator.triangle = phaseIncrement * bandlimitedTriangleSquare
-                        + (1.0f - phaseIncrement) * oscillator.triangle;
-    oscillator.triangle = std::clamp(finiteOr(oscillator.triangle, 0.0f),
-                                     -0.35f, 0.35f);
-    std::array<float, 3> vcoOutputs {{
-        bandlimitedSaw,
-        bandlimitedPulse,
-        4.0f * oscillator.triangle,
-    }};
-
-    // Pekonen et al.'s source-specific Table 4(b) fit matches this exact
-    // fourth-order B-spline BLEP to recorded Minimoog Voyager spectra. Keep it
-    // warm even while another waveform is selected, so a switch has no stale
-    // post-EQ state.
-    const float oscillatorFrequency = phaseIncrement * oversampledRate_;
-    const float fittedFrequency = std::clamp(oscillatorFrequency, 86.0f, 8300.0f);
-    const float frequencySquared = fittedFrequency * fittedFrequency;
-    const float referenceGain = 0.7105f + 3.380e-5f * fittedFrequency;
-    const float referenceZero = 1.0161f - 5.850e-4f * fittedFrequency
-                              + 5.220e-8f * frequencySquared;
-    const float referencePole = 1.0294f - 4.8921e-4f * fittedFrequency
-                              + 3.974e-8f * frequencySquared;
-    constexpr float referenceRate = 44100.0f;
-    const float rateRatio = referenceRate / oversampledRate_;
-    const auto remapCoefficient = [rateRatio] (float coefficient) noexcept
-    {
-        return ((1.0f + rateRatio) * coefficient + (1.0f - rateRatio))
-             / ((1.0f - rateRatio) * coefficient + (1.0f + rateRatio));
-    };
-    const float zero = remapCoefficient(referenceZero);
-    const float pole = remapCoefficient(referencePole);
-    const float referenceDcGain = referenceGain * (1.0f - referenceZero)
-                                / (1.0f - referencePole);
-    const float gain = referenceDcGain * (1.0f - pole) / (1.0f - zero);
-    if (!oscillator.sawContourInitialised)
-    {
-        oscillator.previousSawInput = bandlimitedSaw;
-        oscillator.previousSawOutput = bandlimitedSaw;
-        oscillator.sawContourInitialised = true;
-    }
-    else
-    {
-        const float contoured = gain
-                              * (bandlimitedSaw - zero * oscillator.previousSawInput)
-                              + pole * oscillator.previousSawOutput;
-        oscillator.previousSawInput = bandlimitedSaw;
-        oscillator.previousSawOutput = std::isfinite(contoured)
-            ? contoured : bandlimitedSaw;
-        const float contourBlend = smoothStep((oscillatorFrequency - 43.0f) / 43.0f);
-        vcoOutputs[0] = bandlimitedSaw
-                      + contourBlend * (oscillator.previousSawOutput - bandlimitedSaw);
+        // Range, pitch, and PWM are sampled together by the multiplexed
+        // control scan. Do not combine a just-automated range clock with the
+        // previous control interval's frequency target.
+        if (!oscillator.dcoClockInitialised || --oscillator.dcoControlCountdown <= 0)
+            writeDcoControl(increment);
+        if (!oscillator.dcoClockInitialised)
+            latchDcoTimer();
     }
 
-    // The DCO clock resets an analogue ramp rather than reading a wavetable.
-    // Its endpoint-preserving charge curvature sits on the same bandlimited
-    // reset, followed by a prewarped TPT reconstruction pole whose analogue
-    // 18.5 kHz corner is invariant with host and HQ sample rate.
-    constexpr float rampCurvature = 0.15f;
-    std::array<float, 3> dcoInputs {{
-        bandlimitedSaw + 2.0f * rampCurvature
-                         * delayedPhase * (1.0f - delayedPhase),
-        bandlimitedPulse,
-        4.0f * oscillator.triangle,
-    }};
-    std::array<float, 3> dcoOutputs {};
-    for (std::size_t index = 0; index < dcoOutputs.size(); ++index)
+    const bool needsVco = model == OscillatorModel::Vco || oscillator.modelBlend < 1.0f
+                          || oscillator.modelCrossfadeRemaining > 0;
+    const float vcoPhase = oscillator.phase;
+    const float dcoPhase = oscillator.dcoPhase;
+    std::array<float, 3> vcoOutputs{};
+    if (needsVco)
     {
-        if (!oscillator.dcoReconstructionInitialised[index])
+        // Keep every VCO waveform generator warm while the VCO endpoint is
+        // audible. The same causal integrated
+        // third-order B-spline correction now bandlimits the saw reset, both pulse
+        // edges, and the square driver integrated into the triangle. This matters
+        // most under PWM and cross-mod, where the former compact two-sample BLEP
+        // was the weakest oscillator path. Warm parallel states also make preset
+        // randomisation and host waveform automation crossfade without a click.
+        const float rawSaw = 2.0f * vcoPhase - 1.0f;
+        const float rawPulse = vcoPhase < pulseWidth ? 1.0f : -1.0f;
+        const float rawTriangleSquare = vcoPhase < 0.5f ? 1.0f : -1.0f;
+        if (!oscillator.expectedPulseInitialised)
         {
-            oscillator.dcoReconstruction[index] = dcoInputs[index];
-            oscillator.dcoReconstructionInitialised[index] = true;
-            dcoOutputs[index] = dcoInputs[index];
+            oscillator.expectedPulseAtNextSample = rawPulse;
+            oscillator.expectedPulseInitialised = true;
+        }
+        else if (rawPulse != oscillator.expectedPulseAtNextSample)
+        {
+            // A moving PWM comparator can cross the already-advanced phase even
+            // when the previous sample's constant-width prediction saw no edge.
+            // Schedule that threshold-motion step at the sample boundary; the
+            // two-sample causal B-spline delay leaves the correction on time.
+            addFourthOrderBlep(
+                oscillator.pulseCorrection, rawPulse - oscillator.expectedPulseAtNextSample, 0.0f);
+        }
+        const float bandlimitedSaw = processFourthOrderBlep(rawSaw,
+                                                            oscillator.vcoSawDelay,
+                                                            oscillator.vcoSawCorrection,
+                                                            oscillator.vcoSawBlepInitialised);
+        const float bandlimitedPulse = processFourthOrderBlep(rawPulse,
+                                                              oscillator.pulseDelay,
+                                                              oscillator.pulseCorrection,
+                                                              oscillator.pulseBlepInitialised);
+        const float bandlimitedTriangleSquare =
+            processFourthOrderBlep(rawTriangleSquare,
+                                   oscillator.triangleSquareDelay,
+                                   oscillator.triangleSquareCorrection,
+                                   oscillator.triangleSquareBlepInitialised);
+
+        oscillator.triangle = increment * bandlimitedTriangleSquare
+                              + (1.0f - increment) * oscillator.triangle;
+        oscillator.triangle = std::clamp(finiteOr(oscillator.triangle, 0.0f), -0.35f, 0.35f);
+        vcoOutputs = {{
+            bandlimitedSaw,
+            bandlimitedPulse,
+            4.0f * oscillator.triangle,
+        }};
+
+        // Pekonen et al.'s source-specific Table 4(b) fit matches this exact
+        // fourth-order B-spline BLEP to recorded Minimoog Voyager spectra. Keep it
+        // warm even while another waveform is selected, so a switch has no stale
+        // post-EQ state.
+        const float oscillatorFrequency = increment * oversampledRate_;
+        const float fittedFrequency = std::clamp(oscillatorFrequency, 86.0f, 8300.0f);
+        const float frequencySquared = fittedFrequency * fittedFrequency;
+        const float referenceGain = 0.7105f + 3.380e-5f * fittedFrequency;
+        const float referenceZero =
+            1.0161f - 5.850e-4f * fittedFrequency + 5.220e-8f * frequencySquared;
+        const float referencePole =
+            1.0294f - 4.8921e-4f * fittedFrequency + 3.974e-8f * frequencySquared;
+        constexpr float referenceRate = 44100.0f;
+        const float rateRatio = referenceRate / oversampledRate_;
+        const auto remapCoefficient = [rateRatio](float coefficient) noexcept
+        {
+            return ((1.0f + rateRatio) * coefficient + (1.0f - rateRatio))
+                   / ((1.0f - rateRatio) * coefficient + (1.0f + rateRatio));
+        };
+        const float zero = remapCoefficient(referenceZero);
+        const float pole = remapCoefficient(referencePole);
+        const float referenceDcGain =
+            referenceGain * (1.0f - referenceZero) / (1.0f - referencePole);
+        const float gain = referenceDcGain * (1.0f - pole) / (1.0f - zero);
+        if (!oscillator.sawContourInitialised)
+        {
+            oscillator.previousSawInput = bandlimitedSaw;
+            oscillator.previousSawOutput = bandlimitedSaw;
+            oscillator.sawContourInitialised = true;
         }
         else
         {
-            const float v = dcoReconstructionGain_
-                          * (dcoInputs[index] - oscillator.dcoReconstruction[index]);
-            dcoOutputs[index] = v + oscillator.dcoReconstruction[index];
-            oscillator.dcoReconstruction[index] = dcoOutputs[index] + v;
+            const float contoured = gain * (bandlimitedSaw - zero * oscillator.previousSawInput)
+                                    + pole * oscillator.previousSawOutput;
+            oscillator.previousSawInput = bandlimitedSaw;
+            oscillator.previousSawOutput = std::isfinite(contoured) ? contoured : bandlimitedSaw;
+            const float contourBlend = smoothStep((oscillatorFrequency - 43.0f) / 43.0f);
+            vcoOutputs[0] =
+                bandlimitedSaw + contourBlend * (oscillator.previousSawOutput - bandlimitedSaw);
+        }
+    }
+
+    const auto normaliseDcoSaw = [](float rampVolts) noexcept
+    {
+        return std::clamp(rampVolts / 6.0f - 1.0f, -1.12f, 1.12f);
+    };
+    std::array<float, 3> dcoOutputs{};
+    if (needsDco)
+    {
+        // MC5534A: a resettable Miller integrator makes the saw and a
+        // comparator derives PWM from the held control voltage. Work in the
+        // documented 12 V ramp domain, then normalise only at the output.
+        // Reset events are still corrected at their exact fractional time by
+        // the existing causal integrated B-spline kernel.
+        if (!oscillator.dcoAnalogueInitialised)
+        {
+            oscillator.dcoRampVolts = 12.0f * dcoPhase;
+            const float thresholdVolts = 12.0f * oscillator.dcoHeldPulseWidth;
+            oscillator.dcoPulseSlew = oscillator.dcoRampVolts < thresholdVolts ? 1.0f : -1.0f;
+            oscillator.dcoSawDelay.fill(0.0f);
+            oscillator.dcoSawCorrection.fill(0.0f);
+            oscillator.dcoPulseDelay.fill(0.0f);
+            oscillator.dcoPulseCorrection.fill(0.0f);
+            oscillator.dcoTriangleSquareDelay.fill(0.0f);
+            oscillator.dcoTriangleSquareCorrection.fill(0.0f);
+            oscillator.dcoTriangle = 0.25f * triangleAtPhase(dcoPhase);
+            oscillator.dcoSawBlepInitialised = false;
+            oscillator.dcoPulseBlepInitialised = false;
+            oscillator.dcoTriangleSquareBlepInitialised = false;
+            oscillator.dcoExpectedPulseInitialised = false;
+            oscillator.dcoReconstructionInitialised.fill(false);
+            oscillator.dcoAnalogueInitialised = true;
+        }
+
+        const float rawDcoSaw = normaliseDcoSaw(oscillator.dcoRampVolts);
+        const float dcoThresholdVolts = 12.0f * oscillator.dcoHeldPulseWidth;
+        const float rawDcoPulse = oscillator.dcoRampVolts < dcoThresholdVolts ? 1.0f : -1.0f;
+        if (!oscillator.dcoExpectedPulseInitialised)
+        {
+            oscillator.dcoExpectedPulseAtNextSample = rawDcoPulse;
+            oscillator.dcoExpectedPulseInitialised = true;
+        }
+        else if (rawDcoPulse != oscillator.dcoExpectedPulseAtNextSample)
+        {
+            // The PWM CV is sample-and-held at the control scan. If its new
+            // threshold crosses the already-running ramp, the comparator step
+            // occurs at that control boundary rather than being missed.
+            addFourthOrderBlep(oscillator.dcoPulseCorrection,
+                               rawDcoPulse - oscillator.dcoExpectedPulseAtNextSample,
+                               0.0f);
+        }
+
+        const float dcoSaw = processFourthOrderBlep(rawDcoSaw,
+                                                    oscillator.dcoSawDelay,
+                                                    oscillator.dcoSawCorrection,
+                                                    oscillator.dcoSawBlepInitialised);
+        const float dcoPulse = processFourthOrderBlep(rawDcoPulse,
+                                                      oscillator.dcoPulseDelay,
+                                                      oscillator.dcoPulseCorrection,
+                                                      oscillator.dcoPulseBlepInitialised);
+        const float rawDcoTriangleSquare = dcoPhase < 0.5f ? 1.0f : -1.0f;
+        const float dcoTriangleSquare =
+            processFourthOrderBlep(rawDcoTriangleSquare,
+                                   oscillator.dcoTriangleSquareDelay,
+                                   oscillator.dcoTriangleSquareCorrection,
+                                   oscillator.dcoTriangleSquareBlepInitialised);
+        oscillator.dcoTriangle = oscillator.dcoIncrement * dcoTriangleSquare
+                                 + (1.0f - oscillator.dcoIncrement) * oscillator.dcoTriangle;
+        oscillator.dcoTriangle =
+            std::clamp(finiteOr(oscillator.dcoTriangle, 0.0f), -0.35f, 0.35f);
+        const float pulseSlew = dcoPulse > oscillator.dcoPulseSlew ? dcoPulseRise_ : dcoPulseFall_;
+        oscillator.dcoPulseSlew += pulseSlew * (dcoPulse - oscillator.dcoPulseSlew);
+
+        const std::array<float, 3> dcoInputs{{
+            dcoSaw,
+            oscillator.dcoPulseSlew,
+            // The MC5534A has no triangle output. Retaining it here is an
+            // explicitly documented Mars extension through the same output
+            // bandwidth, not a hardware claim.
+            4.0f * oscillator.dcoTriangle,
+        }};
+        for (std::size_t index = 0; index < dcoOutputs.size(); ++index)
+        {
+            if (!oscillator.dcoReconstructionInitialised[index])
+            {
+                oscillator.dcoReconstruction[index] = dcoInputs[index];
+                oscillator.dcoReconstructionInitialised[index] = true;
+                dcoOutputs[index] = dcoInputs[index];
+            }
+            else
+            {
+                const float v = dcoReconstructionGain_
+                                * (dcoInputs[index] - oscillator.dcoReconstruction[index]);
+                dcoOutputs[index] = v + oscillator.dcoReconstruction[index];
+                oscillator.dcoReconstruction[index] = dcoOutputs[index] + v;
+            }
         }
     }
 
     float output = 0.0f;
     for (std::size_t index = 0; index < oscillator.waveformBlend.size(); ++index)
     {
-        const float modelOutput = vcoOutputs[index]
-            + oscillator.modelBlend * (dcoOutputs[index] - vcoOutputs[index]);
+        const float modelOutput =
+            vcoOutputs[index] + oscillator.modelBlend * (dcoOutputs[index] - vcoOutputs[index]);
         output += oscillator.waveformBlend[index] * modelOutput;
     }
     if (!std::isfinite(output))
         output = 0.0f;
 
-    const float unwrappedPhase = phase + phaseIncrement;
-    oscillator.phase = unwrappedPhase;
-    wrapped = unwrappedPhase >= 1.0f;
-
-    // Schedule every discontinuity at its actual fractional crossing time.
-    // With increment < 0.5 there can be one cycle reset plus, for a narrow
-    // pulse, its second edge in the new cycle; corrections therefore add.
-    if (phase < pulseWidth && unwrappedPhase >= pulseWidth)
-        addFourthOrderBlep(oscillator.pulseCorrection, -2.0f,
-                           (unwrappedPhase - pulseWidth) / phaseIncrement);
-    if (unwrappedPhase >= 1.0f + pulseWidth)
-        addFourthOrderBlep(oscillator.pulseCorrection, -2.0f,
-                           (unwrappedPhase - (1.0f + pulseWidth)) / phaseIncrement);
-    if (phase < 0.5f && unwrappedPhase >= 0.5f)
-        addFourthOrderBlep(oscillator.triangleSquareCorrection, -2.0f,
-                           (unwrappedPhase - 0.5f) / phaseIncrement);
-
-    if (wrapped)
+    // Each endpoint owns its timing. During a model change both continue at
+    // their physical rates while only audio is crossfaded; once settled, the
+    // inactive endpoint and its correction/filter state freeze.
+    bool vcoWrapped = false;
+    if (needsVco)
     {
-        oscillator.phase -= std::floor(oscillator.phase);
-        const float samplesToNext = oscillator.phase / phaseIncrement;
-        addFourthOrderBlep(oscillator.vcoSawCorrection, -2.0f, samplesToNext);
-        addFourthOrderBlep(oscillator.pulseCorrection, 2.0f, samplesToNext);
-        addFourthOrderBlep(oscillator.triangleSquareCorrection, 2.0f,
-                           samplesToNext);
-        chooseDcoPeriod(increment);
+        const float unwrappedVcoPhase = vcoPhase + increment;
+        oscillator.phase = unwrappedVcoPhase;
+        vcoWrapped = unwrappedVcoPhase >= 1.0f;
+
+        // With increment < 0.5 there can be one cycle reset plus, for a
+        // narrow pulse, its second edge in the new cycle. Corrections add.
+        if (vcoPhase < pulseWidth && unwrappedVcoPhase >= pulseWidth)
+            addFourthOrderBlep(
+                oscillator.pulseCorrection, -2.0f, (unwrappedVcoPhase - pulseWidth) / increment);
+        if (unwrappedVcoPhase >= 1.0f + pulseWidth)
+            addFourthOrderBlep(oscillator.pulseCorrection,
+                               -2.0f,
+                               (unwrappedVcoPhase - (1.0f + pulseWidth)) / increment);
+        if (vcoPhase < 0.5f && unwrappedVcoPhase >= 0.5f)
+            addFourthOrderBlep(oscillator.triangleSquareCorrection,
+                               -2.0f,
+                               (unwrappedVcoPhase - 0.5f) / increment);
+
+        if (vcoWrapped)
+        {
+            oscillator.phase -= std::floor(oscillator.phase);
+            const float samplesToNext = oscillator.phase / increment;
+            addFourthOrderBlep(oscillator.vcoSawCorrection, -2.0f, samplesToNext);
+            addFourthOrderBlep(oscillator.pulseCorrection, 2.0f, samplesToNext);
+            addFourthOrderBlep(oscillator.triangleSquareCorrection, 2.0f, samplesToNext);
+        }
+        oscillator.expectedPulseAtNextSample = oscillator.phase < pulseWidth ? 1.0f : -1.0f;
     }
-    oscillator.expectedPulseAtNextSample
-        = oscillator.phase < pulseWidth ? 1.0f : -1.0f;
+
+    bool dcoWrapped = false;
+    if (needsDco)
+    {
+        const float oldDcoIncrement = oscillator.dcoIncrement;
+        const float unwrappedDcoPhase = dcoPhase + oldDcoIncrement;
+        dcoWrapped = unwrappedDcoPhase >= 1.0f;
+        if (dcoPhase < 0.5f && unwrappedDcoPhase >= 0.5f)
+            addFourthOrderBlep(oscillator.dcoTriangleSquareCorrection,
+                               -2.0f,
+                               (unwrappedDcoPhase - 0.5f) / oldDcoIncrement);
+        const float thresholdVolts = 12.0f * oscillator.dcoHeldPulseWidth;
+        constexpr float integratorLeakSeconds = 8.0f;
+
+        const auto comparatorOutput = [thresholdVolts](float rampVolts) noexcept
+        {
+            return rampVolts < thresholdVolts ? 1.0f : -1.0f;
+        };
+        const auto advanceRampSegment = [this, &oscillator, comparatorOutput, thresholdVolts](
+                                            float startFraction,
+                                            float endFraction) noexcept
+        {
+            const float startRamp = oscillator.dcoRampVolts;
+            const float seconds = std::max(0.0f, endFraction - startFraction) / oversampledRate_;
+            const float endRamp = startRamp
+                                  + seconds
+                                        * (oscillator.dcoHeldSlopeVoltsPerSecond
+                                           - startRamp / integratorLeakSeconds);
+            const float startPulse = comparatorOutput(startRamp);
+            const float endPulse = comparatorOutput(endRamp);
+            if (startPulse != endPulse && std::abs(endRamp - startRamp) > 1.0e-12f)
+            {
+                const float localCrossing =
+                    std::clamp((thresholdVolts - startRamp) / (endRamp - startRamp), 0.0f, 1.0f);
+                const float eventFraction =
+                    startFraction + localCrossing * (endFraction - startFraction);
+                addFourthOrderBlep(oscillator.dcoPulseCorrection,
+                                   endPulse - startPulse,
+                                   1.0f - eventFraction);
+            }
+            oscillator.dcoRampVolts = endRamp;
+        };
+
+        if (dcoWrapped)
+        {
+            const float eventFraction =
+                std::clamp((1.0f - dcoPhase) / oldDcoIncrement, 0.0f, 1.0f);
+            const float samplesToNext = 1.0f - eventFraction;
+            advanceRampSegment(0.0f, eventFraction);
+            const float beforeReset = oscillator.dcoRampVolts;
+            const float pulseBeforeReset = comparatorOutput(beforeReset);
+
+            // The reset switch is active for approximately one range-clock
+            // period. These low-order constants are fitted voicing targets,
+            // not a claimed transistor netlist of the proprietary IC.
+            oscillator.dcoRampVolts = oscillator.dcoResetResidue * beforeReset
+                                    + oscillator.dcoChargeInjectionVolts;
+            const float pulseAfterReset = comparatorOutput(oscillator.dcoRampVolts);
+            const float normalisedResetStep = normaliseDcoSaw(oscillator.dcoRampVolts)
+                                            - normaliseDcoSaw(beforeReset);
+            addFourthOrderBlep(oscillator.dcoSawCorrection, normalisedResetStep, samplesToNext);
+            addFourthOrderBlep(oscillator.dcoTriangleSquareCorrection, 2.0f, samplesToNext);
+            if (pulseAfterReset != pulseBeforeReset)
+                addFourthOrderBlep(oscillator.dcoPulseCorrection,
+                                   pulseAfterReset - pulseBeforeReset,
+                                   samplesToNext);
+            oscillator.dcoLastResetSamplesToNext = samplesToNext;
+
+            // Intel Mode 2 reload semantics: the pending control write becomes
+            // active only after the current terminal-count event. Preserve the
+            // elapsed post-event time in the newly loaded count's units.
+            latchDcoTimer();
+            oscillator.dcoPhase = samplesToNext * oscillator.dcoIncrement;
+            advanceRampSegment(eventFraction, 1.0f);
+        }
+        else
+        {
+            oscillator.dcoPhase = unwrappedDcoPhase;
+            advanceRampSegment(0.0f, 1.0f);
+        }
+        oscillator.dcoExpectedPulseAtNextSample = comparatorOutput(oscillator.dcoRampVolts);
+    }
+
+    oscillator.dcoWrappedThisSample = dcoWrapped;
+    wrapped = model == OscillatorModel::Dco ? dcoWrapped : vcoWrapped;
 
     if (oscillator.waveformCrossfadeRemaining > 0)
     {
@@ -2104,8 +2467,9 @@ float MarsEngine::renderOscillator(Oscillator& oscillator, OscillatorWave wavefo
         if (oscillator.waveformCrossfadeRemaining == 0)
         {
             oscillator.waveformBlend.fill(0.0f);
-            oscillator.waveformBlend[static_cast<std::size_t>(
-                waveformIndex(oscillator.activeWave))] = 1.0f;
+            oscillator
+                .waveformBlend[static_cast<std::size_t>(waveformIndex(oscillator.activeWave))] =
+                1.0f;
             oscillator.waveformBlendStep.fill(0.0f);
         }
         else
@@ -2113,7 +2477,8 @@ float MarsEngine::renderOscillator(Oscillator& oscillator, OscillatorWave wavefo
             for (std::size_t index = 0; index < oscillator.waveformBlend.size(); ++index)
                 oscillator.waveformBlend[index] = std::clamp(
                     oscillator.waveformBlend[index] + oscillator.waveformBlendStep[index],
-                    0.0f, 1.0f);
+                    0.0f,
+                    1.0f);
         }
     }
 
@@ -2122,21 +2487,20 @@ float MarsEngine::renderOscillator(Oscillator& oscillator, OscillatorWave wavefo
         --oscillator.modelCrossfadeRemaining;
         if (oscillator.modelCrossfadeRemaining == 0)
         {
-            oscillator.modelBlend = oscillator.activeModel == OscillatorModel::Dco
-                ? 1.0f : 0.0f;
+            oscillator.modelBlend = oscillator.activeModel == OscillatorModel::Dco ? 1.0f : 0.0f;
             oscillator.modelBlendStep = 0.0f;
         }
         else
         {
-            oscillator.modelBlend = std::clamp(
-                oscillator.modelBlend + oscillator.modelBlendStep, 0.0f, 1.0f);
+            oscillator.modelBlend =
+                std::clamp(oscillator.modelBlend + oscillator.modelBlendStep, 0.0f, 1.0f);
         }
     }
     return output;
 }
 
-float MarsEngine::renderVoiceOversample(Voice& voice,
-                                        const EngineParameters& parameters,
+float MarsEngine::renderVoiceOversample(Voice &voice,
+                                        const EngineParameters &parameters,
                                         float lfoValue) noexcept
 {
     if (!voice.active)
@@ -2174,11 +2538,19 @@ float MarsEngine::renderVoiceOversample(Voice& voice,
                                         + 0.42f * parameters.lfoPwm * lfoFade * lfoValue
                                         + 0.035f * ageScale * card.pulseSkew,
                                         0.05f, 0.95f);
+    const auto dcoRangeClock = [] (int octave) noexcept
+    {
+        // -1/0/+1 are the JUNO 16'/8'/4' 1/2/4 MHz clocks. Mars keeps its
+        // existing outer octave positions as explicit 500 kHz/8 MHz range
+        // divider extensions.
+        return std::ldexp(2000000.0f, std::clamp(octave, -2, 2));
+    };
 
     bool oscillator2Wrapped = false;
     float oscillator2 = renderOscillator(voice.oscillator2, parameters.osc2Wave,
                                          parameters.osc2Model,
                                          voice.oscillator2Increment, pulseWidth,
+                                         dcoRangeClock(parameters.osc2Octave),
                                          oscillator2Wrapped);
     (void) oscillator2Wrapped;
 
@@ -2197,65 +2569,78 @@ float MarsEngine::renderVoiceOversample(Voice& voice,
     const float oscillator1Increment = voice.oscillator1Increment
                                      * frequencyModulation;
 
-    // Keep the VCO sub path running underneath model transitions. The DCO sub
-    // below is derived directly from oscillator I's cycle state; it never owns
-    // a second timer or period-error accumulator.
+    // The DCO sub below is derived directly from oscillator I's cycle state;
+    // it never owns a second timer. Run the separate VCO sub only while that
+    // endpoint is audible or crossfading, then freeze it at settled DCO.
     bool vcoSubWrapped = false;
-    const float vcoSub = renderOscillator(voice.subOscillator, OscillatorWave::Pulse,
-                                          OscillatorModel::Vco, voice.subIncrement,
-                                          0.5f, vcoSubWrapped);
+    float vcoSub = 0.0f;
+    const bool needsVcoSub = parameters.osc1Model == OscillatorModel::Vco
+                          || voice.oscillator1.modelBlend < 1.0f
+                          || voice.oscillator1.modelCrossfadeRemaining > 0;
+    if (needsVcoSub)
+        vcoSub = renderOscillator(
+            voice.subOscillator, OscillatorWave::Pulse,
+            OscillatorModel::Vco, voice.subIncrement, 0.5f,
+            2000000.0f, vcoSubWrapped);
     (void) vcoSubWrapped;
 
-    const float oscillator1PhaseBefore = voice.oscillator1.phase;
     bool oscillator1Wrapped = false;
     float oscillator1 = renderOscillator(voice.oscillator1, parameters.osc1Wave,
                                          parameters.osc1Model,
                                          oscillator1Increment, pulseWidth,
+                                         dcoRangeClock(parameters.osc1Octave),
                                          oscillator1Wrapped);
-
-    float oscillator1ActualIncrement = voice.oscillator1.phase
-                                     - oscillator1PhaseBefore;
-    if (oscillator1Wrapped)
-        oscillator1ActualIncrement += 1.0f;
-    oscillator1ActualIncrement = std::clamp(
-        oscillator1ActualIncrement, 0.0000001f, 0.45f);
+    (void) oscillator1Wrapped;
 
     // A Juno-family sub is a divider transition, not a separately tuned DCO.
-    // The parity bit tracks every oscillator-I reset, including while the VCO
-    // model is selected, so a live switch can crossfade into an already
-    // phase-locked divide-by-two pulse without resetting either audible path.
-    const float dividerPhase = wrapPhase(
-        0.5f * oscillator1PhaseBefore
-        + (voice.oscillator1CycleOdd ? 0.5f : 0.0f));
-    const float dividerIncrement = 0.5f * oscillator1ActualIncrement;
-    const float rawDcoSub = dividerPhase < 0.5f ? 1.0f : -1.0f;
-    float dcoSub = processFourthOrderBlep(
-        rawDcoSub, voice.dcoSubDelay, voice.dcoSubCorrection,
-        voice.dcoSubBlepInitialised);
-    const float unwrappedDivider = dividerPhase + dividerIncrement;
-    if (dividerPhase < 0.5f && unwrappedDivider >= 0.5f)
-        addFourthOrderBlep(voice.dcoSubCorrection, -2.0f,
-                           (unwrappedDivider - 0.5f) / dividerIncrement);
-    if (unwrappedDivider >= 1.0f)
-        addFourthOrderBlep(voice.dcoSubCorrection, 2.0f,
-                           (unwrappedDivider - 1.0f) / dividerIncrement);
-    if (!voice.dcoSubReconstructionInitialised)
+    // Its D flip-flop toggles only on the MC5534A reset pulse. Keep parity
+    // cheap, but freeze the inactive sub audio endpoint with the rest of the
+    // DCO path once a VCO selection has settled.
+    const bool needsDcoSub = parameters.osc1Model == OscillatorModel::Dco
+                             || voice.oscillator1.modelBlend > 0.0f
+                             || voice.oscillator1.modelCrossfadeRemaining > 0;
+    float dcoSub = 0.0f;
+    const bool dcoWrapped = voice.oscillator1.dcoWrappedThisSample;
+    if (needsDcoSub)
     {
-        voice.dcoSubReconstruction = dcoSub;
-        voice.dcoSubReconstructionInitialised = true;
+        if (!voice.dcoSubActive)
+        {
+            voice.dcoSubDelay.fill(0.0f);
+            voice.dcoSubCorrection.fill(0.0f);
+            voice.dcoSubBlepInitialised = false;
+            voice.dcoSubReconstructionInitialised = false;
+            voice.dcoSubActive = true;
+        }
+        const float rawDcoSub = voice.oscillator1CycleOdd ? -1.0f : 1.0f;
+        dcoSub = processFourthOrderBlep(rawDcoSub,
+                                       voice.dcoSubDelay,
+                                       voice.dcoSubCorrection,
+                                       voice.dcoSubBlepInitialised);
+        if (dcoWrapped)
+            addFourthOrderBlep(voice.dcoSubCorrection,
+                               -2.0f * rawDcoSub,
+                               voice.oscillator1.dcoLastResetSamplesToNext);
+        if (!voice.dcoSubReconstructionInitialised)
+        {
+            voice.dcoSubReconstruction = dcoSub;
+            voice.dcoSubReconstructionInitialised = true;
+        }
+        else
+        {
+            const float v = dcoReconstructionGain_ * (dcoSub - voice.dcoSubReconstruction);
+            dcoSub = v + voice.dcoSubReconstruction;
+            voice.dcoSubReconstruction = dcoSub + v;
+        }
+        if (!std::isfinite(dcoSub))
+            dcoSub = 0.0f;
     }
     else
     {
-        const float v = dcoReconstructionGain_
-                      * (dcoSub - voice.dcoSubReconstruction);
-        dcoSub = v + voice.dcoSubReconstruction;
-        voice.dcoSubReconstruction = dcoSub + v;
+        voice.dcoSubActive = false;
     }
-    if (!std::isfinite(dcoSub))
-        dcoSub = 0.0f;
     const float sub = vcoSub + voice.oscillator1.modelBlend * (dcoSub - vcoSub);
 
-    if (oscillator1Wrapped)
+    if (dcoWrapped)
         voice.oscillator1CycleOdd = !voice.oscillator1CycleOdd;
 
     const float shaping = 1.05f + 0.28f * parameters.drift;
@@ -2414,9 +2799,11 @@ void MarsEngine::downsamplePair(HalfbandDecimator& decimator,
     push(secondLeft, secondRight);
 }
 
-void MarsEngine::processChorus(float inputLeft, float inputRight,
-                               const EngineParameters& parameters,
-                               float& outputLeft, float& outputRight) noexcept
+void MarsEngine::processChorus(float inputLeft,
+                               float inputRight,
+                               const EngineParameters &parameters,
+                               float &outputLeft,
+                               float &outputRight) noexcept
 {
     // A Juno-60 line contains 256 physical buckets clocked in two phases, so
     // the 128 stored signal-bearing stage pairs below produce N/(2*fClock)
@@ -2424,18 +2811,44 @@ void MarsEngine::processChorus(float inputLeft, float inputRight,
     // read pointer, is modulated by an antiphase triangle LFO. This preserves
     // the BBD's characteristic piecewise pitch motion and sample-and-hold
     // spectrum; the measured fifth-order networks suppress its images.
-    chorusPhase_ = wrapPhase(chorusPhase_
-                           + parameters.chorusRateHz / oversampledRate_);
+    chorusPhase_ = wrapPhase(chorusPhase_ + parameters.chorusRateHz / oversampledRate_);
     const float triangle = 1.0f - 4.0f * std::abs(chorusPhase_ - 0.5f);
     constexpr float centreClock = 50000.0f;
     constexpr float clockDepth = 24000.0f;
     const float leftClock = centreClock + clockDepth * triangle;
     const float rightClock = centreClock - clockDepth * triangle;
     const float monoFeed = 0.70710678f * (inputLeft + inputRight);
-    const float wetLeft = chorusLeft_.process(0.997f * monoFeed, leftClock,
-                                              oversampledRate_);
-    const float wetRight = chorusRight_.process(1.003f * monoFeed, rightClock,
-                                                oversampledRate_);
+
+    // Real BBD clock residue and device noise persist at idle. A plug-in must
+    // nevertheless reach exact digital silence so hosts can suspend it and HQ
+    // changes can remain click-free. Open the parasitic path quickly whenever
+    // signal is present, then retain it well past the complete BBD delay before
+    // fading and snapping to zero.
+    if (std::abs(monoFeed) > 1.0e-8f)
+        chorusActivity_ += chorusActivityAttack_ * (1.0f - chorusActivity_);
+    else
+    {
+        chorusActivity_ *= chorusActivityRelease_;
+        if (chorusActivity_ < 1.0e-6f)
+            chorusActivity_ = 0.0f;
+    }
+
+    const float companderTarget = parameters.chorusCompander ? 1.0f : 0.0f;
+    companderBlend_ += companderBlendCoefficient_ * (companderTarget - companderBlend_);
+    if (std::abs(companderBlend_ - companderTarget) < 1.0e-6f)
+        companderBlend_ = companderTarget;
+    const float compressedFeed = chorusCompander_.compress(monoFeed);
+    const float bbdFeed = monoFeed + companderBlend_ * (compressedFeed - monoFeed);
+
+    float wetLeft =
+        chorusLeft_.process(0.997f * bbdFeed, leftClock, oversampledRate_, chorusActivity_);
+    float wetRight =
+        chorusRight_.process(1.003f * bbdFeed, rightClock, oversampledRate_, chorusActivity_);
+    float expandedLeft = wetLeft;
+    float expandedRight = wetRight;
+    chorusCompander_.expand(expandedLeft, expandedRight);
+    wetLeft += companderBlend_ * (expandedLeft - wetLeft);
+    wetRight += companderBlend_ * (expandedRight - wetRight);
 
     // The panel Mix remains a continuous modern control while following the
     // hardware convention that chorus adds a wet path instead of replacing
@@ -2449,8 +2862,9 @@ void MarsEngine::processChorus(float inputLeft, float inputRight,
     outputRight = dryGain * inputRight + wetGain * wetRight;
 }
 
-float MarsEngine::processDcBlocker(float input, float& previousInput,
-                                   float& previousOutput) const noexcept
+float MarsEngine::processDcBlocker(float input,
+                                   float &previousInput,
+                                   float &previousOutput) const noexcept
 {
     const float output = input - previousInput + dcCoefficient_ * previousOutput;
     if (std::abs(input) < 1.0e-10f && std::abs(output) < 1.0e-4f)
@@ -2464,7 +2878,7 @@ float MarsEngine::processDcBlocker(float input, float& previousInput,
     return output;
 }
 
-void MarsEngine::process(float* left, float* right, int numSamples)
+void MarsEngine::process(float *left, float *right, int numSamples)
 {
     if (numSamples <= 0)
         return;
@@ -2479,6 +2893,7 @@ void MarsEngine::process(float* left, float* right, int numSamples)
     smoothedParameters_.osc2Wave = targets.osc2Wave;
     smoothedParameters_.osc1Model = targets.osc1Model;
     smoothedParameters_.osc2Model = targets.osc2Model;
+    smoothedParameters_.chorusCompander = targets.chorusCompander;
     smoothedParameters_.osc1Enabled = targets.osc1Enabled;
     smoothedParameters_.osc2Enabled = targets.osc2Enabled;
     smoothedParameters_.filterModel = targets.filterModel;
