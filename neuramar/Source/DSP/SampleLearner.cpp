@@ -1,0 +1,1780 @@
+#include "SampleLearner.h"
+
+#include "AirFilterbank.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <complex>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <numeric>
+#include <utility>
+
+namespace neuramar
+{
+struct NeuralModelTrainingAccess
+{
+    static auto& outputMeans(NeuralModel& model) noexcept { return model.outputMeans_; }
+    static auto& outputScales(NeuralModel& model) noexcept { return model.outputScales_; }
+    static auto& inputWeights(NeuralModel& model) noexcept { return model.inputWeights_; }
+    static const auto& inputWeights(const NeuralModel& model) noexcept
+    {
+        return model.inputWeights_;
+    }
+    static auto& hiddenBiases(NeuralModel& model) noexcept { return model.hiddenBiases_; }
+    static const auto& hiddenBiases(const NeuralModel& model) noexcept
+    {
+        return model.hiddenBiases_;
+    }
+    static auto& outputWeights(NeuralModel& model) noexcept { return model.outputWeights_; }
+    static const auto& outputWeights(const NeuralModel& model) noexcept
+    {
+        return model.outputWeights_;
+    }
+    static auto& outputBiases(NeuralModel& model) noexcept { return model.outputBiases_; }
+    static const auto& outputBiases(const NeuralModel& model) noexcept
+    {
+        return model.outputBiases_;
+    }
+};
+
+namespace
+{
+constexpr float pi = 3.14159265358979323846f;
+constexpr float twoPi = 2.0f * pi;
+constexpr float amplitudeFloor = 1.12535175e-7f; // exp(-16)
+constexpr int analysisFrameCount = 96;
+constexpr std::size_t spectrumSize = 4096;
+constexpr int trainingEpochCount = 180;
+constexpr std::size_t airFitCellCount = 48;
+constexpr double maximumSampleSeconds = 20.0;
+constexpr double fixedAnalysisSampleRate = 48000.0;
+constexpr float airLowerFrequencyHz = 80.0f;
+constexpr float airUpperFrequencyHz = 16000.0f;
+
+using Complex = std::complex<float>;
+using TargetFrame = std::array<float, NeuralModel::outputSize>;
+
+struct PitchEstimate
+{
+    float frequencyHz { 0.0f };
+    float confidence { 0.0f };
+};
+
+struct SpectrumFrame
+{
+    float normalisedTime { 0.0f };
+    float timeSeconds { 0.0f };
+    float normalisation { 1.0f };
+    float noisePowerCorrection { 1.0f };
+    std::size_t analysisWindowSize { spectrumSize };
+    std::vector<Complex> bins;
+};
+
+struct HarmonicAnalysisFrame
+{
+    SpectrumFrame residualSpectrum;
+    std::array<float, NeuralModel::harmonicCount> amplitudes {};
+    std::array<float, NeuralModel::harmonicCount> sinePhases {};
+};
+
+struct BoneSelection
+{
+    std::array<float, NeuralModel::boneModeCount> ratios {};
+    std::array<float, NeuralModel::boneModeCount> reliabilities {};
+};
+
+using AirResponseMatrix = std::array<
+    std::array<double, NeuralModel::airBandCount>, airFitCellCount>;
+
+struct AirFitDesign
+{
+    AirResponseMatrix response {};
+    float lowerFrequencyHz { airLowerFrequencyHz };
+    float upperFrequencyHz { airUpperFrequencyHz };
+};
+
+struct AirFitResult
+{
+    std::array<float, NeuralModel::airBandCount> amplitudes {};
+    std::array<double, NeuralModel::airBandCount> powers {};
+};
+
+[[nodiscard]] bool cancellationRequested(
+    const SampleLearner::CancelPredicate& predicate)
+{
+    return predicate && predicate();
+}
+
+void report(const SampleLearner::ProgressCallback& callback,
+            SampleLearner::Stage stage, float overall,
+            const PitchEstimate& pitch, const char* message)
+{
+    if (!callback)
+        return;
+
+    SampleLearner::Progress progress;
+    progress.stage = stage;
+    progress.overallProgress = std::clamp(overall, 0.0f, 1.0f);
+    progress.rootFrequencyHz = pitch.frequencyHz;
+    progress.pitchConfidence = pitch.confidence;
+    if (pitch.frequencyHz > 0.0f)
+    {
+        const float midi = 69.0f + 12.0f * std::log2(pitch.frequencyHz / 440.0f);
+        progress.rootMidiNote = std::clamp(static_cast<int>(std::lround(midi)), 0, 127);
+        progress.rootCents = 100.0f * (midi - static_cast<float>(progress.rootMidiNote));
+    }
+    progress.message = message;
+    callback(progress);
+}
+
+void fft(std::vector<Complex>& values)
+{
+    const std::size_t size = values.size();
+    for (std::size_t index = 1, reversed = 0; index < size; ++index)
+    {
+        std::size_t bit = size >> 1;
+        while ((reversed & bit) != 0)
+        {
+            reversed ^= bit;
+            bit >>= 1;
+        }
+        reversed ^= bit;
+        if (index < reversed)
+            std::swap(values[index], values[reversed]);
+    }
+
+    for (std::size_t length = 2; length <= size; length <<= 1)
+    {
+        const float angle = -twoPi / static_cast<float>(length);
+        const Complex root(std::cos(angle), std::sin(angle));
+        for (std::size_t offset = 0; offset < size; offset += length)
+        {
+            Complex twiddle(1.0f, 0.0f);
+            const std::size_t half = length >> 1;
+            for (std::size_t index = 0; index < half; ++index)
+            {
+                const Complex even = values[offset + index];
+                const Complex odd = values[offset + index + half] * twiddle;
+                values[offset + index] = even + odd;
+                values[offset + index + half] = even - odd;
+                twiddle *= root;
+            }
+        }
+    }
+}
+
+[[nodiscard]] float hannWindow(std::size_t index,
+                               std::size_t windowSize) noexcept
+{
+    if (windowSize < 2 || index >= windowSize)
+        return 0.0f;
+    return 0.5f - 0.5f * std::cos(
+        twoPi * static_cast<float>(index)
+        / static_cast<float>(windowSize - 1));
+}
+
+[[nodiscard]] std::size_t transientAnalysisWindowSize(
+    float fundamentalHz, double sampleRate) noexcept
+{
+    if (!(fundamentalHz > 0.0f) || !std::isfinite(fundamentalHz))
+        return spectrumSize;
+
+    // Four fundamental periods give the weighted sinusoidal solve enough
+    // information while avoiding the fixed 85 ms aperture that used to blur
+    // every attack. Power-of-two apertures keep the deterministic analysis
+    // bank bounded to 10.7, 21.3, 42.7, or 85.3 ms at 48 kHz.
+    const auto desired = static_cast<std::size_t>(std::ceil(
+        4.0 * sampleRate / static_cast<double>(fundamentalHz)));
+    std::size_t windowSize = 512;
+    while (windowSize < desired && windowSize < spectrumSize)
+        windowSize *= 2;
+    return std::clamp(windowSize, std::size_t { 512 }, spectrumSize);
+}
+
+[[nodiscard]] float spectrumMagnitude(const SpectrumFrame& frame,
+                                      float frequencyHz,
+                                      double sampleRate) noexcept
+{
+    if (!(frequencyHz > 0.0f)
+        || frequencyHz >= 0.5f * static_cast<float>(sampleRate))
+        return 0.0f;
+
+    const float bin = frequencyHz * static_cast<float>(frame.bins.size())
+        / static_cast<float>(sampleRate);
+    const auto lower = static_cast<std::size_t>(bin);
+    if (lower + 1 >= frame.bins.size() / 2)
+        return 0.0f;
+    const float fraction = bin - static_cast<float>(lower);
+    const float first = std::abs(frame.bins[lower]);
+    const float second = std::abs(frame.bins[lower + 1]);
+    return 2.0f * (first + fraction * (second - first))
+        / std::max(frame.normalisation, 1.0f);
+}
+
+[[nodiscard]] float spectrumPhase(const SpectrumFrame& frame,
+                                  float frequencyHz,
+                                  double sampleRate) noexcept
+{
+    const float bin = frequencyHz * static_cast<float>(frame.bins.size())
+        / static_cast<float>(sampleRate);
+    const auto nearest = static_cast<std::size_t>(std::max(0.0f, std::round(bin)));
+    if (nearest >= frame.bins.size() / 2)
+        return 0.0f;
+    float phase = std::arg(frame.bins[nearest]) / twoPi;
+    phase -= std::floor(phase);
+    return phase;
+}
+
+[[nodiscard]] SpectrumFrame makeSpectrumFrame(const std::vector<float>& sample,
+                                               double sampleRate,
+                                               float normalisedTime)
+{
+    SpectrumFrame frame;
+    frame.normalisedTime = std::clamp(normalisedTime, 0.0f, 1.0f);
+    frame.analysisWindowSize = spectrumSize;
+    frame.timeSeconds = frame.normalisedTime
+        * static_cast<float>(sample.size() - 1) / static_cast<float>(sampleRate);
+    frame.bins.assign(spectrumSize, Complex {});
+
+    const auto centre = static_cast<std::ptrdiff_t>(std::llround(
+        frame.normalisedTime * static_cast<float>(sample.size() - 1)));
+    const auto start = centre - static_cast<std::ptrdiff_t>(spectrumSize / 2);
+    float windowSum = 0.0f;
+    float windowSquareSum = 0.0f;
+    for (std::size_t index = 0; index < spectrumSize; ++index)
+    {
+        const auto source = start + static_cast<std::ptrdiff_t>(index);
+        if (source < 0 || source >= static_cast<std::ptrdiff_t>(sample.size()))
+            continue;
+        const float window = hannWindow(index, spectrumSize);
+        frame.bins[index] = Complex(sample[static_cast<std::size_t>(source)] * window,
+                                    0.0f);
+        windowSum += window;
+        windowSquareSum += window * window;
+    }
+    frame.normalisation = std::max(windowSum, 1.0f);
+    frame.noisePowerCorrection = windowSum * windowSum
+        / (static_cast<float>(spectrumSize)
+           * std::max(windowSquareSum, 1.0e-8f));
+    fft(frame.bins);
+    return frame;
+}
+
+[[nodiscard]] HarmonicAnalysisFrame analyseHarmonicResidual(
+    const std::vector<float>& sample, double sampleRate,
+    float normalisedTime, float fundamentalHz,
+    std::size_t windowSize = spectrumSize)
+{
+    windowSize = std::clamp(windowSize, std::size_t { 512 }, spectrumSize);
+    HarmonicAnalysisFrame result;
+    auto& residualSpectrum = result.residualSpectrum;
+    residualSpectrum.normalisedTime = std::clamp(normalisedTime, 0.0f, 1.0f);
+    residualSpectrum.analysisWindowSize = windowSize;
+    residualSpectrum.timeSeconds = residualSpectrum.normalisedTime
+        * static_cast<float>(sample.size() - 1) / static_cast<float>(sampleRate);
+    residualSpectrum.bins.assign(spectrumSize, Complex {});
+
+    const auto centre = static_cast<std::ptrdiff_t>(std::llround(
+        residualSpectrum.normalisedTime
+        * static_cast<float>(sample.size() - 1)));
+    const auto start = centre - static_cast<std::ptrdiff_t>(windowSize / 2);
+    std::array<float, spectrumSize> residual {};
+    std::array<float, spectrumSize> windows {};
+    float windowSum = 0.0f;
+    float windowSquareSum = 0.0f;
+    for (std::size_t index = 0; index < windowSize; ++index)
+    {
+        const auto source = start + static_cast<std::ptrdiff_t>(index);
+        if (source < 0 || source >= static_cast<std::ptrdiff_t>(sample.size()))
+            continue;
+        windows[index] = hannWindow(index, windowSize);
+        residual[index] = sample[static_cast<std::size_t>(source)];
+        windowSum += windows[index];
+        windowSquareSum += windows[index] * windows[index];
+    }
+    residualSpectrum.normalisation = std::max(windowSum, 1.0f);
+    residualSpectrum.noisePowerCorrection = windowSum * windowSum
+        / (static_cast<float>(spectrumSize)
+           * std::max(windowSquareSum, 1.0e-8f));
+
+    // Sequential weighted least-squares projections remove each harmonic from
+    // the actual waveform frame. The 2x2 solve handles the finite/windowed
+    // cosine/sine basis without assuming perfect orthogonality.
+    for (std::size_t harmonic = 0;
+         harmonic < NeuralModel::harmonicCount; ++harmonic)
+    {
+        const double frequency = static_cast<double>(fundamentalHz)
+            * static_cast<double>(harmonic + 1);
+        if (!(frequency > 0.0) || frequency >= 0.48 * sampleRate)
+            break;
+
+        const double angle = twoPi * frequency / sampleRate;
+        const Complex rotation(static_cast<float>(std::cos(angle)),
+                               static_cast<float>(std::sin(angle)));
+        Complex oscillator = std::polar(
+            1.0f, static_cast<float>(angle * static_cast<double>(start)));
+        double cosineCosine = 0.0;
+        double sineSine = 0.0;
+        double cosineSine = 0.0;
+        double signalCosine = 0.0;
+        double signalSine = 0.0;
+        for (std::size_t index = 0; index < windowSize; ++index)
+        {
+            const float weight = windows[index];
+            if (weight > 0.0f)
+            {
+                const double cosine = oscillator.real();
+                const double sine = oscillator.imag();
+                const double value = residual[index];
+                cosineCosine += weight * cosine * cosine;
+                sineSine += weight * sine * sine;
+                cosineSine += weight * cosine * sine;
+                signalCosine += weight * value * cosine;
+                signalSine += weight * value * sine;
+            }
+            oscillator *= rotation;
+        }
+
+        const double determinant = cosineCosine * sineSine
+            - cosineSine * cosineSine;
+        if (determinant <= 1.0e-9)
+            continue;
+        double cosineCoefficient = (signalCosine * sineSine
+            - signalSine * cosineSine) / determinant;
+        double sineCoefficient = (signalSine * cosineCosine
+            - signalCosine * cosineSine) / determinant;
+        const double magnitude = std::hypot(cosineCoefficient, sineCoefficient);
+        if (!std::isfinite(magnitude))
+            continue;
+        if (magnitude > 2.0)
+        {
+            const double scale = 2.0 / magnitude;
+            cosineCoefficient *= scale;
+            sineCoefficient *= scale;
+        }
+
+        const float amplitude = static_cast<float>(std::hypot(
+            cosineCoefficient, sineCoefficient));
+        result.amplitudes[harmonic] = amplitude;
+        float sinePhase = static_cast<float>(std::atan2(
+            cosineCoefficient, sineCoefficient) / twoPi);
+        sinePhase -= std::floor(sinePhase);
+        result.sinePhases[harmonic] = sinePhase;
+
+        oscillator = std::polar(
+            1.0f, static_cast<float>(angle * static_cast<double>(start)));
+        for (std::size_t index = 0; index < windowSize; ++index)
+        {
+            if (windows[index] > 0.0f)
+            {
+                residual[index] -= static_cast<float>(
+                    cosineCoefficient * oscillator.real()
+                    + sineCoefficient * oscillator.imag());
+            }
+            oscillator *= rotation;
+        }
+    }
+
+    for (std::size_t index = 0; index < windowSize; ++index)
+        residualSpectrum.bins[index] = Complex(
+            residual[index] * windows[index], 0.0f);
+    fft(residualSpectrum.bins);
+    return result;
+}
+
+[[nodiscard]] double sinc(double value) noexcept
+{
+    if (std::abs(value) < 1.0e-12)
+        return 1.0;
+    const double angle = static_cast<double>(pi) * value;
+    return std::sin(angle) / angle;
+}
+
+[[nodiscard]] std::vector<float> resampleWindowedSinc(
+    const std::vector<float>& source, double sourceRate, double destinationRate,
+    const SampleLearner::CancelPredicate& cancel = {})
+{
+    if (source.empty() || !std::isfinite(sourceRate)
+        || !std::isfinite(destinationRate)
+        || sourceRate <= 0.0 || destinationRate <= 0.0)
+        return {};
+    if (std::abs(sourceRate - destinationRate) < 1.0e-6)
+        return source;
+
+    constexpr int halfTaps = 24;
+    const double sourcePerOutput = sourceRate / destinationRate;
+    const double cutoff = 0.94 * std::min(1.0, destinationRate / sourceRate);
+    const auto destinationSize = static_cast<std::size_t>(
+        std::max(1.0, std::round(static_cast<double>(source.size())
+                                * destinationRate / sourceRate)));
+    std::vector<float> destination(destinationSize, 0.0f);
+    for (std::size_t output = 0; output < destinationSize; ++output)
+    {
+        if ((output & 1023u) == 0u && cancellationRequested(cancel))
+            return {};
+        const double centre = static_cast<double>(output) * sourcePerOutput;
+        const auto first = static_cast<std::ptrdiff_t>(std::floor(centre))
+                         - halfTaps + 1;
+        double weighted = 0.0;
+        double weightSum = 0.0;
+        for (int tap = 0; tap < 2 * halfTaps; ++tap)
+        {
+            const auto input = first + tap;
+            if (input < 0 || input >= static_cast<std::ptrdiff_t>(source.size()))
+                continue;
+            const double distance = centre - static_cast<double>(input);
+            const double window = 0.5 + 0.5 * std::cos(
+                static_cast<double>(pi) * distance / halfTaps);
+            const double weight = cutoff * sinc(cutoff * distance) * window;
+            weighted += static_cast<double>(source[static_cast<std::size_t>(input)])
+                      * weight;
+            weightSum += weight;
+        }
+        destination[output] = std::abs(weightSum) > 1.0e-12
+            ? static_cast<float>(weighted / weightSum) : 0.0f;
+    }
+    return destination;
+}
+
+[[nodiscard]] std::vector<float> downsampleForPitch(
+    const std::vector<float>& source, double sourceRate, double& destinationRate,
+    const SampleLearner::CancelPredicate& cancel)
+{
+    destinationRate = std::min(sourceRate, 12000.0);
+    return resampleWindowedSinc(source, sourceRate, destinationRate, cancel);
+}
+
+[[nodiscard]] PitchEstimate estimateYinWindow(const std::vector<float>& sample,
+                                               double sampleRate,
+                                               std::size_t start,
+                                               std::size_t length,
+                                               const SampleLearner::CancelPredicate& cancel)
+{
+    PitchEstimate result;
+    if (length < 384 || start + length > sample.size())
+        return result;
+
+    const std::size_t minimumLag = std::max<std::size_t>(2,
+        static_cast<std::size_t>(std::floor(sampleRate / 2000.0)));
+    const std::size_t maximumLag = std::min<std::size_t>(length / 3,
+        static_cast<std::size_t>(std::ceil(sampleRate / 35.0)));
+    if (maximumLag <= minimumLag + 2)
+        return result;
+
+    const std::size_t comparisonLength = length - maximumLag;
+    std::vector<double> difference(maximumLag + 1, 0.0);
+    for (std::size_t lag = 1; lag <= maximumLag; ++lag)
+    {
+        if ((lag & 7u) == 0u && cancellationRequested(cancel))
+            return {};
+        double value = 0.0;
+        for (std::size_t index = 0; index < comparisonLength; ++index)
+        {
+            const double delta = static_cast<double>(sample[start + index])
+                - static_cast<double>(sample[start + index + lag]);
+            value += delta * delta;
+        }
+        difference[lag] = value;
+    }
+
+    std::vector<double> cumulative(maximumLag + 1, 1.0);
+    double running = 0.0;
+    for (std::size_t lag = 1; lag <= maximumLag; ++lag)
+    {
+        running += difference[lag];
+        cumulative[lag] = running > 1.0e-20
+            ? difference[lag] * static_cast<double>(lag) / running
+            : 1.0;
+    }
+
+    std::size_t selected = 0;
+    constexpr double threshold = 0.16;
+    for (std::size_t lag = minimumLag; lag < maximumLag; ++lag)
+    {
+        if (cumulative[lag] < threshold)
+        {
+            selected = lag;
+            while (selected + 1 < maximumLag
+                   && cumulative[selected + 1] < cumulative[selected])
+                ++selected;
+            break;
+        }
+    }
+    if (selected == 0)
+    {
+        selected = minimumLag;
+        for (std::size_t lag = minimumLag + 1; lag <= maximumLag; ++lag)
+            if (cumulative[lag] < cumulative[selected])
+                selected = lag;
+    }
+
+    double refinedLag = static_cast<double>(selected);
+    if (selected > minimumLag && selected < maximumLag)
+    {
+        const double before = cumulative[selected - 1];
+        const double centre = cumulative[selected];
+        const double after = cumulative[selected + 1];
+        const double denominator = before - 2.0 * centre + after;
+        if (std::abs(denominator) > 1.0e-12)
+            refinedLag += 0.5 * (before - after) / denominator;
+    }
+
+    result.frequencyHz = static_cast<float>(sampleRate / refinedLag);
+    result.confidence = static_cast<float>(
+        std::clamp(1.0 - cumulative[selected], 0.0, 1.0));
+    if (result.frequencyHz < 35.0f || result.frequencyHz > 2000.0f)
+        return {};
+    return result;
+}
+
+[[nodiscard]] PitchEstimate estimatePitch(const std::vector<float>& sample,
+                                          double sampleRate,
+                                          const SampleLearner::CancelPredicate& cancel)
+{
+    double pitchRate = 0.0;
+    const auto pitchSample = downsampleForPitch(
+        sample, sampleRate, pitchRate, cancel);
+    if (cancellationRequested(cancel))
+        return {};
+    std::vector<PitchEstimate> candidates;
+    constexpr std::array<std::size_t, 3> resolutions { 2048, 4096, 8192 };
+    constexpr std::array<float, 3> centres { 0.22f, 0.50f, 0.76f };
+
+    for (const auto requestedLength : resolutions)
+    {
+        const std::size_t length = std::min(requestedLength, pitchSample.size());
+        if (length < 384)
+            continue;
+        for (const float centre : centres)
+        {
+            if (cancellationRequested(cancel))
+                return {};
+            const auto centreSample = static_cast<std::size_t>(centre
+                * static_cast<float>(pitchSample.size() - 1));
+            const std::size_t start = centreSample > length / 2
+                ? std::min(centreSample - length / 2, pitchSample.size() - length)
+                : 0;
+            const auto estimate = estimateYinWindow(pitchSample, pitchRate,
+                                                    start, length, cancel);
+            if (estimate.confidence >= 0.20f)
+                candidates.push_back(estimate);
+        }
+    }
+
+    if (candidates.empty())
+        return {};
+
+    const auto strongest = std::max_element(candidates.begin(), candidates.end(),
+        [](const PitchEstimate& left, const PitchEstimate& right)
+        {
+            return left.confidence < right.confidence;
+        });
+    const float reference = strongest->frequencyHz;
+    double weightedLogFrequency = 0.0;
+    double weightSum = 0.0;
+    double confidenceSum = 0.0;
+    for (auto candidate : candidates)
+    {
+        const float octaveShift = std::round(std::log2(reference / candidate.frequencyHz));
+        candidate.frequencyHz *= std::exp2(octaveShift);
+        if (candidate.frequencyHz < 35.0f || candidate.frequencyHz > 2000.0f)
+            continue;
+        const double weight = std::max(0.05f, candidate.confidence);
+        weightedLogFrequency += weight * std::log(candidate.frequencyHz);
+        weightSum += weight;
+        confidenceSum += weight * candidate.confidence;
+    }
+
+    PitchEstimate combined;
+    combined.frequencyHz = static_cast<float>(std::exp(
+        weightedLogFrequency / std::max(weightSum, 1.0e-12)));
+    combined.confidence = static_cast<float>(confidenceSum
+        / std::max(weightSum, 1.0e-12));
+
+    const auto spectrum = makeSpectrumFrame(sample, sampleRate, 0.42f);
+    if (cancellationRequested(cancel))
+        return {};
+    float bestFrequency = combined.frequencyHz;
+    float bestScore = -1.0f;
+    for (const float multiplier : { 0.5f, 1.0f, 2.0f })
+    {
+        const float candidate = combined.frequencyHz * multiplier;
+        if (candidate < 35.0f || candidate > 2000.0f)
+            continue;
+        float score = 0.0f;
+        for (int harmonic = 1; harmonic <= 16; ++harmonic)
+            score += spectrumMagnitude(spectrum, candidate * static_cast<float>(harmonic),
+                                       sampleRate)
+                / std::sqrt(static_cast<float>(harmonic));
+        if (score > bestScore)
+        {
+            bestScore = score;
+            bestFrequency = candidate;
+        }
+    }
+    combined.frequencyHz = bestFrequency;
+    combined.confidence = std::clamp(combined.confidence, 0.0f, 1.0f);
+    return combined;
+}
+
+[[nodiscard]] std::vector<float> estimatePitchContour(
+    const std::vector<float>& sample, double sampleRate,
+    const std::vector<SpectrumFrame>& spectra, float rootFrequencyHz,
+    const SampleLearner::CancelPredicate& cancel)
+{
+    std::vector<float> semitoneOffsets(spectra.size(), 0.0f);
+    if (spectra.empty() || !(rootFrequencyHz > 0.0f))
+        return semitoneOffsets;
+
+    double pitchRate = 0.0;
+    const auto pitchSample = downsampleForPitch(
+        sample, sampleRate, pitchRate, cancel);
+    if (cancellationRequested(cancel))
+        return semitoneOffsets;
+    const std::size_t windowLength = std::min<std::size_t>(4096,
+                                                           pitchSample.size());
+    const double expectedLag = pitchRate / rootFrequencyHz;
+    constexpr float maximumContourSemitones = 4.0f;
+    const auto minimumLag = static_cast<std::size_t>(std::max(2.0,
+        std::floor(expectedLag / std::exp2(maximumContourSemitones / 12.0f))));
+    const auto maximumLag = static_cast<std::size_t>(std::ceil(
+        expectedLag * std::exp2(maximumContourSemitones / 12.0f)));
+    if (maximumLag <= minimumLag + 1 || windowLength <= maximumLag + 192)
+        return semitoneOffsets;
+
+    std::vector<float> correlations(maximumLag - minimumLag + 1, -1.0f);
+    std::vector<float> rawOffsets(spectra.size(), 0.0f);
+    for (std::size_t frame = 0; frame < spectra.size(); ++frame)
+    {
+        if (cancellationRequested(cancel))
+            return semitoneOffsets;
+        const auto centre = static_cast<std::size_t>(std::llround(
+            spectra[frame].normalisedTime
+            * static_cast<float>(pitchSample.size() - 1)));
+        const std::size_t start = centre > windowLength / 2
+            ? std::min(centre - windowLength / 2,
+                       pitchSample.size() - windowLength)
+            : 0;
+        const std::size_t comparisonLength = windowLength - maximumLag;
+
+        float bestCorrelation = -1.0f;
+        std::size_t bestLag = minimumLag;
+        for (std::size_t lag = minimumLag; lag <= maximumLag; ++lag)
+        {
+            if ((lag & 7u) == 0u && cancellationRequested(cancel))
+                return semitoneOffsets;
+            double cross = 0.0;
+            double firstEnergy = 0.0;
+            double secondEnergy = 0.0;
+            for (std::size_t index = 0; index < comparisonLength; ++index)
+            {
+                const double first = pitchSample[start + index];
+                const double second = pitchSample[start + index + lag];
+                cross += first * second;
+                firstEnergy += first * first;
+                secondEnergy += second * second;
+            }
+            const double denominator = std::sqrt(firstEnergy * secondEnergy);
+            const float correlation = denominator > 1.0e-18
+                ? static_cast<float>(cross / denominator) : -1.0f;
+            correlations[lag - minimumLag] = correlation;
+            if (correlation > bestCorrelation)
+            {
+                bestCorrelation = correlation;
+                bestLag = lag;
+            }
+        }
+
+        if (bestCorrelation < 0.25f)
+            continue;
+
+        double refinedLag = static_cast<double>(bestLag);
+        if (bestLag > minimumLag && bestLag < maximumLag)
+        {
+            const float before = correlations[bestLag - minimumLag - 1];
+            const float centreValue = correlations[bestLag - minimumLag];
+            const float after = correlations[bestLag - minimumLag + 1];
+            const float denominator = before - 2.0f * centreValue + after;
+            if (std::abs(denominator) > 1.0e-7f)
+                refinedLag += std::clamp(
+                    0.5 * static_cast<double>(before - after) / denominator,
+                    -1.0, 1.0);
+        }
+
+        const float frequency = static_cast<float>(pitchRate / refinedLag);
+        rawOffsets[frame] = std::clamp(
+            12.0f * std::log2(frequency / rootFrequencyHz),
+            -maximumContourSemitones, maximumContourSemitones);
+    }
+
+    // A three-frame median rejects isolated lag choices while retaining the
+    // source's slower vibrato, bends, and glide trajectory.
+    for (std::size_t frame = 0; frame < rawOffsets.size(); ++frame)
+    {
+        const std::size_t before = frame > 0 ? frame - 1 : frame;
+        const std::size_t after = std::min(frame + 1, rawOffsets.size() - 1);
+        std::array<float, 3> neighbourhood {
+            rawOffsets[before], rawOffsets[frame], rawOffsets[after]
+        };
+        std::sort(neighbourhood.begin(), neighbourhood.end());
+        semitoneOffsets[frame] = neighbourhood[1];
+    }
+    return semitoneOffsets;
+}
+
+[[nodiscard]] bool conditionSample(const std::vector<float>& input,
+                                   double sampleRate,
+                                   std::vector<float>& output,
+                                   float& sourcePeak,
+                                   float& sourceRms,
+                                   std::string& error,
+                                   const SampleLearner::CancelPredicate& cancel)
+{
+    if (!std::isfinite(sampleRate) || sampleRate < 8000.0 || sampleRate > 768000.0)
+    {
+        error = "Sample rate must be between 8 kHz and 768 kHz";
+        return false;
+    }
+    if (input.size() < 256)
+    {
+        error = "The sample is too short to learn";
+        return false;
+    }
+
+    const std::size_t maximumSamples = static_cast<std::size_t>(
+        maximumSampleSeconds * sampleRate);
+    const std::size_t usedSamples = std::min(input.size(), maximumSamples);
+    double mean = 0.0;
+    std::size_t finiteCount = 0;
+    for (std::size_t index = 0; index < usedSamples; ++index)
+    {
+        if ((index & 65535u) == 0u && cancellationRequested(cancel))
+            return false;
+        if (std::isfinite(input[index]))
+        {
+            mean += input[index];
+            ++finiteCount;
+        }
+    }
+    if (finiteCount < 256)
+    {
+        error = "The sample does not contain enough finite audio";
+        return false;
+    }
+    mean /= static_cast<double>(finiteCount);
+
+    std::vector<float> centred(usedSamples, 0.0f);
+    sourcePeak = 0.0f;
+    double squareSum = 0.0;
+    for (std::size_t index = 0; index < usedSamples; ++index)
+    {
+        if ((index & 65535u) == 0u && cancellationRequested(cancel))
+            return false;
+        const float value = std::isfinite(input[index])
+            ? input[index] - static_cast<float>(mean) : 0.0f;
+        centred[index] = value;
+        sourcePeak = std::max(sourcePeak, std::abs(value));
+        squareSum += static_cast<double>(value) * static_cast<double>(value);
+    }
+    sourceRms = static_cast<float>(std::sqrt(squareSum
+        / static_cast<double>(usedSamples)));
+    if (sourcePeak < 1.0e-6f || sourceRms < 1.0e-7f)
+    {
+        error = "The sample is silent or too quiet to analyse";
+        return false;
+    }
+
+    const float trimThreshold = sourcePeak * 0.0015f;
+    std::size_t first = 0;
+    while (first + 1 < centred.size()
+           && std::abs(centred[first]) < trimThreshold)
+    {
+        if ((first & 65535u) == 0u && cancellationRequested(cancel))
+            return false;
+        ++first;
+    }
+    std::size_t last = centred.size();
+    while (last > first + 1 && std::abs(centred[last - 1]) < trimThreshold)
+    {
+        if ((last & 65535u) == 0u && cancellationRequested(cancel))
+            return false;
+        --last;
+    }
+    const std::size_t padding = static_cast<std::size_t>(0.008 * sampleRate);
+    first = first > padding ? first - padding : 0;
+    last = std::min(centred.size(), last + padding);
+    if (last - first < 256)
+    {
+        error = "The non-silent part of the sample is too short";
+        return false;
+    }
+
+    const float gain = 0.90f / sourcePeak;
+    output.resize(last - first);
+    for (std::size_t index = 0; index < output.size(); ++index)
+    {
+        if ((index & 65535u) == 0u && cancellationRequested(cancel))
+            return false;
+        output[index] = std::clamp(centred[first + index] * gain, -1.0f, 1.0f);
+    }
+    // Metadata describes the conditioned signal that was actually analysed.
+    // Keeping it in the same bounded domain also guarantees that every model
+    // produced by learn() satisfies the serializer's validation contract.
+    sourceRms = std::clamp(sourceRms * gain, 0.0f, 0.90f);
+    sourcePeak = 0.90f;
+    return true;
+}
+
+void makePreview(const std::vector<float>& sample,
+                 std::array<float, NeuralModel::previewSize>& preview)
+{
+    for (std::size_t point = 0; point < preview.size(); ++point)
+    {
+        const std::size_t begin = point * sample.size() / preview.size();
+        const std::size_t end = std::max(begin + 1,
+            (point + 1) * sample.size() / preview.size());
+        float selected = 0.0f;
+        for (std::size_t index = begin; index < std::min(end, sample.size()); ++index)
+            if (std::abs(sample[index]) > std::abs(selected))
+                selected = sample[index];
+        preview[point] = selected;
+    }
+}
+
+[[nodiscard]] BoneSelection findPersistentBoneModes(
+    const std::vector<SpectrumFrame>& residualSpectra,
+    float rootFrequencyHz, double sampleRate)
+{
+    struct Peak
+    {
+        float magnitude { 0.0f };
+        float ratio { 0.0f };
+        float score { 0.0f };
+        float reliability { 0.0f };
+    };
+    std::vector<Peak> peaks;
+    if (residualSpectra.empty())
+        return {};
+
+    const auto& reference = residualSpectra.front();
+    const float binWidth = static_cast<float>(sampleRate)
+        / static_cast<float>(reference.bins.size());
+    const std::size_t firstBin = static_cast<std::size_t>(
+        std::ceil(1.15f * rootFrequencyHz / binWidth));
+    const std::size_t lastBin = std::min(reference.bins.size() / 2 - 2,
+        static_cast<std::size_t>(std::floor(
+            std::min(0.45f * static_cast<float>(sampleRate),
+                     24.0f * rootFrequencyHz) / binWidth)));
+
+    constexpr std::array<std::size_t, 3> earlyFrameIndices { 2, 8, 18 };
+    for (const auto requestedFrame : earlyFrameIndices)
+    {
+        const auto& spectrum = residualSpectra[std::min(
+            requestedFrame, residualSpectra.size() - 1)];
+        for (std::size_t bin = std::max<std::size_t>(2, firstBin);
+             bin <= lastBin; ++bin)
+        {
+            const float magnitude = spectrumMagnitude(
+                spectrum, static_cast<float>(bin) * binWidth, sampleRate);
+            if (magnitude <= spectrumMagnitude(
+                    spectrum, static_cast<float>(bin - 1) * binWidth, sampleRate)
+                || magnitude < spectrumMagnitude(
+                    spectrum, static_cast<float>(bin + 1) * binWidth, sampleRate))
+                continue;
+            const float ratio = static_cast<float>(bin) * binWidth
+                / rootFrequencyHz;
+            if (std::abs(ratio - std::round(ratio)) < 0.13f)
+                continue;
+
+            const auto existing = std::find_if(peaks.begin(), peaks.end(),
+                [ratio](const Peak& peak)
+                {
+                    return std::abs(peak.ratio - ratio) < 0.12f;
+                });
+            if (existing == peaks.end())
+                peaks.push_back({ magnitude, ratio, 0.0f, 0.0f });
+            else if (magnitude > existing->magnitude)
+            {
+                existing->magnitude = magnitude;
+                existing->ratio = ratio;
+            }
+        }
+    }
+
+    for (auto& peak : peaks)
+    {
+        const float frequency = peak.ratio * rootFrequencyHz;
+        double totalWeight = 0.0;
+        double supportWeight = 0.0;
+        double prominenceSum = 0.0;
+        for (std::size_t frameIndex = 0;
+             frameIndex < residualSpectra.size(); ++frameIndex)
+        {
+            const auto& spectrum = residualSpectra[frameIndex];
+            if (spectrum.normalisedTime > 0.72f)
+                break;
+            const float centre = std::max({
+                spectrumMagnitude(spectrum, frequency - binWidth, sampleRate),
+                spectrumMagnitude(spectrum, frequency, sampleRate),
+                spectrumMagnitude(spectrum, frequency + binWidth, sampleRate)
+            });
+            const float shoulder = 0.25f * (
+                spectrumMagnitude(spectrum, frequency - 5.0f * binWidth, sampleRate)
+                + spectrumMagnitude(spectrum, frequency - 3.0f * binWidth, sampleRate)
+                + spectrumMagnitude(spectrum, frequency + 3.0f * binWidth, sampleRate)
+                + spectrumMagnitude(spectrum, frequency + 5.0f * binWidth, sampleRate));
+            const float prominence = centre / std::max(shoulder, 1.0e-7f);
+            const float relativeLevel = centre / std::max(peak.magnitude, 1.0e-7f);
+            const float nextTime = frameIndex + 1 < residualSpectra.size()
+                ? residualSpectra[frameIndex + 1].normalisedTime : 1.0f;
+            const double weight = std::max(
+                static_cast<double>(nextTime - spectrum.normalisedTime), 1.0e-5)
+                * std::exp(-1.2 * spectrum.normalisedTime);
+            totalWeight += weight;
+            if (prominence >= 1.25f && relativeLevel >= 0.012f)
+                supportWeight += weight;
+            prominenceSum += weight * std::clamp(
+                static_cast<double>(prominence - 1.0f), 0.0, 4.0);
+        }
+
+        const float support = static_cast<float>(supportWeight
+            / std::max(totalWeight, 1.0e-12));
+        const float prominence = static_cast<float>(prominenceSum
+            / std::max(totalWeight, 1.0e-12));
+        if (support < 0.10f || prominence < 0.08f)
+            continue;
+        peak.reliability = std::clamp(
+            0.75f * support + 0.15f * prominence, 0.0f, 1.0f);
+        peak.score = peak.magnitude * (0.15f + 0.85f * support)
+            * (1.0f + 0.20f * prominence);
+    }
+
+    std::erase_if(peaks, [](const Peak& peak) { return peak.score <= 0.0f; });
+    std::sort(peaks.begin(), peaks.end(),
+        [](const Peak& left, const Peak& right)
+        {
+            return left.score > right.score;
+        });
+
+    constexpr std::array<float, NeuralModel::boneModeCount> defaults {
+        1.47f, 2.63f, 3.82f, 5.21f, 7.13f, 9.37f
+    };
+    struct Selected
+    {
+        float ratio { 1.0f };
+        float reliability { 0.0f };
+    };
+    std::array<Selected, NeuralModel::boneModeCount> selected {};
+    std::size_t count = 0;
+    for (const auto& peak : peaks)
+    {
+        bool separated = true;
+        for (std::size_t existing = 0; existing < count; ++existing)
+            separated = separated
+                && std::abs(selected[existing].ratio - peak.ratio) > 0.22f;
+        if (separated)
+            selected[count++] = { peak.ratio, peak.reliability };
+        if (count == selected.size())
+            break;
+    }
+    for (; count < selected.size(); ++count)
+        selected[count] = { defaults[count], 0.0f };
+    std::sort(selected.begin(), selected.end(),
+        [](const Selected& left, const Selected& right)
+        {
+            return left.ratio < right.ratio;
+        });
+
+    BoneSelection result;
+    for (std::size_t mode = 0; mode < selected.size(); ++mode)
+    {
+        result.ratios[mode] = selected[mode].ratio;
+        result.reliabilities[mode] = selected[mode].reliability;
+    }
+    return result;
+}
+
+[[nodiscard]] bool belongsToActiveBone(float frequencyHz,
+                                       float analysisBinWidth,
+                                       const BoneSelection& selection,
+                                       float rootFrequencyHz) noexcept
+{
+    for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
+    {
+        if (selection.reliabilities[mode] <= 0.0f)
+            continue;
+        const float modeFrequency = rootFrequencyHz * selection.ratios[mode];
+        if (std::abs(frequencyHz - modeFrequency)
+            < 2.5f * analysisBinWidth)
+            return true;
+    }
+    return false;
+}
+
+[[nodiscard]] std::size_t airCellForFrequency(float frequencyHz,
+                                              const AirFitDesign& design) noexcept
+{
+    const float position = std::log(frequencyHz / design.lowerFrequencyHz)
+        / std::log(design.upperFrequencyHz / design.lowerFrequencyHz);
+    return std::min<std::size_t>(airFitCellCount - 1,
+        static_cast<std::size_t>(std::max(0.0f,
+            std::floor(position * static_cast<float>(airFitCellCount)))));
+}
+
+[[nodiscard]] AirFitDesign makeAirFitDesign(
+    const std::array<float, NeuralModel::airBandCount>& centreFrequencies,
+    const std::array<float, NeuralModel::airBandCount>& bandwidthOctaves,
+    const BoneSelection& boneSelection, float rootFrequencyHz,
+    double sampleRate, std::size_t analysisWindowSize)
+{
+    AirFitDesign design;
+    design.upperFrequencyHz = std::min(
+        airUpperFrequencyHz, 0.42f * static_cast<float>(sampleRate));
+    std::array<airfilter::Coefficients, NeuralModel::airBandCount> coefficients {};
+    for (std::size_t band = 0; band < coefficients.size(); ++band)
+        coefficients[band] = airfilter::makeCoefficients(
+            centreFrequencies[band], bandwidthOctaves[band],
+            static_cast<float>(sampleRate));
+
+    const float fftBinWidth = static_cast<float>(sampleRate)
+        / static_cast<float>(spectrumSize);
+    const float analysisBinWidth = static_cast<float>(sampleRate)
+        / static_cast<float>(std::max<std::size_t>(
+            analysisWindowSize, 1));
+    const std::size_t firstBin = std::max<std::size_t>(1,
+        static_cast<std::size_t>(std::ceil(
+            design.lowerFrequencyHz / fftBinWidth)));
+    const std::size_t lastBin = std::min<std::size_t>(spectrumSize / 2 - 1,
+        static_cast<std::size_t>(std::floor(
+            design.upperFrequencyHz / fftBinWidth)));
+    for (std::size_t bin = firstBin; bin <= lastBin; ++bin)
+    {
+        const float frequency = static_cast<float>(bin) * fftBinWidth;
+        if (belongsToActiveBone(frequency, analysisBinWidth, boneSelection,
+                                rootFrequencyHz))
+            continue;
+        const auto cell = airCellForFrequency(frequency, design);
+        for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+        {
+            design.response[cell][band] += 2.0
+                * static_cast<double>(airfilter::unitNoisePowerResponse(
+                    coefficients[band], frequency,
+                    static_cast<float>(sampleRate)))
+                / static_cast<double>(spectrumSize);
+        }
+    }
+    return design;
+}
+
+[[nodiscard]] AirFitResult fitAirFilterbank(
+    const SpectrumFrame& spectrum, const AirFitDesign& design,
+    const BoneSelection& boneSelection, float rootFrequencyHz,
+    double sampleRate,
+    const std::array<double, NeuralModel::airBandCount>& initialPowers)
+{
+    std::array<double, airFitCellCount> target {};
+    const float fftBinWidth = static_cast<float>(sampleRate)
+        / static_cast<float>(spectrum.bins.size());
+    const float analysisBinWidth = static_cast<float>(sampleRate)
+        / static_cast<float>(std::max<std::size_t>(
+            spectrum.analysisWindowSize, 1));
+    const std::size_t firstBin = std::max<std::size_t>(1,
+        static_cast<std::size_t>(std::ceil(
+            design.lowerFrequencyHz / fftBinWidth)));
+    const std::size_t lastBin = std::min(spectrum.bins.size() / 2 - 1,
+        static_cast<std::size_t>(std::floor(
+            design.upperFrequencyHz / fftBinWidth)));
+    for (std::size_t bin = firstBin; bin <= lastBin; ++bin)
+    {
+        const float frequency = static_cast<float>(bin) * fftBinWidth;
+        if (belongsToActiveBone(frequency, analysisBinWidth, boneSelection,
+                                rootFrequencyHz))
+            continue;
+        const float magnitude = 2.0f * std::abs(spectrum.bins[bin])
+            / std::max(spectrum.normalisation, 1.0f);
+        target[airCellForFrequency(frequency, design)] += 0.5
+            * static_cast<double>(magnitude) * magnitude
+            * static_cast<double>(spectrum.noisePowerCorrection);
+    }
+
+    const double maximumTarget = *std::max_element(target.begin(), target.end());
+    const double tau = std::max(1.0e-12, 0.01 * maximumTarget);
+    std::array<double, airFitCellCount> weights {};
+    for (std::size_t cell = 0; cell < airFitCellCount; ++cell)
+    {
+        const double denominator = target[cell] + tau;
+        weights[cell] = 1.0 / (denominator * denominator);
+    }
+
+    auto powers = initialPowers;
+    for (auto& power : powers)
+        power = std::clamp(power, 0.0, 4.0);
+    std::array<double, airFitCellCount> prediction {};
+    for (std::size_t cell = 0; cell < airFitCellCount; ++cell)
+        for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+            prediction[cell] += design.response[cell][band] * powers[band];
+
+    double meanDiagonal = 0.0;
+    for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+        for (std::size_t cell = 0; cell < airFitCellCount; ++cell)
+            meanDiagonal += weights[cell] * design.response[cell][band]
+                * design.response[cell][band];
+    meanDiagonal /= static_cast<double>(NeuralModel::airBandCount);
+    const double smoothness = 0.0025 * meanDiagonal;
+
+    // Deterministic projected coordinate descent solves for non-negative band
+    // powers. A small adjacent-band penalty makes the deliberately overlapping
+    // eight-filter representation stable without erasing broad spectral shape.
+    for (int sweep = 0; sweep < 48; ++sweep)
+    {
+        for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+        {
+            double numerator = 0.0;
+            double denominator = 0.0;
+            for (std::size_t cell = 0; cell < airFitCellCount; ++cell)
+            {
+                const double response = design.response[cell][band];
+                const double withoutCurrent = prediction[cell]
+                    - response * powers[band];
+                numerator += weights[cell] * response
+                    * (target[cell] - withoutCurrent);
+                denominator += weights[cell] * response * response;
+            }
+            int neighbours = 0;
+            if (band > 0)
+            {
+                numerator += smoothness * powers[band - 1];
+                ++neighbours;
+            }
+            if (band + 1 < NeuralModel::airBandCount)
+            {
+                numerator += smoothness * powers[band + 1];
+                ++neighbours;
+            }
+            denominator += smoothness * static_cast<double>(neighbours);
+            const double next = denominator > 1.0e-20
+                ? std::clamp(numerator / denominator, 0.0, 4.0) : 0.0;
+            const double delta = next - powers[band];
+            powers[band] = next;
+            for (std::size_t cell = 0; cell < airFitCellCount; ++cell)
+                prediction[cell] += design.response[cell][band] * delta;
+        }
+    }
+
+    AirFitResult result;
+    result.powers = powers;
+    for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+        result.amplitudes[band] = static_cast<float>(std::sqrt(powers[band]));
+    return result;
+}
+
+[[nodiscard]] float estimateDecay(const std::vector<SpectrumFrame>& spectra,
+                                  float frequencyHz, double sampleRate,
+                                  float durationSeconds)
+{
+    double sumTime = 0.0;
+    double sumLog = 0.0;
+    double sumTimeTime = 0.0;
+    double sumTimeLog = 0.0;
+    int count = 0;
+    for (const auto& frame : spectra)
+    {
+        if (frame.normalisedTime > 0.72f)
+            break;
+        const double time = frame.timeSeconds;
+        const double logAmplitude = std::log(std::max(
+            spectrumMagnitude(frame, frequencyHz, sampleRate), amplitudeFloor));
+        sumTime += time;
+        sumLog += logAmplitude;
+        sumTimeTime += time * time;
+        sumTimeLog += time * logAmplitude;
+        ++count;
+    }
+    const double denominator = static_cast<double>(count) * sumTimeTime
+        - sumTime * sumTime;
+    if (count < 3 || std::abs(denominator) < 1.0e-12)
+        return std::max(0.05f, 0.7f * durationSeconds);
+    const double slope = (static_cast<double>(count) * sumTimeLog
+                          - sumTime * sumLog) / denominator;
+    if (slope >= -0.01)
+        return std::clamp(2.0f * durationSeconds, 0.05f, 60.0f);
+    return std::clamp(static_cast<float>(-1.0 / slope), 0.02f, 60.0f);
+}
+
+void chooseLoop(const std::vector<TargetFrame>& targets,
+                const std::vector<SpectrumFrame>& spectra,
+                float duration, float& loopStart, float& loopEnd)
+{
+    float bestDistance = std::numeric_limits<float>::max();
+    std::size_t bestStart = targets.size() / 3;
+    std::size_t bestEnd = 5 * targets.size() / 6;
+    const std::size_t minimumSeparation = targets.size() / 4;
+    for (std::size_t first = targets.size() / 5;
+         first < 3 * targets.size() / 5; ++first)
+    {
+        for (std::size_t second = first + minimumSeparation;
+             second + 1 < targets.size(); ++second)
+        {
+            float distance = 0.0f;
+            for (std::size_t output = 0; output < NeuralModel::outputSize; ++output)
+            {
+                const float delta = targets[first][output] - targets[second][output];
+                const float firstSlope = targets[first + 1][output]
+                    - targets[first][output];
+                const float secondSlope = targets[second + 1][output]
+                    - targets[second][output];
+                const float slopeDelta = firstSlope - secondSlope;
+                distance += delta * delta + 0.35f * slopeDelta * slopeDelta;
+            }
+            distance /= static_cast<float>(NeuralModel::outputSize);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestStart = first;
+                bestEnd = second;
+            }
+        }
+    }
+    loopStart = std::clamp(spectra[bestStart].timeSeconds, 0.0f, duration - 0.002f);
+    loopEnd = std::clamp(spectra[bestEnd].timeSeconds,
+                         loopStart + 0.001f, duration);
+}
+
+[[nodiscard]] std::array<float, NeuralModel::inputSize> networkInputs(
+    float time, float durationSeconds)
+{
+    time = std::clamp(time, 0.0f, 1.0f);
+    const float centred = 2.0f * time - 1.0f;
+    const float timeSeconds = time * std::max(durationSeconds, 0.0f);
+    return { centred, centred * centred,
+             std::sin(twoPi * time), std::cos(twoPi * time),
+             std::sin(2.0f * twoPi * time), std::cos(2.0f * twoPi * time),
+             std::sin(4.0f * twoPi * time), std::cos(4.0f * twoPi * time),
+             std::exp(-8.0f * timeSeconds),
+             std::exp(-40.0f * timeSeconds) };
+}
+
+[[nodiscard]] float networkLoss(const NeuralModel& model,
+                                const std::vector<SpectrumFrame>& spectra,
+                                const std::vector<TargetFrame>& normalisedTargets)
+{
+    const auto& hiddenBiases = NeuralModelTrainingAccess::hiddenBiases(model);
+    const auto& inputWeights = NeuralModelTrainingAccess::inputWeights(model);
+    const auto& outputBiases = NeuralModelTrainingAccess::outputBiases(model);
+    const auto& outputWeights = NeuralModelTrainingAccess::outputWeights(model);
+    double loss = 0.0;
+    for (std::size_t frame = 0; frame < spectra.size(); ++frame)
+    {
+        const auto inputs = networkInputs(spectra[frame].normalisedTime,
+                                          model.durationSeconds());
+        std::array<float, NeuralModel::hiddenSize> hidden {};
+        for (std::size_t unit = 0; unit < NeuralModel::hiddenSize; ++unit)
+        {
+            float value = hiddenBiases[unit];
+            for (std::size_t input = 0; input < NeuralModel::inputSize; ++input)
+                value += inputWeights[unit * NeuralModel::inputSize + input]
+                    * inputs[input];
+            hidden[unit] = std::tanh(value);
+        }
+        for (std::size_t output = 0; output < NeuralModel::outputSize; ++output)
+        {
+            float prediction = outputBiases[output];
+            for (std::size_t unit = 0; unit < NeuralModel::hiddenSize; ++unit)
+                prediction += outputWeights[output * NeuralModel::hiddenSize + unit]
+                    * hidden[unit];
+            const double error = static_cast<double>(prediction)
+                - static_cast<double>(normalisedTargets[frame][output]);
+            loss += error * error;
+        }
+    }
+    return static_cast<float>(loss
+        / static_cast<double>(spectra.size() * NeuralModel::outputSize));
+}
+
+template <std::size_t Size>
+struct AdamState
+{
+    std::array<float, Size> first {};
+    std::array<float, Size> second {};
+
+    void update(std::array<float, Size>& values,
+                const std::array<float, Size>& gradients,
+                float learningRate, float beta1Correction,
+                float beta2Correction, int step) noexcept
+    {
+        constexpr float beta1 = 0.9f;
+        constexpr float beta2 = 0.999f;
+        constexpr float epsilon = 1.0e-8f;
+        (void) step;
+        for (std::size_t index = 0; index < Size; ++index)
+        {
+            first[index] = beta1 * first[index] + (1.0f - beta1) * gradients[index];
+            second[index] = beta2 * second[index]
+                + (1.0f - beta2) * gradients[index] * gradients[index];
+            const float correctedFirst = first[index] / beta1Correction;
+            const float correctedSecond = second[index] / beta2Correction;
+            values[index] -= learningRate * correctedFirst
+                / (std::sqrt(correctedSecond) + epsilon);
+        }
+    }
+};
+
+[[nodiscard]] bool train(NeuralModel& model,
+                         const std::vector<SpectrumFrame>& spectra,
+                         const std::vector<TargetFrame>& targets,
+                         const SampleLearner::ProgressCallback& callback,
+                         const SampleLearner::CancelPredicate& cancel,
+                         const PitchEstimate& pitch,
+                         float& initialLoss, float& finalLoss,
+                         int& completedEpochs)
+{
+    auto& outputMeans = NeuralModelTrainingAccess::outputMeans(model);
+    auto& outputScales = NeuralModelTrainingAccess::outputScales(model);
+    auto& inputWeights = NeuralModelTrainingAccess::inputWeights(model);
+    auto& hiddenBiases = NeuralModelTrainingAccess::hiddenBiases(model);
+    auto& outputWeights = NeuralModelTrainingAccess::outputWeights(model);
+    auto& outputBiases = NeuralModelTrainingAccess::outputBiases(model);
+    std::vector<TargetFrame> normalisedTargets = targets;
+    for (std::size_t output = 0; output < NeuralModel::outputSize; ++output)
+    {
+        double mean = 0.0;
+        for (const auto& target : targets)
+            mean += target[output];
+        mean /= static_cast<double>(targets.size());
+        double variance = 0.0;
+        for (const auto& target : targets)
+        {
+            const double delta = target[output] - mean;
+            variance += delta * delta;
+        }
+        variance /= static_cast<double>(targets.size());
+        const float scale = std::max(0.18f, static_cast<float>(std::sqrt(variance)));
+        outputMeans[output] = static_cast<float>(mean);
+        outputScales[output] = scale;
+        for (auto& target : normalisedTargets)
+            target[output] = (target[output] - static_cast<float>(mean)) / scale;
+    }
+
+    std::uint32_t randomState = 0x4e657572u;
+    const auto randomBipolar = [&randomState]()
+    {
+        randomState ^= randomState << 13;
+        randomState ^= randomState >> 17;
+        randomState ^= randomState << 5;
+        return 2.0f * static_cast<float>(randomState) / 4294967295.0f - 1.0f;
+    };
+    for (auto& weight : inputWeights)
+        weight = 0.35f * randomBipolar();
+    for (auto& weight : outputWeights)
+        weight = 0.025f * randomBipolar();
+
+    initialLoss = networkLoss(model, spectra, normalisedTargets);
+    float bestLoss = initialLoss;
+    auto bestInputWeights = inputWeights;
+    auto bestHiddenBiases = hiddenBiases;
+    auto bestOutputWeights = outputWeights;
+    auto bestOutputBiases = outputBiases;
+
+    AdamState<NeuralModel::hiddenSize * NeuralModel::inputSize> inputAdam;
+    AdamState<NeuralModel::hiddenSize> hiddenAdam;
+    AdamState<NeuralModel::outputSize * NeuralModel::hiddenSize> outputAdam;
+    AdamState<NeuralModel::outputSize> biasAdam;
+    float beta1Power = 1.0f;
+    float beta2Power = 1.0f;
+
+    for (int epoch = 0; epoch < trainingEpochCount; ++epoch)
+    {
+        if (cancellationRequested(cancel))
+            return false;
+
+        std::array<float, NeuralModel::hiddenSize * NeuralModel::inputSize> inputGradient {};
+        std::array<float, NeuralModel::hiddenSize> hiddenGradient {};
+        std::array<float, NeuralModel::outputSize * NeuralModel::hiddenSize> outputGradient {};
+        std::array<float, NeuralModel::outputSize> biasGradient {};
+
+        for (std::size_t frame = 0; frame < spectra.size(); ++frame)
+        {
+            const auto inputs = networkInputs(spectra[frame].normalisedTime,
+                                              model.durationSeconds());
+            std::array<float, NeuralModel::hiddenSize> hidden {};
+            for (std::size_t unit = 0; unit < NeuralModel::hiddenSize; ++unit)
+            {
+                float value = hiddenBiases[unit];
+                for (std::size_t input = 0; input < NeuralModel::inputSize; ++input)
+                    value += inputWeights[unit * NeuralModel::inputSize + input]
+                        * inputs[input];
+                hidden[unit] = std::tanh(value);
+            }
+
+            std::array<float, NeuralModel::outputSize> errors {};
+            for (std::size_t output = 0; output < NeuralModel::outputSize; ++output)
+            {
+                float prediction = outputBiases[output];
+                for (std::size_t unit = 0; unit < NeuralModel::hiddenSize; ++unit)
+                    prediction += outputWeights[output * NeuralModel::hiddenSize + unit]
+                        * hidden[unit];
+                errors[output] = prediction - normalisedTargets[frame][output];
+                biasGradient[output] += errors[output];
+                for (std::size_t unit = 0; unit < NeuralModel::hiddenSize; ++unit)
+                    outputGradient[output * NeuralModel::hiddenSize + unit]
+                        += errors[output] * hidden[unit];
+            }
+
+            for (std::size_t unit = 0; unit < NeuralModel::hiddenSize; ++unit)
+            {
+                float propagated = 0.0f;
+                for (std::size_t output = 0; output < NeuralModel::outputSize; ++output)
+                    propagated += errors[output]
+                        * outputWeights[output * NeuralModel::hiddenSize + unit];
+                propagated *= 1.0f - hidden[unit] * hidden[unit];
+                hiddenGradient[unit] += propagated;
+                for (std::size_t input = 0; input < NeuralModel::inputSize; ++input)
+                    inputGradient[unit * NeuralModel::inputSize + input]
+                        += propagated * inputs[input];
+            }
+        }
+
+        const float gradientScale = 1.0f / static_cast<float>(spectra.size());
+        double gradientSquareSum = 0.0;
+        const auto accumulateGradient = [&gradientSquareSum, gradientScale](auto& values)
+        {
+            for (auto& value : values)
+            {
+                value *= gradientScale;
+                gradientSquareSum += static_cast<double>(value) * value;
+            }
+        };
+        accumulateGradient(inputGradient);
+        accumulateGradient(hiddenGradient);
+        accumulateGradient(outputGradient);
+        accumulateGradient(biasGradient);
+        const float norm = static_cast<float>(std::sqrt(gradientSquareSum));
+        if (norm > 5.0f)
+        {
+            const float clip = 5.0f / norm;
+            const auto clipGradient = [clip](auto& values)
+            {
+                for (auto& value : values)
+                    value *= clip;
+            };
+            clipGradient(inputGradient);
+            clipGradient(hiddenGradient);
+            clipGradient(outputGradient);
+            clipGradient(biasGradient);
+        }
+
+        beta1Power *= 0.9f;
+        beta2Power *= 0.999f;
+        const float progress = static_cast<float>(epoch)
+            / static_cast<float>(trainingEpochCount - 1);
+        const float learningRate = 0.012f * (1.0f - 0.82f * progress);
+        const float beta1Correction = 1.0f - beta1Power;
+        const float beta2Correction = 1.0f - beta2Power;
+        inputAdam.update(inputWeights, inputGradient, learningRate,
+                         beta1Correction, beta2Correction, epoch + 1);
+        hiddenAdam.update(hiddenBiases, hiddenGradient, learningRate,
+                          beta1Correction, beta2Correction, epoch + 1);
+        outputAdam.update(outputWeights, outputGradient, learningRate,
+                          beta1Correction, beta2Correction, epoch + 1);
+        biasAdam.update(outputBiases, biasGradient, learningRate,
+                        beta1Correction, beta2Correction, epoch + 1);
+        completedEpochs = epoch + 1;
+
+        const float loss = networkLoss(model, spectra, normalisedTargets);
+        if (std::isfinite(loss) && loss < bestLoss)
+        {
+            bestLoss = loss;
+            bestInputWeights = inputWeights;
+            bestHiddenBiases = hiddenBiases;
+            bestOutputWeights = outputWeights;
+            bestOutputBiases = outputBiases;
+        }
+
+        if ((epoch & 3) == 0 || epoch + 1 == trainingEpochCount)
+            report(callback, SampleLearner::Stage::Training,
+                   0.55f + 0.44f * static_cast<float>(epoch + 1)
+                       / static_cast<float>(trainingEpochCount),
+                   pitch, "Teaching the neural timbre map");
+    }
+
+    inputWeights = bestInputWeights;
+    hiddenBiases = bestHiddenBiases;
+    outputWeights = bestOutputWeights;
+    outputBiases = bestOutputBiases;
+    finalLoss = bestLoss;
+    return true;
+}
+} // namespace
+
+SampleLearner::LearnResult SampleLearner::learn(
+    const std::vector<float>& monoSample,
+    double sampleRate,
+    ProgressCallback progressCallback,
+    CancelPredicate cancelPredicate)
+{
+    LearnResult result;
+    PitchEstimate pitch;
+    report(progressCallback, Stage::Conditioning, 0.0f, pitch,
+           "Conditioning the dropped sample");
+
+    std::vector<float> conditionedSample;
+    float sourcePeak = 0.0f;
+    float sourceRms = 0.0f;
+    if (!conditionSample(monoSample, sampleRate, conditionedSample,
+                         sourcePeak, sourceRms, result.error, cancelPredicate))
+    {
+        if (cancellationRequested(cancelPredicate))
+            result.cancelled = true;
+        return result;
+    }
+    if (cancellationRequested(cancelPredicate))
+    {
+        result.cancelled = true;
+        return result;
+    }
+
+    auto sample = resampleWindowedSinc(conditionedSample, sampleRate,
+                                       fixedAnalysisSampleRate, cancelPredicate);
+    if (cancellationRequested(cancelPredicate))
+    {
+        result.cancelled = true;
+        return result;
+    }
+    if (sample.size() < 256)
+    {
+        result.error = "The conditioned sample could not be resampled for analysis";
+        return result;
+    }
+    constexpr double analysisSampleRate = fixedAnalysisSampleRate;
+
+    report(progressCallback, Stage::Pitch, 0.10f, pitch,
+           "Listening across several pitch resolutions");
+    pitch = estimatePitch(sample, analysisSampleRate, cancelPredicate);
+    if (cancellationRequested(cancelPredicate))
+    {
+        result.cancelled = true;
+        return result;
+    }
+    if (!(pitch.frequencyHz > 0.0f) || pitch.confidence < 0.12f)
+    {
+        result.error = "No stable root pitch could be identified";
+        return result;
+    }
+    report(progressCallback, Stage::Pitch, 0.25f, pitch,
+           "Root note identified");
+    if (cancellationRequested(cancelPredicate))
+    {
+        result.cancelled = true;
+        return result;
+    }
+
+    auto model = std::unique_ptr<NeuralModel>(new NeuralModel());
+    auto& metadata = model->metadata_;
+    metadata.sourceSampleRate = sampleRate;
+    metadata.rootFrequencyHz = pitch.frequencyHz;
+    const float midi = 69.0f + 12.0f * std::log2(pitch.frequencyHz / 440.0f);
+    metadata.rootMidiNote = std::clamp(static_cast<int>(std::lround(midi)), 0, 127);
+    metadata.rootCents = 100.0f * (midi - static_cast<float>(metadata.rootMidiNote));
+    metadata.pitchConfidence = pitch.confidence;
+    metadata.durationSeconds = static_cast<float>(sample.size() - 1)
+        / static_cast<float>(analysisSampleRate);
+    metadata.sourcePeak = sourcePeak;
+    metadata.sourceRms = sourceRms;
+    makePreview(sample, metadata.waveformPreview);
+
+    report(progressCallback, Stage::Analysis, 0.28f, pitch,
+           "Tracing Core, Air, and Bone through time");
+    std::vector<SpectrumFrame> spectra;
+    spectra.reserve(analysisFrameCount);
+    for (int frame = 0; frame < analysisFrameCount; ++frame)
+    {
+        const float linear = static_cast<float>(frame)
+            / static_cast<float>(analysisFrameCount - 1);
+        const float time = std::pow(linear, 1.65f);
+        spectra.push_back(makeSpectrumFrame(sample, analysisSampleRate, time));
+        if ((frame & 7) == 0)
+        {
+            if (cancellationRequested(cancelPredicate))
+            {
+                result.cancelled = true;
+                return result;
+            }
+            report(progressCallback, Stage::Analysis,
+                   0.28f + 0.15f * linear, pitch,
+                   "Tracing spectral evolution");
+        }
+    }
+    const auto pitchContour = estimatePitchContour(
+        sample, analysisSampleRate, spectra, pitch.frequencyHz,
+        cancelPredicate);
+    if (cancellationRequested(cancelPredicate))
+    {
+        result.cancelled = true;
+        return result;
+    }
+
+    std::vector<std::array<float, NeuralModel::harmonicCount>> harmonicAmplitudes;
+    harmonicAmplitudes.reserve(spectra.size());
+    std::vector<std::array<float, NeuralModel::harmonicCount>> harmonicPhases;
+    harmonicPhases.reserve(spectra.size());
+    std::vector<SpectrumFrame> residualSpectra;
+    residualSpectra.reserve(spectra.size());
+    std::vector<SpectrumFrame> transientResidualSpectra;
+    transientResidualSpectra.reserve(spectra.size());
+    for (std::size_t frameIndex = 0; frameIndex < spectra.size(); ++frameIndex)
+    {
+        const float framePitchHz = pitch.frequencyHz
+            * std::exp2(pitchContour[frameIndex] / 12.0f);
+        auto longAnalysis = analyseHarmonicResidual(
+            sample, analysisSampleRate, spectra[frameIndex].normalisedTime,
+            framePitchHz);
+        const auto transientWindow = transientAnalysisWindowSize(
+            framePitchHz, analysisSampleRate);
+        if (transientWindow < spectrumSize)
+        {
+            auto transientAnalysis = analyseHarmonicResidual(
+                sample, analysisSampleRate,
+                spectra[frameIndex].normalisedTime, framePitchHz,
+                transientWindow);
+            harmonicAmplitudes.push_back(transientAnalysis.amplitudes);
+            harmonicPhases.push_back(transientAnalysis.sinePhases);
+            transientResidualSpectra.push_back(
+                std::move(transientAnalysis.residualSpectrum));
+        }
+        else
+        {
+            harmonicAmplitudes.push_back(longAnalysis.amplitudes);
+            harmonicPhases.push_back(longAnalysis.sinePhases);
+            transientResidualSpectra.push_back(longAnalysis.residualSpectrum);
+        }
+        // Bone selection and decay keep the long aperture: persistent modal
+        // identity needs frequency resolution more than onset precision.
+        residualSpectra.push_back(std::move(longAnalysis.residualSpectrum));
+        if ((frameIndex & 7u) == 0u && cancellationRequested(cancelPredicate))
+        {
+            result.cancelled = true;
+            return result;
+        }
+    }
+
+    const auto boneSelection = findPersistentBoneModes(
+        residualSpectra, pitch.frequencyHz, analysisSampleRate);
+    model->boneFrequencyRatios_ = boneSelection.ratios;
+    model->boneModeReliabilities_ = boneSelection.reliabilities;
+    model->initialHarmonicPhases_ = harmonicPhases.front();
+    for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
+    {
+        const float frequency = pitch.frequencyHz * boneSelection.ratios[mode];
+        const auto firstFrameStart = -static_cast<std::ptrdiff_t>(spectrumSize / 2);
+        float phase = spectrumPhase(residualSpectra.front(), frequency,
+                                    analysisSampleRate)
+            - frequency * static_cast<float>(firstFrameStart)
+                / static_cast<float>(analysisSampleRate)
+            + 0.25f;
+        phase -= std::floor(phase);
+        model->initialBonePhases_[mode] = phase;
+        model->boneDecaySeconds_[mode] = estimateDecay(
+            residualSpectra, frequency, analysisSampleRate,
+            metadata.durationSeconds);
+    }
+
+    const float lowerAir = airLowerFrequencyHz;
+    const float upperAir = std::min(
+        airUpperFrequencyHz,
+        0.42f * static_cast<float>(analysisSampleRate));
+    const float airEdgeRatio = std::pow(
+        upperAir / lowerAir,
+        1.0f / static_cast<float>(NeuralModel::airBandCount));
+    const float airWidthOctaves = std::log2(airEdgeRatio);
+    for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+    {
+        model->airCentreFrequenciesHz_[band] = lowerAir * std::pow(
+            airEdgeRatio, static_cast<float>(band) + 0.5f);
+        model->airBandwidthOctaves_[band] = airWidthOctaves;
+    }
+    constexpr std::array<std::size_t, 4> airAnalysisWindowSizes {
+        512, 1024, 2048, spectrumSize
+    };
+    std::array<AirFitDesign, airAnalysisWindowSizes.size()> airFitDesigns {};
+    for (std::size_t index = 0; index < airFitDesigns.size(); ++index)
+    {
+        airFitDesigns[index] = makeAirFitDesign(
+            model->airCentreFrequenciesHz_, model->airBandwidthOctaves_,
+            boneSelection, pitch.frequencyHz, analysisSampleRate,
+            airAnalysisWindowSizes[index]);
+    }
+    const auto airDesignIndex = [&airAnalysisWindowSizes] (
+        std::size_t windowSize) noexcept
+    {
+        std::size_t index = 0;
+        while (index + 1 < airAnalysisWindowSizes.size()
+               && airAnalysisWindowSizes[index] < windowSize)
+            ++index;
+        return index;
+    };
+
+    std::vector<TargetFrame> targets(spectra.size());
+    std::array<double, NeuralModel::airBandCount> previousAirPowers {};
+    for (std::size_t frameIndex = 0; frameIndex < spectra.size(); ++frameIndex)
+    {
+        const auto& boneSpectrum = residualSpectra[frameIndex];
+        const auto& transientSpectrum = transientResidualSpectra[frameIndex];
+        auto& target = targets[frameIndex];
+        for (std::size_t harmonic = 0;
+             harmonic < NeuralModel::harmonicCount; ++harmonic)
+        {
+            const float amplitude = harmonicAmplitudes[frameIndex][harmonic];
+            target[harmonic] = std::log(std::max(amplitude, amplitudeFloor));
+        }
+
+        const auto airFit = fitAirFilterbank(
+            transientSpectrum,
+            airFitDesigns[airDesignIndex(
+                transientSpectrum.analysisWindowSize)],
+            boneSelection, pitch.frequencyHz,
+            analysisSampleRate, previousAirPowers);
+        previousAirPowers = airFit.powers;
+        for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+        {
+            target[NeuralModel::harmonicCount + band] = std::log(
+                std::max(airFit.amplitudes[band], amplitudeFloor));
+        }
+
+        for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
+        {
+            const float amplitude = boneSelection.reliabilities[mode] > 0.0f
+                ? spectrumMagnitude(
+                    boneSpectrum, pitch.frequencyHz * boneSelection.ratios[mode],
+                    analysisSampleRate)
+                : 0.0f;
+            target[NeuralModel::harmonicCount + NeuralModel::airBandCount + mode]
+                = std::log(std::max(amplitude, amplitudeFloor));
+        }
+        target[NeuralModel::pitchOutputIndex] = pitchContour[frameIndex];
+    }
+
+    chooseLoop(targets, spectra, metadata.durationSeconds,
+               metadata.loopStartSeconds, metadata.loopEndSeconds);
+    report(progressCallback, Stage::Analysis, 0.54f, pitch,
+           "Spectral memory prepared");
+
+    if (!train(*model, spectra, targets, progressCallback, cancelPredicate,
+               pitch, result.initialLoss, result.finalLoss,
+               result.trainingEpochs))
+    {
+        result.cancelled = true;
+        return result;
+    }
+    metadata.initialLoss = result.initialLoss;
+    metadata.finalLoss = result.finalLoss;
+    metadata.trainingEpochs = result.trainingEpochs;
+    result.model = std::move(model);
+    report(progressCallback, Stage::Training, 1.0f, pitch,
+           "Neural instrument ready to play");
+    return result;
+}
+
+} // namespace neuramar

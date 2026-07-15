@@ -30,7 +30,7 @@ jobs:
         working-directory: vocalor
         run: ./scripts/build-macos.sh
 
-      - name: Package Vocalor (ad-hoc signed)
+      - name: Package Vocalor (ad-hoc-signed bundles)
         working-directory: vocalor
         run: ./scripts/sign-and-package-macos.sh
 
@@ -38,7 +38,7 @@ jobs:
         working-directory: drumalor
         run: ./scripts/build-macos.sh
 
-      - name: Package Drumalor (ad-hoc signed)
+      - name: Package Drumalor (ad-hoc-signed bundles)
         working-directory: drumalor
         run: ./scripts/sign-and-package-macos.sh
 
@@ -46,8 +46,16 @@ jobs:
         working-directory: mars
         run: ./scripts/build-macos.sh
 
-      - name: Package Mars (ad-hoc signed)
+      - name: Package Mars (ad-hoc-signed bundles)
         working-directory: mars
+        run: ./scripts/sign-and-package-macos.sh
+
+      - name: Build Neuramar and run tests
+        working-directory: neuramar
+        run: ./scripts/build-macos.sh
+
+      - name: Package Neuramar (ad-hoc-signed bundles)
+        working-directory: neuramar
         run: ./scripts/sign-and-package-macos.sh
 
       # Retained on the workflow run itself (downloadable by anyone with repo
@@ -64,10 +72,12 @@ jobs:
             drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg
             mars/build-macos/dist/Mars-*-macOS-universal.zip
             mars/build-macos/dist/Mars-*-macOS-universal.pkg
+            neuramar/build-macos/dist/Neuramar-*-macOS-universal.zip
+            neuramar/build-macos/dist/Neuramar-*-macOS-universal.pkg
           if-no-files-found: error
           retention-days: 14
 
-      # Publish a single rolling "nightly" release so all three instruments share a
+      # Publish a single rolling "nightly" release so all four instruments share a
       # stable public download URL.
       - name: Publish rolling "nightly" release
         env:
@@ -84,20 +94,43 @@ jobs:
             "drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg"
             mars/build-macos/dist/Mars-*-macOS-universal.zip
             mars/build-macos/dist/Mars-*-macOS-universal.pkg
+            neuramar/build-macos/dist/Neuramar-*-macOS-universal.zip
+            neuramar/build-macos/dist/Neuramar-*-macOS-universal.pkg
           )
+          if (( ${#assets[@]} != 8 )); then
+            echo "error: expected exactly eight release assets, found ${#assets[@]}" >&2
+            printf '  %s\n' "${assets[@]}" >&2
+            exit 1
+          fi
           for asset in "${assets[@]}"; do
             if [[ ! -f "$asset" ]]; then
               echo "error: missing release asset: $asset" >&2
               exit 1
             fi
           done
-          expected_asset_names=()
+
+          # Unique names let the previous complete release remain downloadable
+          # throughout this upload. A rerun for the same commit may safely
+          # replace only that commit's staged files.
+          STAGING_DIR="${RUNNER_TEMP}/nightly-release-assets"
+          rm -rf "$STAGING_DIR"
+          mkdir -p "$STAGING_DIR"
+          staged_assets=()
           for asset in "${assets[@]}"; do
+            filename="${asset##*/}"
+            stem="${filename%.*}"
+            extension="${filename##*.}"
+            staged="${STAGING_DIR}/${stem}-g${SHORT_SHA}.${extension}"
+            cp -p "$asset" "$staged"
+            staged_assets+=("$staged")
+          done
+          expected_asset_names=()
+          for asset in "${staged_assets[@]}"; do
             expected_asset_names+=("${asset##*/}")
           done
 
           TITLE="VST instruments nightly ($DATE)"
-          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, and Mars from \`main\` ($SHORT_SHA).
+          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, Mars, and Neuramar from \`main\` ($SHORT_SHA).
 
           **These bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally, clear the quarantine flag after unzipping, e.g.:
 
@@ -105,17 +138,41 @@ jobs:
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Vocalor.vst3 Library/Audio/Plug-Ins/Components/Vocalor.component Applications/Vocalor.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Drumalor.vst3 Library/Audio/Plug-Ins/Components/Drumalor.component Applications/Drumalor.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Mars.vst3 Library/Audio/Plug-Ins/Components/Mars.component Applications/Mars.app
+          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Neuramar.vst3 Library/Audio/Plug-Ins/Components/Neuramar.component Applications/Neuramar.app
           \`\`\`
 
           Not intended for production distribution."
 
           if gh release view nightly >/dev/null 2>&1; then
-            # Keep the existing public release available if an upload fails.
-            gh release upload nightly "${assets[@]}" --clobber
+            gh release upload nightly "${staged_assets[@]}" --clobber
 
-            # --clobber replaces equal filenames but cannot remove assets whose
-            # versioned names changed. Prune only after all current uploads
-            # succeed, so a failed build/upload never empties the rolling release.
+            published_asset_names=()
+            while IFS= read -r asset_name; do
+              published_asset_names+=("$asset_name")
+            done < <(gh api \
+              "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" \
+              --jq '.assets[] | select(.size > 0) | .name')
+            for expected_name in "${expected_asset_names[@]}"; do
+              found=0
+              for published_name in "${published_asset_names[@]}"; do
+                if [[ "$published_name" == "$expected_name" ]]; then
+                  found=1
+                  break
+                fi
+              done
+              if (( found == 0 )); then
+                echo "error: uploaded release asset was not verified: $expected_name" >&2
+                exit 1
+              fi
+            done
+
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" \
+              -f sha="$GITHUB_SHA" -F force=true >/dev/null
+            gh release edit nightly --title "$TITLE" --prerelease --notes "$NOTES"
+
+            # Prune only after upload verification and metadata/tag switching.
+            # If pruning itself fails, both complete generations remain usable.
             while IFS=$'\t' read -r asset_id asset_name; do
               is_expected=0
               for expected_name in "${expected_asset_names[@]}"; do
@@ -132,13 +189,8 @@ jobs:
             done < <(gh api \
               "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" \
               --jq '.assets[] | [.id, .name] | @tsv')
-
-            gh api --method PATCH \
-              "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" \
-              -f sha="$GITHUB_SHA" -F force=true >/dev/null
-            gh release edit nightly --title "$TITLE" --prerelease --notes "$NOTES"
           else
-            gh release create nightly "${assets[@]}" \
+            gh release create nightly "${staged_assets[@]}" \
               --title "$TITLE" \
               --target "$GITHUB_SHA" \
               --prerelease \

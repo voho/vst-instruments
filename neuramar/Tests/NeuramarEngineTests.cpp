@@ -1,0 +1,1435 @@
+#include "DSP/AirFilterbank.h"
+#include "DSP/NeuramarEngine.h"
+#include "DSP/NeuralModel.h"
+#include "DSP/SampleLearner.h"
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <complex>
+#include <cstdint>
+#include <cstdlib>
+#include <iostream>
+#include <limits>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace
+{
+constexpr double pi = 3.14159265358979323846;
+constexpr std::array<float, neuramar::NeuralModel::boneModeCount>
+    persistentBoneRatios { 1.35f, 2.35f, 3.35f, 4.35f, 5.35f, 6.35f };
+constexpr std::array<float, neuramar::NeuralModel::boneModeCount>
+    transientBoneRatios { 1.68f, 2.68f, 3.68f, 4.68f, 5.68f, 6.68f };
+int failures = 0;
+
+void expect(bool condition, const std::string& message)
+{
+    if (!condition)
+    {
+        std::cerr << "FAIL: " << message << '\n';
+        ++failures;
+    }
+}
+
+[[nodiscard]] std::vector<float> makeLearningSample(double sampleRate,
+                                                     double frequencyHz,
+                                                     double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    std::uint32_t noiseState = 0x73594a1du;
+    float previousNoise = 0.0f;
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.008);
+        const double tail = 0.82 + 0.18 * std::exp(-time / 0.48);
+        const double evolution = 0.5 + 0.5 * std::sin(2.0 * pi * 0.73 * time);
+        double value = 0.58 * std::sin(2.0 * pi * frequencyHz * time + 0.21);
+        value += (0.20 + 0.08 * evolution)
+            * std::sin(2.0 * pi * 2.0 * frequencyHz * time + 1.07);
+        value += (0.105 - 0.035 * evolution)
+            * std::sin(2.0 * pi * 3.0 * frequencyHz * time + 2.11);
+        value += 0.055 * std::sin(2.0 * pi * 5.0 * frequencyHz * time + 0.73);
+        value += 0.055 * std::exp(-time / 0.34)
+            * std::sin(2.0 * pi * 2.71 * frequencyHz * time + 1.61);
+
+        noiseState ^= noiseState << 13;
+        noiseState ^= noiseState >> 17;
+        noiseState ^= noiseState << 5;
+        const float noise = static_cast<float>(noiseState)
+            * (2.0f / 4294967295.0f) - 1.0f;
+        const float highNoise = noise - 0.92f * previousNoise;
+        previousNoise = noise;
+        value += 0.012 * (0.35 + 0.65 * evolution) * highNoise;
+        sample[index] = static_cast<float>(0.78 * attack * tail * value);
+    }
+    return sample;
+}
+
+[[nodiscard]] std::vector<float> makeMissingFundamentalSample(
+    double sampleRate, double fundamentalHz, double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    constexpr double levels[] { 0.0, 0.0, 0.52, 0.34, 0.23, 0.16 };
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double envelope = (1.0 - std::exp(-time / 0.006))
+            * (0.88 + 0.12 * std::exp(-time / 0.55));
+        double value = 0.0;
+        for (int harmonic = 2; harmonic <= 5; ++harmonic)
+            value += levels[harmonic] * std::sin(
+                2.0 * pi * fundamentalHz * static_cast<double>(harmonic) * time
+                + 0.37 * static_cast<double>(harmonic));
+        sample[index] = static_cast<float>(envelope * value);
+    }
+    return sample;
+}
+
+[[nodiscard]] std::vector<float> makeBrightHighPitchSample(
+    double sampleRate, double fundamentalHz, double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    const int harmonicCount = std::max(1, std::min(18,
+        static_cast<int>(std::floor(0.44 * sampleRate / fundamentalHz))));
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double envelope = (1.0 - std::exp(-time / 0.004))
+            * (0.80 + 0.20 * std::exp(-time / 0.42));
+        double value = 0.0;
+        for (int harmonic = 1; harmonic <= harmonicCount; ++harmonic)
+        {
+            const double level = 0.31 / std::pow(static_cast<double>(harmonic), 0.62);
+            value += level * std::sin(
+                2.0 * pi * fundamentalHz * static_cast<double>(harmonic) * time
+                + 0.19 * static_cast<double>(harmonic * harmonic));
+        }
+        sample[index] = static_cast<float>(envelope * value);
+    }
+    return sample;
+}
+
+[[nodiscard]] std::vector<float> makeSlowPitchBendSample(
+    double sampleRate, double centreFrequencyHz, double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    double phase = 0.0;
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double position = static_cast<double>(index)
+            / static_cast<double>(std::max<std::size_t>(1, sample.size() - 1));
+        const double semitones = -1.7 + 3.4 * position;
+        const double frequency = centreFrequencyHz * std::exp2(semitones / 12.0);
+        phase += frequency / sampleRate;
+        phase -= std::floor(phase);
+        const double angle = 2.0 * pi * phase;
+        const double envelope = (1.0 - std::exp(-time / 0.006))
+            * (0.94 + 0.06 * std::exp(-time / 0.5));
+        sample[index] = static_cast<float>(envelope
+            * (0.68 * std::sin(angle + 0.13)
+               + 0.21 * std::sin(2.0 * angle + 0.71)
+               + 0.08 * std::sin(3.0 * angle - 0.39)));
+    }
+    return sample;
+}
+
+[[nodiscard]] std::vector<float> makeAirSeparationSample(
+    double sampleRate, bool includeNoise)
+{
+    constexpr double fundamentalHz = 187.5;
+    constexpr double durationSeconds = 0.96;
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    const int harmonicCount = std::max(1, std::min(32,
+        static_cast<int>(std::floor(0.42 * sampleRate / fundamentalHz))));
+    std::uint32_t noiseState = 0x6a09e667u;
+    float previousNoise = 0.0f;
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double envelope = 1.0 - std::exp(-time / 0.006);
+        double value = 0.0;
+        for (int harmonic = 1; harmonic <= harmonicCount; ++harmonic)
+        {
+            const double level = 0.42
+                / std::pow(static_cast<double>(harmonic), 0.82);
+            value += level * std::sin(
+                2.0 * pi * fundamentalHz * static_cast<double>(harmonic) * time
+                + 0.137 * static_cast<double>(harmonic * harmonic));
+        }
+
+        if (includeNoise)
+        {
+            noiseState ^= noiseState << 13;
+            noiseState ^= noiseState >> 17;
+            noiseState ^= noiseState << 5;
+            const float noise = static_cast<float>(noiseState)
+                * (2.0f / 4294967295.0f) - 1.0f;
+            const float highNoise = noise - 0.94f * previousNoise;
+            previousNoise = noise;
+            value += 0.085 * static_cast<double>(highNoise);
+        }
+        sample[index] = static_cast<float>(envelope * value);
+    }
+    return sample;
+}
+
+[[nodiscard]] std::vector<float> makePersistentBoneSample(double sampleRate)
+{
+    constexpr double fundamentalHz = 187.5;
+    constexpr double durationSeconds = 1.20;
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double tonalAttack = 1.0 - std::exp(-time / 0.004);
+        double value = tonalAttack
+            * (0.62 * std::sin(2.0 * pi * fundamentalHz * time + 0.17)
+               + 0.18 * std::sin(2.0 * pi * 2.0 * fundamentalHz * time + 0.83)
+               + 0.08 * std::sin(2.0 * pi * 3.0 * fundamentalHz * time - 0.41));
+
+        for (std::size_t mode = 0; mode < persistentBoneRatios.size(); ++mode)
+        {
+            value += tonalAttack * 0.050 * std::sin(
+                2.0 * pi * fundamentalHz * persistentBoneRatios[mode] * time
+                + 0.43 * static_cast<double>(mode + 1));
+            value += 0.16 * std::exp(-time / 0.012) * std::sin(
+                2.0 * pi * fundamentalHz * transientBoneRatios[mode] * time
+                + 0.61 * static_cast<double>(mode + 1));
+        }
+        sample[index] = static_cast<float>(value);
+    }
+    return sample;
+}
+
+[[nodiscard]] std::vector<float> makeEvolvingAirSample(double sampleRate)
+{
+    constexpr double fundamentalHz = 187.5;
+    constexpr double durationSeconds = 1.10;
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    std::uint32_t noiseState = 0xbb67ae85u;
+    float lowNoise = 0.0f;
+    float previousNoise = 0.0f;
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double position = static_cast<double>(index)
+            / static_cast<double>(std::max<std::size_t>(1, sample.size() - 1));
+        const double envelope = 1.0 - std::exp(-time / 0.006);
+        noiseState ^= noiseState << 13;
+        noiseState ^= noiseState >> 17;
+        noiseState ^= noiseState << 5;
+        const float noise = static_cast<float>(noiseState)
+            * (2.0f / 4294967295.0f) - 1.0f;
+        lowNoise += 0.08f * (noise - lowNoise);
+        const float highNoise = noise - previousNoise;
+        previousNoise = noise;
+        const double stochastic = (1.0 - position) * 0.50 * lowNoise
+            + position * 0.075 * highNoise;
+        const double tonal = 0.54 * std::sin(
+            2.0 * pi * fundamentalHz * time + 0.17)
+            + 0.17 * std::sin(
+                2.0 * pi * 2.0 * fundamentalHz * time + 0.71);
+        sample[index] = static_cast<float>(envelope * (tonal + stochastic));
+    }
+    return sample;
+}
+
+[[nodiscard]] std::vector<float> makeTransientAirSample(double sampleRate)
+{
+    constexpr double fundamentalHz = 196.0;
+    constexpr double durationSeconds = 0.82;
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    std::uint32_t noiseState = 0x3c6ef372u;
+    float previousNoise = 0.0f;
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double tonalAttack = 1.0 - std::exp(-time / 0.004);
+        const double tonal = tonalAttack
+            * (0.58 * std::sin(2.0 * pi * fundamentalHz * time + 0.19)
+               + 0.18 * std::sin(
+                   2.0 * pi * 2.0 * fundamentalHz * time + 0.73));
+        noiseState ^= noiseState << 13;
+        noiseState ^= noiseState >> 17;
+        noiseState ^= noiseState << 5;
+        const float noise = static_cast<float>(noiseState)
+            * (2.0f / 4294967295.0f) - 1.0f;
+        const float highNoise = noise - 0.96f * previousNoise;
+        previousNoise = noise;
+        const double burst = 0.24 * std::exp(-time / 0.008)
+            * static_cast<double>(highNoise);
+        sample[index] = static_cast<float>(tonal + burst);
+    }
+    return sample;
+}
+
+[[nodiscard]] float rms(const std::vector<float>& values,
+                        std::size_t first = 0)
+{
+    if (first >= values.size())
+        return 0.0f;
+    double sum = 0.0;
+    for (std::size_t index = first; index < values.size(); ++index)
+        sum += static_cast<double>(values[index]) * values[index];
+    return static_cast<float>(std::sqrt(sum
+        / static_cast<double>(values.size() - first)));
+}
+
+[[nodiscard]] float renderLayerDifferenceRms(
+    const neuramar::NeuralModel& model, double sampleRate, int midiNote,
+    float airLevel, float boneLevel)
+{
+    neuramar::NeuramarEngine dry;
+    neuramar::NeuramarEngine wet;
+    dry.prepare(sampleRate, 128);
+    wet.prepare(sampleRate, 128);
+    dry.setModel(&model);
+    wet.setModel(&model);
+
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.bodyLock = 0.0f;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.brightness = 0.5f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 0.08f;
+    dry.setParameters(parameters);
+    parameters.air = airLevel;
+    parameters.bone = boneLevel;
+    wet.setParameters(parameters);
+
+    dry.noteOn(midiNote, 1.0f);
+    wet.noteOn(midiNote, 1.0f);
+    const int sampleCount = static_cast<int>(std::lround(0.82 * sampleRate));
+    std::vector<float> difference(static_cast<std::size_t>(sampleCount), 0.0f);
+    std::array<float, 128> dryLeft {};
+    std::array<float, 128> dryRight {};
+    std::array<float, 128> wetLeft {};
+    std::array<float, 128> wetRight {};
+    for (int offset = 0; offset < sampleCount; offset += 128)
+    {
+        const int count = std::min(128, sampleCount - offset);
+        dry.process(dryLeft.data(), dryRight.data(), count);
+        wet.process(wetLeft.data(), wetRight.data(), count);
+        for (int index = 0; index < count; ++index)
+            difference[static_cast<std::size_t>(offset + index)]
+                = wetLeft[static_cast<std::size_t>(index)]
+                - dryLeft[static_cast<std::size_t>(index)];
+    }
+    return rms(difference, static_cast<std::size_t>(0.16 * sampleRate));
+}
+
+struct AirMetrics
+{
+    float medianFraction { 0.0f };
+    float medianAir { 0.0f };
+    float medianCore { 0.0f };
+};
+
+[[nodiscard]] AirMetrics measureAir(const neuramar::NeuralModel& model)
+{
+    constexpr std::array<float, 7> times {
+        0.20f, 0.30f, 0.40f, 0.50f, 0.60f, 0.70f, 0.80f
+    };
+    std::array<float, times.size()> fractions {};
+    std::array<float, times.size()> airValues {};
+    std::array<float, times.size()> coreValues {};
+    for (std::size_t index = 0; index < times.size(); ++index)
+    {
+        neuramar::SynthesisFrame frame;
+        model.evaluate(times[index], frame);
+        double airSquare = 0.0;
+        double coreSquare = 0.0;
+        for (const float amplitude : frame.airAmplitudes)
+            airSquare += static_cast<double>(amplitude) * amplitude;
+        for (const float amplitude : frame.harmonicAmplitudes)
+            coreSquare += static_cast<double>(amplitude) * amplitude;
+        airValues[index] = static_cast<float>(std::sqrt(airSquare));
+        coreValues[index] = static_cast<float>(std::sqrt(coreSquare));
+        fractions[index] = airValues[index] / std::max(coreValues[index], 1.0e-6f);
+    }
+    std::sort(fractions.begin(), fractions.end());
+    std::sort(airValues.begin(), airValues.end());
+    std::sort(coreValues.begin(), coreValues.end());
+    const std::size_t middle = times.size() / 2;
+    return { fractions[middle], airValues[middle], coreValues[middle] };
+}
+
+[[nodiscard]] std::string describeBoneModes(const neuramar::NeuralModel& model)
+{
+    std::string result;
+    const auto ratios = model.boneFrequencyRatios();
+    const auto decays = model.boneDecaySeconds();
+    const auto reliabilities = model.boneModeReliabilities();
+    for (std::size_t mode = 0; mode < ratios.size(); ++mode)
+    {
+        if (!result.empty())
+            result += ", ";
+        result += "(" + std::to_string(ratios[mode])
+            + ", rel=" + std::to_string(reliabilities[mode])
+            + ", decay=" + std::to_string(decays[mode]) + ")";
+    }
+    return result;
+}
+
+[[nodiscard]] float predictedAirCentroid(const neuramar::NeuralModel& model,
+                                         float normalisedTime)
+{
+    neuramar::SynthesisFrame frame;
+    model.evaluate(normalisedTime, frame);
+    const auto centres = model.airCentreFrequenciesHz();
+    const auto widths = model.airBandwidthOctaves();
+    std::array<neuramar::airfilter::Coefficients,
+               neuramar::NeuralModel::airBandCount> coefficients {};
+    for (std::size_t band = 0; band < coefficients.size(); ++band)
+        coefficients[band] = neuramar::airfilter::makeCoefficients(
+            centres[band], widths[band], 48000.0f);
+
+    double weightedFrequency = 0.0;
+    double totalPower = 0.0;
+    constexpr int analysisBins = 1024;
+    for (int bin = 1; bin < analysisBins; ++bin)
+    {
+        const float frequency = 16000.0f * static_cast<float>(bin)
+            / static_cast<float>(analysisBins);
+        double power = 0.0;
+        for (std::size_t band = 0; band < coefficients.size(); ++band)
+        {
+            const double amplitude = frame.airAmplitudes[band];
+            power += amplitude * amplitude
+                * neuramar::airfilter::unitNoisePowerResponse(
+                    coefficients[band], frequency, 48000.0f);
+        }
+        weightedFrequency += static_cast<double>(frequency) * power;
+        totalPower += power;
+    }
+    return static_cast<float>(weightedFrequency
+        / std::max(totalPower, 1.0e-20));
+}
+
+[[nodiscard]] float spectralPeak(const std::vector<float>& signal,
+                                 double sampleRate, float expectedHz)
+{
+    const std::size_t first = std::min<std::size_t>(signal.size() / 5,
+                                                    signal.size());
+    const std::size_t count = std::min<std::size_t>(16384, signal.size() - first);
+    float bestFrequency = expectedHz;
+    double bestEnergy = -1.0;
+    const float lower = 0.94f * expectedHz;
+    const float upper = 1.06f * expectedHz;
+    const float step = std::max(0.20f, expectedHz / 1000.0f);
+    for (float frequency = lower; frequency <= upper; frequency += step)
+    {
+        std::complex<double> sum;
+        const std::complex<double> rotation = std::polar(
+            1.0, -2.0 * pi * static_cast<double>(frequency) / sampleRate);
+        std::complex<double> oscillator(1.0, 0.0);
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const double window = 0.5 - 0.5 * std::cos(
+                2.0 * pi * static_cast<double>(index)
+                / static_cast<double>(std::max<std::size_t>(1, count - 1)));
+            sum += static_cast<double>(signal[first + index]) * window * oscillator;
+            oscillator *= rotation;
+        }
+        const double energy = std::norm(sum);
+        if (energy > bestEnergy)
+        {
+            bestEnergy = energy;
+            bestFrequency = frequency;
+        }
+    }
+    return bestFrequency;
+}
+
+[[nodiscard]] std::vector<float> renderNote(neuramar::NeuramarEngine& engine,
+                                            int midiNote, int sampleCount)
+{
+    std::vector<float> left(static_cast<std::size_t>(sampleCount), 0.0f);
+    std::vector<float> right(static_cast<std::size_t>(sampleCount), 0.0f);
+    engine.noteOn(midiNote, 0.82f);
+    constexpr int blockSize = 128;
+    for (int offset = 0; offset < sampleCount; offset += blockSize)
+    {
+        const int count = std::min(blockSize, sampleCount - offset);
+        engine.process(left.data() + offset, right.data() + offset, count);
+    }
+    engine.allSoundOff();
+    for (std::size_t index = 0; index < left.size(); ++index)
+        left[index] = 0.5f * (left[index] + right[index]);
+    return left;
+}
+
+[[nodiscard]] float windowedSinusoidAmplitude(
+    const std::vector<float>& signal, double sampleRate,
+    double centreSeconds, double frequencyHz)
+{
+    const auto centre = static_cast<std::ptrdiff_t>(std::llround(
+        centreSeconds * sampleRate));
+    const auto halfWindow = static_cast<std::ptrdiff_t>(std::llround(
+        0.040 * sampleRate));
+    const auto first = std::max<std::ptrdiff_t>(0, centre - halfWindow);
+    const auto last = std::min<std::ptrdiff_t>(
+        static_cast<std::ptrdiff_t>(signal.size()), centre + halfWindow + 1);
+    if (last - first < 32)
+        return 0.0f;
+
+    double cosineCosine = 0.0;
+    double sineSine = 0.0;
+    double cosineSine = 0.0;
+    double signalCosine = 0.0;
+    double signalSine = 0.0;
+    const double denominator = static_cast<double>(last - first - 1);
+    for (auto index = first; index < last; ++index)
+    {
+        const double position = static_cast<double>(index - first) / denominator;
+        const double window = 0.5 - 0.5 * std::cos(2.0 * pi * position);
+        const double angle = 2.0 * pi * frequencyHz
+            * static_cast<double>(index) / sampleRate;
+        const double cosine = std::cos(angle);
+        const double sine = std::sin(angle);
+        const double value = signal[static_cast<std::size_t>(index)];
+        cosineCosine += window * cosine * cosine;
+        sineSine += window * sine * sine;
+        cosineSine += window * cosine * sine;
+        signalCosine += window * value * cosine;
+        signalSine += window * value * sine;
+    }
+    const double determinant = cosineCosine * sineSine
+        - cosineSine * cosineSine;
+    if (determinant <= 1.0e-12)
+        return 0.0f;
+    const double cosineCoefficient = (signalCosine * sineSine
+        - signalSine * cosineSine) / determinant;
+    const double sineCoefficient = (signalSine * cosineCosine
+        - signalCosine * cosineSine) / determinant;
+    return static_cast<float>(std::hypot(cosineCoefficient, sineCoefficient));
+}
+
+[[nodiscard]] float segmentRms(const std::vector<float>& signal,
+                               double sampleRate,
+                               double firstSeconds,
+                               double lastSeconds)
+{
+    const auto first = std::min(signal.size(), static_cast<std::size_t>(
+        std::max(0.0, std::floor(firstSeconds * sampleRate))));
+    const auto last = std::min(signal.size(), static_cast<std::size_t>(
+        std::max(0.0, std::ceil(lastSeconds * sampleRate))));
+    if (last <= first)
+        return 0.0f;
+    double squareSum = 0.0;
+    for (std::size_t index = first; index < last; ++index)
+        squareSum += static_cast<double>(signal[index]) * signal[index];
+    return static_cast<float>(std::sqrt(
+        squareSum / static_cast<double>(last - first)));
+}
+
+struct LearnedFixture
+{
+    std::vector<float> source;
+    neuramar::SampleLearner::LearnResult first;
+    neuramar::SampleLearner::LearnResult second;
+};
+
+void testInputValidationAndCancellation()
+{
+    const std::vector<float> silence(4096, 0.0f);
+    const auto silentResult = neuramar::SampleLearner::learn(silence, 48000.0);
+    expect(!silentResult && !silentResult.error.empty(),
+           "silent input was accepted as a learnable instrument");
+
+    auto source = makeLearningSample(32000.0, 329.627557, 0.72);
+    int cancellationChecks = 0;
+    const auto cancelled = neuramar::SampleLearner::learn(
+        source, 32000.0, {}, [&cancellationChecks]
+        {
+            // Reach the cancellable conditioning/resampling loops rather than
+            // only exercising the stage-boundary guard.
+            return ++cancellationChecks >= 20;
+        });
+    expect(cancelled.cancelled && !cancelled.model,
+           "cancelled learning published a partial model");
+}
+
+void testAirFilterNormalisation()
+{
+    constexpr std::size_t integrationSize = 65536;
+    for (const float sampleRate : { 44100.0f, 48000.0f, 96000.0f })
+    {
+        for (const auto [centre, width] : std::array {
+                 std::pair { 120.0f, 1.10f },
+                 std::pair { 1200.0f, 0.75f },
+                 std::pair { 10000.0f, 1.25f } })
+        {
+            const auto coefficients = neuramar::airfilter::makeCoefficients(
+                centre, width, sampleRate);
+            double integratedPower = 0.0;
+            for (std::size_t bin = 1; bin < integrationSize / 2; ++bin)
+            {
+                const float frequency = static_cast<float>(bin) * sampleRate
+                    / static_cast<float>(integrationSize);
+                integratedPower += 2.0
+                    * neuramar::airfilter::unitNoisePowerResponse(
+                        coefficients, frequency, sampleRate)
+                    / static_cast<double>(integrationSize);
+            }
+            expect(std::abs(integratedPower - 1.0) < 0.012,
+                   "Air filter was not unit-RMS calibrated at "
+                       + std::to_string(static_cast<int>(sampleRate))
+                       + " Hz (centre " + std::to_string(centre)
+                       + " Hz, integrated power "
+                       + std::to_string(integratedPower) + ")");
+        }
+    }
+}
+
+void testRootAcrossRatesAndRegisters()
+{
+    struct Scenario
+    {
+        double sampleRate;
+        double frequencyHz;
+        double durationSeconds;
+        int expectedMidi;
+    };
+    constexpr std::array scenarios {
+        Scenario { 32000.0, 329.627557, 0.72, 64 },
+        Scenario { 44100.0, 110.0, 1.05, 45 }
+    };
+
+    for (const auto& scenario : scenarios)
+    {
+        const auto sample = makeLearningSample(
+            scenario.sampleRate, scenario.frequencyHz, scenario.durationSeconds);
+        const auto learned = neuramar::SampleLearner::learn(sample, scenario.sampleRate);
+        expect(static_cast<bool>(learned),
+               "cross-register learning failed: " + learned.error);
+        if (!learned.model)
+            continue;
+        expect(std::abs(learned.model->rootFrequencyHz()
+                            / static_cast<float>(scenario.frequencyHz) - 1.0f) < 0.018f,
+               "cross-register root frequency missed its target");
+        expect(learned.model->rootMidiNote() == scenario.expectedMidi,
+               "cross-register root MIDI note was incorrect");
+    }
+}
+
+[[nodiscard]] LearnedFixture learnFixture()
+{
+    LearnedFixture fixture;
+    fixture.source = makeLearningSample(48000.0, 220.0, 0.92);
+    float previousProgress = 0.0f;
+    bool sawPitch = false;
+    bool sawTraining = false;
+    fixture.first = neuramar::SampleLearner::learn(
+        fixture.source, 48000.0,
+        [&](const neuramar::SampleLearner::Progress& progress)
+        {
+            expect(progress.overallProgress + 1.0e-6f >= previousProgress,
+                   "learner progress moved backwards");
+            previousProgress = progress.overallProgress;
+            sawPitch = sawPitch
+                || progress.stage == neuramar::SampleLearner::Stage::Pitch;
+            sawTraining = sawTraining
+                || progress.stage == neuramar::SampleLearner::Stage::Training;
+        });
+    expect(sawPitch && sawTraining, "learner omitted a public progress stage");
+    expect(previousProgress >= 0.999f, "learner did not report completion");
+    fixture.second = neuramar::SampleLearner::learn(fixture.source, 48000.0);
+    return fixture;
+}
+
+void testLearningAndRoot(const LearnedFixture& fixture)
+{
+    expect(static_cast<bool>(fixture.first),
+           "first deterministic learning pass failed: " + fixture.first.error);
+    expect(static_cast<bool>(fixture.second),
+           "second deterministic learning pass failed: " + fixture.second.error);
+    if (!fixture.first.model || !fixture.second.model)
+        return;
+
+    const auto& metadata = fixture.first.model->metadata();
+    expect(std::abs(metadata.rootFrequencyHz / 220.0f - 1.0f) < 0.012f,
+           "multi-resolution root estimate missed 220 Hz");
+    expect(metadata.rootMidiNote == 57, "root MIDI note was not A3");
+    expect(std::abs(metadata.rootCents) < 20.0f,
+           "root cents were implausibly far from A3");
+    expect(metadata.pitchConfidence > 0.55f,
+           "clean harmonic fixture had low pitch confidence");
+    expect(fixture.first.finalLoss < fixture.first.initialLoss,
+           "Adam fitting did not reduce the neural loss");
+    expect(fixture.first.finalLoss <= 0.82f * fixture.first.initialLoss,
+           "Adam fitting reduced loss too little");
+    expect(fixture.first.trainingEpochs == 180,
+           "deterministic fit did not complete its bounded epoch budget");
+
+    const auto firstBytes = fixture.first.model->serialize();
+    const auto secondBytes = fixture.second.model->serialize();
+    expect(firstBytes == secondBytes,
+           "equal samples did not produce byte-identical neural models");
+    expect(fixture.first.initialLoss == fixture.second.initialLoss
+           && fixture.first.finalLoss == fixture.second.finalLoss,
+           "deterministic fits reported different losses");
+}
+
+void testRootCoreReconstruction(const LearnedFixture& fixture)
+{
+    if (!fixture.first.model)
+        return;
+
+    const auto& model = *fixture.first.model;
+    neuramar::NeuramarEngine engine;
+    engine.prepare(48000.0, 128);
+    engine.setModel(&model);
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.bodyLock = 0.0f;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.brightness = 0.5f;
+    parameters.evolutionRate = 1.0f;
+    parameters.orbit = 0.0f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 0.08f;
+    engine.setParameters(parameters);
+    const auto rendered = renderNote(
+        engine, model.rootMidiNote(), static_cast<int>(fixture.source.size()));
+
+    constexpr std::array<float, 7> positions {
+        0.10f, 0.20f, 0.34f, 0.49f, 0.65f, 0.79f, 0.89f
+    };
+    constexpr std::array<int, 4> harmonics { 1, 2, 3, 5 };
+    std::array<double, positions.size()> sourceFundamentalDb {};
+    std::array<double, positions.size()> renderedFundamentalDb {};
+    double ratioErrorDb = 0.0;
+    int ratioCount = 0;
+    for (std::size_t frameIndex = 0; frameIndex < positions.size(); ++frameIndex)
+    {
+        const float position = positions[frameIndex];
+        const double time = position * model.durationSeconds();
+        neuramar::SynthesisFrame frame;
+        model.evaluate(position, frame);
+        const double renderedFundamental = model.rootFrequencyHz()
+            * frame.pitchRatio;
+        std::array<float, harmonics.size()> sourceAmplitudes {};
+        std::array<float, harmonics.size()> renderedAmplitudes {};
+        for (std::size_t harmonicIndex = 0;
+             harmonicIndex < harmonics.size(); ++harmonicIndex)
+        {
+            const int harmonic = harmonics[harmonicIndex];
+            sourceAmplitudes[harmonicIndex] = windowedSinusoidAmplitude(
+                fixture.source, 48000.0, time, 220.0 * harmonic);
+            renderedAmplitudes[harmonicIndex] = windowedSinusoidAmplitude(
+                rendered, 48000.0, time, renderedFundamental * harmonic);
+        }
+        sourceFundamentalDb[frameIndex] = 20.0 * std::log10(
+            std::max(sourceAmplitudes.front(), 1.0e-8f));
+        renderedFundamentalDb[frameIndex] = 20.0 * std::log10(
+            std::max(renderedAmplitudes.front(), 1.0e-8f));
+        for (std::size_t harmonicIndex = 1;
+             harmonicIndex < harmonics.size(); ++harmonicIndex)
+        {
+            const double sourceRatio = sourceAmplitudes[harmonicIndex]
+                / std::max(sourceAmplitudes.front(), 1.0e-8f);
+            const double renderedRatio = renderedAmplitudes[harmonicIndex]
+                / std::max(renderedAmplitudes.front(), 1.0e-8f);
+            ratioErrorDb += std::abs(20.0 * std::log10(
+                std::max(renderedRatio, 1.0e-8)
+                / std::max(sourceRatio, 1.0e-8)));
+            ++ratioCount;
+        }
+    }
+    ratioErrorDb /= std::max(ratioCount, 1);
+
+    double meanEnvelopeOffset = 0.0;
+    for (std::size_t frame = 0; frame < positions.size(); ++frame)
+        meanEnvelopeOffset += renderedFundamentalDb[frame]
+            - sourceFundamentalDb[frame];
+    meanEnvelopeOffset /= static_cast<double>(positions.size());
+    double envelopeErrorDb = 0.0;
+    for (std::size_t frame = 0; frame < positions.size(); ++frame)
+        envelopeErrorDb += std::abs(
+            renderedFundamentalDb[frame] - sourceFundamentalDb[frame]
+            - meanEnvelopeOffset);
+    envelopeErrorDb /= static_cast<double>(positions.size());
+
+    const float sourceReference = segmentRms(
+        fixture.source, 48000.0, 0.100, 0.160);
+    const float renderedReference = segmentRms(
+        rendered, 48000.0, 0.100, 0.160);
+    constexpr std::array<std::pair<double, double>, 5> attackWindows {
+        std::pair { 0.0, 0.004 }, std::pair { 0.002, 0.006 },
+        std::pair { 0.004, 0.008 }, std::pair { 0.008, 0.016 },
+        std::pair { 0.016, 0.032 }
+    };
+    double attackEnvelopeErrorDb = 0.0;
+    double maximumAttackErrorDb = 0.0;
+    for (const auto [first, last] : attackWindows)
+    {
+        const double sourceRatio = segmentRms(
+            fixture.source, 48000.0, first, last)
+            / std::max(sourceReference, 1.0e-8f);
+        const double renderedRatio = segmentRms(
+            rendered, 48000.0, first, last)
+            / std::max(renderedReference, 1.0e-8f);
+        const double errorDb = 20.0 * std::log10(
+            std::max(renderedRatio, 1.0e-8)
+            / std::max(sourceRatio, 1.0e-8));
+        attackEnvelopeErrorDb += std::abs(errorDb);
+        maximumAttackErrorDb = std::max(
+            maximumAttackErrorDb, std::abs(errorDb));
+    }
+    attackEnvelopeErrorDb /= static_cast<double>(attackWindows.size());
+
+    std::cout << "Root reconstruction diagnostics: harmonic ratio MAE "
+              << ratioErrorDb << " dB, fundamental envelope MAE "
+              << envelopeErrorDb << " dB, attack envelope MAE "
+              << attackEnvelopeErrorDb << " dB\n";
+    expect(ratioErrorDb < 0.35,
+           "root-note neural Core lost too much harmonic identity (mean ratio error "
+               + std::to_string(ratioErrorDb) + " dB)");
+    expect(envelopeErrorDb < 0.30,
+           "root-note neural Core flattened its temporal envelope (mean error "
+               + std::to_string(envelopeErrorDb) + " dB)");
+    // The legacy fixed 85 ms aperture plus trailing control ramp measured
+    // about 2.5 dB here; keep both transient fixes under objective guard.
+    expect(attackEnvelopeErrorDb < 1.30,
+           "root-note neural Core smeared its attack (mean early-envelope error "
+               + std::to_string(attackEnvelopeErrorDb) + " dB)");
+    expect(maximumAttackErrorDb < 3.50,
+           "one root-note attack segment remained materially smeared (maximum error "
+               + std::to_string(maximumAttackErrorDb) + " dB)");
+}
+
+void testMissingFundamentalRoot()
+{
+    constexpr float expectedRoot = 110.0f;
+    const auto source = makeMissingFundamentalSample(48000.0, expectedRoot, 0.82);
+    const auto learned = neuramar::SampleLearner::learn(source, 48000.0);
+    expect(static_cast<bool>(learned),
+           "missing-fundamental fixture failed to learn: " + learned.error);
+    if (!learned.model)
+        return;
+
+    const auto& metadata = learned.model->metadata();
+    expect(std::abs(metadata.rootFrequencyHz / expectedRoot - 1.0f) < 0.018f,
+           "missing-fundamental complex was assigned to an upper harmonic");
+    expect(metadata.rootMidiNote == 45,
+           "missing-fundamental complex did not map to A2");
+}
+
+void testBrightHighPitchAcrossRates()
+{
+    constexpr float expectedRoot = 880.0f;
+    float firstEstimate = 0.0f;
+    for (const double sampleRate : { 48000.0, 96000.0 })
+    {
+        const auto source = makeBrightHighPitchSample(sampleRate, expectedRoot, 0.68);
+        const auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+        expect(static_cast<bool>(learned),
+               "bright high-pitch fixture failed to learn at "
+                   + std::to_string(static_cast<int>(sampleRate)) + " Hz: "
+                   + learned.error);
+        if (!learned.model)
+            continue;
+
+        const float estimate = learned.model->rootFrequencyHz();
+        expect(std::abs(estimate / expectedRoot - 1.0f) < 0.015f,
+               "bright A5 root estimate drifted at "
+                   + std::to_string(static_cast<int>(sampleRate)) + " Hz");
+        expect(learned.model->rootMidiNote() == 81,
+               "bright A5 fixture mapped to the wrong MIDI note at "
+                   + std::to_string(static_cast<int>(sampleRate)) + " Hz");
+        if (firstEstimate == 0.0f)
+            firstEstimate = estimate;
+        else
+            expect(std::abs(estimate / firstEstimate - 1.0f) < 0.006f,
+                   "root estimate changed materially with analysis sample rate");
+    }
+}
+
+void testHarmonicSubtractedAir()
+{
+    const auto harmonicOnly = neuramar::SampleLearner::learn(
+        makeAirSeparationSample(48000.0, false), 48000.0);
+    const auto harmonicAndNoise = neuramar::SampleLearner::learn(
+        makeAirSeparationSample(48000.0, true), 48000.0);
+    expect(static_cast<bool>(harmonicOnly),
+           "harmonic-only Air fixture failed to learn: " + harmonicOnly.error);
+    expect(static_cast<bool>(harmonicAndNoise),
+           "harmonic-plus-noise Air fixture failed to learn: "
+               + harmonicAndNoise.error);
+    if (!harmonicOnly || !harmonicAndNoise)
+        return;
+
+    const AirMetrics pure = measureAir(*harmonicOnly.model);
+    const AirMetrics noisy = measureAir(*harmonicAndNoise.model);
+    const std::string diagnostics = "pure fraction="
+        + std::to_string(pure.medianFraction) + ", pure Air="
+        + std::to_string(pure.medianAir) + ", pure core="
+        + std::to_string(pure.medianCore) + ", noisy fraction="
+        + std::to_string(noisy.medianFraction) + ", noisy Air="
+        + std::to_string(noisy.medianAir) + ", noisy core="
+        + std::to_string(noisy.medianCore);
+
+    expect(pure.medianCore > 0.02f,
+           "harmonic-only fixture learned no meaningful pitched core ("
+               + diagnostics + ")");
+    expect(pure.medianFraction < 0.002f,
+           "harmonic subtraction leaked too much deterministic harmonic energy "
+           "into Air (" + diagnostics + ")");
+    expect(noisy.medianFraction > std::max(2.5f * pure.medianFraction,
+                                           pure.medianFraction + 0.015f),
+           "Air did not distinguish shaped noise from an otherwise identical "
+           "harmonic source (" + diagnostics + ")");
+
+    const float air48k = renderLayerDifferenceRms(
+        *harmonicAndNoise.model, 48000.0,
+        harmonicAndNoise.model->rootMidiNote(), 1.0f, 0.0f);
+    const float air96k = renderLayerDifferenceRms(
+        *harmonicAndNoise.model, 96000.0,
+        harmonicAndNoise.model->rootMidiNote(), 1.0f, 0.0f);
+    const float sampleRateRatio = air96k / std::max(air48k, 1.0e-9f);
+    expect(air48k > 1.0e-5f,
+           "learned Air was effectively inaudible in the render regression");
+    expect(sampleRateRatio >= 0.90f && sampleRateRatio <= 1.10f,
+           "Air level changed materially with host sample rate (48 kHz RMS "
+               + std::to_string(air48k) + ", 96 kHz RMS "
+               + std::to_string(air96k) + ", ratio "
+               + std::to_string(sampleRateRatio) + ")");
+
+    const float foldedAir = renderLayerDifferenceRms(
+        *harmonicAndNoise.model, 8000.0, 127, 1.0f, 0.0f);
+    expect(foldedAir < 0.01f * air48k + 1.0e-7f,
+           "out-of-range Air bands piled up at the host Nyquist edge");
+}
+
+void testPersistentBoneModeSelection()
+{
+    constexpr float sourceRootHz = 187.5f;
+    const auto learned = neuramar::SampleLearner::learn(
+        makePersistentBoneSample(48000.0), 48000.0);
+    expect(static_cast<bool>(learned),
+           "persistent Bone fixture failed to learn: " + learned.error);
+    if (!learned)
+        return;
+
+    const auto& model = *learned.model;
+    const auto ratios = model.boneFrequencyRatios();
+    const auto decays = model.boneDecaySeconds();
+    const auto reliabilities = model.boneModeReliabilities();
+    const float ratioTolerance = std::max(
+        0.08f, 1.5f * (48000.0f / 4096.0f) / model.rootFrequencyHz());
+    int activeModeCount = 0;
+    int persistentMatches = 0;
+    int transientMatches = 0;
+    int persistentDecayMatches = 0;
+    for (const float reliability : reliabilities)
+        activeModeCount += reliability > 0.0f ? 1 : 0;
+
+    for (const float expectedRatio : persistentBoneRatios)
+    {
+        float closestDistance = std::numeric_limits<float>::max();
+        std::size_t closestMode = 0;
+        for (std::size_t mode = 0; mode < ratios.size(); ++mode)
+        {
+            if (reliabilities[mode] <= 0.0f)
+                continue;
+            const float distance = std::abs(ratios[mode] - expectedRatio);
+            if (distance < closestDistance)
+            {
+                closestDistance = distance;
+                closestMode = mode;
+            }
+        }
+        if (closestDistance <= ratioTolerance)
+        {
+            ++persistentMatches;
+            persistentDecayMatches += decays[closestMode] > 0.35f ? 1 : 0;
+        }
+    }
+    for (const float expectedRatio : transientBoneRatios)
+    {
+        for (std::size_t mode = 0; mode < ratios.size(); ++mode)
+        {
+            if (reliabilities[mode] > 0.0f
+                && std::abs(ratios[mode] - expectedRatio) <= ratioTolerance)
+            {
+                ++transientMatches;
+                break;
+            }
+        }
+    }
+
+    const std::string diagnostics = "root="
+        + std::to_string(model.rootFrequencyHz()) + " Hz, tolerance="
+        + std::to_string(ratioTolerance) + ", active="
+        + std::to_string(activeModeCount) + ", persistent matches="
+        + std::to_string(persistentMatches) + ", transient matches="
+        + std::to_string(transientMatches) + ", long-decay matches="
+        + std::to_string(persistentDecayMatches) + ", modes="
+        + describeBoneModes(model);
+    const auto boneAir = measureAir(model);
+    std::cout << "Bone separation diagnostics: Air/Core "
+              << boneAir.medianFraction << '\n';
+    expect(std::abs(model.rootFrequencyHz() / sourceRootHz - 1.0f) < 0.02f,
+           "Bone fixture root estimate drifted (" + diagnostics + ")");
+    expect(activeModeCount >= 5,
+           "too few reliable Bone modes survived persistence scoring ("
+               + diagnostics + ")");
+    expect(persistentMatches >= 5,
+           "persistence scoring failed to retain sustained inharmonic modes ("
+               + diagnostics + ")");
+    expect(transientMatches <= 1,
+           "onset-only distractors displaced sustained Bone modes ("
+               + diagnostics + ")");
+    expect(persistentDecayMatches >= 5,
+           "sustained Bone modes were assigned implausibly short decays ("
+               + diagnostics + ")");
+    expect(boneAir.medianFraction < 0.025f,
+           "short-window modal leakage was mislearned as broadband Air (Air/Core "
+               + std::to_string(boneAir.medianFraction) + ")");
+
+    const float rootBone = renderLayerDifferenceRms(
+        model, 48000.0, model.rootMidiNote(), 0.0f, 1.0f);
+    const float foldedBone = renderLayerDifferenceRms(
+        model, 8000.0, 127, 0.0f, 1.0f);
+    expect(rootBone > 1.0e-6f,
+           "reliable Bone fixture rendered no modal layer");
+    expect(foldedBone < 0.01f * rootBone + 1.0e-7f,
+           "out-of-range Bone modes piled up at the host Nyquist edge");
+}
+
+void testEvolvingAirColour()
+{
+    const auto learned = neuramar::SampleLearner::learn(
+        makeEvolvingAirSample(48000.0), 48000.0);
+    expect(static_cast<bool>(learned),
+           "evolving-Air fixture failed to learn: " + learned.error);
+    if (!learned.model)
+        return;
+
+    const float earlyCentroid = predictedAirCentroid(*learned.model, 0.18f);
+    const float lateCentroid = predictedAirCentroid(*learned.model, 0.82f);
+    expect(earlyCentroid > 80.0f && lateCentroid < 17000.0f,
+           "evolving-Air fit produced an invalid spectral centroid");
+    expect(lateCentroid > 1.65f * earlyCentroid,
+           "neural Air field did not preserve the low-to-high colour evolution "
+               "(early " + std::to_string(earlyCentroid) + " Hz, late "
+               + std::to_string(lateCentroid) + " Hz)");
+}
+
+void testTransientAirResolution()
+{
+    const auto learned = neuramar::SampleLearner::learn(
+        makeTransientAirSample(48000.0), 48000.0);
+    expect(static_cast<bool>(learned),
+           "transient-Air fixture failed to learn: " + learned.error);
+    if (!learned.model)
+        return;
+
+    const auto airNorm = [&model = *learned.model](float timeSeconds)
+    {
+        neuramar::SynthesisFrame frame;
+        model.evaluate(timeSeconds / model.durationSeconds(), frame);
+        double power = 0.0;
+        for (const float amplitude : frame.airAmplitudes)
+            power += static_cast<double>(amplitude) * amplitude;
+        return static_cast<float>(std::sqrt(power));
+    };
+    const float onsetAir = airNorm(0.004f);
+    const float lateAir = airNorm(0.050f);
+    std::cout << "Transient Air diagnostics: onset " << onsetAir
+              << ", 50 ms " << lateAir << '\n';
+    expect(onsetAir > 0.005f,
+           "short noisy onset produced no learned Air energy");
+    expect(onsetAir > 3.15f * lateAir,
+           "multi-resolution analysis smeared a short Air burst beyond 50 ms "
+               "(onset " + std::to_string(onsetAir) + ", late "
+               + std::to_string(lateAir) + ")");
+}
+
+void testLearnedPitchContour(const neuramar::NeuralModel& steadyModel)
+{
+    const auto bentSource = makeSlowPitchBendSample(48000.0, 220.0, 1.18);
+    const auto bent = neuramar::SampleLearner::learn(bentSource, 48000.0);
+    expect(static_cast<bool>(bent),
+           "slow pitch-bend fixture failed to learn: " + bent.error);
+    if (!bent.model)
+        return;
+
+    neuramar::SynthesisFrame early;
+    neuramar::SynthesisFrame middle;
+    neuramar::SynthesisFrame late;
+    bent.model->evaluate(0.16f, early);
+    bent.model->evaluate(0.50f, middle);
+    bent.model->evaluate(0.84f, late);
+    expect(early.pitchRatio >= 0.78f && late.pitchRatio <= 1.28f,
+           "learned bend escaped the constrained pitch-ratio range");
+    expect(middle.pitchRatio > early.pitchRatio * 1.025f
+           && late.pitchRatio > middle.pitchRatio * 1.025f,
+           "learned pitch contour did not preserve the rising bend direction");
+    expect(late.pitchRatio / early.pitchRatio > 1.075f,
+           "learned pitch contour flattened a material three-semitone bend (early "
+               + std::to_string(early.pitchRatio) + ", late "
+               + std::to_string(late.pitchRatio) + ")");
+
+    for (const float time : { 0.16f, 0.50f, 0.84f })
+    {
+        neuramar::SynthesisFrame steady;
+        steadyModel.evaluate(time, steady);
+        expect(std::abs(steady.pitchRatio - 1.0f) < 0.035f,
+               "steady source acquired a material learned pitch contour at t="
+                   + std::to_string(time) + " (ratio "
+                   + std::to_string(steady.pitchRatio) + ")");
+    }
+}
+
+void testSerialization(const neuramar::NeuralModel& model)
+{
+    const auto bytes = model.serialize();
+    expect(bytes.size() > 1000 && bytes.size() < 128 * 1024,
+           "serialized model size escaped its expected bound");
+    std::string error;
+    auto restored = neuramar::NeuralModel::deserialize(bytes, &error);
+    expect(restored != nullptr, "valid model failed to deserialize: " + error);
+    if (restored)
+    {
+        expect(restored->serialize() == bytes,
+               "model binary did not survive a byte-exact round trip");
+        expect(restored->rootMidiNote() == model.rootMidiNote(),
+               "round trip changed root metadata");
+    }
+
+    auto damaged = bytes;
+    damaged[damaged.size() / 2] ^= 0x40u;
+    error.clear();
+    auto rejected = neuramar::NeuralModel::deserialize(damaged, &error);
+    expect(rejected == nullptr && !error.empty(),
+           "checksum corruption was not rejected");
+
+    error.clear();
+    auto truncated = neuramar::NeuralModel::deserialize(
+        std::span<const std::uint8_t>(bytes.data(), bytes.size() - 1), &error);
+    expect(truncated == nullptr && !error.empty(),
+           "truncated model was not rejected");
+
+    neuramar::SynthesisFrame atZero;
+    neuramar::SynthesisFrame atNan;
+    model.evaluate(0.0f, atZero);
+    model.evaluate(std::numeric_limits<float>::quiet_NaN(), atNan);
+    expect(atNan.harmonicAmplitudes == atZero.harmonicAmplitudes
+           && atNan.airAmplitudes == atZero.airAmplitudes
+           && atNan.boneAmplitudes == atZero.boneAmplitudes
+           && atNan.pitchRatio == atZero.pitchRatio,
+           "non-finite model time was not safely mapped to the start frame");
+}
+
+void testRenderAndTransposition(const neuramar::NeuralModel& model)
+{
+    neuramar::NeuramarEngine engine;
+    engine.prepare(48000.0, 512);
+    engine.setModel(&model);
+    neuramar::EngineParameters parameters;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.attackSeconds = 0.002f;
+    parameters.releaseSeconds = 0.04f;
+    parameters.outputGain = 0.48f;
+    engine.setParameters(parameters);
+
+    const auto root = renderNote(engine, model.rootMidiNote(), 30000);
+    const auto octave = renderNote(engine, model.rootMidiNote() + 12, 30000);
+    expect(rms(root, 5000) > 0.005f, "root render was effectively silent");
+    expect(rms(octave, 5000) > 0.003f, "transposed render was effectively silent");
+    for (const auto value : root)
+        expect(std::isfinite(value) && std::abs(value) <= 1.25001f,
+               "root render produced non-finite or unbounded audio");
+    for (const auto value : octave)
+        expect(std::isfinite(value) && std::abs(value) <= 1.25001f,
+               "octave render produced non-finite or unbounded audio");
+
+    const float rootPeak = spectralPeak(root, 48000.0, model.rootFrequencyHz());
+    const float octavePeak = spectralPeak(octave, 48000.0,
+                                          2.0f * model.rootFrequencyHz());
+    expect(std::abs(rootPeak / model.rootFrequencyHz() - 1.0f) < 0.012f,
+           "root render did not follow the learned tuning");
+    expect(std::abs(octavePeak / rootPeak - 2.0f) < 0.018f,
+           "MIDI octave did not transpose synthesis by 2:1");
+}
+
+void testRootCorrectionRelabelsSourceKey(const neuramar::NeuralModel& model)
+{
+    neuramar::NeuramarEngine original;
+    neuramar::NeuramarEngine corrected;
+    original.prepare(48000.0, 128);
+    corrected.prepare(48000.0, 128);
+    original.setModel(&model);
+    corrected.setModel(&model);
+
+    neuramar::EngineParameters parameters;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 0.20f;
+    original.setParameters(parameters);
+    parameters.rootOffsetSemitones = 1.0f;
+    corrected.setParameters(parameters);
+
+    const auto reference = renderNote(
+        original, model.rootMidiNote(), 4096);
+    const auto relabelled = renderNote(
+        corrected, model.rootMidiNote() + 1, 4096);
+    float maximumDifference = 0.0f;
+    for (std::size_t index = 0; index < reference.size(); ++index)
+        maximumDifference = std::max(
+            maximumDifference, std::abs(reference[index] - relabelled[index]));
+    expect(maximumDifference < 1.0e-6f,
+           "Root Correction retuned the source instead of relabelling its MIDI key");
+}
+
+void testReleaseAndVoiceBound(const neuramar::NeuralModel& model)
+{
+    neuramar::NeuramarEngine engine;
+    engine.prepare(48000.0, 256);
+    engine.setModel(&model);
+    neuramar::EngineParameters parameters;
+    parameters.releaseSeconds = 0.025f;
+    engine.setParameters(parameters);
+
+    for (int note = 48; note < 60; ++note)
+        engine.noteOn(note, 0.7f);
+    expect(engine.getActiveVoiceCount() == neuramar::NeuramarEngine::maximumVoices,
+           "polyphony was not bounded at eight voices");
+    engine.allNotesOff();
+    std::vector<float> left(30000, 0.0f);
+    std::vector<float> right(30000, 0.0f);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    expect(engine.getActiveVoiceCount() == 0,
+           "released voices did not become idle");
+    expect(rms(left, left.size() - 2048) < 1.0e-4f,
+           "release tail did not converge to silence");
+
+    engine.noteOn(60, 1.0f);
+    expect(engine.getActiveVoiceCount() == 1, "note-on did not activate a voice");
+    engine.allSoundOff();
+    expect(engine.getActiveVoiceCount() == 0,
+           "allSoundOff did not stop immediately");
+}
+
+void testReleaseDurationSemantics(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr float configuredReleaseSeconds = 0.080f;
+    neuramar::NeuramarEngine engine;
+    engine.prepare(sampleRate, 64);
+    engine.setModel(&model);
+    neuramar::EngineParameters parameters;
+    parameters.attackSeconds = 0.0f;
+    parameters.releaseSeconds = configuredReleaseSeconds;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    engine.setParameters(parameters);
+
+    std::vector<float> left(64, 0.0f);
+    std::vector<float> right(64, 0.0f);
+    engine.noteOn(model.rootMidiNote(), 0.8f);
+    for (int block = 0; block < 24; ++block)
+        engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    engine.noteOff(model.rootMidiNote());
+
+    int releaseSamples = 0;
+    const int hardLimit = static_cast<int>(2.0 * sampleRate);
+    while (engine.getActiveVoiceCount() != 0 && releaseSamples < hardLimit)
+    {
+        engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+        releaseSamples += static_cast<int>(left.size());
+    }
+    const float measuredSeconds = static_cast<float>(releaseSamples / sampleRate);
+    expect(engine.getActiveVoiceCount() == 0,
+           "voice did not retire within the release regression guard");
+    expect(measuredSeconds >= 0.70f * configuredReleaseSeconds,
+           "voice retired substantially before its configured release duration");
+    expect(measuredSeconds <= 1.35f * configuredReleaseSeconds + 0.002f,
+           "configured release behaved as an exponential time constant instead of a duration ("
+               + std::to_string(configuredReleaseSeconds) + " s configured, "
+               + std::to_string(measuredSeconds) + " s measured)");
+}
+
+void testMutationZeroRetriggerDeterminism(const neuramar::NeuralModel& model)
+{
+    const auto prepareEngine = [&model](neuramar::NeuramarEngine& engine)
+    {
+        engine.prepare(48000.0, 128);
+        engine.setModel(&model);
+        neuramar::EngineParameters parameters;
+        parameters.mutation = 0.0f;
+        parameters.air = 0.55f;
+        parameters.bone = 0.55f;
+        parameters.attackSeconds = 0.0f;
+        parameters.outputGain = 0.25f;
+        engine.setParameters(parameters);
+    };
+
+    neuramar::NeuramarEngine pristine;
+    prepareEngine(pristine);
+    const auto reference = renderNote(pristine, model.rootMidiNote(), 4096);
+
+    neuramar::NeuramarEngine advanced;
+    prepareEngine(advanced);
+    (void) renderNote(advanced, model.rootMidiNote() + 7, 512);
+    const auto afterHistory = renderNote(advanced, model.rootMidiNote(), 4096);
+    float maximumDifference = 0.0f;
+    for (std::size_t index = 0; index < reference.size(); ++index)
+        maximumDifference = std::max(maximumDifference,
+            std::abs(reference[index] - afterHistory[index]));
+    expect(maximumDifference < 1.0e-6f,
+           "Mutation=0 still changed note phase/audio according to prior voice history (max delta "
+               + std::to_string(maximumDifference) + ")");
+}
+
+void testStereoPanAndOverlappingNoteOff(const neuramar::NeuralModel& model)
+{
+    neuramar::NeuramarEngine engine;
+    engine.prepare(48000.0, 128);
+    engine.setModel(&model);
+    neuramar::EngineParameters parameters;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.releaseSeconds = 0.020f;
+    parameters.spread = 1.0f;
+    parameters.outputGain = 0.35f;
+    engine.setParameters(parameters);
+
+    std::vector<float> left(2048, 0.0f);
+    std::vector<float> right(2048, 0.0f);
+    engine.noteOn(model.rootMidiNote(), 0.8f);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    float monoDelta = 0.0f;
+    for (std::size_t index = 0; index < left.size(); ++index)
+        monoDelta = std::max(monoDelta, std::abs(left[index] - right[index]));
+    expect(monoDelta < 1.0e-7f,
+           "a single note was not centred at maximum stereo spread");
+
+    engine.allSoundOff();
+    engine.noteOn(model.rootMidiNote(), 0.8f);
+    engine.noteOn(model.rootMidiNote(), 0.8f);
+    expect(engine.getActiveVoiceCount() == 2,
+           "overlapping note-ons did not allocate two voices");
+    std::fill(left.begin(), left.end(), 0.0f);
+    std::fill(right.begin(), right.end(), 0.0f);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    expect(std::abs(rms(left) - rms(right)) < 1.0e-6f,
+           "a two-voice unison was not panned as a balanced pair");
+
+    engine.noteOff(model.rootMidiNote());
+    std::vector<float> releaseLeft(1600, 0.0f);
+    std::vector<float> releaseRight(1600, 0.0f);
+    engine.process(releaseLeft.data(), releaseRight.data(),
+                   static_cast<int>(releaseLeft.size()));
+    expect(engine.getActiveVoiceCount() == 1,
+           "one note-off released every overlapping copy of a MIDI note");
+    expect(rms(releaseLeft, 1200) + rms(releaseRight, 1200) > 0.002f,
+           "the newer overlapping note stopped sounding after one note-off");
+
+    engine.noteOff(model.rootMidiNote());
+    engine.process(releaseLeft.data(), releaseRight.data(),
+                   static_cast<int>(releaseLeft.size()));
+    expect(engine.getActiveVoiceCount() == 0,
+           "the second note-off did not release the remaining overlapping voice");
+}
+
+void testRoughPerformance(const neuramar::NeuralModel& model)
+{
+    neuramar::NeuramarEngine engine;
+    engine.prepare(48000.0, 512);
+    engine.setModel(&model);
+    neuramar::EngineParameters parameters;
+    parameters.air = 0.6f;
+    parameters.bone = 0.6f;
+    engine.setParameters(parameters);
+    for (int note = 48; note < 56; ++note)
+        engine.noteOn(note, 0.75f);
+
+    std::vector<float> left(24000, 0.0f);
+    std::vector<float> right(24000, 0.0f);
+    const auto start = std::chrono::steady_clock::now();
+    for (int offset = 0; offset < static_cast<int>(left.size()); offset += 128)
+    {
+        const int count = std::min(128, static_cast<int>(left.size()) - offset);
+        engine.process(left.data() + offset, right.data() + offset, count);
+    }
+    const double elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start).count();
+    expect(elapsed < 5.0,
+           "eight-voice half-second render exceeded a coarse CPU guard");
+    expect(rms(left) > 0.001f, "performance fixture rendered silence");
+}
+} // namespace
+
+int main()
+{
+    testInputValidationAndCancellation();
+    testAirFilterNormalisation();
+    testRootAcrossRatesAndRegisters();
+    const auto fixture = learnFixture();
+    testLearningAndRoot(fixture);
+    testRootCoreReconstruction(fixture);
+    testMissingFundamentalRoot();
+    testBrightHighPitchAcrossRates();
+    testHarmonicSubtractedAir();
+    testPersistentBoneModeSelection();
+    testEvolvingAirColour();
+    testTransientAirResolution();
+    if (fixture.first.model)
+    {
+        testLearnedPitchContour(*fixture.first.model);
+        testSerialization(*fixture.first.model);
+        testRenderAndTransposition(*fixture.first.model);
+        testRootCorrectionRelabelsSourceKey(*fixture.first.model);
+        testReleaseAndVoiceBound(*fixture.first.model);
+        testReleaseDurationSemantics(*fixture.first.model);
+        testMutationZeroRetriggerDeterminism(*fixture.first.model);
+        testStereoPanAndOverlappingNoteOff(*fixture.first.model);
+        testRoughPerformance(*fixture.first.model);
+    }
+
+    if (failures != 0)
+    {
+        std::cerr << failures << " Neuramar DSP test(s) failed\n";
+        return EXIT_FAILURE;
+    }
+    std::cout << "All Neuramar DSP tests passed\n";
+    return EXIT_SUCCESS;
+}
