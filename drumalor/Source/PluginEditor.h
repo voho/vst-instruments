@@ -42,12 +42,15 @@ private:
     bool selected = false;
 };
 
-class DrumalorKnob final : public juce::Component
+class DrumalorKnob final : public juce::Component,
+                           public juce::SettableTooltipClient
 {
 public:
     enum class ValueStyle { Percent, Semitones, Decibels };
+    enum class VisualRole { Voice, BipolarVoice, Master };
 
-    DrumalorKnob (juce::String name, ValueStyle style);
+    DrumalorKnob (juce::String name, ValueStyle style,
+                  VisualRole role = VisualRole::Voice);
     void setLabelText (const juce::String& text, const juce::String& description);
     void resized() override;
 
@@ -89,6 +92,10 @@ private:
         juce::Rectangle<int> header;
         juce::Rectangle<int> pads;
         juce::Rectangle<int> controls;
+        juce::Rectangle<int> controlHeader;
+        juce::Rectangle<int> selectedVoiceHeader;
+        juce::Rectangle<int> voiceDeck;
+        juce::Rectangle<int> masterDeck;
     };
 
     void timerCallback() override;
@@ -98,6 +105,7 @@ private:
 
     DrumalorAudioProcessor& audioProcessor;
     DrumalorLookAndFeel lookAndFeel;
+    juce::TooltipWindow tooltipWindow;
     juce::Image vintagePanel;
 
     juce::Label logoLabel;
@@ -112,9 +120,11 @@ private:
     juce::Label selectedInstrumentLabel;
     DrumalorKnob characterAKnob { "CHARACTER A", DrumalorKnob::ValueStyle::Percent };
     DrumalorKnob characterBKnob { "CHARACTER B", DrumalorKnob::ValueStyle::Percent };
-    DrumalorKnob pitchKnob { "PITCH", DrumalorKnob::ValueStyle::Semitones };
+    DrumalorKnob pitchKnob { "PITCH", DrumalorKnob::ValueStyle::Semitones,
+                             DrumalorKnob::VisualRole::BipolarVoice };
     DrumalorKnob decayKnob { "DECAY", DrumalorKnob::ValueStyle::Percent };
-    DrumalorKnob outputKnob { "MASTER OUTPUT", DrumalorKnob::ValueStyle::Decibels };
+    DrumalorKnob outputKnob { "MASTER OUTPUT", DrumalorKnob::ValueStyle::Decibels,
+                              DrumalorKnob::VisualRole::Master };
 
     std::unique_ptr<SliderAttachment> characterAAttachment;
     std::unique_ptr<SliderAttachment> characterBAttachment;

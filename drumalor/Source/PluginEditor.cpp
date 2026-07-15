@@ -24,6 +24,13 @@ constexpr auto panelRaised = 0xff262a27;
 constexpr auto panelEdge = 0xff616761;
 constexpr auto textBright = 0xffeee8d8;
 constexpr auto textDim = 0xffaaa99f;
+const juce::Identifier rotaryRoleProperty { "drumalorRotaryRole" };
+
+constexpr double editorAspectRatio = 1180.0 / 780.0;
+constexpr int minimumEditorWidth = 968;
+constexpr int minimumEditorHeight = 640;
+constexpr int maximumEditorWidth = 1362;
+constexpr int maximumEditorHeight = 900;
 
 juce::Colour colour (juce::uint32 argb)
 {
@@ -202,7 +209,11 @@ void DrumalorLookAndFeel::drawRotarySlider (juce::Graphics& graphics,
                                             float sliderPos, float rotaryStartAngle,
                                             float rotaryEndAngle, juce::Slider& slider)
 {
-    const bool isMaster = slider.getName().containsIgnoreCase ("MASTER");
+    const auto role = static_cast<DrumalorKnob::VisualRole> (
+        static_cast<int> (slider.getProperties().getWithDefault (
+            rotaryRoleProperty, static_cast<int> (DrumalorKnob::VisualRole::Voice))));
+    const bool isMaster = role == DrumalorKnob::VisualRole::Master;
+    const bool isBipolar = role == DrumalorKnob::VisualRole::BipolarVoice;
     const auto available = static_cast<float> (juce::jmin (width, height)) - 18.0f;
     const auto diameter = juce::jlimit (72.0f, isMaster ? 112.0f : 132.0f,
                                         available);
@@ -222,10 +233,14 @@ void DrumalorLookAndFeel::drawRotarySlider (juce::Graphics& graphics,
         const auto tickAngle = rotaryStartAngle
                              + proportion * (rotaryEndAngle - rotaryStartAngle);
         const auto outer = centre.getPointOnCircumference (radius + 7.5f, tickAngle);
+        const bool centreDetent = isBipolar && tick == tickCount / 2;
+        const bool majorTick = tick % 5 == 0;
         const auto inner = centre.getPointOnCircumference (
-            radius + (tick % 5 == 0 ? 2.0f : 3.5f), tickAngle);
-        graphics.setColour (colour (textDim).withAlpha (tick % 5 == 0 ? 0.90f : 0.56f));
-        graphics.drawLine ({ inner, outer }, tick % 5 == 0 ? 1.5f : 1.0f);
+            radius + (centreDetent ? 0.5f : majorTick ? 2.0f : 3.5f), tickAngle);
+        graphics.setColour (centreDetent ? colour (textBright)
+                                         : colour (textDim).withAlpha (majorTick ? 0.90f
+                                                                                : 0.56f));
+        graphics.drawLine ({ inner, outer }, centreDetent ? 2.0f : majorTick ? 1.5f : 1.0f);
     }
 
     juce::Path track;
@@ -236,13 +251,21 @@ void DrumalorLookAndFeel::drawRotarySlider (juce::Graphics& graphics,
                                                       juce::PathStrokeType::curved,
                                                       juce::PathStrokeType::rounded));
 
-    juce::Path valueArc;
-    valueArc.addCentredArc (centre.x, centre.y, radius + 0.5f, radius + 0.5f, 0.0f,
-                            rotaryStartAngle, angle, true);
-    graphics.setColour (slider.findColour (juce::Slider::rotarySliderFillColourId));
-    graphics.strokePath (valueArc, juce::PathStrokeType (3.0f,
-                                                         juce::PathStrokeType::curved,
-                                                         juce::PathStrokeType::rounded));
+    const auto valueOrigin = isBipolar
+        ? rotaryStartAngle + 0.5f * (rotaryEndAngle - rotaryStartAngle)
+        : rotaryStartAngle;
+    const auto valueStart = juce::jmin (valueOrigin, angle);
+    const auto valueEnd = juce::jmax (valueOrigin, angle);
+    if (valueEnd - valueStart > 0.0001f)
+    {
+        juce::Path valueArc;
+        valueArc.addCentredArc (centre.x, centre.y, radius + 0.5f, radius + 0.5f, 0.0f,
+                                valueStart, valueEnd, true);
+        graphics.setColour (slider.findColour (juce::Slider::rotarySliderFillColourId));
+        graphics.strokePath (valueArc, juce::PathStrokeType (3.0f,
+                                                             juce::PathStrokeType::curved,
+                                                             juce::PathStrokeType::rounded));
+    }
 
     graphics.setColour (juce::Colours::black.withAlpha (0.52f));
     graphics.fillEllipse (bounds.translated (1.5f, 2.5f));
@@ -320,6 +343,8 @@ DrumalorPad::DrumalorPad (drumalor::Instrument instrument,
     setTitle (nameText + " drum pad");
     setDescription ("Select and trigger " + nameText
                     + " on MIDI note " + juce::String (midiNote));
+    setTooltip ("Select and audition " + nameText
+                + " (MIDI note " + juce::String (midiNote) + ")");
     setWantsKeyboardFocus (true);
     setClickingTogglesState (true);
     setRadioGroupId (1, juce::dontSendNotification);
@@ -458,7 +483,7 @@ void DrumalorPad::paintButton (juce::Graphics& graphics,
     graphics.drawText (noteText, noteArea, juce::Justification::centred);
 }
 
-DrumalorKnob::DrumalorKnob (juce::String name, ValueStyle style)
+DrumalorKnob::DrumalorKnob (juce::String name, ValueStyle style, VisualRole role)
 {
     label.setJustificationType (juce::Justification::centred);
     label.setFont (juce::Font (juce::FontOptions (11.5f, juce::Font::bold)));
@@ -474,6 +499,7 @@ DrumalorKnob::DrumalorKnob (juce::String name, ValueStyle style)
     slider.setColour (juce::Slider::textBoxTextColourId, colour (textBright));
     slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f,
                                 juce::MathConstants<float>::pi * 2.75f, true);
+    slider.getProperties().set (rotaryRoleProperty, static_cast<int> (role));
 
     if (style == ValueStyle::Percent)
     {
@@ -525,7 +551,10 @@ void DrumalorKnob::setLabelText (const juce::String& text,
     label.setText (text, juce::dontSendNotification);
     slider.setName (text);
     slider.setTitle (text);
-    slider.setDescription (description);
+    const auto helpText = description + ". Double-click to reset.";
+    slider.setDescription (helpText);
+    slider.setTooltip (helpText);
+    setTooltip (helpText);
 }
 
 void DrumalorKnob::resized()
@@ -554,6 +583,8 @@ void DrumalorStatusDisplay::setStatus (int activeVoices, bool ready, double samp
     if (voices == activeVoices && isReady == ready && std::abs (rate - sampleRate) < 1.0)
         return;
 
+    const bool shouldAnnounceStatusChange = isReady != ready
+        || (ready && std::abs (rate - sampleRate) >= 1.0);
     voices = activeVoices;
     isReady = ready;
     rate = sampleRate;
@@ -562,8 +593,9 @@ void DrumalorStatusDisplay::setStatus (int activeVoices, bool ready, double samp
             + juce::String (juce::roundToInt (rate / 1000.0)) + " kilohertz"
         : juce::String { "No active drum tails; audio engine is offline" };
     setTitle (statusText);
-    if (auto* handler = getAccessibilityHandler())
-        handler->notifyAccessibilityEvent (juce::AccessibilityEvent::titleChanged);
+    if (shouldAnnounceStatusChange)
+        if (auto* handler = getAccessibilityHandler())
+            handler->notifyAccessibilityEvent (juce::AccessibilityEvent::titleChanged);
     repaint();
 }
 
@@ -600,6 +632,7 @@ void DrumalorStatusDisplay::paint (juce::Graphics& graphics)
 
 DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p),
+      tooltipWindow (this, 550),
       vintagePanel (juce::ImageFileFormat::loadFrom (
           DrumalorAssets::vintagepanel_jpg,
           static_cast<std::size_t> (DrumalorAssets::vintagepanel_jpgSize)))
@@ -624,6 +657,7 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
     panicButton.setName ("Panic - stop all drum tails");
     panicButton.setTitle ("Panic");
     panicButton.setDescription ("Immediately stop every sounding drum voice");
+    panicButton.setTooltip ("Immediately stop every sounding drum voice");
     panicButton.onClick = [this]
     {
         audioProcessor.requestPanic();
@@ -652,7 +686,7 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
     }
 
     selectedInstrumentLabel.setFont (
-        juce::Font (juce::FontOptions (17.0f, juce::Font::bold)));
+        juce::Font (juce::FontOptions (18.0f, juce::Font::bold)));
     selectedInstrumentLabel.setColour (juce::Label::textColourId, colour (textBright));
     selectedInstrumentLabel.setJustificationType (juce::Justification::centredLeft);
     selectedInstrumentLabel.setInterceptsMouseClicks (false, false);
@@ -676,7 +710,10 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
                              audioProcessor.getCurrentSampleRateForDisplay());
 
     setResizable (true, true);
-    setResizeLimits (900, 640, 1600, 900);
+    setResizeLimits (minimumEditorWidth, minimumEditorHeight,
+                     maximumEditorWidth, maximumEditorHeight);
+    if (auto* constrainer = getConstrainer())
+        constrainer->setFixedAspectRatio (editorAspectRatio);
     setSize (1180, 780);
     startTimerHz (30);
 }
@@ -706,6 +743,8 @@ void DrumalorAudioProcessorEditor::selectInstrument (drumalor::Instrument instru
     const auto characterB = toJuceString (
         drumalor::getCharacterBLabel (selectedInstrument));
     const auto midiNote = drumalor::getStandardMidiNote (selectedInstrument);
+    const auto& defaults = drumalor::getInstrumentMetadata (
+        selectedInstrument).defaultParameters;
 
     selectedInstrumentLabel.setText (
         name.toUpperCase() + "   |   MIDI " + juce::String (midiNote),
@@ -723,6 +762,13 @@ void DrumalorAudioProcessorEditor::selectInstrument (drumalor::Instrument instru
 
     if (needsAttachmentRefresh)
         rebuildSelectedAttachments();
+
+    // Keep the editor's reset gesture tied to each instrument's authored defaults,
+    // independent of attachment implementation details.
+    characterAKnob.slider.setDoubleClickReturnValue (true, defaults.characterA);
+    characterBKnob.slider.setDoubleClickReturnValue (true, defaults.characterB);
+    pitchKnob.slider.setDoubleClickReturnValue (true, defaults.pitch);
+    decayKnob.slider.setDoubleClickReturnValue (true, defaults.decay);
 }
 
 void DrumalorAudioProcessorEditor::rebuildSelectedAttachments()
@@ -793,6 +839,17 @@ DrumalorAudioProcessorEditor::calculateLayout() const
     layout.pads = content.removeFromTop (padHeight);
     content.removeFromTop (10);
     layout.controls = content;
+
+    auto controlContent = layout.controls.reduced (15);
+    layout.controlHeader = controlContent.removeFromTop (42);
+    const auto masterWidth = juce::jlimit (150, 220, controlContent.getWidth() / 5);
+    layout.masterDeck = controlContent.removeFromRight (masterWidth);
+    controlContent.removeFromRight (10);
+    layout.voiceDeck = controlContent;
+
+    layout.selectedVoiceHeader = layout.controlHeader;
+    layout.selectedVoiceHeader.removeFromLeft (105);
+    layout.selectedVoiceHeader.removeFromRight (masterWidth + 10);
     return layout;
 }
 
@@ -854,14 +911,7 @@ void DrumalorAudioProcessorEditor::paint (juce::Graphics& graphics)
                        layout.pads.reduced (14).removeFromTop (22),
                        juce::Justification::centredLeft);
 
-    auto controlContent = layout.controls.reduced (15);
-    auto controlHeader = controlContent.removeFromTop (42);
-    const auto masterWidth = juce::jlimit (150, 220, controlContent.getWidth() / 5);
-    auto masterDeck = controlContent.removeFromRight (masterWidth);
-    controlContent.removeFromRight (10);
-    auto voiceDeck = controlContent;
-
-    for (const auto deck : { voiceDeck, masterDeck })
+    for (const auto deck : { layout.voiceDeck, layout.masterDeck })
     {
         const auto area = deck.toFloat();
         graphics.setColour (juce::Colours::black.withAlpha (0.24f));
@@ -870,13 +920,22 @@ void DrumalorAudioProcessorEditor::paint (juce::Graphics& graphics)
         graphics.drawRoundedRectangle (area.reduced (0.5f), 5.0f, 1.0f);
     }
 
-    graphics.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
-    graphics.setColour (colour (trOrange));
-    graphics.drawText ("VOICE CIRCUIT", controlHeader.removeFromLeft (105),
+    const auto voiceAccent = padAccentFor (selectedInstrument);
+    const auto voiceRail = juce::Rectangle<float> (
+        static_cast<float> (layout.voiceDeck.getX() + 8),
+        static_cast<float> (layout.voiceDeck.getY()), 72.0f, 3.0f);
+    graphics.setColour (voiceAccent.withAlpha (0.92f));
+    graphics.fillRoundedRectangle (voiceRail, 1.5f);
+
+    auto circuitHeader = layout.controlHeader;
+    graphics.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+    graphics.setColour (voiceAccent);
+    graphics.drawText ("VOICE CIRCUIT", circuitHeader.removeFromLeft (105),
                        juce::Justification::centredLeft);
     graphics.setColour (colour (trRed));
-    graphics.drawText ("MASTER BUS", masterDeck.getX(), layout.controls.getY() + 14,
-                       masterDeck.getWidth(), 22, juce::Justification::centred);
+    graphics.drawText ("MASTER BUS", layout.masterDeck.getX(),
+                       layout.controlHeader.getY(), layout.masterDeck.getWidth(),
+                       layout.controlHeader.getHeight(), juce::Justification::centred);
 }
 
 void DrumalorAudioProcessorEditor::resized()
@@ -922,18 +981,9 @@ void DrumalorAudioProcessorEditor::resized()
     layoutPadRow (firstRow, 0, 7);
     layoutPadRow (secondRow, 7, drumalor::instrumentCount - 7);
 
-    auto controls = layout.controls.reduced (15);
-    auto controlHeader = controls.removeFromTop (42);
-    const auto masterWidth = juce::jlimit (150, 220, controls.getWidth() / 5);
-    auto masterDeck = controls.removeFromRight (masterWidth);
-    controls.removeFromRight (10);
-    auto voiceDeck = controls;
+    selectedInstrumentLabel.setBounds (layout.selectedVoiceHeader);
 
-    controlHeader.removeFromLeft (105);
-    controlHeader.removeFromRight (masterWidth + 10);
-    selectedInstrumentLabel.setBounds (controlHeader);
-
-    auto voiceKnobRow = voiceDeck.reduced (8, 5);
+    auto voiceKnobRow = layout.voiceDeck.reduced (8, 5);
     voiceKnobRow = voiceKnobRow.withSizeKeepingCentre (
         voiceKnobRow.getWidth(), juce::jmin (260, voiceKnobRow.getHeight()));
     constexpr int voiceKnobCount = 4;
@@ -947,7 +997,7 @@ void DrumalorAudioProcessorEditor::resized()
         knobs[index]->setBounds (cell.reduced (4, 0));
     }
 
-    auto masterKnob = masterDeck.reduced (8, 5);
+    auto masterKnob = layout.masterDeck.reduced (8, 5);
     masterKnob = masterKnob.withSizeKeepingCentre (
         masterKnob.getWidth(), juce::jmin (238, masterKnob.getHeight()));
     outputKnob.setBounds (masterKnob);

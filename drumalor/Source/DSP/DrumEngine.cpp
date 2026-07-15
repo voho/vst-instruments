@@ -62,6 +62,24 @@ float coefficientForTime (float seconds, float sampleRate) noexcept
     return std::exp (minusSixtyDb / std::max (1.0f, seconds * sampleRate));
 }
 
+double besselI0 (double value) noexcept
+{
+    // Stable power series for the Kaiser-window range used by the metallic
+    // decimator. This runs only in prepare/reset, never in the audio loop.
+    const double squaredQuarter = 0.25 * value * value;
+    double sum = 1.0;
+    double term = 1.0;
+    for (int order = 1; order <= 24; ++order)
+    {
+        term *= squaredQuarter
+            / static_cast<double> (order * order);
+        sum += term;
+        if (term < 1.0e-15 * sum)
+            break;
+    }
+    return sum;
+}
+
 float polyBlep (float phase, float phaseIncrement) noexcept
 {
     phaseIncrement = std::clamp (phaseIncrement, 1.0e-6f, 0.49f);
@@ -264,6 +282,23 @@ void DrumEngine::prepare (double sampleRate, int maxBlockSize) noexcept
         -1.0f / std::max (1.0f, supplySagReleaseSeconds * floatSampleRate));
     modalNoiseScale_ = referenceSampleRate / floatSampleRate;
     modalNoisePhaseIncrement_ = modalNoiseScale_;
+    // The discontinuous metallic source islands run at a high internal rate,
+    // while resonators, envelopes and the per-voice circuit stages remain at
+    // the host rate. This targets oversampling where Schmitt edges and ring
+    // products actually create out-of-band energy instead of multiplying the
+    // cost of the entire 128-voice path.
+    metallicOversampleFactor_ = floatSampleRate < 44100.0f ? 8
+                               : floatSampleRate <= 48000.0f ? 4
+                               : floatSampleRate <= 96000.0f ? 2 : 1;
+    metallicInternalSampleRate_ = floatSampleRate
+        * static_cast<float> (metallicOversampleFactor_);
+    metallicInverseSampleRate_ = 1.0f / metallicInternalSampleRate_;
+    configureMetallicDecimator();
+    metallicIncrementSmoothing_ = 1.0f - std::exp (
+        -1.0f / std::max (1.0f, 0.0015f * metallicInternalSampleRate_));
+    const float reconstructionCutoff = std::min (13500.0f, 0.42f * floatSampleRate);
+    cymbalReconstructionCoefficient_ = 1.0f - std::exp (
+        -twoPi * reconstructionCutoff / floatSampleRate);
     for (int i = 0; i < sineTableSize; ++i)
         sineTable_[static_cast<std::size_t> (i)] = std::sin (
             twoPi * static_cast<float> (i) / static_cast<float> (sineTableSize));
@@ -279,6 +314,7 @@ void DrumEngine::reset() noexcept
         voice = Voice {};
     triggerCounters_.fill (0);
     componentDrift_.fill (0.0f);
+    resetMetallicOscillatorBanks();
     generation_ = 0;
     smoothedOutputGain_ = outputGain_.load (std::memory_order_relaxed);
     dcInputLeft_ = dcInputRight_ = 0.0f;
@@ -426,39 +462,378 @@ float DrumEngine::sineLookup (float phase) const noexcept
 float DrumEngine::oscillator (Voice& voice, int oscillatorIndex) const noexcept
 {
     const auto index = static_cast<std::size_t> (std::clamp (oscillatorIndex, 0, oscillatorCount - 1));
-    voice.phases[index] += voice.phaseIncrements[index];
+    // The tonal core represents a lightly asymmetric analogue resonator, not
+    // an immutable table sine. A small supply-dependent pitch term couples it
+    // to the voice rail, while explicitly band-limited second/third harmonics
+    // reproduce component/core asymmetry without passing a discontinuity into
+    // a memoryless waveshaper.
+    const float railPitch = 1.0f - 0.0018f * std::min (1.5f, voice.supplySag);
+    const float increment = std::clamp (
+        voice.phaseIncrements[index] * railPitch, 0.0f, 0.45f);
+    voice.phases[index] += increment;
     voice.phases[index] -= std::floor (voice.phases[index]);
-    return sineLookup (voice.phases[index]);
+    const float phase = voice.phases[index];
+    const float asymmetry = voice.oscillatorAsymmetries[index];
+    const float secondGain = 0.022f * asymmetry
+        * std::clamp ((0.48f - 2.0f * increment) / 0.08f, 0.0f, 1.0f);
+    const float thirdGain = (0.004f + 0.005f * std::abs (asymmetry))
+        * std::clamp ((0.48f - 3.0f * increment) / 0.08f, 0.0f, 1.0f);
+    const float output = sineLookup (phase)
+        + secondGain * sineLookup (2.0f * phase)
+        + thirdGain * sineLookup (3.0f * phase);
+    return output / (1.0f + std::abs (secondGain) + thirdGain);
 }
 
-float DrumEngine::bandLimitedPulse (Voice& voice, int oscillatorIndex) const noexcept
+int DrumEngine::metallicBankIndexFor (Instrument instrument) noexcept
 {
-    const auto index = static_cast<std::size_t> (
-        std::clamp (oscillatorIndex, 0, oscillatorCount - 1));
-    const float increment = std::clamp (voice.phaseIncrements[index], 0.0f, 0.45f);
-    float phase = voice.phases[index] + increment;
-    phase -= std::floor (phase);
-    voice.phases[index] = phase;
-
-    // The HD14584 oscillator bank measured in the TR-808 settles near a
-    // 47.98% duty cycle. Correct both pulse edges with PolyBLEP so its dense
-    // upper spectrum remains useful without a bank of aliased naive squares.
-    constexpr float duty = 0.4798f;
-    float output = phase < duty ? 1.0f : -1.0f;
-    output += polyBlep (phase, increment);
-    float fallingPhase = phase - duty;
-    if (fallingPhase < 0.0f)
-        fallingPhase += 1.0f;
-    output -= polyBlep (fallingPhase, increment);
-    return output;
+    switch (instrument)
+    {
+        case Instrument::ClosedHat: return 0;
+        case Instrument::OpenHat:   return 1;
+        case Instrument::Ride:      return 2;
+        case Instrument::Crash:     return 3;
+        case Instrument::Perc1:     return 4;
+        default:                    return -1;
+    }
 }
 
-float DrumEngine::cymbalOscillatorBank (Voice& voice) const noexcept
+void DrumEngine::configureMetallicDecimator() noexcept
 {
+    // The discontinuous source island needs substantially more rejection than
+    // a light audio low-pass can provide before an N:1 sample-rate change.
+    // These odd-length Kaiser-windowed sinc kernels target an approximately
+    // 80 dB stopband between 0.40 and 0.50 of the host sample rate. The tap
+    // counts scale with the internal rate so the transition stays comparable
+    // for every adaptive oversampling factor.
+    metallicDecimatorCoefficients_.fill (0.0f);
+    metallicDecimatorTapCount_ = metallicOversampleFactor_ <= 1 ? 1
+                                 : metallicOversampleFactor_ == 2 ? 129
+                                 : metallicOversampleFactor_ == 4 ? 257 : 401;
+    if (metallicDecimatorTapCount_ == 1)
+    {
+        metallicDecimatorCoefficients_[0] = 1.0f;
+        return;
+    }
+
+    constexpr double beta = 7.85726; // Kaiser beta for roughly 80 dB rejection.
+    const int halfLength = metallicDecimatorTapCount_ / 2;
+    const double cutoff = 0.45 / static_cast<double> (metallicOversampleFactor_);
+    const double inverseWindowDenominator = 1.0 / besselI0 (beta);
+    double coefficientSum = 0.0;
+    for (int tap = 0; tap < metallicDecimatorTapCount_; ++tap)
+    {
+        const int offset = tap - halfLength;
+        const double sinc = offset == 0
+            ? 2.0 * cutoff
+            : std::sin (2.0 * static_cast<double> (pi) * cutoff
+                        * static_cast<double> (offset))
+                / (static_cast<double> (pi) * static_cast<double> (offset));
+        const double ratio = static_cast<double> (offset)
+            / static_cast<double> (halfLength);
+        const double window = besselI0 (
+            beta * std::sqrt (std::max (0.0, 1.0 - ratio * ratio)))
+            * inverseWindowDenominator;
+        const float coefficient = static_cast<float> (sinc * window);
+        metallicDecimatorCoefficients_[static_cast<std::size_t> (tap)] = coefficient;
+        coefficientSum += coefficient;
+    }
+
+    const float inverseSum = static_cast<float> (1.0 / coefficientSum);
+    for (int tap = 0; tap < metallicDecimatorTapCount_; ++tap)
+        metallicDecimatorCoefficients_[static_cast<std::size_t> (tap)] *= inverseSum;
+}
+
+void DrumEngine::resetMetallicOscillatorBanks() noexcept
+{
+    static constexpr std::array<Instrument, metallicBankCount> instruments {
+        Instrument::ClosedHat, Instrument::OpenHat, Instrument::Ride,
+        Instrument::Crash, Instrument::Perc1
+    };
+
+    for (std::size_t bankIndex = 0; bankIndex < metallicBanks_.size(); ++bankIndex)
+    {
+        auto& bank = metallicBanks_[bankIndex];
+        bank = RelaxationOscillatorBank {};
+        bank.instrument = instruments[bankIndex];
+
+        for (std::size_t oscillatorIndex = 0;
+             oscillatorIndex < bank.phases.size(); ++oscillatorIndex)
+        {
+            const auto seed = static_cast<std::uint32_t> (
+                0x9e3779b9u * (bankIndex + 1u)
+                + 0x85ebca6bu * (oscillatorIndex + 1u));
+            bank.phases[oscillatorIndex] = 0.5f
+                + 0.5f * signedUnitFromHash (seed ^ 0x243f6a88u);
+            bank.fixedTolerances[oscillatorIndex] = signedUnitFromHash (
+                seed ^ 0xb7e15162u);
+            bank.dutyCycles[oscillatorIndex] = std::clamp (
+                0.4798f + 0.010f * signedUnitFromHash (seed ^ 0x13198a2eu),
+                0.445f, 0.515f);
+            bank.thresholds[oscillatorIndex] = std::clamp (
+                0.50f + 0.035f * signedUnitFromHash (seed ^ 0x03707344u),
+                0.40f, 0.60f);
+        }
+
+        const auto values = snapshotParameters (bank.instrument);
+        bank.lastParameterPitch = values.pitch;
+        bank.lastParameterCharacterA = values.characterA;
+        configureMetallicOscillatorBank (
+            bank.instrument, std::exp2 (values.pitch / 12.0f),
+            values.characterA, true);
+
+        // Fill the complete reconstruction history from the running circuit
+        // rather than exposing a zero-state filter transient on the first hit.
+        for (int substep = 0; substep < metallicDecimatorTapCount_; ++substep)
+        {
+            bank.decimatorHistory[static_cast<std::size_t> (
+                bank.decimatorWriteIndex)] = renderMetallicBankSubstep (bank);
+            bank.decimatorWriteIndex = (bank.decimatorWriteIndex + 1)
+                % maximumMetallicDecimatorTaps;
+        }
+    }
+}
+
+void DrumEngine::updateMetallicBankParameterTargets() noexcept
+{
+    for (auto& bank : metallicBanks_)
+    {
+        const auto values = snapshotParameters (bank.instrument);
+        if (values.pitch == bank.lastParameterPitch
+            && values.characterA == bank.lastParameterCharacterA)
+            continue;
+
+        configureMetallicOscillatorBank (
+            bank.instrument, std::exp2 (values.pitch / 12.0f),
+            values.characterA, false);
+        bank.lastParameterPitch = values.pitch;
+        bank.lastParameterCharacterA = values.characterA;
+    }
+}
+
+void DrumEngine::configureMetallicOscillatorBank (Instrument instrument,
+                                                   float pitchRatio,
+                                                   float characterA,
+                                                   bool snap) noexcept
+{
+    const int bankIndex = metallicBankIndexFor (instrument);
+    if (bankIndex < 0)
+        return;
+
+    auto& bank = metallicBanks_[static_cast<std::size_t> (bankIndex)];
+    bank.characterA = std::clamp (characterA, 0.0f, 1.0f);
+    pitchRatio = std::clamp (pitchRatio, 0.20f, 4.20f);
+
+    static constexpr std::array<float, metallicOscillatorCount> hatRatios {
+        1.0f, 1.342f, 1.778f, 2.133f, 2.697f, 3.415f
+    };
+    // Measured nominal HD14584 oscillator frequencies from the classic
+    // six-inverter cymbal source. The 800/540 Hz pair also anchors Perc 1.
+    static constexpr std::array<float, metallicOscillatorCount> cymbalFrequencies {
+        205.3f, 369.6f, 304.4f, 522.7f, 800.0f, 540.0f
+    };
+
+    bank.activeOscillators = instrument == Instrument::Perc1
+        ? 2 : metallicOscillatorCount;
+    for (int oscillatorIndex = 0; oscillatorIndex < bank.activeOscillators;
+         ++oscillatorIndex)
+    {
+        const auto index = static_cast<std::size_t> (oscillatorIndex);
+        float frequency = 0.0f;
+        float toleranceDepth = 0.004f;
+        if (instrument == Instrument::ClosedHat || instrument == Instrument::OpenHat)
+        {
+            const float alternating = (oscillatorIndex & 1) == 0 ? -1.0f : 1.0f;
+            frequency = 1550.0f * hatRatios[index]
+                * (1.0f + alternating * 0.025f * bank.characterA);
+            toleranceDepth = 0.006f;
+        }
+        else if (instrument == Instrument::Ride || instrument == Instrument::Crash)
+        {
+            frequency = cymbalFrequencies[index]
+                * (instrument == Instrument::Crash ? 0.94f : 1.0f);
+            toleranceDepth = oscillatorIndex < 4
+                ? 0.004f + (instrument == Instrument::Crash
+                                ? 0.004f * bank.characterA : 0.0f)
+                : 0.018f + (instrument == Instrument::Crash
+                                ? 0.012f * bank.characterA : 0.002f);
+        }
+        else
+        {
+            frequency = oscillatorIndex == 0
+                ? 535.0f
+                : 535.0f * (1.34f + 0.42f * bank.characterA);
+            toleranceDepth = 0.008f;
+        }
+
+        frequency *= pitchRatio
+            * (1.0f + toleranceDepth * bank.fixedTolerances[index]);
+        const float increment = std::clamp (
+            frequency * metallicInverseSampleRate_, 1.0e-7f, 0.45f);
+        bank.targetIncrements[index] = increment;
+        if (snap || bank.currentIncrements[index] <= 0.0f)
+            bank.currentIncrements[index] = increment;
+
+        const float threshold = bank.thresholds[index];
+        const float logarithmicSwing = std::log (
+            (1.0f + threshold) / std::max (0.05f, 1.0f - threshold));
+        const float duty = bank.dutyCycles[index];
+        bank.riseCoefficients[index] = 1.0f - std::exp (
+            -logarithmicSwing * increment / std::max (0.10f, duty));
+        bank.fallCoefficients[index] = 1.0f - std::exp (
+            -logarithmicSwing * increment / std::max (0.10f, 1.0f - duty));
+
+        if (snap)
+        {
+            const float phase = bank.phases[index];
+            if (phase < duty)
+            {
+                const float normalized = phase / std::max (0.10f, duty);
+                bank.capacitorStates[index] = 1.0f
+                    - (1.0f + threshold)
+                        * std::exp (-logarithmicSwing * normalized);
+            }
+            else
+            {
+                const float normalized = (phase - duty)
+                    / std::max (0.10f, 1.0f - duty);
+                bank.capacitorStates[index] = -1.0f
+                    + (1.0f + threshold)
+                        * std::exp (-logarithmicSwing * normalized);
+            }
+        }
+    }
+}
+
+float DrumEngine::renderMetallicBankSubstep (
+    RelaxationOscillatorBank& bank) noexcept
+{
+    std::array<float, metallicOscillatorCount> pulses {};
+    std::array<float, metallicOscillatorCount> capacitors {};
+    for (int oscillatorIndex = 0; oscillatorIndex < bank.activeOscillators;
+         ++oscillatorIndex)
+    {
+        const auto index = static_cast<std::size_t> (oscillatorIndex);
+        bank.currentIncrements[index] += metallicIncrementSmoothing_
+            * (bank.targetIncrements[index] - bank.currentIncrements[index]);
+        const float increment = std::clamp (
+            bank.currentIncrements[index], 1.0e-7f, 0.45f);
+        float phase = bank.phases[index] + increment;
+        phase -= std::floor (phase);
+        bank.phases[index] = phase;
+
+        const float duty = bank.dutyCycles[index];
+        float pulse = phase < duty ? 1.0f : -1.0f;
+        pulse += polyBlep (phase, increment);
+        float fallingPhase = phase - duty;
+        if (fallingPhase < 0.0f)
+            fallingPhase += 1.0f;
+        pulse -= polyBlep (fallingPhase, increment);
+        // Remove the exact duty-cycle DC term before the downstream channel
+        // filters. Component mismatch still changes harmonic balance without
+        // making overlapping cymbals pull on the master DC blocker.
+        pulses[index] = pulse - (2.0f * duty - 1.0f);
+
+        const float target = phase < duty ? 1.0f : -1.0f;
+        const float coefficient = phase < duty
+            ? bank.riseCoefficients[index] : bank.fallCoefficients[index];
+        bank.capacitorStates[index] += coefficient
+            * (target - bank.capacitorStates[index]);
+        capacitors[index] = bank.capacitorStates[index]
+            / std::max (0.25f, bank.thresholds[index]);
+    }
+
+    if (bank.instrument == Instrument::ClosedHat
+        || bank.instrument == Instrument::OpenHat)
+    {
+        const float pulseRings = pulses[0] * pulses[1]
+                               + pulses[2] * pulses[3]
+                               + pulses[4] * pulses[5];
+        const float capacitorRings = capacitors[0] * capacitors[1]
+                                   + capacitors[2] * capacitors[3]
+                                   + capacitors[4] * capacitors[5];
+        const float tones = pulses[0] + pulses[2] + pulses[4];
+        return (0.18f + 0.12f * bank.characterA)
+                   * (0.82f * pulseRings + 0.18f * capacitorRings)
+             + 0.07f * bank.characterA * tones;
+    }
+
+    if (bank.instrument == Instrument::Perc1)
+    {
+        const float first = pulses[0] + 0.16f * capacitors[0];
+        const float second = pulses[1] + 0.16f * capacitors[1];
+        return 0.42f * first + 0.34f * second + 0.14f * first * second;
+    }
+
     float sum = 0.0f;
-    for (int oscillatorIndex = 0; oscillatorIndex < 6; ++oscillatorIndex)
-        sum += bandLimitedPulse (voice, oscillatorIndex);
-    return sum * (1.0f / 6.0f);
+    for (int oscillatorIndex = 0; oscillatorIndex < bank.activeOscillators;
+         ++oscillatorIndex)
+        sum += pulses[static_cast<std::size_t> (oscillatorIndex)];
+    return sum / static_cast<float> (bank.activeOscillators);
+}
+
+float DrumEngine::decimateMetallicBank (
+    const RelaxationOscillatorBank& bank) const noexcept
+{
+    float reconstructed = 0.0f;
+    int recentIndex = bank.decimatorWriteIndex - 1;
+    if (recentIndex < 0)
+        recentIndex += maximumMetallicDecimatorTaps;
+    int oldestIndex = bank.decimatorWriteIndex - metallicDecimatorTapCount_;
+    if (oldestIndex < 0)
+        oldestIndex += maximumMetallicDecimatorTaps;
+
+    // The linear-phase Kaiser kernel is symmetric. Pair equidistant history
+    // samples before multiplying to halve the active-bank reconstruction cost
+    // without changing its response or persistent state.
+    const int centreTap = metallicDecimatorTapCount_ / 2;
+    for (int tap = 0; tap < centreTap; ++tap)
+    {
+        reconstructed += metallicDecimatorCoefficients_[static_cast<std::size_t> (tap)]
+            * (bank.decimatorHistory[static_cast<std::size_t> (recentIndex)]
+               + bank.decimatorHistory[static_cast<std::size_t> (oldestIndex)]);
+        if (--recentIndex < 0)
+            recentIndex += maximumMetallicDecimatorTaps;
+        if (++oldestIndex >= maximumMetallicDecimatorTaps)
+            oldestIndex = 0;
+    }
+    reconstructed += metallicDecimatorCoefficients_[static_cast<std::size_t> (centreTap)]
+        * bank.decimatorHistory[static_cast<std::size_t> (recentIndex)];
+    return reconstructed;
+}
+
+void DrumEngine::renderMetallicOscillatorBanks (
+    std::uint32_t activeBankMask) noexcept
+{
+    for (std::size_t bankIndex = 0; bankIndex < metallicBanks_.size(); ++bankIndex)
+    {
+        auto& bank = metallicBanks_[bankIndex];
+        float latestSource = 0.0f;
+        for (int substep = 0; substep < metallicOversampleFactor_; ++substep)
+        {
+            latestSource = renderMetallicBankSubstep (bank);
+            bank.decimatorHistory[static_cast<std::size_t> (
+                bank.decimatorWriteIndex)] = latestSource;
+            bank.decimatorWriteIndex = (bank.decimatorWriteIndex + 1)
+                % maximumMetallicDecimatorTaps;
+        }
+
+        // All oscillator/capacitor/filter state keeps advancing through a
+        // closed VCA. The expensive convolution is only needed while a voice
+        // can actually observe this bank.
+        const bool isActive = (activeBankMask
+            & (std::uint32_t { 1 } << static_cast<unsigned> (bankIndex))) != 0u;
+        bank.output = isActive
+            ? (metallicOversampleFactor_ > 1
+                   ? decimateMetallicBank (bank) : latestSource)
+            : 0.0f;
+    }
+}
+
+float DrumEngine::metallicSourceFor (Instrument instrument) const noexcept
+{
+    const int bankIndex = metallicBankIndexFor (instrument);
+    return bankIndex >= 0
+        ? metallicBanks_[static_cast<std::size_t> (bankIndex)].output : 0.0f;
 }
 
 float DrumEngine::nextCymbalPcm (Voice& voice, float source) const noexcept
@@ -477,7 +852,12 @@ float DrumEngine::nextCymbalPcm (Voice& voice, float source) const noexcept
         const float composite = std::clamp (source + decorrelation, -1.0f, 1.0f);
         voice.cymbalPcmValue = std::round (31.0f * composite) * (1.0f / 31.0f);
     }
-    return voice.cymbalPcmValue;
+    // A real reconstruction network does not expose the held DAC steps
+    // directly. This exact one-pole update removes their broadband digital
+    // edge while retaining the audible 30 kHz clock grain at ordinary rates.
+    voice.cymbalPcmReconstructed += cymbalReconstructionCoefficient_
+        * (voice.cymbalPcmValue - voice.cymbalPcmReconstructed);
+    return voice.cymbalPcmReconstructed;
 }
 
 void DrumEngine::configureLowpass (Biquad& filter, float frequency, float q) const noexcept
@@ -702,6 +1082,10 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     voice.decaySeconds = decaySecondsFor (instrument, values.decay)
         * variation.decayScale;
     voice.transientScale = variation.transientScale;
+    // Treat MIDI velocity as trigger/accent voltage as well as final VCA
+    // loudness. The deliberately narrow range preserves the established gain
+    // curve while making hard hits inject more energy into the physical core.
+    voice.excitationScale = 0.74f + 0.26f * std::sqrt (velocity);
     voice.circuitDrive = std::clamp (
         1.10f + 0.48f * voice.characterB + variation.circuitDriveOffset,
         1.02f, 1.72f);
@@ -745,14 +1129,15 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             seed ^ static_cast<std::uint32_t> (0x4f1bbcdcu + oscillatorIndex * 0x9e3779b9u));
         voice.phases[oscillatorIndex] = variation.phaseOffset
             * (0.72f + 0.28f * oscillatorOffset);
+        const auto fixedSeed = static_cast<std::uint32_t> (
+            (indexFor (instrument) + 1u) * 0x9e3779b9u
+            + (oscillatorIndex + 1u) * 0x85ebca6bu);
+        voice.oscillatorAsymmetries[oscillatorIndex] = std::clamp (
+            0.82f * signedUnitFromHash (fixedSeed ^ 0x3c6ef372u)
+                + 0.18f * oscillatorOffset,
+            -1.0f, 1.0f);
     }
 
-    static constexpr float hatRatios[6] { 1.0f, 1.342f, 1.778f, 2.133f, 2.697f, 3.415f };
-    // Measured nominal HD14584 oscillator frequencies from the TR-808 cymbal
-    // source. The two trimmer oscillators are represented by 800 and 540 Hz.
-    static constexpr float cymbalFrequencies[6] {
-        205.3f, 369.6f, 304.4f, 522.7f, 800.0f, 540.0f
-    };
     // Short, increasingly dense acoustic modes give the synthetic 909 layer
     // body without allowing a handful of low partials to cling for the tail.
     static constexpr float rideRatios[12] {
@@ -777,7 +1162,7 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             voice.transientMultiplier = coefficientForTime (0.0020f + 0.0045f * voice.characterA,
                                                              static_cast<float> (sampleRate_));
             voice.kickCharge = (0.92f + 0.16f * voice.characterA)
-                * voice.transientScale;
+                * voice.transientScale * voice.excitationScale;
             voice.kickChargeMultiplier = coefficientForTime (
                 0.00045f + 0.00085f * voice.characterA,
                 static_cast<float> (sampleRate_));
@@ -830,18 +1215,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
         case Instrument::ClosedHat:
         case Instrument::OpenHat:
         {
-            const float base = 1550.0f * voice.pitchRatio;
-            for (int oscillatorIndex = 0; oscillatorIndex < 6; ++oscillatorIndex)
-            {
-                const float alternating = (oscillatorIndex & 1) == 0 ? -1.0f : 1.0f;
-                const float ratio = hatRatios[oscillatorIndex]
-                    * (1.0f + alternating * 0.025f * voice.characterA);
-                voice.phaseIncrements[static_cast<std::size_t> (oscillatorIndex)] =
-                    std::min (0.45f, base * ratio * inverseSampleRate_);
-                voice.phases[static_cast<std::size_t> (oscillatorIndex)] =
-                    static_cast<float> (oscillatorIndex) * 0.117f
-                    + variation.phaseOffset * (0.65f + 0.07f * static_cast<float> (oscillatorIndex));
-            }
+            configureMetallicOscillatorBank (
+                instrument, voice.pitchRatio, voice.characterA, false);
             configureHighpass (voice.filterA, 3400.0f + 6500.0f * voice.characterB, 0.70f);
             configureBandpass (voice.filterB, 6500.0f + 4800.0f * voice.characterB, 0.85f);
             voice.transientMultiplier = coefficientForTime (instrument == Instrument::ClosedHat ? 0.0025f : 0.006f,
@@ -851,19 +1226,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
 
         case Instrument::Ride:
         {
-            for (int oscillatorIndex = 0; oscillatorIndex < 6; ++oscillatorIndex)
-            {
-                const float tolerance = oscillatorIndex < 4 ? 0.0040f : 0.020f;
-                const float offset = signedUnitFromHash (
-                    seed ^ static_cast<std::uint32_t> (
-                        0x51ed270bu + oscillatorIndex * 0x9e3779b9u));
-                const float frequency = cymbalFrequencies[oscillatorIndex]
-                    * voice.pitchRatio * (1.0f + tolerance * offset);
-                voice.phaseIncrements[static_cast<std::size_t> (oscillatorIndex)] =
-                    std::min (0.45f, frequency * inverseSampleRate_);
-                voice.phases[static_cast<std::size_t> (oscillatorIndex)] +=
-                    0.137f * static_cast<float> (oscillatorIndex);
-            }
+            configureMetallicOscillatorBank (
+                instrument, voice.pitchRatio, voice.characterA, false);
 
             const float modalPitch = std::pow (voice.pitchRatio, 0.74f);
             const float modalDecay = 0.16f + voice.decaySeconds
@@ -886,22 +1250,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
 
         case Instrument::Crash:
         {
-            for (int oscillatorIndex = 0; oscillatorIndex < 6; ++oscillatorIndex)
-            {
-                const float tolerance = oscillatorIndex < 4
-                    ? 0.004f + 0.004f * voice.characterA
-                    : 0.018f + 0.012f * voice.characterA;
-                const float offset = signedUnitFromHash (
-                    seed ^ static_cast<std::uint32_t> (
-                        0xa24baed4u + oscillatorIndex * 0x85ebca6bu));
-                const float spreadDetune = 1.0f + tolerance * offset;
-                const float frequency = cymbalFrequencies[oscillatorIndex]
-                    * 0.94f * voice.pitchRatio * spreadDetune;
-                voice.phaseIncrements[static_cast<std::size_t> (oscillatorIndex)] =
-                    std::min (0.45f, frequency * inverseSampleRate_);
-                voice.phases[static_cast<std::size_t> (oscillatorIndex)] +=
-                    0.173f * static_cast<float> (oscillatorIndex);
-            }
+            configureMetallicOscillatorBank (
+                instrument, voice.pitchRatio, voice.characterA, false);
 
             const float modalPitch = std::pow (voice.pitchRatio, 0.72f);
             const float modalDecay = 0.12f + voice.decaySeconds
@@ -957,11 +1307,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
         case Instrument::Perc1:
         {
             voice.baseFrequency = 535.0f * voice.pitchRatio;
-            const float ratio = 1.34f + 0.42f * voice.characterA;
-            voice.phaseIncrements[0] = std::min (0.45f, voice.baseFrequency * inverseSampleRate_);
-            voice.phaseIncrements[1] = std::min (0.45f, voice.baseFrequency * ratio * inverseSampleRate_);
-            voice.phaseIncrements[2] = std::min (0.45f, voice.baseFrequency * 2.0f * inverseSampleRate_);
-            voice.phaseIncrements[3] = std::min (0.45f, voice.baseFrequency * ratio * 2.0f * inverseSampleRate_);
+            configureMetallicOscillatorBank (
+                instrument, voice.pitchRatio, voice.characterA, false);
             configureBandpass (voice.filterA, std::min (6200.0f, voice.baseFrequency * 1.55f), 1.0f);
             configureHighpass (voice.filterB, 1800.0f, 0.70f);
             voice.transientMultiplier = coefficientForTime (0.0035f, static_cast<float> (sampleRate_));
@@ -987,6 +1334,17 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
 
         case Instrument::Count:
             break;
+    }
+
+    const int metallicBankIndex = metallicBankIndexFor (instrument);
+    if (metallicBankIndex >= 0)
+    {
+        auto& bank = metallicBanks_[static_cast<std::size_t> (metallicBankIndex)];
+        // The target contains this hit's tiny analogue tolerance, while these
+        // values remember the nominal control position. Silent automation can
+        // then retune the free-running source without erasing per-hit drift.
+        bank.lastParameterPitch = values.pitch;
+        bank.lastParameterCharacterA = values.characterA;
     }
 }
 
@@ -1059,8 +1417,14 @@ float DrumEngine::renderKick (Voice& voice) noexcept
     // Stable time-varying energy-state resonator. Unlike directly changing a
     // biquad's coefficients, each update is a rotation followed by an explicit
     // contraction, so rapid pitch sweeps cannot inject unbounded state energy.
+    // Euclidean state energy is invariant under the quadrature rotation.
+    // The former L1 estimate changed with phase and unintentionally modulated
+    // pitch and damping at twice the kick frequency. The scale preserves its
+    // former average operating range while removing that digital fingerprint.
     const float stateMagnitude = std::min (
-        1.5f, std::abs (voice.kickStateX) + std::abs (voice.kickStateY));
+        1.5f, 1.27323954f * std::sqrt (
+            voice.kickStateX * voice.kickStateX
+            + voice.kickStateY * voice.kickStateY));
     const float triggerSweep = 0.84f + 0.16f * voice.velocity;
     const float amplitudePitch = 1.0f
         + 0.016f * voice.characterB * stateMagnitude;
@@ -1139,16 +1503,11 @@ float DrumEngine::renderClap (Voice& voice) noexcept
 
 float DrumEngine::renderHat (Voice& voice) noexcept
 {
-    std::array<float, 6> oscillators {};
-    for (int index = 0; index < 6; ++index)
-        oscillators[static_cast<std::size_t> (index)] = oscillator (voice, index);
-    const float rings = oscillators[0] * oscillators[1]
-                      + oscillators[2] * oscillators[3]
-                      + oscillators[4] * oscillators[5];
-    const float tones = oscillators[0] + oscillators[2] + oscillators[4];
     const float noise = nextNoise (voice);
-    const float metallic = (0.18f + 0.12f * voice.characterA) * rings
-                         + 0.07f * voice.characterA * tones
+    // The persistent Schmitt/RC bank is evaluated once per engine sample, so
+    // overlapping hits hear the same free-running hardware source instead of
+    // restarting six ideal sines with newly randomized components.
+    const float metallic = metallicSourceFor (voice.instrument)
                          + 0.20f * (1.0f - voice.characterA) * noise;
     const float high = voice.filterA.tick (metallic);
     const float focused = voice.filterB.tick (metallic);
@@ -1159,7 +1518,7 @@ float DrumEngine::renderHat (Voice& voice) noexcept
 
 float DrumEngine::renderRide (Voice& voice) noexcept
 {
-    const float oscillatorBank = cymbalOscillatorBank (voice);
+    const float oscillatorBank = metallicSourceFor (voice.instrument);
     const float noise = nextModalNoise (voice);
     const float pcm = nextCymbalPcm (
         voice, 0.68f * oscillatorBank + 0.24f * noise);
@@ -1175,9 +1534,9 @@ float DrumEngine::renderRide (Voice& voice) noexcept
         0.34f * oscillatorBank + 0.66f * pcm);
 
     const float contact = voice.ageSamples == 0u
-        ? 2.15f * voice.transientScale
+        ? 2.15f * voice.transientScale * voice.excitationScale
         : 0.055f * modalNoiseScale_ * noise * voice.transientEnvelope
-            * voice.transientScale;
+            * voice.transientScale * voice.excitationScale;
     float modes = 0.0f;
     for (std::size_t mode = 0; mode < resonatorCount; ++mode)
     {
@@ -1190,7 +1549,7 @@ float DrumEngine::renderRide (Voice& voice) noexcept
 
     const float bell = voice.characterA;
     const float tone = voice.characterB;
-    const float body = (0.46f + 0.38f * bell - 0.10f * tone)
+    const float body = (0.46f + 0.50f * bell - 0.10f * tone)
         * bodyBand * voice.envelope;
     const float shimmer = (0.18f + 0.34f * tone)
         * shimmerBand * voice.auxiliaryEnvelope;
@@ -1202,7 +1561,7 @@ float DrumEngine::renderRide (Voice& voice) noexcept
 
 float DrumEngine::renderCrash (Voice& voice) noexcept
 {
-    const float oscillatorBank = cymbalOscillatorBank (voice);
+    const float oscillatorBank = metallicSourceFor (voice.instrument);
     const float noise = nextModalNoise (voice);
     const float pcm = nextCymbalPcm (
         voice, 0.52f * oscillatorBank + 0.34f * noise);
@@ -1223,9 +1582,9 @@ float DrumEngine::renderCrash (Voice& voice) noexcept
     // carried by diffuse oscillator/PCM bands, avoiding the old continuously
     // driven resonators that exposed a handful of clinging pitches.
     const float excitation = voice.ageSamples == 0u
-        ? 1.75f * voice.transientScale
+        ? 1.75f * voice.transientScale * voice.excitationScale
         : 0.075f * modalNoiseScale_ * noise * voice.transientEnvelope
-            * voice.transientScale;
+            * voice.transientScale * voice.excitationScale;
     float modes = 0.0f;
     for (std::size_t mode = 0; mode < resonatorCount; ++mode)
         modes += voice.modeGains[mode] * voice.resonators[mode].tick (excitation);
@@ -1244,7 +1603,11 @@ float DrumEngine::renderCrash (Voice& voice) noexcept
 
 float DrumEngine::renderTom (Voice& voice) noexcept
 {
-    const float frequency = voice.baseFrequency * (1.0f + voice.sweepAmount * voice.pitchEnvelope);
+    const float membraneStiffness = 1.0f + 0.004f * voice.characterB
+        * voice.excitationScale * voice.envelope;
+    const float frequency = voice.baseFrequency
+        * (1.0f + voice.sweepAmount * voice.pitchEnvelope)
+        * membraneStiffness;
     voice.phaseIncrements[0] = std::min (0.45f, frequency * inverseSampleRate_);
     const float fundamental = oscillator (voice, 0);
     const float shell = oscillator (voice, 1);
@@ -1261,7 +1624,7 @@ float DrumEngine::renderShaker (Voice& voice) noexcept
     const float probability = std::min (0.80f, collisionsPerSecond * inverseSampleRate_);
     const float grainNoise = nextNoise (voice);
     if (decision < probability)
-        voice.transientEnvelope += voice.transientScale
+        voice.transientEnvelope += voice.transientScale * voice.excitationScale
             * (0.45f + 0.55f * std::abs (grainNoise));
     const float grains = voice.filterB.tick (voice.filterA.tick (
         grainNoise * voice.transientEnvelope));
@@ -1270,9 +1633,7 @@ float DrumEngine::renderShaker (Voice& voice) noexcept
 
 float DrumEngine::renderPerc1 (Voice& voice) noexcept
 {
-    const float first = oscillator (voice, 0) + 0.24f * oscillator (voice, 2);
-    const float second = oscillator (voice, 1) + 0.24f * oscillator (voice, 3);
-    const float metallic = 0.62f * first + 0.46f * second + 0.22f * first * second;
+    const float metallic = metallicSourceFor (voice.instrument);
     const float click = voice.filterB.tick (nextNoise (voice)) * voice.transientEnvelope
         * voice.transientScale;
     const float shaped = voice.filterA.tick (metallic) * voice.envelope + 0.12f * click;
@@ -1289,7 +1650,8 @@ float DrumEngine::renderPerc2 (Voice& voice) noexcept
             * voice.transientScale * noise;
     float body = 0.0f;
     for (std::size_t mode = 0; mode < 4; ++mode)
-        body += voice.modeGains[mode] * voice.resonators[mode].tick (excitation);
+        body += voice.modeGains[mode] * voice.resonators[mode].tick (
+            excitation * voice.excitationScale);
     const float click = voice.filterA.tick (noise) * voice.transientEnvelope;
     return 1.35f * voice.filterB.tick (body + 0.20f * voice.characterB * click);
 }
@@ -1353,12 +1715,36 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
     if (! prepared_)
         prepare (sampleRate_, std::max (maxBlockSize_, numSamples));
 
+    updateMetallicBankParameterTargets();
+
+    // Voice activity can only decrease inside one engine chunk; triggers split
+    // processing at their exact event offsets. Discover observable banks once
+    // per chunk instead of rescanning both 64-voice pools for every sample.
+    std::uint32_t activeMetallicBankMask = 0u;
+    const auto observeMetallicVoice = [&activeMetallicBankMask] (const Voice& voice)
+    {
+        if (! voice.active)
+            return;
+        const int bankIndex = metallicBankIndexFor (voice.instrument);
+        if (bankIndex >= 0)
+            activeMetallicBankMask |= std::uint32_t { 1 }
+                << static_cast<unsigned> (bankIndex);
+    };
+    for (const auto& voice : voices_)
+        observeMetallicVoice (voice);
+    for (const auto& voice : retiringVoices_)
+        observeMetallicVoice (voice);
+
     const float gainTarget = outputGain_.load (std::memory_order_relaxed);
     const float gainSmoothing = 1.0f - std::exp (-inverseSampleRate_ / 0.020f);
     const float dcCoefficient = std::exp (-twoPi * 12.0f * inverseSampleRate_);
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
+        // Free-running component oscillators advance even when their VCAs are
+        // closed. A later trigger therefore samples the circuit's actual phase
+        // rather than restarting a synthetic waveform at note-on.
+        renderMetallicOscillatorBanks (activeMetallicBankMask);
         float dryLeft = 0.0f;
         float dryRight = 0.0f;
         bool hasActiveVoices = false;

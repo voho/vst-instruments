@@ -919,6 +919,126 @@ void testDeterminismAndBlockPartitioning()
             "staggered organic hit sequence changed with process block partitioning");
 }
 
+void testFreeRunningMetallicOscillators()
+{
+    constexpr int renderedSamples = 2048;
+    constexpr std::array silentOffsets { 137, 173, 251 };
+    constexpr std::array instruments {
+        drumalor::Instrument::ClosedHat,
+        drumalor::Instrument::OpenHat,
+        drumalor::Instrument::Ride,
+        drumalor::Instrument::Crash,
+        drumalor::Instrument::Perc1
+    };
+
+    for (const auto instrument : instruments)
+    {
+        bool observedAdvancedPhase = false;
+        for (const int silentOffset : silentOffsets)
+        {
+            drumalor::DrumEngine immediate;
+            drumalor::DrumEngine delayedSingleBlock;
+            drumalor::DrumEngine delayedIrregularBlocks;
+            for (auto* engine : { &immediate, &delayedSingleBlock,
+                                  &delayedIrregularBlocks })
+                engine->prepare (48000.0, 512);
+
+            const auto silent = renderInterleaved (
+                delayedSingleBlock, silentOffset, silentOffset);
+            const auto irregularSilence = renderInterleaved (
+                delayedIrregularBlocks, silentOffset, 37);
+            expect (meanAbsoluteMagnitude (silent) == 0.0
+                        && meanAbsoluteMagnitude (irregularSilence) == 0.0,
+                    "free-running metallic banks leaked through their closed VCAs");
+
+            immediate.trigger (instrument, 0.8f);
+            delayedSingleBlock.trigger (instrument, 0.8f);
+            delayedIrregularBlocks.trigger (instrument, 0.8f);
+            const auto immediateHit = renderInterleaved (
+                immediate, renderedSamples, defaultBlockSize);
+            const auto delayedHit = renderInterleaved (
+                delayedSingleBlock, renderedSamples, defaultBlockSize);
+            const auto delayedPartitionedHit = renderInterleaved (
+                delayedIrregularBlocks, renderedSamples, 113);
+
+            expect (delayedHit == delayedPartitionedHit,
+                    "free-running metallic state changed with block partitioning");
+            const double difference = meanAbsoluteDifference (immediateHit, delayedHit);
+            const double reference = std::max (meanAbsoluteMagnitude (immediateHit),
+                                               meanAbsoluteMagnitude (delayedHit));
+            observedAdvancedPhase = observedAdvancedPhase
+                || difference > std::max (1.0e-7, 0.01 * reference);
+        }
+
+        expect (observedAdvancedPhase,
+                "metallic oscillator bank restarted at trigger instead of free-running");
+    }
+}
+
+void testPersistentMetallicParameterUpdates()
+{
+    constexpr auto instrument = drumalor::Instrument::ClosedHat;
+    constexpr int silentSamples = 997;
+    constexpr int renderedSamples = 2048;
+    auto values = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+    values.pitch = 11.0f;
+    values.characterA = 0.91f;
+
+    drumalor::DrumEngine automatedSingleBlock;
+    drumalor::DrumEngine automatedPartitioned;
+    drumalor::DrumEngine automatedOnlyAtTrigger;
+    for (auto* engine : { &automatedSingleBlock, &automatedPartitioned,
+                          &automatedOnlyAtTrigger })
+        engine->prepare (48000.0, 512);
+
+    automatedSingleBlock.setInstrumentParameters (instrument, values);
+    automatedPartitioned.setInstrumentParameters (instrument, values);
+    renderInterleaved (automatedSingleBlock, silentSamples, silentSamples);
+    renderInterleaved (automatedPartitioned, silentSamples, 37);
+    renderInterleaved (automatedOnlyAtTrigger, silentSamples, 113);
+    automatedOnlyAtTrigger.setInstrumentParameters (instrument, values);
+
+    automatedSingleBlock.trigger (instrument, 0.8f);
+    automatedPartitioned.trigger (instrument, 0.8f);
+    automatedOnlyAtTrigger.trigger (instrument, 0.8f);
+    const auto singleBlockHit = renderInterleaved (
+        automatedSingleBlock, renderedSamples, defaultBlockSize);
+    const auto partitionedHit = renderInterleaved (
+        automatedPartitioned, renderedSamples, 113);
+    const auto lateAutomationHit = renderInterleaved (
+        automatedOnlyAtTrigger, renderedSamples, defaultBlockSize);
+
+    expect (singleBlockHit == partitionedHit,
+            "silent metallic automation changed with block partitioning");
+    const double automationDifference = meanAbsoluteDifference (
+        singleBlockHit, lateAutomationHit);
+    const double automationReference = std::max (
+        meanAbsoluteMagnitude (singleBlockHit),
+        meanAbsoluteMagnitude (lateAutomationHit));
+    expect (automationDifference > std::max (1.0e-7, 0.01 * automationReference),
+            "silent automation did not retune the persistent metallic history");
+
+    drumalor::DrumEngine restoredBeforePrepare;
+    drumalor::DrumEngine changedAfterPrepare;
+    restoredBeforePrepare.setInstrumentParameters (instrument, values);
+    restoredBeforePrepare.prepare (48000.0, 512);
+    changedAfterPrepare.prepare (48000.0, 512);
+    changedAfterPrepare.setInstrumentParameters (instrument, values);
+    restoredBeforePrepare.trigger (instrument, 0.8f);
+    changedAfterPrepare.trigger (instrument, 0.8f);
+    const auto restoredHit = renderInterleaved (
+        restoredBeforePrepare, renderedSamples, defaultBlockSize);
+    const auto changedAfterPrepareHit = renderInterleaved (
+        changedAfterPrepare, renderedSamples, defaultBlockSize);
+    const double restoreDifference = meanAbsoluteDifference (
+        restoredHit, changedAfterPrepareHit);
+    const double restoreReference = std::max (
+        meanAbsoluteMagnitude (restoredHit),
+        meanAbsoluteMagnitude (changedAfterPrepareHit));
+    expect (restoreDifference > std::max (1.0e-7, 0.01 * restoreReference),
+            "prepare ignored restored metallic parameters during history prefill");
+}
+
 void testOrganicAnalogVariation()
 {
     constexpr double sampleRate = 48000.0;
@@ -1517,6 +1637,8 @@ int main()
     testTailsTerminate();
     testHatChokeAndPanic();
     testDeterminismAndBlockPartitioning();
+    testFreeRunningMetallicOscillators();
+    testPersistentMetallicParameterUpdates();
     testOrganicAnalogVariation();
     testDeepAnalogKickContract();
     testLowFrequencyTailAndVoiceStealing();

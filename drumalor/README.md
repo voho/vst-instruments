@@ -72,21 +72,24 @@ partials for hats and cymbals, and compact stochastic or resonant models for the
 shaker and percussion voices. Voice-specific controls move several related
 synthesis values together so each voice remains useful across the full range.
 
-Every trigger also advances a slowly correlated component-drift model for that
-instrument, then applies tightly bounded hit-level tolerances to oscillator
-pitch and starting phase, envelope decay, transient energy, tone, circuit drive,
-and bias. This makes repeated equal-velocity notes differ in timbre and feel
-without turning them into random changes of kit, level, or timing. The sequence
-is deterministic: resetting the engine or reopening the same project starts the
-same variation sequence again, and audio remains independent of host block size.
+Each virtual channel has fixed per-unit component tolerances. Its metallic
+Schmitt/RC oscillators run continuously behind the VCA, so a strike samples the
+circuit's current phase instead of restarting a waveform with newly randomized
+parts. Triggers add only tightly bounded, slowly correlated variations to pitch,
+envelope decay, transient energy, tone, circuit drive, and bias. MIDI velocity
+also changes trigger energy before the resonators and VCAs, not merely the final
+gain. Repeated equal-velocity notes therefore differ without becoming random
+changes of kit, level, or timing. The sequence remains deterministic after reset
+and independent of host block size.
 
 Each voice finishes through a lightweight asymmetric diode/transistor-style
 transfer with a variable operating point and a virtual supply rail that sags
 quickly on strong transients and recovers more slowly. First-order analytic
 antiderivative antialiasing (ADAA) is applied to these nonlinear stages and the
-stereo output shaper, reducing fold-back artifacts without an oversampled audio
-path. The undelayed linear component is preserved so quiet hits keep their
-transient definition.
+stereo output shaper. Only the discontinuous metallic oscillator/ring-modulation
+islands are adaptively oversampled and reconstructed before returning to the
+host rate; the rest of the voice path is not multiplied in cost. The undelayed
+linear component is preserved so quiet hits keep their transient definition.
 
 The Kick has a dedicated charged-energy model: a virtual capacitor discharges
 into a contractive two-state resonator whose frequency and loss change with the
@@ -96,12 +99,25 @@ operating point, branch mismatch, harmonic density, and modest makeup gain. The
 resonator update is an explicit rotation followed by contraction, so even rapid
 pitch modulation cannot inject unbounded state energy.
 
-Ride and Crash use a deliberately hybrid cymbal architecture. Six independently
-toleranced, 47.98%-duty PolyBLEP pulse oscillators reproduce the dense metallic
-source and 3.44/7.1/10.5 kHz band structure associated with classic analogue
-cymbal circuits. A separate voice-local 30 kHz clock quantizes a generated
-oscillator/noise composite to 63 symmetric levels, adding the grain and diffuse
-continuity of early PCM cymbals without loading a sample or copying ROM data.
+Hats, Ride, Crash, and Perc 1 use persistent relaxation-oscillator banks. Exact
+exponential RC charge/discharge curves, fixed threshold and tuning tolerances,
+47.98%-centred duty cycles, fractional-edge PolyBLEP correction, and local
+adaptive oversampling retain the unstable metallic detail with substantially
+less aliasing than naive square waves or multiplied ideal sines. An
+approximately 80 dB Kaiser-windowed reconstruction FIR precedes each adaptive
+rate change. Perc 1 now derives its cowbell body from the familiar approximately
+535/800 Hz Schmitt pair. Tonal snare and tom cores remain smooth resonators, but
+add explicitly band-limited component asymmetry and subtle virtual-rail pitch
+coupling instead of mathematically perfect table sines.
+
+Ride and Crash keep a deliberately hybrid cymbal architecture. Their six-pulse
+source feeds the 3.44/7.1/10.5 kHz analogue-style band structure. A separate
+voice-local nominal 30 kHz clock quantizes a generated oscillator/noise composite
+to 63 symmetric levels, then passes it through a reconstruction pole, adding the
+grain and diffuse continuity of early PCM cymbals without loading a sample or
+copying ROM data. At host rates below 30 kHz the clock is necessarily limited to
+the host rate.
+
 Short, high-spread acoustic modes supply stick/bell/body energy, while the long
 tail comes from three independently weighted wash bands instead of continuously
 driven low resonators. This removes the former hollow spectral gap and lingering
@@ -125,8 +141,9 @@ The editor uses a generated geometry-free powder-coat plate only as a restrained
 material texture; all panel geometry is rendered by the responsive JUCE layout. A
 compact equal-width channel grid, illuminated selection rails, separate Voice
 Circuit and Master decks, scaled metal-collared Bakelite knobs, recessed value
-readouts, and clearer typography create a denser hardware hierarchy without
-losing accessibility or resize support. Its near-black face, neutral hardware,
+readouts, bipolar Pitch indication, parameter-aware reset gestures, tooltips,
+and clearer typography create a denser hardware hierarchy without losing
+accessibility or resize support. Its near-black face, neutral hardware,
 warm legends, and ordered red/orange/yellow/cream channel accents borrow the
 colour rhythm associated with classic early-1980s rhythm composers while
 retaining Drumalor's own branding and layout. The texture is compiled into the
@@ -150,7 +167,10 @@ self-contained real-time instrument:
   time-varying updates for the Kick.
 - Werner, Abel, and Smith's [TR-808 cymbal circuit analysis](https://pureadmin.qub.ac.uk/ws/portalfiles/portal/125044847/tr_808_cymbal_a_physically_informed_circuit_bendable_digital.pdf)
   supplies the measured six-oscillator frequencies, pulse duty cycle, and
-  multi-band filter structure used by the synthesized cymbal source. The
+  multi-band filter structure used by the synthesized cymbal source. Olsen,
+  Werner, and Germain's [network-variable-preserving oscillator study](https://dafx.de/paper-archive/2017/papers/DAFx17_paper_74.pdf)
+  motivates combining relaxation-circuit state, accurate edge timing, and BLEP
+  correction rather than choosing between physical modeling and antialiasing. The
   [TR-909 service notes](https://www.polynominal.com/site/studio/gear/drum/roland-tr909/roland-tr909-service-manual.pdf)
   document its real-cymbal PCM memories and envelope restoration; Drumalor
   models that early clock/DAC character with newly generated data rather than
@@ -241,10 +261,15 @@ four controls on every voice, sample-rate consistency, saturated voice stealing,
 and a generous offline performance guardrail. Organic-model contracts verify
 that six equal strikes differ for all 13 voices while RMS, peak, and natural-tail
 spread stay bounded; they also verify bit-exact reset replay and block-partition
-invariance. Kick-specific contracts cover a 43–55 Hz settled body, dominant
-sub-100 Hz energy, controlled transient and crest factor, Drive harmonics without
-excess settled energy above 8 kHz, pitch tracking, DC safety, and consistency
-from 8 to 192 kHz. Cymbal contracts reject hollow midrange gaps and sparse
+invariance. A dedicated metallic-source contract verifies across all five banks
+and three elapsed-time offsets that silence advances the free-running source
+without leaking through closed VCAs, and that its reconstruction remains
+independent of block partitioning. Restored-state and silent-automation checks
+also keep the persistent bank controls synchronized. Kick-specific contracts
+cover a 43–55 Hz settled body, dominant sub-100 Hz energy, controlled transient
+and crest factor, Drive harmonics without excess settled energy above 8 kHz,
+pitch tracking, DC safety, and consistency from 8 to 192 kHz. Cymbal contracts
+reject hollow midrange gaps and sparse
 ringing tails, require retained Ride wash at maximum Bell, verify directional
 Tone/Brightness response, and keep Crash Spread diffusion level-matched. Plug-in
 builds add a JUCE-backed processor contract suite for

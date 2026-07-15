@@ -80,6 +80,9 @@ private:
     static constexpr int retiringVoiceCount = maxVoices;
     static constexpr int oscillatorCount = 8;
     static constexpr int resonatorCount = 12;
+    static constexpr int metallicBankCount = 5;
+    static constexpr int metallicOscillatorCount = 6;
+    static constexpr int maximumMetallicDecimatorTaps = 401;
     static constexpr int sineTableSize = 2048;
     static constexpr int sineTableMask = sineTableSize - 1;
 
@@ -155,6 +158,7 @@ private:
         float pitchEnvelope { 1.0f };
         float pitchEnvelopeMultiplier { 0.99f };
         float transientScale { 1.0f };
+        float excitationScale { 1.0f };
         float circuitDrive { 1.2f };
         float circuitBias { 0.0f };
         float analogPreviousInput { 0.0f };
@@ -173,18 +177,41 @@ private:
         float modalNoisePhase { 0.0f };
         float cymbalClockPhase { 1.0f };
         float cymbalPcmValue { 0.0f };
+        float cymbalPcmReconstructed { 0.0f };
         float baseFrequency { 100.0f };
         float sweepAmount { 0.0f };
         float panLeft { 0.70710678f };
         float panRight { 0.70710678f };
         std::array<float, oscillatorCount> phases {};
         std::array<float, oscillatorCount> phaseIncrements {};
+        std::array<float, oscillatorCount> oscillatorAsymmetries {};
         std::array<float, resonatorCount> modeGains {};
         std::array<std::uint64_t, 4> burstStarts {};
         std::array<Resonator, resonatorCount> resonators {};
         Biquad filterA {};
         Biquad filterB {};
         Biquad filterC {};
+    };
+
+    struct RelaxationOscillatorBank
+    {
+        Instrument instrument { Instrument::ClosedHat };
+        int activeOscillators { metallicOscillatorCount };
+        float characterA { 0.5f };
+        float output { 0.0f };
+        float lastParameterPitch { 0.0f };
+        float lastParameterCharacterA { 0.5f };
+        std::array<float, metallicOscillatorCount> phases {};
+        std::array<float, metallicOscillatorCount> currentIncrements {};
+        std::array<float, metallicOscillatorCount> targetIncrements {};
+        std::array<float, metallicOscillatorCount> dutyCycles {};
+        std::array<float, metallicOscillatorCount> thresholds {};
+        std::array<float, metallicOscillatorCount> capacitorStates {};
+        std::array<float, metallicOscillatorCount> riseCoefficients {};
+        std::array<float, metallicOscillatorCount> fallCoefficients {};
+        std::array<float, metallicOscillatorCount> fixedTolerances {};
+        std::array<float, maximumMetallicDecimatorTaps> decimatorHistory {};
+        int decimatorWriteIndex { 0 };
     };
 
     [[nodiscard]] static bool validInstrument (Instrument instrument) noexcept;
@@ -218,8 +245,18 @@ private:
     [[nodiscard]] float renderPerc2 (Voice& voice) noexcept;
 
     [[nodiscard]] float oscillator (Voice& voice, int oscillatorIndex) const noexcept;
-    [[nodiscard]] float bandLimitedPulse (Voice& voice, int oscillatorIndex) const noexcept;
-    [[nodiscard]] float cymbalOscillatorBank (Voice& voice) const noexcept;
+    void resetMetallicOscillatorBanks() noexcept;
+    void configureMetallicDecimator() noexcept;
+    void updateMetallicBankParameterTargets() noexcept;
+    void configureMetallicOscillatorBank (Instrument instrument, float pitchRatio,
+                                          float characterA, bool snap) noexcept;
+    void renderMetallicOscillatorBanks (std::uint32_t activeBankMask) noexcept;
+    [[nodiscard]] float renderMetallicBankSubstep (
+        RelaxationOscillatorBank& bank) noexcept;
+    [[nodiscard]] float decimateMetallicBank (
+        const RelaxationOscillatorBank& bank) const noexcept;
+    [[nodiscard]] float metallicSourceFor (Instrument instrument) const noexcept;
+    [[nodiscard]] static int metallicBankIndexFor (Instrument instrument) noexcept;
     [[nodiscard]] float nextCymbalPcm (Voice& voice, float source) const noexcept;
     [[nodiscard]] float sineLookup (float phase) const noexcept;
     [[nodiscard]] static float nextNoise (Voice& voice) noexcept;
@@ -238,6 +275,8 @@ private:
     std::array<float, instrumentCount> componentDrift_ {};
     std::array<Voice, maxVoices> voices_ {};
     std::array<Voice, retiringVoiceCount> retiringVoices_ {};
+    std::array<RelaxationOscillatorBank, metallicBankCount> metallicBanks_ {};
+    std::array<float, maximumMetallicDecimatorTaps> metallicDecimatorCoefficients_ {};
     std::array<float, sineTableSize> sineTable_ {};
 
     std::atomic<float> outputGain_ { 0.82f };
@@ -257,6 +296,12 @@ private:
     float sagReleaseCoefficient_ { 0.001f };
     float modalNoiseScale_ { 1.0f };
     float modalNoisePhaseIncrement_ { 1.0f };
+    float metallicInternalSampleRate_ { 192000.0f };
+    float metallicInverseSampleRate_ { 1.0f / 192000.0f };
+    float metallicIncrementSmoothing_ { 0.01f };
+    float cymbalReconstructionCoefficient_ { 0.8f };
+    int metallicOversampleFactor_ { 4 };
+    int metallicDecimatorTapCount_ { 257 };
     float smoothedOutputGain_ { 0.82f };
     float dcInputLeft_ { 0.0f };
     float dcInputRight_ { 0.0f };

@@ -11,6 +11,9 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace
 {
@@ -291,8 +294,40 @@ void testEditorRendering()
     if (editor == nullptr)
         return;
 
-    expect (editor->getWidth() >= 900 && editor->getHeight() >= 600,
+    expect (editor->getWidth() >= 968 && editor->getHeight() >= 640,
             "editor opened below its usable design size");
+    auto* constrainer = editor->getConstrainer();
+    expect (constrainer != nullptr, "editor has no resize constrainer");
+    if (constrainer != nullptr)
+    {
+        expect (constrainer->getMinimumWidth() == 968
+                    && constrainer->getMinimumHeight() == 640,
+                "editor resize minimum does not protect the control layout");
+        expect (constrainer->getMaximumWidth() == 1362
+                    && constrainer->getMaximumHeight() == 900,
+                "editor resize maximum does not match the polished layout");
+        expect (std::abs (constrainer->getFixedAspectRatio()
+                             - (1180.0 / 780.0)) < 1.0e-9,
+                "editor no longer preserves its design aspect ratio");
+
+        const auto limits = juce::Rectangle<int> (-10000, -10000, 20000, 20000);
+        for (const auto requestedSize : std::array {
+                 juce::Point<int> { 420, 260 }, juce::Point<int> { 1900, 1200 } })
+        {
+            auto constrained = juce::Rectangle<int> (
+                0, 0, requestedSize.x, requestedSize.y);
+            constrainer->checkBounds (constrained, editor->getBounds(), limits,
+                                      false, false, true, true);
+            expect (constrained.getWidth() >= 968 && constrained.getWidth() <= 1362
+                        && constrained.getHeight() >= 640
+                        && constrained.getHeight() <= 900,
+                    "user resize escaped the configured editor limits");
+            expect (std::abs (static_cast<double> (constrained.getWidth())
+                                 / static_cast<double> (constrained.getHeight())
+                                 - (1180.0 / 780.0)) < 0.002,
+                    "user resize did not preserve the editor aspect ratio");
+        }
+    }
 
     juce::Image snapshot (juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true);
     juce::Graphics graphics (snapshot);
@@ -317,8 +352,8 @@ void testEditorRendering()
     expect (sampledColours.size() > 512u,
             "editor snapshot lacks the embedded vintage texture or visual detail");
 
-    for (const auto size : std::array { juce::Point<int> { 900, 640 },
-                                        juce::Point<int> { 1600, 1000 } })
+    for (const auto size : std::array { juce::Point<int> { 968, 640 },
+                                        juce::Point<int> { 1362, 900 } })
     {
         editor->setSize (size.x, size.y);
         juce::Image resizedSnapshot (
@@ -343,6 +378,122 @@ void testEditorRendering()
         expect (resizeColours.size() > 256u,
                 "resized editor lost visual structure at "
                     + std::to_string (size.x) + "x" + std::to_string (size.y));
+
+        std::vector<juce::Rectangle<int>> knobBounds;
+        std::vector<juce::Rectangle<int>> padBounds;
+        int padCount = 0;
+        for (auto* child : editor->getChildren())
+        {
+            if (! child->isVisible())
+                continue;
+            expect (editor->getLocalBounds().contains (child->getBounds()),
+                    "visible editor control escaped its bounds at "
+                        + std::to_string (size.x) + "x" + std::to_string (size.y));
+            if (dynamic_cast<DrumalorPad*> (child) != nullptr)
+            {
+                ++padCount;
+                padBounds.push_back (child->getBounds());
+                expect (child->getWidth() >= 110 && child->getHeight() >= 58,
+                        "drum pad fell below a practical hit target at "
+                            + std::to_string (size.x) + "x" + std::to_string (size.y));
+            }
+            if (dynamic_cast<DrumalorKnob*> (child) != nullptr)
+                knobBounds.push_back (child->getBounds());
+        }
+        expect (padCount == static_cast<int> (drumalor::instrumentCount),
+                "editor did not lay out all 13 drum pads");
+        expect (knobBounds.size() == 5u, "editor did not lay out all five knobs");
+        for (std::size_t first = 0; first < knobBounds.size(); ++first)
+            for (std::size_t second = first + 1u; second < knobBounds.size(); ++second)
+                expect (! knobBounds[first].intersects (knobBounds[second]),
+                        "knob control regions overlap at "
+                            + std::to_string (size.x) + "x" + std::to_string (size.y));
+        for (std::size_t first = 0; first < padBounds.size(); ++first)
+            for (std::size_t second = first + 1u; second < padBounds.size(); ++second)
+                expect (! padBounds[first].intersects (padBounds[second]),
+                        "drum pad regions overlap at "
+                            + std::to_string (size.x) + "x" + std::to_string (size.y));
+    }
+
+    std::vector<DrumalorPad*> pads;
+    std::vector<juce::Slider*> sliders;
+    for (auto* child : editor->getChildren())
+    {
+        if (auto* pad = dynamic_cast<DrumalorPad*> (child))
+            pads.push_back (pad);
+        if (auto* knob = dynamic_cast<DrumalorKnob*> (child))
+            for (auto* knobChild : knob->getChildren())
+                if (auto* slider = dynamic_cast<juce::Slider*> (knobChild))
+                    sliders.push_back (slider);
+    }
+
+    const auto sliderNamed = [&sliders] (const juce::String& name)
+    {
+        const auto found = std::find_if (
+            sliders.begin(), sliders.end(), [&name] (const juce::Slider* slider)
+            {
+                return slider->getName() == name;
+            });
+        return found != sliders.end() ? *found : nullptr;
+    };
+    auto* masterOutput = sliderNamed ("MASTER OUTPUT");
+    expect (masterOutput != nullptr
+                && masterOutput->isDoubleClickReturnEnabled()
+                && std::abs (masterOutput->getDoubleClickReturnValue() + 6.0) < 1.0e-6,
+            "master output reset no longer returns to -6 dB");
+    expect (masterOutput != nullptr && masterOutput->getTooltip().isNotEmpty(),
+            "master output has no tooltip");
+    expect (pads.size() == drumalor::instrumentCount,
+            "could not inspect every drum pad reset contract");
+    for (std::size_t index = 0; index < pads.size(); ++index)
+    {
+        const auto instrument = static_cast<drumalor::Instrument> (index);
+        const auto foundPad = std::find_if (
+            pads.begin(), pads.end(), [instrument] (const auto* candidate)
+        {
+            return candidate->getInstrument() == instrument;
+        });
+        expect (foundPad != pads.end(), "missing drum pad for instrument index "
+                    + std::to_string (index));
+        if (foundPad == pads.end())
+            continue;
+        auto* pad = *foundPad;
+        if (! pad->getToggleState())
+            pad->setToggleState (true, juce::sendNotification);
+
+        const auto& metadata = drumalor::getInstrumentMetadata (instrument);
+        const auto labelFor = [] (std::string_view label)
+        {
+            return juce::String::fromUTF8 (label.data(), static_cast<int> (label.size()))
+                .toUpperCase();
+        };
+        const std::array resetContracts {
+            std::pair { labelFor (metadata.characterALabel),
+                        static_cast<double> (metadata.defaultParameters.characterA) },
+            std::pair { labelFor (metadata.characterBLabel),
+                        static_cast<double> (metadata.defaultParameters.characterB) },
+            std::pair { juce::String { "PITCH" },
+                        static_cast<double> (metadata.defaultParameters.pitch) },
+            std::pair { juce::String { "DECAY" },
+                        static_cast<double> (metadata.defaultParameters.decay) }
+        };
+        for (const auto& [name, expectedReset] : resetContracts)
+        {
+            auto* slider = sliderNamed (name);
+            expect (slider != nullptr, "missing selected-voice slider " + name.toStdString());
+            if (slider != nullptr)
+            {
+                expect (slider->isDoubleClickReturnEnabled()
+                            && std::abs (slider->getDoubleClickReturnValue() - expectedReset)
+                                < 1.0e-6,
+                        "incorrect double-click reset for "
+                            + std::string (metadata.displayName) + " " + name.toStdString());
+                expect (slider->getTooltip().isNotEmpty(),
+                        "selected-voice slider has no tooltip: " + name.toStdString());
+            }
+        }
+        expect (pad->getTooltip().isNotEmpty(),
+                "drum pad has no tooltip: " + std::string (metadata.displayName));
     }
 
     const auto snapshotPath = juce::SystemStats::getEnvironmentVariable (
