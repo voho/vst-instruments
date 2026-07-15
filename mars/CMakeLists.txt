@@ -23,7 +23,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(Mars VERSION 1.2.0 LANGUAGES C CXX)
+project(Mars VERSION 1.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -136,7 +136,17 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME Mars.MarsEngine COMMAND MarsEngineTests)
-    set_tests_properties(Mars.MarsEngine PROPERTIES TIMEOUT 30)
+    # Address/undefined sanitizers make the full high-rate spectral and
+    # nonlinear render matrix roughly an order of magnitude slower. Keep the
+    # normal runaway guard tight while allowing the same coverage under
+    # instrumentation instead of silently dropping expensive DSP fixtures.
+    if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
+        set(MARS_ENGINE_TEST_TIMEOUT 600)
+    else()
+        set(MARS_ENGINE_TEST_TIMEOUT 30)
+    endif()
+    set_tests_properties(Mars.MarsEngine PROPERTIES
+        TIMEOUT ${MARS_ENGINE_TEST_TIMEOUT})
 
     if(MARS_BUILD_PLUGIN)
         add_executable(MarsPluginProcessorTests Tests/PluginProcessorTests.cpp)

@@ -276,7 +276,10 @@ void MarsLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& but
     auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
     const auto active = button.getToggleState();
     const auto panic = button.getButtonText() == "PANIC";
-    auto fill = panic ? c (0xff551f1d) : active ? c (accentBlueDark) : c (0xff1a2021);
+    const auto randomizer = button.getComponentID() == "preset-randomizer";
+    auto fill = panic ? c (0xff551f1d)
+                      : randomizer ? c (0xff392a1d)
+                      : active ? c (accentBlueDark) : c (0xff1a2021);
     if (highlighted)
         fill = fill.brighter (0.12f);
     if (down)
@@ -288,7 +291,9 @@ void MarsLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& but
                                fill.darker (0.25f), bounds.getBottomLeft(), false);
     g.setGradientFill (face);
     g.fillRoundedRectangle (bounds, 3.0f);
-    g.setColour (panic ? c (signalRed) : active ? c (accentBlueBright) : c (panelEdge));
+    g.setColour (panic ? c (signalRed)
+                       : randomizer ? c (accentAmber)
+                       : active ? c (accentBlueBright) : c (panelEdge));
     g.drawRoundedRectangle (bounds, 3.0f, active || panic ? 1.35f : 1.0f);
     g.setColour (juce::Colours::white.withAlpha (0.07f));
     g.drawLine (bounds.getX() + 4.0f, bounds.getY() + 2.0f,
@@ -475,6 +480,7 @@ MarsChoiceStrip::MarsChoiceStrip (juce::String title, juce::StringArray choices)
         button->setName (titleText + " " + choices[index]);
         button->setTitle (choices[index]);
         button->setDescription ("Select " + choices[index] + " for " + titleText.toLowerCase());
+        button->setTooltip (button->getDescription());
         button->setRadioGroupId (radioGroupId, juce::dontSendNotification);
         button->setClickingTogglesState (true);
         button->setWantsKeyboardFocus (true);
@@ -533,6 +539,7 @@ MarsKnob::MarsKnob (juce::String name, MarsValueFormat format)
     slider.setName (name);
     slider.setTitle (name);
     slider.setDescription ("Adjust " + name.toLowerCase());
+    slider.setTooltip ("Adjust " + name.toLowerCase());
     slider.setWantsKeyboardFocus (true);
     slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f,
                                 juce::MathConstants<float>::pi * 2.75f, true);
@@ -567,6 +574,7 @@ MarsFader::MarsFader (juce::String name, MarsValueFormat format)
     slider.setName (name);
     slider.setTitle (name);
     slider.setDescription ("Adjust " + name.toLowerCase());
+    slider.setTooltip ("Adjust " + name.toLowerCase());
     slider.setWantsKeyboardFocus (true);
     configureValueDisplay (slider, format);
     addAndMakeVisible (slider);
@@ -589,6 +597,12 @@ void MarsStatusDisplay::setStatus (int activeVoices, bool ready, double sampleRa
     voices = activeVoices;
     isReady = ready;
     rate = sampleRate;
+    const auto rateText = rate > 0.0
+        ? juce::String (rate / 1000.0, rate < 100000.0 ? 1 : 0) + " kilohertz"
+        : juce::String { "offline" };
+    setTitle ("Mars engine status");
+    setDescription (juce::String (juce::jmax (0, voices)) + " active voices, engine "
+                    + (isReady ? "ready, " : "not ready, ") + rateText);
     if (scheduleRepaint)
         repaint();
 }
@@ -616,7 +630,13 @@ void MarsStatusDisplay::paint (juce::Graphics& g)
     g.drawText (juce::String (juce::jmax (0, voices)).paddedLeft ('0', 2) + " VOICES",
                 25, 0, 76, getHeight(), juce::Justification::centredLeft);
     g.setColour (c (textDim));
-    const auto rateText = rate > 0.0 ? juce::String (juce::roundToInt (rate / 1000.0)) + " kHz" : "OFFLINE";
+    auto rateText = juce::String { "OFFLINE" };
+    if (rate > 0.0)
+    {
+        auto kilohertz = juce::String (rate / 1000.0, 1);
+        kilohertz = kilohertz.trimCharactersAtEnd ("0").trimCharactersAtEnd (".");
+        rateText = kilohertz + " kHz";
+    }
     g.drawText (rateText, 100, 0, getWidth() - 108, getHeight(), juce::Justification::centredRight);
 }
 
@@ -630,13 +650,42 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     logoLabel.setText ("MARS", juce::dontSendNotification);
     styleHeaderLabel (logoLabel, 29.0f, c (textBright));
     logoLabel.setAccessible (true);
-    logoLabel.setTitle ("Mars analog polyphonic synthesizer");
+    logoLabel.setTitle ("Mars analog-modeled synthesizer");
     addAndMakeVisible (logoLabel);
 
-    editionLabel.setText ("POLYPHONIC ANALOG ENGINE  |  DIRECT CONTROL EDITION",
+    editionLabel.setText ("DUAL-CORE ANALOG-MODELED ENGINE  |  DIRECT CONTROL",
                           juce::dontSendNotification);
     styleHeaderLabel (editionLabel, 10.0f, c (accentBlueBright));
     addAndMakeVisible (editionLabel);
+
+    randomizerLabel.setText ("PRESET RANDOMIZER  /  RANGE", juce::dontSendNotification);
+    styleHeaderLabel (randomizerLabel, 9.0f, c (accentAmber));
+    randomizerLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (randomizerLabel);
+
+    const auto configureRandomizer = [this] (juce::TextButton& button, float amount,
+                                             const juce::String& description)
+    {
+        button.setComponentID ("preset-randomizer");
+        button.setWantsKeyboardFocus (true);
+        button.setName ("Randomize preset by " + button.getButtonText());
+        button.setTitle ("Preset randomizer " + button.getButtonText());
+        button.setDescription (description);
+        button.setTooltip (description);
+        button.setColour (juce::TextButton::textColourOffId, c (textBright));
+        button.onClick = [this, amount]
+        {
+            marsProcessor.randomizeParameters (amount);
+            updateConditionalControls();
+        };
+        addAndMakeVisible (button);
+    };
+    configureRandomizer (randomize1Button, 0.01f,
+                         "Gently mutate sound parameters within one percent of their ranges");
+    configureRandomizer (randomize10Button, 0.10f,
+                         "Mutate sound parameters within ten percent of their ranges");
+    configureRandomizer (randomize100Button, 1.0f,
+                         "Create a fully randomized sound across the available parameter ranges");
 
     addAndMakeVisible (statusDisplay);
     statusDisplay.setAccessible (true);
@@ -645,6 +694,7 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     panicButton.setColour (juce::TextButton::textColourOffId, c (0xfff8d4ce));
     panicButton.setName ("Panic — stop all voices");
     panicButton.setDescription ("Immediately mute every sounding voice");
+    panicButton.setTooltip ("Immediately mute every sounding voice");
     panicButton.onClick = [this]
     {
         marsProcessor.keyboardState.reset();
@@ -657,7 +707,8 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     oversamplingButton.setName ("HQ oversampling");
     oversamplingButton.setTitle ("High-quality oversampling");
     oversamplingButton.setDescription (
-        "Run the nonlinear path at 2x through 48 kHz, native above; changes wait for silence");
+        "Use 4X at 44.1/48 kHz, 2X at 88.2/96 kHz, and native processing at 176.4 kHz or higher; changes wait for silence");
+    oversamplingButton.setTooltip (oversamplingButton.getDescription());
     oversamplingButton.setColour (juce::TextButton::textColourOffId, c (textDim));
     oversamplingButton.setColour (juce::TextButton::textColourOnId, c (textBright));
     oversamplingButton.onStateChange = [this] { updateConditionalControls(); };
@@ -673,16 +724,30 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
         button.setTitle (oscillatorName + " audible mixer feed");
         button.setDescription ("Enable or disable " + oscillatorName
                                + " in the audible mixer; modulation remains active");
+        button.setTooltip (button.getDescription());
         button.setColour (juce::TextButton::textColourOffId, c (textDim));
         button.setColour (juce::TextButton::textColourOnId, c (textBright));
         button.onStateChange = [this] { updateConditionalControls(); };
         addAndMakeVisible (button);
     };
-    configureOscillatorPower (osc1EnableButton, "VCO I");
-    configureOscillatorPower (osc2EnableButton, "VCO II");
+    configureOscillatorPower (osc1EnableButton, "OSC I");
+    configureOscillatorPower (osc2EnableButton, "OSC II");
 
-    for (auto* strip : { &osc1WaveStrip, &osc2WaveStrip, &filterModelStrip,
-                         &lfoWaveStrip, &voiceModeStrip })
+    monoButton.setClickingTogglesState (true);
+    monoButton.setWantsKeyboardFocus (true);
+    monoButton.setName ("Monophonic mode");
+    monoButton.setTitle ("Mono mode");
+    monoButton.setDescription (
+        "Play one note at a time; overrides the polyphonic voice mode");
+    monoButton.setTooltip (monoButton.getDescription());
+    monoButton.setColour (juce::TextButton::textColourOffId, c (textDim));
+    monoButton.setColour (juce::TextButton::textColourOnId, c (textBright));
+    monoButton.onStateChange = [this] { updateConditionalControls(); };
+    addAndMakeVisible (monoButton);
+
+    for (auto* strip : { &osc1ModelStrip, &osc2ModelStrip, &osc1WaveStrip,
+                         &osc2WaveStrip, &filterModelStrip, &lfoWaveStrip,
+                         &voiceModeStrip })
         addAndMakeVisible (*strip);
 
     for (auto* knob : { &osc1OctaveKnob, &osc2OctaveKnob, &osc2TuneKnob,
@@ -690,9 +755,9 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
                         &noiseLevelKnob, &crossModKnob, &cutoffKnob, &resonanceKnob,
                         &filterDriveKnob, &filterShapeKnob, &filterEnvKnob,
                         &keyTrackKnob, &lfoRateKnob, &lfoPitchKnob, &lfoFilterKnob,
-                        &lfoPwmKnob, &unisonVoicesKnob, &driftKnob, &spreadKnob,
-                        &glideKnob, &velocityKnob, &chorusMixKnob, &chorusRateKnob,
-                        &outputKnob })
+                        &lfoPwmKnob, &polyphonyKnob, &unisonVoicesKnob, &driftKnob,
+                        &spreadKnob, &glideKnob, &velocityKnob, &chorusMixKnob,
+                        &chorusRateKnob, &outputKnob })
         addAndMakeVisible (*knob);
 
     for (auto* fader : { &filterAttackFader, &filterDecayFader, &filterSustainFader,
@@ -724,13 +789,37 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
         slider.setName (name);
         slider.setTitle (name);
         slider.setDescription (description);
+        slider.setTooltip (description);
     };
-    describe (osc1OctaveKnob.slider, "VCO I octave", "Transpose VCO I by octaves");
-    describe (osc2OctaveKnob.slider, "VCO II octave", "Transpose VCO II by octaves");
-    describe (osc2TuneKnob.slider, "VCO II semitone tune", "Tune VCO II in semitones");
-    describe (osc2FineKnob.slider, "VCO II fine tune", "Fine-tune VCO II in cents");
+    describe (osc1OctaveKnob.slider, "Oscillator I octave", "Transpose oscillator I by octaves");
+    describe (osc2OctaveKnob.slider, "Oscillator II octave", "Transpose oscillator II by octaves");
+    describe (osc2TuneKnob.slider, "Oscillator II semitone tune", "Tune oscillator II in semitones");
+    describe (osc2FineKnob.slider, "Oscillator II fine tune", "Fine-tune oscillator II in cents");
+    describe (oscMixKnob.slider, "Oscillator balance", "Blend oscillator I and oscillator II");
+    describe (pulseWidthKnob.slider, "Pulse width", "Set the oscillator pulse-wave width");
+    describe (subLevelKnob.slider, "Sub-oscillator level", "Set the divided sub-oscillator level");
+    describe (noiseLevelKnob.slider, "Noise level", "Set the white-noise mixer level");
+    describe (crossModKnob.slider, "Cross modulation", "Frequency-modulate oscillator I from oscillator II");
+    describe (cutoffKnob.slider, "Filter cutoff", "Set the filter cutoff frequency");
+    describe (resonanceKnob.slider, "Filter resonance", "Set the filter feedback resonance");
+    describe (filterDriveKnob.slider, "Filter drive", "Drive the selected nonlinear filter model");
+    describe (filterShapeKnob.slider, "SEM filter shape", "Sweep the SEM response from low-pass through notch to high-pass");
+    describe (filterEnvKnob.slider, "Filter envelope amount", "Set bipolar filter-envelope modulation depth");
+    describe (keyTrackKnob.slider, "Filter key tracking", "Track filter cutoff from MIDI note pitch");
+    describe (polyphonyKnob.slider, "Maximum polyphony",
+              "Limit active render voices from one to sixteen; layered modes use multiple voices per note");
+    describe (unisonVoicesKnob.slider, "Unison voice count", "Set voices consumed by each unison note");
+    describe (driftKnob.slider, "Voice-card drift", "Set deterministic component spread and stochastic analogue movement");
+    describe (spreadKnob.slider, "Stereo spread", "Spread layered and polyphonic voices across stereo");
+    describe (glideKnob.slider, "Glide time", "Set the pitch glide time between notes");
+    describe (velocityKnob.slider, "Velocity response", "Set the note-velocity influence on amplifier level");
     describe (lfoRateKnob.slider, "LFO rate", "Set the low-frequency oscillator rate");
+    describe (lfoPitchKnob.slider, "LFO pitch depth", "Set low-frequency oscillator pitch modulation in cents");
+    describe (lfoFilterKnob.slider, "LFO filter depth", "Set low-frequency oscillator filter modulation in octaves");
+    describe (lfoPwmKnob.slider, "LFO pulse-width depth", "Set low-frequency oscillator pulse-width modulation depth");
+    describe (chorusMixKnob.slider, "Ensemble mix", "Blend the variable-clock BBD ensemble with the dry signal");
     describe (chorusRateKnob.slider, "Ensemble rate", "Set the analog ensemble modulation rate");
+    describe (outputKnob.slider, "Output level", "Set the synthesizer output level in decibels");
     describe (filterAttackFader.slider, "Filter envelope attack", "Set filter envelope attack time");
     describe (filterDecayFader.slider, "Filter envelope decay", "Set filter envelope decay time");
     describe (filterSustainFader.slider, "Filter envelope sustain", "Set filter envelope sustain level");
@@ -740,10 +829,12 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     describe (ampSustainFader.slider, "Amplifier envelope sustain", "Set amplifier envelope sustain level");
     describe (ampReleaseFader.slider, "Amplifier envelope release", "Set amplifier envelope release time");
 
-    choiceAttachments.reserve (5);
-    sliderAttachments.reserve (35);
-    buttonAttachments.reserve (3);
+    choiceAttachments.reserve (7);
+    sliderAttachments.reserve (36);
+    buttonAttachments.reserve (4);
 
+    attachChoice (osc1ModelStrip, mars::parameters::osc1Model);
+    attachChoice (osc2ModelStrip, mars::parameters::osc2Model);
     attachChoice (osc1WaveStrip, mars::parameters::osc1Wave);
     attachChoice (osc2WaveStrip, mars::parameters::osc2Wave);
     attachChoice (filterModelStrip, mars::parameters::filterModel);
@@ -752,6 +843,7 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     attachButton (osc1EnableButton, mars::parameters::osc1Enabled);
     attachButton (osc2EnableButton, mars::parameters::osc2Enabled);
     attachButton (oversamplingButton, mars::parameters::hqOversampling);
+    attachButton (monoButton, mars::parameters::monoMode);
 
     attachSlider (osc1OctaveKnob.slider, mars::parameters::osc1Octave);
     attachSlider (osc2OctaveKnob.slider, mars::parameters::osc2Octave);
@@ -780,6 +872,7 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     attachSlider (lfoPitchKnob.slider, mars::parameters::lfoPitch);
     attachSlider (lfoFilterKnob.slider, mars::parameters::lfoFilter);
     attachSlider (lfoPwmKnob.slider, mars::parameters::lfoPwm);
+    attachSlider (polyphonyKnob.slider, mars::parameters::polyphonyLimit);
     attachSlider (unisonVoicesKnob.slider, mars::parameters::unisonVoices);
     attachSlider (driftKnob.slider, mars::parameters::drift);
     attachSlider (spreadKnob.slider, mars::parameters::spread);
@@ -856,22 +949,41 @@ void MarsAudioProcessorEditor::updateConditionalControls()
     osc1EnableButton.setButtonText (osc1Enabled ? "ON" : "OFF");
     osc2EnableButton.setButtonText (osc2Enabled ? "ON" : "OFF");
     const auto hqRequested = oversamplingButton.getToggleState();
-    const auto hqEffective = marsProcessor.getEffectiveOversamplingFactor() > 1;
+    const auto effectiveFactor = marsProcessor.getEffectiveOversamplingFactor();
     const auto hostRate = marsProcessor.getCurrentSampleRateForDisplay();
-    if (hqRequested != hqEffective && hostRate > 0.0 && hostRate <= 48000.0)
+    int requestedFactor = 1;
+    while (hqRequested && requestedFactor < 4 && hostRate > 0.0
+           && hostRate * static_cast<double> (requestedFactor) < 176400.0)
+        requestedFactor *= 2;
+    if (hostRate <= 0.0 && hqRequested)
+        oversamplingButton.setButtonText ("HQ ON");
+    else if (hostRate > 0.0 && effectiveFactor != requestedFactor)
         oversamplingButton.setButtonText ("HQ WAIT");
     else if (! hqRequested)
         oversamplingButton.setButtonText ("HQ OFF");
-    else if (hqEffective)
-        oversamplingButton.setButtonText ("HQ 2X");
+    else if (effectiveFactor > 1)
+        oversamplingButton.setButtonText ("HQ " + juce::String (effectiveFactor) + "X");
     else
-        oversamplingButton.setButtonText ("HQ AUTO");
+        oversamplingButton.setButtonText ("HQ NATIVE");
+    oversamplingButton.setTitle ("High-quality oversampling: "
+                                 + oversamplingButton.getButtonText());
+    oversamplingButton.setDescription (
+        "Use rate-aware 4X, 2X, or native processing for the nonlinear voice and BBD ensemble; "
+        "current status " + oversamplingButton.getButtonText() + "; changes wait for silence");
+    oversamplingButton.setTooltip (oversamplingButton.getDescription());
 
     const auto bothOscillatorsEnabled = osc1Enabled && osc2Enabled;
     oscMixKnob.setEnabled (bothOscillatorsEnabled);
     oscMixKnob.setAlpha (bothOscillatorsEnabled ? 1.0f : disabledControlAlpha);
 
-    const auto unisonMode = voiceModeStrip.getSelectedIndex() == 1;
+    const auto monoMode = monoButton.getToggleState();
+    voiceModeStrip.setEnabled (! monoMode);
+    voiceModeStrip.setAlpha (monoMode ? disabledControlAlpha : 1.0f);
+
+    polyphonyKnob.setEnabled (! monoMode);
+    polyphonyKnob.setAlpha (monoMode ? disabledControlAlpha : 1.0f);
+
+    const auto unisonMode = ! monoMode && voiceModeStrip.getSelectedIndex() == 1;
     unisonVoicesKnob.setEnabled (unisonMode);
     unisonVoicesKnob.setAlpha (unisonMode ? 1.0f : disabledControlAlpha);
 
@@ -944,7 +1056,7 @@ void MarsAudioProcessorEditor::paint (juce::Graphics& g)
                 headerRailWidth - blueWidth - redWidth, 1.5f);
 
     static constexpr std::array<const char*, sectionCount> names {
-        "VCO I", "VCO II", "MIX", "VCF", "LFO / VOICE",
+        "OSC I", "OSC II", "MIX", "VCF", "LFO / VOICE",
         "FILTER ENV", "AMP ENV", "ENSEMBLE / MASTER"
     };
     static constexpr std::array<juce::uint32, sectionCount> sectionAccents {
@@ -1005,13 +1117,24 @@ void MarsAudioProcessorEditor::resized()
 
     const auto headerHeight = juce::jlimit (58, 74, getHeight() / 11);
     auto header = getLocalBounds().removeFromTop (headerHeight).reduced (24, 8);
-    logoLabel.setBounds (header.removeFromLeft (150));
-    editionLabel.setBounds (header.removeFromLeft (juce::jmin (480, header.getWidth() / 2)));
+    logoLabel.setBounds (header.removeFromLeft (140));
+    header.removeFromLeft (12);
     panicButton.setBounds (header.removeFromRight (72).reduced (1, 6));
-    header.removeFromRight (9);
+    header.removeFromRight (8);
     oversamplingButton.setBounds (header.removeFromRight (82).reduced (0, 6));
-    header.removeFromRight (9);
-    statusDisplay.setBounds (header.removeFromRight (190).reduced (0, 5));
+    header.removeFromRight (8);
+    statusDisplay.setBounds (
+        header.removeFromRight (juce::jlimit (170, 190, getWidth() / 8)).reduced (0, 5));
+    header.removeFromRight (10);
+
+    auto randomizerArea = header.removeFromRight (
+        juce::jlimit (206, 240, getWidth() / 6));
+    randomizerLabel.setBounds (randomizerArea.removeFromTop (15));
+    randomizerArea.removeFromTop (2);
+    distributeHorizontally (randomizerArea.reduced (0, 3),
+                            { &randomize1Button, &randomize10Button, &randomize100Button }, 5);
+    header.removeFromRight (12);
+    editionLabel.setBounds (header);
 
     auto body = getLocalBounds();
     body.removeFromTop (headerHeight);
@@ -1072,13 +1195,19 @@ void MarsAudioProcessorEditor::resized()
     };
 
     auto osc1 = sectionContent (oscillator1Section);
-    osc1WaveStrip.setBounds (osc1.removeFromTop (juce::jlimit (38, 49, osc1.getHeight() / 4)));
+    const auto osc1StripHeight = juce::jlimit (36, 42, osc1.getHeight() / 5);
+    osc1ModelStrip.setBounds (osc1.removeFromTop (osc1StripHeight));
+    osc1.removeFromTop (4);
+    osc1WaveStrip.setBounds (osc1.removeFromTop (osc1StripHeight));
     osc1.removeFromTop (choiceToControlsGap);
     osc1OctaveKnob.setBounds (osc1.withSizeKeepingCentre (juce::jmin (110, osc1.getWidth()),
                                                          osc1.getHeight()));
 
     auto osc2 = sectionContent (oscillator2Section);
-    osc2WaveStrip.setBounds (osc2.removeFromTop (juce::jlimit (38, 49, osc2.getHeight() / 4)));
+    const auto osc2StripHeight = juce::jlimit (36, 42, osc2.getHeight() / 5);
+    osc2ModelStrip.setBounds (osc2.removeFromTop (osc2StripHeight));
+    osc2.removeFromTop (4);
+    osc2WaveStrip.setBounds (osc2.removeFromTop (osc2StripHeight));
     osc2.removeFromTop (choiceToControlsGap);
     distributeHorizontally (osc2, { &osc2OctaveKnob, &osc2TuneKnob, &osc2FineKnob },
                             controlColumnGap);
@@ -1112,14 +1241,20 @@ void MarsAudioProcessorEditor::resized()
     distributeHorizontally (lfoTop, { &lfoRateKnob, &lfoPitchKnob }, controlColumnGap);
     distributeHorizontally (lfo, { &lfoFilterKnob, &lfoPwmKnob }, controlColumnGap);
 
-    voiceModeStrip.setBounds (voice.removeFromTop (juce::jlimit (38, 45, voice.getHeight() / 5)));
+    auto voiceModeArea = voice.removeFromTop (juce::jlimit (38, 45, voice.getHeight() / 5));
+    auto monoArea = voiceModeArea.removeFromRight (juce::jlimit (54, 64, voiceModeArea.getWidth() / 4));
+    voiceModeArea.removeFromRight (6);
+    voiceModeStrip.setBounds (voiceModeArea);
+    monoArea.removeFromTop (15);
+    monoButton.setBounds (monoArea);
     voice.removeFromTop (choiceToControlsGap);
     auto voiceTop = voice.removeFromTop ((voice.getHeight() - controlRowGap) / 2);
     voice.removeFromTop (controlRowGap);
     distributeHorizontally (voiceTop,
-                            { &unisonVoicesKnob, &driftKnob, &spreadKnob },
+                            { &polyphonyKnob, &unisonVoicesKnob, &driftKnob },
                             controlColumnGap);
-    distributeHorizontally (voice, { &glideKnob, &velocityKnob }, controlColumnGap);
+    distributeHorizontally (voice, { &spreadKnob, &glideKnob, &velocityKnob },
+                            controlColumnGap);
 
     distributeHorizontally (sectionContent (filterEnvelopeSection),
                             { &filterAttackFader, &filterDecayFader,

@@ -1,21 +1,23 @@
 # Mars
 
 Mars is an original virtual-analog polyphonic synthesizer built around a direct,
-one-panel workflow. It combines independently switchable dual-VCO tone,
-controlled voice-to-voice movement, a published nonlinear Moog-ladder model,
-an SEM-inspired multimode filter, and a global stereo ensemble. The individual
-models have named research and hardware references; Mars does not claim to be a
-complete clone of any one vintage instrument.
+one-panel workflow. Each oscillator can independently switch between a
+Moog-like free-running VCO and a Juno-like clocked DCO. Mars combines those
+cores with controlled voice-to-voice movement, a published nonlinear
+Moog-ladder model, an SEM-inspired multimode filter, and a global stereo
+ensemble. The individual models have named research and hardware references;
+Mars does not claim to be a complete clone of any one vintage instrument.
 
 There is **no arpeggiator** and **no modulation matrix**. Every sound parameter
 is exposed as a front-panel knob, slider, or switch and as a host-automatable
 parameter. The separate HQ oversampling switch is persisted with the plug-in
 state but intentionally cannot be automated.
 
-![Mars Standalone instrument interface](Docs/screenshots/mars-standalone.png)
+![Mars synthesizer interface](Docs/screenshots/mars-standalone.png)
 
-The screenshot is the actual Standalone application built from this source;
-the VST3 and Audio Unit use the same resizable JUCE editor. Panel materials,
+The screenshot is rendered by the actual minimum-size JUCE editor in the
+plug-in regression suite; the Standalone, VST3, and Audio Unit use that same
+resizable component. Panel materials,
 hardware pots, faders, switches, calibration marks, and shadows are drawn as
 resolution-independent JUCE graphics, so the background and controls scale
 together. Interactive controls remain native components for automation,
@@ -31,21 +33,35 @@ Japanese polysynths without reproducing a branded hardware panel.
 
 ## Sound architecture
 
-- **Two analog-conditioned, event-corrected oscillators per render slot:** VCO I
-  and VCO II provide saw, pulse, and stable leaky-integrated triangle waveforms.
-  Standard polyBLEP correction is applied to saw resets and both pulse edges;
-  the saw then receives the frequency-dependent first-order contour published
-  for measured Minimoog Voyager waveforms. Its 44.1 kHz pole and zero are
-  bilinear-remapped to the active internal rate, while notes below the measured
-  86 Hz boundary blend toward the neutral antialiased saw. Both VCO paths use
-  the same bounded output-stage shaping. VCO II has octave, semitone, and fine
-  tuning, while the mixer adds pulse width, a pulse sub oscillator one octave
-  below VCO I, noise, and bounded VCO II-to-I cross modulation.
-- **Independent VCO mixer switches:** each VCO can be removed from the audible
-  mix without stopping its phase. VCO II therefore remains available to cross
-  modulation while its audio switch is Off, and sub/noise remain independent.
-  A lone enabled VCO runs at unity regardless of `Balance`; changes use a short
-  gain ramp rather than a hard sample edge.
+- **Two independently modeled oscillators per render slot:** `Moog-like VCO`
+  keeps a free-running fundamental with deterministic component calibration and
+  seeded, non-periodic thermal wander. Its saw pairs the paper's four-sample
+  integrated third-order B-spline PolyBLEP with the matching frequency-dependent
+  first-order contour fitted to measured Minimoog Voyager waveforms, remapped
+  from 44.1 kHz to the active internal rate. `Juno-like DCO`
+  chooses an integer period from a 2 MHz reference clock once per cycle and
+  uses first-order count-error feedback to alternate adjacent timer periods.
+  This preserves mean pitch while retaining deterministic clock signature. Its
+  waveform then passes through an endpoint-preserving analogue-ramp curvature
+  and prewarped TPT reconstruction pole; fundamental drift is much tighter than
+  the VCO while analogue edge and voice-card variation remain. Its sub path is
+  divider-locked to oscillator I's selected clock period. Saw reset, both pulse
+  edges, the triangle's square driver, and the derived DCO sub all use the same
+  fractional-event, four-sample integrated B-spline correction. The LFO runs
+  inside the HQ island, and comparator moves that cross the current phase add
+  their own correction instead of becoming untracked PWM steps. All three
+  waveform states stay warm and crossfade for 3 ms, while a separate 2 ms
+  phase-continuous crossfade protects automated model changes. Each oscillator
+  selects its model independently, so hybrid VCO/DCO patches are possible.
+- **Independent oscillator mixer switches:** each oscillator can be removed
+  from the audible mix without stopping its phase. Oscillator II therefore
+  remains available to cross modulation while its audio switch is Off, and
+  sub/noise remain independent.
+  A lone enabled oscillator runs at unity regardless of `Balance`; changes use
+  a short gain ramp rather than a hard sample edge. Oscillator II has octave,
+  semitone, and fine tuning, while the mixer adds pulse width, a pulse sub
+  oscillator one octave below oscillator I, noise, and bounded II-to-I cross
+  modulation.
 - **Antialiased nonlinear mixer:** the active oscillator feeds, sub, and noise
   pass through a fixed first-order ADAA soft saturator. This reduces waveshaper
   aliasing without coupling the filter's `Drive` control into multiple stages.
@@ -62,79 +78,115 @@ Japanese polysynths without reproducing a branded hardware panel.
   transition runs both models to prevent switching clicks; at steady state the
   voice executes only the selected algorithm.
 - **Configurable rate-aware oversampling:** HQ is persisted, non-automatable,
-  and On by default. At host rates through 48 kHz, On runs complete per-slot
-  voice paths at 2x and returns their stereo sum through a 15-tap halfband FIR;
-  above 48 kHz the host is already in the target high-rate range, so it runs
-  natively. Off always runs natively. A requested change waits until the engine
-  is idle before its processing rate changes, so held notes are never reset.
-  The global ensemble remains at host rate.
+  and On by default. At standard production rates it holds the complete
+  nonlinear voice, ensemble, VCA, and output-colour island at a minimum
+  176.4 kHz: 4x at 44.1/48 kHz, 2x at 88.2/96 kHz, and native at 176.4 kHz
+  and above. Each 2:1 return stage is a
+  137-tap equiripple half-band FIR with less than 0.0002 dB passband ripple and
+  more than 100 dB stopband rejection. The staged path reports 51 host samples
+  of latency at 4x and 34 at 2x. The host latency remains fixed for the prepared
+  sample rate; when HQ is Off, a transparent bounded delay aligns its native
+  path to that contract. A requested change waits until the engine is idle, so
+  held notes are never reset.
 - **Deterministic voice cards:** 16 render voices carry controlled
   component-like offsets for tuning, cutoff, resonance, drive, envelope time,
-  pan, pulse skew, and slow per-card drift. The same state and MIDI input
-  render deterministically; there is no simulated-parts-wear control.
+  pan, and pulse skew. Two bounded seeded Ornstein-Uhlenbeck processes retain
+  continuous slow/fast pitch wander on each card through notes and silence
+  instead of restarting a repeating sine with every note. The same state and
+  MIDI input render deterministically; there is no simulated-parts-wear control.
 - **Dedicated modulation:** separate filter and amplifier ADSRs sit beside a
   triangle, sine, or sample-and-hold LFO with direct pitch, filter, and PWM
   depths. The mod wheel deepens those fixed LFO routes; it does not open a
   hidden routing matrix.
-- **Performance controls:** `Poly`, `Unison`, and `Fifth` allocate the 16 render
-  voices in different groups. Glide, velocity response, stereo spread, fixed
-  ±2-semitone pitch bend, MIDI CC 1 mod wheel, and MIDI CC 64 sustain are
-  implemented. CC 123 follows note-off and sustain-pedal semantics; CC 120 and
-  the panel Panic button mute immediately.
+- **Bounded performance controls:** a host-automatable `Polyphony` control caps
+  active DSP render voices from 1 to 16 and is enforced immediately when
+  lowered. `Poly`, `Unison`, and `Fifth` consume that physical budget in
+  different group sizes. The separate `Mono` override uses one continuous
+  voice with last-note priority, legato phase/envelopes, glide, held-note
+  fallback, overlapping same-pitch hold counts, seamless conversion of held
+  layered notes, and fresh-envelope retrigger after the final physical key is
+  released. Velocity response, stereo spread, fixed ±2-semitone pitch bend,
+  MIDI CC 1 mod wheel, and MIDI CC 64 sustain are implemented. CC 123 follows
+  note-off and sustain-pedal semantics; CC 120 and Panic mute immediately.
+- **Safe preset mutation:** `1%`, `10%`, and `100%` randomizer buttons move each
+  sound-design parameter toward an independent legal target in normalized
+  space. One and ten percent are bounded mutations of the current patch; 100%
+  is a full-range draw. Output gain, oscillator power, HQ quality, Mono, and
+  the polyphony budget are deliberately preserved.
 - **Full-range on-screen keyboard:** all MIDI notes 0–127 are reachable with
   scroll controls; key width follows the editor size so the keyboard does not
   terminate in an unused blank panel. The computer-key map is printed on the
   panel.
-- **Global stereo ensemble:** a cross-fed, low-pass-shaped modulated delay has
-  direct `Ensemble mix` and `Ensemble rate` controls. It is one global
-  algorithm rather than a selectable family, with no additional hidden spatial
-  stages. A 1.5 Hz output servo removes accumulated DC without thinning deep
-  notes and sub-octave fundamentals. Mars reports a conservative 24-second host
-  tail so maximum-release notes are not truncated during offline rendering.
+- **Global stereo ensemble:** two complementary variable-clock BBD paths replace
+  a generic interpolated chorus. Each path stores the 128 signal-bearing pairs
+  of a two-phase 256-stage device, uses the
+  measured Juno-60 fifth-order input/output-filter poles and residues, retains
+  the measured +2.3 dB BBD gain with restrained asymmetric transfer, and is
+  clocked from 26–74 kHz by an antiphase triangle LFO. This runs inside the HQ
+  island and does not use a fractional-delay read pointer. Clock crossings use
+  fractional-time input capture and time-weighted held-output integration, so
+  HQ-Off operation does not shift several buckets with one quantized sample.
+  `Ensemble mix` and `Ensemble rate` remain direct modern controls; there are
+  no hidden spatial
+  stages or injected idle hiss. A 1.5 Hz output servo removes accumulated DC
+  without thinning deep notes and sub-octave fundamentals. Mars reports a
+  conservative 24-second host tail so maximum-release notes are not truncated
+  during offline rendering.
 
 The modeling rationale, primary papers, neural-modeling decision, and precise
 claims boundary are in
 [`Docs/analog-modeling-research.md`](Docs/analog-modeling-research.md).
 
-## Polyphony and slot allocation
+## Polyphony, Mono, and slot allocation
 
-Mars has a hard performance ceiling of 16 simultaneous DSP render voices.
-Allocation depends on `Voice mode` and always keeps a note group atomic:
+Mars owns 16 fixed DSP render slots, and `Polyphony` sets the active physical
+budget `L` from 1 to 16. Lowering `L` retires complete groups immediately, so
+the audio thread cannot continue above the requested CPU budget. Allocation
+depends on `Voice mode`:
 
-| Mode | Slots per note group | Maximum note groups |
+| Mode | Slots per note group | Maximum simultaneous groups |
 | --- | ---: | ---: |
-| `Poly` | 1 | 16 |
-| `Unison` | selected `Unison voices` value, 2–8 | `floor(16 / voices)` |
-| `Fifth` | 2: root plus a perfect fifth | 8 |
+| `Poly` | 1 | `L` |
+| `Unison` | `min(Unison voices, L)`, normally 2–8 | `floor(L / layers)` |
+| `Fifth` | `min(2, L)`: root plus fifth when available | `floor(L / layers)` |
+| `Mono` override | 1 continuous voice | 1 |
 
-When a new group needs room, Mars admits it by stealing the newest released
-group first and then the newest remaining active group. Every layer in the
-selected group is removed together. Retriggers and steals preserve a fixed
-2 ms fading tail to avoid a hard sample discontinuity. `Unison voices` is
-active only in `Unison` mode.
+When a new polyphonic group needs room, Mars searches complete released groups
+first, then active groups, selecting the lowest current envelope/output energy
+from an 8 ms output-power average and using the oldest generation as a
+deterministic tie-breaker. A 15 ms attack guard prevents a newly played
+articulation from disappearing before it speaks.
+Every layer in the selected group is removed together. Retriggers and steals
+preserve a fixed 2 ms fading tail to avoid a hard sample discontinuity.
+`Unison voices` is active only in
+`Unison`; `Mono` overrides all three polyphonic allocation modes without
+changing their stored/automated value.
 
-## Exact 43-parameter contract
+## Exact 47-parameter contract
 
 | Section | Front-panel controls (parameter IDs) |
 | --- | --- |
-| VCO I | Mixer feed On/Off (`osc1Enabled`), waveform (`osc1Wave`), octave (`osc1Octave`) |
-| VCO II | Mixer feed On/Off (`osc2Enabled`), waveform (`osc2Wave`), octave (`osc2Octave`), tune (`osc2Tune`), fine tune (`osc2Fine`) |
+| Oscillator I | Model: Moog-like VCO / Juno-like DCO (`osc1Model`), mixer feed On/Off (`osc1Enabled`), waveform (`osc1Wave`), octave (`osc1Octave`) |
+| Oscillator II | Model: Moog-like VCO / Juno-like DCO (`osc2Model`), mixer feed On/Off (`osc2Enabled`), waveform (`osc2Wave`), octave (`osc2Octave`), tune (`osc2Tune`), fine tune (`osc2Fine`) |
 | Mixer | Oscillator balance (`oscMix`), pulse width (`pulseWidth`), sub level (`subLevel`), noise level (`noiseLevel`), cross modulation (`crossMod`) |
 | Filter | Model: `Ladder` / `SEM` (`filterModel`), cutoff (`cutoff`), resonance (`resonance`), drive (`filterDrive`), SEM shape (`filterShape`), envelope amount (`filterEnvAmount`), key tracking (`keyTrack`) |
 | Filter envelope | Attack (`fAttack`), decay (`fDecay`), sustain (`fSustain`), release (`fRelease`) |
 | Amplifier envelope | Attack (`aAttack`), decay (`aDecay`), sustain (`aSustain`), release (`aRelease`) |
 | LFO | Waveform: triangle / sine / sample & hold (`lfoWave`), rate (`lfoRate`), pitch depth (`lfoPitch`), filter depth (`lfoFilter`), PWM depth (`lfoPwm`) |
-| Voice | Mode: `Poly` / `Unison` / `Fifth` (`voiceMode`), unison voices (`unisonVoices`), voice-card drift (`drift`), stereo spread (`spread`), glide time (`glide`), velocity response (`velocity`) |
+| Voice | Mode: `Poly` / `Unison` / `Fifth` (`voiceMode`), Mono override (`monoMode`), physical render-voice ceiling 1–16 (`polyphonyLimit`), unison voices (`unisonVoices`), voice-card drift (`drift`), stereo spread (`spread`), glide time (`glide`), velocity response (`velocity`) |
 | Output | Ensemble mix (`chorusMix`), ensemble rate (`chorusRate`), output level (`output`) |
 | Quality | HQ oversampling (`hqOversampling`): persisted, non-automatable, default On |
 
-These are the complete host parameter IDs for version 1.2: 42 automatable sound
-controls plus one persisted quality setting. The original 40 IDs retain their
-order and version hint; `osc1Enabled` and `osc2Enabled` are appended as
-version-2 automation parameters, and non-automatable `hqOversampling` is
-appended with version hint 3. States that predate any appended parameter migrate
-the missing VCO switches and HQ oversampling to On. There are no other sound
-controls hidden behind a matrix or alternate panel.
+These are the complete host parameter IDs for version 1.4: 46 automatable sound
+and performance controls plus one persisted quality setting. The original 40
+IDs retain their order and version hint; `osc1Enabled` and `osc2Enabled` remain
+the version-2 additions, and non-automatable `hqOversampling` retains version
+hint 3. `osc1Model`, `osc2Model`, `polyphonyLimit`, and `monoMode` are appended
+with version hint 4, so every previously shipped host parameter keeps its index
+and normalized meaning. Legacy states default both models to Moog-like VCO,
+polyphony to 16, Mono to Off, both mixer switches to On, and HQ to On. The three
+randomizer buttons are commands rather than host parameters; there are no
+hidden sound controls behind a matrix or alternate panel.
 
 ## Build products
 
@@ -217,14 +269,21 @@ ctest --test-dir build-dsp --output-on-failure
 
 The DSP tests cover rates through 384 kHz, finite output, release completion,
 deep-note and long-triangle stability, deterministic rendering, distinct
-oscillator and filter responses, the Ladder's full cutoff range, bass-gain
-compensation, and implicit-equation residual/state error against an independent
-double-precision reference, an adversarial ladder control-jump regression, VCO
-mixer isolation and clickless switching, cross modulation with VCO II's audio
-feed disabled, deferred HQ mode changes,
-meaningful glide and modulation, voice-mode allocation, and a CPU regression
-guardrail. Plug-in builds additionally test the 43-parameter, persistence,
-migration, MIDI, and editor contracts.
+VCO/DCO outputs, source-matched VCO saw contour, DCO clock/divider behavior,
+phase-continuous oscillator-model changes, oscillator and filter responses,
+the 137-tap return filter's coefficient symmetry, ripple, >100 dB stopband,
+exact 34/51-sample latency, the clocked BBD's N/(2*fClock) delay, fractional
+multi-crossing capture and +2.3 dB gain, moving-PWM correction, measured
+high-note oscillator alias suppression, the Ladder's full cutoff range,
+bass-gain compensation, and implicit-equation residual/state error against an
+independent double-precision reference. They also cover an adversarial ladder
+control jump, mixer isolation and clickless switching, cross modulation with
+oscillator II's audio feed disabled, deferred HQ changes including large host
+blocks, meaningful glide and modulation, dynamic physical-voice limits, Mono
+mode-transition, duplicate-hold, legato/fallback/retrigger semantics,
+voice-mode allocation, and a CPU guardrail. Plug-in builds additionally test
+the 47-parameter order/default/text contract, legacy migration, all randomizer
+strengths and safety exclusions, MIDI, state, and editor rendering.
 
 ## Install and validate locally
 

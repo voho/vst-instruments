@@ -8,9 +8,11 @@
 #include <cstddef>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <set>
 #include <string>
+#include <tuple>
 
 namespace
 {
@@ -25,7 +27,7 @@ struct ParameterExpectation
     float tolerance;
 };
 
-constexpr std::array<ParameterExpectation, 43> expectedParameters {{
+constexpr std::array<ParameterExpectation, 47> expectedParameters {{
     { mars::parameters::osc1Wave,         0.0f,   1.0e-5f },
     { mars::parameters::osc1Octave,       0.0f,   1.0e-5f },
     { mars::parameters::osc2Wave,         1.0f,   1.0e-5f },
@@ -69,6 +71,10 @@ constexpr std::array<ParameterExpectation, 43> expectedParameters {{
     { mars::parameters::osc1Enabled,      1.0f,   1.0e-5f },
     { mars::parameters::osc2Enabled,      1.0f,   1.0e-5f },
     { mars::parameters::hqOversampling,   1.0f,   1.0e-5f },
+    { mars::parameters::osc1Model,        0.0f,   1.0e-5f },
+    { mars::parameters::osc2Model,        0.0f,   1.0e-5f },
+    { mars::parameters::polyphonyLimit,  16.0f,   1.0e-5f },
+    { mars::parameters::monoMode,         0.0f,   1.0e-5f },
 }};
 
 constexpr std::size_t version1ParameterCount = 40;
@@ -101,6 +107,22 @@ void setParameterValue (MarsAudioProcessor& processor, const char* id, float val
     if (parameter != nullptr)
         parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
 }
+
+struct GestureCounter final : juce::AudioProcessorParameter::Listener
+{
+    void parameterValueChanged (int, float) override {}
+
+    void parameterGestureChanged (int, bool gestureIsStarting) override
+    {
+        if (gestureIsStarting)
+            ++starts;
+        else
+            ++ends;
+    }
+
+    int starts = 0;
+    int ends = 0;
+};
 
 void expectParameterText (MarsAudioProcessor& processor, const char* id, float value,
                           const char* expectedText)
@@ -179,10 +201,10 @@ void useShortReleases (MarsAudioProcessor& processor)
 void testParameterLayoutAndDefaults()
 {
     MarsAudioProcessor processor;
-    expect (expectedParameters.size() == 43u,
-            "test parameter manifest does not contain exactly 43 entries");
+    expect (expectedParameters.size() == 47u,
+            "test parameter manifest does not contain exactly 47 entries");
     expect (processor.getParameters().size() == static_cast<int> (expectedParameters.size()),
-            "processor does not expose exactly 43 APVTS parameters");
+            "processor does not expose exactly 47 APVTS parameters");
 
     std::set<std::string> uniqueIds;
     const auto& hostParameters = processor.getParameters();
@@ -217,7 +239,8 @@ void testParameterLayoutAndDefaults()
                         + std::to_string (index));
 
         const auto expectedVersionHint = index < version1ParameterCount ? 1
-                                       : index < 42u ? 2 : 3;
+                                       : index < 42u ? 2
+                                       : index == 42u ? 3 : 4;
         expect (hostParameter->getVersionHint() == expectedVersionHint,
                 std::string ("wrong parameter version hint for ") + expected.id);
 
@@ -228,7 +251,7 @@ void testParameterLayoutAndDefaults()
     }
 
     expect (uniqueIds.size() == expectedParameters.size(),
-            "the 43-entry APVTS manifest contains duplicate ids");
+            "the 47-entry APVTS manifest contains duplicate ids");
 }
 
 void testParameterTextFormatting()
@@ -246,6 +269,11 @@ void testParameterTextFormatting()
     expectParameterText (processor, mars::parameters::osc2Enabled, 1.0f, "On");
     expectParameterText (processor, mars::parameters::hqOversampling, 0.0f, "Off");
     expectParameterText (processor, mars::parameters::hqOversampling, 1.0f, "On");
+    expectParameterText (processor, mars::parameters::osc1Model, 0.0f, "Moog-like VCO");
+    expectParameterText (processor, mars::parameters::osc2Model, 1.0f, "Juno-like DCO");
+    expectParameterText (processor, mars::parameters::polyphonyLimit, 8.0f, "8 voices");
+    expectParameterText (processor, mars::parameters::monoMode, 0.0f, "Off");
+    expectParameterText (processor, mars::parameters::monoMode, 1.0f, "On");
 }
 
 void testStateRoundTrip()
@@ -260,6 +288,10 @@ void testStateRoundTrip()
     setParameterValue (source, mars::parameters::osc1Enabled, 0.0f);
     setParameterValue (source, mars::parameters::osc2Enabled, 0.0f);
     setParameterValue (source, mars::parameters::hqOversampling, 0.0f);
+    setParameterValue (source, mars::parameters::osc1Model, 1.0f);
+    setParameterValue (source, mars::parameters::osc2Model, 1.0f);
+    setParameterValue (source, mars::parameters::polyphonyLimit, 7.0f);
+    setParameterValue (source, mars::parameters::monoMode, 1.0f);
 
     juce::MemoryBlock state;
     source.getStateInformation (state);
@@ -289,6 +321,15 @@ void testStateRoundTrip()
             "VCO II enabled state did not survive state round-trip");
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::hqOversampling), 0.0f),
             "HQ oversampling state did not survive state round-trip");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::osc1Model), 1.0f)
+                && approximatelyEqual (
+                    parameterValue (restored, mars::parameters::osc2Model), 1.0f),
+            "oscillator models did not survive state round-trip");
+    expect (approximatelyEqual (
+                parameterValue (restored, mars::parameters::polyphonyLimit), 7.0f),
+            "polyphony limit did not survive state round-trip");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::monoMode), 1.0f),
+            "mono mode did not survive state round-trip");
 }
 
 bool isParameterState (const juce::ValueTree& child, const char* parameterId)
@@ -320,9 +361,17 @@ void testLegacyStateDefaultsNewParameters()
     removeParameterState (legacyState, mars::parameters::osc1Enabled);
     removeParameterState (legacyState, mars::parameters::osc2Enabled);
     removeParameterState (legacyState, mars::parameters::hqOversampling);
+    removeParameterState (legacyState, mars::parameters::osc1Model);
+    removeParameterState (legacyState, mars::parameters::osc2Model);
+    removeParameterState (legacyState, mars::parameters::polyphonyLimit);
+    removeParameterState (legacyState, mars::parameters::monoMode);
     expect (! containsParameterState (legacyState, mars::parameters::osc1Enabled)
                 && ! containsParameterState (legacyState, mars::parameters::osc2Enabled)
-                && ! containsParameterState (legacyState, mars::parameters::hqOversampling),
+                && ! containsParameterState (legacyState, mars::parameters::hqOversampling)
+                && ! containsParameterState (legacyState, mars::parameters::osc1Model)
+                && ! containsParameterState (legacyState, mars::parameters::osc2Model)
+                && ! containsParameterState (legacyState, mars::parameters::polyphonyLimit)
+                && ! containsParameterState (legacyState, mars::parameters::monoMode),
             "could not construct a version-1 state without later parameters");
 
     juce::MemoryBlock binaryState;
@@ -334,6 +383,10 @@ void testLegacyStateDefaultsNewParameters()
     setParameterValue (restored, mars::parameters::osc1Enabled, 0.0f);
     setParameterValue (restored, mars::parameters::osc2Enabled, 0.0f);
     setParameterValue (restored, mars::parameters::hqOversampling, 0.0f);
+    setParameterValue (restored, mars::parameters::osc1Model, 1.0f);
+    setParameterValue (restored, mars::parameters::osc2Model, 1.0f);
+    setParameterValue (restored, mars::parameters::polyphonyLimit, 3.0f);
+    setParameterValue (restored, mars::parameters::monoMode, 1.0f);
     restored.setStateInformation (binaryState.getData(), static_cast<int> (binaryState.getSize()));
 
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::osc1Enabled), 1.0f),
@@ -342,6 +395,15 @@ void testLegacyStateDefaultsNewParameters()
             "version-1 state did not default the missing VCO II enable to On");
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::hqOversampling), 1.0f),
             "legacy state did not default missing HQ oversampling to On");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::osc1Model), 0.0f)
+                && approximatelyEqual (
+                    parameterValue (restored, mars::parameters::osc2Model), 0.0f),
+            "legacy state did not default missing oscillator models to Moog-like VCO");
+    expect (approximatelyEqual (
+                parameterValue (restored, mars::parameters::polyphonyLimit), 16.0f),
+            "legacy state did not default the missing polyphony limit to 16");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::monoMode), 0.0f),
+            "legacy state did not default missing mono mode to Off");
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::cutoff),
                                 1234.0f, 0.5f),
             "version-1 migration did not restore existing parameter values");
@@ -349,8 +411,102 @@ void testLegacyStateDefaultsNewParameters()
     const auto upgradedState = restored.parameters.copyState();
     expect (containsParameterState (upgradedState, mars::parameters::osc1Enabled)
                 && containsParameterState (upgradedState, mars::parameters::osc2Enabled)
-                && containsParameterState (upgradedState, mars::parameters::hqOversampling),
+                && containsParameterState (upgradedState, mars::parameters::hqOversampling)
+                && containsParameterState (upgradedState, mars::parameters::osc1Model)
+                && containsParameterState (upgradedState, mars::parameters::osc2Model)
+                && containsParameterState (upgradedState, mars::parameters::polyphonyLimit)
+                && containsParameterState (upgradedState, mars::parameters::monoMode),
             "migrated state did not persist the appended parameters");
+}
+
+bool isExcludedFromRandomizer (const char* id)
+{
+    const std::string parameterId { id };
+    return parameterId == mars::parameters::output
+        || parameterId == mars::parameters::osc1Enabled
+        || parameterId == mars::parameters::osc2Enabled
+        || parameterId == mars::parameters::hqOversampling
+        || parameterId == mars::parameters::polyphonyLimit
+        || parameterId == mars::parameters::monoMode;
+}
+
+void testPresetRandomizerRangeAndSafety()
+{
+    for (const float amount : { 0.01f, 0.10f, 1.0f })
+    {
+        MarsAudioProcessor processor;
+        std::array<float, expectedParameters.size()> before {};
+        std::array<juce::RangedAudioParameter*, expectedParameters.size()> parameterObjects {};
+        GestureCounter gestures;
+
+        for (std::size_t index = 0; index < expectedParameters.size(); ++index)
+        {
+            auto* parameter = processor.parameters.getParameter (expectedParameters[index].id);
+            parameterObjects[index] = parameter;
+            expect (parameter != nullptr,
+                    std::string ("randomizer cannot find ") + expectedParameters[index].id);
+            if (parameter != nullptr)
+            {
+                before[index] = parameter->getValue();
+                parameter->addListener (&gestures);
+            }
+        }
+
+        processor.randomizeParameters (amount);
+
+        int changedSoundParameters = 0;
+        for (std::size_t index = 0; index < expectedParameters.size(); ++index)
+        {
+            auto* parameter = parameterObjects[index];
+            if (parameter == nullptr)
+                continue;
+
+            const float after = parameter->getValue();
+            const float movement = std::abs (after - before[index]);
+            expect (after >= 0.0f && after <= 1.0f,
+                    std::string ("randomizer left the legal range for ")
+                        + expectedParameters[index].id);
+
+            if (isExcludedFromRandomizer (expectedParameters[index].id))
+            {
+                expect (movement == 0.0f,
+                        std::string ("randomizer changed safety/operational parameter ")
+                            + expectedParameters[index].id);
+            }
+            else
+            {
+                // Continuous parameters can move by at most the requested
+                // fraction. The small allowance is for their declared snapping
+                // interval after the normalised destination is calculated.
+                expect (movement <= amount + 0.002f,
+                        std::string ("randomizer exceeded its requested range for ")
+                            + expectedParameters[index].id);
+                changedSoundParameters += movement > 0.0f ? 1 : 0;
+            }
+
+            parameter->removeListener (&gestures);
+        }
+
+        expect (changedSoundParameters > 0,
+                "preset randomizer did not change any sound parameters");
+        expect (gestures.starts == changedSoundParameters
+                    && gestures.ends == changedSoundParameters,
+                "preset randomizer did not bracket every host change with one gesture");
+    }
+
+    MarsAudioProcessor noOp;
+    std::array<float, expectedParameters.size()> beforeNoOp {};
+    for (std::size_t index = 0; index < expectedParameters.size(); ++index)
+        beforeNoOp[index] = noOp.parameters.getParameter (
+            expectedParameters[index].id)->getValue();
+    noOp.randomizeParameters (0.0f);
+    noOp.randomizeParameters (std::numeric_limits<float>::quiet_NaN());
+    for (std::size_t index = 0; index < expectedParameters.size(); ++index)
+        expect (approximatelyEqual (
+                    noOp.parameters.getParameter (expectedParameters[index].id)->getValue(),
+                    beforeNoOp[index]),
+                std::string ("zero/NaN randomization changed ")
+                    + expectedParameters[index].id);
 }
 
 void testOversamplingConfigurationAndDeferredSwitch()
@@ -358,8 +514,10 @@ void testOversamplingConfigurationAndDeferredSwitch()
     MarsAudioProcessor defaultQuality;
     useShortReleases (defaultQuality);
     defaultQuality.prepareToPlay (sampleRate, blockSize);
-    expect (defaultQuality.getOversamplingFactorForDisplay() == 2,
-            "default HQ setting did not prepare the 48 kHz engine at 2x");
+    expect (defaultQuality.getOversamplingFactorForDisplay() == 4,
+            "default HQ setting did not prepare the 48 kHz engine at 4x");
+    expect (defaultQuality.getLatencySamples() == 51,
+            "4x HQ processing did not report its 51-sample cascade latency");
 
     juce::AudioBuffer<float> audio;
     juce::MidiBuffer midi;
@@ -372,7 +530,7 @@ void testOversamplingConfigurationAndDeferredSwitch()
     setParameterValue (defaultQuality, mars::parameters::hqOversampling, 0.0f);
     midi.clear();
     renderBlock (defaultQuality, audio, midi);
-    expect (defaultQuality.getOversamplingFactorForDisplay() == 2,
+    expect (defaultQuality.getOversamplingFactorForDisplay() == 4,
             "HQ switch changed the processing rate while a note was held");
     expect (defaultQuality.getActiveVoiceCount() > 0,
             "HQ switch killed the held note instead of deferring");
@@ -395,6 +553,8 @@ void testOversamplingConfigurationAndDeferredSwitch()
     }
     expect (defaultQuality.getOversamplingFactorForDisplay() == 1,
             "pending HQ-Off setting did not apply after release and idle");
+    expect (defaultQuality.getLatencySamples() == 51,
+            "deferred HQ switch changed the fixed per-session latency contract");
     defaultQuality.releaseResources();
 
     MarsAudioProcessor preparedWithoutHq;
@@ -402,14 +562,19 @@ void testOversamplingConfigurationAndDeferredSwitch()
     preparedWithoutHq.prepareToPlay (sampleRate, blockSize);
     expect (preparedWithoutHq.getOversamplingFactorForDisplay() == 1,
             "HQ-Off setting did not prepare the 48 kHz engine at 1x");
+    expect (preparedWithoutHq.getLatencySamples() == 51,
+            "HQ-Off preparation did not preserve the fixed 48 kHz latency");
     preparedWithoutHq.releaseResources();
 
-    for (const double highRate : { 96000.0, 192000.0 })
+    for (const auto [highRate, expectedFactor, expectedLatency]
+         : { std::tuple { 96000.0, 2, 34 }, std::tuple { 192000.0, 1, 0 } })
     {
         MarsAudioProcessor highRateProcessor;
         highRateProcessor.prepareToPlay (highRate, blockSize);
-        expect (highRateProcessor.getOversamplingFactorForDisplay() == 1,
-                "high host rate performed unnecessary internal oversampling");
+        expect (highRateProcessor.getOversamplingFactorForDisplay() == expectedFactor,
+                "rate-aware HQ topology selected the wrong factor");
+        expect (highRateProcessor.getLatencySamples() == expectedLatency,
+                "rate-aware HQ topology reported the wrong latency");
         highRateProcessor.releaseResources();
     }
 }
@@ -603,6 +768,80 @@ void testMidiControllersAndVoiceLifecycle()
             "MIDI CC120 did not silence all active voices immediately");
 
     processor.releaseResources();
+}
+
+void testPolyphonyLimitAndMonoMapping()
+{
+    MarsAudioProcessor limited;
+    useShortReleases (limited);
+    setParameterValue (limited, mars::parameters::polyphonyLimit, 4.0f);
+    limited.prepareToPlay (sampleRate, blockSize);
+
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+    for (int note = 48; note < 60; ++note)
+        midi.addEvent (juce::MidiMessage::noteOn (
+            1, note, static_cast<juce::uint8> (100)), 0);
+    renderBlock (limited, audio, midi);
+    expect (limited.getActiveVoiceCount() == 4,
+            "processor did not enforce the configured four-voice limit");
+
+    setParameterValue (limited, mars::parameters::polyphonyLimit, 2.0f);
+    midi.clear();
+    renderBlock (limited, audio, midi);
+    expect (limited.getActiveVoiceCount() <= 2,
+            "lowering polyphony did not immediately restore the CPU-safety limit");
+    limited.releaseResources();
+
+    MarsAudioProcessor unisonLimited;
+    setParameterValue (unisonLimited, mars::parameters::voiceMode, 1.0f);
+    setParameterValue (unisonLimited, mars::parameters::unisonVoices, 8.0f);
+    setParameterValue (unisonLimited, mars::parameters::polyphonyLimit, 3.0f);
+    unisonLimited.prepareToPlay (sampleRate, blockSize);
+    midi.addEvent (juce::MidiMessage::noteOn (
+        1, 48, static_cast<juce::uint8> (110)), 0);
+    renderBlock (unisonLimited, audio, midi);
+    expect (unisonLimited.getActiveVoiceCount() > 0
+                && unisonLimited.getActiveVoiceCount() <= 3,
+            "unison layers escaped the configured physical-voice budget");
+    unisonLimited.releaseResources();
+
+    MarsAudioProcessor mono;
+    useShortReleases (mono);
+    // Mono is an independent switch so existing three-choice automation keeps
+    // its exact meaning. It must override even the most expensive voice mode.
+    setParameterValue (mono, mars::parameters::voiceMode, 1.0f);
+    setParameterValue (mono, mars::parameters::unisonVoices, 8.0f);
+    setParameterValue (mono, mars::parameters::monoMode, 1.0f);
+    mono.prepareToPlay (sampleRate, blockSize);
+
+    midi.clear();
+    midi.addEvent (juce::MidiMessage::noteOn (
+        1, 60, static_cast<juce::uint8> (110)), 0);
+    renderBlock (mono, audio, midi);
+    expect (mono.getActiveVoiceCount() == 1,
+            "mono switch did not override unison to one physical voice");
+
+    midi.clear();
+    midi.addEvent (juce::MidiMessage::noteOn (
+        1, 67, static_cast<juce::uint8> (115)), 0);
+    renderBlock (mono, audio, midi);
+    expect (mono.getActiveVoiceCount() == 1,
+            "legato mono note allocated a second voice");
+
+    midi.clear();
+    midi.addEvent (juce::MidiMessage::noteOff (1, 67), 0);
+    renderBlock (mono, audio, midi);
+    expect (mono.getActiveVoiceCount() == 1
+                && peakInRange (audio, 0, blockSize) > 1.0e-7f,
+            "mono last-note release did not fall back to the held note");
+
+    midi.clear();
+    midi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+    renderBlock (mono, audio, midi);
+    expect (renderUntilVoicesStop (mono, audio),
+            "mono voice did not finish after its final physical key release");
+    mono.releaseResources();
 }
 
 void testOutputGainImpact()
@@ -808,6 +1047,8 @@ int main()
     testMaximumReleaseFitsReportedTail();
     testSampleAccurateNoteOn();
     testMidiControllersAndVoiceLifecycle();
+    testPolyphonyLimitAndMonoMapping();
+    testPresetRandomizerRangeAndSafety();
     testOutputGainImpact();
     testPrepareReleaseUiQueueAndPanic();
     testEditorRenderingAtDefaultAndMinimumSize();

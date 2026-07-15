@@ -10,8 +10,10 @@
 namespace mars::parameters
 {
 inline constexpr auto osc1Wave        = "osc1Wave";
+inline constexpr auto osc1Model       = "osc1Model";
 inline constexpr auto osc1Octave      = "osc1Octave";
 inline constexpr auto osc2Wave        = "osc2Wave";
+inline constexpr auto osc2Model       = "osc2Model";
 inline constexpr auto osc2Octave      = "osc2Octave";
 inline constexpr auto osc2Tune        = "osc2Tune";
 inline constexpr auto osc2Fine        = "osc2Fine";
@@ -41,6 +43,8 @@ inline constexpr auto lfoPitch        = "lfoPitch";
 inline constexpr auto lfoFilter       = "lfoFilter";
 inline constexpr auto lfoPwm          = "lfoPwm";
 inline constexpr auto voiceMode       = "voiceMode";
+inline constexpr auto monoMode        = "monoMode";
+inline constexpr auto polyphonyLimit  = "polyphonyLimit";
 inline constexpr auto unisonVoices    = "unisonVoices";
 inline constexpr auto drift           = "drift";
 inline constexpr auto spread          = "spread";
@@ -91,6 +95,11 @@ public:
     void getStateInformation (juce::MemoryBlock& destinationData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    // Call from the message thread (for example, from a front-panel button).
+    // The amount is expressed as a proportion of every control's normalised
+    // legal range: 0.01, 0.10, and 1.0 are the intended panel strengths.
+    void randomizeParameters (float amount);
+
     void requestPanic() noexcept { panicRequested.store (true, std::memory_order_release); }
     int getActiveVoiceCount() const noexcept { return activeVoiceCount.load (std::memory_order_relaxed); }
     double getCurrentSampleRateForDisplay() const noexcept
@@ -116,8 +125,10 @@ private:
     struct ParameterPointers
     {
         std::atomic<float>* osc1Wave = nullptr;
+        std::atomic<float>* osc1Model = nullptr;
         std::atomic<float>* osc1Octave = nullptr;
         std::atomic<float>* osc2Wave = nullptr;
+        std::atomic<float>* osc2Model = nullptr;
         std::atomic<float>* osc2Octave = nullptr;
         std::atomic<float>* osc2Tune = nullptr;
         std::atomic<float>* osc2Fine = nullptr;
@@ -147,6 +158,8 @@ private:
         std::atomic<float>* lfoFilter = nullptr;
         std::atomic<float>* lfoPwm = nullptr;
         std::atomic<float>* voiceMode = nullptr;
+        std::atomic<float>* monoMode = nullptr;
+        std::atomic<float>* polyphonyLimit = nullptr;
         std::atomic<float>* unisonVoices = nullptr;
         std::atomic<float>* drift = nullptr;
         std::atomic<float>* spread = nullptr;

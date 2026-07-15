@@ -1,36 +1,51 @@
 # Mars analog-modeling research and implementation contract
 
-Mars 1.2 is a white-box virtual-analog synthesizer with named reference targets,
+Mars 1.4 is a white-box virtual-analog synthesizer with named reference targets,
 not a black-box claim that one plug-in reproduces an entire vintage instrument.
 This document separates circuit- or measurement-derived blocks from the parts
-that remain stable, efficient Mars designs.
+that remain stable, efficient Mars designs. These changes make Mars more
+physically explicit and measurably cleaner; they do not by themselves establish
+that it sounds better than another synthesizer. A superiority claim requires
+level-matched blind listening against named competitors and calibrated captures
+of identified hardware.
 
 ## Claims boundary
 
-| Block | Reference target | What Mars 1.2 implements | Precise claim |
+| Block | Reference target | What Mars 1.4 implements | Precise claim |
 | --- | --- | --- | --- |
-| Saw waveform | Minimoog Voyager recordings analyzed by Pekonen, Lazzarini, Timoney, Kleimola, and Valimaki | An event-corrected saw followed by the paper's pitch-dependent first-order post-EQ, with its 44.1 kHz pole and zero bilinearly remapped to the active internal rate | Measured contour over the fitted 86 Hz-8.3 kHz range, a neutral blend below that range, and a clamped fit above it; not a capture-perfect Voyager VCO |
-| Pulse and triangle | Classic subtractive analog VCO behavior | PolyBLEP correction at pulse edges; bounded leaky integration for triangle; the same symmetric output-stage shaping used on both VCO paths | Antialiased, analog-conditioned classic waves; no named-hardware measurement claim |
-| Cross modulation | Oberheim-style separation of oscillator mixer and X-Mod routing | VCO II keeps running and frequency-modulates VCO I even when VCO II's audio feed is Off | Hardware-inspired routing with bounded digital FM; not a transistor-level VCO interaction model |
+| `Moog-like VCO` saw | Minimoog Voyager recordings analyzed by Pekonen, Lazzarini, Timoney, Kleimola, and Valimaki | The paper's four-sample integrated third-order B-spline PolyBLEP source and its source-specific Table 4(b) pitch-dependent post-EQ, with the 44.1 kHz pole and zero bilinearly remapped to the active internal rate | The paper's best reported measured-spectrum configuration over the fitted 86 Hz-8.3 kHz range, a neutral blend below that range, and a clamped fit above it; not a capture-perfect or circuit-level Voyager VCO |
+| `Juno-like DCO` timing and saw | Juno-family digitally controlled oscillator concept; Roland documents saw, pulse, PWM, sub, and shared DCO performance controls | A 2 MHz Mars reference clock, once-per-cycle integer period selection with first-order count-error feedback, a divide-by-two clock follower for sub, an endpoint-preserving analogue ramp curve, and a prewarped TPT reconstruction pole | Clocked-DCO behavior with tight deterministic mean pitch, bounded adjacent-count period signature, and a divider-locked sub; not an MC-5534 netlist, measured Juno waveform fit, or exact clock value claim |
+| Oscillator discontinuities | Integrated B-spline event correction described by Pekonen et al. | The same fractional-event, four-sample integrated third-order B-spline correction on saw reset, both pulse edges, moving-PWM comparator steps, the square driver integrated into triangle, and the derived DCO sub; independent correction state allows coincident events to add | Measured alias reduction against naive fixtures and continuous fractional event timing; not a guarantee of zero aliasing under every modulation or nonlinear downstream condition |
+| Cross modulation | Oberheim-style separation of oscillator mixer and X-Mod routing | Oscillator II keeps running and frequency-modulates oscillator I even when oscillator II's audio feed is Off | Hardware-inspired routing with bounded digital FM; not a transistor-level oscillator interaction model |
 | `Ladder` | Four-stage nonlinear Moog ladder model by D'Angelo and Valimaki | An independent bounded damped-Newton solution of the original implicit bilinear transistor equations, with residual-decreasing steps, a `tanh` differential pair in every stage, delay-free feedback, and `(1 + k)` DC-gain compensation | Circuit-derived generalized Moog ladder algorithm across the full 20 kHz control range; not a tolerance-by-tolerance model of one physical serial number |
 | `SEM` | Oberheim/Sequential two-pole state-variable mode behavior | Nonlinear TPT state-variable core with the schematic's linear low-pass -> notch -> high-pass mode pot | SEM-inspired core and schematic-derived mode law; not a component-level SEM clone |
-| Voice cards | Vintage polyphonic component spread | Fixed seeded offsets for pitch, cutoff, resonance, drive, envelopes, pan, pulse skew, and slow drift | Deterministic component-like variation, not measured calibration data |
+| VCA | Analogue VCA signal ordering | A bounded, normalized color transfer before amplifier-envelope, velocity, and group gain | Stable harmonic color as gain closes; not an OTA, BA662, or diode device-equation model and not control-dependent VCA distortion |
+| Stereo ensemble | Holters and Parker's Juno-60 BBD support-filter analysis and variable-rate BBD timing | Two variable-clock 256-stage paths, fractional clock-event capture and held-output integration, fifth-order input/output filters from the paper's Juno-60 poles and residues, reported +2.3 dB BBD gain, and restrained asymmetric transfer | A Juno-informed BBD/filter topology, not a transistor- or capacitor-level MN3009/Juno-60 chorus clone |
+| Voice cards | Vintage polyphonic component spread | Fixed seeded offsets plus persistent seeded slow and fast Ornstein-Uhlenbeck processes for each card | Deterministic, non-periodic component-like movement, not measured calibration, noise, aging, or temperature data from a hardware population |
+| HQ island | Antialiasing for event sources, nonlinearities, and clocked effects | The complete voice, VCA, stereo BBD, and output-color path at 4x, 2x, or native rate, followed by staged 137-tap linear-phase half-band returns | A measured rate and return-filter contract; not proof that all in-band products are inaudible or that oversampling alone produces hardware equivalence |
 
 ## Implemented signal path
 
 The authoritative implementation is `Source/DSP/MarsEngine.cpp`:
 
-1. VCO I and VCO II generate saw, variable-width pulse, or triangle. Saw and
-   pulse discontinuities receive local polyBLEP correction; triangle is a
-   bounded leaky integration of a corrected square. The measured saw contour,
-   including its sample-rate remap and low-note neutral blend, and a symmetric
-   bounded output stage follow the waveform cores.
-2. The two VCO mixer feeds have independent On/Off parameters. With both On,
-   `Balance` uses an equal-power law. With only one On, that VCO has unity gain
+1. Oscillator I and II independently select `Moog-like VCO` or `Juno-like DCO`
+   and generate saw, variable-width pulse, or triangle. Every waveform
+   discontinuity uses the fractional-event, four-sample integrated B-spline
+   correction: saw reset, both pulse edges, the triangle square driver, and the
+   divide-by-two DCO sub. The LFO advances at the internal rate, and an
+   unexpected comparator transition caused by moving PWM adds a boundary
+   correction. Triangle is a bounded leaky integration of that
+   corrected driver. The VCO saw additionally uses the source-matched measured
+   contour. The DCO adds cycle-clock quantization, divider-locked sub timing,
+   analogue-ramp curvature, and a prewarped TPT reconstruction pole, with much
+   tighter fundamental variation. Shared phase and a 2 ms model crossfade keep
+   model automation continuous; waveform changes use a separate 3 ms crossfade.
+2. The two oscillator mixer feeds have independent On/Off parameters. With both
+   On, `Balance` uses an equal-power law. With only one On, that oscillator has unity gain
    at every Balance position. A 4 ms gain smoother prevents a hard automation
-   edge. Oscillator phases always advance, VCO II remains a cross-modulation
+   edge. Oscillator phases always advance, oscillator II remains a cross-modulation
    source, and sub/noise remain independent.
-3. Active VCO feeds, sub, and noise enter a fixed first-order antiderivative-
+3. Active oscillator feeds, sub, and noise enter a fixed first-order antiderivative-
    antialiased (ADAA) mixer. `Filter drive` is then converted once into the
    voltage scale used by the filter; it no longer changes the mixer and VCA as
    unrelated extra gain stages.
@@ -39,29 +54,38 @@ The authoritative implementation is `Source/DSP/MarsEngine.cpp`:
    feedback delay and compensates its resonance-dependent static bass loss. A
    3 ms crossfade protects live model changes; at a steady endpoint only the
    chosen algorithm runs.
-5. Independent exponential filter and amplifier ADSRs, velocity gain, bounded
-   VCA shaping, deterministic pan, a host-rate stereo ensemble, a 1.5 Hz DC
-   servo, and the final finite-output guard complete the path.
+5. The filtered signal enters a bounded, level-normalized VCA color transfer
+   before amplifier-envelope, velocity, and group gain are multiplied. Voices
+   are then panned and summed. This ordering retains the color transfer through
+   a decay instead of making the signal progressively cleaner as gain closes.
+6. The stereo bus enters two antiphase, variable-clock 256-stage BBD paths and
+   their published Juno-60 fifth-order support filters. Ensemble mix, output
+   gain, and the bounded output-color guard all remain inside the HQ island.
+   Staged half-band FIRs return it to the host rate, after which a 1.5 Hz DC
+   servo and finite-output guard complete the path.
 
 The persisted, non-automatable `hqOversampling` quality setting is On by
-default. On renders the complete per-voice path at 2x for 44.1/48 kHz hosts,
-and at every lower host rate, while running natively above 48 kHz. Standard
-44.1/48 kHz sessions therefore use an 88.2/96 kHz internal path. Off always
-renders natively. A requested change is deferred until the engine is idle
-rather than resetting held voices.
+default. At standard production rates it keeps the complete nonlinear voice
+and BBD island at or above 176.4 kHz: 4x at 44.1/48 kHz, 2x at 88.2/96 kHz,
+and native at 176.4 kHz and above. Off renders the sound path natively while a
+bounded host-rate delay preserves the prepared session's latency contract. A
+requested change is deferred until the engine is idle rather than resetting
+held voices.
 
 ## Measured saw contour
 
 Pekonen et al.,
 [*Discrete-Time Modelling of the Moog Sawtooth Oscillator Waveform*](https://doi.org/10.1155/2011/785103),
-fit a first-order post-equalizer to recorded Minimoog Voyager saw waveforms:
+fit separate first-order post-equalizers to several antialiased sources. Mars
+implements their best-performing fourth-order B-spline BLEP configuration and
+therefore uses the source-specific Table 4(b) coefficients:
 
 ```text
 H(z) = g(f0) * (1 - b(f0) z^-1) / (1 - a(f0) z^-1)
 
-g = 0.5400 + 4.473e-5 f0
-b = 0.3894 - 3.102e-4 f0 + 2.417e-8 f0^2
-a = 0.6398 - 2.417e-4 f0 + 1.335e-8 f0^2
+g = 0.7105 + 3.380e-5 f0
+b = 1.0161 - 5.850e-4 f0 + 5.220e-8 f0^2
+a = 1.0294 - 4.8921e-4 f0 + 3.974e-8 f0^2
 ```
 
 The published discrete-time coefficients were identified at 44.1 kHz. Mars
@@ -76,29 +100,76 @@ span. Above the range Mars retains the clamped contour. Over the octave below
 approximately 43 Hz, instead of imposing the lowest measured contour on every
 deep note. The filter state is guarded against non-finite input.
 
-The source oscillator here is compact polyBLEP; the paper's best reported
-post-EQ result used a fourth-order B-spline BLEP. Consequently Mars claims the
-published measured spectral contour inside its fitted range, not the paper's
-lowest-error complete configuration. Pulse, triangle, and sub do not reuse
-saw-only coefficients.
+The source reset uses the four BLEP residual polynomials from the integrated
+third-order B-spline (a fourth-order PolyBLEP). A fixed two-sample internal
+delay lets its four correction samples span both sides of a fractional reset;
+there is no lookup table or allocation. Pulse, triangle's square driver, DCO
+saw, and the derived sub reuse this event-correction kernel with their own
+states, but they do not reuse the VCO-saw-only post-EQ coefficients above.
+
+## Clocked DCO model
+
+Roland's official
+[*JUNO-106 Technical Specifications*](https://support.roland.com/hc/en-us/articles/201966419-Juno-106-Technical-Specifications)
+identify a DCO with saw, pulse, PWM, range selection, and a sub oscillator. Mars
+uses that hybrid design idea rather than treating `DCO` as a perfectly sampled
+digital wavetable. It does not claim that its chosen clock, analogue curve, or
+component constants reproduce a particular Juno revision.
+
+For a requested oscillator frequency `f`, Mars calculates the ideal period of
+a 2 MHz internal reference clock. At each waveform reset it selects one integer
+timer count. A first-order error accumulator chooses between the adjacent
+counts, analogous to a deterministic fractional divider: individual cycles
+retain a small clock-period signature while their long-term average converges
+on the requested pitch. Frequency modulation is sampled into the clock period
+at the next cycle boundary. The sub path derives its phase from oscillator I's
+phase plus a parity bit toggled by every oscillator-I reset, instead of running
+a second phase or count-error sequence. This is materially different from
+simply reducing the VCO's random detune or quantizing MIDI notes.
+
+The clock controls phase timing; audio still follows an analogue-inspired path.
+For saw, normalized phase `p` is curved as
+`p + 0.15 p (1 - p)`, which preserves both endpoints and therefore the exact
+reset-step amplitude used by the BLEP correction. Saw, pulse, the Mars-specific
+triangle extension, and the derived sub then pass through independent states of
+a one-pole TPT reconstruction stage. Its 18.5 kHz analogue corner is prewarped
+with `tan(pi * fc / fs)`, so changing host rate or HQ factor does not move the
+intended corner. The shared bounded output stage follows it.
+
+Per-card VCO calibration and wander are reduced to small residuals in DCO mode;
+intentional unison detune, panel fine tune, pitch bend, LFO pitch modulation,
+PWM/component skew, and output-stage variation remain. VCO and DCO states are
+deterministic. Switching a running oscillator uses one phase accumulator and a
+2 ms crossfade; the destination's reconstruction state starts underneath the
+zero-gain side instead of resetting audible phase.
 
 ## Oscillator event correction and output stage
 
 A naively sampled saw or pulse aliases because its discontinuities contain
-energy above Nyquist. Mars applies a compact polynomial correction around each
-wrap and pulse-width edge, then uses a bounded leaky integrator for triangle.
+energy above Nyquist. Mars schedules the same four-sample B-spline PolyBLEP at
+the actual fractional time of every oscillator discontinuity: VCO and DCO saw
+reset, the rising and falling pulse edges including narrow-pulse events that
+land in the next cycle, both edges of the triangle square driver, and the
+divide-by-two DCO sub. Multiple events add into independent correction queues.
+The corrected square driver is then integrated into a bounded triangle.
 This follows the efficient event-correction family described by Stilson and
 Smith's
 [*Alias-Free Digital Synthesis of Classic Analog Waveforms*](https://quod.lib.umich.edu/i/icmc/bbp2372.1996.101/--alias-free-digital-synthesis-of-classic-analog-waveforms?rgn=main%3Bview%3Dfulltext)
 and Valimaki and Huovilainen's
 [*Antialiasing Oscillators in Subtractive Synthesis*](https://research.aalto.fi/en/publications/antialiasing-oscillators-in-subtractive-synthesis/).
 
-Both primary VCOs then pass through the same bounded, level-normalized output
-shaper. This gives pulse and triangle finite analog-like edge/level behavior but
-does not turn them into measured Minimoog or Oberheim waveform models. An exact
-named-hardware claim for those shapes would require schematic-revision-specific
-device equations or calibrated captures across pitch, pulse width, level, and
-temperature.
+The deterministic high-note regression compares non-harmonic DFT energy with
+naive sources at the same phase increment. Its current reductions are 27.7 dB
+for saw, 25.2 dB for pulse, and 19.3 dB for triangle. These values are objective
+fixture results, not an assertion of zero aliasing, an audibility threshold, or
+a comparison with another product.
+
+Both primary oscillators then pass through the same bounded, level-normalized
+output shaper. This gives pulse and triangle finite analogue-like edge/level
+behavior but does not turn them into measured Minimoog, Juno, or Oberheim
+waveform models. An exact named-hardware claim for those shapes would require
+schematic-revision-specific device equations or calibrated captures across
+pitch, pulse width, level, temperature, and clock history.
 
 ## ADAA mixer
 
@@ -189,26 +260,105 @@ SEM revision's transistor/OTA device equations or capture-derived error curves;
 the UI and documentation therefore say `SEM`-inspired rather than
 circuit-accurate SEM.
 
-## Oversampling and deterministic variation
+## VCA ordering and boundary
+
+Mars colors the selected filter output first, using a bounded and
+level-normalized transfer, and only then multiplies amplifier-envelope,
+velocity, and voice-group gain. The practical distinction is `g * f(x)`, not
+`f(g * x)`: the waveshaper's harmonic balance no longer disappears as an
+envelope closes. Per-card drive error introduces a small fixed color variation,
+while the envelope and velocity remain smooth control signals.
+
+This is a topology and gain-staging correction, not a component-level VCA. Mars
+does not solve a BA662, OTA, or diode bridge, and its distortion does not move
+with control-gain operating point as a physical device can. Pines's
+[*Real-Time Virtual Analog Modelling of Diode-Based VCAs*](https://www.corianderpines.org/publications/dafx2025_diode_vca/)
+is an example of a newer control-dependent device-modeling direction; that
+model is not implemented here. The current block is intentionally documented
+as bounded VCA color rather than a named-hardware VCA emulation.
+
+## Variable-clock BBD ensemble
+
+The ensemble follows Holters and Parker,
+[*A Combined Model for a Bucket Brigade Device and its Input and Output
+Filters*](https://dafx.de/paper-archive/2018/papers/DAFx2018_paper_12.pdf).
+Each stereo side represents a two-phase, 256-stage BBD as 128 signal-bearing
+stage pairs. A clock event shifts the held sample rather than reading a
+fractional-delay pointer, so the nominal delay follows `N / (2 fClock)`. An
+antiphase triangle varies the two clocks around 50 kHz by 24 kHz, producing a
+26-74 kHz range and complementary pitch motion.
+
+Clock events are resolved at fractional positions within each audio interval.
+Each bucket captures a linearly interpolated, support-filtered input at its
+event time, and the output filter receives the time-weighted mean of the
+piecewise-held, colored output. This is especially important with HQ Off, where
+more than one BBD event can occur in a host sample; those events no longer all
+capture the same quantized input value.
+
+Both lines use the paper's Juno-60 fifth-order input- and output-filter poles
+and residues from Table 1. Mars maps the analogue partial fractions to the
+active internal rate with an impulse-invariant parallel form, normalizes DC
+gain, and gives the two lines small fixed frequency offsets. The held BBD sample
+retains the reported +2.3 dB chip gain before a restrained bias-asymmetric
+transfer and the published output network. The complete ensemble runs inside the
+1x/2x/4x HQ island.
+
+The implementation boundary matters. Mars models variable clocking, bucket
+timing, the published support-filter response, reported static chip gain, and a
+bounded asymmetric color. It does not model charge-transfer loss per capacitor,
+clock feedthrough, device noise, stochastic clock jitter, a specific LFO/driver
+circuit, temperature, a compander, or a particular MN3009 lot. Fractional
+capture and interval integration reduce simulation-grid error, but held-output
+transitions are not BLEP-corrected or integrated through an exact asynchronous
+modified-impulse-invariant solve. The high internal rate and measured output
+network suppress their images. Gabrielli, D'Angelo, and Squartini's newer
+[*Antialiasing in BBD Chips Using BLEP*](https://dafx.de/paper-archive/2025/DAFx25_paper_29.pdf)
+describes a possible future refinement, not a Mars 1.4 feature.
+
+## HQ return path, smoothing, and deterministic variation
 
 HQ oversampling is a persisted, non-automatable quality setting and defaults to
-On. At host rates through 48 kHz, On runs each active render slot's oscillator,
-mixer, filter, envelope, and pan path at 2x. The summed stereo voice bus returns
-through one 15-tap halfband FIR. Above 48 kHz, the host is already in the high-
-rate range and On runs the nonlinear island at the native host rate; Off uses
-the native rate at every host rate. Requested changes wait until the engine is
-idle before rebuilding rate-dependent state, so an active note is not reset or
-retuned mid-hit.
+On. It runs the complete nonlinear voice, VCA, BBD ensemble, and output-color
+island at 4x for 44.1/48 kHz hosts, 2x for 88.2/96 kHz hosts, and natively at
+176.4 kHz and above. Off uses native DSP everywhere. Requested changes wait
+until the engine is idle before rebuilding rate-dependent state, so an active
+note is not reset or retuned mid-hit.
 
-The global ensemble remains at host rate. A 1.5 Hz output DC servo removes
-accumulated offset while preserving the weight and tuning of bottom-octave and
-sub-octave fundamentals. The suite exercises rates through 384 kHz; the engine
-guards API input up to 768 kHz.
+Every 2:1 return uses the same 137-tap equiripple linear-phase half-band FIR.
+It has exact alternating zero taps, a 0.5 center tap, and 34 stored symmetric
+side coefficients. The regression contract measures less than 0.0002 dB ripple
+through 0.455 of the input Nyquist, more than 100 dB rejection from 0.545 of
+Nyquist, and -6.0206 dB at the half-band midpoint. One stage reports 34 host
+samples of latency at 2x. The two-stage 4x cascade reports 51 host samples; the
+even decimation phase makes both delays exact integer host samples. Host latency
+is fixed for the prepared rate so deferred HQ changes never notify the host
+from the audio callback. When HQ is Off below 176.4 kHz, a fixed-size native
+delay aligns the path to 51 or 34 samples; at high native rates the contract is
+zero. A 1.5 Hz output DC servo follows rate conversion and preserves bottom-
+octave and sub-octave fundamentals. The suite exercises rates through 384 kHz;
+the engine guards API input up to 768 kHz.
 
-Mars owns 16 fixed render voices. Each receives a deterministic voice card, so
-identical state, MIDI, and automation produce identical audio. `Drift` scales
-the fixed component-like spread and slow motion; it does not simulate worn
-parts or randomize a saved sound on each playback.
+Continuous host controls use a 14 ms one-pole smoother. Strictly positive,
+perceptual controls use multiplicative log-domain interpolation: cutoff, all
+attack/decay/release times, LFO rate, and ensemble rate. This avoids sweeping
+the low end too quickly when automation or the preset randomizer makes a large
+normalized move. Other continuous sound controls interpolate linearly;
+pitch-bend and mod-wheel performance input use 5 ms, and oscillator mixer gates
+use 4 ms. Discrete oscillator models, waveforms, and filter models use their own
+short crossfades rather than interpolating enum values.
+
+Mars owns 16 fixed render voices, with a user ceiling from 1 to 16 that is
+enforced synchronously even when automated downward. Each slot owns a
+deterministic voice card. Alongside fixed offsets, each card carries slow and
+fast seeded Ornstein-Uhlenbeck states with approximately 2.8 s and 75 ms time
+constants, mixed 84/16 and bounded before use. One global control clock advances
+all 16 cards through notes and silence. The state persists across note
+allocation, so drift is non-periodic but does not restart with each key. VCO
+pitch and filter movement receive the full scaled process; the clocked DCO
+fundamental keeps only a small residual while retaining analogue-path
+variation. Identical initial state, MIDI, and automation still produce
+identical audio. `Drift` is not captured component statistics, injected hiss,
+simulated wear, or a newly randomized saved sound on each playback.
 
 ## Why the runtime remains analytic
 
@@ -228,16 +378,28 @@ state-stability, latency, and CPU tests.
 ## Validation boundary
 
 Current automated tests establish finite bounded output, pitch and envelope
-timing across sample rates, deterministic rendering, distinct waveform and
-filter responses, deep-note and long-triangle stability, full-range ladder
+timing across sample rates, deterministic rendering, distinct VCO/DCO output
+for saw, pulse, and triangle, independent model routing for oscillator I and II,
+the source-matched B-spline VCO saw signature, the DCO's bounded adjacent-count
+timing signature and derived-sub-divider behavior, model-switch continuity,
+deep-note and long-triangle stability, and the explicit saw/pulse/triangle alias
+reductions reported above. They also cover the 137-tap half-band coefficient
+structure, passband/stopband contract, 4x/2x/native topology and reported
+latency, finite variable-clock BBD response, the 256-stage `N/(2 fClock)`
+impulse-delay relationship, small-signal +2.3 dB gain, and distinct captures
+for multiple fractional events inside one host sample. Oscillator coverage also
+checks that a moving PWM comparator schedules an antialiasing residual. Filter coverage includes full-range ladder
 stability, bass-gain compensation, implicit-equation residual and state error
-against an independent double-precision reference, click-resistant steals and
-filter changes, VCO switch isolation and smoothing, lone-VCO unity behavior,
-cross-modulation with VCO II audio disabled, deferred HQ mode changes,
-MIDI/state migration, and a 16-voice CPU guardrail.
+against an independent double-precision reference, and distinct Ladder/SEM
+responses. Integration tests cover click-resistant steals and model changes,
+oscillator switch isolation and smoothing, lone-oscillator unity behavior,
+cross-modulation with oscillator II audio disabled, deferred HQ changes,
+dynamic physical-voice budgets, Mono mode-transition/duplicate-hold/last-note/
+legato/fallback/retrigger semantics, preset-randomizer safety, MIDI/state
+migration, and a 16-voice CPU guardrail.
 
 The Release CPU fixture renders all 16 voices at a 96 kHz host rate with HQ On,
-which correctly selects the native high-rate path. It warms the engine and uses
+which correctly selects the 2x, 192 kHz internal path. It warms the engine and uses
 the best of three equal renders to reject scheduler interruptions. Every run
 keeps a loose portable runaway ceiling, and the Ladder must remain below `2.5x`
 the SEM baseline in the same process. Set
@@ -248,16 +410,25 @@ contention are not pinned. Sanitizer builds retain a separate diagnostic ceiling
 because their instrumentation is not a shipping-performance measurement.
 
 Those engineering tests do not replace hardware validation. A stronger claim
-for any complete named instrument would additionally require:
+for any complete named instrument, or a claim that Mars sounds better than a
+competitor, would additionally require:
 
 - a documented unit, revision, temperature, loading, and capture chain;
 - waveform, harmonic-envelope, and alias-energy error across pitch and PWM;
 - filter cutoff, Q, gain loss, self-oscillation, THD, IMD, and multitone sweeps;
 - transient and modulation comparisons across the control space; and
 - null/error analysis against captures or a validated small-timestep circuit
-  reference.
+  reference;
+- level-matched, loudness-controlled ABX or similarly blinded listening against
+  named products and hardware, with enough listeners and trials to report
+  uncertainty rather than anecdotes.
 
-Mars 1.2 therefore makes a deliberately testable statement: its saw contour and
-Moog ladder derive from published measured/circuit models, its SEM mode law and
-VCO routing follow documented hardware behavior, and every remaining boundary
-is labeled rather than implied.
+Mars 1.4 therefore makes a deliberately testable statement: its VCO saw contour
+and Moog ladder derive from published measured/circuit models; its DCO is an
+explicit clock-plus-analogue reconstruction design inspired by documented Juno
+controls rather than a capture claim; its stereo BBD uses published
+circuit-derived Juno-60 support filters and reported device gain while stopping
+short of a component-level chip clone; its SEM mode law and oscillator routing
+follow documented hardware behavior; and every remaining boundary is labeled
+rather than implied. The result is a stronger engineering baseline for
+listening tests, not a substitute for them.

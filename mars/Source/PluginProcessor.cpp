@@ -2,7 +2,9 @@
 #include "PluginEditor.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -147,8 +149,10 @@ MarsAudioProcessor::MarsAudioProcessor()
     using namespace mars::parameters;
 
     parameterPointers.osc1Wave        = parameters.getRawParameterValue (osc1Wave);
+    parameterPointers.osc1Model       = parameters.getRawParameterValue (osc1Model);
     parameterPointers.osc1Octave      = parameters.getRawParameterValue (osc1Octave);
     parameterPointers.osc2Wave        = parameters.getRawParameterValue (osc2Wave);
+    parameterPointers.osc2Model       = parameters.getRawParameterValue (osc2Model);
     parameterPointers.osc2Octave      = parameters.getRawParameterValue (osc2Octave);
     parameterPointers.osc2Tune        = parameters.getRawParameterValue (osc2Tune);
     parameterPointers.osc2Fine        = parameters.getRawParameterValue (osc2Fine);
@@ -178,6 +182,8 @@ MarsAudioProcessor::MarsAudioProcessor()
     parameterPointers.lfoFilter       = parameters.getRawParameterValue (lfoFilter);
     parameterPointers.lfoPwm          = parameters.getRawParameterValue (lfoPwm);
     parameterPointers.voiceMode       = parameters.getRawParameterValue (voiceMode);
+    parameterPointers.monoMode        = parameters.getRawParameterValue (monoMode);
+    parameterPointers.polyphonyLimit  = parameters.getRawParameterValue (polyphonyLimit);
     parameterPointers.unisonVoices    = parameters.getRawParameterValue (unisonVoices);
     parameterPointers.drift           = parameters.getRawParameterValue (drift);
     parameterPointers.spread          = parameters.getRawParameterValue (spread);
@@ -191,6 +197,10 @@ MarsAudioProcessor::MarsAudioProcessor()
     parameterPointers.hqOversampling  = parameters.getRawParameterValue (hqOversampling);
 
     jassert (parameterPointers.osc1Wave != nullptr
+             && parameterPointers.osc1Model != nullptr
+             && parameterPointers.osc2Model != nullptr
+             && parameterPointers.monoMode != nullptr
+             && parameterPointers.polyphonyLimit != nullptr
              && parameterPointers.osc1Enabled != nullptr
              && parameterPointers.osc2Enabled != nullptr
              && parameterPointers.hqOversampling != nullptr);
@@ -206,7 +216,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
 {
     using namespace mars::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (43);
+    result.reserve (47);
 
     const auto addChoice = [&result] (const char* id, const char* name,
                                       juce::StringArray choices, int defaultIndex)
@@ -253,12 +263,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
                 });
     };
 
-    addChoice (osc1Wave, "VCO I waveform", { "Saw", "Pulse", "Triangle" }, 0);
-    addInt (osc1Octave, "VCO I octave", -2, 2, 0, signedIntegerAttributes ("oct"));
-    addChoice (osc2Wave, "VCO II waveform", { "Saw", "Pulse", "Triangle" }, 1);
-    addInt (osc2Octave, "VCO II octave", -2, 2, 0, signedIntegerAttributes ("oct"));
-    addInt (osc2Tune, "VCO II tune", -12, 12, 0, signedIntegerAttributes ("st"));
-    addFloat (osc2Fine, "VCO II fine tune", { -50.0f, 50.0f, 0.1f }, 0.0f,
+    addChoice (osc1Wave, "Oscillator I waveform", { "Saw", "Pulse", "Triangle" }, 0);
+    addInt (osc1Octave, "Oscillator I octave", -2, 2, 0, signedIntegerAttributes ("oct"));
+    addChoice (osc2Wave, "Oscillator II waveform", { "Saw", "Pulse", "Triangle" }, 1);
+    addInt (osc2Octave, "Oscillator II octave", -2, 2, 0, signedIntegerAttributes ("oct"));
+    addInt (osc2Tune, "Oscillator II tune", -12, 12, 0, signedIntegerAttributes ("st"));
+    addFloat (osc2Fine, "Oscillator II fine tune", { -50.0f, 50.0f, 0.1f }, 0.0f,
               juce::AudioParameterFloatAttributes()
                   .withLabel ("ct")
                   .withStringFromValueFunction (centsText)
@@ -320,6 +330,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
                   .withValueFromStringFunction (plainNumericValue));
     addPercent (lfoPwm, "LFO PWM depth", 0.16f);
 
+    // Keep this three-choice range frozen: changing its choice count would
+    // reinterpret existing hosts' normalised automation. Mono is a separate,
+    // appended version-4 switch below.
     addChoice (voiceMode, "Voice mode", { "Poly", "Unison", "Fifth" }, 0);
     addInt (unisonVoices, "Unison voices", 2, 8, 4);
     addPercent (drift, "Voice-card drift", 0.28f);
@@ -347,9 +360,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
     // retains both its identifier and its position in the processor list.
     // The higher hint also keeps AUv2 automation ordering backward compatible.
     result.push_back (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { osc1Enabled, 2 }, "VCO I enabled", true));
+        juce::ParameterID { osc1Enabled, 2 }, "Oscillator I enabled", true));
     result.push_back (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { osc2Enabled, 2 }, "VCO II enabled", true));
+        juce::ParameterID { osc2Enabled, 2 }, "Oscillator II enabled", true));
 
     // This quality switch is persisted with plug-in state, but is deliberately
     // not automatable: changing the internal nonlinear timebase is deferred
@@ -364,9 +377,36 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
                 [] (const juce::String& text)
                 {
                     return text.containsIgnoreCase ("2")
+                        || text.containsIgnoreCase ("4")
                         || text.containsIgnoreCase ("on")
-                        || text.containsIgnoreCase ("hq");
+                        || text.containsIgnoreCase ("hq")
+                        || text.containsIgnoreCase ("ultra");
                 })));
+
+    // Version-4 controls remain at the end of the host parameter list. This
+    // preserves every identifier and list position shipped by versions 1..3.
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { osc1Model, 4 }, "Oscillator I model",
+        juce::StringArray { "Moog-like VCO", "Juno-like DCO" }, 0));
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { osc2Model, 4 }, "Oscillator II model",
+        juce::StringArray { "Moog-like VCO", "Juno-like DCO" }, 0));
+    result.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { polyphonyLimit, 4 }, "Polyphony limit", 1, 16, 16,
+        juce::AudioParameterIntAttributes()
+            .withLabel ("voices")
+            .withStringFromValueFunction (
+                [] (int value, int)
+                {
+                    return juce::String (value) + (value == 1 ? " voice" : " voices");
+                })
+            .withValueFromStringFunction (
+                [] (const juce::String& text)
+                {
+                    return text.retainCharacters ("0123456789-").getIntValue();
+                })));
+    result.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { monoMode, 4 }, "Mono mode", false));
 
     return { result.begin(), result.end() };
 }
@@ -376,6 +416,7 @@ void MarsAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     engineReady.store (false, std::memory_order_release);
     const bool hqEnabled = valueOf (parameterPointers.hqOversampling) >= 0.5f;
     engine.prepare (sampleRate, samplesPerBlock, hqEnabled);
+    setLatencySamples (engine.getProcessingLatencySamples());
     updateEngineParameters();
     engine.reset();
     engine.setPitchBend (0.0f);
@@ -403,6 +444,7 @@ void MarsAudioProcessor::releaseResources()
     activeVoiceCount.store (0, std::memory_order_relaxed);
     displaySampleRate.store (0.0, std::memory_order_relaxed);
     displayOversamplingFactor.store (1, std::memory_order_relaxed);
+    setLatencySamples (0);
 }
 
 bool MarsAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -523,8 +565,10 @@ void MarsAudioProcessor::updateEngineParameters() noexcept
 {
     mars::EngineParameters next;
     next.osc1Wave = enumFromParameter<mars::OscillatorWave> (parameterPointers.osc1Wave, 2);
+    next.osc1Model = enumFromParameter<mars::OscillatorModel> (parameterPointers.osc1Model, 1);
     next.osc1Octave = juce::jlimit (-2, 2, juce::roundToInt (valueOf (parameterPointers.osc1Octave)));
     next.osc2Wave = enumFromParameter<mars::OscillatorWave> (parameterPointers.osc2Wave, 2);
+    next.osc2Model = enumFromParameter<mars::OscillatorModel> (parameterPointers.osc2Model, 1);
     next.osc2Octave = juce::jlimit (-2, 2, juce::roundToInt (valueOf (parameterPointers.osc2Octave)));
     next.osc2Semitones = juce::jlimit (-12, 12, juce::roundToInt (valueOf (parameterPointers.osc2Tune)));
     next.osc2FineCents = valueOf (parameterPointers.osc2Fine);
@@ -553,7 +597,11 @@ void MarsAudioProcessor::updateEngineParameters() noexcept
     next.lfoPitchCents = valueOf (parameterPointers.lfoPitch);
     next.lfoFilterOctaves = valueOf (parameterPointers.lfoFilter);
     next.lfoPwm = valueOf (parameterPointers.lfoPwm);
-    next.voiceMode = enumFromParameter<mars::VoiceMode> (parameterPointers.voiceMode, 2);
+    next.voiceMode = valueOf (parameterPointers.monoMode) >= 0.5f
+        ? mars::VoiceMode::Mono
+        : enumFromParameter<mars::VoiceMode> (parameterPointers.voiceMode, 2);
+    next.polyphonyLimit = juce::jlimit (
+        1, 16, juce::roundToInt (valueOf (parameterPointers.polyphonyLimit)));
     next.unisonVoices = juce::jlimit (2, 8, juce::roundToInt (valueOf (parameterPointers.unisonVoices)));
     next.drift = valueOf (parameterPointers.drift);
     next.spread = valueOf (parameterPointers.spread);
@@ -640,11 +688,122 @@ void MarsAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
         // newer one could leave later switches at the newer state's values.
         for (const auto* parameterId : { mars::parameters::osc1Enabled,
                                          mars::parameters::osc2Enabled,
-                                         mars::parameters::hqOversampling })
+                                         mars::parameters::hqOversampling,
+                                         mars::parameters::osc1Model,
+                                         mars::parameters::osc2Model,
+                                         mars::parameters::polyphonyLimit,
+                                         mars::parameters::monoMode })
             addDefaultParameterStateIfMissing (restoredState, parameters, parameterId);
 
         parameters.replaceState (restoredState);
         requestPanic();
+    }
+}
+
+void MarsAudioProcessor::randomizeParameters (float amount)
+{
+    if (const auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
+        messageManager != nullptr && ! messageManager->isThisTheMessageThread())
+    {
+        // Host gesture callbacks belong to the message thread. Refuse an
+        // accidental audio/background-thread call rather than racing host/UI
+        // listeners or silently posting work that could outlive the processor.
+        jassertfalse;
+        return;
+    }
+
+    if (! std::isfinite (amount))
+        return;
+
+    amount = juce::jlimit (0.0f, 1.0f, amount);
+    if (amount <= 0.0f)
+        return;
+
+    // These are deliberately sound-design controls. Output level, oscillator
+    // power, HQ processing, and the CPU-safety polyphony limit are excluded so
+    // a randomisation cannot mute the patch, jump its gain, or change its
+    // operational budget. Each destination is first drawn across the full
+    // normalised range, then approached by `amount`; therefore every move is
+    // bounded by amount * legalRange and 100% is a true full-range draw. Using
+    // normalised space also respects the perceptual skew of frequency and time
+    // controls.
+    static constexpr std::array<const char*, 41> soundParameterIds {{
+        mars::parameters::osc1Wave,
+        mars::parameters::osc1Model,
+        mars::parameters::osc1Octave,
+        mars::parameters::osc2Wave,
+        mars::parameters::osc2Model,
+        mars::parameters::osc2Octave,
+        mars::parameters::osc2Tune,
+        mars::parameters::osc2Fine,
+        mars::parameters::oscMix,
+        mars::parameters::pulseWidth,
+        mars::parameters::subLevel,
+        mars::parameters::noiseLevel,
+        mars::parameters::crossMod,
+        mars::parameters::filterModel,
+        mars::parameters::cutoff,
+        mars::parameters::resonance,
+        mars::parameters::filterDrive,
+        mars::parameters::filterShape,
+        mars::parameters::filterEnvAmount,
+        mars::parameters::keyTrack,
+        mars::parameters::fAttack,
+        mars::parameters::fDecay,
+        mars::parameters::fSustain,
+        mars::parameters::fRelease,
+        mars::parameters::aAttack,
+        mars::parameters::aDecay,
+        mars::parameters::aSustain,
+        mars::parameters::aRelease,
+        mars::parameters::lfoWave,
+        mars::parameters::lfoRate,
+        mars::parameters::lfoPitch,
+        mars::parameters::lfoFilter,
+        mars::parameters::lfoPwm,
+        mars::parameters::voiceMode,
+        mars::parameters::unisonVoices,
+        mars::parameters::drift,
+        mars::parameters::spread,
+        mars::parameters::glide,
+        mars::parameters::velocity,
+        mars::parameters::chorusMix,
+        mars::parameters::chorusRate,
+    }};
+
+    static std::atomic<std::uint64_t> randomisationSequence { 0 };
+    const auto sequence = randomisationSequence.fetch_add (1, std::memory_order_relaxed);
+    const auto ticks = static_cast<std::uint64_t> (juce::Time::getHighResolutionTicks());
+    juce::Random random (static_cast<juce::int64> (
+        ticks ^ sequence ^ static_cast<std::uint64_t> (
+            reinterpret_cast<std::uintptr_t> (this))));
+
+    for (const auto* parameterId : soundParameterIds)
+    {
+        auto* parameter = parameters.getParameter (parameterId);
+        jassert (parameter != nullptr);
+        if (parameter == nullptr)
+            continue;
+
+        const float current = parameter->getValue();
+        const float destination = random.nextFloat();
+        const float requested = juce::jlimit (
+            0.0f, 1.0f, current + amount * (destination - current));
+        // Round through the parameter's actual range before notifying the host.
+        // This prevents integer and choice parameters from reporting values
+        // between legal steps.
+        const float legal = parameter->convertTo0to1 (
+            parameter->convertFrom0to1 (requested));
+        // A coarse choice/int step may be wider than a subtle strength. In
+        // that case retaining the current value is more honest than allowing
+        // quantisation to exceed the advertised percentage.
+        const float movement = std::abs (legal - current);
+        if (movement <= 1.0e-7f || movement > amount + 1.0e-7f)
+            continue;
+
+        parameter->beginChangeGesture();
+        parameter->setValueNotifyingHost (legal);
+        parameter->endChangeGesture();
     }
 }
 

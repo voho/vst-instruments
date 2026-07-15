@@ -8,14 +8,17 @@ namespace mars
 {
 
 enum class OscillatorWave { Saw, Pulse, Triangle };
+enum class OscillatorModel { Vco, Dco };
 enum class FilterModel { Ladder, Sem };
-enum class VoiceMode { Poly, Unison, Fifth };
+enum class VoiceMode { Poly, Unison, Fifth, Mono };
 enum class LfoWaveform { Triangle, Sine, SampleHold };
 
 struct EngineParameters
 {
     OscillatorWave osc1Wave { OscillatorWave::Saw };
     OscillatorWave osc2Wave { OscillatorWave::Pulse };
+    OscillatorModel osc1Model { OscillatorModel::Vco };
+    OscillatorModel osc2Model { OscillatorModel::Vco };
     FilterModel filterModel { FilterModel::Ladder };
     VoiceMode voiceMode { VoiceMode::Poly };
     LfoWaveform lfoWave { LfoWaveform::Triangle };
@@ -24,6 +27,7 @@ struct EngineParameters
     int osc1Octave { 0 };
     int osc2Octave { 0 };
     int osc2Semitones { 0 };
+    int polyphonyLimit { 16 };
     int unisonVoices { 4 };
     float oscMix { 0.42f };
     float osc2FineCents { 0.0f };
@@ -77,6 +81,7 @@ public:
     void process(float* left, float* right, int numSamples);
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
     [[nodiscard]] int getOversamplingFactor() const noexcept { return oversampling_; }
+    [[nodiscard]] int getProcessingLatencySamples() const noexcept;
     [[nodiscard]] bool isOversamplingEnabled() const noexcept
     {
         return oversamplingRequested_;
@@ -88,13 +93,16 @@ private:
     // double-precision solve. It is not part of the plug-in API.
     friend struct MarsEngineTestAccess;
 
-    static constexpr int oversampleFactor = 2;
-    static constexpr double maximumOversampledHostRate = 48000.0;
+    static constexpr int maximumOversampleFactor = 4;
+    static constexpr double minimumHqProcessingRate = 176400.0;
     static constexpr int maxVoices = 16;
     static constexpr int controlPeriod = 8;
-    static constexpr int chorusBufferSize = 16384;
+    static constexpr int halfbandTaps = 137;
+    static constexpr int halfbandRingSize = 256;
+    static constexpr int latencyCompensationRingSize = 64;
+    static constexpr int bbdStagePairs = 128;
     // JUCE hosts commonly top out at 384 kHz. Keeping an explicit ceiling well
-    // above that protects the fixed chorus buffer from pathological API input
+    // above that protects coefficient calculations from pathological API input
     // without changing the timebase at any practical production sample rate.
     static constexpr double maximumSupportedSampleRate = 768000.0;
 
@@ -118,7 +126,77 @@ private:
         float triangle { -1.0f };
         float previousSawInput { 0.0f };
         float previousSawOutput { 0.0f };
+        std::array<float, 2> vcoSawDelay {};
+        std::array<float, 4> vcoSawCorrection {};
+        std::array<float, 2> pulseDelay {};
+        std::array<float, 4> pulseCorrection {};
+        std::array<float, 2> triangleSquareDelay {};
+        std::array<float, 4> triangleSquareCorrection {};
+        std::array<float, 2> phaseDelay {};
+        float dcoIncrement { 0.001f };
+        float dcoClockError { 0.0f };
+        float expectedPulseAtNextSample { 1.0f };
+        std::array<float, 3> dcoReconstruction {};
+        std::array<bool, 3> dcoReconstructionInitialised {};
+        std::array<float, 3> waveformBlend { 1.0f, 0.0f, 0.0f };
+        std::array<float, 3> waveformBlendStep {};
+        float modelBlend { 0.0f };
+        float modelBlendStep { 0.0f };
+        int waveformCrossfadeRemaining { 0 };
+        int modelCrossfadeRemaining { 0 };
+        OscillatorWave activeWave { OscillatorWave::Saw };
+        OscillatorModel activeModel { OscillatorModel::Vco };
         bool sawContourInitialised { false };
+        bool vcoSawBlepInitialised { false };
+        bool pulseBlepInitialised { false };
+        bool expectedPulseInitialised { false };
+        bool triangleSquareBlepInitialised { false };
+        bool phaseDelayInitialised { false };
+        bool waveformInitialised { false };
+        bool dcoClockInitialised { false };
+        bool modelInitialised { false };
+    };
+
+    struct HalfbandDecimator
+    {
+        std::array<float, halfbandRingSize> left {};
+        std::array<float, halfbandRingSize> right {};
+        int writeIndex { 0 };
+
+        void reset() noexcept;
+    };
+
+    struct ParallelAnalogFilter
+    {
+        std::array<float, 5> stateReal {};
+        std::array<float, 5> stateImag {};
+        std::array<float, 5> poleReal {};
+        std::array<float, 5> poleImag {};
+        std::array<float, 5> gainReal {};
+        std::array<float, 5> gainImag {};
+        float normalisation { 1.0f };
+
+        void configure(float sampleRate, bool inputFilter,
+                       float frequencyScale) noexcept;
+        void reset() noexcept;
+        float process(float input) noexcept;
+    };
+
+    struct BbdLine
+    {
+        std::array<float, bbdStagePairs> cells {};
+        ParallelAnalogFilter inputFilter {};
+        ParallelAnalogFilter outputFilter {};
+        double clockPhase { 0.0 };
+        float heldOutput { 0.0f };
+        float previousFilteredInput { 0.0f };
+        int writeIndex { 0 };
+        bool filteredInputInitialised { false };
+
+        void configure(float sampleRate, float frequencyScale) noexcept;
+        void reset(double initialClockPhase) noexcept;
+        float process(float input, float clockFrequency,
+                      float sampleRate) noexcept;
     };
 
     struct LadderFilter
@@ -159,6 +237,9 @@ private:
         float driftRate { 0.08f };
         float driftDepth { 1.0f };
         float driftPhase { 0.0f };
+        float driftSlow { 0.0f };
+        float driftFast { 0.0f };
+        std::uint32_t driftNoiseState { 1u };
     };
 
     struct Voice
@@ -182,6 +263,7 @@ private:
         std::uint64_t ageSamples { 0 };
         std::uint32_t noiseState { 1u };
         float velocity { 0.0f };
+        float targetVelocity { 0.0f };
         float currentMidi { 60.0f };
         float targetMidi { 60.0f };
         float groupGain { 1.0f };
@@ -215,12 +297,19 @@ private:
         float filterReleaseCoefficient { 1.0f };
         float previousMixerInput { 0.0f };
         float lastOutput { 0.0f };
+        float outputEnergy { 0.0f };
         bool mixerInitialised { false };
         Envelope ampEnvelope {};
         Envelope filterEnvelope {};
         Oscillator oscillator1 {};
         Oscillator oscillator2 {};
         Oscillator subOscillator {};
+        std::array<float, 2> dcoSubDelay {};
+        std::array<float, 4> dcoSubCorrection {};
+        float dcoSubReconstruction { 0.0f };
+        bool dcoSubBlepInitialised { false };
+        bool dcoSubReconstructionInitialised { false };
+        bool oscillator1CycleOdd { false };
         LadderFilter ladder {};
         StateVariableFilter stateVariable {};
     };
@@ -228,6 +317,14 @@ private:
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
     static float midiToHz(float midiNote) noexcept;
     static float polyBlep(float phase, float increment) noexcept;
+    static void addFourthOrderBlep(std::array<float, 4>& correction,
+                                   float step, float samplesToNext) noexcept;
+    static float processFourthOrderBlep(float input,
+                                        std::array<float, 2>& delay,
+                                        std::array<float, 4>& correction,
+                                        bool& initialised) noexcept;
+    static int waveformIndex(OscillatorWave waveform) noexcept;
+    static float halfbandCoefficient(int tap) noexcept;
     static float softSaturate(float value) noexcept;
     static float softSaturateDerivative(float value) noexcept;
     static float adaaShape(float value) noexcept;
@@ -250,22 +347,29 @@ private:
     void updateVoiceControl(Voice& voice, const EngineParameters& parameters,
                             float lfoValue) noexcept;
     float renderOscillator(Oscillator& oscillator, OscillatorWave waveform,
-                           float increment, float pulseWidth,
+                           OscillatorModel model, float increment, float pulseWidth,
                            bool& wrapped) noexcept;
     float renderVoiceOversample(Voice& voice, const EngineParameters& parameters,
                                 float lfoValue) noexcept;
-    void downsampleStereo(float firstLeft, float firstRight,
-                          float secondLeft, float secondRight,
-                          float& outputLeft, float& outputRight) noexcept;
+    void downsamplePair(HalfbandDecimator& decimator,
+                        float firstLeft, float firstRight,
+                        float secondLeft, float secondRight,
+                        float& outputLeft, float& outputRight) noexcept;
     int layersForMode(const EngineParameters& parameters) const noexcept;
     int fifthIntervalForLayer(int layer) const noexcept;
     int findFreeVoice() const noexcept;
-    void makeRoomFor(int required) noexcept;
+    std::uint64_t selectStealGeneration(bool releasingOnly) const noexcept;
+    void makeRoomFor(int required, int voiceLimit) noexcept;
+    void enforcePolyphonyLimit(int voiceLimit) noexcept;
+    int findMonoVoice() const noexcept;
+    void rememberHeldNote(int midiNote, float velocity) noexcept;
+    void forgetHeldNote(int midiNote) noexcept;
+    void clearHeldNotes() noexcept;
+    void retargetMonoVoice(Voice& voice, int midiNote, float velocity) noexcept;
     void updateActiveVoiceCount() noexcept;
     float nextNoise(Voice& voice) noexcept;
     float nextLfoValue(const EngineParameters& parameters) noexcept;
-    float readFractional(const std::array<float, chorusBufferSize>& buffer,
-                         float delaySamples) const noexcept;
+    void updateVoiceCardDrift(VoiceCard& card) noexcept;
     void processChorus(float inputLeft, float inputRight,
                        const EngineParameters& parameters,
                        float& outputLeft, float& outputRight) noexcept;
@@ -278,23 +382,35 @@ private:
     EngineParameters smoothedParameters_ {};
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
-    float oversampledRate_ { 96000.0f };
-    int oversampling_ { 2 };
+    float oversampledRate_ { 192000.0f };
+    int oversampling_ { 4 };
     bool oversamplingEnabled_ { true };
     bool oversamplingRequested_ { true };
     int oversamplingIdleSamples_ { 0 };
     int filterCrossfadeSamples_ { 288 };
+    int oscillatorModelCrossfadeSamples_ { 192 };
+    int waveformCrossfadeSamples_ { 288 };
+    float dcoReconstructionGain_ { 0.69f };
+    float velocitySmoothing_ { 0.02f };
+    float outputEnergySmoothing_ { 0.01f };
     bool prepared_ { false };
     std::uint64_t generation_ { 0 };
     int activeVoiceCount_ { 0 };
+    int driftControlCountdown_ { 0 };
     float lastPlayedMidi_ { 60.0f };
     bool hasLastPlayedMidi_ { false };
+    std::array<int, 128> heldNoteOrder_ {};
+    std::array<float, 128> heldNoteVelocities_ {};
+    std::array<std::uint16_t, 128> heldNoteCounts_ {};
+    int heldNoteCount_ { 0 };
 
     std::array<Voice, maxVoices> voices_ {};
     std::array<VoiceCard, maxVoices> cards_ {};
-    std::array<float, 15> oversampleLeftHistory_ {};
-    std::array<float, 15> oversampleRightHistory_ {};
-    int oversampleWriteIndex_ { 0 };
+    HalfbandDecimator firstDecimator_ {};
+    HalfbandDecimator secondDecimator_ {};
+    std::array<float, latencyCompensationRingSize> latencyDelayLeft_ {};
+    std::array<float, latencyCompensationRingSize> latencyDelayRight_ {};
+    int latencyDelayWriteIndex_ { 0 };
 
     float lfoPhase_ { 0.0f };
     float randomLfoValue_ { 0.0f };
@@ -310,12 +426,9 @@ private:
     float stealTailRight_ { 0.0f };
     float stealTailCoefficient_ { 0.96f };
 
-    std::array<float, chorusBufferSize> chorusLeft_ {};
-    std::array<float, chorusBufferSize> chorusRight_ {};
-    int chorusWriteIndex_ { 0 };
+    BbdLine chorusLeft_ {};
+    BbdLine chorusRight_ {};
     float chorusPhase_ { 0.0f };
-    float chorusLowLeft_ { 0.0f };
-    float chorusLowRight_ { 0.0f };
 
     float dcCoefficient_ { 0.9987f };
     float dcInputLeft_ { 0.0f };

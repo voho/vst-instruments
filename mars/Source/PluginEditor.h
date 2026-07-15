@@ -132,18 +132,26 @@ private:
 
     MarsAudioProcessor& marsProcessor;
     MarsLookAndFeel lookAndFeel;
+    juce::TooltipWindow tooltipWindow { this, 600 };
 
     juce::Label logoLabel;
     juce::Label editionLabel;
+    juce::Label randomizerLabel;
     juce::Label keyboardHintLabel;
     MarsStatusDisplay statusDisplay;
     juce::TextButton panicButton { "PANIC" };
-    juce::TextButton oversamplingButton { "HQ 2X" };
+    juce::TextButton oversamplingButton { "HQ 4X" };
     juce::TextButton osc1EnableButton { "ON" };
     juce::TextButton osc2EnableButton { "ON" };
+    juce::TextButton monoButton { "MONO" };
+    juce::TextButton randomize1Button { "1%" };
+    juce::TextButton randomize10Button { "10%" };
+    juce::TextButton randomize100Button { "100%" };
 
-    MarsChoiceStrip osc1WaveStrip { "VCO I WAVE", { "SAW", "PULSE", "TRI" } };
-    MarsChoiceStrip osc2WaveStrip { "VCO II WAVE", { "SAW", "PULSE", "TRI" } };
+    MarsChoiceStrip osc1ModelStrip { "OSC I MODEL", { "MOOG VCO", "JUNO DCO" } };
+    MarsChoiceStrip osc2ModelStrip { "OSC II MODEL", { "MOOG VCO", "JUNO DCO" } };
+    MarsChoiceStrip osc1WaveStrip { "OSC I WAVE", { "SAW", "PULSE", "TRI" } };
+    MarsChoiceStrip osc2WaveStrip { "OSC II WAVE", { "SAW", "PULSE", "TRI" } };
     MarsChoiceStrip filterModelStrip { "FILTER MODEL", { "LADDER", "SEM" } };
     MarsChoiceStrip lfoWaveStrip { "LFO WAVE", { "TRI", "SINE", "S & H" } };
     MarsChoiceStrip voiceModeStrip { "VOICE MODE", { "POLY", "UNISON", "FIFTH" } };
@@ -178,6 +186,7 @@ private:
     MarsKnob lfoFilterKnob { "FILTER", MarsValueFormat::Octaves };
     MarsKnob lfoPwmKnob { "PWM" };
 
+    MarsKnob polyphonyKnob { "POLYPHONY", MarsValueFormat::Integer };
     MarsKnob unisonVoicesKnob { "VOICES", MarsValueFormat::Integer };
     MarsKnob driftKnob { "DRIFT" };
     MarsKnob spreadKnob { "SPREAD" };

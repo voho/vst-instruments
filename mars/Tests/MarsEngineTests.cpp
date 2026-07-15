@@ -18,6 +18,23 @@ namespace mars
 {
 struct MarsEngineTestAccess
 {
+    struct VoiceSnapshot
+    {
+        bool valid { false };
+        bool keyDown { false };
+        bool releasing { false };
+        bool sustained { false };
+        int rootMidi { -1 };
+        float currentMidi { 0.0f };
+        float targetMidi { 0.0f };
+        float velocity { 0.0f };
+        float ampEnvelope { 0.0f };
+        float filterEnvelope { 0.0f };
+        float oscillator1Phase { 0.0f };
+        float oscillator2Phase { 0.0f };
+        std::uint64_t generation { 0 };
+    };
+
     static float processLadderStep(std::array<float, 4>& state,
                                    float& previousInput,
                                    float input,
@@ -53,6 +70,248 @@ struct MarsEngineTestAccess
     static constexpr int maximumVoiceCount() noexcept
     {
         return MarsEngine::maxVoices;
+    }
+
+    static constexpr int halfbandTapCount() noexcept
+    {
+        return MarsEngine::halfbandTaps;
+    }
+
+    static float halfbandCoefficient(int tap) noexcept
+    {
+        return MarsEngine::halfbandCoefficient(tap);
+    }
+
+    static int processingLatency(const MarsEngine& engine) noexcept
+    {
+        return engine.getProcessingLatencySamples();
+    }
+
+    static std::array<float, 2> voiceCardDrift(const MarsEngine& engine,
+                                               int cardIndex) noexcept
+    {
+        const auto& card = engine.cards_[static_cast<std::size_t>(cardIndex)];
+        return { card.driftSlow, card.driftFast };
+    }
+
+    static std::vector<float> renderBbdImpulse(float sampleRate,
+                                                float clockFrequency,
+                                                int sampleCount)
+    {
+        MarsEngine::BbdLine line;
+        line.configure(sampleRate, 1.0f);
+        line.reset(0.0);
+        std::vector<float> output(static_cast<std::size_t>(sampleCount));
+        for (int sample = 0; sample < sampleCount; ++sample)
+            output[static_cast<std::size_t>(sample)] = line.process(
+                sample == 0 ? 1.0f : 0.0f, clockFrequency, sampleRate);
+        return output;
+    }
+
+    static float renderBbdDcGain(float sampleRate, float clockFrequency)
+    {
+        constexpr float input = 0.001f;
+        constexpr int sampleCount = 16384;
+        constexpr int averageCount = 2048;
+        MarsEngine::BbdLine line;
+        line.configure(sampleRate, 1.0f);
+        line.reset(0.0);
+        double sum = 0.0;
+        for (int sample = 0; sample < sampleCount; ++sample)
+        {
+            const float output = line.process(input, clockFrequency, sampleRate);
+            if (sample >= sampleCount - averageCount)
+                sum += output;
+        }
+        return static_cast<float>(sum / static_cast<double>(averageCount)) / input;
+    }
+
+    static std::array<float, 2> renderFractionalBbdCaptures()
+    {
+        constexpr float sampleRate = 48000.0f;
+        MarsEngine::BbdLine line;
+        line.configure(sampleRate, 1.0f);
+        line.reset(0.0);
+        (void) line.process(0.0f, 18000.0f, sampleRate);
+        (void) line.process(1.0f, 90000.0f, sampleRate);
+        return { line.cells[0], line.cells[1] };
+    }
+
+    static std::vector<float> renderDecimatorImpulse(int factor, int outputCount)
+    {
+        MarsEngine engine;
+        MarsEngine::HalfbandDecimator first;
+        MarsEngine::HalfbandDecimator second;
+        first.reset();
+        second.reset();
+        std::vector<float> output(static_cast<std::size_t>(outputCount));
+        int internalSample = 0;
+        for (int sample = 0; sample < outputCount; ++sample)
+        {
+            if (factor == 2)
+            {
+                const float firstInput = internalSample++ == 0 ? 1.0f : 0.0f;
+                const float secondInput = internalSample++ == 0 ? 1.0f : 0.0f;
+                float left = 0.0f;
+                float right = 0.0f;
+                engine.downsamplePair(second,
+                    firstInput, 0.0f, secondInput, 0.0f,
+                    left, right);
+                output[static_cast<std::size_t>(sample)] = left;
+            }
+            else
+            {
+                std::array<float, 4> internal {};
+                for (auto& value : internal)
+                    value = internalSample++ == 0 ? 1.0f : 0.0f;
+                float intermediate0 = 0.0f;
+                float intermediate1 = 0.0f;
+                float unused = 0.0f;
+                engine.downsamplePair(first, internal[0], 0.0f,
+                                      internal[1], 0.0f,
+                                      intermediate0, unused);
+                engine.downsamplePair(first, internal[2], 0.0f,
+                                      internal[3], 0.0f,
+                                      intermediate1, unused);
+                float left = 0.0f;
+                engine.downsamplePair(second, intermediate0, 0.0f,
+                                      intermediate1, 0.0f,
+                                      left, unused);
+                output[static_cast<std::size_t>(sample)] = left;
+            }
+        }
+        return output;
+    }
+
+    static VoiceSnapshot newestActiveVoice(const MarsEngine& engine) noexcept
+    {
+        const MarsEngine::Voice* newest = nullptr;
+        for (const auto& voice : engine.voices_)
+            if (voice.active
+                && (newest == nullptr || voice.generation > newest->generation))
+                newest = &voice;
+
+        if (newest == nullptr)
+            return {};
+
+        return {
+            true,
+            newest->keyDown,
+            newest->releasing,
+            newest->sustained,
+            newest->rootMidi,
+            newest->currentMidi,
+            newest->targetMidi,
+            newest->velocity,
+            newest->ampEnvelope.value,
+            newest->filterEnvelope.value,
+            newest->oscillator1.phase,
+            newest->oscillator2.phase,
+            newest->generation,
+        };
+    }
+
+    static int heldNoteCount(const MarsEngine& engine) noexcept
+    {
+        return engine.heldNoteCount_;
+    }
+
+    static bool dcoSubUsesPrimaryDivider(const MarsEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active)
+                return voice.dcoSubReconstructionInitialised
+                    && voice.oscillator1.activeModel == OscillatorModel::Dco
+                    && voice.oscillator1.modelBlend > 0.999f
+                    && voice.subOscillator.activeModel == OscillatorModel::Vco
+                    && voice.subOscillator.modelBlend < 0.001f;
+        return false;
+    }
+
+    static std::vector<float> renderOscillatorModel(OscillatorModel model,
+                                                     OscillatorWave wave,
+                                                     float increment,
+                                                     int sampleCount)
+    {
+        MarsEngine engine;
+        engine.prepare(48000.0, 64, false);
+        MarsEngine::Oscillator oscillator;
+        oscillator.phase = 0.173f;
+        std::vector<float> output(static_cast<std::size_t>(sampleCount));
+        for (int sample = 0; sample < sampleCount; ++sample)
+        {
+            bool wrapped = false;
+            output[static_cast<std::size_t>(sample)] = engine.renderOscillator(
+                oscillator, wave, model, increment, 0.47f, wrapped);
+        }
+        return output;
+    }
+
+    static std::vector<float> renderSteadyOscillator(OscillatorWave wave,
+                                                      float increment,
+                                                      float pulseWidth,
+                                                      int sampleCount)
+    {
+        MarsEngine engine;
+        engine.prepare(48000.0, 64, false);
+        MarsEngine::Oscillator oscillator;
+        oscillator.phase = 0.173f;
+        const int warmup = 4 * sampleCount;
+        bool wrapped = false;
+        for (int sample = 0; sample < warmup; ++sample)
+            (void) engine.renderOscillator(oscillator, wave, OscillatorModel::Vco,
+                                           increment, pulseWidth, wrapped);
+
+        std::vector<float> output(static_cast<std::size_t>(sampleCount));
+        for (int sample = 0; sample < sampleCount; ++sample)
+            output[static_cast<std::size_t>(sample)] = engine.renderOscillator(
+                oscillator, wave, OscillatorModel::Vco, increment,
+                pulseWidth, wrapped);
+        return output;
+    }
+
+    static float renderPwmThresholdCorrection()
+    {
+        MarsEngine engine;
+        engine.prepare(192000.0, 16, false);
+        MarsEngine::Oscillator oscillator;
+        oscillator.phase = 0.40f;
+        bool wrapped = false;
+        (void) engine.renderOscillator(oscillator, OscillatorWave::Pulse,
+                                      OscillatorModel::Vco, 0.0001f, 0.30f,
+                                      wrapped);
+        (void) engine.renderOscillator(oscillator, OscillatorWave::Pulse,
+                                      OscillatorModel::Vco, 0.0001f, 0.50f,
+                                      wrapped);
+        float correction = 0.0f;
+        for (const float value : oscillator.pulseCorrection)
+            correction += std::abs(value);
+        return correction;
+    }
+
+    static double oscillatorIncrementSpread(OscillatorModel model,
+                                             float increment,
+                                             int sampleCount) noexcept
+    {
+        MarsEngine engine;
+        engine.prepare(48000.0, 64, false);
+        MarsEngine::Oscillator oscillator;
+        oscillator.phase = 0.173f;
+        float minimum = std::numeric_limits<float>::infinity();
+        float maximum = 0.0f;
+        for (int sample = 0; sample < sampleCount; ++sample)
+        {
+            const float previousPhase = oscillator.phase;
+            bool wrapped = false;
+            (void) engine.renderOscillator(oscillator, OscillatorWave::Saw,
+                                           model, increment, 0.47f, wrapped);
+            float actualIncrement = oscillator.phase - previousPhase;
+            if (wrapped)
+                actualIncrement += 1.0f;
+            minimum = std::min(minimum, actualIncrement);
+            maximum = std::max(maximum, actualIncrement);
+        }
+        return static_cast<double>(maximum - minimum);
     }
 
 };
@@ -844,7 +1103,7 @@ void testLadderFullRangeDoesNotLatch()
                     render(engine, static_cast<int>(0.34 * rate));
                     const auto late = render(engine, static_cast<int>(0.10 * rate));
 
-                    const std::string label = std::string { oversamplingEnabled ? "2x" : "1x" }
+                    const std::string label = std::string { oversamplingEnabled ? "4x" : "1x" }
                         + " ladder at " + std::to_string(static_cast<int>(rate))
                         + " Hz, cutoff " + std::to_string(static_cast<int>(cutoff))
                         + " Hz, resonance " + std::to_string(resonance);
@@ -894,7 +1153,7 @@ void testLadderBassCompensation()
             / std::max(noResonance.rms(), 1.0e-12);
         const double highRatio = highResonance.rms()
             / std::max(noResonance.rms(), 1.0e-12);
-        const std::string path = oversamplingEnabled ? "2x" : "1x";
+        const std::string path = oversamplingEnabled ? "4x" : "1x";
         expect(noResonance.finite && defaultResonance.finite && highResonance.finite,
                path + " bass-compensation render became non-finite");
         expect(defaultRatio > 0.75 && defaultRatio < 1.35,
@@ -951,27 +1210,233 @@ void testDeepOscillatorConsistency()
     }
 }
 
+void testHqReturnFilterAndBbdClockPath()
+{
+    constexpr double piValue = 3.14159265358979323846;
+    const int tapCount = mars::MarsEngineTestAccess::halfbandTapCount();
+    expect(tapCount == 137, "HQ return filter no longer has the measured 137-tap contract");
+
+    double coefficientSum = 0.0;
+    for (int tap = 0; tap < tapCount; ++tap)
+    {
+        const double coefficient = mars::MarsEngineTestAccess::halfbandCoefficient(tap);
+        coefficientSum += coefficient;
+        expect(std::abs(coefficient
+                        - mars::MarsEngineTestAccess::halfbandCoefficient(
+                            tapCount - 1 - tap)) < 1.0e-12,
+               "HQ return filter lost exact linear-phase symmetry");
+        if ((tap & 1) == 0 && tap != (tapCount - 1) / 2)
+            expect(coefficient == 0.0,
+                   "HQ return filter lost an exact half-band zero");
+    }
+    expect(std::abs(mars::MarsEngineTestAccess::halfbandCoefficient(68) - 0.5f)
+               < 1.0e-12,
+           "HQ return filter centre tap changed");
+    expect(std::abs(coefficientSum - 0.999990728247) < 2.0e-6,
+           "HQ return filter DC gain changed");
+
+    const auto responseMagnitude = [](double hostRateRatio)
+    {
+        double real = 0.0;
+        double imaginary = 0.0;
+        for (int tap = 0; tap < tapCount; ++tap)
+        {
+            const double coefficient
+                = mars::MarsEngineTestAccess::halfbandCoefficient(tap);
+            const double angle = piValue * hostRateRatio * static_cast<double>(tap);
+            real += coefficient * std::cos(angle);
+            imaginary -= coefficient * std::sin(angle);
+        }
+        return std::sqrt(real * real + imaginary * imaginary);
+    };
+
+    double passbandMinimum = std::numeric_limits<double>::infinity();
+    double passbandMaximum = 0.0;
+    double stopbandMaximum = 0.0;
+    for (int index = 0; index <= 8192; ++index)
+    {
+        const double ratio = static_cast<double>(index) / 8192.0;
+        const double magnitude = responseMagnitude(ratio);
+        if (ratio <= 0.455)
+        {
+            passbandMinimum = std::min(passbandMinimum, magnitude);
+            passbandMaximum = std::max(passbandMaximum, magnitude);
+        }
+        if (ratio >= 0.545)
+            stopbandMaximum = std::max(stopbandMaximum, magnitude);
+    }
+    const double rippleDb = 20.0 * std::log10(passbandMaximum / passbandMinimum);
+    expect(rippleDb < 0.00020,
+           "HQ return filter exceeded its 0.0002 dB passband-ripple contract");
+    expect(stopbandMaximum < 1.0e-5,
+           "HQ return filter fell short of 100 dB stopband rejection");
+    expect(std::abs(responseMagnitude(0.5) - 0.5) < 2.0e-6,
+           "HQ return filter midpoint is not -6.0206 dB");
+
+    mars::MarsEngine baseRate;
+    mars::MarsEngine midRate;
+    mars::MarsEngine nativeRate;
+    baseRate.prepare(48000.0, blockSize, true);
+    midRate.prepare(96000.0, blockSize, true);
+    nativeRate.prepare(192000.0, blockSize, true);
+    expect(mars::MarsEngineTestAccess::processingLatency(baseRate) == 51,
+           "4x HQ cascade latency is not 51 host samples");
+    expect(mars::MarsEngineTestAccess::processingLatency(midRate) == 34,
+           "2x HQ stage latency is not 34 host samples");
+    expect(mars::MarsEngineTestAccess::processingLatency(nativeRate) == 0,
+           "native-rate HQ processing reported spurious latency");
+
+    for (const auto [factor, expectedPeak]
+         : { std::pair { 2, 34 }, std::pair { 4, 51 } })
+    {
+        const auto response = mars::MarsEngineTestAccess::renderDecimatorImpulse(
+            factor, 192);
+        const auto peak = std::max_element(
+            response.begin(), response.end(),
+            [](float left, float right)
+            {
+                return std::abs(left) < std::abs(right);
+            });
+        expect(peak != response.end()
+                   && std::distance(response.begin(), peak) == expectedPeak,
+               "HQ return impulse did not match its reported integer latency");
+    }
+
+    constexpr float bbdRate = 192000.0f;
+    constexpr float bbdClock = 50000.0f;
+    const auto impulse = mars::MarsEngineTestAccess::renderBbdImpulse(
+        bbdRate, bbdClock, 4096);
+    bool finite = true;
+    double energy = 0.0;
+    std::size_t peakIndex = 0;
+    float peak = 0.0f;
+    for (std::size_t index = 0; index < impulse.size(); ++index)
+    {
+        finite = finite && std::isfinite(impulse[index]);
+        energy += static_cast<double>(impulse[index]) * impulse[index];
+        if (std::abs(impulse[index]) > peak)
+        {
+            peak = std::abs(impulse[index]);
+            peakIndex = index;
+        }
+    }
+    const double peakSeconds = static_cast<double>(peakIndex) / bbdRate;
+    expect(finite && energy > 1.0e-9,
+           "clocked BBD/filter impulse response was invalid or silent");
+    expect(peakSeconds > 0.0020 && peakSeconds < 0.0034,
+           "256-stage BBD delay no longer follows N/(2*fClock)");
+    const float bbdDcGain = mars::MarsEngineTestAccess::renderBbdDcGain(
+        bbdRate, bbdClock);
+    expect(bbdDcGain > 1.28f && bbdDcGain < 1.33f,
+           "BBD small-signal gain no longer matches the reported +2.3 dB");
+    const auto fractionalCaptures
+        = mars::MarsEngineTestAccess::renderFractionalBbdCaptures();
+    expect(std::isfinite(fractionalCaptures[0])
+               && std::isfinite(fractionalCaptures[1])
+               && std::abs(fractionalCaptures[1] - fractionalCaptures[0]) > 1.0e-5f,
+           "multiple BBD clock crossings reused one quantized input sample");
+}
+
+void testFourthOrderOscillatorAliasSuppression()
+{
+    constexpr int sampleCount = 2048;
+    constexpr int fundamentalBin = 173;
+    constexpr float increment = static_cast<float>(fundamentalBin)
+                              / static_cast<float>(sampleCount);
+    constexpr float pulseWidth = 0.47f;
+    constexpr double piValue = 3.14159265358979323846;
+
+    const auto aliasPower = [](const std::vector<float>& signal)
+    {
+        double alias = 0.0;
+        for (int bin = 1; bin <= sampleCount / 2; ++bin)
+        {
+            double real = 0.0;
+            double imaginary = 0.0;
+            for (int sample = 0; sample < sampleCount; ++sample)
+            {
+                const double angle = 2.0 * piValue
+                                   * static_cast<double>(bin * sample)
+                                   / static_cast<double>(sampleCount);
+                real += signal[static_cast<std::size_t>(sample)] * std::cos(angle);
+                imaginary -= signal[static_cast<std::size_t>(sample)] * std::sin(angle);
+            }
+            if (bin % fundamentalBin != 0)
+                alias += real * real + imaginary * imaginary;
+        }
+        return alias;
+    };
+
+    for (const auto wave : { mars::OscillatorWave::Saw,
+                             mars::OscillatorWave::Pulse,
+                             mars::OscillatorWave::Triangle })
+    {
+        const auto bandlimited = mars::MarsEngineTestAccess::renderSteadyOscillator(
+            wave, increment, pulseWidth, sampleCount);
+        std::vector<float> naive(static_cast<std::size_t>(sampleCount));
+        float phase = 0.173f;
+        for (int sample = 0; sample < sampleCount; ++sample)
+        {
+            float value = 0.0f;
+            if (wave == mars::OscillatorWave::Saw)
+                value = 2.0f * phase - 1.0f;
+            else if (wave == mars::OscillatorWave::Pulse)
+                value = phase < pulseWidth ? 1.0f : -1.0f;
+            else
+                value = phase < 0.5f ? -1.0f + 4.0f * phase
+                                     : 3.0f - 4.0f * phase;
+            naive[static_cast<std::size_t>(sample)] = value;
+            phase += increment;
+            phase -= std::floor(phase);
+        }
+
+        const double correctedPower = aliasPower(bandlimited);
+        const double naivePower = aliasPower(naive);
+        const double suppressionDb = 10.0 * std::log10(
+            std::max(naivePower, 1.0e-30) / std::max(correctedPower, 1.0e-30));
+        const char* name = wave == mars::OscillatorWave::Saw ? "saw"
+                         : wave == mars::OscillatorWave::Pulse ? "pulse"
+                                                               : "triangle";
+        std::cout << "Fourth-order " << name << " alias suppression: "
+                  << std::fixed << std::setprecision(1) << suppressionDb << " dB\n";
+        constexpr double minimumSuppression = 18.0;
+        expect(std::isfinite(suppressionDb) && suppressionDb > minimumSuppression,
+               std::string { "fourth-order " } + name
+                   + " did not materially suppress non-harmonic alias energy");
+    }
+    expect(mars::MarsEngineTestAccess::renderPwmThresholdCorrection() > 0.5f,
+           "moving PWM threshold did not schedule a bandlimiting residual");
+}
+
 void testOversamplingConfigurationAndDeferredChange()
 {
     mars::MarsEngine defaults;
     expect(defaults.isOversamplingEnabled(), "oversampling did not default to enabled");
-    expect(defaults.getOversamplingFactor() == 2,
-           "default engine did not advertise its 2x topology");
+    expect(defaults.getOversamplingFactor() == 4,
+           "default engine did not advertise its 4x topology");
 
     for (const double rate : { 44100.0, 48000.0 })
     {
         mars::MarsEngine engine;
         engine.prepare(rate, blockSize, true);
-        expect(engine.isOversamplingEnabled() && engine.getOversamplingFactor() == 2,
-               "enabled oversampling did not select 2x at "
+        expect(engine.isOversamplingEnabled() && engine.getOversamplingFactor() == 4,
+               "enabled oversampling did not select 4x at "
                    + std::to_string(static_cast<int>(rate)) + " Hz");
     }
-    for (const double rate : { 88200.0, 96000.0, 192000.0, 384000.0 })
+    for (const double rate : { 88200.0, 96000.0 })
+    {
+        mars::MarsEngine engine;
+        engine.prepare(rate, blockSize, true);
+        expect(engine.isOversamplingEnabled() && engine.getOversamplingFactor() == 2,
+               "mid-rate host did not select 2x HQ processing at "
+                   + std::to_string(static_cast<int>(rate)) + " Hz");
+    }
+    for (const double rate : { 176400.0, 192000.0, 384000.0 })
     {
         mars::MarsEngine engine;
         engine.prepare(rate, blockSize, true);
         expect(engine.isOversamplingEnabled() && engine.getOversamplingFactor() == 1,
-               "high host rate did not retain native-rate processing at "
+               "high-rate host did not retain native HQ processing at "
                    + std::to_string(static_cast<int>(rate)) + " Hz");
     }
     {
@@ -1004,12 +1469,12 @@ void testOversamplingConfigurationAndDeferredChange()
     expect(found, "could not locate an oversampling-request boundary");
     expect(!changedImmediately && !engine.isOversamplingEnabled(),
            "held-note oversampling request was not deferred");
-    expect(engine.getOversamplingFactor() == 2 && engine.getActiveVoiceCount() == 1,
+    expect(engine.getOversamplingFactor() == 4 && engine.getActiveVoiceCount() == 1,
            "held-note oversampling request killed the voice or changed topology");
     expect(std::abs(afterRequest - boundarySample) < 0.01f,
            "deferred oversampling request introduced a boundary discontinuity");
     render(engine, static_cast<int>(0.04 * rate));
-    expect(engine.getOversamplingFactor() == 2 && engine.getActiveVoiceCount() == 1,
+    expect(engine.getOversamplingFactor() == 4 && engine.getActiveVoiceCount() == 1,
            "oversampling topology changed while the note remained held");
 
     engine.noteOff(36);
@@ -1023,7 +1488,7 @@ void testOversamplingConfigurationAndDeferredChange()
     {
         const int previousFactor = engine.getOversamplingFactor();
         const float current = processLeftSample(engine);
-        if (engine.getActiveVoiceCount() > 0 && engine.getOversamplingFactor() != 2)
+        if (engine.getActiveVoiceCount() > 0 && engine.getOversamplingFactor() != 4)
             changedWhileActive = true;
         if (engine.getActiveVoiceCount() == 0)
             ++idleSamples;
@@ -1054,6 +1519,27 @@ void testOversamplingConfigurationAndDeferredChange()
            "1x topology failed to render a note after the deferred change");
     engine.allNotesOff();
     render(engine, static_cast<int>(0.20 * rate));
+
+    // A release that expires near the end of one large host block must not be
+    // credited with the entire block's duration as silence.
+    mars::MarsEngine blockBoundary;
+    blockBoundary.prepare(rate, 2048, true);
+    auto boundaryParameters = isolatedOscillatorParameters();
+    boundaryParameters.ampRelease = 0.025f;
+    blockBoundary.setParameters(boundaryParameters);
+    blockBoundary.noteOn(48, 0.9f);
+    render(blockBoundary, static_cast<int>(0.08 * rate));
+    expect(!blockBoundary.setOversamplingEnabled(false),
+           "large-block idle regression changed HQ while a note was held");
+    blockBoundary.noteOff(48);
+    std::vector<float> boundaryLeft(2048);
+    std::vector<float> boundaryRight(2048);
+    blockBoundary.process(boundaryLeft.data(), boundaryRight.data(), 2048);
+    expect(blockBoundary.getActiveVoiceCount() == 0,
+           "large-block idle regression did not finish its release");
+    processLeftSample(blockBoundary);
+    expect(blockBoundary.getOversamplingFactor() == 4,
+           "large host block was incorrectly counted as 25 ms of true silence");
 }
 
 void testRenderMatrix()
@@ -1163,11 +1649,13 @@ void testVoiceAllocation()
     engine.noteOn(52, 0.7f);
     expect(engine.getActiveVoiceCount() == 16,
            "poly overflow exceeded the 16-voice render limit");
-    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 36) == 1
-               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 50) == 1
-               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 51) == 0
+    int survivingOriginalNotes = 0;
+    for (int note = 36; note < 52; ++note)
+        survivingOriginalNotes += mars::MarsEngineTestAccess::activeVoicesForRoot(
+            engine, note);
+    expect(survivingOriginalNotes == 15
                && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 52) == 1,
-           "poly overflow did not replace the newest existing note group");
+           "poly overflow did not preserve the new articulation and steal one quiet group");
 
     engine.reset();
     engine.setParameters(p);
@@ -1176,10 +1664,10 @@ void testVoiceAllocation()
     engine.noteOff(50);
     engine.noteOff(51);
     engine.noteOn(52, 0.7f);
-    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 50) == 1
-               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 51) == 0
+    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 50) == 0
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 51) == 1
                && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 52) == 1,
-           "overflow did not replace the newest released note group first");
+           "overflow did not replace the oldest quiet released note group first");
 
     engine.reset();
     p.voiceMode = mars::VoiceMode::Unison;
@@ -1191,10 +1679,10 @@ void testVoiceAllocation()
     render(engine, blockSize);
     expect(engine.getActiveVoiceCount() == 16,
            "8-layer unison exceeded the 16-voice render limit");
-    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 48) == 8
-               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 49) == 0
+    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 48) == 0
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 49) == 8
                && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 50) == 8,
-           "unison overflow did not replace the newest group atomically");
+           "unison overflow did not replace the oldest group atomically");
 
     engine.reset();
     p.unisonVoices = 3;
@@ -1203,9 +1691,10 @@ void testVoiceAllocation()
         engine.noteOn(note, 0.7f);
     expect(engine.getActiveVoiceCount() == 15,
            "3-layer unison did not preserve whole groups within 16 voices");
-    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 52) == 0
+    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 48) == 0
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 52) == 3
                && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 53) == 3,
-           "3-layer unison did not replace the newest complete group");
+           "3-layer unison did not replace the oldest complete group");
 
     engine.reset();
     p.voiceMode = mars::VoiceMode::Fifth;
@@ -1215,10 +1704,421 @@ void testVoiceAllocation()
     engine.noteOn(56, 0.7f);
     expect(engine.getActiveVoiceCount() == 16,
            "fifth mode exceeded the 16-voice render limit");
-    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 48) == 2
-               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 55) == 0
+    expect(mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 48) == 0
+               && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 55) == 2
                && mars::MarsEngineTestAccess::activeVoicesForRoot(engine, 56) == 2,
-           "fifth-mode overflow did not replace the newest group atomically");
+           "fifth-mode overflow did not replace the oldest group atomically");
+}
+
+void testConfigurablePhysicalVoiceLimit()
+{
+    mars::MarsEngine engine;
+    engine.prepare(48000.0, blockSize);
+    auto p = basicParameters();
+    p.voiceMode = mars::VoiceMode::Poly;
+    p.polyphonyLimit = 4;
+    engine.setParameters(p);
+    for (int note = 36; note < 48; ++note)
+        engine.noteOn(note, 0.75f);
+    expect(engine.getActiveVoiceCount() == 4,
+           "configured four-voice budget was not enforced on note allocation");
+
+    // Parameter automation may lower the CPU budget while notes are sounding.
+    // The engine must restore the invariant synchronously, before another render.
+    p.polyphonyLimit = 2;
+    engine.setParameters(p);
+    expect(engine.getActiveVoiceCount() <= 2,
+           "dynamic polyphony reduction left too many physical voices active");
+
+    engine.reset();
+    p.voiceMode = mars::VoiceMode::Unison;
+    p.unisonVoices = 8;
+    p.polyphonyLimit = 3;
+    engine.setParameters(p);
+    engine.noteOn(48, 0.8f);
+    expect(engine.getActiveVoiceCount() > 0 && engine.getActiveVoiceCount() <= 3,
+           "unison layers escaped a limit smaller than the requested layer count");
+
+    engine.reset();
+    p.voiceMode = mars::VoiceMode::Fifth;
+    p.polyphonyLimit = 1;
+    engine.setParameters(p);
+    engine.noteOn(52, 0.8f);
+    expect(engine.getActiveVoiceCount() == 1,
+           "fifth mode escaped a one-voice physical budget");
+
+    // Corrupt/direct API input is sanitised to the same public 1..16 contract.
+    engine.reset();
+    p.voiceMode = mars::VoiceMode::Poly;
+    p.polyphonyLimit = 0;
+    engine.setParameters(p);
+    for (int note = 40; note < 48; ++note)
+        engine.noteOn(note, 0.8f);
+    expect(engine.getActiveVoiceCount() == 1,
+           "out-of-range low polyphony was not clamped to one voice");
+
+    engine.reset();
+    p.polyphonyLimit = 1000;
+    engine.setParameters(p);
+    for (int note = 32; note < 64; ++note)
+        engine.noteOn(note, 0.8f);
+    expect(engine.getActiveVoiceCount()
+               == mars::MarsEngineTestAccess::maximumVoiceCount(),
+           "out-of-range high polyphony escaped the fixed physical voice pool");
+}
+
+void testMonoLastNotePriorityLegatoAndRetrigger()
+{
+    constexpr double rate = 48000.0;
+    mars::MarsEngine engine;
+    engine.prepare(rate, blockSize);
+    auto p = isolatedOscillatorParameters();
+    p.voiceMode = mars::VoiceMode::Mono;
+    p.polyphonyLimit = 16; // Mono must override the ordinary physical budget.
+    p.ampAttack = 0.080f;
+    p.filterAttack = 0.080f;
+    p.ampRelease = 0.080f;
+    p.filterRelease = 0.080f;
+    p.glideSeconds = 0.12f;
+    engine.setParameters(p);
+
+    engine.noteOn(60, 0.70f);
+    render(engine, static_cast<int>(0.025 * rate));
+    const auto first = mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(first.valid && first.rootMidi == 60 && engine.getActiveVoiceCount() == 1,
+           "mono first note did not allocate exactly one voice");
+    expect(first.ampEnvelope > 0.05f
+               && mars::MarsEngineTestAccess::heldNoteCount(engine) == 1,
+           "mono setup did not establish a held, attacked voice");
+
+    // A physically overlapping note is legato: last-note priority retargets the
+    // existing card without resetting envelope, oscillator phase, or generation.
+    engine.noteOn(64, 0.82f);
+    const auto legato = mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(engine.getActiveVoiceCount() == 1 && legato.rootMidi == 64
+               && legato.targetMidi == 64.0f,
+           "mono legato note did not retarget the sole voice");
+    expect(legato.generation == first.generation
+               && legato.ampEnvelope == first.ampEnvelope
+               && legato.filterEnvelope == first.filterEnvelope
+               && legato.oscillator1Phase == first.oscillator1Phase
+               && legato.oscillator2Phase == first.oscillator2Phase,
+           "mono legato retarget restarted a continuous voice state");
+    expect(mars::MarsEngineTestAccess::heldNoteCount(engine) == 2,
+           "mono held-note stack did not record the overlapping key");
+
+    engine.noteOn(67, 0.91f);
+    const auto highestPriority = mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(highestPriority.rootMidi == 67
+               && highestPriority.generation == first.generation
+               && mars::MarsEngineTestAccess::heldNoteCount(engine) == 3,
+           "mono did not give the newest physical key last-note priority");
+
+    // Releasing a non-current key must not disturb the current note. Releasing
+    // the current one falls back to the most recently held surviving key.
+    engine.noteOff(64);
+    const auto afterNonCurrentRelease =
+        mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(afterNonCurrentRelease.rootMidi == 67
+               && mars::MarsEngineTestAccess::heldNoteCount(engine) == 2,
+           "releasing a non-current mono key disturbed last-note priority");
+    engine.noteOff(67);
+    const auto fallback = mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(fallback.rootMidi == 60 && fallback.keyDown && !fallback.releasing
+               && fallback.generation == first.generation
+               && fallback.ampEnvelope == first.ampEnvelope,
+           "mono current-note release did not fall back legato to the held key");
+
+    // Once no physical key remains, the next note is a fresh articulation even
+    // if the previous voice is still in its release tail.
+    engine.noteOff(60);
+    const auto released = mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(released.releasing && !released.keyDown
+               && mars::MarsEngineTestAccess::heldNoteCount(engine) == 0,
+           "mono final key release did not enter the release stage");
+    engine.noteOn(65, 0.76f);
+    const auto retriggered = mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(engine.getActiveVoiceCount() == 1 && retriggered.rootMidi == 65
+               && retriggered.generation > first.generation,
+           "non-legato mono note did not create a fresh articulation");
+    expect(retriggered.ampEnvelope == 0.0f
+               && retriggered.filterEnvelope == 0.0f,
+           "non-legato mono retrigger did not restart both envelopes");
+
+    // Sustain may hold the final release, but a new physical articulation must
+    // still retrigger rather than treating the pedal-only state as legato.
+    render(engine, static_cast<int>(0.02 * rate));
+    engine.setSustainPedal(true);
+    engine.noteOff(65);
+    const auto sustained = mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(sustained.sustained && !sustained.keyDown,
+           "mono sustain did not hold the final released key");
+    engine.noteOn(69, 0.88f);
+    const auto afterPedalOnlyState =
+        mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(afterPedalOnlyState.rootMidi == 69
+               && afterPedalOnlyState.generation > retriggered.generation
+               && afterPedalOnlyState.ampEnvelope == 0.0f,
+           "pedal-only mono state was incorrectly treated as physical legato");
+    engine.noteOff(69);
+    engine.setSustainPedal(false);
+    render(engine, static_cast<int>(0.25 * rate));
+    expect(engine.getActiveVoiceCount() == 0,
+           "mono voice remained stuck after sustain and final release");
+
+    // Switching a held layered patch into Mono must preserve one continuous
+    // layer instead of retiring the whole generation atomically.
+    engine.reset();
+    p.voiceMode = mars::VoiceMode::Unison;
+    p.unisonVoices = 4;
+    engine.setParameters(p);
+    engine.noteOn(55, 0.73f);
+    render(engine, static_cast<int>(0.025 * rate));
+    const auto layered = mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    p.voiceMode = mars::VoiceMode::Mono;
+    engine.setParameters(p);
+    const auto transitioned = mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(engine.getActiveVoiceCount() == 1 && transitioned.valid
+               && transitioned.rootMidi == 55 && transitioned.keyDown
+               && !transitioned.releasing,
+           "switching a held Unison group to Mono silenced the note");
+    expect(transitioned.generation == layered.generation
+               && transitioned.ampEnvelope == layered.ampEnvelope
+               && transitioned.oscillator1Phase == layered.oscillator1Phase,
+           "switching a held layered note to Mono restarted its voice state");
+
+    engine.reset();
+    p.voiceMode = mars::VoiceMode::Poly;
+    engine.setParameters(p);
+    engine.noteOn(60, 0.64f);
+    engine.noteOn(64, 0.79f);
+    p.voiceMode = mars::VoiceMode::Mono;
+    engine.setParameters(p);
+    const auto newestAfterModeSwitch =
+        mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(newestAfterModeSwitch.rootMidi == 64
+               && mars::MarsEngineTestAccess::heldNoteCount(engine) == 2,
+           "Poly-to-Mono transition did not reconstruct last-note priority");
+    engine.noteOff(64);
+    const auto fallbackAfterModeSwitch =
+        mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(fallbackAfterModeSwitch.rootMidi == 60
+               && fallbackAfterModeSwitch.keyDown
+               && !fallbackAfterModeSwitch.releasing,
+           "Poly-to-Mono transition lost the earlier held-note fallback");
+
+    // MIDI-omni input can contain overlapping same-pitch note-ons from
+    // different channels/controllers. One note-off must not release the other.
+    engine.reset();
+    engine.setParameters(p);
+    engine.noteOn(60, 0.61f);
+    engine.noteOn(60, 0.84f);
+    engine.noteOff(60);
+    const auto duplicateStillHeld =
+        mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(duplicateStillHeld.valid && duplicateStillHeld.keyDown
+               && !duplicateStillHeld.releasing
+               && mars::MarsEngineTestAccess::heldNoteCount(engine) == 1,
+           "first note-off released an overlapping same-pitch Mono note");
+    engine.noteOff(60);
+    const auto duplicateReleased =
+        mars::MarsEngineTestAccess::newestActiveVoice(engine);
+    expect(duplicateReleased.releasing && !duplicateReleased.keyDown
+               && mars::MarsEngineTestAccess::heldNoteCount(engine) == 0,
+           "final same-pitch Mono note-off did not release the voice");
+}
+
+void testOscillatorModelContracts()
+{
+    constexpr float increment = 440.0f / 48000.0f;
+    constexpr int directSamples = 8192;
+    for (const auto wave : { mars::OscillatorWave::Saw,
+                             mars::OscillatorWave::Pulse,
+                             mars::OscillatorWave::Triangle })
+    {
+        const auto vcoFirst = mars::MarsEngineTestAccess::renderOscillatorModel(
+            mars::OscillatorModel::Vco, wave, increment, directSamples);
+        const auto vcoSecond = mars::MarsEngineTestAccess::renderOscillatorModel(
+            mars::OscillatorModel::Vco, wave, increment, directSamples);
+        const auto dcoFirst = mars::MarsEngineTestAccess::renderOscillatorModel(
+            mars::OscillatorModel::Dco, wave, increment, directSamples);
+        const auto dcoSecond = mars::MarsEngineTestAccess::renderOscillatorModel(
+            mars::OscillatorModel::Dco, wave, increment, directSamples);
+
+        bool finiteAndBounded = true;
+        double modelDifference = 0.0;
+        for (std::size_t sample = 0; sample < vcoFirst.size(); ++sample)
+        {
+            finiteAndBounded = finiteAndBounded
+                && std::isfinite(vcoFirst[sample]) && std::isfinite(dcoFirst[sample])
+                && std::abs(vcoFirst[sample]) < 2.0f
+                && std::abs(dcoFirst[sample]) < 2.0f;
+            modelDifference += std::abs(static_cast<double>(
+                vcoFirst[sample] - dcoFirst[sample]));
+        }
+        modelDifference /= static_cast<double>(vcoFirst.size());
+
+        expect(finiteAndBounded,
+               "VCO/DCO direct oscillator model produced invalid or unbounded output");
+        expect(vcoFirst == vcoSecond && dcoFirst == dcoSecond,
+               "VCO/DCO oscillator model was not deterministic from identical state");
+        expect(modelDifference > 1.0e-4,
+               "VCO and DCO selections did not produce distinct oscillator behaviour");
+    }
+
+    // A free-running VCO advances by one constant phase increment. The DCO's
+    // 2 MHz timer alternates adjacent integer periods via error feedback, leaving
+    // a small deterministic cycle-period signature while preserving mean pitch.
+    const double vcoSpread = mars::MarsEngineTestAccess::oscillatorIncrementSpread(
+        mars::OscillatorModel::Vco, increment, 48000);
+    const double dcoSpread = mars::MarsEngineTestAccess::oscillatorIncrementSpread(
+        mars::OscillatorModel::Dco, increment, 48000);
+    expect(vcoSpread < 2.0e-7,
+           "free-running VCO developed an unexpected clock-period signature");
+    expect(dcoSpread > 1.0e-6 && dcoSpread > 8.0 * vcoSpread,
+           "DCO did not expose its bounded adjacent-master-clock period signature");
+
+    mars::MarsEngine dividerEngine;
+    dividerEngine.prepare(48000.0, blockSize, false);
+    auto dividerParameters = isolatedOscillatorParameters();
+    dividerParameters.osc1Model = mars::OscillatorModel::Dco;
+    dividerEngine.setParameters(dividerParameters);
+    dividerEngine.noteOn(57, 0.8f);
+    int dividerLockedSamples = 0;
+    for (int sample = 0; sample < 256; ++sample)
+    {
+        render(dividerEngine, 1);
+        if (mars::MarsEngineTestAccess::dcoSubUsesPrimaryDivider(dividerEngine))
+            ++dividerLockedSamples;
+    }
+    expect(dividerLockedSamples > 245,
+           "Juno-like DCO sub did not follow oscillator I's divide-by-two clock period");
+
+    constexpr double rate = 48000.0;
+    const auto exerciseRoutedModel = [] (bool oscillatorOne)
+    {
+        auto vcoParameters = isolatedOscillatorParameters();
+        vcoParameters.filterModel = mars::FilterModel::Sem;
+        vcoParameters.filterShape = 0.0f;
+        vcoParameters.osc1Wave = mars::OscillatorWave::Saw;
+        vcoParameters.osc2Wave = mars::OscillatorWave::Saw;
+        vcoParameters.osc2FineCents = 0.0f;
+        vcoParameters.osc1Enabled = oscillatorOne;
+        vcoParameters.osc2Enabled = !oscillatorOne;
+        vcoParameters.oscMix = oscillatorOne ? 0.0f : 1.0f;
+        vcoParameters.osc1Model = mars::OscillatorModel::Vco;
+        vcoParameters.osc2Model = mars::OscillatorModel::Vco;
+        auto dcoParameters = vcoParameters;
+        if (oscillatorOne)
+            dcoParameters.osc1Model = mars::OscillatorModel::Dco;
+        else
+            dcoParameters.osc2Model = mars::OscillatorModel::Dco;
+
+        mars::MarsEngine vco;
+        mars::MarsEngine dco;
+        mars::MarsEngine dcoFirst;
+        mars::MarsEngine dcoSecond;
+        for (auto* engine : { &vco, &dco, &dcoFirst, &dcoSecond })
+            engine->prepare(rate, blockSize);
+        vco.setParameters(vcoParameters);
+        dco.setParameters(dcoParameters);
+        dcoFirst.setParameters(dcoParameters);
+        dcoSecond.setParameters(dcoParameters);
+        for (auto* engine : { &vco, &dco, &dcoFirst, &dcoSecond })
+        {
+            engine->reset();
+            engine->noteOn(57, 0.82f);
+        }
+
+        const auto vcoWarm = render(vco, static_cast<int>(0.14 * rate));
+        const auto dcoWarm = render(dco, static_cast<int>(0.14 * rate));
+        render(dcoFirst, static_cast<int>(0.14 * rate));
+        render(dcoSecond, static_cast<int>(0.14 * rate));
+        const double routedDifference = averageRenderDifference(
+            vco, dco, static_cast<int>(0.16 * rate));
+        const double deterministicDifference = averageRenderDifference(
+            dcoFirst, dcoSecond, static_cast<int>(0.16 * rate));
+        return std::array<double, 4> {
+            vcoWarm.finite && dcoWarm.finite ? 1.0 : 0.0,
+            std::min(vcoWarm.rms(), dcoWarm.rms()),
+            routedDifference,
+            deterministicDifference,
+        };
+    };
+
+    const auto oscillatorOne = exerciseRoutedModel(true);
+    const auto oscillatorTwo = exerciseRoutedModel(false);
+    for (std::size_t index = 0; index < 2; ++index)
+    {
+        const auto& result = index == 0 ? oscillatorOne : oscillatorTwo;
+        const std::string label = index == 0 ? "oscillator I" : "oscillator II";
+        expect(result[0] == 1.0 && result[1] > 1.0e-4,
+               label + " model routing produced invalid or silent audio");
+        expect(result[2] > 1.0e-4,
+               label + " ignored its independent VCO/DCO model selection");
+        expect(result[3] < 1.0e-8,
+               label + " DCO full-engine render was not deterministic");
+    }
+
+    mars::MarsEngine switched;
+    switched.prepare(rate, 64);
+    auto switchedParameters = isolatedOscillatorParameters();
+    switchedParameters.osc1Enabled = true;
+    switchedParameters.osc2Enabled = false;
+    switchedParameters.osc1Wave = mars::OscillatorWave::Saw;
+    switchedParameters.osc1Model = mars::OscillatorModel::Vco;
+    switchedParameters.cutoffHz = 9000.0f;
+    switched.setParameters(switchedParameters);
+    switched.reset();
+    switched.noteOn(36, 0.9f);
+    render(switched, static_cast<int>(0.20 * rate));
+
+    // Locate the switch near the middle of the saw ramp, then measure just over
+    // the complete 2 ms crossfade. At MIDI 36 this 128-host-sample window cannot
+    // reach the next phase wrap, so an intentional saw reset cannot be mistaken
+    // for a model-switch click.
+    const auto findSafeSawBoundary = [] (mars::MarsEngine& engine, float& boundary)
+    {
+        float previous = processLeftSample(engine);
+        for (int attempt = 0; attempt < 96000; ++attempt)
+        {
+            const float current = processLeftSample(engine);
+            const auto snapshot = mars::MarsEngineTestAccess::newestActiveVoice(engine);
+            if (snapshot.valid
+                && snapshot.oscillator1Phase >= 0.25f
+                && snapshot.oscillator1Phase <= 0.42f
+                && std::abs(current) >= 0.05f
+                && std::abs(current - previous) <= 0.0025f)
+            {
+                boundary = current;
+                return true;
+            }
+            previous = current;
+        }
+        boundary = previous;
+        return false;
+    };
+
+    float vcoBoundary = 0.0f;
+    const bool foundVcoBoundary = findSafeSawBoundary(switched, vcoBoundary);
+    switchedParameters.osc1Model = mars::OscillatorModel::Dco;
+    switched.setParameters(switchedParameters);
+    const double vcoToDcoStep = maximumStepAfter(switched, vcoBoundary, 128);
+    render(switched, static_cast<int>(0.04 * rate));
+
+    float dcoBoundary = 0.0f;
+    const bool foundDcoBoundary = findSafeSawBoundary(switched, dcoBoundary);
+    switchedParameters.osc1Model = mars::OscillatorModel::Vco;
+    switched.setParameters(switchedParameters);
+    const double dcoToVcoStep = maximumStepAfter(switched, dcoBoundary, 128);
+    expect(foundVcoBoundary && foundDcoBoundary,
+           "could not locate audible VCO/DCO model-switch boundaries");
+    expect(vcoToDcoStep < 0.035,
+           "VCO-to-DCO switching introduced an audible discontinuity (step "
+               + std::to_string(vcoToDcoStep) + ")");
+    expect(dcoToVcoStep < 0.035,
+           "DCO-to-VCO switching introduced an audible discontinuity (step "
+               + std::to_string(dcoToVcoStep) + ")");
 }
 
 void testSampleRateLevelConsistency()
@@ -1330,6 +2230,17 @@ void testSemShapeEndpoints()
 void testDeterminismAndOscillatorResponses()
 {
     constexpr double rate = 48000.0;
+    mars::MarsEngine idleDrift;
+    idleDrift.prepare(rate, blockSize);
+    const auto driftBefore = mars::MarsEngineTestAccess::voiceCardDrift(
+        idleDrift, 7);
+    render(idleDrift, static_cast<int>(0.10 * rate));
+    const auto driftAfter = mars::MarsEngineTestAccess::voiceCardDrift(
+        idleDrift, 7);
+    expect(std::abs(driftAfter[0] - driftBefore[0]) > 1.0e-6f
+               || std::abs(driftAfter[1] - driftBefore[1]) > 1.0e-6f,
+           "voice-card thermal drift froze while the engine was silent");
+
     mars::MarsEngine first;
     mars::MarsEngine second;
     first.prepare(rate, blockSize);
@@ -1598,15 +2509,18 @@ void testAnalogModelResponses()
     expect(lowSaw.finite && highSaw.finite
                && lowSaw.rms() > 1.0e-4 && highSaw.rms() > 1.0e-4,
            "the frequency-dependent Voyager saw contour became silent or non-finite");
-    // These deliberately broad deterministic windows protect the measured
-    // frequency-dependent post-EQ from being bypassed while tolerating small
-    // floating-point differences between toolchains.
-    expect(lowSaw.rms() > 0.097 && lowSaw.rms() < 0.1085,
-           "the low-note Voyager saw spectral-contour signature changed");
-    expect(highSaw.rms() > 0.092 && highSaw.rms() < 0.1045,
-           "the high-note Voyager saw spectral-contour signature changed");
-    expect(sawLevelRatio > 0.90 && sawLevelRatio < 1.02,
-           "the Voyager saw contour produced an implausible pitch-level jump");
+    // These deliberately broad deterministic windows protect the measured,
+    // source-specific fourth-order B-spline BLEP post-EQ from being bypassed
+    // while tolerating small floating-point differences between toolchains.
+    expect(lowSaw.rms() > 0.145 && lowSaw.rms() < 0.160,
+           "the low-note Voyager saw spectral-contour signature changed ("
+               + std::to_string(lowSaw.rms()) + ")");
+    expect(highSaw.rms() > 0.124 && highSaw.rms() < 0.140,
+           "the high-note Voyager saw spectral-contour signature changed ("
+               + std::to_string(highSaw.rms()) + ")");
+    expect(sawLevelRatio > 0.82 && sawLevelRatio < 0.92,
+           "the Voyager saw contour produced an implausible pitch-level jump ("
+               + std::to_string(sawLevelRatio) + ")");
 }
 
 void testLongHeldTriangleStability()
@@ -1677,7 +2591,7 @@ void testClicklessRetriggerAndVoiceSteal()
     expect(retrigger.second < 0.045,
            "same-note retrigger introduced an audible one-sample discontinuity");
     expect(steal.second < 0.045,
-           "newest-group voice stealing introduced an audible discontinuity");
+           "quietest/oldest-group voice stealing introduced an audible discontinuity");
 }
 
 void testClicklessFilterModelSwitch()
@@ -1855,7 +2769,7 @@ double benchmarkCpuModel(mars::FilterModel filterModel)
     const auto* modelName = filterModel == mars::FilterModel::Ladder
         ? "Ladder" : "SEM";
     std::cout << std::fixed << std::setprecision(3) << modelName
-              << " 16-slot 96 kHz/native HQ render, best of " << trialCount
+              << " 16-slot 96 kHz/2x HQ render, best of " << trialCount
               << ": " << bestElapsed << " s (" << ratio << "x real time)\n";
     expect(allTrialsValid,
            "CPU regression render was invalid or silent");
@@ -1894,6 +2808,9 @@ int main()
     testRenderMatrix();
     testSustainAndRelease();
     testVoiceAllocation();
+    testConfigurablePhysicalVoiceLimit();
+    testMonoLastNotePriorityLegatoAndRetrigger();
+    testOscillatorModelContracts();
     testSampleRateLevelConsistency();
     testOversamplingPitchAndPitchBend();
     testLadderImplicitSolveAgainstReference();
@@ -1901,6 +2818,8 @@ int main()
     testLadderFullRangeDoesNotLatch();
     testLadderBassCompensation();
     testDeepOscillatorConsistency();
+    testHqReturnFilterAndBbdClockPath();
+    testFourthOrderOscillatorAliasSuppression();
     testOversamplingConfigurationAndDeferredChange();
     testParameterSanitisation();
     testSemShapeEndpoints();
