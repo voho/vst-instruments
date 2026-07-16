@@ -96,6 +96,9 @@ private:
         float a1Step { 0.0f };
         float a2Step { 0.0f };
         float outputScaleStep { 0.0f };
+        float configuredCentreHz { -1.0f };
+        float configuredBandwidthOctaves { -1.0f };
+        int rampRemaining { 0 };
 
         void clear() noexcept { z1 = z2 = 0.0f; }
         void set(float centreHz, float bandwidthOctaves,
@@ -112,6 +115,7 @@ private:
         std::uint64_t ageStamp { 0 };
         std::array<std::uint32_t, NeuralModel::airBandCount> airNoiseStates {};
         float velocity { 0.0f };
+        float velocityGain { 0.0f };
         float envelope { 0.0f };
         double modelTimeSeconds { 0.0 };
         std::uint64_t renderedSampleCount { 0 };
@@ -120,6 +124,10 @@ private:
         float latentPhaseB { 0.0f };
         float latentRateAHertz { 0.0f };
         float latentRateBHertz { 0.0f };
+        float cachedBrightnessTilt { -1000.0f };
+        std::array<float, NeuralModel::harmonicCount> brightnessTiltTable {};
+        std::array<float, NeuralModel::harmonicCount> harmonicVariationSin {};
+        std::array<float, NeuralModel::airBandCount> airVariationSin {};
         float pan { 0.0f };
         float panLeft { 0.70710678f };
         float panRight { 0.70710678f };
@@ -165,6 +173,7 @@ private:
     std::array<Voice, maximumVoices> voices_ {};
     std::array<FadeTail, maximumVoices> fadeTails_ {};
     std::array<float, sineTableSize + 1> sineTable_ {};
+    std::array<float, NeuralModel::harmonicCount> inverseHarmonicRolloff_ {};
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     // Core anti-alias fade constants for coreNyquistGain(), precomputed so the
