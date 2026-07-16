@@ -55,6 +55,13 @@ private:
     static constexpr int roomBufferSize = 32768;
     static constexpr int controlPeriod = 16;
 
+    // Harmonic count per band-limited table level; shared by buildTables()
+    // (which fills the tables) and updateVoiceControl() (which picks the
+    // aliasing-safe level for the current pitch) so the two stay in sync.
+    static constexpr std::array<int, tableLevels> harmonicsPerLevel {
+        1, 2, 4, 8, 16, 32, 64, 128, 256
+    };
+
     struct AtomicParameters
     {
         std::atomic<int> profile { 0 };

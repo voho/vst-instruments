@@ -264,7 +264,6 @@ private:
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;
     [[nodiscard]] static float signedUnitFromHash (std::uint32_t value) noexcept;
     [[nodiscard]] float applyAnalogOutputStage (Voice& voice, float input) const noexcept;
-    void configureLowpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureHighpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureBandpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureResonator (Resonator& resonator, float frequency,

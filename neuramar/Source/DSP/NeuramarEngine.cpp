@@ -466,6 +466,11 @@ void NeuramarEngine::refreshVoicePans() noexcept
     for (auto& voice : voices_)
         if (voice.active)
             ordered[count++] = &voice;
+    // voices_ has exactly maximumVoices elements, so count can never exceed
+    // ordered.size(); this clamp only gives the optimizer a bound it can
+    // prove, silencing a GCC -Warray-bounds false positive in std::sort's
+    // unreachable large-range branch for this fixed 8-element array.
+    count = std::min(count, ordered.size());
 
     std::sort(ordered.begin(), ordered.begin() + static_cast<std::ptrdiff_t>(count),
               [](const Voice* left, const Voice* right)
