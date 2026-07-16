@@ -1,6 +1,7 @@
 #include "NeuramarEngine.h"
 
 #include "AirFilterbank.h"
+#include "SpectralEnvelope.h"
 
 #include <algorithm>
 #include <cmath>
@@ -24,22 +25,111 @@ constexpr float twoPi = 2.0f * pi;
     return std::clamp(finiteOr(value, fallback), minimum, maximum);
 }
 
-[[nodiscard]] float interpolateHarmonic(
-    const std::array<float, NeuralModel::harmonicCount>& values,
+[[nodiscard]] float interpolatePhase(
+    const std::array<float, NeuralModel::harmonicCount>& phases,
     float oneBasedIndex) noexcept
 {
-    if (!(oneBasedIndex >= 1.0f)
-        || oneBasedIndex > static_cast<float>(NeuralModel::harmonicCount) + 0.999f)
-        return 0.0f;
+    if (!(oneBasedIndex >= 1.0f))
+        return phases.front();
+    if (oneBasedIndex >= static_cast<float>(phases.size()))
+        return phases.back();
 
     const float zeroBased = oneBasedIndex - 1.0f;
     const auto lower = static_cast<std::size_t>(zeroBased);
-    if (lower >= values.size() - 1)
-        return values.back() * std::max(0.0f,
-            static_cast<float>(values.size()) + 1.0f - oneBasedIndex);
-
     const float fraction = zeroBased - static_cast<float>(lower);
-    return values[lower] + fraction * (values[lower + 1] - values[lower]);
+    if (!(fraction > 0.0f))
+        return phases[lower];
+    const float firstAngle = twoPi * phases[lower];
+    const float secondAngle = twoPi * phases[lower + 1];
+    const float real = (1.0f - fraction) * std::cos(firstAngle)
+        + fraction * std::cos(secondAngle);
+    const float imaginary = (1.0f - fraction) * std::sin(firstAngle)
+        + fraction * std::sin(secondAngle);
+    if (std::abs(real) + std::abs(imaginary) < 1.0e-8f)
+        return phases[lower];
+    float result = std::atan2(imaginary, real) / twoPi;
+    result -= std::floor(result);
+    return result;
+}
+
+[[nodiscard]] float interpolatePhaseShortest(float first, float second,
+                                             float amount) noexcept
+{
+    float difference = second - first;
+    difference -= std::floor(difference + 0.5f);
+    float result = first + amount * difference;
+    result -= std::floor(result);
+    return result;
+}
+
+[[nodiscard]] float coreNyquistGain(float frequencyHz,
+                                    float sampleRate) noexcept
+{
+    return std::clamp((0.49f * sampleRate - frequencyHz)
+                          / (0.06f * sampleRate),
+                      0.0f, 1.0f);
+}
+
+[[nodiscard]] float guardFiniteOutput(float value) noexcept
+{
+    // Hosts process floating-point audio above 0 dBFS. Preserve that headroom
+    // instead of waveshaping every overload at base rate, which would fold new
+    // harmonics into high-register notes. This is only a pathological-state
+    // guard; ordinary level control remains exactly linear.
+    constexpr float emergencyMagnitude = 7.95f;
+    return std::clamp(finiteOr(value, 0.0f),
+                      -emergencyMagnitude, emergencyMagnitude);
+}
+
+[[nodiscard]] std::array<float, NeuralModel::harmonicCount>
+makeSourceFilterEnvelope(
+    const std::array<float, NeuralModel::harmonicCount>& amplitudes) noexcept
+{
+    // A short symmetric power kernel is wide enough to reject alternating
+    // odd/even excitation while retaining formants that span several source
+    // harmonics.  The decomposition remains exact at observed knots because
+    // the renderer multiplies this envelope by the complementary excitation
+    // residual below.
+    constexpr std::array<float, 5> weights {
+        0.0625f, 0.25f, 0.375f, 0.25f, 0.0625f
+    };
+    std::array<float, NeuralModel::harmonicCount> envelope {};
+    for (std::size_t harmonic = 0; harmonic < amplitudes.size(); ++harmonic)
+    {
+        double power = 0.0;
+        double weightSum = 0.0;
+        for (int offset = -2; offset <= 2; ++offset)
+        {
+            const auto neighbour = static_cast<std::ptrdiff_t>(harmonic)
+                + static_cast<std::ptrdiff_t>(offset);
+            if (neighbour < 0
+                || neighbour >= static_cast<std::ptrdiff_t>(amplitudes.size()))
+                continue;
+
+            const float weight = weights[static_cast<std::size_t>(offset + 2)];
+            const float amplitude = std::max(
+                amplitudes[static_cast<std::size_t>(neighbour)], 0.0f);
+            power += static_cast<double>(weight) * amplitude * amplitude;
+            weightSum += weight;
+        }
+        envelope[harmonic] = static_cast<float>(std::sqrt(
+            power / std::max(weightSum, 1.0e-12)));
+    }
+    return envelope;
+}
+
+[[nodiscard]] float blendMagnitude(float first, float second,
+                                   float amount) noexcept
+{
+    // Companded log interpolation is perceptually smooth, keeps both endpoints
+    // exact (including silence), and avoids the level swell of a linear blend.
+    constexpr float knee = 1.0e-5f;
+    first = std::max(finiteOr(first, 0.0f), 0.0f);
+    second = std::max(finiteOr(second, 0.0f), 0.0f);
+    amount = std::clamp(finiteOr(amount, 0.0f), 0.0f, 1.0f);
+    const float firstLog = std::log1p(first / knee);
+    const float secondLog = std::log1p(second / knee);
+    return knee * std::expm1(firstLog + amount * (secondLog - firstLog));
 }
 
 [[nodiscard]] float wrapUnit(float phase) noexcept
@@ -50,19 +140,36 @@ constexpr float twoPi = 2.0f * pi;
 } // namespace
 
 void NeuramarEngine::Bandpass::set(float centreHz, float bandwidthOctaves,
-                                   float sampleRate) noexcept
+                                   float sampleRate, int rampSamples) noexcept
 {
     const auto coefficients = airfilter::makeCoefficients(
         centreHz, bandwidthOctaves, sampleRate);
-    b0 = coefficients.b0;
-    b2 = coefficients.b2;
-    a1 = coefficients.a1;
-    a2 = coefficients.a2;
-    outputScale = coefficients.outputScale;
+    if (rampSamples <= 0)
+    {
+        b0 = coefficients.b0;
+        b2 = coefficients.b2;
+        a1 = coefficients.a1;
+        a2 = coefficients.a2;
+        outputScale = coefficients.outputScale;
+        b0Step = b2Step = a1Step = a2Step = outputScaleStep = 0.0f;
+        return;
+    }
+
+    const float inverseRamp = 1.0f / static_cast<float>(rampSamples);
+    b0Step = (coefficients.b0 - b0) * inverseRamp;
+    b2Step = (coefficients.b2 - b2) * inverseRamp;
+    a1Step = (coefficients.a1 - a1) * inverseRamp;
+    a2Step = (coefficients.a2 - a2) * inverseRamp;
+    outputScaleStep = (coefficients.outputScale - outputScale) * inverseRamp;
 }
 
 float NeuramarEngine::Bandpass::tick(float input) noexcept
 {
+    b0 += b0Step;
+    b2 += b2Step;
+    a1 += a1Step;
+    a2 += a2Step;
+    outputScale += outputScaleStep;
     const float output = b0 * input + z1;
     z1 = z2 - a1 * output;
     z2 = b2 * input - a2 * output;
@@ -144,7 +251,7 @@ void NeuramarEngine::setParameters(const EngineParameters& parameters) noexcept
                             std::memory_order_relaxed);
     parameters_.mutation.store(clampParameter(parameters.mutation, 0.0f, 1.0f, 0.10f),
                                std::memory_order_relaxed);
-    parameters_.attackSeconds.store(clampParameter(parameters.attackSeconds, 0.0f, 10.0f, 0.008f),
+    parameters_.attackSeconds.store(clampParameter(parameters.attackSeconds, 0.0f, 10.0f, 0.0f),
                                     std::memory_order_relaxed);
     parameters_.releaseSeconds.store(clampParameter(parameters.releaseSeconds, 0.005f, 20.0f, 0.35f),
                                      std::memory_order_relaxed);
@@ -255,10 +362,33 @@ void NeuramarEngine::noteOn(int midiNote, float velocity) noexcept
     selected->pan = 0.0f;
 
     const float phaseMutation = mutationAmount * selected->mutationOffset;
-    for (std::size_t harmonic = 0; harmonic < NeuralModel::harmonicCount; ++harmonic)
+    const float correctedRootMidi = static_cast<float>(model->metadata_.rootMidiNote)
+        + parameters_.rootOffsetSemitones.load(std::memory_order_relaxed);
+    const float phaseRatio = std::clamp(
+        std::exp2((static_cast<float>(midiNote) - correctedRootMidi) / 12.0f)
+            * (1.0f + 0.0012f * phaseMutation),
+        0.0078125f, 128.0f);
+    const float bodyLock = parameters_.bodyLock.load(std::memory_order_relaxed);
+    for (std::size_t harmonic = 0;
+         harmonic < selected->harmonicPhases.size(); ++harmonic)
+    {
+        const float harmonicNumber = static_cast<float>(harmonic + 1);
+        const bool hasPitchFollowingPhase = harmonic < NeuralModel::harmonicCount;
+        const float pitchFollowingPhase = hasPitchFollowingPhase
+            ? model->initialHarmonicPhases_[harmonic]
+            : interpolatePhase(model->initialHarmonicPhases_,
+                               harmonicNumber * phaseRatio);
+        const float sourceCoordinate = harmonicNumber * phaseRatio;
+        const bool hasBodyPhase = sourceCoordinate > 0.0f
+            && sourceCoordinate
+                <= static_cast<float>(NeuralModel::harmonicCount) + 0.999f;
+        const float bodyPhase = hasBodyPhase
+            ? interpolatePhase(model->initialHarmonicPhases_, sourceCoordinate)
+            : pitchFollowingPhase;
         selected->harmonicPhases[harmonic] = wrapUnit(
-            model->initialHarmonicPhases_[harmonic]
+            interpolatePhaseShortest(pitchFollowingPhase, bodyPhase, bodyLock)
             + 0.003f * phaseMutation * static_cast<float>(harmonic));
+    }
     for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
         selected->bonePhases[mode] = wrapUnit(
             model->initialBonePhases_[mode] + 0.007f * phaseMutation);
@@ -400,37 +530,189 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
 
     const float brightnessTilt = (parameters.brightness - 0.5f) * 1.2f;
     const float characteristic = parameters.imprint;
+    const bool needsBodyEnvelope = parameters.bodyLock > 0.0f
+        && characteristic > 0.0f;
+    spectral::ShapePreservingEnvelope<NeuralModel::harmonicCount> bodyEnvelope;
+    std::array<float, NeuralModel::harmonicCount> sourceFilterEnvelope {};
+    if (needsBodyEnvelope)
+    {
+        sourceFilterEnvelope = makeSourceFilterEnvelope(
+            frame.harmonicAmplitudes);
+        bodyEnvelope.prepare(sourceFilterEnvelope);
+    }
     const float fundamentalReference = std::max(frame.harmonicAmplitudes.front(),
                                                 1.0e-5f);
 
-    std::array<float, NeuralModel::amplitudeOutputSize> targets {};
-    for (std::size_t harmonic = 0; harmonic < NeuralModel::harmonicCount; ++harmonic)
+    const float availableMappedHarmonics =
+        (static_cast<float>(NeuralModel::harmonicCount) + 0.999f)
+        / voice.transpositionRatio;
+    // Retire a previous contraction only after its slots are actually silent.
+    // Voice-pan refreshes can request an early control update, so the presence
+    // of another update alone does not prove a full ramp period elapsed.
+    bool retiringHarmonicsAreSilent = true;
+    for (std::size_t harmonic = voice.targetHarmonicCount;
+         harmonic < voice.activeHarmonicCount; ++harmonic)
     {
-        const float harmonicNumber = static_cast<float>(harmonic + 1);
-        const float pitchFollowing = frame.harmonicAmplitudes[harmonic];
-        float bodyLocked = interpolateHarmonic(
-            frame.harmonicAmplitudes,
-            harmonicNumber * voice.transpositionRatio);
-        if (harmonic == 0)
-            bodyLocked = std::max(bodyLocked, pitchFollowing);
-        const float learned = pitchFollowing
-            + parameters.bodyLock * (bodyLocked - pitchFollowing);
-        const float neutral = fundamentalReference
-            / std::pow(harmonicNumber, 1.15f);
-        const float tilt = std::pow(harmonicNumber, brightnessTilt);
-        const float variation = 1.0f + parameters.mutation * 0.045f
-            * std::sin(2.173f * harmonicNumber + 3.7f * voice.mutationOffset);
-        targets[harmonic] = std::clamp(
-            (neutral + characteristic * (learned - neutral)) * tilt * variation,
-            0.0f, 2.0f);
+        retiringHarmonicsAreSilent = retiringHarmonicsAreSilent
+            && voice.amplitudes[harmonic] <= 1.0e-6f;
+    }
+    if (!firstControlFrame && retiringHarmonicsAreSilent
+        && voice.targetHarmonicCount < voice.activeHarmonicCount)
+        voice.activeHarmonicCount = voice.targetHarmonicCount;
+
+    std::size_t desiredHarmonicCount = NeuralModel::harmonicCount;
+    if (availableMappedHarmonics
+        > static_cast<float>(NeuralModel::harmonicCount))
+    {
+        desiredHarmonicCount = std::min(
+            renderedHarmonicCount,
+            static_cast<std::size_t>(std::floor(availableMappedHarmonics)));
+    }
+    voice.targetHarmonicCount = desiredHarmonicCount;
+    if (desiredHarmonicCount > voice.activeHarmonicCount)
+    {
+        if (!firstControlFrame)
+        {
+            std::fill(voice.amplitudes.begin()
+                          + static_cast<std::ptrdiff_t>(voice.activeHarmonicCount),
+                      voice.amplitudes.begin()
+                          + static_cast<std::ptrdiff_t>(desiredHarmonicCount),
+                      0.0f);
+        }
+        voice.activeHarmonicCount = desiredHarmonicCount;
     }
 
-    const float spectralScale = std::pow(voice.transpositionRatio,
-                                         1.0f - parameters.bodyLock);
+    std::array<float, renderAmplitudeCount> targets {};
+    std::array<float, NeuralModel::harmonicCount> referenceTargets {};
+    const bool capacityLimited = desiredHarmonicCount
+            == renderedHarmonicCount
+        && voice.transpositionRatio
+                * static_cast<float>(renderedHarmonicCount)
+            < static_cast<float>(NeuralModel::harmonicCount - 1);
+    for (std::size_t harmonic = 0;
+         harmonic < desiredHarmonicCount; ++harmonic)
+    {
+        const float harmonicNumber = static_cast<float>(harmonic + 1);
+        const bool hasPitchFollowing = harmonic < NeuralModel::harmonicCount;
+        const float pitchFollowing = hasPitchFollowing
+            ? frame.harmonicAmplitudes[harmonic] : 0.0f;
+        const float sourceCoordinate = harmonicNumber * voice.transpositionRatio;
+        const bool hasBodyEvidence = sourceCoordinate > 0.0f
+            && sourceCoordinate
+                <= static_cast<float>(NeuralModel::harmonicCount) + 0.999f;
+        float excitationResidual = 1.0f;
+        if (hasPitchFollowing && needsBodyEnvelope)
+        {
+            const float envelopeAtHarmonic = sourceFilterEnvelope[harmonic];
+            excitationResidual = envelopeAtHarmonic > 1.0e-7f
+                ? pitchFollowing / envelopeAtHarmonic : 0.0f;
+            excitationResidual = std::clamp(excitationResidual, 0.0f, 4.0f);
+        }
+        float bodyLocked = needsBodyEnvelope
+            ? excitationResidual * bodyEnvelope.sample(sourceCoordinate)
+            : pitchFollowing;
+        // Keep a modest pitch anchor when a fixed-frequency lookup would
+        // otherwise erase the played fundamental. Other coordinates above the
+        // observed envelope fade out instead of inventing upper-band energy.
+        if (harmonic == 0)
+            bodyLocked = std::max(bodyLocked, 0.25f * pitchFollowing);
+        // The excitation/filter factorisation keeps odd/even and reed/bow
+        // character attached to harmonic index while moving only the smooth
+        // resonant envelope in absolute frequency.  For virtual low-register
+        // harmonics no excitation evidence exists, so use the neutral envelope
+        // rather than fabricating a repeated residual pattern.
+        const float learned = hasPitchFollowing
+            ? blendMagnitude(pitchFollowing, bodyLocked, parameters.bodyLock)
+            : parameters.bodyLock * bodyLocked;
+        const float neutral = hasPitchFollowing
+            ? fundamentalReference / std::pow(harmonicNumber, 1.15f)
+            : 0.0f;
+        const float bodyCoordinate = hasBodyEvidence
+            ? sourceCoordinate : harmonicNumber;
+        const float spectralCoordinate = harmonicNumber
+            + parameters.bodyLock * (bodyCoordinate - harmonicNumber);
+        const float tilt = std::pow(std::max(spectralCoordinate, 1.0f),
+                                    brightnessTilt);
+        const float variation = 1.0f + parameters.mutation * 0.045f
+            * std::sin(2.173f * spectralCoordinate
+                       + 3.7f * voice.mutationOffset);
+        float target = std::clamp(
+            (neutral + characteristic * (learned - neutral)) * tilt * variation,
+            0.0f, 2.0f);
+        if (capacityLimited
+            && harmonicNumber
+                > static_cast<float>(renderedHarmonicCount - 12))
+        {
+            const float position = (harmonicNumber
+                - static_cast<float>(renderedHarmonicCount - 12)) / 12.0f;
+            target *= 0.5f + 0.5f * std::cos(pi * position);
+        }
+        targets[harmonic] = target;
+
+        if (hasPitchFollowing)
+        {
+            const float referenceNeutral = fundamentalReference
+                / std::pow(harmonicNumber, 1.15f);
+            const float referenceTilt = std::pow(harmonicNumber,
+                                                  brightnessTilt);
+            const float referenceVariation = 1.0f
+                + parameters.mutation * 0.045f
+                    * std::sin(2.173f * harmonicNumber
+                               + 3.7f * voice.mutationOffset);
+            referenceTargets[harmonic] = std::clamp(
+                (referenceNeutral + characteristic
+                    * (pitchFollowing - referenceNeutral))
+                    * referenceTilt * referenceVariation,
+                0.0f, 2.0f);
+        }
+    }
+
+    // Factor register-dependent harmonic shape from overall Core power. This
+    // compensates both the denser fixed-envelope grid on low notes and the
+    // harmonics safely removed near Nyquist on high notes. The upper bound is
+    // deliberately modest: unavailable spectrum must never become a huge gain
+    // boost, and all changes continue to use the normal control-rate ramp.
+    double referencePower = 0.0;
+    const float referenceFundamental = model.metadata_.rootFrequencyHz
+        * frame.pitchRatio;
+    for (std::size_t harmonic = 0;
+         harmonic < referenceTargets.size(); ++harmonic)
+    {
+        const float antialias = coreNyquistGain(
+            referenceFundamental * static_cast<float>(harmonic + 1),
+            static_cast<float>(sampleRate_));
+        const double amplitude = referenceTargets[harmonic] * antialias;
+        referencePower += amplitude * amplitude;
+    }
+    double renderedPower = 0.0;
+    const float renderedFundamental = model.metadata_.rootFrequencyHz
+        * voice.transpositionRatio * frame.pitchRatio;
+    for (std::size_t harmonic = 0;
+         harmonic < desiredHarmonicCount; ++harmonic)
+    {
+        const float antialias = coreNyquistGain(
+            renderedFundamental * static_cast<float>(harmonic + 1),
+            static_cast<float>(sampleRate_));
+        const double amplitude = targets[harmonic] * antialias;
+        renderedPower += amplitude * amplitude;
+    }
+    float registerGain = 1.0f;
+    if (referencePower > 1.0e-12 && renderedPower > 1.0e-12)
+    {
+        registerGain = std::clamp(static_cast<float>(std::sqrt(
+            referencePower / renderedPower)), 0.50f, 1.5848932f);
+    }
+    for (std::size_t harmonic = 0;
+         harmonic < desiredHarmonicCount; ++harmonic)
+        targets[harmonic] *= registerGain;
+
+    const float spectralScale = std::pow(
+        voice.transpositionRatio * frame.pitchRatio,
+        1.0f - parameters.bodyLock);
     const float brightnessScale = std::exp2(parameters.brightness - 0.5f);
     for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
     {
-        const std::size_t output = NeuralModel::harmonicCount + band;
+        const std::size_t output = airOutputOffset + band;
         const float variation = 1.0f + parameters.mutation * 0.12f
             * std::sin(1.37f * static_cast<float>(band + 1)
                        + 5.0f * voice.mutationOffset);
@@ -447,13 +729,13 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
 
         voice.airFilters[band].set(
             desiredFrequency,
-            model.airBandwidthOctaves_[band], static_cast<float>(sampleRate_));
+            model.airBandwidthOctaves_[band], static_cast<float>(sampleRate_),
+            firstControlFrame ? 0 : controlPeriod_);
     }
 
     for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
     {
-        const std::size_t output = NeuralModel::harmonicCount
-            + NeuralModel::airBandCount + mode;
+        const std::size_t output = boneOutputOffset + mode;
         const float active = model.boneModeReliabilities_[mode] > 0.0f
             ? 1.0f : 0.0f;
         const float desiredFrequency = model.metadata_.rootFrequencyHz
@@ -466,13 +748,23 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
                          0.0f, 1.0f);
         targets[output] = std::clamp(frame.boneAmplitudes[mode]
             * active * parameters.bone * edgeGain, 0.0f, 2.0f);
-        voice.boneFrequenciesHz[mode] = std::clamp(
+        const float boundedFrequency = std::clamp(
             desiredFrequency,
             10.0f, 0.49f * static_cast<float>(sampleRate_));
+        if (firstControlFrame)
+        {
+            voice.boneFrequenciesHz[mode] = boundedFrequency;
+            voice.boneFrequencySteps[mode] = 0.0f;
+        }
+        else
+        {
+            voice.boneFrequencySteps[mode] =
+                (boundedFrequency - voice.boneFrequenciesHz[mode])
+                / static_cast<float>(controlPeriod_);
+        }
     }
 
-    for (std::size_t output = 0;
-         output < NeuralModel::amplitudeOutputSize; ++output)
+    for (std::size_t output = 0; output < renderAmplitudeCount; ++output)
     {
         if (firstControlFrame)
         {
@@ -544,12 +836,17 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                         ? 1 : controlPeriod_;
                 }
 
-                for (std::size_t output = 0;
-                     output < NeuralModel::amplitudeOutputSize; ++output)
+                const auto advanceAmplitude = [&voice](std::size_t output) noexcept
                 {
                     voice.amplitudes[output] = std::max(0.0f,
                         voice.amplitudes[output] + voice.amplitudeSteps[output]);
-                }
+                };
+                for (std::size_t harmonic = 0;
+                     harmonic < voice.activeHarmonicCount; ++harmonic)
+                    advanceAmplitude(harmonic);
+                for (std::size_t output = airOutputOffset;
+                     output < renderAmplitudeCount; ++output)
+                    advanceAmplitude(output);
                 voice.pitchRatio = std::clamp(
                     voice.pitchRatio + voice.pitchRatioStep, 0.75f, 1.35f);
                 --voice.controlCountdown;
@@ -563,16 +860,14 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                     * voice.transpositionRatio * voice.pitchRatio;
                 float coreSample = 0.0f;
                 for (std::size_t harmonic = 0;
-                     harmonic < NeuralModel::harmonicCount; ++harmonic)
+                     harmonic < voice.activeHarmonicCount; ++harmonic)
                 {
                     const float harmonicNumber = static_cast<float>(harmonic + 1);
                     const float frequency = fundamentalHz * harmonicNumber;
                     if (frequency < 0.49f * static_cast<float>(sampleRate_))
                     {
-                        const float antialias = std::clamp(
-                            (0.49f * static_cast<float>(sampleRate_) - frequency)
-                                / (0.06f * static_cast<float>(sampleRate_)),
-                            0.0f, 1.0f);
+                        const float antialias = coreNyquistGain(
+                            frequency, static_cast<float>(sampleRate_));
                         coreSample += voice.amplitudes[harmonic] * antialias
                             * sine(voice.harmonicPhases[harmonic]);
                     }
@@ -584,7 +879,7 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                 float airSample = 0.0f;
                 for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
                 {
-                    const std::size_t output = NeuralModel::harmonicCount + band;
+                    const std::size_t output = airOutputOffset + band;
                     airSample += voice.amplitudes[output]
                         * voice.airFilters[band].tick(
                             nextNoise(voice.airNoiseStates[band]));
@@ -593,10 +888,13 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                 float boneSample = 0.0f;
                 for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
                 {
-                    const std::size_t output = NeuralModel::harmonicCount
-                        + NeuralModel::airBandCount + mode;
+                    const std::size_t output = boneOutputOffset + mode;
                     boneSample += voice.amplitudes[output]
                         * sine(voice.bonePhases[mode]);
+                    voice.boneFrequenciesHz[mode] = std::clamp(
+                        voice.boneFrequenciesHz[mode]
+                            + voice.boneFrequencySteps[mode],
+                        10.0f, 0.49f * static_cast<float>(sampleRate_));
                     voice.bonePhases[mode] = wrapUnit(voice.bonePhases[mode]
                         + voice.boneFrequenciesHz[mode] * inverseSampleRate_);
                 }
@@ -634,12 +932,12 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                 tail.clear();
         }
 
-        const auto saturate = [gain = parameters.outputGain](float value) noexcept
+        const auto finishOutput = [gain = parameters.outputGain](float value) noexcept
         {
-            return std::tanh(finiteOr(gain * value, 0.0f));
+            return guardFiniteOutput(gain * value);
         };
-        outputLeft = saturate(outputLeft);
-        outputRight = saturate(outputRight);
+        outputLeft = finishOutput(outputLeft);
+        outputRight = finishOutput(outputRight);
 
         if (left != nullptr)
             left[sample] = outputLeft;

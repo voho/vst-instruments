@@ -91,7 +91,7 @@ Neuramar exposes 13 host parameters: eleven continuous front-panel controls,
 | **Gravity** | -100% to +100%; tilts the reconstructed spectrum from darker to brighter. |
 | **Memory** | 0.25x–4.00x; changes how quickly a note travels through the learned time evolution. |
 | **Mutation** | 0–100%; adds bounded, voice-local movement around the learned character. |
-| **Awaken** | 1 ms–2 s; shapes the performance attack. |
+| **Awaken** | 0–2 s; at zero, preserves the learned attack; higher values add a performance fade-in. |
 | **Dissolve** | 20 ms–8 s; shapes the performance release. |
 | **Horizon** | 0–100%; widens voices across the stereo field. |
 | **Output** | -24 to +6 dB; sets the final level. |
@@ -113,43 +113,72 @@ and the real-time constraints of a polyphonic plug-in. It is not trained
 end-to-end through a differentiable renderer:
 
 - a multi-window YIN-style difference-function detector rejects weak
-  periodicity estimates, aligns octave-related candidates in log frequency,
-  and checks half/current/double-root hypotheses using harmonic support;
+  periodicity estimates, prefers deep periodic minima before its looser noisy
+  fallback, aligns octave-related candidates in log frequency, and changes
+  octave only when compressed, distributed harmonic support materially beats
+  the coherent YIN result;
 - a constrained local autocorrelation track can retain sufficiently stable
   bends, slow vibrato, and glide around that root, and drives pitch-tracked
   harmonic-coordinate analysis;
-- 96 spectral frames at a fixed 48 kHz analysis rate use pitch-adaptive
-  512–4096-sample Hann apertures targeting four root periods (bounded at the
-  lowest accepted pitches) to retain Core and Air attacks without sacrificing
-  low-note resolution; a parallel 4096-sample residual supplies the steadier
-  evidence used for six persistence-scored Bone candidates;
+- 128 spectral frames at a fixed 48 kHz analysis rate reserve 48 strictly
+  ordered physical-time observations for the first 120 ms, then cover sustain
+  and decay; pitch-adaptive 512–4096-sample Hann apertures target four root
+  periods (bounded at the lowest accepted pitches) to retain Core and Air
+  attacks without sacrificing low-note resolution; a parallel 4096-sample
+  residual supplies the steadier evidence used for six persistence-scored Bone
+  candidates;
 - residual power, excluding active Bone neighbourhoods, is accumulated into 48
   log-frequency cells; a deterministic non-negative solver then fits eight
   overlapping log-spaced Air bands against the analytic power response of the
   same normalized biquads used by the renderer;
 - deterministic Adam optimization fits a 32-unit, time-conditioned neural
   controller with polynomial, Fourier, and onset-aware inputs to the low-rate
-  log-amplitude targets;
+  log-amplitude targets; a bounded 128-frame `int16` correction trajectory then
+  restores fast and irregular detail omitted by the smooth neural base without
+  adding allocation or locks to evaluation;
 - **Core** renders the learned harmonic distribution at each played MIDI pitch,
   **Air** drives an independent deterministic white-noise stream through each
   fitted band, and **Bone** renders only candidate modes that remain locally
   prominent across the sound, all with learned amplitude trajectories;
+- the compact 64-partial neural Core can drive an adaptive 256-oscillator
+  runtime bank; Body Lock separates a smooth fixed-frequency envelope from its
+  complementary harmonic-index excitation residual, so odd/even and reed-like
+  character follows the played harmonic while resonances remain source-like;
+  lower notes use only observed envelope evidence on their denser grid, while
+  version-2 learned states retain exact decoder/model-evaluation compatibility;
+- fractional Body-Locked coordinates use a positive, local, shape-preserving
+  cubic in a log-like magnitude domain; learned harmonics remain exact, sharp
+  spectral turns cannot overshoot, and the evidence-boundary fades stay linear
+  so very low notes do not lose their first virtual partials;
+- circular onset-phase mapping, a smooth capacity edge, and bounded
+  post-Nyquist power normalization keep wide transpositions coherent and avoid
+  large register-dependent level jumps; the full-Imprint learned path does not
+  invent out-of-range energy, and lower Imprint fades virtual Body-Locked
+  harmonics outside the learned envelope toward silence;
 - each Air filter is normalized to unit expected RMS for its noise input, and a
   smooth gain taper prevents transposed or brightened bands from accumulating at
   the host Nyquist edge;
+- the final output uses the host's floating-point headroom and remains linear
+  at ordinary operating levels; only a pathological ±7.95 guard is
+  retained, avoiding the folded high-register harmonics produced by an
+  always-on base-rate saturator;
 - each voice owns its envelope, phase, note age, per-band noise, and variation
   state, while controller outputs are forward-interpolated between low-rate
   evaluations so a learned target is reached at the time it describes.
 
 The current engine has a fixed ceiling of eight synthesis voices. It evaluates
-the controller at control rate and interpolates its parameters while the
-oscillators, filters, envelopes, and note handling remain in the audio path.
+the controller, spectral-envelope mapping, and register normalization at control
+rate and interpolates their parameters while the oscillators, filters,
+envelopes, and note handling remain in the audio path.
 
 The representation is deliberately structured rather than a raw-waveform
 generator. Explicit pitch and oscillator priors make one-note extrapolation
 possible and keep inference bounded. The rationale, primary papers, claims
 boundary, and future quality path are documented in
 [`Docs/neural-synthesis-research.md`](Docs/neural-synthesis-research.md).
+The preregistered competitor set, held-out corpus, objective targets, and blind
+listening acceptance rule are specified separately in
+[`Docs/resynthesis-quality-benchmark.md`](Docs/resynthesis-quality-benchmark.md).
 
 ## Scientific scope and limitations
 

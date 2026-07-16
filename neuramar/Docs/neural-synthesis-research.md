@@ -48,6 +48,46 @@ phase-continuous oscillators. This preserves a simple antialiasing boundary and
 allows a continuous `Body Lock` control between absolute-frequency resonances
 and pitch-following harmonic identity.
 
+That control follows the source-filter motivation in
+[Schwarz and Rodet's spectral-envelope work](https://quod.lib.umich.edu/i/icmc/bbp2372.1999.417?rgn=main;view=fulltext): preserving an envelope in absolute
+frequency can retain source-like resonances while harmonic fine structure moves
+with pitch. At each control frame, Neuramar separates the learned magnitudes
+into a short power-smoothed envelope and the complementary harmonic-index
+excitation residual. Their product remains exact at every observed root-note
+partial. When Body Lock moves a note, odd/even, reed, and bow-like excitation
+character therefore stays attached to harmonic index while only the smooth
+envelope is read in absolute-frequency coordinates. The magnitude crossfade is
+performed in a `log1p`-companded domain rather than linear amplitude.
+
+This compact factorisation is a stable one-note synthesis prior, not a claim
+that a unique physical filter has been recovered. A single note cannot reveal
+the filter between every excited partial, and virtual partials beyond the 64th
+use a neutral excitation residual rather than an invented repeating pattern.
+At runtime Neuramar also circularly interpolates onset phases and samples only
+coordinates inside the observed envelope. Magnitude resampling uses a local
+`log1p`-companded monotone cubic: log-amplitude interpolation between sinusoidal
+peaks has direct precedent in spectral-envelope work by
+[Jensen and Hansen](https://crss.utdallas.edu/Publications/Jensen2001.pdf), while
+the slope limiting follows the local shape-preserving construction of
+[Fritsch and Butland](https://doi.org/10.1137/0905021). Every measured harmonic
+is an exact knot, each fractional value remains between its two neighbours, and
+a sharp learned resonance cannot make a ringing overshoot elsewhere. The
+compander remains linear near true silence, avoiding the artificial floor of a
+plain logarithm. This is a smooth interpolation prior; it cannot reconstruct
+spectral evidence that the supplied note never contained.
+
+Below the first coordinate and above the 64th, the previous amplitude-linear
+shoulders remain intact. In particular, a log fade from zero would suppress the
+fractional low-edge partials needed by notes below the source. The low edge
+also retains a bounded fundamental anchor. A 256-slot adaptive oscillator bank
+therefore restores the complete observed bandwidth as far as two octaves down,
+without expanding the neural controller or serialized state. Pitch-follow mode
+never fabricates those virtual partials, and strict Body Lock at full Imprint
+fades coordinates above the observed envelope instead of reverting to unbounded
+pitch-following energy. Inside the learned 64-partial range, lower Imprint
+crossfades toward Dream's synthetic neutral harmonic slope; outside that range,
+it fades the Body-Locked virtual extension toward silence.
+
 The non-harmonic branch follows the motivation of
 [NoiseBandNet](https://arxiv.org/abs/2307.08007): narrow, explicit noise bands
 can represent breath, scrape, bow noise, and attacks more faithfully than one
@@ -91,9 +131,12 @@ that the analyser has identified physical eigenmodes.
    the analyzed duration.
 2. **Find the root before fitting** — estimate candidate fundamentals across
    several window sizes and note regions with YIN's cumulative-mean normalized
-   difference function, reject weak periodicity estimates, align octave-related
-   candidates in log frequency, and score half/current/double-root hypotheses
-   using harmonic support. The mathematical basis is
+   difference function, prefer a genuinely deep periodic minimum before using
+   the looser noisy-signal threshold, align octave-related candidates in log
+   frequency, and score half/current/double-root hypotheses using compressed,
+   distributed harmonic support. An octave hypothesis must materially beat the
+   coherent YIN estimate rather than win on one loud overtone. The mathematical
+   basis is
    [de Cheveigne and Kawahara, 2002](https://pubmed.ncbi.nlm.nih.gov/12002874/).
 3. **Track and factor the sound** — follow a constrained local pitch contour
    around the root; at each frame, use pitch-adaptive weighted cosine/sine least
@@ -105,10 +148,15 @@ that the analyser has identified physical eigenmodes.
    log-frequency cells. Fit non-negative Air powers to the exact analytic
    response of the shared eight-band runtime filterbank, then learn all
    trajectories over normalized note age.
-4. **Fit a temporal neural field** — deterministic Adam optimization trains a
-   compact Fourier-feature multilayer perceptron on log-amplitude targets.
-   Physical-time exponential features give the onset extra resolution. The
-   fixed periodic input mapping follows the motivation of
+4. **Fit a temporal neural field and bounded detail correction** — deterministic
+   Adam optimization trains a compact Fourier-feature multilayer perceptron on
+   log-amplitude targets. Analysis uses 128 strictly ordered times: 48 cover the
+   first 120 ms in physical time and 80 cover sustain and decay. After fitting,
+   per-output `int16` residual keyframes correct detail omitted by the smooth
+   neural base. The decoder interpolates raw log-amplitude and pitch corrections
+   at control rate without allocating. Physical-time exponential features give
+   the onset extra resolution. The fixed periodic input mapping follows the
+   motivation of
    [Fourier Features](https://arxiv.org/abs/2006.10739). Neuramar uses ordinary
    tanh hidden units rather than the sinusoidal activations proposed by
    [SIREN](https://arxiv.org/abs/2006.09661), and inference is deliberately at
@@ -117,10 +165,11 @@ that the analyser has identified physical eigenmodes.
    model at an audio block boundary. No decoding, FFT, fitting, allocation, or
    file access occurs in the render loop.
 
-The learned state stores model coefficients and analysis metadata, not the
-source recording or a source path. Sessions therefore recall the instrument
-without depending on an external file, while remaining far smaller than an
-embedded sample.
+The learned state stores model coefficients, quantized trajectory corrections,
+and analysis metadata, not the source recording or a source path. Version 3
+models remain small (about 35 KiB for the current representation), while the
+strict decoder retains an exact zero-correction path for version 2 state.
+Sessions therefore recall the instrument without depending on an external file.
 
 ## Runtime model
 
@@ -139,16 +188,38 @@ Air band.
   across band centre and ordinary host sample rates.
 - **Bone** renders persistence-selected inharmonic candidates when the model
   contains them; inactive candidate slots contribute nothing.
-- **Body Lock** interpolates between fixed-frequency resonances and a spectrum
-  that follows the played pitch.
+- **Body Lock** interpolates between a pitch-following spectrum and a
+  source/filter factorization whose excitation follows harmonic index while its
+  smooth resonances remain in absolute frequency.
 - **Imprint / Dream** trades strict reconstruction for a smoother, more fluid
   interpretation of the learned field.
 - **Memory** changes traversal speed; **Orbit** revisits a stable region while a
   note is held.
 
+The Core renderer also separates spectral shape from register level. This is
+motivated by the harmonic-oscillator factorization in
+[DDSP, section 3.1](https://arxiv.org/abs/2001.04643), whose implementation
+removes above-Nyquist harmonics and then
+[normalizes the surviving distribution](https://github.com/magenta/ddsp/blob/main/ddsp/core.py#L784-L794).
+Neuramar preserves its absolute root-note partial amplitudes, computes the
+expected squared power of that audible reference and of the mapped/tapered
+register, then applies a control-rate-smoothed correction bounded to -6/+4 dB.
+The squared-power form matches independently phased sinusoidal RMS; the bound
+prevents missing evidence from turning into an excessive boost.
+
+Core partials retain their smooth 0.43-to-0.49-sample-rate Nyquist taper. The
+mixed output uses floating-point host headroom and remains linear at ordinary
+operating levels; only a pathological ±7.95 finite-output guard remains.
+Avoiding a base-rate waveshaper is important at high pitch: otherwise newly
+generated nonlinear harmonics can fold below Nyquist even though every source
+oscillator is band-limited. This aliasing mechanism and antialiased alternatives
+are analysed by
+[Parker, Zavalishin, and Le Bivic](https://www.dafx.de/paper-archive/2016/dafxpapers/20-DAFx-16_paper_41-PN.pdf).
+
 Analysis and rendering share the same Air coefficient and response equations.
-When transposition or `Gravity` moves a band toward a host's upper frequency
-limit, its gain tapers smoothly to zero by 0.45 times the sample rate. This
+When transposition, the learned pitch contour, or `Gravity` moves a band toward
+a host's upper frequency limit, its gain tapers smoothly to zero by 0.45 times
+the sample rate. This
 prevents several out-of-range bands from being clamped onto one Nyquist-edge
 frequency. It also means that a low-rate host deliberately loses Air content it
 cannot represent.
@@ -184,9 +255,10 @@ octave errors to destabilize synthesis.
 
 The current representation leaves a clean upgrade route: joint rather than
 sequential sinusoidal estimation, confidence-aware residual subtraction,
-continuous peak tracking with robust modal decay fits, denser or multirate Air
-filterbanks, mipmapped dynamic wavetables, perceptual multi-resolution losses,
-an optional small legally-clean pitch model, SIMD matrix inference, and a
-user-trainable local prior library. Any upgrade must retain the
+continuous peak tracking with robust modal decay fits, a more rigorous
+F0-adaptive/minimum-phase envelope, denser or multirate Air filterbanks,
+mipmapped dynamic wavetables, perceptual multi-resolution losses, an optional
+small legally-clean pitch model, SIMD matrix inference, and a user-trainable
+local prior library. Any upgrade must retain the
 offline/real-time boundary, bounded state decoding, deterministic fallback, and
 model-version migration.

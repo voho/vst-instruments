@@ -43,6 +43,7 @@ set(NEURAMAR_DSP_HEADERS
     Source/DSP/AirFilterbank.h
     Source/DSP/NeuralModel.h
     Source/DSP/SampleLearner.h
+    Source/DSP/SpectralEnvelope.h
     Source/DSP/NeuramarEngine.h)
 
 add_library(NeuramarDSP STATIC
@@ -143,14 +144,31 @@ if(BUILD_TESTING)
 
     add_test(NAME Neuramar.NeuralEngine COMMAND NeuramarEngineTests)
     # Sanitizers make training and high-rate render fixtures substantially
-    # slower. Preserve the same coverage while retaining a tight normal guard.
+    # slower. The universal macOS ASan/UBSan configuration has been observed to
+    # take roughly 18 minutes after the full 128-frame quality suite, while a
+    # native arm64 sanitizer build remains much faster.
     if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
-        set(NEURAMAR_ENGINE_TEST_TIMEOUT 600)
+        set(NEURAMAR_ENGINE_TEST_TIMEOUT 1800)
     else()
         set(NEURAMAR_ENGINE_TEST_TIMEOUT 30)
     endif()
     set_tests_properties(Neuramar.NeuralEngine PROPERTIES
         TIMEOUT ${NEURAMAR_ENGINE_TEST_TIMEOUT})
+
+    add_executable(NeuramarResynthesisQualityTests
+        Tests/ResynthesisQualityTests.cpp)
+    target_link_libraries(NeuramarResynthesisQualityTests PRIVATE NeuramarDSP)
+    target_compile_features(NeuramarResynthesisQualityTests PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(NeuramarResynthesisQualityTests PRIVATE
+            /W4 /permissive-)
+    else()
+        target_compile_options(NeuramarResynthesisQualityTests PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME Neuramar.ResynthesisQuality
+        COMMAND NeuramarResynthesisQualityTests)
+    set_tests_properties(Neuramar.ResynthesisQuality PROPERTIES TIMEOUT 60)
 
     if(NEURAMAR_BUILD_PLUGIN)
         add_executable(NeuramarPluginProcessorTests Tests/PluginProcessorTests.cpp)

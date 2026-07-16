@@ -29,6 +29,17 @@ public:
             bytes.push_back(static_cast<std::uint8_t>((value >> shift) & 0xffu));
     }
 
+    void writeU16(std::uint16_t value)
+    {
+        for (int shift = 0; shift < 16; shift += 8)
+            bytes.push_back(static_cast<std::uint8_t>((value >> shift) & 0xffu));
+    }
+
+    void writeI16(std::int16_t value)
+    {
+        writeU16(std::bit_cast<std::uint16_t>(value));
+    }
+
     void writeI32(std::int32_t value)
     {
         writeU32(std::bit_cast<std::uint32_t>(value));
@@ -66,6 +77,26 @@ public:
         destination = 0;
         for (int shift = 0; shift < 32; shift += 8)
             destination |= static_cast<std::uint32_t>(bytes[position++]) << shift;
+        return true;
+    }
+
+    [[nodiscard]] bool readU16(std::uint16_t& destination) noexcept
+    {
+        if (remaining() < 2)
+            return false;
+
+        destination = 0;
+        for (int shift = 0; shift < 16; shift += 8)
+            destination |= static_cast<std::uint16_t>(bytes[position++]) << shift;
+        return true;
+    }
+
+    [[nodiscard]] bool readI16(std::int16_t& destination) noexcept
+    {
+        std::uint16_t bits = 0;
+        if (!readU16(bits))
+            return false;
+        destination = std::bit_cast<std::int16_t>(bits);
         return true;
     }
 
@@ -163,8 +194,9 @@ void setError(std::string* error, const char* message)
 }
 } // namespace
 
-void NeuralModel::evaluate(float normalisedTime,
-                           SynthesisFrame& destination) const noexcept
+void NeuralModel::evaluateBaseRaw(
+    float normalisedTime,
+    std::array<float, outputSize>& destination) const noexcept
 {
     const float time = std::clamp(
         std::isfinite(normalisedTime) ? normalisedTime : 0.0f, 0.0f, 1.0f);
@@ -192,19 +224,70 @@ void NeuralModel::evaluate(float normalisedTime,
         hidden[unit] = std::tanh(activation);
     }
 
-    std::array<float, outputSize> decodedOutputs {};
     for (std::size_t output = 0; output < outputSize; ++output)
     {
         float normalised = outputBiases_[output];
         for (std::size_t unit = 0; unit < hiddenSize; ++unit)
             normalised += outputWeights_[output * hiddenSize + unit] * hidden[unit];
 
-        const float decoded = outputMeans_[output]
+        destination[output] = outputMeans_[output]
             + outputScales_[output] * normalised;
-        decodedOutputs[output] = output < amplitudeOutputSize
-            ? std::exp(std::clamp(decoded, -16.0f, 1.5f))
-            : decoded;
     }
+}
+
+void NeuralModel::evaluate(float normalisedTime,
+                           SynthesisFrame& destination) const noexcept
+{
+    const float time = std::clamp(
+        std::isfinite(normalisedTime) ? normalisedTime : 0.0f, 0.0f, 1.0f);
+    std::array<float, outputSize> decodedOutputs {};
+    evaluateBaseRaw(time, decodedOutputs);
+
+    if (residualKeyframeCount_ > 0)
+    {
+        std::size_t first = 0;
+        std::size_t last = residualKeyframeCount_;
+        while (first < last)
+        {
+            const std::size_t middle = first + (last - first) / 2;
+            if (residualTimes_[middle] < time)
+                first = middle + 1;
+            else
+                last = middle;
+        }
+        std::size_t upper = first;
+
+        std::size_t lower = upper;
+        float fraction = 0.0f;
+        if (upper == residualKeyframeCount_)
+        {
+            upper = residualKeyframeCount_ - 1;
+            lower = upper;
+        }
+        else if (upper > 0 && residualTimes_[upper] != time)
+        {
+            lower = upper - 1;
+            const float interval = residualTimes_[upper] - residualTimes_[lower];
+            fraction = interval > 0.0f
+                ? (time - residualTimes_[lower]) / interval : 0.0f;
+        }
+
+        constexpr float inverseQuantisation = 1.0f / 32767.0f;
+        for (std::size_t output = 0; output < outputSize; ++output)
+        {
+            const float first = static_cast<float>(
+                residualValues_[lower * outputSize + output]);
+            const float second = static_cast<float>(
+                residualValues_[upper * outputSize + output]);
+            const float interpolated = first + fraction * (second - first);
+            decodedOutputs[output] += residualScales_[output]
+                * interpolated * inverseQuantisation;
+        }
+    }
+
+    for (std::size_t output = 0; output < amplitudeOutputSize; ++output)
+        decodedOutputs[output] = std::exp(
+            std::clamp(decodedOutputs[output], -16.0f, 1.5f));
 
     std::copy_n(decodedOutputs.begin(), harmonicCount,
                 destination.harmonicAmplitudes.begin());
@@ -248,6 +331,13 @@ std::vector<std::uint8_t> NeuralModel::serialize() const
     writeFloats(payload, hiddenBiases_);
     writeFloats(payload, outputWeights_);
     writeFloats(payload, outputBiases_);
+    payload.writeU32(residualKeyframeCount_);
+    writeFloats(payload, residualScales_);
+    for (std::size_t frame = 0; frame < residualKeyframeCount_; ++frame)
+        payload.writeFloat(residualTimes_[frame]);
+    for (std::size_t frame = 0; frame < residualKeyframeCount_; ++frame)
+        for (std::size_t output = 0; output < outputSize; ++output)
+            payload.writeI16(residualValues_[frame * outputSize + output]);
 
     BinaryWriter complete(headerBytes + payload.bytes.size());
     complete.writeU32(modelMagic);
@@ -288,7 +378,7 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
         setError(error, "Not a Neuramar model");
         return nullptr;
     }
-    if (version != currentFormatVersion)
+    if (version != legacyFormatVersion && version != currentFormatVersion)
     {
         setError(error, "Unsupported Neuramar model version");
         return nullptr;
@@ -340,11 +430,58 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
         || !readFloats(reader, model->inputWeights_)
         || !readFloats(reader, model->hiddenBiases_)
         || !readFloats(reader, model->outputWeights_)
-        || !readFloats(reader, model->outputBiases_)
-        || reader.remaining() != 0)
+        || !readFloats(reader, model->outputBiases_))
     {
         setError(error, "Neuramar model payload is truncated or malformed");
         return nullptr;
+    }
+
+    if (version == legacyFormatVersion)
+    {
+        // Version 2 ends after the neural base. Its correction state remains
+        // value-initialised to zero so rendering follows the original path.
+        if (reader.remaining() != 0)
+        {
+            setError(error, "Neuramar version-2 payload has trailing data");
+            return nullptr;
+        }
+    }
+    else
+    {
+        std::uint32_t keyframeCount = 0;
+        if (!reader.readU32(keyframeCount)
+            || keyframeCount > maximumResidualKeyframes
+            || !readFloats(reader, model->residualScales_))
+        {
+            setError(error, "Neuramar residual header is truncated or malformed");
+            return nullptr;
+        }
+        model->residualKeyframeCount_ = keyframeCount;
+        for (std::size_t frame = 0; frame < keyframeCount; ++frame)
+        {
+            if (!reader.readFloat(model->residualTimes_[frame]))
+            {
+                setError(error, "Neuramar residual times are truncated");
+                return nullptr;
+            }
+        }
+        for (std::size_t frame = 0; frame < keyframeCount; ++frame)
+        {
+            for (std::size_t output = 0; output < outputSize; ++output)
+            {
+                if (!reader.readI16(
+                        model->residualValues_[frame * outputSize + output]))
+                {
+                    setError(error, "Neuramar residual values are truncated");
+                    return nullptr;
+                }
+            }
+        }
+        if (reader.remaining() != 0)
+        {
+            setError(error, "Neuramar version-3 payload has trailing data");
+            return nullptr;
+        }
     }
 
     metadata.rootMidiNote = static_cast<int>(rootMidi);
@@ -413,7 +550,36 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
         && finiteAndBounded(model->outputWeights_, 100.0f)
         && finiteAndBounded(model->outputBiases_, 100.0f);
 
-    if (!metadataValid || !scalesValid || !airValid || !boneValid || !arraysValid)
+    bool residualsValid = true;
+    for (const auto scale : model->residualScales_)
+    {
+        residualsValid = residualsValid && std::isfinite(scale)
+            && scale >= 0.0f && scale <= maximumResidualScale;
+    }
+    for (std::size_t frame = 0;
+         frame < model->residualKeyframeCount_; ++frame)
+    {
+        const float time = model->residualTimes_[frame];
+        residualsValid = residualsValid && std::isfinite(time)
+            && time >= 0.0f && time <= 1.0f
+            && (frame == 0 || time > model->residualTimes_[frame - 1]);
+        for (std::size_t output = 0; output < outputSize; ++output)
+        {
+            const auto value = model->residualValues_[frame * outputSize + output];
+            residualsValid = residualsValid
+                && value != std::numeric_limits<std::int16_t>::min()
+                && (model->residualScales_[output] > 0.0f || value == 0);
+        }
+    }
+    if (model->residualKeyframeCount_ == 0)
+    {
+        residualsValid = residualsValid && std::all_of(
+            model->residualScales_.begin(), model->residualScales_.end(),
+            [](float scale) { return scale == 0.0f; });
+    }
+
+    if (!metadataValid || !scalesValid || !airValid || !boneValid
+        || !arraysValid || !residualsValid)
     {
         setError(error, "Neuramar model contains invalid or unsafe values");
         return nullptr;

@@ -5,15 +5,17 @@
 
 namespace
 {
-constexpr auto background = 0xff061014u;
-constexpr auto panel = 0xff0c1c21u;
-constexpr auto panelRaised = 0xff10272du;
-constexpr auto ink = 0xffdcefebu;
-constexpr auto muted = 0xff6f8f8bu;
-constexpr auto mint = 0xff61f4c5u;
-constexpr auto violet = 0xff9d86ffu;
-constexpr auto coral = 0xffff7467u;
-constexpr auto amber = 0xffffce73u;
+constexpr auto background = 0xff050d10u;
+constexpr auto backgroundDeep = 0xff02080au;
+constexpr auto panel = 0xff0a181bu;
+constexpr auto panelRaised = 0xff102427u;
+constexpr auto ink = 0xffe1eee9u;
+constexpr auto muted = 0xff829b96u;
+constexpr auto mint = 0xff72e8beu;
+constexpr auto violet = 0xffa99ae8u;
+constexpr auto coral = 0xffe9786eu;
+constexpr auto clay = 0xffd99572u;
+constexpr auto amber = 0xffe8c577u;
 
 juce::Colour colour (juce::uint32 argb)
 {
@@ -28,15 +30,119 @@ juce::Font font (float height, bool bold = false)
     return juce::Font (options);
 }
 
+void drawOrganicField (juce::Graphics& g, juce::Rectangle<float> bounds)
+{
+    juce::ColourGradient base (colour (0xff09191cu), bounds.getTopLeft(),
+                               colour (backgroundDeep), bounds.getBottomRight(), false);
+    base.addColour (0.46, colour (0xff061216u));
+    g.setGradientFill (base);
+    g.fillRect (bounds);
+
+    const auto drawBloom = [&g, bounds] (juce::Colour bloom,
+                                         float x, float y, float radius,
+                                         float opacity)
+    {
+        const auto centre = juce::Point<float> (bounds.getX() + bounds.getWidth() * x,
+                                                bounds.getY() + bounds.getHeight() * y);
+        juce::ColourGradient gradient (bloom.withAlpha (opacity), centre.x, centre.y,
+                                      bloom.withAlpha (0.0f), centre.x + radius,
+                                      centre.y, true);
+        g.setGradientFill (gradient);
+        g.fillRect (bounds);
+    };
+
+    drawBloom (colour (mint), 0.17f, 0.04f, bounds.getWidth() * 0.56f, 0.085f);
+    drawBloom (colour (violet), 0.94f, 0.31f, bounds.getWidth() * 0.46f, 0.052f);
+    drawBloom (colour (clay), 0.54f, 1.04f, bounds.getWidth() * 0.42f, 0.025f);
+
+    static constexpr std::array<float, 6> contourHeights {
+        0.12f, 0.205f, 0.315f, 0.475f, 0.66f, 0.84f
+    };
+    for (std::size_t index = 0; index < contourHeights.size(); ++index)
+    {
+        const auto y = bounds.getY() + bounds.getHeight() * contourHeights[index];
+        const auto phase = static_cast<float> (index);
+        juce::Path contour;
+        contour.startNewSubPath (bounds.getX() - bounds.getWidth() * 0.06f, y);
+        contour.cubicTo (bounds.getX() + bounds.getWidth() * 0.18f,
+                         y - bounds.getHeight() * (0.055f + 0.009f * phase),
+                         bounds.getX() + bounds.getWidth() * 0.36f,
+                         y + bounds.getHeight() * (0.042f - 0.004f * phase),
+                         bounds.getX() + bounds.getWidth() * 0.56f,
+                         y - bounds.getHeight() * 0.018f);
+        contour.cubicTo (bounds.getX() + bounds.getWidth() * 0.74f,
+                         y - bounds.getHeight() * (0.060f - 0.004f * phase),
+                         bounds.getX() + bounds.getWidth() * 0.90f,
+                         y + bounds.getHeight() * (0.040f + 0.003f * phase),
+                         bounds.getRight() + bounds.getWidth() * 0.05f,
+                         y - bounds.getHeight() * 0.025f);
+        const auto contourColour = index % 3 == 1 ? colour (violet) : colour (mint);
+        g.setColour (contourColour.withAlpha (0.022f + 0.004f
+                                               * static_cast<float> (index % 2)));
+        g.strokePath (contour, juce::PathStrokeType (
+            index == 0 || index == contourHeights.size() - 1 ? 1.15f : 0.75f,
+            juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    juce::ColourGradient vignette (juce::Colours::transparentBlack,
+                                    bounds.getCentreX(), bounds.getCentreY(),
+                                    colour (backgroundDeep).withAlpha (0.54f),
+                                    bounds.getRight(), bounds.getBottom(), true);
+    vignette.addColour (0.68, colour (backgroundDeep).withAlpha (0.03f));
+    g.setGradientFill (vignette);
+    g.fillRect (bounds);
+}
+
 void drawPanel (juce::Graphics& g, juce::Rectangle<float> bounds,
                 float corner = 18.0f)
 {
-    g.setColour (juce::Colours::black.withAlpha (0.34f));
-    g.fillRoundedRectangle (bounds.translated (0.0f, 3.0f), corner);
-    g.setColour (colour (panel));
+    for (int layer = 3; layer >= 1; --layer)
+    {
+        const auto spread = static_cast<float> (layer) * 1.25f;
+        g.setColour (juce::Colours::black.withAlpha (0.025f
+                                                      * static_cast<float> (4 - layer)));
+        g.fillRoundedRectangle (bounds.expanded (spread)
+                                    .translated (0.0f, 1.2f + spread * 0.55f),
+                                corner + spread);
+    }
+
+    juce::ColourGradient surface (colour (0xff11272au).withAlpha (0.95f),
+                                  bounds.getX(), bounds.getY(),
+                                  colour (0xff071417u).withAlpha (0.97f),
+                                  bounds.getRight(), bounds.getBottom(), false);
+    surface.addColour (0.52, colour (panel).withAlpha (0.96f));
+    g.setGradientFill (surface);
     g.fillRoundedRectangle (bounds, corner);
-    g.setColour (colour (mint).withAlpha (0.10f));
-    g.drawRoundedRectangle (bounds.reduced (0.5f), corner, 1.0f);
+
+    juce::ColourGradient mineralGlow (colour (mint).withAlpha (0.032f),
+                                      bounds.getX() + bounds.getWidth() * 0.12f,
+                                      bounds.getY() + bounds.getHeight() * 0.08f,
+                                      colour (mint).withAlpha (0.0f),
+                                      bounds.getX() + bounds.getWidth() * 0.72f,
+                                      bounds.getY() + bounds.getHeight() * 0.74f, true);
+    g.setGradientFill (mineralGlow);
+    g.fillRoundedRectangle (bounds, corner);
+
+    juce::Path vein;
+    vein.startNewSubPath (bounds.getX() - bounds.getWidth() * 0.04f,
+                          bounds.getY() + bounds.getHeight() * 0.62f);
+    vein.cubicTo (bounds.getX() + bounds.getWidth() * 0.24f,
+                  bounds.getY() + bounds.getHeight() * 0.43f,
+                  bounds.getX() + bounds.getWidth() * 0.52f,
+                  bounds.getY() + bounds.getHeight() * 0.76f,
+                  bounds.getRight() + bounds.getWidth() * 0.04f,
+                  bounds.getY() + bounds.getHeight() * 0.48f);
+    g.setColour (colour (mint).withAlpha (0.016f));
+    g.strokePath (vein, juce::PathStrokeType (13.0f, juce::PathStrokeType::curved,
+                                              juce::PathStrokeType::rounded));
+    g.setColour (colour (ink).withAlpha (0.024f));
+    g.strokePath (vein, juce::PathStrokeType (0.65f, juce::PathStrokeType::curved,
+                                              juce::PathStrokeType::rounded));
+
+    g.setColour (colour (ink).withAlpha (0.055f));
+    g.drawRoundedRectangle (bounds.reduced (0.65f), corner, 0.8f);
+    g.setColour (colour (mint).withAlpha (0.070f));
+    g.drawRoundedRectangle (bounds.reduced (1.35f), corner - 0.5f, 0.65f);
 }
 } // namespace
 
@@ -66,56 +172,148 @@ void NeuramarLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y,
                                              float rotaryEndAngle,
                                              juce::Slider& slider)
 {
-    const auto diameter = static_cast<float> (std::min (width, height)) - 12.0f;
-    const auto bounds = juce::Rectangle<float> (static_cast<float> (x), static_cast<float> (y),
-                                                static_cast<float> (width), static_cast<float> (height))
-                            .withSizeKeepingCentre (diameter, diameter);
+    const auto available = static_cast<float> (std::min (width, height));
+    if (available <= 20.0f)
+        return;
+
+    const auto value = juce::jlimit (0.0f, 1.0f,
+        std::isfinite (sliderPos) ? sliderPos : 0.0f);
+    const auto diameter = available - juce::jlimit (9.0f, 15.0f, available * 0.12f);
+    const auto bounds = juce::Rectangle<float> (diameter, diameter).withCentre ({
+        static_cast<float> (x) + static_cast<float> (width) * 0.5f,
+        static_cast<float> (y) + static_cast<float> (height) * 0.5f });
     const auto centre = bounds.getCentre();
-    const auto radius = bounds.getWidth() * 0.5f;
-    const auto angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
+    const auto radius = diameter * 0.5f;
+    const auto angle = rotaryStartAngle + value * (rotaryEndAngle - rotaryStartAngle);
+    const auto enabled = slider.isEnabled();
+    const auto hovering = slider.isMouseOverOrDragging();
+    const auto pressed = slider.isMouseButtonDown();
+    const auto focused = slider.hasKeyboardFocus (true);
+    const auto accentBase = slider.findColour (juce::Slider::rotarySliderFillColourId);
+    const auto accent = enabled ? accentBase : colour (muted).darker (0.22f);
 
-    g.setColour (juce::Colours::black.withAlpha (0.50f));
-    g.fillEllipse (bounds.translated (0.0f, 3.0f));
+    juce::Graphics::ScopedSaveState state (g);
+    g.setOpacity (enabled ? 1.0f : 0.48f);
 
-    juce::ColourGradient shell (colour (0xff213a40u), bounds.getX(), bounds.getY(),
-                                colour (0xff091519u), bounds.getRight(), bounds.getBottom(), false);
-    shell.addColour (0.50, colour (0xff173138u));
-    g.setGradientFill (shell);
+    for (int layer = 4; layer >= 1; --layer)
+    {
+        const auto spread = static_cast<float> (layer) * 1.15f;
+        g.setColour (juce::Colours::black.withAlpha (0.035f
+                                                      * static_cast<float> (5 - layer)));
+        g.fillEllipse (bounds.expanded (spread)
+                           .translated (0.0f, 1.8f + spread * 0.50f));
+    }
+
+    juce::ColourGradient collar (colour (0xff253a3cu),
+                                  bounds.getX() + diameter * 0.20f,
+                                  bounds.getY() + diameter * 0.13f,
+                                  colour (0xff03090bu), bounds.getRight(),
+                                  bounds.getBottom(), true);
+    collar.addColour (0.56, colour (0xff102125u));
+    g.setGradientFill (collar);
     g.fillEllipse (bounds);
+    g.setColour (colour (ink).withAlpha (0.10f));
+    g.drawEllipse (bounds.reduced (0.6f), juce::jlimit (0.7f, 1.2f, diameter * 0.011f));
 
-    const auto arcBounds = bounds.expanded (3.0f);
+    const auto arcRadius = radius * 0.90f;
     juce::Path track;
-    track.addCentredArc (centre.x, centre.y, arcBounds.getWidth() * 0.5f,
-                         arcBounds.getHeight() * 0.5f, 0.0f,
+    track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                          rotaryStartAngle, rotaryEndAngle, true);
-    g.setColour (colour (muted).withAlpha (0.24f));
-    g.strokePath (track, juce::PathStrokeType (2.6f, juce::PathStrokeType::curved,
+    g.setColour (colour (muted).withAlpha (hovering ? 0.30f : 0.21f));
+    g.strokePath (track, juce::PathStrokeType (
+        juce::jlimit (1.25f, 2.0f, diameter * 0.019f), juce::PathStrokeType::curved,
                                                juce::PathStrokeType::rounded));
 
+    for (int tick = 0; tick < 5; ++tick)
+    {
+        const auto proportion = static_cast<float> (tick) / 4.0f;
+        const auto tickAngle = rotaryStartAngle
+                             + proportion * (rotaryEndAngle - rotaryStartAngle);
+        const auto point = centre.getPointOnCircumference (radius * 0.76f, tickAngle);
+        const auto tickSize = tick == 0 || tick == 2 || tick == 4
+            ? juce::jlimit (1.4f, 2.4f, diameter * 0.022f)
+            : juce::jlimit (1.0f, 1.8f, diameter * 0.016f);
+        g.setColour (colour (muted).withAlpha (tick == 2 ? 0.36f : 0.22f));
+        g.fillEllipse (juce::Rectangle<float> (tickSize, tickSize).withCentre (point));
+    }
+
     juce::Path valueArc;
-    valueArc.addCentredArc (centre.x, centre.y, arcBounds.getWidth() * 0.5f,
-                            arcBounds.getHeight() * 0.5f, 0.0f,
+    valueArc.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                             rotaryStartAngle, angle, true);
-    const auto accent = slider.findColour (juce::Slider::rotarySliderFillColourId);
-    g.setColour (accent.withAlpha (0.25f));
-    g.strokePath (valueArc, juce::PathStrokeType (6.0f, juce::PathStrokeType::curved,
-                                                  juce::PathStrokeType::rounded));
-    g.setColour (accent);
-    g.strokePath (valueArc, juce::PathStrokeType (2.2f, juce::PathStrokeType::curved,
+    if (hovering || focused)
+    {
+        g.setColour (accent.withAlpha (focused ? 0.18f : 0.12f));
+        g.strokePath (valueArc, juce::PathStrokeType (
+            juce::jlimit (4.4f, 6.0f, diameter * 0.058f), juce::PathStrokeType::curved,
+            juce::PathStrokeType::rounded));
+    }
+    juce::ColourGradient arcGradient (accent.brighter (0.18f), bounds.getX(), bounds.getY(),
+                                      accent.darker (0.12f), bounds.getRight(),
+                                      bounds.getBottom(), false);
+    g.setGradientFill (arcGradient);
+    g.strokePath (valueArc, juce::PathStrokeType (
+        juce::jlimit (1.8f, 2.6f, diameter * 0.025f), juce::PathStrokeType::curved,
                                                   juce::PathStrokeType::rounded));
 
-    const auto pointerLength = radius * 0.58f;
-    const auto pointerWidth = std::max (2.0f, radius * 0.075f);
-    juce::Path pointer;
-    pointer.addRoundedRectangle (-pointerWidth * 0.5f, -pointerLength,
-                                 pointerWidth, pointerLength * 0.72f,
-                                 pointerWidth * 0.5f);
-    pointer.applyTransform (juce::AffineTransform::rotation (angle)
-                                .translated (centre.x, centre.y));
-    g.setColour (accent);
-    g.fillPath (pointer);
-    g.setColour (colour (ink).withAlpha (0.30f));
-    g.drawEllipse (bounds.reduced (1.0f), 1.0f);
+    const auto bead = centre.getPointOnCircumference (arcRadius, angle);
+    if (hovering)
+    {
+        const auto bloomSize = juce::jlimit (6.0f, 10.0f, diameter * 0.09f);
+        g.setColour (accent.withAlpha (0.13f));
+        g.fillEllipse (juce::Rectangle<float> (bloomSize, bloomSize).withCentre (bead));
+    }
+    const auto beadSize = juce::jlimit (2.8f, 4.2f, diameter * 0.038f);
+    g.setColour (accent.brighter (0.24f));
+    g.fillEllipse (juce::Rectangle<float> (beadSize, beadSize).withCentre (bead));
+
+    auto capBounds = bounds.reduced (radius * 0.17f);
+    if (hovering && ! pressed)
+        capBounds = capBounds.translated (0.0f, -0.55f);
+    juce::ColourGradient cap (pressed ? colour (0xff152629u) : colour (0xff294144u),
+                              capBounds.getX() + capBounds.getWidth() * 0.25f,
+                              capBounds.getY() + capBounds.getHeight() * 0.18f,
+                              colour (0xff071114u), capBounds.getRight(),
+                              capBounds.getBottom(), true);
+    cap.addColour (0.48, pressed ? colour (0xff102023u) : colour (0xff172d30u));
+    g.setGradientFill (cap);
+    g.fillEllipse (capBounds);
+
+    const auto innerGlowPoint = centre.getPointOnCircumference (radius * 0.34f, angle);
+    juce::ColourGradient innerGlow (accent.withAlpha (hovering ? 0.105f : 0.045f),
+                                    innerGlowPoint.x, innerGlowPoint.y,
+                                    accent.withAlpha (0.0f), centre.x + radius * 0.68f,
+                                    centre.y, true);
+    g.setGradientFill (innerGlow);
+    g.fillEllipse (capBounds.reduced (1.0f));
+
+    g.setColour (juce::Colours::black.withAlpha (0.55f));
+    g.drawEllipse (capBounds.translated (0.0f, 0.8f),
+                   juce::jlimit (1.0f, 1.6f, diameter * 0.014f));
+    g.setColour (colour (ink).withAlpha (hovering ? 0.14f : 0.09f));
+    g.drawEllipse (capBounds.reduced (0.45f), 0.8f);
+
+    const auto pointerStart = centre.getPointOnCircumference (radius * 0.15f, angle);
+    const auto pointerEnd = centre.getPointOnCircumference (radius * 0.54f, angle);
+    g.setColour (juce::Colours::black.withAlpha (0.58f));
+    g.drawLine ({ pointerStart.translated (0.0f, 1.0f),
+                  pointerEnd.translated (0.0f, 1.0f) },
+                juce::jlimit (2.2f, 3.6f, diameter * 0.036f));
+    g.setColour (accent.interpolatedWith (colour (ink), 0.22f)
+                       .withAlpha (hovering ? 1.0f : 0.88f));
+    g.drawLine ({ pointerStart, pointerEnd },
+                juce::jlimit (1.35f, 2.2f, diameter * 0.021f));
+
+    const auto dimpleSize = juce::jlimit (2.2f, 3.5f, diameter * 0.030f);
+    g.setColour (juce::Colours::black.withAlpha (0.52f));
+    g.fillEllipse (juce::Rectangle<float> (dimpleSize, dimpleSize).withCentre (centre));
+
+    if (focused)
+    {
+        g.setColour (colour (ink).withAlpha (0.78f));
+        g.drawEllipse (bounds.expanded (2.0f), 1.25f);
+        g.setColour (accent.withAlpha (0.28f));
+        g.drawEllipse (bounds.expanded (4.2f), 1.0f);
+    }
 }
 
 void NeuramarLookAndFeel::drawButtonBackground (juce::Graphics& g,
@@ -125,18 +323,39 @@ void NeuramarLookAndFeel::drawButtonBackground (juce::Graphics& g,
 {
     auto bounds = button.getLocalBounds().toFloat().reduced (1.0f);
     const auto active = button.getToggleState();
-    auto fill = active ? colour (mint) : colour (panelRaised);
+    const auto destructive = button.getButtonText() == "PANIC";
+    const auto buttonAccent = destructive ? colour (coral) : colour (mint);
+    auto fill = active ? colour (0xff216a5au) : colour (panelRaised).darker (0.10f);
     if (down)
         fill = fill.interpolatedWith (juce::Colours::black, 0.20f);
     else if (highlighted)
-        fill = fill.brighter (0.10f);
+        fill = fill.brighter (0.08f);
 
-    g.setColour (juce::Colours::black.withAlpha (0.34f));
-    g.fillRoundedRectangle (bounds.translated (0.0f, 2.0f), 8.0f);
-    g.setColour (fill);
+    g.setColour (juce::Colours::black.withAlpha (0.31f));
+    g.fillRoundedRectangle (bounds.expanded (0.8f).translated (0.0f, 2.0f), 9.0f);
+    juce::ColourGradient surface (fill.brighter (active ? 0.03f : 0.07f),
+                                  bounds.getX(), bounds.getY(),
+                                  fill.darker (active ? 0.12f : 0.19f),
+                                  bounds.getRight(), bounds.getBottom(), false);
+    g.setGradientFill (surface);
     g.fillRoundedRectangle (bounds, 8.0f);
-    g.setColour ((active ? colour (mint) : colour (muted)).withAlpha (active ? 0.92f : 0.32f));
-    g.drawRoundedRectangle (bounds, 8.0f, 1.0f);
+    g.setColour ((active ? colour (mint) : buttonAccent)
+                     .withAlpha (active ? 0.90f : destructive ? 0.48f
+                                                              : highlighted ? 0.30f : 0.17f));
+    g.drawRoundedRectangle (bounds.reduced (0.35f), 8.0f,
+                            button.hasKeyboardFocus (true) ? 1.5f : 0.9f);
+
+    if (! active)
+    {
+        g.setColour (colour (ink).withAlpha (0.045f));
+        g.drawRoundedRectangle (bounds.reduced (1.35f), 7.2f, 0.7f);
+    }
+
+    if (button.hasKeyboardFocus (true))
+    {
+        g.setColour (colour (ink).withAlpha (0.74f));
+        g.drawRoundedRectangle (bounds.reduced (2.2f), 6.4f, 1.15f);
+    }
 }
 
 void NeuramarLookAndFeel::drawButtonText (juce::Graphics& g,
@@ -144,13 +363,32 @@ void NeuramarLookAndFeel::drawButtonText (juce::Graphics& g,
                                           bool, bool)
 {
     g.setFont (getTextButtonFont (button, button.getHeight()));
-    g.setColour (button.getToggleState() ? colour (background) : colour (ink));
+    const auto destructive = button.getButtonText() == "PANIC";
+    g.setColour (button.getToggleState() ? colour (ink)
+                                         : destructive ? colour (coral).brighter (0.10f)
+                                                       : colour (ink));
     g.drawFittedText (button.getButtonText(), button.getLocalBounds().reduced (5, 2),
                       juce::Justification::centred, 1);
 }
 
 void NeuramarLookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
 {
+    if (auto* slider = dynamic_cast<juce::Slider*> (label.getParentComponent()))
+    {
+        const auto engaged = slider->isMouseOverOrDragging()
+                          || slider->hasKeyboardFocus (true)
+                          || label.isBeingEdited();
+        if (engaged)
+        {
+            const auto bounds = label.getLocalBounds().toFloat().reduced (1.0f, 0.5f);
+            g.setColour (colour (backgroundDeep).withAlpha (0.56f));
+            g.fillRoundedRectangle (bounds, bounds.getHeight() * 0.45f);
+            g.setColour (slider->findColour (juce::Slider::rotarySliderFillColourId)
+                             .withAlpha (0.25f));
+            g.drawRoundedRectangle (bounds, bounds.getHeight() * 0.45f, 0.8f);
+        }
+    }
+
     g.setColour (label.findColour (juce::Label::textColourId));
     g.setFont (label.getFont());
     g.drawFittedText (label.getText(), label.getLocalBounds(), label.getJustificationType(),
@@ -178,13 +416,13 @@ NeuramarKnob::NeuramarKnob (juce::String title, juce::String hint)
     slider.setTooltip (title + " - " + hint);
 
     titleLabel.setText (title, juce::dontSendNotification);
-    titleLabel.setFont (font (11.5f, true));
+    titleLabel.setFont (font (11.2f, true));
     titleLabel.setColour (juce::Label::textColourId, colour (ink));
     titleLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (titleLabel);
 
     hintLabel.setText (hint, juce::dontSendNotification);
-    hintLabel.setFont (font (8.5f));
+    hintLabel.setFont (font (9.4f));
     hintLabel.setColour (juce::Label::textColourId, colour (muted));
     hintLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (hintLabel);
@@ -258,11 +496,20 @@ void NeuralPoolDisplay::paint (juce::Graphics& g)
     const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
     const auto accent = dragHover ? colour (mint) : stageColour (snapshot.stage);
 
-    juce::ColourGradient poolGradient (colour (0xff10282fu), bounds.getX(), bounds.getY(),
-                                       colour (0xff071519u), bounds.getRight(),
+    juce::ColourGradient poolGradient (colour (0xff102b2du), bounds.getX(), bounds.getY(),
+                                       colour (0xff061315u), bounds.getRight(),
                                        bounds.getBottom(), false);
-    poolGradient.addColour (0.46, colour (0xff0b2025u));
+    poolGradient.addColour (0.44, colour (0xff0a2022u));
     g.setGradientFill (poolGradient);
+    g.fillRoundedRectangle (bounds, 22.0f);
+
+    juce::ColourGradient poolBloom (accent.withAlpha (dragHover ? 0.11f : 0.050f),
+                                    bounds.getX() + bounds.getWidth() * 0.20f,
+                                    bounds.getY() + bounds.getHeight() * 0.08f,
+                                    accent.withAlpha (0.0f),
+                                    bounds.getX() + bounds.getWidth() * 0.78f,
+                                    bounds.getY() + bounds.getHeight() * 0.78f, true);
+    g.setGradientFill (poolBloom);
     g.fillRoundedRectangle (bounds, 22.0f);
 
     g.setColour (accent.withAlpha (dragHover ? 0.88f : 0.22f));
@@ -273,18 +520,36 @@ void NeuralPoolDisplay::paint (juce::Graphics& g)
     graph.removeFromBottom (50.0f);
     const auto centre = graph.getCentre();
 
-    // A subtle pitch/time lattice makes the learned memory feel spatial while
-    // keeping all meaningful state readable without relying on a bitmap.
-    g.setColour (colour (mint).withAlpha (0.045f));
+    // A curved pitch/time field feels grown rather than plotted while retaining
+    // enough structure to make the learned memory read as a model, not a sample.
     for (int i = 1; i < 8; ++i)
     {
         const auto x = graph.getX() + graph.getWidth() * static_cast<float> (i) / 8.0f;
-        g.drawVerticalLine (juce::roundToInt (x), graph.getY(), graph.getBottom());
+        const auto offset = graph.getWidth() * (0.008f
+            + 0.002f * static_cast<float> (i % 3));
+        juce::Path filament;
+        filament.startNewSubPath (x, graph.getY());
+        filament.cubicTo (x - offset, graph.getY() + graph.getHeight() * 0.31f,
+                          x + offset, graph.getY() + graph.getHeight() * 0.67f,
+                          x - offset * 0.35f, graph.getBottom());
+        g.setColour ((i % 3 == 0 ? colour (violet) : colour (mint))
+                         .withAlpha (0.035f));
+        g.strokePath (filament, juce::PathStrokeType (0.65f,
+                                                      juce::PathStrokeType::curved));
     }
     for (int i = 1; i < 5; ++i)
     {
         const auto y = graph.getY() + graph.getHeight() * static_cast<float> (i) / 5.0f;
-        g.drawHorizontalLine (juce::roundToInt (y), graph.getX(), graph.getRight());
+        const auto offset = graph.getHeight() * (0.018f
+            + 0.003f * static_cast<float> (i % 2));
+        juce::Path contour;
+        contour.startNewSubPath (graph.getX(), y);
+        contour.cubicTo (graph.getX() + graph.getWidth() * 0.27f, y - offset,
+                         graph.getX() + graph.getWidth() * 0.58f, y + offset,
+                         graph.getRight(), y - offset * 0.45f);
+        g.setColour (colour (mint).withAlpha (0.035f));
+        g.strokePath (contour, juce::PathStrokeType (0.65f,
+                                                     juce::PathStrokeType::curved));
     }
 
     const auto hasWaveform = std::any_of (snapshot.waveform.begin(), snapshot.waveform.end(),
@@ -441,7 +706,7 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
 
     taglineLabel.setText ("TEACH A SOUND. PLAY ITS MEMORY.", juce::dontSendNotification);
     taglineLabel.setFont (font (10.5f, true));
-    taglineLabel.setColour (juce::Label::textColourId, colour (mint).withAlpha (0.76f));
+    taglineLabel.setColour (juce::Label::textColourId, colour (mint).withAlpha (0.84f));
     taglineLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (taglineLabel);
 
@@ -508,10 +773,10 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
         addAndMakeVisible (*knob);
 
     bodyLockKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
-    boneKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (coral));
+    boneKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (clay));
     brightnessKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (amber));
     evolutionKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
-    mutationKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (coral));
+    mutationKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
     outputKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (amber));
 
     attachSlider (imprintKnob.slider, neuramar::parameters::imprint);
@@ -556,16 +821,8 @@ NeuramarAudioProcessorEditor::~NeuramarAudioProcessorEditor()
 
 void NeuramarAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (colour (background));
-
     const auto bounds = getLocalBounds().toFloat();
-    juce::ColourGradient glow (colour (mint).withAlpha (0.10f),
-                               bounds.getWidth() * 0.30f, 0.0f,
-                               juce::Colours::transparentBlack,
-                               bounds.getWidth() * 0.30f, bounds.getHeight() * 0.72f,
-                               true);
-    g.setGradientFill (glow);
-    g.fillRect (bounds);
+    drawOrganicField (g, bounds);
 
     auto content = getLocalBounds().reduced (18);
     content.removeFromTop (58);
@@ -579,8 +836,12 @@ void NeuramarAudioProcessorEditor::paint (juce::Graphics& g)
     if (content.getHeight() > 0)
         drawPanel (g, content.withTrimmedTop (10).toFloat());
 
-    g.setColour (colour (mint).withAlpha (0.16f));
-    g.drawHorizontalLine (64, 18.0f, static_cast<float> (getWidth() - 18));
+    juce::ColourGradient headerLine (colour (mint).withAlpha (0.38f), 18.0f, 64.0f,
+                                     colour (violet).withAlpha (0.10f),
+                                     static_cast<float> (getWidth() - 18), 64.0f, false);
+    g.setGradientFill (headerLine);
+    g.fillRoundedRectangle (18.0f, 63.5f,
+                            static_cast<float> (getWidth() - 36), 1.0f, 0.5f);
 
     g.setColour (colour (muted).withAlpha (0.45f));
     g.setFont (font (8.0f, true));
@@ -589,7 +850,7 @@ void NeuramarAudioProcessorEditor::paint (juce::Graphics& g)
     g.fillEllipse (static_cast<float> (getWidth() - 132), 52.0f, 4.0f, 4.0f);
     g.setColour (colour (muted).withAlpha (0.45f));
     g.drawText ("AIR", getWidth() - 124, 48, 34, 12, juce::Justification::centred, false);
-    g.setColour (colour (coral));
+    g.setColour (colour (clay));
     g.fillEllipse (static_cast<float> (getWidth() - 88), 52.0f, 4.0f, 4.0f);
     g.setColour (colour (muted).withAlpha (0.45f));
     g.drawText ("BONE", getWidth() - 80, 48, 45, 12, juce::Justification::centred, false);
@@ -644,7 +905,7 @@ void NeuramarAudioProcessorEditor::resized()
 
     bounds.removeFromTop (10);
     auto performance = bounds.reduced (10, 8);
-    auto actions = performance.removeFromRight (juce::jmax (126, performance.getWidth() / 7));
+    auto actions = performance.removeFromRight (juce::jmax (150, performance.getWidth() / 7));
     auto firstActionRow = actions.removeFromTop (actions.getHeight() / 2);
     orbitButton.setBounds (firstActionRow.removeFromLeft (firstActionRow.getWidth() / 2).reduced (4));
     loadButton.setBounds (firstActionRow.reduced (4));
@@ -708,7 +969,7 @@ void NeuramarAudioProcessorEditor::timerCallback()
                        || snapshot.stage == NeuramarAudioProcessor::LearningStage::Analysing
                        || snapshot.stage == NeuramarAudioProcessor::LearningStage::Training;
     cancelButton.setEnabled (learning);
-    cancelButton.setAlpha (learning ? 1.0f : 0.42f);
+    cancelButton.setAlpha (learning ? 1.0f : 0.68f);
 }
 
 void NeuramarAudioProcessorEditor::attachSlider (juce::Slider& slider,

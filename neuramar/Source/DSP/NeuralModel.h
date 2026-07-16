@@ -26,10 +26,11 @@ struct SynthesisFrame
 class NeuralModel final
 {
 public:
-    // Version 2 introduces renderer-matched overlapping Air bands. Version-1
-    // development memories used different band semantics and must not be
-    // silently rendered with this engine.
-    static constexpr std::uint32_t currentFormatVersion = 2;
+    // Version 2 introduced renderer-matched overlapping Air bands. Version 3
+    // adds a bounded, quantised residual trajectory on top of the neural base.
+    // Version-1 development memories used different band semantics and must
+    // not be silently rendered with this engine.
+    static constexpr std::uint32_t currentFormatVersion = 3;
     static constexpr std::size_t previewSize = 256;
     static constexpr std::size_t harmonicCount = SynthesisFrame::harmonicCount;
     static constexpr std::size_t airBandCount = SynthesisFrame::airBandCount;
@@ -87,7 +88,7 @@ public:
     // normalised to the learned sample duration and is clamped to [0, 1].
     void evaluate(float normalisedTime, SynthesisFrame& destination) const noexcept;
 
-    // The binary form is fixed-size, checksummed, explicitly little-endian,
+    // The binary form is fixed-layout, checksummed, explicitly little-endian,
     // and bounded. Deserialisation never accepts trailing or oversized data.
     [[nodiscard]] std::vector<std::uint8_t> serialize() const;
     [[nodiscard]] static std::unique_ptr<NeuralModel>
@@ -96,6 +97,14 @@ public:
 
 private:
     NeuralModel() = default;
+
+    static constexpr std::uint32_t legacyFormatVersion = 2;
+    static constexpr std::size_t maximumResidualKeyframes = 128;
+    static constexpr float maximumResidualScale = 64.0f;
+
+    void evaluateBaseRaw(
+        float normalisedTime,
+        std::array<float, outputSize>& destination) const noexcept;
 
     Metadata metadata_ {};
     std::array<float, harmonicCount> initialHarmonicPhases_ {};
@@ -111,6 +120,11 @@ private:
     std::array<float, hiddenSize> hiddenBiases_ {};
     std::array<float, outputSize * hiddenSize> outputWeights_ {};
     std::array<float, outputSize> outputBiases_ {};
+    std::uint32_t residualKeyframeCount_ { 0 };
+    std::array<float, outputSize> residualScales_ {};
+    std::array<float, maximumResidualKeyframes> residualTimes_ {};
+    std::array<std::int16_t,
+               maximumResidualKeyframes * outputSize> residualValues_ {};
 
     friend class SampleLearner;
     friend class NeuramarEngine;

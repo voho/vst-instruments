@@ -45,7 +45,9 @@ namespace
 constexpr float pi = 3.14159265358979323846f;
 constexpr float twoPi = 2.0f * pi;
 constexpr float amplitudeFloor = 1.12535175e-7f; // exp(-16)
-constexpr int analysisFrameCount = 96;
+constexpr int analysisFrameCount = 128;
+constexpr int onsetAnalysisFrameCount = 48;
+constexpr float denseOnsetSeconds = 0.120f;
 constexpr std::size_t spectrumSize = 4096;
 constexpr int trainingEpochCount = 180;
 constexpr std::size_t airFitCellCount = 48;
@@ -56,6 +58,58 @@ constexpr float airUpperFrequencyHz = 16000.0f;
 
 using Complex = std::complex<float>;
 using TargetFrame = std::array<float, NeuralModel::outputSize>;
+
+[[nodiscard]] std::array<float, analysisFrameCount> makeAnalysisTimes(
+    float durationSeconds) noexcept
+{
+    std::array<float, analysisFrameCount> times {};
+    const float safeDuration = std::max(durationSeconds, 1.0e-6f);
+    const float onsetEnd = std::min(1.0f, denseOnsetSeconds / safeDuration);
+
+    // For normal musical samples, 48 physical-time keyframes describe the
+    // first 120 ms and the remaining 80 cover sustain and decay. Extremely
+    // short samples use the whole bounded grid because their complete gesture
+    // is effectively an onset and there is no distinct sustain region.
+    if (onsetEnd < 0.999f)
+    {
+        for (int frame = 0; frame < onsetAnalysisFrameCount; ++frame)
+        {
+            const float position = static_cast<float>(frame)
+                / static_cast<float>(onsetAnalysisFrameCount - 1);
+            times[static_cast<std::size_t>(frame)] = onsetEnd
+                * std::pow(position, 1.18f);
+        }
+
+        constexpr int remainingFrameCount = analysisFrameCount
+            - onsetAnalysisFrameCount;
+        for (int frame = 0; frame < remainingFrameCount; ++frame)
+        {
+            const float position = static_cast<float>(frame + 1)
+                / static_cast<float>(remainingFrameCount);
+            times[static_cast<std::size_t>(onsetAnalysisFrameCount + frame)]
+                = onsetEnd + (1.0f - onsetEnd)
+                    * std::pow(position, 1.24f);
+        }
+    }
+    else
+    {
+        for (int frame = 0; frame < analysisFrameCount; ++frame)
+        {
+            const float position = static_cast<float>(frame)
+                / static_cast<float>(analysisFrameCount - 1);
+            times[static_cast<std::size_t>(frame)] = std::pow(position, 1.35f);
+        }
+    }
+
+    times.front() = 0.0f;
+    times.back() = 1.0f;
+    for (std::size_t frame = 1; frame < times.size(); ++frame)
+    {
+        if (times[frame] <= times[frame - 1])
+            times[frame] = std::nextafter(times[frame - 1], 1.0f);
+    }
+    return times;
+}
 
 struct PitchEstimate
 {
@@ -490,19 +544,29 @@ void fft(std::vector<Complex>& values)
             : 1.0;
     }
 
-    std::size_t selected = 0;
-    constexpr double threshold = 0.16;
-    for (std::size_t lag = minimumLag; lag < maximumLag; ++lag)
+    const auto firstMinimumBelow = [&cumulative, minimumLag, maximumLag](
+        double threshold) noexcept
     {
-        if (cumulative[lag] < threshold)
+        for (std::size_t lag = minimumLag; lag < maximumLag; ++lag)
         {
-            selected = lag;
+            if (cumulative[lag] >= threshold)
+                continue;
+            std::size_t selected = lag;
             while (selected + 1 < maximumLag
                    && cumulative[selected + 1] < cumulative[selected])
                 ++selected;
-            break;
+            return selected;
         }
-    }
+        return std::size_t { 0 };
+    };
+
+    // A moderately periodic upper partial can cross YIN's conventional loose
+    // threshold before the much deeper true-period minimum. Prefer a strong
+    // periodic trough across the complete range, then retain the former
+    // threshold as a fallback for noisy or breathy material.
+    std::size_t selected = firstMinimumBelow(0.10);
+    if (selected == 0)
+        selected = firstMinimumBelow(0.16);
     if (selected == 0)
     {
         selected = minimumLag;
@@ -597,19 +661,28 @@ void fft(std::vector<Complex>& values)
     const auto spectrum = makeSpectrumFrame(sample, sampleRate, 0.42f);
     if (cancellationRequested(cancel))
         return {};
-    float bestFrequency = combined.frequencyHz;
-    float bestScore = -1.0f;
-    for (const float multiplier : { 0.5f, 1.0f, 2.0f })
+    const auto harmonicSupport = [&spectrum, sampleRate](float candidate)
     {
-        const float candidate = combined.frequencyHz * multiplier;
         if (candidate < 35.0f || candidate > 2000.0f)
-            continue;
+            return -1.0f;
         float score = 0.0f;
         for (int harmonic = 1; harmonic <= 16; ++harmonic)
-            score += spectrumMagnitude(spectrum, candidate * static_cast<float>(harmonic),
-                                       sampleRate)
+            score += std::sqrt(std::max(0.0f, spectrumMagnitude(
+                         spectrum, candidate * static_cast<float>(harmonic),
+                         sampleRate)))
                 / std::sqrt(static_cast<float>(harmonic));
-        if (score > bestScore)
+        return score;
+    };
+
+    float bestFrequency = combined.frequencyHz;
+    float bestScore = harmonicSupport(bestFrequency);
+    for (const float multiplier : { 0.5f, 2.0f })
+    {
+        const float candidate = combined.frequencyHz * multiplier;
+        const float score = harmonicSupport(candidate);
+        // Keep the coherent YIN result on near-ties. A hypothesis must carry
+        // materially more distributed harmonic support before changing octave.
+        if (score > 1.05f * bestScore)
         {
             bestScore = score;
             bestFrequency = candidate;
@@ -1589,12 +1662,14 @@ SampleLearner::LearnResult SampleLearner::learn(
            "Tracing Core, Air, and Bone through time");
     std::vector<SpectrumFrame> spectra;
     spectra.reserve(analysisFrameCount);
+    const auto analysisTimes = makeAnalysisTimes(metadata.durationSeconds);
     for (int frame = 0; frame < analysisFrameCount; ++frame)
     {
-        const float linear = static_cast<float>(frame)
+        const float frameProgress = static_cast<float>(frame)
             / static_cast<float>(analysisFrameCount - 1);
-        const float time = std::pow(linear, 1.65f);
-        spectra.push_back(makeSpectrumFrame(sample, analysisSampleRate, time));
+        spectra.push_back(makeSpectrumFrame(
+            sample, analysisSampleRate,
+            analysisTimes[static_cast<std::size_t>(frame)]));
         if ((frame & 7) == 0)
         {
             if (cancellationRequested(cancelPredicate))
@@ -1603,7 +1678,7 @@ SampleLearner::LearnResult SampleLearner::learn(
                 return result;
             }
             report(progressCallback, Stage::Analysis,
-                   0.28f + 0.15f * linear, pitch,
+                   0.28f + 0.15f * frameProgress, pitch,
                    "Tracing spectral evolution");
         }
     }
@@ -1768,6 +1843,64 @@ SampleLearner::LearnResult SampleLearner::learn(
         result.cancelled = true;
         return result;
     }
+
+    report(progressCallback, Stage::Training, 0.995f, pitch,
+           "Capturing fine temporal detail");
+    const std::size_t residualFrameCount = std::min(
+        spectra.size(), NeuralModel::maximumResidualKeyframes);
+    model->residualKeyframeCount_ = static_cast<std::uint32_t>(
+        residualFrameCount);
+    for (std::size_t frame = 0; frame < residualFrameCount; ++frame)
+        model->residualTimes_[frame] = spectra[frame].normalisedTime;
+
+    std::array<float, NeuralModel::outputSize> basePrediction {};
+    for (std::size_t frame = 0; frame < residualFrameCount; ++frame)
+    {
+        if ((frame & 15u) == 0u && cancellationRequested(cancelPredicate))
+        {
+            result.cancelled = true;
+            return result;
+        }
+        model->evaluateBaseRaw(model->residualTimes_[frame], basePrediction);
+        for (std::size_t output = 0; output < NeuralModel::outputSize; ++output)
+        {
+            const float correction = targets[frame][output]
+                - basePrediction[output];
+            if (std::isfinite(correction))
+            {
+                model->residualScales_[output] = std::min(
+                    NeuralModel::maximumResidualScale,
+                    std::max(model->residualScales_[output],
+                             std::abs(correction)));
+            }
+        }
+    }
+
+    constexpr float quantisationMaximum = 32767.0f;
+    for (std::size_t frame = 0; frame < residualFrameCount; ++frame)
+    {
+        model->evaluateBaseRaw(model->residualTimes_[frame], basePrediction);
+        for (std::size_t output = 0; output < NeuralModel::outputSize; ++output)
+        {
+            const float scale = model->residualScales_[output];
+            if (scale <= 1.0e-7f)
+            {
+                model->residualScales_[output] = 0.0f;
+                model->residualValues_[frame * NeuralModel::outputSize + output]
+                    = 0;
+                continue;
+            }
+            const float correction = std::isfinite(targets[frame][output]
+                                                    - basePrediction[output])
+                ? targets[frame][output] - basePrediction[output] : 0.0f;
+            const float normalised = std::clamp(correction / scale,
+                                                -1.0f, 1.0f);
+            model->residualValues_[frame * NeuralModel::outputSize + output]
+                = static_cast<std::int16_t>(std::lround(
+                    normalised * quantisationMaximum));
+        }
+    }
+
     metadata.initialLoss = result.initialLoss;
     metadata.finalLoss = result.finalLoss;
     metadata.trainingEpochs = result.trainingEpochs;

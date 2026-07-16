@@ -162,6 +162,46 @@ AudioMetrics renderNote (NeuramarAudioProcessor& processor, int midiNote,
     return result;
 }
 
+std::vector<float> renderInitialAttack (const juce::MemoryBlock& state,
+                                        bool setAttackExplicitly,
+                                        float attackSeconds)
+{
+    NeuramarAudioProcessor processor;
+    processor.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+    setParameterValue (processor, neuramar::parameters::mutation, 0.0f);
+    if (setAttackExplicitly)
+        setParameterValue (processor, neuramar::parameters::attack, attackSeconds);
+
+    processor.prepareToPlay (48000.0, 512);
+    juce::AudioBuffer<float> buffer (2, 512);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.82f), 0);
+    processor.processBlock (buffer, midi);
+
+    std::vector<float> result;
+    result.reserve (static_cast<std::size_t> (buffer.getNumChannels()
+                                              * buffer.getNumSamples()));
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        result.insert (result.end(), buffer.getReadPointer (channel),
+                       buffer.getReadPointer (channel) + buffer.getNumSamples());
+    processor.releaseResources();
+    return result;
+}
+
+double squaredDifference (const std::vector<float>& first,
+                          const std::vector<float>& second)
+{
+    expect (first.size() == second.size(), "attack renders have different lengths");
+    const auto count = std::min (first.size(), second.size());
+    double result = 0.0;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const auto difference = static_cast<double> (first[index]) - second[index];
+        result += difference * difference;
+    }
+    return result;
+}
+
 void testContractsAndLearning()
 {
     NeuramarAudioProcessor processor;
@@ -176,6 +216,22 @@ void testContractsAndLearning()
             "the VST3 factory program has no host-visible name");
     expect (processor.getParameters().size() == 13,
             "version-one host parameter count changed");
+
+    auto* awaken = processor.parameters.getParameter (neuramar::parameters::attack);
+    expect (awaken != nullptr, "Awaken parameter is missing");
+    if (awaken != nullptr)
+    {
+        const auto range = awaken->getNormalisableRange();
+        expect (approximatelyEqual (range.start, 0.0f)
+                    && approximatelyEqual (range.end, 2.0f)
+                    && approximatelyEqual (range.interval, 0.0001f),
+                "Awaken range no longer exposes an exact 0-2 second contract");
+        expect (approximatelyEqual (
+                    awaken->convertFrom0to1 (awaken->getDefaultValue()), 0.0f)
+                    && approximatelyEqual (
+                        parameterValue (processor, neuramar::parameters::attack), 0.0f),
+                "Awaken no longer defaults to the learned attack without smoothing");
+    }
 
     const auto stereo = processor.getBusesLayout();
     expect (processor.isBusesLayoutSupported (stereo),
@@ -228,6 +284,16 @@ void testContractsAndLearning()
     processor.getStateInformation (state);
     expect (state.getSize() > 512 && state.getSize() < 4 * 1024 * 1024,
             "state did not embed one compact, bounded neural model");
+
+    const auto defaultAttack = renderInitialAttack (state, false, 0.0f);
+    const auto explicitZeroAttack = renderInitialAttack (state, true, 0.0f);
+    const auto formerSmoothedAttack = renderInitialAttack (state, true, 0.012f);
+    const auto defaultVsZero = squaredDifference (defaultAttack, explicitZeroAttack);
+    const auto zeroVsFormer = squaredDifference (explicitZeroAttack, formerSmoothedAttack);
+    expect (defaultVsZero <= 1.0e-12,
+            "default render attack differs from an explicit zero-second attack");
+    expect (zeroVsFormer > 1.0e-8,
+            "default render still behaves like the former 12 ms smoothing");
 
     setParameterValue (processor, neuramar::parameters::imprint, rejectedImprint);
     juce::MemoryBlock stateWithRejectedParameters;
@@ -378,36 +444,60 @@ void testContractsAndLearning()
     {
         expect (editor->getWidth() == 1180 && editor->getHeight() == 760,
                 "editor default size changed unexpectedly");
-        juce::Image snapshot (juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true);
-        juce::Graphics graphics (snapshot);
-        editor->paintEntireComponent (graphics, true);
 
-        std::set<juce::uint32> sampledColours;
-        auto opaque = true;
-        for (int y = 4; y < snapshot.getHeight(); y += 11)
-            for (int x = 4; x < snapshot.getWidth(); x += 11)
-            {
-                const auto pixel = snapshot.getPixelAt (x, y);
-                sampledColours.insert (pixel.getARGB());
-                opaque = opaque && pixel.getAlpha() == 255;
-            }
-        expect (opaque, "editor snapshot contains transparent holes");
-        expect (sampledColours.size() > 80,
-                "editor snapshot lacks the neural-pool visual detail");
-
-        const auto snapshotPath = juce::SystemStats::getEnvironmentVariable (
-            "NEURAMAR_EDITOR_SNAPSHOT", {});
-        if (snapshotPath.isNotEmpty())
+        const auto renderAndCheckEditor = [&editor] (int width, int height,
+                                                      const char* snapshotVariable)
         {
-            juce::FileOutputStream output { juce::File (snapshotPath) };
-            juce::PNGImageFormat png;
-            const auto prepared = output.openedOk()
-                               && output.setPosition (0)
-                               && output.truncate();
-            const auto written = prepared && png.writeImageToStream (snapshot, output);
-            output.flush();
-            expect (written, "could not write requested editor snapshot");
-        }
+            editor->setSize (width, height);
+            juce::Image snapshot (juce::Image::ARGB, width, height, true);
+            juce::Graphics graphics (snapshot);
+            editor->paintEntireComponent (graphics, true);
+
+            std::set<juce::uint32> sampledColours;
+            auto opaque = true;
+            for (int y = 4; y < snapshot.getHeight(); y += 11)
+                for (int x = 4; x < snapshot.getWidth(); x += 11)
+                {
+                    const auto pixel = snapshot.getPixelAt (x, y);
+                    sampledColours.insert (pixel.getARGB());
+                    opaque = opaque && pixel.getAlpha() == 255;
+                }
+            const auto size = std::to_string (width) + "x" + std::to_string (height);
+            expect (opaque, "editor snapshot contains transparent holes at " + size);
+            expect (sampledColours.size() > 80,
+                    "editor snapshot lacks visual detail at " + size);
+
+            for (int childIndex = 0; childIndex < editor->getNumChildComponents(); ++childIndex)
+            {
+                const auto* child = editor->getChildComponent (childIndex);
+                if (child == nullptr || ! child->isVisible())
+                    continue;
+                expect (child->getWidth() > 0 && child->getHeight() > 0,
+                        "visible editor child collapsed at " + size);
+                expect (editor->getLocalBounds().contains (child->getBounds()),
+                        "visible editor child escaped its bounds at " + size);
+            }
+
+            const auto snapshotPath = juce::SystemStats::getEnvironmentVariable (
+                snapshotVariable, {});
+            if (snapshotPath.isNotEmpty())
+            {
+                juce::FileOutputStream output { juce::File (snapshotPath) };
+                juce::PNGImageFormat png;
+                const auto prepared = output.openedOk()
+                                   && output.setPosition (0)
+                                   && output.truncate();
+                const auto written = prepared && png.writeImageToStream (snapshot, output);
+                output.flush();
+                expect (written, "could not write requested " + size
+                                     + " editor snapshot");
+            }
+        };
+
+        renderAndCheckEditor (1180, 760, "NEURAMAR_EDITOR_SNAPSHOT");
+        renderAndCheckEditor (960, 619, "NEURAMAR_EDITOR_SNAPSHOT_MIN");
+        renderAndCheckEditor (1500, 966, "NEURAMAR_EDITOR_SNAPSHOT_MAX");
+        editor->setSize (1180, 760);
     }
 
     processor.releaseResources();

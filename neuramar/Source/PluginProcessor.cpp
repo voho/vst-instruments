@@ -126,11 +126,11 @@ NeuramarAudioProcessor::createParameterLayout()
     result.push_back (makePercentParameter (
         neuramar::parameters::mutation, "Mutation", 0.12f));
 
-    auto attackRange = juce::NormalisableRange<float> { 0.001f, 2.0f, 0.0001f };
+    auto attackRange = juce::NormalisableRange<float> { 0.0f, 2.0f, 0.0001f };
     attackRange.setSkewForCentre (0.08f);
     result.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { neuramar::parameters::attack, 1 }, "Awaken",
-        attackRange, 0.012f,
+        attackRange, 0.0f,
         juce::AudioParameterFloatAttributes().withLabel ("s")));
 
     auto releaseRange = juce::NormalisableRange<float> { 0.02f, 8.0f, 0.001f };
@@ -270,7 +270,7 @@ void NeuramarAudioProcessor::updateEngineParameters() noexcept
     next.evolutionRate = valueOf (parameterPointers.evolutionRate, 1.0f);
     next.orbit = valueOf (parameterPointers.orbit, 1.0f) >= 0.5f ? 1.0f : 0.0f;
     next.mutation = valueOf (parameterPointers.mutation, 0.12f);
-    next.attackSeconds = valueOf (parameterPointers.attack, 0.012f);
+    next.attackSeconds = valueOf (parameterPointers.attack, 0.0f);
     next.releaseSeconds = valueOf (parameterPointers.release, 0.65f);
     next.spread = valueOf (parameterPointers.spread, 0.58f);
     next.rootOffsetSemitones = static_cast<float> (

@@ -2,9 +2,11 @@
 #include "DSP/NeuramarEngine.h"
 #include "DSP/NeuralModel.h"
 #include "DSP/SampleLearner.h"
+#include "DSP/SpectralEnvelope.h"
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <complex>
@@ -17,6 +19,19 @@
 #include <utility>
 #include <vector>
 
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define NEURAMAR_SANITIZED_TEST_BUILD 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) \
+    || __has_feature(undefined_behavior_sanitizer)
+#define NEURAMAR_SANITIZED_TEST_BUILD 1
+#else
+#define NEURAMAR_SANITIZED_TEST_BUILD 0
+#endif
+#else
+#define NEURAMAR_SANITIZED_TEST_BUILD 0
+#endif
+
 namespace
 {
 constexpr double pi = 3.14159265358979323846;
@@ -26,6 +41,127 @@ constexpr std::array<float, neuramar::NeuralModel::boneModeCount>
     transientBoneRatios { 1.68f, 2.68f, 3.68f, 4.68f, 5.68f, 6.68f };
 int failures = 0;
 
+constexpr std::size_t modelHeaderBytes = 16;
+constexpr std::size_t version2PayloadBytes = 8 + 12 * 4
+    + 4 * (neuramar::NeuralModel::previewSize
+        + neuramar::NeuralModel::harmonicCount
+        + 2 * neuramar::NeuralModel::airBandCount
+        + 4 * neuramar::NeuralModel::boneModeCount
+        + 2 * neuramar::NeuralModel::outputSize
+        + neuramar::NeuralModel::hiddenSize * neuramar::NeuralModel::inputSize
+        + neuramar::NeuralModel::hiddenSize
+        + neuramar::NeuralModel::outputSize * neuramar::NeuralModel::hiddenSize
+        + neuramar::NeuralModel::outputSize);
+
+[[nodiscard]] std::uint32_t readLittleU32(
+    const std::vector<std::uint8_t>& bytes, std::size_t offset)
+{
+    std::uint32_t value = 0;
+    for (int shift = 0; shift < 32; shift += 8)
+        value |= static_cast<std::uint32_t>(bytes[offset++]) << shift;
+    return value;
+}
+
+[[nodiscard]] float readLittleFloat(
+    const std::vector<std::uint8_t>& bytes, std::size_t offset)
+{
+    return std::bit_cast<float>(readLittleU32(bytes, offset));
+}
+
+void writeLittleU32(std::vector<std::uint8_t>& bytes,
+                    std::size_t offset, std::uint32_t value)
+{
+    for (int shift = 0; shift < 32; shift += 8)
+        bytes[offset++] = static_cast<std::uint8_t>((value >> shift) & 0xffu);
+}
+
+void writeLittleU16(std::vector<std::uint8_t>& bytes,
+                    std::size_t offset, std::uint16_t value)
+{
+    for (int shift = 0; shift < 16; shift += 8)
+        bytes[offset++] = static_cast<std::uint8_t>((value >> shift) & 0xffu);
+}
+
+void appendLittleU32(std::vector<std::uint8_t>& bytes, std::uint32_t value)
+{
+    const auto offset = bytes.size();
+    bytes.resize(offset + 4);
+    writeLittleU32(bytes, offset, value);
+}
+
+void appendLittleFloat(std::vector<std::uint8_t>& bytes, float value)
+{
+    appendLittleU32(bytes, std::bit_cast<std::uint32_t>(value));
+}
+
+void appendLittleI16(std::vector<std::uint8_t>& bytes, std::int16_t value)
+{
+    const auto offset = bytes.size();
+    bytes.resize(offset + 2);
+    writeLittleU16(bytes, offset, std::bit_cast<std::uint16_t>(value));
+}
+
+[[nodiscard]] std::uint32_t modelChecksum(
+    std::span<const std::uint8_t> bytes)
+{
+    std::uint32_t hash = 2166136261u;
+    for (const auto byte : bytes)
+    {
+        hash ^= byte;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+void refreshModelHeader(std::vector<std::uint8_t>& bytes,
+                        std::uint32_t version)
+{
+    writeLittleU32(bytes, 4, version);
+    writeLittleU32(bytes, 8, static_cast<std::uint32_t>(
+        bytes.size() - modelHeaderBytes));
+    writeLittleU32(bytes, 12, modelChecksum(std::span<const std::uint8_t>(bytes)
+        .subspan(modelHeaderBytes)));
+}
+
+[[nodiscard]] std::vector<std::uint8_t> makeVersion2ModelBytes(
+    const neuramar::NeuralModel& model)
+{
+    auto bytes = model.serialize();
+    if (bytes.size() < modelHeaderBytes + version2PayloadBytes)
+        return {};
+    bytes.resize(modelHeaderBytes + version2PayloadBytes);
+    refreshModelHeader(bytes, 2);
+    return bytes;
+}
+
+[[nodiscard]] std::vector<std::uint8_t> makeLinearResidualModelBytes(
+    const neuramar::NeuralModel& model, float pitchCorrectionSemitones)
+{
+    auto bytes = makeVersion2ModelBytes(model);
+    appendLittleU32(bytes, 2);
+    for (std::size_t output = 0; output < neuramar::NeuralModel::outputSize;
+         ++output)
+    {
+        appendLittleFloat(bytes,
+            output == neuramar::NeuralModel::pitchOutputIndex
+                ? pitchCorrectionSemitones : 0.0f);
+    }
+    appendLittleFloat(bytes, 0.0f);
+    appendLittleFloat(bytes, 1.0f);
+    for (std::size_t frame = 0; frame < 2; ++frame)
+    {
+        for (std::size_t output = 0; output < neuramar::NeuralModel::outputSize;
+             ++output)
+        {
+            appendLittleI16(bytes,
+                frame == 1 && output == neuramar::NeuralModel::pitchOutputIndex
+                    ? static_cast<std::int16_t>(32767) : 0);
+        }
+    }
+    refreshModelHeader(bytes, neuramar::NeuralModel::currentFormatVersion);
+    return bytes;
+}
+
 void expect(bool condition, const std::string& message)
 {
     if (!condition)
@@ -33,6 +169,124 @@ void expect(bool condition, const std::string& message)
         std::cerr << "FAIL: " << message << '\n';
         ++failures;
     }
+}
+
+void testShapePreservingSpectralInterpolation()
+{
+    using SmallEnvelope = neuramar::spectral::ShapePreservingEnvelope<8>;
+    const std::array<float, 8> notched {
+        0.82f, 0.006f, 0.47f, 0.0f, 0.19f, 0.031f, 0.11f, 0.002f
+    };
+    SmallEnvelope notchedEnvelope;
+    notchedEnvelope.prepare(notched);
+
+    expect(notchedEnvelope.sample(0.0f) == 0.0f
+           && notchedEnvelope.sample(9.0f) == 0.0f
+           && notchedEnvelope.sample(-1.0f) == 0.0f
+           && notchedEnvelope.sample(
+               std::numeric_limits<float>::quiet_NaN()) == 0.0f,
+           "spectral interpolation did not preserve its silent evidence boundary");
+    for (std::size_t harmonic = 0; harmonic < notched.size(); ++harmonic)
+    {
+        expect(notchedEnvelope.sample(static_cast<float>(harmonic + 1))
+                   == notched[harmonic],
+               "spectral interpolation changed an observed harmonic knot");
+    }
+
+    std::array<float, 10> knots {};
+    std::copy(notched.begin(), notched.end(), knots.begin() + 1);
+    for (std::size_t interval = 0; interval + 1 < knots.size(); ++interval)
+    {
+        const float minimum = std::min(knots[interval], knots[interval + 1]);
+        const float maximum = std::max(knots[interval], knots[interval + 1]);
+        for (int step = 1; step < 32; ++step)
+        {
+            const float coordinate = static_cast<float>(interval)
+                + static_cast<float>(step) / 32.0f;
+            const float value = notchedEnvelope.sample(coordinate);
+            expect(std::isfinite(value) && value >= minimum - 1.0e-8f
+                       && value <= maximum + 1.0e-8f,
+                   "spectral interpolation overshot adjacent learned magnitudes");
+        }
+    }
+
+    // A smooth exponential roll-off is linear in log magnitude. The companded
+    // cubic should reproduce its fractional coordinates much more accurately
+    // than the former arithmetic interpolation without changing its knots.
+    using SmoothEnvelope = neuramar::spectral::ShapePreservingEnvelope<32>;
+    std::array<float, 32> smooth {};
+    for (std::size_t harmonic = 0; harmonic < smooth.size(); ++harmonic)
+        smooth[harmonic] = 0.8f * std::exp(
+            -0.09f * static_cast<float>(harmonic + 1));
+    SmoothEnvelope smoothEnvelope;
+    smoothEnvelope.prepare(smooth);
+    double smartSquaredError = 0.0;
+    double linearSquaredError = 0.0;
+    for (int interval = 2; interval < 30; ++interval)
+    {
+        for (const float fraction : { 0.125f, 0.375f, 0.625f, 0.875f })
+        {
+            const float coordinate = static_cast<float>(interval) + fraction;
+            const float expected = 0.8f * std::exp(-0.09f * coordinate);
+            const float smart = smoothEnvelope.sample(coordinate);
+            const float linear = smooth[static_cast<std::size_t>(interval - 1)]
+                + fraction * (smooth[static_cast<std::size_t>(interval)]
+                    - smooth[static_cast<std::size_t>(interval - 1)]);
+            smartSquaredError += static_cast<double>(smart - expected)
+                * (smart - expected);
+            linearSquaredError += static_cast<double>(linear - expected)
+                * (linear - expected);
+        }
+    }
+    expect(smartSquaredError < 0.10 * linearSquaredError,
+           "shape-preserving interpolation did not improve a smooth log-spectral "
+           "trajectory over arithmetic interpolation");
+
+    using FormantEnvelope = neuramar::spectral::ShapePreservingEnvelope<64>;
+    const auto formantMagnitude = [](float coordinate)
+    {
+        const float firstDistance = (coordinate - 14.0f) / 3.2f;
+        const float secondDistance = (coordinate - 37.0f) / 6.0f;
+        return std::exp(-1.0f - 0.035f * coordinate
+            + 1.8f * std::exp(-0.5f * firstDistance * firstDistance)
+            + 0.9f * std::exp(-0.5f * secondDistance * secondDistance));
+    };
+    std::array<float, 64> formants {};
+    for (std::size_t harmonic = 0; harmonic < formants.size(); ++harmonic)
+        formants[harmonic] = formantMagnitude(
+            static_cast<float>(harmonic + 1));
+    FormantEnvelope formantEnvelope;
+    formantEnvelope.prepare(formants);
+    double smartDbSquaredError = 0.0;
+    double linearDbSquaredError = 0.0;
+    for (int interval = 2; interval < 62; ++interval)
+    {
+        for (const float fraction : { 0.125f, 0.375f, 0.625f, 0.875f })
+        {
+            const float coordinate = static_cast<float>(interval) + fraction;
+            const float expected = formantMagnitude(coordinate);
+            const float smart = formantEnvelope.sample(coordinate);
+            const float linear = formants[static_cast<std::size_t>(interval - 1)]
+                + fraction * (formants[static_cast<std::size_t>(interval)]
+                    - formants[static_cast<std::size_t>(interval - 1)]);
+            const double smartDbError = 20.0 * std::log10(
+                std::max(smart, 1.0e-12f) / expected);
+            const double linearDbError = 20.0 * std::log10(
+                std::max(linear, 1.0e-12f) / expected);
+            smartDbSquaredError += smartDbError * smartDbError;
+            linearDbSquaredError += linearDbError * linearDbError;
+        }
+    }
+    const double exponentialErrorRatio = smartSquaredError
+        / std::max(linearSquaredError, 1.0e-30);
+    const double formantErrorRatio = smartDbSquaredError
+        / std::max(linearDbSquaredError, 1.0e-30);
+    std::cout << "Interpolation diagnostics: exponential error ratio "
+              << exponentialErrorRatio << ", curved-formant dB error ratio "
+              << formantErrorRatio << '\n';
+    expect(formantErrorRatio < 0.35,
+           "shape-preserving interpolation did not improve a curved smooth "
+           "log-spectral envelope over arithmetic interpolation");
 }
 
 [[nodiscard]] std::vector<float> makeLearningSample(double sampleRate,
@@ -94,6 +348,78 @@ void expect(bool condition, const std::string& message)
     return sample;
 }
 
+[[nodiscard]] double gaussianLogFrequency(double frequencyHz,
+                                          double centreHz,
+                                          double widthOctaves) noexcept
+{
+    const double distance = std::log2(
+        std::max(frequencyHz, 1.0) / centreHz) / widthOctaves;
+    return std::exp(-0.5 * distance * distance);
+}
+
+[[nodiscard]] std::vector<float> makeFormantDominantRootSample(
+    double sampleRate, double fundamentalHz, double durationSeconds,
+    bool includeFundamental)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    const int harmonicCount = std::min(96, static_cast<int>(std::floor(
+        0.44 * sampleRate / fundamentalHz)));
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double envelope = (1.0 - std::exp(-time / 0.006))
+            * (0.88 + 0.12 * std::exp(-time / 0.40));
+        double value = 0.0;
+        for (int harmonic = 1; harmonic <= harmonicCount; ++harmonic)
+        {
+            if (harmonic == 1 && !includeFundamental)
+                continue;
+            const double frequency = fundamentalHz * harmonic;
+            const double formants = 0.13
+                + 1.55 * gaussianLogFrequency(frequency, 720.0, 0.23)
+                + 0.92 * gaussianLogFrequency(frequency, 1810.0, 0.19)
+                + 0.58 * gaussianLogFrequency(frequency, 3470.0, 0.22);
+            const double excitation = (harmonic & 1) != 0 ? 1.0 : 0.055;
+            const double amplitude = excitation * formants
+                / std::pow(static_cast<double>(harmonic), 0.72);
+            value += amplitude * std::sin(
+                2.0 * pi * frequency * time
+                + 0.19 * static_cast<double>(harmonic * harmonic));
+        }
+        sample[index] = static_cast<float>(0.16 * envelope * value);
+    }
+    return sample;
+}
+
+[[nodiscard]] std::vector<float> makeOctaveDominantRootSample(
+    double sampleRate, double fundamentalHz, double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    constexpr std::array<double, 5> levels {
+        0.06, 0.80, 0.17, 0.12, 0.09
+    };
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double envelope = (1.0 - std::exp(-time / 0.005))
+            * (0.86 + 0.14 * std::exp(-time / 0.45));
+        double value = 0.0;
+        for (std::size_t harmonic = 0; harmonic < levels.size(); ++harmonic)
+        {
+            value += levels[harmonic] * std::sin(
+                2.0 * pi * fundamentalHz
+                    * static_cast<double>(harmonic + 1) * time
+                + 0.31 * static_cast<double>(harmonic + 1));
+        }
+        sample[index] = static_cast<float>(0.72 * envelope * value);
+    }
+    return sample;
+}
+
 [[nodiscard]] std::vector<float> makeBrightHighPitchSample(
     double sampleRate, double fundamentalHz, double durationSeconds)
 {
@@ -147,6 +473,22 @@ void expect(bool condition, const std::string& message)
     return sample;
 }
 
+[[nodiscard]] std::vector<float> makePureSineSample(
+    double sampleRate, double frequencyHz, double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double envelope = 1.0 - std::exp(-time / 0.004);
+        sample[index] = static_cast<float>(
+            0.72 * envelope * std::sin(2.0 * pi * frequencyHz * time + 0.31));
+    }
+    return sample;
+}
+
 [[nodiscard]] std::vector<float> makeAirSeparationSample(
     double sampleRate, bool includeNoise)
 {
@@ -155,7 +497,7 @@ void expect(bool condition, const std::string& message)
     const auto sampleCount = static_cast<std::size_t>(
         std::llround(sampleRate * durationSeconds));
     std::vector<float> sample(sampleCount, 0.0f);
-    const int harmonicCount = std::max(1, std::min(32,
+    const int harmonicCount = std::max(1, std::min(64,
         static_cast<int>(std::floor(0.42 * sampleRate / fundamentalHz))));
     std::uint32_t noiseState = 0x6a09e667u;
     float previousNoise = 0.0f;
@@ -549,6 +891,178 @@ struct AirMetrics
         squareSum / static_cast<double>(last - first)));
 }
 
+void testWideRegisterCore(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    const auto render = [&model](int midiNote, float bodyLock)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        neuramar::EngineParameters parameters;
+        parameters.imprint = 1.0f;
+        parameters.bodyLock = bodyLock;
+        parameters.air = 0.0f;
+        parameters.bone = 0.0f;
+        parameters.brightness = 0.5f;
+        parameters.evolutionRate = 1.0f;
+        parameters.orbit = 0.0f;
+        parameters.mutation = 0.0f;
+        parameters.attackSeconds = 0.0f;
+        parameters.spread = 0.0f;
+        parameters.outputGain = 0.04f;
+        engine.setParameters(parameters);
+        return renderNote(engine, midiNote,
+                          static_cast<int>(std::lround(0.82 * sampleRate)));
+    };
+
+    const auto root = render(model.rootMidiNote(), 1.0f);
+    const auto lockedDown = render(model.rootMidiNote() - 12, 1.0f);
+    const auto followingDown = render(model.rootMidiNote() - 12, 0.0f);
+    const auto lockedDownTwoOctaves = render(model.rootMidiNote() - 24, 1.0f);
+    const auto lockedUp = render(model.rootMidiNote() + 12, 1.0f);
+    const auto followingUp = render(model.rootMidiNote() + 12, 0.0f);
+    constexpr double analysisTime = 0.52;
+    neuramar::SynthesisFrame frame;
+    model.evaluate(static_cast<float>(analysisTime / model.durationSeconds()), frame);
+
+    constexpr std::array<int, 3> sourceHarmonics { 40, 48, 60 };
+    double lockedRatioSum = 0.0;
+    double followingRatioSum = 0.0;
+    for (const int sourceHarmonic : sourceHarmonics)
+    {
+        const double frequency = model.rootFrequencyHz() * frame.pitchRatio
+            * static_cast<float>(sourceHarmonic);
+        const float rootAmplitude = windowedSinusoidAmplitude(
+            root, sampleRate, analysisTime, frequency);
+        const float lockedAmplitude = windowedSinusoidAmplitude(
+            lockedDown, sampleRate, analysisTime, frequency);
+        const float followingAmplitude = windowedSinusoidAmplitude(
+            followingDown, sampleRate, analysisTime, frequency);
+        lockedRatioSum += lockedAmplitude / std::max(rootAmplitude, 1.0e-8f);
+        followingRatioSum += followingAmplitude / std::max(rootAmplitude, 1.0e-8f);
+    }
+    const double lockedRatio = lockedRatioSum
+        / static_cast<double>(sourceHarmonics.size());
+    const double followingRatio = followingRatioSum
+        / static_cast<double>(sourceHarmonics.size());
+    const float rootRms = segmentRms(root, sampleRate, 0.20, 0.72);
+    const float downRms = segmentRms(lockedDown, sampleRate, 0.20, 0.72);
+    const float levelRatio = downRms / std::max(rootRms, 1.0e-8f);
+
+    constexpr std::array<int, 3> twoOctaveSourceHarmonics { 40, 48, 60 };
+    double twoOctaveRatioSum = 0.0;
+    for (const int sourceHarmonic : twoOctaveSourceHarmonics)
+    {
+        const double frequency = model.rootFrequencyHz() * frame.pitchRatio
+            * static_cast<float>(sourceHarmonic);
+        const float rootAmplitude = windowedSinusoidAmplitude(
+            root, sampleRate, analysisTime, frequency);
+        const float lowAmplitude = windowedSinusoidAmplitude(
+            lockedDownTwoOctaves, sampleRate, analysisTime, frequency);
+        twoOctaveRatioSum += lowAmplitude / std::max(rootAmplitude, 1.0e-8f);
+    }
+    const double twoOctaveRatio = twoOctaveRatioSum
+        / static_cast<double>(twoOctaveSourceHarmonics.size());
+    const float twoOctaveRms = segmentRms(
+        lockedDownTwoOctaves, sampleRate, 0.20, 0.72);
+    const float twoOctaveLevelRatio = twoOctaveRms
+        / std::max(rootRms, 1.0e-8f);
+
+    constexpr std::array<int, 2> upperOutputHarmonics { 36, 40 };
+    double lockedOutsideRatioSum = 0.0;
+    for (const int outputHarmonic : upperOutputHarmonics)
+    {
+        const double frequency = 2.0 * model.rootFrequencyHz() * frame.pitchRatio
+            * static_cast<float>(outputHarmonic);
+        const float lockedAmplitude = windowedSinusoidAmplitude(
+            lockedUp, sampleRate, analysisTime, frequency);
+        const float followingAmplitude = windowedSinusoidAmplitude(
+            followingUp, sampleRate, analysisTime, frequency);
+        lockedOutsideRatioSum += lockedAmplitude
+            / std::max(followingAmplitude, 1.0e-8f);
+    }
+    const double lockedOutsideRatio = lockedOutsideRatioSum
+        / static_cast<double>(upperOutputHarmonics.size());
+
+    std::cout << "Wide-register diagnostics: locked high-band ratio "
+              << lockedRatio << ", following ratio " << followingRatio
+              << ", locked -12/root RMS ratio " << levelRatio
+              << ", -24 high-band ratio " << twoOctaveRatio
+              << ", -24/root RMS ratio " << twoOctaveLevelRatio
+              << ", +12 out-of-envelope ratio " << lockedOutsideRatio << '\n';
+    expect(lockedRatio >= 0.45 && lockedRatio <= 1.30,
+           "Body Lock did not preserve the learned upper spectrum one octave down "
+           "(mean partial ratio " + std::to_string(lockedRatio) + ")");
+    expect(followingRatio <= 0.15 * lockedRatio + 0.02,
+           "pitch-follow mode fabricated the extended Body-Locked partial bank");
+    expect(levelRatio >= 0.70f && levelRatio <= 1.35f,
+           "Body-Locked Core level drifted excessively one octave down (ratio "
+               + std::to_string(levelRatio) + ")");
+    expect(twoOctaveRatio >= 0.35 && twoOctaveRatio <= 1.10,
+           "Body Lock did not retain evidence-backed upper partials two octaves down "
+           "(mean partial ratio " + std::to_string(twoOctaveRatio) + ")");
+    expect(twoOctaveLevelRatio >= 0.65f && twoOctaveLevelRatio <= 1.40f,
+           "Body-Locked Core level drifted excessively two octaves down (ratio "
+               + std::to_string(twoOctaveLevelRatio) + ")");
+    expect(lockedOutsideRatio < 0.03,
+           "strict Body Lock retained pitch-following energy above its observed "
+           "source envelope (ratio " + std::to_string(lockedOutsideRatio) + ")");
+}
+
+void testHighRegisterOutputLinearity()
+{
+    constexpr double sampleRate = 48000.0;
+    const auto learned = neuramar::SampleLearner::learn(
+        makePureSineSample(sampleRate, 1000.0, 0.72), sampleRate);
+    expect(static_cast<bool>(learned),
+           "high-register alias fixture failed to learn: " + learned.error);
+    if (!learned.model)
+        return;
+
+    const auto& model = *learned.model;
+    neuramar::NeuramarEngine engine;
+    engine.prepare(sampleRate, 128);
+    engine.setModel(&model);
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.bodyLock = 0.0f;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.brightness = 0.5f;
+    parameters.orbit = 0.0f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 2.0f;
+    engine.setParameters(parameters);
+
+    constexpr int semitones = 38;
+    const int midiNote = std::min(127, model.rootMidiNote() + semitones);
+    const auto rendered = renderNote(
+        engine, midiNote, static_cast<int>(std::lround(0.62 * sampleRate)));
+    constexpr double analysisTime = 0.42;
+    neuramar::SynthesisFrame frame;
+    model.evaluate(static_cast<float>(analysisTime / model.durationSeconds()), frame);
+    const double ratio = std::exp2(
+        static_cast<double>(midiNote - model.rootMidiNote()) / 12.0);
+    const double fundamental = model.rootFrequencyHz() * frame.pitchRatio * ratio;
+    const double foldedThird = std::abs(sampleRate - 3.0 * fundamental);
+    const float fundamentalAmplitude = windowedSinusoidAmplitude(
+        rendered, sampleRate, analysisTime, fundamental);
+    const float foldedAmplitude = windowedSinusoidAmplitude(
+        rendered, sampleRate, analysisTime, foldedThird);
+    const float foldRatio = foldedAmplitude
+        / std::max(fundamentalAmplitude, 1.0e-8f);
+    std::cout << "High-register diagnostics: f0 " << fundamental
+              << " Hz, folded-third ratio " << foldRatio << '\n';
+    expect(fundamental > 7000.0 && fundamental < 11000.0,
+           "alias fixture did not land in the intended high register");
+    expect(foldRatio < 0.005f,
+           "maximum user output gain folded a high-register third harmonic "
+           "back into the audible band (ratio " + std::to_string(foldRatio) + ")");
+}
+
 struct LearnedFixture
 {
     std::vector<float> source;
@@ -695,6 +1209,132 @@ void testLearningAndRoot(const LearnedFixture& fixture)
     expect(fixture.first.initialLoss == fixture.second.initialLoss
            && fixture.first.finalLoss == fixture.second.finalLoss,
            "deterministic fits reported different losses");
+}
+
+void testResidualScheduleAndQuality(const LearnedFixture& fixture)
+{
+    if (!fixture.first.model)
+        return;
+
+    const auto& corrected = *fixture.first.model;
+    const auto bytes = corrected.serialize();
+    const std::size_t extension = modelHeaderBytes + version2PayloadBytes;
+    expect(readLittleU32(bytes, 4)
+               == neuramar::NeuralModel::currentFormatVersion,
+           "learner did not write the current v3 model format");
+    const auto keyframeCount = readLittleU32(bytes, extension);
+    expect(keyframeCount == 128,
+           "learner did not fill the bounded 128-frame residual trajectory");
+    const std::size_t expectedBytes = modelHeaderBytes + version2PayloadBytes
+        + 4 + 4 * neuramar::NeuralModel::outputSize
+        + keyframeCount * (4 + 2 * neuramar::NeuralModel::outputSize);
+    expect(bytes.size() == expectedBytes && bytes.size() < 128 * 1024,
+           "learned v3 payload escaped its exact bounded layout");
+
+    const std::size_t timesOffset = extension + 4
+        + 4 * neuramar::NeuralModel::outputSize;
+    std::size_t onsetFrames = 0;
+    float previousTime = -1.0f;
+    const float onsetEnd = std::min(
+        1.0f, 0.120f / corrected.durationSeconds());
+    for (std::size_t frame = 0; frame < keyframeCount; ++frame)
+    {
+        const float time = readLittleFloat(bytes, timesOffset + 4 * frame);
+        expect(std::isfinite(time) && time >= 0.0f && time <= 1.0f
+                   && time > previousTime,
+               "residual schedule contained a duplicate or unsafe time");
+        if (time <= onsetEnd + 1.0e-6f)
+            ++onsetFrames;
+        previousTime = time;
+    }
+    expect(readLittleFloat(bytes, timesOffset) == 0.0f
+               && readLittleFloat(bytes,
+                    timesOffset + 4 * (keyframeCount - 1)) == 1.0f,
+           "residual schedule did not span the complete learned duration");
+    expect(onsetFrames >= 40 && onsetFrames <= 48,
+           "residual schedule did not reserve 40-48 frames for the first 120 ms "
+               "(found " + std::to_string(onsetFrames) + ")");
+
+    std::string error;
+    auto neuralBase = neuramar::NeuralModel::deserialize(
+        makeVersion2ModelBytes(corrected), &error);
+    expect(neuralBase != nullptr,
+           "could not isolate the v2 neural base for residual quality testing: "
+               + error);
+    if (!neuralBase)
+        return;
+
+    constexpr std::array<float, 7> positions {
+        0.10f, 0.20f, 0.34f, 0.49f, 0.65f, 0.79f, 0.89f
+    };
+    constexpr std::array<int, 4> harmonics { 1, 2, 3, 5 };
+    const auto ratioError = [&fixture, &positions, &harmonics](
+        const neuramar::NeuralModel& model)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(48000.0, 128);
+        engine.setModel(&model);
+        neuramar::EngineParameters parameters;
+        parameters.imprint = 1.0f;
+        parameters.bodyLock = 0.0f;
+        parameters.air = 0.0f;
+        parameters.bone = 0.0f;
+        parameters.brightness = 0.5f;
+        parameters.evolutionRate = 1.0f;
+        parameters.orbit = 0.0f;
+        parameters.mutation = 0.0f;
+        parameters.attackSeconds = 0.0f;
+        parameters.spread = 0.0f;
+        parameters.outputGain = 0.08f;
+        engine.setParameters(parameters);
+        const auto rendered = renderNote(
+            engine, model.rootMidiNote(),
+            static_cast<int>(fixture.source.size()));
+
+        double totalErrorDb = 0.0;
+        std::size_t count = 0;
+        for (const float position : positions)
+        {
+            neuramar::SynthesisFrame frame;
+            model.evaluate(position, frame);
+            const double time = position * model.durationSeconds();
+            const double renderedFundamental = model.rootFrequencyHz()
+                * frame.pitchRatio;
+            std::array<float, harmonics.size()> sourceAmplitudes {};
+            std::array<float, harmonics.size()> renderedAmplitudes {};
+            for (std::size_t index = 0; index < harmonics.size(); ++index)
+            {
+                sourceAmplitudes[index] = windowedSinusoidAmplitude(
+                    fixture.source, 48000.0, time,
+                    220.0 * static_cast<double>(harmonics[index]));
+                renderedAmplitudes[index] = windowedSinusoidAmplitude(
+                    rendered, 48000.0, time,
+                    renderedFundamental * static_cast<double>(harmonics[index]));
+            }
+            for (std::size_t index = 1; index < harmonics.size(); ++index)
+            {
+                const double sourceRatio = sourceAmplitudes[index]
+                    / std::max(sourceAmplitudes.front(), 1.0e-8f);
+                const double modelRatio = renderedAmplitudes[index]
+                    / std::max(renderedAmplitudes.front(), 1.0e-8f);
+                totalErrorDb += std::abs(20.0 * std::log10(
+                    std::max(modelRatio, 1.0e-8)
+                    / std::max(sourceRatio, 1.0e-8)));
+                ++count;
+            }
+        }
+        return totalErrorDb / static_cast<double>(std::max<std::size_t>(count, 1));
+    };
+
+    const double baseErrorDb = ratioError(*neuralBase);
+    const double correctedErrorDb = ratioError(corrected);
+    std::cout << "Residual diagnostics: onset frames " << onsetFrames
+              << ", neural-base harmonic-ratio MAE " << baseErrorDb
+              << " dB, corrected MAE " << correctedErrorDb << " dB\n";
+    expect(correctedErrorDb < 0.40 * baseErrorDb,
+           "residual trajectory did not materially improve the neural base "
+           "harmonic-ratio error (base " + std::to_string(baseErrorDb)
+               + " dB, corrected " + std::to_string(correctedErrorDb) + " dB)");
 }
 
 void testRootCoreReconstruction(const LearnedFixture& fixture)
@@ -845,6 +1485,48 @@ void testMissingFundamentalRoot()
            "missing-fundamental complex did not map to A2");
 }
 
+void testFormantAndOctaveDominantRoots()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr float expectedRoot = 220.0f;
+    for (const bool includeFundamental : { true, false })
+    {
+        const auto learned = neuramar::SampleLearner::learn(
+            makeFormantDominantRootSample(
+                sampleRate, expectedRoot, 0.82, includeFundamental),
+            sampleRate);
+        const std::string label = includeFundamental
+            ? "formant-dominant odd spectrum"
+            : "formant-dominant missing fundamental";
+        expect(static_cast<bool>(learned),
+               label + " failed to learn: " + learned.error);
+        if (!learned.model)
+            continue;
+        expect(std::abs(learned.model->rootFrequencyHz() / expectedRoot - 1.0f)
+                   < 0.012f,
+               label + " locked onto a loud upper partial");
+        expect(learned.model->rootMidiNote() == 57,
+               label + " mapped to the wrong MIDI note");
+        expect(learned.model->pitchConfidence() > 0.75f,
+               label + " produced unexpectedly weak pitch confidence");
+    }
+
+    const auto octaveDominant = neuramar::SampleLearner::learn(
+        makeOctaveDominantRootSample(sampleRate, expectedRoot, 0.82),
+        sampleRate);
+    expect(static_cast<bool>(octaveDominant),
+           "octave-dominant root fixture failed to learn: "
+               + octaveDominant.error);
+    if (octaveDominant.model)
+    {
+        expect(std::abs(octaveDominant.model->rootFrequencyHz()
+                            / expectedRoot - 1.0f) < 0.015f,
+               "octave-dominant root fixture followed one loud partial");
+        expect(octaveDominant.model->rootMidiNote() == 57,
+               "octave-dominant fixture mapped to the upper octave");
+    }
+}
+
 void testBrightHighPitchAcrossRates()
 {
     constexpr float expectedRoot = 880.0f;
@@ -929,6 +1611,8 @@ void testHarmonicSubtractedAir()
         *harmonicAndNoise.model, 8000.0, 127, 1.0f, 0.0f);
     expect(foldedAir < 0.01f * air48k + 1.0e-7f,
            "out-of-range Air bands piled up at the host Nyquist edge");
+
+    testWideRegisterCore(*harmonicOnly.model);
 }
 
 void testPersistentBoneModeSelection()
@@ -1140,6 +1824,121 @@ void testSerialization(const neuramar::NeuralModel& model)
         std::span<const std::uint8_t>(bytes.data(), bytes.size() - 1), &error);
     expect(truncated == nullptr && !error.empty(),
            "truncated model was not rejected");
+
+    const auto version2Bytes = makeVersion2ModelBytes(model);
+    expect(version2Bytes.size() == modelHeaderBytes + version2PayloadBytes
+               && readLittleU32(version2Bytes, 4) == 2,
+           "test fixture did not produce a canonical version-2 payload");
+    error.clear();
+    auto version2 = neuramar::NeuralModel::deserialize(version2Bytes, &error);
+    expect(version2 != nullptr,
+           "real version-2 neural payload failed to deserialize: " + error);
+    if (version2)
+    {
+        const auto migratedBytes = version2->serialize();
+        const auto extension = modelHeaderBytes + version2PayloadBytes;
+        expect(readLittleU32(migratedBytes, 4)
+                   == neuramar::NeuralModel::currentFormatVersion
+                   && readLittleU32(migratedBytes, extension) == 0,
+               "version-2 model did not migrate to a zero-correction v3 payload");
+        auto migrated = neuramar::NeuralModel::deserialize(migratedBytes, &error);
+        expect(migrated != nullptr,
+               "zero-correction v3 migration failed to deserialize: " + error);
+        if (migrated)
+        {
+            for (const float time : { 0.0f, 0.017f, 0.25f, 0.5f, 0.83f, 1.0f })
+            {
+                neuramar::SynthesisFrame legacyFrame;
+                neuramar::SynthesisFrame migratedFrame;
+                version2->evaluate(time, legacyFrame);
+                migrated->evaluate(time, migratedFrame);
+                expect(legacyFrame.harmonicAmplitudes
+                               == migratedFrame.harmonicAmplitudes
+                           && legacyFrame.airAmplitudes
+                               == migratedFrame.airAmplitudes
+                           && legacyFrame.boneAmplitudes
+                               == migratedFrame.boneAmplitudes
+                           && legacyFrame.pitchRatio == migratedFrame.pitchRatio,
+                       "zero-correction migration changed exact v2 rendering");
+            }
+        }
+    }
+
+    auto version2WithTrailingData = bytes;
+    writeLittleU32(version2WithTrailingData, 4, 2);
+    error.clear();
+    auto trailingRejected = neuramar::NeuralModel::deserialize(
+        version2WithTrailingData, &error);
+    expect(trailingRejected == nullptr && !error.empty(),
+           "version-2 decoder accepted a version-3 residual extension");
+
+    const auto interpolatedBytes = makeLinearResidualModelBytes(model, 0.75f);
+    error.clear();
+    auto interpolated = neuramar::NeuralModel::deserialize(
+        interpolatedBytes, &error);
+    auto interpolationBase = neuramar::NeuralModel::deserialize(
+        version2Bytes, &error);
+    expect(interpolated != nullptr && interpolationBase != nullptr,
+           "crafted residual interpolation fixture failed to deserialize: " + error);
+    if (interpolated && interpolationBase)
+    {
+        for (const float time : { 0.0f, 0.125f, 0.25f, 0.5f, 0.75f, 1.0f })
+        {
+            neuramar::SynthesisFrame baseFrame;
+            neuramar::SynthesisFrame correctedFrame;
+            interpolationBase->evaluate(time, baseFrame);
+            interpolated->evaluate(time, correctedFrame);
+            const float correctionSemitones = 12.0f * std::log2(
+                correctedFrame.pitchRatio / baseFrame.pitchRatio);
+            expect(std::abs(correctionSemitones - 0.75f * time) < 2.0e-4f,
+                   "residual interpolation did not follow its raw-space linear "
+                   "trajectory at t=" + std::to_string(time));
+            expect(correctedFrame.harmonicAmplitudes
+                           == baseFrame.harmonicAmplitudes
+                       && correctedFrame.airAmplitudes == baseFrame.airAmplitudes
+                       && correctedFrame.boneAmplitudes == baseFrame.boneAmplitudes,
+                   "a zero-scale residual altered an unrelated amplitude output");
+        }
+    }
+
+    const std::size_t extension = modelHeaderBytes + version2PayloadBytes;
+    auto excessiveKeyframes = bytes;
+    writeLittleU32(excessiveKeyframes, extension, 129);
+    refreshModelHeader(excessiveKeyframes,
+                       neuramar::NeuralModel::currentFormatVersion);
+    error.clear();
+    auto excessiveRejected = neuramar::NeuralModel::deserialize(
+        excessiveKeyframes, &error);
+    expect(excessiveRejected == nullptr && !error.empty(),
+           "v3 decoder accepted more than 128 residual keyframes");
+
+    const auto keyframeCount = readLittleU32(bytes, extension);
+    const std::size_t timesOffset = extension + 4
+        + 4 * neuramar::NeuralModel::outputSize;
+    if (keyframeCount >= 2)
+    {
+        auto duplicateTimes = bytes;
+        writeLittleU32(duplicateTimes, timesOffset + 4,
+                       readLittleU32(duplicateTimes, timesOffset));
+        refreshModelHeader(duplicateTimes,
+                           neuramar::NeuralModel::currentFormatVersion);
+        error.clear();
+        auto duplicateRejected = neuramar::NeuralModel::deserialize(
+            duplicateTimes, &error);
+        expect(duplicateRejected == nullptr && !error.empty(),
+               "v3 decoder accepted duplicate residual keyframe times");
+
+        auto forbiddenQuantisedValue = bytes;
+        const std::size_t valuesOffset = timesOffset + 4 * keyframeCount;
+        writeLittleU16(forbiddenQuantisedValue, valuesOffset, 0x8000u);
+        refreshModelHeader(forbiddenQuantisedValue,
+                           neuramar::NeuralModel::currentFormatVersion);
+        error.clear();
+        auto quantisedRejected = neuramar::NeuralModel::deserialize(
+            forbiddenQuantisedValue, &error);
+        expect(quantisedRejected == nullptr && !error.empty(),
+               "v3 decoder accepted the non-canonical -32768 residual value");
+    }
 
     neuramar::SynthesisFrame atZero;
     neuramar::SynthesisFrame atNan;
@@ -1379,7 +2178,8 @@ void testRoughPerformance(const neuramar::NeuralModel& model)
     parameters.air = 0.6f;
     parameters.bone = 0.6f;
     engine.setParameters(parameters);
-    for (int note = 48; note < 56; ++note)
+    const int firstNote = std::clamp(model.rootMidiNote() - 24, 0, 119);
+    for (int note = firstNote; note < firstNote + 8; ++note)
         engine.noteOn(note, 0.75f);
 
     std::vector<float> left(24000, 0.0f);
@@ -1392,22 +2192,31 @@ void testRoughPerformance(const neuramar::NeuralModel& model)
     }
     const double elapsed = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - start).count();
-    expect(elapsed < 5.0,
-           "eight-voice half-second render exceeded a coarse CPU guard");
+    std::cout << "Performance diagnostics: eight-voice wide-register 0.5 s render "
+              << elapsed << " s (" << 0.5 / std::max(elapsed, 1.0e-9)
+              << "x realtime)\n";
+    constexpr double performanceLimit = NEURAMAR_SANITIZED_TEST_BUILD
+        ? 10.0 : 1.0;
+    expect(elapsed < performanceLimit,
+           "eight-voice wide-register render exceeded its coarse wall-time guard");
     expect(rms(left) > 0.001f, "performance fixture rendered silence");
 }
 } // namespace
 
 int main()
 {
+    testShapePreservingSpectralInterpolation();
     testInputValidationAndCancellation();
     testAirFilterNormalisation();
     testRootAcrossRatesAndRegisters();
     const auto fixture = learnFixture();
     testLearningAndRoot(fixture);
+    testResidualScheduleAndQuality(fixture);
     testRootCoreReconstruction(fixture);
     testMissingFundamentalRoot();
+    testFormantAndOctaveDominantRoots();
     testBrightHighPitchAcrossRates();
+    testHighRegisterOutputLinearity();
     testHarmonicSubtractedAir();
     testPersistentBoneModeSelection();
     testEvolvingAirColour();
