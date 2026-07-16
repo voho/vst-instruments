@@ -338,6 +338,12 @@ private:
         float filterAttackCoefficient { 1.0f };
         float filterDecayCoefficient { 1.0f };
         float filterReleaseCoefficient { 1.0f };
+        float cachedAmpAttackSeconds { -1.0f };
+        float cachedAmpDecaySeconds { -1.0f };
+        float cachedAmpReleaseSeconds { -1.0f };
+        float cachedFilterAttackSeconds { -1.0f };
+        float cachedFilterDecaySeconds { -1.0f };
+        float cachedFilterReleaseSeconds { -1.0f };
         float previousMixerInput { 0.0f };
         float lastOutput { 0.0f };
         float outputEnergy { 0.0f };
@@ -413,6 +419,7 @@ private:
     void updateActiveVoiceCount() noexcept;
     float nextNoise(Voice& voice) noexcept;
     float nextLfoValue(const EngineParameters& parameters) noexcept;
+    void advanceLfoPhase(const EngineParameters& parameters) noexcept;
     void updateVoiceCardDrift(VoiceCard& card) noexcept;
     void processChorus(float inputLeft, float inputRight,
                        const EngineParameters& parameters,
@@ -441,9 +448,15 @@ private:
     float velocitySmoothing_ { 0.02f };
     float outputEnergySmoothing_ { 0.01f };
     bool prepared_ { false };
+    bool anyVoiceActive_ { false };
+    int idleZeroRun_ { 0 };
     std::uint64_t generation_ { 0 };
     int activeVoiceCount_ { 0 };
     int driftControlCountdown_ { 0 };
+    float driftSlowRho_ { 0.99f };
+    float driftFastRho_ { 0.9f };
+    float driftSlowExcitation_ { 0.1f };
+    float driftFastExcitation_ { 0.5f };
     float lastPlayedMidi_ { 60.0f };
     bool hasLastPlayedMidi_ { false };
     std::array<int, 128> heldNoteOrder_ {};
@@ -476,6 +489,9 @@ private:
     BbdLine chorusLeft_ {};
     BbdLine chorusRight_ {};
     BbdCompander chorusCompander_ {};
+    float cachedChorusMix_ { -1.0f };
+    float chorusDryGain_ { 1.0f };
+    float chorusWetGain_ { 0.0f };
     float chorusPhase_ { 0.0f };
     float chorusActivity_ { 0.0f };
     float chorusActivityAttack_ { 0.05f };
