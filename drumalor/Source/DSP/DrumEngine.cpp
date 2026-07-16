@@ -296,6 +296,7 @@ void DrumEngine::prepare (double sampleRate, int maxBlockSize) noexcept
     configureMetallicDecimator();
     metallicIncrementSmoothing_ = 1.0f - std::exp (
         -1.0f / std::max (1.0f, 0.0015f * metallicInternalSampleRate_));
+    cymbalClockIncrement_ = std::min (1.0f, 30000.0f * inverseSampleRate_);
     const float reconstructionCutoff = std::min (13500.0f, 0.42f * floatSampleRate);
     cymbalReconstructionCoefficient_ = 1.0f - std::exp (
         -twoPi * reconstructionCutoff / floatSampleRate);
@@ -315,6 +316,8 @@ void DrumEngine::reset() noexcept
     triggerCounters_.fill (0);
     componentDrift_.fill (0.0f);
     resetMetallicOscillatorBanks();
+    anyVoiceActive_ = false;
+    metallicFrozenSamples_ = 0;
     generation_ = 0;
     smoothedOutputGain_ = outputGain_.load (std::memory_order_relaxed);
     dcInputLeft_ = dcInputRight_ = 0.0f;
@@ -587,8 +590,66 @@ void DrumEngine::resetMetallicOscillatorBanks() noexcept
         {
             bank.decimatorHistory[static_cast<std::size_t> (
                 bank.decimatorWriteIndex)] = renderMetallicBankSubstep (bank);
-            bank.decimatorWriteIndex = (bank.decimatorWriteIndex + 1)
-                % maximumMetallicDecimatorTaps;
+            if (++bank.decimatorWriteIndex >= maximumMetallicDecimatorTaps)
+                bank.decimatorWriteIndex = 0;
+        }
+    }
+}
+
+void DrumEngine::wakeMetallicOscillatorBanks() noexcept
+{
+    // The engine renders exact digital silence while no voice exists, so the
+    // free-running metallic circuits are frozen instead of advanced sample by
+    // sample. This restores the state they would have reached: short gaps are
+    // replayed substep-exactly, longer gaps advance every phase analytically,
+    // snap the capacitors onto their settled periodic orbit, and re-render one
+    // full reconstruction history. The gap length is an absolute sample count,
+    // so the result is independent of host block partitioning.
+    if (metallicFrozenSamples_ == 0u)
+        return;
+
+    const auto substepsToCover = metallicFrozenSamples_
+        * static_cast<std::uint64_t> (metallicOversampleFactor_);
+    const auto warmupSubsteps = static_cast<std::uint64_t> (metallicDecimatorTapCount_);
+    // Short gaps are replayed substep-exactly, so a briefly idle engine stays
+    // sample-identical to one that kept rendering (a tested superposition
+    // contract). Beyond this bound the smoothed increments and capacitors have
+    // long settled onto their periodic orbit, which the analytic jump restores
+    // directly; the bound also caps the wake cost at well under a millisecond.
+    constexpr std::uint64_t exactReplaySubsteps = 2048;
+    metallicFrozenSamples_ = 0;
+
+    for (auto& bank : metallicBanks_)
+    {
+        auto replaySubsteps = substepsToCover;
+        if (substepsToCover > exactReplaySubsteps)
+        {
+            const auto advance = substepsToCover - warmupSubsteps;
+            for (int oscillatorIndex = 0; oscillatorIndex < bank.activeOscillators;
+                 ++oscillatorIndex)
+            {
+                const auto index = static_cast<std::size_t> (oscillatorIndex);
+                const double travelled = static_cast<double> (bank.targetIncrements[index])
+                    * static_cast<double> (advance);
+                bank.phases[index] = std::clamp (
+                    static_cast<float> (bank.phases[index]
+                        + travelled - std::floor (bank.phases[index] + travelled)),
+                    0.0f, 1.0f);
+            }
+            // Snap increments and capacitor states to the settled values the
+            // smoothed circuit converges to within a couple of milliseconds.
+            configureMetallicOscillatorBank (
+                bank.instrument, std::exp2 (bank.lastParameterPitch / 12.0f),
+                bank.lastParameterCharacterA, true);
+            replaySubsteps = warmupSubsteps;
+        }
+
+        for (std::uint64_t substep = 0; substep < replaySubsteps; ++substep)
+        {
+            bank.decimatorHistory[static_cast<std::size_t> (
+                bank.decimatorWriteIndex)] = renderMetallicBankSubstep (bank);
+            if (++bank.decimatorWriteIndex >= maximumMetallicDecimatorTaps)
+                bank.decimatorWriteIndex = 0;
         }
     }
 }
@@ -813,8 +874,8 @@ void DrumEngine::renderMetallicOscillatorBanks (
             latestSource = renderMetallicBankSubstep (bank);
             bank.decimatorHistory[static_cast<std::size_t> (
                 bank.decimatorWriteIndex)] = latestSource;
-            bank.decimatorWriteIndex = (bank.decimatorWriteIndex + 1)
-                % maximumMetallicDecimatorTaps;
+            if (++bank.decimatorWriteIndex >= maximumMetallicDecimatorTaps)
+                bank.decimatorWriteIndex = 0;
         }
 
         // All oscillator/capacitor/filter state keeps advancing through a
@@ -842,9 +903,7 @@ float DrumEngine::nextCymbalPcm (Voice& voice, float source) const noexcept
     // remains fully synthesized, but this voice-local clock and 63-level
     // quantizer contribute the same held-DAC grain to a generated oscillator/
     // noise composite. No sample or copyrighted ROM data is embedded.
-    const float clockIncrement = std::min (
-        1.0f, 30000.0f * inverseSampleRate_);
-    voice.cymbalClockPhase += clockIncrement;
+    voice.cymbalClockPhase += cymbalClockIncrement_;
     if (voice.cymbalClockPhase >= 1.0f)
     {
         voice.cymbalClockPhase -= std::floor (voice.cymbalClockPhase);
@@ -1354,6 +1413,7 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
         return;
     if (! prepared_)
         prepare (sampleRate_, maxBlockSize_);
+    wakeMetallicOscillatorBanks();
     velocity = std::clamp (velocity, 0.0f, 1.0f);
     if (instrument == Instrument::ClosedHat || instrument == Instrument::OpenHat)
         chokeHats();
@@ -1400,6 +1460,7 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
         retireVoice (voice);
     initialiseVoice (voice, instrument, velocity, snapshotParameters (instrument), seed,
                      variation);
+    anyVoiceActive_ = true;
     updateActiveVoiceCount();
 }
 
@@ -1741,6 +1802,22 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
+        // While no voice exists in either pool, every downstream stage is at
+        // its zero rest state and the block is exact digital silence, so only
+        // the output-gain smoother needs to advance. The frozen sample count
+        // lets the next trigger restore the free-running metallic circuits to
+        // the state they would have reached (see wakeMetallicOscillatorBanks).
+        if (! anyVoiceActive_)
+        {
+            ++metallicFrozenSamples_;
+            smoothedOutputGain_ += gainSmoothing * (gainTarget - smoothedOutputGain_);
+            if (left != nullptr)
+                left[sample] = 0.0f;
+            if (right != nullptr && right != left)
+                right[sample] = 0.0f;
+            continue;
+        }
+
         // Free-running component oscillators advance even when their VCAs are
         // closed. A later trigger therefore samples the circuit's actual phase
         // rather than restarting a synthetic waveform at note-on.
@@ -1805,6 +1882,7 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
             dcOutputLeft_ = dcOutputRight_ = 0.0f;
             masterAdaaPreviousLeft_ = masterAdaaPreviousRight_ = 0.0f;
         }
+        anyVoiceActive_ = hasActiveVoices;
     }
 
     updateActiveVoiceCount();

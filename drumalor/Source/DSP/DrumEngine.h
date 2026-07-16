@@ -246,6 +246,7 @@ private:
 
     [[nodiscard]] float oscillator (Voice& voice, int oscillatorIndex) const noexcept;
     void resetMetallicOscillatorBanks() noexcept;
+    void wakeMetallicOscillatorBanks() noexcept;
     void configureMetallicDecimator() noexcept;
     void updateMetallicBankParameterTargets() noexcept;
     void configureMetallicOscillatorBank (Instrument instrument, float pitchRatio,
@@ -285,6 +286,8 @@ private:
     float inverseSampleRate_ { 1.0f / 48000.0f };
     int maxBlockSize_ { 512 };
     bool prepared_ { false };
+    bool anyVoiceActive_ { false };
+    std::uint64_t metallicFrozenSamples_ { 0 };
     std::uint64_t generation_ { 0 };
     std::uint64_t maximumVoiceSamples_ { 384000 };
     std::uint64_t forcedFadeStartSamples_ { 383760 };
@@ -299,6 +302,7 @@ private:
     float metallicInternalSampleRate_ { 192000.0f };
     float metallicInverseSampleRate_ { 1.0f / 192000.0f };
     float metallicIncrementSmoothing_ { 0.01f };
+    float cymbalClockIncrement_ { 0.625f };
     float cymbalReconstructionCoefficient_ { 0.8f };
     int metallicOversampleFactor_ { 4 };
     int metallicDecimatorTapCount_ { 257 };
