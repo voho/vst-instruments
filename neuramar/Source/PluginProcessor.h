@@ -29,6 +29,7 @@ inline constexpr auto release       = "release";
 inline constexpr auto spread        = "spread";
 inline constexpr auto rootCorrection = "rootCorrection";
 inline constexpr auto output        = "output";
+inline constexpr auto noise         = "noise";
 } // namespace neuramar::parameters
 
 class NeuramarAudioProcessorEditor;
@@ -49,6 +50,13 @@ public:
         Error
     };
 
+    enum class RandomizationAmount : unsigned
+    {
+        Subtle1Percent = 1,
+        Evolve10Percent = 10,
+        Wild100Percent = 100
+    };
+
     struct LearningSnapshot
     {
         LearningStage stage = LearningStage::Empty;
@@ -57,6 +65,7 @@ public:
         int rootMidiNote = -1;
         float rootCents = 0.0f;
         float rootConfidence = 0.0f;
+        bool generatedModel = false;
         std::uint64_t modelGeneration = 0;
         juce::String sourceName;
         juce::String message;
@@ -97,6 +106,9 @@ public:
                           juce::String sourceName = "Generated sound");
     void requestLearningCancellation();
     void cancelLearning();
+    // Message-thread action: generates a playable neural seed when empty, or
+    // derives an immutable variation from the currently published memory.
+    void randomizeModel (RandomizationAmount amount);
     void requestPanic() noexcept;
 
     [[nodiscard]] LearningSnapshot getLearningSnapshot() const;
@@ -136,6 +148,7 @@ private:
         std::atomic<float>* spread = nullptr;
         std::atomic<float>* rootCorrection = nullptr;
         std::atomic<float>* output = nullptr;
+        std::atomic<float>* noise = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
@@ -170,7 +183,8 @@ private:
                       juce::String sourceName,
                       std::uint64_t attemptState);
     void publishModel (std::unique_ptr<neuramar::NeuralModel> model,
-                       juce::String sourceName);
+                       juce::String sourceName,
+                       juce::String readyMessage = {});
     void publishRestoredModel (std::unique_ptr<neuramar::NeuralModel> model,
                                juce::String sourceName);
     void clearPublishedModel (juce::String message);
@@ -181,6 +195,7 @@ private:
     void makeWaveformPreview (const std::vector<float>& monoSamples,
                               std::uint64_t attemptState = 0);
     void reclaimRetiredModelsLocked();
+    [[nodiscard]] std::uint64_t nextRandomizationSeed() noexcept;
 
     std::array<UiMidiEvent, uiQueueCapacity> uiMidiQueue {};
     std::atomic<unsigned> uiWriteIndex { 0 };
@@ -214,6 +229,8 @@ private:
     // Even nonzero values are publishable attempts; the worker or canceller
     // atomically closes an attempt by setting its low bit.
     std::atomic<std::uint64_t> learningAttemptState { 0 };
+    std::uint64_t randomizationSeedBase = 0;
+    std::atomic<std::uint64_t> randomizationCounter { 0 };
 
     mutable juce::CriticalSection displayLock;
     LearningSnapshot displayState;

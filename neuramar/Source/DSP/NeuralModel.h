@@ -88,6 +88,23 @@ public:
     // normalised to the learned sample duration and is clamped to [0, 1].
     void evaluate(float normalisedTime, SynthesisFrame& destination) const noexcept;
 
+    // Evaluates a nearby point on the model's learned time manifold. The
+    // latent coordinate is bounded to [-1, 1]; zero is exactly equivalent to
+    // the legacy two-argument evaluation path.
+    void evaluate(float normalisedTime, float latentCoordinate,
+                  SynthesisFrame& destination) const noexcept;
+
+    // Creates a self-contained, playable neural memory without analysing a
+    // sample. The seed is the only source of entropy and strength linearly
+    // selects how much of the musically bounded randomisation range is used.
+    [[nodiscard]] static std::unique_ptr<NeuralModel>
+        createRandom(std::uint64_t seed, float strength);
+
+    // Returns a deep, immutable variation of this model. Root pitch, duration,
+    // and loop timing are preserved; the original model is never modified.
+    [[nodiscard]] std::unique_ptr<NeuralModel>
+        createRandomizedVariation(std::uint64_t seed, float strength) const;
+
     // The binary form is fixed-layout, checksummed, explicitly little-endian,
     // and bounded. Deserialisation never accepts trailing or oversized data.
     [[nodiscard]] std::vector<std::uint8_t> serialize() const;
@@ -105,6 +122,8 @@ private:
     void evaluateBaseRaw(
         float normalisedTime,
         std::array<float, outputSize>& destination) const noexcept;
+    [[nodiscard]] std::unique_ptr<NeuralModel> clone() const;
+    void refreshWaveformPreview(float blend) noexcept;
 
     Metadata metadata_ {};
     std::array<float, harmonicCount> initialHarmonicPhases_ {};

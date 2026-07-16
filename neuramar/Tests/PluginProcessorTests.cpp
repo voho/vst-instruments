@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <iostream>
 #include <set>
@@ -71,6 +72,54 @@ bool corruptSerializedModel (juce::MemoryBlock& state)
     auto* bytes = static_cast<std::uint8_t*> (state.getData());
     bytes[static_cast<std::size_t> (modelOffset + modelLength - 1)] ^= 0x80u;
     return true;
+}
+
+juce::MemoryBlock removeParameterFromSerializedState (
+    const juce::MemoryBlock& state, const char* parameterId)
+{
+    juce::MemoryInputStream input (state.getData(), state.getSize(), false);
+    constexpr auto expectedMagic = static_cast<std::uint32_t> (0x5453524eu);
+    const auto magic = static_cast<std::uint32_t> (input.readInt());
+    const auto version = input.readInt();
+    const auto xmlLength = input.readInt();
+    if (magic != expectedMagic || version != 1 || xmlLength <= 0
+        || static_cast<juce::int64> (xmlLength) > input.getNumBytesRemaining())
+        return {};
+
+    std::vector<char> xmlBytes (static_cast<std::size_t> (xmlLength));
+    if (input.read (xmlBytes.data(), xmlLength) != xmlLength)
+        return {};
+    const auto xml = juce::XmlDocument::parse (
+        juce::String::fromUTF8 (xmlBytes.data(), xmlLength));
+    if (xml == nullptr)
+        return {};
+    auto parameterState = juce::ValueTree::fromXml (*xml);
+    for (int childIndex = parameterState.getNumChildren() - 1;
+         childIndex >= 0; --childIndex)
+    {
+        const auto child = parameterState.getChild (childIndex);
+        if (child.hasType ("PARAM")
+            && child.getProperty ("id").toString() == parameterId)
+            parameterState.removeChild (childIndex, nullptr);
+    }
+    const auto migratedXml = parameterState.createXml();
+    if (migratedXml == nullptr)
+        return {};
+    const auto migratedText = migratedXml->toString();
+    const auto* migratedUtf8 = migratedText.toRawUTF8();
+    const auto migratedLength = static_cast<int> (std::strlen (migratedUtf8));
+
+    juce::MemoryBlock result;
+    juce::MemoryOutputStream output (result, false);
+    output.writeInt (static_cast<int> (magic));
+    output.writeInt (version);
+    output.writeInt (migratedLength);
+    output.write (migratedUtf8, static_cast<std::size_t> (migratedLength));
+    const auto remainderOffset = static_cast<std::size_t> (input.getPosition());
+    output.write (
+        static_cast<const std::uint8_t*> (state.getData()) + remainderOffset,
+        state.getSize() - remainderOffset);
+    return result;
 }
 
 std::vector<float> makeLearningTone (double sampleRate, double seconds,
@@ -188,6 +237,14 @@ std::vector<float> renderInitialAttack (const juce::MemoryBlock& state,
     return result;
 }
 
+void silenceProcessor (NeuramarAudioProcessor& processor)
+{
+    processor.requestPanic();
+    juce::AudioBuffer<float> buffer (2, 128);
+    juce::MidiBuffer midi;
+    processor.processBlock (buffer, midi);
+}
+
 double squaredDifference (const std::vector<float>& first,
                           const std::vector<float>& second)
 {
@@ -202,6 +259,158 @@ double squaredDifference (const std::vector<float>& first,
     return result;
 }
 
+bool componentTreeContainsLabel (const juce::Component& component,
+                                 const juce::String& text)
+{
+    if (const auto* label = dynamic_cast<const juce::Label*> (&component);
+        label != nullptr && label->getText() == text)
+        return true;
+
+    for (int childIndex = 0; childIndex < component.getNumChildComponents();
+         ++childIndex)
+    {
+        if (const auto* child = component.getChildComponent (childIndex);
+            child != nullptr && componentTreeContainsLabel (*child, text))
+            return true;
+    }
+    return false;
+}
+
+void testRandomizationWorkflow()
+{
+    using Amount = NeuramarAudioProcessor::RandomizationAmount;
+    NeuramarAudioProcessor processor;
+    expect (processor.getLearningSnapshot().stage
+                == NeuramarAudioProcessor::LearningStage::Empty,
+            "randomization fixture did not start empty");
+
+    processor.prepareToPlay (48000.0, 128);
+    processor.randomizeModel (Amount::Subtle1Percent);
+    const auto subtle = processor.getLearningSnapshot();
+    expect (subtle.stage == NeuramarAudioProcessor::LearningStage::Ready
+                && subtle.generatedModel
+                && subtle.rootMidiNote == 60
+                && subtle.modelGeneration > 0,
+            "1% randomization did not create a playable sample-free model");
+    expect (subtle.sourceName.contains ("1%")
+                && subtle.message.containsIgnoreCase ("no source sample"),
+            "sample-free randomization did not explain its range and origin");
+
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> generatedEditor (
+            processor.createEditor());
+        auto foundGeneratedRoot = false;
+        if (generatedEditor != nullptr)
+        {
+            for (int childIndex = 0;
+                 childIndex < generatedEditor->getNumChildComponents();
+                 ++childIndex)
+            {
+                if (const auto* label = dynamic_cast<const juce::Label*> (
+                        generatedEditor->getChildComponent (childIndex)))
+                    foundGeneratedRoot = foundGeneratedRoot
+                        || label->getText() == "GENERATED ROOT";
+            }
+        }
+        expect (foundGeneratedRoot,
+                "generated neural model was presented as an inferred sample root");
+    }
+
+    for (const int midiNote : { 24, 60, 96 })
+    {
+        const auto audio = renderNote (processor, midiNote, 60);
+        expect (audio.finite && audio.energy > 1.0e-8 && audio.peak < 7.96f,
+                "sample-free neural seed failed a wide-register render");
+        silenceProcessor (processor);
+    }
+
+    juce::MemoryBlock subtleState;
+    processor.getStateInformation (subtleState);
+
+    juce::AudioBuffer<float> liveVariationBuffer (2, 128);
+    juce::MidiBuffer liveVariationMidi;
+    liveVariationMidi.addEvent (
+        juce::MidiMessage::noteOn (1, 67, 0.82f), 0);
+    processor.processBlock (liveVariationBuffer, liveVariationMidi);
+    expect (processor.getActiveVoiceCount() > 0,
+            "live randomization fixture did not start a sounding voice");
+
+    processor.randomizeModel (Amount::Evolve10Percent);
+    const auto evolved = processor.getLearningSnapshot();
+    expect (evolved.stage == NeuramarAudioProcessor::LearningStage::Ready
+                && evolved.generatedModel
+                && evolved.modelGeneration > subtle.modelGeneration
+                && evolved.rootMidiNote == subtle.rootMidiNote,
+            "10% randomization did not vary the published neural model");
+    expect (evolved.sourceName.contains ("variation 10%")
+                && evolved.message.containsIgnoreCase ("weights varied"),
+            "existing-model randomization did not report weight variation");
+    liveVariationBuffer.clear();
+    juce::MidiBuffer noLiveVariationMidi;
+    processor.processBlock (liveVariationBuffer, noLiveVariationMidi);
+    const auto liveVariationMetrics = measure (liveVariationBuffer);
+    expect (liveVariationMetrics.finite && liveVariationMetrics.peak < 7.96f,
+            "publishing a neural variation while sounding produced invalid audio");
+    silenceProcessor (processor);
+
+    juce::MemoryBlock evolvedState;
+    processor.getStateInformation (evolvedState);
+    expect (evolvedState != subtleState,
+            "1% and 10% randomization serialized identical processor state");
+
+    NeuramarAudioProcessor restored;
+    restored.setStateInformation (
+        evolvedState.getData(), static_cast<int> (evolvedState.getSize()));
+    const auto restoredSnapshot = restored.getLearningSnapshot();
+    expect (restoredSnapshot.stage
+                == NeuramarAudioProcessor::LearningStage::Ready
+                && restoredSnapshot.generatedModel
+                && restoredSnapshot.rootMidiNote == evolved.rootMidiNote
+                && restoredSnapshot.sourceName == evolved.sourceName,
+            "sample-free neural seed did not retain its identity on state restore");
+    restored.prepareToPlay (48000.0, 128);
+    const auto restoredAudio = renderNote (restored, 72, 60);
+    expect (restoredAudio.finite && restoredAudio.energy > 1.0e-8,
+            "restored sample-free neural seed was not playable");
+    silenceProcessor (restored);
+
+    const auto restoredGeneration = restoredSnapshot.modelGeneration;
+    restored.randomizeModel (Amount::Wild100Percent);
+    const auto wild = restored.getLearningSnapshot();
+    expect (wild.stage == NeuramarAudioProcessor::LearningStage::Ready
+                && wild.generatedModel
+                && wild.modelGeneration > restoredGeneration
+                && wild.sourceName.contains ("variation 100%"),
+            "100% randomization did not publish a wild neural variation");
+    juce::MemoryBlock wildState;
+    restored.getStateInformation (wildState);
+    expect (wildState != evolvedState,
+            "100% randomization did not change the serialized neural state");
+
+    processor.learnSampleData (
+        makeLearningTone (16000.0, 2.0, 329.627557),
+        16000.0, "learner that randomize must cancel");
+    processor.randomizeModel (Amount::Subtle1Percent);
+    const auto afterLearningCancellation = processor.getLearningSnapshot();
+    expect (afterLearningCancellation.stage
+                == NeuramarAudioProcessor::LearningStage::Ready
+                && afterLearningCancellation.generatedModel
+                && ! afterLearningCancellation.sourceName.contains ("learner that"),
+            "randomization did not replace an in-flight learner coherently");
+    std::this_thread::sleep_for (std::chrono::milliseconds (40));
+    const auto stableAfterCancellation = processor.getLearningSnapshot();
+    expect (stableAfterCancellation.stage
+                == NeuramarAudioProcessor::LearningStage::Ready
+                && stableAfterCancellation.modelGeneration
+                    == afterLearningCancellation.modelGeneration
+                && stableAfterCancellation.sourceName
+                    == afterLearningCancellation.sourceName,
+            "cancelled learner published over a randomized neural memory");
+
+    processor.releaseResources();
+    restored.releaseResources();
+}
+
 void testContractsAndLearning()
 {
     NeuramarAudioProcessor processor;
@@ -214,8 +423,50 @@ void testContractsAndLearning()
     expect (processor.getNumPrograms() == 1
                 && processor.getProgramName (0).isNotEmpty(),
             "the VST3 factory program has no host-visible name");
-    expect (processor.getParameters().size() == 13,
-            "version-one host parameter count changed");
+    expect (processor.getParameters().size() == 14,
+            "host parameter count does not include the appended Noise control");
+    constexpr std::array<const char*, 14> expectedParameterOrder {
+        neuramar::parameters::imprint,
+        neuramar::parameters::bodyLock,
+        neuramar::parameters::air,
+        neuramar::parameters::bone,
+        neuramar::parameters::brightness,
+        neuramar::parameters::evolutionRate,
+        neuramar::parameters::orbit,
+        neuramar::parameters::mutation,
+        neuramar::parameters::attack,
+        neuramar::parameters::release,
+        neuramar::parameters::spread,
+        neuramar::parameters::rootCorrection,
+        neuramar::parameters::output,
+        neuramar::parameters::noise
+    };
+    for (std::size_t index = 0; index < expectedParameterOrder.size(); ++index)
+    {
+        expect (
+            processor.getParameters()[static_cast<int> (index)]
+                == processor.parameters.getParameter (
+                    expectedParameterOrder[index]),
+            "host parameter order changed at index "
+                + std::to_string (index));
+    }
+
+    auto* noise = processor.parameters.getParameter (neuramar::parameters::noise);
+    expect (noise != nullptr, "Noise parameter is missing");
+    if (noise != nullptr)
+    {
+        const auto range = noise->getNormalisableRange();
+        expect (approximatelyEqual (range.start, 0.0f)
+                    && approximatelyEqual (range.end, 1.0f)
+                    && approximatelyEqual (range.interval, 0.001f),
+                "Noise no longer exposes the exact 0-100% contract");
+        expect (approximatelyEqual (
+                    noise->convertFrom0to1 (noise->getDefaultValue()), 0.0f)
+                    && approximatelyEqual (
+                        parameterValue (processor, neuramar::parameters::noise),
+                        0.0f),
+                "Noise no longer defaults to exact model recall");
+    }
 
     auto* awaken = processor.parameters.getParameter (neuramar::parameters::attack);
     expect (awaken != nullptr, "Awaken parameter is missing");
@@ -260,6 +511,8 @@ void testContractsAndLearning()
             "root detector reported implausibly low confidence for a harmonic tone");
     expect (learned.modelGeneration > 0,
             "ready model did not receive a generation");
+    expect (! learned.generatedModel,
+            "sample-learned model was mislabeled as a generated neural seed");
 
     const auto rendered = renderNote (processor, 67, 80);
     expect (rendered.finite, "learned instrument rendered NaN or infinity");
@@ -275,15 +528,38 @@ void testContractsAndLearning()
 
     constexpr auto retainedImprint = 0.31f;
     constexpr auto rejectedImprint = 0.76f;
+    constexpr auto retainedNoise = 0.43f;
     setParameterValue (processor, neuramar::parameters::imprint, retainedImprint);
+    setParameterValue (processor, neuramar::parameters::noise, retainedNoise);
     expect (approximatelyEqual (
                 parameterValue (processor, neuramar::parameters::imprint), retainedImprint),
             "could not establish the retained parameter-state fixture");
+    expect (approximatelyEqual (
+                parameterValue (processor, neuramar::parameters::noise), retainedNoise),
+            "could not establish the retained Noise parameter fixture");
 
     juce::MemoryBlock state;
     processor.getStateInformation (state);
     expect (state.getSize() > 512 && state.getSize() < 4 * 1024 * 1024,
             "state did not embed one compact, bounded neural model");
+
+    const auto legacyState = removeParameterFromSerializedState (
+        state, neuramar::parameters::noise);
+    expect (! legacyState.isEmpty(),
+            "could not construct the pre-Noise state migration fixture");
+    NeuramarAudioProcessor legacyRestored;
+    setParameterValue (
+        legacyRestored, neuramar::parameters::noise, 0.91f);
+    legacyRestored.setStateInformation (
+        legacyState.getData(), static_cast<int> (legacyState.getSize()));
+    expect (approximatelyEqual (
+                parameterValue (
+                    legacyRestored, neuramar::parameters::noise),
+                0.0f)
+                && legacyRestored.getLearningSnapshot().stage
+                    == NeuramarAudioProcessor::LearningStage::Ready,
+            "a pre-Noise session inherited the live Noise value instead of "
+            "migrating to exact recall");
 
     const auto defaultAttack = renderInitialAttack (state, false, 0.0f);
     const auto explicitZeroAttack = renderInitialAttack (state, true, 0.0f);
@@ -405,6 +681,9 @@ void testContractsAndLearning()
     expect (approximatelyEqual (
                 parameterValue (restored, neuramar::parameters::imprint), retainedImprint),
             "state round trip changed the saved parameter fixture");
+    expect (approximatelyEqual (
+                parameterValue (restored, neuramar::parameters::noise), retainedNoise),
+            "state round trip changed the saved Noise parameter");
     restored.prepareToPlay (48000.0, 128);
     const auto restoredRender = renderNote (restored, 55, 50);
     expect (restoredRender.finite && restoredRender.energy > 1.0e-8,
@@ -444,6 +723,27 @@ void testContractsAndLearning()
     {
         expect (editor->getWidth() == 1180 && editor->getHeight() == 760,
                 "editor default size changed unexpectedly");
+
+        std::set<std::string> buttonTexts;
+        auto defaultTenPercentSelected = false;
+        for (int childIndex = 0; childIndex < editor->getNumChildComponents();
+             ++childIndex)
+        {
+            if (const auto* button = dynamic_cast<const juce::TextButton*> (
+                    editor->getChildComponent (childIndex)))
+            {
+                buttonTexts.insert (button->getButtonText().toStdString());
+                if (button->getButtonText() == "10%")
+                    defaultTenPercentSelected = button->getToggleState();
+            }
+        }
+        for (const auto* text : { "RANDOMIZE", "1%", "10%", "100%" })
+            expect (buttonTexts.contains (text),
+                    std::string ("editor is missing randomization control ") + text);
+        expect (defaultTenPercentSelected,
+                "editor did not default to the balanced 10% random range");
+        expect (componentTreeContainsLabel (*editor, "NOISE"),
+                "editor is missing the neural-input Noise control");
 
         const auto renderAndCheckEditor = [&editor] (int width, int height,
                                                       const char* snapshotVariable)
@@ -500,6 +800,17 @@ void testContractsAndLearning()
         editor->setSize (1180, 760);
     }
 
+    processor.randomizeModel (
+        NeuramarAudioProcessor::RandomizationAmount::Subtle1Percent);
+    const auto learnedVariation = processor.getLearningSnapshot();
+    expect (learnedVariation.stage
+                == NeuramarAudioProcessor::LearningStage::Ready
+                && ! learnedVariation.generatedModel
+                && learnedVariation.rootMidiNote == learned.rootMidiNote
+                && learnedVariation.modelGeneration > learned.modelGeneration
+                && learnedVariation.sourceName.contains ("variation 1%"),
+            "randomizing a learned memory lost its inferred-root identity");
+
     processor.releaseResources();
     restored.releaseResources();
 }
@@ -508,6 +819,7 @@ void testContractsAndLearning()
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
+    testRandomizationWorkflow();
     testContractsAndLearning();
 
     if (failures != 0)

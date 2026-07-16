@@ -1,10 +1,11 @@
 # Neuramar
 
-Neuramar is a sample-learned neural instrument for macOS: drop in one sound,
-let it infer the root and fit a compact local synthesis model, then play the
-result across the keyboard. Its **Core**, **Air**, and **Bone** layers preserve
-different parts of the source's identity while the front panel invites the
-memory to stay faithful, drift, breathe, or become something new.
+Neuramar is a neural instrument for macOS: drop in one sound, let it infer the
+root and fit a compact local synthesis model, then play the result across the
+keyboard. Or start without a recording and grow a playable neural seed from
+the **Randomize** controls. Its **Core**, **Air**, and **Bone** layers preserve
+or invent different parts of a sound's identity while the front panel invites
+the memory to stay faithful, drift, breathe, or become something new.
 
 Neuramar is not a conventional sampler. The imported recording is analysed in
 the background but is not repitched or played back when notes sound. Completed
@@ -49,6 +50,18 @@ Loading a new sound starts a new fit; the playable model changes only when that
 fit completes successfully. The file loader accepts at least 60 ms and reads at
 most the first 12 seconds; stereo input is downmixed for the monophonic analysis.
 
+To begin without a sample, choose **1%**, **10%**, or **100%**, then press
+**Randomize**. With an empty pool, Neuramar creates a playable C4-anchored neural
+seed. With a learned or generated memory already loaded, it derives a fresh
+immutable variation instead. The three buttons scale the same bounded musical
+mutation ranges: 1% is a near-neighbour, 10% is an audible evolution, and 100%
+can establish a new identity. Randomization never runs in the audio callback,
+and the resulting compact model is saved with the session like a learned one.
+At 1% and 10%, each press moves the current published memory toward a new
+bounded target, creating a controlled evolutionary walk. At 100%, the mutable
+neural field is fully rerolled while its Core/Air/Bone energy remains calibrated,
+so repeated Wild presses do not accumulate runaway loudness.
+
 ## Choosing a useful source
 
 Neuramar learns most predictably from one clean, isolated, mostly monophonic
@@ -79,7 +92,7 @@ display shows the inferred note, tuning offset, confidence, and any manual
 semitone correction. The editor is resizable and all controls are drawn with
 native JUCE graphics.
 
-Neuramar exposes 13 host parameters: eleven continuous front-panel controls,
+Neuramar exposes 14 host parameters: twelve continuous front-panel controls,
 **Orbit**, and the persisted root correction.
 
 | Control | Musical role |
@@ -91,6 +104,7 @@ Neuramar exposes 13 host parameters: eleven continuous front-panel controls,
 | **Gravity** | -100% to +100%; tilts the reconstructed spectrum from darker to brighter. |
 | **Memory** | 0.25x–4.00x; changes how quickly a note travels through the learned time evolution. |
 | **Mutation** | 0–100%; adds bounded, voice-local movement around the learned character. |
+| **Noise** | 0–100%; sends smooth voice-local randomness through the neural time/Fourier input coordinate, making the model wander through its own learned or generated behaviour. It does not add an audio-noise layer. |
 | **Awaken** | 0–2 s; at zero, preserves the learned attack; higher values add a performance fade-in. |
 | **Dissolve** | 20 ms–8 s; shapes the performance release. |
 | **Horizon** | 0–100%; widens voices across the stereo field. |
@@ -98,8 +112,10 @@ Neuramar exposes 13 host parameters: eleven continuous front-panel controls,
 | **Orbit** | Revisits a stable learned region while a note remains held. |
 | **Root correction** | Shifts the inferred source root from -12 to +12 semitones without retraining. |
 
-**Panic** immediately silences sounding voices. **Drop / Open**, **Cancel**, and
-**Panic** are actions rather than host parameters.
+**Randomize** creates a model when the pool is empty or varies the current
+model's neural state. Its **1% / 10% / 100%** selector controls the breadth of
+that operation. **Panic** immediately silences sounding voices. **Drop / Open**,
+**Randomize**, **Cancel**, and **Panic** are actions rather than host parameters.
 
 Root correction is sampler-style key relabelling: the corrected MIDI key
 reproduces the learned source pitch. It does not retune the source itself or act
@@ -136,6 +152,18 @@ end-to-end through a differentiable renderer:
   log-amplitude targets; a bounded 128-frame `int16` correction trajectory then
   restores fast and irregular detail omitted by the smooth neural base without
   adding allocation or locks to evaluation;
+- the same controller can be initialized as a musically constrained procedural
+  neural field when no sample is present; subsequent randomization uses
+  deterministic per-operation seeds and independent named random streams,
+  scales bounded coefficient, phase, spectrum, and modal changes by exactly
+  1%, 10%, or 100%, and progressively releases learned residual corrections so
+  larger variations can express their new network state;
+- **Noise** supplies a slow, smoothly interpolated, voice-local latent signal
+  to the controller's existing input manifold; it moves evaluation through
+  nearby model states at control rate, with displacement capped in seconds so
+  long recordings do not turn into coarse temporal scrubbing, while **Air**
+  remains the explicit stochastic audio layer and **Mutation** remains the
+  per-voice character variation control;
 - **Core** renders the learned harmonic distribution at each played MIDI pitch,
   **Air** drives an independent deterministic white-noise stream through each
   fitted band, and **Bone** renders only candidate modes that remain locally
@@ -187,6 +215,10 @@ that were never captured. Neuramar learns the evidence in that recording and
 uses musical synthesis priors to extrapolate it; it does not recover an unknown
 original instrument in full. Large transpositions can expose that limitation,
 and noisy or ambiguous sources can lead to a wrong root or a less literal model.
+Likewise, sample-free Randomize is a procedural generator inside Neuramar's
+bounded neural/DDSP architecture, not a pretrained generative model of real
+instruments. “100%” means the full designed musical mutation range, not arbitrary
+unsafe values across the serialized decoder's validation limits.
 
 The current release uses no pretrained corpus or bundled weights. That keeps the
 fit private and self-contained, but it also means Neuramar has no external

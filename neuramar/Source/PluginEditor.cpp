@@ -467,7 +467,7 @@ juce::String NeuralPoolDisplay::stageTitle (NeuramarAudioProcessor::LearningStag
     using Stage = NeuramarAudioProcessor::LearningStage;
     switch (stage)
     {
-        case Stage::Empty:       return "DROP A SOUND INTO THE POOL";
+        case Stage::Empty:       return "DROP A SOUND OR PRESS RANDOMIZE";
         case Stage::Reading:     return "LISTENING";
         case Stage::FindingRoot: return "FINDING THE ROOT";
         case Stage::Analysing:   return "SEPARATING CORE / AIR / BONE";
@@ -704,7 +704,7 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     logoLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (logoLabel);
 
-    taglineLabel.setText ("TEACH A SOUND. PLAY ITS MEMORY.", juce::dontSendNotification);
+    taglineLabel.setText ("TEACH A SOUND. GROW A MEMORY.", juce::dontSendNotification);
     taglineLabel.setFont (font (10.5f, true));
     taglineLabel.setColour (juce::Label::textColourId, colour (mint).withAlpha (0.84f));
     taglineLabel.setJustificationType (juce::Justification::centredLeft);
@@ -749,12 +749,40 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     loadButton.setTooltip ("Open a WAV, AIFF, FLAC, or OGG sound for local learning.");
     cancelButton.setTooltip ("Cancel the current background analysis and training pass.");
     panicButton.setTooltip ("Immediately stop all sounding voices.");
-    rootDownButton.setTooltip ("Correct the inferred root down by one semitone.");
-    rootUpButton.setTooltip ("Correct the inferred root up by one semitone.");
+    randomizeButton.setDescription (
+        "Generate a playable neural seed, or vary the current neural memory.");
+    randomizeButton.setTooltip (
+        "With no memory, grow a playable neural seed. With a memory, vary its weights "
+        "within the selected musical range.");
+    randomize1Button.setDescription (
+        "Select subtle one-percent neural randomization.");
+    randomize10Button.setDescription (
+        "Select ten-percent neural evolution.");
+    randomize100Button.setDescription (
+        "Select full-range wild neural randomization.");
+    randomize1Button.setTooltip (
+        "Subtle: move neural weights through 1% of their bounded musical range.");
+    randomize10Button.setTooltip (
+        "Evolve: move neural weights through 10% of their bounded musical range.");
+    randomize100Button.setTooltip (
+        "Wild: use the full bounded musical range to create a new neural identity.");
+    rootDownButton.setTooltip ("Move the model's root anchor down by one semitone.");
+    rootUpButton.setTooltip ("Move the model's root anchor up by one semitone.");
 
-    for (auto* button : std::array<juce::Button*, 6> {
+    constexpr int randomizationRadioGroup = 0x4e52;
+    for (auto* button : std::array<juce::TextButton*, 3> {
+             &randomize1Button, &randomize10Button, &randomize100Button })
+    {
+        button->setClickingTogglesState (true);
+        button->setRadioGroupId (randomizationRadioGroup);
+    }
+    randomize10Button.setToggleState (true, juce::dontSendNotification);
+
+    for (auto* button : std::array<juce::Button*, 10> {
              &loadButton, &cancelButton, &panicButton,
-             &rootDownButton, &rootUpButton, &orbitButton })
+             &rootDownButton, &rootUpButton, &orbitButton,
+             &randomizeButton, &randomize1Button, &randomize10Button,
+             &randomize100Button })
         addAndMakeVisible (*button);
 
     loadButton.onClick = [this] { chooseSampleFile(); };
@@ -763,13 +791,32 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
         neuramarProcessor.requestLearningCancellation();
     };
     panicButton.onClick = [this] { neuramarProcessor.requestPanic(); };
+    randomizeButton.onClick = [this]
+    {
+        neuramarProcessor.randomizeModel (randomizationAmount);
+    };
+    randomize1Button.onClick = [this]
+    {
+        randomizationAmount =
+            NeuramarAudioProcessor::RandomizationAmount::Subtle1Percent;
+    };
+    randomize10Button.onClick = [this]
+    {
+        randomizationAmount =
+            NeuramarAudioProcessor::RandomizationAmount::Evolve10Percent;
+    };
+    randomize100Button.onClick = [this]
+    {
+        randomizationAmount =
+            NeuramarAudioProcessor::RandomizationAmount::Wild100Percent;
+    };
     rootDownButton.onClick = [this] { nudgeRoot (-1); };
     rootUpButton.onClick = [this] { nudgeRoot (1); };
 
-    for (auto* knob : std::array<NeuramarKnob*, 11> {
+    for (auto* knob : std::array<NeuramarKnob*, 12> {
              &imprintKnob, &bodyLockKnob, &airKnob, &boneKnob,
              &brightnessKnob, &evolutionKnob, &mutationKnob,
-             &attackKnob, &releaseKnob, &spreadKnob, &outputKnob })
+             &noiseKnob, &attackKnob, &releaseKnob, &spreadKnob, &outputKnob })
         addAndMakeVisible (*knob);
 
     bodyLockKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
@@ -777,7 +824,13 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     brightnessKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (amber));
     evolutionKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
     mutationKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
+    noiseKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
     outputKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (amber));
+    noiseKnob.slider.setDescription (
+        "Evolves the neural model's latent input; it does not add audible hiss.");
+    noiseKnob.slider.setTooltip (
+        "Latent evolution: perturbs the neural input over time. This is not an audible "
+        "hiss or noise-layer level.");
 
     attachSlider (imprintKnob.slider, neuramar::parameters::imprint);
     attachSlider (bodyLockKnob.slider, neuramar::parameters::bodyLock);
@@ -786,6 +839,7 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     attachSlider (brightnessKnob.slider, neuramar::parameters::brightness);
     attachSlider (evolutionKnob.slider, neuramar::parameters::evolutionRate);
     attachSlider (mutationKnob.slider, neuramar::parameters::mutation);
+    attachSlider (noiseKnob.slider, neuramar::parameters::noise);
     attachSlider (attackKnob.slider, neuramar::parameters::attack);
     attachSlider (releaseKnob.slider, neuramar::parameters::release);
     attachSlider (spreadKnob.slider, neuramar::parameters::spread);
@@ -905,16 +959,32 @@ void NeuramarAudioProcessorEditor::resized()
 
     bounds.removeFromTop (10);
     auto performance = bounds.reduced (10, 8);
-    auto actions = performance.removeFromRight (juce::jmax (150, performance.getWidth() / 7));
+    auto actions = performance.removeFromRight (
+        juce::jmax (270, performance.getWidth() / 4));
     auto firstActionRow = actions.removeFromTop (actions.getHeight() / 2);
-    orbitButton.setBounds (firstActionRow.removeFromLeft (firstActionRow.getWidth() / 2).reduced (4));
-    loadButton.setBounds (firstActionRow.reduced (4));
+    const auto firstActionWidth = firstActionRow.getWidth() / 3;
+    orbitButton.setBounds (
+        firstActionRow.removeFromLeft (firstActionWidth).reduced (4));
+    loadButton.setBounds (
+        firstActionRow.removeFromLeft (firstActionWidth).reduced (4));
+    randomizeButton.setBounds (firstActionRow.reduced (4));
+
     auto secondActionRow = actions;
-    cancelButton.setBounds (secondActionRow.removeFromLeft (secondActionRow.getWidth() / 2).reduced (4));
+    auto strengthArea = secondActionRow.removeFromLeft (
+        secondActionRow.getWidth() / 2);
+    const auto strengthWidth = strengthArea.getWidth() / 3;
+    randomize1Button.setBounds (
+        strengthArea.removeFromLeft (strengthWidth).reduced (4));
+    randomize10Button.setBounds (
+        strengthArea.removeFromLeft (strengthWidth).reduced (4));
+    randomize100Button.setBounds (strengthArea.reduced (4));
+    cancelButton.setBounds (
+        secondActionRow.removeFromLeft (secondActionRow.getWidth() / 2).reduced (4));
     panicButton.setBounds (secondActionRow.reduced (4));
 
-    std::array<NeuramarKnob*, 5> performanceKnobs {
-        &evolutionKnob, &attackKnob, &releaseKnob, &spreadKnob, &outputKnob
+    std::array<NeuramarKnob*, 6> performanceKnobs {
+        &evolutionKnob, &noiseKnob, &attackKnob,
+        &releaseKnob, &spreadKnob, &outputKnob
     };
     const auto performanceWidth = performance.getWidth()
                                 / static_cast<int> (performanceKnobs.size());
@@ -1024,8 +1094,10 @@ void NeuramarAudioProcessorEditor::updateRootReadout (
 {
     if (snapshot.rootMidiNote < 0)
     {
+        rootLabel.setText ("INFERRED ROOT", juce::dontSendNotification);
         rootValueLabel.setText ("--", juce::dontSendNotification);
-        rootConfidenceLabel.setText ("drop a sound to begin", juce::dontSendNotification);
+        rootConfidenceLabel.setText (
+            "drop a sound or randomize", juce::dontSendNotification);
         rootDownButton.setEnabled (false);
         rootUpButton.setEnabled (false);
         return;
@@ -1042,13 +1114,19 @@ void NeuramarAudioProcessorEditor::updateRootReadout (
     rootValueLabel.setText (NeuramarAudioProcessor::noteName (correctedNote)
                                 + "  " + centsText,
                             juce::dontSendNotification);
+    rootLabel.setText (
+        snapshot.generatedModel ? "GENERATED ROOT" : "INFERRED ROOT",
+        juce::dontSendNotification);
+    const auto correctionText = correction == 0
+        ? juce::String {}
+        : "  /  corrected " + juce::String (correction > 0 ? "+" : "")
+            + juce::String (correction) + " st";
     rootConfidenceLabel.setText (
-        juce::String (juce::roundToInt (snapshot.rootConfidence * 100.0f))
-            + "% confidence"
-            + (correction == 0 ? juce::String {}
-                               : "  /  corrected "
-                                     + juce::String (correction > 0 ? "+" : "")
-                                     + juce::String (correction) + " st"),
+        snapshot.generatedModel
+            ? "neural pitch anchor" + correctionText
+            : juce::String (juce::roundToInt (
+                  snapshot.rootConfidence * 100.0f))
+                + "% confidence" + correctionText,
         juce::dontSendNotification);
     rootDownButton.setEnabled (correction > -12);
     rootUpButton.setEnabled (correction < 12);

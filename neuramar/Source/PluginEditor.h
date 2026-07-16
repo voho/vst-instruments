@@ -103,9 +103,16 @@ private:
     juce::TextButton loadButton { "DROP / OPEN" };
     juce::TextButton cancelButton { "CANCEL" };
     juce::TextButton panicButton { "PANIC" };
+    juce::TextButton randomizeButton { "RANDOMIZE" };
+    juce::TextButton randomize1Button { "1%" };
+    juce::TextButton randomize10Button { "10%" };
+    juce::TextButton randomize100Button { "100%" };
     juce::TextButton rootDownButton { "-" };
     juce::TextButton rootUpButton { "+" };
     juce::TextButton orbitButton { "ORBIT" };
+    NeuramarAudioProcessor::RandomizationAmount randomizationAmount {
+        NeuramarAudioProcessor::RandomizationAmount::Evolve10Percent
+    };
 
     NeuramarKnob imprintKnob { "IMPRINT", "dream  /  faithful" };
     NeuramarKnob bodyLockKnob { "BODY LOCK", "follows  /  fixed" };
@@ -114,6 +121,7 @@ private:
     NeuramarKnob brightnessKnob { "GRAVITY", "dark  /  bright" };
     NeuramarKnob evolutionKnob { "MEMORY", "slow  /  rush" };
     NeuramarKnob mutationKnob { "MUTATION", "still  /  alive" };
+    NeuramarKnob noiseKnob { "NOISE", "latent evolution" };
     NeuramarKnob attackKnob { "AWAKEN", "attack" };
     NeuramarKnob releaseKnob { "DISSOLVE", "release" };
     NeuramarKnob spreadKnob { "HORIZON", "stereo spread" };

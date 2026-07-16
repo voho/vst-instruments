@@ -251,6 +251,8 @@ void NeuramarEngine::setParameters(const EngineParameters& parameters) noexcept
                             std::memory_order_relaxed);
     parameters_.mutation.store(clampParameter(parameters.mutation, 0.0f, 1.0f, 0.10f),
                                std::memory_order_relaxed);
+    parameters_.noise.store(clampParameter(parameters.noise, 0.0f, 1.0f, 0.0f),
+                            std::memory_order_relaxed);
     parameters_.attackSeconds.store(clampParameter(parameters.attackSeconds, 0.0f, 10.0f, 0.0f),
                                     std::memory_order_relaxed);
     parameters_.releaseSeconds.store(clampParameter(parameters.releaseSeconds, 0.005f, 20.0f, 0.35f),
@@ -275,6 +277,7 @@ EngineParameters NeuramarEngine::loadParameters() const noexcept
     result.evolutionRate = parameters_.evolutionRate.load(std::memory_order_relaxed);
     result.orbit = parameters_.orbit.load(std::memory_order_relaxed);
     result.mutation = parameters_.mutation.load(std::memory_order_relaxed);
+    result.noise = parameters_.noise.load(std::memory_order_relaxed);
     result.attackSeconds = parameters_.attackSeconds.load(std::memory_order_relaxed);
     result.releaseSeconds = parameters_.releaseSeconds.load(std::memory_order_relaxed);
     result.spread = parameters_.spread.load(std::memory_order_relaxed);
@@ -345,17 +348,33 @@ void NeuramarEngine::noteOn(int midiNote, float velocity) noexcept
         noteHash ^ static_cast<std::uint32_t>(selected->ageStamp));
     const float mutationAmount = parameters_.mutation.load(
         std::memory_order_relaxed);
-    // Zero Mutation is a literal recall mode: the same note restarts every
-    // oscillator and stochastic stream identically, independent of prior
-    // voice allocation. Any positive Mutation gives each voice a new stream.
-    const auto noiseHash = mutationAmount <= 0.0f ? noteHash : voiceHash;
+    // With Mutation and model-space Noise both at zero, the same note restarts
+    // every oscillator and the audible Air stream identically, independent of
+    // prior voice allocation. Positive Mutation gives Air a new voice stream;
+    // positive Noise independently selects a fresh latent trajectory below.
+    const auto airNoiseHash = mutationAmount <= 0.0f ? noteHash : voiceHash;
     for (std::size_t band = 0; band < selected->airNoiseStates.size(); ++band)
     {
         selected->airNoiseStates[band] = mixHash(
-            noiseHash ^ (0x9e3779b9u * static_cast<std::uint32_t>(band + 1)));
+            airNoiseHash
+                ^ (0x9e3779b9u * static_cast<std::uint32_t>(band + 1)));
     }
     selected->mutationOffset = 2.0f
         * static_cast<float>(voiceHash & 0xffffu) / 65535.0f - 1.0f;
+
+    // Model-space NOISE owns a separate deterministic domain. It neither
+    // consumes the Air PRNG nor reuses Mutation's static scalar.
+    const auto latentPhaseAHash = mixHash(voiceHash ^ 0xa511e9b3u);
+    const auto latentPhaseBHash = mixHash(voiceHash ^ 0x63d83595u);
+    const auto latentRateAHash = mixHash(voiceHash ^ 0xc2b2ae35u);
+    const auto latentRateBHash = mixHash(voiceHash ^ 0x27d4eb2fu);
+    constexpr float inverseU32 = 1.0f / 4294967295.0f;
+    selected->latentPhaseA = static_cast<float>(latentPhaseAHash) * inverseU32;
+    selected->latentPhaseB = static_cast<float>(latentPhaseBHash) * inverseU32;
+    selected->latentRateAHertz = 0.07f
+        + 0.10f * static_cast<float>(latentRateAHash) * inverseU32;
+    selected->latentRateBHertz = 0.19f
+        + 0.18f * static_cast<float>(latentRateBHash) * inverseU32;
     // Pan is assigned from the currently sounding set below. A single voice is
     // always centred, while chords occupy a symmetric horizon without making
     // the result depend on how many notes were played earlier.
@@ -526,7 +545,33 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
         0.0, static_cast<double>(duration)));
 
     SynthesisFrame frame;
-    model.evaluate(effectiveTime / duration, frame);
+    const float normalisedTime = effectiveTime / duration;
+    if (parameters.noise > 0.0f)
+    {
+        const std::uint64_t predictedSample = voice.renderedSampleCount
+            + static_cast<std::uint64_t>(
+                firstControlFrame ? 0 : controlPeriod_ - 1);
+        const double latentTimeSeconds = static_cast<double>(predictedSample)
+            / sampleRate_;
+        const float phaseA = static_cast<float>(std::fmod(
+            static_cast<double>(voice.latentPhaseA)
+                + static_cast<double>(voice.latentRateAHertz)
+                    * latentTimeSeconds,
+            1.0));
+        const float phaseB = static_cast<float>(std::fmod(
+            static_cast<double>(voice.latentPhaseB)
+                + static_cast<double>(voice.latentRateBHertz)
+                    * latentTimeSeconds,
+            1.0));
+        const float latentCoordinate = parameters.noise * std::clamp(
+            0.62f * sine(phaseA) + 0.38f * sine(phaseB),
+            -1.0f, 1.0f);
+        model.evaluate(normalisedTime, latentCoordinate, frame);
+    }
+    else
+    {
+        model.evaluate(normalisedTime, frame);
+    }
 
     const float brightnessTilt = (parameters.brightness - 0.5f) * 1.2f;
     const float characteristic = parameters.imprint;
@@ -909,6 +954,7 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                 outputRight += voice.lastRight;
                 voice.modelTimeSeconds += static_cast<double>(parameters.evolutionRate)
                     / sampleRate_;
+                ++voice.renderedSampleCount;
 
                 if (voice.releasing && voice.envelope <= retirementLevel)
                 {

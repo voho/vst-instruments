@@ -171,6 +171,35 @@ models remain small (about 35 KiB for the current representation), while the
 strict decoder retains an exact zero-correction path for version 2 state.
 Sessions therefore recall the instrument without depending on an external file.
 
+## Generative initialization and variation
+
+The same compact controller can be used without a source recording. Neuramar
+starts from a deliberately voiced C4-anchored Core/Air/Bone field, then applies
+seeded coefficient, bias, phase, spectrum, and modal perturbations. This is
+procedural initialization of the instrument's existing neural/DDSP
+representation, not sampling from a pretrained corpus model and not a claim to
+have learned the distribution of acoustic instruments.
+
+Randomization is local, allocation-allowed work outside the audio callback. A
+per-processor seed is combined with a monotonic operation counter, and the model
+derives independent named random streams so adding randomness to one subsystem
+does not silently reorder every other subsystem. A fixed seed and strength
+therefore produce an identical serialized model in regression tests, while
+normal UI operations still create a fresh memory.
+
+The visible 1%, 10%, and 100% choices linearly scale bounded *musical* mutation
+ranges. They are not percentages of the decoder's broad corruption-rejection
+limits. When a learned model is varied, its root, duration, and loop semantics
+remain fixed. Its quantized detail correction is relaxed in proportion to the
+chosen amount: subtle changes retain almost all learned detail, while a full
+variation lets the changed neural field establish a substantially new
+trajectory. Every result is published and persisted through the same immutable
+model path as a learned memory. Each operation constructs a fresh bounded target
+with independently seeded subsystems. The 1% and 10% choices interpolate the
+current model toward it; 100% takes the complete reroll. Target Core, Air, and
+Bone trajectories are calibrated to bounded layer energy, preventing repeated
+Wild presses from becoming an additive loudness random walk.
+
 ## Runtime model
 
 The controller is evaluated at a low control rate. After the exact onset frame,
@@ -195,6 +224,14 @@ Air band.
   interpretation of the learned field.
 - **Memory** changes traversal speed; **Orbit** revisits a stable region while a
   note is held.
+- **Noise** drives a deterministic, voice-local, slowly varying latent
+  coordinate through the controller's existing time/Fourier input manifold.
+  It therefore changes Core, Air, Bone, and pitch trajectories only through the
+  model. The normalized displacement is also capped at 180 ms of model time so
+  long recordings remain an evolution rather than a scrub. Noise never mixes a
+  noise waveform into the output. This is distinct from **Air**, which is an
+  audible stochastic synthesis branch, and from **Mutation**, which supplies
+  bounded per-voice identity offsets.
 
 The Core renderer also separates spectral shape from register level. This is
 motivated by the harmonic-oscillator factorization in

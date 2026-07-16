@@ -20,6 +20,7 @@ struct EngineParameters
     float evolutionRate { 1.0f };        // learned-time rate, 0.125..4
     float orbit { 0.15f };               // one-shot to learned-loop blend, 0..1
     float mutation { 0.10f };            // deterministic per-voice variation, 0..1
+    float noise { 0.0f };                // voice-local model-space drift, 0..1
     float attackSeconds { 0.0f };         // 0..10 seconds
     float releaseSeconds { 0.35f };       // 0.005..20 seconds
     float spread { 0.35f };               // stereo voice spread, 0..1
@@ -73,6 +74,7 @@ private:
         std::atomic<float> evolutionRate { 1.0f };
         std::atomic<float> orbit { 0.15f };
         std::atomic<float> mutation { 0.10f };
+        std::atomic<float> noise { 0.0f };
         std::atomic<float> attackSeconds { 0.0f };
         std::atomic<float> releaseSeconds { 0.35f };
         std::atomic<float> spread { 0.35f };
@@ -112,7 +114,12 @@ private:
         float velocity { 0.0f };
         float envelope { 0.0f };
         double modelTimeSeconds { 0.0 };
+        std::uint64_t renderedSampleCount { 0 };
         float mutationOffset { 0.0f };
+        float latentPhaseA { 0.0f };
+        float latentPhaseB { 0.0f };
+        float latentRateAHertz { 0.0f };
+        float latentRateBHertz { 0.0f };
         float pan { 0.0f };
         float panLeft { 0.70710678f };
         float panRight { 0.70710678f };

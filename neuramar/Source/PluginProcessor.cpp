@@ -37,12 +37,96 @@ juce::String learningErrorPrefix (const juce::String& sourceName)
 {
     return sourceName.isNotEmpty() ? sourceName + ": " : juce::String {};
 }
+
+bool containsParameterState (
+    const juce::ValueTree& state, const char* parameterId)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    for (const auto& child : state)
+    {
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId)
+            return true;
+    }
+    return false;
+}
+
+void addDefaultParameterStateIfMissing (
+    juce::ValueTree& state,
+    juce::AudioProcessorValueTreeState& parameters,
+    const char* parameterId)
+{
+    if (containsParameterState (state, parameterId))
+        return;
+
+    if (const auto* parameter = parameters.getParameter (parameterId))
+    {
+        static const juce::Identifier parameterType { "PARAM" };
+        static const juce::Identifier idProperty { "id" };
+        static const juce::Identifier valueProperty { "value" };
+        juce::ValueTree parameterState { parameterType };
+        parameterState.setProperty (idProperty, parameterId, nullptr);
+        parameterState.setProperty (
+            valueProperty,
+            parameter->convertFrom0to1 (parameter->getDefaultValue()),
+            nullptr);
+        state.appendChild (parameterState, nullptr);
+    }
+}
+
+std::uint64_t mixRandomizationSeed (std::uint64_t value) noexcept
+{
+    value ^= value >> 30u;
+    value *= 0xbf58476d1ce4e5b9ull;
+    value ^= value >> 27u;
+    value *= 0x94d049bb133111ebull;
+    return value ^ (value >> 31u);
+}
+
+float randomizationStrength (
+    NeuramarAudioProcessor::RandomizationAmount amount) noexcept
+{
+    switch (amount)
+    {
+        case NeuramarAudioProcessor::RandomizationAmount::Subtle1Percent:
+            return 0.01f;
+        case NeuramarAudioProcessor::RandomizationAmount::Evolve10Percent:
+            return 0.10f;
+        case NeuramarAudioProcessor::RandomizationAmount::Wild100Percent:
+            return 1.0f;
+    }
+
+    return 0.10f;
+}
+
+juce::String randomizationLabel (
+    NeuramarAudioProcessor::RandomizationAmount amount)
+{
+    switch (amount)
+    {
+        case NeuramarAudioProcessor::RandomizationAmount::Subtle1Percent:
+            return "1%";
+        case NeuramarAudioProcessor::RandomizationAmount::Evolve10Percent:
+            return "10%";
+        case NeuramarAudioProcessor::RandomizationAmount::Wild100Percent:
+            return "100%";
+    }
+
+    return "10%";
+}
 } // namespace
 
 NeuramarAudioProcessor::NeuramarAudioProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       parameters (*this, nullptr, "NEURAMAR_STATE", createParameterLayout())
 {
+    randomizationSeedBase = mixRandomizationSeed (
+        static_cast<std::uint64_t> (juce::Time::getHighResolutionTicks())
+        ^ (static_cast<std::uint64_t> (juce::Time::currentTimeMillis()) << 1u)
+        ^ static_cast<std::uint64_t> (
+            reinterpret_cast<std::uintptr_t> (this)));
+
     parameterPointers.imprint = parameters.getRawParameterValue (neuramar::parameters::imprint);
     parameterPointers.bodyLock = parameters.getRawParameterValue (neuramar::parameters::bodyLock);
     parameterPointers.air = parameters.getRawParameterValue (neuramar::parameters::air);
@@ -56,9 +140,10 @@ NeuramarAudioProcessor::NeuramarAudioProcessor()
     parameterPointers.spread = parameters.getRawParameterValue (neuramar::parameters::spread);
     parameterPointers.rootCorrection = parameters.getRawParameterValue (neuramar::parameters::rootCorrection);
     parameterPointers.output = parameters.getRawParameterValue (neuramar::parameters::output);
+    parameterPointers.noise = parameters.getRawParameterValue (neuramar::parameters::noise);
 
     keyboardState.addListener (this);
-    displayState.message = "Drop a mostly monophonic sound, then play MIDI.";
+    displayState.message = "Drop a sound or press Randomize, then play MIDI.";
 }
 
 NeuramarAudioProcessor::~NeuramarAudioProcessor()
@@ -80,7 +165,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout
 NeuramarAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (13);
+    result.reserve (14);
 
     result.push_back (makePercentParameter (
         neuramar::parameters::imprint, "Imprint", 0.90f));
@@ -152,6 +237,12 @@ NeuramarAudioProcessor::createParameterLayout()
         juce::ParameterID { neuramar::parameters::output, 1 }, "Output",
         juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -6.0f,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
+
+    // Appended to preserve the established index and automation identity of
+    // every parameter above. This drives neural-coordinate evolution; it does
+    // not mix an additive noise generator into the audio output.
+    result.push_back (makePercentParameter (
+        neuramar::parameters::noise, "Noise", 0.0f));
 
     return { result.begin(), result.end() };
 }
@@ -270,6 +361,7 @@ void NeuramarAudioProcessor::updateEngineParameters() noexcept
     next.evolutionRate = valueOf (parameterPointers.evolutionRate, 1.0f);
     next.orbit = valueOf (parameterPointers.orbit, 1.0f) >= 0.5f ? 1.0f : 0.0f;
     next.mutation = valueOf (parameterPointers.mutation, 0.12f);
+    next.noise = valueOf (parameterPointers.noise, 0.0f);
     next.attackSeconds = valueOf (parameterPointers.attack, 0.0f);
     next.releaseSeconds = valueOf (parameterPointers.release, 0.65f);
     next.spread = valueOf (parameterPointers.spread, 0.58f);
@@ -395,6 +487,7 @@ void NeuramarAudioProcessor::loadSampleFile (const juce::File& file)
         displayState.message = "Reading " + file.getFileName();
         displayState.stage = LearningStage::Reading;
         displayState.progress = 0.01f;
+        displayState.generatedModel = false;
     }
 
     const std::scoped_lock threadLock (learningThreadMutex);
@@ -492,6 +585,7 @@ void NeuramarAudioProcessor::learnSampleData (std::vector<float> monoSamples,
         displayState.message = "Finding the root before the neural fit...";
         displayState.stage = LearningStage::FindingRoot;
         displayState.progress = 0.04f;
+        displayState.generatedModel = false;
     }
     startLearningWorker (std::move (monoSamples), sourceSampleRate,
                          std::move (sourceName));
@@ -622,8 +716,81 @@ void NeuramarAudioProcessor::cancelLearning()
     }
 }
 
+std::uint64_t NeuramarAudioProcessor::nextRandomizationSeed() noexcept
+{
+    constexpr std::uint64_t goldenRatio = 0x9e3779b97f4a7c15ull;
+    const auto ordinal = randomizationCounter.fetch_add (
+        1u, std::memory_order_relaxed) + 1u;
+    return mixRandomizationSeed (
+        randomizationSeedBase + goldenRatio * ordinal);
+}
+
+void NeuramarAudioProcessor::randomizeModel (RandomizationAmount amount)
+{
+    // This is intentionally a non-realtime operation. It may join the bounded
+    // learner and allocates a fresh immutable model before publication.
+    const std::scoped_lock operationLock (learningOperationMutex);
+    cancelLearning();
+
+    const auto seed = nextRandomizationSeed();
+    const auto strength = randomizationStrength (amount);
+    const auto amountText = randomizationLabel (amount);
+    auto variedExistingModel = false;
+    auto sourceName = juce::String {};
+    std::unique_ptr<neuramar::NeuralModel> model;
+
+    {
+        // Holding the archive lock keeps the current immutable model alive
+        // while its variation is constructed. The audio callback never takes
+        // this lock and continues rendering the old generation throughout.
+        const std::scoped_lock lock (modelArchiveMutex);
+        if (const auto* current = publishedModel.load (std::memory_order_seq_cst))
+        {
+            model = current->createRandomizedVariation (seed, strength);
+            sourceName = publishedSourceName;
+            variedExistingModel = true;
+        }
+    }
+
+    if (! variedExistingModel)
+        model = neuramar::NeuralModel::createRandom (seed, strength);
+
+    if (model == nullptr)
+    {
+        setTerminalLearningStatus (
+            LearningStage::Error,
+            "The neural randomizer could not create a valid memory.");
+        return;
+    }
+
+    if (variedExistingModel)
+    {
+        static constexpr auto variationMarker = " / variation ";
+        const auto priorVariation = sourceName.indexOf (variationMarker);
+        if (priorVariation >= 0)
+            sourceName = sourceName.substring (0, priorVariation);
+        if (sourceName.isEmpty())
+            sourceName = "Neural memory";
+        sourceName = sourceName.substring (0, 896)
+                   + variationMarker + amountText;
+    }
+    else
+    {
+        sourceName = "Random neural seed " + amountText;
+    }
+
+    publishModel (
+        std::move (model), std::move (sourceName),
+        variedExistingModel
+            ? "Neural weights varied across " + amountText
+                + " of their musical range - play any MIDI note."
+            : "A playable neural memory was generated at " + amountText
+                + " range - no source sample required.");
+}
+
 void NeuramarAudioProcessor::publishModel (
-    std::unique_ptr<neuramar::NeuralModel> model, juce::String sourceName)
+    std::unique_ptr<neuramar::NeuralModel> model, juce::String sourceName,
+    juce::String readyMessage)
 {
     if (model == nullptr)
         return;
@@ -648,10 +815,13 @@ void NeuramarAudioProcessor::publishModel (
     displayState.rootMidiNote = modelPointer->rootMidiNote();
     displayState.rootCents = modelPointer->rootCents();
     displayState.rootConfidence = modelPointer->pitchConfidence();
+    displayState.generatedModel = modelPointer->metadata().trainingEpochs == 0;
     displayState.waveform = modelPointer->metadata().waveformPreview;
     displayState.modelGeneration = generation;
     displayState.sourceName = std::move (sourceName);
-    displayState.message = "Compact neural memory learned locally - play any MIDI note.";
+    displayState.message = readyMessage.isNotEmpty()
+        ? std::move (readyMessage)
+        : "Compact neural memory learned locally - play any MIDI note.";
 }
 
 void NeuramarAudioProcessor::publishRestoredModel (
@@ -706,6 +876,7 @@ void NeuramarAudioProcessor::setTerminalLearningStatus (
         restored.rootMidiNote = metadata.rootMidiNote;
         restored.rootCents = metadata.rootCents;
         restored.rootConfidence = metadata.pitchConfidence;
+        restored.generatedModel = metadata.trainingEpochs == 0;
         restored.waveform = metadata.waveformPreview;
         restored.modelGeneration = publishedGeneration.load (
             std::memory_order_acquire);
@@ -823,7 +994,12 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
         // state shape. Keep that harmless fallback for parameter migration.
         if (const auto xml = getXmlFromBinary (data, sizeInBytes);
             xml != nullptr && xml->hasTagName (parameters.state.getType()))
-            parameters.replaceState (juce::ValueTree::fromXml (*xml));
+        {
+            auto restoredState = juce::ValueTree::fromXml (*xml);
+            addDefaultParameterStateIfMissing (
+                restoredState, parameters, neuramar::parameters::noise);
+            parameters.replaceState (restoredState);
+        }
         return;
     }
 
@@ -854,9 +1030,14 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
     const auto xml = juce::XmlDocument::parse (xmlText);
     if (xml == nullptr || ! xml->hasTagName (parameters.state.getType()))
         return;
-    const auto restoredParameterState = juce::ValueTree::fromXml (*xml);
+    auto restoredParameterState = juce::ValueTree::fromXml (*xml);
     if (! restoredParameterState.isValid())
         return;
+    // Version-one sessions predate the appended model-space Noise control.
+    // APVTS otherwise retains the live value for a missing parameter child,
+    // which could make a legacy exact-recall preset unexpectedly evolve.
+    addDefaultParameterStateIfMissing (
+        restoredParameterState, parameters, neuramar::parameters::noise);
 
     std::vector<std::uint8_t> modelBytes;
     if (! readBoundedBlock (maximumModelStateBytes, modelBytes))

@@ -639,6 +639,553 @@ void testShapePreservingSpectralInterpolation()
         / static_cast<double>(values.size() - first)));
 }
 
+[[nodiscard]] std::vector<float> renderNote(
+    neuramar::NeuramarEngine& engine, int midiNote, int sampleCount);
+
+[[nodiscard]] double modelFrameDistance(
+    const neuramar::NeuralModel& reference,
+    const neuramar::NeuralModel& candidate)
+{
+    constexpr std::array<float, 9> times {
+        0.0f, 0.03f, 0.08f, 0.16f, 0.28f, 0.43f, 0.61f, 0.79f, 1.0f
+    };
+    double squared = 0.0;
+    std::size_t count = 0;
+    for (const auto time : times)
+    {
+        neuramar::SynthesisFrame first;
+        neuramar::SynthesisFrame second;
+        reference.evaluate(time, first);
+        candidate.evaluate(time, second);
+        const auto accumulateAmplitude = [&squared, &count] (
+            auto firstValues, auto secondValues)
+        {
+            for (std::size_t index = 0; index < firstValues.size(); ++index)
+            {
+                const double difference = std::log(
+                    std::max(secondValues[index], 1.0e-8f))
+                    - std::log(std::max(firstValues[index], 1.0e-8f));
+                squared += difference * difference;
+                ++count;
+            }
+        };
+        accumulateAmplitude(first.harmonicAmplitudes,
+                            second.harmonicAmplitudes);
+        accumulateAmplitude(first.airAmplitudes, second.airAmplitudes);
+        accumulateAmplitude(first.boneAmplitudes, second.boneAmplitudes);
+        const double pitchSemitones = 12.0 * std::log2(
+            second.pitchRatio / first.pitchRatio);
+        squared += pitchSemitones * pitchSemitones;
+        ++count;
+    }
+    return std::sqrt(squared / static_cast<double>(std::max<std::size_t>(1, count)));
+}
+
+[[nodiscard]] bool framesExactlyEqual(
+    const neuramar::SynthesisFrame& first,
+    const neuramar::SynthesisFrame& second) noexcept
+{
+    return first.harmonicAmplitudes == second.harmonicAmplitudes
+        && first.airAmplitudes == second.airAmplitudes
+        && first.boneAmplitudes == second.boneAmplitudes
+        && first.pitchRatio == second.pitchRatio;
+}
+
+[[nodiscard]] double synthesisFrameDistance(
+    const neuramar::SynthesisFrame& first,
+    const neuramar::SynthesisFrame& second)
+{
+    double squared = 0.0;
+    std::size_t count = 0;
+    const auto accumulate = [&squared, &count] (
+        const auto& firstValues, const auto& secondValues)
+    {
+        for (std::size_t index = 0; index < firstValues.size(); ++index)
+        {
+            const double difference = static_cast<double>(
+                secondValues[index] - firstValues[index]);
+            squared += difference * difference;
+            ++count;
+        }
+    };
+    accumulate(first.harmonicAmplitudes, second.harmonicAmplitudes);
+    accumulate(first.airAmplitudes, second.airAmplitudes);
+    accumulate(first.boneAmplitudes, second.boneAmplitudes);
+    const double pitchDifference = static_cast<double>(
+        second.pitchRatio - first.pitchRatio);
+    squared += pitchDifference * pitchDifference;
+    ++count;
+    return std::sqrt(squared
+        / static_cast<double>(std::max<std::size_t>(1, count)));
+}
+
+struct ModelFieldMetrics
+{
+    double energy { 0.0 };
+    float minimumPitchRatio { std::numeric_limits<float>::max() };
+    float maximumPitchRatio { 0.0f };
+    std::size_t upperAmplitudeClamps { 0 };
+    bool finite { true };
+};
+
+[[nodiscard]] ModelFieldMetrics measureModelField(
+    const neuramar::NeuralModel& model)
+{
+    ModelFieldMetrics metrics;
+    constexpr float maximumDecodedAmplitude = 4.4816890703380645f;
+    for (int sample = 0; sample <= 64; ++sample)
+    {
+        neuramar::SynthesisFrame frame;
+        model.evaluate(static_cast<float>(sample) / 64.0f, frame);
+        const auto accumulate = [&metrics, maximumDecodedAmplitude] (
+            const auto& amplitudes)
+        {
+            for (const auto amplitude : amplitudes)
+            {
+                metrics.finite = metrics.finite
+                    && std::isfinite(amplitude) && amplitude >= 0.0f;
+                if (std::isfinite(amplitude))
+                    metrics.energy += static_cast<double>(amplitude) * amplitude;
+                if (amplitude >= maximumDecodedAmplitude * (1.0f - 1.0e-6f))
+                    ++metrics.upperAmplitudeClamps;
+            }
+        };
+        accumulate(frame.harmonicAmplitudes);
+        accumulate(frame.airAmplitudes);
+        accumulate(frame.boneAmplitudes);
+        metrics.finite = metrics.finite && std::isfinite(frame.pitchRatio);
+        metrics.minimumPitchRatio = std::min(
+            metrics.minimumPitchRatio, frame.pitchRatio);
+        metrics.maximumPitchRatio = std::max(
+            metrics.maximumPitchRatio, frame.pitchRatio);
+    }
+    return metrics;
+}
+
+void testRandomNeuralSeed()
+{
+    constexpr std::uint64_t seed = 0x6e657572616d6172ull;
+    auto subtle = neuramar::NeuralModel::createRandom(seed, 0.01f);
+    auto subtleAgain = neuramar::NeuralModel::createRandom(seed, 0.01f);
+    auto evolve = neuramar::NeuralModel::createRandom(seed, 0.10f);
+    auto wild = neuramar::NeuralModel::createRandom(seed, 1.0f);
+    auto anotherSeed = neuramar::NeuralModel::createRandom(seed + 1u, 0.10f);
+    expect(subtle && subtleAgain && evolve && wild && anotherSeed,
+           "sample-free neural randomization did not create every model");
+    if (!subtle || !subtleAgain || !evolve || !wild || !anotherSeed)
+        return;
+
+    expect(subtle->serialize() == subtleAgain->serialize(),
+           "identical neural seeds were not deterministic");
+    expect(subtle->serialize() != evolve->serialize()
+               && evolve->serialize() != wild->serialize(),
+           "1%, 10%, and 100% random ranges produced the same neural state");
+    expect(evolve->serialize() != anotherSeed->serialize(),
+           "different neural seeds produced the same model");
+
+    const auto& metadata = evolve->metadata();
+    expect(metadata.trainingEpochs == 0
+               && metadata.rootMidiNote == 60
+               && std::abs(metadata.rootFrequencyHz - 261.625565f) < 0.01f
+               && metadata.durationSeconds > 0.1f
+               && metadata.loopEndSeconds > metadata.loopStartSeconds,
+           "generated neural model metadata is not a valid playable C4 anchor");
+    const auto previewPeak = *std::max_element(
+        metadata.waveformPreview.begin(), metadata.waveformPreview.end(),
+        [] (float first, float second)
+        {
+            return std::abs(first) < std::abs(second);
+        });
+    expect(std::abs(previewPeak) > 0.05f,
+           "generated neural model did not provide a waveform preview");
+
+    for (const auto* model : { subtle.get(), evolve.get(), wild.get() })
+    {
+        double frameEnergy = 0.0;
+        for (const float time : { 0.0f, 0.1f, 0.35f, 0.7f, 1.0f })
+        {
+            neuramar::SynthesisFrame frame;
+            model->evaluate(time, frame);
+            for (const auto amplitude : frame.harmonicAmplitudes)
+            {
+                expect(std::isfinite(amplitude) && amplitude >= 0.0f,
+                       "generated Core frame contained invalid amplitude");
+                frameEnergy += static_cast<double>(amplitude) * amplitude;
+            }
+            for (const auto amplitude : frame.airAmplitudes)
+            {
+                expect(std::isfinite(amplitude) && amplitude >= 0.0f,
+                       "generated Air frame contained invalid amplitude");
+                frameEnergy += static_cast<double>(amplitude) * amplitude;
+            }
+            for (const auto amplitude : frame.boneAmplitudes)
+            {
+                expect(std::isfinite(amplitude) && amplitude >= 0.0f,
+                       "generated Bone frame contained invalid amplitude");
+                frameEnergy += static_cast<double>(amplitude) * amplitude;
+            }
+            expect(std::isfinite(frame.pitchRatio)
+                       && frame.pitchRatio > 0.7f && frame.pitchRatio < 1.4f,
+                   "generated neural pitch trajectory exceeded its musical bound");
+        }
+        expect(frameEnergy > 1.0e-5,
+               "generated neural model evaluated to silence");
+    }
+
+    std::string error;
+    auto restored = neuramar::NeuralModel::deserialize(
+        wild->serialize(), &error);
+    expect(restored != nullptr && restored->serialize() == wild->serialize(),
+           "generated neural model did not survive serialization: " + error);
+
+    auto evolutionaryWalk = neuramar::NeuralModel::createRandom(
+        seed ^ 0x57414c4bull, 0.10f);
+    const auto walkBaseline = evolutionaryWalk != nullptr
+        ? measureModelField(*evolutionaryWalk) : ModelFieldMetrics {};
+    constexpr float oneSemitone = 1.0594630943592953f;
+    for (std::uint64_t step = 0; evolutionaryWalk && step < 32; ++step)
+    {
+        evolutionaryWalk = evolutionaryWalk->createRandomizedVariation(
+            seed + 0x9e3779b97f4a7c15ull * (step + 1u), 1.0f);
+        expect(evolutionaryWalk != nullptr,
+               "repeated full-range variation lost the neural model");
+        if (! evolutionaryWalk)
+            break;
+
+        const auto metrics = measureModelField(*evolutionaryWalk);
+        const auto energyRatio = metrics.energy
+            / std::max(walkBaseline.energy, 1.0e-12);
+        expect(metrics.finite && metrics.upperAmplitudeClamps == 0,
+               "repeated full-range variation saturated model amplitudes");
+        expect(energyRatio >= 0.25 && energyRatio <= 4.0,
+               "repeated full-range variation escaped its loudness range");
+        expect(metrics.minimumPitchRatio >= 1.0f / oneSemitone
+                   && metrics.maximumPitchRatio <= oneSemitone,
+               "repeated full-range variation drifted beyond one semitone");
+
+        error.clear();
+        auto walkedRoundTrip = neuramar::NeuralModel::deserialize(
+            evolutionaryWalk->serialize(), &error);
+        expect(walkedRoundTrip != nullptr,
+               "cumulative neural variation failed state validation: " + error);
+
+        if (step == 15 || step == 31)
+        {
+            for (const int midiNote : { 0, 24, 60, 127 })
+            {
+                neuramar::NeuramarEngine engine;
+                engine.prepare(48000.0, 128);
+                engine.setModel(evolutionaryWalk.get());
+                neuramar::EngineParameters parameters;
+                parameters.imprint = 0.90f;
+                parameters.bodyLock = 0.52f;
+                parameters.air = 0.82f;
+                parameters.bone = 0.78f;
+                parameters.brightness = 0.50f;
+                parameters.evolutionRate = 1.0f;
+                parameters.orbit = 0.0f;
+                parameters.mutation = 0.12f;
+                parameters.attackSeconds = 0.0f;
+                parameters.releaseSeconds = 0.65f;
+                parameters.spread = 0.58f;
+                parameters.outputGain = 0.5011872f;
+                engine.setParameters(parameters);
+                const auto audio = renderNote(engine, midiNote, 12000);
+                expect(rms(audio, 1024) > 1.0e-6f,
+                       "repeated full-range variation became silent");
+                for (const auto value : audio)
+                    expect(std::isfinite(value) && std::abs(value) < 7.94f,
+                           "repeated full-range variation hit the output guard");
+            }
+        }
+    }
+
+    auto evolveWalk = neuramar::NeuralModel::createRandom(
+        seed ^ 0x45564f4c5645ull, 0.10f);
+    const auto evolveBaseline = evolveWalk != nullptr
+        ? measureModelField(*evolveWalk) : ModelFieldMetrics {};
+    for (std::uint64_t step = 0; evolveWalk && step < 256; ++step)
+    {
+        evolveWalk = evolveWalk->createRandomizedVariation(
+            seed ^ (0xd1b54a32d192ed03ull * (step + 1u)), 0.10f);
+        expect(evolveWalk != nullptr,
+               "repeated ten-percent variation lost the neural model");
+        if (! evolveWalk)
+            break;
+
+        if (step == 63 || step == 127 || step == 191 || step == 255)
+        {
+            const auto metrics = measureModelField(*evolveWalk);
+            const auto energyRatio = metrics.energy
+                / std::max(evolveBaseline.energy, 1.0e-12);
+            expect(metrics.finite && metrics.upperAmplitudeClamps == 0,
+                   "repeated ten-percent variation saturated model amplitudes");
+            expect(energyRatio >= 0.85 && energyRatio <= 1.15,
+                   "repeated ten-percent variation accumulated a loudness fade "
+                   "or runaway gain");
+            expect(metrics.minimumPitchRatio >= 1.0f / oneSemitone
+                       && metrics.maximumPitchRatio <= oneSemitone,
+                   "repeated ten-percent variation drifted beyond one semitone");
+        }
+    }
+    if (evolveWalk)
+    {
+        error.clear();
+        auto evolveRoundTrip = neuramar::NeuralModel::deserialize(
+            evolveWalk->serialize(), &error);
+        expect(evolveRoundTrip != nullptr,
+               "256-step ten-percent variation failed state validation: "
+                   + error);
+    }
+
+    for (const int midiNote : {
+             wild->rootMidiNote() - 36,
+             wild->rootMidiNote(),
+             wild->rootMidiNote() + 36 })
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(48000.0, 128);
+        engine.setModel(wild.get());
+        neuramar::EngineParameters parameters;
+        parameters.imprint = 1.0f;
+        parameters.air = 0.45f;
+        parameters.bone = 0.45f;
+        parameters.mutation = 0.0f;
+        parameters.attackSeconds = 0.0f;
+        parameters.outputGain = 0.05f;
+        engine.setParameters(parameters);
+        const auto audio = renderNote(engine, midiNote, 12000);
+        expect(rms(audio, 1024) > 1.0e-4f,
+               "generated neural seed was silent across the wide MIDI range");
+        for (const auto sample : audio)
+            expect(std::isfinite(sample) && std::abs(sample) <= 7.95001f,
+                   "generated neural seed rendered invalid or unbounded audio");
+    }
+}
+
+void testRandomizedVariations(const neuramar::NeuralModel& learned)
+{
+    constexpr std::uint64_t seed = 0x766172696174696full;
+    const auto originalBytes = learned.serialize();
+    auto subtle = learned.createRandomizedVariation(seed, 0.01f);
+    auto subtleAgain = learned.createRandomizedVariation(seed, 0.01f);
+    auto evolve = learned.createRandomizedVariation(seed, 0.10f);
+    auto wild = learned.createRandomizedVariation(seed, 1.0f);
+    expect(subtle && subtleAgain && evolve && wild,
+           "learned neural memory could not create random variations");
+    if (!subtle || !subtleAgain || !evolve || !wild)
+        return;
+
+    expect(subtle->serialize() == subtleAgain->serialize(),
+           "learned neural variation was not deterministic for a fixed seed");
+    expect(learned.serialize() == originalBytes,
+           "immutable learned model changed while deriving a variation");
+    for (const auto* variation : { subtle.get(), evolve.get(), wild.get() })
+    {
+        const auto& originalMetadata = learned.metadata();
+        const auto& variedMetadata = variation->metadata();
+        expect(variedMetadata.rootFrequencyHz == originalMetadata.rootFrequencyHz
+                   && variedMetadata.rootMidiNote == originalMetadata.rootMidiNote
+                   && variedMetadata.rootCents == originalMetadata.rootCents
+                   && variedMetadata.durationSeconds
+                       == originalMetadata.durationSeconds
+                   && variedMetadata.loopStartSeconds
+                       == originalMetadata.loopStartSeconds
+                   && variedMetadata.loopEndSeconds
+                       == originalMetadata.loopEndSeconds,
+               "neural variation changed source pitch or time semantics");
+    }
+
+    const auto subtleDistance = modelFrameDistance(learned, *subtle);
+    const auto evolveDistance = modelFrameDistance(learned, *evolve);
+    const auto wildDistance = modelFrameDistance(learned, *wild);
+    expect(subtleDistance > 1.0e-6,
+           "1% neural variation did not alter the learned memory");
+    expect(evolveDistance > subtleDistance * 1.5,
+           "10% neural variation was not materially broader than 1%");
+    expect(wildDistance > evolveDistance * 1.5,
+           "100% neural variation was not materially broader than 10%");
+}
+
+void testModelSpaceNoise(const neuramar::NeuralModel& model)
+{
+    for (const float time : { 0.0f, 0.07f, 0.31f, 0.63f, 1.0f })
+    {
+        neuramar::SynthesisFrame established;
+        neuramar::SynthesisFrame zeroLatent;
+        neuramar::SynthesisFrame invalidLatent;
+        model.evaluate(time, established);
+        model.evaluate(time, 0.0f, zeroLatent);
+        model.evaluate(
+            time, std::numeric_limits<float>::quiet_NaN(), invalidLatent);
+        expect(framesExactlyEqual(established, zeroLatent)
+                   && framesExactlyEqual(established, invalidLatent),
+               "zero/invalid model-space Noise changed the established neural "
+               "evaluation path");
+    }
+
+    neuramar::SynthesisFrame negativeLatent;
+    neuramar::SynthesisFrame positiveLatent;
+    model.evaluate(0.43f, -1.0f, negativeLatent);
+    model.evaluate(0.43f, 1.0f, positiveLatent);
+    expect(synthesisFrameDistance(negativeLatent, positiveLatent) > 1.0e-7,
+           "model-space Noise did not move through the learned trajectory");
+
+    const auto makeParameters = [] (float noise)
+    {
+        neuramar::EngineParameters parameters;
+        parameters.imprint = 1.0f;
+        parameters.bodyLock = 0.35f;
+        parameters.air = 0.0f;
+        parameters.bone = 0.0f;
+        parameters.brightness = 0.5f;
+        parameters.evolutionRate = 1.0f;
+        parameters.orbit = 1.0f;
+        parameters.mutation = 0.0f;
+        parameters.noise = noise;
+        parameters.attackSeconds = 0.0f;
+        parameters.releaseSeconds = 0.25f;
+        parameters.spread = 0.0f;
+        parameters.outputGain = 0.08f;
+        return parameters;
+    };
+    const auto configure = [&model, &makeParameters] (
+        neuramar::NeuramarEngine& engine, float noise)
+    {
+        engine.prepare(48000.0, 128);
+        engine.setModel(&model);
+        engine.setParameters(makeParameters(noise));
+    };
+
+    neuramar::NeuramarEngine exactRecall;
+    neuramar::NeuramarEngine evolvingA;
+    neuramar::NeuramarEngine evolvingB;
+    configure(exactRecall, 0.0f);
+    configure(evolvingA, 1.0f);
+    configure(evolvingB, 1.0f);
+    constexpr int renderSamples = 72000;
+    const auto recalled = renderNote(
+        exactRecall, model.rootMidiNote(), renderSamples);
+    const auto evolvedA = renderNote(
+        evolvingA, model.rootMidiNote(), renderSamples);
+    const auto evolvedB = renderNote(
+        evolvingB, model.rootMidiNote(), renderSamples);
+    const auto evolvedASecond = renderNote(
+        evolvingA, model.rootMidiNote(), renderSamples);
+    const auto evolvedBSecond = renderNote(
+        evolvingB, model.rootMidiNote(), renderSamples);
+
+    double changedSquareSum = 0.0;
+    double retriggerSquareSum = 0.0;
+    float deterministicMaximumDifference = 0.0f;
+    float secondDeterministicMaximumDifference = 0.0f;
+    for (std::size_t index = 0; index < recalled.size(); ++index)
+    {
+        const double difference = static_cast<double>(
+            evolvedA[index] - recalled[index]);
+        changedSquareSum += difference * difference;
+        const double retriggerDifference = static_cast<double>(
+            evolvedASecond[index] - evolvedA[index]);
+        retriggerSquareSum += retriggerDifference * retriggerDifference;
+        deterministicMaximumDifference = std::max(
+            deterministicMaximumDifference,
+            std::abs(evolvedA[index] - evolvedB[index]));
+        secondDeterministicMaximumDifference = std::max(
+            secondDeterministicMaximumDifference,
+            std::abs(evolvedASecond[index] - evolvedBSecond[index]));
+        expect(std::isfinite(evolvedA[index])
+                   && std::abs(evolvedA[index]) < 7.94f,
+               "model-space Noise produced invalid or guarded audio");
+    }
+    const double changedRms = std::sqrt(
+        changedSquareSum / static_cast<double>(recalled.size()));
+    expect(deterministicMaximumDifference == 0.0f,
+           "identical model-space Noise voices were not deterministic");
+    expect(secondDeterministicMaximumDifference == 0.0f,
+           "identical model-space Noise event sequences diverged");
+    expect(changedRms > 1.0e-6,
+           "Noise did not evolve the rendered neural trajectory");
+    const double retriggerRms = std::sqrt(
+        retriggerSquareSum / static_cast<double>(evolvedA.size()));
+    expect(retriggerRms > 1.0e-6,
+           "positive Noise reused the same latent path on every retrigger");
+
+    evolvingA.reset();
+    const auto evolvedAfterReset = renderNote(
+        evolvingA, model.rootMidiNote(), renderSamples);
+    float resetMaximumDifference = 0.0f;
+    for (std::size_t index = 0; index < evolvedA.size(); ++index)
+    {
+        resetMaximumDifference = std::max(
+            resetMaximumDifference,
+            std::abs(evolvedAfterReset[index] - evolvedA[index]));
+    }
+    expect(resetMaximumDifference == 0.0f,
+           "reset did not reproduce the deterministic Noise event sequence");
+
+    const auto energyRatio = static_cast<double>(rms(evolvedA, 4096))
+        / std::max(static_cast<double>(rms(recalled, 4096)), 1.0e-12);
+    expect(energyRatio >= 0.35 && energyRatio <= 2.85,
+           "model-space Noise escaped the model's established energy range");
+
+    neuramar::NeuramarEngine automated;
+    configure(automated, 0.0f);
+    automated.noteOn(model.rootMidiNote(), 0.82f);
+    constexpr int automationSegmentSamples = 12288;
+    std::vector<float> beforeAutomation(
+        static_cast<std::size_t>(automationSegmentSamples), 0.0f);
+    std::vector<float> beforeAutomationRight(
+        static_cast<std::size_t>(automationSegmentSamples), 0.0f);
+    std::vector<float> afterAutomation(
+        static_cast<std::size_t>(automationSegmentSamples), 0.0f);
+    std::vector<float> afterAutomationRight(
+        static_cast<std::size_t>(automationSegmentSamples), 0.0f);
+    automated.process(
+        beforeAutomation.data(), beforeAutomationRight.data(),
+        automationSegmentSamples);
+    automated.setParameters(makeParameters(1.0f));
+    automated.process(
+        afterAutomation.data(), afterAutomationRight.data(),
+        automationSegmentSamples);
+    const float boundaryStep = std::abs(
+        afterAutomation.front() - beforeAutomation.back());
+    float neighbouringStep = 0.0f;
+    for (std::size_t index = beforeAutomation.size() - 512;
+         index + 1 < beforeAutomation.size(); ++index)
+    {
+        neighbouringStep = std::max(
+            neighbouringStep,
+            std::abs(beforeAutomation[index + 1] - beforeAutomation[index]));
+    }
+    for (std::size_t index = 0; index + 1 < 512; ++index)
+    {
+        neighbouringStep = std::max(
+            neighbouringStep,
+            std::abs(afterAutomation[index + 1] - afterAutomation[index]));
+    }
+    expect(boundaryStep <= 6.0f * neighbouringStep + 1.0e-4f,
+           "mid-note Noise automation introduced a discontinuous output step");
+    for (const auto sample : afterAutomation)
+    {
+        expect(std::isfinite(sample) && std::abs(sample) < 7.94f,
+               "mid-note Noise automation produced invalid audio");
+    }
+
+    for (const int midiNote : { 0, 24, 60, 96, 127 })
+    {
+        neuramar::NeuramarEngine wideRegister;
+        configure(wideRegister, 1.0f);
+        const auto audio = renderNote(wideRegister, midiNote, 24000);
+        expect(rms(audio, 2048) > 1.0e-7f,
+               "model-space Noise became silent in the wide MIDI range");
+        for (const auto sample : audio)
+        {
+            expect(std::isfinite(sample) && std::abs(sample) < 7.94f,
+                   "model-space Noise was unstable in the wide MIDI range");
+        }
+    }
+}
+
 [[nodiscard]] float renderLayerDifferenceRms(
     const neuramar::NeuralModel& model, double sampleRate, int midiNote,
     float airLevel, float boneLevel)
@@ -2208,6 +2755,7 @@ int main()
     testShapePreservingSpectralInterpolation();
     testInputValidationAndCancellation();
     testAirFilterNormalisation();
+    testRandomNeuralSeed();
     testRootAcrossRatesAndRegisters();
     const auto fixture = learnFixture();
     testLearningAndRoot(fixture);
@@ -2225,6 +2773,8 @@ int main()
     {
         testLearnedPitchContour(*fixture.first.model);
         testSerialization(*fixture.first.model);
+        testRandomizedVariations(*fixture.first.model);
+        testModelSpaceNoise(*fixture.first.model);
         testRenderAndTransposition(*fixture.first.model);
         testRootCorrectionRelabelsSourceKey(*fixture.first.model);
         testReleaseAndVoiceBound(*fixture.first.model);
