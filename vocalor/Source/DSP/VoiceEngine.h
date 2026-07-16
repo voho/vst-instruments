@@ -119,6 +119,7 @@ private:
         bool active { false };
         bool releasing { false };
         bool alternateCycle { false };
+        bool controlInitialised { false };
         int rootMidi { -1 };
         int midiNote { 60 };
         int singer { 0 };
@@ -128,7 +129,10 @@ private:
         std::uint64_t generation { 0 };
         std::uint32_t noiseState { 1u };
         std::uint64_t ageSamples { 0 };
+        std::uint64_t lastControlAge { 0 };
+        float vibratoPhase { 0.0f };
         float velocity { 0.0f };
+        float amplitudeGain { 0.0f };
         float groupGain { 1.0f };
         float phase { 0.0f };
         float phaseIncrement { 0.0f };
@@ -189,8 +193,12 @@ private:
     float sharedPitchPhase_ { 0.0f };
     float sharedRatePhase_ { 0.0f };
     float sharedFormantPhase_ { 0.0f };
+    std::uint64_t pendingEnsembleLfoSamples_ { 0 };
     float smoothedRoom_ { 0.0f };
     float smoothedGain_ { 0.8f };
+    float smoothedBreath_ { 0.28f };
+    float smoothedTension_ { 0.48f };
+    float roomEnvelope_ { 0.0f };
     std::atomic<int> activeVoiceCount_ { 0 };
 
     std::array<float, roomBufferSize> roomLeft_ {};
