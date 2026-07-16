@@ -81,10 +81,13 @@ void VoiceEngine::reset()
     sharedPitchPhase_ = 0.173f;
     sharedRatePhase_ = 0.617f;
     sharedFormantPhase_ = 0.391f;
+    ensembleLfoCountdown_ = 0;
     generation_ = 0;
     blockParameters_ = snapshotParameters();
     smoothedRoom_ = blockParameters_.room;
     smoothedGain_ = blockParameters_.outputGain;
+    smoothedBreath_ = blockParameters_.breath;
+    smoothedTension_ = blockParameters_.tension;
 
     // The singer LFOs keep a repeatable but non-aligned ensemble state.
     for (int i = 0; i < singerCount; ++i)
@@ -339,7 +342,9 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
     voice.singer = singerIndex % singerCount;
     voice.generation = generation_;
     voice.velocity = velocity;
+    voice.amplitudeGain = groupGain * velocity * (0.67f + 0.33f * std::sqrt(velocity));
     voice.groupGain = groupGain;
+    voice.vibratoPhase = wrapPhase(0.173f * static_cast<float>(singerIndex % singerCount));
     voice.noiseState = hash32(static_cast<std::uint32_t>(generation_) ^
                               static_cast<std::uint32_t>(rootMidi * 977 + singerIndex * 131));
     voice.phase = 0.5f + 0.12f * hashFloat(voice.noiseState + 17u);
@@ -377,6 +382,7 @@ void VoiceEngine::allSoundOff() noexcept
     roomRight_.fill(0.0f);
     roomWriteIndex_ = 0;
     roomDampingLeft_ = roomDampingRight_ = 0.0f;
+    roomEnvelope_ = 0.0f;
     activeVoiceCount_.store(0, std::memory_order_relaxed);
 }
 
@@ -440,8 +446,13 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         (1.0f + p.humanize * (0.055f * singerDrift + 0.018f * sharedRate));
     const float vibratoDepth = p.vibrato * singer.vibratoDepth *
         (20.0f + 7.0f * p.humanize * depthDrift) * vibratoFade;
-    const float vibratoPhase = wrapPhase(static_cast<float>(voice.ageSamples) * inverseSampleRate_ * vibratoRate
-                                          + 0.173f * static_cast<float>(voice.singer));
+    // Integrating the rate keeps the vibrato phase exact for arbitrarily long
+    // notes. Recomputing age * rate amplified any rate drift by the note age
+    // and lost sub-sample precision once the age exceeded 2^24 samples.
+    const float elapsedSeconds = static_cast<float>(voice.ageSamples - voice.lastControlAge)
+        * inverseSampleRate_;
+    voice.lastControlAge = voice.ageSamples;
+    voice.vibratoPhase = wrapPhase(voice.vibratoPhase + elapsedSeconds * vibratoRate);
 
     // Jitter is correlated over tens of milliseconds rather than sample-white pitch noise.
     const float random = randomBipolar(voice);
@@ -450,7 +461,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     const float identityCents = singer.detuneCents * p.humanize;
     const float wanderCents = p.humanize * (2.1f * singerDrift + 0.75f * sharedPitch);
     const float cents = voice.pitchScoop + identityCents + wanderCents + jitterCents
-                      + vibratoDepth * sine(vibratoPhase);
+                      + vibratoDepth * sine(voice.vibratoPhase);
     const float frequency = midiToHz(voice.midiNote) * std::exp2(cents / 1200.0f);
     voice.targetPhaseIncrement = std::clamp(frequency * inverseSampleRate_, 0.0f, 0.48f);
     voice.phaseIncrementStep = (voice.targetPhaseIncrement - voice.phaseIncrement) / static_cast<float>(controlPeriod);
@@ -497,8 +508,21 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     }
 
     const float pan = std::clamp(singer.pan * p.spread * (voice.singer == 0 && p.mode == PerformanceMode::Solo ? 0.18f : 1.0f), -1.0f, 1.0f);
-    voice.panLeft = std::sqrt(0.5f * (1.0f - pan));
-    voice.panRight = std::sqrt(0.5f * (1.0f + pan));
+    const float targetPanLeft = std::sqrt(0.5f * (1.0f - pan));
+    const float targetPanRight = std::sqrt(0.5f * (1.0f + pan));
+    if (!voice.controlInitialised)
+    {
+        voice.panLeft = targetPanLeft;
+        voice.panRight = targetPanRight;
+        voice.controlInitialised = true;
+    }
+    else
+    {
+        // Glide like the formant targets so a spread automation jump cannot
+        // step the pan gains audibly at the control rate.
+        voice.panLeft += 0.105f * (targetPanLeft - voice.panLeft);
+        voice.panRight += 0.105f * (targetPanRight - voice.panRight);
+    }
 }
 
 float VoiceEngine::tableLookup(const std::array<float, tableSize>& table, float phase) const noexcept
@@ -544,6 +568,11 @@ void VoiceEngine::updateRoom(float inputLeft, float inputRight, float amount,
     const float rb = read(roomRight_, roomDelayD_);
     const float rawLeft = 0.72f * la + 0.28f * rb;
     const float rawRight = 0.72f * ra + 0.28f * lb;
+    // Tracks the audible room level from above so process() can prove the
+    // tail has fully rung out and skip silent rendering entirely.
+    roomEnvelope_ = std::max(std::abs(rawLeft) + std::abs(rawRight)
+                             + std::abs(inputLeft) + std::abs(inputRight),
+                             roomEnvelope_ * 0.999f);
     roomDampingLeft_ += 0.28f * (rawLeft - roomDampingLeft_);
     roomDampingRight_ += 0.28f * (rawRight - roomDampingRight_);
 
@@ -569,22 +598,55 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
     const float attackBase = 1.0f - std::exp(-inverseSampleRate_ / (0.010f + 0.018f * blockParameters_.humanize));
     const float airAttack = 1.0f - std::exp(-inverseSampleRate_ / 0.004f);
     const float releaseMultiplier = std::exp(-inverseSampleRate_ / (0.105f + 0.19f * blockParameters_.humanize));
+    const float airReleaseMultiplier = releaseMultiplier * releaseMultiplier;
     const float scoopMultiplier = std::exp(-inverseSampleRate_ / 0.072f);
     const float onsetAirMultiplier = std::exp(-inverseSampleRate_ / 0.085f);
     const float sharedPitchIncrement = 0.047f * inverseSampleRate_;
     const float sharedRateIncrement = 0.019f * inverseSampleRate_;
     const float sharedFormantIncrement = 0.011f * inverseSampleRate_;
 
-    for (int sample = 0; sample < numSamples; ++sample)
+    const auto advanceEnsembleLfos = [this, sharedPitchIncrement, sharedRateIncrement,
+                                      sharedFormantIncrement](int samples)
     {
-        sharedPitchPhase_ = wrapPhase(sharedPitchPhase_ + sharedPitchIncrement);
-        sharedRatePhase_ = wrapPhase(sharedRatePhase_ + sharedRateIncrement);
-        sharedFormantPhase_ = wrapPhase(sharedFormantPhase_ + sharedFormantIncrement);
+        const float count = static_cast<float>(samples);
+        sharedPitchPhase_ = wrapPhase(sharedPitchPhase_ + sharedPitchIncrement * count);
+        sharedRatePhase_ = wrapPhase(sharedRatePhase_ + sharedRateIncrement * count);
+        sharedFormantPhase_ = wrapPhase(sharedFormantPhase_ + sharedFormantIncrement * count);
         for (auto& singer : singers_)
         {
-            singer.driftPhase = wrapPhase(singer.driftPhase + singer.driftIncrement);
-            singer.depthPhase = wrapPhase(singer.depthPhase + singer.depthIncrement);
-            singer.formantPhase = wrapPhase(singer.formantPhase + singer.formantIncrement);
+            singer.driftPhase = wrapPhase(singer.driftPhase + singer.driftIncrement * count);
+            singer.depthPhase = wrapPhase(singer.depthPhase + singer.depthIncrement * count);
+            singer.formantPhase = wrapPhase(singer.formantPhase + singer.formantIncrement * count);
+        }
+    };
+
+    // Once every voice has ended and the room tail has audibly rung out, the
+    // block renders exact digital silence. Keep the ensemble drift oscillators
+    // moving and skip the per-sample work entirely.
+    bool anyVoiceActive = false;
+    for (const auto& voice : voices_)
+        anyVoiceActive = anyVoiceActive || voice.active;
+    if (!anyVoiceActive && roomEnvelope_ < 1.0e-9f)
+    {
+        advanceEnsembleLfos(numSamples);
+        ensembleLfoCountdown_ = 0;
+        if (left != nullptr)
+            std::fill(left, left + numSamples, 0.0f);
+        if (right != nullptr && right != left)
+            std::fill(right, right + numSamples, 0.0f);
+        activeVoiceCount_.store(0, std::memory_order_relaxed);
+        return;
+    }
+
+    for (int sample = 0; sample < numSamples; ++sample)
+    {
+        // These sub-0.1 Hz drift sources feed 16-sample voice control ticks, so
+        // advancing them at the same control rate is exact for every listener
+        // while removing 39 per-sample phase updates.
+        if (--ensembleLfoCountdown_ <= 0)
+        {
+            advanceEnsembleLfos(controlPeriod);
+            ensembleLfoCountdown_ = controlPeriod;
         }
 
         float dryLeft = 0.0f;
@@ -615,7 +677,7 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             if (voice.releasing)
             {
                 voice.envelope *= releaseMultiplier;
-                voice.airEnvelope *= releaseMultiplier * releaseMultiplier;
+                voice.airEnvelope *= airReleaseMultiplier;
             }
             else
             {
@@ -627,8 +689,8 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
 
             const float soft = tableLookup(softTables_[static_cast<std::size_t>(voice.tableLevel)], voice.phase);
             const float tense = tableLookup(tenseTables_[static_cast<std::size_t>(voice.tableLevel)], voice.phase);
-            float glottal = soft + blockParameters_.tension * (tense - soft);
-            const float lowIrregularity = voice.midiNote < 52 ? (1.0f - blockParameters_.tension) * blockParameters_.humanize * 0.035f : 0.0f;
+            float glottal = soft + smoothedTension_ * (tense - soft);
+            const float lowIrregularity = voice.midiNote < 52 ? (1.0f - smoothedTension_) * blockParameters_.humanize * 0.035f : 0.0f;
             glottal *= 1.0f + (voice.alternateCycle ? lowIrregularity : -lowIrregularity);
 
             const float noise = randomBipolar(voice);
@@ -654,12 +716,11 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             const float fullMix = smoothStep((age - voice.fullStageStart)
                                              / std::max(0.001f, voice.fullStageEnd - voice.fullStageStart));
             const float voiced = earlyVoice + fullMix * (fullVoice - earlyVoice);
-            const float breathAmount = blockParameters_.breath
+            const float breathAmount = smoothedBreath_
                 * (0.22f + 0.78f * voice.onsetAir);
             const float air = shapedAir * breathAmount * voice.airEnvelope;
-            const float tonal = voiced * voice.envelope * (0.88f - 0.24f * blockParameters_.breath);
-            const float amplitude = voice.groupGain * voice.velocity * (0.67f + 0.33f * std::sqrt(voice.velocity));
-            const float output = amplitude * (0.62f * tonal + 0.22f * air);
+            const float tonal = voiced * voice.envelope * (0.88f - 0.24f * smoothedBreath_);
+            const float output = voice.amplitudeGain * (0.62f * tonal + 0.22f * air);
             dryLeft += output * voice.panLeft;
             dryRight += output * voice.panRight;
             ++voice.ageSamples;
@@ -670,6 +731,8 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
 
         smoothedRoom_ += parameterSmoothing * (blockParameters_.room - smoothedRoom_);
         smoothedGain_ += parameterSmoothing * (blockParameters_.outputGain - smoothedGain_);
+        smoothedBreath_ += parameterSmoothing * (blockParameters_.breath - smoothedBreath_);
+        smoothedTension_ += parameterSmoothing * (blockParameters_.tension - smoothedTension_);
         float wetLeft = 0.0f;
         float wetRight = 0.0f;
         updateRoom(dryLeft, dryRight, smoothedRoom_, wetLeft, wetRight);
