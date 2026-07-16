@@ -30,6 +30,13 @@ and the physical polyphony limit are preserved. Positive frequency and time
 controls are smoothed multiplicatively, so even a large randomizer move follows
 their perceptual range without a raw parameter step.
 
+Each recipe below reuses the panel's own units and field order: filter and
+amplifier stages are always listed Attack / Decay / Sustain / Release (time /
+time / percent / time); `tune` is whole semitones and `fine` is cents;
+cutoff, LFO rate, and ensemble rate are in Hz; LFO depths are cents for pitch,
+octaves for filter, and percent for PWM; and any time under one second is
+shown in ms, one second and above in s.
+
 ## Red Planet Brass
 
 - Oscillator I `Moog-like VCO` / `Saw`, octave 0; oscillator II

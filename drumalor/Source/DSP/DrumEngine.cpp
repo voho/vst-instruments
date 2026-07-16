@@ -860,22 +860,6 @@ float DrumEngine::nextCymbalPcm (Voice& voice, float source) const noexcept
     return voice.cymbalPcmReconstructed;
 }
 
-void DrumEngine::configureLowpass (Biquad& filter, float frequency, float q) const noexcept
-{
-    frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
-    q = std::clamp (q, 0.15f, 20.0f);
-    const float omega = twoPi * frequency * inverseSampleRate_;
-    const float cosine = std::cos (omega);
-    const float alpha = std::sin (omega) / (2.0f * q);
-    const float inverseA0 = 1.0f / (1.0f + alpha);
-    filter.b0 = 0.5f * (1.0f - cosine) * inverseA0;
-    filter.b1 = (1.0f - cosine) * inverseA0;
-    filter.b2 = filter.b0;
-    filter.a1 = -2.0f * cosine * inverseA0;
-    filter.a2 = (1.0f - alpha) * inverseA0;
-    filter.clear();
-}
-
 void DrumEngine::configureHighpass (Biquad& filter, float frequency, float q) const noexcept
 {
     frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));

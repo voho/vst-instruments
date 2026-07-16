@@ -143,7 +143,6 @@ EngineParameters VoiceEngine::snapshotParameters() const noexcept
 
 void VoiceEngine::buildTables()
 {
-    static constexpr std::array<int, tableLevels> harmonics { 1, 2, 4, 8, 16, 32, 64, 128, 256 };
     for (int i = 0; i < tableSize; ++i)
         sineTable_[static_cast<std::size_t>(i)] = std::sin(twoPi * static_cast<float>(i) / static_cast<float>(tableSize));
 
@@ -153,7 +152,7 @@ void VoiceEngine::buildTables()
         auto& tense = tenseTables_[static_cast<std::size_t>(level)];
         soft.fill(0.0f);
         tense.fill(0.0f);
-        for (int harmonic = 1; harmonic <= harmonics[static_cast<std::size_t>(level)]; ++harmonic)
+        for (int harmonic = 1; harmonic <= harmonicsPerLevel[static_cast<std::size_t>(level)]; ++harmonic)
         {
             const float h = static_cast<float>(harmonic);
             // Two differentiated glottal-flow spectra: rounded/breathy and firmly adducted.
@@ -455,11 +454,10 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     voice.targetPhaseIncrement = std::clamp(frequency * inverseSampleRate_, 0.0f, 0.48f);
     voice.phaseIncrementStep = (voice.targetPhaseIncrement - voice.phaseIncrement) / static_cast<float>(controlPeriod);
 
-    static constexpr std::array<int, tableLevels> harmonics { 1, 2, 4, 8, 16, 32, 64, 128, 256 };
     const int permissible = std::max(1, static_cast<int>(0.46f * static_cast<float>(sampleRate_) / std::max(frequency, 1.0f)));
     voice.tableLevel = 0;
     for (int level = 1; level < tableLevels; ++level)
-        if (harmonics[static_cast<std::size_t>(level)] <= permissible)
+        if (harmonicsPerLevel[static_cast<std::size_t>(level)] <= permissible)
             voice.tableLevel = level;
 
     const float anatomy = 1.0f + singer.anatomy * p.humanize
