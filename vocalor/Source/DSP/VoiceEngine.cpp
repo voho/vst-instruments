@@ -81,6 +81,7 @@ void VoiceEngine::reset()
     sharedPitchPhase_ = 0.173f;
     sharedRatePhase_ = 0.617f;
     sharedFormantPhase_ = 0.391f;
+    ensembleSamplePosition_ = 0;
     pendingEnsembleLfoSamples_ = 0;
     generation_ = 0;
     blockParameters_ = snapshotParameters();
@@ -599,22 +600,35 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
     const float airReleaseMultiplier = releaseMultiplier * releaseMultiplier;
     const float scoopMultiplier = std::exp(-inverseSampleRate_ / 0.072f);
     const float onsetAirMultiplier = std::exp(-inverseSampleRate_ / 0.085f);
-    const float sharedPitchIncrement = 0.047f * inverseSampleRate_;
-    const float sharedRateIncrement = 0.019f * inverseSampleRate_;
-    const float sharedFormantIncrement = 0.011f * inverseSampleRate_;
+    const double sharedPitchIncrement = 0.047 / sampleRate_;
+    const double sharedRateIncrement = 0.019 / sampleRate_;
+    const double sharedFormantIncrement = 0.011 / sampleRate_;
 
     const auto advanceEnsembleLfos = [this, sharedPitchIncrement, sharedRateIncrement,
                                       sharedFormantIncrement](std::uint64_t samples)
     {
-        const float count = static_cast<float>(samples);
-        sharedPitchPhase_ = wrapPhase(sharedPitchPhase_ + sharedPitchIncrement * count);
-        sharedRatePhase_ = wrapPhase(sharedRatePhase_ + sharedRateIncrement * count);
-        sharedFormantPhase_ = wrapPhase(sharedFormantPhase_ + sharedFormantIncrement * count);
-        for (auto& singer : singers_)
+        ensembleSamplePosition_ += samples;
+        const double position = static_cast<double>(ensembleSamplePosition_);
+        const auto absolutePhase = [position](double origin, double increment) noexcept
         {
-            singer.driftPhase = wrapPhase(singer.driftPhase + singer.driftIncrement * count);
-            singer.depthPhase = wrapPhase(singer.depthPhase + singer.depthIncrement * count);
-            singer.formantPhase = wrapPhase(singer.formantPhase + singer.formantIncrement * count);
+            const double phase = origin + increment * position;
+            return static_cast<float>(phase - std::floor(phase));
+        };
+        sharedPitchPhase_ = absolutePhase(0.173, sharedPitchIncrement);
+        sharedRatePhase_ = absolutePhase(0.617, sharedRateIncrement);
+        sharedFormantPhase_ = absolutePhase(0.391, sharedFormantIncrement);
+        for (int singerIndex = 0; singerIndex < singerCount; ++singerIndex)
+        {
+            auto& singer = singers_[static_cast<std::size_t>(singerIndex)];
+            singer.driftPhase = absolutePhase(
+                0.071 + 0.137 * static_cast<double>(singerIndex),
+                static_cast<double>(singer.driftIncrement));
+            singer.depthPhase = absolutePhase(
+                0.419 + 0.193 * static_cast<double>(singerIndex),
+                static_cast<double>(singer.depthIncrement));
+            singer.formantPhase = absolutePhase(
+                0.733 + 0.113 * static_cast<double>(singerIndex),
+                static_cast<double>(singer.formantIncrement));
         }
     };
 
@@ -642,7 +656,7 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
         const auto smoothTo = [idleSmoothing](float& value, float target) noexcept
         {
             value += idleSmoothing * (target - value);
-            if (std::abs(target - value) < 1.0e-7f)
+            if (std::abs(target - value) < 1.0e-4f)
                 value = target;
         };
         smoothTo(smoothedRoom_, blockParameters_.room);

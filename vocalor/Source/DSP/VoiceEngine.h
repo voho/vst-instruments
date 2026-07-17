@@ -46,6 +46,8 @@ public:
     [[nodiscard]] int getActiveVoiceCount() const;
 
 private:
+    friend struct VoiceEngineTestAccess;
+
     static constexpr int tableSize = 2048;
     static constexpr int tableMask = tableSize - 1;
     static constexpr int tableLevels = 9;
@@ -193,6 +195,7 @@ private:
     float sharedPitchPhase_ { 0.0f };
     float sharedRatePhase_ { 0.0f };
     float sharedFormantPhase_ { 0.0f };
+    std::uint64_t ensembleSamplePosition_ { 0 };
     std::uint64_t pendingEnsembleLfoSamples_ { 0 };
     float smoothedRoom_ { 0.0f };
     float smoothedGain_ { 0.8f };

@@ -94,6 +94,25 @@ struct MarsEngineTestAccess
         return { card.driftSlow, card.driftFast };
     }
 
+    static bool chorusLineIsCleared(const MarsEngine& engine) noexcept
+    {
+        const auto lineIsCleared = [](const MarsEngine::BbdLine& line) noexcept
+        {
+            return line.heldOutput == 0.0f
+                && line.transferMemory == 0.0f
+                && std::all_of(line.cells.begin(), line.cells.end(),
+                               [](float value) { return value == 0.0f; });
+        };
+        return engine.chorusLineCleared_
+            && lineIsCleared(engine.chorusLeft_)
+            && lineIsCleared(engine.chorusRight_);
+    }
+
+    static float companderBlend(const MarsEngine& engine) noexcept
+    {
+        return engine.companderBlend_;
+    }
+
     static std::vector<float> renderBbdImpulse(float sampleRate,
                                                 float clockFrequency,
                                                 int sampleCount)
@@ -3179,6 +3198,44 @@ void testExtremeAutomationStability()
            "automated voices did not finish releasing");
 }
 
+void testIdleChorusStateMaintenance()
+{
+    constexpr double rate = 48000.0;
+    mars::MarsEngine lineState;
+    lineState.prepare(rate, blockSize);
+    auto parameters = basicParameters();
+    parameters.chorusMix = 1.0f;
+    parameters.chorusCompander = true;
+    lineState.setParameters(parameters);
+    lineState.reset();
+    lineState.noteOn(60, 0.8f);
+    render(lineState, static_cast<int>(0.12 * rate));
+    expect(!mars::MarsEngineTestAccess::chorusLineIsCleared(lineState),
+           "active Chorus unexpectedly reported an empty BBD line");
+
+    parameters.chorusMix = 0.0f;
+    lineState.setParameters(parameters);
+    render(lineState, static_cast<int>(0.30 * rate));
+    expect(mars::MarsEngineTestAccess::chorusLineIsCleared(lineState),
+           "zero Chorus Mix retained stale BBD charge");
+
+    mars::MarsEngine idleCompander;
+    idleCompander.prepare(rate, blockSize);
+    parameters.chorusMix = 0.0f;
+    parameters.chorusCompander = false;
+    idleCompander.setParameters(parameters);
+    idleCompander.reset();
+    parameters.chorusCompander = true;
+    idleCompander.setParameters(parameters);
+    const auto idle = render(idleCompander, static_cast<int>(0.35 * rate));
+    expect(idle.peak == 0.0,
+           "idle compander automation produced non-zero output");
+    const float blend = mars::MarsEngineTestAccess::companderBlend(idleCompander);
+    expect(blend == 1.0f,
+           "idle processing did not settle the compander blend (value "
+               + std::to_string(blend) + ")");
+}
+
 double benchmarkCpuModel(mars::FilterModel filterModel)
 {
     constexpr double rate = 96000.0;
@@ -3284,6 +3341,7 @@ int main()
     testClicklessFilterModelSwitch();
     testGlideAndModulationMeaningfulness();
     testExtremeAutomationStability();
+    testIdleChorusStateMaintenance();
     testCpuRegression();
 
     if (failures != 0)

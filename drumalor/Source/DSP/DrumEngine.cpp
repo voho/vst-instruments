@@ -1397,7 +1397,11 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
         return;
     if (! prepared_)
         prepare (sampleRate_, maxBlockSize_);
+    // Restore the skipped interval under the targets that were active during
+    // that interval, then publish any control change that arrived with this
+    // trigger before the first audible sample is rendered.
     wakeMetallicOscillatorBanks();
+    updateMetallicBankParameterTargets();
     velocity = std::clamp (velocity, 0.0f, 1.0f);
     if (instrument == Instrument::ClosedHat || instrument == Instrument::OpenHat)
         chokeHats();

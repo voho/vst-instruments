@@ -2865,7 +2865,7 @@ void MarsEngine::processChorus(float inputLeft,
 
     const float companderTarget = parameters.chorusCompander ? 1.0f : 0.0f;
     companderBlend_ += companderBlendCoefficient_ * (companderTarget - companderBlend_);
-    if (std::abs(companderBlend_ - companderTarget) < 1.0e-6f)
+    if (std::abs(companderBlend_ - companderTarget) < 2.0e-4f)
         companderBlend_ = companderTarget;
 
     // The panel Mix remains a continuous modern control while following the
@@ -3081,7 +3081,7 @@ void MarsEngine::process(float *left, float *right, int numSamples)
             }
             const float companderTarget =
                 smoothedParameters_.chorusCompander ? 1.0f : 0.0f;
-            if (std::abs(companderBlend_ - companderTarget) < 1.0e-6f)
+            if (std::abs(companderBlend_ - companderTarget) < 2.0e-4f)
                 companderBlend_ = companderTarget;
             const int quietSamplesRequired = std::max(
                 1, static_cast<int>(std::lround(0.025 * sampleRate_)));

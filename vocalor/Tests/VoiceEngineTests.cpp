@@ -13,6 +13,18 @@
 #include <string_view>
 #include <vector>
 
+namespace vocalor
+{
+struct VoiceEngineTestAccess
+{
+    static std::array<float, 4> smoothedParameters(const VoiceEngine& engine) noexcept
+    {
+        return { engine.smoothedRoom_, engine.smoothedGain_,
+                 engine.smoothedBreath_, engine.smoothedTension_ };
+    }
+};
+} // namespace vocalor
+
 namespace
 {
 constexpr int blockSize = 256;
@@ -78,6 +90,27 @@ RenderMetrics render (vocalor::VoiceEngine& engine, int samples)
         rendered += count;
     }
 
+    return result;
+}
+
+std::vector<float> renderInterleaved(vocalor::VoiceEngine& engine, int samples,
+                                     int renderBlockSize)
+{
+    std::vector<float> result(static_cast<std::size_t>(2 * samples), 0.0f);
+    std::vector<float> left(static_cast<std::size_t>(renderBlockSize), 0.0f);
+    std::vector<float> right(static_cast<std::size_t>(renderBlockSize), 0.0f);
+    for (int rendered = 0; rendered < samples;)
+    {
+        const int count = std::min(renderBlockSize, samples - rendered);
+        engine.process(left.data(), right.data(), count);
+        for (int sample = 0; sample < count; ++sample)
+        {
+            const auto destination = static_cast<std::size_t>(2 * (rendered + sample));
+            result[destination] = left[static_cast<std::size_t>(sample)];
+            result[destination + 1] = right[static_cast<std::size_t>(sample)];
+        }
+        rendered += count;
+    }
     return result;
 }
 
@@ -210,6 +243,60 @@ void testAllSoundOffIsImmediate()
             "all-sound-off left audible voice or room-tail samples");
 }
 
+void testIdleStateAdvancementAndAutomation()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr int idleSamples = 12345;
+    constexpr int noteSamples = 4096;
+    vocalor::VoiceEngine singleSampleBlocks;
+    vocalor::VoiceEngine irregularBlocks;
+    for (auto* engine : { &singleSampleBlocks, &irregularBlocks })
+    {
+        engine->prepare(sampleRate, blockSize);
+        auto parameters = makeParameters(1, 0, 0, 0);
+        parameters.room = 0.0f;
+        engine->setParameters(parameters);
+        engine->reset();
+    }
+
+    const auto firstSilence = renderInterleaved(singleSampleBlocks, idleSamples, 1);
+    const auto secondSilence = renderInterleaved(irregularBlocks, idleSamples, 383);
+    expect(firstSilence == secondSilence
+               && std::all_of(firstSilence.begin(), firstSilence.end(),
+                              [](float sample) { return sample == 0.0f; }),
+           "idle output or ensemble state changed with block partitioning");
+
+    singleSampleBlocks.noteOn(60, 0.82f);
+    irregularBlocks.noteOn(60, 0.82f);
+    expect(renderInterleaved(singleSampleBlocks, noteSamples, 1)
+               == renderInterleaved(irregularBlocks, noteSamples, 383),
+           "the first note after idle changed with block partitioning");
+
+    vocalor::VoiceEngine automated;
+    automated.prepare(sampleRate, blockSize);
+    auto initial = makeParameters(0, 0, 0, 0);
+    initial.room = 0.0f;
+    initial.outputGain = 0.2f;
+    initial.breath = 0.1f;
+    initial.tension = 0.2f;
+    automated.setParameters(initial);
+    automated.reset();
+
+    auto target = initial;
+    target.room = 0.8f;
+    target.outputGain = 1.3f;
+    target.breath = 0.9f;
+    target.tension = 0.75f;
+    automated.setParameters(target);
+    const auto idle = render(automated, static_cast<int>(0.5 * sampleRate));
+    const auto smoothed = vocalor::VoiceEngineTestAccess::smoothedParameters(automated);
+    expect(idle.peak == 0.0,
+           "idle parameter automation produced non-zero output");
+    expect(smoothed == std::array<float, 4> {
+               target.room, target.outputGain, target.breath, target.tension },
+           "idle parameter automation did not advance the smoothers to their targets");
+}
+
 void testRoughPerformance()
 {
     constexpr auto sampleRate = 96000.0;
@@ -247,6 +334,7 @@ int main()
     testRenderMatrix();
     testReleaseCompletes();
     testAllSoundOffIsImmediate();
+    testIdleStateAdvancementAndAutomation();
     testRoughPerformance();
 
     if (failureCount != 0)
