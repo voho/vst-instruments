@@ -1004,6 +1004,12 @@ void MarsEngine::reset()
     stealTailRight_ = 0.0f;
     generation_ = 0;
     activeVoiceCount_ = 0;
+    anyVoiceActive_ = false;
+    // A reset engine is already at exact rest, so the idle bypass may engage
+    // immediately; the run length only guards a live tail draining out.
+    idleZeroRun_ = latencyCompensationRingSize;
+    cachedChorusMix_ = -1.0f;
+    chorusLineCleared_ = true;
     driftControlCountdown_ = 0;
     oversamplingIdleSamples_ = std::max(
         1, static_cast<int>(std::lround(0.025 * sampleRate_)));
@@ -1542,6 +1548,7 @@ void MarsEngine::initialiseVoice(Voice& voice, int slot, int rootMidi,
 {
     voice = Voice {};
     voice.active = true;
+    anyVoiceActive_ = true;
     voice.keyDown = true;
     voice.rootMidi = rootMidi;
     voice.soundingMidi = soundingMidi;
@@ -1829,10 +1836,8 @@ float MarsEngine::nextNoise(Voice& voice) noexcept
     return static_cast<float>(voice.noiseState & 0x00ffffffu) / 8388607.5f - 1.0f;
 }
 
-float MarsEngine::nextLfoValue(const EngineParameters& parameters) noexcept
+void MarsEngine::advanceLfoPhase(const EngineParameters& parameters) noexcept
 {
-    // The LFO lives inside the HQ island so PWM and pitch modulation do not
-    // become a host-rate staircase before a 2x/4x oscillator render.
     lfoPhase_ += parameters.lfoRateHz / oversampledRate_;
     if (lfoPhase_ >= 1.0f)
     {
@@ -1840,6 +1845,13 @@ float MarsEngine::nextLfoValue(const EngineParameters& parameters) noexcept
         globalNoiseState_ = hash32(globalNoiseState_ + 0x9e3779b9u);
         randomLfoValue_ = hashBipolar(globalNoiseState_);
     }
+}
+
+float MarsEngine::nextLfoValue(const EngineParameters& parameters) noexcept
+{
+    // The LFO lives inside the HQ island so PWM and pitch modulation do not
+    // become a host-rate staircase before a 2x/4x oscillator render.
+    advanceLfoPhase(parameters);
 
     if (parameters.lfoWave == LfoWaveform::Sine)
         return std::sin(twoPi * lfoPhase_);
@@ -1993,18 +2005,30 @@ void MarsEngine::updateVoiceControl(Voice& voice,
 
     const float envelopeScale =
         std::clamp(1.0f + 0.14f * ageScale * card.envelopeError, 0.72f, 1.28f);
-    voice.ampAttackCoefficient =
-        envelopeCoefficient(parameters.ampAttack * envelopeScale, oversampledRate_);
-    voice.ampDecayCoefficient =
-        envelopeCoefficient(parameters.ampDecay * envelopeScale, oversampledRate_);
-    voice.ampReleaseCoefficient =
-        envelopeCoefficient(parameters.ampRelease * envelopeScale, oversampledRate_);
-    voice.filterAttackCoefficient =
-        envelopeCoefficient(parameters.filterAttack * envelopeScale, oversampledRate_);
-    voice.filterDecayCoefficient =
-        envelopeCoefficient(parameters.filterDecay * envelopeScale, oversampledRate_);
-    voice.filterReleaseCoefficient =
-        envelopeCoefficient(parameters.filterRelease * envelopeScale, oversampledRate_);
+    // The six stage times move only while their parameters (or the drift
+    // scale) are actually changing, so the exponentials behind them are
+    // recomputed on change instead of on every 8-sample control tick.
+    const auto refreshCoefficient = [this](float seconds, float& cachedSeconds,
+                                           float& coefficient) noexcept
+    {
+        if (seconds != cachedSeconds)
+        {
+            cachedSeconds = seconds;
+            coefficient = envelopeCoefficient(seconds, oversampledRate_);
+        }
+    };
+    refreshCoefficient(parameters.ampAttack * envelopeScale,
+                       voice.cachedAmpAttackSeconds, voice.ampAttackCoefficient);
+    refreshCoefficient(parameters.ampDecay * envelopeScale,
+                       voice.cachedAmpDecaySeconds, voice.ampDecayCoefficient);
+    refreshCoefficient(parameters.ampRelease * envelopeScale,
+                       voice.cachedAmpReleaseSeconds, voice.ampReleaseCoefficient);
+    refreshCoefficient(parameters.filterAttack * envelopeScale,
+                       voice.cachedFilterAttackSeconds, voice.filterAttackCoefficient);
+    refreshCoefficient(parameters.filterDecay * envelopeScale,
+                       voice.cachedFilterDecaySeconds, voice.filterDecayCoefficient);
+    refreshCoefficient(parameters.filterRelease * envelopeScale,
+                       voice.cachedFilterReleaseSeconds, voice.filterReleaseCoefficient);
 }
 
 float MarsEngine::renderOscillator(Oscillator &oscillator,
@@ -2841,8 +2865,42 @@ void MarsEngine::processChorus(float inputLeft,
 
     const float companderTarget = parameters.chorusCompander ? 1.0f : 0.0f;
     companderBlend_ += companderBlendCoefficient_ * (companderTarget - companderBlend_);
-    if (std::abs(companderBlend_ - companderTarget) < 1.0e-6f)
+    if (std::abs(companderBlend_ - companderTarget) < 2.0e-4f)
         companderBlend_ = companderTarget;
+
+    // The panel Mix remains a continuous modern control while following the
+    // hardware convention that chorus adds a wet path instead of replacing
+    // the dry one. A quarter-circle law closely matches the old preset gain at
+    // normal settings and stays bounded at 100%. The trigonometric law is
+    // re-evaluated only when the smoothed Mix actually moves.
+    const float mix = std::clamp(parameters.chorusMix, 0.0f, 1.0f);
+    if (mix != cachedChorusMix_)
+    {
+        cachedChorusMix_ = mix;
+        const float angle = 0.25f * pi * mix;
+        chorusDryGain_ = std::cos(angle);
+        chorusWetGain_ = std::sin(angle);
+    }
+
+    // With the Mix smoother settled at exactly zero the wet branch is
+    // unobservable. Clear it once before bypassing so a later Mix increase
+    // cannot reveal stale bucket charge or compander detector history.
+    if (chorusWetGain_ == 0.0f)
+    {
+        if (!chorusLineCleared_)
+        {
+            chorusLeft_.reset(0.17);
+            chorusRight_.reset(0.63);
+            chorusCompander_.reset();
+            chorusActivity_ = 0.0f;
+            chorusLineCleared_ = true;
+        }
+        outputLeft = inputLeft;
+        outputRight = inputRight;
+        return;
+    }
+    chorusLineCleared_ = false;
+
     const float compressedFeed = chorusCompander_.compress(monoFeed);
     const float bbdFeed = monoFeed + companderBlend_ * (compressedFeed - monoFeed);
 
@@ -2856,16 +2914,8 @@ void MarsEngine::processChorus(float inputLeft,
     wetLeft += companderBlend_ * (expandedLeft - wetLeft);
     wetRight += companderBlend_ * (expandedRight - wetRight);
 
-    // The panel Mix remains a continuous modern control while following the
-    // hardware convention that chorus adds a wet path instead of replacing
-    // the dry one. A quarter-circle law closely matches the old preset gain at
-    // normal settings and stays bounded at 100%.
-    const float mix = std::clamp(parameters.chorusMix, 0.0f, 1.0f);
-    const float angle = 0.25f * pi * mix;
-    const float dryGain = std::cos(angle);
-    const float wetGain = std::sin(angle);
-    outputLeft = dryGain * inputLeft + wetGain * wetLeft;
-    outputRight = dryGain * inputRight + wetGain * wetRight;
+    outputLeft = chorusDryGain_ * inputLeft + chorusWetGain_ * wetLeft;
+    outputRight = chorusDryGain_ * inputRight + chorusWetGain_ * wetRight;
 }
 
 float MarsEngine::processDcBlocker(float input,
@@ -2915,15 +2965,33 @@ void MarsEngine::process(float *left, float *right, int numSamples)
     const float mixerGateSmoothing = 1.0f - std::exp(-inverseSampleRate_ / 0.004f);
     for (int sample = 0; sample < numSamples; ++sample)
     {
+        // Both smoothers finish by snapping onto the target: the one-pole tail
+        // below one part in 10^5 is inaudible, and an exactly reached target
+        // lets every equality-keyed coefficient cache downstream stop
+        // recomputing. The logarithmic form otherwise pays an exp and a log
+        // per parameter per sample forever, even at a converged value.
         const auto smooth = [smoothing](float& current, float target)
         {
+            if (current == target)
+                return;
             current += smoothing * (target - current);
+            if (std::abs(target - current)
+                <= 1.0e-5f * std::max(std::abs(target), 1.0e-3f))
+                current = target;
         };
         const auto smoothLog = [smoothing](float& current, float target)
         {
-            current = std::max(current, 1.0e-6f);
             target = std::max(target, 1.0e-6f);
-            current *= std::exp(smoothing * std::log(target / current));
+            if (current == target)
+                return;
+            current = std::max(current, 1.0e-6f);
+            const float ratio = target / current;
+            if (std::abs(ratio - 1.0f) <= 1.0e-5f)
+            {
+                current = target;
+                return;
+            }
+            current *= std::exp(smoothing * std::log(ratio));
         };
         smooth(smoothedParameters_.osc2FineCents, targets.osc2FineCents);
         smooth(smoothedParameters_.pulseWidth, targets.pulseWidth);
@@ -2984,6 +3052,47 @@ void MarsEngine::process(float *left, float *right, int numSamples)
             oscillator1MixGain_ = oscillator1TargetGain;
         if (std::abs(oscillator2MixGain_ - oscillator2TargetGain) < 1.0e-5f)
             oscillator2MixGain_ = oscillator2TargetGain;
+
+        // Every audible path has reached exact digital silence: no voice, no
+        // steal tail, a snapped-closed chorus gate, and a whole latency ring
+        // of exactly zero output. Only the documented free-running state (the
+        // LFO, the thermal card drift, and the chorus clock phase) needs to
+        // keep moving; everything else holds its inaudible rest state.
+        if (!anyVoiceActive_
+            && stealTailLeft_ == 0.0f && stealTailRight_ == 0.0f
+            && chorusActivity_ == 0.0f
+            && idleZeroRun_ >= latencyCompensationRingSize)
+        {
+            for (int step = 0; step < oversampling_; ++step)
+            {
+                if (--driftControlCountdown_ <= 0)
+                {
+                    for (auto& card : cards_)
+                        updateVoiceCardDrift(card);
+                    driftControlCountdown_ = controlPeriod;
+                }
+                advanceLfoPhase(smoothedParameters_);
+                chorusPhase_ = wrapPhase(
+                    chorusPhase_ + smoothedParameters_.chorusRateHz / oversampledRate_);
+                const float companderTarget =
+                    smoothedParameters_.chorusCompander ? 1.0f : 0.0f;
+                companderBlend_ += companderBlendCoefficient_
+                    * (companderTarget - companderBlend_);
+            }
+            const float companderTarget =
+                smoothedParameters_.chorusCompander ? 1.0f : 0.0f;
+            if (std::abs(companderBlend_ - companderTarget) < 2.0e-4f)
+                companderBlend_ = companderTarget;
+            const int quietSamplesRequired = std::max(
+                1, static_cast<int>(std::lround(0.025 * sampleRate_)));
+            oversamplingIdleSamples_ = std::min(
+                oversamplingIdleSamples_ + 1, quietSamplesRequired);
+            if (left != nullptr)
+                left[sample] = 0.0f;
+            if (right != nullptr && right != left)
+                right[sample] = 0.0f;
+            continue;
+        }
 
         const auto renderInternalSample = [this](float& renderedLeft,
                                                  float& renderedRight) noexcept
@@ -3091,6 +3200,7 @@ void MarsEngine::process(float *left, float *right, int numSamples)
         bool anyVoiceActive = false;
         for (const auto& voice : voices_)
             anyVoiceActive = anyVoiceActive || voice.active;
+        anyVoiceActive_ = anyVoiceActive;
         if (!anyVoiceActive)
         {
             const int quietSamplesRequired = std::max(
@@ -3102,6 +3212,10 @@ void MarsEngine::process(float *left, float *right, int numSamples)
         {
             oversamplingIdleSamples_ = 0;
         }
+        if (outputLeft == 0.0f && outputRight == 0.0f)
+            idleZeroRun_ = std::min(idleZeroRun_ + 1, 1 << 20);
+        else
+            idleZeroRun_ = 0;
 
         if (left != nullptr)
             left[sample] = outputLeft;
