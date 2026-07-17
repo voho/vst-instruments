@@ -573,6 +573,16 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
     const float sharedRateIncrement = 0.019f * inverseSampleRate_;
     const float sharedFormantIncrement = 0.011f * inverseSampleRate_;
 
+    // Voices only start in noteOn(), which the audio thread calls between
+    // process() calls, so the set of sounding voices is fixed for this block.
+    // Collecting it once keeps the per-sample loop from scanning all voice
+    // slots (and touching their cold cache lines) when only a few are in use.
+    std::array<Voice*, maxVoices> activeVoices {};
+    int activeTotal = 0;
+    for (auto& voice : voices_)
+        if (voice.active)
+            activeVoices[static_cast<std::size_t>(activeTotal++)] = &voice;
+
     for (int sample = 0; sample < numSamples; ++sample)
     {
         sharedPitchPhase_ = wrapPhase(sharedPitchPhase_ + sharedPitchIncrement);
@@ -587,9 +597,10 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
 
         float dryLeft = 0.0f;
         float dryRight = 0.0f;
-        for (auto& voice : voices_)
+        for (int v = 0; v < activeTotal; ++v)
         {
-            if (!voice.active)
+            Voice& voice = *activeVoices[static_cast<std::size_t>(v)];
+            if (!voice.active) // finished releasing earlier in this block
                 continue;
             if (voice.delaySamples > 0)
             {

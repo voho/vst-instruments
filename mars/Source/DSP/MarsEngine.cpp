@@ -871,6 +871,17 @@ void MarsEngine::updateProcessingRate() noexcept
         std::max(1, static_cast<int>(std::lround(0.0042 * static_cast<double>(oversampledRate_))));
     velocitySmoothing_ = 1.0f - std::exp(-1.0f / (0.005f * oversampledRate_));
     outputEnergySmoothing_ = 1.0f - std::exp(-1.0f / (0.008f * oversampledRate_));
+    // The Ornstein-Uhlenbeck drift coefficients and the pink-ish noise-colour
+    // pole depend only on the fixed processing rate, so they are computed here
+    // once instead of per control tick and per rendered sample.
+    const float driftControlInterval = static_cast<float>(controlPeriod) / oversampledRate_;
+    driftSlowRho_ = std::exp(-driftControlInterval / 2.8f);
+    driftFastRho_ = std::exp(-driftControlInterval / 0.075f);
+    driftSlowExcitation_ = std::sqrt(std::max(
+        0.0f, 3.0f * (1.0f - driftSlowRho_ * driftSlowRho_)));
+    driftFastExcitation_ = std::sqrt(std::max(
+        0.0f, 3.0f * (1.0f - driftFastRho_ * driftFastRho_)));
+    noiseColourCoefficient_ = std::clamp(twoPi * 5200.0f / oversampledRate_, 0.001f, 0.42f);
     chorusLeft_.configure(oversampledRate_, 0.994f);
     chorusRight_.configure(oversampledRate_, 1.006f);
     chorusCompander_.configure(oversampledRate_);
@@ -1852,17 +1863,13 @@ void MarsEngine::updateVoiceCardDrift(VoiceCard& card) noexcept
         return static_cast<float>(card.driftNoiseState & 0x00ffffffu)
              / 8388607.5f - 1.0f;
     };
-    const float controlInterval = static_cast<float>(controlPeriod) / oversampledRate_;
-    const float slowRho = std::exp(-controlInterval / 2.8f);
-    const float fastRho = std::exp(-controlInterval / 0.075f);
-    const float slowExcitation = std::sqrt(std::max(
-        0.0f, 3.0f * (1.0f - slowRho * slowRho)));
-    const float fastExcitation = std::sqrt(std::max(
-        0.0f, 3.0f * (1.0f - fastRho * fastRho)));
-    card.driftSlow = slowRho * card.driftSlow
-                   + slowExcitation * nextDriftNoise();
-    card.driftFast = fastRho * card.driftFast
-                   + fastExcitation * nextDriftNoise();
+    // The rho/excitation coefficients are rate-derived constants prepared in
+    // updateProcessingRate(); recomputing exp/sqrt for all 16 cards on every
+    // control tick was pure per-block overhead.
+    card.driftSlow = driftSlowRho_ * card.driftSlow
+                   + driftSlowExcitation_ * nextDriftNoise();
+    card.driftFast = driftFastRho_ * card.driftFast
+                   + driftFastExcitation_ * nextDriftNoise();
     card.driftSlow = std::clamp(card.driftSlow, -3.5f, 3.5f);
     card.driftFast = std::clamp(card.driftFast, -3.5f, 3.5f);
 }
@@ -2649,8 +2656,7 @@ float MarsEngine::renderVoiceOversample(Voice &voice,
     oscillator2 = softSaturate(oscillator2 * shaping) / normalisation;
 
     const float whiteNoise = nextNoise(voice);
-    const float noiseCoefficient = std::clamp(twoPi * 5200.0f / oversampledRate_, 0.001f, 0.42f);
-    voice.noiseColour += noiseCoefficient * (whiteNoise - voice.noiseColour);
+    voice.noiseColour += noiseColourCoefficient_ * (whiteNoise - voice.noiseColour);
     const float filteredNoise = 0.62f * whiteNoise + 0.38f * voice.noiseColour;
     const float rawMix = oscillator1MixGain_ * oscillator1
                        + oscillator2MixGain_ * oscillator2

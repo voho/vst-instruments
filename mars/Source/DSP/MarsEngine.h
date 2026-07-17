@@ -440,6 +440,11 @@ private:
     int dcoControlPeriodSamples_ { 806 };
     float velocitySmoothing_ { 0.02f };
     float outputEnergySmoothing_ { 0.01f };
+    float driftSlowRho_ { 0.999985f };
+    float driftFastRho_ { 0.999445f };
+    float driftSlowExcitation_ { 0.00945f };
+    float driftFastExcitation_ { 0.05773f };
+    float noiseColourCoefficient_ { 0.1702f };
     bool prepared_ { false };
     std::uint64_t generation_ { 0 };
     int activeVoiceCount_ { 0 };

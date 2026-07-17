@@ -1702,22 +1702,27 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
     updateMetallicBankParameterTargets();
 
     // Voice activity can only decrease inside one engine chunk; triggers split
-    // processing at their exact event offsets. Discover observable banks once
-    // per chunk instead of rescanning both 64-voice pools for every sample.
+    // processing at their exact event offsets. Discover observable banks and
+    // collect the audible voices once per chunk instead of rescanning both
+    // 64-voice pools for every sample.
     std::uint32_t activeMetallicBankMask = 0u;
-    const auto observeMetallicVoice = [&activeMetallicBankMask] (const Voice& voice)
+    std::array<Voice*, maxVoices + retiringVoiceCount> chunkVoices {};
+    int chunkVoiceCount = 0;
+    const auto observeVoice = [&activeMetallicBankMask, &chunkVoices,
+                               &chunkVoiceCount] (Voice& voice)
     {
         if (! voice.active)
             return;
+        chunkVoices[static_cast<std::size_t> (chunkVoiceCount++)] = &voice;
         const int bankIndex = metallicBankIndexFor (voice.instrument);
         if (bankIndex >= 0)
             activeMetallicBankMask |= std::uint32_t { 1 }
                 << static_cast<unsigned> (bankIndex);
     };
-    for (const auto& voice : voices_)
-        observeMetallicVoice (voice);
-    for (const auto& voice : retiringVoices_)
-        observeMetallicVoice (voice);
+    for (auto& voice : voices_)
+        observeVoice (voice);
+    for (auto& voice : retiringVoices_)
+        observeVoice (voice);
 
     const float gainTarget = outputGain_.load (std::memory_order_relaxed);
     const float gainSmoothing = 1.0f - std::exp (-inverseSampleRate_ / 0.020f);
@@ -1732,21 +1737,13 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         float dryLeft = 0.0f;
         float dryRight = 0.0f;
         bool hasActiveVoices = false;
-        for (auto& voice : voices_)
+        for (int voiceIndex = 0; voiceIndex < chunkVoiceCount; ++voiceIndex)
         {
+            auto& voice = *chunkVoices[static_cast<std::size_t> (voiceIndex)];
             if (! voice.active)
                 continue;
-            const float panLeft = voice.panLeft;
-            const float panRight = voice.panRight;
-            const float value = renderVoice (voice);
-            dryLeft += value * panLeft;
-            dryRight += value * panRight;
-            hasActiveVoices = hasActiveVoices || voice.active;
-        }
-        for (auto& voice : retiringVoices_)
-        {
-            if (! voice.active)
-                continue;
+            // Pan is captured first because a voice completing its tail this
+            // sample is reset to defaults inside renderVoice.
             const float panLeft = voice.panLeft;
             const float panRight = voice.panRight;
             const float value = renderVoice (voice);

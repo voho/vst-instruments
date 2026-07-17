@@ -167,6 +167,10 @@ private:
     std::array<float, sineTableSize + 1> sineTable_ {};
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
+    // Core anti-alias fade constants for coreNyquistGain(), precomputed so the
+    // per-sample harmonic loop needs no division.
+    float coreNyquistLimitHz_ { 0.49f * 48000.0f };
+    float coreNyquistFadeScale_ { 1.0f / (0.06f * 48000.0f) };
     int controlPeriod_ { 192 };
     std::uint64_t ageCounter_ { 0 };
 };

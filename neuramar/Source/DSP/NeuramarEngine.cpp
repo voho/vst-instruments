@@ -62,11 +62,13 @@ constexpr float twoPi = 2.0f * pi;
     return result;
 }
 
-[[nodiscard]] float coreNyquistGain(float frequencyHz,
-                                    float sampleRate) noexcept
+// The limit is 0.49 * sampleRate and the fade scale is 1 / (0.06 *
+// sampleRate); both are precomputed in prepare() so the per-sample harmonic
+// loop multiplies instead of dividing for every audible harmonic.
+[[nodiscard]] float coreNyquistGain(float frequencyHz, float nyquistLimitHz,
+                                    float nyquistFadeScale) noexcept
 {
-    return std::clamp((0.49f * sampleRate - frequencyHz)
-                          / (0.06f * sampleRate),
+    return std::clamp((nyquistLimitHz - frequencyHz) * nyquistFadeScale,
                       0.0f, 1.0f);
 }
 
@@ -197,6 +199,9 @@ void NeuramarEngine::prepare(double sampleRate, int maxBlockSize)
 
     sampleRate_ = sampleRate;
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
+    coreNyquistLimitHz_ = 0.49f * static_cast<float>(sampleRate_);
+    coreNyquistFadeScale_ = static_cast<float>(
+        1.0 / (0.06 * sampleRate_));
     controlPeriod_ = std::clamp(static_cast<int>(std::lround(sampleRate_ / 250.0)),
                                 16, 4096);
     reset();
@@ -730,7 +735,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     {
         const float antialias = coreNyquistGain(
             referenceFundamental * static_cast<float>(harmonic + 1),
-            static_cast<float>(sampleRate_));
+            coreNyquistLimitHz_, coreNyquistFadeScale_);
         const double amplitude = referenceTargets[harmonic] * antialias;
         referencePower += amplitude * amplitude;
     }
@@ -742,7 +747,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     {
         const float antialias = coreNyquistGain(
             renderedFundamental * static_cast<float>(harmonic + 1),
-            static_cast<float>(sampleRate_));
+            coreNyquistLimitHz_, coreNyquistFadeScale_);
         const double amplitude = targets[harmonic] * antialias;
         renderedPower += amplitude * amplitude;
     }
@@ -914,10 +919,11 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                 {
                     const float harmonicNumber = static_cast<float>(harmonic + 1);
                     const float frequency = fundamentalHz * harmonicNumber;
-                    if (frequency < 0.49f * static_cast<float>(sampleRate_))
+                    if (frequency < coreNyquistLimitHz_)
                     {
                         const float antialias = coreNyquistGain(
-                            frequency, static_cast<float>(sampleRate_));
+                            frequency, coreNyquistLimitHz_,
+                            coreNyquistFadeScale_);
                         coreSample += voice.amplitudes[harmonic] * antialias
                             * sine(voice.harmonicPhases[harmonic]);
                     }
