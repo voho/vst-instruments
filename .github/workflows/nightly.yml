@@ -58,6 +58,14 @@ jobs:
         working-directory: neuramar
         run: ./scripts/sign-and-package-macos.sh
 
+      - name: Build Electry and run tests
+        working-directory: electry
+        run: ./scripts/build-macos.sh
+
+      - name: Package Electry (ad-hoc-signed bundles)
+        working-directory: electry
+        run: ./scripts/sign-and-package-macos.sh
+
       # Retained on the workflow run itself (downloadable by anyone with repo
       # access). Instrument-specific patterns prevent one output from
       # accidentally satisfying the other instrument's artifact check.
@@ -74,10 +82,12 @@ jobs:
             mars/build-macos/dist/Mars-*-macOS-universal.pkg
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.zip
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.pkg
+            electry/build-macos/dist/Electry-*-macOS-universal.zip
+            electry/build-macos/dist/Electry-*-macOS-universal.pkg
           if-no-files-found: error
           retention-days: 14
 
-      # Publish a single rolling "nightly" release so all four instruments share a
+      # Publish a single rolling "nightly" release so all five instruments share a
       # stable public download URL.
       - name: Publish rolling "nightly" release
         env:
@@ -96,9 +106,11 @@ jobs:
             mars/build-macos/dist/Mars-*-macOS-universal.pkg
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.zip
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.pkg
+            electry/build-macos/dist/Electry-*-macOS-universal.zip
+            electry/build-macos/dist/Electry-*-macOS-universal.pkg
           )
-          if (( ${#assets[@]} != 8 )); then
-            echo "error: expected exactly eight release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 10 )); then
+            echo "error: expected exactly ten release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]}" >&2
             exit 1
           fi
@@ -130,7 +142,7 @@ jobs:
           done
 
           TITLE="VST instruments nightly ($DATE)"
-          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, Mars, and Neuramar from \`main\` ($SHORT_SHA).
+          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, Mars, Neuramar, and Electry from \`main\` ($SHORT_SHA).
 
           **These bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally, clear the quarantine flag after unzipping, e.g.:
 
@@ -139,6 +151,7 @@ jobs:
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Drumalor.vst3 Library/Audio/Plug-Ins/Components/Drumalor.component Applications/Drumalor.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Mars.vst3 Library/Audio/Plug-Ins/Components/Mars.component Applications/Mars.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Neuramar.vst3 Library/Audio/Plug-Ins/Components/Neuramar.component Applications/Neuramar.app
+          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Electry.vst3 Library/Audio/Plug-Ins/Components/Electry.component Applications/Electry.app
           \`\`\`
 
           Not intended for production distribution."
