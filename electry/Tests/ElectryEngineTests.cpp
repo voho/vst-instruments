@@ -114,6 +114,26 @@ struct ElectryEngineTestAccess
              + 4.0f * sectionDeficit(loop.dispersionHighCoefficient);
     }
 
+    static double modalMagnitudeAt(float frequencyHz, float q, float modeGain,
+                                   float sampleRate,
+                                   float evaluationFrequencyHz) noexcept
+    {
+        ElectryEngine::ModalResonator resonator;
+        resonator.configure(frequencyHz, q, modeGain, sampleRate);
+
+        const double omega = 2.0 * 3.14159265358979323846
+                           * static_cast<double>(evaluationFrequencyHz)
+                           / static_cast<double>(sampleRate);
+        const double denominatorReal = 1.0
+            + static_cast<double>(resonator.a1) * std::cos(omega)
+            + static_cast<double>(resonator.a2) * std::cos(2.0 * omega);
+        const double denominatorImag =
+            -static_cast<double>(resonator.a1) * std::sin(omega)
+            -static_cast<double>(resonator.a2) * std::sin(2.0 * omega);
+        return std::abs(static_cast<double>(resonator.gain))
+             / std::max(std::hypot(denominatorReal, denominatorImag), 1.0e-20);
+    }
+
     static constexpr int delayLineCapacity() noexcept
     {
         return ElectryEngine::delayLineSize;
@@ -390,7 +410,320 @@ double highBandRatio(const std::vector<float>& data, int start, int length,
     return low > 0.0 ? high / low : 0.0;
 }
 
+struct HarmonicBalance
+{
+    double lowPowerShare { 0.0 };
+    double highPowerShare { 0.0 };
+    double strongestFirstEightDb { -300.0 };
+    double lowMagnitude { 0.0 };
+};
+
+double decibels(double ratio)
+{
+    return 20.0 * std::log10(std::max(ratio, 1.0e-15));
+}
+
+// Stiff wound-string partials sit slightly above an ideal harmonic series.
+// A short scan prevents valid dispersion from looking like missing spectral
+// energy while remaining narrow enough not to count unrelated noise.
+double scannedPartialMagnitude(const std::vector<float>& data, int start,
+                               int length, double sampleRate,
+                               double fundamentalHz, int partial)
+{
+    const double idealFrequency = fundamentalHz * static_cast<double>(partial);
+    double best = 0.0;
+    for (double cents = -8.0; cents <= 56.0; cents += 8.0)
+    {
+        const double frequency = idealFrequency * std::pow(2.0, cents / 1200.0);
+        best = std::max(best, dftMagnitude(data, start, length, sampleRate,
+                                           frequency));
+    }
+    return best;
+}
+
+HarmonicBalance measureHarmonicBalance(const std::vector<float>& data,
+                                       int start, int length,
+                                       double sampleRate,
+                                       double fundamentalHz)
+{
+    double lowPower = 0.0;
+    double middlePower = 0.0;
+    double highPower = 0.0;
+    double fundamentalMagnitude = 0.0;
+    double strongestFirstEight = 0.0;
+
+    for (int partial = 1; partial <= 64; ++partial)
+    {
+        const double frequency = fundamentalHz * static_cast<double>(partial);
+        if (frequency >= std::min(6500.0, 0.45 * sampleRate))
+            break;
+        const double magnitude = scannedPartialMagnitude(
+            data, start, length, sampleRate, fundamentalHz, partial);
+        const double power = magnitude * magnitude;
+        if (frequency < 250.0)
+            lowPower += power;
+        else if (frequency < 1000.0)
+            middlePower += power;
+        else
+            highPower += power;
+
+        if (partial == 1)
+            fundamentalMagnitude = magnitude;
+        else if (partial <= 8)
+            strongestFirstEight = std::max(strongestFirstEight, magnitude);
+    }
+
+    const double totalPower = lowPower + middlePower + highPower;
+    HarmonicBalance result;
+    result.lowPowerShare = lowPower / std::max(totalPower, 1.0e-30);
+    result.highPowerShare = highPower / std::max(totalPower, 1.0e-30);
+    result.strongestFirstEightDb = decibels(
+        strongestFirstEight / std::max(fundamentalMagnitude, 1.0e-15));
+    result.lowMagnitude = std::sqrt(lowPower);
+    return result;
+}
+
 // ---------------------------------------------------------------------------
+
+void testModalResonatorPeakGain()
+{
+    // These span the open low strings, the complete solid-body mode table,
+    // and the Q/gain ranges used by both the body and sympathetic banks. The
+    // old numerator exceeded the requested gain by 100x or more down here.
+    struct Case
+    {
+        float frequency;
+        float q;
+        float gain;
+    };
+    constexpr std::array<Case, 7> cases {{
+        { 41.20f, 34.0f, 0.026f },
+        { 61.74f, 28.0f, 0.040f },
+        { 92.0f, 30.0f, 1.20f },
+        { 112.0f, 24.0f, 1.00f },
+        { 220.0f, 18.0f, 0.68f },
+        { 488.0f, 12.0f, 0.32f },
+        { 690.0f, 9.0f, 0.46f },
+    }};
+
+    constexpr std::array<float, 3> internalSampleRates {
+        96000.0f, 192000.0f, 384000.0f
+    };
+    for (const float internalSampleRate : internalSampleRates)
+    {
+        for (const auto& test : cases)
+        {
+            const double actual = TestAccess::modalMagnitudeAt(
+                test.frequency, test.q, test.gain, internalSampleRate,
+                test.frequency);
+            const double relativeError = std::abs(actual - test.gain)
+                                       / std::max<double>(test.gain, 1.0e-12);
+            expect(relativeError < 0.005,
+                   "modal resonator did not reproduce its requested peak gain at "
+                       + std::to_string(test.frequency) + " Hz / "
+                       + std::to_string(internalSampleRate) + " Hz sample rate"
+                       + " (requested " + std::to_string(test.gain)
+                       + ", actual " + std::to_string(actual) + ")");
+        }
+    }
+}
+
+void testLowRegisterGuitarEnvelope()
+{
+    constexpr double sampleRate = 48000.0;
+    EngineParameters cleanParameters;
+    cleanParameters.pickupSelector = PickupSelector::Bridge;
+    cleanParameters.outputMode = electry::OutputMode::Mono;
+    // Measure the pitched string itself. Incidental noises and sympathetic
+    // hardware must not be what makes an otherwise thin E1/B1 pass.
+    cleanParameters.artifactAmount = 0.0f;
+    cleanParameters.pickNoise = 0.0f;
+    cleanParameters.fingerNoise = 0.0f;
+    cleanParameters.releaseNoise = 0.0f;
+
+    struct NoteCase
+    {
+        int midiNote;
+        const char* name;
+        double minimumAttackLowShare;
+        double minimumSustainLowShare;
+    };
+    constexpr std::array<NoteCase, 2> notes {{
+        { 28, "E1", 0.20, 0.25 },
+        { 35, "B1", 0.15, 0.20 },
+    }};
+
+    for (const auto& note : notes)
+    {
+        const auto validate = [&] (const EngineParameters& parameters,
+                                   const char* variant,
+                                   double maximumPeakToSustainDb)
+        {
+            ElectryEngine engine;
+            engine.prepare(sampleRate, 512);
+            engine.setParameters(parameters);
+            const auto render = renderNote(
+                engine, sampleRate, note.midiNote, 0.8f,
+                Articulation::Downstroke, 4.1);
+            const double fundamental = midiHz(note.midiNote);
+            const auto attack = measureHarmonicBalance(
+                render.left, static_cast<int>(0.03 * sampleRate),
+                static_cast<int>(0.15 * sampleRate), sampleRate, fundamental);
+            const auto sustain = measureHarmonicBalance(
+                render.left, static_cast<int>(0.25 * sampleRate),
+                static_cast<int>(0.40 * sampleRate), sampleRate, fundamental);
+            const auto late = measureHarmonicBalance(
+                render.left, static_cast<int>(3.25 * sampleRate),
+                static_cast<int>(0.40 * sampleRate), sampleRate, fundamental);
+            const std::string prefix = std::string(note.name) + " " + variant;
+
+            expect(attack.lowPowerShare >= note.minimumAttackLowShare,
+                   prefix + " attack still lacks low partials ("
+                       + std::to_string(100.0 * attack.lowPowerShare) + "%)");
+            expect(attack.highPowerShare <= 0.50,
+                   prefix + " attack remains clavinet-bright ("
+                       + std::to_string(100.0 * attack.highPowerShare)
+                       + "% above 1 kHz)");
+            expect(sustain.lowPowerShare >= note.minimumSustainLowShare,
+                   prefix + " sustain still lacks low partials ("
+                       + std::to_string(100.0 * sustain.lowPowerShare) + "%)");
+            expect(sustain.highPowerShare <= 0.35,
+                   prefix + " sustain remains upper-harmonic dominated ("
+                       + std::to_string(100.0 * sustain.highPowerShare)
+                       + "% above 1 kHz)");
+            expect(attack.strongestFirstEightDb <= 16.0,
+                   prefix + " attack partial exceeds the fundamental by "
+                       + std::to_string(attack.strongestFirstEightDb) + " dB");
+            expect(sustain.strongestFirstEightDb <= 12.0,
+                   prefix + " sustained partial exceeds the fundamental by "
+                       + std::to_string(sustain.strongestFirstEightDb) + " dB");
+
+            const double attackToSustain = decibels(
+                peakAbs(render.left, 0, static_cast<int>(0.20 * sampleRate))
+                / std::max(rmsInRange(
+                    render.left, static_cast<int>(0.20 * sampleRate),
+                    static_cast<int>(0.70 * sampleRate)), 1.0e-15));
+            expect(attackToSustain <= maximumPeakToSustainDb,
+                   prefix + " is too transient-heavy (peak/sustain "
+                       + std::to_string(attackToSustain) + " dB)");
+
+            const double earlyRms = rmsInRange(
+                render.left, static_cast<int>(0.05 * sampleRate),
+                static_cast<int>(0.20 * sampleRate));
+            const auto expectTailAbove = [&] (double begin, double end,
+                                              double minimumDb)
+            {
+                const double tailRms = rmsInRange(
+                    render.left, static_cast<int>(begin * sampleRate),
+                    static_cast<int>(end * sampleRate));
+                const double relativeDb = decibels(
+                    tailRms / std::max(earlyRms, 1.0e-15));
+                expect(relativeDb >= minimumDb,
+                       prefix + " string dies too early at "
+                           + std::to_string(begin) + "-" + std::to_string(end)
+                           + " s (" + std::to_string(relativeDb) + " dB)");
+            };
+            expectTailAbove(0.50, 1.00, -8.0);
+            expectTailAbove(1.00, 2.00, -15.0);
+            expectTailAbove(2.00, 4.00, -26.0);
+
+            const double lowDecayDb = decibels(
+                late.lowMagnitude / std::max(sustain.lowMagnitude, 1.0e-15));
+            const double apparentT60 = lowDecayDb < -1.0e-6
+                ? -60.0 * 3.0 / lowDecayDb
+                : 1.0e6;
+            expect(apparentT60 >= 4.0 && apparentT60 <= 12.0,
+                   prefix + " low-partial T60 left the guitar range ("
+                       + std::to_string(apparentT60) + " s)");
+        };
+
+        validate(cleanParameters, "clean physical string", 15.0);
+        // The normal preset retains a small direct plectrum/contact transient;
+        // allow that realistic edge without returning to the old 22 dB
+        // clavinet-like attack-to-sustain ratio.
+        validate(EngineParameters {}, "default output", 17.0);
+
+    }
+}
+
+void testOpenLowStringLevelBalance()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double renderSeconds = 0.75;
+
+    EngineParameters parameters;
+    parameters.pickupSelector = PickupSelector::Bridge;
+    parameters.outputMode = electry::OutputMode::Mono;
+
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(parameters);
+
+    const auto e1 = renderNote(engine, sampleRate, 28, 0.8f,
+                               Articulation::Downstroke, renderSeconds);
+    const auto b1 = renderNote(engine, sampleRate, 35, 0.8f,
+                               Articulation::Downstroke, renderSeconds);
+    const auto e2 = renderNote(engine, sampleRate, 40, 0.8f,
+                               Articulation::Downstroke, renderSeconds);
+    const auto a2 = renderNote(engine, sampleRate, 45, 0.8f,
+                               Articulation::Downstroke, renderSeconds);
+
+    const std::array<const StereoBuffer*, 4> renders {{ &e1, &b1, &e2, &a2 }};
+    struct Window
+    {
+        const char* name;
+        double beginSeconds;
+        double endSeconds;
+        double minimumE1;
+        double minimumB1;
+    };
+    constexpr std::array<Window, 3> windows {{
+        { "attack", 0.004, 0.115, 0.003981, 0.003981 },
+        { "body", 0.050, 0.200, 0.003981, 0.003981 },
+        { "sustain", 0.200, 0.700, 0.002512, 0.002512 },
+    }};
+
+    for (const auto& window : windows)
+    {
+        std::array<double, 4> rms {};
+        for (std::size_t i = 0; i < renders.size(); ++i)
+        {
+            rms[i] = rmsInRange(
+                renders[i]->left,
+                static_cast<int>(window.beginSeconds * sampleRate),
+                static_cast<int>(window.endSeconds * sampleRate));
+        }
+
+        expect(rms[0] >= window.minimumE1,
+               std::string(window.name) + " E1 is effectively silent (RMS "
+                   + std::to_string(rms[0]) + ")");
+        expect(rms[1] >= window.minimumB1,
+               std::string(window.name) + " B1 is effectively silent (RMS "
+                   + std::to_string(rms[1]) + ")");
+
+        const double reference = std::max(rms[3], 1.0e-15);
+        const std::array<double, 3> ratios {
+            rms[0] / reference, rms[1] / reference, rms[2] / reference
+        };
+        constexpr std::array<double, 3> minimumRatios {
+            0.5012, 0.6310, 0.7079 // -6, -4, and -3 dB versus A2.
+        };
+        for (std::size_t index = 0; index < ratios.size(); ++index)
+        {
+            expect(ratios[index] >= minimumRatios[index],
+                   std::string(window.name) + " low string "
+                       + std::to_string(index) + " is under-balanced versus A2 ("
+                       + std::to_string(decibels(ratios[index])) + " dB)");
+            expect(ratios[index] <= 1.585,
+                   std::string(window.name) + " low string "
+                       + std::to_string(index) + " is over-compensated versus A2 ("
+                       + std::to_string(decibels(ratios[index])) + " dB)");
+        }
+    }
+
+    expect(peakAbs(e1.left) < 0.50f && peakAbs(b1.left) < 0.50f,
+           "low-register level compensation is driving every note into the guard");
+}
 
 void testInternalOversamplingPolicy()
 {
@@ -427,7 +760,7 @@ void testInternalOversamplingPolicy()
                "oversampled render became non-finite at "
                    + std::to_string(rate.hostRate) + " Hz");
         const float peak = peakAbs(buffer.left);
-        expect(peak > 1.0e-5f && peak < 1.2f,
+        expect(peak > 1.0e-5f && peak < 0.80f,
                "oversampled render was silent or unbounded at "
                    + std::to_string(rate.hostRate) + " Hz");
 
@@ -480,12 +813,26 @@ void testRenderMatrixFiniteAndBounded()
                    "non-finite output at rate " + std::to_string(sampleRate)
                        + " articulation " + std::to_string(articulationIndex));
             const float peak = peakAbs(buffer.left);
-            expect(peak < 1.2f,
+            expect(peak < 0.80f,
                    "output beyond guard at rate " + std::to_string(sampleRate)
                        + " articulation " + std::to_string(articulationIndex));
             expect(peak > 1.0e-4f,
                    "articulation " + std::to_string(articulationIndex)
                        + " is silent at rate " + std::to_string(sampleRate));
+
+            if (sampleRate == 48000.0)
+            {
+                const auto low = renderNote(
+                    engine, sampleRate, 28, 0.9f, articulation, 0.5, 0.35);
+                const float lowPeak = peakAbs(low.left);
+                expect(allFinite(low),
+                       "non-finite Drop-E output for articulation "
+                           + std::to_string(articulationIndex));
+                expect(lowPeak > 1.0e-4f && lowPeak < 0.80f,
+                       "Drop-E articulation is silent or driving the guard: "
+                           + std::to_string(articulationIndex) + " (peak "
+                           + std::to_string(lowPeak) + ")");
+            }
         }
     }
 }
@@ -746,9 +1093,13 @@ void testArticulationsSoundDistinct()
     // The hammered attack is fingered, not picked: it must be darker than
     // both pick strokes. The slap attack must be the brightest.
     expect(hammerCentroid < downCentroid * 0.9,
-           "hammer-on attack is not darker than a downstroke");
+           "hammer-on attack is not darker than a downstroke (down "
+               + std::to_string(downCentroid) + " Hz, hammer "
+               + std::to_string(hammerCentroid) + " Hz)");
     expect(hammerCentroid < upCentroid * 0.9,
-           "hammer-on attack is not darker than an upstroke");
+           "hammer-on attack is not darker than an upstroke (up "
+               + std::to_string(upCentroid) + " Hz, hammer "
+               + std::to_string(hammerCentroid) + " Hz)");
     expect(slapCentroid > downCentroid * 1.05,
            "slap attack is not brighter than a downstroke (down "
                + std::to_string(downCentroid) + " Hz, slap "
@@ -1210,7 +1561,7 @@ void testArtifactsControl()
         engine.noteOn(note, 1.0f);
     StereoBuffer strum(static_cast<int>(0.8 * sampleRate));
     renderInto(engine, strum);
-    expect(allFinite(strum) && peakAbs(strum.left) < 1.2f,
+    expect(allFinite(strum) && peakAbs(strum.left) < 0.80f,
            "maximum-artifact eight-string strum became unstable");
 }
 
@@ -1484,7 +1835,10 @@ void testMaterialAndControlAudibility()
     const double bodyDifference = normalisedDifferenceRms(
         dry.left, resonant.left, static_cast<int>(0.035 * sampleRate),
         static_cast<int>(0.60 * sampleRate));
-    expect(bodyDifference > 0.12,
+    // Exact modal normalisation keeps the structural path controlled: a
+    // clearly audible endpoint change is required, but the test must not
+    // reward the former oversized, clavinet-like body peaks.
+    expect(bodyDifference > 0.08,
            "Body Resonance full range is still too polite ("
                + std::to_string(bodyDifference) + ")");
 
@@ -1851,6 +2205,7 @@ void testCpuGuardrail()
 
 int main()
 {
+    testModalResonatorPeakGain();
     testInternalOversamplingPolicy();
     testRenderMatrixFiniteAndBounded();
     testPitchAccuracy();
@@ -1866,6 +2221,8 @@ int main()
     testPickupsToneAndModelMorph();
     testArtifactsControl();
     testAdvancedDispersionAndBodyConductance();
+    testLowRegisterGuitarEnvelope();
+    testOpenLowStringLevelBalance();
     testMonoStereoOutputField();
     testVelocityExpression();
     testMaterialAndControlAudibility();

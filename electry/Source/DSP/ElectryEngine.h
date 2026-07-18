@@ -181,18 +181,23 @@ private:
 
     struct ModalResonator
     {
-        float a1 { 0.0f }, a2 { 0.0f }, gain { 0.0f };
-        float y1 { 0.0f }, y2 { 0.0f };
+        // Low structural modes can run at 384 kHz, where float coefficient
+        // cancellation materially changes their gain and Q. The small shared
+        // modal bank uses double state so its physical calibration survives
+        // every supported host rate.
+        double a1 { 0.0 }, a2 { 0.0 }, gain { 0.0 };
+        double y1 { 0.0 }, y2 { 0.0 };
 
-        void reset() noexcept { y1 = y2 = 0.0f; }
+        void reset() noexcept { y1 = y2 = 0.0; }
         void configure(float frequencyHz, float q, float modeGain,
                        float sampleRate) noexcept;
         float process(float input) noexcept
         {
-            const float output = gain * input - a1 * y1 - a2 * y2;
+            const double output = gain * static_cast<double>(input)
+                                - a1 * y1 - a2 * y2;
             y2 = y1;
             y1 = output;
-            return output;
+            return static_cast<float>(output);
         }
     };
 
@@ -330,12 +335,23 @@ private:
         float excitationAmplitude { 0.0f };
         float excitationCombDelay { 0.0f };
         float excitationPolarity { 1.0f };
+        // The principal release component is shaped with two string-scaled
+        // low-pass sections so its modal envelope approximates the 1/n^2
+        // falloff of a triangular pluck displacement. Ordinary sustained
+        // pick styles use a much smaller broad pulse for the physical edge;
+        // deliberately percussive styles may weight that edge more strongly.
+        float excitationTransientAmplitude { 0.0f };
+        float excitationModalCoefficient { 0.99f };
+        int excitationTailLength { 0 };
+        float contactFeedbackGain { 1.0f };
         float noiseAmplitude { 0.0f };
         float noiseBandCoefficient { 0.5f };
         int noiseRemaining { 0 };
         int noiseLength { 0 };
         float excitationPulseCoefficient { 0.5f };
         OnePole excitationShaper {};
+        OnePole excitationModalShaper1 {};
+        OnePole excitationModalShaper2 {};
         OnePole noiseShaper {};
         float noiseBandState { 0.0f };
 
@@ -476,6 +492,9 @@ private:
     float magneticDriveNeck_ { 0.4f };
     float magneticDriveBridge_ { 0.4f };
     std::array<ModalResonator, bodyModeCount> bodyModes_ {};
+    float previousBodyDisplacement_ { 0.0f };
+    OnePole bodyEmfLowpass_ {};
+    float bodyEmfLowpassCoefficient_ { 0.5f };
     std::array<ModalResonator, stringCount> sympatheticModes_ {};
     std::array<float, bodyModeCount> bodyModeFrequencies_ {};
     std::array<float, bodyModeCount> bodyModeQs_ {};
@@ -485,6 +504,7 @@ private:
     float smoothedBodyLevel_ { 0.35f };
     float stereoWidth_ { 0.0f };
     float parameterSmoothingCoefficient_ { 0.01f };
+    float contactNoiseBandCoefficient_ { 0.08f };
     bool artifactsActive_ { true };
     std::array<HalfbandDecimator, 2> decimators_ {};
 };

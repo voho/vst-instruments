@@ -104,24 +104,37 @@ Off.
   milliseconds; slaps deepen the effect. Bend styles move the same pitch
   program along a finger-shaped curve.
 - **Velocity:** one coherent response profile drives attack level, pulse
-  width and brightness, contact noise, tension glide, and collision
-  likelihood. At 0% response those dimensions are velocity-invariant; at
-  100% they span soft finger-light notes through aggressive metal attacks.
+  width and brightness, the string-scaled modal release, contact noise,
+  tension glide, and collision likelihood. The principal release passes two
+  low-pass stages whose time scale follows the string period, approximating
+  the `1/n^2` modal falloff of a triangular pluck displacement; for ordinary
+  sustained pick styles, a much smaller broadband component preserves the
+  pick edge. Their delay-line projection is normalised against open E4, so
+  equal player effort does not lose tens of decibels on the much longer E1
+  loop. At 0% response those
+  dimensions are velocity-invariant; at 100% they span soft finger-light
+  notes through aggressive metal attacks.
 - **Pickups and coils:** per-string position combs at morphing
   bridge/neck distances, a wave-speed-scaled finite rectangular magnetic
   aperture with its exact sinc response (wide humbucker window to narrow
   single-coil window), a bounded second-order-dominant flux nonlinearity,
   induced-EMF differentiation with an oversampled ultrasonic guard, and one
   loaded resonant coil filter per pickup (2.0 kHz / Q 1.0 humbucker anchor to 6.0 kHz /
-  Q 2.4 single-coil anchor). The selector fades Neck, Both (with the
+  Q 2.4 single-coil anchor). A bounded string-mass/pole-balance calibration
+  keeps the thick low strings at practical guitar-pickup levels. The selector
+  fades Neck, Both (with the
   paired-coil resonance shift), or Bridge; the passive tone control moves
   the loaded resonance down and damps it.
 - **Body:** four modal resonators voiced along strongly separated wood, size,
-  shape, and construction endpoints colour the coil inputs and receive slap
-  knocks and contact noise. Their positive, bounded modal bridge conductance
-  also drains string energy when a fundamental or strong partial meets a body
-  mode, so the build changes sustain as well as EQ. Solid-body colour, not an
-  acoustic radiator.
+  shape, and construction endpoints receive bridge motion, slap knocks, and
+  contact noise. Each resonator is normalised at its own modal peak so low
+  modes do not acquire an unintended frequency-dependent boost. The resulting
+  structural drive is converted once to induced voltage before the modal
+  bank, guarded, then joined with string pickup voltage before the same coil;
+  displacement is never mixed directly into an electrical signal. Their
+  positive, bounded modal bridge conductance also drains string energy when a
+  fundamental or strong partial meets a body mode, so the build changes
+  sustain as well as timbre. Solid-body coupling, not an acoustic radiator.
 - **Play noise:** deterministic seeded plectrum scrape, finger contact,
   release damping noise, and slap knock, band-shaped per string (wound
   versus plain) with independent level controls. Identical MIDI always
