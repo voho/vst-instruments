@@ -746,10 +746,17 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             const float highNoise = noise - 0.92f * voice.lastNoise;
             voice.lastNoise = noise;
 
+            const float age = static_cast<float>(voice.ageSamples) * inverseSampleRate_;
+            const float fullMix = smoothStep((age - voice.fullStageStart)
+                                             / std::max(0.001f, voice.fullStageEnd - voice.fullStageStart));
+            // Age only grows within a note, so once the onset crossfade reaches
+            // its full-tract end the early stage cancels out of the mix exactly
+            // and its resonators can stop ticking for the rest of the note.
             float earlyVoice = 0.0f;
-            for (int f = 0; f < 2; ++f)
-                earlyVoice += voice.formantGain[static_cast<std::size_t>(f)]
-                    * voice.early[static_cast<std::size_t>(f)].tick(glottal);
+            if (fullMix < 1.0f)
+                for (int f = 0; f < 2; ++f)
+                    earlyVoice += voice.formantGain[static_cast<std::size_t>(f)]
+                        * voice.early[static_cast<std::size_t>(f)].tick(glottal);
             float fullVoice = 0.0f;
             for (int f = 0; f < formantCount; ++f)
                 fullVoice += voice.formantGain[static_cast<std::size_t>(f)]
@@ -759,9 +766,6 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
                 shapedAir += (0.72f - 0.18f * static_cast<float>(f))
                     * voice.air[static_cast<std::size_t>(f)].tick(highNoise);
 
-            const float age = static_cast<float>(voice.ageSamples) * inverseSampleRate_;
-            const float fullMix = smoothStep((age - voice.fullStageStart)
-                                             / std::max(0.001f, voice.fullStageEnd - voice.fullStageStart));
             const float voiced = earlyVoice + fullMix * (fullVoice - earlyVoice);
             const float breathAmount = smoothedBreath_
                 * (0.22f + 0.78f * voice.onsetAir);

@@ -172,7 +172,7 @@ private:
     AtomicParameters parameters_ {};
     std::array<Voice, maximumVoices> voices_ {};
     std::array<FadeTail, maximumVoices> fadeTails_ {};
-    std::array<float, sineTableSize + 1> sineTable_ {};
+    std::array<float, sineTableSize + 2> sineTable_ {};
     std::array<float, NeuralModel::harmonicCount> inverseHarmonicRolloff_ {};
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };

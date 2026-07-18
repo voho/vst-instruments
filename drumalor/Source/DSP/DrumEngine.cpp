@@ -280,6 +280,8 @@ void DrumEngine::prepare (double sampleRate, int maxBlockSize) noexcept
         -1.0f / std::max (1.0f, supplySagAttackSeconds * floatSampleRate));
     sagReleaseCoefficient_ = 1.0f - std::exp (
         -1.0f / std::max (1.0f, supplySagReleaseSeconds * floatSampleRate));
+    gainSmoothingCoefficient_ = 1.0f - std::exp (-inverseSampleRate_ / 0.020f);
+    dcBlockerCoefficient_ = std::exp (-twoPi * 12.0f * inverseSampleRate_);
     modalNoiseScale_ = referenceSampleRate / floatSampleRate;
     modalNoisePhaseIncrement_ = modalNoiseScale_;
     // The discontinuous metallic source islands run at a high internal rate,
@@ -1790,8 +1792,8 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         observeVoice (voice);
 
     const float gainTarget = outputGain_.load (std::memory_order_relaxed);
-    const float gainSmoothing = 1.0f - std::exp (-inverseSampleRate_ / 0.020f);
-    const float dcCoefficient = std::exp (-twoPi * 12.0f * inverseSampleRate_);
+    const float gainSmoothing = gainSmoothingCoefficient_;
+    const float dcCoefficient = dcBlockerCoefficient_;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {

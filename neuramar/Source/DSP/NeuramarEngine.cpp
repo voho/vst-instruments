@@ -207,7 +207,12 @@ NeuramarEngine::NeuramarEngine() noexcept
     for (int index = 0; index < sineTableSize; ++index)
         sineTable_[static_cast<std::size_t>(index)] = std::sin(
             twoPi * static_cast<float>(index) / static_cast<float>(sineTableSize));
-    sineTable_.back() = sineTable_.front();
+    // Two wrapped guard entries: the first lets the final cell interpolate
+    // across the phase wrap, and the second keeps the lookup in bounds for
+    // wrapped phases within half an ulp of 1.0, whose scaled table position
+    // rounds up to exactly sineTableSize.
+    sineTable_[sineTableSize] = sineTable_.front();
+    sineTable_.back() = sineTable_[1];
     for (std::size_t harmonic = 0; harmonic < NeuralModel::harmonicCount; ++harmonic)
         inverseHarmonicRolloff_[harmonic] = 1.0f
             / std::pow(static_cast<float>(harmonic + 1), 1.15f);

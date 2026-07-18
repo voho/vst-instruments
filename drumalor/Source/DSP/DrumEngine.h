@@ -296,6 +296,8 @@ private:
     float forcedFadeMultiplier_ { 0.999f };
     float sagAttackCoefficient_ { 0.01f };
     float sagReleaseCoefficient_ { 0.001f };
+    float gainSmoothingCoefficient_ { 0.001f };
+    float dcBlockerCoefficient_ { 0.9984f };
     float modalNoiseScale_ { 1.0f };
     float modalNoisePhaseIncrement_ { 1.0f };
     float metallicInternalSampleRate_ { 192000.0f };
