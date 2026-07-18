@@ -1354,15 +1354,22 @@ void ElectryEngine::renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
         && voice.excitationPhase != ExcitationPhase::Idle)
         bodySum += 2.4f * excitation;
 
-    // Energy tracking feeds tension modulation and voice retirement. The
-    // release side follows the string's own decay scale so the attack pitch
-    // glide relaxes over hundreds of milliseconds, as measured tension
-    // modulation does.
+    // The slow energy envelope feeds tension modulation: its release side
+    // follows the string's own decay scale so the attack pitch glide relaxes
+    // over hundreds of milliseconds, as measured tension modulation does.
     const float instantaneous = verticalSample * verticalSample
                               + horizontalSample * horizontalSample;
     const float coefficient = instantaneous > voice.energyEnvelope ? 0.004f : 0.00006f;
     voice.energyEnvelope += coefficient * (instantaneous - voice.energyEnvelope);
-    voice.outputEnergy = voice.energyEnvelope;
+
+    // A separate, faster follower drives voice retirement only. Tying that to
+    // the slow tension envelope kept an inaudible released string alive for
+    // several seconds, needlessly holding its slot; this follower falls to
+    // the retirement floor within about half a second of the audio going
+    // silent while still tracking a genuine sustain.
+    const float retireCoefficient = instantaneous > voice.outputEnergy
+        ? 0.01f : 0.0009f;
+    voice.outputEnergy += retireCoefficient * (instantaneous - voice.outputEnergy);
 
     if (voice.releasing)
         voice.releaseGain += voice.releaseGainCoefficient

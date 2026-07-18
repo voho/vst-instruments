@@ -15,9 +15,9 @@ All five engines run locally, contact no service while rendering, and ship
 without factory samples, pretrained neural weights, or third-party preset
 libraries.
 
-| [Vocalor](vocalor/) | [Drumalor](drumalor/) | [Mars](mars/) | [Neuramar](neuramar/) |
-| :---: | :---: | :---: | :---: |
-| [![Vocalor standalone interface](vocalor/Docs/screenshots/vocalor-standalone.png)](vocalor/README.md) | [![Drumalor standalone interface](drumalor/Docs/screenshots/drumalor-standalone.png)](drumalor/README.md) | [![Mars standalone interface](mars/Docs/screenshots/mars-standalone.png)](mars/README.md) | [![Neuramar standalone interface](neuramar/Docs/screenshots/neuramar-standalone.png)](neuramar/README.md) |
+| [Vocalor](vocalor/) | [Drumalor](drumalor/) | [Mars](mars/) | [Neuramar](neuramar/) | [Electry](electry/) |
+| :---: | :---: | :---: | :---: | :---: |
+| [![Vocalor standalone interface](vocalor/Docs/screenshots/vocalor-standalone.png)](vocalor/README.md) | [![Drumalor standalone interface](drumalor/Docs/screenshots/drumalor-standalone.png)](drumalor/README.md) | [![Mars standalone interface](mars/Docs/screenshots/mars-standalone.png)](mars/README.md) | [![Neuramar standalone interface](neuramar/Docs/screenshots/neuramar-standalone.png)](neuramar/README.md) | [![Electry standalone interface](electry/Docs/screenshots/electry-standalone.png)](electry/README.md) |
 
 ## Instruments
 

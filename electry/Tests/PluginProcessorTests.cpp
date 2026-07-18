@@ -188,21 +188,32 @@ void testBusAndPluginContract()
     expect (! processor.producesMidi(), "instrument unexpectedly produces MIDI");
     expect (! processor.isMidiEffect(), "instrument reports being a MIDI effect");
     expect (processor.hasEditor(), "instrument does not advertise its editor");
-    expect (processor.getTailLengthSeconds()
-                == ElectryAudioProcessor::maximumTailLengthSeconds,
+    expect (std::abs (processor.getTailLengthSeconds()
+                          - ElectryAudioProcessor::maximumTailLengthSeconds) < 1.0e-9,
             "tail length does not match the documented contract");
 
-    juce::AudioProcessor::BusesLayout stereoOut;
-    stereoOut.inputBuses.add (juce::AudioChannelSet::disabled());
-    stereoOut.outputBuses.add (juce::AudioChannelSet::stereo());
-    expect (processor.checkBusesLayoutSupported (stereoOut),
-            "stereo-out layout is not supported");
+    expect (processor.getBusCount (true) == 0,
+            "instrument unexpectedly exposes an input bus");
+    expect (processor.getBusCount (false) == 1,
+            "instrument does not expose exactly one output bus");
+    expect (processor.getTotalNumOutputChannels() == 2,
+            "instrument main output is not stereo");
 
-    juce::AudioProcessor::BusesLayout monoOut;
-    monoOut.inputBuses.add (juce::AudioChannelSet::disabled());
-    monoOut.outputBuses.add (juce::AudioChannelSet::mono());
-    expect (! processor.checkBusesLayoutSupported (monoOut),
-            "mono-only layout should be rejected");
+    // Test the actual processor topology rather than a hand-built layout, so
+    // the bus count matches what checkBusesLayoutSupported would validate.
+    const auto stereoLayout = processor.getBusesLayout();
+    expect (processor.isBusesLayoutSupported (stereoLayout),
+            "default no-input/stereo-output layout is unsupported");
+
+    auto monoLayout = stereoLayout;
+    monoLayout.outputBuses.set (0, juce::AudioChannelSet::mono());
+    expect (! processor.isBusesLayoutSupported (monoLayout),
+            "mono instrument output should be rejected");
+
+    auto inputLayout = stereoLayout;
+    inputLayout.inputBuses.add (juce::AudioChannelSet::stereo());
+    expect (! processor.isBusesLayoutSupported (inputLayout),
+            "an added instrument input bus should be rejected");
 }
 
 void testSampleAccurateNoteAndSound()
@@ -221,7 +232,8 @@ void testSampleAccurateNoteAndSound()
 
     const auto before = audio.getMagnitude (0, onset - 8);
     const auto after = audio.getMagnitude (onset, blockSize - onset);
-    expect (before == 0.0f, "audio appeared before the note-on sample position");
+    // getMagnitude is non-negative, so <= 0 is exact silence.
+    expect (before <= 0.0f, "audio appeared before the note-on sample position");
     expect (after > 1.0e-5f, "note-on did not produce audio in its block");
     expect (processor.getActiveVoiceCount() == 1,
             "note-on did not report one active string");
@@ -243,7 +255,7 @@ void testKeyswitchContract()
     // A keyswitch note alone changes the style and never sounds.
     midi.addEvent (juce::MidiMessage::noteOn (1, 27, (juce::uint8) 100), 0);
     renderBlock (processor, audio, midi);
-    expect (audio.getMagnitude (0, blockSize) == 0.0f,
+    expect (audio.getMagnitude (0, blockSize) <= 0.0f,
             "keyswitch note produced audio");
     expect (processor.getActiveVoiceCount() == 0, "keyswitch note created a voice");
     expect (processor.getCurrentArticulationIndex() == 3,
@@ -345,6 +357,11 @@ void testOutputGainImpact()
         setParameterValue (processor, electry::parameters::output, outputDb);
 
         juce::AudioBuffer<float> audio;
+        // Let the output-gain smoother settle before the note so the pluck is
+        // measured at the requested level, not part-way through the
+        // anti-zipper ramp from the default level.
+        renderSeconds (processor, audio, 0.1);
+
         juce::MidiBuffer midi;
         midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 100), 0);
         renderBlock (processor, audio, midi);
@@ -355,8 +372,11 @@ void testOutputGainImpact()
 
     const auto quiet = renderPeak (-24.0f);
     const auto loud = renderPeak (0.0f);
-    expect (loud > quiet * 4.0f,
-            "output level does not scale the rendered signal");
+    // -24 dB to 0 dB is a 15.85x change; require most of it to survive the
+    // pluck and output guard.
+    expect (loud > quiet * 8.0f,
+            "output level does not scale the rendered signal (quiet "
+                + std::to_string (quiet) + ", loud " + std::to_string (loud) + ")");
 }
 
 juce::Image renderEditorSnapshot (juce::AudioProcessorEditor& editor)
@@ -371,6 +391,7 @@ juce::Image renderEditorSnapshot (juce::AudioProcessorEditor& editor)
 void testEditorRendering()
 {
     ElectryAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
     expect (editor != nullptr, "processor did not create an editor");
     if (editor == nullptr)
@@ -386,6 +407,27 @@ void testEditorRendering()
             if (snapshot.getPixelAt (x, y).getPerceivedBrightness() > 0.05f)
                 ++litPixels;
     expect (litPixels > 100, "editor snapshot appears blank");
+
+    // The committed interface screenshot is this exact editor render. Setting
+    // ELECTRY_EDITOR_SNAPSHOT to a path writes the PNG used in the READMEs, so
+    // the documentation image is always the real regression-tested editor.
+    const auto snapshotPath = juce::SystemStats::getEnvironmentVariable (
+        "ELECTRY_EDITOR_SNAPSHOT", {});
+    if (snapshotPath.isNotEmpty())
+    {
+        juce::FileOutputStream output { juce::File (snapshotPath) };
+        juce::PNGImageFormat png;
+        const bool preparedOutput = output.openedOk()
+            && output.setPosition (0)
+            && output.truncate();
+        const bool wroteSnapshot = preparedOutput
+            && png.writeImageToStream (snapshot, output);
+        output.flush();
+        expect (wroteSnapshot, "could not write requested editor snapshot");
+    }
+
+    editor.reset();
+    processor.releaseResources();
 }
 
 void testPrepareReleaseCycles()

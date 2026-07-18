@@ -17,6 +17,17 @@ carry, ready for the amp simulation of your choice. Every guitar-model axis
 is parametrized to sit between a Gibson Les Paul-style anchor at 0% and a
 Fender Telecaster-style anchor at 100%, and defaults to the midpoint.
 
+![Electry electric guitar interface](Docs/screenshots/electry-standalone.png)
+
+This screenshot is the exact editor rendered by the plug-in regression suite
+(`ELECTRY_EDITOR_SNAPSHOT`), so the documentation image is always the
+real, tested interface. The Standalone, VST3, and Audio Unit use that same
+JUCE component. Panels, knobs, the keyswitch strip, and the on-screen
+keyboard are drawn as resolution-independent JUCE graphics; interactive
+controls stay native for automation, keyboard operation, and accessibility.
+The walnut-and-amber chassis nods to a workbench electric guitar without
+reproducing a branded hardware panel.
+
 > **Just want to try it?** The scheduled Nightly workflow publishes the
 > latest successful universal build from `main` to the rolling
 > [nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly).
