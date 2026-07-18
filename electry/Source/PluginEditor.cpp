@@ -268,10 +268,10 @@ void ElectryStatusDisplay::paint (juce::Graphics& graphics)
 // Editor
 // ---------------------------------------------------------------------------
 
-ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor& processor)
-    : AudioProcessorEditor (&processor),
-      electryProcessor (processor),
-      keyboard (processor.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
+ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor& p)
+    : AudioProcessorEditor (&p),
+      electryProcessor (p),
+      keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
 {
     setLookAndFeel (&lookAndFeel);
 
@@ -379,6 +379,10 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
 
     setSize (editorWidth, editorHeight);
     startTimerHz (12);
+
+    // Populate the status readout and articulation strip immediately so the
+    // panel opens in its real state instead of waiting up to a timer tick.
+    timerCallback();
 }
 
 ElectryAudioProcessorEditor::~ElectryAudioProcessorEditor()
