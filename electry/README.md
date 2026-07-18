@@ -1,21 +1,23 @@
 # Electry
 
 Electry is an original, physically modeled dry electric guitar instrument.
-Six string voices run dual-polarisation waveguide loops with physically
+Eight string voices run dual-polarisation waveguide loops with physically
 derived stiffness dispersion, decay-targeted damping, tension-modulation
 pitch glide, collision-informed slap behavior, and a published pickup signal
-structure (position comb, magnetic aperture, flux nonlinearity, and loaded
-coil resonance). Play styles are selected with latching keyswitches below
+structure (position comb, finite magnetic aperture, nonlinear flux, induced
+EMF, and loaded coil resonance). Play styles are selected with latching keyswitches below
 the playable range. The individual models have named research references
 (see the [physical-modeling research
 contract](Docs/physical-modeling-research.md)); Electry does not claim to be
 a capture-accurate clone of any one instrument.
 
 There are **no effects**: no amplifier, cabinet, reverb, chorus, or
-compression. The output is the dry electric guitar signal a DI box would
-carry, ready for the amp simulation of your choice. Every guitar-model axis
-is parametrized to sit between a Gibson Les Paul-style anchor at 0% and a
-Fender Telecaster-style anchor at 100%, and defaults to the midpoint.
+compression. Mono is the authentic summed dry DI; Stereo is a phase-coherent
+divided-pickup view of the eight physical strings, not an effect or delay.
+Both are ready for the amp simulation of your choice. Material, body, pickup,
+and construction controls span deliberately contrasting solid-body anchors;
+scale length spans a conventional 25.5-inch electric to a modern 28-inch
+baritone/8-string build.
 
 ![Electry electric guitar interface](Docs/screenshots/electry-standalone.png)
 
@@ -25,6 +27,10 @@ real, tested interface. The Standalone, VST3, and Audio Unit use that same
 JUCE component. Panels, knobs, the keyswitch strip, and the on-screen
 keyboard are drawn as resolution-independent JUCE graphics; interactive
 controls stay native for automation, keyboard operation, and accessibility.
+The editor uses audible impact as its visual hierarchy: pickup/tone,
+excitation, age, body resonance, and velocity are oversized in the Core row;
+guitar-build controls are medium; articulation-specific noise and artifact
+details are compact.
 The walnut-and-amber chassis nods to a workbench electric guitar without
 reproducing a branded hardware panel.
 
@@ -36,26 +42,35 @@ reproducing a branded hardware panel.
 
 ## Keyswitches and playable range
 
-MIDI notes 24..32 (C1..G#1) are latching keyswitches; they never sound, and
+MIDI notes 12..27 (C0..D#1) are latching keyswitches; they never sound, and
 the most recent one selects the play style for every following note until
 changed. Keyswitch note-offs are ignored. The editor's PLAY STYLE strip
-sends the same keyswitches and always shows the currently latched style.
+sends the same keyswitches and always shows the currently latched style. The
+on-screen keyboard colours and labels the entire keyswitch bank separately
+from the playable instrument.
 
 | MIDI note | Key | Play style |
 | --- | --- | --- |
-| 24 | C1 | Downstroke (default) |
-| 25 | C#1 | Upstroke — opposite displacement polarity, slightly closer to the bridge, thinner and brighter |
-| 26 | D1 | Hammer-on / pull-off — continues a sounding string legato within a nine-fret reach, fingered attack, no plectrum noise |
-| 27 | D#1 | Muted — palm mute with damping set by the Mute Damp control |
-| 28 | E1 | Bend 1 up — picks the played note, bends +1 semitone over the Bend Time |
-| 29 | F1 | Bend 2 up — picks the played note, bends +2 semitones |
-| 30 | F#1 | Bend 1 down — picks 1 semitone above, releases onto the played note |
-| 31 | G1 | Bend 2 down — picks 2 semitones above, releases onto the played note |
-| 32 | G#1 | Slap — hard attack, fret-collision buzz window, deeper tension glide, thumb knock into the body |
+| 12 | C0 | Downstroke (default) |
+| 13 | C#0 | Upstroke — opposite displacement polarity, slightly closer to the bridge, thinner and brighter |
+| 14 | D0 | Alternate stroke — starts down, then alternates down/up for each accepted note-on |
+| 15 | D#0 | Hammer-on / pull-off — continues a sounding string legato within a nine-fret reach, fingered attack, no plectrum noise |
+| 16 | E0 | Tap — a fresh, focused fingerboard attack without plectrum scrape |
+| 17 | F0 | Palm mute — damping follows the Mute Damp control |
+| 18 | F#0 | Chug — harder contact and a tighter, shorter metal rhythm mute |
+| 19 | G0 | Dead note — short, percussive fretting-hand choke |
+| 20 | G#0 | Natural harmonic — glassy octave harmonic with a soft node-focused touch |
+| 21 | A0 | Pinch harmonic — bright octave-plus-fifth squeal with a hard pick edge |
+| 22 | A#0 | Tremolo pick — repeated alternating strokes while the note remains held |
+| 23 | B0 | Bend 1 up — picks the played note, bends +1 semitone over the Bend Time |
+| 24 | C1 | Bend 2 up — picks the played note, bends +2 semitones |
+| 25 | C#1 | Bend 1 down — picks 1 semitone above, releases onto the played note |
+| 26 | D1 | Bend 2 down — picks 2 semitones above, releases onto the played note |
+| 27 | D#1 | Slap — hard attack, fret-collision buzz window, deeper tension glide, thumb knock into the body |
 
-Notes 40..86 (open E2 to fret 22 on the high E string) are playable in
-standard tuning; notes outside both ranges are ignored. Each note is
-allocated to one of the six physical strings: a repick of a sounding note
+Notes 28..86 are playable on a 22-fret, eight-string Drop-E instrument tuned
+E1-B1-E2-A2-D3-G3-B3-E4; notes outside both ranges are ignored. Each note is
+allocated to one of the eight physical strings: a repick of a sounding note
 grabs the same string, hammer-on continues the nearest sounding string,
 otherwise the free string with the lowest fret wins (which reproduces
 open-position chord shapes), and when everything sounds, the oldest string
@@ -68,13 +83,16 @@ Off.
 - **Strings:** one voice per physical string. Each voice runs two
   single-delay-loop waveguides (the two transverse polarisations) with
   third-order Lagrange fractional delays, a one-pole damping filter solved
-  from per-string decay targets, two dispersion allpasses solved from the
-  string's physical inharmonicity (diameter, wound core, scale length,
+  from per-string decay targets, an eight-stage factored allpass dispersion
+  cascade fitted at low and high partials from the string's physical
+  inharmonicity (diameter, effective wound core, scale length,
   tension), and a contractive bridge coupling. The horizontal polarisation
   decays 1.7x slower and is detuned by a fraction of a cent, giving the
   natural two-stage decay and slow beating. Loop-filter phase is
   compensated analytically, holding the fundamental within a few cents
-  across the fretboard at 44.1-192 kHz.
+  across the fretboard at 44.1-384 kHz. At host rates through 96 kHz the
+  complete physical and nonlinear signal path runs internally at 2x and is
+  returned through a 63-tap halfband FIR; higher-rate hosts run natively.
 - **Frets:** fretting position drives sounding length, inharmonicity,
   pickup comb geometry, and Fleischer-style dead-spot damping (deeper on
   the bolt-on end of the construction axis). Slap opens a decaying
@@ -85,26 +103,42 @@ Off.
   so hard attacks start audibly sharp and relax over hundreds of
   milliseconds; slaps deepen the effect. Bend styles move the same pitch
   program along a finger-shaped curve.
+- **Velocity:** one coherent response profile drives attack level, pulse
+  width and brightness, contact noise, tension glide, and collision
+  likelihood. At 0% response those dimensions are velocity-invariant; at
+  100% they span soft finger-light notes through aggressive metal attacks.
 - **Pickups and coils:** per-string position combs at morphing
-  bridge/neck distances, a wave-speed-scaled magnetic aperture lowpass
-  (wide humbucker window to narrow single-coil window), a bounded
-  second-order-dominant flux nonlinearity, and one loaded resonant coil
-  filter per pickup (2.45 kHz / Q 1.35 humbucker anchor to 4.05 kHz /
-  Q 1.95 single-coil anchor). The selector fades Neck, Both (with the
+  bridge/neck distances, a wave-speed-scaled finite rectangular magnetic
+  aperture with its exact sinc response (wide humbucker window to narrow
+  single-coil window), a bounded second-order-dominant flux nonlinearity,
+  induced-EMF differentiation with an oversampled ultrasonic guard, and one
+  loaded resonant coil filter per pickup (2.0 kHz / Q 1.0 humbucker anchor to 6.0 kHz /
+  Q 2.4 single-coil anchor). The selector fades Neck, Both (with the
   paired-coil resonance shift), or Bridge; the passive tone control moves
   the loaded resonance down and damps it.
-- **Body:** four modal resonators voiced along the wood, size, and shape
-  axes colour the coil inputs and receive slap knocks and contact noise.
-  Solid-body colour, not an acoustic radiator.
+- **Body:** four modal resonators voiced along strongly separated wood, size,
+  shape, and construction endpoints colour the coil inputs and receive slap
+  knocks and contact noise. Their positive, bounded modal bridge conductance
+  also drains string energy when a fundamental or strong partial meets a body
+  mode, so the build changes sustain as well as EQ. Solid-body colour, not an
+  acoustic radiator.
 - **Play noise:** deterministic seeded plectrum scrape, finger contact,
   release damping noise, and slap knock, band-shaped per string (wound
   versus plain) with independent level controls. Identical MIDI always
   renders identical audio.
+- **Artifacts:** a separate deterministic imperfection path adds controllable
+  open-string sympathetic ring, velocity-dependent incidental fret contact,
+  and string-specific saddle buzz. At 0% it is exactly bypassed and silent;
+  the 18% default is intentionally subtle.
+- **Output field:** Mono is exact dual mono and preserves the conventional
+  electric-guitar DI. Stereo spreads per-string pickup signals left-to-right
+  in physical low-to-high string order, keeps the body centred, folds down
+  coherently, and adds no chorus, modulation, random phase, or Haas delay.
 
-## Guitar-model axes
+## Guitar construction axes
 
-Every axis reads "Les Paul-style at 0, Telecaster-style at 1" and defaults
-to 0.5:
+The material controls use contrasting classic solid-body anchors and default
+to 0.5. Scale length is widened for the Drop-E instrument:
 
 | Control | 0 | 1 |
 | --- | --- | --- |
@@ -112,14 +146,15 @@ to 0.5:
 | Body size | Thick, heavy (lower modes) | Thin, light (higher modes) |
 | Body shape | Carved single-cut pattern | Flat slab pattern |
 | Construction | Set neck + stopbar | Bolt-on + through-body |
-| Scale length | 24.75 in | 25.5 in |
+| Scale length | 25.5 in conventional electric | 28 in baritone / 8-string |
 | Pickup type | Humbucker | Narrow single coil |
 
-## Exact 20-parameter contract
+## Exact 22-parameter contract
 
-All parameters are version-1 host parameters in this order. Continuous
-controls are smoothed inside the engine; the pickup selector fades over
-4 ms.
+The original 20 version-1 host parameters remain in their exact order; the
+Artifacts control is parameter 21 and Output field is appended as parameter
+22. Continuous controls are smoothed inside the engine; pickup and output
+mode changes crossfade over roughly 4 ms.
 
 | # | ID | Name | Range and default |
 | --- | --- | --- | --- |
@@ -130,9 +165,9 @@ controls are smoothed inside the engine; the pickup selector fades over
 | 5 | `bodySize` | Body size | 0..100%, default 50% |
 | 6 | `bodyShape` | Body shape | 0..100%, default 50% |
 | 7 | `construction` | Construction | 0..100%, default 50% |
-| 8 | `scaleLength` | Scale length | 24.75"..25.50", default 25.13" |
+| 8 | `scaleLength` | Scale length | 25.50"..28.00", default 26.75" |
 | 9 | `bodyResonance` | Body resonance | 0..100%, default 35% |
-| 10 | `stringGauge` | String gauge | light 9s..medium 11s, default 50% |
+| 10 | `stringGauge` | String gauge | Drop-E .009-.080 set to .011-.098 set, default 50% |
 | 11 | `stringAge` | String age | 0..100%, default 15% |
 | 12 | `pickPosition` | Pick position | bridge..neck, default 35% |
 | 13 | `pickHardness` | Pick hardness | 0..100%, default 60% |
@@ -141,8 +176,10 @@ controls are smoothed inside the engine; the pickup selector fades over
 | 16 | `releaseNoise` | Release noise | 0..100%, default 40% |
 | 17 | `muteDamping` | Mute damping | 0..100%, default 55% |
 | 18 | `bendTime` | Bend time | 40 ms..2 s, default 280 ms |
-| 19 | `velocity` | Velocity response | 0..100%, default 65% |
+| 19 | `velocity` | Velocity response | 0..100% multi-dimensional response, default 65% |
 | 20 | `output` | Output level | -24..+6 dB, default -6 dB |
+| 21 | `artifacts` | Artifacts | clean bypass..ring/contact/saddle detail, default 18% |
+| 22 | `outputMode` | Output field | **Mono** / Stereo divided-pickup field |
 
 ## Build products
 
@@ -222,7 +259,7 @@ Source/DSP/          ElectryEngine (JUCE-free physical model)
 Source/              PluginProcessor and PluginEditor (JUCE shell)
 Tests/               Engine regression suite and plug-in contract tests
 Docs/                Physical-modeling research and implementation contract
-Presets/             Sound-design recipes for the 20-parameter set
+Presets/             Sound-design recipes for the 22-parameter set
 scripts/             macOS build and packaging helpers
 ThirdParty/          JUCE licence notice
 ```

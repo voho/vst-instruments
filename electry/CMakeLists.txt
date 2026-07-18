@@ -100,6 +100,9 @@ if(ELECTRY_BUILD_PLUGIN)
 
     juce_generate_juce_header(Electry)
 
+    juce_add_binary_data(ElectryAssets
+        SOURCES Assets/electry-guitar-top.png)
+
     target_sources(Electry PRIVATE
         Source/PluginProcessor.cpp
         Source/PluginProcessor.h
@@ -109,6 +112,7 @@ if(ELECTRY_BUILD_PLUGIN)
     target_link_libraries(Electry
         PRIVATE
             ElectryDSP
+            ElectryAssets
             juce::juce_audio_utils
             juce::juce_dsp
         PUBLIC

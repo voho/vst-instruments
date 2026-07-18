@@ -54,7 +54,7 @@ juce::AudioParameterFloatAttributes percentAttributes()
         .withValueFromStringFunction (percentValue);
 }
 
-// Morph axes read as "Les Paul-style at 0, Telecaster-style at 1".
+// Material/construction morph axes use named solid-body endpoints.
 juce::AudioParameterFloatAttributes morphAttributes (const char* lowName,
                                                      const char* highName)
 {
@@ -101,6 +101,8 @@ ElectryAudioProcessor::ElectryAudioProcessor()
     parameterPointers.bendTime       = parameters.getRawParameterValue (bendTime);
     parameterPointers.velocity       = parameters.getRawParameterValue (velocity);
     parameterPointers.output         = parameters.getRawParameterValue (output);
+    parameterPointers.artifacts      = parameters.getRawParameterValue (artifacts);
+    parameterPointers.outputMode     = parameters.getRawParameterValue (outputMode);
 
     jassert (parameterPointers.pickupSelector != nullptr
              && parameterPointers.pickupType != nullptr
@@ -108,7 +110,9 @@ ElectryAudioProcessor::ElectryAudioProcessor()
              && parameterPointers.bodyWood != nullptr
              && parameterPointers.scaleLength != nullptr
              && parameterPointers.bendTime != nullptr
-             && parameterPointers.output != nullptr);
+             && parameterPointers.output != nullptr
+             && parameterPointers.artifacts != nullptr
+             && parameterPointers.outputMode != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -122,7 +126,7 @@ ElectryAudioProcessor::createParameterLayout()
 {
     using namespace electry::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (20);
+    result.reserve (22);
 
     const auto addFloat = [&result] (const char* id, const char* name,
                                      juce::NormalisableRange<float> range, float defaultValue,
@@ -160,17 +164,17 @@ ElectryAudioProcessor::createParameterLayout()
                   .withStringFromValueFunction (
                       [] (float value, int)
                       {
-                          return juce::String (24.75f + value * 0.75f, 2) + "\"";
+                          return juce::String (25.5f + value * 2.5f, 2) + "\"";
                       })
                   .withValueFromStringFunction (
                       [] (const juce::String& text)
                       {
                           const auto inches = plainNumericValue (text);
-                          return juce::jlimit (0.0f, 1.0f, (inches - 24.75f) / 0.75f);
+                          return juce::jlimit (0.0f, 1.0f, (inches - 25.5f) / 2.5f);
                       }));
     addPercent (bodyResonance, "Body resonance", 0.35f);
 
-    addMorph (stringGauge, "String gauge", 0.5f, "Light 9s", "Medium 11s");
+    addMorph (stringGauge, "String gauge", 0.5f, "9-80 set", "11-98 set");
     addPercent (stringAge, "String age", 0.15f);
 
     addPercent (pickPosition, "Pick position", 0.35f);
@@ -194,6 +198,13 @@ ElectryAudioProcessor::createParameterLayout()
                   .withLabel ("dB")
                   .withStringFromValueFunction (decibelsText)
                   .withValueFromStringFunction (plainNumericValue));
+
+    // Appended after the original version-1 parameter sequence so existing
+    // host automation IDs and ordering stay intact.
+    addPercent (artifacts, "Artifacts", 0.18f);
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { outputMode, 1 }, "Output field",
+        juce::StringArray { "Mono", "Stereo" }, 0));
 
     return { result.begin(), result.end() };
 }
@@ -364,6 +375,10 @@ void ElectryAudioProcessor::updateEngineParameters() noexcept
     next.bendTimeSeconds = valueOf (parameterPointers.bendTime);
     next.velocityAmount = valueOf (parameterPointers.velocity);
     next.outputGain = juce::Decibels::decibelsToGain (valueOf (parameterPointers.output));
+    next.artifactAmount = valueOf (parameterPointers.artifacts);
+    const auto mode = juce::jlimit (0, 1,
+        juce::roundToInt (valueOf (parameterPointers.outputMode)));
+    next.outputMode = static_cast<electry::OutputMode> (mode);
     engine.setParameters (next);
 }
 

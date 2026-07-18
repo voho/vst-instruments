@@ -12,8 +12,15 @@ enum class Articulation
 {
     Downstroke,
     Upstroke,
+    AlternateStroke,
     HammerOn,
+    Tap,
     Muted,
+    Chug,
+    DeadNote,
+    NaturalHarmonic,
+    PinchHarmonic,
+    Tremolo,
     Bend1Up,
     Bend2Up,
     Bend1Down,
@@ -22,10 +29,11 @@ enum class Articulation
 };
 
 enum class PickupSelector { Neck, Both, Bridge };
+enum class OutputMode { Mono, Stereo };
 
-// Every 0..1 "voicing axis" morphs between a Gibson Les Paul-style anchor at
-// 0 and a Fender Telecaster-style anchor at 1. The default 0.5 places the
-// modeled guitar between the two references, as the instrument contract asks.
+// Material and construction axes morph between classic solid-body anchors.
+// Scale length spans a conventional electric into a modern baritone/8-string
+// build, while the remaining performance controls use their full 0..1 range.
 struct EngineParameters
 {
     PickupSelector pickupSelector { PickupSelector::Bridge };
@@ -33,11 +41,11 @@ struct EngineParameters
     float bodySize { 0.5f };        // 0 thick heavy blank, 1 thin light slab
     float bodyShape { 0.5f };       // 0 carved single-cut, 1 flat single-cut slab
     float construction { 0.5f };    // 0 set neck + stopbar, 1 bolt-on + through-body
-    float scaleLength { 0.5f };     // 0 = 24.75 in, 1 = 25.5 in
+    float scaleLength { 0.5f };     // 0 = 25.5 in, 1 = 28 in
     float pickupType { 0.5f };      // 0 humbucker, 1 narrow single coil
     float toneKnob { 0.8f };        // guitar's own passive tone control
     float bodyResonance { 0.35f };  // solid-body structural colour level
-    float stringGauge { 0.5f };     // 0 = 0.009 set, 1 = 0.011 set
+    float stringGauge { 0.5f };     // 0 = .009-.080 set, 1 = .011-.098 set
     float stringAge { 0.15f };      // 0 fresh round-wounds, 1 old dead strings
     float pickPosition { 0.35f };   // 0 close to bridge, 1 over the neck
     float pickHardness { 0.6f };    // 0 soft/rounded contact, 1 stiff sharp pick
@@ -48,6 +56,8 @@ struct EngineParameters
     float bendTimeSeconds { 0.28f };// finger-bend travel time
     float velocityAmount { 0.65f }; // MIDI velocity to pluck strength
     float outputGain { 0.5f };      // linear output level
+    float artifactAmount { 0.18f }; // sympathetic ring and incidental contact
+    OutputMode outputMode { OutputMode::Mono }; // authentic DI or hex/string field
 };
 
 class ElectryEngine
@@ -55,17 +65,22 @@ class ElectryEngine
 public:
     ElectryEngine() noexcept;
 
-    static constexpr int stringCount = 6;
+    static constexpr int stringCount = 8;
     static constexpr int fretCount = 22;
 
     // Keyswitches occupy one contiguous group below the playable range:
-    // 24 (C1) Downstroke, 25 Upstroke, 26 Hammer-on/Pull-off, 27 Muted,
-    // 28 Bend 1 up, 29 Bend 2 up, 30 Bend 1 down, 31 Bend 2 down, 32 Slap.
-    static constexpr int firstKeyswitchNote = 24;
-    static constexpr int keyswitchCount = 9;
-    // Standard-tuned 22-fret instrument: open low E2 to fret 22 on E4.
-    static constexpr int lowestPlayableNote = 40;
+    // 12 (C0) through 27 (D#1), in Articulation enum order.
+    static constexpr int firstKeyswitchNote = 12;
+    static constexpr int keyswitchCount = static_cast<int>(Articulation::Slap) + 1;
+    // Drop-E eight-string, 22-fret instrument: open low E1 to fret 22 on E4.
+    static constexpr int lowestPlayableNote = 28;
     static constexpr int highestPlayableNote = 86;
+
+    static_assert(firstKeyswitchNote + keyswitchCount == lowestPlayableNote,
+                  "keyswitches must end immediately below the playable range");
+    static_assert(keyswitchCount == 16, "every articulation needs one keyswitch");
+    static_assert(static_cast<int>(Articulation::Slap) + 1 == keyswitchCount,
+                  "keyswitch count must match the Articulation enum");
 
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
@@ -97,12 +112,14 @@ private:
     // this narrow seam. It is not part of the plug-in API.
     friend struct ElectryEngineTestAccess;
 
-    static constexpr int delayLineSize = 8192;
+    static constexpr int delayLineSize = 16384;
     static constexpr int controlPeriod = 16;
     static constexpr int bodyModeCount = 4;
+    static constexpr int decimatorHistorySize = 64;
+    static constexpr int apertureHistorySize = 256;
     // JUCE hosts commonly top out at 384 kHz; the delay lines above are sized
-    // for the lowest reachable pitch (open E2 bent two semitones down, with
-    // the wheel at -2) at that rate. Rates beyond the ceiling are clamped so
+    // for the lowest reachable pitch (open E1 with the wheel at -2) at that
+    // rate. Rates beyond the ceiling are clamped so
     // hostile prepare() input cannot break the tuning contract.
     static constexpr double minimumSupportedSampleRate = 8000.0;
     static constexpr double maximumSupportedSampleRate = 384000.0;
@@ -179,6 +196,41 @@ private:
         }
     };
 
+    // Fixed-state 2:1 output decimator. The physical model generates its own
+    // signal, so it needs no input interpolator; every internal sample is fed
+    // to this linear-phase halfband FIR before one host-rate sample is read.
+    struct HalfbandDecimator
+    {
+        std::array<float, decimatorHistorySize> history {};
+        int writeIndex { 0 };
+
+        void reset() noexcept
+        {
+            history.fill(0.0f);
+            writeIndex = 0;
+        }
+        void push(float input) noexcept;
+        [[nodiscard]] float output() const noexcept;
+    };
+
+    // Causal finite-window spatial average implemented through a ring of
+    // cumulative sums. It gives the exact rectangular-aperture sinc response
+    // with O(1) work and supports a fractional window length.
+    struct FractionalMovingAverage
+    {
+        std::array<double, apertureHistorySize> cumulativeHistory {};
+        double cumulative { 0.0 };
+        int writeIndex { 0 };
+
+        void reset() noexcept
+        {
+            cumulativeHistory.fill(0.0);
+            cumulative = 0.0;
+            writeIndex = 0;
+        }
+        float process(float input, float lengthSamples) noexcept;
+    };
+
     // One transverse polarisation of a string: a single-delay-loop waveguide
     // with loop damping, stiffness dispersion, and a loop DC guard.
     struct PolarisationLoop
@@ -190,10 +242,20 @@ private:
         float delaySmoothing { 0.02f };
         float loopGain { 0.995f };
         float loopDampingCoefficient { 0.3f };
-        float dispersionCoefficient { 0.0f };
+        // Two independently fitted four-section allpass groups match the
+        // stiff-string delay deficit at a
+        // low and a high partial. The factored cascade is well conditioned.
+        float dispersionLowCoefficient { 0.0f };
+        float dispersionHighCoefficient { 0.0f };
         OnePole damping {};
         DispersionAllpass dispersion1 {};
         DispersionAllpass dispersion2 {};
+        DispersionAllpass dispersion3 {};
+        DispersionAllpass dispersion4 {};
+        DispersionAllpass dispersion5 {};
+        DispersionAllpass dispersion6 {};
+        DispersionAllpass dispersion7 {};
+        DispersionAllpass dispersion8 {};
 
         void clear() noexcept;
         [[nodiscard]] float readFractional(float delaySamples) const noexcept;
@@ -201,6 +263,17 @@ private:
     };
 
     enum class ExcitationPhase { Idle, Contact, Release, Tail };
+
+    struct VelocityProfile
+    {
+        float amplitude { 1.0f };
+        float effort { 0.65f };
+        float effortCurve { 0.72f };
+        float brightness { 1.0f };
+        float noise { 1.0f };
+        float tension { 1.0f };
+        float collision { 0.5f };
+    };
 
     struct Voice
     {
@@ -213,6 +286,7 @@ private:
         int fret { 0 };
         Articulation articulation { Articulation::Downstroke };
         float velocity { 0.0f };
+        VelocityProfile velocityProfile {};
         std::uint64_t startOrder { 0 };
         std::uint32_t noiseState { 1u };
 
@@ -224,6 +298,7 @@ private:
         // applied cheaply every control tick.
         float baseFrequency { 110.0f };
         float lastConfiguredSemitones { -999.0f };
+        float lastConfiguredFrequency { -1.0f };
         float compensatedPeriodVertical { 100.0f };
         float compensatedPeriodHorizontal { 100.0f };
         float bendStartSemitones { 0.0f };
@@ -238,6 +313,15 @@ private:
         // Tension-modulation state (attack pitch glide).
         float energyEnvelope { 0.0f };
         float tensionDepth { 0.0f };
+
+        // Cached physical descriptors used by the dispersion and structural
+        // admittance solves. They are useful for control-rate refreshes and
+        // for the JUCE-free physics regression seam.
+        float inharmonicity { 0.0f };
+        float dispersionLowPartial { 4.0f };
+        float dispersionHighPartial { 16.0f };
+        float bodyConductance { 0.0f };
+        float bodyLossFactor { 1.0f };
 
         // Excitation state machine.
         ExcitationPhase excitationPhase { ExcitationPhase::Idle };
@@ -259,6 +343,27 @@ private:
         int collisionRemaining { 0 };
         float collisionThreshold { 1.0f };
 
+        // Optional deterministic imperfections. A separate PRNG guarantees
+        // that the Artifacts control never changes the ordinary pick/finger
+        // noise sequence. The modal rattle is excited only by real attacks or
+        // fret contact, so an idle engine remains exactly silent.
+        std::uint32_t artifactNoiseState { 1u };
+        OnePole artifactNoiseShaper {};
+        float artifactNoiseCoefficient { 0.5f };
+        float artifactNoiseBandState { 0.0f };
+        int artifactCollisionRemaining { 0 };
+        int artifactCollisionLength { 0 };
+        float artifactClearance { 1.0f };
+        std::uint32_t artifactCollisionCount { 0 };
+        ModalResonator saddleRattle {};
+
+        // Tremolo picking repeatedly excites one held physical string. The
+        // direction flips on every scheduled stroke without changing the
+        // latched Tremolo articulation reported to the host/UI.
+        int tremoloSamplesUntilRetrigger { 0 };
+        std::uint32_t tremoloRetriggerCount { 0 };
+        bool tremoloStrokeIsUp { false };
+
         // Damping ramp applied by note release and palm muting.
         float releaseGain { 1.0f };
         float releaseGainTarget { 1.0f };
@@ -268,10 +373,15 @@ private:
         // Pickup taps and per-string pickup colouring.
         float pickupDelayNeck { 20.0f };
         float pickupDelayBridge { 6.0f };
-        OnePole apertureNeck {};
-        OnePole apertureBridge {};
-        float apertureNeckCoefficient { 0.1f };
-        float apertureBridgeCoefficient { 0.1f };
+        FractionalMovingAverage apertureNeck {};
+        FractionalMovingAverage apertureBridge {};
+        float apertureNeckLength { 8.0f };
+        float apertureBridgeLength { 8.0f };
+        float previousFluxNeck { 0.0f };
+        float previousFluxBridge { 0.0f };
+        OnePole emfLowpassNeck {};
+        OnePole emfLowpassBridge {};
+        float emfLowpassCoefficient { 0.2f };
 
         int controlCountdown { 0 };
         float outputEnergy { 0.0f };
@@ -283,8 +393,21 @@ private:
         int openMidiNote { 40 };
         bool wound { true };
         float plainDiameterMm { 0.4064f }; // light-set reference gauge
-        float woundCoreScale { 0.42f };    // core fraction of a wound diameter
+        float woundCoreScale { 0.30f };    // effective bending-core fraction
         float t60Seconds { 6.0f };
+    };
+
+    struct StereoSample
+    {
+        float left { 0.0f };
+        float right { 0.0f };
+    };
+
+    struct RenderSums
+    {
+        std::array<float, 2> neck {};
+        std::array<float, 2> bridge {};
+        float body { 0.0f };
     };
 
     static const std::array<StringSpec, stringCount>& stringSpecs() noexcept;
@@ -297,7 +420,8 @@ private:
     static float lerp(float a, float b, float t) noexcept { return a + (b - a) * t; }
     static float onePolePhaseDelay(float coefficient, float omega) noexcept;
     static float allpassPhaseDelay(float coefficient, float omega) noexcept;
-    static float softLimit(float value) noexcept;
+
+    [[nodiscard]] VelocityProfile makeVelocityProfile(float velocity) const noexcept;
 
     void configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept;
     void configureVoiceDamping(Voice& voice) noexcept;
@@ -305,6 +429,7 @@ private:
     void refreshVoicingIfNeeded() noexcept;
     void configureBody() noexcept;
     void configurePickupFilters() noexcept;
+    [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
     void startVoice(Voice& voice, int midiNote, float velocity,
                     Articulation articulation) noexcept;
@@ -314,8 +439,8 @@ private:
     int chooseString(int midiNote, Articulation articulation) const noexcept;
     [[nodiscard]] float currentSoundingSemitoneOffset(const Voice& voice) const noexcept;
     void updateVoiceControl(Voice& voice) noexcept;
-    void renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
-                     float& bodySum) noexcept;
+    void renderVoice(Voice& voice, RenderSums& sums) noexcept;
+    [[nodiscard]] StereoSample renderInternalSample() noexcept;
     void updateActiveVoiceCount() noexcept;
     [[nodiscard]] float deadSpotFactor(int stringIndex, int fret) const noexcept;
     [[nodiscard]] float scaleLengthMetres() const noexcept;
@@ -323,10 +448,13 @@ private:
     EngineParameters targetParameters_ {};
     EngineParameters smoothedParameters_ {};
     EngineParameters appliedVoicingParameters_ {};
+    double hostSampleRate_ { 48000.0 };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
+    int oversamplingFactor_ { 1 };
     bool prepared_ { false };
     Articulation articulation_ { Articulation::Downstroke };
+    bool alternateNextStrokeIsUp_ { false };
     std::uint64_t noteSequence_ { 0 };
     int activeVoiceCount_ { 0 };
     int controlCountdown_ { 0 };
@@ -337,9 +465,9 @@ private:
     std::array<Voice, stringCount> voices_ {};
 
     // Shared electrical and structural path.
-    Biquad neckCoil_ {};
-    Biquad bridgeCoil_ {};
-    DcBlocker outputDc_ {};
+    std::array<Biquad, 2> neckCoils_ {};
+    std::array<Biquad, 2> bridgeCoils_ {};
+    std::array<DcBlocker, 2> outputDc_ {};
     float neckMix_ { 0.0f };
     float bridgeMix_ { 1.0f };
     float neckMixTarget_ { 0.0f };
@@ -348,10 +476,17 @@ private:
     float magneticDriveNeck_ { 0.4f };
     float magneticDriveBridge_ { 0.4f };
     std::array<ModalResonator, bodyModeCount> bodyModes_ {};
+    std::array<ModalResonator, stringCount> sympatheticModes_ {};
+    std::array<float, bodyModeCount> bodyModeFrequencies_ {};
+    std::array<float, bodyModeCount> bodyModeQs_ {};
+    std::array<float, bodyModeCount> bodyModeLevels_ {};
     float outputDcCoefficient_ { 0.9993f };
     float smoothedOutputGain_ { 0.5f };
     float smoothedBodyLevel_ { 0.35f };
+    float stereoWidth_ { 0.0f };
     float parameterSmoothingCoefficient_ { 0.01f };
+    bool artifactsActive_ { true };
+    std::array<HalfbandDecimator, 2> decimators_ {};
 };
 
 } // namespace electry

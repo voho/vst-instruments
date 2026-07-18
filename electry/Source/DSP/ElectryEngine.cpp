@@ -11,28 +11,28 @@ namespace
 constexpr float pi = 3.14159265358979323846f;
 constexpr float twoPi = 6.28318530717958647692f;
 
-// Reference geometry of the two anchor instruments. Scale lengths are the
-// documented 24.75 in and 25.5 in; pickup distances from the bridge saddles
-// are geometric estimates of typical mounting positions, not measurements of
-// specific serial numbers.
-constexpr float lesPaulScaleMetres = 0.62865f;
-constexpr float telecasterScaleMetres = 0.6477f;
-constexpr float lesPaulBridgePickupMetres = 0.046f;
-constexpr float telecasterBridgePickupMetres = 0.031f;
+// The playable model spans a conventional 25.5-inch electric scale into a
+// 28-inch baritone/8-string scale. The longer endpoint keeps Drop-E tension
+// and partial definition credible instead of merely pitching a short guitar
+// down. Pickup distances remain geometric reference estimates.
+constexpr float conventionalScaleMetres = 0.6477f;
+constexpr float baritoneScaleMetres = 0.7112f;
+constexpr float lesPaulBridgePickupMetres = 0.043f;
+constexpr float telecasterBridgePickupMetres = 0.028f;
 constexpr float lesPaulNeckPickupMetres = 0.155f;
 constexpr float telecasterNeckPickupMetres = 0.163f;
 
 // Effective magnetic aperture windows: a humbucker averages string motion
 // across two coils, a narrow single coil across a much shorter window.
-constexpr float humbuckerApertureMetres = 0.0175f;
-constexpr float singleCoilApertureMetres = 0.0064f;
+constexpr float humbuckerApertureMetres = 0.0210f;
+constexpr float singleCoilApertureMetres = 0.0048f;
 
 // Loaded electrical resonance of the two anchor pickup circuits (coil
 // inductance and capacitance with typical pot and cable loading).
-constexpr float humbuckerResonanceHz = 2450.0f;
-constexpr float singleCoilResonanceHz = 4050.0f;
-constexpr float humbuckerResonanceQ = 1.35f;
-constexpr float singleCoilResonanceQ = 1.95f;
+constexpr float humbuckerResonanceHz = 2000.0f;
+constexpr float singleCoilResonanceHz = 6000.0f;
+constexpr float humbuckerResonanceQ = 1.0f;
+constexpr float singleCoilResonanceQ = 2.40f;
 
 constexpr float steelDensity = 7850.0f;      // kg/m^3
 constexpr float steelYoungModulus = 2.0e11f; // Pa
@@ -43,6 +43,12 @@ constexpr float clampf(float value, float low, float high) noexcept
 }
 
 bool finitef(float value) noexcept { return std::isfinite(value); }
+
+float rateAdjustedCoefficient(float coefficientAt48k, float sampleRate) noexcept
+{
+    coefficientAt48k = clampf(coefficientAt48k, 0.0f, 1.0f);
+    return 1.0f - std::pow(1.0f - coefficientAt48k, 48000.0f / sampleRate);
+}
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -82,6 +88,82 @@ void ElectryEngine::ModalResonator::configure(float frequencyHz, float q,
     gain = (1.0f - radius * radius) * modeGain;
 }
 
+void ElectryEngine::HalfbandDecimator::push(float input) noexcept
+{
+    history[static_cast<std::size_t>(writeIndex)] = input;
+    writeIndex = (writeIndex + 1) & (decimatorHistorySize - 1);
+}
+
+float ElectryEngine::HalfbandDecimator::output() const noexcept
+{
+    // 63-tap Blackman-windowed halfband low-pass. At half the internal sample
+    // rate every second side coefficient is mathematically zero; retaining
+    // only the 15 non-zero symmetric pairs and the centre tap gives the exact
+    // 31-non-zero-tap FIR response with 16 multiplies. Rejection exceeds 75 dB by
+    // 0.30 * internal Fs, while the -6 dB transition centre is host Nyquist.
+    static constexpr std::array<float, 16> sideTaps {
+        0.0f,
+        0.0000411789433614f,
+       -0.000184365757173f,
+        0.000476226242826f,
+       -0.000989039317420f,
+        0.00182325680003f,
+       -0.00311016959510f,
+        0.00501722155648f,
+       -0.00776114313623f,
+        0.0116398290043f,
+       -0.0171085471172f,
+        0.0249696847801f,
+       -0.0369009266890f,
+        0.0572633729276f,
+       -0.102148960367f,
+        0.316972234517f,
+    };
+    static constexpr float centreTap = 0.500000294415f;
+    static constexpr int historyMask = decimatorHistorySize - 1;
+
+    // writeIndex points one slot past the newest internal sample.
+    const int newest = (writeIndex - 1) & historyMask;
+    float sum = centreTap
+              * history[static_cast<std::size_t>((newest - 31) & historyMask)];
+    for (int pair = 1; pair < static_cast<int>(sideTaps.size()); ++pair)
+    {
+        const int nearOffset = 2 * pair;
+        const int farOffset = 62 - nearOffset;
+        sum += sideTaps[static_cast<std::size_t>(pair)]
+             * (history[static_cast<std::size_t>((newest - nearOffset) & historyMask)]
+                + history[static_cast<std::size_t>((newest - farOffset) & historyMask)]);
+    }
+    return sum;
+}
+
+float ElectryEngine::FractionalMovingAverage::process(
+    float input, float lengthSamples) noexcept
+{
+    static_assert((apertureHistorySize & (apertureHistorySize - 1)) == 0,
+                  "aperture history must be a power of two");
+    constexpr int mask = apertureHistorySize - 1;
+    lengthSamples = clampf(lengthSamples, 1.0f,
+                           static_cast<float>(apertureHistorySize - 2));
+
+    cumulative += static_cast<double>(input);
+    cumulativeHistory[static_cast<std::size_t>(writeIndex)] = cumulative;
+
+    const int whole = static_cast<int>(std::floor(lengthSamples));
+    const double fraction = static_cast<double>(lengthSamples)
+                          - static_cast<double>(whole);
+    const int recentIndex = (writeIndex - whole) & mask;
+    const int olderIndex = (recentIndex - 1) & mask;
+    const double delayed = cumulativeHistory[static_cast<std::size_t>(recentIndex)]
+        + fraction
+            * (cumulativeHistory[static_cast<std::size_t>(olderIndex)]
+               - cumulativeHistory[static_cast<std::size_t>(recentIndex)]);
+
+    writeIndex = (writeIndex + 1) & mask;
+    return static_cast<float>((cumulative - delayed)
+                              / static_cast<double>(lengthSamples));
+}
+
 // ---------------------------------------------------------------------------
 // Polarisation loop
 // ---------------------------------------------------------------------------
@@ -93,6 +175,12 @@ void ElectryEngine::PolarisationLoop::clear() noexcept
     damping.reset();
     dispersion1.reset();
     dispersion2.reset();
+    dispersion3.reset();
+    dispersion4.reset();
+    dispersion5.reset();
+    dispersion6.reset();
+    dispersion7.reset();
+    dispersion8.reset();
 }
 
 float ElectryEngine::PolarisationLoop::readFractional(float delaySamples) const noexcept
@@ -133,12 +221,16 @@ void ElectryEngine::PolarisationLoop::writeAdd(float offsetSamples, float value)
 const std::array<ElectryEngine::StringSpec, ElectryEngine::stringCount>&
 ElectryEngine::stringSpecs() noexcept
 {
-    // Standard tuning, light 0.009-0.042 reference set. The gauge parameter
-    // scales these diameters toward a 0.011-0.052 set.
+    // Drop-E eight-string tuning with a light .009-.080 reference set. The
+    // gauge parameter scales it toward a heavy .011-.098 set.
     static const std::array<StringSpec, stringCount> specs {{
-        { 40, true, 1.0668f, 0.40f, 7.5f },  // E2, wound
-        { 45, true, 0.8128f, 0.42f, 7.0f },  // A2, wound
-        { 50, true, 0.6096f, 0.44f, 6.4f },  // D3, wound
+        // Effective bending cores are smaller than the geometric core: the
+        // wrap slips under flexure instead of behaving like a solid rod.
+        { 28, true, 2.0320f, 0.22f, 8.2f },  // E1, wound (.080)
+        { 35, true, 1.5240f, 0.25f, 7.8f },  // B1, wound (.060)
+        { 40, true, 1.0668f, 0.28f, 7.5f },  // E2, wound
+        { 45, true, 0.8128f, 0.30f, 7.0f },  // A2, wound
+        { 50, true, 0.6096f, 0.32f, 6.4f },  // D3, wound
         { 55, false, 0.4064f, 1.0f, 5.4f },  // G3, plain
         { 59, false, 0.2794f, 1.0f, 4.6f },  // B3, plain
         { 64, false, 0.2286f, 1.0f, 4.0f },  // E4, plain
@@ -174,6 +266,7 @@ EngineParameters ElectryEngine::sanitise(const EngineParameters& parameters) noe
     result.releaseNoise = clampUnit(parameters.releaseNoise, defaults.releaseNoise);
     result.muteDamping = clampUnit(parameters.muteDamping, defaults.muteDamping);
     result.velocityAmount = clampUnit(parameters.velocityAmount, defaults.velocityAmount);
+    result.artifactAmount = clampUnit(parameters.artifactAmount, defaults.artifactAmount);
 
     if (! std::isfinite(parameters.bendTimeSeconds))
         result.bendTimeSeconds = defaults.bendTimeSeconds;
@@ -189,6 +282,10 @@ EngineParameters ElectryEngine::sanitise(const EngineParameters& parameters) noe
     result.pickupSelector = selector < 0 || selector > 2
         ? defaults.pickupSelector
         : parameters.pickupSelector;
+    const int outputMode = static_cast<int>(parameters.outputMode);
+    result.outputMode = outputMode < 0 || outputMode > 1
+        ? defaults.outputMode
+        : parameters.outputMode;
     return result;
 }
 
@@ -243,9 +340,23 @@ float ElectryEngine::allpassPhaseDelay(float coefficient, float omega) noexcept
     return -angle / omega;
 }
 
-float ElectryEngine::softLimit(float value) noexcept
+ElectryEngine::VelocityProfile
+ElectryEngine::makeVelocityProfile(float velocity) const noexcept
 {
-    return value / std::sqrt(1.0f + 0.4356f * value * value);
+    const float v = clampf(velocity, 0.0f, 1.0f);
+    const float response = smoothedParameters_.velocityAmount;
+    const float curve = std::pow(v, 1.35f);
+
+    VelocityProfile profile;
+    profile.amplitude = lerp(1.0f, 0.06f + 0.94f * curve, response);
+    profile.effort = lerp(0.65f, v, response);
+    profile.effortCurve = smoothStep(profile.effort);
+    profile.brightness = lerp(0.20f, 2.10f, profile.effortCurve);
+    profile.noise = lerp(1.0f, 0.18f + 0.82f * std::sqrt(v), response);
+    profile.tension = lerp(0.55f, 1.25f, profile.effortCurve);
+    profile.collision = smoothStep(
+        clampf((profile.effort - 0.25f) / 0.75f, 0.0f, 1.0f));
+    return profile;
 }
 
 // ---------------------------------------------------------------------------
@@ -264,8 +375,14 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     (void) maxBlockSize;
     if (! std::isfinite(sampleRate))
         sampleRate = 48000.0;
-    sampleRate_ = std::clamp(sampleRate, minimumSupportedSampleRate,
-                             maximumSupportedSampleRate);
+    hostSampleRate_ = std::clamp(sampleRate, minimumSupportedSampleRate,
+                                 maximumSupportedSampleRate);
+    // The nonlinear pickup/string/body path benefits most at conventional
+    // rates. At high-rate hosts the native clock already provides at least
+    // the same bandwidth, so avoid needlessly exceeding the delay-line and
+    // CPU contracts.
+    oversamplingFactor_ = hostSampleRate_ <= 96000.0 ? 2 : 1;
+    sampleRate_ = hostSampleRate_ * static_cast<double>(oversamplingFactor_);
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
 
     // 14 ms continuous-parameter smoothing and a 4 ms pickup selector fade,
@@ -298,19 +415,40 @@ void ElectryEngine::reset()
 
     smoothedParameters_ = sanitise(targetParameters_);
     articulation_ = Articulation::Downstroke;
+    alternateNextStrokeIsUp_ = false;
     noteSequence_ = 0;
     activeVoiceCount_ = 0;
     controlCountdown_ = 0;
     pitchBendSemitones_ = pitchBendTarget_;
     sustainPedalDown_ = false;
 
-    neckCoil_.reset();
-    bridgeCoil_.reset();
-    outputDc_.reset();
+    for (auto& filter : neckCoils_)
+        filter.reset();
+    for (auto& filter : bridgeCoils_)
+        filter.reset();
+    for (auto& blocker : outputDc_)
+        blocker.reset();
+    for (auto& decimator : decimators_)
+        decimator.reset();
     for (auto& mode : bodyModes_)
         mode.reset();
+    static constexpr std::array<float, stringCount> sympatheticQ {
+        55.0f, 52.0f, 48.0f, 44.0f, 40.0f, 36.0f, 32.0f, 30.0f
+    };
+    for (int stringIndex = 0; stringIndex < stringCount; ++stringIndex)
+    {
+        auto& mode = sympatheticModes_[static_cast<std::size_t>(stringIndex)];
+        mode.reset();
+        mode.configure(
+            midiToHz(static_cast<float>(
+                stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote)),
+            sympatheticQ[static_cast<std::size_t>(stringIndex)], 0.026f,
+            static_cast<float>(sampleRate_));
+    }
     smoothedOutputGain_ = smoothedParameters_.outputGain;
-    smoothedBodyLevel_ = smoothedParameters_.bodyResonance;
+    smoothedBodyLevel_ = 2.25f * smoothedParameters_.bodyResonance;
+    stereoWidth_ = smoothedParameters_.outputMode == OutputMode::Stereo ? 1.0f : 0.0f;
+    artifactsActive_ = smoothedParameters_.artifactAmount > 0.0f;
 
     configureBody();
     configurePickupFilters();
@@ -359,26 +497,35 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
     if (isKeyswitchNote(midiNote))
     {
         articulation_ = static_cast<Articulation>(midiNote - firstKeyswitchNote);
+        if (articulation_ == Articulation::AlternateStroke)
+            alternateNextStrokeIsUp_ = false;
         return;
     }
 
     if (! isPlayableNote(midiNote) || velocity <= 0.0f)
         return;
 
-    const auto articulation = articulation_;
-    const int stringIndex = chooseString(midiNote, articulation);
+    const auto latchedArticulation = articulation_;
+    const auto voiceArticulation = latchedArticulation == Articulation::AlternateStroke
+        ? (alternateNextStrokeIsUp_ ? Articulation::Upstroke
+                                    : Articulation::Downstroke)
+        : latchedArticulation;
+    const int stringIndex = chooseString(midiNote, voiceArticulation);
     if (stringIndex < 0)
         return;
 
+    if (latchedArticulation == Articulation::AlternateStroke)
+        alternateNextStrokeIsUp_ = ! alternateNextStrokeIsUp_;
+
     auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
 
-    const bool legato = articulation == Articulation::HammerOn
+    const bool legato = voiceArticulation == Articulation::HammerOn
                      && voice.active
                      && voice.midiNote != midiNote;
     if (legato)
         legatoRetarget(voice, midiNote, velocity);
     else
-        startVoice(voice, midiNote, velocity, articulation);
+        startVoice(voice, midiNote, velocity, voiceArticulation);
 
     updateActiveVoiceCount();
 }
@@ -503,7 +650,7 @@ int ElectryEngine::chooseString(int midiNote, Articulation articulation) const n
 
 float ElectryEngine::scaleLengthMetres() const noexcept
 {
-    return lerp(lesPaulScaleMetres, telecasterScaleMetres,
+    return lerp(conventionalScaleMetres, baritoneScaleMetres,
                 smoothedParameters_.scaleLength);
 }
 
@@ -512,12 +659,13 @@ float ElectryEngine::deadSpotFactor(int stringIndex, int fret) const noexcept
     // Solid-body dead spots: locally raised neck conductance shortens decay
     // at specific fret positions. Bolt-on construction deepens the effect.
     static constexpr std::array<float, stringCount> centres {
-        9.5f, 11.0f, 12.5f, 6.0f, 5.0f, 7.5f
+        8.0f, 9.0f, 9.5f, 11.0f, 12.5f, 6.0f, 5.0f, 7.5f
     };
-    const float depth = 0.05f + 0.30f * smoothedParameters_.construction;
+    const float depth = lerp(0.03f, 0.45f,
+                             smoothedParameters_.construction);
     const float distance = static_cast<float>(fret)
                          - centres[static_cast<std::size_t>(stringIndex)];
-    const float gaussian = std::exp(-distance * distance / (2.0f * 1.8f * 1.8f));
+    const float gaussian = std::exp(-distance * distance / (2.0f * 1.65f * 1.65f));
     return 1.0f / (1.0f + depth * gaussian);
 }
 
@@ -527,21 +675,73 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
 
     float t60 = spec.t60Seconds;
-    t60 *= lerp(1.0f, 0.55f, parameters.stringAge);
-    t60 *= lerp(1.12f, 0.92f, parameters.construction);
-    t60 *= lerp(0.95f, 1.10f, parameters.stringGauge);
+    t60 *= lerp(1.08f, 0.38f, parameters.stringAge);
+    t60 *= lerp(1.16f, 0.86f, parameters.construction);
+    t60 *= lerp(0.88f, 1.18f, parameters.stringGauge);
+    t60 *= lerp(1.05f, 0.95f, parameters.bodyWood);
+    t60 *= lerp(1.04f, 0.96f, parameters.bodySize);
     t60 *= deadSpotFactor(voice.stringIndex, voice.fret);
+
+    // The body modes are not merely a parallel EQ. Modal bridge admittance
+    // removes string energy fastest when a fundamental or strong low partial
+    // lands on a structural resonance, producing construction-dependent
+    // sustain and dead-spot behaviour without an unstable additive feedback
+    // loop. Six partials cover the body band even for open Drop-E.
+    float weightedConductance = 0.0f;
+    float conductanceWeight = 0.0f;
+    for (int partial = 1; partial <= 6; ++partial)
+    {
+        const float frequency = voice.baseFrequency * static_cast<float>(partial);
+        if (frequency >= 0.4f * static_cast<float>(sampleRate_))
+            break;
+        const float weight = 1.0f / static_cast<float>(partial);
+        weightedConductance += weight * bodyConductanceAt(frequency);
+        conductanceWeight += weight;
+    }
+    voice.bodyConductance = weightedConductance
+        / std::max(conductanceWeight, 1.0e-6f);
+    const float structuralCoupling = smoothStep(parameters.bodyResonance)
+        * lerp(0.82f, 1.18f, parameters.construction);
+    voice.bodyLossFactor = 1.0f
+        / (1.0f + 3.8f * structuralCoupling * voice.bodyConductance);
+    t60 *= voice.bodyLossFactor;
+    t60 = clampf(t60, 0.02f, 9.5f);
 
     if (voice.articulation == Articulation::Muted)
     {
-        const float muteT60 = lerp(0.60f, 0.09f, parameters.muteDamping);
+        const float muteT60 = std::exp(lerp(std::log(1.0f), std::log(0.055f),
+                                            parameters.muteDamping));
         t60 = std::min(t60, muteT60);
+    }
+    else if (voice.articulation == Articulation::Chug)
+    {
+        // A chug is a firmer bridge-hand mute than the general Muted style:
+        // its low fundamental survives briefly while the loop is stopped hard.
+        const float chugT60 = std::exp(lerp(std::log(0.32f), std::log(0.028f),
+                                            parameters.muteDamping));
+        t60 = std::min(t60, chugT60);
+    }
+    else if (voice.articulation == Articulation::DeadNote)
+    {
+        // Fretting-hand pressure releases before the string establishes a
+        // sustained pitch, leaving only a short deterministic percussion hit.
+        t60 = std::min(t60, 0.032f);
+    }
+    else if (voice.articulation == Articulation::NaturalHarmonic)
+    {
+        t60 = std::min(t60, 3.8f);
+    }
+    else if (voice.articulation == Articulation::PinchHarmonic)
+    {
+        t60 = std::min(t60, 2.9f);
     }
 
     // High-frequency decay target relative to the fundamental's decay.
-    float highRatio = lerp(0.34f, 0.10f, parameters.stringAge);
+    float highRatio = lerp(0.44f, 0.055f, parameters.stringAge);
     highRatio *= spec.wound ? 0.72f : 1.0f;
-    highRatio *= lerp(1.05f, 0.90f, parameters.stringGauge);
+    highRatio *= lerp(1.15f, 0.78f, parameters.stringGauge);
+    highRatio *= lerp(0.86f, 1.16f, parameters.bodyWood);
+    highRatio *= lerp(0.90f, 1.15f, parameters.construction);
     highRatio = clampf(highRatio, 0.02f, 0.9f);
 
     const float sampleRate = static_cast<float>(sampleRate_);
@@ -606,17 +806,19 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     }
 
     const float semitones = bendOffset + legatoOffset + pitchBendSemitones_;
+    const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
+                            20.0f, 0.24f * static_cast<float>(sampleRate_));
 
     // The dispersion solve and filter phase compensation are only refreshed
     // when the sounding pitch actually moves; the tension-modulation factor
     // below stays cheap enough for every control tick.
     if (forceDelayJump
-        || std::abs(semitones - voice.lastConfiguredSemitones) > 8.0e-4f)
+        || std::abs(semitones - voice.lastConfiguredSemitones) > 8.0e-4f
+        || std::abs(f0 - voice.lastConfiguredFrequency)
+               > 5.0e-5f * std::max(f0, 20.0f))
     {
         voice.lastConfiguredSemitones = semitones;
-
-        const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
-                                20.0f, 0.24f * static_cast<float>(sampleRate_));
+        voice.lastConfiguredFrequency = f0;
         const float omega = twoPi * f0 * inverseSampleRate_;
         const float period = static_cast<float>(sampleRate_) / f0;
 
@@ -642,44 +844,104 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
             / std::max(tension * soundingLength * soundingLength, 1.0e-9f);
         inharmonicity = clampf(inharmonicity, 0.0f, 3.0e-3f);
 
-        // Map the inharmonicity coefficient to the pair of first-order loop
-        // allpasses: pick the coefficient whose extra low-frequency phase
-        // delay reproduces the delay deficit stiffness causes at a reference
-        // partial.
-        float dispersion = 0.0f;
-        if (inharmonicity > 1.0e-7f)
+        // Eight cascaded first-order sections are fitted in factored form:
+        // four share each band coefficient. A
+        // bounded two-pass grid minimises relative phase-delay error at both
+        // reference partials. This is done only at note/control setup.
+        const float highPartial = clampf(
+            std::floor(0.30f * static_cast<float>(sampleRate_) / f0),
+            4.0f, 16.0f);
+        const float lowPartial = std::min(
+            4.0f, std::max(2.0f, std::floor(0.5f * highPartial)));
+        float lowCoefficient = 0.0f;
+        float highCoefficient = 0.0f;
+
+        const auto wantedDeficit = [&] (float partial)
         {
-            const float referencePartial =
-                clampf(std::floor(0.30f * static_cast<float>(sampleRate_) / f0),
-                       2.0f, 16.0f);
             const float stretch =
-                std::sqrt((1.0f + inharmonicity * referencePartial * referencePartial)
+                std::sqrt((1.0f + inharmonicity * partial * partial)
                           / (1.0f + inharmonicity));
-            const float wantedDeficit = period * (1.0f - 1.0f / stretch);
-            const float omegaRef = std::min(omega * referencePartial, pi * 0.95f);
-            float low = -0.55f;
-            float high = 0.0f;
-            for (int i = 0; i < 14; ++i)
+            return period * (1.0f - 1.0f / stretch);
+        };
+        const auto pairDeficit = [&] (float coefficient, float partial)
+        {
+            const float omegaRef = std::min(omega * partial, pi * 0.95f);
+            return 2.0f * (allpassPhaseDelay(coefficient, omega)
+                           - allpassPhaseDelay(coefficient, omegaRef));
+        };
+        if (inharmonicity > 1.0e-8f)
+        {
+            const float wantedLow = wantedDeficit(lowPartial);
+            const float wantedHigh = wantedDeficit(highPartial);
+            const float lowScale = std::max(wantedLow, 0.01f);
+            const float highScale = std::max(wantedHigh, 0.04f);
+            float bestError = 1.0e30f;
+            float lowMinimum = -0.995f;
+            float lowMaximum = 0.0f;
+            float highMinimum = -0.995f;
+            float highMaximum = 0.0f;
+
+            for (int pass = 0; pass < 2; ++pass)
             {
-                const float mid = 0.5f * (low + high);
-                const float deficit = 2.0f * (allpassPhaseDelay(mid, omega)
-                                              - allpassPhaseDelay(mid, omegaRef));
-                if (deficit < wantedDeficit)
-                    high = mid;
-                else
-                    low = mid;
+                const int divisions = pass == 0 ? 17 : 13;
+                const float lowStep = (lowMaximum - lowMinimum)
+                                    / static_cast<float>(divisions);
+                const float highStep = (highMaximum - highMinimum)
+                                     / static_cast<float>(divisions);
+                for (int lowIndex = 0; lowIndex <= divisions; ++lowIndex)
+                {
+                    const float candidateLow = lowMinimum
+                        + lowStep * static_cast<float>(lowIndex);
+                    for (int highIndex = 0; highIndex <= divisions; ++highIndex)
+                    {
+                        const float candidateHigh = highMinimum
+                            + highStep * static_cast<float>(highIndex);
+                        const float actualLow =
+                            2.0f * pairDeficit(candidateLow, lowPartial)
+                            + 2.0f * pairDeficit(candidateHigh, lowPartial);
+                        const float actualHigh =
+                            2.0f * pairDeficit(candidateLow, highPartial)
+                            + 2.0f * pairDeficit(candidateHigh, highPartial);
+                        const float lowError = (actualLow - wantedLow) / lowScale;
+                        const float highError = (actualHigh - wantedHigh) / highScale;
+                        const float error = lowError * lowError
+                                          + 1.30f * highError * highError
+                                          + 1.0e-5f
+                                            * (candidateLow * candidateLow
+                                               + candidateHigh * candidateHigh);
+                        if (error < bestError)
+                        {
+                            bestError = error;
+                            lowCoefficient = candidateLow;
+                            highCoefficient = candidateHigh;
+                        }
+                    }
+                }
+
+                lowMinimum = std::max(-0.995f, lowCoefficient - lowStep);
+                lowMaximum = std::min(0.0f, lowCoefficient + lowStep);
+                highMinimum = std::max(-0.995f, highCoefficient - highStep);
+                highMaximum = std::min(0.0f, highCoefficient + highStep);
             }
-            dispersion = 0.5f * (low + high);
         }
-        voice.vertical.dispersionCoefficient = dispersion;
-        voice.horizontal.dispersionCoefficient = dispersion;
+
+        voice.inharmonicity = inharmonicity;
+        voice.dispersionLowPartial = lowPartial;
+        voice.dispersionHighPartial = highPartial;
+        voice.vertical.dispersionLowCoefficient = lowCoefficient;
+        voice.vertical.dispersionHighCoefficient = highCoefficient;
+        voice.horizontal.dispersionLowCoefficient = lowCoefficient;
+        voice.horizontal.dispersionHighCoefficient = highCoefficient;
 
         // Compensate every loop filter's phase delay at the fundamental so
         // the sounding pitch matches the target frequency.
         const auto loopPhaseDelay = [&] (const PolarisationLoop& loop)
         {
             return onePolePhaseDelay(loop.loopDampingCoefficient, omega)
-                 + 2.0f * allpassPhaseDelay(loop.dispersionCoefficient, omega);
+                 + 4.0f * allpassPhaseDelay(
+                       loop.dispersionLowCoefficient, omega)
+                 + 4.0f * allpassPhaseDelay(
+                       loop.dispersionHighCoefficient, omega);
         };
 
         voice.compensatedPeriodVertical = period - loopPhaseDelay(voice.vertical);
@@ -726,6 +988,10 @@ void ElectryEngine::refreshVoicingIfNeeded() noexcept
 
     const bool dirty = moved(s.stringAge, a.stringAge)
                     || moved(s.stringGauge, a.stringGauge)
+                    || moved(s.bodyWood, a.bodyWood)
+                    || moved(s.bodySize, a.bodySize)
+                    || moved(s.bodyShape, a.bodyShape)
+                    || moved(s.bodyResonance, a.bodyResonance)
                     || moved(s.construction, a.construction)
                     || moved(s.muteDamping, a.muteDamping)
                     || moved(s.scaleLength, a.scaleLength)
@@ -767,61 +1033,96 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
     voice.pickupDelayNeck = clampf(neckFraction * period, 2.0f,
                                    static_cast<float>(delayLineSize - 8));
 
-    // Magnetic aperture: the transverse wave speed on the string sets which
-    // temporal frequency corresponds to the aperture's spatial average.
+    // Magnetic aperture: a true finite rectangular spatial window. Its
+    // temporal length is Fs*w/c, where c is transverse wave speed. This has
+    // the expected sinc response and -3 dB point at approximately .443*c/w,
+    // unlike the previous one-pole approximation.
     const float aperture = lerp(humbuckerApertureMetres, singleCoilApertureMetres,
                                 parameters.pickupType);
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const float waveSpeed = 2.0f * openLength * midiToHz(
         static_cast<float>(spec.openMidiNote));
-    const float cutoff = clampf(0.443f * waveSpeed / aperture, 700.0f,
-                                0.45f * static_cast<float>(sampleRate_));
-    const float coefficient = std::exp(-twoPi * cutoff * inverseSampleRate_);
-    voice.apertureNeckCoefficient = coefficient;
-    voice.apertureBridgeCoefficient = coefficient;
+    const float apertureLength = clampf(
+        static_cast<float>(sampleRate_) * aperture / std::max(waveSpeed, 1.0f),
+        1.0f, static_cast<float>(apertureHistorySize - 2));
+    voice.apertureNeckLength = apertureLength;
+    voice.apertureBridgeLength = apertureLength;
+
+    // Differentiation converts modeled magnetic flux to induced voltage.
+    // Its ultrasonic rise is kept bounded before the loaded-coil model; the
+    // whole path runs inside the engine's oversampled clock.
+    const float emfCutoff = std::min(16000.0f,
+                                     0.40f * static_cast<float>(sampleRate_));
+    voice.emfLowpassCoefficient = std::exp(-twoPi * emfCutoff * inverseSampleRate_);
 }
 
 void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) noexcept
 {
+    (void) velocity; // The note-on velocity is cached in velocityProfile.
     const auto& parameters = smoothedParameters_;
     const float sampleRate = static_cast<float>(sampleRate_);
-    const float shaped = (1.0f - parameters.velocityAmount)
-                       + parameters.velocityAmount * std::pow(velocity, 1.6f);
+    const auto& profile = voice.velocityProfile;
+    const float hardnessGain = lerp(0.72f, 1.78f, parameters.pickHardness);
 
-    float amplitude = 0.62f * shaped;
+    float amplitude = 0.48f * profile.amplitude * hardnessGain
+                    * lerp(1.0f, 0.90f, parameters.stringAge);
     // The string leaves the pick in a fraction of a millisecond; the width
     // controls how much of the upper spectrum the release step carries.
-    float pulseMs = lerp(0.85f, 0.16f, parameters.pickHardness);
-    float pulseCutoff = lerp(1400.0f, 9200.0f, parameters.pickHardness);
-    float pluckFraction = lerp(0.055f, 0.42f, parameters.pickPosition);
-    float noiseLevel = parameters.pickNoise * (0.16f + 0.55f * shaped);
-    float noiseMs = lerp(3.6f, 1.3f, parameters.pickHardness);
+    float pulseMs = lerp(1.15f, 0.10f, parameters.pickHardness)
+                  * lerp(1.55f, 0.48f, profile.effortCurve);
+    float pulseCutoff = lerp(900.0f, 13000.0f, parameters.pickHardness);
+    float pluckFraction = lerp(0.025f, 0.48f, parameters.pickPosition);
+    const float pickControl = std::pow(parameters.pickNoise, 0.75f);
+    const float fingerControl = std::pow(parameters.fingerNoise, 0.75f);
+    float noiseLevel = pickControl * (0.12f + 0.63f * profile.noise);
+    noiseLevel += fingerControl * (voice.fret > 0 ? 0.055f : 0.012f)
+                * profile.noise;
+    float noiseMs = lerp(4.8f, 0.8f, parameters.pickHardness);
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
-    float noiseCutoff = spec.wound ? 2300.0f : 4300.0f;
+    float noiseCutoff = spec.wound ? 2100.0f : 4800.0f;
     voice.excitationPolarity = 1.0f;
+
+    const auto applyUpstrokeVoicing = [&]
+    {
+        amplitude *= 0.92f;
+        pulseMs *= 0.58f;
+        pulseCutoff *= 2.00f;
+        // The upstroke contact point sits a little closer to the bridge,
+        // thinning and brightening the stroke.
+        pluckFraction = clampf(pluckFraction - 0.020f, 0.03f, 0.45f);
+        noiseMs *= 0.8f;
+        noiseCutoff *= 1.2f;
+        voice.excitationPolarity = -1.0f;
+    };
 
     switch (voice.articulation)
     {
         case Articulation::Downstroke:
             break;
         case Articulation::Upstroke:
-            amplitude *= 0.92f;
-            pulseCutoff *= 1.18f;
-            // The upstroke contact point sits a little closer to the bridge,
-            // thinning and brightening the stroke.
-            pluckFraction = clampf(pluckFraction - 0.025f, 0.03f, 0.45f);
-            noiseMs *= 0.8f;
-            noiseCutoff *= 1.2f;
-            voice.excitationPolarity = -1.0f;
+            applyUpstrokeVoicing();
+            break;
+        case Articulation::AlternateStroke:
+            // AlternateStroke is resolved to a concrete Down/Up stroke in
+            // noteOn(), while the latched articulation remains unchanged.
             break;
         case Articulation::HammerOn:
             amplitude *= legato ? 0.30f : 0.42f;
             pulseMs *= 1.9f;
             pulseCutoff *= 0.42f;
             pluckFraction = 0.12f;
-            noiseLevel = parameters.fingerNoise * (0.10f + 0.30f * shaped);
+            noiseLevel = fingerControl * (0.10f + 0.30f * profile.noise);
             noiseMs = 1.6f;
             noiseCutoff = 850.0f;
+            break;
+        case Articulation::Tap:
+            amplitude *= 0.50f;
+            pulseMs *= 1.55f;
+            pulseCutoff *= 0.48f;
+            pluckFraction = 0.11f;
+            noiseLevel = fingerControl * (0.14f + 0.34f * profile.noise);
+            noiseMs = 1.9f;
+            noiseCutoff = 1150.0f;
             break;
         case Articulation::Muted:
             amplitude *= 0.88f;
@@ -830,6 +1131,53 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             pluckFraction *= 0.8f;
             noiseLevel *= 1.5f;
             break;
+        case Articulation::Chug:
+            amplitude *= 1.05f;
+            pulseMs *= 0.58f;
+            pulseCutoff *= 1.12f;
+            pluckFraction = clampf(pluckFraction * 0.58f, 0.03f, 0.24f);
+            noiseLevel *= 1.75f;
+            noiseMs *= 0.62f;
+            noiseCutoff *= 0.86f;
+            break;
+        case Articulation::DeadNote:
+            amplitude *= 0.72f;
+            pulseMs *= 0.42f;
+            pulseCutoff *= 0.62f;
+            pluckFraction = 0.08f;
+            noiseLevel = 0.10f + 0.42f
+                * (0.55f * parameters.fingerNoise + 0.45f * parameters.pickNoise)
+                * (0.3f + 0.7f * profile.noise);
+            noiseMs = 5.2f;
+            noiseCutoff = spec.wound ? 1650.0f : 2800.0f;
+            break;
+        case Articulation::NaturalHarmonic:
+            amplitude *= 0.62f;
+            pulseMs *= 0.50f;
+            pulseCutoff *= 1.65f;
+            pluckFraction = 0.31f;
+            noiseLevel *= 0.55f;
+            noiseMs *= 0.7f;
+            noiseCutoff *= 1.35f;
+            break;
+        case Articulation::PinchHarmonic:
+            amplitude *= 0.80f;
+            pulseMs *= 0.38f;
+            pulseCutoff *= 1.95f;
+            pluckFraction = 0.13f;
+            noiseLevel *= 1.22f;
+            noiseMs *= 0.55f;
+            noiseCutoff *= 1.55f;
+            break;
+        case Articulation::Tremolo:
+            amplitude *= 0.76f;
+            pulseMs *= 0.55f;
+            pulseCutoff *= 1.15f;
+            noiseLevel *= 0.62f;
+            noiseMs *= 0.58f;
+            if (voice.tremoloStrokeIsUp)
+                applyUpstrokeVoicing();
+            break;
         case Articulation::Bend1Up:
         case Articulation::Bend2Up:
         case Articulation::Bend1Down:
@@ -837,21 +1185,33 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             break;
         case Articulation::Slap:
             amplitude *= 1.35f;
-            pulseMs *= 0.45f;
-            pulseCutoff *= 1.6f;
-            pluckFraction = 0.34f;
+            pulseMs *= 0.30f;
+            pulseCutoff *= 2.3f;
+            pluckFraction = 0.16f;
             noiseLevel *= 1.35f;
             noiseCutoff = 5200.0f;
             noiseMs *= 0.7f;
             break;
     }
 
+    // Player effort and the guitar build change more than level: hard notes
+    // are shorter/brighter at the contact, old strings lose the initial edge,
+    // and the low Drop-E strings receive a little extra definition.
+    const float lowString = 1.0f
+        - static_cast<float>(voice.stringIndex) / static_cast<float>(stringCount - 1);
+    pulseCutoff *= profile.brightness
+                 * lerp(1.08f, 0.42f, parameters.stringAge)
+                 * lerp(0.92f, 1.12f, parameters.construction)
+                 * (1.0f + 0.24f * lowString);
+    noiseCutoff *= lerp(0.72f, 1.22f, profile.effortCurve)
+                 * (1.0f + 0.12f * lowString);
+
     voice.excitationAmplitude = amplitude;
     voice.excitationLength = std::max(
         8, static_cast<int>(pulseMs * 0.001f * sampleRate));
     const int contactSamples = legato
         ? 0
-        : std::max(4, static_cast<int>(lerp(2.4f, 0.9f, parameters.pickHardness)
+        : std::max(4, static_cast<int>(lerp(3.0f, 0.55f, parameters.pickHardness)
                                        * 0.001f * sampleRate));
     voice.excitationRemaining = voice.excitationLength;
     voice.excitationPhase = legato ? ExcitationPhase::Release
@@ -859,7 +1219,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     if (! legato)
         voice.excitationRemaining = contactSamples;
 
-    voice.excitationCombDelay = clampf(pluckFraction, 0.03f, 0.46f)
+    voice.excitationCombDelay = clampf(pluckFraction, 0.02f, 0.49f)
                               * voice.vertical.targetDelay;
     voice.excitationPulseCoefficient = std::exp(
         -twoPi * clampf(pulseCutoff, 300.0f, 0.45f * sampleRate) * inverseSampleRate_);
@@ -868,7 +1228,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         -twoPi * clampf(noiseCutoff, 250.0f, 0.45f * sampleRate) * inverseSampleRate_);
     voice.noiseShaper.state = 0.0f;
     voice.noiseBandState = 0.0f;
-    voice.noiseAmplitude = 0.55f * noiseLevel;
+    voice.noiseAmplitude = 0.75f * noiseLevel;
     voice.noiseLength = std::max(8, static_cast<int>(noiseMs * 0.001f * sampleRate));
     voice.noiseRemaining = voice.noiseLength;
     voice.releaseNoiseDone = false;
@@ -891,6 +1251,7 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.fret = std::clamp(fret, 0, fretCount);
     voice.articulation = articulation;
     voice.velocity = velocity;
+    voice.velocityProfile = makeVelocityProfile(velocity);
     voice.startOrder = ++noteSequence_;
     voice.ageSamples = 0;
     voice.noiseState = hash32(static_cast<std::uint32_t>(voice.stringIndex * 7349)
@@ -898,7 +1259,32 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
                               ^ static_cast<std::uint32_t>(
                                   static_cast<int>(articulation) * 17)
                               ^ static_cast<std::uint32_t>(noteSequence_ * 2654435761u));
-    voice.baseFrequency = midiToHz(static_cast<float>(midiNote));
+    voice.artifactNoiseState = hash32(voice.noiseState ^ 0xa53c9e17u);
+    int harmonicOffset = 0;
+    if (articulation == Articulation::NaturalHarmonic)
+        harmonicOffset = 12;
+    else if (articulation == Articulation::PinchHarmonic)
+        harmonicOffset = 19;
+    voice.baseFrequency = midiToHz(static_cast<float>(midiNote + harmonicOffset));
+
+    // Each physical string has a slightly different saddle/bridge rattle.
+    // Its variation is seeded by the note sequence, never by wall-clock time,
+    // so renders remain reproducible while consecutive notes are not clones.
+    const float rattleVariation = 0.03f
+        * bipolarNoise(voice.artifactNoiseState);
+    const float rattleFrequency = (1600.0f + 420.0f
+        * static_cast<float>(voice.stringIndex)) * (1.0f + rattleVariation);
+    voice.saddleRattle.reset();
+    voice.saddleRattle.configure(
+        rattleFrequency,
+        lerp(10.0f, 24.0f, smoothedParameters_.artifactAmount), 1.0f,
+        static_cast<float>(sampleRate_));
+    voice.artifactNoiseShaper.reset();
+    voice.artifactNoiseCoefficient = std::exp(
+        -twoPi * (3400.0f + 280.0f * static_cast<float>(voice.stringIndex))
+        * inverseSampleRate_);
+    voice.artifactNoiseBandState = 0.0f;
+    voice.artifactCollisionCount = 0;
     voice.legatoBlend = 1.0f;
     voice.legatoFromFrequency = 0.0f;
     voice.releaseGain = 1.0f;
@@ -906,6 +1292,12 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.releaseGainCoefficient = 0.0f;
     voice.energyEnvelope = 0.0f;
     voice.outputEnergy = 0.0f;
+    voice.tremoloStrokeIsUp = false;
+    voice.tremoloRetriggerCount = 0;
+    voice.tremoloSamplesUntilRetrigger = articulation == Articulation::Tremolo
+        ? std::max(controlPeriod,
+                   static_cast<int>(0.075f * static_cast<float>(sampleRate_)))
+        : 0;
 
     // Bend programs: upward bends start on the played note and travel up;
     // downward bends start above and release onto the played note.
@@ -932,7 +1324,8 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
 
     // Tension-modulation depth: lighter strings glide more, slaps push the
     // string much harder against its tension.
-    voice.tensionDepth = 0.042f * lerp(1.25f, 0.8f, parameters.stringGauge);
+    voice.tensionDepth = 0.042f * lerp(1.45f, 0.70f, parameters.stringGauge)
+                       * voice.velocityProfile.tension;
     if (articulation == Articulation::Slap)
         voice.tensionDepth *= 3.2f;
 
@@ -940,15 +1333,38 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     // soft-limits displacement and adds rattle noise.
     if (articulation == Articulation::Slap)
     {
-        voice.collisionRemaining =
-            static_cast<int>(0.085f * static_cast<float>(sampleRate_));
-        voice.collisionThreshold =
-            clampf(0.34f * (0.35f + 0.65f * velocity), 0.05f, 0.6f);
+        const float collision = voice.velocityProfile.collision;
+        voice.collisionRemaining = static_cast<int>(
+            lerp(0.055f, 0.100f, collision) * static_cast<float>(sampleRate_));
+        voice.collisionThreshold = lerp(0.40f, 0.20f, collision);
     }
     else
     {
         voice.collisionRemaining = 0;
         voice.collisionThreshold = 1.0f;
+    }
+
+    const bool incidentalContact = articulation != Articulation::Slap
+                                && articulation != Articulation::HammerOn;
+    if (incidentalContact && parameters.artifactAmount > 0.0f)
+    {
+        const float lowString = 1.0f
+            - static_cast<float>(voice.stringIndex)
+              / static_cast<float>(stringCount - 1);
+        const float contact = smoothStep(parameters.artifactAmount)
+                            * voice.velocityProfile.collision
+                            * (0.70f + 0.30f * lowString);
+        voice.artifactCollisionLength = static_cast<int>(
+            lerp(0.025f, 0.100f, voice.velocityProfile.collision)
+            * static_cast<float>(sampleRate_));
+        voice.artifactCollisionRemaining = voice.artifactCollisionLength;
+        voice.artifactClearance = lerp(0.52f, 0.24f, contact);
+    }
+    else
+    {
+        voice.artifactCollisionRemaining = 0;
+        voice.artifactCollisionLength = 0;
+        voice.artifactClearance = 1.0f;
     }
 
     configureVoiceDamping(voice);
@@ -993,11 +1409,16 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity) n
     voice.releasing = false;
     voice.startOrder = ++noteSequence_;
     voice.velocity = velocity;
+    voice.velocityProfile = makeVelocityProfile(velocity);
     voice.bendStartSemitones = 0.0f;
     voice.bendTargetSemitones = 0.0f;
     voice.bendProgress = 1.0f;
+    voice.tremoloSamplesUntilRetrigger = 0;
+    voice.tremoloRetriggerCount = 0;
+    voice.tremoloStrokeIsUp = false;
     voice.releaseGain = 1.0f;
     voice.releaseGainTarget = 1.0f;
+    voice.artifactCollisionRemaining = 0;
 
     // The finger lands over roughly ten milliseconds rather than instantly.
     voice.legatoBlend = 0.0f;
@@ -1030,12 +1451,16 @@ void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
     {
         voice.releaseNoiseDone = true;
         const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
-        const float level = smoothedParameters_.releaseNoise
-                          * (spec.wound ? 0.22f : 0.13f)
-                          * (0.4f + 0.6f * voice.velocity);
+        const float level = std::pow(smoothedParameters_.releaseNoise, 0.75f)
+                          * (spec.wound ? 0.34f : 0.20f)
+                          * voice.velocityProfile.noise;
         voice.noiseAmplitude = level;
+        const float releaseSeconds = lerp(
+            0.006f, 0.015f,
+            0.55f * smoothedParameters_.stringAge
+                + 0.45f * smoothedParameters_.stringGauge);
         voice.noiseLength = std::max(
-            8, static_cast<int>(0.009f * sampleRate));
+            8, static_cast<int>(releaseSeconds * sampleRate));
         voice.noiseRemaining = voice.noiseLength;
         voice.noiseBandCoefficient = std::exp(-twoPi * (spec.wound ? 1500.0f : 2600.0f)
                                               * inverseSampleRate_);
@@ -1053,6 +1478,12 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.excitationRemaining = 0;
     voice.noiseRemaining = 0;
     voice.collisionRemaining = 0;
+    voice.artifactCollisionRemaining = 0;
+    voice.artifactCollisionLength = 0;
+    voice.artifactCollisionCount = 0;
+    voice.tremoloSamplesUntilRetrigger = 0;
+    voice.tremoloRetriggerCount = 0;
+    voice.tremoloStrokeIsUp = false;
     voice.energyEnvelope = 0.0f;
     voice.outputEnergy = 0.0f;
     voice.releaseGain = 1.0f;
@@ -1067,10 +1498,18 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     // break the engine's determinism contract.
     voice.apertureNeck.reset();
     voice.apertureBridge.reset();
+    voice.previousFluxNeck = 0.0f;
+    voice.previousFluxBridge = 0.0f;
+    voice.emfLowpassNeck.reset();
+    voice.emfLowpassBridge.reset();
     voice.excitationShaper.reset();
     voice.noiseShaper.reset();
     voice.noiseBandState = 0.0f;
+    voice.artifactNoiseShaper.reset();
+    voice.artifactNoiseBandState = 0.0f;
+    voice.saddleRattle.reset();
     voice.lastConfiguredSemitones = -999.0f;
+    voice.lastConfiguredFrequency = -1.0f;
 }
 
 // ---------------------------------------------------------------------------
@@ -1084,31 +1523,73 @@ void ElectryEngine::configureBody() noexcept
 
     // Structural mode estimates for the two anchor bodies. These are
     // geometry-informed voicing values, not measured mode tables.
-    static constexpr std::array<float, bodyModeCount> lesPaulModes {
-        108.0f, 172.0f, 306.0f, 520.0f
+    static constexpr std::array<float, bodyModeCount> carvedModes {
+        112.0f, 168.0f, 292.0f, 488.0f
     };
-    static constexpr std::array<float, bodyModeCount> telecasterModes {
-        96.0f, 205.0f, 398.0f, 640.0f
+    static constexpr std::array<float, bodyModeCount> slabModes {
+        92.0f, 220.0f, 420.0f, 690.0f
     };
     static constexpr std::array<float, bodyModeCount> modeLevels {
         1.0f, 0.68f, 0.46f, 0.32f
     };
+    static constexpr std::array<float, bodyModeCount> mahoganyMapleTilt {
+        1.20f, 0.95f, 0.60f, 0.35f
+    };
+    static constexpr std::array<float, bodyModeCount> ashTilt {
+        0.72f, 0.82f, 1.15f, 1.55f
+    };
 
-    const float sizeScale = std::exp2((parameters.bodySize - 0.5f) * 0.5f);
-    const float q = lerp(24.0f, 15.0f, parameters.bodyWood);
+    const float sizeScale = std::exp2((parameters.bodySize - 0.5f) * 0.65f);
+    const float q = lerp(30.0f, 9.0f, parameters.bodyWood)
+                  * lerp(1.12f, 0.82f, parameters.construction);
+    const float sizeLevel = lerp(0.90f, 1.15f, parameters.bodySize);
 
     for (int mode = 0; mode < bodyModeCount; ++mode)
     {
         const auto index = static_cast<std::size_t>(mode);
-        const float frequency = lerp(lesPaulModes[index], telecasterModes[index],
+        const float frequency = lerp(carvedModes[index], slabModes[index],
                                      parameters.bodyShape) * sizeScale;
-        // Ash favours its upper structural modes slightly more than the
-        // mahogany/maple blank.
-        const float tilt = lerp(1.0f, lerp(0.85f, 1.25f, parameters.bodyWood),
-                                static_cast<float>(mode) / 3.0f);
-        bodyModes_[index].configure(frequency, q, modeLevels[index] * tilt,
+        const float woodTilt = lerp(mahoganyMapleTilt[index], ashTilt[index],
+                                    parameters.bodyWood);
+        const float level = clampf(modeLevels[index] * woodTilt * sizeLevel,
+                                   0.08f, 1.20f);
+        bodyModeFrequencies_[index] = frequency;
+        bodyModeQs_[index] = q;
+        bodyModeLevels_[index] = level;
+        bodyModes_[index].configure(frequency, q, level,
                                     sampleRate);
     }
+}
+
+float ElectryEngine::bodyConductanceAt(float frequencyHz) const noexcept
+{
+    // A normalised modal-conductance envelope. Near a structural mode the
+    // bridge accepts more string energy; far from every mode it approaches
+    // zero. This response is evaluated only while configuring a note, not in
+    // the sample loop, and is used exclusively to add loss.
+    float response = 0.0f;
+    float normaliser = 0.0f;
+    for (int mode = 0; mode < bodyModeCount; ++mode)
+    {
+        const auto index = static_cast<std::size_t>(mode);
+        const float centre = std::max(bodyModeFrequencies_[index], 30.0f);
+        const float q = std::max(bodyModeQs_[index], 2.0f);
+        const float level = std::max(bodyModeLevels_[index], 0.0f);
+        const float omega = twoPi * std::max(frequencyHz, 0.0f);
+        const float omegaMode = twoPi * centre;
+        const float damping = omegaMode / q;
+        const float dissipative = damping * omega;
+        const float reactive = omegaMode * omegaMode - omega * omega;
+        // Real (conductive) part of a normalised modal mobility. It is
+        // positive, bounded by one, and peaks exactly at the body mode;
+        // unlike modal magnitude it does not over-damp distant notes.
+        const float conductance = dissipative * dissipative
+            / std::max(reactive * reactive + dissipative * dissipative,
+                       1.0e-12f);
+        response += level * conductance;
+        normaliser += level;
+    }
+    return clampf(response / std::max(normaliser, 1.0e-6f), 0.0f, 1.0f);
 }
 
 void ElectryEngine::configurePickupFilters() noexcept
@@ -1130,16 +1611,18 @@ void ElectryEngine::configurePickupFilters() noexcept
     // capacitor and pot take over, damps the resonant peak, so rolling the
     // tone off darkens rather than just relocating the hump.
     const float tone = parameters.toneKnob;
-    resonance = lerp(780.0f, resonance, std::pow(tone, 0.75f));
-    q *= 0.35f + 0.65f * tone;
+    resonance = lerp(600.0f, resonance, std::pow(tone, 1.10f));
+    q *= 0.22f + 0.78f * tone;
 
-    neckCoil_.setResonantLowpass(resonance, q, sampleRate);
-    bridgeCoil_.setResonantLowpass(resonance, q, sampleRate);
+    for (auto& filter : neckCoils_)
+        filter.setResonantLowpass(resonance, q, sampleRate);
+    for (auto& filter : bridgeCoils_)
+        filter.setResonantLowpass(resonance, q, sampleRate);
 
     // Distance-dependent magnetic flux: hotter, closer humbuckers develop
     // more even-harmonic distortion than a low-wind single coil.
-    magneticDriveNeck_ = lerp(0.52f, 0.30f, parameters.pickupType);
-    magneticDriveBridge_ = lerp(0.55f, 0.34f, parameters.pickupType);
+    magneticDriveNeck_ = lerp(0.62f, 0.24f, parameters.pickupType);
+    magneticDriveBridge_ = lerp(0.68f, 0.27f, parameters.pickupType);
 
     switch (parameters.pickupSelector)
     {
@@ -1181,6 +1664,22 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
         voice.legatoBlend = clampf(voice.legatoBlend + voice.legatoIncrement,
                                    0.0f, 1.0f);
 
+    if (voice.articulation == Articulation::Tremolo
+        && voice.keyDown && ! voice.releasing)
+    {
+        voice.tremoloSamplesUntilRetrigger -= controlPeriod;
+        if (voice.tremoloSamplesUntilRetrigger <= 0)
+        {
+            const int interval = std::max(
+                controlPeriod,
+                static_cast<int>(0.075f * static_cast<float>(sampleRate_)));
+            voice.tremoloSamplesUntilRetrigger += interval;
+            voice.tremoloStrokeIsUp = ! voice.tremoloStrokeIsUp;
+            ++voice.tremoloRetriggerCount;
+            startExcitation(voice, voice.velocity, false);
+        }
+    }
+
     configureVoicePitch(voice, false);
 
     // Retire the voice once the string has decayed below audibility and no
@@ -1194,8 +1693,7 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
     }
 }
 
-void ElectryEngine::renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
-                                float& bodySum) noexcept
+void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
 {
     auto& vertical = voice.vertical;
     auto& horizontal = voice.horizontal;
@@ -1204,8 +1702,14 @@ void ElectryEngine::renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
     const auto advanceLoop = [&] (PolarisationLoop& loop, float extraFeedback)
     {
         float sample = loop.readFractional(loop.currentDelay);
-        sample = loop.dispersion1.process(sample, loop.dispersionCoefficient);
-        sample = loop.dispersion2.process(sample, loop.dispersionCoefficient);
+        sample = loop.dispersion1.process(sample, loop.dispersionLowCoefficient);
+        sample = loop.dispersion2.process(sample, loop.dispersionLowCoefficient);
+        sample = loop.dispersion3.process(sample, loop.dispersionLowCoefficient);
+        sample = loop.dispersion4.process(sample, loop.dispersionLowCoefficient);
+        sample = loop.dispersion5.process(sample, loop.dispersionHighCoefficient);
+        sample = loop.dispersion6.process(sample, loop.dispersionHighCoefficient);
+        sample = loop.dispersion7.process(sample, loop.dispersionHighCoefficient);
+        sample = loop.dispersion8.process(sample, loop.dispersionHighCoefficient);
         sample = loop.damping.process(sample, loop.loopDampingCoefficient);
         sample *= loop.loopGain * voice.releaseGain * extraFeedback;
         return sample;
@@ -1232,6 +1736,47 @@ void ElectryEngine::renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
             const float sign = verticalSample > 0.0f ? 1.0f : -1.0f;
             verticalSample = sign * (threshold + excess / (1.0f + 6.0f * excess));
             verticalSample += 0.18f * excess * bipolarNoise(voice.noiseState);
+        }
+    }
+
+    // Ordinary hard-picked notes can make brief, irregular fret contact too.
+    // The Artifacts control blends toward the same bounded collision law used
+    // by Slap, but a separate deterministic noise stream preserves the clean
+    // engine's exact contact-noise sequence.
+    float artifactContactSignal = 0.0f;
+    float artifactExcess = 0.0f;
+    if (artifactsActive_ && voice.artifactCollisionRemaining > 0)
+    {
+        --voice.artifactCollisionRemaining;
+        const float progress = 1.0f
+            - static_cast<float>(voice.artifactCollisionRemaining)
+              / static_cast<float>(std::max(1, voice.artifactCollisionLength));
+        const float clearance = voice.artifactClearance
+                              * (1.0f + 3.5f * progress);
+        artifactExcess = std::abs(verticalSample) - clearance;
+        if (artifactExcess > 0.0f)
+        {
+            const float lowString = 1.0f
+                - static_cast<float>(voice.stringIndex)
+                  / static_cast<float>(stringCount - 1);
+            const float contact = smoothStep(smoothedParameters_.artifactAmount)
+                                * voice.velocityProfile.collision
+                                * (0.70f + 0.30f * lowString);
+            const float sign = verticalSample >= 0.0f ? 1.0f : -1.0f;
+            const float limited = sign * (clearance
+                + artifactExcess / (1.0f + 6.0f * artifactExcess));
+            verticalSample = lerp(verticalSample, limited, contact);
+
+            const float raw = bipolarNoise(voice.artifactNoiseState);
+            const float lowpassed = voice.artifactNoiseShaper.process(
+                raw, voice.artifactNoiseCoefficient);
+            const float bandCoefficient = rateAdjustedCoefficient(
+                0.12f, static_cast<float>(sampleRate_));
+            voice.artifactNoiseBandState += bandCoefficient
+                * (lowpassed - voice.artifactNoiseBandState);
+            artifactContactSignal = (lowpassed - voice.artifactNoiseBandState)
+                                  * artifactExcess * 0.22f * contact;
+            ++voice.artifactCollisionCount;
         }
     }
 
@@ -1281,6 +1826,14 @@ void ElectryEngine::renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
     }
 
     const float injected = excitation + noiseSample;
+    float saddleRattle = 0.0f;
+    if (artifactsActive_)
+    {
+        const float rattleDrive = 0.10f * excitation
+                                + 0.65f * artifactContactSignal
+                                + 0.08f * artifactExcess;
+        saddleRattle = voice.saddleRattle.process(rattleDrive);
+    }
 
     // Articulations attack the string at different angles, splitting energy
     // differently between the two polarisations.
@@ -1288,14 +1841,28 @@ void ElectryEngine::renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
     float horizontalWeight = 0.42f;
     switch (voice.articulation)
     {
-        case Articulation::Upstroke: verticalWeight = 0.80f; horizontalWeight = 0.60f; break;
+        case Articulation::Upstroke: verticalWeight = 0.90f; horizontalWeight = 0.46f; break;
         case Articulation::HammerOn: verticalWeight = 0.95f; horizontalWeight = 0.28f; break;
+        case Articulation::Tap: verticalWeight = 0.96f; horizontalWeight = 0.24f; break;
+        case Articulation::Chug: verticalWeight = 0.88f; horizontalWeight = 0.50f; break;
+        case Articulation::DeadNote: verticalWeight = 0.76f; horizontalWeight = 0.62f; break;
+        case Articulation::NaturalHarmonic: verticalWeight = 0.86f; horizontalWeight = 0.52f; break;
+        case Articulation::PinchHarmonic: verticalWeight = 0.98f; horizontalWeight = 0.30f; break;
+        case Articulation::Tremolo:
+            if (voice.tremoloStrokeIsUp)
+            {
+                verticalWeight = 0.90f;
+                horizontalWeight = 0.46f;
+            }
+            break;
         case Articulation::Slap: verticalWeight = 1.00f; horizontalWeight = 0.22f; break;
         default: break;
     }
 
-    const float verticalTotal = verticalIn + injected * verticalWeight;
-    const float horizontalTotal = horizontalIn + injected * horizontalWeight;
+    const float verticalTotal = verticalIn + injected * verticalWeight
+                              + 0.35f * artifactContactSignal;
+    const float horizontalTotal = horizontalIn + injected * horizontalWeight
+                                + 0.12f * artifactContactSignal;
 
     vertical.line[static_cast<std::size_t>(vertical.writeIndex
                                            & (delayLineSize - 1))] = verticalTotal;
@@ -1328,6 +1895,16 @@ void ElectryEngine::renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
     float neckTap = pickupTap(voice.pickupDelayNeck);
     float bridgeTap = pickupTap(voice.pickupDelayBridge);
 
+    if (artifactsActive_)
+    {
+        const float buzzAmount = smoothedParameters_.artifactAmount
+                               * smoothedParameters_.artifactAmount;
+        const float artifactPickup = artifactContactSignal
+                                   + 0.035f * buzzAmount * saddleRattle;
+        neckTap += 0.55f * artifactPickup;
+        bridgeTap += artifactPickup;
+    }
+
     vertical.writeIndex = (vertical.writeIndex + 1) & (delayLineSize - 1);
     horizontal.writeIndex = (horizontal.writeIndex + 1) & (delayLineSize - 1);
 
@@ -1335,31 +1912,78 @@ void ElectryEngine::renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
                            * (vertical.targetDelay - vertical.currentDelay);
     horizontal.currentDelay += horizontal.delaySmoothing
                              * (horizontal.targetDelay - horizontal.currentDelay);
-    neckTap = voice.apertureNeck.process(neckTap, voice.apertureNeckCoefficient);
-    bridgeTap = voice.apertureBridge.process(bridgeTap, voice.apertureBridgeCoefficient);
+    neckTap = voice.apertureNeck.process(neckTap, voice.apertureNeckLength);
+    bridgeTap = voice.apertureBridge.process(bridgeTap, voice.apertureBridgeLength);
 
     // Distance-dependent flux nonlinearity, second-order dominant. The 0.5
-    // keeps a six-string strum inside the output guard's linear region.
+    // keeps a full eight-string strum inside the output guard's linear region.
     const auto magneticTransfer = [] (float displacement, float drive)
     {
         const float x = clampf(displacement * drive, -0.9f, 0.9f);
         return (x + x * x * (0.55f + 0.30f * x)) / std::max(drive, 1.0e-3f);
     };
-    neckSum += 0.5f * magneticTransfer(neckTap, magneticDriveNeck_);
-    bridgeSum += 0.5f * magneticTransfer(bridgeTap, magneticDriveBridge_);
+    const float fluxScale = lerp(
+        1.55f, 0.72f,
+        static_cast<float>(voice.stringIndex)
+            / static_cast<float>(stringCount - 1));
+    const float neckFlux = fluxScale
+        * magneticTransfer(neckTap, magneticDriveNeck_);
+    const float bridgeFlux = fluxScale
+        * magneticTransfer(bridgeTap, magneticDriveBridge_);
+
+    // Faraday's law: a magnetic pickup outputs induced voltage, proportional
+    // to d(Phi)/dt, rather than displacement itself. Normalising the finite
+    // difference at 220 Hz preserves practical level while retaining the
+    // physically important frequency weighting. The oversampled lowpass
+    // bounds the differentiator before the loaded-coil circuit.
+    const float emfScale = static_cast<float>(sampleRate_) / (twoPi * 220.0f);
+    float neckSignal = (neckFlux - voice.previousFluxNeck) * emfScale;
+    float bridgeSignal = (bridgeFlux - voice.previousFluxBridge) * emfScale;
+    voice.previousFluxNeck = neckFlux;
+    voice.previousFluxBridge = bridgeFlux;
+    neckSignal = voice.emfLowpassNeck.process(
+        neckSignal, voice.emfLowpassCoefficient);
+    bridgeSignal = voice.emfLowpassBridge.process(
+        bridgeSignal, voice.emfLowpassCoefficient);
+
+    // A phase-coherent divided-pickup field. Mono leaves both weights at one;
+    // Stereo spreads strings by their real lateral order, without delay,
+    // chorus, modulation, or random phase. The shared body remains centred.
+    const float lateral = 2.0f * static_cast<float>(voice.stringIndex)
+                            / static_cast<float>(stringCount - 1)
+                        - 1.0f;
+    const float side = 0.24f * stereoWidth_ * lateral;
+    const std::array<float, 2> channelWeights { 1.0f - side, 1.0f + side };
+    for (int channel = 0; channel < 2; ++channel)
+    {
+        const float weight = channelWeights[static_cast<std::size_t>(channel)];
+        sums.neck[static_cast<std::size_t>(channel)]
+            += 0.5f * neckSignal * weight;
+        sums.bridge[static_cast<std::size_t>(channel)]
+            += 0.5f * bridgeSignal * weight;
+    }
 
     // The bridge passes string vibration and playing noise into the body.
-    bodySum += 0.5f * (verticalTotal + horizontalTotal) + 1.6f * noiseSample;
+    sums.body += 0.5f * (verticalTotal + horizontalTotal) + 1.6f * noiseSample;
+    if (artifactsActive_)
+    {
+        const float buzzAmount = smoothedParameters_.artifactAmount
+                               * smoothedParameters_.artifactAmount;
+        sums.body += 0.9f * artifactContactSignal
+                   + 0.09f * buzzAmount * saddleRattle;
+    }
     if (voice.articulation == Articulation::Slap
         && voice.excitationPhase != ExcitationPhase::Idle)
-        bodySum += 2.4f * excitation;
+        sums.body += 2.4f * excitation;
 
     // The slow energy envelope feeds tension modulation: its release side
     // follows the string's own decay scale so the attack pitch glide relaxes
     // over hundreds of milliseconds, as measured tension modulation does.
     const float instantaneous = verticalSample * verticalSample
                               + horizontalSample * horizontalSample;
-    const float coefficient = instantaneous > voice.energyEnvelope ? 0.004f : 0.00006f;
+    const float coefficient = rateAdjustedCoefficient(
+        instantaneous > voice.energyEnvelope ? 0.004f : 0.00006f,
+        static_cast<float>(sampleRate_));
     voice.energyEnvelope += coefficient * (instantaneous - voice.energyEnvelope);
 
     // A separate, faster follower drives voice retirement only. Tying that to
@@ -1367,8 +1991,9 @@ void ElectryEngine::renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
     // several seconds, needlessly holding its slot; this follower falls to
     // the retirement floor within about half a second of the audio going
     // silent while still tracking a genuine sustain.
-    const float retireCoefficient = instantaneous > voice.outputEnergy
-        ? 0.01f : 0.0009f;
+    const float retireCoefficient = rateAdjustedCoefficient(
+        instantaneous > voice.outputEnergy ? 0.01f : 0.0009f,
+        static_cast<float>(sampleRate_));
     voice.outputEnergy += retireCoefficient * (instantaneous - voice.outputEnergy);
 
     if (voice.releasing)
@@ -1376,6 +2001,186 @@ void ElectryEngine::renderVoice(Voice& voice, float& neckSum, float& bridgeSum,
                            * (voice.releaseGainTarget - voice.releaseGain);
 
     voice.ageSamples++;
+}
+
+ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
+{
+    if (controlCountdown_ <= 0)
+    {
+        controlCountdown_ = controlPeriod;
+
+        // Continuous parameter smoothing toward the host targets.
+        const auto smoothTowards = [this] (float& value, float target)
+        {
+            value += parameterSmoothingCoefficient_ * (target - value);
+        };
+        auto& s = smoothedParameters_;
+        const auto& t = targetParameters_;
+        const bool pickupDirty =
+            s.pickupSelector != t.pickupSelector
+            || std::abs(s.pickupType - t.pickupType) > 1.0e-4f
+            || std::abs(s.toneKnob - t.toneKnob) > 1.0e-4f;
+        const bool bodyDirty =
+            std::abs(s.bodyWood - t.bodyWood) > 1.0e-4f
+            || std::abs(s.bodySize - t.bodySize) > 1.0e-4f
+            || std::abs(s.bodyShape - t.bodyShape) > 1.0e-4f
+            || std::abs(s.construction - t.construction) > 1.0e-4f;
+
+        smoothTowards(s.bodyWood, t.bodyWood);
+        smoothTowards(s.bodySize, t.bodySize);
+        smoothTowards(s.bodyShape, t.bodyShape);
+        smoothTowards(s.construction, t.construction);
+        smoothTowards(s.scaleLength, t.scaleLength);
+        smoothTowards(s.pickupType, t.pickupType);
+        smoothTowards(s.toneKnob, t.toneKnob);
+        smoothTowards(s.bodyResonance, t.bodyResonance);
+        smoothTowards(s.stringGauge, t.stringGauge);
+        smoothTowards(s.stringAge, t.stringAge);
+        smoothTowards(s.pickPosition, t.pickPosition);
+        smoothTowards(s.pickHardness, t.pickHardness);
+        smoothTowards(s.pickNoise, t.pickNoise);
+        smoothTowards(s.fingerNoise, t.fingerNoise);
+        smoothTowards(s.releaseNoise, t.releaseNoise);
+        smoothTowards(s.muteDamping, t.muteDamping);
+        smoothTowards(s.velocityAmount, t.velocityAmount);
+        smoothTowards(s.artifactAmount, t.artifactAmount);
+        s.bendTimeSeconds = t.bendTimeSeconds;
+        s.pickupSelector = t.pickupSelector;
+        s.outputMode = t.outputMode;
+        smoothTowards(s.outputGain, t.outputGain);
+
+        if (t.artifactAmount <= 0.0f && s.artifactAmount < 1.0e-5f)
+        {
+            s.artifactAmount = 0.0f;
+            if (artifactsActive_)
+            {
+                for (auto& mode : sympatheticModes_)
+                    mode.reset();
+                for (auto& voice : voices_)
+                {
+                    voice.artifactCollisionRemaining = 0;
+                    voice.artifactNoiseShaper.reset();
+                    voice.artifactNoiseBandState = 0.0f;
+                    voice.saddleRattle.reset();
+                }
+            }
+            artifactsActive_ = false;
+        }
+        else if (t.artifactAmount > 0.0f || s.artifactAmount > 0.0f)
+        {
+            artifactsActive_ = true;
+        }
+
+        const float pitchBendCoefficient = rateAdjustedCoefficient(
+            0.35f, static_cast<float>(sampleRate_));
+        pitchBendSemitones_ += pitchBendCoefficient
+                             * (pitchBendTarget_ - pitchBendSemitones_);
+
+        if (pickupDirty)
+            configurePickupFilters();
+        if (bodyDirty)
+            configureBody();
+        refreshVoicingIfNeeded();
+
+        neckMix_ += pickupMixCoefficient_ * (neckMixTarget_ - neckMix_);
+        bridgeMix_ += pickupMixCoefficient_ * (bridgeMixTarget_ - bridgeMix_);
+        smoothedOutputGain_ = s.outputGain;
+        smoothedBodyLevel_ = 2.25f * s.bodyResonance;
+        const float stereoTarget = s.outputMode == OutputMode::Stereo ? 1.0f : 0.0f;
+        stereoWidth_ += pickupMixCoefficient_ * (stereoTarget - stereoWidth_);
+        if (stereoTarget == 0.0f && stereoWidth_ < 1.0e-6f)
+            stereoWidth_ = 0.0f;
+
+        for (auto& voice : voices_)
+            updateVoiceControl(voice);
+        updateActiveVoiceCount();
+    }
+    controlCountdown_--;
+
+    RenderSums sums;
+
+    for (auto& voice : voices_)
+        if (voice.active)
+            renderVoice(voice, sums);
+
+    // Open strings and bridge hardware ring sympathetically. This is a
+    // strictly feed-forward bank, so it colours the pickup/body drive without
+    // threatening the waveguide stability contract.
+    if (artifactsActive_)
+    {
+        const float neckMid = 0.5f * (sums.neck[0] + sums.neck[1]);
+        const float bridgeMid = 0.5f * (sums.bridge[0] + sums.bridge[1]);
+        const float drive = 0.5f * (neckMid + bridgeMid) + 0.08f * sums.body;
+        float ring = 0.0f;
+        for (auto& mode : sympatheticModes_)
+            ring += mode.process(drive);
+        const float mix = 0.28f * smoothedParameters_.artifactAmount;
+        for (int channel = 0; channel < 2; ++channel)
+        {
+            sums.neck[static_cast<std::size_t>(channel)] += 0.55f * mix * ring;
+            sums.bridge[static_cast<std::size_t>(channel)] += mix * ring;
+        }
+        sums.body += 1.5f * mix * ring;
+    }
+
+    // Solid-body structural colour, sensed by the pickups alongside the
+    // strings.
+    float body = 0.0f;
+    for (auto& mode : bodyModes_)
+        body += mode.process(0.055f * sums.body);
+    body *= smoothedBodyLevel_;
+
+    // Humbuckers are hotter than low-wind single coils.
+    const float pickupLevel = lerp(1.40f, 0.92f, smoothedParameters_.pickupType);
+
+    StereoSample output;
+    std::array<float, 2> raw {};
+    for (int channel = 0; channel < 2; ++channel)
+    {
+        const auto index = static_cast<std::size_t>(channel);
+        const float neckOut = neckCoils_[index].process(sums.neck[index]
+                                                        + 0.75f * body);
+        const float bridgeOut = bridgeCoils_[index].process(sums.bridge[index]
+                                                            + 0.55f * body);
+        const float pickup = (neckOut * neckMix_ + bridgeOut * bridgeMix_)
+                           * pickupLevel;
+        raw[index] = outputDc_[index].process(pickup, outputDcCoefficient_);
+    }
+
+    // One linked guard gain preserves the physical stereo field. In Mono the
+    // channels are equal and this is the original scalar soft-limit law.
+    const float guardInput = std::max(std::abs(raw[0]), std::abs(raw[1]));
+    const float guardGain = 1.0f
+        / std::sqrt(1.0f + 0.4356f * guardInput * guardInput);
+    output.left = raw[0] * guardGain * smoothedOutputGain_;
+    output.right = raw[1] * guardGain * smoothedOutputGain_;
+
+    if (! finitef(output.left) || ! finitef(output.right))
+    {
+        // A non-finite sample means some state has been corrupted by hostile
+        // input; recover silently rather than latching.
+        for (auto& voice : voices_)
+        {
+            silenceVoice(voice);
+            voice.vertical.clear();
+            voice.horizontal.clear();
+        }
+        for (auto& filter : neckCoils_)
+            filter.reset();
+        for (auto& filter : bridgeCoils_)
+            filter.reset();
+        for (auto& blocker : outputDc_)
+            blocker.reset();
+        for (auto& mode : bodyModes_)
+            mode.reset();
+        for (auto& mode : sympatheticModes_)
+            mode.reset();
+        for (auto& decimator : decimators_)
+            decimator.reset();
+        output = {};
+    }
+
+    return output;
 }
 
 void ElectryEngine::process(float* left, float* right, int numSamples)
@@ -1392,110 +2197,32 @@ void ElectryEngine::process(float* left, float* right, int numSamples)
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
-        if (controlCountdown_ <= 0)
+        StereoSample output;
+        if (oversamplingFactor_ == 2)
         {
-            controlCountdown_ = controlPeriod;
-
-            // Continuous parameter smoothing toward the host targets.
-            const auto smoothTowards = [this] (float& value, float target)
+            for (int phase = 0; phase < 2; ++phase)
             {
-                value += parameterSmoothingCoefficient_ * (target - value);
-            };
-            auto& s = smoothedParameters_;
-            const auto& t = targetParameters_;
-            const bool pickupDirty =
-                s.pickupSelector != t.pickupSelector
-                || std::abs(s.pickupType - t.pickupType) > 1.0e-4f
-                || std::abs(s.toneKnob - t.toneKnob) > 1.0e-4f;
-            const bool bodyDirty =
-                std::abs(s.bodyWood - t.bodyWood) > 1.0e-4f
-                || std::abs(s.bodySize - t.bodySize) > 1.0e-4f
-                || std::abs(s.bodyShape - t.bodyShape) > 1.0e-4f;
-
-            smoothTowards(s.bodyWood, t.bodyWood);
-            smoothTowards(s.bodySize, t.bodySize);
-            smoothTowards(s.bodyShape, t.bodyShape);
-            smoothTowards(s.construction, t.construction);
-            smoothTowards(s.scaleLength, t.scaleLength);
-            smoothTowards(s.pickupType, t.pickupType);
-            smoothTowards(s.toneKnob, t.toneKnob);
-            smoothTowards(s.bodyResonance, t.bodyResonance);
-            smoothTowards(s.stringGauge, t.stringGauge);
-            smoothTowards(s.stringAge, t.stringAge);
-            smoothTowards(s.pickPosition, t.pickPosition);
-            smoothTowards(s.pickHardness, t.pickHardness);
-            smoothTowards(s.pickNoise, t.pickNoise);
-            smoothTowards(s.fingerNoise, t.fingerNoise);
-            smoothTowards(s.releaseNoise, t.releaseNoise);
-            smoothTowards(s.muteDamping, t.muteDamping);
-            smoothTowards(s.velocityAmount, t.velocityAmount);
-            s.bendTimeSeconds = t.bendTimeSeconds;
-            s.pickupSelector = t.pickupSelector;
-            smoothTowards(s.outputGain, t.outputGain);
-
-            pitchBendSemitones_ += 0.35f * (pitchBendTarget_ - pitchBendSemitones_);
-
-            if (pickupDirty)
-                configurePickupFilters();
-            if (bodyDirty)
-                configureBody();
-            refreshVoicingIfNeeded();
-
-            neckMix_ += pickupMixCoefficient_ * (neckMixTarget_ - neckMix_);
-            bridgeMix_ += pickupMixCoefficient_ * (bridgeMixTarget_ - bridgeMix_);
-            smoothedOutputGain_ = s.outputGain;
-            smoothedBodyLevel_ = s.bodyResonance;
-
-            for (auto& voice : voices_)
-                updateVoiceControl(voice);
-            updateActiveVoiceCount();
-        }
-        controlCountdown_--;
-
-        float neckSum = 0.0f;
-        float bridgeSum = 0.0f;
-        float bodySum = 0.0f;
-
-        for (auto& voice : voices_)
-            if (voice.active)
-                renderVoice(voice, neckSum, bridgeSum, bodySum);
-
-        // Solid-body structural colour, sensed by the pickups alongside the
-        // strings.
-        float body = 0.0f;
-        for (auto& mode : bodyModes_)
-            body += mode.process(0.02f * bodySum);
-        body *= smoothedBodyLevel_;
-
-        const float neckOut = neckCoil_.process(neckSum + 0.6f * body);
-        const float bridgeOut = bridgeCoil_.process(bridgeSum + 0.4f * body);
-        // Humbuckers are hotter than low-wind single coils.
-        const float pickupLevel = lerp(1.32f, 1.0f, smoothedParameters_.pickupType);
-
-        float output = (neckOut * neckMix_ + bridgeOut * bridgeMix_) * pickupLevel;
-        output = outputDc_.process(output, outputDcCoefficient_);
-        output = softLimit(output) * smoothedOutputGain_;
-
-        if (! finitef(output))
-        {
-            // A non-finite sample means some state has been corrupted by
-            // hostile input; recover silently rather than latching.
-            for (auto& voice : voices_)
-            {
-                silenceVoice(voice);
-                voice.vertical.clear();
-                voice.horizontal.clear();
+                const auto internal = renderInternalSample();
+                decimators_[0].push(internal.left);
+                decimators_[1].push(internal.right);
             }
-            neckCoil_.reset();
-            bridgeCoil_.reset();
-            outputDc_.reset();
-            for (auto& mode : bodyModes_)
-                mode.reset();
-            output = 0.0f;
+            output.left = decimators_[0].output();
+            output.right = decimators_[1].output();
+        }
+        else
+        {
+            output = renderInternalSample();
         }
 
-        left[sample] = output;
-        right[sample] = output;
+        if (! finitef(output.left) || ! finitef(output.right))
+        {
+            for (auto& decimator : decimators_)
+                decimator.reset();
+            output = {};
+        }
+
+        left[sample] = output.left;
+        right[sample] = output.right;
     }
 }
 

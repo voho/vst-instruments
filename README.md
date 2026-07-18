@@ -27,7 +27,7 @@ libraries.
 | [Drumalor](drumalor/) | Thirteen-voice procedural drum synthesizer with deterministic organic variation, circuit-inspired colour, and GM-oriented MIDI mapping. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
 | [Mars](mars/) | Dual-oscillator virtual-analog polysynth with switchable VCO mixer feeds, measured saw contouring, nonlinear Moog-ladder and SEM-inspired filters, deterministic voice cards, 42 direct sound controls, and persisted HQ oversampling. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
 | [Neuramar](neuramar/) | Drop in a mostly monophonic sound, infer its root, and fit a compact local DDSP-inspired neural synthesis model whose harmonic Core, noisy Air, and resonant Bone remain playable across pitches. | VST3 · AU · Standalone | macOS 11+ | [README](neuramar/README.md) |
-| [Electry](electry/) | Physically modeled dry electric guitar: six dual-polarisation waveguide strings with dispersion, tension-modulation glide, fret collisions, a published pickup/coil model, keyswitched play styles, and guitar-model axes spanning a Les Paul-style and a Telecaster-style anchor. | VST3 · AU · Standalone | macOS 11+ | [README](electry/README.md) |
+| [Electry](electry/) | Oversampled physically modeled Drop-E eight-string guitar: eight dual-polarisation waveguides, fitted stiff-string dispersion, induced-EMF pickups, modal body loss, Mono/divided-pickup Stereo, and 16 labeled keyswitched play styles. | VST3 · AU · Standalone | macOS 11+ | [README](electry/README.md) |
 
 ## Download (nightly)
 

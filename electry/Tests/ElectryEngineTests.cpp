@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace electry
@@ -28,9 +29,20 @@ struct ElectryEngineTestAccess
         Articulation articulation { Articulation::Downstroke };
         float verticalDelayTarget { 0.0f };
         float verticalDelayCurrent { 0.0f };
-        float dispersionCoefficient { 0.0f };
+        float dispersionLowCoefficient { 0.0f };
+        float dispersionHighCoefficient { 0.0f };
+        float inharmonicity { 0.0f };
+        float dispersionLowPartial { 0.0f };
+        float dispersionHighPartial { 0.0f };
+        float bodyConductance { 0.0f };
+        float bodyLossFactor { 1.0f };
         float loopGain { 0.0f };
+        float baseFrequency { 0.0f };
         int collisionRemaining { 0 };
+        int tremoloSamplesUntilRetrigger { 0 };
+        std::uint32_t tremoloRetriggerCount { 0 };
+        bool tremoloStrokeIsUp { false };
+        std::uint64_t ageSamples { 0 };
     };
 
     static VoiceSnapshot snapshot(const ElectryEngine& engine, int stringIndex)
@@ -49,10 +61,62 @@ struct ElectryEngineTestAccess
         result.articulation = voice.articulation;
         result.verticalDelayTarget = voice.vertical.targetDelay;
         result.verticalDelayCurrent = voice.vertical.currentDelay;
-        result.dispersionCoefficient = voice.vertical.dispersionCoefficient;
+        result.dispersionLowCoefficient = voice.vertical.dispersionLowCoefficient;
+        result.dispersionHighCoefficient = voice.vertical.dispersionHighCoefficient;
+        result.inharmonicity = voice.inharmonicity;
+        result.dispersionLowPartial = voice.dispersionLowPartial;
+        result.dispersionHighPartial = voice.dispersionHighPartial;
+        result.bodyConductance = voice.bodyConductance;
+        result.bodyLossFactor = voice.bodyLossFactor;
         result.loopGain = voice.vertical.loopGain;
+        result.baseFrequency = voice.baseFrequency;
         result.collisionRemaining = voice.collisionRemaining;
+        result.tremoloSamplesUntilRetrigger = voice.tremoloSamplesUntilRetrigger;
+        result.tremoloRetriggerCount = voice.tremoloRetriggerCount;
+        result.tremoloStrokeIsUp = voice.tremoloStrokeIsUp;
+        result.ageSamples = voice.ageSamples;
         return result;
+    }
+
+    static int oversamplingFactor(const ElectryEngine& engine) noexcept
+    {
+        return engine.oversamplingFactor_;
+    }
+
+    static double hostSampleRate(const ElectryEngine& engine) noexcept
+    {
+        return engine.hostSampleRate_;
+    }
+
+    static double internalSampleRate(const ElectryEngine& engine) noexcept
+    {
+        return engine.sampleRate_;
+    }
+
+    static float dispersionDeficit(const ElectryEngine& engine,
+                                    int stringIndex, float partial) noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= ElectryEngine::stringCount)
+            return 0.0f;
+        const auto& voice = engine.voices_[static_cast<std::size_t>(stringIndex)];
+        const auto& loop = voice.vertical;
+        const float omega = 2.0f * 3.14159265358979323846f
+                          * voice.lastConfiguredFrequency
+                          / static_cast<float>(engine.sampleRate_);
+        const float omegaPartial = std::min(
+            omega * partial, 3.14159265358979323846f * 0.95f);
+        const auto sectionDeficit = [&] (float coefficient)
+        {
+            return ElectryEngine::allpassPhaseDelay(coefficient, omega)
+                 - ElectryEngine::allpassPhaseDelay(coefficient, omegaPartial);
+        };
+        return 4.0f * sectionDeficit(loop.dispersionLowCoefficient)
+             + 4.0f * sectionDeficit(loop.dispersionHighCoefficient);
+    }
+
+    static constexpr int delayLineCapacity() noexcept
+    {
+        return ElectryEngine::delayLineSize;
     }
 
     static int stringForNote(const ElectryEngine& engine, int midiNote)
@@ -177,6 +241,29 @@ double rmsInRange(const std::vector<float>& data, int start, int end)
     return std::sqrt(sum / static_cast<double>(last - first));
 }
 
+double normalisedDifferenceRms(const std::vector<float>& a,
+                               const std::vector<float>& b,
+                               int start, int end)
+{
+    const int first = std::max(0, start);
+    const int last = std::min<int>({ end, static_cast<int>(a.size()),
+                                    static_cast<int>(b.size()) });
+    if (last <= first)
+        return 0.0;
+
+    double difference = 0.0;
+    double reference = 0.0;
+    for (int i = first; i < last; ++i)
+    {
+        const double av = a[static_cast<std::size_t>(i)];
+        const double bv = b[static_cast<std::size_t>(i)];
+        const double delta = av - bv;
+        difference += delta * delta;
+        reference += 0.5 * (av * av + bv * bv);
+    }
+    return reference > 0.0 ? std::sqrt(difference / reference) : 0.0;
+}
+
 // Hann-windowed DFT magnitude at an arbitrary frequency, evaluated with a
 // phasor recurrence so the tests stay fast.
 double dftMagnitude(const std::vector<float>& data, int start, int length,
@@ -223,8 +310,20 @@ double measureFrequency(const std::vector<float>& data, int start, int length,
         for (double cents = -spanCents; cents <= spanCents; cents += stepCents)
         {
             const double frequency = centre * std::pow(2.0, cents / 1200.0);
-            const double magnitude = dftMagnitude(data, start, length,
-                                                  sampleRate, frequency);
+            // A magnetic pickup produces induced EMF, so its fundamental can
+            // be weaker than the first few partials. Score a short harmonic
+            // series instead of assuming displacement-like fundamental
+            // dominance; the narrow scan still prevents octave ambiguity.
+            double magnitude = 0.0;
+            for (int partial = 1; partial <= 5; ++partial)
+            {
+                const double partialFrequency = frequency * partial;
+                if (partialFrequency >= 0.45 * sampleRate)
+                    break;
+                magnitude += dftMagnitude(data, start, length, sampleRate,
+                                          partialFrequency)
+                           / std::sqrt(static_cast<double>(partial));
+            }
             if (magnitude > bestMagnitude)
             {
                 bestMagnitude = magnitude;
@@ -293,6 +392,75 @@ double highBandRatio(const std::vector<float>& data, int start, int length,
 
 // ---------------------------------------------------------------------------
 
+void testInternalOversamplingPolicy()
+{
+    struct RateCase { double hostRate; int expectedFactor; };
+    constexpr std::array<RateCase, 5> rates {{
+        { 44100.0, 2 }, { 48000.0, 2 }, { 96000.0, 2 },
+        { 192000.0, 1 }, { 384000.0, 1 },
+    }};
+
+    for (const auto& rate : rates)
+    {
+        ElectryEngine engine;
+        engine.prepare(rate.hostRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        engine.setParameters(parameters);
+
+        expect(TestAccess::oversamplingFactor(engine) == rate.expectedFactor,
+               "wrong internal oversampling factor at "
+                   + std::to_string(rate.hostRate) + " Hz");
+        expect(TestAccess::hostSampleRate(engine) == rate.hostRate,
+               "host sample rate was not retained by prepare()");
+        expect(TestAccess::internalSampleRate(engine)
+                   == rate.hostRate * rate.expectedFactor,
+               "internal sample clock does not match host rate times factor");
+
+        engine.noteOn(45, 0.8f);
+        constexpr int hostSamples = 1024;
+        StereoBuffer buffer(hostSamples);
+        renderInto(engine, buffer, 127);
+        expect(allFinite(buffer),
+               "oversampled render became non-finite at "
+                   + std::to_string(rate.hostRate) + " Hz");
+        const float peak = peakAbs(buffer.left);
+        expect(peak > 1.0e-5f && peak < 1.2f,
+               "oversampled render was silent or unbounded at "
+                   + std::to_string(rate.hostRate) + " Hz");
+
+        const int stringIndex = TestAccess::stringForNote(engine, 45);
+        const auto snapshot = TestAccess::snapshot(engine, stringIndex);
+        expect(snapshot.ageSamples
+                   == static_cast<std::uint64_t>(hostSamples * rate.expectedFactor),
+               "host samples did not advance the physical clock exactly");
+    }
+
+    // Compare one 2x render with one native high-rate render. Both must retain
+    // the played pitch after the halfband FIR and host-rate decimation.
+    for (const double sampleRate : { 48000.0, 192000.0 })
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        engine.setParameters(parameters);
+        const auto buffer = renderNote(engine, sampleRate, 45, 0.35f,
+                                       Articulation::Downstroke, 0.8);
+        const double expected = midiHz(45);
+        const double measured = measureFrequency(
+            buffer.left, static_cast<int>(0.30 * sampleRate),
+            static_cast<int>(0.35 * sampleRate), sampleRate, expected);
+        expect(std::abs(centsBetween(measured, expected)) < 10.0,
+               "oversampling introduced gross pitch drift at "
+                   + std::to_string(sampleRate) + " Hz");
+    }
+}
+
 void testRenderMatrixFiniteAndBounded()
 {
     for (const double sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
@@ -334,7 +502,7 @@ void testPitchAccuracy()
         parameters.releaseNoise = 0.0f;
         engine.setParameters(parameters);
 
-        for (const int midiNote : { 40, 45, 50, 55, 59, 64, 69, 76, 86 })
+        for (const int midiNote : { 28, 35, 40, 45, 50, 55, 59, 64, 69, 76, 86 })
         {
             auto buffer = renderNote(engine, sampleRate, midiNote, 0.3f,
                                      Articulation::Downstroke, 1.1);
@@ -350,6 +518,41 @@ void testPitchAccuracy()
                        + std::to_string(cents) + " cents");
         }
     }
+}
+
+void testDropELowNoteAtMaximumRate()
+{
+    constexpr double sampleRate = 384000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    engine.setParameters(parameters);
+    engine.setPitchBend(-1.0f);
+    engine.noteOn(28, 0.25f);
+
+    StereoBuffer buffer(static_cast<int>(1.25 * sampleRate));
+    renderInto(engine, buffer);
+    expect(allFinite(buffer), "Drop-E render became non-finite at 384 kHz");
+
+    const int stringIndex = TestAccess::stringForNote(engine, 28);
+    const auto snapshot = TestAccess::snapshot(engine, stringIndex);
+    expect(stringIndex == 0 && snapshot.fret == 0,
+           "open E1 was not allocated to the eighth string");
+    expect(snapshot.verticalDelayTarget > 9000.0f,
+           "maximum-rate Drop-E delay did not exercise the expanded line");
+    expect(snapshot.verticalDelayTarget
+               < static_cast<float>(TestAccess::delayLineCapacity() - 8),
+           "maximum-rate Drop-E delay exceeded the delay-line capacity");
+
+    const double expected = midiHz(26); // E1 with the wheel at -2 semitones.
+    const double measured = measureFrequency(
+        buffer.left, static_cast<int>(0.55 * sampleRate),
+        static_cast<int>(0.60 * sampleRate), sampleRate, expected);
+    expect(std::abs(centsBetween(measured, expected)) < 10.0,
+           "384 kHz Drop-E wheel-down pitch is inaccurate");
 }
 
 void testDeterminism()
@@ -369,7 +572,7 @@ void testDeterminism()
         engine.noteOn(45, 0.85f);
         engine.process(buffer.left.data(), buffer.right.data(), 12000);
         engine.noteOn(ElectryEngine::firstKeyswitchNote
-                          + static_cast<int>(Articulation::Upstroke), 1.0f);
+                          + static_cast<int>(Articulation::Tremolo), 1.0f);
         engine.noteOn(52, 0.6f);
         engine.process(buffer.left.data() + 12000,
                        buffer.right.data() + 12000, 24000);
@@ -402,6 +605,14 @@ void testKeyswitchesSelectStylesSilently()
     engine.prepare(sampleRate, 512);
     engine.setParameters(EngineParameters {});
     engine.reset();
+
+    expect(ElectryEngine::firstKeyswitchNote == 12,
+           "keyswitch range does not start at MIDI 12");
+    expect(ElectryEngine::keyswitchCount == 16,
+           "keyswitch range does not expose all 16 play styles");
+    expect(ElectryEngine::lowestPlayableNote == 28
+               && ElectryEngine::highestPlayableNote == 86,
+           "Drop-E playable range is not MIDI 28..86");
 
     expect(engine.getCurrentArticulation() == Articulation::Downstroke,
            "default articulation is not Downstroke");
@@ -436,11 +647,67 @@ void testKeyswitchesSelectStylesSilently()
     expect(snapshot.articulation == Articulation::Muted,
            "played note did not inherit the latched articulation");
 
-    // Notes outside the playable range are ignored.
-    engine.noteOn(20, 0.9f);
-    engine.noteOn(97, 0.9f);
+    // The adjacent range boundary is unambiguous: 27 is the final silent
+    // keyswitch and 28 is the sounding open low E.
+    engine.reset();
+    engine.noteOn(27, 0.9f);
+    expect(engine.getCurrentArticulation() == Articulation::Slap,
+           "MIDI 27 did not select the final play style");
+    expect(engine.getActiveVoiceCount() == 0,
+           "final keyswitch note created a voice");
+    engine.noteOn(28, 0.8f);
+    expect(TestAccess::stringForNote(engine, 28) == 0,
+           "MIDI 28 did not play open E1 on the lowest string");
+
+    // Notes outside both the keyswitch and playable ranges are ignored.
+    engine.noteOn(0, 0.9f);
+    engine.noteOn(87, 0.9f);
     expect(engine.getActiveVoiceCount() == 1,
-           "unplayable notes outside E2..D6 were not ignored");
+           "notes outside keyswitches and E1..D6 were not ignored");
+}
+
+void testAlternateStrokeSequence()
+{
+    ElectryEngine engine;
+    engine.prepare(48000.0, 512);
+    engine.setParameters(EngineParameters {});
+    engine.noteOn(ElectryEngine::firstKeyswitchNote
+                      + static_cast<int>(Articulation::AlternateStroke), 1.0f);
+
+    expect(engine.getCurrentArticulation() == Articulation::AlternateStroke,
+           "Alternate Stroke did not latch");
+
+    // Rejected performance events must not consume a stroke direction.
+    engine.noteOn(100, 1.0f);
+    engine.noteOn(40, 0.0f);
+
+    engine.noteOn(40, 0.8f);
+    const auto first = TestAccess::snapshot(engine,
+                                            TestAccess::stringForNote(engine, 40));
+    engine.noteOn(45, 0.8f);
+    const auto second = TestAccess::snapshot(engine,
+                                             TestAccess::stringForNote(engine, 45));
+    engine.noteOn(50, 0.8f);
+    const auto third = TestAccess::snapshot(engine,
+                                            TestAccess::stringForNote(engine, 50));
+
+    expect(first.articulation == Articulation::Downstroke,
+           "Alternate Stroke did not begin with a downstroke");
+    expect(second.articulation == Articulation::Upstroke,
+           "Alternate Stroke did not alternate to an upstroke");
+    expect(third.articulation == Articulation::Downstroke,
+           "Alternate Stroke did not alternate back to a downstroke");
+    expect(engine.getCurrentArticulation() == Articulation::AlternateStroke,
+           "resolved strokes replaced the latched Alternate Stroke style");
+
+    // Pressing the keyswitch again begins a fresh phrase on a downstroke.
+    engine.noteOn(ElectryEngine::firstKeyswitchNote
+                      + static_cast<int>(Articulation::AlternateStroke), 1.0f);
+    engine.noteOn(55, 0.8f);
+    const auto restarted = TestAccess::snapshot(
+        engine, TestAccess::stringForNote(engine, 55));
+    expect(restarted.articulation == Articulation::Downstroke,
+           "reselecting Alternate Stroke did not reset its phase");
 }
 
 void testArticulationsSoundDistinct()
@@ -449,6 +716,7 @@ void testArticulationsSoundDistinct()
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
     EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
     engine.setParameters(parameters);
 
     const int attackStart = static_cast<int>(0.002 * sampleRate);
@@ -482,9 +750,13 @@ void testArticulationsSoundDistinct()
     expect(hammerCentroid < upCentroid * 0.9,
            "hammer-on attack is not darker than an upstroke");
     expect(slapCentroid > downCentroid * 1.05,
-           "slap attack is not brighter than a downstroke");
+           "slap attack is not brighter than a downstroke (down "
+               + std::to_string(downCentroid) + " Hz, slap "
+               + std::to_string(slapCentroid) + " Hz)");
     expect(upCentroid > downCentroid * 1.01,
-           "upstroke attack is not brighter than a downstroke");
+           "upstroke attack is not brighter than a downstroke (down "
+               + std::to_string(downCentroid) + " Hz, up "
+               + std::to_string(upCentroid) + " Hz)");
 
     // The hammered attack is also quieter than the picked one.
     const double downAttackRms = rmsInRange(down.left, attackStart,
@@ -518,6 +790,105 @@ void testArticulationsSoundDistinct()
            "downstroke and upstroke render nearly identical audio");
 }
 
+void testExtendedPlayStyles()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.bodyResonance = 0.0f;
+    engine.setParameters(parameters);
+
+    const auto down = renderNote(engine, sampleRate, 45, 0.85f,
+                                 Articulation::Downstroke, 0.9);
+    const auto tap = renderNote(engine, sampleRate, 45, 0.85f,
+                                Articulation::Tap, 0.9);
+    const auto muted = renderNote(engine, sampleRate, 45, 0.85f,
+                                  Articulation::Muted, 0.9);
+    const auto chug = renderNote(engine, sampleRate, 45, 0.85f,
+                                 Articulation::Chug, 0.9);
+    const auto dead = renderNote(engine, sampleRate, 45, 0.85f,
+                                 Articulation::DeadNote, 0.9);
+
+    const int attackStart = static_cast<int>(0.002 * sampleRate);
+    const int attackEnd = static_cast<int>(0.060 * sampleRate);
+    const double downAttack = rmsInRange(down.left, attackStart, attackEnd);
+    const double tapAttack = rmsInRange(tap.left, attackStart, attackEnd);
+    expect(tapAttack < downAttack * 0.85,
+           "tap is not a softer finger excitation than a downstroke");
+
+    const int muteLateStart = static_cast<int>(0.36 * sampleRate);
+    const int muteLateEnd = static_cast<int>(0.56 * sampleRate);
+    const double mutedLate = rmsInRange(muted.left, muteLateStart, muteLateEnd);
+    const double chugLate = rmsInRange(chug.left, muteLateStart, muteLateEnd);
+    expect(chugLate < mutedLate * 0.55,
+           "chug does not stop the string harder than Muted");
+
+    const int deadLateStart = static_cast<int>(0.16 * sampleRate);
+    const int deadLateEnd = static_cast<int>(0.30 * sampleRate);
+    const double deadLate = rmsInRange(dead.left, deadLateStart, deadLateEnd);
+    const double chugSameWindow = rmsInRange(chug.left, deadLateStart, deadLateEnd);
+    // The anti-aliased high-rate path preserves slightly more of the dead
+    // note's low-frequency residue, but it must still decay at least four
+    // times below the firmer, pitched chug over the same late window.
+    expect(deadLate < chugSameWindow * 0.25,
+           "dead note is not a short percussive articulation");
+
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    engine.setParameters(parameters);
+    const auto natural = renderNote(engine, sampleRate, 45, 0.35f,
+                                    Articulation::NaturalHarmonic, 1.1);
+    const auto pinch = renderNote(engine, sampleRate, 45, 0.35f,
+                                  Articulation::PinchHarmonic, 1.1);
+    const int harmonicStart = static_cast<int>(0.35 * sampleRate);
+    const int harmonicWindow = static_cast<int>(0.55 * sampleRate);
+    const double naturalExpected = midiHz(57);
+    const double pinchExpected = midiHz(64);
+    const double naturalMeasured = measureFrequency(
+        natural.left, harmonicStart, harmonicWindow, sampleRate, naturalExpected);
+    const double pinchMeasured = measureFrequency(
+        pinch.left, harmonicStart, harmonicWindow, sampleRate, pinchExpected);
+    expect(std::abs(centsBetween(naturalMeasured, naturalExpected)) < 10.0,
+           "natural harmonic does not sound one octave above the played note");
+    expect(std::abs(centsBetween(pinchMeasured, pinchExpected)) < 10.0,
+           "pinch harmonic does not sound nineteen semitones above the played note");
+
+    // Tremolo is one held string with deterministic scheduled re-excitations,
+    // not a stack of new voices.
+    engine.reset();
+    engine.noteOn(ElectryEngine::firstKeyswitchNote
+                      + static_cast<int>(Articulation::Tremolo), 1.0f);
+    engine.noteOn(45, 0.8f);
+    const int tremoloString = TestAccess::stringForNote(engine, 45);
+    const auto initial = TestAccess::snapshot(engine, tremoloString);
+    expect(initial.tremoloRetriggerCount == 0 && ! initial.tremoloStrokeIsUp,
+           "tremolo did not begin on its initial downstroke");
+
+    StereoBuffer tremoloAudio(static_cast<int>(0.24 * sampleRate));
+    renderInto(engine, tremoloAudio);
+    const auto running = TestAccess::snapshot(engine, tremoloString);
+    expect(running.tremoloRetriggerCount >= 3,
+           "held tremolo note did not schedule repeated strokes");
+    expect(running.tremoloStrokeIsUp
+               == ((running.tremoloRetriggerCount & 1u) != 0u),
+           "tremolo stroke directions did not alternate");
+    expect(engine.getActiveVoiceCount() == 1,
+           "tremolo retriggers allocated additional physical strings");
+
+    engine.setSustainPedal(true);
+    engine.noteOff(45);
+    const auto countAtRelease = running.tremoloRetriggerCount;
+    StereoBuffer sustained(static_cast<int>(0.20 * sampleRate));
+    renderInto(engine, sustained);
+    const auto afterRelease = TestAccess::snapshot(engine, tremoloString);
+    expect(afterRelease.active
+               && afterRelease.tremoloRetriggerCount == countAtRelease,
+           "tremolo continued retriggering after the key was released");
+}
+
 void testBendPrograms()
 {
     constexpr double sampleRate = 48000.0;
@@ -527,6 +898,8 @@ void testBendPrograms()
     parameters.pickNoise = 0.0f;
     parameters.fingerNoise = 0.0f;
     parameters.releaseNoise = 0.0f;
+    parameters.artifactAmount = 0.0f;
+    parameters.bodyResonance = 0.0f;
     parameters.bendTimeSeconds = 0.20f;
     engine.setParameters(parameters);
 
@@ -696,6 +1069,7 @@ void testPickupsToneAndModelMorph()
 
     EngineParameters parameters;
     parameters.pickNoise = 0.0f;
+    parameters.artifactAmount = 0.0f;
 
     parameters.pickupSelector = PickupSelector::Bridge;
     engine.setParameters(parameters);
@@ -759,7 +1133,9 @@ void testPickupsToneAndModelMorph()
     // The single-coil Telecaster bridge is characteristically brighter than
     // a humbucker Les Paul.
     expect(telecasterCentroid > lesPaulCentroid * 1.10,
-           "Telecaster endpoint is not brighter than Les Paul endpoint");
+           "Telecaster endpoint is not brighter than Les Paul endpoint (LP "
+               + std::to_string(lesPaulCentroid) + " Hz, Tele "
+               + std::to_string(telecasterCentroid) + " Hz)");
 
     // Both endpoints stay in tune.
     for (const auto* render : { &lesPaulRender, &telecasterRender })
@@ -770,6 +1146,413 @@ void testPickupsToneAndModelMorph()
         expect(std::abs(centsBetween(measured, midiHz(45))) < 8.0,
                "guitar-model endpoint detuned the instrument");
     }
+}
+
+void testArtifactsControl()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+
+    EngineParameters parameters;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+
+    const auto renderAt = [&] (float amount)
+    {
+        parameters.artifactAmount = amount;
+        engine.setParameters(parameters);
+        return renderNote(engine, sampleRate, 45, 0.95f,
+                          Articulation::Downstroke, 0.75);
+    };
+
+    const auto clean = renderAt(0.0f);
+    const auto subtle = renderAt(0.18f);
+    const auto medium = renderAt(0.60f);
+    const auto full = renderAt(1.0f);
+    const int start = static_cast<int>(0.020 * sampleRate);
+    const int end = static_cast<int>(0.60 * sampleRate);
+    const double subtleDifference = normalisedDifferenceRms(
+        subtle.left, clean.left, start, end);
+    const double mediumDifference = normalisedDifferenceRms(
+        medium.left, clean.left, start, end);
+    const double fullDifference = normalisedDifferenceRms(
+        full.left, clean.left, start, end);
+
+    expect(subtleDifference > 0.002 && subtleDifference < 0.15,
+           "default artifacts are inaudible or no longer subtle (difference "
+               + std::to_string(subtleDifference) + ")");
+    expect(mediumDifference > subtleDifference * 1.35
+               && fullDifference > mediumDifference * 1.12,
+           "Artifacts control does not increase imperfection energy monotonically ("
+               + std::to_string(subtleDifference) + ", "
+               + std::to_string(mediumDifference) + ", "
+               + std::to_string(fullDifference) + ")");
+
+    const auto repeatedFull = renderAt(1.0f);
+    expect(full.left == repeatedFull.left && full.right == repeatedFull.right,
+           "artifact PRNG path is not sample-deterministic");
+
+    engine.reset();
+    StereoBuffer silence(4096);
+    renderInto(engine, silence);
+    expect(peakAbs(silence.left) == 0.0f,
+           "Artifacts control generated ambience without a played note");
+
+    // Worst-case low-register strum remains bounded with every imperfection
+    // path open and the mandatory oversampling clock active.
+    engine.reset();
+    constexpr std::array<int, ElectryEngine::stringCount> openNotes {
+        28, 35, 40, 45, 50, 55, 59, 64
+    };
+    for (const int note : openNotes)
+        engine.noteOn(note, 1.0f);
+    StereoBuffer strum(static_cast<int>(0.8 * sampleRate));
+    renderInto(engine, strum);
+    expect(allFinite(strum) && peakAbs(strum.left) < 1.2f,
+           "maximum-artifact eight-string strum became unstable");
+}
+
+void testAdvancedDispersionAndBodyConductance()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+
+    EngineParameters parameters;
+    parameters.scaleLength = 0.0f;
+    parameters.stringGauge = 1.0f;
+    parameters.bodyResonance = 1.0f;
+    parameters.bodyShape = 0.0f;
+    parameters.artifactAmount = 0.0f;
+    engine.setParameters(parameters);
+    engine.reset();
+    engine.noteOn(28, 0.8f);
+
+    const int stringIndex = TestAccess::stringForNote(engine, 28);
+    const auto snapshot = TestAccess::snapshot(engine, stringIndex);
+    expect(snapshot.inharmonicity > 1.0e-7f,
+           "physical wound-string inharmonicity was not configured");
+    expect(snapshot.dispersionLowCoefficient <= 0.0f
+               && snapshot.dispersionLowCoefficient >= -0.9951f
+               && snapshot.dispersionHighCoefficient <= 0.0f
+               && snapshot.dispersionHighCoefficient >= -0.9951f,
+           "eight-stage dispersion coefficients escaped their stable bounds");
+
+    const auto expectedDeficit = [&] (float partial)
+    {
+        const float period = static_cast<float>(TestAccess::internalSampleRate(engine))
+                           / snapshot.baseFrequency;
+        const float stretch = std::sqrt(
+            (1.0f + snapshot.inharmonicity * partial * partial)
+            / (1.0f + snapshot.inharmonicity));
+        return period * (1.0f - 1.0f / stretch);
+    };
+    for (const float partial : { snapshot.dispersionLowPartial,
+                                 snapshot.dispersionHighPartial })
+    {
+        const float wanted = expectedDeficit(partial);
+        const float actual = TestAccess::dispersionDeficit(
+            engine, stringIndex, partial);
+        const float relativeError = std::abs(actual - wanted)
+            / std::max(wanted, 1.0e-6f);
+        expect(relativeError < 0.20f,
+               "two-point dispersion fit missed partial "
+                   + std::to_string(partial) + " (wanted "
+                   + std::to_string(wanted) + ", actual "
+                   + std::to_string(actual) + ")");
+    }
+
+    expect(snapshot.bodyConductance >= 0.0f && snapshot.bodyConductance <= 1.0f,
+           "modal bridge conductance escaped its passive range");
+    expect(snapshot.bodyLossFactor > 0.0f && snapshot.bodyLossFactor <= 1.0f,
+           "modal bridge conductance added string energy");
+
+    parameters.bodyResonance = 0.0f;
+    engine.setParameters(parameters);
+    engine.reset();
+    engine.noteOn(28, 0.8f);
+    const auto bypassed = TestAccess::snapshot(
+        engine, TestAccess::stringForNote(engine, 28));
+    expect(std::abs(bypassed.bodyLossFactor - 1.0f) < 1.0e-6f,
+           "zero Body Resonance did not exactly bypass structural loss");
+}
+
+void testMonoStereoOutputField()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+
+    EngineParameters parameters;
+    parameters.bodyResonance = 0.0f;
+    parameters.artifactAmount = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    parameters.outputMode = electry::OutputMode::Mono;
+    engine.setParameters(parameters);
+    const auto monoLow = renderNote(engine, sampleRate, 28, 0.8f,
+                                    Articulation::Downstroke, 0.65);
+    expect(monoLow.left == monoLow.right,
+           "Mono output mode is not exact dual mono");
+
+    parameters.outputMode = electry::OutputMode::Stereo;
+    engine.setParameters(parameters);
+    const auto stereoLow = renderNote(engine, sampleRate, 28, 0.8f,
+                                      Articulation::Downstroke, 0.65);
+    const auto repeatedLow = renderNote(engine, sampleRate, 28, 0.8f,
+                                        Articulation::Downstroke, 0.65);
+    expect(stereoLow.left == repeatedLow.left
+               && stereoLow.right == repeatedLow.right,
+           "Stereo divided-pickup field is not deterministic");
+
+    const int start = static_cast<int>(0.025 * sampleRate);
+    const int end = static_cast<int>(0.55 * sampleRate);
+    const double lowLeft = rmsInRange(stereoLow.left, start, end);
+    const double lowRight = rmsInRange(stereoLow.right, start, end);
+    expect(lowLeft > lowRight * 1.10,
+           "Stereo low E does not favour the low-string side (L "
+               + std::to_string(lowLeft) + ", R "
+               + std::to_string(lowRight) + ")");
+
+    const auto stereoHigh = renderNote(engine, sampleRate, 64, 0.8f,
+                                       Articulation::Downstroke, 0.65);
+    const double highLeft = rmsInRange(stereoHigh.left, start, end);
+    const double highRight = rmsInRange(stereoHigh.right, start, end);
+    expect(highRight > highLeft * 1.10,
+           "Stereo high E does not favour the high-string side (L "
+               + std::to_string(highLeft) + ", R "
+               + std::to_string(highRight) + ")");
+
+    std::vector<float> folded(stereoLow.left.size());
+    std::vector<float> side(stereoLow.left.size());
+    for (std::size_t sample = 0; sample < folded.size(); ++sample)
+    {
+        folded[sample] = 0.5f * (stereoLow.left[sample]
+                               + stereoLow.right[sample]);
+        side[sample] = 0.5f * (stereoLow.left[sample]
+                             - stereoLow.right[sample]);
+    }
+    const double foldDifference = normalisedDifferenceRms(
+        folded, monoLow.left, start, end);
+    expect(foldDifference < 0.12,
+           "Stereo field does not fold coherently to Mono (difference "
+               + std::to_string(foldDifference) + ")");
+
+    const double midRms = rmsInRange(folded, start, end);
+    const double sideRms = rmsInRange(side, start, end);
+    expect(sideRms > midRms * 0.08 && sideRms < midRms * 0.35,
+           "Stereo side field is inaudible or excessive (ratio "
+               + std::to_string(sideRms / std::max(midRms, 1.0e-12)) + ")");
+
+    const double monoEnergy = std::pow(
+        rmsInRange(monoLow.left, start, end), 2.0);
+    const double stereoEnergy = 0.5
+        * (lowLeft * lowLeft + lowRight * lowRight);
+    const double energyRatio = stereoEnergy / std::max(monoEnergy, 1.0e-12);
+    expect(energyRatio > 0.80 && energyRatio < 1.20,
+           "Stereo output field changed average energy excessively (ratio "
+               + std::to_string(energyRatio) + ")");
+}
+
+void testVelocityExpression()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+
+    EngineParameters parameters;
+    parameters.velocityAmount = 1.0f;
+    parameters.bodyResonance = 0.0f;
+    parameters.artifactAmount = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    engine.setParameters(parameters);
+
+    const auto low = renderNote(engine, sampleRate, 45, 0.2f,
+                                Articulation::Downstroke, 0.55);
+    const auto middle = renderNote(engine, sampleRate, 45, 0.6f,
+                                   Articulation::Downstroke, 0.55);
+    const auto high = renderNote(engine, sampleRate, 45, 1.0f,
+                                 Articulation::Downstroke, 0.55);
+    const int attackStart = static_cast<int>(0.004 * sampleRate);
+    const int attackEnd = static_cast<int>(0.115 * sampleRate);
+    const double lowRms = rmsInRange(low.left, attackStart, attackEnd);
+    const double middleRms = rmsInRange(middle.left, attackStart, attackEnd);
+    const double highRms = rmsInRange(high.left, attackStart, attackEnd);
+    expect(middleRms > lowRms * 1.20 && highRms > middleRms * 1.20,
+           "velocity amplitude is not clearly monotonic ("
+               + std::to_string(lowRms) + ", " + std::to_string(middleRms)
+               + ", " + std::to_string(highRms) + ")");
+
+    const double lowCentroid = spectralCentroid(
+        low.left, attackStart, attackEnd - attackStart, sampleRate, midiHz(45));
+    const double highCentroid = spectralCentroid(
+        high.left, attackStart, attackEnd - attackStart, sampleRate, midiHz(45));
+    expect(highCentroid > lowCentroid * 1.10,
+           "velocity does not brighten the attack (low "
+               + std::to_string(lowCentroid) + " Hz, high "
+               + std::to_string(highCentroid) + " Hz)");
+
+    // At zero response, MIDI velocity is deliberately removed from every
+    // attack dimension, not merely from output gain.
+    parameters.velocityAmount = 0.0f;
+    engine.setParameters(parameters);
+    const auto flatLow = renderNote(engine, sampleRate, 45, 0.2f,
+                                    Articulation::Downstroke, 0.30);
+    const auto flatHigh = renderNote(engine, sampleRate, 45, 1.0f,
+                                     Articulation::Downstroke, 0.30);
+    expect(flatLow.left == flatHigh.left && flatLow.right == flatHigh.right,
+           "zero velocity response still changes the rendered attack");
+}
+
+void testMaterialAndControlAudibility()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+
+    EngineParameters base;
+    base.bodyResonance = 0.55f;
+    base.artifactAmount = 0.0f;
+    base.pickNoise = 0.0f;
+    base.fingerNoise = 0.0f;
+    base.releaseNoise = 0.0f;
+
+    const auto compareAxis = [&] (auto setAxis, int midiNote)
+    {
+        auto lowParameters = base;
+        setAxis(lowParameters, 0.0f);
+        engine.setParameters(lowParameters);
+        const auto low = renderNote(engine, sampleRate, midiNote, 0.8f,
+                                    Articulation::Downstroke, 0.75);
+        auto highParameters = base;
+        setAxis(highParameters, 1.0f);
+        engine.setParameters(highParameters);
+        const auto high = renderNote(engine, sampleRate, midiNote, 0.8f,
+                                     Articulation::Downstroke, 0.75);
+        return normalisedDifferenceRms(
+            low.left, high.left, static_cast<int>(0.035 * sampleRate),
+            static_cast<int>(0.60 * sampleRate));
+    };
+
+    const auto wood = [] (EngineParameters& p, float v) { p.bodyWood = v; };
+    const auto size = [] (EngineParameters& p, float v) { p.bodySize = v; };
+    const auto shape = [] (EngineParameters& p, float v) { p.bodyShape = v; };
+    const auto construction = [] (EngineParameters& p, float v) { p.construction = v; };
+    const auto scale = [] (EngineParameters& p, float v) { p.scaleLength = v; };
+    const auto gauge = [] (EngineParameters& p, float v) { p.stringGauge = v; };
+
+    using AxisSetter = void (*) (EngineParameters&, float);
+    const std::array<std::pair<const char*, AxisSetter>, 4> bodyAxes {{
+        { "wood", wood }, { "size", size }, { "shape", shape },
+        { "construction", construction }
+    }};
+    for (const auto& namedAxis : bodyAxes)
+    {
+        const double lowNoteDifference = compareAxis(namedAxis.second, 28);
+        const double midNoteDifference = compareAxis(namedAxis.second, 45);
+        expect(std::min(lowNoteDifference, midNoteDifference) > 0.055,
+               std::string("body ") + namedAxis.first
+                   + " remains effectively inaudible on E1/A2 ("
+                   + std::to_string(lowNoteDifference) + ", "
+                   + std::to_string(midNoteDifference) + ")");
+    }
+
+    const double scaleDifference = compareAxis(scale, 28);
+    const double gaugeDifference = compareAxis(gauge, 28);
+    expect(scaleDifference > 0.025,
+           "25.5-to-28-inch scale range does not change Drop-E timbre ("
+               + std::to_string(scaleDifference) + ")");
+    expect(gaugeDifference > 0.08,
+           "string-gauge endpoints remain too similar ("
+               + std::to_string(gaugeDifference) + ")");
+
+    auto noBody = base;
+    noBody.bodyResonance = 0.0f;
+    engine.setParameters(noBody);
+    const auto dry = renderNote(engine, sampleRate, 45, 0.8f,
+                                Articulation::Downstroke, 0.75);
+    auto fullBody = base;
+    fullBody.bodyResonance = 1.0f;
+    engine.setParameters(fullBody);
+    const auto resonant = renderNote(engine, sampleRate, 45, 0.8f,
+                                     Articulation::Downstroke, 0.75);
+    const double bodyDifference = normalisedDifferenceRms(
+        dry.left, resonant.left, static_cast<int>(0.035 * sampleRate),
+        static_cast<int>(0.60 * sampleRate));
+    expect(bodyDifference > 0.12,
+           "Body Resonance full range is still too polite ("
+               + std::to_string(bodyDifference) + ")");
+
+    auto fresh = base;
+    fresh.bodyResonance = 0.0f;
+    fresh.stringAge = 0.0f;
+    engine.setParameters(fresh);
+    const auto freshRender = renderNote(engine, sampleRate, 45, 0.8f,
+                                        Articulation::Downstroke, 1.3);
+    auto old = fresh;
+    old.stringAge = 1.0f;
+    engine.setParameters(old);
+    const auto oldRender = renderNote(engine, sampleRate, 45, 0.8f,
+                                      Articulation::Downstroke, 1.3);
+    const double freshLate = rmsInRange(
+        freshRender.left, static_cast<int>(0.8 * sampleRate),
+        static_cast<int>(1.2 * sampleRate));
+    const double oldLate = rmsInRange(
+        oldRender.left, static_cast<int>(0.8 * sampleRate),
+        static_cast<int>(1.2 * sampleRate));
+    expect(oldLate < freshLate * 0.35,
+           "String Age does not strongly shorten/darken the tail (ratio "
+               + std::to_string(oldLate / std::max(freshLate, 1.0e-12)) + ")");
+
+    auto bridgePick = fresh;
+    bridgePick.pickPosition = 0.0f;
+    engine.setParameters(bridgePick);
+    const auto bridgePicked = renderNote(engine, sampleRate, 45, 0.8f,
+                                         Articulation::Downstroke, 0.6);
+    auto neckPick = fresh;
+    neckPick.pickPosition = 1.0f;
+    engine.setParameters(neckPick);
+    const auto neckPicked = renderNote(engine, sampleRate, 45, 0.8f,
+                                       Articulation::Downstroke, 0.6);
+    const double positionDifference = normalisedDifferenceRms(
+        bridgePicked.left, neckPicked.left, static_cast<int>(0.005 * sampleRate),
+        static_cast<int>(0.40 * sampleRate));
+    expect(positionDifference > 0.35,
+           "Pick Position range is not clearly audible ("
+               + std::to_string(positionDifference) + ")");
+
+    auto soft = fresh;
+    soft.pickHardness = 0.0f;
+    engine.setParameters(soft);
+    const auto softPick = renderNote(engine, sampleRate, 45, 0.8f,
+                                     Articulation::Downstroke, 0.5);
+    auto hard = fresh;
+    hard.pickHardness = 1.0f;
+    engine.setParameters(hard);
+    const auto hardPick = renderNote(engine, sampleRate, 45, 0.8f,
+                                     Articulation::Downstroke, 0.5);
+    const int attackStart = static_cast<int>(0.004 * sampleRate);
+    const int attackLength = static_cast<int>(0.10 * sampleRate);
+    const double softCentroid = spectralCentroid(
+        softPick.left, attackStart, attackLength, sampleRate, midiHz(45));
+    const double hardCentroid = spectralCentroid(
+        hardPick.left, attackStart, attackLength, sampleRate, midiHz(45));
+    const double softRms = rmsInRange(softPick.left, attackStart,
+                                      attackStart + attackLength);
+    const double hardRms = rmsInRange(hardPick.left, attackStart,
+                                      attackStart + attackLength);
+    expect(hardCentroid > softCentroid * 1.35,
+           "Pick Hardness does not sufficiently brighten the attack (ratio "
+               + std::to_string(hardCentroid / std::max(softCentroid, 1.0e-12))
+               + ")");
+    expect(hardRms > softRms * 0.55 && hardRms < softRms * 1.70,
+           "Pick Hardness changes loudness more than material (RMS ratio "
+               + std::to_string(hardRms / std::max(softRms, 1.0e-12)) + ")");
 }
 
 void testNoiseComponentsAndSilence()
@@ -879,20 +1662,40 @@ void testStringAllocationAndPolyphony()
 
     expect(engine.getActiveVoiceCount() == 5,
            "C-major chord did not allocate five strings");
-    expect(TestAccess::stringForNote(engine, 48) == 1, "C3 is not on the A string");
-    expect(TestAccess::stringForNote(engine, 52) == 2, "E3 is not on the D string");
-    expect(TestAccess::stringForNote(engine, 55) == 3, "G3 is not on the G string");
-    expect(TestAccess::stringForNote(engine, 60) == 4, "C4 is not on the B string");
-    expect(TestAccess::stringForNote(engine, 64) == 5,
+    expect(TestAccess::stringForNote(engine, 48) == 3, "C3 is not on the A string");
+    expect(TestAccess::stringForNote(engine, 52) == 4, "E3 is not on the D string");
+    expect(TestAccess::stringForNote(engine, 55) == 5, "G3 is not on the G string");
+    expect(TestAccess::stringForNote(engine, 60) == 6, "C4 is not on the B string");
+    expect(TestAccess::stringForNote(engine, 64) == 7,
            "E4 is not on the high E string");
 
-    // A sixth note takes the last free string; a seventh must steal, keeping
-    // the voice count at the physical six.
+    // The three lower opens fill the remaining physical strings. A ninth
+    // simultaneous note must steal while the voice count remains eight.
     engine.noteOn(40, 0.8f);
-    expect(engine.getActiveVoiceCount() == 6, "open E2 did not use the E string");
+    expect(engine.getActiveVoiceCount() == 6, "open E2 did not use its string");
+    engine.noteOn(35, 0.8f);
+    expect(engine.getActiveVoiceCount() == 7, "open B1 did not use its string");
+    engine.noteOn(28, 0.8f);
+    expect(engine.getActiveVoiceCount() == 8, "open E1 did not use its string");
     engine.noteOn(50, 0.8f);
-    expect(engine.getActiveVoiceCount() == 6,
-           "seventh simultaneous note exceeded six strings");
+    expect(engine.getActiveVoiceCount() == 8,
+           "ninth simultaneous note exceeded eight strings");
+
+    // Every open note maps to its own physical string in Drop-E tuning.
+    engine.reset();
+    constexpr std::array<int, ElectryEngine::stringCount> openNotes {
+        28, 35, 40, 45, 50, 55, 59, 64
+    };
+    for (int string = 0; string < ElectryEngine::stringCount; ++string)
+    {
+        const int note = openNotes[static_cast<std::size_t>(string)];
+        engine.noteOn(note, 0.8f);
+        expect(TestAccess::stringForNote(engine, note) == string,
+               "open note " + std::to_string(note)
+                   + " did not map to physical string " + std::to_string(string));
+    }
+    expect(engine.getActiveVoiceCount() == ElectryEngine::stringCount,
+           "eight open notes did not fill all eight physical strings");
 
     // Retriggering a sounding note reuses its string.
     engine.reset();
@@ -984,7 +1787,9 @@ void testParameterSanitisation()
     hostile.bendTimeSeconds = -3.0f;
     hostile.velocityAmount = 9.0f;
     hostile.outputGain = std::numeric_limits<float>::quiet_NaN();
+    hostile.artifactAmount = std::numeric_limits<float>::infinity();
     hostile.pickupSelector = static_cast<PickupSelector>(999);
+    hostile.outputMode = static_cast<electry::OutputMode>(999);
     engine.setParameters(hostile);
 
     auto buffer = renderNote(engine, sampleRate, 45, 0.9f, Articulation::Slap, 0.6);
@@ -1003,11 +1808,15 @@ void testCpuGuardrail()
     constexpr double sampleRate = 96000.0;
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
-    engine.setParameters(EngineParameters {});
+    EngineParameters worstCase;
+    worstCase.outputMode = electry::OutputMode::Stereo;
+    worstCase.artifactAmount = 1.0f;
+    worstCase.bodyResonance = 1.0f;
+    engine.setParameters(worstCase);
     engine.reset();
 
-    // All six strings ringing.
-    for (const int note : { 40, 45, 50, 55, 59, 64 })
+    // All eight physical strings ringing in Drop-E tuning.
+    for (const int note : { 28, 35, 40, 45, 50, 55, 59, 64 })
         engine.noteOn(note, 0.9f);
 
     constexpr int totalSamples = static_cast<int>(2.0 * 96000.0);
@@ -1026,7 +1835,7 @@ void testCpuGuardrail()
 
     const double rendered = static_cast<double>(totalSamples) / sampleRate;
     const double ratio = bestSeconds / rendered;
-    std::cout << "Six-string render CPU ratio at 96 kHz: " << ratio << "x\n";
+    std::cout << "Eight-string render CPU ratio at 96 kHz: " << ratio << "x\n";
 
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
     constexpr double ceiling = 40.0;
@@ -1035,22 +1844,31 @@ void testCpuGuardrail()
     // benchmark fixture.
     constexpr double ceiling = 8.0;
 #endif
-    expect(ratio < ceiling, "six-string render exceeded the portable CPU ceiling");
+    expect(ratio < ceiling, "eight-string render exceeded the portable CPU ceiling");
 }
 
 } // namespace
 
 int main()
 {
+    testInternalOversamplingPolicy();
     testRenderMatrixFiniteAndBounded();
     testPitchAccuracy();
+    testDropELowNoteAtMaximumRate();
     testDeterminism();
     testKeyswitchesSelectStylesSilently();
+    testAlternateStrokeSequence();
     testArticulationsSoundDistinct();
+    testExtendedPlayStyles();
     testBendPrograms();
     testHammerOnLegatoContinuity();
     testSlapCollisionAndTensionGlide();
     testPickupsToneAndModelMorph();
+    testArtifactsControl();
+    testAdvancedDispersionAndBodyConductance();
+    testMonoStereoOutputField();
+    testVelocityExpression();
+    testMaterialAndControlAudibility();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
     testPitchWheelAndSustainPedal();

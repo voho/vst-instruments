@@ -29,6 +29,8 @@ inline constexpr auto muteDamping    = "muteDamping";
 inline constexpr auto bendTime       = "bendTime";
 inline constexpr auto velocity       = "velocity";
 inline constexpr auto output         = "output";
+inline constexpr auto artifacts      = "artifacts";
+inline constexpr auto outputMode     = "outputMode";
 } // namespace electry::parameters
 
 class ElectryAudioProcessor final : public juce::AudioProcessor,
@@ -115,6 +117,8 @@ private:
         std::atomic<float>* bendTime = nullptr;
         std::atomic<float>* velocity = nullptr;
         std::atomic<float>* output = nullptr;
+        std::atomic<float>* artifacts = nullptr;
+        std::atomic<float>* outputMode = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent

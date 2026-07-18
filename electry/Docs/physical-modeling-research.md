@@ -13,37 +13,41 @@ level-matched blind listening.
 
 | Block | Reference | What Electry 1.0 implements | Precise claim |
 | --- | --- | --- | --- |
-| String core | Karjalainen, Välimäki, and Tolonen's single-delay-loop condensation of digital waveguides | Six independent strings, each with two transverse-polarisation single-delay-loop waveguides, third-order Lagrange fractional reads, and a contractive bridge coupling matrix | The published SDL string family with two coupled polarisations per string; not a bidirectional multi-rail scattering simulation |
+| String core | Karjalainen, Välimäki, and Tolonen's single-delay-loop condensation of digital waveguides | Eight independent strings in Drop-E tuning, each with two transverse-polarisation single-delay-loop waveguides, third-order Lagrange fractional reads, and a contractive bridge coupling matrix | The published SDL string family with two coupled polarisations per string; not a bidirectional multi-rail scattering simulation |
 | Two-stage decay and beating | Two-polarisation string behavior described in the same plucked-string literature | The polarisation parallel to the body carries a 1.7x longer decay target and a sub-cent detune, so the mixed output beats slowly and decays in two stages | A qualitative reproduction of the documented mechanism with voiced constants; not calibrated polarisation data from a measured instrument |
-| Stiffness dispersion | Stiff-string inharmonicity `B = pi^3 E d^4 / (64 T L^2)` (Fletcher and Rossing) and allpass dispersion-filter design practice (Rauhala and Välimäki; Abel and Smith) | A per-note `B` computed from string diameter, wound-core fraction, scale length, and tension, mapped onto two first-order loop allpasses whose solved coefficient reproduces the stiffness delay deficit at a reference partial, with exact phase compensation at the fundamental | A physically derived, bounded low-order dispersion approximation; not the very high-order allpass designs that match piano-class inharmonicity across the full band |
-| Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E2..D6 at 44.1-96 kHz); not per-partial measured decay matching |
+| Stiffness dispersion | Stiff-string inharmonicity `B = pi^3 E d^4 / (64 T L^2)` (Fletcher and Rossing) and robust factored allpass design practice (Rauhala and Välimäki; Abel and Smith) | A per-note `B` from string diameter, effective wound-core bending fraction, scale length, and tension drives an eight-stage factored first-order cascade; two coefficients are fitted jointly at low and high partials, with exact fundamental phase compensation | A physically derived, bounded two-band fit whose regression error is under 20% at both references for the worst heavy Drop-E case; not a capture-fitted very-high-order piano dispersion filter |
+| Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E1..D6 at tested host rates through 384 kHz); not per-partial measured decay matching |
 | Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
 | Tension modulation | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity | A string-energy envelope drives a bounded shortening of the loop delay, producing the attack pitch glide that relaxes over hundreds of milliseconds; slaps deepen it | The published phenomenon in its energy-envelope shortcut form; not the exact elongation integral or a time-varying-fraction-delay implementation |
 | Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase excitation (contact choke and scrape, sub-millisecond shaped release pulse, decaying tail) whose polarity, angle-dependent polarisation split, width, spectrum, and comb position differ per play style; the pluck-point comb is realised exactly as the excitation's second travelling-wave image | Behaviorally faithful player interaction in signal form; not the beam-mechanics plectrum profile or force-based finger contact solvers of the cited papers |
 | Fret collisions (slap) | Bilbao and Torin's energy-balanced string/fretboard collision modeling | A decaying collision window whose soft limit clips vertical displacement against a velocity-dependent threshold and re-radiates deterministic rattle noise | Collision-informed slap behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved, with a soft finger excitation and no plectrum noise | Continuous-state legato with fingered attacks; not a distributed finger-force model |
-| Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs whose delay follows the sounding length each fret, a wave-speed-scaled aperture lowpass (wide humbucker vs narrow single-coil window), a bounded distance-flux polynomial nonlinearity, and a loaded RLC-style resonant second-order coil filter with tone-pot behavior | The published pickup signal structure (position comb, aperture average, flux distortion, electrical resonance) with datasheet-plausible constants; not a magnetic finite-element or capture-fitted model of named pickups |
-| Solid body | Solid-body admittance and dead-spot literature; geometric estimates | Four modal resonators fed from the bridge, morphed by the body wood, size, and shape axes; body colour is mixed into the coil inputs and receives knock energy from slaps and contact noise | Geometry-informed structural colour; the mode tables are voicing estimates, not measured modal data of a Les Paul or Telecaster |
-| Guitar-model axes | Documented anchor geometry: 24.75 in vs 25.5 in scales, humbucker vs single-coil construction, set-neck vs bolt-on | Every axis (body wood, size, shape, construction, scale length, pickup type) interpolates between a Gibson Les Paul-style anchor at 0 and a Fender Telecaster-style anchor at 1, defaulting between the two | Parametrized placement between two reference styles; not a licensed or capture-verified reproduction of either trademarked instrument |
+| Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible constants; not a magnetic finite-element or capture-fitted model of named pickups |
+| Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Four modal resonators colour the pickup path, while the positive real modal conductance is evaluated across each note's first six partials and can only shorten loop T60; modes morph with wood, size, shape, and construction | Geometry-informed structural colour plus passive mode-dependent energy extraction; the mode tables remain voicing estimates rather than measured admittance data |
+| Construction controls | Solid-body material/geometry contrasts, humbucker vs single-coil construction, set-neck vs bolt-on, and modern extended-range scale practice | Wood, size, shape, construction, and pickup type interpolate between contrasting reference voicings; scale length spans 25.5 to 28 inches for Drop-E | Parametrized construction and extended-range voicing; not a licensed or capture-verified reproduction of a named instrument |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, release damping noise, and slap body knock, band-shaped per string (wound vs plain) and injected through the same string and body paths as the tone | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
+| Controllable artifacts | The same touch/collision literature plus sympathetic-string and bridge-hardware behavior | An exactly bypassable deterministic path combines open-string sympathetic modes, partial non-slap fret contact, and per-string saddle rattle, all driven by played energy | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
+| Oversampling | Standard nonlinear-audio antialiasing practice | The complete physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x | Genuine internal oversampling and filtered decimation, not a quality label applied to a native-rate nonlinear stage |
+| Output field | Phase-coherent divided/hex pickup practice | Mono is the conventional summed DI. Stereo weights each modeled string by its physical lateral position, keeps shared body modes centered, uses linked output limiting and independent matched decimation, and folds coherently to mono | A virtual divided-pickup string field with no time or phase widening; not room, amplifier, cabinet, chorus, or acoustic stereo |
 
 ## Implemented signal path
 
 The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
 
-1. MIDI notes 24..32 are latching keyswitches that select the play style:
-   downstroke, upstroke, hammer-on/pull-off, palm mute, bend to +1 or +2
-   semitones, release bends from +1 or +2 semitones onto the played note, and
-   slap. Notes 40..86 (open E2 to fret 22 on the high E) are playable; a
-   deterministic allocator maps each note to one of six string voices,
+1. MIDI notes 12..27 (C0..D#1) are latching keyswitches that select the play
+   style: downstroke, upstroke, alternating strokes, hammer-on/pull-off, tap,
+   palm mute, chug, dead note, natural and pinch harmonics, repeated tremolo
+   picking, bend to +1 or +2 semitones, release bends from +1 or +2 semitones,
+   and slap. Notes 28..86 are playable on eight physical strings in Drop-E
+   tuning (E1-B1-E2-A2-D3-G3-B3-E4); a deterministic allocator maps each note,
    preferring a repick of an already-sounding note, then the hammer-on
    continuation of the nearest sounding string, then the free string with the
    lowest fret (which reproduces open-position chord shapes), and finally an
    oldest-first steal.
 2. Each string voice runs two single-delay-loop waveguides (vertical and
    horizontal polarisation). Each loop has a third-order Lagrange fractional
-   read, two first-order dispersion allpasses solved from the string's
-   physical inharmonicity, a one-pole damping filter solved from T60 targets,
+   read, eight factored first-order dispersion allpasses jointly fitted from
+   the string's physical inharmonicity at two partials, a one-pole damping filter solved from T60 targets,
    and a release/mute gain ramp. A contractive bridge matrix exchanges a
    small amount of energy between the polarisations.
 3. The loop delay compensates the exact phase delay of every loop filter at
@@ -59,7 +63,9 @@ The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
    play style, injected into both polarisations with a style-dependent split
    and polarity. The pluck-position comb is realised by scattering the same
    excitation with opposite sign one comb delay behind the write head — the
-   second travelling-wave image of the excitation point.
+   second travelling-wave image of the excitation point. A single velocity
+   profile drives pulse level, width, brightness, contact noise, tension, and
+   collision response, so the Velocity knob changes expression coherently.
 5. Slap opens a decaying fret-collision window that soft-limits vertical
    displacement against a velocity-dependent clearance and adds deterministic
    rattle proportional to the clipped excess, plus a thumb knock into the
@@ -69,17 +75,29 @@ The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
 6. Each pickup reads every string's displacement as the freshly written
    bridge sample minus a fractional read at the pickup delay; that delay
    follows the sounding length, so fretting up the neck moves the comb
-   exactly as the geometry does. The tap passes an aperture one-pole scaled
-   by the string's wave speed and the selected coil's magnetic window, then a
-   bounded distance-flux polynomial. String sums (plus body colour) drive one
+   exactly as the geometry does. The tap passes a fractional finite-window
+   spatial average scaled by wave speed and magnetic aperture, then a bounded
+   distance-flux polynomial. Its time derivative is the induced pickup EMF;
+   an oversampled 16 kHz guard bounds the differentiator. String sums (plus body colour) drive one
    resonant second-order coil filter per pickup, morphing humbucker to
    single-coil resonance and Q, loaded further by the passive tone control;
    the selector fades neck, both (with the paired-coil resonance shift), or
    bridge.
 7. Four modal body resonators fed from bridge motion and contact/knock noise
-   add solid-body colour into the coil inputs. The summed output passes a
-   5 Hz DC blocker and a bounded soft guard. The result is dual-mono: a dry
-   electric guitar signal with no amplifier, cabinet, or effect processing.
+   add solid-body colour into the coil inputs. The same modal frequencies, Q,
+   and levels define a bounded positive bridge-conductance map across the
+   first six string partials; it only removes loop energy, making body modes
+   alter sustain without risking feedback growth. An optional eight-mode
+   open-string bank plus per-string saddle/fret contact adds deterministic
+   Artifacts detail without feeding energy back into the string loops.
+8. Mono sums the normal pickup field to exact dual mono. Stereo derives a
+   modest side field from each string's physical low-to-high position while
+   keeping body motion centered; there is no delay or modulation. Both
+   channels pass matched coil filters, 5 Hz DC blockers, and one linked
+   bounded soft guard. At host
+   rates through 96 kHz, steps 2-8 run at 2x and a fixed 63-tap halfband FIR
+   decimates to the host rate; 192 and 384 kHz hosts run natively. The result
+   is dry guitar with no amplifier, cabinet, room, or effect processing.
 
 ## Dual-polarisation string loops
 
@@ -90,7 +108,7 @@ Waveguides and Beyond*](http://users.spa.aalto.fi/vpv/publications/cmj98.pdf)
 string with consolidated losses reduces exactly to a single delay loop, and
 that output combs equivalent to pluck and pickup positions can be factored
 out of the loop. Electry uses that condensation: per polarisation, one
-fractional delay line, one damping filter, and one dispersion pair; the pluck
+fractional delay line, one damping filter, and one factored dispersion cascade; the pluck
 comb is realised as the excitation's second travelling-wave image written
 directly into the line, and each pickup tap is the current bridge sample
 minus a delayed read.
@@ -125,20 +143,23 @@ filters*](https://www.researchgate.net/publication/229009513_Dispersion_modeling
 and Abel and Smith
 ([*Robust Design of Very High-Order Allpass Dispersion
 Filters*](https://www.dafx.de/paper-archive/2006/papers/p_013.pdf)) in
-spirit, at deliberately low order: two identical first-order allpasses whose
-coefficient is solved by bisection so their extra low-frequency phase delay
-reproduces the delay deficit stiffness causes at a reference partial
-(`min(16, 0.3 fs / f0)`). Electric-guitar `B` values (about `1e-5` for a
-plain high E to about `1.5e-4` for a wound low E at these scales) are small
-enough for this bounded approximation; the solved coefficient is clamped to
-`[-0.55, 0]`, and the deficit is therefore also bounded on the lowest wound
-strings. Electry does not claim the full-band partial-frequency accuracy of
-the cited high-order designs.
+factored form. Each polarisation uses eight first-order allpass sections:
+four share one coefficient and four share a second. At note configuration, a
+bounded two-pass search jointly minimises relative delay-deficit error at a
+low partial (`2..4`, depending on available bandwidth) and a high partial
+(`min(16, 0.3 fs / f0)`). Coefficients remain strictly inside the unit circle
+in `[-0.995, 0]`. Wound strings use an effective bending-core fraction smaller
+than the geometric core because the wrap slips under flexure instead of acting
+like one solid rod; the full diameter still determines mass and tension. The
+heavy, short-scale Drop-E regression bounds fit error at both references,
+rather than checking only that a coefficient is nonzero. Electry does not
+claim the full-band accuracy of the cited very-high-order capture-fitted
+designs.
 
 Tuning is exact at the fundamental: the loop delay subtracts the analytic
-phase delay of the damping one-pole and both allpasses at `f0`, evaluated
+phase delay of the damping one-pole and all eight allpasses at `f0`, evaluated
 from their closed-form responses. The regression suite bounds the sounding
-fundamental within 8 cents of equal temperament across E2..D6 at 44.1, 48,
+fundamental within 8 cents of equal temperament across E1..D6 at 44.1, 48,
 and 96 kHz.
 
 ## Loop damping, dead spots, and release
@@ -204,8 +225,8 @@ in signal form:
   longer than plain ones, following the handling-noise observations in
   Pakarinen, Puputti, and Välimäki's virtual slide guitar work
   ([NIME 2008 companion paper](https://www.nime.org/proceedings/2008/nime2008_049.pdf)).
-- **Release phase.** A raised-cosine pulse of 0.16-0.85 ms (hardness
-  dependent, style scaled) passes a hardness-mapped one-pole and enters both
+- **Release phase.** A raised-cosine pulse of roughly 0.10-1.15 ms before
+  velocity/style scaling passes a hardness-mapped one-pole and enters both
   polarisations with a style-dependent split and polarity: downstrokes and
   upstrokes displace the string in opposite directions, upstrokes sit
   slightly closer to the bridge and brighter, hammer-ons are wider, darker,
@@ -213,7 +234,8 @@ in signal form:
 - **Noise controls.** Plectrum, finger, and release noise have independent
   levels; all noise is seeded deterministically per note, so identical MIDI
   renders identical audio. The noise feeds the string loops and the body,
-  never a parallel dry bus alone.
+  never a parallel dry bus alone. The Artifacts path uses a separate PRNG, so
+  changing it never changes the ordinary plectrum/finger-noise sequence.
 
 Bend styles start the pitch program at the played note (upward bends) or
 above it (release bends), hold for about 55 ms, then travel along a
@@ -229,7 +251,8 @@ Bilbao and Torin,
 Interactions*](https://www.research.ed.ac.uk/en/publications/numerical-modeling-and-sound-synthesis-for-articulated-stringfret/)
 (JAES 63(5), 2015), simulate distributed string-fret contact with an
 energy-balanced penalty formulation. A full FDTD contact solve is outside
-Electry's per-voice budget; the slap style instead opens an 85 ms collision
+Electry's per-voice budget; the slap style instead opens a velocity-shaped
+55-100 ms collision
 window in which vertical displacement beyond a velocity-dependent clearance
 is soft-limited (a bounded rational excess law) and the clipped excess
 re-radiates as deterministic rattle noise. The threshold relaxes as the
@@ -248,16 +271,18 @@ a resonant electrical circuit. Electry implements each element:
 
 - **Position comb.** Per string and pickup, `y(n) = s(n) - s(n - D)` with
   `D = (d / L_sounding) * period`. The distances from the bridge morph
-  between the anchors (bridge pickup 46 mm to 31 mm, neck pickup 155 mm to
+  between the anchors (bridge pickup 43 mm to 28 mm, neck pickup 155 mm to
   163 mm), and because `D` follows the sounding length, fretting up the neck
   moves the comb exactly as the geometry does. Partials with a node at the
   pickup cancel; the bridge position's weak fundamental sensing is why it
   reads thin and bright, which the regression suite checks as a centroid
   ordering.
-- **Aperture.** A one-pole lowpass whose cutoff is `0.443 c / w`: the
-  transverse wave speed `c = 2 L f_open` over the magnetic window width,
-  17.5 mm for the humbucker anchor and 6.4 mm for the single-coil anchor
-  (window magnitudes consistent with engineering analyses such as
+- **Aperture.** A fractional rectangular moving average of length `Fs*w/c`,
+  where transverse wave speed `c = 2 L f_open`. A cumulative-sum ring gives
+  this finite spatial window in O(1) per sample, including fractional window
+  length, so its response is the exact aperture sinc with the expected
+  `0.443 c / w` -3 dB point. Width morphs from 21.0 mm for the humbucker
+  anchor to 4.8 mm for the narrow single coil (window magnitudes consistent with engineering analyses such as
   [Cycfi Research's virtual pickup
   series](https://www.cycfi.com/2014/08/virtual-pickups-part-3/)).
 - **Flux nonlinearity.** A bounded polynomial `x (1 + 0.55 x + 0.30 x^2)` on
@@ -266,21 +291,25 @@ a resonant electrical circuit. Electry implements each element:
   [*Measurements and Modeling of the Nonlinear Behavior of a Guitar Pickup
   at Low
   Frequencies*](https://www.researchgate.net/publication/312046898_Measurements_and_Modeling_of_the_Nonlinear_Behavior_of_a_Guitar_Pickup_at_Low_Frequencies);
-  the hotter humbucker anchor drives it harder. DC produced by the even
-  terms is removed by the output blocker.
+  the hotter humbucker anchor drives it harder.
+- **Induced EMF.** The nonlinear result represents magnetic flux, not output
+  voltage. A finite difference multiplied by `Fs / (2 pi 220 Hz)` produces
+  the induced EMF and its physically correct frequency weighting; a one-pole
+  at up to 16 kHz bounds the differentiator inside the oversampled path. DC
+  from the even flux terms therefore vanishes before the output blocker.
 - **Coil resonance and tone.** One resonant second-order lowpass per pickup:
-  2.45 kHz at Q 1.35 for the loaded humbucker anchor, 4.05 kHz at Q 1.95
+  2.0 kHz at Q 1.0 for the loaded humbucker anchor, 6.0 kHz at Q 2.4
   for the loaded single coil, values inside the ranges those circuits
   measure under typical pot and cable loading. Selecting both pickups
   shifts the shared resonance down 7%, and the passive tone control moves
-  the resonance toward 780 Hz while damping its Q, so rolling the tone off
+  the resonance toward 600 Hz while damping its Q, so rolling the tone off
   genuinely darkens rather than merely relocating the peak. Humbucker
-  output is 1.32x hotter.
+  output is 1.40x hotter.
 
 These constants are datasheet-plausible anchors, not fitted measurements of
 named pickup models.
 
-## Solid body and the Les Paul-Telecaster axes
+## Solid body and construction axes
 
 A solid body has low bridge admittance and mainly colours the sound and its
 decay rather than radiating it. Electry feeds bridge motion, contact noise,
@@ -291,23 +320,54 @@ signal joins the coil inputs, as body vibration reaches the pickups through
 string-pickup distance modulation. The mode tables are geometry-informed
 estimates and are documented as voicing, not measured modal data.
 
-Every guitar-model axis interpolates between the two anchor instruments and
-defaults to 0.5, placing the default instrument between a Les Paul-style and
-a Telecaster-style build, as the instrument contract requires:
+Bank and Karjalainen's
+[*Passive admittance-based physical modeling of musical instruments in
+real time*](https://home.mit.bme.hu/~bank/publist/dafx10adm.pdf) and Maestre,
+Scavone, and Smith's
+[*Joint Modeling of Bridge Admittance and Body Radiativity for Efficient
+Synthesis of String Instrument Sound by Digital Waveguides*](https://caml.music.mcgill.ca/lib/exe/fetch.php?media=publications%3Amaestre_jointmodeling_ieeeaslp_2017.pdf)
+show how a positive-real modal bridge admittance can couple string energy to
+an instrument body without creating energy. Electry uses a conservative
+loss-only slice of that direction, not their complete shared multiport bridge
+scattering network. For each body mode, the engine evaluates the positive
+real part of normalised modal mobility,
+`G=(c*w)^2 / ((w_m^2-w^2)^2 + (c*w)^2)`, with `c=w_m/Q`. `G` stays in
+`[0,1]`, peaks at the mode, and is averaged across the note's first six
+partials. Body Resonance and construction scale that conductance, which can
+only shorten T60; at 0% Body Resonance the additional structural loss is
+exactly bypassed. This gives note-dependent material sustain without an
+additive feedback loop.
 
-| Axis | 0 (Les Paul-style anchor) | 1 (Telecaster-style anchor) |
+The material axes interpolate between contrasting solid-body references and
+default to 0.5. Scale length is independent and extended for Drop-E:
+
+| Axis | 0 | 1 |
 | --- | --- | --- |
 | Body wood | Mahogany with maple cap, longer-ringing modes | Swamp ash, lighter and brighter-tilted modes |
 | Body size | Thick, heavy blank (lower modes) | Thin, light slab (higher modes) |
 | Body shape | Carved single-cut mode pattern | Flat slab mode pattern |
 | Construction | Set neck and stopbar (more sustain, shallower dead spots) | Bolt-on and through-body (snappier, deeper dead spots) |
-| Scale length | 24.75 in (628.65 mm) | 25.5 in (647.7 mm), higher tension and slightly lower inharmonicity for the same pitch |
-| Pickup type | Wide-aperture humbucker, 2.45 kHz loaded resonance, hotter | Narrow single coil, 4.05 kHz loaded resonance |
+| Scale length | 25.5 in (647.7 mm) conventional electric | 28 in (711.2 mm) baritone/8-string, higher tension and lower inharmonicity for the same pitch |
+| Pickup type | Wide-aperture humbucker, 2.0 kHz loaded resonance, hotter | Narrow single coil, 6.0 kHz loaded resonance |
 
 Scale length enters the string physics directly: tension, wave speed,
 aperture cutoff, inharmonicity, and pickup comb fractions all follow it.
 
 ## Why the runtime remains analytic
+
+Bilbao, Russo, Webb, and Ducceschi's 2024
+[*Real-Time Guitar Synthesis*](https://www.pure.ed.ac.uk/ws/portalfiles/portal/470239305/BilbaoEtal2024RealTimeGuitarSynthesis.pdf)
+shows that energy-stable FDTD guitar strings with simultaneous geometric,
+fretboard, fret, and finger nonlinearities can now run in real time using
+IEQ/SAV methods and a small low-rank solve. That reference models one
+polarisation and explicitly leaves body coupling and radiation for future
+work. Replacing Electry's complete eight-string runtime with that solver
+would therefore trade away its two-polarisation pickup/body architecture and
+its broad host-rate contract. Electry instead combines the efficient
+single-delay-loop family with bounded collision laws, exact finite-aperture
+pickup sensing, induced EMF, factored dispersion, and loss-only modal bridge
+conductance. The choice is architectural, not a claim that the FDTD method is
+impractical.
 
 Learning-based string synthesis is advancing quickly — differentiable modal
 and waveguide models such as
@@ -319,34 +379,49 @@ no licensed capture set of identified instruments across pitch, style,
 pickup, and control space, so a learned runtime would add opaque behavior
 rather than verified fidelity. The analytic blocks above are auditable,
 deterministic, allocation-free in the audio path, and cheap: the complete
-six-string engine renders at about 5% of real time at 96 kHz on the CI
-reference hardware. Differentiable methods remain the obvious future path
+eight-string engine remains comfortably faster than real time at 96 kHz on
+the CI reference hardware. Differentiable methods remain the obvious future path
 for fitting Electry's voicing constants (T60 maps, body modes, pickup
 resonances) to calibrated captures.
 
 ## Validation boundary
 
 Current automated tests establish: finite, bounded, non-silent output for
-all nine play styles at 44.1-192 kHz; exact-silence idle output;
+all 16 play styles at 44.1-384 kHz; the 2x/1x internal-rate policy, exact
+host-to-physical clock timing, and filtered-decimation pitch stability;
+exact-silence idle output;
 sample-identical renders for identical MIDI (including across engine reuse,
 which caught a real aperture-state leak during development); fundamental
-accuracy within 8 cents across E2..D6 at three rates; keyswitch latching,
+accuracy within 8 cents across E1..D6 at three rates; stable allpass bounds
+and under-20% low/high dispersion-deficit fit error on the heavy short-scale
+Drop-E case; positive bounded modal conductance and exact structural-loss
+bypass at 0%; keyswitch latching,
 silence, and range gating; measurably distinct attack spectra and levels for
-picked, hammered, muted, and slapped styles; palm-mute decay contraction;
+picked, hammered, tapped, muted, chugged, dead, harmonic, tremolo, and slapped
+styles; palm-mute decay contraction;
 bend start/end/travel targets for all four bend styles; hammer-on
 same-string continuation, pitch settling, and click-free transition; slap
 collision-window engagement and a sharp-to-true tension glide between 1.5
 and 80 cents; bridge-brighter-than-neck centroid ordering; tone-control
-high-band reduction; audibly different Les Paul-style and Telecaster-style
+high-band reduction; independently audible wood, size, shape, construction,
+scale, gauge, body-level, position, hardness, and age endpoints; monotonic
+multi-dimensional velocity response plus an exactly flat 0% setting;
+deterministic, monotonic, exactly silent-at-zero Artifacts behavior and a
+bounded maximum-artifact eight-string strum; contrasting construction
 endpoints that both stay in tune; plectrum contact noise in the pre-attack
-window; release noise that appears only after note-off; six-string
+window; release noise that appears only after note-off; eight-string
 polyphony with open-position chord mapping, repick reuse, and stealing;
 pitch-wheel travel and sustain-pedal hold; hostile parameter and performance
-input safety; and a portable CPU ceiling with the six-string render ratio
-printed on every run. The plug-in suite additionally pins the 20-parameter
+input safety; and a portable CPU ceiling with the eight-string render ratio
+printed on every run in worst-case Stereo, maximum Body Resonance, and maximum
+Artifacts mode. Mono is checked sample-for-sample dual mono; Stereo tests pin
+physical low/high string orientation, coherent fold-down, bounded side level,
+energy balance, determinism, and opposite string endpoints. The plug-in suite
+additionally pins the 22-parameter
 contract, formatted values, state round-trips, bus layout, sample-accurate
 note starts, MIDI controller behavior (sustain, all-sound-off,
-all-notes-off), UI articulation triggering, panic, output-gain effect,
+all-notes-off), UI articulation triggering, panic, output-gain and APVTS
+output-field effects, two visible non-overlapping mode buttons,
 offscreen editor rendering, and prepare/release cycles at three rates.
 
 Those engineering tests do not replace hardware validation. A stronger claim

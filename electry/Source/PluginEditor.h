@@ -26,6 +26,27 @@ public:
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 };
 
+// A guitar-oriented keyboard that keeps the latching play-style keys visually
+// separate from the playable Drop-E eight-string range.
+class ElectryKeyboardComponent final : public juce::MidiKeyboardComponent
+{
+public:
+    explicit ElectryKeyboardComponent (juce::MidiKeyboardState&);
+
+    void setSelectedKeyswitchIndex (int newIndex);
+
+    void drawWhiteNote (int midiNoteNumber, juce::Graphics&,
+                        juce::Rectangle<float> area, bool isDown, bool isOver,
+                        juce::Colour lineColour, juce::Colour textColour) override;
+    void drawBlackNote (int midiNoteNumber, juce::Graphics&,
+                        juce::Rectangle<float> area, bool isDown, bool isOver,
+                        juce::Colour noteFillColour) override;
+    juce::String getWhiteNoteText (int midiNoteNumber) override;
+
+private:
+    int selectedKeyswitchIndex = 0;
+};
+
 // A titled row of exclusive buttons, used for the pickup selector and the
 // play-style (keyswitch) strip.
 class ElectryChoiceStrip final : public juce::Component
@@ -35,6 +56,7 @@ public:
 
     std::function<void (int)> onChoice;
     void setSelectedIndex (int newIndex);
+    void setTooltipText (const juce::String& text);
     int getSelectedIndex() const noexcept { return selectedIndex; }
 
     void paint (juce::Graphics&) override;
@@ -50,6 +72,7 @@ class ElectryKnob final : public juce::Component
 {
 public:
     explicit ElectryKnob (juce::String name);
+    void paint (juce::Graphics&) override;
     void resized() override;
 
     juce::Slider slider;
@@ -87,11 +110,10 @@ private:
     enum Section
     {
         articulationSection,
-        guitarSection,
-        pickupSection,
-        playSection,
-        noiseSection,
+        coreSection,
         masterSection,
+        buildSection,
+        detailSection,
         sectionCount
     };
 
@@ -100,6 +122,7 @@ private:
 
     ElectryAudioProcessor& electryProcessor;
     ElectryLookAndFeel lookAndFeel;
+    juce::Image backgroundImage;
     juce::TooltipWindow tooltipWindow { this, 600 };
 
     juce::Label logoLabel;
@@ -109,11 +132,13 @@ private:
     juce::TextButton panicButton { "PANIC" };
 
     ElectryChoiceStrip articulationStrip {
-        "PLAY STYLE  (KEYSWITCHES C1..G#1)",
-        { "DOWN", "UP", "HAMMER", "MUTED", "BEND 1^", "BEND 2^",
-          "BEND 1v", "BEND 2v", "SLAP" }
+        "PLAY STYLE  (OXBLOOD KEYSWITCHES C0..D#1)",
+        { "DOWN", "UP", "ALT", "HAMMER", "TAP", "PALM MUTE", "CHUG", "DEAD",
+          "HARMONIC", "PINCH", "TREMOLO", "BEND 1^", "BEND 2^", "RELEASE 1",
+          "RELEASE 2", "SLAP" }
     };
     ElectryChoiceStrip pickupStrip { "PICKUP", { "NECK", "BOTH", "BRIDGE" } };
+    ElectryChoiceStrip outputModeStrip { "OUTPUT FIELD", { "MONO", "STEREO" } };
 
     ElectryKnob bodyWoodKnob { "WOOD" };
     ElectryKnob bodySizeKnob { "SIZE" };
@@ -136,12 +161,14 @@ private:
     ElectryKnob pickNoiseKnob { "PLECTRUM" };
     ElectryKnob fingerNoiseKnob { "FINGER" };
     ElectryKnob releaseNoiseKnob { "RELEASE" };
+    ElectryKnob artifactsKnob { "ARTIFACTS" };
 
     ElectryKnob outputKnob { "OUTPUT" };
 
-    juce::MidiKeyboardComponent keyboard;
+    ElectryKeyboardComponent keyboard;
 
     std::unique_ptr<juce::ParameterAttachment> pickupAttachment;
+    std::unique_ptr<juce::ParameterAttachment> outputModeAttachment;
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::array<juce::Rectangle<int>, sectionCount> sectionBounds {};
 
