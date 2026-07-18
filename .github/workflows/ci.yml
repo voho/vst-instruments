@@ -31,6 +31,9 @@ jobs:
           - name: Neuramar
             directory: neuramar
             build_plugin_option: NEURAMAR_BUILD_PLUGIN
+          - name: Electry
+            directory: electry
+            build_plugin_option: ELECTRY_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +67,8 @@ jobs:
             directory: mars
           - name: Neuramar
             directory: neuramar
+          - name: Electry
+            directory: electry
     steps:
       - uses: actions/checkout@v4
 

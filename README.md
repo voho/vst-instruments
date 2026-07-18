@@ -3,16 +3,17 @@
 [![CI](https://github.com/voho/vst-instruments/actions/workflows/ci.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/ci.yml)
 [![Nightly](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml/badge.svg)](https://github.com/voho/vst-instruments/actions/workflows/nightly.yml)
 
-A collection of four original macOS instruments built on one shared technical
+A collection of five original macOS instruments built on one shared technical
 contract: JUCE 8.0.14, CMake 3.22+, C++20, CTest, and VST3, Audio Unit, and
 Standalone targets. Each instrument remains a self-contained project with its
 own DSP core, interface, tests, release helpers, and documentation.
 
-Vocalor, Drumalor, and Mars generate sound procedurally without loading samples.
-Neuramar instead learns a compact synthesis model from audio supplied by its
-user, then renders that model without replaying the recording. All four engines
-run locally, contact no service while rendering, and ship without factory
-samples, pretrained neural weights, or third-party preset libraries.
+Vocalor, Drumalor, Mars, and Electry generate sound procedurally without
+loading samples. Neuramar instead learns a compact synthesis model from audio
+supplied by its user, then renders that model without replaying the recording.
+All five engines run locally, contact no service while rendering, and ship
+without factory samples, pretrained neural weights, or third-party preset
+libraries.
 
 | [Vocalor](vocalor/) | [Drumalor](drumalor/) | [Mars](mars/) | [Neuramar](neuramar/) |
 | :---: | :---: | :---: | :---: |
@@ -26,12 +27,13 @@ samples, pretrained neural weights, or third-party preset libraries.
 | [Drumalor](drumalor/) | Thirteen-voice procedural drum synthesizer with deterministic organic variation, circuit-inspired colour, and GM-oriented MIDI mapping. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
 | [Mars](mars/) | Dual-oscillator virtual-analog polysynth with switchable VCO mixer feeds, measured saw contouring, nonlinear Moog-ladder and SEM-inspired filters, deterministic voice cards, 42 direct sound controls, and persisted HQ oversampling. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
 | [Neuramar](neuramar/) | Drop in a mostly monophonic sound, infer its root, and fit a compact local DDSP-inspired neural synthesis model whose harmonic Core, noisy Air, and resonant Bone remain playable across pitches. | VST3 · AU · Standalone | macOS 11+ | [README](neuramar/README.md) |
+| [Electry](electry/) | Physically modeled dry electric guitar: six dual-polarisation waveguide strings with dispersion, tension-modulation glide, fret collisions, a published pickup/coil model, keyswitched play styles, and guitar-model axes spanning a Les Paul-style and a Telecaster-style anchor. | VST3 · AU · Standalone | macOS 11+ | [README](electry/README.md) |
 
 ## Download (nightly)
 
 The scheduled and manually dispatchable Nightly workflow builds and tests all
-four instruments as universal `arm64`/`x86_64` binaries. After every build,
-test, package, and eight-file manifest check succeeds, it uploads a uniquely
+five instruments as universal `arm64`/`x86_64` binaries. After every build,
+test, package, and ten-file manifest check succeeds, it uploads a uniquely
 named complete set before switching the single rolling
 **[nightly release](https://github.com/voho/vst-instruments/releases/tag/nightly)**.
 Check the Nightly badge above for the latest workflow result before downloading.
@@ -56,23 +58,29 @@ xattr -dr com.apple.quarantine \
   Library/Audio/Plug-Ins/VST3/Neuramar.vst3 \
   Library/Audio/Plug-Ins/Components/Neuramar.component \
   Applications/Neuramar.app
+xattr -dr com.apple.quarantine \
+  Library/Audio/Plug-Ins/VST3/Electry.vst3 \
+  Library/Audio/Plug-Ins/Components/Electry.component \
+  Applications/Electry.app
 ```
 
 For public distribution, build from source with your own Developer ID signing
 and notarization. Each instrument README contains its own distribution guide:
 [Vocalor](vocalor/README.md#sign-package-and-notarize),
 [Drumalor](drumalor/README.md#sign-package-and-notarize),
-[Mars](mars/README.md#sign-package-and-notarize), and
-[Neuramar](neuramar/README.md#sign-package-and-notarize).
+[Mars](mars/README.md#sign-package-and-notarize),
+[Neuramar](neuramar/README.md#sign-package-and-notarize), and
+[Electry](electry/README.md#sign-package-and-notarize).
 
 ## Building
 
 There is no top-level CMake target: build each self-contained instrument from its
-own directory. All four helpers use the same Xcode/CMake/JUCE toolchain,
+own directory. All five helpers use the same Xcode/CMake/JUCE toolchain,
 compile universal `arm64`/`x86_64` binaries, run the instrument's CTest suite,
 and write VST3, Audio Unit, and Standalone bundles below that instrument's
-`build-macos/` directory. Drumalor, Mars, and Neuramar additionally include JUCE
-processor contract tests; Vocalor currently exercises its JUCE-free DSP suite.
+`build-macos/` directory. Drumalor, Mars, Neuramar, and Electry additionally
+include JUCE processor contract tests; Vocalor currently exercises its
+JUCE-free DSP suite.
 
 **Vocalor** ([full instructions](vocalor/README.md#build-on-macos)):
 
@@ -99,6 +107,13 @@ cd mars
 
 ```bash
 cd neuramar
+./scripts/build-macos.sh
+```
+
+**Electry** ([full instructions](electry/README.md#build-on-macos)):
+
+```bash
+cd electry
 ./scripts/build-macos.sh
 ```
 
@@ -131,6 +146,7 @@ vocalor/      Vocalor vocal and choir synthesizer (self-contained JUCE project)
 drumalor/     Drumalor thirteen-voice drum synthesizer (self-contained JUCE project)
 mars/         Mars nonlinear virtual-analog polysynth (self-contained JUCE project)
 neuramar/     Neuramar sample-learned neural synthesizer (self-contained JUCE project)
+electry/      Electry physically modeled dry electric guitar (self-contained JUCE project)
 .github/      Per-push CI and universal Nightly release workflows
 ```
 
@@ -151,6 +167,8 @@ and third-party notices:
   its [third-party notices](mars/THIRD_PARTY_NOTICES.md).
 - **Neuramar** — original source under the [MIT License](neuramar/LICENSE); see
   its [third-party notices](neuramar/THIRD_PARTY_NOTICES.md).
+- **Electry** — original source under the [MIT License](electry/LICENSE); see
+  its [third-party notices](electry/THIRD_PARTY_NOTICES.md).
 
 All instruments build against JUCE, which is not covered by those MIT
 licences. JUCE 8 is dual-licensed under AGPLv3 or a commercial JUCE licence, so
