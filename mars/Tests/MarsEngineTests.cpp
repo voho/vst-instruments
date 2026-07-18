@@ -1661,7 +1661,7 @@ void testHqReturnFilterAndBbdClockPath()
     expect(mars::MarsEngineTestAccess::processingLatency(nativeRate) == 0,
            "native-rate HQ processing reported spurious latency");
 
-    for (const auto [factor, expectedPeak]
+    for (const auto& [factor, expectedPeak]
          : { std::pair { 2, 34 }, std::pair { 4, 51 } })
     {
         const auto response = mars::MarsEngineTestAccess::renderDecimatorImpulse(
@@ -2411,7 +2411,7 @@ void testOscillatorModelContracts()
     expect(dcoSpread < 2.0e-7,
            "DCO alternated adjacent timer counts instead of holding one divisor");
 
-    for (const auto [frequency, clock]
+    for (const auto& [frequency, clock]
          : { std::pair { 220.0f, 1000000.0f },
              std::pair { 440.0f, 2000000.0f },
              std::pair { 880.0f, 4000000.0f } })

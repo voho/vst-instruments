@@ -583,7 +583,7 @@ void testOversamplingConfigurationAndDeferredSwitch()
             "HQ-Off preparation did not preserve the fixed 48 kHz latency");
     preparedWithoutHq.releaseResources();
 
-    for (const auto [highRate, expectedFactor, expectedLatency]
+    for (const auto& [highRate, expectedFactor, expectedLatency]
          : { std::tuple { 96000.0, 2, 34 }, std::tuple { 192000.0, 1, 0 } })
     {
         MarsAudioProcessor highRateProcessor;
