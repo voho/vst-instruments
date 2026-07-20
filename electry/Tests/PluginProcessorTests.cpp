@@ -33,7 +33,7 @@ struct ParameterExpectation
     float tolerance;
 };
 
-constexpr std::array<ParameterExpectation, 22> expectedParameters {{
+constexpr std::array<ParameterExpectation, 27> expectedParameters {{
     { electry::parameters::pickupSelector, 2.0f,  1.0e-5f },
     { electry::parameters::pickupType,     0.5f,  1.0e-5f },
     { electry::parameters::tone,           0.8f,  1.0e-5f },
@@ -56,6 +56,11 @@ constexpr std::array<ParameterExpectation, 22> expectedParameters {{
     { electry::parameters::output,        -6.0f,  1.0e-5f },
     { electry::parameters::artifacts,      0.18f, 1.0e-5f },
     { electry::parameters::outputMode,     0.0f,  1.0e-5f },
+    { electry::parameters::distortion,     0.0f,  1.0e-5f },
+    { electry::parameters::amp,            0.0f,  1.0e-5f },
+    { electry::parameters::compressor,     0.0f,  1.0e-5f },
+    { electry::parameters::delay,          0.0f,  1.0e-5f },
+    { electry::parameters::room,           0.0f,  1.0e-5f },
 }};
 
 float parameterValue (const ElectryAudioProcessor& processor, const char* id)
@@ -117,7 +122,7 @@ void testParameterLayoutAndDefaults()
     ElectryAudioProcessor processor;
     expect (processor.getParameters().size()
                 == static_cast<int> (expectedParameters.size()),
-            "processor does not expose exactly 22 APVTS parameters");
+            "processor does not expose exactly 27 APVTS parameters");
 
     std::set<std::string> uniqueIds;
     for (const auto& expected : expectedParameters)

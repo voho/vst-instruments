@@ -437,6 +437,8 @@ void ElectryEngine::reset()
     activeVoiceCount_ = 0;
     controlCountdown_ = 0;
     pitchBendSemitones_ = pitchBendTarget_;
+    vibratoAmount_ = vibratoTarget_;
+    vibratoPhase_ = 0.0f;
     sustainPedalDown_ = false;
 
     for (auto& filter : neckCoils_)
@@ -486,6 +488,12 @@ void ElectryEngine::setPitchBend(float normalisedBipolar) noexcept
     if (! std::isfinite(normalisedBipolar))
         normalisedBipolar = 0.0f;
     pitchBendTarget_ = 2.0f * clampf(normalisedBipolar, -1.0f, 1.0f);
+}
+
+void ElectryEngine::setVibratoAmount(float normalised) noexcept
+{
+    vibratoTarget_ = std::isfinite(normalised)
+        ? clampf(normalised, 0.0f, 1.0f) : 0.0f;
 }
 
 void ElectryEngine::setSustainPedal(bool down) noexcept
@@ -824,7 +832,15 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         legatoOffset = fromSemis * (1.0f - smoothStep(voice.legatoBlend));
     }
 
-    const float semitones = bendOffset + legatoOffset + pitchBendSemitones_;
+    // A restrained, delayed guitar vibrato: the wheel becomes expressive
+    // without making newly picked attacks seasick. CC1 reaches +/- 35 cents.
+    const float vibratoFade = smoothStep(clampf(
+        static_cast<float>(voice.ageSamples) / (0.09f * static_cast<float>(sampleRate_)),
+        0.0f, 1.0f));
+    const float vibratoSemitones = 0.35f * vibratoAmount_ * vibratoFade
+                                 * std::sin(vibratoPhase_);
+    const float semitones = bendOffset + legatoOffset + pitchBendSemitones_
+                          + vibratoSemitones;
     const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
                             20.0f, 0.24f * static_cast<float>(sampleRate_));
 
@@ -2134,6 +2150,26 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     neckSignal += 0.09f * noiseSample;
     bridgeSignal += 0.15f * noiseSample;
 
+    // Perceptual makeup keeps keyswitch changes usable in a phrase while the
+    // excitation spectra and envelopes remain strongly different. Softer
+    // fingered/harmonic styles no longer disappear beside a power chord.
+    float articulationMakeup = 1.0f;
+    switch (voice.articulation)
+    {
+        case Articulation::Upstroke:        articulationMakeup = 1.06f; break;
+        case Articulation::HammerOn:        articulationMakeup = 1.48f; break;
+        case Articulation::Tap:             articulationMakeup = 1.30f; break;
+        case Articulation::Muted:           articulationMakeup = 1.18f; break;
+        case Articulation::DeadNote:        articulationMakeup = 1.16f; break;
+        case Articulation::NaturalHarmonic: articulationMakeup = 1.34f; break;
+        case Articulation::PinchHarmonic:   articulationMakeup = 1.18f; break;
+        case Articulation::Tremolo:         articulationMakeup = 1.12f; break;
+        case Articulation::Slap:            articulationMakeup = 0.84f; break;
+        default: break;
+    }
+    neckSignal *= articulationMakeup;
+    bridgeSignal *= articulationMakeup;
+
     // A phase-coherent divided-pickup field. Mono leaves both weights at one;
     // Stereo spreads strings by their real lateral order, without delay,
     // chorus, modulation, or random phase. The shared body remains centred.
@@ -2263,6 +2299,12 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
             0.35f, static_cast<float>(sampleRate_));
         pitchBendSemitones_ += pitchBendCoefficient
                              * (pitchBendTarget_ - pitchBendSemitones_);
+        vibratoAmount_ += rateAdjustedCoefficient(0.12f, static_cast<float>(sampleRate_))
+                        * (vibratoTarget_ - vibratoAmount_);
+        vibratoPhase_ += twoPi * 5.4f * static_cast<float>(controlPeriod)
+                       / static_cast<float>(sampleRate_);
+        if (vibratoPhase_ >= twoPi)
+            vibratoPhase_ -= twoPi;
 
         if (pickupDirty)
             configurePickupFilters();

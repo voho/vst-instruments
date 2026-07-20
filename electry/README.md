@@ -11,8 +11,9 @@ the playable range. The individual models have named research references
 contract](Docs/physical-modeling-research.md)); Electry does not claim to be
 a capture-accurate clone of any one instrument.
 
-There are **no effects**: no amplifier, cabinet, reverb, chorus, or
-compression. Mono is the authentic summed dry DI; Stereo is a phase-coherent
+The compact FX panel provides parallel distortion, amp/cab simulation,
+compression, lead delay, and a stereo room; every effect defaults to a true
+0% dry setting. Mono is the authentic summed dry DI; Stereo is a phase-coherent
 divided-pickup view of the eight physical strings, not an effect or delay.
 Both are ready for the amp simulation of your choice. Material, body, pickup,
 and construction controls span deliberately contrasting solid-body anchors;
@@ -75,8 +76,9 @@ grabs the same string, hammer-on continues the nearest sounding string,
 otherwise the free string with the lowest fret wins (which reproduces
 open-position chord shapes), and when everything sounds, the oldest string
 is stolen. The pitch wheel bends ±2 semitones and the sustain pedal (CC 64)
-holds released strings; CC 120/123 behave as All Sound Off and All Notes
-Off.
+holds released strings; the modulation wheel (CC 1) adds a delayed, natural
+5.4 Hz vibrato up to +/-35 cents; CC 120/123 behave as All Sound Off and All
+Notes Off.
 
 ## Sound architecture
 
@@ -162,11 +164,11 @@ to 0.5. Scale length is widened for the Drop-E instrument:
 | Scale length | 25.5 in conventional electric | 28 in baritone / 8-string |
 | Pickup type | Humbucker | Narrow single coil |
 
-## Exact 22-parameter contract
+## Exact 27-parameter contract
 
 The original 20 version-1 host parameters remain in their exact order; the
 Artifacts control is parameter 21 and Output field is appended as parameter
-22. Continuous controls are smoothed inside the engine; pickup and output
+22. The five FX controls are appended as parameters 23..27. Continuous controls are smoothed inside the engine; pickup and output
 mode changes crossfade over roughly 4 ms.
 
 | # | ID | Name | Range and default |
@@ -193,6 +195,11 @@ mode changes crossfade over roughly 4 ms.
 | 20 | `output` | Output level | -24..+6 dB, default -6 dB |
 | 21 | `artifacts` | Artifacts | clean bypass..ring/contact/saddle detail, default 18% |
 | 22 | `outputMode` | Output field | **Mono** / Stereo divided-pickup field |
+| 23 | `distortion` | Distortion | dry..high-gain saturation, default 0% |
+| 24 | `amp` | Amp simulation | dry..amp/cab saturation, default 0% |
+| 25 | `compressor` | Compressor | dry..fast rhythm levelling, default 0% |
+| 26 | `delay` | Delay | dry..360 ms lead delay, default 0% |
+| 27 | `room` | Room | dry..compact stereo ambience, default 0% |
 
 ## Build products
 
