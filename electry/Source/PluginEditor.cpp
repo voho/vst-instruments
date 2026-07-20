@@ -7,8 +7,8 @@ namespace
 namespace colours
 {
 const juce::Colour background { 0xff100b09 };
-const juce::Colour panel { 0xe81a1512 };
-const juce::Colour panelTop { 0xe82a211a };
+const juce::Colour panel { 0x941a1512 };
+const juce::Colour panelTop { 0x9c2a211a };
 const juce::Colour panelOutline { 0xff8c7046 };
 const juce::Colour binding { 0xffd7c398 };
 const juce::Colour text { 0xfff3ead8 };
@@ -710,6 +710,11 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     setup (artifactsKnob, artifacts,
            "Amount of subtle deterministic hardware ring, fret buzz, and incidental collision");
     setup (outputKnob, output, "Master output level");
+    setup (distortionKnob, distortion, "Parallel high-gain distortion drive");
+    setup (ampKnob, amp, "Saturated guitar amp and cabinet simulation");
+    setup (compressorKnob, compressor, "Fast levelling for tight rhythm playing");
+    setup (delayKnob, delay, "Tempo-neutral 360 ms lead delay");
+    setup (roomKnob, room, "Compact stereo room ambience");
 
     keyboard.setAvailableRange (firstKeyboardNote, lastKeyboardNote);
     keyboard.setLowestVisibleKey (firstKeyboardNote);
@@ -775,7 +780,7 @@ void ElectryAudioProcessorEditor::paint (juce::Graphics& graphics)
     }
 
     const std::array<const char*, sectionCount> titles {
-        "", "CORE TONE & RESPONSE", "MASTER", "GUITAR BUILD", "PLAY DETAIL"
+        "", "CORE TONE & RESPONSE", "MASTER", "GUITAR BUILD", "PLAY DETAIL", "FX"
     };
 
     for (int section = 0; section < sectionCount; ++section)
@@ -785,7 +790,7 @@ void ElectryAudioProcessorEditor::paint (juce::Graphics& graphics)
             continue;
         const auto panelBounds = bounds.toFloat();
         const bool prioritySection = section == coreSection || section == masterSection;
-        graphics.setColour (juce::Colours::black.withAlpha (0.42f));
+        graphics.setColour (juce::Colours::black.withAlpha (0.22f));
         graphics.fillRoundedRectangle (panelBounds.translated (0.0f, 2.0f), 8.0f);
 
         juce::ColourGradient panelGradient (
@@ -913,12 +918,17 @@ void ElectryAudioProcessorEditor::resized()
 
     const int secondaryContentWidth = juce::jmax (0, secondaryRow.getWidth() - 8);
     const int buildWidth = juce::roundToInt (
-        static_cast<float> (secondaryContentWidth) * 0.55725f);
+        static_cast<float> (secondaryContentWidth) * 0.43f);
     auto buildArea = secondaryRow.removeFromLeft (buildWidth);
     secondaryRow.removeFromLeft (juce::jmin (8, secondaryRow.getWidth()));
-    auto detailArea = secondaryRow;
+    const int detailWidth = juce::roundToInt (
+        static_cast<float> (secondaryContentWidth) * 0.30f);
+    auto detailArea = secondaryRow.removeFromLeft (detailWidth);
+    secondaryRow.removeFromLeft (juce::jmin (8, secondaryRow.getWidth()));
+    auto effectsArea = secondaryRow;
     sectionBounds[buildSection] = buildArea;
     sectionBounds[detailSection] = detailArea;
+    sectionBounds[effectsSection] = effectsArea;
 
     layoutKnobRow (
         buildArea.reduced (12).withTrimmedTop (16),
@@ -939,4 +949,12 @@ void ElectryAudioProcessorEditor::resized()
           { &releaseNoiseKnob, KnobTier::detail },
           { &artifactsKnob, KnobTier::detail } },
         4);
+
+    layoutKnobRow (
+        effectsArea.reduced (10).withTrimmedTop (16),
+        { { &distortionKnob, KnobTier::detail },
+          { &ampKnob, KnobTier::detail },
+          { &compressorKnob, KnobTier::detail },
+          { &delayKnob, KnobTier::detail },
+          { &roomKnob, KnobTier::detail } }, 2);
 }

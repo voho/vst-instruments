@@ -6,6 +6,7 @@
 
 #include <array>
 #include <atomic>
+#include <vector>
 
 namespace electry::parameters
 {
@@ -31,6 +32,11 @@ inline constexpr auto velocity       = "velocity";
 inline constexpr auto output         = "output";
 inline constexpr auto artifacts      = "artifacts";
 inline constexpr auto outputMode     = "outputMode";
+inline constexpr auto distortion     = "distortion";
+inline constexpr auto amp            = "amp";
+inline constexpr auto compressor     = "compressor";
+inline constexpr auto delay          = "delay";
+inline constexpr auto room           = "room";
 } // namespace electry::parameters
 
 class ElectryAudioProcessor final : public juce::AudioProcessor,
@@ -119,6 +125,11 @@ private:
         std::atomic<float>* output = nullptr;
         std::atomic<float>* artifacts = nullptr;
         std::atomic<float>* outputMode = nullptr;
+        std::atomic<float>* distortion = nullptr;
+        std::atomic<float>* amp = nullptr;
+        std::atomic<float>* compressor = nullptr;
+        std::atomic<float>* delay = nullptr;
+        std::atomic<float>* room = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
@@ -144,6 +155,13 @@ private:
     void updateEngineParameters() noexcept;
 
     electry::ElectryEngine engine;
+    void processEffects (juce::AudioBuffer<float>&, int startSample, int numSamples) noexcept;
+    std::array<std::vector<float>, 2> delayLines;
+    std::array<float, 2> ampLowpass {};
+    std::array<float, 2> roomState {};
+    float compressorEnvelope = 0.0f;
+    int delayWriteIndex = 0;
+    double effectSampleRate = 48000.0;
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };

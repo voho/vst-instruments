@@ -89,6 +89,8 @@ public:
     void noteOff(int midiNote);
     void allNotesOff();
     void setPitchBend(float normalisedBipolar) noexcept;
+    // MIDI CC1 controls a performance vibrato (0 = still, 1 = wide).
+    void setVibratoAmount(float normalised) noexcept;
     void setSustainPedal(bool down) noexcept;
     void process(float* left, float* right, int numSamples);
 
@@ -476,6 +478,9 @@ private:
     int controlCountdown_ { 0 };
     float pitchBendTarget_ { 0.0f };
     float pitchBendSemitones_ { 0.0f };
+    float vibratoTarget_ { 0.0f };
+    float vibratoAmount_ { 0.0f };
+    float vibratoPhase_ { 0.0f };
     bool sustainPedalDown_ { false };
 
     std::array<Voice, stringCount> voices_ {};

@@ -114,6 +114,7 @@ private:
         masterSection,
         buildSection,
         detailSection,
+        effectsSection,
         sectionCount
     };
 
@@ -164,6 +165,11 @@ private:
     ElectryKnob artifactsKnob { "ARTIFACTS" };
 
     ElectryKnob outputKnob { "OUTPUT" };
+    ElectryKnob distortionKnob { "DISTORT" };
+    ElectryKnob ampKnob { "AMP" };
+    ElectryKnob compressorKnob { "COMP" };
+    ElectryKnob delayKnob { "DELAY" };
+    ElectryKnob roomKnob { "ROOM" };
 
     ElectryKeyboardComponent keyboard;
 

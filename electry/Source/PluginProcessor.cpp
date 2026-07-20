@@ -103,6 +103,11 @@ ElectryAudioProcessor::ElectryAudioProcessor()
     parameterPointers.output         = parameters.getRawParameterValue (output);
     parameterPointers.artifacts      = parameters.getRawParameterValue (artifacts);
     parameterPointers.outputMode     = parameters.getRawParameterValue (outputMode);
+    parameterPointers.distortion     = parameters.getRawParameterValue (distortion);
+    parameterPointers.amp            = parameters.getRawParameterValue (amp);
+    parameterPointers.compressor     = parameters.getRawParameterValue (compressor);
+    parameterPointers.delay          = parameters.getRawParameterValue (delay);
+    parameterPointers.room           = parameters.getRawParameterValue (room);
 
     jassert (parameterPointers.pickupSelector != nullptr
              && parameterPointers.pickupType != nullptr
@@ -126,7 +131,7 @@ ElectryAudioProcessor::createParameterLayout()
 {
     using namespace electry::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (22);
+    result.reserve (27);
 
     const auto addFloat = [&result] (const char* id, const char* name,
                                      juce::NormalisableRange<float> range, float defaultValue,
@@ -206,6 +211,13 @@ ElectryAudioProcessor::createParameterLayout()
         juce::ParameterID { outputMode, 1 }, "Output field",
         juce::StringArray { "Mono", "Stereo" }, 0));
 
+    // Versioned additions are intentionally appended to preserve automation.
+    addPercent (distortion, "Distortion", 0.0f);
+    addPercent (amp, "Amp simulation", 0.0f);
+    addPercent (compressor, "Compressor", 0.0f);
+    addPercent (delay, "Delay", 0.0f);
+    addPercent (room, "Room", 0.0f);
+
     return { result.begin(), result.end() };
 }
 
@@ -217,6 +229,15 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     engine.reset();
     engine.setPitchBend (0.0f);
     engine.setSustainPedal (false);
+    engine.setVibratoAmount (0.0f);
+    effectSampleRate = juce::jlimit (8000.0, 384000.0, sampleRate);
+    const auto delaySize = static_cast<std::size_t> (effectSampleRate * 1.25) + 1u;
+    for (auto& line : delayLines)
+        line.assign (delaySize, 0.0f);
+    ampLowpass = {};
+    roomState = {};
+    compressorEnvelope = 0.0f;
+    delayWriteIndex = 0;
     discardUiMidiEvents();
     panicRequested.store (false, std::memory_order_release);
     displaySampleRate.store (sampleRate, std::memory_order_relaxed);
@@ -290,6 +311,8 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                         buffer.getWritePointer (1, renderedTo),
                         numSamples - renderedTo);
 
+    processEffects (buffer, 0, numSamples);
+
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
     articulationIndex.store (
         static_cast<int> (engine.getCurrentArticulation()), std::memory_order_relaxed);
@@ -321,9 +344,12 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
         const auto controllerValue = data[2] & 0x7fu;
         if (controller == 64u)
             engine.setSustainPedal (controllerValue >= 64u);
+        else if (controller == 1u)
+            engine.setVibratoAmount (static_cast<float> (controllerValue) / 127.0f);
         else if (controller == 121u)
         {
             engine.setPitchBend (0.0f);
+            engine.setVibratoAmount (0.0f);
             engine.setSustainPedal (false);
         }
         else if (controller == 120u)
@@ -380,6 +406,73 @@ void ElectryAudioProcessor::updateEngineParameters() noexcept
         juce::roundToInt (valueOf (parameterPointers.outputMode)));
     next.outputMode = static_cast<electry::OutputMode> (mode);
     engine.setParameters (next);
+}
+
+void ElectryAudioProcessor::processEffects (juce::AudioBuffer<float>& buffer,
+                                            int startSample, int numSamples) noexcept
+{
+    if (delayLines[0].empty() || numSamples <= 0)
+        return;
+
+    const float distortionMix = valueOf (parameterPointers.distortion);
+    const float ampMix = valueOf (parameterPointers.amp);
+    const float compressorMix = valueOf (parameterPointers.compressor);
+    const float delayMix = valueOf (parameterPointers.delay);
+    const float roomMix = valueOf (parameterPointers.room);
+    const float attack = std::exp (-1.0f / static_cast<float> (0.003 * effectSampleRate));
+    const float release = std::exp (-1.0f / static_cast<float> (0.090 * effectSampleRate));
+    const float cabinetCoefficient = std::exp (
+        -juce::MathConstants<float>::twoPi * (1800.0f + 2600.0f * (1.0f - ampMix))
+        / static_cast<float> (effectSampleRate));
+    const int delaySamples = juce::jlimit (
+        1, static_cast<int> (delayLines[0].size()) - 1,
+        static_cast<int> (0.36 * effectSampleRate));
+    const int roomSamples = juce::jmax (1, static_cast<int> (0.029 * effectSampleRate));
+    const int lineSize = static_cast<int> (delayLines[0].size());
+
+    for (int i = startSample; i < startSample + numSamples; ++i)
+    {
+        const float detector = juce::jmax (std::abs (buffer.getSample (0, i)),
+                                           std::abs (buffer.getSample (1, i)));
+        compressorEnvelope = (detector > compressorEnvelope ? attack : release)
+                           * compressorEnvelope
+                           + (1.0f - (detector > compressorEnvelope ? attack : release))
+                           * detector;
+        const float threshold = juce::Decibels::decibelsToGain (-20.0f);
+        const float compressedGain = compressorEnvelope > threshold
+            ? std::pow (threshold / compressorEnvelope, 0.72f) : 1.0f;
+
+        for (int channel = 0; channel < 2; ++channel)
+        {
+            float sample = buffer.getSample (channel, i);
+            const float driven = std::tanh (sample * (1.0f + 24.0f * distortionMix))
+                               / std::tanh (1.0f + 24.0f * distortionMix);
+            sample = juce::jmap (distortionMix, sample, driven);
+
+            const float ampDriven = std::tanh (sample * (1.0f + 12.0f * ampMix));
+            ampLowpass[static_cast<std::size_t> (channel)] =
+                cabinetCoefficient * ampLowpass[static_cast<std::size_t> (channel)]
+                + (1.0f - cabinetCoefficient) * ampDriven;
+            sample = juce::jmap (ampMix, sample,
+                1.35f * ampLowpass[static_cast<std::size_t> (channel)]);
+            sample *= juce::jmap (compressorMix, 1.0f, compressedGain);
+
+            auto& line = delayLines[static_cast<std::size_t> (channel)];
+            const int delayedIndex = (delayWriteIndex - delaySamples + lineSize) % lineSize;
+            const int roomIndex = (delayWriteIndex - roomSamples + lineSize) % lineSize;
+            const float delayed = line[static_cast<std::size_t> (delayedIndex)];
+            roomState[static_cast<std::size_t> (channel)] = 0.72f
+                * roomState[static_cast<std::size_t> (channel)]
+                + 0.28f * line[static_cast<std::size_t> (roomIndex)];
+            line[static_cast<std::size_t> (delayWriteIndex)] = sample
+                + delayed * (0.18f + 0.42f * delayMix)
+                + roomState[static_cast<std::size_t> (1 - channel)] * 0.24f * roomMix;
+            sample += delayed * 0.55f * delayMix
+                    + roomState[static_cast<std::size_t> (channel)] * 0.38f * roomMix;
+            buffer.setSample (channel, i, juce::jlimit (-2.0f, 2.0f, sample));
+        }
+        delayWriteIndex = (delayWriteIndex + 1) % lineSize;
+    }
 }
 
 void ElectryAudioProcessor::triggerArticulation (int index)
