@@ -231,6 +231,7 @@ private:
     void dispatchMidiData (const juce::uint8* data, int numBytes) noexcept;
     void updateEngineParameters() noexcept;
     void pushScopeSamples (const juce::AudioBuffer<float>& buffer) noexcept;
+    void clearScopeRing() noexcept;
 
     mars::MarsEngine engine;
     std::atomic<bool> panicRequested { false };

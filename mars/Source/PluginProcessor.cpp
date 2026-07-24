@@ -549,7 +549,7 @@ void MarsAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     displayArpNote.store (-1, std::memory_order_relaxed);
     displayArpPhase.store (0.0f, std::memory_order_relaxed);
     displayArpKeys.store (0, std::memory_order_relaxed);
-    scopeRing.fill (0.0f);
+    clearScopeRing();
     scopeWriteIndex.store (0, std::memory_order_release);
     engineReady.store (true, std::memory_order_release);
 }
@@ -570,7 +570,7 @@ void MarsAudioProcessor::releaseResources()
     displayArpNote.store (-1, std::memory_order_relaxed);
     displayArpPhase.store (0.0f, std::memory_order_relaxed);
     displayArpKeys.store (0, std::memory_order_relaxed);
-    scopeRing.fill (0.0f);
+    clearScopeRing();
     scopeWriteIndex.store (0, std::memory_order_release);
     setLatencySamples (0);
 }
@@ -632,6 +632,13 @@ void MarsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     displayArpPhase.store (engine.getArpeggiatorPhase(), std::memory_order_relaxed);
     displayArpKeys.store (engine.getArpeggiatorHeldKeyCount(), std::memory_order_relaxed);
     pushScopeSamples (buffer);
+}
+
+void MarsAudioProcessor::clearScopeRing() noexcept
+{
+    // std::array::fill would copy-assign the atomics, which is deleted.
+    for (auto& sample : scopeRing)
+        sample.store (0.0f, std::memory_order_relaxed);
 }
 
 void MarsAudioProcessor::pushScopeSamples (const juce::AudioBuffer<float>& buffer) noexcept
