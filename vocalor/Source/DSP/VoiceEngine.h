@@ -302,6 +302,11 @@ private:
     // the pitch held until its final note-off.
     std::array<std::uint16_t, 128> heldNoteCounts_ {};
     int heldCount_ { 0 };
+    // True while the sounding voices reached their pitch by a legato retune
+    // rather than a fresh attack. Legato can be automated off mid-phrase, and
+    // the note-off fallback still has to hand those voices back to the key
+    // underneath -- they were never started for the pitch being released.
+    bool legatoPhrase_ { false };
     int soundingRoot_ { -1 };
     int lastRootMidi_ { -1 };
 

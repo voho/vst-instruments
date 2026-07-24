@@ -139,6 +139,7 @@ void VoiceEngine::reset()
     generation_ = 0;
     heldCount_ = 0;
     heldNoteCounts_.fill(0);
+    legatoPhrase_ = false;
     soundingRoot_ = -1;
     lastRootMidi_ = -1;
     blockParameters_ = snapshotParameters();
@@ -548,9 +549,13 @@ void VoiceEngine::noteOn(int midiNote, float velocity)
     {
         soundingRoot_ = midiNote;
         lastRootMidi_ = midiNote;
+        legatoPhrase_ = true;
         activeVoiceCount_.store(countActiveVoices(), std::memory_order_relaxed);
         return;
     }
+
+    // A fresh attack ends any legato phrase these voices belonged to.
+    legatoPhrase_ = false;
 
     const int total = voicesForMode(p);
 
@@ -625,7 +630,11 @@ void VoiceEngine::noteOff(int midiNote)
     const EngineParameters p = snapshotParameters();
 
     // Releasing the top of a legato phrase falls back to the note underneath.
-    if (p.legato && wasHeld && soundingRoot_ == midiNote && heldCount_ > 0)
+    // legatoPhrase_ keeps that true when Legato is switched off mid-phrase:
+    // these voices were bent to the pitch being released, so without the
+    // fallback the key still held underneath would go silent.
+    if ((p.legato || legatoPhrase_) && wasHeld && soundingRoot_ == midiNote
+        && heldCount_ > 0)
     {
         const int previous = heldNotes_[static_cast<std::size_t>(heldCount_ - 1)];
         updateChunkState(p, false);
@@ -636,6 +645,8 @@ void VoiceEngine::noteOff(int midiNote)
             return;
         }
     }
+
+    legatoPhrase_ = false;
 
     for (auto& voice : voices_)
         if (voice.active && voice.rootMidi == midiNote)
@@ -648,6 +659,7 @@ void VoiceEngine::allNotesOff()
 {
     heldCount_ = 0;
     heldNoteCounts_.fill(0);
+    legatoPhrase_ = false;
     soundingRoot_ = -1;
     for (auto& voice : voices_)
         if (voice.active)
@@ -661,6 +673,7 @@ void VoiceEngine::allSoundOff() noexcept
     clearRoom();
     heldCount_ = 0;
     heldNoteCounts_.fill(0);
+    legatoPhrase_ = false;
     soundingRoot_ = -1;
     lastRootMidi_ = -1;
     meterLeft_ = meterRight_ = 0.0f;

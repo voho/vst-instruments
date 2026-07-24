@@ -724,6 +724,35 @@ void testGlideAndLegato()
                 "the final note-off did not release the overlapping repeat");
     }
 
+    // Legato can be switched off in the middle of a phrase. The sounding
+    // voices were bent to the top note rather than started for it, so
+    // releasing it still has to hand them back to the key underneath -- the
+    // player is physically holding it and would otherwise hear nothing.
+    {
+        vocalor::VoiceEngine automated;
+        automated.prepare (sampleRate, blockSize);
+        automated.reset();
+        automated.setParameters (phrased);
+
+        automated.noteOn (60, 0.8f);
+        render (automated, static_cast<int> (sampleRate * 0.3));
+        automated.noteOn (64, 0.8f);
+        render (automated, 256);
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (automated) == 64,
+                "the legato phrase did not reach the upper note");
+
+        auto detached = phrased;
+        detached.legato = false;
+        automated.setParameters (detached);
+
+        automated.noteOff (64);
+        render (automated, 256);
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (automated) == 60,
+                "disabling legato mid-phrase silenced the key still held");
+        expect (vocalor::VoiceEngineTestAccess::soundingEnvelope (automated) > 0.9f,
+                "falling back after legato was disabled re-attacked or released");
+    }
+
     legato.noteOff (64);
     render (legato, 256);
     expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (legato) == 60,
