@@ -422,7 +422,10 @@ private:
     void noteOnInternal(int midiNote, float velocity) noexcept;
     void noteOffInternal(int midiNote) noexcept;
     void arpKeyDown(int midiNote, float velocity) noexcept;
-    void arpKeyUp(int midiNote) noexcept;
+    // Returns true when the note was part of the arpeggiator's key list, so
+    // callers can release notes that predate the arpeggiator instead.
+    bool arpKeyUp(int midiNote) noexcept;
+    void releaseNotesPredatingArpeggiator() noexcept;
     void clearArpeggiator(bool releaseSounding) noexcept;
     int buildArpeggiatorSequence(std::array<int, maxArpSteps>& notes,
                                  std::array<float, maxArpSteps>& velocities,

@@ -1690,12 +1690,38 @@ void MarsEngine::noteOn(int midiNote, float velocity)
 void MarsEngine::noteOff(int midiNote)
 {
     midiNote = std::clamp(midiNote, 0, 127);
-    if (targetParameters_.arpEnabled)
-    {
-        arpKeyUp(midiNote);
+    // A note pressed before the arpeggiator was switched on is not in the key
+    // list, so arpKeyUp() cannot release it. Falling through keeps that voice
+    // from staying key-down until the next panic.
+    if (targetParameters_.arpEnabled && arpKeyUp(midiNote))
         return;
-    }
     noteOffInternal(midiNote);
+}
+
+void MarsEngine::releaseNotesPredatingArpeggiator() noexcept
+{
+    // Voices started by ordinary note-ons are absent from the pattern's key
+    // list, so the arpeggiator will never articulate them. Release them as a
+    // key lift would, which keeps the sustain pedal honoured. This walks the
+    // voices rather than the held-note list because only Mono maintains that
+    // bookkeeping.
+    clearHeldNotes();
+    for (auto& voice : voices_)
+    {
+        if (!voice.active || !voice.keyDown)
+            continue;
+
+        voice.keyDown = false;
+        if (sustainPedalDown_)
+        {
+            voice.sustained = true;
+            continue;
+        }
+
+        voice.releasing = true;
+        voice.ampEnvelope.noteOff();
+        voice.filterEnvelope.noteOff();
+    }
 }
 
 void MarsEngine::noteOnInternal(int midiNote, float velocity) noexcept
@@ -1896,7 +1922,7 @@ void MarsEngine::arpKeyDown(int midiNote, float velocity) noexcept
     }
 }
 
-void MarsEngine::arpKeyUp(int midiNote) noexcept
+bool MarsEngine::arpKeyUp(int midiNote) noexcept
 {
     for (int index = 0; index < arpKeyCount_; ++index)
     {
@@ -1910,7 +1936,7 @@ void MarsEngine::arpKeyUp(int midiNote) noexcept
         }
 
         if (targetParameters_.arpHold)
-            return;
+            return true;
 
         for (int shift = index; shift + 1 < arpKeyCount_; ++shift)
         {
@@ -1923,8 +1949,9 @@ void MarsEngine::arpKeyUp(int midiNote) noexcept
         --arpKeyCount_;
         if (arpKeyCount_ == 0)
             clearArpeggiator(true);
-        return;
+        return true;
     }
+    return false;
 }
 
 void MarsEngine::clearArpeggiator(bool releaseSounding) noexcept
@@ -2071,7 +2098,14 @@ void MarsEngine::advanceArpeggiator(const EngineParameters& parameters) noexcept
         return;
     }
 
-    arpWasEnabled_ = true;
+    if (!arpWasEnabled_)
+    {
+        // Entering arpeggiator mode must not strand the notes that were already
+        // sounding, mirroring the release performed when leaving it.
+        releaseNotesPredatingArpeggiator();
+        arpWasEnabled_ = true;
+    }
+
     // Switching Hold off while a chord is latched releases it, exactly as
     // lifting the last key would have done without Hold.
     if (!parameters.arpHold && arpPhysicalKeyCount_ == 0 && arpKeyCount_ > 0)

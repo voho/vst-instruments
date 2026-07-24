@@ -3928,6 +3928,55 @@ void testArpeggiator()
                "the keyboard did not resume direct note handling");
     }
 
+    // The mirrored transition. A note held while the arpeggiator is switched on
+    // is not in its key list, so arpKeyUp() cannot release it: before the fix
+    // the voice stayed key-down until the next panic. Every voice mode is
+    // covered because only Mono keeps a held-note list.
+    for (const auto mode : { mars::VoiceMode::Poly, mars::VoiceMode::Unison,
+                             mars::VoiceMode::Fifth, mars::VoiceMode::Mono })
+    {
+        mars::MarsEngine engine;
+        auto p = makeEngine(engine, mars::ArpeggiatorMode::Up, 1, 0.8f, false);
+        p.voiceMode = mode;
+        p.arpEnabled = false;
+        engine.setParameters(p);
+        engine.noteOn(60, 0.8f);
+        render(engine, 4096);
+        expect(engine.getActiveVoiceCount() > 0,
+               "the direct note did not sound before the arpeggiator was enabled");
+
+        p.arpEnabled = true;
+        engine.setParameters(p);
+        render(engine, static_cast<int>(0.6 * rate));
+        expect(engine.getActiveVoiceCount() == 0,
+               "enabling the arpeggiator stranded the note that predated it");
+
+        // The key lift still arrives afterwards and must stay harmless.
+        engine.noteOff(60);
+        render(engine, static_cast<int>(0.3 * rate));
+        expect(engine.getActiveVoiceCount() == 0,
+               "the late note-off resurrected the released voice");
+    }
+
+    // The same switch, but the host sends the note-off before the next
+    // process() call, so the transition handler has not run yet and the release
+    // has to come from noteOff()'s fallback.
+    {
+        mars::MarsEngine engine;
+        auto p = makeEngine(engine, mars::ArpeggiatorMode::Up, 1, 0.8f, false);
+        p.arpEnabled = false;
+        engine.setParameters(p);
+        engine.noteOn(60, 0.8f);
+        render(engine, 4096);
+
+        p.arpEnabled = true;
+        engine.setParameters(p);
+        engine.noteOff(60);
+        render(engine, static_cast<int>(0.6 * rate));
+        expect(engine.getActiveVoiceCount() == 0,
+               "a note-off arriving before the first arpeggiator block was swallowed");
+    }
+
     // Deterministic and finite under an extreme rate with every voice mode.
     for (const auto mode : { mars::VoiceMode::Poly, mars::VoiceMode::Unison,
                              mars::VoiceMode::Fifth, mars::VoiceMode::Mono })
