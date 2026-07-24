@@ -683,6 +683,29 @@ void testGlideAndLegato()
     expect (vocalor::VoiceEngineTestAccess::heldNoteCount (legato) == 2,
             "the legato note stack did not record both held notes");
 
+    // Repeating the pitch that is already sounding is not a move between
+    // pitches, so it must still articulate. Taking the legato path here only
+    // retuned the voice to itself, which made overlapping repeats from layered
+    // controllers or a loop boundary silent.
+    {
+        vocalor::VoiceEngine repeated;
+        repeated.prepare (sampleRate, blockSize);
+        repeated.reset();
+        repeated.setParameters (phrased);
+
+        repeated.noteOn (60, 0.8f);
+        render (repeated, static_cast<int> (sampleRate * 0.4));
+        expect (vocalor::VoiceEngineTestAccess::soundingEnvelope (repeated) > 0.9f,
+                "the repeated-root test note did not reach a sustained level");
+
+        repeated.noteOn (60, 0.8f);
+        render (repeated, 64);
+        expect (vocalor::VoiceEngineTestAccess::soundingEnvelope (repeated) < 0.5f,
+                "a repeated root under legato did not re-attack");
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (repeated) == 60,
+                "the repeated root did not stay on its own pitch");
+    }
+
     legato.noteOff (64);
     render (legato, 256);
     expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (legato) == 60,

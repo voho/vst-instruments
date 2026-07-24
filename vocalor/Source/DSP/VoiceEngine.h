@@ -322,6 +322,10 @@ private:
     std::atomic<float> displayLevelRight_ { 0.0f };
     std::atomic<float> displayVowelX_ { 0.5f };
     std::atomic<float> displayVowelY_ { 0.5f };
+    // The editor's timer keeps reading the display state while a host can be
+    // inside prepare() for a sample-rate change, so the rate is published like
+    // every other display field rather than read from sampleRate_ directly.
+    std::atomic<float> displaySampleRate_ { 48000.0f };
 };
 
 } // namespace vocalor

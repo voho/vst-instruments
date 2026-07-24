@@ -100,6 +100,7 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     if (!std::isfinite(sampleRate))
         sampleRate = 48000.0;
     sampleRate_ = std::clamp(sampleRate, 8000.0, 192000.0);
+    displaySampleRate_.store(static_cast<float>(sampleRate_), std::memory_order_relaxed);
     inverseSampleRate_ = static_cast<float>(1.0 / sampleRate_);
     maxBlockSize_ = std::max(1, maxBlockSize);
 
@@ -512,7 +513,10 @@ void VoiceEngine::noteOn(int midiNote, float velocity)
 
     // Legato: an overlapping note bends the sounding voices instead of
     // restarting them, which is how a singer actually moves between pitches.
-    if (p.legato && hadHeldNote && retuneForLegato(midiNote, p))
+    // A repeat of the pitch already sounding is not a move, so it falls
+    // through to the retrigger below and gets a fresh attack.
+    if (p.legato && hadHeldNote && midiNote != soundingRoot_
+        && retuneForLegato(midiNote, p))
     {
         soundingRoot_ = midiNote;
         lastRootMidi_ = midiNote;
@@ -1323,7 +1327,7 @@ EngineDisplayState VoiceEngine::getDisplayState() const noexcept
     state.levelRight = displayLevelRight_.load(std::memory_order_relaxed);
     state.vowelX = displayVowelX_.load(std::memory_order_relaxed);
     state.vowelY = displayVowelY_.load(std::memory_order_relaxed);
-    state.sampleRate = static_cast<float>(sampleRate_);
+    state.sampleRate = displaySampleRate_.load(std::memory_order_relaxed);
     state.activeVoices = activeVoiceCount_.load(std::memory_order_relaxed);
     return state;
 }
