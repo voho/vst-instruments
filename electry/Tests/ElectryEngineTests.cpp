@@ -2987,9 +2987,12 @@ void testCpuGuardrail()
     constexpr double sampleRate = 96000.0;
     constexpr int totalSamples = static_cast<int>(2.0 * 96000.0);
 
-    const auto measure = [&] (PickupSelector selector, electry::OutputMode mode)
+    // All eight physical strings ringing in Drop-E tuning. With every string
+    // played there is no coupled string left to render, so this measures
+    // exactly the same work the pre-1.1 engine did.
+    const auto strike = [&] (ElectryEngine& engine, PickupSelector selector,
+                             electry::OutputMode mode)
     {
-        ElectryEngine engine;
         engine.prepare(sampleRate, 512);
         EngineParameters parameters;
         parameters.pickupSelector = selector;
@@ -2999,31 +3002,38 @@ void testCpuGuardrail()
         engine.setParameters(parameters);
         engine.reset();
 
-        // All eight physical strings ringing in Drop-E tuning. With every
-        // string played there is no coupled string left to render, so this
-        // measures exactly the same work the pre-1.1 engine did.
         for (const int note : { 28, 35, 40, 45, 50, 55, 59, 64 })
             engine.noteOn(note, 0.9f);
-
-        StereoBuffer buffer(totalSamples);
-        double bestSeconds = 1.0e9;
-        for (int attempt = 0; attempt < 3; ++attempt)
-        {
-            const auto begin = std::chrono::steady_clock::now();
-            renderInto(engine, buffer);
-            const auto end = std::chrono::steady_clock::now();
-            bestSeconds = std::min(
-                bestSeconds,
-                std::chrono::duration<double>(end - begin).count());
-        }
-        expect(allFinite(buffer), "the CPU guardrail render was not finite");
-        return bestSeconds / (static_cast<double>(totalSamples) / sampleRate);
     };
 
-    const double worstCase = measure(PickupSelector::Both,
-                                     electry::OutputMode::Stereo);
-    const double defaultCase = measure(PickupSelector::Bridge,
-                                       electry::OutputMode::Mono);
+    StereoBuffer buffer(totalSamples);
+    const auto timeRender = [&] (ElectryEngine& engine)
+    {
+        const auto begin = std::chrono::steady_clock::now();
+        renderInto(engine, buffer);
+        const auto end = std::chrono::steady_clock::now();
+        expect(allFinite(buffer), "the CPU guardrail render was not finite");
+        return std::chrono::duration<double>(end - begin).count()
+             / (static_cast<double>(totalSamples) / sampleRate);
+    };
+
+    // The two configurations are timed alternately, each from a freshly struck
+    // chord, and each keeps its fastest sample. Measuring one configuration to
+    // completion and then the other lets a busy stretch on a shared runner land
+    // entirely on whichever went second, which is enough to invert a real
+    // difference; interleaving exposes both to the same noise.
+    double worstCase = 1.0e9;
+    double defaultCase = 1.0e9;
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        ElectryEngine worstEngine;
+        strike (worstEngine, PickupSelector::Both, electry::OutputMode::Stereo);
+        worstCase = std::min (worstCase, timeRender (worstEngine));
+
+        ElectryEngine defaultEngine;
+        strike (defaultEngine, PickupSelector::Bridge, electry::OutputMode::Mono);
+        defaultCase = std::min (defaultCase, timeRender (defaultEngine));
+    }
     std::cout << "Eight-string render CPU ratio at 96 kHz: " << worstCase
               << "x worst case (Both + Stereo), " << defaultCase
               << "x default (Bridge + Mono)\n";
