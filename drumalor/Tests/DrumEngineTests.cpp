@@ -1954,6 +1954,37 @@ void testKitBusStage()
     expect (metered.getBusGain() > 0.97f,
             "bus compressor never released its gain reduction");
 
+    // Level and Pan are channel-strip controls, so automating them has to be
+    // audible on a voice that is already ringing. They used to be copied into
+    // the voice at trigger time only, which left a long crash or ride tail
+    // ignoring the mixer until the next hit.
+    const auto crashTailRms = [] (bool automateLevel, float automatedDecibels)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        auto values = drumalor::getInstrumentMetadata (drumalor::Instrument::Crash)
+                          .defaultParameters;
+        engine.setInstrumentParameters (drumalor::Instrument::Crash, values);
+        engine.trigger (drumalor::Instrument::Crash, 1.0f);
+        renderMetrics (engine, static_cast<int> (0.2 * sampleRate), defaultBlockSize);
+
+        if (automateLevel)
+        {
+            values.level = automatedDecibels;
+            engine.setInstrumentParameters (drumalor::Instrument::Crash, values);
+        }
+        return renderMetrics (engine, static_cast<int> (0.3 * sampleRate),
+                              defaultBlockSize).rms();
+    };
+
+    const double ringingTail = crashTailRms (false, 0.0f);
+    const double duckedTail = crashTailRms (true, -24.0f);
+    expect (ringingTail > 1.0e-5, "the crash tail probe produced no signal");
+    expect (duckedTail < 0.50 * ringingTail,
+            "level automation never reached the ringing voice (tail rms "
+                + std::to_string (duckedTail) + " against "
+                + std::to_string (ringingTail) + " untouched)");
+
     // Bypassing the compressor must not freeze its detector. With Bus Drive
     // still on the bus stage keeps running, so automating Bus Compression back
     // on used to reapply whatever gain reduction was in flight when it was

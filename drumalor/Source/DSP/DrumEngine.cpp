@@ -2099,6 +2099,19 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         busDrive_.load (std::memory_order_relaxed), 0.0f);
     const float compressionAmount = clampUnit (
         busCompression_.load (std::memory_order_relaxed), 0.0f);
+    // Refreshed per block, then smoothed into each ringing voice below so
+    // channel-strip automation is audible on a tail rather than only on the
+    // next hit.
+    for (std::size_t index = 0; index < instrumentCount; ++index)
+    {
+        const auto values = snapshotParameters (static_cast<Instrument> (index));
+        auto& mixer = mixerTargets_[index];
+        mixer.levelGain = decibelsToGain (values.level);
+        const float pan = std::clamp (values.pan, -1.0f, 1.0f);
+        mixer.panLeft = constantPowerLeft (pan);
+        mixer.panRight = constantPowerRight (pan);
+    }
+
     const bool busActive = driveAmount > 0.0f || compressionAmount > 0.0f;
     if (! busActive)
         resetBusStage();
@@ -2135,6 +2148,14 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
             auto& voice = *chunkVoices[static_cast<std::size_t> (voiceIndex)];
             if (! voice.active)
                 continue;
+            // Track the channel strip at the same 20 ms constant as the master
+            // gain. A voice starts at its instrument's current value, so with
+            // static parameters this is exactly a no-op.
+            const auto& mixer = mixerTargets_[indexFor (voice.instrument)];
+            voice.levelGain += gainSmoothing * (mixer.levelGain - voice.levelGain);
+            voice.panLeft += gainSmoothing * (mixer.panLeft - voice.panLeft);
+            voice.panRight += gainSmoothing * (mixer.panRight - voice.panRight);
+
             // Pan is captured first because a voice completing its tail this
             // sample is reset to defaults inside renderVoice.
             const float panLeft = voice.panLeft;

@@ -322,6 +322,16 @@ private:
     void configureResonator (Resonator& resonator, float frequency,
                              float decaySeconds) const noexcept;
 
+    // Level and Pan are channel-strip controls rather than per-hit properties,
+    // so their current values are republished each block and applied to voices
+    // that are already ringing.
+    struct MixerTarget
+    {
+        float levelGain { 1.0f };
+        float panLeft { 0.7071f };
+        float panRight { 0.7071f };
+    };
+    std::array<MixerTarget, instrumentCount> mixerTargets_ {};
     std::array<AtomicInstrumentParameters, instrumentCount> parameters_ {};
     std::array<std::uint64_t, instrumentCount> triggerCounters_ {};
     std::array<float, instrumentCount> componentDrift_ {};
