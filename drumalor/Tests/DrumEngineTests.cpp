@@ -1954,6 +1954,42 @@ void testKitBusStage()
     expect (metered.getBusGain() > 0.97f,
             "bus compressor never released its gain reduction");
 
+    // Bypassing the compressor must not freeze its detector. With Bus Drive
+    // still on the bus stage keeps running, so automating Bus Compression back
+    // on used to reapply whatever gain reduction was in flight when it was
+    // switched off, however long ago that was.
+    drumalor::DrumEngine automated;
+    automated.prepare (sampleRate, defaultBlockSize);
+    drumalor::KitParameters drivenCompressed;
+    drivenCompressed.busDrive = 0.6f;
+    drivenCompressed.busCompression = 1.0f;
+    automated.setKitParameters (drivenCompressed);
+    for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+        automated.trigger (static_cast<drumalor::Instrument> (index), 1.0f);
+    renderMetrics (automated, 4800, defaultBlockSize);
+    const float bypassEntryGain = automated.getBusGain();
+    expect (bypassEntryGain < 0.90f,
+            "the automation probe never built any gain reduction to go stale");
+
+    // Compression off, Drive still on, and a quiet passage that keeps a voice
+    // alive so the bus stage is not skipped as silence.
+    drumalor::KitParameters compressionBypassed = drivenCompressed;
+    compressionBypassed.busCompression = 0.0f;
+    automated.setKitParameters (compressionBypassed);
+    for (int repeat = 0; repeat < 5; ++repeat)
+    {
+        automated.trigger (drumalor::Instrument::Kick, 0.04f);
+        renderMetrics (automated, static_cast<int> (0.1 * sampleRate), defaultBlockSize);
+    }
+
+    automated.setKitParameters (drivenCompressed);
+    renderMetrics (automated, 64, defaultBlockSize);
+    const float resumedGain = automated.getBusGain();
+    expect (resumedGain > 0.97f,
+            "re-enabling bus compression restored the gain reduction from "
+            "before the bypass (resumed at " + std::to_string (resumedGain)
+                + ", bypassed at " + std::to_string (bypassEntryGain) + ")");
+
     // Both stages stay stable and block-partition invariant together.
     drumalor::KitParameters both;
     both.busDrive = 0.8f;

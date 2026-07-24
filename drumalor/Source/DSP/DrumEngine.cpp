@@ -2037,16 +2037,20 @@ void DrumEngine::applyBusStage (float& left, float& right, float driveAmount,
             driveGain * right, busDriveAdaaRight_, curvature, curvature);
     }
 
+    // Stereo-linked peak detector with a 4 ms attack and 140 ms release. It
+    // keeps running while the compressor is bypassed: freezing it meant that
+    // automating Bus Compression back on applied the gain reduction that was in
+    // flight when it was switched off, however long ago that was, instead of
+    // responding to the signal actually present.
+    const float detector = std::max (std::abs (left), std::abs (right));
+    const float detectorCoefficient = detector > busEnvelope_
+        ? busAttackCoefficient_ : busReleaseCoefficient_;
+    busEnvelope_ += detectorCoefficient * (detector - busEnvelope_);
+
     if (compressionAmount > 0.0f)
     {
-        // Stereo-linked peak detector with a 4 ms attack and 140 ms release.
         // The gain law blends continuously between unity and hard limiting, an
         // approximation of a soft-knee ratio that avoids a per-sample pow().
-        const float detector = std::max (std::abs (left), std::abs (right));
-        const float coefficient = detector > busEnvelope_
-            ? busAttackCoefficient_ : busReleaseCoefficient_;
-        busEnvelope_ += coefficient * (detector - busEnvelope_);
-
         const float threshold = 0.50f - 0.42f * compressionAmount;
         const float slope = compressionAmount / (0.35f + 0.65f * compressionAmount);
         float gain = 1.0f;
