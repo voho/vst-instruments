@@ -26,20 +26,24 @@ constexpr float naturalQuietHoldSeconds = 0.045f;
 constexpr float supplySagAttackSeconds = 0.004f;
 constexpr float supplySagReleaseSeconds = 0.085f;
 
+// The trailing three defaults are the per-voice mixer: level in decibels, the
+// constant-power pan position that used to be hard-coded in initialiseVoice(),
+// and the choke/mute group. Only the two hi-hats share a group by default, so
+// a factory kit still behaves exactly like the original pedal-linked pair.
 constexpr std::array<InstrumentMetadata, instrumentCount> metadata {{
-    { Instrument::Kick,      "Kick",       "kick",       36, "Punch",   "Drive",      { 0.68f, 0.42f, 0.0f, 0.55f } },
-    { Instrument::Snare,     "Snare",      "snare",      38, "Wires",   "Snap",       { 0.62f, 0.64f, 0.0f, 0.48f } },
-    { Instrument::Clap,      "Clap",       "clap",       39, "Spread",  "Tone",       { 0.48f, 0.62f, 0.0f, 0.45f } },
-    { Instrument::ClosedHat, "Closed Hat", "closedHat", 42, "Metal",   "Tone",       { 0.58f, 0.70f, 0.0f, 0.30f } },
-    { Instrument::OpenHat,   "Open Hat",   "openHat",   46, "Metal",   "Tone",       { 0.62f, 0.68f, 0.0f, 0.55f } },
-    { Instrument::Ride,      "Ride",       "ride",       51, "Bell",    "Tone",       { 0.45f, 0.62f, 0.0f, 0.62f } },
-    { Instrument::Crash,     "Crash",      "crash",      49, "Spread",  "Brightness", { 0.58f, 0.65f, 0.0f, 0.65f } },
-    { Instrument::LowTom,    "Low Tom",    "lowTom",     45, "Punch",   "Skin",       { 0.55f, 0.40f, 0.0f, 0.60f } },
-    { Instrument::MidTom,    "Mid Tom",    "midTom",     47, "Punch",   "Skin",       { 0.55f, 0.45f, 0.0f, 0.52f } },
-    { Instrument::HighTom,   "High Tom",   "highTom",    50, "Punch",   "Skin",       { 0.50f, 0.50f, 0.0f, 0.45f } },
-    { Instrument::Shaker,    "Shaker",     "shaker",     82, "Density", "Color",      { 0.62f, 0.62f, 0.0f, 0.45f } },
-    { Instrument::Perc1,     "Perc 1",     "perc1",      56, "Ratio",   "Drive",      { 0.50f, 0.45f, 0.0f, 0.45f } },
-    { Instrument::Perc2,     "Perc 2",     "perc2",      75, "Hollow",  "Click",      { 0.55f, 0.55f, 0.0f, 0.40f } },
+    { Instrument::Kick,      "Kick",       "kick",       36, "Punch",   "Drive",      { 0.68f, 0.42f, 0.0f, 0.55f, 0.0f,  0.00f, 0 } },
+    { Instrument::Snare,     "Snare",      "snare",      38, "Wires",   "Snap",       { 0.62f, 0.64f, 0.0f, 0.48f, 0.0f,  0.00f, 0 } },
+    { Instrument::Clap,      "Clap",       "clap",       39, "Spread",  "Tone",       { 0.48f, 0.62f, 0.0f, 0.45f, 0.0f,  0.00f, 0 } },
+    { Instrument::ClosedHat, "Closed Hat", "closedHat", 42, "Metal",   "Tone",       { 0.58f, 0.70f, 0.0f, 0.30f, 0.0f,  0.16f, 1 } },
+    { Instrument::OpenHat,   "Open Hat",   "openHat",   46, "Metal",   "Tone",       { 0.62f, 0.68f, 0.0f, 0.55f, 0.0f,  0.20f, 1 } },
+    { Instrument::Ride,      "Ride",       "ride",       51, "Bell",    "Tone",       { 0.45f, 0.62f, 0.0f, 0.62f, 0.0f,  0.27f, 0 } },
+    { Instrument::Crash,     "Crash",      "crash",      49, "Spread",  "Brightness", { 0.58f, 0.65f, 0.0f, 0.65f, 0.0f, -0.27f, 0 } },
+    { Instrument::LowTom,    "Low Tom",    "lowTom",     45, "Punch",   "Skin",       { 0.55f, 0.40f, 0.0f, 0.60f, 0.0f, -0.20f, 0 } },
+    { Instrument::MidTom,    "Mid Tom",    "midTom",     47, "Punch",   "Skin",       { 0.55f, 0.45f, 0.0f, 0.52f, 0.0f,  0.00f, 0 } },
+    { Instrument::HighTom,   "High Tom",   "highTom",    50, "Punch",   "Skin",       { 0.50f, 0.50f, 0.0f, 0.45f, 0.0f,  0.20f, 0 } },
+    { Instrument::Shaker,    "Shaker",     "shaker",     82, "Density", "Color",      { 0.62f, 0.62f, 0.0f, 0.45f, 0.0f,  0.12f, 0 } },
+    { Instrument::Perc1,     "Perc 1",     "perc1",      56, "Ratio",   "Drive",      { 0.50f, 0.45f, 0.0f, 0.45f, 0.0f, -0.12f, 0 } },
+    { Instrument::Perc2,     "Perc 2",     "perc2",      75, "Hollow",  "Click",      { 0.55f, 0.55f, 0.0f, 0.40f, 0.0f,  0.12f, 0 } },
 }};
 
 constexpr std::array<float, instrumentCount> minimumDecay {{
@@ -52,9 +56,28 @@ constexpr std::array<float, instrumentCount> maximumDecay {{
     2.40f, 1.80f, 1.40f, 1.20f, 2.00f, 1.10f
 }};
 
+// Ideal circular-membrane (Bessel) mode ratios. A drum head loaded by the air
+// inside its shell rings lower than the ideal series at every mode above the
+// fundamental, so the engine raises each ratio to an air-loading exponent
+// rather than pretending the head is a massless ideal membrane.
+constexpr std::array<float, 6> membraneModeRatios {{
+    1.000f, 1.593f, 2.135f, 2.295f, 2.653f, 2.917f
+}};
+
 float clampUnit (float value, float fallback = 0.5f) noexcept
 {
     return std::isfinite (value) ? std::clamp (value, 0.0f, 1.0f) : fallback;
+}
+
+float decibelsToGain (float decibels) noexcept
+{
+    if (! std::isfinite (decibels))
+        return 1.0f;
+    decibels = std::clamp (decibels, minimumVoiceLevelDecibels,
+                           maximumVoiceLevelDecibels);
+    // Exactly 1.0f at the 0 dB default, so a factory kit is bit-identical to
+    // the engine before the per-voice mixer existed.
+    return decibels == 0.0f ? 1.0f : std::pow (10.0f, 0.05f * decibels);
 }
 
 float coefficientForTime (float seconds, float sampleRate) noexcept
@@ -302,6 +325,12 @@ void DrumEngine::prepare (double sampleRate, int maxBlockSize) noexcept
     const float reconstructionCutoff = std::min (13500.0f, 0.42f * floatSampleRate);
     cymbalReconstructionCoefficient_ = 1.0f - std::exp (
         -twoPi * reconstructionCutoff / floatSampleRate);
+    // The shared bus compressor uses a peak detector with a fast musical
+    // attack and a slow release, so it glues a kit without pumping on hats.
+    busAttackCoefficient_ = 1.0f - std::exp (
+        -1.0f / std::max (1.0f, 0.004f * floatSampleRate));
+    busReleaseCoefficient_ = 1.0f - std::exp (
+        -1.0f / std::max (1.0f, 0.140f * floatSampleRate));
     for (int i = 0; i < sineTableSize; ++i)
         sineTable_[static_cast<std::size_t> (i)] = std::sin (
             twoPi * static_cast<float> (i) / static_cast<float> (sineTableSize));
@@ -317,15 +346,30 @@ void DrumEngine::reset() noexcept
         voice = Voice {};
     triggerCounters_.fill (0);
     componentDrift_.fill (0.0f);
+    metallicBankVoiceCounts_.fill (0);
+    metallicBankMask_ = 0u;
     resetMetallicOscillatorBanks();
     anyVoiceActive_ = false;
-    metallicFrozenSamples_ = 0;
     generation_ = 0;
     smoothedOutputGain_ = outputGain_.load (std::memory_order_relaxed);
     dcInputLeft_ = dcInputRight_ = 0.0f;
     dcOutputLeft_ = dcOutputRight_ = 0.0f;
     masterAdaaPreviousLeft_ = masterAdaaPreviousRight_ = 0.0f;
+    resetBusStage();
+    meterPeakLeft_ = meterPeakRight_ = 0.0f;
+    outputLevelLeft_.store (0.0f, std::memory_order_relaxed);
+    outputLevelRight_.store (0.0f, std::memory_order_relaxed);
+    busGainMeter_.store (1.0f, std::memory_order_relaxed);
+    for (auto& level : instrumentLevels_)
+        level.store (0.0f, std::memory_order_relaxed);
     activeVoiceCount_.store (0, std::memory_order_relaxed);
+}
+
+void DrumEngine::resetBusStage() noexcept
+{
+    busEnvelope_ = 0.0f;
+    busGain_ = 1.0f;
+    busDriveAdaaLeft_ = busDriveAdaaRight_ = 0.0f;
 }
 
 void DrumEngine::setInstrumentParameters (Instrument instrument,
@@ -343,6 +387,22 @@ void DrumEngine::setInstrumentParameters (Instrument instrument,
     target.pitch.store (std::clamp (pitch, -24.0f, 24.0f), std::memory_order_relaxed);
     target.decay.store (clampUnit (values.decay, defaults.decay),
                         std::memory_order_relaxed);
+    const float level = std::isfinite (values.level) ? values.level : defaults.level;
+    target.level.store (std::clamp (level, minimumVoiceLevelDecibels,
+                                    maximumVoiceLevelDecibels),
+                        std::memory_order_relaxed);
+    const float pan = std::isfinite (values.pan) ? values.pan : defaults.pan;
+    target.pan.store (std::clamp (pan, -1.0f, 1.0f), std::memory_order_relaxed);
+    target.chokeGroup.store (std::clamp (values.chokeGroup, 0, chokeGroupCount),
+                             std::memory_order_relaxed);
+}
+
+void DrumEngine::setKitParameters (const KitParameters& values) noexcept
+{
+    humanise_.store (clampUnit (values.humanise, 0.5f), std::memory_order_relaxed);
+    busDrive_.store (clampUnit (values.busDrive, 0.0f), std::memory_order_relaxed);
+    busCompression_.store (clampUnit (values.busCompression, 0.0f),
+                           std::memory_order_relaxed);
 }
 
 void DrumEngine::setOutputGain (float linearGain) noexcept
@@ -351,13 +411,34 @@ void DrumEngine::setOutputGain (float linearGain) noexcept
                        std::memory_order_relaxed);
 }
 
+float DrumEngine::getOutputLevel (int channel) const noexcept
+{
+    return (channel <= 0 ? outputLevelLeft_ : outputLevelRight_)
+        .load (std::memory_order_relaxed);
+}
+
+float DrumEngine::getInstrumentLevel (Instrument instrument) const noexcept
+{
+    return validInstrument (instrument)
+        ? instrumentLevels_[indexFor (instrument)].load (std::memory_order_relaxed)
+        : 0.0f;
+}
+
+float DrumEngine::getBusGain() const noexcept
+{
+    return busGainMeter_.load (std::memory_order_relaxed);
+}
+
 InstrumentParameters DrumEngine::snapshotParameters (Instrument instrument) const noexcept
 {
     const auto& source = parameters_[indexFor (instrument)];
     return { source.characterA.load (std::memory_order_relaxed),
              source.characterB.load (std::memory_order_relaxed),
              source.pitch.load (std::memory_order_relaxed),
-             source.decay.load (std::memory_order_relaxed) };
+             source.decay.load (std::memory_order_relaxed),
+             source.level.load (std::memory_order_relaxed),
+             source.pan.load (std::memory_order_relaxed),
+             source.chokeGroup.load (std::memory_order_relaxed) };
 }
 
 float DrumEngine::decaySecondsFor (Instrument instrument, float normalizedDecay) const noexcept
@@ -598,62 +679,89 @@ void DrumEngine::resetMetallicOscillatorBanks() noexcept
     }
 }
 
-void DrumEngine::wakeMetallicOscillatorBanks() noexcept
+void DrumEngine::wakeMetallicOscillatorBank (RelaxationOscillatorBank& bank) noexcept
 {
-    // The engine renders exact digital silence while no voice exists, so the
-    // free-running metallic circuits are frozen instead of advanced sample by
-    // sample. This restores the state they would have reached: short gaps are
-    // replayed substep-exactly, longer gaps advance every phase analytically,
-    // snap the capacitors onto their settled periodic orbit, and re-render one
-    // full reconstruction history. The gap length is an absolute sample count,
-    // so the result is independent of host block partitioning.
-    if (metallicFrozenSamples_ == 0u)
+    // A metallic circuit is only advanced sample by sample while some voice can
+    // actually observe it: through a closed VCA its contribution is exactly
+    // zero, so the engine freezes it and restores the state it would have
+    // reached when the next strike opens the VCA. Short gaps are replayed
+    // substep-exactly, longer gaps advance every phase analytically, snap the
+    // capacitors onto their settled periodic orbit, and re-render one full
+    // reconstruction history. The gap is an absolute sample count and the
+    // observability is evaluated per sample, so the result is independent of
+    // host block partitioning.
+    if (bank.frozenSamples == 0u)
         return;
 
-    const auto substepsToCover = metallicFrozenSamples_
+    const auto substepsToCover = bank.frozenSamples
         * static_cast<std::uint64_t> (metallicOversampleFactor_);
     const auto warmupSubsteps = static_cast<std::uint64_t> (metallicDecimatorTapCount_);
-    // Short gaps are replayed substep-exactly, so a briefly idle engine stays
+    // Short gaps are replayed substep-exactly, so a briefly idle bank stays
     // sample-identical to one that kept rendering (a tested superposition
     // contract). Beyond this bound the smoothed increments and capacitors have
     // long settled onto their periodic orbit, which the analytic jump restores
     // directly; the bound also caps the wake cost at well under a millisecond.
     constexpr std::uint64_t exactReplaySubsteps = 2048;
-    metallicFrozenSamples_ = 0;
+    bank.frozenSamples = 0;
 
-    for (auto& bank : metallicBanks_)
+    auto replaySubsteps = substepsToCover;
+    if (substepsToCover > exactReplaySubsteps)
     {
-        auto replaySubsteps = substepsToCover;
-        if (substepsToCover > exactReplaySubsteps)
+        const auto advance = substepsToCover - warmupSubsteps;
+        for (int oscillatorIndex = 0; oscillatorIndex < bank.activeOscillators;
+             ++oscillatorIndex)
         {
-            const auto advance = substepsToCover - warmupSubsteps;
-            for (int oscillatorIndex = 0; oscillatorIndex < bank.activeOscillators;
-                 ++oscillatorIndex)
-            {
-                const auto index = static_cast<std::size_t> (oscillatorIndex);
-                const double travelled = static_cast<double> (bank.targetIncrements[index])
-                    * static_cast<double> (advance);
-                bank.phases[index] = std::clamp (
-                    static_cast<float> (bank.phases[index]
-                        + travelled - std::floor (bank.phases[index] + travelled)),
-                    0.0f, 1.0f);
-            }
-            // Snap increments and capacitor states to the settled values the
-            // smoothed circuit converges to within a couple of milliseconds.
-            configureMetallicOscillatorBank (
-                bank.instrument, std::exp2 (bank.lastParameterPitch / 12.0f),
-                bank.lastParameterCharacterA, true);
-            replaySubsteps = warmupSubsteps;
+            const auto index = static_cast<std::size_t> (oscillatorIndex);
+            const double travelled = static_cast<double> (bank.targetIncrements[index])
+                * static_cast<double> (advance);
+            bank.phases[index] = std::clamp (
+                static_cast<float> (bank.phases[index]
+                    + travelled - std::floor (bank.phases[index] + travelled)),
+                0.0f, 1.0f);
         }
-
-        for (std::uint64_t substep = 0; substep < replaySubsteps; ++substep)
-        {
-            bank.decimatorHistory[static_cast<std::size_t> (
-                bank.decimatorWriteIndex)] = renderMetallicBankSubstep (bank);
-            if (++bank.decimatorWriteIndex >= maximumMetallicDecimatorTaps)
-                bank.decimatorWriteIndex = 0;
-        }
+        // Snap increments and capacitor states to the settled values the
+        // smoothed circuit converges to within a couple of milliseconds.
+        configureMetallicOscillatorBank (
+            bank.instrument, std::exp2 (bank.lastParameterPitch / 12.0f),
+            bank.lastParameterCharacterA, true);
+        replaySubsteps = warmupSubsteps;
     }
+
+    for (std::uint64_t substep = 0; substep < replaySubsteps; ++substep)
+    {
+        bank.decimatorHistory[static_cast<std::size_t> (
+            bank.decimatorWriteIndex)] = renderMetallicBankSubstep (bank);
+        if (++bank.decimatorWriteIndex >= maximumMetallicDecimatorTaps)
+            bank.decimatorWriteIndex = 0;
+    }
+}
+
+void DrumEngine::wakeMetallicOscillatorBankFor (Instrument instrument) noexcept
+{
+    const int bankIndex = metallicBankIndexFor (instrument);
+    if (bankIndex >= 0)
+        wakeMetallicOscillatorBank (metallicBanks_[static_cast<std::size_t> (bankIndex)]);
+}
+
+void DrumEngine::addBankReference (Instrument instrument) noexcept
+{
+    const int bankIndex = metallicBankIndexFor (instrument);
+    if (bankIndex < 0)
+        return;
+    const auto index = static_cast<std::size_t> (bankIndex);
+    if (++metallicBankVoiceCounts_[index] > 0)
+        metallicBankMask_ |= std::uint32_t { 1 } << static_cast<unsigned> (bankIndex);
+}
+
+void DrumEngine::releaseBankReference (Instrument instrument) noexcept
+{
+    const int bankIndex = metallicBankIndexFor (instrument);
+    if (bankIndex < 0)
+        return;
+    const auto index = static_cast<std::size_t> (bankIndex);
+    metallicBankVoiceCounts_[index] = std::max (0, metallicBankVoiceCounts_[index] - 1);
+    if (metallicBankVoiceCounts_[index] == 0)
+        metallicBankMask_ &= ~(std::uint32_t { 1 } << static_cast<unsigned> (bankIndex));
 }
 
 void DrumEngine::updateMetallicBankParameterTargets() noexcept
@@ -870,6 +978,20 @@ void DrumEngine::renderMetallicOscillatorBanks (
     for (std::size_t bankIndex = 0; bankIndex < metallicBanks_.size(); ++bankIndex)
     {
         auto& bank = metallicBanks_[bankIndex];
+        const bool isActive = (activeBankMask
+            & (std::uint32_t { 1 } << static_cast<unsigned> (bankIndex))) != 0u;
+        if (! isActive)
+        {
+            // Nothing can hear this circuit: its oscillators, capacitors and
+            // reconstruction history are frozen and restored analytically by
+            // wakeMetallicOscillatorBank() when the next strike opens a VCA.
+            // Skipping the substeps and the 129-multiply symmetric convolution
+            // is where most of the engine's idle cost used to go.
+            ++bank.frozenSamples;
+            bank.output = 0.0f;
+            continue;
+        }
+
         float latestSource = 0.0f;
         for (int substep = 0; substep < metallicOversampleFactor_; ++substep)
         {
@@ -880,15 +1002,8 @@ void DrumEngine::renderMetallicOscillatorBanks (
                 bank.decimatorWriteIndex = 0;
         }
 
-        // All oscillator/capacitor/filter state keeps advancing through a
-        // closed VCA. The expensive convolution is only needed while a voice
-        // can actually observe this bank.
-        const bool isActive = (activeBankMask
-            & (std::uint32_t { 1 } << static_cast<unsigned> (bankIndex))) != 0u;
-        bank.output = isActive
-            ? (metallicOversampleFactor_ > 1
-                   ? decimateMetallicBank (bank) : latestSource)
-            : 0.0f;
+        bank.output = metallicOversampleFactor_ > 1
+            ? decimateMetallicBank (bank) : latestSource;
     }
 }
 
@@ -1001,6 +1116,8 @@ int DrumEngine::findVoiceSlot() const noexcept
 
 void DrumEngine::silenceVoice (Voice& voice) noexcept
 {
+    if (voice.active)
+        releaseBankReference (voice.instrument);
     voice = Voice {};
 }
 
@@ -1047,15 +1164,26 @@ void DrumEngine::retireVoice (const Voice& source) noexcept
         }
     }
 
+    // The slot being reused may itself still be sounding; drop its bank
+    // reference before it is overwritten by the retired copy.
+    if (destination->active)
+        releaseBankReference (destination->instrument);
     *destination = source;
+    addBankReference (source.instrument);
     beginFadeToSilence (*destination, retirementFadeMultiplier_);
 }
 
-void DrumEngine::chokeHats() noexcept
+void DrumEngine::chokeGroup (int group) noexcept
 {
+    if (group <= 0)
+        return;
+    // Every voice remembers the group it was born into, so retuning the
+    // parameter never strands a ringing tail that can no longer be cut.
     for (auto& voice : voices_)
-        if (voice.active && (voice.instrument == Instrument::ClosedHat
-                             || voice.instrument == Instrument::OpenHat))
+        if (voice.active && voice.chokeGroup == group)
+            beginChoke (voice, 0.003f);
+    for (auto& voice : retiringVoices_)
+        if (voice.active && voice.chokeGroup == group)
             beginChoke (voice, 0.003f);
 }
 
@@ -1071,11 +1199,26 @@ void DrumEngine::allSoundsOff() noexcept
 
 void DrumEngine::updateActiveVoiceCount() noexcept
 {
+    // One pass over both pools publishes the host-facing voice count and the
+    // per-instrument meter levels the editor's channel strip reads. The per
+    // voice recentPeak already carries 30 ms meter ballistics, so nothing has
+    // to be tracked inside the per-sample loop.
     int count = 0;
+    std::array<float, instrumentCount> levels {};
+    const auto observe = [&count, &levels] (const Voice& voice)
+    {
+        if (! voice.active)
+            return;
+        ++count;
+        auto& level = levels[indexFor (voice.instrument)];
+        level = std::max (level, voice.recentPeak * voice.chokeGain);
+    };
     for (const auto& voice : voices_)
-        count += voice.active ? 1 : 0;
+        observe (voice);
     for (const auto& voice : retiringVoices_)
-        count += voice.active ? 1 : 0;
+        observe (voice);
+    for (std::size_t index = 0; index < instrumentCount; ++index)
+        instrumentLevels_[index].store (levels[index], std::memory_order_relaxed);
     activeVoiceCount_.store (count, std::memory_order_relaxed);
 }
 
@@ -1106,6 +1249,14 @@ void DrumEngine::initialiseModalVoice (Voice& voice, const float* ratios, int mo
     const float scale = gainSum > 0.0f ? 1.35f / gainSum : 1.0f;
     for (int mode = 0; mode < modeCount; ++mode)
         voice.modeGains[static_cast<std::size_t> (mode)] *= scale;
+
+    // Every configured mode reaches -60 dB within decaySeconds, so after 2.6
+    // times that the whole bank is below -150 dB: far under the -100 dB level
+    // at which a voice is already considered silent. Recording the boundary
+    // lets long cymbal and tom tails stop paying for a resonator bank that can
+    // no longer contribute, without changing a single audible sample.
+    voice.modalActiveSamples = static_cast<std::uint64_t> (std::ceil (
+        2.6 * static_cast<double> (std::max (0.0f, decaySeconds)) * sampleRate_)) + 1u;
 }
 
 void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float velocity,
@@ -1115,6 +1266,7 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     voice = Voice {};
     voice.active = true;
     voice.instrument = instrument;
+    voice.chokeGroup = std::clamp (values.chokeGroup, 0, chokeGroupCount);
     voice.generation = ++generation_;
     voice.noiseState = seed == 0u ? 1u : seed;
     voice.velocity = velocity * (0.68f + 0.32f * std::sqrt (velocity));
@@ -1131,6 +1283,12 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     // loudness. The deliberately narrow range preserves the established gain
     // curve while making hard hits inject more energy into the physical core.
     voice.excitationScale = 0.74f + 0.26f * std::sqrt (velocity);
+    // A softly struck head, cymbal or shaker radiates a darker spectrum than a
+    // hard strike, because less energy reaches the high, heavily damped modes.
+    // The curve is unity at full velocity, so the loud end of the existing
+    // voice design is preserved and only quiet hits gain the extra realism.
+    voice.velocityTimbre = 0.62f + 0.38f * velocity;
+    voice.levelGain = decibelsToGain (values.level);
     voice.circuitDrive = std::clamp (
         1.10f + 0.48f * voice.characterB + variation.circuitDriveOffset,
         1.02f, 1.72f);
@@ -1148,20 +1306,9 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     // host-facing ceiling; a forced fade begins shortly before it.
     voice.maximumSamples = maximumVoiceSamples_;
 
-    float pan = 0.0f;
-    switch (instrument)
-    {
-        case Instrument::ClosedHat: pan = 0.16f; break;
-        case Instrument::OpenHat:   pan = 0.20f; break;
-        case Instrument::Ride:      pan = 0.27f; break;
-        case Instrument::Crash:     pan = -0.27f; break;
-        case Instrument::LowTom:    pan = -0.20f; break;
-        case Instrument::HighTom:   pan = 0.20f; break;
-        case Instrument::Shaker:    pan = 0.12f; break;
-        case Instrument::Perc1:     pan = -0.12f; break;
-        case Instrument::Perc2:     pan = 0.12f; break;
-        default: break;
-    }
+    // Placement is now an automatable per-voice control whose defaults are the
+    // former hard-coded kit positions, so an untouched kit images identically.
+    const float pan = std::clamp (values.pan, -1.0f, 1.0f);
     voice.panLeft = constantPowerLeft (pan);
     voice.panRight = constantPowerRight (pan);
 
@@ -1222,22 +1369,40 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             voice.circuitBias += 0.12f * voice.characterB;
             voice.analogPreviousInput = voice.circuitBias;
             configureBandpass (voice.filterA,
-                               1900.0f + 5400.0f * voice.characterA, 0.72f);
+                               (1900.0f + 5400.0f * voice.characterA) * voice.velocityTimbre,
+                               0.72f);
             break;
 
         case Instrument::Snare:
+        {
             voice.baseFrequency = 185.0f * voice.pitchRatio;
             voice.phaseIncrements[0] = std::min (0.45f, voice.baseFrequency * inverseSampleRate_);
             voice.phaseIncrements[1] = std::min (0.45f, voice.baseFrequency * 1.78f * inverseSampleRate_);
             voice.envelopeMultiplier = coefficientForTime (voice.decaySeconds * 0.72f,
                                                             static_cast<float> (sampleRate_));
+            // Batter and resonant heads are coupled through the shell air, so a
+            // struck snare rings on an air-loaded membrane series and not on two
+            // detuned sines alone. Only the modes above the fundamental are
+            // resonated here; the swept oscillator pair still carries the body.
+            const float airLoad = 0.84f + 0.13f * voice.characterB;
+            const float upperModes[4] {
+                std::pow (membraneModeRatios[1], airLoad),
+                std::pow (membraneModeRatios[2], airLoad),
+                std::pow (membraneModeRatios[3], airLoad),
+                std::pow (membraneModeRatios[4], airLoad)
+            };
+            initialiseModalVoice (voice, upperModes, 4, voice.baseFrequency,
+                                  voice.decaySeconds * 0.42f, 0.07f,
+                                  0.38f + 0.34f * voice.characterB);
             configureBandpass (voice.filterA,
-                               (1250.0f + 4800.0f * voice.characterB) * std::pow (voice.pitchRatio, 0.30f),
+                               (1250.0f + 4800.0f * voice.characterB)
+                                   * std::pow (voice.pitchRatio, 0.30f) * voice.velocityTimbre,
                                0.65f + 0.45f * voice.characterB);
             configureHighpass (voice.filterB, 700.0f + 1700.0f * voice.characterB, 0.7f);
             voice.transientMultiplier = coefficientForTime (0.004f + 0.005f * voice.characterB,
                                                              static_cast<float> (sampleRate_));
             break;
+        }
 
         case Instrument::Clap:
         {
@@ -1251,7 +1416,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             voice.transientMultiplier = coefficientForTime (0.0030f + 0.0025f * voice.characterA,
                                                              static_cast<float> (sampleRate_));
             configureBandpass (voice.filterA,
-                               (850.0f + 2750.0f * voice.characterB) * std::pow (voice.pitchRatio, 0.42f),
+                               (850.0f + 2750.0f * voice.characterB)
+                                   * std::pow (voice.pitchRatio, 0.42f) * voice.velocityTimbre,
                                0.68f + 0.42f * voice.characterB);
             configureHighpass (voice.filterB, 430.0f + 1450.0f * voice.characterB, 0.72f);
             break;
@@ -1263,7 +1429,9 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             configureMetallicOscillatorBank (
                 instrument, voice.pitchRatio, voice.characterA, false);
             configureHighpass (voice.filterA, 3400.0f + 6500.0f * voice.characterB, 0.70f);
-            configureBandpass (voice.filterB, 6500.0f + 4800.0f * voice.characterB, 0.85f);
+            configureBandpass (voice.filterB,
+                               (6500.0f + 4800.0f * voice.characterB) * voice.velocityTimbre,
+                               0.85f);
             voice.transientMultiplier = coefficientForTime (instrument == Instrument::ClosedHat ? 0.0025f : 0.006f,
                                                              static_cast<float> (sampleRate_));
             break;
@@ -1335,7 +1503,25 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                                                                   static_cast<float> (sampleRate_));
             voice.transientMultiplier = coefficientForTime (0.003f + 0.004f * voice.characterB,
                                                              static_cast<float> (sampleRate_));
-            configureBandpass (voice.filterA, 1900.0f + 2800.0f * voice.characterB, 0.72f);
+            // The stick contact excites the head's inharmonic circular-membrane
+            // modes, which ring briefly over the swept body. Air loading inside
+            // the shell pulls the ideal Bessel ratios down, and Skin moves that
+            // exponent, so the tom runs from a tight, nearly harmonic head to a
+            // loose, clearly inharmonic one instead of a fixed pair of sines.
+            const float airLoad = 0.88f - 0.10f * voice.characterB;
+            const float headModes[5] {
+                std::pow (membraneModeRatios[1], airLoad),
+                std::pow (membraneModeRatios[2], airLoad),
+                std::pow (membraneModeRatios[3], airLoad),
+                std::pow (membraneModeRatios[4], airLoad),
+                std::pow (membraneModeRatios[5], airLoad)
+            };
+            initialiseModalVoice (voice, headModes, 5, voice.baseFrequency,
+                                  voice.decaySeconds * 0.36f, 0.06f,
+                                  (0.34f + 0.30f * voice.characterB) * voice.velocityTimbre);
+            configureBandpass (voice.filterA,
+                               (1900.0f + 2800.0f * voice.characterB) * voice.velocityTimbre,
+                               0.72f);
             break;
         }
 
@@ -1344,7 +1530,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             voice.transientMultiplier = coefficientForTime (0.0008f + 0.0012f * voice.characterA,
                                                              static_cast<float> (sampleRate_));
             configureBandpass (voice.filterA,
-                               (4400.0f + 6600.0f * voice.characterB) * std::pow (voice.pitchRatio, 0.65f),
+                               (4400.0f + 6600.0f * voice.characterB)
+                                   * std::pow (voice.pitchRatio, 0.65f) * voice.velocityTimbre,
                                0.75f + 1.2f * voice.characterB);
             configureHighpass (voice.filterB, 1900.0f + 2600.0f * voice.characterB, 0.70f);
             break;
@@ -1369,8 +1556,11 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             const float ratios[4] { 1.0f, 1.42f + 0.35f * hollow,
                                     2.31f + 0.55f * hollow, 3.84f - 0.40f * hollow };
             initialiseModalVoice (voice, ratios, 4, 930.0f * voice.pitchRatio,
-                                  voice.decaySeconds, 0.055f, 0.35f + 0.35f * hollow);
-            configureBandpass (voice.filterA, 2800.0f + 5000.0f * voice.characterB, 0.85f);
+                                  voice.decaySeconds, 0.055f,
+                                  (0.35f + 0.35f * hollow) * voice.velocityTimbre);
+            configureBandpass (voice.filterA,
+                               (2800.0f + 5000.0f * voice.characterB) * voice.velocityTimbre,
+                               0.85f);
             configureHighpass (voice.filterB, 350.0f + 550.0f * (1.0f - hollow), 0.70f);
             voice.transientMultiplier = coefficientForTime (0.0015f + 0.003f * voice.characterB,
                                                              static_cast<float> (sampleRate_));
@@ -1402,13 +1592,15 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
     // Restore the skipped interval under the targets that were active during
     // that interval, then publish any control change that arrived with this
     // trigger before the first audible sample is rendered.
-    wakeMetallicOscillatorBanks();
+    wakeMetallicOscillatorBankFor (instrument);
     updateMetallicBankParameterTargets();
     velocity = std::clamp (velocity, 0.0f, 1.0f);
-    if (instrument == Instrument::ClosedHat || instrument == Instrument::OpenHat)
-        chokeHats();
 
     const auto index = indexFor (instrument);
+    const auto values = snapshotParameters (instrument);
+    // Mute groups generalise the hi-hat pedal: any voice can cut the group it
+    // belongs to, and the two hats share group A by default.
+    chokeGroup (values.chokeGroup);
     const auto counter = ++triggerCounters_[index];
     const std::uint32_t seed = hash32 (0x6d2b79f5u
         ^ static_cast<std::uint32_t> ((index + 1u) * 0x9e3779b9u)
@@ -1424,32 +1616,40 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
     drift = std::clamp (0.86f * drift
                            + 0.14f * signedUnitFromHash (seed ^ 0xa341316cu),
                         -1.0f, 1.0f);
+    // Humanise scales how much of that modelled tolerance actually reaches the
+    // voice. The drift accumulator itself is untouched, so the per-instrument
+    // sequence stays reproducible at every setting, and the 0.5 default maps to
+    // a depth of exactly 1.0 - the historical fixed variation. Zero gives a
+    // machine-tight kit; 1.0 doubles the spread. Each raw deviation is clamped
+    // before scaling, so the depth-1.0 result is bit-identical to the original.
+    const float humaniseDepth = 2.0f * clampUnit (
+        humanise_.load (std::memory_order_relaxed), 0.5f);
     HitVariation variation;
-    variation.pitchCents = 3.2f * drift
-        + 2.4f * signedUnitFromHash (seed ^ 0xc8013ea4u);
-    variation.decayScale = std::clamp (
-        1.0f + 0.025f * drift
-            + 0.016f * signedUnitFromHash (seed ^ 0xad90777du),
-        0.955f, 1.045f);
-    variation.characterAOffset = 0.018f * drift
-        + 0.014f * signedUnitFromHash (seed ^ 0x7e95761eu);
-    variation.characterBOffset = -0.014f * drift
-        + 0.016f * signedUnitFromHash (seed ^ 0x3c6ef372u);
-    variation.transientScale = std::clamp (
-        1.0f - 0.035f * drift
-            + 0.035f * signedUnitFromHash (seed ^ 0xbb67ae85u),
-        0.925f, 1.075f);
-    variation.circuitDriveOffset = 0.035f * drift
-        + 0.045f * signedUnitFromHash (seed ^ 0x1b873593u);
-    variation.circuitBias = 0.010f * drift
-        + 0.007f * signedUnitFromHash (seed ^ 0x85ebca6bu);
-    variation.phaseOffset = 0.010f * drift
-        + 0.012f * signedUnitFromHash (seed ^ 0xc2b2ae35u);
+    variation.pitchCents = humaniseDepth * (3.2f * drift
+        + 2.4f * signedUnitFromHash (seed ^ 0xc8013ea4u));
+    variation.decayScale = 1.0f + humaniseDepth * std::clamp (
+        0.025f * drift + 0.016f * signedUnitFromHash (seed ^ 0xad90777du),
+        -0.045f, 0.045f);
+    variation.characterAOffset = humaniseDepth * (0.018f * drift
+        + 0.014f * signedUnitFromHash (seed ^ 0x7e95761eu));
+    variation.characterBOffset = humaniseDepth * (-0.014f * drift
+        + 0.016f * signedUnitFromHash (seed ^ 0x3c6ef372u));
+    variation.transientScale = 1.0f + humaniseDepth * std::clamp (
+        -0.035f * drift + 0.035f * signedUnitFromHash (seed ^ 0xbb67ae85u),
+        -0.075f, 0.075f);
+    variation.circuitDriveOffset = humaniseDepth * (0.035f * drift
+        + 0.045f * signedUnitFromHash (seed ^ 0x1b873593u));
+    variation.circuitBias = humaniseDepth * (0.010f * drift
+        + 0.007f * signedUnitFromHash (seed ^ 0x85ebca6bu));
+    variation.phaseOffset = humaniseDepth * (0.010f * drift
+        + 0.012f * signedUnitFromHash (seed ^ 0xc2b2ae35u));
     auto& voice = voices_[static_cast<std::size_t> (findVoiceSlot())];
     if (voice.active && voice.ageSamples != 0u)
         retireVoice (voice);
-    initialiseVoice (voice, instrument, velocity, snapshotParameters (instrument), seed,
-                     variation);
+    if (voice.active)
+        releaseBankReference (voice.instrument);
+    initialiseVoice (voice, instrument, velocity, values, seed, variation);
+    addBankReference (instrument);
     anyVoiceActive_ = true;
     updateActiveVoiceCount();
 }
@@ -1532,11 +1732,35 @@ float DrumEngine::renderSnare (Voice& voice) noexcept
     const float body = (0.72f * oscillator (voice, 0) + 0.36f * oscillator (voice, 1))
         * voice.envelope;
     const float noise = nextNoise (voice);
-    const float wires = voice.filterA.tick (noise) * voice.auxiliaryEnvelope;
+
+    // Coupled head modes. The strike excites the air-loaded membrane series
+    // once and then leaves it ringing, which is what gives a real snare its
+    // short inharmonic "crack" between the transient and the wire wash.
+    float headModes = 0.0f;
+    if (voice.ageSamples < voice.modalActiveSamples)
+    {
+        const float strike = voice.ageSamples == 0u
+            ? voice.transientScale * voice.excitationScale
+            : 0.05f * modalNoiseScale_ * voice.transientEnvelope
+                  * voice.transientScale * noise;
+        for (std::size_t mode = 0; mode < 4; ++mode)
+            headModes += voice.modeGains[mode] * voice.resonators[mode].tick (strike);
+    }
+
+    // Snare wires are not a linear noise envelope: they only leave the resonant
+    // head, and therefore rattle, while its displacement exceeds their resting
+    // contact. Below that they damp the head instead. Gating the wire noise on
+    // instantaneous head displacement reproduces the characteristic buzz that
+    // fades into a dry, damped tail rather than a clean exponential hiss.
+    const float displacement = std::abs (body) + 0.55f * voice.transientEnvelope;
+    const float rattle = displacement / (0.10f + displacement);
+    const float wires = voice.filterA.tick (noise) * voice.auxiliaryEnvelope
+        * (0.30f + 0.70f * rattle);
     const float snap = voice.filterB.tick (noise) * voice.transientEnvelope
-        * voice.transientScale;
+        * voice.transientScale * voice.velocityTimbre;
     const float wireMix = 0.18f + 0.82f * voice.characterA;
-    return 0.72f * ((0.78f - 0.48f * voice.characterA) * body
+    return 0.72f * ((0.62f - 0.38f * voice.characterA) * body
+                    + (0.30f - 0.16f * voice.characterA) * headModes
                     + wireMix * wires + 0.35f * voice.characterB * snap);
 }
 
@@ -1562,7 +1786,8 @@ float DrumEngine::renderHat (Voice& voice) noexcept
                          + 0.20f * (1.0f - voice.characterA) * noise;
     const float high = voice.filterA.tick (metallic);
     const float focused = voice.filterB.tick (metallic);
-    const float attack = 0.12f * voice.transientEnvelope * noise * voice.transientScale;
+    const float attack = 0.12f * voice.transientEnvelope * noise * voice.transientScale
+        * voice.velocityTimbre;
     return (0.58f * high + (0.18f + 0.20f * voice.characterB) * focused + attack)
         * voice.envelope;
 }
@@ -1584,18 +1809,21 @@ float DrumEngine::renderRide (Voice& voice) noexcept
     const float airBand = voice.filterC.tick (
         0.34f * oscillatorBank + 0.66f * pcm);
 
-    const float contact = voice.ageSamples == 0u
-        ? 2.15f * voice.transientScale * voice.excitationScale
-        : 0.055f * modalNoiseScale_ * noise * voice.transientEnvelope
-            * voice.transientScale * voice.excitationScale;
     float modes = 0.0f;
-    for (std::size_t mode = 0; mode < resonatorCount; ++mode)
+    if (voice.ageSamples < voice.modalActiveSamples)
     {
-        float gain = voice.modeGains[mode];
-        gain *= mode < 4
-            ? 0.50f + 1.40f * voice.characterA
-            : 0.90f - 0.25f * voice.characterA;
-        modes += gain * voice.resonators[mode].tick (contact);
+        const float contact = voice.ageSamples == 0u
+            ? 2.15f * voice.transientScale * voice.excitationScale
+            : 0.055f * modalNoiseScale_ * noise * voice.transientEnvelope
+                * voice.transientScale * voice.excitationScale;
+        for (std::size_t mode = 0; mode < resonatorCount; ++mode)
+        {
+            float gain = voice.modeGains[mode];
+            gain *= mode < 4
+                ? 0.50f + 1.40f * voice.characterA
+                : 0.90f - 0.25f * voice.characterA;
+            modes += gain * voice.resonators[mode].tick (contact);
+        }
     }
 
     const float bell = voice.characterA;
@@ -1632,13 +1860,16 @@ float DrumEngine::renderCrash (Voice& voice) noexcept
     // The modal layer is struck briefly and then left alone. The long tail is
     // carried by diffuse oscillator/PCM bands, avoiding the old continuously
     // driven resonators that exposed a handful of clinging pitches.
-    const float excitation = voice.ageSamples == 0u
-        ? 1.75f * voice.transientScale * voice.excitationScale
-        : 0.075f * modalNoiseScale_ * noise * voice.transientEnvelope
-            * voice.transientScale * voice.excitationScale;
     float modes = 0.0f;
-    for (std::size_t mode = 0; mode < resonatorCount; ++mode)
-        modes += voice.modeGains[mode] * voice.resonators[mode].tick (excitation);
+    if (voice.ageSamples < voice.modalActiveSamples)
+    {
+        const float excitation = voice.ageSamples == 0u
+            ? 1.75f * voice.transientScale * voice.excitationScale
+            : 0.075f * modalNoiseScale_ * noise * voice.transientEnvelope
+                * voice.transientScale * voice.excitationScale;
+        for (std::size_t mode = 0; mode < resonatorCount; ++mode)
+            modes += voice.modeGains[mode] * voice.resonators[mode].tick (excitation);
+    }
 
     const float brightness = voice.characterB;
     const float bloom = 0.34f + 0.66f * (1.0f - voice.pitchEnvelope);
@@ -1654,18 +1885,41 @@ float DrumEngine::renderCrash (Voice& voice) noexcept
 
 float DrumEngine::renderTom (Voice& voice) noexcept
 {
-    const float membraneStiffness = 1.0f + 0.004f * voice.characterB
-        * voice.excitationScale * voice.envelope;
+    // Tension modulation: a displaced head is a stiffer head, so the pitch is
+    // highest while the strike energy is still stored and settles as the tom
+    // rings out. This nonlinear drop rides on top of the fast contact sweep and
+    // is what distinguishes a struck membrane from a pitch-enveloped sine.
+    const float tension = 1.0f
+        + (0.006f + 0.052f * voice.characterB) * voice.excitationScale
+              * voice.envelope * voice.envelope;
     const float frequency = voice.baseFrequency
         * (1.0f + voice.sweepAmount * voice.pitchEnvelope)
-        * membraneStiffness;
+        * tension;
     voice.phaseIncrements[0] = std::min (0.45f, frequency * inverseSampleRate_);
     const float fundamental = oscillator (voice, 0);
     const float shell = oscillator (voice, 1);
-    const float skin = voice.filterA.tick (nextNoise (voice)) * voice.transientEnvelope
+    const float noise = nextNoise (voice);
+    const float skin = voice.filterA.tick (noise) * voice.transientEnvelope
         * voice.transientScale;
-    return 0.98f * ((fundamental + (0.06f + 0.19f * voice.characterB) * shell)
-                    * voice.envelope + 0.16f * voice.characterB * skin);
+
+    // Inharmonic circular-membrane modes struck once by the stick contact.
+    // They decay faster than the body, so they colour the attack and early
+    // sustain without adding a clinging inharmonic tail.
+    float membrane = 0.0f;
+    if (voice.ageSamples < voice.modalActiveSamples)
+    {
+        const float strike = voice.ageSamples == 0u
+            ? voice.transientScale * voice.excitationScale
+            : 0.06f * modalNoiseScale_ * voice.transientEnvelope
+                  * voice.transientScale * noise;
+        for (std::size_t mode = 0; mode < 5; ++mode)
+            membrane += voice.modeGains[mode] * voice.resonators[mode].tick (strike);
+    }
+
+    return 0.98f * ((0.90f * fundamental + (0.06f + 0.19f * voice.characterB) * shell)
+                        * voice.envelope
+                    + (0.15f + 0.14f * voice.characterB) * membrane
+                    + 0.16f * voice.characterB * skin);
 }
 
 float DrumEngine::renderShaker (Voice& voice) noexcept
@@ -1696,14 +1950,20 @@ float DrumEngine::renderPerc1 (Voice& voice) noexcept
 float DrumEngine::renderPerc2 (Voice& voice) noexcept
 {
     const float noise = nextModalNoise (voice);
-    const float excitation = (voice.ageSamples == 0 ? voice.transientScale : 0.0f)
-        + 0.10f * modalNoiseScale_ * voice.characterB * voice.transientEnvelope
-            * voice.transientScale * noise;
     float body = 0.0f;
-    for (std::size_t mode = 0; mode < 4; ++mode)
-        body += voice.modeGains[mode] * voice.resonators[mode].tick (
-            excitation * voice.excitationScale);
-    const float click = voice.filterA.tick (noise) * voice.transientEnvelope;
+    if (voice.ageSamples < voice.modalActiveSamples)
+    {
+        const float excitation = (voice.ageSamples == 0 ? voice.transientScale : 0.0f)
+            + 0.10f * modalNoiseScale_ * voice.characterB * voice.transientEnvelope
+                * voice.transientScale * noise;
+        for (std::size_t mode = 0; mode < 4; ++mode)
+            body += voice.modeGains[mode] * voice.resonators[mode].tick (
+                excitation * voice.excitationScale);
+    }
+    // Stick content scales with velocity as well as level: a light tap on a
+    // wooden or metallic body puts far less energy into the contact click.
+    const float click = voice.filterA.tick (noise) * voice.transientEnvelope
+        * voice.velocityTimbre;
     return 1.35f * voice.filterB.tick (body + 0.20f * voice.characterB * click);
 }
 
@@ -1731,7 +1991,7 @@ float DrumEngine::renderVoice (Voice& voice) noexcept
         case Instrument::Count:     break;
     }
 
-    output *= voice.velocity * voice.chokeGain;
+    output *= voice.velocity * voice.chokeGain * voice.levelGain;
     output = applyAnalogOutputStage (voice, output);
     voice.lastOutput = output;
     voice.recentPeak = std::max (
@@ -1759,6 +2019,51 @@ float DrumEngine::renderVoice (Voice& voice) noexcept
     return output;
 }
 
+void DrumEngine::applyBusStage (float& left, float& right, float driveAmount,
+                                float compressionAmount) noexcept
+{
+    if (driveAmount > 0.0f)
+    {
+        // A shared transformer/console-style softener. The linear region is
+        // gain-matched, so Drive adds density and level dependence rather than
+        // simply making the kit louder, and the same first-order ADAA used by
+        // the voice stages keeps its corner from splattering aliases.
+        const float driveGain = 1.0f + 3.0f * driveAmount;
+        const float curvature = 0.30f + 0.70f * driveAmount;
+        const float compensation = (1.0f + 0.55f * driveAmount) / driveGain;
+        left = compensation * antialiasedRationalShaper (
+            driveGain * left, busDriveAdaaLeft_, curvature, curvature);
+        right = compensation * antialiasedRationalShaper (
+            driveGain * right, busDriveAdaaRight_, curvature, curvature);
+    }
+
+    if (compressionAmount > 0.0f)
+    {
+        // Stereo-linked peak detector with a 4 ms attack and 140 ms release.
+        // The gain law blends continuously between unity and hard limiting, an
+        // approximation of a soft-knee ratio that avoids a per-sample pow().
+        const float detector = std::max (std::abs (left), std::abs (right));
+        const float coefficient = detector > busEnvelope_
+            ? busAttackCoefficient_ : busReleaseCoefficient_;
+        busEnvelope_ += coefficient * (detector - busEnvelope_);
+
+        const float threshold = 0.50f - 0.42f * compressionAmount;
+        const float slope = compressionAmount / (0.35f + 0.65f * compressionAmount);
+        float gain = 1.0f;
+        if (busEnvelope_ > threshold)
+            gain = 1.0f + slope * (threshold / busEnvelope_ - 1.0f);
+        busGain_ = std::clamp (std::isfinite (gain) ? gain : 1.0f, 0.02f, 1.0f);
+
+        const float makeup = 1.0f + 1.15f * compressionAmount;
+        left *= busGain_ * makeup;
+        right *= busGain_ * makeup;
+    }
+    else
+    {
+        busGain_ = 1.0f;
+    }
+}
+
 void DrumEngine::process (float* left, float* right, int numSamples) noexcept
 {
     if (numSamples <= 0)
@@ -1769,22 +2074,14 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
     updateMetallicBankParameterTargets();
 
     // Voice activity can only decrease inside one engine chunk; triggers split
-    // processing at their exact event offsets. Discover observable banks and
-    // collect the audible voices once per chunk instead of rescanning both
-    // 64-voice pools for every sample.
-    std::uint32_t activeMetallicBankMask = 0u;
+    // processing at their exact event offsets. Collect the audible voices once
+    // per chunk instead of rescanning both 64-voice pools for every sample.
     std::array<Voice*, maxVoices + retiringVoiceCount> chunkVoices {};
     int chunkVoiceCount = 0;
-    const auto observeVoice = [&activeMetallicBankMask, &chunkVoices,
-                               &chunkVoiceCount] (Voice& voice)
+    const auto observeVoice = [&chunkVoices, &chunkVoiceCount] (Voice& voice)
     {
-        if (! voice.active)
-            return;
-        chunkVoices[static_cast<std::size_t> (chunkVoiceCount++)] = &voice;
-        const int bankIndex = metallicBankIndexFor (voice.instrument);
-        if (bankIndex >= 0)
-            activeMetallicBankMask |= std::uint32_t { 1 }
-                << static_cast<unsigned> (bankIndex);
+        if (voice.active)
+            chunkVoices[static_cast<std::size_t> (chunkVoiceCount++)] = &voice;
     };
     for (auto& voice : voices_)
         observeVoice (voice);
@@ -1794,17 +2091,25 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
     const float gainTarget = outputGain_.load (std::memory_order_relaxed);
     const float gainSmoothing = gainSmoothingCoefficient_;
     const float dcCoefficient = dcBlockerCoefficient_;
+    const float driveAmount = clampUnit (
+        busDrive_.load (std::memory_order_relaxed), 0.0f);
+    const float compressionAmount = clampUnit (
+        busCompression_.load (std::memory_order_relaxed), 0.0f);
+    const bool busActive = driveAmount > 0.0f || compressionAmount > 0.0f;
+    if (! busActive)
+        resetBusStage();
+    std::uint64_t silentSamples = 0;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
         // While no voice exists in either pool, every downstream stage is at
         // its zero rest state and the block is exact digital silence, so only
-        // the output-gain smoother needs to advance. The frozen sample count
-        // lets the next trigger restore the free-running metallic circuits to
-        // the state they would have reached (see wakeMetallicOscillatorBanks).
+        // the output-gain smoother needs to advance. The skipped samples are
+        // accounted to every metallic bank below so the next trigger can
+        // restore the circuit state it would have reached.
         if (! anyVoiceActive_)
         {
-            ++metallicFrozenSamples_;
+            ++silentSamples;
             smoothedOutputGain_ += gainSmoothing * (gainTarget - smoothedOutputGain_);
             if (left != nullptr)
                 left[sample] = 0.0f;
@@ -1813,10 +2118,11 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
             continue;
         }
 
-        // Free-running component oscillators advance even when their VCAs are
-        // closed. A later trigger therefore samples the circuit's actual phase
-        // rather than restarting a synthetic waveform at note-on.
-        renderMetallicOscillatorBanks (activeMetallicBankMask);
+        // Component oscillators advance whenever a voice can observe them, so
+        // a strike samples the circuit's actual phase rather than restarting a
+        // synthetic waveform at note-on. Banks nobody can hear are frozen and
+        // restored analytically, which is exact through a closed VCA.
+        renderMetallicOscillatorBanks (metallicBankMask_);
         float dryLeft = 0.0f;
         float dryRight = 0.0f;
         bool hasActiveVoices = false;
@@ -1836,19 +2142,26 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         }
 
         smoothedOutputGain_ += gainSmoothing * (gainTarget - smoothedOutputGain_);
-        const float dcLeft = dryLeft - dcInputLeft_ + dcCoefficient * dcOutputLeft_;
-        const float dcRight = dryRight - dcInputRight_ + dcCoefficient * dcOutputRight_;
+        float busLeft = dryLeft - dcInputLeft_ + dcCoefficient * dcOutputLeft_;
+        float busRight = dryRight - dcInputRight_ + dcCoefficient * dcOutputRight_;
         dcInputLeft_ = dryLeft;
         dcInputRight_ = dryRight;
-        dcOutputLeft_ = dcLeft;
-        dcOutputRight_ = dcRight;
+        dcOutputLeft_ = busLeft;
+        dcOutputRight_ = busRight;
+
+        if (busActive)
+            applyBusStage (busLeft, busRight, driveAmount, compressionAmount);
 
         const float outputLeft = std::clamp (antialiasedRationalShaper (
-            smoothedOutputGain_ * dcLeft, masterAdaaPreviousLeft_, 1.0f, 1.0f),
+            smoothedOutputGain_ * busLeft, masterAdaaPreviousLeft_, 1.0f, 1.0f),
             -1.0f, 1.0f);
         const float outputRight = std::clamp (antialiasedRationalShaper (
-            smoothedOutputGain_ * dcRight, masterAdaaPreviousRight_, 1.0f, 1.0f),
+            smoothedOutputGain_ * busRight, masterAdaaPreviousRight_, 1.0f, 1.0f),
             -1.0f, 1.0f);
+        meterPeakLeft_ = std::max (std::abs (outputLeft),
+                                   meterPeakLeft_ * peakReleaseMultiplier_);
+        meterPeakRight_ = std::max (std::abs (outputRight),
+                                    meterPeakRight_ * peakReleaseMultiplier_);
         if (left != nullptr && right == left)
         {
             left[sample] = 0.5f * (outputLeft + outputRight);
@@ -1872,6 +2185,25 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         anyVoiceActive_ = hasActiveVoices;
     }
 
+    if (silentSamples != 0u)
+    {
+        for (auto& bank : metallicBanks_)
+            bank.frozenSamples += silentSamples;
+        const auto releasedSilence = static_cast<float> (silentSamples);
+        const float release = std::pow (peakReleaseMultiplier_, releasedSilence);
+        meterPeakLeft_ *= release;
+        meterPeakRight_ *= release;
+    }
+
+    // With no voice left, the bus sees exact zero: its detector would decay to
+    // rest and its gain to unity. Doing that in one step keeps silence free and
+    // stops a stale gain-reduction reading from sticking on the editor's meter.
+    if (! anyVoiceActive_)
+        resetBusStage();
+
+    outputLevelLeft_.store (meterPeakLeft_, std::memory_order_relaxed);
+    outputLevelRight_.store (meterPeakRight_, std::memory_order_relaxed);
+    busGainMeter_.store (busGain_, std::memory_order_relaxed);
     updateActiveVoiceCount();
 }
 

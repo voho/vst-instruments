@@ -9,8 +9,10 @@ audio.
 
 ![Drumalor instrument interface](Docs/screenshots/drumalor-standalone.png)
 
-The screenshot is the actual Standalone application built from this source.
-The VST3 and Audio Unit use the same resizable JUCE editor.
+The screenshot is the actual Standalone application, captured from the version
+1.0 build; the 1.1 editor adds the kit mixer, kit bus deck, and metering
+described below and has not been re-captured, because that requires a macOS
+build. The VST3 and Audio Unit use the same resizable JUCE editor.
 
 Drumalor provides **13 separately playable synthesized voices**: Kick, Snare,
 Clap, Closed and Open Hats, Ride, Crash, Low/Mid/High Toms, Shaker, and two
@@ -32,37 +34,91 @@ The project builds three products from one JUCE codebase:
 ## Voices, MIDI notes, and controls
 
 The primary note map follows General MIDI percussion assignments. MIDI velocity
-controls hit strength.
+controls both hit strength and timbre.
 
-Each row has exactly four automatable controls: two voice-specific character
-controls, **Pitch** from -24 to +24 semitones, and **Decay**. Character and decay
-controls run from 0% to 100%. A separate global **Output** parameter spans -24
-to +6 dB, for 53 host parameters in total: 52 voice parameters plus Output.
+Each voice has seven automatable controls, and the kit adds four more, for
+**95 host parameters** in total: 91 voice parameters plus the kit bus.
 
-| Voice | GM note | General MIDI assignment | Character A | Character B |
-| --- | ---: | --- | --- | --- |
-| Kick | 36 | Bass Drum 1 | Punch | Drive |
-| Snare | 38 | Acoustic Snare | Wires | Snap |
-| Clap | 39 | Hand Clap | Spread | Tone |
-| Closed Hat | 42 | Closed Hi-Hat | Metal | Tone |
-| Open Hat | 46 | Open Hi-Hat | Metal | Tone |
-| Ride | 51 | Ride Cymbal 1 | Bell | Tone |
-| Crash | 49 | Crash Cymbal 1 | Spread | Brightness |
-| Low Tom | 45 | Low Tom | Punch | Skin |
-| Mid Tom | 47 | Low-Mid Tom | Punch | Skin |
-| High Tom | 50 | High Tom | Punch | Skin |
-| Shaker | 82 | Shaker | Density | Color |
-| Perc 1 | 56 | Cowbell | Ratio | Drive |
-| Perc 2 | 75 | Claves | Hollow | Click |
+| Per-voice control | Range | Default |
+| --- | --- | --- |
+| Character A | 0-100% | per voice |
+| Character B | 0-100% | per voice |
+| Pitch | -24 to +24 st | 0.0 |
+| Decay | 0-100% | per voice |
+| Level | -24 to +6 dB | 0.0 dB |
+| Pan | L100 to R100 | original kit position |
+| Choke Group | Off, A, B, C | A for both hi-hats, Off elsewhere |
+
+| Kit control | Range | Default |
+| --- | --- | --- |
+| Kit Humanise | 0-100% | 50% |
+| Bus Drive | 0-100% | 0% |
+| Bus Compression | 0-100% | 0% |
+| Output | -24 to +6 dB | -6.0 dB |
+
+| Voice | GM note | General MIDI assignment | Character A | Character B | Default pan |
+| --- | ---: | --- | --- | --- | --- |
+| Kick | 36 | Bass Drum 1 | Punch | Drive | C |
+| Snare | 38 | Acoustic Snare | Wires | Snap | C |
+| Clap | 39 | Hand Clap | Spread | Tone | C |
+| Closed Hat | 42 | Closed Hi-Hat | Metal | Tone | R16 |
+| Open Hat | 46 | Open Hi-Hat | Metal | Tone | R20 |
+| Ride | 51 | Ride Cymbal 1 | Bell | Tone | R27 |
+| Crash | 49 | Crash Cymbal 1 | Spread | Brightness | L27 |
+| Low Tom | 45 | Low Tom | Punch | Skin | L20 |
+| Mid Tom | 47 | Low-Mid Tom | Punch | Skin | C |
+| High Tom | 50 | High Tom | Punch | Skin | R20 |
+| Shaker | 82 | Shaker | Density | Color | R12 |
+| Perc 1 | 56 | Cowbell | Ratio | Drive | L12 |
+| Perc 2 | 75 | Claves | Hollow | Click | R12 |
 
 Common kit-layout aliases are accepted too: 35 for Kick; 40 for Snare; 44 for
 Closed Hat; 53 and 59 for Ride; 57 for Crash; 41 and 43 for Low Tom; 48 for Mid
 Tom; 70 for Shaker; and 37, 76, or 77 for Perc 2. Other notes are silent.
 
-Closed Hat chokes a ringing Open Hat, as expected from a shared hi-hat pedal
-group. The remaining voices can overlap and retrigger independently. The labels
-describe musical intent rather than exposing implementation-specific constants;
-hosts store the stable parameter IDs behind them for automation and recall.
+**Choke groups** generalise the hi-hat pedal. Any voice can be placed in group
+A, B, or C; triggering it then cuts every sounding voice in the same group with
+a short 3 ms fade. Closed Hat and Open Hat share group A by default, so an
+untouched kit behaves exactly as before, while a Ride and Crash, or two
+percussion voices, can now be linked the same way. Each hit remembers the group
+it was born into, so changing the control never strands a ringing tail. Voices
+outside a group overlap and retrigger independently.
+
+The labels describe musical intent rather than exposing implementation-specific
+constants; hosts store the stable parameter IDs behind them for automation and
+recall.
+
+The version 1.0 parameter block is unchanged and still occupies host parameter
+indices 0-52, so existing sessions and automation lanes keep working. Every
+control added in 1.1 is appended after it and defaults to preserving the earlier
+sound: unity channel level, the original kit pan positions, the original hi-hat
+choke pair, a bypassed bus, and the Humanise setting that reproduces the
+previous fixed variation depth sample for sample.
+
+## Kit mixer and bus
+
+**Level** and **Pan** turn the previously hard-coded kit balance into
+automatable per-voice controls. Level is a clean gain applied to the voice, and
+Pan is the same constant-power law the fixed positions always used, so a kit
+left alone images and balances identically.
+
+**Kit Humanise** scales how much of the modelled per-hit component tolerance
+actually reaches each voice: pitch, decay, transient energy, tone, circuit drive
+and bias. At 0% the kit is machine-tight and every strike is a deterministic
+copy of the last; at 100% the drift is twice as wide. The 50% default is
+numerically identical to the fixed depth the engine always had, and the
+underlying drift sequence is untouched by the control, so a kit remains exactly
+reproducible after reset at any setting.
+
+**Bus Drive** and **Bus Compression** form a shared output stage after the mix
+and DC blocker. Drive is a gain-matched asymmetric softener with the same
+first-order ADAA used inside the voices, so it adds density and level dependence
+rather than loudness. Compression is a stereo-linked peak-detecting glue
+compressor with a 4 ms attack, a 140 ms release, an amount-dependent threshold
+and ratio, and matched makeup; its gain law blends continuously between unity
+and hard limiting so no per-sample transcendental is needed. Both stages are
+fully bypassed at their 0% defaults - not almost bypassed, but skipped entirely,
+which the regression suite verifies sample for sample.
 
 ## Sound engine
 
@@ -72,15 +128,78 @@ partials for hats and cymbals, and compact stochastic or resonant models for the
 shaker and percussion voices. Voice-specific controls move several related
 synthesis values together so each voice remains useful across the full range.
 
+Toms and Snare are struck-membrane models rather than pitch-enveloped sines. The
+stick contact excites a bank of circular-membrane modes at the ideal Bessel
+ratios (1.000, 1.593, 2.135, 2.295, 2.653, 2.917), raised to an air-loading
+exponent because the air column inside a shell pulls a real head's upper modes
+down towards its fundamental. **Skin** moves that exponent, running each tom
+from a tight, nearly harmonic head to a looser and clearly inharmonic one. The
+modes ring down faster than the body, so they colour the attack and early
+sustain without leaving an inharmonic tail behind. The toms also model tension
+modulation: a displaced head is a stiffer head, so the pitch is highest while
+the strike energy is still stored and settles as the drum rings out, on top of
+the fast contact sweep.
+
+The Snare adds a nonlinear wire model. Real snare wires only rattle while the
+resonant head lifts them off their resting contact and damp it below that
+threshold, so the wire noise here is gated by the instantaneous head
+displacement instead of following a plain exponential envelope. Hard strikes
+buzz; soft ones stay dry and damped, and the wire-to-body balance therefore
+changes with velocity rather than only with level.
+
+MIDI velocity is a timbre control across the struck voices, not only a VCA
+level. A soft strike puts less energy into the high, heavily damped modes of a
+real drum, so velocity scales the struck-timbre filters, the modal brightness
+and the stick/contact content of Kick, Snare, Clap, both hi-hats, all three
+Toms, Shaker and Perc 2. The curve is unity at full velocity, so the loud end of
+the established voice design is preserved and quiet hits gain the extra realism.
+Ride, Crash and Perc 1 are driven by free-running relaxation circuits rather
+than by struck filters, so for them velocity keeps shaping contact and
+excitation energy as before instead of moving a cutoff.
+
 Each virtual channel has fixed per-unit component tolerances. Its metallic
-Schmitt/RC oscillators run continuously behind the VCA, so a strike samples the
+Schmitt/RC oscillators keep running behind the VCA, so a strike samples the
 circuit's current phase instead of restarting a waveform with newly randomized
 parts. Triggers add only tightly bounded, slowly correlated variations to pitch,
-envelope decay, transient energy, tone, circuit drive, and bias. MIDI velocity
-also changes trigger energy before the resonators and VCAs, not merely the final
-gain. Repeated equal-velocity notes therefore differ without becoming random
-changes of kit, level, or timing. The sequence remains deterministic after reset
-and independent of host block size.
+envelope decay, transient energy, tone, circuit drive, and bias, scaled by **Kit
+Humanise**. MIDI velocity also changes trigger energy before the resonators and
+VCAs, not merely the final gain. Repeated equal-velocity notes therefore differ
+without becoming random changes of kit, level, or timing. The sequence remains
+deterministic after reset and independent of host block size.
+
+A relaxation-oscillator bank contributes exactly zero through a closed VCA, so
+the engine no longer advances one that no voice can observe. Observability is
+evaluated per sample from a reference count that voice allocation and retirement
+keep exact, and a frozen bank is restored analytically the moment the next
+strike opens a VCA: short gaps are replayed substep-exactly, longer gaps advance
+every phase, snap the capacitors onto their settled periodic orbit, and
+re-render one full reconstruction history. Because the gap is an absolute sample
+count, the result is independent of host block partitioning, and a bank frozen
+behind an unrelated drum wakes into the same state as one frozen during silence.
+The same reasoning retires each voice's modal bank once it has rung down past
+-150 dB, far below the -100 dB at which the voice already counts as silent.
+Together these remove most of the engine's fixed cost: a kit without hats or
+cymbals stops paying for five metallic circuits, and long cymbal tails stop
+paying for twelve resonators they can no longer excite.
+
+Measured on one Linux x86-64 machine, rendering 45 seconds of 16th-note patterns
+at 48 kHz in 128-sample blocks, comparing the 1.0 and 1.1 engines back to back
+(lower is better; this is CPU time as a fraction of real time):
+
+| Pattern | 1.0 | 1.1 | Change |
+| --- | ---: | ---: | ---: |
+| Kick, Snare, three Toms, Clap, Perc 2 | 16.0% | 10.7% | -33% |
+| Kick, Snare, Closed and Open Hat | 13.9% | 8.4% | -39% |
+| All thirteen voices | 28.8% | 22.2% | -23% |
+| Kick only | 22.9% | 15.1% | -34% |
+| Ride only | 60.3% | 36.8% | -39% |
+| Aggregate of the five | 1.42 | 0.93 | -34% |
+
+The 1.1 figures already include the added membrane models, so the saving from
+the two gating changes alone is larger than the table shows. The absolute
+percentages are specific to that machine and say nothing about a Mac; only the
+before/after ratio is meaningful. The JUCE-free regression suite over the same
+period went from 27.5 s to 17.5 s despite gaining ten new test groups.
 
 Each voice finishes through a lightweight asymmetric diode/transistor-style
 transfer with a variable operating point and a virtual supply rail that sags
@@ -140,7 +259,7 @@ and clears completed one-shot voices after their tails finish.
 The editor uses a generated geometry-free powder-coat plate only as a restrained
 material texture; all panel geometry is rendered by the responsive JUCE layout. A
 compact equal-width channel grid, illuminated selection rails, separate Voice
-Circuit and Master decks, scaled metal-collared Bakelite knobs, recessed value
+Circuit and Kit Bus decks, scaled metal-collared Bakelite knobs, recessed value
 readouts, bipolar Pitch indication, parameter-aware reset gestures, tooltips,
 and clearer typography create a denser hardware hierarchy without losing
 accessibility or resize support. Its near-black face, neutral hardware,
@@ -150,6 +269,25 @@ retaining Drumalor's own branding and layout. The texture is compiled into the
 plug-in as binary data, so there is no external image to install. The visual
 direction is era-inspired rather than a copy of any historical drum machine's
 panel or trade dress.
+
+The panel is now also a meter bridge. Every channel pad carries a recessed
+activity rail that fills with that voice's own measured level and leaves a
+peak-hold marker behind, turning the thirteen-pad grid into a live channel
+overview rather than a row of note-on flashes. A stereo bus meter in the header
+shows the output with peak hold, silkscreen marks at -36, -24, -12 and -6 dB,
+and a separate strip that grows leftwards with the bus compressor's gain
+reduction. The Voice Circuit deck holds five knobs plus a horizontal Pan slider
+and the Choke Group selector; the Kit Bus deck holds Humanise, Drive, Comp and
+Output.
+
+The presentation mathematics behind all of that - the decibel meter curve and
+its exact inverse, the asymmetric attack/release/peak-hold ballistics, the
+pad-grid geometry, and the colour-ramp curves - lives in the JUCE-free
+`Source/DSP/UiMath.*` library and is unit-tested with the synthesis engine. The
+JUCE layer only renders it.
+
+**Note:** the screenshot above still shows the version 1.0 interface. It can
+only be regenerated from a macOS build.
 
 ## Research influences and modeling scope
 
@@ -257,8 +395,8 @@ ctest --test-dir build-dsp --output-on-failure
 
 The JUCE-free regression executable renders every voice from 8 to 192 kHz. It
 checks finite, non-silent, bounded output, completed tails, hi-hat choking, all
-four controls on every voice, sample-rate consistency, saturated voice stealing,
-and a generous offline performance guardrail. Organic-model contracts verify
+four original controls on every voice, sample-rate consistency, saturated voice
+stealing, and a generous offline performance guardrail. Organic-model contracts verify
 that six equal strikes differ for all 13 voices while RMS, peak, and natural-tail
 spread stay bounded; they also verify bit-exact reset replay and block-partition
 invariance. A dedicated metallic-source contract verifies across all five banks
@@ -271,9 +409,32 @@ and crest factor, Drive harmonics without excess settled energy above 8 kHz,
 pitch tracking, DC safety, and consistency from 8 to 192 kHz. Cymbal contracts
 reject hollow midrange gaps and sparse
 ringing tails, require retained Ride wash at maximum Bell, verify directional
-Tone/Brightness response, and keep Crash Spread diffusion level-matched. Plug-in
-builds add a JUCE-backed processor contract suite for
-parameter defaults and state, sample-accurate MIDI, CC panic, the UI-trigger
+Tone/Brightness response, and keep Crash Spread diffusion level-matched.
+
+Version 1.1 adds contracts for everything it introduces. The kit mixer is held
+to a clean -6 dB gain law, a symmetric pan law, hard-panned channel isolation,
+the original default positions, and bit-identical output at unity. Choke groups
+are checked for the factory hi-hat pair, for arbitrary linked voices, for
+independence between groups, and for tails that keep the group they were born
+into. Humanise is verified to reproduce the historical fixed variation depth
+exactly at its default, to order hit-to-hit spread across its range, and to stay
+reproducible after reset at every setting. The kit bus is checked for exact
+bypass at 0%, safe and level-matched saturation, real dynamic-range reduction,
+released gain reduction, and block-partition invariance. Metering is checked for
+attack, release, stereo placement and reset. Membrane contracts require audible
+inharmonic head content at the strike that decays faster than the body, a Skin
+control that actually moves the air loading, a level-dependent snare wire
+rattle, and darker soft hits on all ten velocity-timbred voices. A dedicated
+efficiency contract proves that a metallic bank frozen behind an unrelated drum
+wakes into exactly the same state as one frozen during silence, and measures
+that adding a hi-hat costs meaningfully more than the same kick alone, which is
+only true while unobservable banks stay frozen. The presentation library gets
+its own contracts for the meter curve and its inverse, ballistics, pad-grid
+geometry, and sanitisation of invalid input.
+
+Plug-in builds add a JUCE-backed processor contract suite for parameter defaults
+and state, version-1.0 host parameter index stability, restoring a session that
+predates the new parameters, sample-accurate MIDI, CC panic, the UI-trigger
 lifecycle, and off-screen rendering of the embedded vintage editor. These checks
 do not replace listening tests, host automation tests, or profiling on the oldest
 supported Mac.
@@ -331,7 +492,8 @@ the VST3 at the highest strictness level:
 ```
 
 Also exercise all 13 note mappings, velocity extremes, rapid retriggers, the
-open/closed-hat choke, all 52 voice parameters, project-state recall, sample-
+open/closed-hat choke, all 91 voice parameters and the four kit controls,
+choke groups, project-state recall, sample-
 rate changes, and buffer sizes from 32 to 2048 samples in at least two hosts.
 A validator passing does not guarantee musical or host-level correctness.
 
@@ -377,9 +539,9 @@ Before publishing, verify the package from a clean user account and inspect its
 signature and Gatekeeper assessment:
 
 ```bash
-pkgutil --check-signature build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg
+pkgutil --check-signature build-macos/dist/Drumalor-1.1.0-macOS-universal.pkg
 spctl --assess --type install --verbose=4 \
-  build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg
+  build-macos/dist/Drumalor-1.1.0-macOS-universal.pkg
 ```
 
 The bundle identifier `audio.drumalor.synth`, manufacturer code `Dral`, and
@@ -391,9 +553,9 @@ CMake project version and packaging-script version in sync for each release.
 ## Project layout
 
 ```text
-Source/DSP/              JUCE-free synthesis engine and voice metadata
+Source/DSP/              JUCE-free synthesis engine, voice metadata, and UI maths
 Source/PluginProcessor.* MIDI mapping, parameters, state, and audio bridge
-Source/PluginEditor.*    Thirteen-pad editor and four-knob voice controls
+Source/PluginEditor.*    Metered thirteen-pad editor, voice deck, and kit bus deck
 Assets/                  Embedded geometry-free charcoal material texture
 Docs/                    Real interface screenshot(s) used in this README
 Tests/                   DSP and JUCE processor-contract regression tests

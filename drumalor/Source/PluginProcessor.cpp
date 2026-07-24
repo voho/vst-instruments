@@ -23,8 +23,13 @@ juce::String toJuceString (const Text& text)
 }
 
 constexpr std::array<const char*, drumalor::parameters::count> parameterSuffixes {
-    "CharacterA", "CharacterB", "Pitch", "Decay"
+    "CharacterA", "CharacterB", "Pitch", "Decay", "Level", "Pan", "Choke"
 };
+
+juce::StringArray chokeGroupChoices()
+{
+    return { "Off", "Group A", "Group B", "Group C" };
+}
 
 constexpr bool isValidInstrument (drumalor::Instrument instrument) noexcept
 {
@@ -53,6 +58,51 @@ std::unique_ptr<juce::RangedAudioParameter> makePercentParameter (
                 return text.retainCharacters ("0123456789.-").getFloatValue() / 100.0f;
             }));
 }
+
+std::unique_ptr<juce::RangedAudioParameter> makeDecibelParameter (
+    const juce::String& id, const juce::String& name, float minimum, float maximum,
+    float defaultValue)
+{
+    return std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { id, 1 }, name,
+        juce::NormalisableRange<float> { minimum, maximum, 0.1f }, defaultValue,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("dB")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (value, 1);
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.-").getFloatValue();
+            }));
+}
+
+std::unique_ptr<juce::RangedAudioParameter> makePanParameter (
+    const juce::String& id, const juce::String& name, float defaultValue)
+{
+    return std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { id, 1 }, name,
+        juce::NormalisableRange<float> { -1.0f, 1.0f, 0.01f }, defaultValue,
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                const auto amount = juce::roundToInt (std::abs (value) * 100.0f);
+                if (amount == 0)
+                    return juce::String ("C");
+                return (value < 0.0f ? juce::String ("L") : juce::String ("R"))
+                     + juce::String (amount);
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                const auto trimmed = text.trim().toUpperCase();
+                if (trimmed.startsWithChar ('C'))
+                    return 0.0f;
+                const auto amount =
+                    trimmed.retainCharacters ("0123456789.-").getFloatValue() / 100.0f;
+                return trimmed.startsWithChar ('L') ? -std::abs (amount) : amount;
+            }));
+}
 } // namespace
 
 DrumalorAudioProcessor::DrumalorAudioProcessor()
@@ -71,7 +121,14 @@ DrumalorAudioProcessor::DrumalorAudioProcessor()
     }
 
     outputParameter = parameters.getRawParameterValue (drumalor::parameters::output);
+    humaniseParameter = parameters.getRawParameterValue (drumalor::parameters::humanise);
+    busDriveParameter = parameters.getRawParameterValue (drumalor::parameters::busDrive);
+    busCompressionParameter =
+        parameters.getRawParameterValue (drumalor::parameters::busCompression);
     jassert (outputParameter != nullptr);
+    jassert (humaniseParameter != nullptr);
+    jassert (busDriveParameter != nullptr);
+    jassert (busCompressionParameter != nullptr);
 }
 
 juce::String DrumalorAudioProcessor::parameterId (drumalor::Instrument instrument, int slot)
@@ -92,8 +149,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout
 DrumalorAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (drumalor::instrumentCount * drumalor::parameters::count + 1);
+    result.reserve (drumalor::instrumentCount * drumalor::parameters::count
+                    + drumalor::parameters::kitParameterCount);
 
+    // Version 1.0 parameter block, unchanged and still first, so every host
+    // parameter index, ID, range and default from an existing session is
+    // preserved exactly. Everything added in 1.1 is appended after it.
     for (std::size_t instrument = 0; instrument < drumalor::instrumentCount; ++instrument)
     {
         const auto drum = static_cast<drumalor::Instrument> (instrument);
@@ -134,6 +195,37 @@ DrumalorAudioProcessor::createParameterLayout()
         juce::ParameterID { drumalor::parameters::output, 1 }, "Output",
         juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -6.0f,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
+
+    // Kit bus. The two bus stages are fully bypassed at their 0 % defaults and
+    // Humanise defaults to the depth the fixed analogue variation always had,
+    // so a restored 1.0 session sounds exactly as it did.
+    result.push_back (makePercentParameter (
+        drumalor::parameters::humanise, "Kit Humanise", 0.5f));
+    result.push_back (makePercentParameter (
+        drumalor::parameters::busDrive, "Bus Drive", 0.0f));
+    result.push_back (makePercentParameter (
+        drumalor::parameters::busCompression, "Bus Compression", 0.0f));
+
+    // Per-voice mixer, appended last for the same index-stability reason.
+    for (std::size_t instrument = 0; instrument < drumalor::instrumentCount; ++instrument)
+    {
+        const auto drum = static_cast<drumalor::Instrument> (instrument);
+        const auto& metadata = drumalor::getInstrumentMetadata (drum);
+        const auto drumName = toJuceString (drumalor::getInstrumentDisplayName (drum));
+
+        result.push_back (makeDecibelParameter (
+            parameterId (drum, drumalor::parameters::level), drumName + " Level",
+            drumalor::minimumVoiceLevelDecibels, drumalor::maximumVoiceLevelDecibels,
+            metadata.defaultParameters.level));
+        result.push_back (makePanParameter (
+            parameterId (drum, drumalor::parameters::pan), drumName + " Pan",
+            metadata.defaultParameters.pan));
+        result.push_back (std::make_unique<juce::AudioParameterChoice> (
+            juce::ParameterID { parameterId (drum, drumalor::parameters::choke), 1 },
+            drumName + " Choke Group", chokeGroupChoices(),
+            juce::jlimit (0, drumalor::chokeGroupCount,
+                          metadata.defaultParameters.chokeGroup)));
+    }
 
     return { result.begin(), result.end() };
 }
@@ -330,8 +422,19 @@ void DrumalorAudioProcessor::updateEngineParameters() noexcept
         next.characterB = pointers[drumalor::parameters::characterB]->load (std::memory_order_relaxed);
         next.pitch = pointers[drumalor::parameters::pitch]->load (std::memory_order_relaxed);
         next.decay = pointers[drumalor::parameters::decay]->load (std::memory_order_relaxed);
+        next.level = pointers[drumalor::parameters::level]->load (std::memory_order_relaxed);
+        next.pan = pointers[drumalor::parameters::pan]->load (std::memory_order_relaxed);
+        // A choice parameter publishes its selected index as a float.
+        next.chokeGroup = juce::roundToInt (
+            pointers[drumalor::parameters::choke]->load (std::memory_order_relaxed));
         engine.setInstrumentParameters (drum, next);
     }
+
+    drumalor::KitParameters kit;
+    kit.humanise = humaniseParameter->load (std::memory_order_relaxed);
+    kit.busDrive = busDriveParameter->load (std::memory_order_relaxed);
+    kit.busCompression = busCompressionParameter->load (std::memory_order_relaxed);
+    engine.setKitParameters (kit);
 
     engine.setOutputGain (juce::Decibels::decibelsToGain (
         outputParameter->load (std::memory_order_relaxed)));

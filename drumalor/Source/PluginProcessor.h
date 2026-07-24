@@ -11,6 +11,12 @@
 namespace drumalor::parameters
 {
 inline constexpr auto output = "output";
+inline constexpr auto humanise = "humanise";
+inline constexpr auto busDrive = "busDrive";
+inline constexpr auto busCompression = "busComp";
+
+// Kit-wide controls, in the order they are appended to the layout.
+inline constexpr int kitParameterCount = 4;
 
 enum Slot
 {
@@ -18,8 +24,16 @@ enum Slot
     characterB,
     pitch,
     decay,
+    level,
+    pan,
+    choke,
     count
 };
+
+// The four original per-voice controls keep host parameter indices 0..51 so
+// existing automation lanes and sessions stay valid; the mixer slots are
+// appended after the kit controls.
+inline constexpr int originalSlotCount = 4;
 } // namespace drumalor::parameters
 
 class DrumalorAudioProcessorEditor;
@@ -61,6 +75,17 @@ public:
     {
         return activeVoiceCount.load (std::memory_order_relaxed);
     }
+    // Metering for the editor. The engine publishes already-smoothed values
+    // through relaxed atomics, so polling from the message thread is safe.
+    [[nodiscard]] float getOutputLevel (int channel) const noexcept
+    {
+        return engine.getOutputLevel (channel);
+    }
+    [[nodiscard]] float getInstrumentLevel (drumalor::Instrument instrument) const noexcept
+    {
+        return engine.getInstrumentLevel (instrument);
+    }
+    [[nodiscard]] float getBusGain() const noexcept { return engine.getBusGain(); }
     [[nodiscard]] double getCurrentSampleRateForDisplay() const noexcept
     {
         return displaySampleRate.load (std::memory_order_relaxed);
@@ -97,6 +122,9 @@ private:
 
     std::array<InstrumentParameterPointers, drumalor::instrumentCount> parameterPointers {};
     std::atomic<float>* outputParameter = nullptr;
+    std::atomic<float>* humaniseParameter = nullptr;
+    std::atomic<float>* busDriveParameter = nullptr;
+    std::atomic<float>* busCompressionParameter = nullptr;
 
     std::array<UiTriggerEvent, uiQueueCapacity> uiTriggerQueue {};
     std::atomic<unsigned> uiWriteIndex { 0 };

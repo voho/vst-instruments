@@ -22,7 +22,7 @@ endif()
 
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU and
 # Standalone) compile C/Objective-C sources with non-Xcode generators too.
-project(Drumalor VERSION 1.0.0 LANGUAGES C CXX)
+project(Drumalor VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,8 +35,12 @@ set(DRUMALOR_JUCE_PATH "" CACHE PATH
 
 include(CTest)
 
-set(DRUMALOR_DSP_SOURCES Source/DSP/DrumEngine.cpp)
-set(DRUMALOR_DSP_HEADERS Source/DSP/DrumEngine.h)
+set(DRUMALOR_DSP_SOURCES
+    Source/DSP/DrumEngine.cpp
+    Source/DSP/UiMath.cpp)
+set(DRUMALOR_DSP_HEADERS
+    Source/DSP/DrumEngine.h
+    Source/DSP/UiMath.h)
 
 add_library(DrumalorDSP STATIC
     ${DRUMALOR_DSP_SOURCES}
