@@ -2540,6 +2540,41 @@ void testStrumSpread()
            "a strum-delayed string was retired before it was picked");
     expect(peakAbs(settle.left) > 1.0e-4f, "the delayed strings never sounded");
 
+    // Strum Spread schedules the stroke rather than shaping it, so the control
+    // tick copies it verbatim. A chord dispatched at offset 0 of the block that
+    // carries the automation change must already use the new value; reading the
+    // smoothed copy scheduled the whole chord with the previous spread. reset()
+    // syncs the smoothed state from the target, so this deliberately does not
+    // reset after the change.
+    {
+        ElectryEngine automated;
+        automated.prepare (sampleRate, 512);
+        EngineParameters flat;
+        flat.artifactAmount = 0.0f;
+        flat.sympatheticAmount = 0.0f;
+        flat.strumSpreadSeconds = 0.0f;
+        automated.setParameters (flat);
+        automated.reset();
+        StereoBuffer settled (1024);
+        renderInto (automated, settled);
+
+        EngineParameters spreadNow = flat;
+        spreadNow.strumSpreadSeconds = 0.020f;
+        automated.setParameters (spreadNow);
+
+        // No render in between: the chord arrives at sample offset 0.
+        for (const int note : chord)
+            automated.noteOn (note, 0.85f);
+
+        int delayedStrings = 0;
+        for (int stringIndex = 0; stringIndex < ElectryEngine::stringCount; ++stringIndex)
+            if (TestAccess::snapshot (automated, stringIndex).startDelaySamples > 0)
+                ++delayedStrings;
+        expect (delayedStrings > 0,
+                "a chord automated in the same block was scheduled with the "
+                "previous strum spread");
+    }
+
     // Lifting a key before the pick reaches that string cancels the stroke.
     // Leaving the countdown running excited the string after its release, so a
     // short strummed chord grew a late attack once the keys were already up.

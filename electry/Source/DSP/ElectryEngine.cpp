@@ -595,12 +595,17 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
     lastNoteOnClock_ = engineClock_;
 
     int startDelaySamples = 0;
-    if (smoothedParameters_.strumSpreadSeconds > 0.0f && ! newChord)
+    // Read the sanitised target rather than the smoothed copy. This control
+    // schedules the stroke instead of shaping it, so the control tick copies it
+    // verbatim; a chord whose note-ons land at offset 0 of the same block as
+    // the automation change would otherwise be scheduled with the previous
+    // block's spread, usually as a block chord.
+    const float spreadSeconds = targetParameters_.strumSpreadSeconds;
+    if (spreadSeconds > 0.0f && ! newChord)
     {
         const int stringsCrossed = std::abs(stringIndex - chordAnchorString_);
         startDelaySamples = static_cast<int>(
-            smoothedParameters_.strumSpreadSeconds
-            * static_cast<float>(sampleRate_))
+            spreadSeconds * static_cast<float>(sampleRate_))
             * stringsCrossed;
     }
 
