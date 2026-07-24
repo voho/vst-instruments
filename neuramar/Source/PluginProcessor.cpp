@@ -75,6 +75,26 @@ void addDefaultParameterStateIfMissing (
     }
 }
 
+void addLegacyTouchIfMissing (juce::ValueTree& state)
+{
+    if (containsParameterState (state, neuramar::parameters::touch))
+        return;
+
+    // Touch is the one appended control whose declared default is not its
+    // identity value: the pre-1.1 synthesis path is Touch 0, which leaves the
+    // harmonic tilt and Air gain untouched at every velocity, while new
+    // instances open at 0.35. Restoring the declared default here would make a
+    // legacy memory respond to velocity, which is what this migration exists
+    // to prevent.
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+    juce::ValueTree parameterState { parameterType };
+    parameterState.setProperty (idProperty, neuramar::parameters::touch, nullptr);
+    parameterState.setProperty (valueProperty, 0.0f, nullptr);
+    state.appendChild (parameterState, nullptr);
+}
+
 std::uint64_t mixRandomizationSeed (std::uint64_t value) noexcept
 {
     value ^= value >> 30u;
@@ -1059,6 +1079,7 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
             xml != nullptr && xml->hasTagName (parameters.state.getType()))
         {
             auto restoredState = juce::ValueTree::fromXml (*xml);
+            addLegacyTouchIfMissing (restoredState);
             addDefaultParameterStateIfMissing (
                 restoredState, parameters, neuramar::parameters::noise);
             addDefaultParameterStateIfMissing (
@@ -1106,6 +1127,7 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // Touch controls. APVTS otherwise retains the live value for a missing
     // parameter child, which could make a legacy exact-recall preset
     // unexpectedly evolve, stretch, shift, or respond to velocity.
+    addLegacyTouchIfMissing (restoredParameterState);
     addDefaultParameterStateIfMissing (
         restoredParameterState, parameters, neuramar::parameters::noise);
     addDefaultParameterStateIfMissing (

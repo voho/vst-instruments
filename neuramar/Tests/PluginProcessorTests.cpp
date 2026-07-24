@@ -642,12 +642,17 @@ void testContractsAndLearning()
     {
         const char* id;
         float liveValue;
-        float expectedDefault;
+        // What exact recall requires, which is the value that leaves the
+        // pre-1.1 synthesis path unchanged. For Stretch and Formant that is
+        // also the declared default; Touch opens at 0.35 on a new instance but
+        // only Touch 0 leaves the harmonic tilt and Air gain alone at every
+        // velocity, so a legacy memory has to migrate there instead.
+        float expectedAfterMigration;
     };
     for (const auto& migration : std::array<MigrationCase, 3> {
              MigrationCase { neuramar::parameters::stretch, 0.05f, 1.0f },
              MigrationCase { neuramar::parameters::formant, 19.5f, 0.0f },
-             MigrationCase { neuramar::parameters::touch, 0.97f, 0.35f } })
+             MigrationCase { neuramar::parameters::touch, 0.97f, 0.0f } })
     {
         const auto olderState = removeParameterFromSerializedState (
             state, migration.id);
@@ -660,11 +665,12 @@ void testContractsAndLearning()
             olderState.getData(), static_cast<int> (olderState.getSize()));
         expect (approximatelyEqual (
                     parameterValue (olderRestored, migration.id),
-                    migration.expectedDefault)
+                    migration.expectedAfterMigration)
                     && olderRestored.getLearningSnapshot().stage
                         == NeuramarAudioProcessor::LearningStage::Ready,
                 std::string ("a session saved before ") + migration.id
-                    + " inherited the live value instead of its default");
+                    + " inherited the live value instead of the value that "
+                      "reproduces its original sound");
     }
 
     const auto defaultAttack = renderInitialAttack (state, false, 0.0f);
