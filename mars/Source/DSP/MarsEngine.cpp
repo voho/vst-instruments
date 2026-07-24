@@ -1688,18 +1688,42 @@ void MarsEngine::noteOn(int midiNote, float velocity)
         arpKeyDown(midiNote, velocity);
         return;
     }
+    // Symmetrically, leaving arpeggiator mode has to complete before this
+    // note-on creates anything: clearArpeggiator() releases the latched step by
+    // MIDI root, which would otherwise also release a voice just started on
+    // that same pitch.
+    exitArpeggiatorMode();
     noteOnInternal(midiNote, velocity);
 }
 
 void MarsEngine::noteOff(int midiNote)
 {
     midiNote = std::clamp(midiNote, 0, 127);
-    // A note pressed before the arpeggiator was switched on is not in the key
-    // list, so arpKeyUp() cannot release it. Falling through keeps that voice
-    // from staying key-down until the next panic.
-    if (targetParameters_.arpEnabled && arpKeyUp(midiNote))
-        return;
+    if (targetParameters_.arpEnabled)
+    {
+        // A note pressed before the arpeggiator was switched on is not in the
+        // key list, so arpKeyUp() cannot release it. Falling through keeps that
+        // voice from staying key-down until the next panic.
+        if (arpKeyUp(midiNote))
+            return;
+    }
+    else
+    {
+        exitArpeggiatorMode();
+    }
     noteOffInternal(midiNote);
+}
+
+void MarsEngine::exitArpeggiatorMode() noexcept
+{
+    if (!arpWasEnabled_)
+        return;
+
+    // Leaving arpeggiator mode must not strand a latched step or the pattern's
+    // key list. The step is released normally so its amplifier envelope still
+    // finishes. Cleared first so this runs once however it is reached.
+    arpWasEnabled_ = false;
+    clearArpeggiator(true);
 }
 
 void MarsEngine::enterArpeggiatorMode() noexcept
@@ -2111,14 +2135,9 @@ void MarsEngine::advanceArpeggiator(const EngineParameters& parameters) noexcept
 {
     if (!parameters.arpEnabled)
     {
-        if (arpWasEnabled_)
-        {
-            // Leaving arpeggiator mode must not strand a latched step or the
-            // pattern's key list. The current note is released normally so the
-            // amplifier envelope still finishes.
-            clearArpeggiator(true);
-            arpWasEnabled_ = false;
-        }
+        // A note-on dispatched earlier in this block will already have done
+        // this; either way it happens before a normal voice exists.
+        exitArpeggiatorMode();
         return;
     }
 

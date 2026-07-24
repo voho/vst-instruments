@@ -2029,7 +2029,13 @@ void DrumEngine::applyBusStage (float& left, float& right, float driveAmount,
         // simply making the kit louder, and the same first-order ADAA used by
         // the voice stages keeps its corner from splattering aliases.
         const float driveGain = 1.0f + 3.0f * driveAmount;
-        const float curvature = 0.30f + 0.70f * driveAmount;
+        // Curvature scales from zero so the stage meets bypass continuously.
+        // A fixed offset meant the first fraction of a percent on the knob
+        // jumped straight to a third of the full curve -- a steady 0.5 landed
+        // at roughly 0.435 -- so automation crossing zero clicked. Both the
+        // gain and its compensation already reach unity at zero, so this is
+        // the last discontinuity, and full drive is unchanged at 1.0.
+        const float curvature = driveAmount;
         const float compensation = (1.0f + 0.55f * driveAmount) / driveGain;
         left = compensation * antialiasedRationalShaper (
             driveGain * left, busDriveAdaaLeft_, curvature, curvature);

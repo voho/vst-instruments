@@ -3988,6 +3988,31 @@ void testArpeggiator()
                "the arpeggiator did not keep running after being switched on");
     }
 
+    // The mirror of the enable case. Switching the arpeggiator off in the same
+    // block as a note-on for the pitch it is currently sounding must not let
+    // the exit release the fresh voice: clearArpeggiator() releases the latched
+    // step by MIDI root, which matches the new voice too.
+    {
+        // Hold latches the pattern, so the arpeggiator keeps sounding the pitch
+        // with no key down and the note-on below needs no note-off first.
+        mars::MarsEngine engine;
+        auto p = makeEngine(engine, mars::ArpeggiatorMode::Up, 1, 0.8f, true);
+        engine.noteOn(60, 0.8f);
+        engine.noteOff(60);
+        render(engine, 4096);
+        expect(mars::MarsEngineTestAccess::arpeggiatorSoundingNote(engine) == 60,
+               "the latched arpeggiator was not sounding the pitch under test");
+
+        p.arpEnabled = false;
+        engine.setParameters(p);
+
+        // The keyboard takes over on that same pitch, before the next block.
+        engine.noteOn(60, 0.8f);
+        render(engine, static_cast<int> (0.4 * rate));
+        expect(engine.getActiveVoiceCount() > 0,
+               "leaving arpeggiator mode released the note-on that replaced it");
+    }
+
     // The engine is MIDI-omni, so two controllers can hold one pitch at once.
     // The pattern must keep that key until the final note-off, exactly as the
     // Mono held-note stack already counts overlapping presses.

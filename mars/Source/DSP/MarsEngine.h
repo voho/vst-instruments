@@ -426,6 +426,7 @@ private:
     // callers can release notes that predate the arpeggiator instead.
     bool arpKeyUp(int midiNote, bool releaseEveryPress = false) noexcept;
     void enterArpeggiatorMode() noexcept;
+    void exitArpeggiatorMode() noexcept;
     void releaseNotesPredatingArpeggiator() noexcept;
     void clearArpeggiator(bool releaseSounding) noexcept;
     int buildArpeggiatorSequence(std::array<int, maxArpSteps>& notes,

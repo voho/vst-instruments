@@ -1904,6 +1904,19 @@ void testKitBusStage()
             "bus drive produced unsafe audio");
     expect (meanAbsoluteDifference (dry, drivenRender) > 1.0e-4,
             "bus drive did not change the kit");
+
+    // The stage has to meet bypass continuously. A fixed curvature offset meant
+    // the first fraction of a percent on the knob jumped straight to a third of
+    // the full curve, so automation crossing zero clicked.
+    drumalor::KitParameters barelyDriven;
+    barelyDriven.busDrive = 0.001f;
+    const auto barelyDrivenRender = renderKit (barelyDriven);
+    const double bypassGap = meanAbsoluteDifference (dry, barelyDrivenRender);
+    const double fullDriveGap = meanAbsoluteDifference (dry, drivenRender);
+    expect (bypassGap < 0.02 * fullDriveGap,
+            "the first step of bus drive is discontinuous with bypass ("
+                + std::to_string (bypassGap) + " against "
+                + std::to_string (fullDriveGap) + " at full drive)");
     const double driveLevelDb = 20.0 * std::log10 (
         metricsForInterleaved (drivenRender).rms()
         / std::max (1.0e-12, metricsForInterleaved (dry).rms()));
