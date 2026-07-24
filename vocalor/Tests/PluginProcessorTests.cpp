@@ -446,6 +446,45 @@ void testVersionOneSessionsStillLoad()
     expect (std::isfinite (shift) && shift >= -12.0f && shift <= 12.0f,
             "the formant shift left its range after loading a legacy session");
 
+    // The same load into an instance that has already been sung through. APVTS
+    // keeps a parameter's live value when the stored tree has no child for it,
+    // so without the migration a version-1 session would inherit the player's
+    // morph, glide and legato instead of the defaults it was saved with.
+    VocalorAudioProcessor used;
+    const auto setValue = [&used] (const char* id, float value)
+    {
+        auto* parameter = used.parameters.getParameter (id);
+        expect (parameter != nullptr, std::string ("cannot set missing parameter ") + id);
+        if (parameter != nullptr)
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    };
+    setValue (vowelX, 0.93f);
+    setValue (vowelY, 0.07f);
+    setValue (vowelMorph, 0.85f);
+    setValue (formantShift, 7.0f);
+    setValue (glide, 0.62f);
+    setValue (legato, 1.0f);
+    setValue (roomSize, 0.19f);
+
+    used.setStateInformation (stored.getData(), static_cast<int> (stored.getSize()));
+
+    VocalorAudioProcessor pristine;
+    for (const char* id : { vowelX, vowelY, vowelMorph, formantShift, glide,
+                            legato, roomSize })
+    {
+        auto* live = used.parameters.getRawParameterValue (id);
+        auto* fresh = pristine.parameters.getRawParameterValue (id);
+        expect (live != nullptr && fresh != nullptr,
+                std::string ("missing parameter ") + id);
+        if (live != nullptr && fresh != nullptr)
+            expect (nearly (live->load(), fresh->load(), 0.002f),
+                    std::string ("a version-1 session kept the live value of ") + id
+                        + " instead of its default");
+    }
+    auto* usedBreath = used.parameters.getRawParameterValue (breath);
+    expect (usedBreath != nullptr && nearly (usedBreath->load(), 0.71f, 0.002f),
+            "reloading into a used instance lost a stored value");
+
     processor.prepareToPlay (sampleRate, blockSize);
     juce::AudioBuffer<float> buffer (2, blockSize);
     juce::MidiBuffer midi;

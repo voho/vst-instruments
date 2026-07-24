@@ -413,8 +413,22 @@ void testStateRoundTrip()
     expect (removedChildren == newIds.size(),
             "could not build a version 1.0 state without the new parameters");
 
+    // Load it the way a host does. Going through setStateInformation() rather
+    // than replaceState() is what exercises the migration.
+    juce::MemoryBlock legacyStored;
+    if (const auto legacyXml = legacyTree.createXml())
+        juce::AudioProcessor::copyXmlToBinary (*legacyXml, legacyStored);
+    else
+        expect (false, "the version 1.0 state could not be serialised");
+
+    const auto loadLegacyState = [&legacyStored] (DrumalorAudioProcessor& target)
+    {
+        target.setStateInformation (legacyStored.getData(),
+                                    static_cast<int> (legacyStored.getSize()));
+    };
+
     DrumalorAudioProcessor legacyReader;
-    legacyReader.parameters.replaceState (legacyTree);
+    loadLegacyState (legacyReader);
     expect (approximatelyEqual (
                 parameterValue (legacyReader, kickCharacter), 0.421f, 0.0011f),
             "a version 1.0 session lost its stored value");
@@ -433,6 +447,27 @@ void testStateRoundTrip()
                        drumalor::getInstrumentMetadata (drumalor::Instrument::Ride)
                            .defaultParameters.pan, 0.011f),
             "a version 1.0 session did not restore the original kit mixer defaults");
+
+    // The same load into an instance that has already been used. APVTS keeps a
+    // parameter's live value when the stored tree has no child for it, so
+    // without the migration a legacy preset would inherit whatever the player
+    // had dialled in -- an old kit recalled with the bus still driven.
+    DrumalorAudioProcessor usedReader;
+    setParameterValue (usedReader, drumalor::parameters::busDrive, 0.83f);
+    setParameterValue (usedReader, drumalor::parameters::busCompression, 0.77f);
+    setParameterValue (usedReader, drumalor::parameters::humanise, 0.91f);
+    setParameterValue (usedReader, snareLevel, -6.0f);
+    loadLegacyState (usedReader);
+
+    DrumalorAudioProcessor pristine;
+    for (const auto& id : newIds)
+        expect (approximatelyEqual (parameterValue (usedReader, id),
+                                    parameterValue (pristine, id), 0.0011f),
+                ("a version 1.0 session kept the live value of " + id
+                 + " instead of its default").toStdString());
+    expect (approximatelyEqual (
+                parameterValue (usedReader, kickCharacter), 0.421f, 0.0011f),
+            "reloading into a used instance lost the stored value");
 }
 
 void testSampleAccurateMidiAndMappings()

@@ -140,6 +140,54 @@ void addDefaultParameterStateIfMissing (
         state.appendChild (parameterState, nullptr);
     }
 }
+
+float parameterStateValue (const juce::ValueTree& state,
+                           juce::AudioProcessorValueTreeState& parameters,
+                           const char* parameterId)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+
+    for (const auto& child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId
+            && child.hasProperty (valueProperty))
+            return static_cast<float> (child.getProperty (valueProperty));
+
+    if (const auto* parameter = parameters.getParameter (parameterId))
+        return parameter->convertFrom0to1 (parameter->getDefaultValue());
+
+    return 0.0f;
+}
+
+void addLegacyUnisonDetuneIfMissing (juce::ValueTree& state,
+                                     juce::AudioProcessorValueTreeState& parameters)
+{
+    if (containsParameterState (state, mars::parameters::unisonDetune))
+        return;
+
+    const auto* detune = dynamic_cast<const juce::RangedAudioParameter*> (
+        parameters.getParameter (mars::parameters::unisonDetune));
+    if (detune == nullptr)
+        return;
+
+    // Until 1.6 the unison width was 4 + 20 * Drift cents. The new control's
+    // 9.6 default only reproduces that at the default Drift, so a legacy state
+    // has to derive its width from the Drift value it actually stored -- Drift
+    // 0 sounded 4 cents wide, not 9.6.
+    const auto drift = parameterStateValue (state, parameters, mars::parameters::drift);
+    const auto cents = detune->getNormalisableRange().snapToLegalValue (
+        4.0f + 20.0f * drift);
+
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+    juce::ValueTree parameterState { parameterType };
+    parameterState.setProperty (idProperty, mars::parameters::unisonDetune, nullptr);
+    parameterState.setProperty (valueProperty, cents, nullptr);
+    state.appendChild (parameterState, nullptr);
+}
 } // namespace
 
 MarsAudioProcessor::MarsAudioProcessor()
@@ -814,6 +862,10 @@ void MarsAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
     {
         auto restoredState = juce::ValueTree::fromXml (*xml);
+
+        // Runs before the defaults below so the derived width wins over the
+        // control's flat default for a state that predates it.
+        addLegacyUnisonDetuneIfMissing (restoredState, parameters);
 
         // APVTS preserves the current raw value when a parameter child is
         // absent from a replacement tree. Explicitly restore the declared

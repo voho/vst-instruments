@@ -498,6 +498,39 @@ void testLegacyStateDefaultsNewParameters()
                                 1234.0f, 0.5f),
             "version-1 migration did not restore existing parameter values");
 
+    // Unison width was 4 + 20 * Drift cents before it became a control of its
+    // own. The 9.6 default only reproduces that at the default Drift, so a
+    // legacy session has to derive the width from the Drift it stored --
+    // otherwise a Drift-0 Unison patch recalls at 9.6 cents instead of 4.
+    const auto expectDerivedDetune = [] (float drift, float expectedCents)
+    {
+        MarsAudioProcessor driftSource;
+        setParameterValue (driftSource, mars::parameters::drift, drift);
+        auto driftState = driftSource.parameters.copyState();
+        removeParameterState (driftState, mars::parameters::unisonDetune);
+
+        juce::MemoryBlock driftBinary;
+        if (const auto xml = driftState.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*xml, driftBinary);
+        expect (driftBinary.getSize() > 0,
+                "could not serialise a legacy drift fixture");
+
+        MarsAudioProcessor driftReader;
+        setParameterValue (driftReader, mars::parameters::unisonDetune, 41.0f);
+        driftReader.setStateInformation (driftBinary.getData(),
+                                         static_cast<int> (driftBinary.getSize()));
+        expect (approximatelyEqual (
+                    parameterValue (driftReader, mars::parameters::unisonDetune),
+                    expectedCents, 0.06f),
+                "a legacy session at drift " + std::to_string (drift)
+                    + " did not recall its "  + std::to_string (expectedCents)
+                    + " cent unison width");
+    };
+
+    expectDerivedDetune (0.0f, 4.0f);
+    expectDerivedDetune (0.28f, 9.6f);
+    expectDerivedDetune (1.0f, 24.0f);
+
     const auto upgradedState = restored.parameters.copyState();
     expect (containsParameterState (upgradedState, mars::parameters::osc1Enabled)
                 && containsParameterState (upgradedState, mars::parameters::osc2Enabled)

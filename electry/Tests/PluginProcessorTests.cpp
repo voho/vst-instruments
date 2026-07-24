@@ -246,8 +246,17 @@ void testStateRoundTrip()
             legacyState.removeChild (child, nullptr);
     }
 
+    // Load it the way a host does: setStateInformation() is the path that
+    // migrates, replaceState() on its own is not.
+    juce::MemoryBlock legacyStored;
+    if (const auto legacyXml = legacyState.createXml())
+        juce::AudioProcessor::copyXmlToBinary (*legacyXml, legacyStored);
+    else
+        expect (false, "the pre-1.1 state could not be serialised");
+
     ElectryAudioProcessor upgraded;
-    upgraded.parameters.replaceState (legacyState);
+    upgraded.setStateInformation (legacyStored.getData(),
+                                  static_cast<int> (legacyStored.getSize()));
     expect (std::abs (parameterValue (upgraded, electry::parameters::tone) - 0.31f)
                 < 1.0e-4f,
             "a pre-1.1 session lost an original parameter value");
@@ -266,6 +275,27 @@ void testStateRoundTrip()
     expect (std::abs (parameterValue (upgraded, electry::parameters::vibratoDepth)
                           - 35.0f) < 1.0e-3f,
             "a pre-1.1 session did not pick up the vibrato-depth default");
+
+    // The same load into an instance that has already been played. APVTS keeps
+    // a parameter's live value when the stored tree omits it, so without the
+    // migration the legacy session would inherit the player's sympathetic
+    // resonance and palm mute rather than resetting them.
+    ElectryAudioProcessor used;
+    setParameterValue (used, electry::parameters::sympathetic, 0.93f);
+    setParameterValue (used, electry::parameters::palmMute, 0.68f);
+    setParameterValue (used, electry::parameters::strumSpread, 0.21f);
+    setParameterValue (used, electry::parameters::vibratoDepth, 80.0f);
+    used.setStateInformation (legacyStored.getData(),
+                              static_cast<int> (legacyStored.getSize()));
+
+    for (const char* id : { electry::parameters::sympathetic,
+                            electry::parameters::palmMute,
+                            electry::parameters::strumSpread,
+                            electry::parameters::vibratoDepth })
+        expect (std::abs (parameterValue (used, id) - parameterValue (upgraded, id))
+                    < 1.0e-3f,
+                std::string ("a pre-1.1 session kept the live value of ") + id
+                    + " instead of its default");
 }
 
 void testBusAndPluginContract()

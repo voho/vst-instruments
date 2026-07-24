@@ -14,6 +14,50 @@ Enum enumFromParameter (const std::atomic<float>* value, int maximum) noexcept
     return static_cast<Enum> (juce::jlimit (0, maximum,
                                            juce::roundToInt (value->load (std::memory_order_relaxed))));
 }
+
+// APVTS keeps a parameter at its current value when the replacement tree has
+// no child for it. A session saved before a control existed would therefore
+// adopt whatever the previously loaded preset left behind rather than that
+// control's default, so fill in every default the stored tree omits.
+bool containsParameterState (const juce::ValueTree& state,
+                             const juce::String& parameterId)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+
+    for (const auto& child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId)
+            return true;
+
+    return false;
+}
+
+void addMissingParameterDefaults (
+    juce::ValueTree& state, juce::AudioProcessorValueTreeState& parameters,
+    const juce::Array<juce::AudioProcessorParameter*>& hostParameters)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+
+    for (const auto* hostParameter : hostParameters)
+    {
+        const auto* ranged =
+            dynamic_cast<const juce::RangedAudioParameter*> (hostParameter);
+        if (ranged == nullptr
+            || parameters.getParameter (ranged->paramID) == nullptr
+            || containsParameterState (state, ranged->paramID))
+            continue;
+
+        juce::ValueTree parameterState { parameterType };
+        parameterState.setProperty (idProperty, ranged->paramID, nullptr);
+        parameterState.setProperty (
+            valueProperty,
+            ranged->convertFrom0to1 (ranged->getDefaultValue()), nullptr);
+        state.appendChild (parameterState, nullptr);
+    }
+}
 } // namespace
 
 VocalorAudioProcessor::VocalorAudioProcessor()
@@ -307,7 +351,9 @@ void VocalorAudioProcessor::setStateInformation (const void* data, int sizeInByt
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
     {
-        parameters.replaceState (juce::ValueTree::fromXml (*xml));
+        auto restoredState = juce::ValueTree::fromXml (*xml);
+        addMissingParameterDefaults (restoredState, parameters, getParameters());
+        parameters.replaceState (restoredState);
         requestPanic();
     }
 }
