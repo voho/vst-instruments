@@ -1,4 +1,5 @@
 #include "DSP/AirFilterbank.h"
+#include "DSP/ModelVisualisation.h"
 #include "DSP/NeuramarEngine.h"
 #include "DSP/NeuralModel.h"
 #include "DSP/SampleLearner.h"
@@ -134,8 +135,11 @@ void refreshModelHeader(std::vector<std::uint8_t>& bytes,
     return bytes;
 }
 
+// Builds a canonical version-3 payload: the version-2 neural base plus a
+// two-keyframe residual trajectory and no inharmonicity field at all.
 [[nodiscard]] std::vector<std::uint8_t> makeLinearResidualModelBytes(
-    const neuramar::NeuralModel& model, float pitchCorrectionSemitones)
+    const neuramar::NeuralModel& model, float pitchCorrectionSemitones,
+    std::uint32_t version = 3, float inharmonicity = 0.0f)
 {
     auto bytes = makeVersion2ModelBytes(model);
     appendLittleU32(bytes, 2);
@@ -158,7 +162,9 @@ void refreshModelHeader(std::vector<std::uint8_t>& bytes,
                     ? static_cast<std::int16_t>(32767) : 0);
         }
     }
-    refreshModelHeader(bytes, neuramar::NeuralModel::currentFormatVersion);
+    if (version >= 4)
+        appendLittleFloat(bytes, inharmonicity);
+    refreshModelHeader(bytes, version);
     return bytes;
 }
 
@@ -1327,11 +1333,13 @@ struct AirMetrics
     const std::size_t first = std::min<std::size_t>(signal.size() / 5,
                                                     signal.size());
     const std::size_t count = std::min<std::size_t>(16384, signal.size() - first);
-    float bestFrequency = expectedHz;
-    double bestEnergy = -1.0;
     const float lower = 0.94f * expectedHz;
     const float upper = 1.06f * expectedHz;
     const float step = std::max(0.20f, expectedHz / 1000.0f);
+    // A parabolic vertex over the strongest three probes keeps the estimate
+    // limited by the render rather than by this sweep's step size.
+    std::vector<double> energies;
+    std::size_t best = 0;
     for (float frequency = lower; frequency <= upper; frequency += step)
     {
         std::complex<double> sum;
@@ -1346,14 +1354,25 @@ struct AirMetrics
             sum += static_cast<double>(signal[first + index]) * window * oscillator;
             oscillator *= rotation;
         }
-        const double energy = std::norm(sum);
-        if (energy > bestEnergy)
-        {
-            bestEnergy = energy;
-            bestFrequency = frequency;
-        }
+        energies.push_back(std::norm(sum));
+        if (energies.back() > energies[best])
+            best = energies.size() - 1;
     }
-    return bestFrequency;
+    if (energies.empty())
+        return expectedHz;
+
+    double offset = 0.0;
+    if (best > 0 && best + 1 < energies.size())
+    {
+        const double left = std::log(std::max(energies[best - 1], 1.0e-300));
+        const double centre = std::log(std::max(energies[best], 1.0e-300));
+        const double right = std::log(std::max(energies[best + 1], 1.0e-300));
+        const double denominator = left - 2.0 * centre + right;
+        if (denominator < -1.0e-18)
+            offset = std::clamp(0.5 * (left - right) / denominator, -0.5, 0.5);
+    }
+    return lower + static_cast<float>(
+        (static_cast<double>(best) + offset) * static_cast<double>(step));
 }
 
 [[nodiscard]] std::vector<float> renderNote(neuramar::NeuramarEngine& engine,
@@ -1642,7 +1661,7 @@ void testAirFilterNormalisation()
     constexpr std::size_t integrationSize = 65536;
     for (const float sampleRate : { 44100.0f, 48000.0f, 96000.0f })
     {
-        for (const auto [centre, width] : std::array {
+        for (const auto& [centre, width] : std::array {
                  std::pair { 120.0f, 1.10f },
                  std::pair { 1200.0f, 0.75f },
                  std::pair { 10000.0f, 1.25f } })
@@ -1768,15 +1787,19 @@ void testResidualScheduleAndQuality(const LearnedFixture& fixture)
     const std::size_t extension = modelHeaderBytes + version2PayloadBytes;
     expect(readLittleU32(bytes, 4)
                == neuramar::NeuralModel::currentFormatVersion,
-           "learner did not write the current v3 model format");
+           "learner did not write the current v4 model format");
     const auto keyframeCount = readLittleU32(bytes, extension);
     expect(keyframeCount == 128,
            "learner did not fill the bounded 128-frame residual trajectory");
     const std::size_t expectedBytes = modelHeaderBytes + version2PayloadBytes
         + 4 + 4 * neuramar::NeuralModel::outputSize
-        + keyframeCount * (4 + 2 * neuramar::NeuralModel::outputSize);
+        + keyframeCount * (4 + 2 * neuramar::NeuralModel::outputSize)
+        + 4;
     expect(bytes.size() == expectedBytes && bytes.size() < 128 * 1024,
-           "learned v3 payload escaped its exact bounded layout");
+           "learned v4 payload escaped its exact bounded layout");
+    expect(readLittleFloat(bytes, expectedBytes - 4)
+               == corrected.inharmonicity(),
+           "learned payload did not end with its inharmonicity coefficient");
 
     const std::size_t timesOffset = extension + 4
         + 4 * neuramar::NeuralModel::outputSize;
@@ -1978,7 +2001,7 @@ void testRootCoreReconstruction(const LearnedFixture& fixture)
     };
     double attackEnvelopeErrorDb = 0.0;
     double maximumAttackErrorDb = 0.0;
-    for (const auto [first, last] : attackWindows)
+    for (const auto& [first, last] : attackWindows)
     {
         const double sourceRatio = segmentRms(
             fixture.source, 48000.0, first, last)
@@ -2716,6 +2739,732 @@ void testStereoPanAndOverlappingNoteOff(const neuramar::NeuralModel& model)
            "the second note-off did not release the remaining overlapping voice");
 }
 
+// A stiff-string partial series with a known coefficient. Upper partials decay
+// faster than low ones, exactly as a struck string does.
+[[nodiscard]] std::vector<float> makeStiffStringSample(
+    double sampleRate, double fundamentalHz, double inharmonicity,
+    double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    constexpr int partialCount = 36;
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.004);
+        double value = 0.0;
+        for (int partial = 1; partial <= partialCount; ++partial)
+        {
+            const double number = static_cast<double>(partial);
+            const double frequency = fundamentalHz * number
+                * std::sqrt(1.0 + inharmonicity * number * number);
+            if (frequency >= 0.44 * sampleRate)
+                break;
+            const double decay = std::exp(
+                -time * (0.85 + 0.052 * number));
+            const double amplitude = std::pow(number, -1.05) * decay;
+            value += amplitude * std::sin(
+                2.0 * pi * frequency * time
+                + 0.31 * number + 0.11 * number * number);
+        }
+        sample[index] = static_cast<float>(0.42 * attack * value);
+    }
+    return sample;
+}
+
+// Two fixed resonances well away from the fundamental, so a Formant shift has
+// something unambiguous to move.
+[[nodiscard]] std::vector<float> makeResonantBodySample(
+    double sampleRate, double fundamentalHz, double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    const int partialCount = std::min(56, static_cast<int>(std::floor(
+        0.44 * sampleRate / fundamentalHz)));
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double envelope = (1.0 - std::exp(-time / 0.007))
+            * (0.86 + 0.14 * std::exp(-time / 0.42));
+        double value = 0.0;
+        for (int partial = 1; partial <= partialCount; ++partial)
+        {
+            const double frequency = fundamentalHz
+                * static_cast<double>(partial);
+            const double body = 0.09
+                + 1.40 * gaussianLogFrequency(frequency, 780.0, 0.30)
+                + 0.80 * gaussianLogFrequency(frequency, 2450.0, 0.26);
+            const double amplitude = body
+                / std::pow(static_cast<double>(partial), 0.65);
+            value += amplitude * std::sin(
+                2.0 * pi * frequency * time + 0.23 * static_cast<double>(partial));
+        }
+        sample[index] = static_cast<float>(0.13 * envelope * value);
+    }
+    return sample;
+}
+
+[[nodiscard]] double harmonicCentroidHz(const std::vector<float>& rendered,
+                                        double sampleRate,
+                                        double fundamentalHz,
+                                        int partialCount,
+                                        double analysisTime)
+{
+    double weighted = 0.0;
+    double total = 0.0;
+    for (int partial = 1; partial <= partialCount; ++partial)
+    {
+        const double frequency = fundamentalHz * static_cast<double>(partial);
+        if (frequency >= 0.45 * sampleRate)
+            break;
+        const double amplitude = windowedSinusoidAmplitude(
+            rendered, sampleRate, analysisTime, frequency);
+        const double power = amplitude * amplitude;
+        weighted += frequency * power;
+        total += power;
+    }
+    return weighted / std::max(total, 1.0e-24);
+}
+
+[[nodiscard]] std::vector<float> renderWithParameters(
+    const neuramar::NeuralModel& model, int midiNote, float velocity,
+    const neuramar::EngineParameters& parameters, int sampleCount)
+{
+    neuramar::NeuramarEngine engine;
+    engine.prepare(48000.0, 128);
+    engine.setModel(&model);
+    engine.setParameters(parameters);
+
+    std::vector<float> left(static_cast<std::size_t>(sampleCount), 0.0f);
+    std::vector<float> right(static_cast<std::size_t>(sampleCount), 0.0f);
+    engine.noteOn(midiNote, velocity);
+    for (int offset = 0; offset < sampleCount; offset += 128)
+    {
+        const int count = std::min(128, sampleCount - offset);
+        engine.process(left.data() + offset, right.data() + offset, count);
+    }
+    for (std::size_t index = 0; index < left.size(); ++index)
+        left[index] = 0.5f * (left[index] + right[index]);
+    return left;
+}
+
+[[nodiscard]] neuramar::EngineParameters cleanCoreParameters()
+{
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.bodyLock = 1.0f;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.brightness = 0.5f;
+    parameters.evolutionRate = 1.0f;
+    parameters.orbit = 0.0f;
+    parameters.mutation = 0.0f;
+    parameters.noise = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 0.20f;
+    return parameters;
+}
+
+void testInharmonicPartialSeries()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double fundamental = 220.0;
+    constexpr double trueInharmonicity = 3.0e-4;
+    const auto source = makeStiffStringSample(
+        sampleRate, fundamental, trueInharmonicity, 1.05);
+    const auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+    expect(static_cast<bool>(learned),
+           "stiff-string fixture failed to learn: " + learned.error);
+    if (!learned.model)
+        return;
+
+    const auto& model = *learned.model;
+    const float fitted = model.inharmonicity();
+    std::cout << "Inharmonicity diagnostics: true B " << trueInharmonicity
+              << ", fitted B " << fitted << ", root "
+              << model.rootFrequencyHz() << " Hz\n";
+    expect(fitted > 0.0f,
+           "a clearly stiff partial series was fitted as perfectly harmonic");
+    expect(std::abs(static_cast<double>(fitted) / trueInharmonicity - 1.0) < 0.35,
+           "fitted stiff-string coefficient missed its known value (fitted "
+               + std::to_string(fitted) + ")");
+    expect(std::abs(model.rootFrequencyHz() / fundamental - 1.0f) < 0.02f,
+           "stiff-string root drifted away from its known fundamental");
+
+    // Render at the learned root and measure where each partial actually
+    // lands, with the stretch enabled and forced off.
+    auto stretched = cleanCoreParameters();
+    stretched.bodyLock = 0.0f;
+    auto flattened = stretched;
+    flattened.stretch = 0.0f;
+    constexpr int renderSamples = 24000;
+    const auto stretchedRender = renderWithParameters(
+        model, model.rootMidiNote(), 0.85f, stretched, renderSamples);
+    const auto flatRender = renderWithParameters(
+        model, model.rootMidiNote(), 0.85f, flattened, renderSamples);
+
+    neuramar::SynthesisFrame frame;
+    model.evaluate(0.20f / model.durationSeconds(), frame);
+    const double renderedRoot = static_cast<double>(model.rootFrequencyHz())
+        * frame.pitchRatio;
+    double stretchedCentsError = 0.0;
+    double flatCentsError = 0.0;
+    int measured = 0;
+    // Below partial 15 the ideal-series spacing stays wider than the peak
+    // search window, so every measurement is unambiguous.
+    for (int partial = 6; partial <= 14; partial += 2)
+    {
+        const double number = static_cast<double>(partial);
+        const double expectedHz = renderedRoot * number
+            * std::sqrt(1.0 + trueInharmonicity * number * number);
+        if (expectedHz >= 0.40 * sampleRate)
+            break;
+        const double stretchedHz = spectralPeak(
+            stretchedRender, sampleRate, static_cast<float>(expectedHz));
+        const double flatHz = spectralPeak(
+            flatRender, sampleRate, static_cast<float>(expectedHz));
+        stretchedCentsError += std::abs(
+            1200.0 * std::log2(stretchedHz / expectedHz));
+        flatCentsError += std::abs(1200.0 * std::log2(flatHz / expectedHz));
+        ++measured;
+    }
+    expect(measured > 0, "no stiff-string partials were measurable");
+    if (measured == 0)
+        return;
+    stretchedCentsError /= static_cast<double>(measured);
+    flatCentsError /= static_cast<double>(measured);
+    std::cout << "Inharmonicity diagnostics: partial placement error "
+              << stretchedCentsError << " cents with Stretch, "
+              << flatCentsError << " cents without\n";
+    expect(stretchedCentsError < 18.0,
+           "stretched rendering did not place its partials on the learned "
+           "stiff-string series (" + std::to_string(stretchedCentsError)
+               + " cents)");
+    expect(stretchedCentsError < 0.45 * flatCentsError,
+           "the Stretch control did not materially improve partial placement "
+           "over an ideal harmonic bank");
+
+    // A genuinely harmonic source must still fit exactly zero, so nothing
+    // about an ordinary sustained note changes.
+    const auto harmonicSource = makeLearningSample(sampleRate, 220.0, 0.82);
+    const auto harmonicLearned = neuramar::SampleLearner::learn(
+        harmonicSource, sampleRate);
+    expect(harmonicLearned.model != nullptr
+               && harmonicLearned.model->inharmonicity() == 0.0f,
+           "an ideal harmonic source was given a non-zero stiff-string "
+           "coefficient");
+}
+
+void testFormantShift()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double fundamental = 220.0;
+    const auto source = makeResonantBodySample(sampleRate, fundamental, 0.85);
+    const auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+    expect(static_cast<bool>(learned),
+           "resonant-body fixture failed to learn: " + learned.error);
+    if (!learned.model)
+        return;
+
+    const auto& model = *learned.model;
+    constexpr int renderSamples = 24000;
+    const auto render = [&](float semitones)
+    {
+        auto parameters = cleanCoreParameters();
+        parameters.formantShiftSemitones = semitones;
+        return renderWithParameters(model, model.rootMidiNote(), 0.85f,
+                                    parameters, renderSamples);
+    };
+
+    const auto neutral = render(0.0f);
+    const auto raised = render(12.0f);
+    const auto lowered = render(-12.0f);
+    const double neutralCentroid = harmonicCentroidHz(
+        neutral, sampleRate, static_cast<double>(model.rootFrequencyHz()),
+        40, 0.25);
+    const double raisedCentroid = harmonicCentroidHz(
+        raised, sampleRate, static_cast<double>(model.rootFrequencyHz()),
+        40, 0.25);
+    const double loweredCentroid = harmonicCentroidHz(
+        lowered, sampleRate, static_cast<double>(model.rootFrequencyHz()),
+        40, 0.25);
+    std::cout << "Formant diagnostics: centroid " << loweredCentroid
+              << " / " << neutralCentroid << " / " << raisedCentroid
+              << " Hz at -12 / 0 / +12 st\n";
+    expect(raisedCentroid > 1.35 * neutralCentroid,
+           "a +12 semitone Formant shift did not move the resonant body up");
+    expect(loweredCentroid < 0.85 * neutralCentroid,
+           "a -12 semitone Formant shift did not move the resonant body down");
+
+    const float neutralRoot = spectralPeak(neutral, sampleRate,
+                                           model.rootFrequencyHz());
+    const float raisedRoot = spectralPeak(raised, sampleRate,
+                                          model.rootFrequencyHz());
+    expect(std::abs(raisedRoot / std::max(neutralRoot, 1.0e-6f) - 1.0f) < 0.004f,
+           "Formant shifting also moved the played pitch");
+}
+
+void testVelocityTouch(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int renderSamples = 20000;
+    const auto centroidAt = [&](float touch, float velocity, float air)
+    {
+        auto parameters = cleanCoreParameters();
+        parameters.bodyLock = 0.0f;
+        parameters.air = air;
+        parameters.touch = touch;
+        const auto rendered = renderWithParameters(
+            model, model.rootMidiNote(), velocity, parameters, renderSamples);
+        return harmonicCentroidHz(
+            rendered, sampleRate, static_cast<double>(model.rootFrequencyHz()),
+            32, 0.22);
+    };
+
+    const double neutralSoft = centroidAt(0.0f, 0.25f, 0.0f);
+    const double neutralHard = centroidAt(0.0f, 1.00f, 0.0f);
+    expect(std::abs(neutralHard / std::max(neutralSoft, 1.0e-9) - 1.0) < 0.01,
+           "Touch at zero still made velocity change the harmonic balance");
+
+    const double touchedSoft = centroidAt(0.9f, 0.25f, 0.0f);
+    const double touchedHard = centroidAt(0.9f, 1.00f, 0.0f);
+    std::cout << "Touch diagnostics: centroid " << touchedSoft << " -> "
+              << touchedHard << " Hz across velocity at Touch 0.9 (neutral "
+              << neutralSoft << " Hz)\n";
+    expect(touchedHard > 1.08 * touchedSoft,
+           "Touch did not brighten a harder note");
+    expect(touchedSoft < 0.95 * neutralSoft,
+           "Touch did not darken a softer note");
+
+    // Air is uncorrelated with Core, so subtracting the two renders in the
+    // power domain isolates the stochastic layer's own level.
+    const auto airOnlyRms = [&](float touch, float velocity)
+    {
+        auto parameters = cleanCoreParameters();
+        parameters.bodyLock = 0.0f;
+        parameters.touch = touch;
+        parameters.air = 1.0f;
+        const auto withAir = renderWithParameters(
+            model, model.rootMidiNote(), velocity, parameters, renderSamples);
+        parameters.air = 0.0f;
+        const auto withoutAir = renderWithParameters(
+            model, model.rootMidiNote(), velocity, parameters, renderSamples);
+        const double withLevel = segmentRms(withAir, sampleRate, 0.10, 0.38);
+        const double withoutLevel = segmentRms(
+            withoutAir, sampleRate, 0.10, 0.38);
+        // Remove the plain velocity gain so only the timbral change is left.
+        const double gain = velocity
+            * (0.72 + 0.28 * std::sqrt(static_cast<double>(velocity)));
+        return std::sqrt(std::max(
+                   withLevel * withLevel - withoutLevel * withoutLevel, 0.0))
+            / std::max(gain, 1.0e-6);
+    };
+    const double softAir = airOnlyRms(0.9f, 0.25f);
+    const double hardAir = airOnlyRms(0.9f, 1.00f);
+    std::cout << "Touch diagnostics: level-compensated Air " << softAir
+              << " -> " << hardAir << " across velocity\n";
+    expect(softAir > 1.0e-7,
+           "the Touch fixture produced no measurable Air layer");
+    expect(hardAir > 1.20 * softAir,
+           "Touch did not open the Air layer for a harder note");
+}
+
+void testStretchFormantTouchSafety(const neuramar::NeuralModel& model)
+{
+    constexpr float quietNan = std::numeric_limits<float>::quiet_NaN();
+    constexpr float infinity = std::numeric_limits<float>::infinity();
+    const std::array<std::array<float, 3>, 6> hostile {{
+        { quietNan, quietNan, quietNan },
+        { infinity, -infinity, infinity },
+        { -5.0f, 900.0f, -3.0f },
+        { 2.0f, 24.0f, 1.0f },
+        { 2.0f, -24.0f, 1.0f },
+        { 0.0f, 0.0f, 0.0f }
+    }};
+
+    for (const auto& values : hostile)
+    {
+        auto parameters = cleanCoreParameters();
+        parameters.air = 0.7f;
+        parameters.bone = 0.7f;
+        parameters.stretch = values[0];
+        parameters.formantShiftSemitones = values[1];
+        parameters.touch = values[2];
+        parameters.outputGain = 1.0f;
+
+        neuramar::NeuramarEngine engine;
+        engine.prepare(44100.0, 64);
+        engine.setModel(&model);
+        engine.setParameters(parameters);
+        std::vector<float> left(8192, 0.0f);
+        std::vector<float> right(8192, 0.0f);
+        engine.noteOn(model.rootMidiNote() + 30, 1.0f);
+        engine.noteOn(model.rootMidiNote() - 26, 0.2f);
+        for (int offset = 0; offset < 8192; offset += 64)
+            engine.process(left.data() + offset, right.data() + offset, 64);
+
+        bool finite = true;
+        for (std::size_t index = 0; index < left.size(); ++index)
+        {
+            finite = finite && std::isfinite(left[index])
+                && std::isfinite(right[index])
+                && std::abs(left[index]) <= 8.0f
+                && std::abs(right[index]) <= 8.0f;
+        }
+        expect(finite,
+               "hostile Stretch/Formant/Touch values produced non-finite or "
+               "unbounded audio");
+
+        // A retired voice must leave exactly zero behind: no subnormal filter
+        // or oscillator tail is allowed to keep trickling into the output.
+        engine.allNotesOff();
+        for (int block = 0; block < 400 && engine.getActiveVoiceCount() != 0;
+             ++block)
+            engine.process(left.data(), right.data(), 64);
+        expect(engine.getActiveVoiceCount() == 0,
+               "voices did not retire under hostile parameter values");
+        std::fill(left.begin(), left.begin() + 64, 1.0f);
+        std::fill(right.begin(), right.begin() + 64, 1.0f);
+        engine.process(left.data(), right.data(), 64);
+        bool exactlySilent = true;
+        for (int index = 0; index < 64; ++index)
+            exactlySilent = exactlySilent && left[index] == 0.0f
+                && right[index] == 0.0f;
+        expect(exactlySilent,
+               "the render path left a denormal or residual tail after every "
+               "voice retired");
+    }
+}
+
+void testLegacyModelStretchCompatibility(const neuramar::NeuralModel& model)
+{
+    std::string error;
+    const auto version2Bytes = makeVersion2ModelBytes(model);
+    auto version2 = neuramar::NeuralModel::deserialize(version2Bytes, &error);
+    expect(version2 != nullptr,
+           "version-2 memory failed to load after the v4 extension: " + error);
+
+    const auto version3Bytes = makeLinearResidualModelBytes(model, 0.5f, 3);
+    error.clear();
+    auto version3 = neuramar::NeuralModel::deserialize(version3Bytes, &error);
+    expect(version3 != nullptr,
+           "version-3 memory failed to load after the v4 extension: " + error);
+    expect(version2 == nullptr || version2->inharmonicity() == 0.0f,
+           "a version-2 memory reported a non-zero stiff-string coefficient");
+    expect(version3 == nullptr || version3->inharmonicity() == 0.0f,
+           "a version-3 memory reported a non-zero stiff-string coefficient");
+
+    // A stored v3 memory must render bit-identically no matter where Stretch
+    // sits, because it carries no coefficient for Stretch to scale.
+    if (version3 != nullptr)
+    {
+        auto parameters = cleanCoreParameters();
+        parameters.stretch = 0.0f;
+        const auto flat = renderWithParameters(
+            *version3, version3->rootMidiNote(), 0.8f, parameters, 6000);
+        parameters.stretch = 2.0f;
+        const auto stretched = renderWithParameters(
+            *version3, version3->rootMidiNote(), 0.8f, parameters, 6000);
+        float maximumDifference = 0.0f;
+        for (std::size_t index = 0; index < flat.size(); ++index)
+            maximumDifference = std::max(maximumDifference,
+                std::abs(flat[index] - stretched[index]));
+        expect(maximumDifference == 0.0f,
+               "Stretch changed the rendering of a legacy memory that has no "
+               "stiff-string coefficient");
+    }
+
+    // Round trip a version-4 payload that does carry a coefficient.
+    const auto version4Bytes = makeLinearResidualModelBytes(
+        model, 0.5f, 4, 4.5e-4f);
+    error.clear();
+    auto version4 = neuramar::NeuralModel::deserialize(version4Bytes, &error);
+    expect(version4 != nullptr,
+           "crafted version-4 memory failed to load: " + error);
+    if (version4 != nullptr)
+    {
+        expect(std::abs(version4->inharmonicity() - 4.5e-4f) < 1.0e-9f,
+               "version-4 round trip lost the stiff-string coefficient");
+        expect(version4->serialize() == version4Bytes,
+               "version-4 payload did not survive a byte-exact round trip");
+    }
+
+    const auto outOfRange = makeLinearResidualModelBytes(
+        model, 0.5f, 4, 10.0f * neuramar::NeuralModel::maximumInharmonicity);
+    error.clear();
+    auto rejected = neuramar::NeuralModel::deserialize(outOfRange, &error);
+    expect(rejected == nullptr && !error.empty(),
+           "an out-of-range stiff-string coefficient was accepted");
+
+    auto truncatedV4 = makeLinearResidualModelBytes(model, 0.5f, 4, 0.0f);
+    truncatedV4.resize(truncatedV4.size() - 2);
+    refreshModelHeader(truncatedV4, 4);
+    error.clear();
+    auto truncatedRejected = neuramar::NeuralModel::deserialize(
+        truncatedV4, &error);
+    expect(truncatedRejected == nullptr && !error.empty(),
+           "a truncated version-4 inharmonicity field was accepted");
+}
+
+void testModelVisualisation(const neuramar::NeuralModel& model)
+{
+    using neuramar::ModelAnatomy;
+    expect(std::abs(neuramar::anatomyPositionOf(
+               ModelAnatomy::lowestFrequencyHz)) < 1.0e-6f
+               && std::abs(neuramar::anatomyPositionOf(
+                      ModelAnatomy::highestFrequencyHz) - 1.0f) < 1.0e-6f,
+           "the anatomy frequency mapping did not span its declared range");
+    for (const float position : { 0.0f, 0.13f, 0.5f, 0.77f, 1.0f })
+    {
+        const float frequency = neuramar::anatomyFrequencyAt(position);
+        expect(std::abs(neuramar::anatomyPositionOf(frequency) - position)
+                   < 1.0e-5f,
+               "the anatomy frequency mapping did not round trip");
+    }
+    expect(neuramar::anatomyPositionOf(-1.0f) == 0.0f
+               && neuramar::anatomyPositionOf(
+                      std::numeric_limits<float>::quiet_NaN()) == 0.0f
+               && std::abs(neuramar::anatomyFrequencyAt(
+                      std::numeric_limits<float>::quiet_NaN())
+                          - ModelAnatomy::lowestFrequencyHz) < 0.01f,
+           "the anatomy mapping did not clamp hostile inputs");
+    expect(neuramar::anatomySliceAt(-3.0f) == 0
+               && neuramar::anatomySliceAt(1.0f)
+                      == ModelAnatomy::sliceCount - 1
+               && neuramar::anatomySliceAt(
+                      std::numeric_limits<float>::quiet_NaN()) == 0,
+           "the anatomy slice selector escaped its trajectory bounds");
+
+    expect(neuramar::followMeter(0.0f, 1.0f, 0.5f, 0.1f) == 0.5f
+               && std::abs(neuramar::followMeter(1.0f, 0.0f, 0.5f, 0.25f)
+                           - 0.75f) < 1.0e-6f
+               && neuramar::followMeter(
+                      std::numeric_limits<float>::quiet_NaN(), 0.4f,
+                      0.5f, 0.5f) == 0.4f
+               && neuramar::followMeter(0.5f, 4.0f, 1.0f, 1.0f) == 1.0f,
+           "the meter follower did not honour its attack, release, and bounds");
+
+    ModelAnatomy anatomy;
+    neuramar::clearModelAnatomy(anatomy);
+    expect(!anatomy.valid
+               && std::abs(anatomy.binFrequencyHz.front()
+                           - ModelAnatomy::lowestFrequencyHz) < 0.01f
+               && std::abs(anatomy.binFrequencyHz.back()
+                           - ModelAnatomy::highestFrequencyHz) < 1.0f,
+           "a cleared anatomy was not in its empty display state");
+
+    neuramar::buildModelAnatomy(model, anatomy);
+    expect(anatomy.valid, "a learned memory produced no anatomy");
+    expect(anatomy.peakAmplitude > 0.0f
+               && std::isfinite(anatomy.peakAmplitude),
+           "the anatomy peak amplitude was not usable");
+    expect(std::abs(anatomy.rootFrequencyHz - model.rootFrequencyHz())
+               < 1.0e-3f,
+           "the anatomy did not carry the learned root");
+
+    bool ordered = true;
+    bool bounded = true;
+    float largest = 0.0f;
+    for (std::size_t bin = 1; bin < ModelAnatomy::binCount; ++bin)
+        ordered = ordered && anatomy.binFrequencyHz[bin]
+            > anatomy.binFrequencyHz[bin - 1];
+    for (std::size_t slice = 0; slice < ModelAnatomy::sliceCount; ++slice)
+    {
+        for (std::size_t bin = 0; bin < ModelAnatomy::binCount; ++bin)
+        {
+            for (const float value : { anatomy.core[slice][bin],
+                                       anatomy.air[slice][bin],
+                                       anatomy.bone[slice][bin] })
+            {
+                bounded = bounded && std::isfinite(value) && value >= 0.0f
+                    && value <= 1.0f;
+                largest = std::max(largest, value);
+            }
+        }
+        bounded = bounded && anatomy.coreLevel[slice] >= 0.0f
+            && anatomy.coreLevel[slice] <= 1.0f
+            && anatomy.airLevel[slice] >= 0.0f
+            && anatomy.airLevel[slice] <= 1.0f
+            && anatomy.boneLevel[slice] >= 0.0f
+            && anatomy.boneLevel[slice] <= 1.0f;
+    }
+    expect(ordered, "the anatomy frequency axis was not strictly increasing");
+    expect(bounded, "the anatomy produced values outside its display range");
+    expect(largest > 0.98f,
+           "the anatomy did not normalise its loudest cell to full height");
+
+    // The fundamental has to appear in the bin that actually contains it.
+    neuramar::SynthesisFrame frame;
+    model.evaluate(0.35f, frame);
+    const auto slice = neuramar::anatomySliceAt(0.35f);
+    const float fundamental = model.rootFrequencyHz() * frame.pitchRatio;
+    const auto expectedBin = static_cast<std::size_t>(std::lround(
+        neuramar::anatomyPositionOf(fundamental)
+        * static_cast<float>(ModelAnatomy::binCount - 1)));
+    expect(anatomy.core[slice][expectedBin] > 0.0f,
+           "the anatomy placed no Core energy at the learned fundamental");
+    expect(anatomy.core[slice][0] == 0.0f
+               || model.rootFrequencyHz() < 40.0f,
+           "the anatomy leaked Core energy far below the fundamental");
+
+    // Generated memories must also be displayable.
+    const auto generated = neuramar::NeuralModel::createRandom(0x51df3719ull,
+                                                               1.0f);
+    expect(generated != nullptr, "randomizer produced no model to display");
+    if (generated != nullptr)
+    {
+        ModelAnatomy generatedAnatomy;
+        neuramar::buildModelAnatomy(*generated, generatedAnatomy);
+        expect(generatedAnatomy.valid,
+               "a generated memory produced no anatomy");
+    }
+}
+
+// The shipped polyphase resampler must match a direct evaluation of the same
+// windowed-sinc kernel, and it exists to be much faster than one. Both halves
+// are measured here so the efficiency claim has a reproducible number.
+void testResamplerAccuracyAndCost()
+{
+    constexpr double sourceRate = 48000.0;
+    constexpr double destinationRate = 12000.0;
+    constexpr std::size_t sourceSize = 240000;
+    std::vector<float> source(sourceSize, 0.0f);
+    for (std::size_t index = 0; index < sourceSize; ++index)
+    {
+        const double time = static_cast<double>(index) / sourceRate;
+        source[index] = static_cast<float>(
+            0.55 * std::sin(2.0 * pi * 220.0 * time)
+            + 0.25 * std::sin(2.0 * pi * 1310.0 * time + 0.7)
+            + 0.12 * std::sin(2.0 * pi * 4400.0 * time + 1.9));
+    }
+
+    // Literal transcription of the pre-1.1 direct-evaluation resampler.
+    const auto referenceResample = [&source]()
+    {
+        constexpr int halfTaps = 24;
+        const double sourcePerOutput = sourceRate / destinationRate;
+        const double cutoff = 0.94 * std::min(1.0,
+                                              destinationRate / sourceRate);
+        const auto destinationSize = static_cast<std::size_t>(std::max(1.0,
+            std::round(static_cast<double>(source.size())
+                       * destinationRate / sourceRate)));
+        std::vector<float> destination(destinationSize, 0.0f);
+        for (std::size_t output = 0; output < destinationSize; ++output)
+        {
+            const double centre = static_cast<double>(output) * sourcePerOutput;
+            const auto first = static_cast<std::ptrdiff_t>(std::floor(centre))
+                - halfTaps + 1;
+            double weighted = 0.0;
+            double weightSum = 0.0;
+            for (int tap = 0; tap < 2 * halfTaps; ++tap)
+            {
+                const auto input = first + tap;
+                if (input < 0
+                    || input >= static_cast<std::ptrdiff_t>(source.size()))
+                    continue;
+                const double distance = centre - static_cast<double>(input);
+                const double angle = pi * cutoff * distance;
+                const double sinc = std::abs(angle) < 1.0e-12
+                    ? 1.0 : std::sin(angle) / angle;
+                const double window = 0.5 + 0.5 * std::cos(
+                    pi * distance / halfTaps);
+                const double weight = cutoff * sinc * window;
+                weighted += static_cast<double>(
+                    source[static_cast<std::size_t>(input)]) * weight;
+                weightSum += weight;
+            }
+            destination[output] = std::abs(weightSum) > 1.0e-12
+                ? static_cast<float>(weighted / weightSum) : 0.0f;
+        }
+        return destination;
+    };
+
+    const auto referenceStart = std::chrono::steady_clock::now();
+    const auto reference = referenceResample();
+    const double referenceSeconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - referenceStart).count();
+
+    const auto shippedStart = std::chrono::steady_clock::now();
+    const auto shipped = neuramar::SampleLearner::resampleForTests(
+        source, sourceRate, destinationRate);
+    const double shippedSeconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - shippedStart).count();
+
+    expect(shipped.size() == reference.size(),
+           "the polyphase resampler produced a different output length");
+    if (shipped.size() != reference.size())
+        return;
+
+    double squaredError = 0.0;
+    double squaredSignal = 0.0;
+    for (std::size_t index = 0; index < shipped.size(); ++index)
+    {
+        const double error = static_cast<double>(shipped[index])
+            - reference[index];
+        squaredError += error * error;
+        squaredSignal += static_cast<double>(reference[index])
+            * reference[index];
+    }
+    const double errorDb = 10.0 * std::log10(
+        std::max(squaredError, 1.0e-300)
+        / std::max(squaredSignal, 1.0e-300));
+    const double speedup = referenceSeconds
+        / std::max(shippedSeconds, 1.0e-9);
+    std::cout << "Resampler diagnostics: error " << errorDb
+              << " dB relative to direct evaluation, " << referenceSeconds
+              << " s direct vs " << shippedSeconds << " s tabulated ("
+              << speedup << "x)\n";
+    expect(errorDb < -90.0,
+           "the polyphase resampler diverged from direct kernel evaluation ("
+               + std::to_string(errorDb) + " dB)");
+    expect(speedup > 2.0,
+           "the tabulated resampler was not materially faster than direct "
+           "kernel evaluation (" + std::to_string(speedup) + "x)");
+}
+
+void testHighRegisterRenderThroughput(const neuramar::NeuralModel& model)
+{
+    neuramar::NeuramarEngine engine;
+    engine.prepare(48000.0, 512);
+    engine.setModel(&model);
+    auto parameters = cleanCoreParameters();
+    parameters.air = 0.6f;
+    parameters.bone = 0.6f;
+    parameters.outputGain = 0.25f;
+    engine.setParameters(parameters);
+
+    // Two octaves above the root: most of the learned bank sits above Nyquist
+    // and is skipped entirely instead of being phase-advanced and faded.
+    const int firstNote = std::clamp(model.rootMidiNote() + 24, 0, 119);
+    for (int note = firstNote; note < firstNote + 8; ++note)
+        engine.noteOn(note, 0.75f);
+
+    std::vector<float> left(48000, 0.0f);
+    std::vector<float> right(48000, 0.0f);
+    const auto start = std::chrono::steady_clock::now();
+    for (int offset = 0; offset < static_cast<int>(left.size()); offset += 128)
+    {
+        const int count = std::min(128, static_cast<int>(left.size()) - offset);
+        engine.process(left.data() + offset, right.data() + offset, count);
+    }
+    const double elapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start).count();
+    const double realtimeFactor = 1.0 / std::max(elapsed, 1.0e-9);
+    std::cout << "Performance diagnostics: eight-voice high-register 1 s "
+              << "render " << elapsed << " s (" << realtimeFactor
+              << "x realtime)\n";
+    constexpr double throughputFloor = NEURAMAR_SANITIZED_TEST_BUILD
+        ? 1.0 : 8.0;
+    expect(realtimeFactor > throughputFloor,
+           "eight-voice high-register rendering fell below its throughput "
+           "floor (" + std::to_string(realtimeFactor) + "x realtime)");
+    expect(rms(left) > 1.0e-5f,
+           "high-register throughput fixture rendered silence");
+}
+
 void testRoughPerformance(const neuramar::NeuralModel& model)
 {
     neuramar::NeuramarEngine engine;
@@ -2769,18 +3518,26 @@ int main()
     testPersistentBoneModeSelection();
     testEvolvingAirColour();
     testTransientAirResolution();
+    testInharmonicPartialSeries();
+    testFormantShift();
+    testResamplerAccuracyAndCost();
     if (fixture.first.model)
     {
         testLearnedPitchContour(*fixture.first.model);
         testSerialization(*fixture.first.model);
+        testLegacyModelStretchCompatibility(*fixture.first.model);
+        testModelVisualisation(*fixture.first.model);
         testRandomizedVariations(*fixture.first.model);
         testModelSpaceNoise(*fixture.first.model);
         testRenderAndTransposition(*fixture.first.model);
         testRootCorrectionRelabelsSourceKey(*fixture.first.model);
+        testVelocityTouch(*fixture.first.model);
+        testStretchFormantTouchSafety(*fixture.first.model);
         testReleaseAndVoiceBound(*fixture.first.model);
         testReleaseDurationSemantics(*fixture.first.model);
         testMutationZeroRetriggerDeterminism(*fixture.first.model);
         testStereoPanAndOverlappingNoteOff(*fixture.first.model);
+        testHighRegisterRenderThroughput(*fixture.first.model);
         testRoughPerformance(*fixture.first.model);
     }
 

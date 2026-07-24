@@ -74,10 +74,10 @@ jobs:
         with:
           name: vst-instruments-nightly-macOS-universal
           path: |
-            vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.zip
-            vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.pkg
-            drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.zip
-            drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg
+            vocalor/build-macos/dist/Vocalor-*-macOS-universal.zip
+            vocalor/build-macos/dist/Vocalor-*-macOS-universal.pkg
+            drumalor/build-macos/dist/Drumalor-*-macOS-universal.zip
+            drumalor/build-macos/dist/Drumalor-*-macOS-universal.pkg
             mars/build-macos/dist/Mars-*-macOS-universal.zip
             mars/build-macos/dist/Mars-*-macOS-universal.pkg
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.zip
@@ -98,10 +98,10 @@ jobs:
           SHORT_SHA="${GITHUB_SHA:0:7}"
 
           assets=(
-            "vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.zip"
-            "vocalor/build-macos/dist/Vocalor-1.0.0-macOS-universal.pkg"
-            "drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.zip"
-            "drumalor/build-macos/dist/Drumalor-1.0.0-macOS-universal.pkg"
+            vocalor/build-macos/dist/Vocalor-*-macOS-universal.zip
+            vocalor/build-macos/dist/Vocalor-*-macOS-universal.pkg
+            drumalor/build-macos/dist/Drumalor-*-macOS-universal.zip
+            drumalor/build-macos/dist/Drumalor-*-macOS-universal.pkg
             mars/build-macos/dist/Mars-*-macOS-universal.zip
             mars/build-macos/dist/Mars-*-macOS-universal.pkg
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.zip

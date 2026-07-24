@@ -19,15 +19,19 @@ libraries.
 | :---: | :---: | :---: | :---: | :---: |
 | [![Vocalor standalone interface](vocalor/Docs/screenshots/vocalor-standalone.png)](vocalor/README.md) | [![Drumalor standalone interface](drumalor/Docs/screenshots/drumalor-standalone.png)](drumalor/README.md) | [![Mars standalone interface](mars/Docs/screenshots/mars-standalone.png)](mars/README.md) | [![Neuramar standalone interface](neuramar/Docs/screenshots/neuramar-standalone.png)](neuramar/README.md) | [![Electry standalone interface](electry/Docs/screenshots/electry-standalone.png)](electry/README.md) |
 
+Every screenshot above was captured from the previous release of its instrument
+and predates the interface work described in each README. They are regenerated
+from a macOS standalone build, so they will be refreshed on the next one.
+
 ## Instruments
 
 | Instrument | Description | Formats | Platform | Docs |
 | --- | --- | --- | --- | --- |
-| [Vocalor](vocalor/) | Source-filter vocal and choir synthesizer with solo, ensemble, and chord performance modes across three sustained vowels. | VST3 · AU · Standalone | macOS 11+ | [README](vocalor/README.md) |
-| [Drumalor](drumalor/) | Thirteen-voice procedural drum synthesizer with deterministic organic variation, circuit-inspired colour, and GM-oriented MIDI mapping. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
-| [Mars](mars/) | Dual-oscillator virtual-analog polysynth with switchable VCO mixer feeds, measured saw contouring, nonlinear Moog-ladder and SEM-inspired filters, deterministic voice cards, 42 direct sound controls, and persisted HQ oversampling. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
-| [Neuramar](neuramar/) | Drop in a mostly monophonic sound, infer its root, and fit a compact local DDSP-inspired neural synthesis model whose harmonic Core, noisy Air, and resonant Bone remain playable across pitches. | VST3 · AU · Standalone | macOS 11+ | [README](neuramar/README.md) |
-| [Electry](electry/) | Oversampled physically modeled Drop-E eight-string guitar: eight dual-polarisation waveguides, fitted stiff-string dispersion, induced-EMF pickups, modal body loss, Mono/divided-pickup Stereo, and 16 labeled keyswitched play styles. | VST3 · AU · Standalone | macOS 11+ | [README](electry/README.md) |
+| [Vocalor](vocalor/) | Source-filter vocal and choir synthesizer with an LF-style glottal source, a continuous morphable vowel space, formant shifting independent of pitch, and legato phrasing across solo, ensemble, and chord modes. | VST3 · AU · Standalone | macOS 11+ | [README](vocalor/README.md) |
+| [Drumalor](drumalor/) | Thirteen-voice procedural drum synthesizer with struck-membrane modal models, velocity-dependent timbre, per-voice level/pan/choke mixing, humanised organic variation, a shared drive and compression bus, and GM-oriented MIDI mapping. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
+| [Mars](mars/) | Dual-oscillator virtual-analog polysynth with switchable VCO mixer feeds, measured saw contouring, self-oscillating nonlinear Moog-ladder and saturating SEM-inspired filters, a free-running arpeggiator, unison detune, deterministic voice cards, 54 direct sound controls, and persisted HQ oversampling. | VST3 · AU · Standalone | macOS 11+ | [README](mars/README.md) |
+| [Neuramar](neuramar/) | Drop in a mostly monophonic sound, infer its root, and fit a compact local DDSP-inspired neural synthesis model — with fitted stiff-string inharmonicity, formant shifting, and velocity-driven timbre — whose harmonic Core, noisy Air, and resonant Bone remain playable across pitches. | VST3 · AU · Standalone | macOS 11+ | [README](neuramar/README.md) |
+| [Electry](electry/) | Oversampled physically modeled Drop-E eight-string guitar: eight dual-polarisation waveguides, fitted stiff-string dispersion, bridge-coupled sympathetic strings, a continuous palm mute, strum travel, induced-EMF pickups, modal body loss, Mono/divided-pickup Stereo, and 16 labeled keyswitched play styles. | VST3 · AU · Standalone | macOS 11+ | [README](electry/README.md) |
 
 ## Download (nightly)
 

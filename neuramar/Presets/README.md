@@ -4,9 +4,13 @@ Neuramar creates an instrument by analysing a user-selected audio sample,
 identifying its root pitch, and learning a compact synthesis model. The source
 sample is user content and is not part of this repository.
 
-The host-state contract stores the ordinary sound controls, root-note metadata,
-display-only source name and waveform preview, and the versioned compact model
-needed to reproduce the instrument. It does not package or redistribute the
+The host-state contract stores the ordinary sound controls (17 host parameters
+in version 1.1), root-note metadata, display-only source name and waveform
+preview, and the versioned compact model needed to reproduce the instrument.
+The current model payload is version 4; version-2 and version-3 payloads written
+by earlier releases still load and render unchanged, and controls added after a
+session was saved are restored at their defaults rather than inheriting whatever
+the running instance held. It does not package or redistribute the
 original source recording. Exported presets carry the Neuramar state/model
 version so future migrations remain explicit.
 
@@ -16,4 +20,4 @@ descriptive names based on sound character rather than a named artist,
 performer, protected recording, or existing commercial instrument.
 
 No factory samples, pretrained weights, or third-party preset library are
-included in version 1.0.
+included in version 1.1.

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace electry
 {
@@ -58,6 +59,31 @@ struct EngineParameters
     float outputGain { 0.5f };      // linear output level
     float artifactAmount { 0.18f }; // sympathetic ring and incidental contact
     OutputMode outputMode { OutputMode::Mono }; // authentic DI or hex/string field
+    // Bridge-coupled sympathetic resonance of the strings that are not being
+    // fingered. 0 bypasses the coupled waveguides exactly.
+    float sympatheticAmount { 0.20f };
+    // Continuous bridge-hand damping applied to every play style, independent
+    // of the Muted/Chug keyswitches. 0 leaves the model untouched.
+    float palmMute { 0.0f };
+    // Per-string offset of a strummed chord, in seconds of pick travel per
+    // string crossed. 0 keeps simultaneous note-ons exactly simultaneous.
+    float strumSpreadSeconds { 0.0f };
+    // Full-scale depth of the CC1 performance vibrato, in cents.
+    float vibratoDepthCents { 35.0f };
+};
+
+// Per-string readout for the editor's fretboard display. It is produced on
+// the audio thread and consumed on the message thread through the host's own
+// atomics, so it is deliberately small and trivially copyable.
+struct StringVisualState
+{
+    bool sounding { false };      // a fingered/picked note owns this string
+    bool sympathetic { false };   // ringing only through bridge coupling
+    bool releasing { false };     // key released, damping ramp running
+    int midiNote { -1 };          // sounding note, or -1
+    int fret { -1 };              // stopped fret, or -1
+    float level { 0.0f };         // 0..1 ballistic display level
+    Articulation articulation { Articulation::Downstroke };
 };
 
 class ElectryEngine
@@ -91,10 +117,19 @@ public:
     void setPitchBend(float normalisedBipolar) noexcept;
     // MIDI CC1 controls a performance vibrato (0 = still, 1 = wide).
     void setVibratoAmount(float normalised) noexcept;
+    // MIDI CC2 adds continuous bridge-hand damping on top of the Palm Mute
+    // parameter, so a phrase can be muted and opened without automation.
+    void setPalmMutePressure(float normalised) noexcept;
     void setSustainPedal(bool down) noexcept;
     void process(float* left, float* right, int numSamples);
 
+    // Snapshot of the eight physical strings for the editor's fretboard.
+    void getStringVisualState(
+        std::array<StringVisualState, stringCount>& destination) const noexcept;
+
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
+    // Strings ringing purely through the sympathetic bridge coupling.
+    [[nodiscard]] int getSympatheticStringCount() const noexcept;
     [[nodiscard]] Articulation getCurrentArticulation() const noexcept
     {
         return articulation_;
@@ -119,6 +154,12 @@ private:
     static constexpr int bodyModeCount = 4;
     static constexpr int decimatorHistorySize = 64;
     static constexpr int apertureHistorySize = 256;
+    // Once no string is rendering and the shared body/coil/DC path has fallen
+    // below -120 dBFS, the engine holds this many further internal samples and
+    // then freezes: state is cleared, the output becomes exactly zero, and the
+    // whole shared chain stops running until a note arrives.
+    static constexpr int idleFreezeSamples = 64;
+    static constexpr float idleFreezeLevel = 1.0e-6f;
     // JUCE hosts commonly top out at 384 kHz; the delay lines above are sized
     // for the lowest reachable pitch (open E1 with the wheel at -2) at that
     // rate. Rates beyond the ceiling are clamped so
@@ -235,7 +276,38 @@ private:
             cumulative = 0.0;
             writeIndex = 0;
         }
-        float process(float input, float lengthSamples) noexcept;
+
+        // Defined here rather than in the .cpp so it inlines into the per-voice
+        // render loop, where it runs once per pickup per string per sample.
+        float process(float input, float lengthSamples) noexcept
+        {
+            static_assert((apertureHistorySize & (apertureHistorySize - 1)) == 0,
+                          "aperture history must be a power of two");
+            constexpr int mask = apertureHistorySize - 1;
+            lengthSamples = lengthSamples < 1.0f
+                ? 1.0f
+                : (lengthSamples > static_cast<float>(apertureHistorySize - 2)
+                       ? static_cast<float>(apertureHistorySize - 2)
+                       : lengthSamples);
+
+            cumulative += static_cast<double>(input);
+            cumulativeHistory[static_cast<std::size_t>(writeIndex)] = cumulative;
+
+            const int whole = static_cast<int>(lengthSamples);
+            const double fraction = static_cast<double>(lengthSamples)
+                                  - static_cast<double>(whole);
+            const int recentIndex = (writeIndex - whole) & mask;
+            const int olderIndex = (recentIndex - 1) & mask;
+            const double recent =
+                cumulativeHistory[static_cast<std::size_t>(recentIndex)];
+            const double older =
+                cumulativeHistory[static_cast<std::size_t>(olderIndex)];
+            const double delayed = recent + fraction * (older - recent);
+
+            writeIndex = (writeIndex + 1) & mask;
+            return static_cast<float>((cumulative - delayed)
+                                      / static_cast<double>(lengthSamples));
+        }
     };
 
     // One transverse polarisation of a string: a single-delay-loop waveguide
@@ -265,7 +337,35 @@ private:
         DispersionAllpass dispersion8 {};
 
         void clear() noexcept;
-        [[nodiscard]] float readFractional(float delaySamples) const noexcept;
+
+        // The fractional read runs six times per string per sample (two loop
+        // reads plus two taps for each selected pickup). Defining it here lets
+        // it inline into the render loop instead of costing a call each time.
+        [[nodiscard]] float readFractional(float delaySamples) const noexcept
+        {
+            constexpr float maximumDelay = static_cast<float>(delayLineSize - 8);
+            delaySamples = delaySamples < 4.0f
+                ? 4.0f
+                : (delaySamples > maximumDelay ? maximumDelay : delaySamples);
+            const float position = static_cast<float>(writeIndex) - delaySamples;
+            const int index = static_cast<int>(position) - (position < 0.0f ? 1 : 0);
+            const float t = position - static_cast<float>(index);
+            constexpr int mask = delayLineSize - 1;
+            const float y0 = line[static_cast<std::size_t>((index - 1) & mask)];
+            const float y1 = line[static_cast<std::size_t>(index & mask)];
+            const float y2 = line[static_cast<std::size_t>((index + 1) & mask)];
+            const float y3 = line[static_cast<std::size_t>((index + 2) & mask)];
+            // Third-order Lagrange interpolation with y1..y2 as the unit
+            // interval, factored to share the three bracket terms.
+            const float tMinus1 = t - 1.0f;
+            const float tMinus2 = t - 2.0f;
+            const float tPlus1 = t + 1.0f;
+            return (y0 * (-t * tMinus1 * tMinus2)
+                    + y3 * (tPlus1 * t * tMinus1)) * (1.0f / 6.0f)
+                 + (y1 * (tPlus1 * tMinus1 * tMinus2)
+                    - y2 * (tPlus1 * t * tMinus2)) * 0.5f;
+        }
+
         void writeAdd(float offsetSamples, float value) noexcept;
     };
 
@@ -306,6 +406,10 @@ private:
         float baseFrequency { 110.0f };
         float lastConfiguredSemitones { -999.0f };
         float lastConfiguredFrequency { -1.0f };
+        // Set whenever the loop filters move without the pitch moving, so the
+        // analytic phase compensation is refreshed without paying for the
+        // expensive dispersion grid search again.
+        bool compensationDirty { true };
         float compensatedPeriodVertical { 100.0f };
         float compensatedPeriodHorizontal { 100.0f };
         float bendStartSemitones { 0.0f };
@@ -388,6 +492,10 @@ private:
         float releaseGainCoefficient { 0.0f };
         bool releaseNoiseDone { true };
 
+        // Strum travel: a chord's later strings start after the pick reaches
+        // them. Zero for a simultaneous (non-strummed) note-on.
+        int startDelaySamples { 0 };
+
         // Pickup taps and per-string pickup colouring.
         float pickupDelayNeck { 20.0f };
         float pickupDelayBridge { 6.0f };
@@ -399,10 +507,30 @@ private:
         float previousFluxBridge { 0.0f };
         OnePole emfLowpassNeck {};
         OnePole emfLowpassBridge {};
-        float emfLowpassCoefficient { 0.2f };
+        // Per-string magnetic balance, hoisted out of the sample loop: it
+        // depends only on the string and the pickup geometry.
+        float fluxScale { 1.0f };
+
+        // Per-articulation constants, resolved once per attack instead of
+        // being re-selected by a switch on every rendered sample.
+        float verticalWeight { 0.92f };
+        float horizontalWeight { 0.42f };
+        float articulationMakeup { 1.0f };
+
+        // Bridge-coupled sympathetic ring of an unfingered string. The voice
+        // reuses its own (otherwise idle) vertical waveguide, so this costs no
+        // extra memory and cannot form a feedback loop: only voices with
+        // `active` set drive the bridge bus, and only inactive voices read it.
+        bool sympatheticReady { false };
+        float sympatheticDelay { 100.0f };
+        float sympatheticPickupDelay { 8.0f };
+        float sympatheticPreviousFlux { 0.0f };
+        float sympatheticEnergy { 0.0f };
+        OnePole sympatheticEmf {};
 
         int controlCountdown { 0 };
         float outputEnergy { 0.0f };
+        float displayLevel { 0.0f };
         std::uint64_t ageSamples { 0 };
     };
 
@@ -433,24 +561,42 @@ private:
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
     static float midiToHz(float midiNote) noexcept;
     static std::uint32_t hash32(std::uint32_t value) noexcept;
-    static float bipolarNoise(std::uint32_t& state) noexcept;
-    static float smoothStep(float value) noexcept;
+    // Both run inside the per-sample excitation and artifact paths, so they
+    // are defined here to inline rather than call.
+    static float bipolarNoise(std::uint32_t& state) noexcept
+    {
+        state = state * 1664525u + 1013904223u;
+        const auto bits = (state >> 9) | 0x3f800000u;
+        float unit;
+        std::memcpy(&unit, &bits, sizeof(unit));
+        return 2.0f * (unit - 1.5f);
+    }
+    static float smoothStep(float value) noexcept
+    {
+        value = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+        return value * value * (3.0f - 2.0f * value);
+    }
     static float lerp(float a, float b, float t) noexcept { return a + (b - a) * t; }
     static float onePolePhaseDelay(float coefficient, float omega) noexcept;
     static float allpassPhaseDelay(float coefficient, float omega) noexcept;
+    // Per-string magnetic balance. It depends only on the string, so it is
+    // solved once instead of inside the sample loop.
+    static float stringFluxScale(int stringIndex) noexcept;
 
     [[nodiscard]] VelocityProfile makeVelocityProfile(float velocity) const noexcept;
 
     void configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept;
     void configureVoiceDamping(Voice& voice) noexcept;
     void configureVoicePickups(Voice& voice) noexcept;
+    void configureSympatheticString(Voice& voice) noexcept;
+    void updateArticulationWeights(Voice& voice) noexcept;
     void refreshVoicingIfNeeded() noexcept;
     void configureBody() noexcept;
     void configurePickupFilters() noexcept;
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
     void startVoice(Voice& voice, int midiNote, float velocity,
-                    Articulation articulation) noexcept;
+                    Articulation articulation, int startDelaySamples) noexcept;
     void legatoRetarget(Voice& voice, int midiNote, float velocity) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
     void silenceVoice(Voice& voice) noexcept;
@@ -458,6 +604,9 @@ private:
     [[nodiscard]] float currentSoundingSemitoneOffset(const Voice& voice) const noexcept;
     void updateVoiceControl(Voice& voice) noexcept;
     void renderVoice(Voice& voice, RenderSums& sums) noexcept;
+    void renderSympatheticString(Voice& voice, RenderSums& sums,
+                                 float drive) noexcept;
+    void freezeSharedPath() noexcept;
     [[nodiscard]] StereoSample renderInternalSample() noexcept;
     void updateActiveVoiceCount() noexcept;
     [[nodiscard]] float deadSpotFactor(int stringIndex, int fret) const noexcept;
@@ -475,13 +624,44 @@ private:
     bool alternateNextStrokeIsUp_ { false };
     std::uint64_t noteSequence_ { 0 };
     int activeVoiceCount_ { 0 };
+    int sympatheticStringCount_ { 0 };
     int controlCountdown_ { 0 };
     float pitchBendTarget_ { 0.0f };
     float pitchBendSemitones_ { 0.0f };
     float vibratoTarget_ { 0.0f };
     float vibratoAmount_ { 0.0f };
     float vibratoPhase_ { 0.0f };
+    float vibratoDepthSemitones_ { 0.35f };
     bool sustainPedalDown_ { false };
+
+    // Strum travel. The engine clock is the internal (oversampled) sample
+    // count, so the chord window and the per-string offset are sample-accurate
+    // at every host rate.
+    std::int64_t engineClock_ { 0 };
+    std::int64_t lastNoteOnClock_ { -(1ll << 40) };
+    int chordAnchorString_ { 0 };
+    int chordWindowSamples_ { 1680 };
+
+    // Continuous bridge-hand damping: the parameter plus the CC2 pressure.
+    float palmMutePressure_ { 0.0f };
+    float palmMuteBlend_ { 0.0f };
+    float appliedPalmMute_ { 0.0f };
+
+    // Sympathetic bridge bus. `sympatheticBus_` accumulates the current
+    // sample's plucked-string bridge force; the coupled strings read the
+    // previous sample's total, which removes any ordering dependence and any
+    // algebraic loop.
+    float sympatheticBus_ { 0.0f };
+    float sympatheticBusDelayed_ { 0.0f };
+    float sympatheticGain_ { 0.0f };
+    // The hand that mutes a chug or a palm-muted riff lies across every
+    // string, not only the one being picked, so the coupled strings are damped
+    // and starved of new energy exactly when the player is muting.
+    float sympatheticInjection_ { 0.0f };
+    float sympatheticHandGain_ { 1.0f };
+    float sympatheticHandGainTarget_ { 1.0f };
+    float sympatheticHandMute_ { -1.0f };
+    bool sympatheticActive_ { false };
 
     std::array<Voice, stringCount> voices_ {};
 
@@ -496,6 +676,18 @@ private:
     float pickupMixCoefficient_ { 0.01f };
     float magneticDriveNeck_ { 0.4f };
     float magneticDriveBridge_ { 0.4f };
+    float magneticDriveNeckInverse_ { 2.5f };
+    float magneticDriveBridgeInverse_ { 2.5f };
+    // A pickup whose selector mix has faded to silence is skipped entirely;
+    // its per-voice aperture and EMF state is cleared when it comes back so
+    // the crossfade starts from a clean, click-free path.
+    bool neckPathActive_ { false };
+    bool bridgePathActive_ { true };
+    // Mono is exact dual mono, so only one channel of the shared coil, DC and
+    // decimation chain has to run. State is copied to the second channel at
+    // the instant the field opens, which is exact because both channels had
+    // identical inputs up to that sample.
+    bool channelsLinked_ { true };
     std::array<ModalResonator, bodyModeCount> bodyModes_ {};
     float previousBodyDisplacement_ { 0.0f };
     OnePole bodyEmfLowpass_ {};
@@ -511,6 +703,34 @@ private:
     float parameterSmoothingCoefficient_ { 0.01f };
     float contactNoiseBandCoefficient_ { 0.08f };
     bool artifactsActive_ { true };
+
+    // Rate-derived constants that used to be recomputed with std::pow on
+    // every rendered sample of every string. They depend only on the internal
+    // clock, so prepare() is their only correct home.
+    float energyAttackCoefficient_ { 0.004f };
+    float energyReleaseCoefficient_ { 0.00006f };
+    float retireAttackCoefficient_ { 0.01f };
+    float retireReleaseCoefficient_ { 0.0009f };
+    float artifactBandCoefficient_ { 0.12f };
+    float pitchBendCoefficient_ { 0.35f };
+    float vibratoCoefficient_ { 0.12f };
+    float sympatheticEnergyCoefficient_ { 0.002f };
+    float displayLevelAttack_ { 0.5f };
+    float displayLevelRelease_ { 0.08f };
+    float emfScale_ { 34.7f };
+    float emfLowpassCoefficient_ { 0.2f };
+
+    // Artifact shaping constants, evaluated once per control tick.
+    float artifactContactShape_ { 0.0f };
+    float artifactBuzzAmount_ { 0.0f };
+
+    // Idle freeze. A guitar track is silent most of the time; running four
+    // modal resonators, four coil biquads, two DC blockers and two halfband
+    // decimators through an inaudible tail is pure waste, and it is exactly
+    // where a float path ends up producing denormals.
+    int silentInternalSamples_ { 0 };
+    bool idleFrozen_ { true };
+
     std::array<HalfbandDecimator, 2> decimators_ {};
 };
 

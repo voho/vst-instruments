@@ -73,6 +73,50 @@ juce::AudioParameterFloatAttributes morphAttributes (const char* lowName,
             })
         .withValueFromStringFunction (percentValue);
 }
+
+// APVTS keeps a parameter at its current value when the replacement tree has
+// no child for it. A session saved before a control existed would therefore
+// adopt whatever the previously loaded preset left behind rather than that
+// control's default, so fill in every default the stored tree omits.
+bool containsParameterState (const juce::ValueTree& state,
+                             const juce::String& parameterId)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+
+    for (const auto& child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId)
+            return true;
+
+    return false;
+}
+
+void addMissingParameterDefaults (
+    juce::ValueTree& state, juce::AudioProcessorValueTreeState& parameters,
+    const juce::Array<juce::AudioProcessorParameter*>& hostParameters)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+
+    for (const auto* hostParameter : hostParameters)
+    {
+        const auto* ranged =
+            dynamic_cast<const juce::RangedAudioParameter*> (hostParameter);
+        if (ranged == nullptr
+            || parameters.getParameter (ranged->paramID) == nullptr
+            || containsParameterState (state, ranged->paramID))
+            continue;
+
+        juce::ValueTree parameterState { parameterType };
+        parameterState.setProperty (idProperty, ranged->paramID, nullptr);
+        parameterState.setProperty (
+            valueProperty,
+            ranged->convertFrom0to1 (ranged->getDefaultValue()), nullptr);
+        state.appendChild (parameterState, nullptr);
+    }
+}
 } // namespace
 
 ElectryAudioProcessor::ElectryAudioProcessor()
@@ -108,6 +152,10 @@ ElectryAudioProcessor::ElectryAudioProcessor()
     parameterPointers.compressor     = parameters.getRawParameterValue (compressor);
     parameterPointers.delay          = parameters.getRawParameterValue (delay);
     parameterPointers.room           = parameters.getRawParameterValue (room);
+    parameterPointers.sympathetic    = parameters.getRawParameterValue (sympathetic);
+    parameterPointers.palmMute       = parameters.getRawParameterValue (palmMute);
+    parameterPointers.strumSpread    = parameters.getRawParameterValue (strumSpread);
+    parameterPointers.vibratoDepth   = parameters.getRawParameterValue (vibratoDepth);
 
     jassert (parameterPointers.pickupSelector != nullptr
              && parameterPointers.pickupType != nullptr
@@ -117,7 +165,11 @@ ElectryAudioProcessor::ElectryAudioProcessor()
              && parameterPointers.bendTime != nullptr
              && parameterPointers.output != nullptr
              && parameterPointers.artifacts != nullptr
-             && parameterPointers.outputMode != nullptr);
+             && parameterPointers.outputMode != nullptr
+             && parameterPointers.sympathetic != nullptr
+             && parameterPointers.palmMute != nullptr
+             && parameterPointers.strumSpread != nullptr
+             && parameterPointers.vibratoDepth != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -131,7 +183,7 @@ ElectryAudioProcessor::createParameterLayout()
 {
     using namespace electry::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (27);
+    result.reserve (31);
 
     const auto addFloat = [&result] (const char* id, const char* name,
                                      juce::NormalisableRange<float> range, float defaultValue,
@@ -218,6 +270,32 @@ ElectryAudioProcessor::createParameterLayout()
     addPercent (delay, "Delay", 0.0f);
     addPercent (room, "Room", 0.0f);
 
+    // Version 1.1 additions, again appended so parameter indices 1..27 keep
+    // pointing at exactly the same controls in existing host sessions.
+    addPercent (sympathetic, "Sympathetic ring", 0.20f);
+    addPercent (palmMute, "Palm mute", 0.0f);
+    addFloat (strumSpread, "Strum spread", { 0.0f, 40.0f, 0.1f }, 0.0f,
+              juce::AudioParameterFloatAttributes()
+                  .withLabel ("ms")
+                  .withStringFromValueFunction (
+                      [] (float value, int)
+                      {
+                          if (value < 0.05f)
+                              return juce::String ("Block chord");
+                          return juce::String (value, 1) + " ms/string";
+                      })
+                  .withValueFromStringFunction (plainNumericValue));
+    addFloat (vibratoDepth, "Vibrato depth", { 0.0f, 100.0f, 1.0f }, 35.0f,
+              juce::AudioParameterFloatAttributes()
+                  .withLabel ("cents")
+                  .withStringFromValueFunction (
+                      [] (float value, int)
+                      {
+                          return juce::String (juce::roundToInt (value))
+                               + " cents";
+                      })
+                  .withValueFromStringFunction (plainNumericValue));
+
     return { result.begin(), result.end() };
 }
 
@@ -230,6 +308,7 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     engine.setPitchBend (0.0f);
     engine.setSustainPedal (false);
     engine.setVibratoAmount (0.0f);
+    engine.setPalmMutePressure (0.0f);
     effectSampleRate = juce::jlimit (8000.0, 384000.0, sampleRate);
     const auto delaySize = static_cast<std::size_t> (effectSampleRate * 1.25) + 1u;
     for (auto& line : delayLines)
@@ -242,8 +321,10 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     panicRequested.store (false, std::memory_order_release);
     displaySampleRate.store (sampleRate, std::memory_order_relaxed);
     activeVoiceCount.store (0, std::memory_order_relaxed);
+    sympatheticStringCount.store (0, std::memory_order_relaxed);
     articulationIndex.store (
         static_cast<int> (engine.getCurrentArticulation()), std::memory_order_relaxed);
+    publishStringVisualState();
     engineReady.store (true, std::memory_order_release);
 }
 
@@ -252,12 +333,15 @@ void ElectryAudioProcessor::releaseResources()
     engineReady.store (false, std::memory_order_release);
     engine.setPitchBend (0.0f);
     engine.setSustainPedal (false);
+    engine.setPalmMutePressure (0.0f);
     engine.allNotesOff();
     engine.reset();
     discardUiMidiEvents();
     panicRequested.store (false, std::memory_order_release);
     activeVoiceCount.store (0, std::memory_order_relaxed);
+    sympatheticStringCount.store (0, std::memory_order_relaxed);
     displaySampleRate.store (0.0, std::memory_order_relaxed);
+    publishStringVisualState();
 }
 
 bool ElectryAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -314,8 +398,11 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     processEffects (buffer, 0, numSamples);
 
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
+    sympatheticStringCount.store (engine.getSympatheticStringCount(),
+                                  std::memory_order_relaxed);
     articulationIndex.store (
         static_cast<int> (engine.getCurrentArticulation()), std::memory_order_relaxed);
+    publishStringVisualState();
 }
 
 void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBytes) noexcept
@@ -346,10 +433,18 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
             engine.setSustainPedal (controllerValue >= 64u);
         else if (controller == 1u)
             engine.setVibratoAmount (static_cast<float> (controllerValue) / 127.0f);
+        else if (controller == 2u)
+        {
+            // Breath/CC2 is the performable side of the Palm Mute parameter:
+            // it adds bridge-hand pressure without needing automation.
+            engine.setPalmMutePressure (
+                static_cast<float> (controllerValue) / 127.0f);
+        }
         else if (controller == 121u)
         {
             engine.setPitchBend (0.0f);
             engine.setVibratoAmount (0.0f);
+            engine.setPalmMutePressure (0.0f);
             engine.setSustainPedal (false);
         }
         else if (controller == 120u)
@@ -402,10 +497,27 @@ void ElectryAudioProcessor::updateEngineParameters() noexcept
     next.velocityAmount = valueOf (parameterPointers.velocity);
     next.outputGain = juce::Decibels::decibelsToGain (valueOf (parameterPointers.output));
     next.artifactAmount = valueOf (parameterPointers.artifacts);
+    next.sympatheticAmount = valueOf (parameterPointers.sympathetic);
+    next.palmMute = valueOf (parameterPointers.palmMute);
+    next.strumSpreadSeconds = 0.001f * valueOf (parameterPointers.strumSpread);
+    next.vibratoDepthCents = valueOf (parameterPointers.vibratoDepth);
     const auto mode = juce::jlimit (0, 1,
         juce::roundToInt (valueOf (parameterPointers.outputMode)));
     next.outputMode = static_cast<electry::OutputMode> (mode);
     engine.setParameters (next);
+}
+
+void ElectryAudioProcessor::publishStringVisualState() noexcept
+{
+    engine.getStringVisualState (visualScratch);
+    for (int stringIndex = 0;
+         stringIndex < electry::ElectryEngine::stringCount; ++stringIndex)
+    {
+        const auto index = static_cast<std::size_t> (stringIndex);
+        stringVisuals[index].store (
+            electry::visuals::packStringVisual (visualScratch[index]),
+            std::memory_order_relaxed);
+    }
 }
 
 void ElectryAudioProcessor::processEffects (juce::AudioBuffer<float>& buffer,
@@ -547,7 +659,9 @@ void ElectryAudioProcessor::setStateInformation (const void* data, int sizeInByt
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
     {
-        parameters.replaceState (juce::ValueTree::fromXml (*xml));
+        auto restoredState = juce::ValueTree::fromXml (*xml);
+        addMissingParameterDefaults (restoredState, parameters, getParameters());
+        parameters.replaceState (restoredState);
         requestPanic();
     }
 }

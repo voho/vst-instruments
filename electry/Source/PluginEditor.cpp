@@ -1,6 +1,10 @@
 #include "PluginEditor.h"
 
+#include "DSP/ElectryVisuals.h"
+
 #include <BinaryData.h>
+
+#include <cmath>
 
 namespace
 {
@@ -23,10 +27,17 @@ const juce::Colour nickel { 0xffb8ae9b };
 const juce::Colour warmBone { 0xffddcda9 };
 const juce::Colour ebony { 0xff17110e };
 const juce::Colour keyswitchBlack { 0xff70251f };
+const juce::Colour rosewood { 0xff33211a };
+const juce::Colour rosewoodDark { 0xff1d120e };
+const juce::Colour fretWire { 0xffbdb4a2 };
+const juce::Colour sympatheticRing { 0xff6fa8b8 };
 } // namespace colours
 
 constexpr int editorWidth = 1080;
-constexpr int editorHeight = 720;
+constexpr int editorHeight = 860;
+constexpr int fretboardPanelHeight = 148;
+constexpr int timerHz = 30;
+constexpr int lastDrawnFret = electry::ElectryEngine::fretCount;
 constexpr int firstKeyboardNote = electry::ElectryEngine::firstKeyswitchNote; // C0
 constexpr int firstPlayableNote = electry::ElectryEngine::lowestPlayableNote; // E1
 constexpr int lastKeyboardNote = electry::ElectryEngine::highestPlayableNote; // D6
@@ -529,13 +540,15 @@ void ElectryKnob::resized()
 // Status display
 // ---------------------------------------------------------------------------
 
-void ElectryStatusDisplay::setStatus (int activeVoices, bool ready, double sampleRate,
+void ElectryStatusDisplay::setStatus (int activeVoices, int sympatheticStrings,
+                                      bool ready, double sampleRate,
                                       bool scheduleRepaint)
 {
-    if (voices == activeVoices && isReady == ready
-        && juce::approximatelyEqual (rate, sampleRate))
+    if (voices == activeVoices && sympathetic == sympatheticStrings
+        && isReady == ready && juce::approximatelyEqual (rate, sampleRate))
         return;
     voices = activeVoices;
+    sympathetic = sympatheticStrings;
     isReady = ready;
     rate = sampleRate;
     if (scheduleRepaint)
@@ -556,6 +569,8 @@ void ElectryStatusDisplay::paint (juce::Graphics& graphics)
     else
     {
         status = juce::String (voices) + (voices == 1 ? " STRING" : " STRINGS");
+        if (sympathetic > 0)
+            status += " +" + juce::String (sympathetic) + " RING";
         if (rate > 0.0)
             status += "  |  " + juce::String (rate / 1000.0, 1) + " kHz";
     }
@@ -564,6 +579,231 @@ void ElectryStatusDisplay::paint (juce::Graphics& graphics)
     graphics.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     graphics.drawText (status, getLocalBounds().reduced (8, 0),
                        juce::Justification::centredLeft);
+}
+
+// ---------------------------------------------------------------------------
+// Fretboard display
+// ---------------------------------------------------------------------------
+
+ElectryFretboardDisplay::ElectryFretboardDisplay()
+{
+    setInterceptsMouseClicks (false, false);
+    setName ("Fretboard display");
+}
+
+bool ElectryFretboardDisplay::refresh (const ElectryAudioProcessor& processor,
+                                       float frameSeconds)
+{
+    bool moving = false;
+    for (int stringIndex = 0;
+         stringIndex < electry::ElectryEngine::stringCount; ++stringIndex)
+    {
+        auto& row = rows[static_cast<std::size_t> (stringIndex)];
+        const auto next = processor.getStringVisualState (stringIndex);
+        const bool changed = next.midiNote != row.state.midiNote
+                          || next.fret != row.state.fret
+                          || next.sounding != row.state.sounding
+                          || next.sympathetic != row.state.sympathetic
+                          || next.releasing != row.state.releasing;
+        row.state = next;
+
+        const float previousLevel = row.level;
+        row.level = electry::visuals::meterBallistics (row.level, next.level,
+                                                       0.55f, 0.18f);
+        if (row.level > 0.004f)
+        {
+            // A visible wobble rate per string. It is deliberately not the
+            // audio pitch, which would alias into nonsense at any frame rate a
+            // GUI can sustain; it only has to read as "this string is moving".
+            row.phase += juce::MathConstants<float>::twoPi
+                       * (4.5f + 0.8f * static_cast<float> (stringIndex))
+                       * frameSeconds;
+            while (row.phase > juce::MathConstants<float>::twoPi)
+                row.phase -= juce::MathConstants<float>::twoPi;
+            moving = true;
+        }
+        else if (previousLevel > 0.0f)
+        {
+            row.level = 0.0f;
+            row.phase = 0.0f;
+            moving = true;
+        }
+
+        moving = moving || changed;
+    }
+    return moving;
+}
+
+void ElectryFretboardDisplay::paint (juce::Graphics& graphics)
+{
+    auto bounds = getLocalBounds().toFloat();
+    if (bounds.getWidth() < 120.0f || bounds.getHeight() < 40.0f)
+        return;
+
+    auto tuningArea = bounds.removeFromLeft (26.0f);
+    auto meterArea = bounds.removeFromRight (54.0f);
+    bounds.removeFromLeft (4.0f);
+    meterArea.removeFromLeft (8.0f);
+    const auto neck = bounds;
+
+    // Fingerboard blank.
+    graphics.setGradientFill ({ colours::rosewood, neck.getCentreX(), neck.getY(),
+                                colours::rosewoodDark, neck.getCentreX(),
+                                neck.getBottom(), false });
+    graphics.fillRoundedRectangle (neck, 3.0f);
+    graphics.setColour (colours::panelOutline.withAlpha (0.55f));
+    graphics.drawRoundedRectangle (neck.reduced (0.5f), 3.0f, 0.8f);
+
+    const auto neckX = neck.getX();
+    const auto neckWidth = neck.getWidth();
+    const auto fretX = [neckX, neckWidth] (int fret)
+    {
+        return neckX + neckWidth
+             * electry::visuals::fretWireFraction (fret, lastDrawnFret);
+    };
+
+    // Position inlays sit behind the strings.
+    const auto drawInlay = [&graphics, &fretX, &neck] (int fret, bool doubled)
+    {
+        const auto centre = 0.5f * (fretX (fret - 1) + fretX (fret));
+        const auto radius = juce::jmin (4.0f, neck.getHeight() * 0.05f);
+        graphics.setColour (colours::warmBone.withAlpha (0.30f));
+        if (doubled)
+        {
+            const auto offset = neck.getHeight() * 0.24f;
+            graphics.fillEllipse (centre - radius, neck.getCentreY() - offset - radius,
+                                  radius * 2.0f, radius * 2.0f);
+            graphics.fillEllipse (centre - radius, neck.getCentreY() + offset - radius,
+                                  radius * 2.0f, radius * 2.0f);
+        }
+        else
+        {
+            graphics.fillEllipse (centre - radius, neck.getCentreY() - radius,
+                                  radius * 2.0f, radius * 2.0f);
+        }
+    };
+    for (const int fret : electry::visuals::inlayFrets)
+        drawInlay (fret, false);
+    drawInlay (electry::visuals::octaveInlayFret, true);
+    drawInlay (electry::visuals::upperOctaveInlayFret, true);
+
+    // Nut and fret wires.
+    graphics.setColour (colours::warmBone.withAlpha (0.85f));
+    graphics.fillRect (neck.getX(), neck.getY(), 3.0f, neck.getHeight());
+    for (int fret = 1; fret <= lastDrawnFret; ++fret)
+    {
+        const auto x = fretX (fret);
+        graphics.setColour (colours::fretWire.withAlpha (0.42f));
+        graphics.drawLine (x, neck.getY() + 1.5f, x, neck.getBottom() - 1.5f, 1.1f);
+    }
+
+    // Strings, note markers, tuning labels and level meters.
+    static constexpr std::array<const char*, electry::ElectryEngine::stringCount>
+        tuningNames { "E1", "B1", "E2", "A2", "D3", "G3", "B3", "E4" };
+
+    for (int stringIndex = 0;
+         stringIndex < electry::ElectryEngine::stringCount; ++stringIndex)
+    {
+        const auto& row = rows[static_cast<std::size_t> (stringIndex)];
+        const auto y = neck.getY() + neck.getHeight()
+            * electry::visuals::stringRowFraction (
+                  stringIndex, electry::ElectryEngine::stringCount, 0.085f);
+        const auto thickness = electry::visuals::stringThickness (
+            stringIndex, 0.9f, 2.6f);
+        const auto heat = electry::visuals::levelHeat (row.level);
+        const bool ringing = row.state.sounding || row.state.sympathetic;
+
+        auto stringColour = colours::nickel.withAlpha (0.55f);
+        if (row.state.sympathetic)
+            stringColour = colours::sympatheticRing.withAlpha (0.45f + 0.45f * heat);
+        else if (row.state.sounding)
+            stringColour = (row.state.releasing ? colours::accent
+                                                : colours::accentBright)
+                               .withAlpha (0.55f + 0.45f * heat);
+
+        const auto stoppedFraction = row.state.sounding && row.state.fret > 0
+            ? electry::visuals::fretWireFraction (row.state.fret, lastDrawnFret)
+            : 0.0f;
+        const auto swing = std::sin (row.phase) * heat
+                         * juce::jmin (5.0f, neck.getHeight() * 0.055f);
+
+        graphics.setColour (stringColour);
+        if (ringing && std::abs (swing) > 0.05f)
+        {
+            // The vibrating portion is drawn as the fundamental standing wave
+            // over the sounding length only, so the section behind the
+            // fretting finger correctly stays still.
+            juce::Path shape;
+            constexpr int steps = 40;
+            for (int step = 0; step <= steps; ++step)
+            {
+                const auto u = static_cast<float> (step) / static_cast<float> (steps);
+                const auto x = neck.getX() + neckWidth * u;
+                const auto offset = swing
+                    * electry::visuals::vibrationShape (u, stoppedFraction);
+                if (step == 0)
+                    shape.startNewSubPath (x, y + offset);
+                else
+                    shape.lineTo (x, y + offset);
+            }
+            graphics.strokePath (shape, juce::PathStrokeType (thickness));
+        }
+        else
+        {
+            graphics.drawLine (neck.getX(), y, neck.getRight(), y, thickness);
+        }
+
+        // Fingered position.
+        if (row.state.sounding && row.state.midiNote >= 0)
+        {
+            const auto markerX = row.state.fret > 0
+                ? neck.getX() + neckWidth
+                      * electry::visuals::fretCentreFraction (row.state.fret,
+                                                              lastDrawnFret)
+                : neck.getX() + 1.5f;
+            const auto radius = juce::jmin (6.5f, neck.getHeight() * 0.085f);
+            graphics.setColour (juce::Colours::black.withAlpha (0.55f));
+            graphics.fillEllipse (markerX - radius, y - radius,
+                                  radius * 2.0f, radius * 2.0f);
+            graphics.setColour ((row.state.releasing ? colours::accent
+                                                     : colours::accentBright)
+                                    .withAlpha (0.85f));
+            graphics.drawEllipse (markerX - radius, y - radius,
+                                  radius * 2.0f, radius * 2.0f, 1.4f);
+            graphics.setColour (colours::text);
+            graphics.setFont (juce::FontOptions (9.0f, juce::Font::bold));
+            graphics.drawText (
+                juce::MidiMessage::getMidiNoteName (row.state.midiNote, true, false, 4),
+                juce::Rectangle<float> (markerX - radius - 6.0f, y - radius,
+                                        radius * 2.0f + 12.0f, radius * 2.0f),
+                juce::Justification::centred);
+        }
+
+        // Tuning label.
+        graphics.setColour (ringing ? colours::binding
+                                    : colours::dimText.withAlpha (0.65f));
+        graphics.setFont (juce::FontOptions (8.6f, juce::Font::bold));
+        graphics.drawText (tuningNames[static_cast<std::size_t> (stringIndex)],
+                           juce::Rectangle<float> (tuningArea.getX(), y - 6.0f,
+                                                   tuningArea.getWidth(), 12.0f),
+                           juce::Justification::centredRight);
+
+        // Per-string level meter.
+        const auto meterHeight = juce::jmax (2.0f, thickness + 1.0f);
+        const juce::Rectangle<float> meterTrack (meterArea.getX(), y - meterHeight * 0.5f,
+                                                 meterArea.getWidth(), meterHeight);
+        graphics.setColour (juce::Colours::black.withAlpha (0.55f));
+        graphics.fillRoundedRectangle (meterTrack, meterHeight * 0.5f);
+        if (heat > 0.01f)
+        {
+            graphics.setColour (row.state.sympathetic ? colours::sympatheticRing
+                                                      : colours::accentBright);
+            graphics.fillRoundedRectangle (
+                meterTrack.withWidth (juce::jmax (meterHeight,
+                                                  meterTrack.getWidth() * heat)),
+                meterHeight * 0.5f);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -709,12 +949,26 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     setup (releaseNoiseKnob, releaseNoise, "String damping noise at note end");
     setup (artifactsKnob, artifacts,
            "Amount of subtle deterministic hardware ring, fret buzz, and incidental collision");
+    setup (sympatheticKnob, sympathetic,
+           "Bridge-coupled sympathetic ring of the strings you are not fingering. "
+           "At 0% the coupled waveguides are bypassed exactly.");
+    setup (palmMuteKnob, palmMute,
+           "Continuous bridge-hand damping for every play style, on top of the "
+           "Muted and Chug keyswitches. MIDI CC2 adds to it while you play.");
+    setup (strumSpreadKnob, strumSpread,
+           "Pick travel time per string crossed. At 0 ms a chord starts as one "
+           "block; higher values sweep it string by string.");
+    setup (vibratoDepthKnob, vibratoDepth,
+           "Full-scale depth of the modulation-wheel (CC1) performance vibrato");
     setup (outputKnob, output, "Master output level");
     setup (distortionKnob, distortion, "Parallel high-gain distortion drive");
     setup (ampKnob, amp, "Saturated guitar amp and cabinet simulation");
     setup (compressorKnob, compressor, "Fast levelling for tight rhythm playing");
     setup (delayKnob, delay, "Tempo-neutral 360 ms lead delay");
     setup (roomKnob, room, "Compact stereo room ambience");
+
+    fretboardDisplay.setComponentID ("fretboard");
+    addAndMakeVisible (fretboardDisplay);
 
     keyboard.setAvailableRange (firstKeyboardNote, lastKeyboardNote);
     keyboard.setLowestVisibleKey (firstKeyboardNote);
@@ -725,7 +979,10 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     addAndMakeVisible (keyboard);
 
     setSize (editorWidth, editorHeight);
-    startTimerHz (12);
+    // The fretboard animates string motion, so the editor runs at a display
+    // rate rather than the old status-only 12 Hz. Only the fretboard repaints,
+    // and only while something is actually moving.
+    startTimerHz (timerHz);
 
     // Populate the status readout and articulation strip immediately so the
     // panel opens in its real state instead of waiting up to a timer tick.
@@ -747,11 +1004,15 @@ void ElectryAudioProcessorEditor::attachSlider (juce::Slider& slider,
 void ElectryAudioProcessorEditor::timerCallback()
 {
     statusDisplay.setStatus (electryProcessor.getActiveVoiceCount(),
+                             electryProcessor.getSympatheticStringCount(),
                              electryProcessor.isEngineReady(),
                              electryProcessor.getCurrentSampleRateForDisplay());
     const auto articulationIndex = electryProcessor.getCurrentArticulationIndex();
     articulationStrip.setSelectedIndex (articulationIndex);
     keyboard.setSelectedKeyswitchIndex (articulationIndex);
+
+    if (fretboardDisplay.refresh (electryProcessor, 1.0f / static_cast<float> (timerHz)))
+        fretboardDisplay.repaint();
 }
 
 void ElectryAudioProcessorEditor::paint (juce::Graphics& graphics)
@@ -780,7 +1041,8 @@ void ElectryAudioProcessorEditor::paint (juce::Graphics& graphics)
     }
 
     const std::array<const char*, sectionCount> titles {
-        "", "CORE TONE & RESPONSE", "MASTER", "GUITAR BUILD", "PLAY DETAIL", "FX"
+        "", "FRETBOARD  (LIVE STRING VIEW)", "PERFORMANCE",
+        "CORE TONE & RESPONSE", "MASTER", "GUITAR BUILD", "PLAY DETAIL", "FX"
     };
 
     for (int section = 0; section < sectionCount; ++section)
@@ -871,6 +1133,28 @@ void ElectryAudioProcessorEditor::resized()
     sectionBounds[articulationSection] = articulationArea;
     articulationStrip.setBounds (articulationArea.reduced (12, 8));
     area.removeFromTop (8);
+
+    // The live fretboard sits directly under the play styles, beside the four
+    // performance controls that change what it shows.
+    {
+        auto fretboardRow = area.removeFromTop (
+            juce::jmin (fretboardPanelHeight, juce::jmax (0, area.getHeight() - 260)));
+        area.removeFromTop (8);
+        auto performanceArea = fretboardRow.removeFromRight (
+            juce::jmin (300, fretboardRow.getWidth() / 3));
+        fretboardRow.removeFromRight (8);
+        sectionBounds[fretboardSection] = fretboardRow;
+        sectionBounds[performanceSection] = performanceArea;
+
+        fretboardDisplay.setBounds (fretboardRow.reduced (12).withTrimmedTop (14));
+        layoutKnobRow (
+            performanceArea.reduced (10).withTrimmedTop (14),
+            { { &sympatheticKnob, KnobTier::detail },
+              { &palmMuteKnob, KnobTier::detail },
+              { &strumSpreadKnob, KnobTier::detail },
+              { &vibratoDepthKnob, KnobTier::detail } },
+            4);
+    }
 
     // The remaining 410 px is deliberately split by sonic importance rather
     // than by parameter type. Controls that reshape every note occupy the

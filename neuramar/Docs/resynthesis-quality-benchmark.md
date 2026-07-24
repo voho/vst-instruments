@@ -2,9 +2,16 @@
 
 ## Status and claim boundary
 
-This document specifies a future evaluation protocol. It contains no benchmark
-results. Every numerical threshold below is a **proposed target**, not evidence
-that the current Neuramar build satisfies it.
+This document specifies a future evaluation protocol against real competitors
+and human listeners. That protocol has **not** been run. Every numerical
+threshold in the *Proposed target gates* table below is a **proposed target**,
+not evidence that the current Neuramar build satisfies it.
+
+The one exception is *Measured analytic-fixture results* immediately below. That
+section reports numbers actually produced by the repository's own regression
+binaries on deterministic analytic fixtures. It is a self-comparison across
+Neuramar versions on synthetic material, not a competitor comparison, not a
+listening test, and not evidence about real acoustic instruments.
 
 "Industry-leading" must not mean universally better than every instrument. A
 defensible claim is narrower: in a preregistered, version-pinned comparison,
@@ -16,6 +23,86 @@ analysis code must accompany any public claim.
 A single source note contains no evidence about unrecorded registers,
 velocities, or articulations. Root-note reconstruction and cross-register
 instrument resemblance are therefore reported separately.
+
+## Measured analytic-fixture results
+
+Source: `Tests/ResynthesisQualityTests.cpp`, run through
+`ctest --test-dir build-dsp`. Every figure below is printed by that binary and
+is reproducible from a clean checkout. The fixtures are analytic, the targets
+are generated independently at every rendered pitch, and the machine was an
+x86-64 Linux container; absolute timings will differ elsewhere, ratios much
+less so.
+
+### Held-out source/filter family
+
+A 220 Hz note with three fixed formants, an alternating odd/even excitation, and
+a boosted fundamental is learned once and then rendered at ten register offsets
+from -24 to +24 semitones. `shape MAE` is the mean absolute deviation, in dB,
+between each rendered partial and the independently generated target after
+removing one median level offset; `parity error` is the error in the mean
+odd-minus-even partial level.
+
+| Metric (mean over -24 … +24 st) | 1.0 | 1.1 |
+| --- | --- | --- |
+| Body-Locked shape MAE | 3.495 dB | **2.898 dB** |
+| Pitch-following shape MAE (reference) | 6.453 dB | 6.453 dB |
+| Excitation parity error | 0.609 dB | 0.898 dB |
+
+Every one of the ten offsets improved. The largest gains are in the middle of
+the matrix (-7 st: 3.38 → 2.64 dB; +7 st: 2.49 → 1.96 dB; +12 st: 2.06 → 1.69 dB)
+and at the extremes (-24 st: 6.54 → 5.80 dB; +24 st: 4.46 → 3.86 dB). The cause
+is the narrower parity-balanced source/filter kernel described in
+[`neural-synthesis-research.md`](neural-synthesis-research.md): the previous
+five-tap kernel blurred a narrow formant across roughly four source harmonics.
+Parity is the deliberate trade: a narrower envelope tracks the excitation a
+little more closely, so slightly less of the odd/even contrast survives into the
+excitation residual. The worst single offset is +24 st at 2.23 dB, well inside
+the 3.5 dB regression guard.
+
+### Stiff-string partial placement
+
+A struck-string fixture with a known coefficient `B = 4.0e-4` is learned once and
+rendered at -12, 0, and +12 semitones. Partial placement error is the mean
+absolute deviation, in cents, between rendered partials 6, 10, and 14 and the
+independently generated stiff-string targets, located by an analytic sweep with
+parabolic refinement.
+
+| Metric | 1.0 (no stiff-string model) | 1.1 |
+| --- | --- | --- |
+| Fitted coefficient | not modelled | 4.0145e-4 (true 4.0e-4) |
+| Detected root | — | 219.94 Hz (true 220 Hz) |
+| Partial placement, mean over -12/0/+12 st | 37.44 cents | **0.095 cents** |
+
+The 1.0 column is measured by rendering the same 1.1 model with `Stretch` at 0%,
+which reproduces the ideal harmonic bank every earlier release used. The
+engine-side test in `Tests/NeuramarEngineTests.cpp` repeats the experiment with
+a different coefficient (`B = 3.0e-4`) and a different fixture and reports
+0.20 cents fitted against 27.81 cents ideal-harmonic.
+
+This measures placement of the partial series only. It says nothing about
+amplitude, decay, or perceived similarity to a real piano.
+
+### Cost
+
+Measured with the same binaries, best of three runs, on the same container.
+The 1.0 column was produced by reverting only the changed hot paths in a
+scratch copy of the tree, so the workload is identical.
+
+| Case | 1.0 | 1.1 |
+| --- | --- | --- |
+| Eight voices, two octaves above the root, 1 s at 48 kHz | 0.156 s (6.40x realtime) | **0.067 s (15.0x realtime)** |
+| Eight voices, two octaves below the root, 0.5 s at 48 kHz | 0.354 s (1.41x realtime) | **0.211 s (2.37x realtime)** |
+| `learn()` on a 1.6 s / 44.1 kHz source | 0.715 s | **0.557 s** |
+| Tabulated vs direct windowed-sinc resampling of 5 s at 48 → 12 kHz | 0.060 s | **0.0033 s** |
+
+The resampler row is an in-test A/B: the same regression binary runs a literal
+transcription of the pre-1.1 direct-evaluation kernel and the shipped polyphase
+table over identical input and reports both the speedup and the difference
+between their outputs, which is below -150 dB. The 1.1 `learn()` figure includes
+the new stiff-string estimation pass, which 1.0 did not perform at all.
+
+None of these are the acceptance gates below. In particular, the render-speed
+gates are specified for Apple silicon and Rosetta and have not been measured.
 
 ## Locked comparison systems
 

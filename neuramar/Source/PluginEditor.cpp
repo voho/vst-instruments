@@ -1,7 +1,10 @@
 #include "PluginEditor.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <utility>
 
 namespace
 {
@@ -691,6 +694,311 @@ void NeuralPoolDisplay::mouseUp (const juce::MouseEvent& event)
         onChooseFile();
 }
 
+ModelAnatomyDisplay::ModelAnatomyDisplay()
+{
+    neuramar::clearModelAnatomy (anatomy);
+}
+
+void ModelAnatomyDisplay::setAnatomy (const neuramar::ModelAnatomy& next,
+                                      std::uint64_t generation)
+{
+    if (generation == anatomyGeneration)
+        return;
+    anatomyGeneration = generation;
+    anatomy = next;
+    playhead = 0.0f;
+    repaint();
+}
+
+void ModelAnatomyDisplay::advance (int activeVoiceCount, float stretch)
+{
+    stretchAmount = stretch;
+    // One sweep of the learned trajectory every four seconds keeps slow
+    // memories readable without turning fast ones into a strobe.
+    const auto step = anatomy.durationSeconds > 0.0f
+        ? 1.0f / (30.0f * juce::jlimit (1.0f, 8.0f, anatomy.durationSeconds
+                                        + 1.5f))
+        : 0.008f;
+    playhead = std::fmod (playhead + step, 1.0f);
+
+    const auto slice = neuramar::anatomySliceAt (playhead);
+    const auto voiceGain = activeVoiceCount > 0 ? 1.0f : 0.35f;
+    coreMeter = neuramar::followMeter (
+        coreMeter, anatomy.coreLevel[slice] * voiceGain, 0.55f, 0.14f);
+    airMeter = neuramar::followMeter (
+        airMeter, anatomy.airLevel[slice] * voiceGain, 0.55f, 0.14f);
+    boneMeter = neuramar::followMeter (
+        boneMeter, anatomy.boneLevel[slice] * voiceGain, 0.55f, 0.14f);
+    repaint();
+}
+
+juce::Rectangle<float> ModelAnatomyDisplay::plotBounds() const
+{
+    auto plot = getLocalBounds().toFloat().reduced (14.0f, 10.0f);
+    plot.removeFromTop (20.0f);
+    plot.removeFromBottom (16.0f);
+    return plot;
+}
+
+void ModelAnatomyDisplay::paintGrid (juce::Graphics& g,
+                                     juce::Rectangle<float> plot) const
+{
+    static constexpr std::array<float, 7> decades {
+        50.0f, 100.0f, 250.0f, 500.0f, 1000.0f, 4000.0f, 12000.0f
+    };
+    g.setFont (font (7.6f, true));
+    for (const auto frequency : decades)
+    {
+        const auto position = neuramar::anatomyPositionOf (frequency);
+        const auto x = plot.getX() + plot.getWidth() * position;
+        g.setColour (colour (ink).withAlpha (0.055f));
+        g.drawLine (x, plot.getY(), x, plot.getBottom(), 0.7f);
+        g.setColour (colour (muted).withAlpha (0.38f));
+        g.drawText (frequency >= 1000.0f
+                        ? juce::String (juce::roundToInt (frequency / 1000.0f)) + "k"
+                        : juce::String (juce::roundToInt (frequency)),
+                    juce::Rectangle<float> (x - 16.0f, plot.getBottom() + 1.0f,
+                                            32.0f, 13.0f),
+                    juce::Justification::centred, false);
+    }
+    for (int line = 1; line < 4; ++line)
+    {
+        const auto y = plot.getY() + plot.getHeight()
+                     * static_cast<float> (line) / 4.0f;
+        g.setColour (colour (ink).withAlpha (0.035f));
+        g.drawLine (plot.getX(), y, plot.getRight(), y, 0.6f);
+    }
+}
+
+void ModelAnatomyDisplay::paintSpectrum (juce::Graphics& g,
+                                         juce::Rectangle<float> plot)
+{
+    const auto slice = neuramar::anatomySliceAt (playhead);
+    const auto binX = [plot] (std::size_t bin)
+    {
+        return plot.getX() + plot.getWidth() * static_cast<float> (bin)
+             / static_cast<float> (neuramar::ModelAnatomy::binCount - 1);
+    };
+
+    const auto buildPath = [&] (
+        const std::array<float, neuramar::ModelAnatomy::binCount>& values,
+        bool closed)
+    {
+        juce::Path path;
+        path.startNewSubPath (binX (0), plot.getBottom()
+                              - plot.getHeight() * values[0]);
+        for (std::size_t bin = 1; bin < values.size(); ++bin)
+            path.lineTo (binX (bin),
+                         plot.getBottom() - plot.getHeight() * values[bin]);
+        if (closed)
+        {
+            path.lineTo (binX (values.size() - 1), plot.getBottom());
+            path.lineTo (binX (0), plot.getBottom());
+            path.closeSubPath();
+        }
+        return path;
+    };
+
+    // The faint outline is the loudest each cell ever gets across the whole
+    // learned trajectory, so the moving slice is read against the memory's
+    // total spectral reach rather than in isolation.
+    std::array<float, neuramar::ModelAnatomy::binCount> envelope {};
+    for (std::size_t s = 0; s < neuramar::ModelAnatomy::sliceCount; ++s)
+        for (std::size_t bin = 0; bin < envelope.size(); ++bin)
+            envelope[bin] = std::max (envelope[bin],
+                std::max (anatomy.core[s][bin],
+                          std::max (anatomy.air[s][bin],
+                                    anatomy.bone[s][bin])));
+    g.setColour (colour (ink).withAlpha (0.14f));
+    g.strokePath (buildPath (envelope, false),
+                  juce::PathStrokeType (0.9f, juce::PathStrokeType::curved));
+
+    const auto airPath = buildPath (anatomy.air[slice], true);
+    g.setColour (colour (clay).withAlpha (0.24f));
+    g.fillPath (airPath);
+    g.setColour (colour (clay).withAlpha (0.72f));
+    g.strokePath (buildPath (anatomy.air[slice], false),
+                  juce::PathStrokeType (1.1f, juce::PathStrokeType::curved));
+
+    const auto corePath = buildPath (anatomy.core[slice], true);
+    g.setColour (colour (mint).withAlpha (0.20f));
+    g.fillPath (corePath);
+    g.setColour (colour (mint).withAlpha (0.90f));
+    g.strokePath (buildPath (anatomy.core[slice], false),
+                  juce::PathStrokeType (1.35f, juce::PathStrokeType::curved));
+
+    for (std::size_t bin = 0; bin < neuramar::ModelAnatomy::binCount; ++bin)
+    {
+        const auto height = anatomy.bone[slice][bin];
+        if (height <= 0.001f)
+            continue;
+        const auto x = binX (bin);
+        g.setColour (colour (violet).withAlpha (0.80f));
+        g.drawLine (x, plot.getBottom(),
+                    x, plot.getBottom() - plot.getHeight() * height, 1.6f);
+    }
+
+    if (hovering && hoverPosition >= 0.0f)
+    {
+        const auto x = plot.getX() + plot.getWidth() * hoverPosition;
+        g.setColour (colour (ink).withAlpha (0.30f));
+        g.drawLine (x, plot.getY(), x, plot.getBottom(), 0.8f);
+    }
+}
+
+void ModelAnatomyDisplay::paintEvolution (juce::Graphics& g,
+                                          juce::Rectangle<float> plot)
+{
+    const auto sliceX = [plot] (std::size_t slice)
+    {
+        return plot.getX() + plot.getWidth() * static_cast<float> (slice)
+             / static_cast<float> (neuramar::ModelAnatomy::sliceCount - 1);
+    };
+    const auto drawLayer = [&] (
+        const std::array<float, neuramar::ModelAnatomy::sliceCount>& values,
+        juce::Colour layerColour)
+    {
+        juce::Path path;
+        path.startNewSubPath (sliceX (0),
+                              plot.getBottom() - plot.getHeight() * values[0]);
+        for (std::size_t slice = 1; slice < values.size(); ++slice)
+            path.lineTo (sliceX (slice),
+                         plot.getBottom() - plot.getHeight() * values[slice]);
+        g.setColour (layerColour.withAlpha (0.86f));
+        g.strokePath (path, juce::PathStrokeType (
+            1.5f, juce::PathStrokeType::curved,
+            juce::PathStrokeType::rounded));
+        juce::Path filled = path;
+        filled.lineTo (sliceX (values.size() - 1), plot.getBottom());
+        filled.lineTo (sliceX (0), plot.getBottom());
+        filled.closeSubPath();
+        g.setColour (layerColour.withAlpha (0.13f));
+        g.fillPath (filled);
+    };
+
+    drawLayer (anatomy.airLevel, colour (clay));
+    drawLayer (anatomy.boneLevel, colour (violet));
+    drawLayer (anatomy.coreLevel, colour (mint));
+
+    const auto x = plot.getX() + plot.getWidth() * playhead;
+    g.setColour (colour (ink).withAlpha (0.42f));
+    g.drawLine (x, plot.getY(), x, plot.getBottom(), 1.0f);
+}
+
+void ModelAnatomyDisplay::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
+    juce::ColourGradient surface (colour (0xff0b1f22u), bounds.getX(),
+                                  bounds.getY(), colour (0xff050f12u),
+                                  bounds.getRight(), bounds.getBottom(), false);
+    g.setGradientFill (surface);
+    g.fillRoundedRectangle (bounds, 16.0f);
+    g.setColour (colour (mint).withAlpha (0.14f));
+    g.drawRoundedRectangle (bounds.reduced (0.7f), 16.0f, 0.9f);
+
+    const auto plot = plotBounds();
+    if (plot.getWidth() < 8.0f || plot.getHeight() < 8.0f)
+        return;
+    paintGrid (g, plot);
+
+    auto header = bounds.reduced (14.0f, 8.0f).removeFromTop (16.0f);
+    g.setFont (font (9.2f, true));
+    g.setColour (colour (muted));
+    g.drawText (view == View::Spectrum ? "MODEL ANATOMY  /  SPECTRUM"
+                                       : "MODEL ANATOMY  /  EVOLUTION",
+                header.removeFromLeft (190.0f),
+                juce::Justification::centredLeft, false);
+
+    if (! anatomy.valid)
+    {
+        g.setColour (colour (muted).withAlpha (0.62f));
+        g.setFont (font (10.5f));
+        g.drawText ("no memory to inspect yet", plot,
+                    juce::Justification::centred, false);
+        return;
+    }
+
+    if (view == View::Spectrum)
+        paintSpectrum (g, plot);
+    else
+        paintEvolution (g, plot);
+
+    // Layer meters, in the same order and colours as the header legend.
+    auto meters = header.removeFromRight (168.0f);
+    if (meters.getWidth() > 60.0f)
+    {
+        const auto meterWidth = meters.getWidth() / 3.0f;
+        const std::array<std::pair<float, juce::Colour>, 3> layerMeters {{
+            { coreMeter, colour (mint) },
+            { airMeter, colour (clay) },
+            { boneMeter, colour (violet) }
+        }};
+        for (std::size_t index = 0; index < layerMeters.size(); ++index)
+        {
+            auto cell = meters.removeFromLeft (meterWidth).reduced (3.0f, 5.0f);
+            g.setColour (colour (ink).withAlpha (0.07f));
+            g.fillRoundedRectangle (cell, 2.0f);
+            const auto filled = cell.withWidth (
+                cell.getWidth() * juce::jlimit (0.0f, 1.0f,
+                                                layerMeters[index].first));
+            g.setColour (layerMeters[index].second.withAlpha (0.80f));
+            g.fillRoundedRectangle (filled, 2.0f);
+        }
+    }
+
+    auto footer = bounds.reduced (14.0f, 8.0f).removeFromBottom (13.0f);
+    juce::String detail;
+    if (hovering && hoverPosition >= 0.0f && view == View::Spectrum)
+    {
+        const auto frequency = neuramar::anatomyFrequencyAt (hoverPosition);
+        detail = (frequency >= 1000.0f
+                      ? juce::String (frequency / 1000.0f, 2) + " kHz"
+                      : juce::String (juce::roundToInt (frequency)) + " Hz");
+    }
+    else
+    {
+        const auto stretchCents = 1200.0f * std::log2 (
+            std::max (neuramar::stretchedHarmonicRatio (
+                          16.0f, anatomy.inharmonicity
+                              * juce::jlimit (0.0f, 2.0f, stretchAmount))
+                          / 16.0f, 1.0e-6f));
+        detail = anatomy.inharmonicity > 0.0f
+            ? "stretch " + juce::String (juce::roundToInt (stretchCents))
+                  + "c at partial 16"
+            : juce::String ("ideal harmonic series");
+    }
+    g.setColour (colour (muted).withAlpha (0.80f));
+    g.setFont (font (9.0f));
+    g.drawText (detail + "  /  click to swap view", footer,
+                juce::Justification::centredRight, false);
+}
+
+void ModelAnatomyDisplay::mouseUp (const juce::MouseEvent& event)
+{
+    if (! event.mouseWasClicked())
+        return;
+    view = view == View::Spectrum ? View::Evolution : View::Spectrum;
+    repaint();
+}
+
+void ModelAnatomyDisplay::mouseMove (const juce::MouseEvent& event)
+{
+    const auto plot = plotBounds();
+    if (plot.getWidth() <= 0.0f)
+        return;
+    hovering = true;
+    hoverPosition = juce::jlimit (0.0f, 1.0f,
+        (event.position.x - plot.getX()) / plot.getWidth());
+    repaint();
+}
+
+void ModelAnatomyDisplay::mouseExit (const juce::MouseEvent&)
+{
+    hovering = false;
+    hoverPosition = -1.0f;
+    repaint();
+}
+
 NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcessor& p)
     : AudioProcessorEditor (&p), neuramarProcessor (p),
       keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
@@ -742,6 +1050,16 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
         "Drop or choose an audio file to infer its root and learn a playable synthesis model.");
     neuralPool.setTooltip ("Drop a supported audio file here, or click to choose one.");
     addAndMakeVisible (neuralPool);
+
+    modelAnatomy.setAccessible (true);
+    modelAnatomy.setTitle ("Learned model anatomy");
+    modelAnatomy.setDescription (
+        "Shows what the learned memory contains: its Core partials, Air bands, "
+        "Bone modes, and how each layer evolves.");
+    modelAnatomy.setTooltip (
+        "Core / Air / Bone content of the learned memory. Click to swap "
+        "between the spectral fingerprint and the layer evolution.");
+    addAndMakeVisible (modelAnatomy);
 
     orbitButton.setClickingTogglesState (true);
     orbitButton.setDescription ("Repeat the learned stable region while a note is held.");
@@ -813,10 +1131,11 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     rootDownButton.onClick = [this] { nudgeRoot (-1); };
     rootUpButton.onClick = [this] { nudgeRoot (1); };
 
-    for (auto* knob : std::array<NeuramarKnob*, 12> {
+    for (auto* knob : std::array<NeuramarKnob*, 15> {
              &imprintKnob, &bodyLockKnob, &airKnob, &boneKnob,
              &brightnessKnob, &evolutionKnob, &mutationKnob,
-             &noiseKnob, &attackKnob, &releaseKnob, &spreadKnob, &outputKnob })
+             &noiseKnob, &attackKnob, &releaseKnob, &spreadKnob, &outputKnob,
+             &stretchKnob, &formantKnob, &touchKnob })
         addAndMakeVisible (*knob);
 
     bodyLockKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
@@ -826,6 +1145,24 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     mutationKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
     noiseKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
     outputKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (amber));
+    formantKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
+    touchKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (amber));
+    stretchKnob.slider.setDescription (
+        "Scales the memory's fitted stiff-string partial stretch.");
+    stretchKnob.slider.setTooltip (
+        "Stretch: 100% renders the learned stiff-string partial series, 0% "
+        "forces an ideal harmonic bank. A memory with no fitted stretch is "
+        "unaffected.");
+    formantKnob.slider.setDescription (
+        "Moves the learned resonant body in frequency without moving pitch.");
+    formantKnob.slider.setTooltip (
+        "Formant: shifts the Body-Locked Core envelope, Air bands, and Bone "
+        "modes in semitones. The played pitch does not move.");
+    touchKnob.slider.setDescription (
+        "Sets how much MIDI velocity shapes timbre as well as level.");
+    touchKnob.slider.setTooltip (
+        "Touch: harder notes become brighter and breathier, softer notes "
+        "darker. At 0% velocity only sets level.");
     noiseKnob.slider.setDescription (
         "Evolves the neural model's latent input; it does not add audible hiss.");
     noiseKnob.slider.setTooltip (
@@ -844,6 +1181,9 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     attachSlider (releaseKnob.slider, neuramar::parameters::release);
     attachSlider (spreadKnob.slider, neuramar::parameters::spread);
     attachSlider (outputKnob.slider, neuramar::parameters::output);
+    attachSlider (stretchKnob.slider, neuramar::parameters::stretch);
+    attachSlider (formantKnob.slider, neuramar::parameters::formant);
+    attachSlider (touchKnob.slider, neuramar::parameters::touch);
     attachButton (orbitButton, neuramar::parameters::orbit);
 
     keyboard.setAvailableRange (0, 127);
@@ -858,10 +1198,10 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     setResizable (true, true);
     if (auto* constrainer = getConstrainer())
     {
-        constrainer->setSizeLimits (960, 619, 1500, 966);
-        constrainer->setFixedAspectRatio (1180.0 / 760.0);
+        constrainer->setSizeLimits (960, 716, 1500, 1119);
+        constrainer->setFixedAspectRatio (1180.0 / 880.0);
     }
-    setSize (1180, 760);
+    setSize (1180, 880);
     timerCallback();
     startTimerHz (30);
 }
@@ -882,7 +1222,7 @@ void NeuramarAudioProcessorEditor::paint (juce::Graphics& g)
     content.removeFromTop (58);
     content.removeFromBottom (99);
     const auto upper = content.removeFromTop (juce::roundToInt (
-        static_cast<float> (content.getHeight()) * 0.67f));
+        static_cast<float> (content.getHeight()) * 0.66f));
     const auto poolWidth = juce::roundToInt (
         static_cast<float> (upper.getWidth()) * 0.665f);
     drawPanel (g, upper.withWidth (poolWidth).toFloat());
@@ -923,11 +1263,15 @@ void NeuramarAudioProcessorEditor::resized()
     keyboard.setBounds (keyboardArea.withTrimmedTop (7));
 
     auto upper = bounds.removeFromTop (juce::roundToInt (
-        static_cast<float> (bounds.getHeight()) * 0.67f));
+        static_cast<float> (bounds.getHeight()) * 0.66f));
     const auto poolWidth = juce::roundToInt (
         static_cast<float> (upper.getWidth()) * 0.665f);
-    auto poolArea = upper.removeFromLeft (poolWidth);
-    neuralPool.setBounds (poolArea.reduced (8));
+    auto poolArea = upper.removeFromLeft (poolWidth).reduced (8);
+    auto anatomyArea = poolArea.removeFromBottom (juce::roundToInt (
+        static_cast<float> (poolArea.getHeight()) * 0.42f));
+    neuralPool.setBounds (poolArea);
+    anatomyArea.removeFromTop (8);
+    modelAnatomy.setBounds (anatomyArea);
 
     upper.removeFromLeft (12);
     auto dnaArea = upper.reduced (10);
@@ -941,11 +1285,13 @@ void NeuramarAudioProcessorEditor::resized()
 
     dnaArea.removeFromTop (2);
     constexpr int columns = 3;
+    constexpr int rows = 3;
     const auto cellWidth = dnaArea.getWidth() / columns;
-    const auto cellHeight = dnaArea.getHeight() / 2;
-    std::array<NeuramarKnob*, 6> dnaKnobs {
+    const auto cellHeight = dnaArea.getHeight() / rows;
+    std::array<NeuramarKnob*, 9> dnaKnobs {
         &imprintKnob, &bodyLockKnob, &airKnob,
-        &boneKnob, &brightnessKnob, &mutationKnob
+        &boneKnob, &brightnessKnob, &mutationKnob,
+        &stretchKnob, &formantKnob, &touchKnob
     };
     for (int i = 0; i < static_cast<int> (dnaKnobs.size()); ++i)
     {
@@ -1033,6 +1379,22 @@ void NeuramarAudioProcessorEditor::timerCallback()
     neuralPool.setSnapshot (snapshot, neuramarProcessor.getActiveVoiceCount(),
                             neuramarProcessor.getCurrentSampleRateForDisplay());
     updateRootReadout (snapshot);
+
+    // The anatomy is only copied when a new memory is published; every other
+    // frame just advances the sweep and the layer meters.
+    if (snapshot.modelGeneration != lastAnatomyGeneration)
+    {
+        const auto anatomySnapshot = neuramarProcessor.getModelAnatomySnapshot();
+        lastAnatomyGeneration = anatomySnapshot.modelGeneration;
+        modelAnatomy.setAnatomy (anatomySnapshot.anatomy,
+                                 anatomySnapshot.modelGeneration);
+    }
+    auto stretchAmount = 1.0f;
+    if (const auto* raw = neuramarProcessor.parameters.getRawParameterValue (
+            neuramar::parameters::stretch))
+        stretchAmount = raw->load (std::memory_order_relaxed);
+    modelAnatomy.advance (neuramarProcessor.getActiveVoiceCount(),
+                          stretchAmount);
 
     const auto learning = snapshot.stage == NeuramarAudioProcessor::LearningStage::Reading
                        || snapshot.stage == NeuramarAudioProcessor::LearningStage::FindingRoot

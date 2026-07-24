@@ -48,12 +48,69 @@ phase-continuous oscillators. This preserves a simple antialiasing boundary and
 allows a continuous `Body Lock` control between absolute-frequency resonances
 and pitch-following harmonic identity.
 
+## Stiff-string partial placement
+
+An ideal harmonic bank is the wrong prior for a large family of useful sources.
+Struck and plucked strings, electric-piano tines, and struck bars all sharpen
+their upper partials because the vibrating body has bending stiffness, and the
+classical description of that is
+[Fletcher's stiff-string law](https://doi.org/10.1121/1.1908504),
+`f(n) = n f0 sqrt(1 + B n^2)`. Forcing such a sound onto exact integer multiples
+misplaces its partials by tens of cents in the region where the ear is most
+sensitive to it, and it also corrupts the amplitude analysis, because the
+sinusoidal projection then measures the wrong frequency.
+
+Neuramar fits one coefficient `B` before any other analysis. Squaring the law
+linearises it exactly:
+
+```text
+(f(n) / n)^2 = f0^2 + (f0^2 B) n^2
+```
+
+so a single amplitude-weighted straight-line fit over the measured partial
+positions recovers the fundamental and the coefficient *together*. That joint
+form matters: solving for `B` against an assumed fundamental biases both, because
+a period-based detector already reads a stiff string slightly sharp and that
+sharpness absorbs part of the stretch it is supposed to measure. Partial
+positions come from three long-aperture probes in the steady part of the sound,
+each refined below the bin spacing by the parabolic vertex of three
+log-magnitude bins. The estimate is iterated over a widening partial set so an
+early mis-prediction cannot lock a high partial onto its neighbour.
+
+The fit is deliberately easy to reject. It is discarded unless the accepted
+partials form an uninterrupted run from the fundamental, the `n^2` trend
+explains most of the weighted deviation energy, and the coefficient exceeds an
+audibility floor. A sparse spectrum with a few strong resonances - exactly the
+material the Bone branch exists for - therefore reports an ideal harmonic series
+rather than a spurious stretch, and an ordinary sustained note reports exactly
+zero, leaving every earlier code path bit-identical. This is a one-parameter
+musical prior, not a physical model: it cannot describe an arbitrary inharmonic
+body, and the explicit modal branch remains the representation for those.
+
+Once accepted, the coefficient propagates consistently. The harmonic analysis
+projects at the stretched positions, Bone candidate rejection measures its
+distance to the nearest stretched partial rather than to the nearest integer
+ratio, and the renderer derives every oscillator frequency from a shared ratio
+table. The `Stretch` control scales that coefficient at render time, so a user
+can hear the fitted series, an ideal harmonic bank, or an exaggerated stretch
+without re-analysing anything.
+
 That control follows the source-filter motivation in
 [Schwarz and Rodet's spectral-envelope work](https://quod.lib.umich.edu/i/icmc/bbp2372.1999.417?rgn=main;view=fulltext): preserving an envelope in absolute
 frequency can retain source-like resonances while harmonic fine structure moves
 with pitch. At each control frame, Neuramar separates the learned magnitudes
 into a short power-smoothed envelope and the complementary harmonic-index
-excitation residual. Their product remains exact at every observed root-note
+excitation residual. The smoothing kernel is chosen so that exactly half of its
+weight sits on even offsets and half on the odd +/-1 taps: an alternating
+odd/even excitation then cancels identically at every index, which is what puts
+the parity contrast entirely in the excitation residual where it belongs. Within
+that constraint the shoulder taps are kept as light as the cancellation allows
+(1/32 of the weight each), because kernel width, not parity leakage, is what
+limits held-out register accuracy - a formant only a fifth of an octave wide
+spans fewer source harmonics than a wide kernel averages over. The kernel
+reflects about the first and last observation instead of renormalising a
+truncated weight sum, which would reintroduce a parity bias exactly at the
+evidence boundaries. Their product remains exact at every observed root-note
 partial. When Body Lock moves a note, odd/even, reed, and bow-like excitation
 character therefore stays attached to harmonic index while only the smooth
 envelope is read in absolute-frequency coordinates. The magnitude crossfade is
@@ -138,7 +195,10 @@ that the analyser has identified physical eigenmodes.
    coherent YIN estimate rather than win on one loud overtone. The mathematical
    basis is
    [de Cheveigne and Kawahara, 2002](https://pubmed.ncbi.nlm.nih.gov/12002874/).
-3. **Track and factor the sound** — follow a constrained local pitch contour
+3. **Measure the partial series** — fit the stiff-string coefficient and a
+   jointly estimated fundamental as described above, or report an exactly
+   harmonic series when the evidence does not support one.
+4. **Track and factor the sound** — follow a constrained local pitch contour
    around the root; at each frame, use pitch-adaptive weighted cosine/sine least
    squares to estimate harmonic amplitude and phase and subtract the fitted
    sinusoids from the waveform. The shorter Core/Air branch preserves temporal
@@ -148,7 +208,7 @@ that the analyser has identified physical eigenmodes.
    log-frequency cells. Fit non-negative Air powers to the exact analytic
    response of the shared eight-band runtime filterbank, then learn all
    trajectories over normalized note age.
-4. **Fit a temporal neural field and bounded detail correction** — deterministic
+5. **Fit a temporal neural field and bounded detail correction** — deterministic
    Adam optimization trains a compact Fourier-feature multilayer perceptron on
    log-amplitude targets. Analysis uses 128 strictly ordered times: 48 cover the
    first 120 ms in physical time and 80 cover sustain and decay. After fitting,
@@ -161,21 +221,37 @@ that the analyser has identified physical eigenmodes.
    tanh hidden units rather than the sinusoidal activations proposed by
    [SIREN](https://arxiv.org/abs/2006.09661), and inference is deliberately at
    control rate rather than audio rate.
-5. **Publish atomically** — the completed immutable model replaces the prior
+6. **Publish atomically** — the completed immutable model replaces the prior
    model at an audio block boundary. No decoding, FFT, fitting, allocation, or
    file access occurs in the render loop.
 
 The learned state stores model coefficients, quantized trajectory corrections,
-and analysis metadata, not the source recording or a source path. Version 3
-models remain small (about 35 KiB for the current representation), while the
-strict decoder retains an exact zero-correction path for version 2 state.
-Sessions therefore recall the instrument without depending on an external file.
+and analysis metadata, not the source recording or a source path. Version 4
+models remain small (about 35 KiB for the current representation) and append one
+stiff-string coefficient to the version-3 layout. The strict decoder retains an
+exact zero-correction path for version 2 and an exact zero-stretch path for
+version 3, so a memory saved by any shipped release still renders the way it
+did. Sessions therefore recall the instrument without depending on an external
+file.
+
+Two decoding costs were removed rather than absorbed. The band-limited
+resampling used during conditioning and pitch analysis evaluates its
+windowed-sinc kernel into a 1024-phase polyphase table instead of calling
+`sin` and `cos` forty-eight times for each of hundreds of thousands of output
+samples, and one decimation now feeds both the multi-window root search and the
+local pitch contour. Training reuses the forward pass it already performs for
+the gradient to score the loss, rather than running a second full forward pass
+after every update; the same set of candidate weight states is still scored, so
+the fit is unchanged.
 
 ## Generative initialization and variation
 
 The same compact controller can be used without a source recording. Neuramar
 starts from a deliberately voiced C4-anchored Core/Air/Bone field, then applies
-seeded coefficient, bias, phase, spectrum, and modal perturbations. This is
+seeded coefficient, bias, phase, spectrum, modal, and partial-stretch
+perturbations. The generated stretch is drawn from a squared distribution and
+bounded far below the fitted-model limit, so most generated identities stay
+close to an ideal harmonic series and none becomes a bell. This is
 procedural initialization of the instrument's existing neural/DDSP
 representation, not sampling from a pretrained corpus model and not a claim to
 have learned the distribution of acoustic instruments.
@@ -220,6 +296,19 @@ Air band.
 - **Body Lock** interpolates between a pitch-following spectrum and a
   source/filter factorization whose excitation follows harmonic index while its
   smooth resonances remain in absolute frequency.
+- **Stretch** scales the fitted stiff-string coefficient into a shared
+  per-partial frequency-ratio table. The table is rebuilt only when the
+  effective coefficient changes, never per voice and never per sample, and a
+  memory without a coefficient is unaffected at every setting.
+- **Formant** divides the Body-Locked envelope lookup coordinate by the shift
+  and multiplies the Air and Bone centre frequencies by it. The resonant body
+  therefore moves in absolute frequency while every oscillator's played pitch
+  stays exactly where it was.
+- **Touch** treats MIDI velocity as an excitation strength rather than a volume
+  control: above a mezzo-forte reference the harmonic tilt leans brighter and
+  more of the learned Air is let through, below it the opposite. The learned
+  timbre is reproduced unchanged at the reference velocity for any depth, and at
+  zero depth the response is the pure amplitude behaviour of earlier releases.
 - **Imprint / Dream** trades strict reconstruction for a smoother, more fluid
   interpretation of the learned field.
 - **Memory** changes traversal speed; **Orbit** revisits a stable region while a
@@ -244,7 +333,18 @@ register, then applies a control-rate-smoothed correction bounded to -6/+4 dB.
 The squared-power form matches independently phased sinusoidal RMS; the bound
 prevents missing evidence from turning into an excessive boost.
 
-Core partials retain their smooth 0.43-to-0.49-sample-rate Nyquist taper. The
+Core partials retain their smooth 0.43-to-0.49-sample-rate Nyquist taper, but it
+is now evaluated at control rate and folded into the ramped amplitude instead of
+being recomputed per sample. That has two consequences beyond the arithmetic
+saved: the audio loop performs no band-limiting work at all, and every partial
+the taper has silenced drops out of the render entirely rather than being
+phase-advanced for nothing. A partial re-entering the audible range starts from
+a zero amplitude ramp, so the discarded phase continuity is inaudible. Stored
+phases are kept reduced to `[0, 1)`, so each audible partial costs one table
+lookup, one multiply-add, and one wrap. At control rate the Body-Locked spectral
+coordinate is always a fixed multiple of the harmonic index, which lets
+`pow(index * scale, tilt)` factor into one cached table lookup and one scalar
+and removes a `pow` and a `sin` from every rendered partial of every frame. The
 mixed output uses floating-point host headroom and remains linear at ordinary
 operating levels; only a pathological ±7.95 finite-output guard remains.
 Avoiding a base-rate waveshaper is important at high pitch: otherwise newly
@@ -292,7 +392,8 @@ octave errors to destabilize synthesis.
 
 The current representation leaves a clean upgrade route: joint rather than
 sequential sinusoidal estimation, confidence-aware residual subtraction,
-continuous peak tracking with robust modal decay fits, a more rigorous
+continuous peak tracking with robust modal decay fits, a time-varying rather
+than fixed stiff-string coefficient, a more rigorous
 F0-adaptive/minimum-phase envelope, denser or multirate Air filterbanks,
 mipmapped dynamic wavetables, perceptual multi-resolution losses, an optional
 small legally-clean pitch model, SIMD matrix inference, and a user-trainable

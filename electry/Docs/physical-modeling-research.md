@@ -1,6 +1,6 @@
 # Electry physical-modeling research and implementation contract
 
-Electry 1.0 is a white-box physically modeled dry electric guitar with named
+Electry 1.1 is a white-box physically modeled dry electric guitar with named
 reference literature, not a black-box claim that one plug-in reproduces a
 specific instrument. This document separates the published models the engine
 implements from the parts that remain efficient Electry voicing decisions.
@@ -26,7 +26,11 @@ level-matched blind listening.
 | Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Structural bridge displacement is differentiated before four double-precision, peak-normalised modal resonators and a 4 kHz guard, producing body-induced voltage before the loaded pickup coils; positive real modal conductance across each note's first six partials can only shorten loop T60 | Geometry-informed structural pickup voltage plus passive mode-dependent energy extraction; not undifferentiated acoustic body displacement mixed into pickup voltage, and the mode tables remain voicing estimates rather than measured admittance data |
 | Construction controls | Solid-body material/geometry contrasts, humbucker vs single-coil construction, set-neck vs bolt-on, and modern extended-range scale practice | Wood, size, shape, construction, and pickup type interpolate between contrasting reference voicings; scale length spans 25.5 to 28 inches for Drop-E | Parametrized construction and extended-range voicing; not a licensed or capture-verified reproduction of a named instrument |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, release damping noise, and slap body knock, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
-| Controllable artifacts | The same touch/collision literature plus sympathetic-string and bridge-hardware behavior | An exactly bypassable deterministic path combines open-string sympathetic modes, partial non-slap fret contact, and per-string saddle rattle, all driven by played energy | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
+| Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with its own T60-derived loop filter, exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
+| Bridge-hand damping | Palm-muting practice and the same decay-targeted loop design | A continuous pressure interpolates the string's T60 geometrically toward a 40 ms stop and scales the high-frequency decay ratio, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as a decay target, applied identically to every play style; not a distributed hand/string contact solve |
+| Strum travel | Ordinary plectrum kinematics | Note-ons inside a 35 ms window are treated as one stroke; the first string fixes the edge the pick starts from and every further string's excitation is delayed by the travel time per string crossed | Constant-velocity pick travel across the string plane; not a model of pick angle, chord voicing, or the player's hand position |
+| Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, partial non-slap fret contact, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
+| Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
 | Oversampling | Standard nonlinear-audio antialiasing practice | The complete physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x | Genuine internal oversampling and filtered decimation, not a quality label applied to a native-rate nonlinear stage |
 | Output field | Phase-coherent divided/hex pickup practice | Mono is the conventional summed DI. Stereo weights each modeled string by its physical lateral position, keeps shared body modes centered, uses linked output limiting and independent matched decimation, and folds coherently to mono | A virtual divided-pickup string field with no time or phase widening; not room, amplifier, cabinet, chorus, or acoustic stereo |
 
@@ -80,7 +84,19 @@ The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
    body. A string-energy envelope shortens the loop delay (tension
    modulation), so hard attacks start audibly sharp and relax; slaps deepen
    the effect.
-6. Each pickup reads every string's displacement as the freshly written
+6. Every string that no note owns is a bridge-coupled sympathetic string. The
+   plucked voices' bridge force is accumulated into a bus that the coupled
+   strings read one sample later, which removes any dependence on voice order
+   and any algebraic loop. Each coupled string reuses its own otherwise idle
+   delay line at its open pitch with a T60-derived loop filter and exact
+   fundamental phase compensation, is bounded by a rational soft limit, and is
+   read through a bridge-position tap and an induced-EMF difference before
+   joining the pickup sums. Because only `active` voices write the bus and only
+   inactive voices read it, the coupling graph is a DAG and no coupling gain
+   can create a growing loop. The muting hand of a palm-muted, chugged or dead
+   note damps and starves the coupled strings, and the whole path is exactly
+   bypassed at 0%.
+7. Each pickup reads every string's displacement as the freshly written
    bridge sample minus a fractional read at the pickup delay; that delay
    follows the sounding length, so fretting up the neck moves the comb
    exactly as the geometry does. The tap passes a fractional finite-window
@@ -92,7 +108,7 @@ The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
    single-coil resonance and Q, loaded further by the passive tone control;
    the selector fades neck, both (with the paired-coil resonance shift), or
    bridge.
-7. Four modal body resonators fed from bridge motion and contact/knock noise
+8. Four modal body resonators fed from bridge motion and contact/knock noise
    are normalised to their requested gain at each configured modal frequency;
    this prevents low-frequency modes from receiving the old implicit
    `1/sin(omega)` boost. Bridge displacement is differentiated once before
@@ -108,12 +124,12 @@ The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
    growth. An optional eight-mode open-string bank plus per-string saddle/fret
    contact adds deterministic Artifacts detail without feeding energy back
    into the string loops.
-8. Mono sums the normal pickup field to exact dual mono. Stereo derives a
+9. Mono sums the normal pickup field to exact dual mono. Stereo derives a
    modest side field from each string's physical low-to-high position while
    keeping body motion centered; there is no delay or modulation. Both
    channels pass matched coil filters, 5 Hz DC blockers, and one linked
    bounded soft guard. At host
-   rates through 96 kHz, steps 2-8 run at 2x and a fixed 63-tap halfband FIR
+   rates through 96 kHz, steps 2-9 run at 2x and a fixed 63-tap halfband FIR
    decimates to the host rate; 192 and 384 kHz hosts run natively. The result
    is dry guitar with no amplifier, cabinet, room, or effect processing.
 
@@ -208,6 +224,73 @@ about 22 ms — the fretting or picking hand damping the string — and
 optionally injects a short wound- or plain-voiced damping noise. The palm
 mute style caps T60 between 0.6 s and 90 ms depending on the mute-damping
 control, with a darker excitation and stronger contact noise.
+
+## Sympathetic bridge coupling
+
+An electric guitar's unfingered strings are not silent while you play. Energy
+crosses the bridge and drives them at their own open pitches, which is a large
+part of why an eight-string instrument sounds dense and why players use fret
+wraps to stop it. Electry models the mechanism directly instead of colouring
+the output with a resonator bank.
+
+The plucked voices accumulate their bridge-bound wave `0.5 (v + h)` into a bus.
+Every string that no note owns reuses its own otherwise idle delay line as a
+single-polarisation waveguide tuned to its open pitch, solves its loop gain
+from the same T60 machinery the played strings use, compensates the loop
+filter's phase delay at the fundamental, and is read through a
+bridge-position tap and an induced-EMF difference before joining the pickup
+sums. The bus is read one sample late, which makes the result independent of
+the order the voices happen to be rendered in.
+
+The stability argument is structural rather than numerical: only voices with
+`active` set write to the bus, and only voices without it read from the bus.
+The coupling graph is therefore a directed acyclic graph with exactly one
+edge class, so no coupling gain can close a loop. Each coupled loop is
+individually a comb with gain strictly below one and additionally carries a
+bounded rational soft limit, so a driving partial landing exactly on a coupled
+mode still cannot exceed a fixed ceiling. The regression suite drives all eight
+strings at maximum coupling, maximum artifacts and maximum output gain at
+44.1, 96 and 192 kHz and requires the result to stay inside the analytic guard
+ceiling and to ring out to exact silence.
+
+This is deliberately the loss-only, one-directional slice of the passive
+admittance direction that Bank and Karjalainen and Maestre, Scavone and Smith
+describe. A full shared bridge junction would let the coupled strings
+re-radiate into the played ones; Electry does not claim that, and the second
+-order term is small enough that the omission is honest rather than
+convenient.
+
+Because the mechanism is physical, the muting hand is too. A palm-muted,
+chugged or dead-note passage puts the heel of the hand across every string, so
+those articulations damp the coupled strings with a per-sample contact loss and
+cut the injection at the same time. That is what keeps a Drop-E chug tight
+instead of washing it in open-string ring.
+
+## Bridge-hand damping
+
+The Muted and Chug keyswitches cap a note's T60 at fixed points. Palm Mute is
+the continuous version of the same physics, available to every play style and
+performable from MIDI CC 2: the pressure interpolates the string's decay
+geometrically from its own T60 toward a 40 ms stop,
+`T60' = exp((1-p) ln T60 + p ln 0.040)`, and multiplies the high-frequency
+decay ratio by `1 - 0.5 p` as more of the string is covered. Zero pressure is
+therefore a mathematical no-op, not a small effect.
+
+The important detail is that this runs through the ordinary loop-filter solve
+rather than as a gain after the fact. The one-pole is re-bisected against the
+new decay targets and the loop delay subtracts the new analytic phase delay at
+the fundamental, so a heavily muted string sounds the played pitch instead of
+drifting sharp as a naive extra damping filter would make it.
+
+## Strum travel
+
+A pick crosses the strings at a finite speed. Electry treats note-ons that
+arrive inside one 35 ms window as a single stroke: the first of them fixes the
+edge the pick starts from, and every later string's excitation is armed and
+released after `spread * |string - anchor|` seconds. The voice is allocated,
+fretted and choked immediately, so string allocation, voice counts and note-off
+handling are unchanged; only the excitation waits. At a zero spread the
+behaviour is bit-identical to a block chord.
 
 ## Tension modulation
 
@@ -389,6 +472,47 @@ default to 0.5. Scale length is independent and extended for Drop-E:
 Scale length enters the string physics directly: tension, wave speed,
 aperture cutoff, inharmonicity, and pickup comb fractions all follow it.
 
+## Cost model
+
+The engine's arithmetic is bounded by what is audible rather than by what is
+declared:
+
+- **Culled pickup path.** A pickup whose selector mix has faded to zero is
+  skipped in full: two fractional delay reads, the spatial aperture window, the
+  flux polynomial, the induced-EMF difference and its guard. Its per-voice
+  aperture ring and EMF memory are cleared when the selector brings it back, so
+  the 4 ms crossfade starts from a clean path and the regression suite bounds
+  the largest sample-to-sample step across the transition.
+- **Linked Mono chain.** Mono output is exact dual mono, so only one coil pair,
+  DC blocker and halfband decimator runs and the result is mirrored. Opening
+  the stereo field copies channel zero's state across at that sample, which is
+  exact because both channels have seen identical inputs up to it.
+- **Split voicing refresh.** Only the geometry axes (gauge, scale length)
+  invalidate the dispersion fit. Damping-only moves - string age, body loss,
+  mute damping, palm-mute pressure - reuse the fit and redo only the analytic
+  phase compensation, which removes several hundred `atan2` evaluations per
+  automated control tick per string.
+- **Idle freeze.** Once no string is rendering and the shared body/coil/DC path
+  has fallen below -120 dBFS, the engine clears that state, outputs exactly
+  zero and stops running the shared chain until the next note. A silent guitar
+  track costs essentially nothing, and the float path cannot sit generating
+  denormals, which the regression suite checks sample by sample.
+- **Constants where they belong.** Every rate-derived smoothing coefficient and
+  the per-string magnetic balance are solved in `prepare()` and at note setup.
+  They used to be recomputed with `std::pow` inside the per-sample render loop,
+  three times per string per sample.
+- **Inlined hot primitives.** The fractional delay read, the aperture window and
+  the noise generator are defined in the header so they inline into the render
+  loop instead of costing a call six times per string per sample.
+
+Measured with an eight-string Drop-E chord held for two seconds, best of five
+runs, comparing 1.0 and 1.1 sources built identically: the default
+Bridge/Mono configuration went from 0.28x to 0.15x realtime at 96 kHz, the
+worst-case Both/Stereo configuration from 0.27x to 0.19x, and an idle engine
+from 0.013x to 0.003x. The regression suite prints both eight-string ratios on
+every run and asserts that the default configuration is measurably cheaper than
+the worst case, so the culling cannot silently regress.
+
 ## Why the runtime remains analytic
 
 Bilbao, Russo, Webb, and Ducceschi's 2024
@@ -443,7 +567,25 @@ high-band reduction; independently audible wood, size, shape, construction,
 scale, gauge, body-level, position, hardness, and age endpoints; monotonic
 multi-dimensional velocity response plus an exactly flat 0% setting;
 deterministic, monotonic, exactly silent-at-zero Artifacts behavior and a
-bounded maximum-artifact eight-string strum; contrasting construction
+bounded maximum-artifact eight-string strum; bridge-coupled sympathetic ring
+of an open string that the played note does not itself produce, exact bypass
+and never-configured coupled loops at 0%, coupling determinism, a coupled
+string handed back to the player when it is picked, and bounded, ring-out-to-
+exact-silence behaviour at maximum coupling across three host rates;
+monotonic palm-mute decay contraction, an exact no-op at zero pressure, an
+in-tune heavily muted string, the solved loop coefficient actually moving, and
+CC 2 pressure including hostile input; strum travel offsets in physical string
+order, an undelayed leading string, a lower stacked chord peak, a fresh stroke
+outside the chord window, and no premature retirement of a delayed string;
+vibrato depth scaling the loop-delay excursion with an exactly still zero
+setting; pluck position following the fretted sounding length by 2^(fret/12);
+fretboard geometry, meter ballistics, standing-wave shape, colour knee and a
+lossless packed audio-to-editor round trip; per-string display readout naming
+the right string, fret, note and articulation; selector-driven pickup culling,
+click-free restoration of a culled pickup, Mono channel linking and a
+click-free stereo-field opening; exact digital silence from an untouched
+engine, a subnormal-free ring-out that reaches exact zero, and a clean wake
+from the frozen state; contrasting construction
 endpoints that both stay in tune; plectrum contact noise in the pre-attack
 window; release noise that appears only after note-off; eight-string
 polyphony with open-position chord mapping, repick reuse, and stealing;
@@ -453,12 +595,15 @@ printed on every run in worst-case Stereo, maximum Body Resonance, and maximum
 Artifacts mode. Mono is checked sample-for-sample dual mono; Stereo tests pin
 physical low/high string orientation, coherent fold-down, bounded side level,
 energy balance, determinism, and opposite string endpoints. The plug-in suite
-additionally pins the 22-parameter
-contract, formatted values, state round-trips, bus layout, sample-accurate
+additionally pins the 31-parameter
+contract, formatted values, state round-trips including a pre-1.1 session that
+picks up the new defaults, bus layout, sample-accurate
 note starts, MIDI controller behavior (sustain, all-sound-off,
 all-notes-off), UI articulation triggering, panic, output-gain and APVTS
 output-field effects, two visible non-overlapping mode buttons,
-offscreen editor rendering, and prepare/release cycles at three rates.
+the sympathetic, palm-mute (parameter and CC 2) and strum-spread controls
+reaching the rendered audio, offscreen editor rendering including the live
+fretboard's bounds, and prepare/release cycles at three rates.
 
 Those engineering tests do not replace hardware validation. A stronger claim
 about any named instrument would additionally require documented capture

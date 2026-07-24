@@ -23,7 +23,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(Vocalor VERSION 1.0.0 LANGUAGES C CXX)
+project(Vocalor VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,8 +36,12 @@ set(VOCALOR_JUCE_PATH "" CACHE PATH
 
 include(CTest)
 
-set(VOCALOR_DSP_SOURCES Source/DSP/VoiceEngine.cpp)
-set(VOCALOR_DSP_HEADERS Source/DSP/VoiceEngine.h)
+set(VOCALOR_DSP_SOURCES
+    Source/DSP/VoiceEngine.cpp
+    Source/DSP/VocalorMath.cpp)
+set(VOCALOR_DSP_HEADERS
+    Source/DSP/VoiceEngine.h
+    Source/DSP/VocalorMath.h)
 
 add_library(VocalorDSP STATIC
     ${VOCALOR_DSP_SOURCES}

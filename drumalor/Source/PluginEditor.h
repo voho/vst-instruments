@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include "PluginProcessor.h"
+#include "DSP/UiMath.h"
 
 #include <array>
 #include <cstdint>
@@ -29,6 +30,8 @@ public:
     void setSelected (bool shouldBeSelected);
     void triggerFlash();
     void advanceFlash();
+    // Live post-VCA level of this channel, used for the pad's activity bar.
+    void setLevel (float linearLevel);
     void paintButton (juce::Graphics&, bool isMouseOverButton, bool isButtonDown) override;
     std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
@@ -39,6 +42,8 @@ private:
     juce::String nameText;
     juce::String noteText;
     float flashLevel = 0.0f;
+    float levelPosition = 0.0f;
+    drumalor::ui::MeterBallistics ballistics;
     bool selected = false;
 };
 
@@ -74,6 +79,30 @@ private:
     double rate = 0.0;
 };
 
+// Stereo output meter with peak hold plus a downward bus gain-reduction bar.
+// All ballistics and the decibel scale come from the JUCE-free ui namespace, so
+// they are unit-tested rather than tuned by eye inside paint().
+class DrumalorBusMeter final : public juce::Component
+{
+public:
+    DrumalorBusMeter();
+    void setLevels (float leftLinear, float rightLinear, float busGain);
+    void paint (juce::Graphics&) override;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
+
+    static constexpr float floorDecibels = -48.0f;
+
+private:
+    drumalor::ui::MeterBallistics leftBallistics;
+    drumalor::ui::MeterBallistics rightBallistics;
+    float reductionPosition = 0.0f;
+    float lastPaintedLeft = -1.0f;
+    float lastPaintedRight = -1.0f;
+    float lastPaintedLeftPeak = -1.0f;
+    float lastPaintedRightPeak = -1.0f;
+    int announcedClipState = -1;
+};
+
 class DrumalorAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                            private juce::Timer
 {
@@ -86,6 +115,7 @@ public:
 
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
 
     struct LayoutAreas
     {
@@ -95,6 +125,7 @@ private:
         juce::Rectangle<int> controlHeader;
         juce::Rectangle<int> selectedVoiceHeader;
         juce::Rectangle<int> voiceDeck;
+        juce::Rectangle<int> voiceStrip;
         juce::Rectangle<int> masterDeck;
     };
 
@@ -111,6 +142,7 @@ private:
     juce::Label logoLabel;
     juce::Label editionLabel;
     DrumalorStatusDisplay statusDisplay;
+    DrumalorBusMeter busMeter;
     juce::TextButton panicButton { "PANIC" };
 
     std::array<std::unique_ptr<DrumalorPad>, drumalor::instrumentCount> pads;
@@ -123,6 +155,19 @@ private:
     DrumalorKnob pitchKnob { "PITCH", DrumalorKnob::ValueStyle::Semitones,
                              DrumalorKnob::VisualRole::BipolarVoice };
     DrumalorKnob decayKnob { "DECAY", DrumalorKnob::ValueStyle::Percent };
+    DrumalorKnob levelKnob { "LEVEL", DrumalorKnob::ValueStyle::Decibels };
+
+    juce::Label panLabel;
+    juce::Slider panSlider;
+    juce::Label chokeLabel;
+    juce::ComboBox chokeBox;
+
+    DrumalorKnob humaniseKnob { "HUMANISE", DrumalorKnob::ValueStyle::Percent,
+                                DrumalorKnob::VisualRole::Master };
+    DrumalorKnob busDriveKnob { "BUS DRIVE", DrumalorKnob::ValueStyle::Percent,
+                                DrumalorKnob::VisualRole::Master };
+    DrumalorKnob busCompressionKnob { "BUS COMP", DrumalorKnob::ValueStyle::Percent,
+                                      DrumalorKnob::VisualRole::Master };
     DrumalorKnob outputKnob { "MASTER OUTPUT", DrumalorKnob::ValueStyle::Decibels,
                               DrumalorKnob::VisualRole::Master };
 
@@ -130,6 +175,12 @@ private:
     std::unique_ptr<SliderAttachment> characterBAttachment;
     std::unique_ptr<SliderAttachment> pitchAttachment;
     std::unique_ptr<SliderAttachment> decayAttachment;
+    std::unique_ptr<SliderAttachment> levelAttachment;
+    std::unique_ptr<SliderAttachment> panAttachment;
+    std::unique_ptr<ComboBoxAttachment> chokeAttachment;
+    std::unique_ptr<SliderAttachment> humaniseAttachment;
+    std::unique_ptr<SliderAttachment> busDriveAttachment;
+    std::unique_ptr<SliderAttachment> busCompressionAttachment;
     std::unique_ptr<SliderAttachment> outputAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DrumalorAudioProcessorEditor)

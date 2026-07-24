@@ -14,6 +14,50 @@ Enum enumFromParameter (const std::atomic<float>* value, int maximum) noexcept
     return static_cast<Enum> (juce::jlimit (0, maximum,
                                            juce::roundToInt (value->load (std::memory_order_relaxed))));
 }
+
+// APVTS keeps a parameter at its current value when the replacement tree has
+// no child for it. A session saved before a control existed would therefore
+// adopt whatever the previously loaded preset left behind rather than that
+// control's default, so fill in every default the stored tree omits.
+bool containsParameterState (const juce::ValueTree& state,
+                             const juce::String& parameterId)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+
+    for (const auto& child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId)
+            return true;
+
+    return false;
+}
+
+void addMissingParameterDefaults (
+    juce::ValueTree& state, juce::AudioProcessorValueTreeState& parameters,
+    const juce::Array<juce::AudioProcessorParameter*>& hostParameters)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+
+    for (const auto* hostParameter : hostParameters)
+    {
+        const auto* ranged =
+            dynamic_cast<const juce::RangedAudioParameter*> (hostParameter);
+        if (ranged == nullptr
+            || parameters.getParameter (ranged->paramID) == nullptr
+            || containsParameterState (state, ranged->paramID))
+            continue;
+
+        juce::ValueTree parameterState { parameterType };
+        parameterState.setProperty (idProperty, ranged->paramID, nullptr);
+        parameterState.setProperty (
+            valueProperty,
+            ranged->convertFrom0to1 (ranged->getDefaultValue()), nullptr);
+        state.appendChild (parameterState, nullptr);
+    }
+}
 } // namespace
 
 VocalorAudioProcessor::VocalorAudioProcessor()
@@ -35,8 +79,16 @@ VocalorAudioProcessor::VocalorAudioProcessor()
     parameterPointers.tension      = parameters.getRawParameterValue (tension);
     parameterPointers.room         = parameters.getRawParameterValue (room);
     parameterPointers.output       = parameters.getRawParameterValue (output);
+    parameterPointers.legato       = parameters.getRawParameterValue (legato);
+    parameterPointers.vowelX       = parameters.getRawParameterValue (vowelX);
+    parameterPointers.vowelY       = parameters.getRawParameterValue (vowelY);
+    parameterPointers.vowelMorph   = parameters.getRawParameterValue (vowelMorph);
+    parameterPointers.formantShift = parameters.getRawParameterValue (formantShift);
+    parameterPointers.glide        = parameters.getRawParameterValue (glide);
+    parameterPointers.roomSize     = parameters.getRawParameterValue (roomSize);
 
     jassert (parameterPointers.profile != nullptr && parameterPointers.output != nullptr);
+    jassert (parameterPointers.vowelMorph != nullptr && parameterPointers.roomSize != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -93,6 +145,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
         juce::ParameterID { output, 1 }, "Output",
         juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -6.0f,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
+
+    // Version 1.1 additions. They are appended so every version-1 parameter
+    // keeps its index, and every default reproduces the version-1 sound.
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { legato, 1 }, "Legato",
+        juce::StringArray { "Off", "On" }, 0));
+
+    addPercent (vowelX, "Vowel front-back", 0.50f);
+    addPercent (vowelY, "Vowel open-close", 0.50f);
+    addPercent (vowelMorph, "Vowel morph", 0.0f);
+
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { formantShift, 1 }, "Formant shift",
+        juce::NormalisableRange<float> { -12.0f, 12.0f, 0.1f }, 0.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("st")));
+
+    addPercent (glide, "Glide", 0.0f);
+    addPercent (roomSize, "Room size", 0.50f);
 
     return { result.begin(), result.end() };
 }
@@ -214,6 +284,13 @@ void VocalorAudioProcessor::updateEngineParameters() noexcept
     next.room = parameterPointers.room->load (std::memory_order_relaxed);
     next.outputGain = juce::Decibels::decibelsToGain (
         parameterPointers.output->load (std::memory_order_relaxed));
+    next.legato = parameterPointers.legato->load (std::memory_order_relaxed) >= 0.5f;
+    next.vowelX = parameterPointers.vowelX->load (std::memory_order_relaxed);
+    next.vowelY = parameterPointers.vowelY->load (std::memory_order_relaxed);
+    next.vowelMorph = parameterPointers.vowelMorph->load (std::memory_order_relaxed);
+    next.formantShift = parameterPointers.formantShift->load (std::memory_order_relaxed);
+    next.glide = parameterPointers.glide->load (std::memory_order_relaxed);
+    next.roomSize = parameterPointers.roomSize->load (std::memory_order_relaxed);
     engine.setParameters (next);
 }
 
@@ -274,7 +351,9 @@ void VocalorAudioProcessor::setStateInformation (const void* data, int sizeInByt
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
     {
-        parameters.replaceState (juce::ValueTree::fromXml (*xml));
+        auto restoredState = juce::ValueTree::fromXml (*xml);
+        addMissingParameterDefaults (restoredState, parameters, getParameters());
+        parameters.replaceState (restoredState);
         requestPanic();
     }
 }

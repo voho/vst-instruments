@@ -23,7 +23,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(Mars VERSION 1.5.0 LANGUAGES C CXX)
+project(Mars VERSION 1.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,8 +36,12 @@ set(MARS_JUCE_PATH "" CACHE PATH
 
 include(CTest)
 
-set(MARS_DSP_SOURCES Source/DSP/MarsEngine.cpp)
-set(MARS_DSP_HEADERS Source/DSP/MarsEngine.h)
+set(MARS_DSP_SOURCES
+    Source/DSP/MarsEngine.cpp
+    Source/DSP/MarsScope.cpp)
+set(MARS_DSP_HEADERS
+    Source/DSP/MarsEngine.h
+    Source/DSP/MarsScope.h)
 
 add_library(MarsDSP STATIC
     ${MARS_DSP_SOURCES}

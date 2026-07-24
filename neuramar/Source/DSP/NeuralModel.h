@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -10,6 +11,20 @@
 
 namespace neuramar
 {
+
+// Stiff-string partial series f(n) = n * f0 * sqrt(1 + B n^2). B is zero for an
+// ideal harmonic source, small for wound strings and tines, and larger for
+// struck bars. Returning the plain harmonic number for B = 0 keeps every
+// pre-existing model bit-identical.
+[[nodiscard]] inline float stretchedHarmonicRatio(
+    float harmonicNumber, float inharmonicity) noexcept
+{
+    if (!(inharmonicity > 0.0f) || !std::isfinite(inharmonicity)
+        || !std::isfinite(harmonicNumber))
+        return harmonicNumber;
+    return harmonicNumber * std::sqrt(
+        1.0f + inharmonicity * harmonicNumber * harmonicNumber);
+}
 
 struct SynthesisFrame
 {
@@ -28,9 +43,17 @@ class NeuralModel final
 public:
     // Version 2 introduced renderer-matched overlapping Air bands. Version 3
     // adds a bounded, quantised residual trajectory on top of the neural base.
-    // Version-1 development memories used different band semantics and must
-    // not be silently rendered with this engine.
-    static constexpr std::uint32_t currentFormatVersion = 3;
+    // Version 4 appends the fitted stiff-string inharmonicity coefficient.
+    // Versions 2 and 3 still load and render exactly as they did, with the
+    // missing fields left at their neutral zero values. Version-1 development
+    // memories used different band semantics and must not be silently rendered
+    // with this engine.
+    static constexpr std::uint32_t currentFormatVersion = 4;
+    // A bounded stiff-string coefficient. 0.01 already stretches the 16th
+    // partial by roughly eleven semitones, which is far past any ordinary
+    // wound string or tine; strongly inharmonic bodies are represented by the
+    // explicit Bone modes instead.
+    static constexpr float maximumInharmonicity = 0.01f;
     static constexpr std::size_t previewSize = 256;
     static constexpr std::size_t harmonicCount = SynthesisFrame::harmonicCount;
     static constexpr std::size_t airBandCount = SynthesisFrame::airBandCount;
@@ -73,6 +96,12 @@ public:
     [[nodiscard]] float pitchConfidence() const noexcept { return metadata_.pitchConfidence; }
     [[nodiscard]] float durationSeconds() const noexcept { return metadata_.durationSeconds; }
     [[nodiscard]] float finalLoss() const noexcept { return metadata_.finalLoss; }
+    // Fitted stiff-string coefficient B. Zero means an ideal harmonic series
+    // and is what every version-2 and version-3 memory reports.
+    [[nodiscard]] float inharmonicity() const noexcept
+    {
+        return inharmonicity_;
+    }
     [[nodiscard]] std::span<const float, airBandCount>
         airCentreFrequenciesHz() const noexcept { return airCentreFrequenciesHz_; }
     [[nodiscard]] std::span<const float, airBandCount>
@@ -115,7 +144,8 @@ public:
 private:
     NeuralModel() = default;
 
-    static constexpr std::uint32_t legacyFormatVersion = 2;
+    static constexpr std::uint32_t bandFormatVersion = 2;
+    static constexpr std::uint32_t residualFormatVersion = 3;
     static constexpr std::size_t maximumResidualKeyframes = 128;
     static constexpr float maximumResidualScale = 64.0f;
 
@@ -139,6 +169,7 @@ private:
     std::array<float, hiddenSize> hiddenBiases_ {};
     std::array<float, outputSize * hiddenSize> outputWeights_ {};
     std::array<float, outputSize> outputBiases_ {};
+    float inharmonicity_ { 0.0f };
     std::uint32_t residualKeyframeCount_ { 0 };
     std::array<float, outputSize> residualScales_ {};
     std::array<float, maximumResidualKeyframes> residualTimes_ {};

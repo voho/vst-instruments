@@ -26,6 +26,16 @@ struct EngineParameters
     float spread { 0.35f };               // stereo voice spread, 0..1
     float rootOffsetSemitones { 0.0f };   // manual detected-root correction, -12..12
     float outputGain { 0.72f };           // linear gain, 0..2
+    // Scales the model's fitted stiff-string coefficient. 1 renders the
+    // learned partial stretch, 0 forces an ideal harmonic series, and 2
+    // exaggerates it. Legacy memories carry no coefficient, so this control
+    // is inaudible for them regardless of its value.
+    float stretch { 1.0f };               // 0..2
+    // Moves the resonant body in frequency without moving the played pitch.
+    float formantShiftSemitones { 0.0f }; // -24..24
+    // Velocity-to-timbre depth. Zero preserves the pure amplitude response
+    // that every earlier Neuramar build had.
+    float touch { 0.0f };                 // 0..1
 };
 
 class NeuramarEngine final
@@ -80,6 +90,9 @@ private:
         std::atomic<float> spread { 0.35f };
         std::atomic<float> rootOffsetSemitones { 0.0f };
         std::atomic<float> outputGain { 0.72f };
+        std::atomic<float> stretch { 1.0f };
+        std::atomic<float> formantShiftSemitones { 0.0f };
+        std::atomic<float> touch { 0.0f };
     };
 
     struct Bandpass
@@ -125,7 +138,10 @@ private:
         float latentRateAHertz { 0.0f };
         float latentRateBHertz { 0.0f };
         float cachedBrightnessTilt { -1000.0f };
-        std::array<float, NeuralModel::harmonicCount> brightnessTiltTable {};
+        // Covers the whole rendered bank so the control-rate target loop can
+        // factor pow(index * scale, tilt) into one cached table lookup and one
+        // scalar instead of a pow() per rendered harmonic.
+        std::array<float, renderedHarmonicCount> brightnessTiltTable {};
         std::array<float, NeuralModel::harmonicCount> harmonicVariationSin {};
         std::array<float, NeuralModel::airBandCount> airVariationSin {};
         float pan { 0.0f };
@@ -138,6 +154,10 @@ private:
         float lastRight { 0.0f };
         std::size_t activeHarmonicCount { NeuralModel::harmonicCount };
         std::size_t targetHarmonicCount { NeuralModel::harmonicCount };
+        // Harmonics at or above this index are silent now and stay silent for
+        // the whole coming control period, so the audio loop skips them
+        // entirely instead of advancing a phase nothing reads.
+        std::size_t soundingHarmonicCount { 0 };
         std::array<float, renderedHarmonicCount> harmonicPhases {};
         std::array<float, NeuralModel::boneModeCount> bonePhases {};
         std::array<float, NeuralModel::boneModeCount> boneFrequenciesHz {};
@@ -162,6 +182,18 @@ private:
 
     [[nodiscard]] EngineParameters loadParameters() const noexcept;
     [[nodiscard]] float sine(float phase) const noexcept;
+    // Table lookup for a phase already reduced to [0, 1). The two wrapped
+    // guard entries make the top cell and the rounded-up edge case safe.
+    [[nodiscard]] float sineUnit(float unitPhase) const noexcept
+    {
+        const float tablePosition = unitPhase
+            * static_cast<float>(sineTableSize);
+        const auto lower = static_cast<std::size_t>(tablePosition);
+        const float fraction = tablePosition - static_cast<float>(lower);
+        return sineTable_[lower]
+            + fraction * (sineTable_[lower + 1] - sineTable_[lower]);
+    }
+    void refreshHarmonicStretch(float inharmonicity) noexcept;
     void updateVoiceControl(Voice& voice, const NeuralModel& model,
                             const EngineParameters& parameters) noexcept;
     [[nodiscard]] static float nextNoise(std::uint32_t& state) noexcept;
@@ -174,6 +206,11 @@ private:
     std::array<FadeTail, maximumVoices> fadeTails_ {};
     std::array<float, sineTableSize + 2> sineTable_ {};
     std::array<float, NeuralModel::harmonicCount> inverseHarmonicRolloff_ {};
+    // Rendered partial frequency divided by the fundamental. Identity for an
+    // ideal harmonic series; rebuilt only when the effective stiff-string
+    // coefficient actually changes, never per voice and never per sample.
+    std::array<float, renderedHarmonicCount> harmonicStretchRatio_ {};
+    float cachedInharmonicity_ { -1.0f };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     // Core anti-alias fade constants for coreNyquistGain(), precomputed so the

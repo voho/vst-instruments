@@ -1,4 +1,5 @@
 #include "DSP/DrumEngine.h"
+#include "DSP/UiMath.h"
 
 #include <algorithm>
 #include <array>
@@ -1570,6 +1571,876 @@ void testParameterInfluence()
     }
 }
 
+std::vector<float> renderLevelProbe (drumalor::Instrument instrument,
+                                     const drumalor::InstrumentParameters& parameters)
+{
+    drumalor::DrumEngine engine;
+    engine.prepare (48000.0, defaultBlockSize);
+    engine.setInstrumentParameters (instrument, parameters);
+    engine.trigger (instrument, 0.12f);
+    return renderInterleaved (engine, 9600, defaultBlockSize);
+}
+
+std::vector<float> renderKitHits (drumalor::Instrument instrument,
+                                  const drumalor::InstrumentParameters& parameters,
+                                  const drumalor::KitParameters& kit,
+                                  int hitCount, int samplesPerHit,
+                                  float velocity = 0.85f)
+{
+    drumalor::DrumEngine engine;
+    engine.prepare (48000.0, defaultBlockSize);
+    engine.setInstrumentParameters (instrument, parameters);
+    engine.setKitParameters (kit);
+    std::vector<float> result;
+    result.reserve (static_cast<std::size_t> (hitCount)
+                    * static_cast<std::size_t> (samplesPerHit) * 2u);
+    for (int hit = 0; hit < hitCount; ++hit)
+    {
+        engine.trigger (instrument, velocity);
+        auto segment = renderInterleaved (engine, samplesPerHit, defaultBlockSize);
+        result.insert (result.end(), segment.begin(), segment.end());
+    }
+    return result;
+}
+
+void testPerVoiceMixer()
+{
+    constexpr double sampleRate = 48000.0;
+    for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+    {
+        const auto instrument = static_cast<drumalor::Instrument> (index);
+        const std::string label (drumalor::getInstrumentDisplayName (instrument));
+        const auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+        expect (defaults.level == 0.0f,
+                label + " does not default to unity channel level");
+        expect (defaults.pan >= -1.0f && defaults.pan <= 1.0f,
+                label + " default pan is out of range");
+        expect (defaults.chokeGroup >= 0
+                    && defaults.chokeGroup <= drumalor::chokeGroupCount,
+                label + " default choke group is out of range");
+
+        // The mixer must be a clean gain law: -6 dB has to halve the render.
+        // The probe velocity is deliberately low, because the per-voice analogue
+        // output stage is intentionally nonlinear at high levels and would make
+        // a quieter channel measure slightly louder than a linear law predicts.
+        auto quieter = defaults;
+        quieter.level = -6.0f;
+        const auto unityRender = renderLevelProbe (instrument, defaults);
+        const auto quietRender = renderLevelProbe (instrument, quieter);
+        const double unityLevel = meanAbsoluteMagnitude (unityRender);
+        const double quietLevel = meanAbsoluteMagnitude (quietRender);
+        expect (unityLevel > 1.0e-8, label + " unity-level render was silent");
+        const double ratioDb = 20.0 * std::log10 (
+            quietLevel / std::max (1.0e-14, unityLevel));
+        expect (ratioDb < -5.2 && ratioDb > -6.8,
+                label + " -6 dB channel level produced " + std::to_string (ratioDb)
+                    + " dB instead of roughly -6 dB");
+
+        // Hard-left and hard-right must swap the channel balance symmetrically.
+        auto leftOnly = defaults;
+        auto rightOnly = defaults;
+        leftOnly.pan = -1.0f;
+        rightOnly.pan = 1.0f;
+        const auto leftRender = renderWithParameters (instrument, leftOnly, 9600);
+        const auto rightRender = renderWithParameters (instrument, rightOnly, 9600);
+        double leftOnLeft = 0.0;
+        double leftOnRight = 0.0;
+        double rightOnRight = 0.0;
+        for (std::size_t sample = 0; sample + 1u < leftRender.size(); sample += 2u)
+        {
+            leftOnLeft += std::abs (static_cast<double> (leftRender[sample]));
+            leftOnRight += std::abs (static_cast<double> (leftRender[sample + 1u]));
+            rightOnRight += std::abs (static_cast<double> (rightRender[sample + 1u]));
+        }
+        expect (leftOnLeft > 40.0 * std::max (1.0e-9, leftOnRight),
+                label + " hard-left pan still fed the right channel");
+        expect (std::abs (leftOnLeft - rightOnRight)
+                    <= 0.02 * std::max (leftOnLeft, rightOnRight),
+                label + " pan law is not symmetric about centre");
+    }
+
+    // The default kit must still image exactly as the hard-coded positions did.
+    constexpr std::array pannedInstruments {
+        std::pair { drumalor::Instrument::ClosedHat, 0.16f },
+        std::pair { drumalor::Instrument::Ride, 0.27f },
+        std::pair { drumalor::Instrument::Crash, -0.27f },
+        std::pair { drumalor::Instrument::LowTom, -0.20f },
+        std::pair { drumalor::Instrument::Kick, 0.0f }
+    };
+    for (const auto& [instrument, expectedPan] : pannedInstruments)
+        expect (std::abs (drumalor::getInstrumentMetadata (instrument)
+                              .defaultParameters.pan - expectedPan) < 1.0e-6f,
+                std::string (drumalor::getInstrumentDisplayName (instrument))
+                    + " default pan changed from its original kit position");
+
+    // A level of exactly 0 dB must not perturb a single sample.
+    drumalor::DrumEngine untouched;
+    drumalor::DrumEngine explicitlyUnity;
+    untouched.prepare (sampleRate, defaultBlockSize);
+    explicitlyUnity.prepare (sampleRate, defaultBlockSize);
+    auto unityParameters = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Snare).defaultParameters;
+    unityParameters.level = 0.0f;
+    explicitlyUnity.setInstrumentParameters (drumalor::Instrument::Snare, unityParameters);
+    untouched.trigger (drumalor::Instrument::Snare, 0.9f);
+    explicitlyUnity.trigger (drumalor::Instrument::Snare, 0.9f);
+    expect (renderInterleaved (untouched, 8192, defaultBlockSize)
+                == renderInterleaved (explicitlyUnity, 8192, defaultBlockSize),
+            "an explicit 0 dB channel level changed the render");
+}
+
+void testChokeGroups()
+{
+    constexpr double sampleRate = 48000.0;
+    // Group A is the factory hi-hat pair, and must behave exactly as the old
+    // hard-coded pedal link did.
+    expect (drumalor::getInstrumentMetadata (drumalor::Instrument::ClosedHat)
+                .defaultParameters.chokeGroup == 1
+                && drumalor::getInstrumentMetadata (drumalor::Instrument::OpenHat)
+                       .defaultParameters.chokeGroup == 1,
+            "the hi-hat pair no longer shares the default choke group");
+
+    // Any pair of voices can be linked. Ride cut by Crash is the classic case.
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+    auto rideParameters = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Ride).defaultParameters;
+    auto crashParameters = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Crash).defaultParameters;
+    rideParameters.decay = 1.0f;
+    rideParameters.chokeGroup = 2;
+    crashParameters.chokeGroup = 2;
+    engine.setInstrumentParameters (drumalor::Instrument::Ride, rideParameters);
+    engine.setInstrumentParameters (drumalor::Instrument::Crash, crashParameters);
+
+    engine.trigger (drumalor::Instrument::Ride, 1.0f);
+    renderMetrics (engine, static_cast<int> (0.030 * sampleRate));
+    expect (engine.getActiveVoiceCount() == 1, "ride stopped before the choke test");
+    engine.trigger (drumalor::Instrument::Crash, 0.9f);
+    expect (engine.getActiveVoiceCount() == 2,
+            "grouped crash did not create its own voice");
+    const auto chokeAudio = renderMetrics (engine, static_cast<int> (0.010 * sampleRate));
+    expect (chokeAudio.finite, "group choke produced invalid audio");
+    expect (engine.getActiveVoiceCount() == 1,
+            "a shared choke group did not cut the ringing ride");
+
+    // Voices in different groups, or in no group, must not interfere.
+    drumalor::DrumEngine independent;
+    independent.prepare (sampleRate, defaultBlockSize);
+    auto lowTom = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::LowTom).defaultParameters;
+    auto highTom = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::HighTom).defaultParameters;
+    lowTom.decay = 1.0f;
+    lowTom.chokeGroup = 1;
+    highTom.chokeGroup = 3;
+    independent.setInstrumentParameters (drumalor::Instrument::LowTom, lowTom);
+    independent.setInstrumentParameters (drumalor::Instrument::HighTom, highTom);
+    independent.trigger (drumalor::Instrument::LowTom, 1.0f);
+    renderMetrics (independent, static_cast<int> (0.030 * sampleRate));
+    independent.trigger (drumalor::Instrument::HighTom, 0.9f);
+    renderMetrics (independent, static_cast<int> (0.010 * sampleRate));
+    expect (independent.getActiveVoiceCount() == 2,
+            "voices in different choke groups cut each other");
+
+    // A voice keeps the group it was born into, so retuning cannot strand it.
+    drumalor::DrumEngine retuned;
+    retuned.prepare (sampleRate, defaultBlockSize);
+    auto grouped = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Perc2).defaultParameters;
+    grouped.decay = 1.0f;
+    grouped.chokeGroup = 3;
+    retuned.setInstrumentParameters (drumalor::Instrument::Perc2, grouped);
+    retuned.trigger (drumalor::Instrument::Perc2, 1.0f);
+    renderMetrics (retuned, static_cast<int> (0.020 * sampleRate));
+    auto ungrouped = grouped;
+    ungrouped.chokeGroup = 0;
+    retuned.setInstrumentParameters (drumalor::Instrument::Perc2, ungrouped);
+    retuned.trigger (drumalor::Instrument::Perc2, 0.9f);
+    renderMetrics (retuned, static_cast<int> (0.010 * sampleRate));
+    expect (retuned.getActiveVoiceCount() == 2,
+            "an ungrouped retrigger still cut the previously grouped tail");
+}
+
+void testHumaniseDepth()
+{
+    constexpr int hitCount = 6;
+    constexpr int samplesPerHit = 7200;
+    // Voices whose character comes from the free-running metallic banks are
+    // deliberately excluded: their hit-to-hit difference is dominated by the
+    // circuit phase they happen to sample, which Humanise does not control.
+    constexpr std::array probeInstruments {
+        drumalor::Instrument::Kick, drumalor::Instrument::LowTom,
+        drumalor::Instrument::MidTom, drumalor::Instrument::HighTom,
+        drumalor::Instrument::Snare, drumalor::Instrument::Perc2
+    };
+
+    drumalor::KitParameters tight;
+    drumalor::KitParameters factory;
+    drumalor::KitParameters loose;
+    tight.humanise = 0.0f;
+    factory.humanise = 0.5f;
+    loose.humanise = 1.0f;
+
+    for (const auto instrument : probeInstruments)
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (instrument));
+        const auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+
+        // The 0.5 default must reproduce the historical fixed variation depth
+        // sample for sample, so restoring an old session cannot change a kit.
+        drumalor::DrumEngine legacy;
+        legacy.prepare (48000.0, defaultBlockSize);
+        legacy.setInstrumentParameters (instrument, defaults);
+        std::vector<float> legacyRender;
+        for (int hit = 0; hit < hitCount; ++hit)
+        {
+            legacy.trigger (instrument, 0.85f);
+            auto segment = renderInterleaved (legacy, samplesPerHit, defaultBlockSize);
+            legacyRender.insert (legacyRender.end(), segment.begin(), segment.end());
+        }
+        expect (legacyRender
+                    == renderKitHits (instrument, defaults, factory, hitCount, samplesPerHit),
+                label + " default Humanise changed the untouched analogue variation");
+
+        const auto tightRender = renderKitHits (
+            instrument, defaults, tight, hitCount, samplesPerHit);
+        const auto looseRender = renderKitHits (
+            instrument, defaults, loose, hitCount, samplesPerHit);
+        expect (std::all_of (tightRender.begin(), tightRender.end(),
+                             [] (float value) { return std::isfinite (value); })
+                    && std::all_of (looseRender.begin(), looseRender.end(),
+                                    [] (float value) { return std::isfinite (value); }),
+                label + " Humanise endpoints produced NaN or infinity");
+
+        // Spread between consecutive equal-velocity strikes must grow with the
+        // control and collapse at zero.
+        const auto hitSpread = [samplesPerHit] (const std::vector<float>& render)
+        {
+            const auto stride = static_cast<std::size_t> (samplesPerHit) * 2u;
+            double total = 0.0;
+            for (std::size_t hit = 1; hit * stride < render.size(); ++hit)
+            {
+                const std::vector<float> previous (
+                    render.begin() + static_cast<std::ptrdiff_t> ((hit - 1u) * stride),
+                    render.begin() + static_cast<std::ptrdiff_t> (hit * stride));
+                const std::vector<float> current (
+                    render.begin() + static_cast<std::ptrdiff_t> (hit * stride),
+                    render.begin() + static_cast<std::ptrdiff_t> ((hit + 1u) * stride));
+                total += meanAbsoluteDifference (previous, current);
+            }
+            return total;
+        };
+        const double tightSpread = hitSpread (tightRender);
+        const double factorySpread = hitSpread (legacyRender);
+        const double looseSpread = hitSpread (looseRender);
+        expect (looseSpread > factorySpread && factorySpread > tightSpread,
+                label + " Humanise did not order hit-to-hit variation (tight/factory/loose "
+                    + std::to_string (tightSpread) + "/" + std::to_string (factorySpread)
+                    + "/" + std::to_string (looseSpread) + ")");
+
+        // Every setting must stay reproducible after reset.
+        drumalor::DrumEngine replay;
+        replay.prepare (48000.0, defaultBlockSize);
+        replay.setInstrumentParameters (instrument, defaults);
+        replay.setKitParameters (loose);
+        std::vector<float> firstPass;
+        for (int hit = 0; hit < hitCount; ++hit)
+        {
+            replay.trigger (instrument, 0.85f);
+            auto segment = renderInterleaved (replay, samplesPerHit, defaultBlockSize);
+            firstPass.insert (firstPass.end(), segment.begin(), segment.end());
+        }
+        replay.reset();
+        std::vector<float> secondPass;
+        for (int hit = 0; hit < hitCount; ++hit)
+        {
+            replay.trigger (instrument, 0.85f);
+            auto segment = renderInterleaved (replay, samplesPerHit, defaultBlockSize);
+            secondPass.insert (secondPass.end(), segment.begin(), segment.end());
+        }
+        expect (firstPass == secondPass,
+                label + " maximum Humanise was not reproducible after reset");
+        expect (firstPass == looseRender,
+                label + " maximum Humanise depended on engine history");
+    }
+}
+
+void testKitBusStage()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int captureSamples = 24000;
+    const auto renderKitAt = [] (const drumalor::KitParameters& kit, float velocity)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.setKitParameters (kit);
+        for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+            engine.trigger (static_cast<drumalor::Instrument> (index), velocity);
+        return renderInterleaved (engine, captureSamples, defaultBlockSize);
+    };
+    const auto renderKit = [&renderKitAt] (const drumalor::KitParameters& kit)
+    {
+        return renderKitAt (kit, 0.92f);
+    };
+
+    drumalor::KitParameters bypassed;
+    const auto dry = renderKit (bypassed);
+    expect (metricsForInterleaved (dry).peak > 0.05,
+            "kit bus probe rendered an inaudible kit");
+
+    // The default bus must be a true bypass, not an almost-bypass.
+    drumalor::KitParameters explicitBypass;
+    explicitBypass.busDrive = 0.0f;
+    explicitBypass.busCompression = 0.0f;
+    expect (dry == renderKit (explicitBypass),
+            "an explicitly zeroed kit bus changed the render");
+
+    drumalor::KitParameters driven;
+    driven.busDrive = 1.0f;
+    const auto drivenRender = renderKit (driven);
+    const auto drivenMetrics = metricsForInterleaved (drivenRender);
+    expect (drivenMetrics.finite && drivenMetrics.peak <= 1.001,
+            "bus drive produced unsafe audio");
+    expect (meanAbsoluteDifference (dry, drivenRender) > 1.0e-4,
+            "bus drive did not change the kit");
+
+    // The stage has to meet bypass continuously. A fixed curvature offset meant
+    // the first fraction of a percent on the knob jumped straight to a third of
+    // the full curve, so automation crossing zero clicked.
+    drumalor::KitParameters barelyDriven;
+    barelyDriven.busDrive = 0.001f;
+    const auto barelyDrivenRender = renderKit (barelyDriven);
+    const double bypassGap = meanAbsoluteDifference (dry, barelyDrivenRender);
+    const double fullDriveGap = meanAbsoluteDifference (dry, drivenRender);
+    expect (bypassGap < 0.02 * fullDriveGap,
+            "the first step of bus drive is discontinuous with bypass ("
+                + std::to_string (bypassGap) + " against "
+                + std::to_string (fullDriveGap) + " at full drive)");
+    const double driveLevelDb = 20.0 * std::log10 (
+        metricsForInterleaved (drivenRender).rms()
+        / std::max (1.0e-12, metricsForInterleaved (dry).rms()));
+    expect (std::abs (driveLevelDb) <= 4.0,
+            "bus drive is a level control rather than a saturation control ("
+                + std::to_string (driveLevelDb) + " dB)");
+
+    drumalor::KitParameters compressed;
+    compressed.busCompression = 1.0f;
+    const auto compressedRender = renderKit (compressed);
+    const auto compressedMetrics = metricsForInterleaved (compressedRender);
+    expect (compressedMetrics.finite && compressedMetrics.peak <= 1.001,
+            "bus compression produced unsafe audio");
+
+    // Glue means less distance between a hard and a soft kit: the defining
+    // behaviour of a compressor, measured on the level law rather than on any
+    // particular internal envelope.
+    const auto softDry = renderKitAt (bypassed, 0.30f);
+    const auto softCompressed = renderKitAt (compressed, 0.30f);
+    const double dryRangeDb = 20.0 * std::log10 (
+        metricsForInterleaved (dry).rms()
+        / std::max (1.0e-12, metricsForInterleaved (softDry).rms()));
+    const double compressedRangeDb = 20.0 * std::log10 (
+        metricsForInterleaved (compressedRender).rms()
+        / std::max (1.0e-12, metricsForInterleaved (softCompressed).rms()));
+    expect (dryRangeDb > 4.0,
+            "the kit bus probe has too little dynamic range to test compression ("
+                + std::to_string (dryRangeDb) + " dB)");
+    expect (compressedRangeDb < dryRangeDb - 1.5,
+            "bus compression did not reduce the kit's dynamic range (dry/compressed "
+                + std::to_string (dryRangeDb) + "/" + std::to_string (compressedRangeDb)
+                + " dB)");
+
+    // Gain reduction has to be reported for the editor's meter, and released.
+    drumalor::DrumEngine metered;
+    metered.prepare (sampleRate, defaultBlockSize);
+    metered.setKitParameters (compressed);
+    expect (metered.getBusGain() == 1.0f, "idle bus reported gain reduction");
+    for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+        metered.trigger (static_cast<drumalor::Instrument> (index), 1.0f);
+    renderMetrics (metered, 4800, defaultBlockSize);
+    const float loudGain = metered.getBusGain();
+    expect (loudGain < 0.90f && loudGain > 0.0f,
+            "bus compressor reported no gain reduction on a loud kit (gain "
+                + std::to_string (loudGain) + ")");
+    metered.allSoundsOff();
+    renderMetrics (metered, 48000, defaultBlockSize);
+    expect (metered.getBusGain() > 0.97f,
+            "bus compressor never released its gain reduction");
+
+    // Level and Pan are channel-strip controls, so automating them has to be
+    // audible on a voice that is already ringing. They used to be copied into
+    // the voice at trigger time only, which left a long crash or ride tail
+    // ignoring the mixer until the next hit.
+    const auto crashTailRms = [] (bool automateLevel, float automatedDecibels)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        auto values = drumalor::getInstrumentMetadata (drumalor::Instrument::Crash)
+                          .defaultParameters;
+        engine.setInstrumentParameters (drumalor::Instrument::Crash, values);
+        engine.trigger (drumalor::Instrument::Crash, 1.0f);
+        renderMetrics (engine, static_cast<int> (0.2 * sampleRate), defaultBlockSize);
+
+        if (automateLevel)
+        {
+            values.level = automatedDecibels;
+            engine.setInstrumentParameters (drumalor::Instrument::Crash, values);
+        }
+        return renderMetrics (engine, static_cast<int> (0.3 * sampleRate),
+                              defaultBlockSize).rms();
+    };
+
+    const double ringingTail = crashTailRms (false, 0.0f);
+    const double duckedTail = crashTailRms (true, -24.0f);
+    expect (ringingTail > 1.0e-5, "the crash tail probe produced no signal");
+    expect (duckedTail < 0.50 * ringingTail,
+            "level automation never reached the ringing voice (tail rms "
+                + std::to_string (duckedTail) + " against "
+                + std::to_string (ringingTail) + " untouched)");
+
+    // Bypassing the compressor must not freeze its detector. With Bus Drive
+    // still on the bus stage keeps running, so automating Bus Compression back
+    // on used to reapply whatever gain reduction was in flight when it was
+    // switched off, however long ago that was.
+    drumalor::DrumEngine automated;
+    automated.prepare (sampleRate, defaultBlockSize);
+    drumalor::KitParameters drivenCompressed;
+    drivenCompressed.busDrive = 0.6f;
+    drivenCompressed.busCompression = 1.0f;
+    automated.setKitParameters (drivenCompressed);
+    for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+        automated.trigger (static_cast<drumalor::Instrument> (index), 1.0f);
+    renderMetrics (automated, 4800, defaultBlockSize);
+    const float bypassEntryGain = automated.getBusGain();
+    expect (bypassEntryGain < 0.90f,
+            "the automation probe never built any gain reduction to go stale");
+
+    // Compression off, Drive still on, and a quiet passage that keeps a voice
+    // alive so the bus stage is not skipped as silence.
+    drumalor::KitParameters compressionBypassed = drivenCompressed;
+    compressionBypassed.busCompression = 0.0f;
+    automated.setKitParameters (compressionBypassed);
+    for (int repeat = 0; repeat < 5; ++repeat)
+    {
+        automated.trigger (drumalor::Instrument::Kick, 0.04f);
+        renderMetrics (automated, static_cast<int> (0.1 * sampleRate), defaultBlockSize);
+    }
+
+    automated.setKitParameters (drivenCompressed);
+    renderMetrics (automated, 64, defaultBlockSize);
+    const float resumedGain = automated.getBusGain();
+    expect (resumedGain > 0.97f,
+            "re-enabling bus compression restored the gain reduction from "
+            "before the bypass (resumed at " + std::to_string (resumedGain)
+                + ", bypassed at " + std::to_string (bypassEntryGain) + ")");
+
+    // Both stages stay stable and block-partition invariant together.
+    drumalor::KitParameters both;
+    both.busDrive = 0.8f;
+    both.busCompression = 0.7f;
+    const auto renderPartitioned = [&both] (int blockSize)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, 512);
+        engine.setKitParameters (both);
+        for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+            engine.trigger (static_cast<drumalor::Instrument> (index), 0.95f);
+        return renderInterleaved (engine, 12000, blockSize);
+    };
+    expect (renderPartitioned (1) == renderPartitioned (383),
+            "the kit bus stage changed with host block partitioning");
+}
+
+void testMetering()
+{
+    constexpr double sampleRate = 48000.0;
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+    expect (engine.getOutputLevel (0) == 0.0f && engine.getOutputLevel (1) == 0.0f,
+            "a prepared engine reported output level before any hit");
+    for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+        expect (engine.getInstrumentLevel (static_cast<drumalor::Instrument> (index))
+                    == 0.0f,
+                "a prepared engine reported channel level before any hit");
+
+    engine.trigger (drumalor::Instrument::Kick, 1.0f);
+    renderMetrics (engine, 2400, defaultBlockSize);
+    expect (engine.getOutputLevel (0) > 0.01f && engine.getOutputLevel (1) > 0.01f,
+            "output metering stayed silent while the kick was sounding");
+    expect (engine.getInstrumentLevel (drumalor::Instrument::Kick) > 0.01f,
+            "kick channel metering stayed silent while it was sounding");
+    expect (engine.getInstrumentLevel (drumalor::Instrument::Crash) == 0.0f,
+            "an unplayed channel reported a level");
+
+    // Panning must be visible in the stereo meter.
+    drumalor::DrumEngine panned;
+    panned.prepare (sampleRate, defaultBlockSize);
+    auto hardLeft = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Snare).defaultParameters;
+    hardLeft.pan = -1.0f;
+    panned.setInstrumentParameters (drumalor::Instrument::Snare, hardLeft);
+    panned.trigger (drumalor::Instrument::Snare, 1.0f);
+    renderMetrics (panned, 2400, defaultBlockSize);
+    expect (panned.getOutputLevel (0) > 10.0f * panned.getOutputLevel (1),
+            "the stereo meter did not follow a hard-left channel");
+
+    // Levels must release rather than latch, and clear on reset.
+    engine.allSoundsOff();
+    renderMetrics (engine, static_cast<int> (2.0 * sampleRate), defaultBlockSize);
+    expect (engine.getOutputLevel (0) < 0.001f,
+            "output metering never released after the kit stopped");
+    expect (engine.getInstrumentLevel (drumalor::Instrument::Kick) == 0.0f,
+            "channel metering never released after the kit stopped");
+    engine.trigger (drumalor::Instrument::Ride, 0.9f);
+    renderMetrics (engine, 2400, defaultBlockSize);
+    engine.reset();
+    expect (engine.getOutputLevel (0) == 0.0f && engine.getOutputLevel (1) == 0.0f
+                && engine.getInstrumentLevel (drumalor::Instrument::Ride) == 0.0f
+                && engine.getBusGain() == 1.0f,
+            "reset did not clear the published metering state");
+}
+
+void testMembraneAndVelocityTimbre()
+{
+    constexpr double sampleRate = 48000.0;
+    // Bands chosen around each drum's own fundamental: the body region covers
+    // the swept fundamental, the head region the inharmonic membrane modes that
+    // sit between roughly 1.5 and 3 times it.
+    struct MembraneProbe
+    {
+        drumalor::Instrument instrument;
+        double bodyLow;
+        double bodyHigh;
+        double headLow;
+        double headHigh;
+    };
+    constexpr std::array membraneProbes {
+        MembraneProbe { drumalor::Instrument::LowTom, 55.0, 130.0, 130.0, 420.0 },
+        MembraneProbe { drumalor::Instrument::MidTom, 85.0, 190.0, 190.0, 620.0 },
+        MembraneProbe { drumalor::Instrument::HighTom, 120.0, 270.0, 270.0, 880.0 },
+        MembraneProbe { drumalor::Instrument::Snare, 130.0, 290.0, 290.0, 760.0 }
+    };
+
+    for (const auto& probe : membraneProbes)
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (probe.instrument));
+        const auto defaults = drumalor::getInstrumentMetadata (
+            probe.instrument).defaultParameters;
+        const auto samples = renderMonoHit (
+            sampleRate, probe.instrument, defaults, 0.60, 0.95f);
+        expect (std::all_of (samples.begin(), samples.end(), [] (float value)
+                {
+                    return std::isfinite (value);
+                }),
+                label + " membrane render produced NaN or infinity");
+        expect (peakInRange (samples, 0, samples.size()) <= 1.001,
+                label + " membrane render exceeded the output safety bound");
+
+        const double bodyBegin = bandPowerInRange (
+            samples, sampleRate, probe.bodyLow, probe.bodyHigh, 0.004, 0.060);
+        const double headBegin = bandPowerInRange (
+            samples, sampleRate, probe.headLow, probe.headHigh, 0.004, 0.060);
+        const double earlyRatio = headBegin / std::max (1.0e-20, bodyBegin);
+        expect (earlyRatio > 0.05,
+                label + " has no audible inharmonic head content at the strike (ratio "
+                    + std::to_string (earlyRatio) + ")");
+
+        // A struck head rings out faster than the drum body. The snare is
+        // excluded because its wire wash, not its head, dominates that region
+        // later in the tail; its own nonlinearity is checked separately below.
+        if (probe.instrument == drumalor::Instrument::Snare)
+            continue;
+        const double bodyLate = bandPowerInRange (
+            samples, sampleRate, probe.bodyLow, probe.bodyHigh, 0.180, 0.320);
+        const double headLate = bandPowerInRange (
+            samples, sampleRate, probe.headLow, probe.headHigh, 0.180, 0.320);
+        const double lateRatio = headLate / std::max (1.0e-20, bodyLate);
+        expect (lateRatio < 0.85 * earlyRatio,
+                label + " head modes did not decay faster than the body (early/late "
+                    + std::to_string (earlyRatio) + "/" + std::to_string (lateRatio) + ")");
+    }
+
+    // Air loading is a real control, not a constant: Skin has to move where the
+    // head modes sit relative to the fundamental.
+    auto tightHead = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::MidTom).defaultParameters;
+    auto looseHead = tightHead;
+    tightHead.characterB = 1.0f;
+    looseHead.characterB = 0.0f;
+    const auto tightSamples = renderMonoHit (
+        sampleRate, drumalor::Instrument::MidTom, tightHead, 0.30, 0.95f);
+    const auto looseSamples = renderMonoHit (
+        sampleRate, drumalor::Instrument::MidTom, looseHead, 0.30, 0.95f);
+    const double tightUpper = bandPowerInRange (
+        tightSamples, sampleRate, 300.0, 620.0, 0.004, 0.060)
+        / std::max (1.0e-20, bandPowerInRange (
+            tightSamples, sampleRate, 190.0, 300.0, 0.004, 0.060));
+    const double looseUpper = bandPowerInRange (
+        looseSamples, sampleRate, 300.0, 620.0, 0.004, 0.060)
+        / std::max (1.0e-20, bandPowerInRange (
+            looseSamples, sampleRate, 190.0, 300.0, 0.004, 0.060));
+    expect (std::abs (20.0 * std::log10 (
+                std::max (1.0e-12, tightUpper / std::max (1.0e-20, looseUpper)))) > 0.5,
+            "Mid Tom Skin did not move the membrane's air loading (tight/loose "
+                + std::to_string (tightUpper) + "/" + std::to_string (looseUpper) + ")");
+
+    // The snare wires only rattle while the head displacement lifts them off
+    // their rest contact, so their share of the sound grows faster than the
+    // body does as the strike gets harder.
+    const auto snareDefaults = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Snare).defaultParameters;
+    const auto hardSnare = renderMonoHit (
+        sampleRate, drumalor::Instrument::Snare, snareDefaults, 0.30, 1.0f);
+    const auto softSnare = renderMonoHit (
+        sampleRate, drumalor::Instrument::Snare, snareDefaults, 0.30, 0.22f);
+    const double hardWireRatio = bandPowerInRange (
+        hardSnare, sampleRate, 1500.0, 9000.0, 0.0, 0.120)
+        / std::max (1.0e-20, bandPowerInRange (
+            hardSnare, sampleRate, 130.0, 290.0, 0.0, 0.120));
+    const double softWireRatio = bandPowerInRange (
+        softSnare, sampleRate, 1500.0, 9000.0, 0.0, 0.120)
+        / std::max (1.0e-20, bandPowerInRange (
+            softSnare, sampleRate, 130.0, 290.0, 0.0, 0.120));
+    expect (softWireRatio < 0.85 * hardWireRatio,
+            "the snare wire rattle is not level dependent (hard/soft wire-to-body "
+                + std::to_string (hardWireRatio) + "/" + std::to_string (softWireRatio)
+                + ")");
+
+    // Velocity has to change timbre, not only level. Comparing the high-band to
+    // low-band ratio stays sensitive even for voices that are almost entirely
+    // high frequency, where a share of the total would saturate near one.
+    constexpr std::array timbreInstruments {
+        drumalor::Instrument::Kick, drumalor::Instrument::Snare,
+        drumalor::Instrument::Clap, drumalor::Instrument::ClosedHat,
+        drumalor::Instrument::OpenHat, drumalor::Instrument::LowTom,
+        drumalor::Instrument::MidTom, drumalor::Instrument::HighTom,
+        drumalor::Instrument::Shaker, drumalor::Instrument::Perc2
+    };
+    for (const auto instrument : timbreInstruments)
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (instrument));
+        const auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+        const auto hard = renderMonoHit (sampleRate, instrument, defaults, 0.30, 1.0f);
+        const auto soft = renderMonoHit (sampleRate, instrument, defaults, 0.30, 0.18f);
+
+        const double hardRatio = bandPowerInRange (
+            hard, sampleRate, 2500.0, 16000.0, 0.0, 0.060)
+            / std::max (1.0e-20, bandPowerInRange (
+                hard, sampleRate, 40.0, 2500.0, 0.0, 0.060));
+        const double softRatio = bandPowerInRange (
+            soft, sampleRate, 2500.0, 16000.0, 0.0, 0.060)
+            / std::max (1.0e-20, bandPowerInRange (
+                soft, sampleRate, 40.0, 2500.0, 0.0, 0.060));
+        expect (softRatio < 0.90 * hardRatio,
+                label + " soft hits are not spectrally darker than hard hits"
+                    " (hard/soft high-to-low " + std::to_string (hardRatio) + "/"
+                    + std::to_string (softRatio) + ")");
+    }
+}
+
+void testUiPresentationMath()
+{
+    using namespace drumalor::ui;
+
+    // Meter curve: monotone, anchored at both ends, and exactly invertible.
+    expect (meterPositionForLinear (1.0f, -48.0f) == 1.0f,
+            "full scale is not the top of the meter curve");
+    expect (meterPositionForLinear (0.0f, -48.0f) == 0.0f,
+            "silence is not the bottom of the meter curve");
+    expect (std::abs (meterPositionForLinear (0.5f, -48.0f) - (1.0f - (-6.0206f) / -48.0f))
+                < 0.002f,
+            "half amplitude is not placed at -6 dB on the meter curve");
+    float previousPosition = -1.0f;
+    for (int step = 0; step <= 64; ++step)
+    {
+        const float position = static_cast<float> (step) / 64.0f;
+        const float linear = linearForMeterPosition (position, -48.0f);
+        const float roundTrip = meterPositionForLinear (linear, -48.0f);
+        expect (std::abs (roundTrip - position) < 0.002f,
+                "meter curve did not round-trip at position "
+                    + std::to_string (position));
+        expect (position > previousPosition, "meter curve is not strictly increasing");
+        previousPosition = position;
+    }
+    expect (meterPositionForLinear (std::numeric_limits<float>::quiet_NaN(), -48.0f) == 0.0f
+                && meterPositionForLinear (-1.0f, 0.0f) == 0.0f,
+            "meter curve did not sanitize invalid input");
+
+    // Ballistics: instant attack, gradual release, hold then fall on the peak.
+    MeterBallistics ballistics;
+    const float release = onePoleCoefficient (0.30f, 30.0f);
+    const float fall = decayMultiplier (-12.0f, 1.0f, 30.0f);
+    expect (release > 0.0f && release < 1.0f, "release coefficient is out of range");
+    expect (fall > 0.0f && fall < 1.0f, "peak fall multiplier is out of range");
+    expect (onePoleCoefficient (0.0f, 30.0f) == 1.0f,
+            "a zero time constant is not an instant coefficient");
+
+    ballistics.update (0.8f, 1.0f, release, fall, 3.0f);
+    expect (std::abs (ballistics.level - 0.8f) < 1.0e-6f,
+            "meter attack was not instant");
+    expect (std::abs (ballistics.peak - 0.8f) < 1.0e-6f, "peak did not latch");
+    for (int update = 0; update < 3; ++update)
+        ballistics.update (0.0f, 1.0f, release, fall, 3.0f);
+    expect (ballistics.level < 0.8f && ballistics.level > 0.0f,
+            "meter release was instant instead of gradual");
+    expect (std::abs (ballistics.peak - 0.8f) < 1.0e-6f,
+            "peak marker did not hold for its configured time");
+    const float heldPeak = ballistics.peak;
+    for (int update = 0; update < 12; ++update)
+        ballistics.update (0.0f, 1.0f, release, fall, 3.0f);
+    expect (ballistics.peak < heldPeak, "peak marker never fell after its hold");
+    expect (ballistics.peak >= ballistics.level,
+            "peak marker fell below the level it marks");
+    ballistics.update (std::numeric_limits<float>::infinity(), 1.0f, release, fall, 3.0f);
+    expect (std::isfinite (ballistics.level) && std::isfinite (ballistics.peak),
+            "meter ballistics did not sanitize invalid input");
+    ballistics.reset();
+    expect (ballistics.level == 0.0f && ballistics.peak == 0.0f,
+            "meter ballistics did not reset");
+
+    // Pad-grid geometry: equal cells, exact gaps, and short rows centred under
+    // the long row they share a grid with.
+    const auto fullRow = rowLayout (960, 7, 7, 7);
+    expect (fullRow.cellSize == 131 && fullRow.origin == 0,
+            "seven-column pad grid did not fill its row");
+    expect (cellOffset (fullRow, 7, 0) == 0
+                && cellOffset (fullRow, 7, 6) == 6 * (131 + 7),
+            "pad grid cell offsets do not honour the gap");
+    const auto shortRow = rowLayout (960, 7, 7, 6);
+    expect (shortRow.cellSize == fullRow.cellSize,
+            "short pad row used a different cell size");
+    const int used = shortRow.cellSize * 6 + 7 * 5;
+    expect (shortRow.origin == (960 - used) / 2,
+            "short pad row was not centred under the full row");
+    expect (cellOffset (shortRow, 7, 5) + shortRow.cellSize <= 960,
+            "short pad row escaped its container");
+    const auto degenerate = rowLayout (0, 0, -4, 99);
+    expect (degenerate.cellSize >= 1 && degenerate.origin >= 0,
+            "pad grid did not sanitize a degenerate request");
+
+    // Colour/curve helpers used by the meter ramp.
+    expect (mix (0.0f, 10.0f, 0.25f) == 2.5f, "mix did not interpolate");
+    expect (mix (0.0f, 10.0f, -3.0f) == 0.0f && mix (0.0f, 10.0f, 4.0f) == 10.0f,
+            "mix did not clamp its amount");
+    expect (smoothStep (0.0f, 1.0f, 0.0f) == 0.0f
+                && smoothStep (0.0f, 1.0f, 1.0f) == 1.0f
+                && std::abs (smoothStep (0.0f, 1.0f, 0.5f) - 0.5f) < 1.0e-6f,
+            "smoothStep endpoints or midpoint are wrong");
+    expect (smoothStep (0.5f, 0.5f, 0.6f) == 1.0f
+                && smoothStep (0.5f, 0.5f, 0.4f) == 0.0f,
+            "smoothStep did not handle a zero-width edge");
+}
+
+void testIdleMetallicCostAndDenormalSafety()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 128;
+    constexpr int samples = 48000 * 4;
+
+    // A bank frozen while other voices were sounding must wake into exactly the
+    // state it would have reached had it kept running behind their closed VCAs.
+    // Two engines that reach the same absolute gap in different ways - one busy
+    // with an unrelated drum, one completely idle - must therefore render the
+    // same hi-hat, sample for sample.
+    drumalor::DrumEngine busy;
+    drumalor::DrumEngine idle;
+    for (auto* engine : { &busy, &idle })
+        engine->prepare (sampleRate, 512);
+    auto shortKick = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Kick).defaultParameters;
+    shortKick.decay = 0.0f;
+    busy.setInstrumentParameters (drumalor::Instrument::Kick, shortKick);
+    busy.trigger (drumalor::Instrument::Kick, 0.9f);
+    constexpr int gapSamples = 48000;
+    renderInterleaved (busy, gapSamples, 373);
+    renderInterleaved (idle, gapSamples, 97);
+    expect (busy.getActiveVoiceCount() == 0,
+            "the frozen-bank probe still had a sounding kick at the hi-hat strike");
+    busy.trigger (drumalor::Instrument::ClosedHat, 0.85f);
+    idle.trigger (drumalor::Instrument::ClosedHat, 0.85f);
+    expect (renderInterleaved (busy, 6000, defaultBlockSize)
+                == renderInterleaved (idle, 6000, defaultBlockSize),
+            "a metallic bank frozen behind an unrelated voice woke into a "
+            "different state than one frozen during silence");
+
+    // Cost side of the same contract. A bank is only advanced while some voice
+    // can observe it, so adding one hi-hat to a single sustained kick has to
+    // cost clearly more than that kick alone. When all five relaxation banks ran
+    // unconditionally the two measurements were nearly identical, so this ratio
+    // is what actually guards the optimisation. It compares two runs taken back
+    // to back on the same machine rather than an absolute wall-clock budget.
+    const auto timeSustainedKick = [sampleRate, samples, blockSize] (bool withHat)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        auto deepKick = drumalor::getInstrumentMetadata (
+            drumalor::Instrument::Kick).defaultParameters;
+        deepKick.pitch = -24.0f;
+        deepKick.decay = 1.0f;
+        engine.setInstrumentParameters (drumalor::Instrument::Kick, deepKick);
+        engine.trigger (drumalor::Instrument::Kick, 1.0f);
+        std::array<float, blockSize> left {};
+        std::array<float, blockSize> right {};
+        bool finite = true;
+        const auto start = std::chrono::steady_clock::now();
+        for (int rendered = 0; rendered < samples; rendered += blockSize)
+        {
+            if (withHat && rendered % 4800 == 0)
+                engine.trigger (drumalor::Instrument::ClosedHat, 0.8f);
+            const int count = std::min (blockSize, samples - rendered);
+            engine.process (left.data(), right.data(), count);
+            for (int sample = 0; sample < count; ++sample)
+                finite = finite
+                    && std::isfinite (left[static_cast<std::size_t> (sample)])
+                    && std::isfinite (right[static_cast<std::size_t> (sample)]);
+        }
+        const double elapsed = std::chrono::duration<double> (
+            std::chrono::steady_clock::now() - start).count();
+        expect (finite, "the timed metallic probe produced NaN or infinity");
+        return elapsed;
+    };
+
+    double withoutHat = std::numeric_limits<double>::max();
+    double withHat = std::numeric_limits<double>::max();
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        withoutHat = std::min (withoutHat, timeSustainedKick (false));
+        withHat = std::min (withHat, timeSustainedKick (true));
+    }
+    expect (withHat > 1.30 * withoutHat,
+            "adding a hi-hat did not measurably cost more than the kick alone, so "
+            "the relaxation banks are running even when nothing can observe them "
+            "(kick/kick+hat " + std::to_string (withoutHat) + "/"
+                + std::to_string (withHat) + " s)");
+    expect (withHat < 6.0,
+            "four seconds of a sustained kick and hi-hat exceeded the offline "
+            "guardrail (" + std::to_string (withHat) + " s)");
+
+    // Long, very quiet tails must not fall into denormal arithmetic or leave
+    // residue behind. Render a full maximum-decay kit down to silence and check
+    // that the deep tail is exactly zero once every voice has retired.
+    drumalor::DrumEngine tails;
+    tails.prepare (sampleRate, 256);
+    for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+    {
+        auto parameters = drumalor::getInstrumentMetadata (
+            static_cast<drumalor::Instrument> (index)).defaultParameters;
+        parameters.decay = 1.0f;
+        parameters.level = drumalor::minimumVoiceLevelDecibels;
+        tails.setInstrumentParameters (static_cast<drumalor::Instrument> (index),
+                                       parameters);
+        tails.trigger (static_cast<drumalor::Instrument> (index), 0.02f);
+    }
+    const auto quietTail = renderMetrics (
+        tails, static_cast<int> (sampleRate * drumalor::maximumTailSeconds), 256);
+    expect (quietTail.finite, "a very quiet maximum-decay kit produced invalid audio");
+    expect (tails.getActiveVoiceCount() == 0,
+            "a very quiet maximum-decay kit never retired its voices");
+    const auto afterTail = renderMetrics (tails, 8192, 251);
+    expect (afterTail.peak == 0.0,
+            "the engine emitted residue after every voice retired");
+}
+
 void testInvalidValuesAndStressPerformance()
 {
     drumalor::DrumEngine engine;
@@ -1587,7 +2458,26 @@ void testInvalidValuesAndStressPerformance()
     expect (invalidMetrics.finite && invalidMetrics.nonZeroCount > 0,
             "invalid parameter sanitization did not produce safe audio");
 
+    drumalor::KitParameters invalidKit;
+    invalidKit.humanise = std::numeric_limits<float>::quiet_NaN();
+    invalidKit.busDrive = std::numeric_limits<float>::infinity();
+    invalidKit.busCompression = -std::numeric_limits<float>::infinity();
+    engine.setKitParameters (invalidKit);
+    drumalor::InstrumentParameters invalidMixer;
+    invalidMixer.level = std::numeric_limits<float>::quiet_NaN();
+    invalidMixer.pan = std::numeric_limits<float>::infinity();
+    invalidMixer.chokeGroup = 9999;
+    engine.setInstrumentParameters (drumalor::Instrument::LowTom, invalidMixer);
+    engine.trigger (drumalor::Instrument::LowTom, 1.0f);
+    const auto invalidKitMetrics = renderMetrics (engine, 8192);
+    expect (invalidKitMetrics.finite && invalidKitMetrics.peak <= 1.001,
+            "invalid kit/mixer sanitization did not produce safe audio");
+
     engine.reset();
+    engine.setKitParameters (drumalor::KitParameters {});
+    engine.setInstrumentParameters (
+        drumalor::Instrument::LowTom,
+        drumalor::getInstrumentMetadata (drumalor::Instrument::LowTom).defaultParameters);
     constexpr int samples = 96000;
     constexpr std::array instruments {
         drumalor::Instrument::Kick, drumalor::Instrument::Snare,
@@ -1644,6 +2534,14 @@ int main()
     testLowFrequencyTailAndVoiceStealing();
     testCymbalQualityContract();
     testParameterInfluence();
+    testPerVoiceMixer();
+    testChokeGroups();
+    testHumaniseDepth();
+    testKitBusStage();
+    testMetering();
+    testMembraneAndVelocityTimbre();
+    testUiPresentationMath();
+    testIdleMetallicCostAndDenormalSafety();
     testInvalidValuesAndStressPerformance();
 
     if (failureCount != 0)

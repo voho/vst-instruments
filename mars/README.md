@@ -8,14 +8,19 @@ Moog-ladder model, an SEM-inspired multimode filter, and a global stereo
 ensemble. The individual models have named research and hardware references;
 Mars does not claim to be a complete clone of any one vintage instrument.
 
-There is **no arpeggiator** and **no modulation matrix**. Every sound parameter
-is exposed as a front-panel knob, slider, or switch and as a host-automatable
-parameter. The separate HQ oversampling switch is persisted with the plug-in
-state but intentionally cannot be automated.
+There is **no modulation matrix**. Every sound parameter is exposed as a
+front-panel knob, slider, or switch and as a host-automatable parameter. The
+separate HQ oversampling switch is persisted with the plug-in state but
+intentionally cannot be automated. Version 1.6 adds a free-running,
+JUNO-style **arpeggiator** section; it is Off by default and drives the ordinary
+voice allocator rather than a hidden second engine.
 
 ![Mars synthesizer interface](Docs/screenshots/mars-standalone.png)
 
-The screenshot is rendered by the actual minimum-size JUCE editor in the
+The screenshot above still shows the version-1.5 panel: it predates the 1.6
+arpeggiator section and header scope and has not been regenerated, because
+rendering it requires a macOS plug-in build. It is produced by the actual
+minimum-size JUCE editor in the
 plug-in regression suite; the Standalone, VST3, and Audio Unit use that same
 resizable component. Panel materials,
 hardware pots, faders, switches, calibration marks, and shadows are drawn as
@@ -78,9 +83,18 @@ Japanese polysynths without reproducing a branded hardware panel.
   delay, no state above the documented equation-residual ceiling is committed,
   the full 20 kHz control range remains stable, and `(1 + k)` DC-gain
   compensation restores the severe low-band loss that otherwise accompanies
-  rising resonance. `SEM` is a
+  rising resonance. The resonance map now crosses the ladder's own `k = 4`
+  oscillation threshold in the last few percent of the control, so maximum
+  resonance **self-oscillates** at the cutoff instead of merely ringing; the
+  transistor pairs bound the limit cycle and the regression suite measures both
+  its frequency and its amplitude. Below that knee the feedback gain is
+  unchanged. `SEM` is a
   nonlinear, two-integrator TPT state-variable design inspired by the Oberheim
-  topology; `Filter shape` sweeps low-pass through notch to high-pass. A 3 ms
+  topology; `Filter shape` sweeps low-pass through notch to high-pass. Its
+  resonance loop now saturates where the circuit's OTA does, so a high-Q peak
+  compresses into a stable limit cycle (measured 12.5x small-signal gain falling
+  to 3.0x at programme level) and gains odd-order colour instead of behaving
+  like an ideal linear resonator. A 3 ms
   transition runs both models to prevent switching clicks; at steady state the
   voice executes only the selected algorithm.
 - **Configurable rate-aware oversampling:** HQ is persisted, non-automatable,
@@ -104,10 +118,29 @@ Japanese polysynths without reproducing a branded hardware panel.
   triangle, sine, or sample-and-hold LFO with direct pitch, filter, and PWM
   depths. The mod wheel deepens those fixed LFO routes; it does not open a
   hidden routing matrix.
+- **Free-running arpeggiator:** `Arp` plays the held keys through the ordinary
+  allocator, so Poly, Unison, Fifth, and Mono all behave exactly as they do from
+  the keyboard, including the 2 ms retrigger tail. `Mode` selects Up, Down,
+  Up-down, Random, or As played; `Range` repeats the pattern over one to four
+  octaves; `Rate` is a free-running control in steps per second rather than a
+  host-tempo division, matching the JUNO-6/60/106 convention; `Gate` sets how
+  much of each step the note is held, with a fully open gate playing legato;
+  `Hold` latches the last chord so the pattern continues after the keys are
+  released, and a fresh press starts a new chord. The first key of a phrase
+  plays immediately. Turning the arpeggiator off releases its current step and
+  hands note handling straight back to the keyboard.
+- **Panel signal scope:** the header carries a triggered oscilloscope, an output
+  meter with a held peak marker, and the arpeggiator's current step and note.
+  The trace reduction, meter ballistics, decibel mapping, and colour ramp live
+  in the JUCE-free DSP library and are covered by the regression suite; the
+  editor only fetches a lock-free trace and draws it.
 - **Bounded performance controls:** a host-automatable `Polyphony` control caps
   active DSP render voices from 1 to 16 and is enforced immediately when
   lowered. `Poly`, `Unison`, and `Fifth` consume that physical budget in
-  different group sizes. The separate `Mono` override uses one continuous
+  different group sizes. `Unison detune` is an independent panel control rather
+  than a side effect of `Drift`, so a stack can beat tightly without freezing
+  the card-to-card component spread; its 9.6-cent default reproduces the
+  previous drift-derived spread exactly. The separate `Mono` override uses one continuous
   voice with last-note priority, legato phase/envelopes, glide, held-note
   fallback, overlapping same-pitch hold counts, seamless conversion of held
   layered notes, and fresh-envelope retrigger after the final physical key is
@@ -117,7 +150,8 @@ Japanese polysynths without reproducing a branded hardware panel.
 - **Safe preset mutation:** `1%`, `10%`, and `100%` randomizer buttons move each
   sound-design parameter toward an independent legal target in normalized
   space. One and ten percent are bounded mutations of the current patch; 100%
-  is a full-range draw. Output gain, oscillator power, HQ quality, Mono, and
+  is a full-range draw. Output gain, oscillator power, HQ quality, Mono, the
+  arpeggiator's own On and Hold switches, and
   the polyphony budget are deliberately preserved.
 - **Full-range on-screen keyboard:** all MIDI notes 0–127 are reachable with
   scroll controls; key width follows the editor size so the keyboard does not
@@ -174,11 +208,13 @@ deterministic tie-breaker. A 15 ms attack guard prevents a newly played
 articulation from disappearing before it speaks.
 Every layer in the selected group is removed together. Retriggers and steals
 preserve a fixed 2 ms fading tail to avoid a hard sample discontinuity.
-`Unison voices` is active only in
+`Unison voices` and `Unison detune` are active only in
 `Unison`; `Mono` overrides all three polyphonic allocation modes without
-changing their stored/automated value.
+changing their stored/automated value. When the arpeggiator is running it feeds
+this same allocator one step at a time, so a step in `Unison` still consumes a
+full layer group and a step in `Mono` still uses the single continuous voice.
 
-## Exact 48-parameter contract
+## Exact 55-parameter contract
 
 | Section | Front-panel controls (parameter IDs) |
 | --- | --- |
@@ -189,22 +225,39 @@ changing their stored/automated value.
 | Filter envelope | Attack (`fAttack`), decay (`fDecay`), sustain (`fSustain`), release (`fRelease`) |
 | Amplifier envelope | Attack (`aAttack`), decay (`aDecay`), sustain (`aSustain`), release (`aRelease`) |
 | LFO | Waveform: triangle / sine / sample & hold (`lfoWave`), rate (`lfoRate`), pitch depth (`lfoPitch`), filter depth (`lfoFilter`), PWM depth (`lfoPwm`) |
-| Voice | Mode: `Poly` / `Unison` / `Fifth` (`voiceMode`), Mono override (`monoMode`), physical render-voice ceiling 1–16 (`polyphonyLimit`), unison voices (`unisonVoices`), voice-card drift (`drift`), stereo spread (`spread`), glide time (`glide`), velocity response (`velocity`) |
+| Voice | Mode: `Poly` / `Unison` / `Fifth` (`voiceMode`), Mono override (`monoMode`), physical render-voice ceiling 1–16 (`polyphonyLimit`), unison voices (`unisonVoices`), unison detune (`unisonDetune`), voice-card drift (`drift`), stereo spread (`spread`), glide time (`glide`), velocity response (`velocity`) |
+| Arpeggiator | On/Off (`arpEnabled`), mode: Up / Down / Up-down / Random / As played (`arpMode`), rate in steps per second (`arpRate`), octave range 1–4 (`arpOctaves`), gate (`arpGate`), hold/latch (`arpHold`) |
 | Output | Ensemble mix (`chorusMix`), ensemble rate (`chorusRate`), non-Juno studio compander (`chorusCompander`), output level (`output`) |
 | Quality | HQ oversampling (`hqOversampling`): persisted, non-automatable, default On |
 
-These are the complete host parameter IDs for version 1.5: 47 automatable sound
+These are the complete host parameter IDs for version 1.6: 54 automatable sound
 and performance controls plus one persisted quality setting. The original 40
 IDs retain their order and version hint; `osc1Enabled` and `osc2Enabled` remain
 the version-2 additions, and non-automatable `hqOversampling` retains version
 hint 3. `osc1Model`, `osc2Model`, `polyphonyLimit`, and `monoMode` are appended
 with version hint 4. `chorusCompander` is appended with version hint 5 and
-defaults Off, so every previously shipped host parameter keeps its index and
+defaults Off. `unisonDetune`, `arpEnabled`, `arpMode`, `arpRate`, `arpOctaves`,
+`arpGate`, and `arpHold` are appended in that order with version hint 6, so
+every previously shipped host parameter keeps its index and
 normalized meaning. Legacy states default both models to Moog-like VCO,
 polyphony to 16, Mono and the non-Juno compander to Off, both mixer switches to
-On, and HQ to On. The three
+On, HQ to On, unison detune to 9.6 cents (the exact version-1.5 spread at the
+default drift), and the arpeggiator to Off / Up / 5 steps per second / one
+octave / 55% gate / Hold off. The three
 randomizer buttons are commands rather than host parameters; there are no
 hidden sound controls behind a matrix or alternate panel.
+
+New parameter ranges and defaults:
+
+| Parameter ID | Range | Default |
+| --- | --- | --- |
+| `unisonDetune` | 0-50 cents, 0.1 ct step | 9.6 ct |
+| `arpEnabled` | Off / On | Off |
+| `arpMode` | Up / Down / Up-down / Random / As played | Up |
+| `arpRate` | 0.5-20 steps per second, skewed to 4 | 5.00 Hz |
+| `arpOctaves` | 1-4 | 1 |
+| `arpGate` | 5-100% | 55% |
+| `arpHold` | Off / On | Off |
 
 ## Build products
 
@@ -302,9 +355,20 @@ control jump, mixer isolation and clickless switching, cross modulation with
 oscillator II's audio feed disabled, deferred HQ changes including large host
 blocks, meaningful glide and modulation, dynamic physical-voice limits, Mono
 mode-transition, duplicate-hold, legato/fallback/retrigger semantics,
-voice-mode allocation, and a CPU guardrail. Plug-in builds additionally test
-the 48-parameter order/default/text contract, legacy migration, all randomizer
-strengths and safety exclusions, MIDI, state, and editor rendering.
+voice-mode allocation, and a CPU guardrail.
+Version 1.6 adds measurements of ladder self-oscillation frequency and
+boundedness at maximum resonance against the unchanged sub-threshold behaviour,
+the SEM's level-dependent resonance compression and its stability at every
+shape, transient-free waveform switching and settled-state equivalence for the
+frozen oscillator generators, unison-detune spread and its decoupling from
+drift, the arpeggiator's pattern order in every mode with range, gate, hold, and
+mode-exit semantics plus determinism across all four voice modes, the scope
+reduction, meter ballistics, trigger search and decibel mapping, and a default
+eight-voice CPU measurement. Plug-in builds additionally test
+the 55-parameter order/default/text contract, legacy migration including the
+version-6 additions, all randomizer
+strengths and safety exclusions, MIDI, arpeggiated MIDI playback, the scope
+trace, state, and editor rendering.
 
 ## Install and validate locally
 

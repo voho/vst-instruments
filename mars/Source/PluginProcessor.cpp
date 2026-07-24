@@ -140,6 +140,54 @@ void addDefaultParameterStateIfMissing (
         state.appendChild (parameterState, nullptr);
     }
 }
+
+float parameterStateValue (const juce::ValueTree& state,
+                           juce::AudioProcessorValueTreeState& parameters,
+                           const char* parameterId)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+
+    for (const auto& child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId
+            && child.hasProperty (valueProperty))
+            return static_cast<float> (child.getProperty (valueProperty));
+
+    if (const auto* parameter = parameters.getParameter (parameterId))
+        return parameter->convertFrom0to1 (parameter->getDefaultValue());
+
+    return 0.0f;
+}
+
+void addLegacyUnisonDetuneIfMissing (juce::ValueTree& state,
+                                     juce::AudioProcessorValueTreeState& parameters)
+{
+    if (containsParameterState (state, mars::parameters::unisonDetune))
+        return;
+
+    const auto* detune = dynamic_cast<const juce::RangedAudioParameter*> (
+        parameters.getParameter (mars::parameters::unisonDetune));
+    if (detune == nullptr)
+        return;
+
+    // Until 1.6 the unison width was 4 + 20 * Drift cents. The new control's
+    // 9.6 default only reproduces that at the default Drift, so a legacy state
+    // has to derive its width from the Drift value it actually stored -- Drift
+    // 0 sounded 4 cents wide, not 9.6.
+    const auto drift = parameterStateValue (state, parameters, mars::parameters::drift);
+    const auto cents = detune->getNormalisableRange().snapToLegalValue (
+        4.0f + 20.0f * drift);
+
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+    juce::ValueTree parameterState { parameterType };
+    parameterState.setProperty (idProperty, mars::parameters::unisonDetune, nullptr);
+    parameterState.setProperty (valueProperty, cents, nullptr);
+    state.appendChild (parameterState, nullptr);
+}
 } // namespace
 
 MarsAudioProcessor::MarsAudioProcessor()
@@ -196,7 +244,21 @@ MarsAudioProcessor::MarsAudioProcessor()
     parameterPointers.osc1Enabled     = parameters.getRawParameterValue (osc1Enabled);
     parameterPointers.osc2Enabled     = parameters.getRawParameterValue (osc2Enabled);
     parameterPointers.hqOversampling  = parameters.getRawParameterValue (hqOversampling);
+    parameterPointers.unisonDetune    = parameters.getRawParameterValue (unisonDetune);
+    parameterPointers.arpEnabled      = parameters.getRawParameterValue (arpEnabled);
+    parameterPointers.arpMode         = parameters.getRawParameterValue (arpMode);
+    parameterPointers.arpRate         = parameters.getRawParameterValue (arpRate);
+    parameterPointers.arpOctaves      = parameters.getRawParameterValue (arpOctaves);
+    parameterPointers.arpGate         = parameters.getRawParameterValue (arpGate);
+    parameterPointers.arpHold         = parameters.getRawParameterValue (arpHold);
 
+    jassert (parameterPointers.unisonDetune != nullptr
+             && parameterPointers.arpEnabled != nullptr
+             && parameterPointers.arpMode != nullptr
+             && parameterPointers.arpRate != nullptr
+             && parameterPointers.arpOctaves != nullptr
+             && parameterPointers.arpGate != nullptr
+             && parameterPointers.arpHold != nullptr);
     jassert (parameterPointers.osc1Wave != nullptr
              && parameterPointers.osc1Model != nullptr
              && parameterPointers.osc2Model != nullptr
@@ -218,7 +280,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
 {
     using namespace mars::parameters;
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (48);
+    result.reserve (55);
 
     const auto addChoice = [&result] (const char* id, const char* name,
                                       juce::StringArray choices, int defaultIndex)
@@ -417,6 +479,53 @@ juce::AudioProcessorValueTreeState::ParameterLayout MarsAudioProcessor::createPa
         juce::ParameterID { chorusCompander, 5 },
         "Ensemble compander (non-Juno)", false));
 
+    // Version-6 controls are appended last, so every identifier and list
+    // position shipped by versions 1..5 keeps its index and normalised meaning.
+    // Unison detune used to be a hidden function of the drift control; 9.6 cents
+    // is exactly what the previous formula produced at the default drift, so a
+    // restored version-5 preset sounds identical.
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { unisonDetune, 6 }, "Unison detune",
+        juce::NormalisableRange<float> { 0.0f, 50.0f, 0.1f }, 9.6f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("ct")
+            .withStringFromValueFunction (
+                [] (float value, int) { return juce::String (value, 1) + "ct"; })
+            .withValueFromStringFunction (plainNumericValue)));
+
+    // Arpeggiator. It defaults Off, so a legacy state that predates it plays
+    // exactly as before.
+    result.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { arpEnabled, 6 }, "Arpeggiator", false));
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { arpMode, 6 }, "Arpeggiator mode",
+        juce::StringArray { "Up", "Down", "Up-down", "Random", "As played" }, 0));
+    auto arpRateRange = juce::NormalisableRange<float> { 0.5f, 20.0f, 0.0f };
+    arpRateRange.setSkewForCentre (4.0f);
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { arpRate, 6 }, "Arpeggiator rate", arpRateRange, 5.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("Hz")
+            .withStringFromValueFunction (frequencyText)
+            .withValueFromStringFunction (frequencyValue)));
+    result.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { arpOctaves, 6 }, "Arpeggiator range", 1, 4, 1,
+        juce::AudioParameterIntAttributes()
+            .withLabel ("oct")
+            .withStringFromValueFunction (
+                [] (int value, int) { return juce::String (value) + " oct"; })
+            .withValueFromStringFunction (
+                [] (const juce::String& text)
+                {
+                    return text.retainCharacters ("0123456789-").getIntValue();
+                })));
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { arpGate, 6 }, "Arpeggiator gate",
+        juce::NormalisableRange<float> { 0.05f, 1.0f, 0.001f }, 0.55f,
+        percentAttributes()));
+    result.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { arpHold, 6 }, "Arpeggiator hold", false));
+
     return { result.begin(), result.end() };
 }
 
@@ -437,6 +546,11 @@ void MarsAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     displayOversamplingFactor.store (engine.getOversamplingFactor(),
                                      std::memory_order_relaxed);
     activeVoiceCount.store (0, std::memory_order_relaxed);
+    displayArpNote.store (-1, std::memory_order_relaxed);
+    displayArpPhase.store (0.0f, std::memory_order_relaxed);
+    displayArpKeys.store (0, std::memory_order_relaxed);
+    clearScopeRing();
+    scopeWriteIndex.store (0, std::memory_order_release);
     engineReady.store (true, std::memory_order_release);
 }
 
@@ -453,6 +567,11 @@ void MarsAudioProcessor::releaseResources()
     activeVoiceCount.store (0, std::memory_order_relaxed);
     displaySampleRate.store (0.0, std::memory_order_relaxed);
     displayOversamplingFactor.store (1, std::memory_order_relaxed);
+    displayArpNote.store (-1, std::memory_order_relaxed);
+    displayArpPhase.store (0.0f, std::memory_order_relaxed);
+    displayArpKeys.store (0, std::memory_order_relaxed);
+    clearScopeRing();
+    scopeWriteIndex.store (0, std::memory_order_release);
     setLatencySamples (0);
 }
 
@@ -509,6 +628,57 @@ void MarsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
     displayOversamplingFactor.store (engine.getOversamplingFactor(),
                                      std::memory_order_relaxed);
+    displayArpNote.store (engine.getArpeggiatorNote(), std::memory_order_relaxed);
+    displayArpPhase.store (engine.getArpeggiatorPhase(), std::memory_order_relaxed);
+    displayArpKeys.store (engine.getArpeggiatorHeldKeyCount(), std::memory_order_relaxed);
+    pushScopeSamples (buffer);
+}
+
+void MarsAudioProcessor::clearScopeRing() noexcept
+{
+    // std::array::fill would copy-assign the atomics, which is deleted.
+    for (auto& sample : scopeRing)
+        sample.store (0.0f, std::memory_order_relaxed);
+}
+
+void MarsAudioProcessor::pushScopeSamples (const juce::AudioBuffer<float>& buffer) noexcept
+{
+    const auto numSamples = buffer.getNumSamples();
+    if (numSamples <= 0 || buffer.getNumChannels() <= 0)
+        return;
+
+    const auto* left = buffer.getReadPointer (0);
+    const auto* right = buffer.getNumChannels() > 1 ? buffer.getReadPointer (1) : left;
+    auto write = scopeWriteIndex.load (std::memory_order_relaxed);
+
+    // A host block longer than the ring only needs its most recent tail.
+    const auto first = juce::jmax (0, numSamples - scopeRingSize);
+    for (int sample = first; sample < numSamples; ++sample)
+    {
+        scopeRing[static_cast<size_t> (write)].store (
+            0.5f * (left[sample] + right[sample]), std::memory_order_relaxed);
+        write = (write + 1) & (scopeRingSize - 1);
+    }
+
+    scopeWriteIndex.store (write, std::memory_order_release);
+}
+
+int MarsAudioProcessor::copyScopeTrace (float* destination, int maximumSamples) const noexcept
+{
+    if (destination == nullptr || maximumSamples <= 0)
+        return 0;
+
+    const auto count = juce::jmin (maximumSamples, scopeRingSize);
+    const auto write = scopeWriteIndex.load (std::memory_order_acquire);
+    auto read = ((write - count) % scopeRingSize + scopeRingSize) % scopeRingSize;
+
+    for (int sample = 0; sample < count; ++sample)
+    {
+        destination[sample] = scopeRing[static_cast<size_t> (read)].load (
+            std::memory_order_relaxed);
+        read = (read + 1) & (scopeRingSize - 1);
+    }
+    return count;
 }
 
 void MarsAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBytes) noexcept
@@ -622,6 +792,14 @@ void MarsAudioProcessor::updateEngineParameters() noexcept
     next.outputGain = juce::Decibels::decibelsToGain (valueOf (parameterPointers.output));
     next.osc1Enabled = valueOf (parameterPointers.osc1Enabled) >= 0.5f;
     next.osc2Enabled = valueOf (parameterPointers.osc2Enabled) >= 0.5f;
+    next.unisonDetuneCents = valueOf (parameterPointers.unisonDetune);
+    next.arpEnabled = valueOf (parameterPointers.arpEnabled) >= 0.5f;
+    next.arpHold = valueOf (parameterPointers.arpHold) >= 0.5f;
+    next.arpMode = enumFromParameter<mars::ArpeggiatorMode> (parameterPointers.arpMode, 4);
+    next.arpRateHz = valueOf (parameterPointers.arpRate);
+    next.arpOctaves = juce::jlimit (
+        1, 4, juce::roundToInt (valueOf (parameterPointers.arpOctaves)));
+    next.arpGate = valueOf (parameterPointers.arpGate);
     engine.setOversamplingEnabled (
         valueOf (parameterPointers.hqOversampling) >= 0.5f);
     engine.setParameters (next);
@@ -692,6 +870,10 @@ void MarsAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
     {
         auto restoredState = juce::ValueTree::fromXml (*xml);
 
+        // Runs before the defaults below so the derived width wins over the
+        // control's flat default for a state that predates it.
+        addLegacyUnisonDetuneIfMissing (restoredState, parameters);
+
         // APVTS preserves the current raw value when a parameter child is
         // absent from a replacement tree. Explicitly restore the declared
         // defaults for legacy states, otherwise loading an old preset after a
@@ -703,7 +885,14 @@ void MarsAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
                                          mars::parameters::osc2Model,
                                          mars::parameters::polyphonyLimit,
                                          mars::parameters::monoMode,
-                                         mars::parameters::chorusCompander })
+                                         mars::parameters::chorusCompander,
+                                         mars::parameters::unisonDetune,
+                                         mars::parameters::arpEnabled,
+                                         mars::parameters::arpMode,
+                                         mars::parameters::arpRate,
+                                         mars::parameters::arpOctaves,
+                                         mars::parameters::arpGate,
+                                         mars::parameters::arpHold })
             addDefaultParameterStateIfMissing (restoredState, parameters, parameterId);
 
         parameters.replaceState (restoredState);
@@ -731,14 +920,16 @@ void MarsAudioProcessor::randomizeParameters (float amount)
         return;
 
     // These are deliberately sound-design controls. Output level, oscillator
-    // power, HQ processing, and the CPU-safety polyphony limit are excluded so
-    // a randomisation cannot mute the patch, jump its gain, or change its
-    // operational budget. Each destination is first drawn across the full
+    // power, HQ processing, the CPU-safety polyphony limit, and the two
+    // performance switches (Mono, and the arpeggiator's own run/hold state) are
+    // excluded so a randomisation cannot mute the patch, jump its gain, change
+    // its operational budget, or silently take over note handling. Each
+    // destination is first drawn across the full
     // normalised range, then approached by `amount`; therefore every move is
     // bounded by amount * legalRange and 100% is a true full-range draw. Using
     // normalised space also respects the perceptual skew of frequency and time
     // controls.
-    static constexpr std::array<const char*, 42> soundParameterIds {{
+    static constexpr std::array<const char*, 47> soundParameterIds {{
         mars::parameters::osc1Wave,
         mars::parameters::osc1Model,
         mars::parameters::osc1Octave,
@@ -781,6 +972,11 @@ void MarsAudioProcessor::randomizeParameters (float amount)
         mars::parameters::chorusMix,
         mars::parameters::chorusRate,
         mars::parameters::chorusCompander,
+        mars::parameters::unisonDetune,
+        mars::parameters::arpMode,
+        mars::parameters::arpRate,
+        mars::parameters::arpOctaves,
+        mars::parameters::arpGate,
     }};
 
     static std::atomic<std::uint64_t> randomisationSequence { 0 };

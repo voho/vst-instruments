@@ -149,33 +149,6 @@ float ElectryEngine::HalfbandDecimator::output() const noexcept
     return sum;
 }
 
-float ElectryEngine::FractionalMovingAverage::process(
-    float input, float lengthSamples) noexcept
-{
-    static_assert((apertureHistorySize & (apertureHistorySize - 1)) == 0,
-                  "aperture history must be a power of two");
-    constexpr int mask = apertureHistorySize - 1;
-    lengthSamples = clampf(lengthSamples, 1.0f,
-                           static_cast<float>(apertureHistorySize - 2));
-
-    cumulative += static_cast<double>(input);
-    cumulativeHistory[static_cast<std::size_t>(writeIndex)] = cumulative;
-
-    const int whole = static_cast<int>(std::floor(lengthSamples));
-    const double fraction = static_cast<double>(lengthSamples)
-                          - static_cast<double>(whole);
-    const int recentIndex = (writeIndex - whole) & mask;
-    const int olderIndex = (recentIndex - 1) & mask;
-    const double delayed = cumulativeHistory[static_cast<std::size_t>(recentIndex)]
-        + fraction
-            * (cumulativeHistory[static_cast<std::size_t>(olderIndex)]
-               - cumulativeHistory[static_cast<std::size_t>(recentIndex)]);
-
-    writeIndex = (writeIndex + 1) & mask;
-    return static_cast<float>((cumulative - delayed)
-                              / static_cast<double>(lengthSamples));
-}
-
 // ---------------------------------------------------------------------------
 // Polarisation loop
 // ---------------------------------------------------------------------------
@@ -193,26 +166,6 @@ void ElectryEngine::PolarisationLoop::clear() noexcept
     dispersion6.reset();
     dispersion7.reset();
     dispersion8.reset();
-}
-
-float ElectryEngine::PolarisationLoop::readFractional(float delaySamples) const noexcept
-{
-    delaySamples = clampf(delaySamples, 4.0f, static_cast<float>(delayLineSize - 8));
-    const float position = static_cast<float>(writeIndex) - delaySamples;
-    const int index = static_cast<int>(std::floor(position));
-    const float fraction = position - static_cast<float>(index);
-    const int mask = delayLineSize - 1;
-    const float y0 = line[static_cast<std::size_t>((index - 1) & mask)];
-    const float y1 = line[static_cast<std::size_t>(index & mask)];
-    const float y2 = line[static_cast<std::size_t>((index + 1) & mask)];
-    const float y3 = line[static_cast<std::size_t>((index + 2) & mask)];
-    // Third-order Lagrange interpolation with y1..y2 as the unit interval.
-    const float t = fraction;
-    const float term0 = y0 * (-t * (t - 1.0f) * (t - 2.0f)) / 6.0f;
-    const float term1 = y1 * ((t + 1.0f) * (t - 1.0f) * (t - 2.0f)) / 2.0f;
-    const float term2 = y2 * (-(t + 1.0f) * t * (t - 2.0f)) / 2.0f;
-    const float term3 = y3 * ((t + 1.0f) * t * (t - 1.0f)) / 6.0f;
-    return term0 + term1 + term2 + term3;
 }
 
 void ElectryEngine::PolarisationLoop::writeAdd(float offsetSamples, float value) noexcept
@@ -234,8 +187,11 @@ const std::array<ElectryEngine::StringSpec, ElectryEngine::stringCount>&
 ElectryEngine::stringSpecs() noexcept
 {
     // Drop-E eight-string tuning with a light .009-.080 reference set. The
-    // gauge parameter scales it toward a heavy .011-.098 set.
-    static const std::array<StringSpec, stringCount> specs {{
+    // gauge parameter scales it toward a heavy .011-.098 set. `constexpr`
+    // rather than `const`: a runtime-initialised function-local static costs a
+    // guard-variable check on every call, and this table is read from the
+    // per-sample render path.
+    static constexpr std::array<StringSpec, stringCount> specs {{
         // Effective bending cores are smaller than the geometric core: the
         // wrap slips under flexure instead of behaving like a solid rod.
         { 28, true, 2.0320f, 0.22f, 8.2f },  // E1, wound (.080)
@@ -279,6 +235,21 @@ EngineParameters ElectryEngine::sanitise(const EngineParameters& parameters) noe
     result.muteDamping = clampUnit(parameters.muteDamping, defaults.muteDamping);
     result.velocityAmount = clampUnit(parameters.velocityAmount, defaults.velocityAmount);
     result.artifactAmount = clampUnit(parameters.artifactAmount, defaults.artifactAmount);
+    result.sympatheticAmount = clampUnit(parameters.sympatheticAmount,
+                                         defaults.sympatheticAmount);
+    result.palmMute = clampUnit(parameters.palmMute, defaults.palmMute);
+
+    if (! std::isfinite(parameters.strumSpreadSeconds))
+        result.strumSpreadSeconds = defaults.strumSpreadSeconds;
+    else
+        result.strumSpreadSeconds = clampf(parameters.strumSpreadSeconds,
+                                           0.0f, 0.040f);
+
+    if (! std::isfinite(parameters.vibratoDepthCents))
+        result.vibratoDepthCents = defaults.vibratoDepthCents;
+    else
+        result.vibratoDepthCents = clampf(parameters.vibratoDepthCents,
+                                          0.0f, 100.0f);
 
     if (! std::isfinite(parameters.bendTimeSeconds))
         result.bendTimeSeconds = defaults.bendTimeSeconds;
@@ -316,19 +287,24 @@ std::uint32_t ElectryEngine::hash32(std::uint32_t value) noexcept
     return value;
 }
 
-float ElectryEngine::bipolarNoise(std::uint32_t& state) noexcept
+float ElectryEngine::stringFluxScale(int stringIndex) noexcept
 {
-    state = state * 1664525u + 1013904223u;
-    const auto bits = (state >> 9) | 0x3f800000u;
-    float unit;
-    std::memcpy(&unit, &bits, sizeof(unit));
-    return 2.0f * (unit - 1.5f);
-}
-
-float ElectryEngine::smoothStep(float value) noexcept
-{
-    value = clampf(value, 0.0f, 1.0f);
-    return value * value * (3.0f - 2.0f * value);
+    // Pole-piece balance and ferromagnetic string mass keep a real guitar's
+    // thick low strings from losing another full factor of frequency at the
+    // pickup. The shallow diameter-derived term deliberately stops far short
+    // of geometric area scaling (which would overstate an .080 string by tens
+    // of times), while preserving one stable balance for every fret on a given
+    // string. It depends only on the string, so it is solved once instead of
+    // inside the sample loop, where it used to cost a std::pow per string per
+    // rendered sample.
+    constexpr float highEStringDiameterMm = 0.2286f;
+    const auto index = static_cast<std::size_t>(
+        std::clamp(stringIndex, 0, stringCount - 1));
+    const float magneticMassBalance = std::pow(
+        stringSpecs()[index].plainDiameterMm / highEStringDiameterMm, 0.30f);
+    return lerp(1.55f, 0.72f,
+                static_cast<float>(index) / static_cast<float>(stringCount - 1))
+         * magneticMassBalance;
 }
 
 float ElectryEngine::onePolePhaseDelay(float coefficient, float omega) noexcept
@@ -417,6 +393,34 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
         -twoPi * std::min(4000.0f, 0.30f * static_cast<float>(sampleRate_))
         * inverseSampleRate_);
 
+    // Every rate-derived smoothing constant below used to be recomputed with
+    // std::pow inside renderVoice(), twice per string per sample. They depend
+    // only on the internal clock, so they belong here.
+    const float internalRate = static_cast<float>(sampleRate_);
+    energyAttackCoefficient_ = rateAdjustedCoefficient(0.004f, internalRate);
+    energyReleaseCoefficient_ = rateAdjustedCoefficient(0.00006f, internalRate);
+    retireAttackCoefficient_ = rateAdjustedCoefficient(0.01f, internalRate);
+    retireReleaseCoefficient_ = rateAdjustedCoefficient(0.0009f, internalRate);
+    artifactBandCoefficient_ = rateAdjustedCoefficient(0.12f, internalRate);
+    pitchBendCoefficient_ = rateAdjustedCoefficient(0.35f, internalRate);
+    vibratoCoefficient_ = rateAdjustedCoefficient(0.12f, internalRate);
+    // A 60 ms window on the sympathetic ring's own energy follower: long
+    // enough to survive a bar of ringing, short enough to retire a coupled
+    // string promptly once it is inaudible.
+    sympatheticEnergyCoefficient_ = 1.0f - std::exp(-1.0f / (0.060f * internalRate));
+
+    const float controlTickRate = internalRate / static_cast<float>(controlPeriod);
+    displayLevelAttack_ = 1.0f - std::exp(-1.0f / (0.010f * controlTickRate));
+    displayLevelRelease_ = 1.0f - std::exp(-1.0f / (0.220f * controlTickRate));
+
+    emfScale_ = internalRate / (twoPi * 220.0f);
+    emfLowpassCoefficient_ = std::exp(
+        -twoPi * std::min(16000.0f, 0.40f * internalRate) * inverseSampleRate_);
+
+    // A strum's notes reach the engine within one host block; 35 ms is wide
+    // enough to group a chord and short enough not to merge separate beats.
+    chordWindowSamples_ = std::max(1, static_cast<int>(0.035 * sampleRate_));
+
     prepared_ = true;
     reset();
 }
@@ -428,6 +432,8 @@ void ElectryEngine::reset()
         silenceVoice(voice);
         voice.vertical.clear();
         voice.horizontal.clear();
+        voice.fluxScale = stringFluxScale(voice.stringIndex);
+        updateArticulationWeights(voice);
     }
 
     smoothedParameters_ = sanitise(targetParameters_);
@@ -435,11 +441,27 @@ void ElectryEngine::reset()
     alternateNextStrokeIsUp_ = false;
     noteSequence_ = 0;
     activeVoiceCount_ = 0;
+    sympatheticStringCount_ = 0;
     controlCountdown_ = 0;
     pitchBendSemitones_ = pitchBendTarget_;
     vibratoAmount_ = vibratoTarget_;
     vibratoPhase_ = 0.0f;
+    vibratoDepthSemitones_ = 0.01f * smoothedParameters_.vibratoDepthCents;
     sustainPedalDown_ = false;
+    engineClock_ = 0;
+    lastNoteOnClock_ = -(1ll << 40);
+    chordAnchorString_ = 0;
+    palmMuteBlend_ = clampf(smoothedParameters_.palmMute + palmMutePressure_,
+                            0.0f, 1.0f);
+    appliedPalmMute_ = palmMuteBlend_;
+    sympatheticBus_ = 0.0f;
+    sympatheticBusDelayed_ = 0.0f;
+    sympatheticGain_ = 0.0045f * smoothedParameters_.sympatheticAmount;
+    sympatheticInjection_ = sympatheticGain_ * (1.0f - palmMuteBlend_);
+    sympatheticHandGain_ = 1.0f;
+    sympatheticHandGainTarget_ = 1.0f;
+    sympatheticHandMute_ = -1.0f;
+    sympatheticActive_ = smoothedParameters_.sympatheticAmount > 0.0f;
 
     for (auto& filter : neckCoils_)
         filter.reset();
@@ -469,13 +491,23 @@ void ElectryEngine::reset()
     smoothedOutputGain_ = smoothedParameters_.outputGain;
     smoothedBodyLevel_ = 24.5f * smoothedParameters_.bodyResonance;
     stereoWidth_ = smoothedParameters_.outputMode == OutputMode::Stereo ? 1.0f : 0.0f;
+    channelsLinked_ = stereoWidth_ == 0.0f;
     artifactsActive_ = smoothedParameters_.artifactAmount > 0.0f;
+    artifactContactShape_ = smoothStep(smoothedParameters_.artifactAmount);
+    artifactBuzzAmount_ = smoothedParameters_.artifactAmount
+                        * smoothedParameters_.artifactAmount;
 
     configureBody();
     configurePickupFilters();
     appliedVoicingParameters_ = smoothedParameters_;
     neckMix_ = neckMixTarget_;
     bridgeMix_ = bridgeMixTarget_;
+    neckPathActive_ = neckMix_ > 1.0e-4f;
+    bridgePathActive_ = bridgeMix_ > 1.0e-4f;
+    // Everything above has just been cleared, so the engine starts frozen and
+    // only wakes when a string is actually asked to vibrate.
+    silentInternalSamples_ = 0;
+    idleFrozen_ = true;
 }
 
 void ElectryEngine::setParameters(const EngineParameters& parameters)
@@ -493,6 +525,12 @@ void ElectryEngine::setPitchBend(float normalisedBipolar) noexcept
 void ElectryEngine::setVibratoAmount(float normalised) noexcept
 {
     vibratoTarget_ = std::isfinite(normalised)
+        ? clampf(normalised, 0.0f, 1.0f) : 0.0f;
+}
+
+void ElectryEngine::setPalmMutePressure(float normalised) noexcept
+{
+    palmMutePressure_ = std::isfinite(normalised)
         ? clampf(normalised, 0.0f, 1.0f) : 0.0f;
 }
 
@@ -546,13 +584,38 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
 
     auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
 
+    // Strum travel. Note-ons that arrive inside one chord window belong to the
+    // same pick stroke; the first of them fixes the edge the pick starts from,
+    // and every later string is offset by the time the pick needs to reach it.
+    // At a zero spread this is exactly the previous simultaneous behaviour.
+    const bool newChord = engineClock_ - lastNoteOnClock_
+                        > static_cast<std::int64_t>(chordWindowSamples_);
+    if (newChord)
+        chordAnchorString_ = stringIndex;
+    lastNoteOnClock_ = engineClock_;
+
+    int startDelaySamples = 0;
+    // Read the sanitised target rather than the smoothed copy. This control
+    // schedules the stroke instead of shaping it, so the control tick copies it
+    // verbatim; a chord whose note-ons land at offset 0 of the same block as
+    // the automation change would otherwise be scheduled with the previous
+    // block's spread, usually as a block chord.
+    const float spreadSeconds = targetParameters_.strumSpreadSeconds;
+    if (spreadSeconds > 0.0f && ! newChord)
+    {
+        const int stringsCrossed = std::abs(stringIndex - chordAnchorString_);
+        startDelaySamples = static_cast<int>(
+            spreadSeconds * static_cast<float>(sampleRate_))
+            * stringsCrossed;
+    }
+
     const bool legato = voiceArticulation == Articulation::HammerOn
                      && voice.active
                      && voice.midiNote != midiNote;
     if (legato)
         legatoRetarget(voice, midiNote, velocity);
     else
-        startVoice(voice, midiNote, velocity, voiceArticulation);
+        startVoice(voice, midiNote, velocity, voiceArticulation, startDelaySamples);
 
     updateActiveVoiceCount();
 }
@@ -769,6 +832,20 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     highRatio *= lerp(1.15f, 0.78f, parameters.stringGauge);
     highRatio *= lerp(0.86f, 1.16f, parameters.bodyWood);
     highRatio *= lerp(0.90f, 1.15f, parameters.construction);
+
+    // Continuous bridge-hand damping. Unlike the Muted and Chug keyswitches
+    // this is a smooth pressure that applies to every play style, so a phrase
+    // can open from a dead chug into a ringing chord without a style change.
+    // It interpolates geometrically from the string's own decay toward a hard
+    // 40 ms stop, so a pressure of exactly zero is a mathematical no-op, and
+    // it darkens the string as the heel of the hand covers more of it. The
+    // loop filters are re-solved and the loop delay re-compensated, so the
+    // damped string stays exactly in tune.
+    if (palmMuteBlend_ > 0.0f)
+    {
+        t60 = std::exp(lerp(std::log(t60), std::log(0.040f), palmMuteBlend_));
+        highRatio *= lerp(1.0f, 0.50f, palmMuteBlend_);
+    }
     highRatio = clampf(highRatio, 0.02f, 0.9f);
 
     const float sampleRate = static_cast<float>(sampleRate_);
@@ -818,6 +895,10 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     // producing the instrument's two-stage decay.
     configureLoop(voice.vertical, 1.0f);
     configureLoop(voice.horizontal, 1.7f);
+
+    // The loop filters moved, so the analytic phase compensation is stale even
+    // if the target pitch did not change.
+    voice.compensationDirty = true;
 }
 
 void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept
@@ -837,25 +918,30 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     const float vibratoFade = smoothStep(clampf(
         static_cast<float>(voice.ageSamples) / (0.09f * static_cast<float>(sampleRate_)),
         0.0f, 1.0f));
-    const float vibratoSemitones = 0.35f * vibratoAmount_ * vibratoFade
-                                 * std::sin(vibratoPhase_);
+    const float vibratoSemitones = vibratoDepthSemitones_ * vibratoAmount_
+                                 * vibratoFade * std::sin(vibratoPhase_);
     const float semitones = bendOffset + legatoOffset + pitchBendSemitones_
                           + vibratoSemitones;
     const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
                             20.0f, 0.24f * static_cast<float>(sampleRate_));
 
-    // The dispersion solve and filter phase compensation are only refreshed
-    // when the sounding pitch actually moves; the tension-modulation factor
-    // below stays cheap enough for every control tick.
-    if (forceDelayJump
+    const bool pitchMoved = forceDelayJump
         || std::abs(semitones - voice.lastConfiguredSemitones) > 8.0e-4f
         || std::abs(f0 - voice.lastConfiguredFrequency)
-               > 5.0e-5f * std::max(f0, 20.0f))
+               > 5.0e-5f * std::max(f0, 20.0f);
+    const float omega = twoPi * f0 * inverseSampleRate_;
+    const float period = static_cast<float>(sampleRate_) / f0;
+
+    // The dispersion solve is only refreshed when the sounding pitch actually
+    // moves; the tension-modulation factor below stays cheap enough for every
+    // control tick. Damping-only changes (palm-mute pressure, string age, body
+    // loss) reuse this fit and only redo the analytic phase compensation,
+    // which avoids several hundred atan2 evaluations per automated control
+    // tick per string.
+    if (pitchMoved)
     {
         voice.lastConfiguredSemitones = semitones;
         voice.lastConfiguredFrequency = f0;
-        const float omega = twoPi * f0 * inverseSampleRate_;
-        const float period = static_cast<float>(sampleRate_) / f0;
 
         // Stiffness inharmonicity from the string's physical make-up. Wound
         // strings bend with their core, not their full winding diameter.
@@ -967,7 +1053,11 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         voice.vertical.dispersionHighCoefficient = highCoefficient;
         voice.horizontal.dispersionLowCoefficient = lowCoefficient;
         voice.horizontal.dispersionHighCoefficient = highCoefficient;
+        voice.compensationDirty = true;
+    }
 
+    if (pitchMoved || voice.compensationDirty)
+    {
         // Compensate every loop filter's phase delay at the fundamental so
         // the sounding pitch matches the target frequency.
         const auto loopPhaseDelay = [&] (const PolarisationLoop& loop)
@@ -981,6 +1071,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
 
         voice.compensatedPeriodVertical = period - loopPhaseDelay(voice.vertical);
         voice.compensatedPeriodHorizontal = period - loopPhaseDelay(voice.horizontal);
+        voice.compensationDirty = false;
     }
 
     const float tensionFactor =
@@ -1021,27 +1112,44 @@ void ElectryEngine::refreshVoicingIfNeeded() noexcept
         return std::abs(current - applied) > 2.0e-3f;
     };
 
-    const bool dirty = moved(s.stringAge, a.stringAge)
-                    || moved(s.stringGauge, a.stringGauge)
-                    || moved(s.bodyWood, a.bodyWood)
-                    || moved(s.bodySize, a.bodySize)
-                    || moved(s.bodyShape, a.bodyShape)
-                    || moved(s.bodyResonance, a.bodyResonance)
-                    || moved(s.construction, a.construction)
-                    || moved(s.muteDamping, a.muteDamping)
-                    || moved(s.scaleLength, a.scaleLength)
-                    || moved(s.pickupType, a.pickupType);
-    if (! dirty)
+    // Splitting the refresh by what each control actually changes is a large
+    // saving: only the geometry axes require the dispersion grid search to run
+    // again, while damping-only moves reuse the existing fit.
+    const bool dampingDirty = moved(s.stringAge, a.stringAge)
+                           || moved(s.stringGauge, a.stringGauge)
+                           || moved(s.bodyWood, a.bodyWood)
+                           || moved(s.bodySize, a.bodySize)
+                           || moved(s.bodyShape, a.bodyShape)
+                           || moved(s.bodyResonance, a.bodyResonance)
+                           || moved(s.construction, a.construction)
+                           || moved(s.muteDamping, a.muteDamping)
+                           || moved(palmMuteBlend_, appliedPalmMute_);
+    const bool geometryDirty = moved(s.stringGauge, a.stringGauge)
+                            || moved(s.scaleLength, a.scaleLength);
+    const bool pickupDirty = moved(s.pickupType, a.pickupType)
+                          || moved(s.scaleLength, a.scaleLength);
+    if (! dampingDirty && ! geometryDirty && ! pickupDirty)
         return;
 
     appliedVoicingParameters_ = smoothedParameters_;
+    appliedPalmMute_ = palmMuteBlend_;
     for (auto& voice : voices_)
     {
         if (! voice.active)
+        {
+            // A sympathetically ringing string follows the build in place:
+            // its delay target and loop filter are re-solved without clearing
+            // the line, so the ring never clicks.
+            if (voice.sympatheticReady)
+                configureSympatheticString(voice);
             continue;
-        configureVoiceDamping(voice);
-        configureVoicePickups(voice);
-        voice.lastConfiguredSemitones = -999.0f;
+        }
+        if (dampingDirty)
+            configureVoiceDamping(voice);
+        if (pickupDirty)
+            configureVoicePickups(voice);
+        if (geometryDirty)
+            voice.lastConfiguredSemitones = -999.0f;
         configureVoicePitch(voice, false);
     }
 }
@@ -1083,12 +1191,63 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
     voice.apertureNeckLength = apertureLength;
     voice.apertureBridgeLength = apertureLength;
 
-    // Differentiation converts modeled magnetic flux to induced voltage.
-    // Its ultrasonic rise is kept bounded before the loaded-coil model; the
-    // whole path runs inside the engine's oversampled clock.
-    const float emfCutoff = std::min(16000.0f,
-                                     0.40f * static_cast<float>(sampleRate_));
-    voice.emfLowpassCoefficient = std::exp(-twoPi * emfCutoff * inverseSampleRate_);
+}
+
+void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
+{
+    // An unfingered string vibrates over its full open length. One
+    // polarisation is enough for a bridge-coupled ring, so this solves a
+    // single loop: period, damping, gain, and the bridge pickup tap.
+    const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
+    const auto& parameters = smoothedParameters_;
+    const float sampleRate = static_cast<float>(sampleRate_);
+    const float f0 = midiToHz(static_cast<float>(spec.openMidiNote));
+    const float period = sampleRate / f0;
+    const float omega = twoPi * f0 * inverseSampleRate_;
+
+    // An open string that nobody is touching rings longer than a fretted one,
+    // but it still follows the string set, its age, and the bridge hand.
+    float t60 = spec.t60Seconds
+              * lerp(1.08f, 0.38f, parameters.stringAge)
+              * lerp(0.88f, 1.18f, parameters.stringGauge);
+    if (palmMuteBlend_ > 0.0f)
+        t60 = std::exp(lerp(std::log(t60), std::log(0.040f), palmMuteBlend_));
+    t60 = clampf(t60, 0.03f, 9.5f);
+
+    // A gentle fixed high-frequency loss: the coupled ring is a low-level
+    // detail, so it needs no second bisection solve.
+    auto& loop = voice.vertical;
+    loop.loopDampingCoefficient = clampf(
+        lerp(0.34f, 0.72f, parameters.stringAge), 0.0f, 0.9f);
+    loop.dispersionLowCoefficient = 0.0f;
+    loop.dispersionHighCoefficient = 0.0f;
+    const float magnitudeAtF0 = (1.0f - loop.loopDampingCoefficient)
+        / std::sqrt(std::max(
+            1.0f + loop.loopDampingCoefficient * loop.loopDampingCoefficient
+                - 2.0f * loop.loopDampingCoefficient * std::cos(omega),
+            1.0e-12f));
+    const float gainAtF0 = std::pow(10.0f, -3.0f * period / (t60 * sampleRate));
+    loop.loopGain = clampf(gainAtF0 / std::max(magnitudeAtF0, 1.0e-6f),
+                           0.0f, 0.9999f);
+
+    voice.sympatheticDelay = clampf(
+        period - onePolePhaseDelay(loop.loopDampingCoefficient, omega),
+        4.0f, static_cast<float>(delayLineSize - 8));
+    loop.targetDelay = voice.sympatheticDelay;
+    loop.delaySmoothing = 1.0f - std::exp(-static_cast<float>(controlPeriod)
+                                          / (0.006f * sampleRate));
+    // A string that is already ringing glides to its new tuning; a freshly
+    // woken one starts there, so a build change never clicks the ring.
+    if (! voice.sympatheticReady)
+        loop.currentDelay = voice.sympatheticDelay;
+
+    const float bridgeDistance = lerp(lesPaulBridgePickupMetres,
+                                      telecasterBridgePickupMetres,
+                                      parameters.pickupType);
+    const float bridgeFraction = clampf(bridgeDistance / scaleLengthMetres(),
+                                        0.01f, 0.95f);
+    voice.sympatheticPickupDelay = clampf(bridgeFraction * period, 2.0f,
+                                          static_cast<float>(delayLineSize - 8));
 }
 
 void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) noexcept
@@ -1346,7 +1505,16 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     if (! legato)
         voice.excitationRemaining = contactSamples;
 
-    voice.excitationCombDelay = clampf(pluckFraction, 0.02f, 0.49f)
+    // The picking hand stays at a fixed distance from the bridge; it does not
+    // follow the fretting hand up the neck. `pluckFraction` is therefore a
+    // fraction of the *open* string, and the comb position as a fraction of
+    // the sounding length grows by 2^(fret/12) as the note is fretted higher.
+    // At the nut this reproduces the previous behaviour exactly, while a note
+    // at the twelfth fret is now picked at twice the relative distance, which
+    // is what moves a high fretted note toward the hollow, mid-string comb of
+    // a real guitar.
+    const float fretStretch = std::exp2(static_cast<float>(voice.fret) / 12.0f);
+    voice.excitationCombDelay = clampf(pluckFraction * fretStretch, 0.02f, 0.49f)
                               * voice.vertical.targetDelay;
     voice.excitationPulseCoefficient = std::exp(
         -twoPi * clampf(pulseCutoff, 300.0f, 0.45f * sampleRate) * inverseSampleRate_);
@@ -1381,16 +1549,87 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     voice.noiseLength = std::max(8, static_cast<int>(noiseMs * 0.001f * sampleRate));
     voice.noiseRemaining = voice.noiseLength;
     voice.releaseNoiseDone = false;
+    updateArticulationWeights(voice);
+}
+
+void ElectryEngine::updateArticulationWeights(Voice& voice) noexcept
+{
+    // Articulations attack the string at different angles, splitting energy
+    // differently between the two polarisations, and a perceptual makeup keeps
+    // keyswitch changes usable inside one phrase while the excitation spectra
+    // and envelopes remain strongly different. Both used to be re-selected by
+    // a switch on every rendered sample; they only change at an attack.
+    float verticalWeight = 0.92f;
+    float horizontalWeight = 0.42f;
+    float makeup = 1.0f;
+    switch (voice.articulation)
+    {
+        case Articulation::Upstroke:
+            verticalWeight = 0.90f; horizontalWeight = 0.46f; makeup = 1.06f;
+            break;
+        case Articulation::HammerOn:
+            verticalWeight = 0.95f; horizontalWeight = 0.28f; makeup = 1.48f;
+            break;
+        case Articulation::Tap:
+            verticalWeight = 0.96f; horizontalWeight = 0.24f; makeup = 1.30f;
+            break;
+        case Articulation::Muted:
+            makeup = 1.18f;
+            break;
+        case Articulation::Chug:
+            verticalWeight = 0.88f; horizontalWeight = 0.50f;
+            break;
+        case Articulation::DeadNote:
+            verticalWeight = 0.76f; horizontalWeight = 0.62f; makeup = 1.16f;
+            break;
+        case Articulation::NaturalHarmonic:
+            verticalWeight = 0.86f; horizontalWeight = 0.52f; makeup = 1.34f;
+            break;
+        case Articulation::PinchHarmonic:
+            verticalWeight = 0.98f; horizontalWeight = 0.30f; makeup = 1.18f;
+            break;
+        case Articulation::Tremolo:
+            if (voice.tremoloStrokeIsUp)
+            {
+                verticalWeight = 0.90f;
+                horizontalWeight = 0.46f;
+            }
+            makeup = 1.12f;
+            break;
+        case Articulation::Slap:
+            verticalWeight = 1.00f; horizontalWeight = 0.22f; makeup = 0.84f;
+            break;
+        default:
+            break;
+    }
+    voice.verticalWeight = verticalWeight;
+    voice.horizontalWeight = horizontalWeight;
+    voice.articulationMakeup = makeup;
 }
 
 void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
-                               Articulation articulation) noexcept
+                               Articulation articulation,
+                               int startDelaySamples) noexcept
 {
     const auto& parameters = smoothedParameters_;
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const int fret = midiNote - spec.openMidiNote;
 
     const bool wasRinging = voice.active;
+
+    // The fretting hand stops a sympathetically ringing open string before the
+    // pick reaches it, so a coupled ring never survives into the played note.
+    // A coupled string that has already fallen below audibility needs no work.
+    if (! wasRinging && voice.sympatheticReady
+        && voice.sympatheticEnergy > 1.0e-11f)
+    {
+        for (auto& sample : voice.vertical.line)
+            sample *= 0.22f;
+        voice.sympatheticEnergy = 0.0f;
+        voice.sympatheticPreviousFlux = 0.0f;
+        voice.sympatheticEmf.reset();
+    }
+    voice.sympatheticReady = false;
 
     voice.active = true;
     voice.keyDown = true;
@@ -1543,7 +1782,13 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         }
     }
 
-    startExcitation(voice, velocity, false);
+    // A strummed chord's later strings are already fretted and choked, but the
+    // pick has not reached them yet. The excitation fires from the control
+    // tick once the travel time has elapsed.
+    voice.startDelaySamples = std::max(0, startDelaySamples);
+    updateArticulationWeights(voice);
+    if (voice.startDelaySamples == 0)
+        startExcitation(voice, velocity, false);
 }
 
 void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity) noexcept
@@ -1571,6 +1816,7 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity) n
     voice.releaseGain = 1.0f;
     voice.releaseGainTarget = 1.0f;
     voice.artifactCollisionRemaining = 0;
+    voice.startDelaySamples = 0;
 
     // The finger lands over roughly ten milliseconds rather than instantly.
     voice.legatoBlend = 0.0f;
@@ -1589,6 +1835,12 @@ void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
         return;
     voice.releasing = true;
     voice.sustained = false;
+
+    // A strum spreads the pick across the strings by up to 280 ms. If the key
+    // is lifted before the pick arrives, it never lands: leaving the countdown
+    // running would excite the string after the release and produce a late
+    // attack on short notes.
+    voice.startDelaySamples = 0;
 
     // The fretting or picking hand damps the string over tens of
     // milliseconds; the loop then decays with roughly a 60 ms T60.
@@ -1644,6 +1896,8 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.tremoloStrokeIsUp = false;
     voice.energyEnvelope = 0.0f;
     voice.outputEnergy = 0.0f;
+    voice.displayLevel = 0.0f;
+    voice.startDelaySamples = 0;
     voice.releaseGain = 1.0f;
     voice.releaseGainTarget = 1.0f;
     voice.releaseGainCoefficient = 0.0f;
@@ -1671,6 +1925,13 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.saddleRattle.reset();
     voice.lastConfiguredSemitones = -999.0f;
     voice.lastConfiguredFrequency = -1.0f;
+    voice.compensationDirty = true;
+    // The string is free again: the next bridge-coupled excitation reconfigures
+    // and clears the loop for its open pitch.
+    voice.sympatheticReady = false;
+    voice.sympatheticEnergy = 0.0f;
+    voice.sympatheticPreviousFlux = 0.0f;
+    voice.sympatheticEmf.reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -1784,6 +2045,10 @@ void ElectryEngine::configurePickupFilters() noexcept
     // more even-harmonic distortion than a low-wind single coil.
     magneticDriveNeck_ = lerp(0.62f, 0.24f, parameters.pickupType);
     magneticDriveBridge_ = lerp(0.68f, 0.27f, parameters.pickupType);
+    // The flux polynomial normalises by its own drive; the reciprocal is a
+    // control-rate constant, not a per-sample division.
+    magneticDriveNeckInverse_ = 1.0f / std::max(magneticDriveNeck_, 1.0e-3f);
+    magneticDriveBridgeInverse_ = 1.0f / std::max(magneticDriveBridge_, 1.0e-3f);
 
     switch (parameters.pickupSelector)
     {
@@ -1825,6 +2090,17 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
         voice.legatoBlend = clampf(voice.legatoBlend + voice.legatoIncrement,
                                    0.0f, 1.0f);
 
+    // Strum travel: the pick reaches this string after the programmed offset.
+    if (voice.startDelaySamples > 0)
+    {
+        voice.startDelaySamples -= controlPeriod;
+        if (voice.startDelaySamples <= 0)
+        {
+            voice.startDelaySamples = 0;
+            startExcitation(voice, voice.velocity, false);
+        }
+    }
+
     if (voice.articulation == Articulation::Tremolo
         && voice.keyDown && ! voice.releasing)
     {
@@ -1843,10 +2119,19 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
 
     configureVoicePitch(voice, false);
 
+    // Ballistic display level for the fretboard readout. It is derived from
+    // the same energy follower the retirement logic uses, so it costs one
+    // square root and one one-pole per control tick.
+    const float target = std::sqrt(std::max(voice.outputEnergy, 0.0f));
+    const float ballistic = target > voice.displayLevel ? displayLevelAttack_
+                                                        : displayLevelRelease_;
+    voice.displayLevel += ballistic * (target - voice.displayLevel);
+
     // Retire the voice once the string has decayed below audibility and no
     // excitation remains pending.
     const bool excitationIdle = voice.excitationPhase == ExcitationPhase::Idle
-                             && voice.noiseRemaining <= 0;
+                             && voice.noiseRemaining <= 0
+                             && voice.startDelaySamples <= 0;
     if (excitationIdle && voice.outputEnergy < 1.0e-10f
         && voice.ageSamples > static_cast<std::uint64_t>(sampleRate_ * 0.05))
     {
@@ -1920,7 +2205,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
             const float lowString = 1.0f
                 - static_cast<float>(voice.stringIndex)
                   / static_cast<float>(stringCount - 1);
-            const float contact = smoothStep(smoothedParameters_.artifactAmount)
+            const float contact = artifactContactShape_
                                 * voice.velocityProfile.collision
                                 * (0.70f + 0.30f * lowString);
             const float sign = verticalSample >= 0.0f ? 1.0f : -1.0f;
@@ -1931,9 +2216,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
             const float raw = bipolarNoise(voice.artifactNoiseState);
             const float lowpassed = voice.artifactNoiseShaper.process(
                 raw, voice.artifactNoiseCoefficient);
-            const float bandCoefficient = rateAdjustedCoefficient(
-                0.12f, static_cast<float>(sampleRate_));
-            voice.artifactNoiseBandState += bandCoefficient
+            voice.artifactNoiseBandState += artifactBandCoefficient_
                 * (lowpassed - voice.artifactNoiseBandState);
             artifactContactSignal = (lowpassed - voice.artifactNoiseBandState)
                                   * artifactExcess * 0.22f * contact;
@@ -2023,28 +2306,10 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     }
 
     // Articulations attack the string at different angles, splitting energy
-    // differently between the two polarisations.
-    float verticalWeight = 0.92f;
-    float horizontalWeight = 0.42f;
-    switch (voice.articulation)
-    {
-        case Articulation::Upstroke: verticalWeight = 0.90f; horizontalWeight = 0.46f; break;
-        case Articulation::HammerOn: verticalWeight = 0.95f; horizontalWeight = 0.28f; break;
-        case Articulation::Tap: verticalWeight = 0.96f; horizontalWeight = 0.24f; break;
-        case Articulation::Chug: verticalWeight = 0.88f; horizontalWeight = 0.50f; break;
-        case Articulation::DeadNote: verticalWeight = 0.76f; horizontalWeight = 0.62f; break;
-        case Articulation::NaturalHarmonic: verticalWeight = 0.86f; horizontalWeight = 0.52f; break;
-        case Articulation::PinchHarmonic: verticalWeight = 0.98f; horizontalWeight = 0.30f; break;
-        case Articulation::Tremolo:
-            if (voice.tremoloStrokeIsUp)
-            {
-                verticalWeight = 0.90f;
-                horizontalWeight = 0.46f;
-            }
-            break;
-        case Articulation::Slap: verticalWeight = 1.00f; horizontalWeight = 0.22f; break;
-        default: break;
-    }
+    // differently between the two polarisations. The split is resolved once
+    // per attack in updateArticulationWeights().
+    const float verticalWeight = voice.verticalWeight;
+    const float horizontalWeight = voice.horizontalWeight;
 
     const float verticalTotal = verticalIn + injected * verticalWeight
                               + 0.35f * artifactContactSignal;
@@ -2072,24 +2337,67 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // delay. The magnetic pole senses the perpendicular polarisation more
     // strongly than the parallel one. Taps are taken before the write index
     // advances so the interpolator never touches a stale slot.
-    const auto pickupTap = [&] (float delay)
+    // Distance-dependent flux nonlinearity, second-order dominant. The 0.5
+    // keeps a full eight-string strum inside the output guard's linear region.
+    const auto magneticTransfer = [] (float displacement, float drive,
+                                      float inverseDrive)
     {
-        const float verticalTap = verticalTotal - vertical.readFractional(delay);
-        const float horizontalTap = horizontalTotal - horizontal.readFractional(delay);
-        return 0.85f * verticalTap + 0.35f * horizontalTap;
+        const float x = clampf(displacement * drive, -0.9f, 0.9f);
+        return (x + x * x * (0.55f + 0.30f * x)) * inverseDrive;
     };
 
-    float neckTap = pickupTap(voice.pickupDelayNeck);
-    float bridgeTap = pickupTap(voice.pickupDelayBridge);
-
+    // A pickup whose selector mix has faded to silence contributes nothing, so
+    // its two fractional reads, spatial aperture, flux polynomial, induced-EMF
+    // difference and guard are skipped outright. At the default Bridge setting
+    // this removes the entire neck chain from every string.
+    float artifactPickup = 0.0f;
     if (artifactsActive_)
+        artifactPickup = artifactContactSignal
+                       + 0.035f * artifactBuzzAmount_ * saddleRattle;
+
+    float neckSignal = 0.0f;
+    float bridgeSignal = 0.0f;
+
+    if (neckPathActive_)
     {
-        const float buzzAmount = smoothedParameters_.artifactAmount
-                               * smoothedParameters_.artifactAmount;
-        const float artifactPickup = artifactContactSignal
-                                   + 0.035f * buzzAmount * saddleRattle;
-        neckTap += 0.55f * artifactPickup;
-        bridgeTap += artifactPickup;
+        const float delay = voice.pickupDelayNeck;
+        float tap = 0.85f * (verticalTotal - vertical.readFractional(delay))
+                  + 0.35f * (horizontalTotal - horizontal.readFractional(delay))
+                  + 0.55f * artifactPickup;
+        tap = voice.apertureNeck.process(tap, voice.apertureNeckLength);
+        const float flux = voice.fluxScale
+            * magneticTransfer(tap, magneticDriveNeck_, magneticDriveNeckInverse_);
+        // Faraday's law: a magnetic pickup outputs induced voltage,
+        // proportional to d(Phi)/dt, rather than displacement itself.
+        // Normalising the finite difference at 220 Hz preserves practical
+        // level while retaining the physically important frequency weighting.
+        // The oversampled lowpass bounds the differentiator before the
+        // loaded-coil circuit.
+        neckSignal = voice.emfLowpassNeck.process(
+            (flux - voice.previousFluxNeck) * emfScale_, emfLowpassCoefficient_);
+        voice.previousFluxNeck = flux;
+        // Local contact motion reaches the pickup as a short velocity-like
+        // transient. It still passes through the shared loaded-coil circuit,
+        // but does not masquerade as a persistent pitched wave on the string.
+        neckSignal = (neckSignal + 0.09f * noiseSample)
+                   * voice.articulationMakeup;
+    }
+
+    if (bridgePathActive_)
+    {
+        const float delay = voice.pickupDelayBridge;
+        float tap = 0.85f * (verticalTotal - vertical.readFractional(delay))
+                  + 0.35f * (horizontalTotal - horizontal.readFractional(delay))
+                  + artifactPickup;
+        tap = voice.apertureBridge.process(tap, voice.apertureBridgeLength);
+        const float flux = voice.fluxScale
+            * magneticTransfer(tap, magneticDriveBridge_,
+                               magneticDriveBridgeInverse_);
+        bridgeSignal = voice.emfLowpassBridge.process(
+            (flux - voice.previousFluxBridge) * emfScale_, emfLowpassCoefficient_);
+        voice.previousFluxBridge = flux;
+        bridgeSignal = (bridgeSignal + 0.15f * noiseSample)
+                     * voice.articulationMakeup;
     }
 
     vertical.writeIndex = (vertical.writeIndex + 1) & (delayLineSize - 1);
@@ -2099,103 +2407,43 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                            * (vertical.targetDelay - vertical.currentDelay);
     horizontal.currentDelay += horizontal.delaySmoothing
                              * (horizontal.targetDelay - horizontal.currentDelay);
-    neckTap = voice.apertureNeck.process(neckTap, voice.apertureNeckLength);
-    bridgeTap = voice.apertureBridge.process(bridgeTap, voice.apertureBridgeLength);
-
-    // Distance-dependent flux nonlinearity, second-order dominant. The 0.5
-    // keeps a full eight-string strum inside the output guard's linear region.
-    const auto magneticTransfer = [] (float displacement, float drive)
-    {
-        const float x = clampf(displacement * drive, -0.9f, 0.9f);
-        return (x + x * x * (0.55f + 0.30f * x)) / std::max(drive, 1.0e-3f);
-    };
-    // Pole-piece balance and ferromagnetic string mass keep a real guitar's
-    // thick low strings from losing another full factor of frequency at the
-    // pickup.  The shallow diameter-derived term deliberately stops far
-    // short of geometric area scaling (which would overstate an .080 string
-    // by tens of times), while preserving one stable balance for every fret
-    // on a given string.
-    const auto& pickupString = stringSpecs()[static_cast<std::size_t>(
-        voice.stringIndex)];
-    constexpr float highEStringDiameterMm = 0.2286f;
-    const float magneticMassBalance = std::pow(
-        pickupString.plainDiameterMm / highEStringDiameterMm, 0.30f);
-    const float fluxScale = lerp(
-        1.55f, 0.72f,
-        static_cast<float>(voice.stringIndex)
-            / static_cast<float>(stringCount - 1)) * magneticMassBalance;
-    const float neckFlux = fluxScale
-        * magneticTransfer(neckTap, magneticDriveNeck_);
-    const float bridgeFlux = fluxScale
-        * magneticTransfer(bridgeTap, magneticDriveBridge_);
-
-    // Faraday's law: a magnetic pickup outputs induced voltage, proportional
-    // to d(Phi)/dt, rather than displacement itself. Normalising the finite
-    // difference at 220 Hz preserves practical level while retaining the
-    // physically important frequency weighting. The oversampled lowpass
-    // bounds the differentiator before the loaded-coil circuit.
-    const float emfScale = static_cast<float>(sampleRate_) / (twoPi * 220.0f);
-    float neckSignal = (neckFlux - voice.previousFluxNeck) * emfScale;
-    float bridgeSignal = (bridgeFlux - voice.previousFluxBridge) * emfScale;
-    voice.previousFluxNeck = neckFlux;
-    voice.previousFluxBridge = bridgeFlux;
-    neckSignal = voice.emfLowpassNeck.process(
-        neckSignal, voice.emfLowpassCoefficient);
-    bridgeSignal = voice.emfLowpassBridge.process(
-        bridgeSignal, voice.emfLowpassCoefficient);
-
-    // Local contact motion reaches the pickup as a short velocity-like
-    // transient. It still passes through the shared loaded-coil circuit, but
-    // does not masquerade as a persistent pitched wave on the string.
-    neckSignal += 0.09f * noiseSample;
-    bridgeSignal += 0.15f * noiseSample;
-
-    // Perceptual makeup keeps keyswitch changes usable in a phrase while the
-    // excitation spectra and envelopes remain strongly different. Softer
-    // fingered/harmonic styles no longer disappear beside a power chord.
-    float articulationMakeup = 1.0f;
-    switch (voice.articulation)
-    {
-        case Articulation::Upstroke:        articulationMakeup = 1.06f; break;
-        case Articulation::HammerOn:        articulationMakeup = 1.48f; break;
-        case Articulation::Tap:             articulationMakeup = 1.30f; break;
-        case Articulation::Muted:           articulationMakeup = 1.18f; break;
-        case Articulation::DeadNote:        articulationMakeup = 1.16f; break;
-        case Articulation::NaturalHarmonic: articulationMakeup = 1.34f; break;
-        case Articulation::PinchHarmonic:   articulationMakeup = 1.18f; break;
-        case Articulation::Tremolo:         articulationMakeup = 1.12f; break;
-        case Articulation::Slap:            articulationMakeup = 0.84f; break;
-        default: break;
-    }
-    neckSignal *= articulationMakeup;
-    bridgeSignal *= articulationMakeup;
 
     // A phase-coherent divided-pickup field. Mono leaves both weights at one;
     // Stereo spreads strings by their real lateral order, without delay,
     // chorus, modulation, or random phase. The shared body remains centred.
-    const float lateral = 2.0f * static_cast<float>(voice.stringIndex)
-                            / static_cast<float>(stringCount - 1)
-                        - 1.0f;
-    const float side = 0.24f * stereoWidth_ * lateral;
-    const std::array<float, 2> channelWeights { 1.0f - side, 1.0f + side };
-    for (int channel = 0; channel < 2; ++channel)
+    // In Mono the two channels are bit-identical, so only one is accumulated.
+    if (channelsLinked_)
     {
-        const float weight = channelWeights[static_cast<std::size_t>(channel)];
-        sums.neck[static_cast<std::size_t>(channel)]
-            += 0.5f * neckSignal * weight;
-        sums.bridge[static_cast<std::size_t>(channel)]
-            += 0.5f * bridgeSignal * weight;
+        sums.neck[0] += 0.5f * neckSignal;
+        sums.bridge[0] += 0.5f * bridgeSignal;
+    }
+    else
+    {
+        const float lateral = 2.0f * static_cast<float>(voice.stringIndex)
+                                / static_cast<float>(stringCount - 1)
+                            - 1.0f;
+        const float side = 0.24f * stereoWidth_ * lateral;
+        const std::array<float, 2> channelWeights { 1.0f - side, 1.0f + side };
+        for (int channel = 0; channel < 2; ++channel)
+        {
+            const float weight = channelWeights[static_cast<std::size_t>(channel)];
+            sums.neck[static_cast<std::size_t>(channel)]
+                += 0.5f * neckSignal * weight;
+            sums.bridge[static_cast<std::size_t>(channel)]
+                += 0.5f * bridgeSignal * weight;
+        }
     }
 
-    // The bridge passes string vibration and playing noise into the body.
-    sums.body += 0.5f * (verticalTotal + horizontalTotal) + 1.6f * noiseSample;
+    // The bridge passes string vibration and playing noise into the body, and
+    // the same bridge force drives the sympathetic coupling bus. Only voices
+    // that are being played write to the bus; the coupled strings only read
+    // it, so the coupling graph is acyclic and unconditionally stable.
+    const float bridgeForce = 0.5f * (verticalTotal + horizontalTotal);
+    sympatheticBus_ += bridgeForce;
+    sums.body += bridgeForce + 1.6f * noiseSample;
     if (artifactsActive_)
-    {
-        const float buzzAmount = smoothedParameters_.artifactAmount
-                               * smoothedParameters_.artifactAmount;
         sums.body += 0.9f * artifactContactSignal
-                   + 0.09f * buzzAmount * saddleRattle;
-    }
+                   + 0.09f * artifactBuzzAmount_ * saddleRattle;
     if (voice.articulation == Articulation::Slap
         && voice.excitationPhase != ExcitationPhase::Idle)
         sums.body += 2.4f * excitation;
@@ -2205,9 +2453,8 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // over hundreds of milliseconds, as measured tension modulation does.
     const float instantaneous = verticalSample * verticalSample
                               + horizontalSample * horizontalSample;
-    const float coefficient = rateAdjustedCoefficient(
-        instantaneous > voice.energyEnvelope ? 0.004f : 0.00006f,
-        static_cast<float>(sampleRate_));
+    const float coefficient = instantaneous > voice.energyEnvelope
+        ? energyAttackCoefficient_ : energyReleaseCoefficient_;
     voice.energyEnvelope += coefficient * (instantaneous - voice.energyEnvelope);
 
     // A separate, faster follower drives voice retirement only. Tying that to
@@ -2215,9 +2462,8 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // several seconds, needlessly holding its slot; this follower falls to
     // the retirement floor within about half a second of the audio going
     // silent while still tracking a genuine sustain.
-    const float retireCoefficient = rateAdjustedCoefficient(
-        instantaneous > voice.outputEnergy ? 0.01f : 0.0009f,
-        static_cast<float>(sampleRate_));
+    const float retireCoefficient = instantaneous > voice.outputEnergy
+        ? retireAttackCoefficient_ : retireReleaseCoefficient_;
     voice.outputEnergy += retireCoefficient * (instantaneous - voice.outputEnergy);
 
     if (voice.releasing)
@@ -2225,6 +2471,99 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                            * (voice.releaseGainTarget - voice.releaseGain);
 
     voice.ageSamples++;
+}
+
+void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
+                                            float drive) noexcept
+{
+    // A string nobody is fingering still vibrates: the bridge carries the
+    // played strings' force into it, and it answers at its own open pitch.
+    // This is a strictly one-directional slice of bridge coupling - the ring
+    // never re-enters the bus - so no amount of coupling gain can create a
+    // growing loop.
+    auto& loop = voice.vertical;
+    if (! voice.sympatheticReady)
+    {
+        // The voice was retired below audibility, so its residue is inaudible
+        // but at the wrong pitch. Start the open string from rest.
+        loop.clear();
+        voice.sympatheticEnergy = 0.0f;
+        voice.sympatheticPreviousFlux = 0.0f;
+        voice.sympatheticEmf.reset();
+        configureSympatheticString(voice);
+        voice.sympatheticReady = true;
+    }
+
+    float sample = loop.readFractional(loop.currentDelay);
+    sample = loop.damping.process(sample, loop.loopDampingCoefficient);
+    sample *= loop.loopGain * sympatheticHandGain_;
+
+    // A bounded rational saturation. The loop is already contractive, so this
+    // never engages in normal use; it exists so that a pathological drive
+    // landing exactly on a coupled mode still cannot exceed a fixed ceiling.
+    const float magnitude = std::abs(sample);
+    if (magnitude > 1.0f)
+    {
+        const float excess = magnitude - 1.0f;
+        sample = (sample < 0.0f ? -1.0f : 1.0f)
+               * (1.0f + excess / (1.0f + 4.0f * excess));
+    }
+
+    const float total = sample + sympatheticInjection_ * drive;
+    loop.line[static_cast<std::size_t>(loop.writeIndex & (delayLineSize - 1))]
+        = total;
+    const float tap = total - loop.readFractional(voice.sympatheticPickupDelay);
+    loop.writeIndex = (loop.writeIndex + 1) & (delayLineSize - 1);
+    loop.currentDelay += loop.delaySmoothing
+                       * (loop.targetDelay - loop.currentDelay);
+
+    const float flux = voice.fluxScale * tap;
+    const float emf = voice.sympatheticEmf.process(
+        (flux - voice.sympatheticPreviousFlux) * emfScale_,
+        emfLowpassCoefficient_);
+    voice.sympatheticPreviousFlux = flux;
+
+    if (channelsLinked_)
+    {
+        sums.bridge[0] += 0.5f * emf;
+        sums.neck[0] += 0.28f * emf;
+    }
+    else
+    {
+        const float lateral = 2.0f * static_cast<float>(voice.stringIndex)
+                                / static_cast<float>(stringCount - 1)
+                            - 1.0f;
+        const float side = 0.24f * stereoWidth_ * lateral;
+        sums.bridge[0] += 0.5f * emf * (1.0f - side);
+        sums.bridge[1] += 0.5f * emf * (1.0f + side);
+        sums.neck[0] += 0.28f * emf * (1.0f - side);
+        sums.neck[1] += 0.28f * emf * (1.0f + side);
+    }
+    sums.body += 0.35f * total;
+
+    voice.sympatheticEnergy += sympatheticEnergyCoefficient_
+        * (total * total - voice.sympatheticEnergy);
+}
+
+void ElectryEngine::freezeSharedPath() noexcept
+{
+    for (auto& filter : neckCoils_)
+        filter.reset();
+    for (auto& filter : bridgeCoils_)
+        filter.reset();
+    for (auto& blocker : outputDc_)
+        blocker.reset();
+    for (auto& mode : bodyModes_)
+        mode.reset();
+    for (auto& mode : sympatheticModes_)
+        mode.reset();
+    for (auto& decimator : decimators_)
+        decimator.reset();
+    previousBodyDisplacement_ = 0.0f;
+    bodyEmfLowpass_.reset();
+    sympatheticBus_ = 0.0f;
+    sympatheticBusDelayed_ = 0.0f;
+    silentInternalSamples_ = 0;
 }
 
 ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
@@ -2268,10 +2607,97 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
         smoothTowards(s.muteDamping, t.muteDamping);
         smoothTowards(s.velocityAmount, t.velocityAmount);
         smoothTowards(s.artifactAmount, t.artifactAmount);
+        smoothTowards(s.sympatheticAmount, t.sympatheticAmount);
+        smoothTowards(s.palmMute, t.palmMute);
+        smoothTowards(s.vibratoDepthCents, t.vibratoDepthCents);
+        s.strumSpreadSeconds = t.strumSpreadSeconds;
         s.bendTimeSeconds = t.bendTimeSeconds;
         s.pickupSelector = t.pickupSelector;
         s.outputMode = t.outputMode;
         smoothTowards(s.outputGain, t.outputGain);
+
+        vibratoDepthSemitones_ = 0.01f * s.vibratoDepthCents;
+        palmMuteBlend_ = clampf(s.palmMute + palmMutePressure_, 0.0f, 1.0f);
+        if (t.palmMute <= 0.0f && s.palmMute < 1.0e-5f)
+            s.palmMute = 0.0f;
+
+        // The sympathetic coupling bypasses exactly at zero: the coupled loops
+        // stop being rendered and their state is dropped, so an idle engine is
+        // bit-for-bit identical to one built without the feature.
+        sympatheticGain_ = 0.0045f * s.sympatheticAmount;
+        if (t.sympatheticAmount <= 0.0f && s.sympatheticAmount < 1.0e-5f)
+        {
+            s.sympatheticAmount = 0.0f;
+            sympatheticGain_ = 0.0f;
+            if (sympatheticActive_)
+            {
+                for (auto& voice : voices_)
+                {
+                    if (voice.active)
+                        continue;
+                    voice.sympatheticReady = false;
+                    voice.sympatheticEnergy = 0.0f;
+                    voice.sympatheticPreviousFlux = 0.0f;
+                    voice.sympatheticEmf.reset();
+                }
+                sympatheticBus_ = 0.0f;
+                sympatheticBusDelayed_ = 0.0f;
+                sympatheticStringCount_ = 0;
+            }
+            sympatheticActive_ = false;
+        }
+        else
+        {
+            sympatheticActive_ = true;
+        }
+
+        if (sympatheticActive_)
+        {
+            // The muting hand covers every string. A palm-muted, chugged or
+            // dead-note passage therefore damps the coupled strings and stops
+            // feeding them, which is what keeps a Drop-E chug tight instead of
+            // washing it in open-string ring.
+            float handMute = palmMuteBlend_;
+            for (const auto& voice : voices_)
+            {
+                if (! voice.active)
+                    continue;
+                switch (voice.articulation)
+                {
+                    case Articulation::Muted:
+                        handMute = std::max(handMute, 0.55f + 0.45f * s.muteDamping);
+                        break;
+                    case Articulation::Chug:
+                        handMute = std::max(handMute, 0.75f + 0.25f * s.muteDamping);
+                        break;
+                    case Articulation::DeadNote:
+                        handMute = std::max(handMute, 0.95f);
+                        break;
+                    default:
+                        break;
+                }
+            }
+            if (handMute != sympatheticHandMute_)
+            {
+                sympatheticHandMute_ = handMute;
+                // A per-sample contact loss, which is how a hand resting on a
+                // string actually damps it: distributed, not once per period.
+                sympatheticHandGainTarget_ = handMute > 0.0f
+                    ? std::pow(10.0f,
+                               -3.0f / (std::exp(lerp(std::log(4.0f),
+                                                      std::log(0.045f), handMute))
+                                        * static_cast<float>(sampleRate_)))
+                    : 1.0f;
+            }
+            sympatheticHandGain_ += parameterSmoothingCoefficient_
+                * (sympatheticHandGainTarget_ - sympatheticHandGain_);
+            sympatheticInjection_ = sympatheticGain_
+                * std::max(0.0f, 1.0f - handMute);
+        }
+        else
+        {
+            sympatheticInjection_ = 0.0f;
+        }
 
         if (t.artifactAmount <= 0.0f && s.artifactAmount < 1.0e-5f)
         {
@@ -2294,12 +2720,12 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
         {
             artifactsActive_ = true;
         }
+        artifactContactShape_ = smoothStep(s.artifactAmount);
+        artifactBuzzAmount_ = s.artifactAmount * s.artifactAmount;
 
-        const float pitchBendCoefficient = rateAdjustedCoefficient(
-            0.35f, static_cast<float>(sampleRate_));
-        pitchBendSemitones_ += pitchBendCoefficient
+        pitchBendSemitones_ += pitchBendCoefficient_
                              * (pitchBendTarget_ - pitchBendSemitones_);
-        vibratoAmount_ += rateAdjustedCoefficient(0.12f, static_cast<float>(sampleRate_))
+        vibratoAmount_ += vibratoCoefficient_
                         * (vibratoTarget_ - vibratoAmount_);
         vibratoPhase_ += twoPi * 5.4f * static_cast<float>(controlPeriod)
                        / static_cast<float>(sampleRate_);
@@ -2314,6 +2740,37 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
 
         neckMix_ += pickupMixCoefficient_ * (neckMixTarget_ - neckMix_);
         bridgeMix_ += pickupMixCoefficient_ * (bridgeMixTarget_ - bridgeMix_);
+        if (neckMixTarget_ == 0.0f && neckMix_ < 1.0e-5f)
+            neckMix_ = 0.0f;
+        if (bridgeMixTarget_ == 0.0f && bridgeMix_ < 1.0e-5f)
+            bridgeMix_ = 0.0f;
+
+        // A silent pickup is skipped entirely in renderVoice(). Its per-voice
+        // aperture ring and induced-EMF memory are cleared as it comes back so
+        // the fade-in starts from a clean path rather than stale history.
+        const bool neckWanted = neckMix_ > 1.0e-4f;
+        const bool bridgeWanted = bridgeMix_ > 1.0e-4f;
+        if (neckWanted && ! neckPathActive_)
+        {
+            for (auto& voice : voices_)
+            {
+                voice.apertureNeck.reset();
+                voice.previousFluxNeck = 0.0f;
+                voice.emfLowpassNeck.reset();
+            }
+        }
+        if (bridgeWanted && ! bridgePathActive_)
+        {
+            for (auto& voice : voices_)
+            {
+                voice.apertureBridge.reset();
+                voice.previousFluxBridge = 0.0f;
+                voice.emfLowpassBridge.reset();
+            }
+        }
+        neckPathActive_ = neckWanted;
+        bridgePathActive_ = bridgeWanted;
+
         smoothedOutputGain_ = s.outputGain;
         smoothedBodyLevel_ = 24.5f * s.bodyResonance;
         const float stereoTarget = s.outputMode == OutputMode::Stereo ? 1.0f : 0.0f;
@@ -2321,31 +2778,78 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
         if (stereoTarget == 0.0f && stereoWidth_ < 1.0e-6f)
             stereoWidth_ = 0.0f;
 
+        // Mono is exact dual mono, so the second coil, DC blocker and
+        // decimator are redundant. Opening the field copies channel zero's
+        // state across, which is exact because both channels have seen
+        // identical inputs up to this sample.
+        const bool linked = stereoWidth_ == 0.0f;
+        if (channelsLinked_ && ! linked)
+        {
+            neckCoils_[1] = neckCoils_[0];
+            bridgeCoils_[1] = bridgeCoils_[0];
+            outputDc_[1] = outputDc_[0];
+            decimators_[1] = decimators_[0];
+        }
+        channelsLinked_ = linked;
+
         for (auto& voice : voices_)
             updateVoiceControl(voice);
         updateActiveVoiceCount();
     }
     controlCountdown_--;
+    ++engineClock_;
 
     RenderSums sums;
 
+    // The coupled strings read the previous sample's bridge total, which makes
+    // the result independent of voice order and removes any algebraic loop.
+    const float sympatheticDrive = sympatheticBusDelayed_;
+    sympatheticBus_ = 0.0f;
+
+    bool rendered = false;
     for (auto& voice : voices_)
+    {
         if (voice.active)
+        {
             renderVoice(voice, sums);
+            rendered = true;
+        }
+        else if (sympatheticActive_
+                 && (voice.sympatheticEnergy > 1.0e-11f
+                     || std::abs(sympatheticDrive) > 1.0e-6f))
+        {
+            renderSympatheticString(voice, sums, sympatheticDrive);
+            rendered = true;
+        }
+    }
+    sympatheticBusDelayed_ = sympatheticBus_;
+
+    // Nothing is vibrating and the shared path has already been cleared, so
+    // there is no arithmetic left to do.
+    if (! rendered && idleFrozen_)
+        return {};
 
     // Open strings and bridge hardware ring sympathetically. This is a
     // strictly feed-forward bank, so it colours the pickup/body drive without
     // threatening the waveguide stability contract.
     if (artifactsActive_)
     {
-        const float neckMid = 0.5f * (sums.neck[0] + sums.neck[1]);
-        const float bridgeMid = 0.5f * (sums.bridge[0] + sums.bridge[1]);
-        const float drive = 0.5f * (neckMid + bridgeMid);
+        // Bridge and saddle hardware is heard through whichever coil is
+        // selected, so the artifact bank is driven by the same selector mix
+        // the output uses. That is both more physical than an unweighted
+        // neck+bridge average and independent of a pickup path that the
+        // selector has faded out and the renderer therefore skips.
+        const float neckMid = channelsLinked_
+            ? sums.neck[0] : 0.5f * (sums.neck[0] + sums.neck[1]);
+        const float bridgeMid = channelsLinked_
+            ? sums.bridge[0] : 0.5f * (sums.bridge[0] + sums.bridge[1]);
+        const float drive = neckMid * neckMix_ + bridgeMid * bridgeMix_;
         float ring = 0.0f;
         for (auto& mode : sympatheticModes_)
             ring += mode.process(drive);
         const float mix = 0.85f * smoothedParameters_.artifactAmount;
-        for (int channel = 0; channel < 2; ++channel)
+        const int channelCount = channelsLinked_ ? 1 : 2;
+        for (int channel = 0; channel < channelCount; ++channel)
         {
             sums.neck[static_cast<std::size_t>(channel)] += 0.55f * mix * ring;
             sums.bridge[static_cast<std::size_t>(channel)] += mix * ring;
@@ -2373,7 +2877,8 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
 
     StereoSample output;
     std::array<float, 2> raw {};
-    for (int channel = 0; channel < 2; ++channel)
+    const int outputChannels = channelsLinked_ ? 1 : 2;
+    for (int channel = 0; channel < outputChannels; ++channel)
     {
         const auto index = static_cast<std::size_t>(channel);
         const float neckOut = neckCoils_[index].process(sums.neck[index]
@@ -2384,6 +2889,8 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
                            * pickupLevel;
         raw[index] = outputDc_[index].process(pickup, outputDcCoefficient_);
     }
+    if (channelsLinked_)
+        raw[1] = raw[0];
 
     // One linked guard gain preserves the physical stereo field. In Mono the
     // channels are equal and this is the original scalar soft-limit law.
@@ -2392,6 +2899,18 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
         / std::sqrt(1.0f + 0.4356f * guardInput * guardInput);
     output.left = raw[0] * guardGain * smoothedOutputGain_;
     output.right = raw[1] * guardGain * smoothedOutputGain_;
+
+    if (rendered || guardInput >= idleFreezeLevel)
+    {
+        silentInternalSamples_ = 0;
+        idleFrozen_ = false;
+    }
+    else if (++silentInternalSamples_ >= idleFreezeSamples)
+    {
+        freezeSharedPath();
+        idleFrozen_ = true;
+        output = {};
+    }
 
     if (! finitef(output.left) || ! finitef(output.right))
     {
@@ -2417,6 +2936,8 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
             mode.reset();
         for (auto& decimator : decimators_)
             decimator.reset();
+        sympatheticBus_ = 0.0f;
+        sympatheticBusDelayed_ = 0.0f;
         output = {};
     }
 
@@ -2440,14 +2961,26 @@ void ElectryEngine::process(float* left, float* right, int numSamples)
         StereoSample output;
         if (oversamplingFactor_ == 2)
         {
+            // In Mono only one decimator runs; its state is copied to the
+            // second the instant the stereo field opens.
+            bool linked = channelsLinked_;
+            bool frozen = true;
             for (int phase = 0; phase < 2; ++phase)
             {
                 const auto internal = renderInternalSample();
+                if (idleFrozen_)
+                    continue;
+                frozen = false;
                 decimators_[0].push(internal.left);
-                decimators_[1].push(internal.right);
+                linked = linked && channelsLinked_;
+                if (! channelsLinked_)
+                    decimators_[1].push(internal.right);
             }
-            output.left = decimators_[0].output();
-            output.right = decimators_[1].output();
+            if (! frozen)
+            {
+                output.left = decimators_[0].output();
+                output.right = linked ? output.left : decimators_[1].output();
+            }
         }
         else
         {
@@ -2469,15 +3002,63 @@ void ElectryEngine::process(float* left, float* right, int numSamples)
 void ElectryEngine::updateActiveVoiceCount() noexcept
 {
     int count = 0;
+    int sympathetic = 0;
     for (const auto& voice : voices_)
+    {
         if (voice.active)
             ++count;
+        else if (voice.sympatheticReady && voice.sympatheticEnergy > 1.0e-11f)
+            ++sympathetic;
+    }
     activeVoiceCount_ = count;
+    sympatheticStringCount_ = sympathetic;
 }
 
 int ElectryEngine::getActiveVoiceCount() const noexcept
 {
     return activeVoiceCount_;
+}
+
+int ElectryEngine::getSympatheticStringCount() const noexcept
+{
+    return sympatheticStringCount_;
+}
+
+void ElectryEngine::getStringVisualState(
+    std::array<StringVisualState, stringCount>& destination) const noexcept
+{
+    for (int stringIndex = 0; stringIndex < stringCount; ++stringIndex)
+    {
+        const auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
+        auto& state = destination[static_cast<std::size_t>(stringIndex)];
+        state.sounding = voice.active;
+        state.releasing = voice.active && voice.releasing;
+        state.articulation = voice.articulation;
+        if (voice.active)
+        {
+            state.sympathetic = false;
+            state.midiNote = voice.midiNote;
+            state.fret = voice.fret;
+            // The display level is a ballistic follower of the same energy the
+            // retirement logic uses; 4.0 places a hard picked note near full
+            // scale without clipping the meter on a strum.
+            state.level = clampf(4.0f * voice.displayLevel, 0.0f, 1.0f);
+        }
+        else
+        {
+            const bool ringing = voice.sympatheticReady
+                              && voice.sympatheticEnergy > 1.0e-11f;
+            state.sympathetic = ringing;
+            state.midiNote = ringing
+                ? stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote
+                : -1;
+            state.fret = ringing ? 0 : -1;
+            state.level = ringing
+                ? clampf(6.0f * std::sqrt(std::max(voice.sympatheticEnergy, 0.0f)),
+                         0.0f, 1.0f)
+                : 0.0f;
+        }
+    }
 }
 
 float ElectryEngine::currentSoundingSemitoneOffset(const Voice& voice) const noexcept

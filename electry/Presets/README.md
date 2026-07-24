@@ -1,10 +1,10 @@
 # Electry sound-design recipes
 
 Electry state is stored by the host. These original recipes are starting
-points for the version-1.0 parameter set; percentages are approximate and
+points for the version-1.1 31-parameter set; percentages are approximate and
 meant to be adjusted by ear. Parameters not listed in a recipe remain at
 their defaults; see the
-[complete parameter contract](../README.md#exact-22-parameter-contract).
+[complete parameter contract](../README.md#exact-31-parameter-contract).
 Remember that the play style comes from the latched keyswitch (C0..D#1) or
 the PLAY STYLE strip, not from a parameter. Material controls span the named
 solid-body endpoints; Scale spans 25.5" to 28" for the Drop-E instrument.
@@ -25,7 +25,9 @@ tone 80%. A neutral, honest DI tone for testing amp chains.
 - Body wood 100%, size 85%, shape 100%, construction 100%, scale 28.00".
 - String gauge 30%, string age 10%; pick position 20%, hardness 75%.
 - Pick noise 55%, finger noise 35%, release noise 45%.
-- Artifacts 22% for restrained saddle detail and sympathetic ring.
+- Artifacts 22% for restrained saddle detail.
+- Sympathetic ring 45% and strum spread 14 ms: open chords bloom and sweep
+  like a real strummed guitar.
 - Play mostly downstrokes with occasional upstroke accents; the release bends
   (C#1/D1) give the classic behind-the-beat pedal-steel gesture.
 
@@ -34,7 +36,7 @@ tone 80%. A neutral, honest DI tone for testing amp chains.
 - Pickup selector `Neck`; pickup type 0%; tone 55%.
 - Body wood 0%, size 15%, shape 0%, construction 0%, scale 25.50".
 - String gauge 80%, string age 35%; pick position 55%, hardness 45%.
-- Body resonance 45%; velocity 55%.
+- Body resonance 45%; velocity 55%; sympathetic ring 30%.
 - Artifacts 12% for a controlled studio-clean rhythm sound.
 - Downstrokes for chords; hammer-on (D#0) for legato figures.
 
@@ -44,6 +46,8 @@ tone 80%. A neutral, honest DI tone for testing amp chains.
 - Pickup selector `Bridge`; pickup type 25%; tone 75%.
 - Pick noise 70%, hardness 85%, velocity 80%.
 - Artifacts 42% so hard low-string attacks occasionally catch a fret.
+- Palm mute 25% under the Chug keyswitch for an even tighter stop, or leave it
+  at 0% and ride MIDI CC 2 through the riff instead.
 - Alternate or tremolo strokes low on the Drop-E and B strings; raise mute
   damping toward 85% for tighter chug, lower toward 40% for half-muted grit.
 
@@ -62,6 +66,7 @@ tone 80%. A neutral, honest DI tone for testing amp chains.
 - Pickup selector `Neck`; pickup type 15%; tone 65%.
 - Construction 20%; string gauge 25% (light strings glide more).
 - Bend time 320 ms; finger noise 55%; release noise 50%.
+- Vibrato depth 60 cents so the modulation wheel sings rather than shimmers.
 - Alternate B0/C1 (bend 1 and 2 up) with D#0 hammer-ons for a legato solo
   voice; the pitch wheel still adds vibrato-style motion on top.
 

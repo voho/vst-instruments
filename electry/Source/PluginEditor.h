@@ -84,14 +84,42 @@ private:
 class ElectryStatusDisplay final : public juce::Component
 {
 public:
-    void setStatus (int activeVoices, bool ready, double sampleRate,
-                    bool scheduleRepaint = true);
+    void setStatus (int activeVoices, int sympatheticStrings, bool ready,
+                    double sampleRate, bool scheduleRepaint = true);
     void paint (juce::Graphics&) override;
 
 private:
     int voices = -1;
+    int sympathetic = -1;
     bool isReady = false;
     double rate = 0.0;
+};
+
+// Live eight-string fretboard. It shows which physical string carries every
+// sounding note, where it is stopped, how hard it is ringing, and which
+// strings are only ringing through the sympathetic bridge coupling. All of its
+// geometry and ballistics come from the JUCE-free electry::visuals helpers, so
+// the drawing code stays a thin renderer.
+class ElectryFretboardDisplay final : public juce::Component
+{
+public:
+    ElectryFretboardDisplay();
+
+    // Pulls one frame of per-string state. Returns true while the picture is
+    // still changing, so the editor only repaints a moving display.
+    bool refresh (const ElectryAudioProcessor&, float frameSeconds);
+
+    void paint (juce::Graphics&) override;
+
+private:
+    struct StringRow
+    {
+        electry::StringVisualState state {};
+        float level = 0.0f;
+        float phase = 0.0f;
+    };
+
+    std::array<StringRow, electry::ElectryEngine::stringCount> rows {};
 };
 
 class ElectryAudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -110,6 +138,8 @@ private:
     enum Section
     {
         articulationSection,
+        fretboardSection,
+        performanceSection,
         coreSection,
         masterSection,
         buildSection,
@@ -164,6 +194,11 @@ private:
     ElectryKnob releaseNoiseKnob { "RELEASE" };
     ElectryKnob artifactsKnob { "ARTIFACTS" };
 
+    ElectryKnob sympatheticKnob { "SYMPATHY" };
+    ElectryKnob palmMuteKnob { "PALM MUTE" };
+    ElectryKnob strumSpreadKnob { "STRUM" };
+    ElectryKnob vibratoDepthKnob { "VIBRATO" };
+
     ElectryKnob outputKnob { "OUTPUT" };
     ElectryKnob distortionKnob { "DISTORT" };
     ElectryKnob ampKnob { "AMP" };
@@ -171,6 +206,7 @@ private:
     ElectryKnob delayKnob { "DELAY" };
     ElectryKnob roomKnob { "ROOM" };
 
+    ElectryFretboardDisplay fretboardDisplay;
     ElectryKeyboardComponent keyboard;
 
     std::unique_ptr<juce::ParameterAttachment> pickupAttachment;

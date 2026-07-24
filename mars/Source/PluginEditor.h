@@ -4,6 +4,8 @@
 
 #include "PluginProcessor.h"
 
+#include "DSP/MarsScope.h"
+
 #include <array>
 #include <functional>
 #include <memory>
@@ -84,6 +86,32 @@ private:
     juce::Label label;
 };
 
+// Panel oscilloscope, output meter, and arpeggiator step readout. All of its
+// arithmetic lives in the JUCE-free mars::ScopeReducer, so this class only
+// fetches a trace and draws it.
+class MarsScopeDisplay final : public juce::Component
+{
+public:
+    MarsScopeDisplay();
+
+    void refresh (const MarsAudioProcessor& processor, bool arpeggiatorEnabled,
+                  const juce::String& arpeggiatorMode);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    static constexpr int traceSamples = 2048;
+
+    mars::ScopeReducer reducer;
+    std::vector<float> trace;
+    juce::String modeText;
+    juce::String statusText;
+    bool arpActive = false;
+    int arpNote = -1;
+    int arpKeys = 0;
+    float arpPhase = 0.0f;
+};
+
 class MarsStatusDisplay final : public juce::Component
 {
 public:
@@ -117,6 +145,7 @@ private:
         oscillator2Section,
         mixerSection,
         filterSection,
+        arpeggiatorSection,
         lfoVoiceSection,
         filterEnvelopeSection,
         ampEnvelopeSection,
@@ -139,12 +168,15 @@ private:
     juce::Label randomizerLabel;
     juce::Label keyboardHintLabel;
     MarsStatusDisplay statusDisplay;
+    MarsScopeDisplay scopeDisplay;
     juce::TextButton panicButton { "PANIC" };
     juce::TextButton oversamplingButton { "HQ 4X" };
     juce::TextButton osc1EnableButton { "ON" };
     juce::TextButton osc2EnableButton { "ON" };
     juce::TextButton monoButton { "MONO" };
     juce::TextButton companderButton { "COMP" };
+    juce::TextButton arpEnableButton { "ARP" };
+    juce::TextButton arpHoldButton { "HOLD" };
     juce::TextButton randomize1Button { "1%" };
     juce::TextButton randomize10Button { "10%" };
     juce::TextButton randomize100Button { "100%" };
@@ -156,6 +188,8 @@ private:
     MarsChoiceStrip filterModelStrip { "FILTER MODEL", { "LADDER", "SEM" } };
     MarsChoiceStrip lfoWaveStrip { "LFO WAVE", { "TRI", "SINE", "S & H" } };
     MarsChoiceStrip voiceModeStrip { "VOICE MODE", { "POLY", "UNISON", "FIFTH" } };
+    MarsChoiceStrip arpModeStrip { "ARP MODE",
+                                   { "UP", "DOWN", "UP-DN", "RAND", "PLAY" } };
 
     MarsKnob osc1OctaveKnob { "OCTAVE", MarsValueFormat::Octaves };
     MarsKnob osc2OctaveKnob { "OCTAVE", MarsValueFormat::Octaves };
@@ -187,8 +221,13 @@ private:
     MarsKnob lfoFilterKnob { "FILTER", MarsValueFormat::Octaves };
     MarsKnob lfoPwmKnob { "PWM" };
 
+    MarsKnob arpRateKnob { "RATE", MarsValueFormat::Hertz };
+    MarsKnob arpOctavesKnob { "RANGE", MarsValueFormat::Integer };
+    MarsKnob arpGateKnob { "GATE" };
+
     MarsKnob polyphonyKnob { "POLYPHONY", MarsValueFormat::Integer };
     MarsKnob unisonVoicesKnob { "VOICES", MarsValueFormat::Integer };
+    MarsKnob unisonDetuneKnob { "DETUNE", MarsValueFormat::Cents };
     MarsKnob driftKnob { "DRIFT" };
     MarsKnob spreadKnob { "SPREAD" };
     MarsKnob glideKnob { "GLIDE", MarsValueFormat::Seconds };

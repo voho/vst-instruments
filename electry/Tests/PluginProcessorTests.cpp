@@ -9,6 +9,7 @@
 #include <iostream>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -33,7 +34,7 @@ struct ParameterExpectation
     float tolerance;
 };
 
-constexpr std::array<ParameterExpectation, 27> expectedParameters {{
+constexpr std::array<ParameterExpectation, 31> expectedParameters {{
     { electry::parameters::pickupSelector, 2.0f,  1.0e-5f },
     { electry::parameters::pickupType,     0.5f,  1.0e-5f },
     { electry::parameters::tone,           0.8f,  1.0e-5f },
@@ -61,6 +62,10 @@ constexpr std::array<ParameterExpectation, 27> expectedParameters {{
     { electry::parameters::compressor,     0.0f,  1.0e-5f },
     { electry::parameters::delay,          0.0f,  1.0e-5f },
     { electry::parameters::room,           0.0f,  1.0e-5f },
+    { electry::parameters::sympathetic,    0.20f, 1.0e-5f },
+    { electry::parameters::palmMute,       0.0f,  1.0e-5f },
+    { electry::parameters::strumSpread,    0.0f,  1.0e-4f },
+    { electry::parameters::vibratoDepth,  35.0f,  1.0e-4f },
 }};
 
 float parameterValue (const ElectryAudioProcessor& processor, const char* id)
@@ -122,7 +127,7 @@ void testParameterLayoutAndDefaults()
     ElectryAudioProcessor processor;
     expect (processor.getParameters().size()
                 == static_cast<int> (expectedParameters.size()),
-            "processor does not expose exactly 27 APVTS parameters");
+            "processor does not expose exactly 31 APVTS parameters");
 
     std::set<std::string> uniqueIds;
     for (const auto& expected : expectedParameters)
@@ -152,6 +157,14 @@ void testParameterTextFormatting()
     expectParameterText (processor, electry::parameters::pickupType, 1.0f, "Single coil");
     expectParameterText (processor, electry::parameters::bodyWood, 0.0f,
                          "Mahogany/maple");
+    expectParameterText (processor, electry::parameters::sympathetic, 0.2f, "20%");
+    expectParameterText (processor, electry::parameters::palmMute, 0.0f, "0%");
+    expectParameterText (processor, electry::parameters::strumSpread, 0.0f,
+                         "Block chord");
+    expectParameterText (processor, electry::parameters::strumSpread, 18.0f,
+                         "18.0 ms/string");
+    expectParameterText (processor, electry::parameters::vibratoDepth, 35.0f,
+                         "35 cents");
 
     const auto* selector = processor.parameters.getParameter (
         electry::parameters::pickupSelector);
@@ -170,6 +183,10 @@ void testStateRoundTrip()
     setParameterValue (source, electry::parameters::artifacts, 0.72f);
     setParameterValue (source, electry::parameters::outputMode, 1.0f);
     setParameterValue (source, electry::parameters::pickupSelector, 0.0f);
+    setParameterValue (source, electry::parameters::sympathetic, 0.66f);
+    setParameterValue (source, electry::parameters::palmMute, 0.44f);
+    setParameterValue (source, electry::parameters::strumSpread, 22.0f);
+    setParameterValue (source, electry::parameters::vibratoDepth, 80.0f);
 
     juce::MemoryBlock state;
     source.getStateInformation (state);
@@ -199,6 +216,86 @@ void testStateRoundTrip()
     expect (std::abs (parameterValue (restored, electry::parameters::pickupSelector))
                 < 1.0e-4f,
             "pickup selector did not survive a state round trip");
+    expect (std::abs (parameterValue (restored, electry::parameters::sympathetic)
+                          - 0.66f) < 1.0e-4f,
+            "sympathetic ring did not survive a state round trip");
+    expect (std::abs (parameterValue (restored, electry::parameters::palmMute)
+                          - 0.44f) < 1.0e-4f,
+            "palm mute did not survive a state round trip");
+    expect (std::abs (parameterValue (restored, electry::parameters::strumSpread)
+                          - 22.0f) < 1.0e-3f,
+            "strum spread did not survive a state round trip");
+    expect (std::abs (parameterValue (restored, electry::parameters::vibratoDepth)
+                          - 80.0f) < 1.0e-3f,
+            "vibrato depth did not survive a state round trip");
+
+    // A session saved before the 1.1 controls existed must still load: the
+    // original values carry over and the four new parameters fall back to
+    // their documented defaults.
+    ElectryAudioProcessor legacy;
+    setParameterValue (legacy, electry::parameters::tone, 0.31f);
+    setParameterValue (legacy, electry::parameters::stringAge, 0.77f);
+    auto legacyState = legacy.parameters.copyState();
+    for (int child = legacyState.getNumChildren(); --child >= 0;)
+    {
+        const auto id = legacyState.getChild (child).getProperty ("id").toString();
+        if (id == electry::parameters::sympathetic
+            || id == electry::parameters::palmMute
+            || id == electry::parameters::strumSpread
+            || id == electry::parameters::vibratoDepth)
+            legacyState.removeChild (child, nullptr);
+    }
+
+    // Load it the way a host does: setStateInformation() is the path that
+    // migrates, replaceState() on its own is not.
+    juce::MemoryBlock legacyStored;
+    if (const auto legacyXml = legacyState.createXml())
+        juce::AudioProcessor::copyXmlToBinary (*legacyXml, legacyStored);
+    else
+        expect (false, "the pre-1.1 state could not be serialised");
+
+    ElectryAudioProcessor upgraded;
+    upgraded.setStateInformation (legacyStored.getData(),
+                                  static_cast<int> (legacyStored.getSize()));
+    expect (std::abs (parameterValue (upgraded, electry::parameters::tone) - 0.31f)
+                < 1.0e-4f,
+            "a pre-1.1 session lost an original parameter value");
+    expect (std::abs (parameterValue (upgraded, electry::parameters::stringAge) - 0.77f)
+                < 1.0e-4f,
+            "a pre-1.1 session lost an original parameter value");
+    expect (std::abs (parameterValue (upgraded, electry::parameters::sympathetic)
+                          - 0.20f) < 1.0e-4f,
+            "a pre-1.1 session did not pick up the sympathetic default");
+    expect (std::abs (parameterValue (upgraded, electry::parameters::palmMute))
+                < 1.0e-4f,
+            "a pre-1.1 session did not pick up the palm-mute default");
+    expect (std::abs (parameterValue (upgraded, electry::parameters::strumSpread))
+                < 1.0e-3f,
+            "a pre-1.1 session did not pick up the strum-spread default");
+    expect (std::abs (parameterValue (upgraded, electry::parameters::vibratoDepth)
+                          - 35.0f) < 1.0e-3f,
+            "a pre-1.1 session did not pick up the vibrato-depth default");
+
+    // The same load into an instance that has already been played. APVTS keeps
+    // a parameter's live value when the stored tree omits it, so without the
+    // migration the legacy session would inherit the player's sympathetic
+    // resonance and palm mute rather than resetting them.
+    ElectryAudioProcessor used;
+    setParameterValue (used, electry::parameters::sympathetic, 0.93f);
+    setParameterValue (used, electry::parameters::palmMute, 0.68f);
+    setParameterValue (used, electry::parameters::strumSpread, 0.21f);
+    setParameterValue (used, electry::parameters::vibratoDepth, 80.0f);
+    used.setStateInformation (legacyStored.getData(),
+                              static_cast<int> (legacyStored.getSize()));
+
+    for (const char* id : { electry::parameters::sympathetic,
+                            electry::parameters::palmMute,
+                            electry::parameters::strumSpread,
+                            electry::parameters::vibratoDepth })
+        expect (std::abs (parameterValue (used, id) - parameterValue (upgraded, id))
+                    < 1.0e-3f,
+                std::string ("a pre-1.1 session kept the live value of ") + id
+                    + " instead of its default");
 }
 
 void testBusAndPluginContract()
@@ -404,6 +501,84 @@ void testOutputGainImpact()
                 + std::to_string (quiet) + ", loud " + std::to_string (loud) + ")");
 }
 
+void testPerformanceControls()
+{
+    // Peak level of the window that starts `skipSeconds` after a note-off, so
+    // the played string's own damping ramp is excluded and only what is still
+    // ringing afterwards is measured.
+    const auto tailAfterRelease = [] (float sympatheticPercent, float palmMutePercent,
+                                      int palmMuteCc)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (processor, electry::parameters::sympathetic,
+                           sympatheticPercent);
+        setParameterValue (processor, electry::parameters::palmMute, palmMutePercent);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        if (palmMuteCc >= 0)
+            midi.addEvent (juce::MidiMessage::controllerEvent (
+                1, 2, (juce::uint8) palmMuteCc), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 0.05);
+
+        midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 110), 0);
+        renderBlock (processor, audio, midi);
+        const auto held = renderSeconds (processor, audio, 0.5);
+        midi.addEvent (juce::MidiMessage::noteOff (1, 45), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 1.0);
+        const auto tail = renderSeconds (processor, audio, 1.0);
+        processor.releaseResources();
+        return std::make_pair (held, tail);
+    };
+
+    const auto bypassed = tailAfterRelease (0.0f, 0.0f, -1);
+    const auto coupled = tailAfterRelease (1.0f, 0.0f, -1);
+    expect (bypassed.first > 1.0e-3f && coupled.first > 1.0e-3f,
+            "the test note did not sound");
+    expect (coupled.second > bypassed.second * 4.0f,
+            "the sympathetic parameter did not ring the unplayed strings ("
+                + std::to_string (bypassed.second) + " -> "
+                + std::to_string (coupled.second) + ")");
+
+    // Palm-mute pressure shortens the note itself, from the parameter and from
+    // MIDI CC2 alike.
+    const auto openHeld = tailAfterRelease (0.0f, 0.0f, -1).first;
+    const auto mutedHeld = tailAfterRelease (0.0f, 1.0f, -1).first;
+    const auto ccMutedHeld = tailAfterRelease (0.0f, 0.0f, 127).first;
+    expect (mutedHeld < openHeld,
+            "the palm-mute parameter did not damp the string");
+    expect (ccMutedHeld < openHeld,
+            "MIDI CC2 did not damp the string");
+
+    // Spreading a chord lowers its stacked initial peak because the strings no
+    // longer all start on the same sample.
+    const auto chordPeak = [] (float spreadMs)
+    {
+        ElectryAudioProcessor processor;
+        processor.prepareToPlay (sampleRate, blockSize);
+        setParameterValue (processor, electry::parameters::strumSpread, spreadMs);
+        setParameterValue (processor, electry::parameters::sympathetic, 0.0f);
+
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        renderSeconds (processor, audio, 0.05);
+        for (const int note : { 28, 40, 45, 50, 55, 64 })
+            midi.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) 105), 0);
+        renderBlock (processor, audio, midi);
+        // Sequenced deliberately: renderSeconds overwrites the buffer, so the
+        // first block's magnitude has to be taken before it runs.
+        const auto firstBlock = audio.getMagnitude (0, blockSize);
+        const auto rest = renderSeconds (processor, audio, 0.03);
+        processor.releaseResources();
+        return std::max (firstBlock, rest);
+    };
+    expect (chordPeak (40.0f) < chordPeak (0.0f),
+            "strum spread did not stagger the chord's attack");
+}
+
 void testOutputModeAudioField()
 {
     struct ChannelResult
@@ -500,11 +675,17 @@ void testEditorRendering()
                     "visible editor control escaped the editor bounds: "
                         + child->getName().toStdString());
     }
-    expect (knobs.size() == 20u, "editor did not expose all 20 knob controls");
+    // 20 sound controls, five FX controls and the four version-1.1
+    // performance controls.
+    expect (knobs.size() == 29u, "editor did not expose all 29 knob controls");
 
     for (std::size_t first = 0; first < knobs.size(); ++first)
     {
-        expect (knobs[first]->getWidth() >= 68 && knobs[first]->getHeight() >= 110,
+        // The editor deliberately tiers its controls by audible impact, so a
+        // texture detail is much smaller than a hero control. This is the
+        // practical floor for the smallest tier; the relative-size assertions
+        // below are what pin the intended hierarchy.
+        expect (knobs[first]->getWidth() >= 44 && knobs[first]->getHeight() >= 110,
                 "knob fell below the compact control size: "
                     + knobs[first]->getName().toStdString());
         for (auto* child : knobs[first]->getChildren())
@@ -588,6 +769,29 @@ void testEditorRendering()
     expect (effectiveDialSize (electry::parameters::output) * 100
                 >= effectiveDialSize (electry::parameters::releaseNoise) * 110,
             "Master Output is not visually above release-noise detail");
+
+    // The version-1.1 performance controls sit beside the fretboard they
+    // change, and must not be smaller than the texture details.
+    for (const auto* performance : { electry::parameters::sympathetic,
+                                     electry::parameters::palmMute,
+                                     electry::parameters::strumSpread,
+                                     electry::parameters::vibratoDepth })
+        expect (effectiveDialSize (performance)
+                    >= effectiveDialSize (electry::parameters::artifacts),
+                std::string (performance)
+                    + " is smaller than an artifact-texture control");
+
+    const auto* fretboard = findControl ("fretboard");
+    expect (fretboard != nullptr, "editor is missing the live fretboard display");
+    if (fretboard != nullptr)
+    {
+        expect (fretboard->getWidth() >= 400 && fretboard->getHeight() >= 60,
+                "the fretboard display is too small to read");
+        for (const auto* knob : knobs)
+            expect (! fretboard->getBounds().intersects (knob->getBounds()),
+                    "the fretboard display overlaps a control: "
+                        + knob->getName().toStdString());
+    }
 
     const auto* articulation = findControl ("articulationStrip");
     const auto* keyboard = findControl ("keyboard");
@@ -691,6 +895,7 @@ int main()
     testMidiControllersAndVoiceLifecycle();
     testUiArticulationTriggerAndPanic();
     testOutputGainImpact();
+    testPerformanceControls();
     testOutputModeAudioField();
     testEditorRendering();
     testPrepareReleaseCycles();

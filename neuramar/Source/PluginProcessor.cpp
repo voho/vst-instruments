@@ -75,6 +75,26 @@ void addDefaultParameterStateIfMissing (
     }
 }
 
+void addLegacyTouchIfMissing (juce::ValueTree& state)
+{
+    if (containsParameterState (state, neuramar::parameters::touch))
+        return;
+
+    // Touch is the one appended control whose declared default is not its
+    // identity value: the pre-1.1 synthesis path is Touch 0, which leaves the
+    // harmonic tilt and Air gain untouched at every velocity, while new
+    // instances open at 0.35. Restoring the declared default here would make a
+    // legacy memory respond to velocity, which is what this migration exists
+    // to prevent.
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+    juce::ValueTree parameterState { parameterType };
+    parameterState.setProperty (idProperty, neuramar::parameters::touch, nullptr);
+    parameterState.setProperty (valueProperty, 0.0f, nullptr);
+    state.appendChild (parameterState, nullptr);
+}
+
 std::uint64_t mixRandomizationSeed (std::uint64_t value) noexcept
 {
     value ^= value >> 30u;
@@ -141,7 +161,11 @@ NeuramarAudioProcessor::NeuramarAudioProcessor()
     parameterPointers.rootCorrection = parameters.getRawParameterValue (neuramar::parameters::rootCorrection);
     parameterPointers.output = parameters.getRawParameterValue (neuramar::parameters::output);
     parameterPointers.noise = parameters.getRawParameterValue (neuramar::parameters::noise);
+    parameterPointers.stretch = parameters.getRawParameterValue (neuramar::parameters::stretch);
+    parameterPointers.formant = parameters.getRawParameterValue (neuramar::parameters::formant);
+    parameterPointers.touch = parameters.getRawParameterValue (neuramar::parameters::touch);
 
+    neuramar::clearModelAnatomy (displayAnatomy.anatomy);
     keyboardState.addListener (this);
     displayState.message = "Drop a sound or press Randomize, then play MIDI.";
 }
@@ -165,7 +189,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout
 NeuramarAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (14);
+    result.reserve (17);
 
     result.push_back (makePercentParameter (
         neuramar::parameters::imprint, "Imprint", 0.90f));
@@ -243,6 +267,41 @@ NeuramarAudioProcessor::createParameterLayout()
     // not mix an additive noise generator into the audio output.
     result.push_back (makePercentParameter (
         neuramar::parameters::noise, "Noise", 0.0f));
+
+    // Also appended, for the same reason. Stretch scales the model's fitted
+    // stiff-string coefficient, so 100% is "exactly as learned" and a memory
+    // without one is unaffected at any setting.
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { neuramar::parameters::stretch, 1 }, "Stretch",
+        juce::NormalisableRange<float> { 0.0f, 2.0f, 0.001f }, 1.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value * 100.0f));
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.-").getFloatValue()
+                     / 100.0f;
+            })));
+
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { neuramar::parameters::formant, 1 }, "Formant",
+        juce::NormalisableRange<float> { -24.0f, 24.0f, 0.01f }, 0.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("st")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (value, 2);
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.-").getFloatValue();
+            })));
+
+    result.push_back (makePercentParameter (
+        neuramar::parameters::touch, "Touch", 0.35f));
 
     return { result.begin(), result.end() };
 }
@@ -369,6 +428,9 @@ void NeuramarAudioProcessor::updateEngineParameters() noexcept
         juce::roundToInt (valueOf (parameterPointers.rootCorrection)));
     next.outputGain = juce::Decibels::decibelsToGain (
         valueOf (parameterPointers.output, -6.0f));
+    next.stretch = valueOf (parameterPointers.stretch, 1.0f);
+    next.formantShiftSemitones = valueOf (parameterPointers.formant, 0.0f);
+    next.touch = valueOf (parameterPointers.touch, 0.35f);
     engine.setParameters (next);
 }
 
@@ -798,6 +860,8 @@ void NeuramarAudioProcessor::publishModel (
     sourceName = sourceName.substring (0, 1024);
     const auto* modelPointer = model.get();
     std::uint64_t generation = 0;
+    neuramar::NeuralModel::Metadata publishedMetadata;
+    ModelAnatomySnapshot anatomy;
     {
         const std::scoped_lock lock (modelArchiveMutex);
         generation = publishedGeneration.load (std::memory_order_relaxed) + 1u;
@@ -806,17 +870,27 @@ void NeuramarAudioProcessor::publishModel (
         publishedModel.store (modelPointer, std::memory_order_seq_cst);
         publishedGeneration.store (generation, std::memory_order_release);
         reclaimRetiredModelsLocked();
+
+        // Everything the display needs is read while the archive lock still
+        // guarantees this model is alive; a concurrent publication on another
+        // thread can then reclaim it without racing these reads. Reducing the
+        // model for the editor also happens here, on the thread that publishes
+        // it, never on the audio thread and never in a paint call.
+        publishedMetadata = modelPointer->metadata();
+        anatomy.modelGeneration = generation;
+        neuramar::buildModelAnatomy (*modelPointer, anatomy.anatomy);
     }
 
     const juce::ScopedLock lock (displayLock);
+    displayAnatomy = std::move (anatomy);
     displayState.stage = LearningStage::Ready;
     displayState.progress = 1.0f;
-    displayState.rootFrequencyHz = modelPointer->rootFrequencyHz();
-    displayState.rootMidiNote = modelPointer->rootMidiNote();
-    displayState.rootCents = modelPointer->rootCents();
-    displayState.rootConfidence = modelPointer->pitchConfidence();
-    displayState.generatedModel = modelPointer->metadata().trainingEpochs == 0;
-    displayState.waveform = modelPointer->metadata().waveformPreview;
+    displayState.rootFrequencyHz = publishedMetadata.rootFrequencyHz;
+    displayState.rootMidiNote = publishedMetadata.rootMidiNote;
+    displayState.rootCents = publishedMetadata.rootCents;
+    displayState.rootConfidence = publishedMetadata.pitchConfidence;
+    displayState.generatedModel = publishedMetadata.trainingEpochs == 0;
+    displayState.waveform = publishedMetadata.waveformPreview;
     displayState.modelGeneration = generation;
     displayState.sourceName = std::move (sourceName);
     displayState.message = readyMessage.isNotEmpty()
@@ -848,6 +922,8 @@ void NeuramarAudioProcessor::clearPublishedModel (juce::String message)
     displayState = {};
     displayState.stage = LearningStage::Empty;
     displayState.message = std::move (message);
+    displayAnatomy = {};
+    neuramar::clearModelAnatomy (displayAnatomy.anatomy);
 }
 
 void NeuramarAudioProcessor::setLearningStatus (LearningStage stage, float progress,
@@ -942,6 +1018,13 @@ NeuramarAudioProcessor::getLearningSnapshot() const
     return displayState;
 }
 
+NeuramarAudioProcessor::ModelAnatomySnapshot
+NeuramarAudioProcessor::getModelAnatomySnapshot() const
+{
+    const juce::ScopedLock lock (displayLock);
+    return displayAnatomy;
+}
+
 void NeuramarAudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)
 {
     juce::MemoryOutputStream stream (destinationData, false);
@@ -996,8 +1079,15 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
             xml != nullptr && xml->hasTagName (parameters.state.getType()))
         {
             auto restoredState = juce::ValueTree::fromXml (*xml);
+            addLegacyTouchIfMissing (restoredState);
             addDefaultParameterStateIfMissing (
                 restoredState, parameters, neuramar::parameters::noise);
+            addDefaultParameterStateIfMissing (
+                restoredState, parameters, neuramar::parameters::stretch);
+            addDefaultParameterStateIfMissing (
+                restoredState, parameters, neuramar::parameters::formant);
+            addDefaultParameterStateIfMissing (
+                restoredState, parameters, neuramar::parameters::touch);
             parameters.replaceState (restoredState);
         }
         return;
@@ -1033,11 +1123,19 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
     auto restoredParameterState = juce::ValueTree::fromXml (*xml);
     if (! restoredParameterState.isValid())
         return;
-    // Version-one sessions predate the appended model-space Noise control.
-    // APVTS otherwise retains the live value for a missing parameter child,
-    // which could make a legacy exact-recall preset unexpectedly evolve.
+    // Earlier sessions predate the appended Noise, Stretch, Formant, and
+    // Touch controls. APVTS otherwise retains the live value for a missing
+    // parameter child, which could make a legacy exact-recall preset
+    // unexpectedly evolve, stretch, shift, or respond to velocity.
+    addLegacyTouchIfMissing (restoredParameterState);
     addDefaultParameterStateIfMissing (
         restoredParameterState, parameters, neuramar::parameters::noise);
+    addDefaultParameterStateIfMissing (
+        restoredParameterState, parameters, neuramar::parameters::stretch);
+    addDefaultParameterStateIfMissing (
+        restoredParameterState, parameters, neuramar::parameters::formant);
+    addDefaultParameterStateIfMissing (
+        restoredParameterState, parameters, neuramar::parameters::touch);
 
     std::vector<std::uint8_t> modelBytes;
     if (! readBoundedBlock (maximumModelStateBytes, modelBytes))

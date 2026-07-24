@@ -16,7 +16,10 @@ GPU, pretrained model, or source file.
 ![Neuramar standalone interface](Docs/screenshots/neuramar-standalone.png)
 
 The screenshot is rendered by the real JUCE editor in the plug-in regression
-suite. VST3, Audio Unit, and Standalone builds use the same resizable interface.
+suite. It shows the 1.0 layout and predates the 1.1 model-anatomy display and
+the Stretch, Formant, and Touch controls; it will be regenerated on the next
+macOS release build. VST3, Audio Unit, and Standalone builds use the same
+resizable interface.
 
 The project builds three products from one JUCE codebase:
 
@@ -87,12 +90,23 @@ reason. Only analyse recordings you are allowed to use.
 ## Interface and controls
 
 The neural pool combines waveform feedback, learning stage, progress, source
-name, model generation, active voices, and sample rate. The neighbouring root
-display shows the inferred note, tuning offset, confidence, and any manual
-semitone correction. The editor is resizable and all controls are drawn with
-native JUCE graphics.
+name, model generation, active voices, and sample rate. Below it, the **model
+anatomy** display draws what the memory actually contains rather than a
+decoration: the Core partial spectrum, the fitted Air bands, and the active Bone
+modes on a shared 20 Hz - 20 kHz logarithmic axis, sweeping through the learned
+trajectory while faintly outlining the spectrum's full reach across that whole
+trajectory. Clicking it swaps to an evolution view of Core, Air, and Bone
+loudness over the learned duration; hovering reads out the frequency under the
+cursor, and the footer reports how far the fitted stiff-string coefficient
+stretches the sixteenth partial at the current Stretch setting. The whole
+reduction is computed once per published memory in the JUCE-free DSP layer, so
+the editor never touches the model on a paint call.
 
-Neuramar exposes 14 host parameters: twelve continuous front-panel controls,
+The neighbouring root display shows the inferred note, tuning offset,
+confidence, and any manual semitone correction. The editor is resizable and all
+controls are drawn with native JUCE graphics.
+
+Neuramar exposes 17 host parameters: fifteen continuous front-panel controls,
 **Orbit**, and the persisted root correction.
 
 | Control | Musical role |
@@ -101,6 +115,9 @@ Neuramar exposes 14 host parameters: twelve continuous front-panel controls,
 | **Body Lock** | 0–100%; moves from resonances that follow the played pitch toward source-like fixed resonances. |
 | **Air** | 0–100%; sets the renderer-matched, harmonic-subtracted noise-filterbank layer: breath, scrape, hiss, and noisy attack energy. |
 | **Bone** | 0–100%; sets persistence-selected inharmonic modes: body resonances, impact, and ringing. |
+| **Stretch** | 0–200%; scales the partial stretch fitted from the source. 100% renders the learned stiff-string series, 0% forces an ideal harmonic bank, 200% exaggerates it. A memory with no fitted stretch is unaffected at any setting. |
+| **Formant** | -24 to +24 semitones; moves the learned resonant body — the Body-Locked Core envelope, the Air bands, and the Bone modes — without moving the played pitch. |
+| **Touch** | 0–100%; sets how much MIDI velocity shapes timbre as well as level. Harder notes become brighter and breathier; at 0% velocity only sets level. |
 | **Gravity** | -100% to +100%; tilts the reconstructed spectrum from darker to brighter. |
 | **Memory** | 0.25x–4.00x; changes how quickly a note travels through the learned time evolution. |
 | **Mutation** | 0–100%; adds bounded, voice-local movement around the learned character. |
@@ -128,6 +145,16 @@ neural-controller architecture chosen for the severe one-example data limit
 and the real-time constraints of a polyphonic plug-in. It is not trained
 end-to-end through a differentiable renderer:
 
+- a stiff-string partial law `f(n) = n f0 sqrt(1 + B n^2)` is fitted to the
+  measured partial positions before anything else is analysed. Squaring it
+  linearises the law, so one amplitude-weighted straight-line fit recovers the
+  fundamental and the coefficient together instead of biasing both; the fit is
+  only accepted when the partial series is dense and uninterrupted and the `n^2`
+  trend explains most of the measured deviation, so an ordinary harmonic source
+  reports exactly zero and behaves exactly as before. The harmonic analysis then
+  projects at the stretched positions, Bone candidate rejection measures its
+  distance to the nearest stretched partial, and the renderer places every
+  oscillator on that series;
 - a multi-window YIN-style difference-function detector rejects weak
   periodicity estimates, prefers deep periodic minima before its looser noisy
   fallback, aligns octave-related candidates in log frequency, and changes
@@ -155,8 +182,8 @@ end-to-end through a differentiable renderer:
 - the same controller can be initialized as a musically constrained procedural
   neural field when no sample is present; subsequent randomization uses
   deterministic per-operation seeds and independent named random streams,
-  scales bounded coefficient, phase, spectrum, and modal changes by exactly
-  1%, 10%, or 100%, and progressively releases learned residual corrections so
+  scales bounded coefficient, phase, spectrum, modal, and partial-stretch
+  changes by exactly 1%, 10%, or 100%, and progressively releases learned residual corrections so
   larger variations can express their new network state;
 - **Noise** supplies a slow, smoothly interpolated, voice-local latent signal
   to the controller's existing input manifold; it moves evaluation through
@@ -174,6 +201,11 @@ end-to-end through a differentiable renderer:
   character follows the played harmonic while resonances remain source-like;
   lower notes use only observed envelope evidence on their denser grid, while
   version-2 learned states retain exact decoder/model-evaluation compatibility;
+  the source/filter envelope uses a parity-balanced power kernel whose shoulder
+  taps carry only 1/32 of the weight each, so an alternating odd/even excitation
+  still cancels exactly while a narrow formant is blurred over a much smaller
+  span, and the kernel reflects at both evidence boundaries instead of
+  renormalising a truncated, parity-biased weight sum;
 - fractional Body-Locked coordinates use a positive, local, shape-preserving
   cubic in a log-like magnitude domain; learned harmonics remain exact, sharp
   spectral turns cannot overshoot, and the evidence-boundary fades stay linear
@@ -190,6 +222,17 @@ end-to-end through a differentiable renderer:
   at ordinary operating levels; only a pathological ±7.95 guard is
   retained, avoiding the folded high-register harmonics produced by an
   always-on base-rate saturator;
+- **Touch** turns velocity into an excitation strength: above a mezzo-forte
+  reference the harmonic tilt leans brighter and more of the learned Air is let
+  through, below it the opposite. At zero the response is the pure amplitude
+  behaviour every earlier build had;
+- **Formant** divides the Body-Locked envelope lookup coordinate by the shift
+  and multiplies the Air and Bone centre frequencies by it, so the resonant body
+  moves in absolute frequency while the played pitch does not move at all;
+- the band-limiting taper is folded into the control-rate amplitude ramp, so the
+  audio loop performs no per-sample anti-alias arithmetic and skips every
+  partial the taper has silenced; stored phases are kept reduced to `[0, 1)` so
+  each audible partial costs one table lookup, one multiply-add, and one wrap;
 - each voice owns its envelope, phase, note age, per-band noise, and variation
   state, while controller outputs are forward-interpolated between low-rate
   evaluations so a learned target is reached at the time it describes.
@@ -227,6 +270,13 @@ fit, deterministic recall, and a real-time-safe render path. Listening tests,
 host validation, and profiling remain necessary; this README makes no measured
 training-time, similarity, or perceptual-quality claim.
 
+The stiff-string law is a one-parameter musical prior, not a physical model of
+the source. It captures the systematic sharpening of upper partials on wound
+strings, tines, and struck bars; it cannot describe an arbitrary inharmonic
+body, which is what the explicit Bone modes are for. The fit is deliberately
+conservative and reports an exactly harmonic series whenever the evidence is
+short, sparse, or does not follow the law.
+
 The Core/Air split is a local sinusoidal decomposition, not a perfect physical
 source separation. Window boundaries, rapidly moving partials, and inharmonic
 tonal energy can leak into the residual. Bone tracks are compact,
@@ -248,7 +298,12 @@ unvoiced regions are deliberately bounded.
 
 Host state stores the ordinary parameters, root analysis metadata, display-only
 source filename, a low-resolution waveform preview, and the compact learned
-model in a versioned payload. It does not store the source recording or its full
+model in a versioned payload. The current payload is version 4, which appends
+the fitted stiff-string coefficient; version-2 and version-3 memories saved by
+earlier releases still load and render exactly as they did, with the missing
+fields left at their neutral zero values. Sessions saved before Noise, Stretch,
+Formant, or Touch existed restore those controls at their defaults rather than
+inheriting whatever the running instance happened to hold. It does not store the source recording or its full
 path, so a saved session can recall the synthesized instrument after the
 original file moves or disappears. Imported audio stays local during learning,
 and performance performs no file or network access.

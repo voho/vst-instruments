@@ -30,6 +30,10 @@ enum class Instrument : std::uint8_t
 
 inline constexpr std::size_t instrumentCount = static_cast<std::size_t> (Instrument::Count);
 inline constexpr double maximumTailSeconds = 8.0;
+// Choke/mute groups A, B and C. Group 0 means the voice never chokes anything.
+inline constexpr int chokeGroupCount = 3;
+inline constexpr float minimumVoiceLevelDecibels = -24.0f;
+inline constexpr float maximumVoiceLevelDecibels = 6.0f;
 
 struct InstrumentParameters
 {
@@ -37,6 +41,23 @@ struct InstrumentParameters
     float characterB { 0.5f };
     float pitch { 0.0f };
     float decay { 0.5f };
+    // Per-voice mixer. Level is in decibels so its unity default is exact;
+    // pan is the usual -1 (left) to +1 (right) constant-power position.
+    float level { 0.0f };
+    float pan { 0.0f };
+    // 0 = no group, 1..chokeGroupCount = mute group A..C.
+    int chokeGroup { 0 };
+};
+
+// Kit-wide controls that shape every voice and the shared output bus.
+struct KitParameters
+{
+    // 0.5 reproduces the original fixed analogue drift depth exactly; 0 makes
+    // the kit machine-tight and 1.0 doubles the per-hit variation.
+    float humanise { 0.5f };
+    // Both bus stages are fully bypassed at 0.
+    float busDrive { 0.0f };
+    float busCompression { 0.0f };
 };
 
 struct InstrumentMetadata
@@ -67,6 +88,7 @@ public:
     void reset() noexcept;
     void setInstrumentParameters (Instrument instrument,
                                   const InstrumentParameters& parameters) noexcept;
+    void setKitParameters (const KitParameters& parameters) noexcept;
     void setOutputGain (float linearGain) noexcept;
     void trigger (Instrument instrument, float velocity) noexcept;
     [[nodiscard]] bool triggerMidi (int midiNote, float velocity) noexcept;
@@ -74,6 +96,15 @@ public:
     void process (float* left, float* right, int numSamples) noexcept;
     // Includes short fade-only tails retained to make voice stealing click-free.
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
+
+    // Metering, published once per processed chunk for the editor. All three
+    // are already ballistically smoothed inside the engine so a UI that polls
+    // slower than the block rate cannot miss a transient.
+    [[nodiscard]] float getOutputLevel (int channel) const noexcept;
+    [[nodiscard]] float getInstrumentLevel (Instrument instrument) const noexcept;
+    // Linear gain currently applied by the bus compressor; 1.0 means no
+    // reduction and the stage may be bypassed entirely.
+    [[nodiscard]] float getBusGain() const noexcept;
 
 private:
     static constexpr int maxVoices = 64;
@@ -92,6 +123,9 @@ private:
         std::atomic<float> characterB { 0.5f };
         std::atomic<float> pitch { 0.0f };
         std::atomic<float> decay { 0.5f };
+        std::atomic<float> level { 0.0f };
+        std::atomic<float> pan { 0.0f };
+        std::atomic<int> chokeGroup { 0 };
     };
 
     struct Biquad
@@ -138,10 +172,15 @@ private:
         bool choking { false };
         bool modalNoiseReady { false };
         Instrument instrument { Instrument::Kick };
+        int chokeGroup { 0 };
         std::uint64_t generation { 0 };
         std::uint64_t ageSamples { 0 };
         std::uint64_t maximumSamples { 0 };
         std::uint64_t minimumSilenceSamples { 0 };
+        // Age after which the modal bank has rung down past -150 dB and can be
+        // skipped. Derived from the voice's own decay, so it stays identical at
+        // every sample rate and under every host block partitioning.
+        std::uint64_t modalActiveSamples { 0 };
         std::uint32_t noiseState { 1u };
         std::uint32_t quietSamples { 0u };
         float velocity { 0.0f };
@@ -159,6 +198,10 @@ private:
         float pitchEnvelopeMultiplier { 0.99f };
         float transientScale { 1.0f };
         float excitationScale { 1.0f };
+        // Softer strikes excite fewer high partials on a real drum. This scales
+        // the struck-timbre filters and stick content, not just the VCA gain.
+        float velocityTimbre { 1.0f };
+        float levelGain { 1.0f };
         float circuitDrive { 1.2f };
         float circuitBias { 0.0f };
         float analogPreviousInput { 0.0f };
@@ -212,6 +255,9 @@ private:
         std::array<float, metallicOscillatorCount> fixedTolerances {};
         std::array<float, maximumMetallicDecimatorTaps> decimatorHistory {};
         int decimatorWriteIndex { 0 };
+        // Samples this bank's circuit has been skipped because no voice could
+        // observe it. Restored analytically by wakeMetallicOscillatorBank().
+        std::uint64_t frozenSamples { 0 };
     };
 
     [[nodiscard]] static bool validInstrument (Instrument instrument) noexcept;
@@ -225,12 +271,17 @@ private:
     void initialiseModalVoice (Voice& voice, const float* ratios, int modeCount,
                                float baseFrequency, float decaySeconds,
                                float spread, float brightness) noexcept;
-    void chokeHats() noexcept;
+    void chokeGroup (int group) noexcept;
     void beginChoke (Voice& voice, float seconds) noexcept;
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
     void retireVoice (const Voice& voice) noexcept;
     void silenceVoice (Voice& voice) noexcept;
+    void addBankReference (Instrument instrument) noexcept;
+    void releaseBankReference (Instrument instrument) noexcept;
     void updateActiveVoiceCount() noexcept;
+    void applyBusStage (float& left, float& right, float driveAmount,
+                        float compressionAmount) noexcept;
+    void resetBusStage() noexcept;
 
     [[nodiscard]] float renderVoice (Voice& voice) noexcept;
     [[nodiscard]] float renderKick (Voice& voice) noexcept;
@@ -246,7 +297,8 @@ private:
 
     [[nodiscard]] float oscillator (Voice& voice, int oscillatorIndex) const noexcept;
     void resetMetallicOscillatorBanks() noexcept;
-    void wakeMetallicOscillatorBanks() noexcept;
+    void wakeMetallicOscillatorBank (RelaxationOscillatorBank& bank) noexcept;
+    void wakeMetallicOscillatorBankFor (Instrument instrument) noexcept;
     void configureMetallicDecimator() noexcept;
     void updateMetallicBankParameterTargets() noexcept;
     void configureMetallicOscillatorBank (Instrument instrument, float pitchRatio,
@@ -270,23 +322,41 @@ private:
     void configureResonator (Resonator& resonator, float frequency,
                              float decaySeconds) const noexcept;
 
+    // Level and Pan are channel-strip controls rather than per-hit properties,
+    // so their current values are republished each block and applied to voices
+    // that are already ringing.
+    struct MixerTarget
+    {
+        float levelGain { 1.0f };
+        float panLeft { 0.7071f };
+        float panRight { 0.7071f };
+    };
+    std::array<MixerTarget, instrumentCount> mixerTargets_ {};
     std::array<AtomicInstrumentParameters, instrumentCount> parameters_ {};
     std::array<std::uint64_t, instrumentCount> triggerCounters_ {};
     std::array<float, instrumentCount> componentDrift_ {};
     std::array<Voice, maxVoices> voices_ {};
     std::array<Voice, retiringVoiceCount> retiringVoices_ {};
     std::array<RelaxationOscillatorBank, metallicBankCount> metallicBanks_ {};
+    std::array<int, metallicBankCount> metallicBankVoiceCounts_ {};
     std::array<float, maximumMetallicDecimatorTaps> metallicDecimatorCoefficients_ {};
     std::array<float, sineTableSize> sineTable_ {};
+    std::array<std::atomic<float>, instrumentCount> instrumentLevels_ {};
 
     std::atomic<float> outputGain_ { 0.82f };
+    std::atomic<float> humanise_ { 0.5f };
+    std::atomic<float> busDrive_ { 0.0f };
+    std::atomic<float> busCompression_ { 0.0f };
+    std::atomic<float> outputLevelLeft_ { 0.0f };
+    std::atomic<float> outputLevelRight_ { 0.0f };
+    std::atomic<float> busGainMeter_ { 1.0f };
     std::atomic<int> activeVoiceCount_ { 0 };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     int maxBlockSize_ { 512 };
     bool prepared_ { false };
     bool anyVoiceActive_ { false };
-    std::uint64_t metallicFrozenSamples_ { 0 };
+    std::uint32_t metallicBankMask_ { 0u };
     std::uint64_t generation_ { 0 };
     std::uint64_t maximumVoiceSamples_ { 384000 };
     std::uint64_t forcedFadeStartSamples_ { 383760 };
@@ -314,6 +384,14 @@ private:
     float dcOutputRight_ { 0.0f };
     float masterAdaaPreviousLeft_ { 0.0f };
     float masterAdaaPreviousRight_ { 0.0f };
+    float busEnvelope_ { 0.0f };
+    float busGain_ { 1.0f };
+    float busDriveAdaaLeft_ { 0.0f };
+    float busDriveAdaaRight_ { 0.0f };
+    float busAttackCoefficient_ { 0.05f };
+    float busReleaseCoefficient_ { 0.002f };
+    float meterPeakLeft_ { 0.0f };
+    float meterPeakRight_ { 0.0f };
 };
 
 } // namespace drumalor

@@ -57,6 +57,13 @@ public:
               double sampleRate,
               ProgressCallback progressCallback = {},
               CancelPredicate cancelPredicate = {});
+
+    // The same band-limited resampler the learning pass uses, exposed so the
+    // regression suite can check it against a direct kernel evaluation. It is
+    // not part of the plug-in's runtime surface.
+    [[nodiscard]] static std::vector<float>
+        resampleForTests(const std::vector<float>& input,
+                         double sourceRate, double destinationRate);
 };
 
 } // namespace neuramar

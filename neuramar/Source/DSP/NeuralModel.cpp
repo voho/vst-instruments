@@ -35,6 +35,10 @@ constexpr std::uint64_t coreBiasSeedDomain = 0x636f72656269000dull;
 constexpr std::uint64_t airBiasSeedDomain = 0x616972626961000eull;
 constexpr std::uint64_t boneBiasSeedDomain = 0x626f6e656269000full;
 constexpr std::uint64_t pitchBiasSeedDomain = 0x7069746269610010ull;
+constexpr std::uint64_t inharmonicitySeedDomain = 0x696e6861726d0011ull;
+// A generated or varied memory only ever reaches a mild wound-string stretch.
+// Fitted memories may exceed this; randomisation deliberately does not.
+constexpr float generatedInharmonicityCeiling = 0.0004f;
 
 [[nodiscard]] std::uint64_t mixSeed(std::uint64_t value) noexcept
 {
@@ -397,6 +401,7 @@ std::unique_ptr<NeuralModel> NeuralModel::clone() const
     result->hiddenBiases_ = hiddenBiases_;
     result->outputWeights_ = outputWeights_;
     result->outputBiases_ = outputBiases_;
+    result->inharmonicity_ = inharmonicity_;
     result->residualKeyframeCount_ = residualKeyframeCount_;
     result->residualScales_ = residualScales_;
     result->residualTimes_ = residualTimes_;
@@ -428,7 +433,8 @@ void NeuralModel::refreshWaveformPreview(float blend) noexcept
         for (std::size_t harmonic = 0;
              harmonic < visibleHarmonicCount; ++harmonic)
         {
-            const float harmonicNumber = static_cast<float>(harmonic + 1);
+            const float harmonicNumber = stretchedHarmonicRatio(
+                static_cast<float>(harmonic + 1), inharmonicity_);
             value += frame.harmonicAmplitudes[harmonic] * std::sin(
                 twoPi * (carrier * harmonicNumber
                          + initialHarmonicPhases_[harmonic]));
@@ -856,6 +862,15 @@ NeuralModel::createRandomizedVariation(std::uint64_t seed,
     target->outputMeans_[pitchOutputIndex]
         = 0.25f * pitchStream.bipolar();
 
+    // A squared draw keeps most generated identities close to an ideal
+    // harmonic series while still occasionally growing a wound-string or
+    // tine-like stretch. The bound is far below the fitted model limit.
+    RandomStream inharmonicityStream(seed, inharmonicitySeedDomain);
+    const float inharmonicityDraw = 0.5f
+        * (inharmonicityStream.bipolar() + 1.0f);
+    target->inharmonicity_ = generatedInharmonicityCeiling
+        * inharmonicityDraw * inharmonicityDraw;
+
     target->residualKeyframeCount_ = 0;
     target->residualScales_.fill(0.0f);
     target->residualTimes_.fill(0.0f);
@@ -950,6 +965,9 @@ NeuralModel::createRandomizedVariation(std::uint64_t seed,
         result->outputWeights_[index] = interpolate(
             outputWeights_[index], target->outputWeights_[index], amount);
     }
+    result->inharmonicity_ = std::clamp(
+        interpolate(inharmonicity_, target->inharmonicity_, amount),
+        0.0f, maximumInharmonicity);
 
     // Learned residuals deliberately pin the neural base to analysis
     // keyframes. Relaxing them by the same selected amount lets a 1% variation
@@ -1201,6 +1219,7 @@ std::vector<std::uint8_t> NeuralModel::serialize() const
     for (std::size_t frame = 0; frame < residualKeyframeCount_; ++frame)
         for (std::size_t output = 0; output < outputSize; ++output)
             payload.writeI16(residualValues_[frame * outputSize + output]);
+    payload.writeFloat(inharmonicity_);
 
     BinaryWriter complete(headerBytes + payload.bytes.size());
     complete.writeU32(modelMagic);
@@ -1241,7 +1260,7 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
         setError(error, "Not a Neuramar model");
         return nullptr;
     }
-    if (version != legacyFormatVersion && version != currentFormatVersion)
+    if (version < bandFormatVersion || version > currentFormatVersion)
     {
         setError(error, "Unsupported Neuramar model version");
         return nullptr;
@@ -1299,10 +1318,11 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
         return nullptr;
     }
 
-    if (version == legacyFormatVersion)
+    if (version == bandFormatVersion)
     {
-        // Version 2 ends after the neural base. Its correction state remains
-        // value-initialised to zero so rendering follows the original path.
+        // Version 2 ends after the neural base. Its correction state and
+        // inharmonicity remain value-initialised to zero so rendering follows
+        // the original path exactly.
         if (reader.remaining() != 0)
         {
             setError(error, "Neuramar version-2 payload has trailing data");
@@ -1340,9 +1360,17 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
                 }
             }
         }
+        // Version 3 stops here; version 4 appends the stiff-string
+        // coefficient. Anything left over is rejected in both cases.
+        if (version >= currentFormatVersion
+            && !reader.readFloat(model->inharmonicity_))
+        {
+            setError(error, "Neuramar inharmonicity field is truncated");
+            return nullptr;
+        }
         if (reader.remaining() != 0)
         {
-            setError(error, "Neuramar version-3 payload has trailing data");
+            setError(error, "Neuramar model payload has trailing data");
             return nullptr;
         }
     }
@@ -1441,8 +1469,12 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
             [](float scale) { return scale == 0.0f; });
     }
 
+    const bool inharmonicityValid = std::isfinite(model->inharmonicity_)
+        && model->inharmonicity_ >= 0.0f
+        && model->inharmonicity_ <= maximumInharmonicity;
+
     if (!metadataValid || !scalesValid || !airValid || !boneValid
-        || !arraysValid || !residualsValid)
+        || !arraysValid || !residualsValid || !inharmonicityValid)
     {
         setError(error, "Neuramar model contains invalid or unsafe values");
         return nullptr;

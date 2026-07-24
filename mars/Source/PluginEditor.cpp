@@ -119,6 +119,38 @@ void distributeHorizontally (juce::Rectangle<int> area,
     }
 }
 
+// Lays components into a fixed column grid so a row with fewer controls still
+// lines up with the row above it.
+void distributeInColumns (juce::Rectangle<int> area,
+                          std::initializer_list<juce::Component*> components,
+                          int columnCount, int gap)
+{
+    const auto count = static_cast<int> (components.size());
+    if (count == 0 || columnCount <= 0)
+        return;
+
+    const auto available = juce::jmax (0, area.getWidth() - gap * (columnCount - 1));
+    const auto columnWidth = available / columnCount;
+    int index = 0;
+    for (auto* component : components)
+    {
+        component->setBounds (area.removeFromLeft (columnWidth));
+        if (++index < count)
+            area.removeFromLeft (gap);
+    }
+}
+
+juce::String midiNoteName (int note)
+{
+    static constexpr std::array<const char*, 12> names {
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+    };
+    if (note < 0 || note > 127)
+        return "--";
+    return juce::String (names[static_cast<size_t> (note % 12)])
+         + juce::String (note / 12 - 1);
+}
+
 void drawChassisSurface (juce::Graphics& g, juce::Rectangle<float> bounds)
 {
     juce::ColourGradient base (c (0xff272d2e), bounds.getTopLeft(), c (coal),
@@ -589,6 +621,160 @@ void MarsFader::resized()
     slider.setBounds (area);
 }
 
+MarsScopeDisplay::MarsScopeDisplay()
+{
+    trace.resize (static_cast<size_t> (traceSamples), 0.0f);
+    reducer.setColumns (128);
+    reducer.setBallistics (12.0f, 0.55f, 1.1f);
+    reducer.reset();
+    setInterceptsMouseClicks (false, false);
+    setAccessible (true);
+    setTitle ("Mars signal scope");
+    setDescription ("Shows the output waveform, level, and arpeggiator step");
+}
+
+void MarsScopeDisplay::refresh (const MarsAudioProcessor& processor,
+                                bool arpeggiatorEnabled,
+                                const juce::String& arpeggiatorMode)
+{
+    const auto count = processor.copyScopeTrace (trace.data(), traceSamples);
+    const auto start = mars::ScopeReducer::findRisingEdge (trace.data(), count);
+    reducer.reduce (trace.data() + start, count - start);
+
+    arpActive = arpeggiatorEnabled;
+    modeText = arpeggiatorMode;
+    arpNote = processor.getArpeggiatorNoteForDisplay();
+    arpKeys = processor.getArpeggiatorKeyCountForDisplay();
+    arpPhase = juce::jlimit (0.0f, 1.0f, processor.getArpeggiatorPhaseForDisplay());
+
+    const auto peakDecibels = reducer.peakHold() > 0.0f
+        ? juce::String (juce::Decibels::gainToDecibels (reducer.peakHold()), 1) + " dB"
+        : juce::String { "-inf dB" };
+    const auto nextStatus = arpActive
+        ? "ARP " + modeText + "  " + midiNoteName (arpNote) + "  " + peakDecibels
+        : "OUTPUT  " + peakDecibels;
+    if (nextStatus != statusText)
+    {
+        statusText = nextStatus;
+        setDescription ("Output waveform and level, peak " + peakDecibels
+                        + (arpActive ? ", arpeggiator running " + modeText
+                                     : juce::String { ", arpeggiator off" }));
+    }
+    repaint();
+}
+
+void MarsScopeDisplay::resized()
+{
+    // One column per two pixels keeps the trace dense without over-sampling the
+    // reduction on a wide editor.
+    reducer.setColumns (juce::jlimit (mars::ScopeReducer::minimumColumns,
+                                      mars::ScopeReducer::maximumColumns,
+                                      juce::jmax (2, getWidth() / 2)));
+}
+
+void MarsScopeDisplay::paint (juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat().reduced (1.0f);
+    g.setColour (c (screen));
+    g.fillRoundedRectangle (bounds, 4.0f);
+    g.setColour (c (accentBlueDark));
+    g.drawRoundedRectangle (bounds, 4.0f, 1.0f);
+
+    auto inner = bounds.reduced (5.0f, 4.0f);
+    if (inner.getWidth() < 8.0f || inner.getHeight() < 12.0f)
+        return;
+
+    auto meterArea = inner.removeFromBottom (juce::jmin (7.0f, inner.getHeight() * 0.24f));
+    inner.removeFromBottom (2.0f);
+
+    // Graticule.
+    g.setColour (c (accentBlueDark).withAlpha (0.55f));
+    for (int division = 1; division < 4; ++division)
+    {
+        const auto x = inner.getX() + inner.getWidth() * static_cast<float> (division) / 4.0f;
+        g.drawLine (x, inner.getY(), x, inner.getBottom(), 0.6f);
+    }
+    g.setColour (c (accentBlueDark).withAlpha (0.75f));
+    g.drawLine (inner.getX(), inner.getCentreY(), inner.getRight(), inner.getCentreY(), 0.8f);
+
+    // Waveform: a filled minimum/maximum band, which reads correctly even when
+    // one column spans many cycles of a high note.
+    const auto columns = reducer.getColumns();
+    const auto half = inner.getHeight() * 0.5f;
+    juce::Path band;
+    bool started = false;
+    for (int column = 0; column < columns; ++column)
+    {
+        const auto x = inner.getX()
+                     + inner.getWidth() * static_cast<float> (column)
+                           / static_cast<float> (juce::jmax (1, columns - 1));
+        const auto top = inner.getCentreY()
+                       - juce::jlimit (-1.0f, 1.0f, reducer.columnMaximum (column)) * half;
+        if (! started)
+        {
+            band.startNewSubPath (x, top);
+            started = true;
+        }
+        else
+        {
+            band.lineTo (x, top);
+        }
+    }
+    for (int column = columns - 1; column >= 0 && started; --column)
+    {
+        const auto x = inner.getX()
+                     + inner.getWidth() * static_cast<float> (column)
+                           / static_cast<float> (juce::jmax (1, columns - 1));
+        const auto bottom = inner.getCentreY()
+                          - juce::jlimit (-1.0f, 1.0f, reducer.columnMinimum (column)) * half;
+        band.lineTo (x, bottom);
+    }
+    if (started)
+    {
+        band.closeSubPath();
+        g.setColour (c (accentBlueBright).withAlpha (0.28f));
+        g.fillPath (band);
+        g.setColour (c (accentBlueBright).withAlpha (0.92f));
+        g.strokePath (band, juce::PathStrokeType (1.0f));
+    }
+
+    // Output meter with a held peak marker.
+    const auto meterValue = mars::ScopeReducer::amplitudeToMeter (reducer.rms());
+    const auto peakValue = mars::ScopeReducer::amplitudeToMeter (reducer.peakHold());
+    const auto warmth = mars::ScopeReducer::meterWarmth (peakValue);
+    g.setColour (juce::Colours::black.withAlpha (0.55f));
+    g.fillRoundedRectangle (meterArea, 1.5f);
+    if (meterValue > 0.0f)
+    {
+        auto filled = meterArea.withWidth (meterArea.getWidth() * meterValue);
+        g.setColour (c (accentBlue).interpolatedWith (c (signalRed), warmth));
+        g.fillRoundedRectangle (filled, 1.5f);
+    }
+    if (peakValue > 0.0f)
+    {
+        const auto x = meterArea.getX() + meterArea.getWidth() * peakValue;
+        g.setColour (peakValue > 0.97f ? c (signalRed) : c (accentAmber));
+        g.fillRect (juce::Rectangle<float> (juce::jmax (meterArea.getX(), x - 1.0f),
+                                            meterArea.getY(), 1.6f, meterArea.getHeight()));
+    }
+
+    g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
+    g.setColour (c (arpActive ? accentAmber : textDim).withAlpha (0.92f));
+    g.drawText (statusText, inner.toNearestInt().reduced (2, 1),
+                juce::Justification::topLeft);
+
+    if (arpActive)
+    {
+        // Step progress: a thin bar that refills once per arpeggiator step.
+        const auto lane = juce::Rectangle<float> (inner.getRight() - 46.0f,
+                                                  inner.getY() + 2.0f, 44.0f, 3.0f);
+        g.setColour (c (accentBlueDark));
+        g.fillRect (lane);
+        g.setColour (c (arpKeys > 0 ? lamp : panelEdge));
+        g.fillRect (lane.withWidth (lane.getWidth() * arpPhase));
+    }
+}
+
 void MarsStatusDisplay::setStatus (int activeVoices, bool ready, double sampleRate,
                                    bool scheduleRepaint)
 {
@@ -656,6 +842,7 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     editionLabel.setText ("DUAL-CORE ANALOG-MODELED ENGINE  |  DIRECT CONTROL",
                           juce::dontSendNotification);
     styleHeaderLabel (editionLabel, 10.0f, c (accentBlueBright));
+    editionLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (editionLabel);
 
     randomizerLabel.setText ("PRESET RANDOMIZER  /  RANGE", juce::dontSendNotification);
@@ -686,6 +873,8 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
                          "Mutate sound parameters within ten percent of their ranges");
     configureRandomizer (randomize100Button, 1.0f,
                          "Create a fully randomized sound across the available parameter ranges");
+
+    addAndMakeVisible (scopeDisplay);
 
     addAndMakeVisible (statusDisplay);
     statusDisplay.setAccessible (true);
@@ -756,9 +945,32 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     companderButton.setColour (juce::TextButton::textColourOnId, c (textBright));
     addAndMakeVisible (companderButton);
 
+    arpEnableButton.setClickingTogglesState (true);
+    arpEnableButton.setWantsKeyboardFocus (true);
+    arpEnableButton.setName ("Arpeggiator");
+    arpEnableButton.setTitle ("Arpeggiator");
+    arpEnableButton.setDescription (
+        "Play held keys as a free-running arpeggio through the normal voice allocator");
+    arpEnableButton.setTooltip (arpEnableButton.getDescription());
+    arpEnableButton.setColour (juce::TextButton::textColourOffId, c (textDim));
+    arpEnableButton.setColour (juce::TextButton::textColourOnId, c (textBright));
+    arpEnableButton.onStateChange = [this] { updateConditionalControls(); };
+    addAndMakeVisible (arpEnableButton);
+
+    arpHoldButton.setClickingTogglesState (true);
+    arpHoldButton.setWantsKeyboardFocus (true);
+    arpHoldButton.setName ("Arpeggiator hold");
+    arpHoldButton.setTitle ("Arpeggiator hold");
+    arpHoldButton.setDescription (
+        "Latch the last chord so the arpeggio continues after the keys are released");
+    arpHoldButton.setTooltip (arpHoldButton.getDescription());
+    arpHoldButton.setColour (juce::TextButton::textColourOffId, c (textDim));
+    arpHoldButton.setColour (juce::TextButton::textColourOnId, c (textBright));
+    addAndMakeVisible (arpHoldButton);
+
     for (auto* strip : { &osc1ModelStrip, &osc2ModelStrip, &osc1WaveStrip,
                          &osc2WaveStrip, &filterModelStrip, &lfoWaveStrip,
-                         &voiceModeStrip })
+                         &voiceModeStrip, &arpModeStrip })
         addAndMakeVisible (*strip);
 
     for (auto* knob : { &osc1OctaveKnob, &osc2OctaveKnob, &osc2TuneKnob,
@@ -766,9 +978,11 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
                         &noiseLevelKnob, &crossModKnob, &cutoffKnob, &resonanceKnob,
                         &filterDriveKnob, &filterShapeKnob, &filterEnvKnob,
                         &keyTrackKnob, &lfoRateKnob, &lfoPitchKnob, &lfoFilterKnob,
-                        &lfoPwmKnob, &polyphonyKnob, &unisonVoicesKnob, &driftKnob,
+                        &lfoPwmKnob, &polyphonyKnob, &unisonVoicesKnob,
+                        &unisonDetuneKnob, &driftKnob,
                         &spreadKnob, &glideKnob, &velocityKnob, &chorusMixKnob,
-                        &chorusRateKnob, &outputKnob })
+                        &chorusRateKnob, &outputKnob,
+                        &arpRateKnob, &arpOctavesKnob, &arpGateKnob })
         addAndMakeVisible (*knob);
 
     for (auto* fader : { &filterAttackFader, &filterDecayFader, &filterSustainFader,
@@ -820,6 +1034,14 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     describe (polyphonyKnob.slider, "Maximum polyphony",
               "Limit active render voices from one to sixteen; layered modes use multiple voices per note");
     describe (unisonVoicesKnob.slider, "Unison voice count", "Set voices consumed by each unison note");
+    describe (unisonDetuneKnob.slider, "Unison detune",
+              "Spread the unison stack in cents, independently of voice-card drift");
+    describe (arpRateKnob.slider, "Arpeggiator rate",
+              "Set the free-running arpeggiator step rate in steps per second");
+    describe (arpOctavesKnob.slider, "Arpeggiator range",
+              "Repeat the held pattern over one to four octaves");
+    describe (arpGateKnob.slider, "Arpeggiator gate",
+              "Set how much of each step the note is held; full gate is legato");
     describe (driftKnob.slider, "Voice-card drift", "Set deterministic component spread and stochastic analogue movement");
     describe (spreadKnob.slider, "Stereo spread", "Spread layered and polyphonic voices across stereo");
     describe (glideKnob.slider, "Glide time", "Set the pitch glide time between notes");
@@ -840,9 +1062,9 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     describe (ampSustainFader.slider, "Amplifier envelope sustain", "Set amplifier envelope sustain level");
     describe (ampReleaseFader.slider, "Amplifier envelope release", "Set amplifier envelope release time");
 
-    choiceAttachments.reserve (7);
-    sliderAttachments.reserve (36);
-    buttonAttachments.reserve (5);
+    choiceAttachments.reserve (8);
+    sliderAttachments.reserve (40);
+    buttonAttachments.reserve (7);
 
     attachChoice (osc1ModelStrip, mars::parameters::osc1Model);
     attachChoice (osc2ModelStrip, mars::parameters::osc2Model);
@@ -851,11 +1073,14 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     attachChoice (filterModelStrip, mars::parameters::filterModel);
     attachChoice (lfoWaveStrip, mars::parameters::lfoWave);
     attachChoice (voiceModeStrip, mars::parameters::voiceMode);
+    attachChoice (arpModeStrip, mars::parameters::arpMode);
     attachButton (osc1EnableButton, mars::parameters::osc1Enabled);
     attachButton (osc2EnableButton, mars::parameters::osc2Enabled);
     attachButton (oversamplingButton, mars::parameters::hqOversampling);
     attachButton (monoButton, mars::parameters::monoMode);
     attachButton (companderButton, mars::parameters::chorusCompander);
+    attachButton (arpEnableButton, mars::parameters::arpEnabled);
+    attachButton (arpHoldButton, mars::parameters::arpHold);
 
     attachSlider (osc1OctaveKnob.slider, mars::parameters::osc1Octave);
     attachSlider (osc2OctaveKnob.slider, mars::parameters::osc2Octave);
@@ -886,6 +1111,10 @@ MarsAudioProcessorEditor::MarsAudioProcessorEditor (MarsAudioProcessor& p)
     attachSlider (lfoPwmKnob.slider, mars::parameters::lfoPwm);
     attachSlider (polyphonyKnob.slider, mars::parameters::polyphonyLimit);
     attachSlider (unisonVoicesKnob.slider, mars::parameters::unisonVoices);
+    attachSlider (unisonDetuneKnob.slider, mars::parameters::unisonDetune);
+    attachSlider (arpRateKnob.slider, mars::parameters::arpRate);
+    attachSlider (arpOctavesKnob.slider, mars::parameters::arpOctaves);
+    attachSlider (arpGateKnob.slider, mars::parameters::arpGate);
     attachSlider (driftKnob.slider, mars::parameters::drift);
     attachSlider (spreadKnob.slider, mars::parameters::spread);
     attachSlider (glideKnob.slider, mars::parameters::glide);
@@ -998,6 +1227,20 @@ void MarsAudioProcessorEditor::updateConditionalControls()
     const auto unisonMode = ! monoMode && voiceModeStrip.getSelectedIndex() == 1;
     unisonVoicesKnob.setEnabled (unisonMode);
     unisonVoicesKnob.setAlpha (unisonMode ? 1.0f : disabledControlAlpha);
+    unisonDetuneKnob.setEnabled (unisonMode);
+    unisonDetuneKnob.setAlpha (unisonMode ? 1.0f : disabledControlAlpha);
+
+    const auto arpRunning = arpEnableButton.getToggleState();
+    for (auto* component : { static_cast<juce::Component*> (&arpModeStrip),
+                             static_cast<juce::Component*> (&arpRateKnob),
+                             static_cast<juce::Component*> (&arpOctavesKnob),
+                             static_cast<juce::Component*> (&arpGateKnob),
+                             static_cast<juce::Component*> (&arpHoldButton) })
+    {
+        component->setEnabled (arpRunning);
+        component->setAlpha (arpRunning ? 1.0f : disabledControlAlpha);
+    }
+    arpEnableButton.setButtonText (arpRunning ? "ARP ON" : "ARP");
 
     const auto semFilter = filterModelStrip.getSelectedIndex() == 1;
     filterShapeKnob.setEnabled (semFilter);
@@ -1015,6 +1258,15 @@ void MarsAudioProcessorEditor::timerCallback()
 {
     statusDisplay.setStatus (marsProcessor.getActiveVoiceCount(), marsProcessor.isEngineReady(),
                              marsProcessor.getCurrentSampleRateForDisplay());
+    // A plain literal table avoids a function-local static JUCE object that
+    // would outlive the library's own shutdown.
+    static constexpr std::array<const char*, 5> arpModeNames {
+        "UP", "DOWN", "UP-DN", "RAND", "PLAY"
+    };
+    const auto modeIndex = juce::jlimit (0, static_cast<int> (arpModeNames.size()) - 1,
+                                         arpModeStrip.getSelectedIndex());
+    scopeDisplay.refresh (marsProcessor, arpEnableButton.getToggleState(),
+                          juce::String (arpModeNames[static_cast<size_t> (modeIndex)]));
     updateConditionalControls();
 }
 
@@ -1068,11 +1320,11 @@ void MarsAudioProcessorEditor::paint (juce::Graphics& g)
                 headerRailWidth - blueWidth - redWidth, 1.5f);
 
     static constexpr std::array<const char*, sectionCount> names {
-        "OSC I", "OSC II", "MIX", "VCF", "LFO / VOICE",
+        "OSC I", "OSC II", "MIX", "VCF", "ARPEGGIATOR", "LFO / VOICE",
         "FILTER ENV", "AMP ENV", "ENSEMBLE / MASTER"
     };
     static constexpr std::array<juce::uint32, sectionCount> sectionAccents {
-        accentOrange, accentOrange, accentBlue, signalRed,
+        accentOrange, accentOrange, accentBlue, signalRed, accentAmber,
         accentBlue, accentOrange, signalRed, accentBlue
     };
 
@@ -1146,14 +1398,19 @@ void MarsAudioProcessorEditor::resized()
     distributeHorizontally (randomizerArea.reduced (0, 3),
                             { &randomize1Button, &randomize10Button, &randomize100Button }, 5);
     header.removeFromRight (12);
-    editionLabel.setBounds (header);
+    // The freed header span becomes the panel scope. The edition legend moves
+    // to the keyboard caption row below.
+    scopeDisplay.setBounds (header.reduced (0, 1));
 
     auto body = getLocalBounds();
     body.removeFromTop (headerHeight);
     body.reduce (24, 10);
     const auto keyboardHeight = juce::jlimit (125, 190, getHeight() * 19 / 100);
     auto keyboardArea = body.removeFromBottom (keyboardHeight);
-    keyboardHintLabel.setBounds (keyboardArea.removeFromTop (20));
+    auto captionRow = keyboardArea.removeFromTop (20);
+    editionLabel.setBounds (captionRow.removeFromRight (
+        juce::jlimit (300, 420, captionRow.getWidth() / 3)));
+    keyboardHintLabel.setBounds (captionRow);
     keyboardArea.removeFromTop (2);
     keyboard.setBounds (keyboardArea.reduced (0, 2));
     // MIDI 0..127 contains 75 white keys. Keep useful-sized keys at normal editor
@@ -1166,10 +1423,11 @@ void MarsAudioProcessorEditor::resized()
     body.removeFromTop (panelGap);
     auto rowTwo = body;
 
-    const auto rowOneAvailable = rowOne.getWidth() - panelGap * 3;
-    const auto osc1Width = rowOneAvailable * 15 / 100;
-    const auto osc2Width = rowOneAvailable * 21 / 100;
-    const auto mixerWidth = rowOneAvailable * 25 / 100;
+    const auto rowOneAvailable = rowOne.getWidth() - panelGap * 4;
+    const auto osc1Width = rowOneAvailable * 13 / 100;
+    const auto osc2Width = rowOneAvailable * 18 / 100;
+    const auto mixerWidth = rowOneAvailable * 21 / 100;
+    const auto filterWidth = rowOneAvailable * 28 / 100;
 
     sectionBounds[oscillator1Section] = rowOne.removeFromLeft (osc1Width);
     rowOne.removeFromLeft (panelGap);
@@ -1177,11 +1435,13 @@ void MarsAudioProcessorEditor::resized()
     rowOne.removeFromLeft (panelGap);
     sectionBounds[mixerSection] = rowOne.removeFromLeft (mixerWidth);
     rowOne.removeFromLeft (panelGap);
-    sectionBounds[filterSection] = rowOne;
+    sectionBounds[filterSection] = rowOne.removeFromLeft (filterWidth);
+    rowOne.removeFromLeft (panelGap);
+    sectionBounds[arpeggiatorSection] = rowOne;
 
     const auto rowTwoAvailable = rowTwo.getWidth() - panelGap * 3;
-    const auto lfoVoiceWidth = rowTwoAvailable * 37 / 100;
-    const auto envelopeWidth = rowTwoAvailable * 20 / 100;
+    const auto lfoVoiceWidth = rowTwoAvailable * 40 / 100;
+    const auto envelopeWidth = rowTwoAvailable * 19 / 100;
     sectionBounds[lfoVoiceSection] = rowTwo.removeFromLeft (lfoVoiceWidth);
     rowTwo.removeFromLeft (panelGap);
     sectionBounds[filterEnvelopeSection] = rowTwo.removeFromLeft (envelopeWidth);
@@ -1199,6 +1459,14 @@ void MarsAudioProcessorEditor::resized()
     osc1EnableButton.setBounds (powerButtonBounds (oscillator1Section));
     osc2EnableButton.setBounds (powerButtonBounds (oscillator2Section));
     companderButton.setBounds (powerButtonBounds (masterSection));
+
+    {
+        auto arpHeaderArea = sectionBounds[arpeggiatorSection].reduced (10, 3)
+                                 .removeFromTop (22);
+        arpHoldButton.setBounds (arpHeaderArea.removeFromRight (46));
+        arpHeaderArea.removeFromRight (4);
+        arpEnableButton.setBounds (arpHeaderArea.removeFromRight (58));
+    }
 
     const auto sectionContent = [this] (Section section)
     {
@@ -1242,8 +1510,15 @@ void MarsAudioProcessorEditor::resized()
     distributeHorizontally (filter, { &filterShapeKnob, &filterEnvKnob, &keyTrackKnob },
                             controlColumnGap);
 
+    auto arp = sectionContent (arpeggiatorSection);
+    arpModeStrip.setBounds (arp.removeFromTop (juce::jlimit (38, 45, arp.getHeight() / 5)));
+    arp.removeFromTop (choiceToControlsGap);
+    distributeHorizontally (arp, { &arpRateKnob, &arpOctavesKnob, &arpGateKnob },
+                            controlColumnGap);
+
     auto lfoVoice = sectionContent (lfoVoiceSection);
-    auto lfo = lfoVoice.removeFromLeft ((lfoVoice.getWidth() - panelGap) / 2);
+    // The voice half now carries four columns against the LFO half's two.
+    auto lfo = lfoVoice.removeFromLeft ((lfoVoice.getWidth() - panelGap) * 2 / 5);
     lfoVoice.removeFromLeft (panelGap);
     auto voice = lfoVoice;
 
@@ -1263,11 +1538,13 @@ void MarsAudioProcessorEditor::resized()
     voice.removeFromTop (choiceToControlsGap);
     auto voiceTop = voice.removeFromTop ((voice.getHeight() - controlRowGap) / 2);
     voice.removeFromTop (controlRowGap);
-    distributeHorizontally (voiceTop,
-                            { &polyphonyKnob, &unisonVoicesKnob, &driftKnob },
-                            controlColumnGap);
-    distributeHorizontally (voice, { &spreadKnob, &glideKnob, &velocityKnob },
-                            controlColumnGap);
+    // Four columns above, three below: the fixed grid keeps both rows aligned
+    // now that unison detune is a control of its own.
+    distributeInColumns (voiceTop,
+                         { &polyphonyKnob, &unisonVoicesKnob, &unisonDetuneKnob, &driftKnob },
+                         4, controlColumnGap);
+    distributeInColumns (voice, { &spreadKnob, &glideKnob, &velocityKnob },
+                         4, controlColumnGap);
 
     distributeHorizontally (sectionContent (filterEnvelopeSection),
                             { &filterAttackFader, &filterDecayFader,

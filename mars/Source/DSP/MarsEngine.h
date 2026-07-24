@@ -12,6 +12,7 @@ enum class OscillatorModel { Vco, Dco };
 enum class FilterModel { Ladder, Sem };
 enum class VoiceMode { Poly, Unison, Fifth, Mono };
 enum class LfoWaveform { Triangle, Sine, SampleHold };
+enum class ArpeggiatorMode { Up, Down, UpDown, Random, AsPlayed };
 
 struct EngineParameters
 {
@@ -61,6 +62,16 @@ struct EngineParameters
     float chorusMix { 0.32f };
     float chorusRateHz { 0.56f };
     float outputGain { 0.72f };
+    // Unison detune used to be derived from the voice-card drift control. It is
+    // now an independent panel value; 9.6 cents reproduces the previous default
+    // (4 + 20 * 0.28) exactly.
+    float unisonDetuneCents { 9.6f };
+    ArpeggiatorMode arpMode { ArpeggiatorMode::Up };
+    bool arpEnabled { false };
+    bool arpHold { false };
+    int arpOctaves { 1 };
+    float arpRateHz { 4.0f };
+    float arpGate { 0.55f };
 };
 
 class MarsEngine
@@ -81,6 +92,14 @@ public:
     void setSustainPedal(bool down) noexcept;
     void process(float* left, float* right, int numSamples);
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
+    // Arpeggiator inspection for the editor's step display. Both are plain
+    // relaxed reads of engine state; the plug-in copies them into atomics.
+    [[nodiscard]] int getArpeggiatorNote() const noexcept { return arpSoundingNote_; }
+    [[nodiscard]] int getArpeggiatorHeldKeyCount() const noexcept { return arpKeyCount_; }
+    [[nodiscard]] float getArpeggiatorPhase() const noexcept
+    {
+        return static_cast<float>(arpPhase_);
+    }
     [[nodiscard]] int getOversamplingFactor() const noexcept { return oversampling_; }
     [[nodiscard]] int getProcessingLatencySamples() const noexcept;
     [[nodiscard]] bool isOversamplingEnabled() const noexcept
@@ -102,6 +121,11 @@ private:
     static constexpr int halfbandRingSize = 256;
     static constexpr int latencyCompensationRingSize = 64;
     static constexpr int bbdStagePairs = 128;
+    // The arpeggiator latches at most one entry per MIDI key, and its expanded
+    // pattern spans at most four octave repeats of that list.
+    static constexpr int maxArpKeys = 32;
+    static constexpr int maxArpOctaves = 4;
+    static constexpr int maxArpSteps = maxArpKeys * maxArpOctaves;
     // JUCE hosts commonly top out at 384 kHz. Keeping an explicit ceiling well
     // above that protects coefficient calculations from pathological API input
     // without changing the timebase at any practical production sample rate.
@@ -347,6 +371,13 @@ private:
         float previousMixerInput { 0.0f };
         float lastOutput { 0.0f };
         float outputEnergy { 0.0f };
+        // Control-rate copies of quantities that used to be recomputed for every
+        // oversampled sample. They move far more slowly than audio, so the
+        // 8-sample control grid already used for pitch and cutoff is ample.
+        float lfoFade { 0.0f };
+        float vcaDrive { 1.05f };
+        float vcaNormalisation { 1.0f };
+        float pulseSkewOffset { 0.0f };
         bool mixerInitialised { false };
         Envelope ampEnvelope {};
         Envelope filterEnvelope {};
@@ -388,6 +419,23 @@ private:
     static float hashBipolar(std::uint32_t value) noexcept;
 
     void buildVoiceCards() noexcept;
+    void noteOnInternal(int midiNote, float velocity) noexcept;
+    void noteOffInternal(int midiNote) noexcept;
+    void arpKeyDown(int midiNote, float velocity) noexcept;
+    // Returns true when the note was part of the arpeggiator's key list, so
+    // callers can release notes that predate the arpeggiator instead.
+    bool arpKeyUp(int midiNote, bool releaseEveryPress = false) noexcept;
+    void enterArpeggiatorMode() noexcept;
+    void exitArpeggiatorMode() noexcept;
+    void releaseNotesPredatingArpeggiator() noexcept;
+    void clearArpeggiator(bool releaseSounding) noexcept;
+    int buildArpeggiatorSequence(std::array<int, maxArpSteps>& notes,
+                                 std::array<float, maxArpSteps>& velocities,
+                                 const EngineParameters& parameters) const noexcept;
+    void advanceArpeggiator(const EngineParameters& parameters) noexcept;
+    void triggerArpeggiatorStep(const EngineParameters& parameters) noexcept;
+    void markVoiceListDirty() noexcept { voiceListDirty_ = true; }
+    void refreshActiveVoiceList() noexcept;
     void initialiseVoice(Voice& voice, int slot, int rootMidi, int soundingMidi,
                          int layer, int layerCount, float velocity,
                          const EngineParameters& parameters) noexcept;
@@ -452,6 +500,14 @@ private:
     float driftSlowExcitation_ { 0.00945f };
     float driftFastExcitation_ { 0.05773f };
     float noiseColourCoefficient_ { 0.1702f };
+    // Block-rate copies of quantities that depend only on smoothed parameters.
+    // Recomputing an ldexp and two saturator evaluations for every oversampled
+    // sample of every voice was pure overhead.
+    float blockShapingGain_ { 1.128f };
+    float blockShapingNormalisation_ { 1.0f };
+    float blockDcoRangeClock1_ { 2000000.0f };
+    float blockDcoRangeClock2_ { 2000000.0f };
+    int blockLatencyCompensation_ { 0 };
     bool prepared_ { false };
     bool anyVoiceActive_ { false };
     int idleZeroRun_ { 0 };
@@ -465,7 +521,29 @@ private:
     std::array<std::uint16_t, 128> heldNoteCounts_ {};
     int heldNoteCount_ { 0 };
 
+    // Arpeggiator. The key list is press-ordered and pre-allocated; nothing on
+    // this path allocates, locks, or blocks.
+    std::array<int, maxArpKeys> arpKeyNotes_ {};
+    std::array<float, maxArpKeys> arpKeyVelocities_ {};
+    // Per-pitch press count, mirroring heldNoteCounts_: the engine is
+    // MIDI-omni, so one pitch can be held by several sources at once and the
+    // key only leaves the pattern on the final note-off.
+    std::array<std::uint16_t, maxArpKeys> arpKeyHoldCounts_ {};
+    int arpKeyCount_ { 0 };
+    int arpPhysicalKeyCount_ { 0 };
+    int arpStepIndex_ { 0 };
+    int arpDirection_ { 1 };
+    int arpSoundingNote_ { -1 };
+    double arpPhase_ { 0.0 };
+    bool arpGateOpen_ { false };
+    bool arpRunning_ { false };
+    bool arpWasEnabled_ { false };
+    std::uint32_t arpRandomState_ { 0x9e3779b9u };
+
     std::array<Voice, maxVoices> voices_ {};
+    std::array<int, maxVoices> activeVoiceSlots_ {};
+    int activeVoiceSlotCount_ { 0 };
+    bool voiceListDirty_ { true };
     std::array<VoiceCard, maxVoices> cards_ {};
     HalfbandDecimator firstDecimator_ {};
     HalfbandDecimator secondDecimator_ {};
