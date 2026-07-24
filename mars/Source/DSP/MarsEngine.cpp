@@ -1061,7 +1061,7 @@ void MarsEngine::reset()
     clearHeldNotes();
     arpKeyNotes_.fill(0);
     arpKeyVelocities_.fill(0.0f);
-    arpKeyPhysicallyHeld_.fill(false);
+    arpKeyHoldCounts_.fill(0);
     arpSoundingNote_ = -1;
     arpGateOpen_ = false;
     arpRunning_ = false;
@@ -1855,8 +1855,8 @@ void MarsEngine::allNotesOff()
     if (arpKeyCount_ > 0)
     {
         for (int index = arpKeyCount_ - 1; index >= 0; --index)
-            if (arpKeyPhysicallyHeld_[static_cast<std::size_t>(index)])
-                arpKeyUp(arpKeyNotes_[static_cast<std::size_t>(index)]);
+            if (arpKeyHoldCounts_[static_cast<std::size_t>(index)] > 0)
+                arpKeyUp(arpKeyNotes_[static_cast<std::size_t>(index)], true);
     }
     for (auto& voice : voices_)
     {
@@ -1906,12 +1906,12 @@ void MarsEngine::arpKeyDown(int midiNote, float velocity) noexcept
         if (arpKeyNotes_[static_cast<std::size_t>(index)] != midiNote)
             continue;
 
-        arpKeyVelocities_[static_cast<std::size_t>(index)] = velocity;
-        if (!arpKeyPhysicallyHeld_[static_cast<std::size_t>(index)])
-        {
-            arpKeyPhysicallyHeld_[static_cast<std::size_t>(index)] = true;
+        const auto slot = static_cast<std::size_t>(index);
+        arpKeyVelocities_[slot] = velocity;
+        if (arpKeyHoldCounts_[slot] == 0)
             ++arpPhysicalKeyCount_;
-        }
+        if (arpKeyHoldCounts_[slot] < std::numeric_limits<std::uint16_t>::max())
+            ++arpKeyHoldCounts_[slot];
         return;
     }
 
@@ -1921,7 +1921,7 @@ void MarsEngine::arpKeyDown(int midiNote, float velocity) noexcept
     const auto slot = static_cast<std::size_t>(arpKeyCount_);
     arpKeyNotes_[slot] = midiNote;
     arpKeyVelocities_[slot] = velocity;
-    arpKeyPhysicallyHeld_[slot] = true;
+    arpKeyHoldCounts_[slot] = 1;
     ++arpKeyCount_;
     ++arpPhysicalKeyCount_;
 
@@ -1937,16 +1937,25 @@ void MarsEngine::arpKeyDown(int midiNote, float velocity) noexcept
     }
 }
 
-bool MarsEngine::arpKeyUp(int midiNote) noexcept
+bool MarsEngine::arpKeyUp(int midiNote, bool releaseEveryPress) noexcept
 {
     for (int index = 0; index < arpKeyCount_; ++index)
     {
         if (arpKeyNotes_[static_cast<std::size_t>(index)] != midiNote)
             continue;
 
-        if (arpKeyPhysicallyHeld_[static_cast<std::size_t>(index)])
+        const auto slot = static_cast<std::size_t>(index);
+        if (arpKeyHoldCounts_[slot] > 0)
         {
-            arpKeyPhysicallyHeld_[static_cast<std::size_t>(index)] = false;
+            if (releaseEveryPress)
+                arpKeyHoldCounts_[slot] = 0;
+            else
+                --arpKeyHoldCounts_[slot];
+
+            // Another controller still holds this pitch, so it stays in the
+            // pattern until its final note-off.
+            if (arpKeyHoldCounts_[slot] != 0)
+                return true;
             arpPhysicalKeyCount_ = std::max(0, arpPhysicalKeyCount_ - 1);
         }
 
@@ -1959,7 +1968,7 @@ bool MarsEngine::arpKeyUp(int midiNote) noexcept
             const auto source = static_cast<std::size_t>(shift + 1);
             arpKeyNotes_[target] = arpKeyNotes_[source];
             arpKeyVelocities_[target] = arpKeyVelocities_[source];
-            arpKeyPhysicallyHeld_[target] = arpKeyPhysicallyHeld_[source];
+            arpKeyHoldCounts_[target] = arpKeyHoldCounts_[source];
         }
         --arpKeyCount_;
         if (arpKeyCount_ == 0)

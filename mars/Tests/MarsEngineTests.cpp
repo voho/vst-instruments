@@ -3988,6 +3988,37 @@ void testArpeggiator()
                "the arpeggiator did not keep running after being switched on");
     }
 
+    // The engine is MIDI-omni, so two controllers can hold one pitch at once.
+    // The pattern must keep that key until the final note-off, exactly as the
+    // Mono held-note stack already counts overlapping presses.
+    {
+        mars::MarsEngine engine;
+        makeEngine(engine, mars::ArpeggiatorMode::Up, 1, 0.5f, false);
+        engine.noteOn(60, 0.8f);
+        engine.noteOn(64, 0.8f);
+        // A second source presses the pitch that is already held.
+        engine.noteOn(60, 0.8f);
+        render(engine, 2048);
+        expect(mars::MarsEngineTestAccess::arpeggiatorKeyCount(engine) == 2,
+               "an overlapping press added a duplicate arpeggiator key");
+
+        engine.noteOff(60);
+        render(engine, 2048);
+        expect(mars::MarsEngineTestAccess::arpeggiatorKeyCount(engine) == 2,
+               "one note-off dropped a key that another controller still held");
+
+        engine.noteOff(60);
+        render(engine, 2048);
+        expect(mars::MarsEngineTestAccess::arpeggiatorKeyCount(engine) == 1,
+               "the final note-off did not release the arpeggiator key");
+
+        engine.noteOff(64);
+        render(engine, static_cast<int>(0.6 * rate));
+        expect(mars::MarsEngineTestAccess::arpeggiatorKeyCount(engine) == 0
+                   && engine.getActiveVoiceCount() == 0,
+               "releasing every overlapping key did not stop the arpeggiator");
+    }
+
     // The same switch, but the host sends the note-off before the next
     // process() call, so the transition handler has not run yet and the release
     // has to come from noteOff()'s fallback.

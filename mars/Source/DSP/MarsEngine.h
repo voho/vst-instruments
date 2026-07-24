@@ -424,7 +424,7 @@ private:
     void arpKeyDown(int midiNote, float velocity) noexcept;
     // Returns true when the note was part of the arpeggiator's key list, so
     // callers can release notes that predate the arpeggiator instead.
-    bool arpKeyUp(int midiNote) noexcept;
+    bool arpKeyUp(int midiNote, bool releaseEveryPress = false) noexcept;
     void enterArpeggiatorMode() noexcept;
     void releaseNotesPredatingArpeggiator() noexcept;
     void clearArpeggiator(bool releaseSounding) noexcept;
@@ -524,7 +524,10 @@ private:
     // this path allocates, locks, or blocks.
     std::array<int, maxArpKeys> arpKeyNotes_ {};
     std::array<float, maxArpKeys> arpKeyVelocities_ {};
-    std::array<bool, maxArpKeys> arpKeyPhysicallyHeld_ {};
+    // Per-pitch press count, mirroring heldNoteCounts_: the engine is
+    // MIDI-omni, so one pitch can be held by several sources at once and the
+    // key only leaves the pattern on the final note-off.
+    std::array<std::uint16_t, maxArpKeys> arpKeyHoldCounts_ {};
     int arpKeyCount_ { 0 };
     int arpPhysicalKeyCount_ { 0 };
     int arpStepIndex_ { 0 };
