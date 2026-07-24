@@ -1681,6 +1681,10 @@ void MarsEngine::noteOn(int midiNote, float velocity)
     velocity = std::clamp(velocity, 0.0f, 1.0f);
     if (targetParameters_.arpEnabled)
     {
+        // The transition has to complete before the first arpeggiated voice
+        // exists, otherwise the cleanup below would treat the arpeggiator's own
+        // opening step as a note that predates it.
+        enterArpeggiatorMode();
         arpKeyDown(midiNote, velocity);
         return;
     }
@@ -1696,6 +1700,17 @@ void MarsEngine::noteOff(int midiNote)
     if (targetParameters_.arpEnabled && arpKeyUp(midiNote))
         return;
     noteOffInternal(midiNote);
+}
+
+void MarsEngine::enterArpeggiatorMode() noexcept
+{
+    if (arpWasEnabled_)
+        return;
+
+    // Marked before the release so a voice the arpeggiator starts from here on
+    // is never mistaken for one that predates it.
+    arpWasEnabled_ = true;
+    releaseNotesPredatingArpeggiator();
 }
 
 void MarsEngine::releaseNotesPredatingArpeggiator() noexcept
@@ -2098,13 +2113,10 @@ void MarsEngine::advanceArpeggiator(const EngineParameters& parameters) noexcept
         return;
     }
 
-    if (!arpWasEnabled_)
-    {
-        // Entering arpeggiator mode must not strand the notes that were already
-        // sounding, mirroring the release performed when leaving it.
-        releaseNotesPredatingArpeggiator();
-        arpWasEnabled_ = true;
-    }
+    // Entering arpeggiator mode must not strand the notes that were already
+    // sounding, mirroring the release performed when leaving it. A note-on
+    // dispatched earlier in this block will already have done this.
+    enterArpeggiatorMode();
 
     // Switching Hold off while a chord is latched releases it, exactly as
     // lifting the last key would have done without Hold.

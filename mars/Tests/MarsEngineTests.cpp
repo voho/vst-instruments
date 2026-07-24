@@ -3958,6 +3958,36 @@ void testArpeggiator()
                "the late note-off resurrected the released voice");
     }
 
+    // The arpeggiator's own opening step must survive the transition. A note-on
+    // dispatched after the switch but before the next process() starts the
+    // first arpeggiated voice while the engine has not yet handled the
+    // transition, and that voice must not be mistaken for one predating it.
+    {
+        mars::MarsEngine engine;
+        auto p = makeEngine(engine, mars::ArpeggiatorMode::Up, 1, 0.8f, false);
+        p.arpEnabled = false;
+        engine.setParameters(p);
+        render(engine, 512);
+
+        p.arpEnabled = true;
+        engine.setParameters(p);
+        engine.noteOn(60, 0.8f);
+        expect(engine.getActiveVoiceCount() > 0,
+               "the arpeggiator did not start its first step on the note-on");
+
+        // One block is enough: the transition runs at the top of it.
+        render(engine, 32);
+        expect(engine.getActiveVoiceCount() > 0,
+               "the transition released the arpeggiator's own opening step");
+
+        // A second key makes consecutive steps differ, which is what the
+        // pattern capture records.
+        engine.noteOn(64, 0.8f);
+        const auto pattern = captureArpeggiatorPattern(engine, rate, 0.8, 4);
+        expect(pattern.size() >= 3,
+               "the arpeggiator did not keep running after being switched on");
+    }
+
     // The same switch, but the host sends the note-off before the next
     // process() call, so the transition handler has not run yet and the release
     // has to come from noteOff()'s fallback.
