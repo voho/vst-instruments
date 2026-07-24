@@ -246,10 +246,14 @@ void testParameterLayoutAndDefaults()
                     std::string ("host parameter order changed at index ")
                         + std::to_string (index));
 
+        // Each release appends its new parameters with a fresh version hint, so
+        // the boundaries below are the parameter counts of the earlier layouts:
+        // 42 = through 1.2, 43 = 1.3, 47 = 1.4, 48 = 1.5, and 55 = 1.6.
         const auto expectedVersionHint = index < version1ParameterCount ? 1
                                        : index < 42u ? 2
                                        : index == 42u ? 3
-                                       : index < 47u ? 4 : 5;
+                                       : index < 47u ? 4
+                                       : index == 47u ? 5 : 6;
         expect (hostParameter->getVersionHint() == expectedVersionHint,
                 std::string ("wrong parameter version hint for ") + expected.id);
 
