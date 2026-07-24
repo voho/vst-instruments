@@ -27,7 +27,7 @@ struct ParameterExpectation
     float tolerance;
 };
 
-constexpr std::array<ParameterExpectation, 48> expectedParameters {{
+constexpr std::array<ParameterExpectation, 55> expectedParameters {{
     { mars::parameters::osc1Wave,         0.0f,   1.0e-5f },
     { mars::parameters::osc1Octave,       0.0f,   1.0e-5f },
     { mars::parameters::osc2Wave,         1.0f,   1.0e-5f },
@@ -76,6 +76,13 @@ constexpr std::array<ParameterExpectation, 48> expectedParameters {{
     { mars::parameters::polyphonyLimit,  16.0f,   1.0e-5f },
     { mars::parameters::monoMode,         0.0f,   1.0e-5f },
     { mars::parameters::chorusCompander,  0.0f,   1.0e-5f },
+    { mars::parameters::unisonDetune,     9.6f,   1.0e-5f },
+    { mars::parameters::arpEnabled,       0.0f,   1.0e-5f },
+    { mars::parameters::arpMode,          0.0f,   1.0e-5f },
+    { mars::parameters::arpRate,          5.0f,   1.0e-5f },
+    { mars::parameters::arpOctaves,       1.0f,   1.0e-5f },
+    { mars::parameters::arpGate,          0.55f,  1.0e-5f },
+    { mars::parameters::arpHold,          0.0f,   1.0e-5f },
 }};
 
 constexpr std::size_t version1ParameterCount = 40;
@@ -202,10 +209,10 @@ void useShortReleases (MarsAudioProcessor& processor)
 void testParameterLayoutAndDefaults()
 {
     MarsAudioProcessor processor;
-    expect (expectedParameters.size() == 48u,
-            "test parameter manifest does not contain exactly 48 entries");
+    expect (expectedParameters.size() == 55u,
+            "test parameter manifest does not contain exactly 55 entries");
     expect (processor.getParameters().size() == static_cast<int> (expectedParameters.size()),
-            "processor does not expose exactly 48 APVTS parameters");
+            "processor does not expose exactly 55 APVTS parameters");
 
     std::set<std::string> uniqueIds;
     const auto& hostParameters = processor.getParameters();
@@ -253,7 +260,7 @@ void testParameterLayoutAndDefaults()
     }
 
     expect (uniqueIds.size() == expectedParameters.size(),
-            "the 48-entry APVTS manifest contains duplicate ids");
+            "the 55-entry APVTS manifest contains duplicate ids");
 }
 
 void testParameterTextFormatting()
@@ -278,6 +285,15 @@ void testParameterTextFormatting()
     expectParameterText (processor, mars::parameters::monoMode, 1.0f, "On");
     expectParameterText (processor, mars::parameters::chorusCompander, 0.0f, "Off");
     expectParameterText (processor, mars::parameters::chorusCompander, 1.0f, "On");
+    expectParameterText (processor, mars::parameters::unisonDetune, 9.6f, "9.6ct");
+    expectParameterText (processor, mars::parameters::arpEnabled, 0.0f, "Off");
+    expectParameterText (processor, mars::parameters::arpEnabled, 1.0f, "On");
+    expectParameterText (processor, mars::parameters::arpMode, 2.0f, "Up-down");
+    expectParameterText (processor, mars::parameters::arpMode, 4.0f, "As played");
+    expectParameterText (processor, mars::parameters::arpRate, 5.0f, "5.00 Hz");
+    expectParameterText (processor, mars::parameters::arpOctaves, 3.0f, "3 oct");
+    expectParameterText (processor, mars::parameters::arpGate, 0.55f, "55%");
+    expectParameterText (processor, mars::parameters::arpHold, 1.0f, "On");
 }
 
 void testStateRoundTrip()
@@ -297,6 +313,13 @@ void testStateRoundTrip()
     setParameterValue (source, mars::parameters::polyphonyLimit, 7.0f);
     setParameterValue (source, mars::parameters::monoMode, 1.0f);
     setParameterValue (source, mars::parameters::chorusCompander, 1.0f);
+    setParameterValue (source, mars::parameters::unisonDetune, 33.4f);
+    setParameterValue (source, mars::parameters::arpEnabled, 1.0f);
+    setParameterValue (source, mars::parameters::arpMode, 3.0f);
+    setParameterValue (source, mars::parameters::arpRate, 11.5f);
+    setParameterValue (source, mars::parameters::arpOctaves, 4.0f);
+    setParameterValue (source, mars::parameters::arpGate, 0.21f);
+    setParameterValue (source, mars::parameters::arpHold, 1.0f);
 
     juce::MemoryBlock state;
     source.getStateInformation (state);
@@ -338,6 +361,23 @@ void testStateRoundTrip()
     expect (approximatelyEqual (
                 parameterValue (restored, mars::parameters::chorusCompander), 1.0f),
             "ensemble compander did not survive state round-trip");
+    expect (approximatelyEqual (
+                parameterValue (restored, mars::parameters::unisonDetune), 33.4f, 0.11f),
+            "unison detune did not survive state round-trip");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::arpEnabled), 1.0f)
+                && approximatelyEqual (
+                    parameterValue (restored, mars::parameters::arpMode), 3.0f)
+                && approximatelyEqual (
+                    parameterValue (restored, mars::parameters::arpOctaves), 4.0f)
+                && approximatelyEqual (
+                    parameterValue (restored, mars::parameters::arpHold), 1.0f),
+            "arpeggiator switches did not survive state round-trip");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::arpRate),
+                                11.5f, 0.05f),
+            "arpeggiator rate did not survive state round-trip");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::arpGate),
+                                0.21f, 0.002f),
+            "arpeggiator gate did not survive state round-trip");
 }
 
 bool isParameterState (const juce::ValueTree& child, const char* parameterId)
@@ -374,6 +414,14 @@ void testLegacyStateDefaultsNewParameters()
     removeParameterState (legacyState, mars::parameters::polyphonyLimit);
     removeParameterState (legacyState, mars::parameters::monoMode);
     removeParameterState (legacyState, mars::parameters::chorusCompander);
+    for (const auto* parameterId : { mars::parameters::unisonDetune,
+                                     mars::parameters::arpEnabled,
+                                     mars::parameters::arpMode,
+                                     mars::parameters::arpRate,
+                                     mars::parameters::arpOctaves,
+                                     mars::parameters::arpGate,
+                                     mars::parameters::arpHold })
+        removeParameterState (legacyState, parameterId);
     expect (! containsParameterState (legacyState, mars::parameters::osc1Enabled)
                 && ! containsParameterState (legacyState, mars::parameters::osc2Enabled)
                 && ! containsParameterState (legacyState, mars::parameters::hqOversampling)
@@ -399,6 +447,13 @@ void testLegacyStateDefaultsNewParameters()
     setParameterValue (restored, mars::parameters::polyphonyLimit, 3.0f);
     setParameterValue (restored, mars::parameters::monoMode, 1.0f);
     setParameterValue (restored, mars::parameters::chorusCompander, 1.0f);
+    setParameterValue (restored, mars::parameters::unisonDetune, 41.0f);
+    setParameterValue (restored, mars::parameters::arpEnabled, 1.0f);
+    setParameterValue (restored, mars::parameters::arpMode, 3.0f);
+    setParameterValue (restored, mars::parameters::arpRate, 17.0f);
+    setParameterValue (restored, mars::parameters::arpOctaves, 4.0f);
+    setParameterValue (restored, mars::parameters::arpGate, 0.9f);
+    setParameterValue (restored, mars::parameters::arpHold, 1.0f);
     restored.setStateInformation (binaryState.getData(), static_cast<int> (binaryState.getSize()));
 
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::osc1Enabled), 1.0f),
@@ -419,6 +474,22 @@ void testLegacyStateDefaultsNewParameters()
     expect (approximatelyEqual (
                 parameterValue (restored, mars::parameters::chorusCompander), 0.0f),
             "legacy state did not default missing ensemble compander to Off");
+    expect (approximatelyEqual (
+                parameterValue (restored, mars::parameters::unisonDetune), 9.6f, 0.05f),
+            "legacy state did not default unison detune to the previous 9.6 cent spread");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::arpEnabled), 0.0f)
+                && approximatelyEqual (
+                    parameterValue (restored, mars::parameters::arpHold), 0.0f)
+                && approximatelyEqual (
+                    parameterValue (restored, mars::parameters::arpMode), 0.0f)
+                && approximatelyEqual (
+                    parameterValue (restored, mars::parameters::arpOctaves), 1.0f),
+            "legacy state did not default the arpeggiator to Off, Up, one octave");
+    expect (approximatelyEqual (parameterValue (restored, mars::parameters::arpRate),
+                                5.0f, 0.02f)
+                && approximatelyEqual (
+                    parameterValue (restored, mars::parameters::arpGate), 0.55f, 0.002f),
+            "legacy state did not default the arpeggiator rate and gate");
     expect (approximatelyEqual (parameterValue (restored, mars::parameters::cutoff),
                                 1234.0f, 0.5f),
             "version-1 migration did not restore existing parameter values");
@@ -432,7 +503,14 @@ void testLegacyStateDefaultsNewParameters()
                 && containsParameterState (upgradedState, mars::parameters::polyphonyLimit)
                 && containsParameterState (upgradedState, mars::parameters::monoMode)
                 && containsParameterState (
-                    upgradedState, mars::parameters::chorusCompander),
+                    upgradedState, mars::parameters::chorusCompander)
+                && containsParameterState (upgradedState, mars::parameters::unisonDetune)
+                && containsParameterState (upgradedState, mars::parameters::arpEnabled)
+                && containsParameterState (upgradedState, mars::parameters::arpMode)
+                && containsParameterState (upgradedState, mars::parameters::arpRate)
+                && containsParameterState (upgradedState, mars::parameters::arpOctaves)
+                && containsParameterState (upgradedState, mars::parameters::arpGate)
+                && containsParameterState (upgradedState, mars::parameters::arpHold),
             "migrated state did not persist the appended parameters");
 }
 
@@ -444,7 +522,9 @@ bool isExcludedFromRandomizer (const char* id)
         || parameterId == mars::parameters::osc2Enabled
         || parameterId == mars::parameters::hqOversampling
         || parameterId == mars::parameters::polyphonyLimit
-        || parameterId == mars::parameters::monoMode;
+        || parameterId == mars::parameters::monoMode
+        || parameterId == mars::parameters::arpEnabled
+        || parameterId == mars::parameters::arpHold;
 }
 
 void testPresetRandomizerRangeAndSafety()
@@ -968,6 +1048,88 @@ struct SnapshotStats
     int opaquePixels = 0;
 };
 
+void testArpeggiatorThroughMidi()
+{
+    MarsAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, mars::parameters::arpEnabled, 1.0f);
+    setParameterValue (processor, mars::parameters::arpRate, 20.0f);
+    setParameterValue (processor, mars::parameters::arpGate, 0.5f);
+    setParameterValue (processor, mars::parameters::arpMode, 0.0f);
+    setParameterValue (processor, mars::parameters::arpOctaves, 1.0f);
+    useShortReleases (processor);
+
+    juce::AudioBuffer<float> audio (2, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, 60, static_cast<juce::uint8> (100)), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (1, 64, static_cast<juce::uint8> (100)), 8);
+    midi.addEvent (juce::MidiMessage::noteOn (1, 67, static_cast<juce::uint8> (100)), 16);
+    renderBlock (processor, audio, midi);
+    midi.clear();
+
+    expect (processor.getArpeggiatorKeyCountForDisplay() == 3,
+            "the arpeggiator did not latch three held keys");
+
+    std::set<int> playedNotes;
+    float peak = 0.0f;
+    for (int block = 0; block < 96; ++block)
+    {
+        renderBlock (processor, audio, midi);
+        const auto note = processor.getArpeggiatorNoteForDisplay();
+        if (note >= 0)
+            playedNotes.insert (note);
+        peak = std::max (peak, peakInRange (audio, 0, audio.getNumSamples()));
+        const auto phase = processor.getArpeggiatorPhaseForDisplay();
+        expect (phase >= 0.0f && phase <= 1.0f,
+                "the arpeggiator reported a phase outside 0..1");
+    }
+    expect (playedNotes == std::set<int> ({ 60, 64, 67 }),
+            "the arpeggiator did not play every held key");
+    expect (peak > 0.001f, "the arpeggiator produced no audio");
+
+    // The scope trace must follow the rendered output and stay finite.
+    std::array<float, 1024> trace {};
+    const auto copied = processor.copyScopeTrace (trace.data(),
+                                                  static_cast<int> (trace.size()));
+    expect (copied == static_cast<int> (trace.size()),
+            "the scope trace did not return the requested sample count");
+    bool traceFinite = true;
+    float tracePeak = 0.0f;
+    for (const auto value : trace)
+    {
+        traceFinite = traceFinite && std::isfinite (value);
+        tracePeak = std::max (tracePeak, std::abs (value));
+    }
+    expect (traceFinite, "the scope trace contained a non-finite sample");
+    expect (tracePeak > 0.0f, "the scope trace stayed silent while the engine played");
+    expect (processor.copyScopeTrace (nullptr, 512) == 0
+                && processor.copyScopeTrace (trace.data(), 0) == 0,
+            "the scope trace did not reject a degenerate request");
+
+    // Releasing every key stops the pattern; the plug-in returns to silence.
+    midi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+    midi.addEvent (juce::MidiMessage::noteOff (1, 64), 1);
+    midi.addEvent (juce::MidiMessage::noteOff (1, 67), 2);
+    renderBlock (processor, audio, midi);
+    midi.clear();
+    expect (renderUntilVoicesStop (processor, audio),
+            "the arpeggiator kept voices alive after every key was released");
+    expect (processor.getArpeggiatorKeyCountForDisplay() == 0,
+            "the arpeggiator kept its key list after every key was released");
+
+    // Turning it off hands note handling straight back to the keyboard.
+    setParameterValue (processor, mars::parameters::arpEnabled, 0.0f);
+    midi.addEvent (juce::MidiMessage::noteOn (1, 55, static_cast<juce::uint8> (100)), 0);
+    renderBlock (processor, audio, midi);
+    midi.clear();
+    expect (processor.getActiveVoiceCount() > 0,
+            "the keyboard did not resume direct note handling after the arpeggiator");
+
+    processor.releaseResources();
+    expect (processor.getArpeggiatorNoteForDisplay() == -1,
+            "releasing resources left an arpeggiator note on the display");
+}
+
 SnapshotStats inspectSnapshot (const juce::Image& snapshot)
 {
     std::set<juce::uint32> colours;
@@ -1068,6 +1230,7 @@ int main()
     testPresetRandomizerRangeAndSafety();
     testOutputGainImpact();
     testPrepareReleaseUiQueueAndPanic();
+    testArpeggiatorThroughMidi();
     testEditorRenderingAtDefaultAndMinimumSize();
 
     if (failureCount != 0)

@@ -1,4 +1,5 @@
 #include "DSP/MarsEngine.h"
+#include "DSP/MarsScope.h"
 
 #include <algorithm>
 #include <array>
@@ -55,6 +56,77 @@ struct MarsEngineTestAccess
         state = filter.stageVoltage;
         previousInput = filter.previousInputVoltage;
         return output;
+    }
+
+    // Free-running ladder ring: a short excitation followed by silence, so the
+    // tail shows whether the loop sustains at the k = 4 oscillation threshold.
+    static std::vector<float> renderLadderRing(float frequencyTangent,
+                                               float feedbackGain,
+                                               float frequencyScale,
+                                               float excitation,
+                                               int excitationSamples,
+                                               int sampleCount)
+    {
+        MarsEngine::LadderFilter filter;
+        std::vector<float> output(static_cast<std::size_t>(std::max(0, sampleCount)));
+        for (int sample = 0; sample < sampleCount; ++sample)
+            output[static_cast<std::size_t>(sample)] = filter.process(
+                sample < excitationSamples ? excitation : 0.0f,
+                frequencyTangent, feedbackGain, frequencyScale);
+        return output;
+    }
+
+    // Steady-state low-pass gain of the SEM core driven at its own cutoff. The
+    // ratio is measured after the resonant build-up has settled.
+    static float stateVariablePeakGain(float g, float resonance, float amplitude,
+                                       float normalisedFrequency, int sampleCount,
+                                       bool& finite)
+    {
+        MarsEngine::StateVariableFilter filter;
+        float peak = 0.0f;
+        finite = true;
+        for (int sample = 0; sample < sampleCount; ++sample)
+        {
+            const float input = amplitude
+                              * std::sin(2.0f * 3.14159265358979f * normalisedFrequency
+                                         * static_cast<float>(sample));
+            float low = 0.0f;
+            float band = 0.0f;
+            float high = 0.0f;
+            filter.process(input, g, resonance, low, band, high);
+            finite = finite && std::isfinite(low) && std::isfinite(band)
+                  && std::isfinite(high);
+            if (sample > (sampleCount * 3) / 4)
+                peak = std::max(peak, std::abs(low));
+        }
+        return amplitude > 0.0f ? peak / amplitude : 0.0f;
+    }
+
+    static std::array<float, 2> voiceLadderFeedback(const MarsEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active)
+                return { voice.resonance, voice.ladderFeedbackGain };
+        return { 0.0f, 0.0f };
+    }
+
+    static std::vector<float> activeVoiceUnisonCents(const MarsEngine& engine)
+    {
+        std::vector<float> cents;
+        for (const auto& voice : engine.voices_)
+            if (voice.active)
+                cents.push_back(voice.unisonCents);
+        return cents;
+    }
+
+    static int arpeggiatorSoundingNote(const MarsEngine& engine) noexcept
+    {
+        return engine.arpSoundingNote_;
+    }
+
+    static int arpeggiatorKeyCount(const MarsEngine& engine) noexcept
+    {
+        return engine.arpKeyCount_;
     }
 
     static int activeVoicesForRoot(const MarsEngine& engine, int midiNote) noexcept
@@ -3236,6 +3308,804 @@ void testIdleChorusStateMaintenance()
                + std::to_string(blend) + ")");
 }
 
+void testLadderSelfOscillation()
+{
+    // 1 kHz cutoff inside the default 4x HQ island.
+    constexpr float processingRate = 192000.0f;
+    constexpr float cutoff = 1000.0f;
+    const float g = std::tan(3.14159265358979f * cutoff / processingRate);
+    const auto ladderFrequencyScale = [](float k)
+    {
+        constexpr float cosPiOverFour = 0.7071067811865475f;
+        const float fourthRootK = std::sqrt(std::sqrt(k));
+        const float alphaSquared = 1.0f + std::sqrt(k) - 2.0f * fourthRootK * cosPiOverFour;
+        return 1.0f / std::sqrt(std::max(alphaSquared, 1.0e-8f));
+    };
+
+    struct Tail
+    {
+        int crossings { 0 };
+        double rms { 0.0 };
+        double peak { 0.0 };
+        bool finite { true };
+    };
+    const auto measure = [&ladderFrequencyScale, g](float k)
+    {
+        const auto ring = mars::MarsEngineTestAccess::renderLadderRing(
+            g, k, ladderFrequencyScale(k), 0.05f, 8, 400000);
+        Tail tail;
+        double sumSquares = 0.0;
+        constexpr int first = 380000;
+        constexpr int last = 399000;
+        for (const float value : ring)
+        {
+            tail.finite = tail.finite && std::isfinite(value);
+            tail.peak = std::max(tail.peak, std::abs(static_cast<double>(value)));
+        }
+        float previous = ring[static_cast<std::size_t>(first)];
+        for (int sample = first + 1; sample < last; ++sample)
+        {
+            const float value = ring[static_cast<std::size_t>(sample)];
+            if ((previous <= 0.0f) != (value <= 0.0f))
+                ++tail.crossings;
+            previous = value;
+            sumSquares += static_cast<double>(value) * static_cast<double>(value);
+        }
+        tail.rms = std::sqrt(sumSquares / static_cast<double>(last - first - 1));
+        return tail;
+    };
+
+    // The old ceiling sat just under the threshold, so an excited ladder could
+    // only ring down. Nothing about that behaviour changes below the knee.
+    const auto belowThreshold = measure(3.98f);
+    const auto atMaximum = measure(4.182f);
+
+    expect(belowThreshold.finite && atMaximum.finite,
+           "ladder ring produced a non-finite sample");
+    expect(belowThreshold.crossings == 0,
+           "a sub-threshold ladder unexpectedly sustained an oscillation");
+    expect(atMaximum.crossings > 100,
+           "maximum resonance did not reach the k = 4 self-oscillation threshold");
+    expect(atMaximum.rms > 8.0 * belowThreshold.rms,
+           "self-oscillation did not raise the sustained tail energy");
+    expect(atMaximum.peak < 4.0,
+           "self-oscillating ladder left its bounded amplitude range");
+
+    // A four-pole ladder oscillates at its cutoff. Two crossings per period.
+    const double tailSeconds = 18999.0 / static_cast<double>(processingRate);
+    const double oscillationHz = 0.5 * static_cast<double>(atMaximum.crossings) / tailSeconds;
+    std::cout << "Ladder self-oscillation at maximum resonance: "
+              << std::fixed << std::setprecision(1) << oscillationHz
+              << " Hz for a " << cutoff << " Hz cutoff\n";
+    expect(oscillationHz > 0.8 * cutoff && oscillationHz < 1.25 * cutoff,
+           "ladder self-oscillation did not track the cutoff frequency");
+
+    // The panel mapping must actually reach past the threshold at the top of
+    // the resonance control and must not disturb ordinary settings.
+    const auto feedbackForResonance = [](float resonance)
+    {
+        mars::MarsEngine engine;
+        engine.prepare(48000.0, blockSize, false);
+        auto p = isolatedOscillatorParameters();
+        p.filterModel = mars::FilterModel::Ladder;
+        p.resonance = resonance;
+        p.drift = 0.0f;
+        p.cutoffHz = 1000.0f;
+        engine.setParameters(p);
+        engine.noteOn(52, 0.9f);
+        render(engine, 2048);
+        return mars::MarsEngineTestAccess::voiceLadderFeedback(engine);
+    };
+    // Compare against the effective per-card resonance, which still carries its
+    // small component tolerance. The lift itself must be invisible here.
+    const auto feedbackAtDefault = feedbackForResonance(0.28f);
+    const auto feedbackAtMaximum = feedbackForResonance(0.995f);
+    expect(std::abs(feedbackAtDefault[1] - 4.0f * feedbackAtDefault[0]) < 1.0e-5f,
+           "the resonance lift changed the feedback gain at the default setting");
+    expect(feedbackAtMaximum[1] > 4.0f && feedbackAtMaximum[1] < 4.3f,
+           "maximum resonance did not cross the ladder oscillation threshold (k = "
+               + std::to_string(feedbackAtMaximum[1]) + ")");
+
+    // Rendering a full voice at that setting must stay finite and bounded.
+    mars::MarsEngine engine;
+    engine.prepare(48000.0, blockSize);
+    auto p = basicParameters();
+    p.filterModel = mars::FilterModel::Ladder;
+    p.resonance = 0.995f;
+    p.filterDrive = 0.85f;
+    p.cutoffHz = 900.0f;
+    engine.setParameters(p);
+    engine.noteOn(40, 1.0f);
+    engine.noteOn(47, 1.0f);
+    const auto metrics = render(engine, static_cast<int>(1.5 * 48000.0));
+    expect(metrics.finite, "self-oscillating voice produced a non-finite sample");
+    expect(metrics.peak <= 1.2500001,
+           "self-oscillating voice exceeded the output guard");
+    expect(metrics.rms() > 1.0e-4, "self-oscillating voice was silent");
+}
+
+void testSemNonlinearResonance()
+{
+    // 2% of the processing rate, driven at the same frequency so the measured
+    // gain is the resonant peak itself.
+    constexpr float normalisedFrequency = 0.02f;
+    const float g = std::tan(3.14159265358979f * normalisedFrequency);
+    bool finite = true;
+    bool allFinite = true;
+    const auto gainAt = [&](float amplitude)
+    {
+        const float gain = mars::MarsEngineTestAccess::stateVariablePeakGain(
+            g, 0.99f, amplitude, normalisedFrequency, 8000, finite);
+        allFinite = allFinite && finite;
+        return gain;
+    };
+
+    const float smallSignalGain = gainAt(0.005f);
+    const float programmeGain = gainAt(0.5f);
+    const float hotGain = gainAt(2.0f);
+    std::cout << "SEM resonant peak gain: " << std::fixed << std::setprecision(2)
+              << smallSignalGain << " small signal, " << programmeGain
+              << " at 0.5, " << hotGain << " at 2.0\n";
+
+    expect(allFinite, "SEM nonlinear resonance produced a non-finite sample");
+    expect(smallSignalGain > 10.0f,
+           "SEM lost its small-signal resonant peak");
+    expect(programmeGain < 0.5f * smallSignalGain,
+           "SEM resonance did not compress at programme level");
+    expect(hotGain < programmeGain,
+           "SEM resonance compression was not monotonic with level");
+    expect(hotGain * 2.0f < 4.5f,
+           "SEM output was not bounded by the saturating resonance state");
+
+    // The whole voice must remain stable with the SEM at its extremes.
+    for (const float shape : { 0.0f, 0.5f, 1.0f })
+    {
+        mars::MarsEngine engine;
+        engine.prepare(96000.0, blockSize);
+        auto p = basicParameters();
+        p.filterModel = mars::FilterModel::Sem;
+        p.filterShape = shape;
+        p.resonance = 0.995f;
+        p.filterDrive = 1.0f;
+        p.cutoffHz = 240.0f;
+        engine.setParameters(p);
+        engine.noteOn(36, 1.0f);
+        engine.noteOn(43, 1.0f);
+        const auto metrics = render(engine, static_cast<int>(0.6 * 96000.0));
+        expect(metrics.finite,
+               "extreme SEM setting produced a non-finite sample");
+        expect(metrics.peak <= 1.2500001,
+               "extreme SEM setting exceeded the output guard");
+    }
+}
+
+void testWaveformFreezeAndThaw()
+{
+    constexpr double rate = 48000.0;
+    constexpr int settleSamples = static_cast<int>(0.05 * rate);
+    constexpr int detourSamples = static_cast<int>(0.20 * rate);
+    constexpr int returnSamples = static_cast<int>(0.15 * rate);
+
+    // A settled endpoint renders only the audible generator. Switching must
+    // still be transient-free, because the frozen paths are re-seeded while the
+    // destination gain is still zero. The reference for "transient-free" is the
+    // slew the destination waveform produces on its own, measured on an engine
+    // that never switched.
+    for (const auto source : { mars::OscillatorWave::Triangle,
+                               mars::OscillatorWave::Saw })
+    {
+        for (const auto destination : { mars::OscillatorWave::Saw,
+                                        mars::OscillatorWave::Pulse,
+                                        mars::OscillatorWave::Triangle })
+        {
+            if (source == destination)
+                continue;
+
+            for (const auto model : { mars::OscillatorModel::Vco,
+                                      mars::OscillatorModel::Dco })
+            {
+                auto p = isolatedOscillatorParameters();
+                p.osc1Model = model;
+                p.osc2Model = model;
+
+                mars::MarsEngine steady;
+                steady.prepare(rate, 64);
+                auto steadyParameters = p;
+                steadyParameters.osc1Wave = destination;
+                steady.setParameters(steadyParameters);
+                steady.noteOn(52, 0.9f);
+                render(steady, settleSamples + detourSamples);
+                const double steadyStep = maximumStepAfter(steady, 0.0f, 512);
+
+                mars::MarsEngine engine;
+                engine.prepare(rate, 64);
+                p.osc1Wave = source;
+                engine.setParameters(p);
+                engine.noteOn(52, 0.9f);
+                render(engine, settleSamples + detourSamples);
+                p.osc1Wave = destination;
+                engine.setParameters(p);
+                const double switchStep = maximumStepAfter(engine, 0.0f, 512);
+
+                expect(switchStep <= 1.6 * steadyStep + 0.01,
+                       "thawing a frozen waveform generator produced a larger "
+                       "transient than the destination waveform itself (step "
+                           + std::to_string(switchStep) + " against "
+                           + std::to_string(steadyStep) + ")");
+            }
+        }
+    }
+
+    // Freezing must not corrupt state: once a switch has settled, an engine
+    // whose destination generator was frozen and re-seeded has to render the
+    // same signal as one that ran that generator continuously. Both engines
+    // share a note, a phase seed, and a sample count.
+    for (const auto destination : { mars::OscillatorWave::Saw,
+                                    mars::OscillatorWave::Pulse,
+                                    mars::OscillatorWave::Triangle })
+    {
+        for (const auto model : { mars::OscillatorModel::Vco,
+                                  mars::OscillatorModel::Dco })
+        {
+            auto p = isolatedOscillatorParameters();
+            p.osc1Model = model;
+            p.osc2Model = model;
+            // A symmetric pulse gives all three waveforms the same mean, so the
+            // 1.5 Hz output servo cannot mask the comparison with a slow
+            // DC-recovery ramp of its own.
+            p.pulseWidth = 0.5f;
+            p.osc1Wave = destination == mars::OscillatorWave::Triangle
+                ? mars::OscillatorWave::Saw : mars::OscillatorWave::Triangle;
+
+            auto warmParameters = p;
+            warmParameters.osc1Wave = destination;
+
+            mars::MarsEngine warm;
+            mars::MarsEngine thawed;
+            warm.prepare(rate, 64);
+            thawed.prepare(rate, 64);
+            warm.setParameters(warmParameters);
+            thawed.setParameters(p);
+            warm.noteOn(52, 0.9f);
+            thawed.noteOn(52, 0.9f);
+            render(warm, settleSamples + detourSamples);
+            render(thawed, settleSamples + detourSamples);
+            thawed.setParameters(warmParameters);
+
+            // Let the 3 ms audio crossfade and the output servo's response to
+            // it pass before comparing the settled endpoints.
+            constexpr int crossfadeSamples = static_cast<int>(0.06 * rate);
+            render(warm, crossfadeSamples);
+            render(thawed, crossfadeSamples);
+
+            constexpr int compareSamples = static_cast<int>(0.03 * rate);
+            std::array<float, blockSize> warmLeft {};
+            std::array<float, blockSize> warmRight {};
+            std::array<float, blockSize> thawedLeft {};
+            std::array<float, blockSize> thawedRight {};
+            double maximumError = 0.0;
+            for (int position = 0; position < compareSamples; position += blockSize)
+            {
+                warm.process(warmLeft.data(), warmRight.data(), blockSize);
+                thawed.process(thawedLeft.data(), thawedRight.data(), blockSize);
+                for (int index = 0; index < blockSize; ++index)
+                    maximumError = std::max(
+                        maximumError,
+                        std::abs(static_cast<double>(
+                            warmLeft[static_cast<std::size_t>(index)]
+                            - thawedLeft[static_cast<std::size_t>(index)])));
+            }
+            expect(maximumError < 0.006,
+                   "a thawed waveform generator did not converge on the warm "
+                   "reference (error " + std::to_string(maximumError) + ")");
+        }
+    }
+
+    // Round-tripping back to the original waveform must return the same steady
+    // state a continuously warm generator would have produced.
+    mars::MarsEngine reference;
+    mars::MarsEngine switched;
+    reference.prepare(rate, 64);
+    switched.prepare(rate, 64);
+    auto p = isolatedOscillatorParameters();
+    p.osc1Wave = mars::OscillatorWave::Saw;
+    reference.setParameters(p);
+    switched.setParameters(p);
+    reference.noteOn(52, 0.9f);
+    switched.noteOn(52, 0.9f);
+    render(reference, settleSamples);
+    render(switched, settleSamples);
+
+    auto detour = p;
+    detour.osc1Wave = mars::OscillatorWave::Pulse;
+    switched.setParameters(detour);
+    render(switched, detourSamples);
+    switched.setParameters(p);
+    render(switched, returnSamples);
+    render(reference, detourSamples + returnSamples);
+
+    // Both engines advanced the same number of samples with the same oscillator
+    // clock, so a settled saw endpoint must agree closely.
+    std::array<float, 256> referenceLeft {};
+    std::array<float, 256> referenceRight {};
+    std::array<float, 256> switchedLeft {};
+    std::array<float, 256> switchedRight {};
+    reference.process(referenceLeft.data(), referenceRight.data(), 256);
+    switched.process(switchedLeft.data(), switchedRight.data(), 256);
+    double maximumDifference = 0.0;
+    for (std::size_t index = 0; index < referenceLeft.size(); ++index)
+        maximumDifference = std::max(
+            maximumDifference,
+            std::abs(static_cast<double>(referenceLeft[index] - switchedLeft[index])));
+    expect(maximumDifference < 0.01,
+           "a frozen-and-thawed saw generator did not return to its warm state "
+           "(difference " + std::to_string(maximumDifference) + ")");
+}
+
+void testUnisonDetuneControl()
+{
+    constexpr double rate = 48000.0;
+    const auto centsSpread = [](float detune, float drift)
+    {
+        mars::MarsEngine engine;
+        engine.prepare(rate, blockSize, false);
+        auto p = basicParameters();
+        p.voiceMode = mars::VoiceMode::Unison;
+        p.unisonVoices = 4;
+        p.unisonDetuneCents = detune;
+        p.drift = drift;
+        engine.setParameters(p);
+        engine.noteOn(57, 0.9f);
+        render(engine, 512);
+        const auto cents = mars::MarsEngineTestAccess::activeVoiceUnisonCents(engine);
+        float lowest = 0.0f;
+        float highest = 0.0f;
+        for (const float value : cents)
+        {
+            lowest = std::min(lowest, value);
+            highest = std::max(highest, value);
+        }
+        return std::pair<std::size_t, float> { cents.size(), highest - lowest };
+    };
+
+    const auto wide = centsSpread(40.0f, 0.0f);
+    const auto narrow = centsSpread(0.0f, 1.0f);
+    const auto legacyDefault = centsSpread(9.6f, 0.28f);
+    expect(wide.first == 4u && narrow.first == 4u,
+           "unison did not allocate four layers");
+    expect(std::abs(wide.second - 80.0f) < 0.01f,
+           "unison detune did not span plus and minus the requested cents");
+    expect(narrow.second == 0.0f,
+           "unison detune remained coupled to the drift control");
+    // 4 + 20 * 0.28 is exactly what the old drift-derived formula produced.
+    expect(std::abs(legacyDefault.second - 19.2f) < 0.01f,
+           "the default unison detune no longer reproduces the previous spread");
+
+    mars::MarsEngine engine;
+    engine.prepare(rate, blockSize);
+    auto p = basicParameters();
+    p.voiceMode = mars::VoiceMode::Unison;
+    p.unisonDetuneCents = 50.0f;
+    engine.setParameters(p);
+    engine.noteOn(45, 0.95f);
+    const auto metrics = render(engine, static_cast<int>(0.4 * rate));
+    expect(metrics.finite && metrics.rms() > 1.0e-4,
+           "maximum unison detune produced an invalid render");
+}
+
+// Renders the engine while recording the arpeggiator's sounding note, so the
+// pattern can be asserted without depending on audio thresholds.
+std::vector<int> captureArpeggiatorPattern(mars::MarsEngine& engine, double rate,
+                                           double seconds, int stepLimit)
+{
+    std::vector<int> pattern;
+    std::array<float, 32> left {};
+    std::array<float, 32> right {};
+    const int total = static_cast<int>(seconds * rate);
+    int previous = -2;
+    for (int position = 0; position < total; position += 32)
+    {
+        engine.process(left.data(), right.data(), 32);
+        const int note = mars::MarsEngineTestAccess::arpeggiatorSoundingNote(engine);
+        if (note >= 0 && note != previous)
+        {
+            pattern.push_back(note);
+            if (static_cast<int>(pattern.size()) >= stepLimit)
+                break;
+        }
+        if (note >= 0)
+            previous = note;
+    }
+    return pattern;
+}
+
+void testArpeggiator()
+{
+    constexpr double rate = 48000.0;
+    const auto makeEngine = [](mars::MarsEngine& engine, mars::ArpeggiatorMode mode,
+                               int octaves, float gate, bool hold)
+    {
+        engine.prepare(rate, blockSize, false);
+        auto p = basicParameters();
+        p.arpEnabled = true;
+        p.arpMode = mode;
+        p.arpOctaves = octaves;
+        p.arpRateHz = 20.0f;
+        p.arpGate = gate;
+        p.arpHold = hold;
+        p.ampRelease = 0.02f;
+        p.filterRelease = 0.02f;
+        p.chorusMix = 0.0f;
+        engine.setParameters(p);
+        return p;
+    };
+
+    // Up over one octave repeats the sorted chord.
+    {
+        mars::MarsEngine engine;
+        makeEngine(engine, mars::ArpeggiatorMode::Up, 1, 0.5f, false);
+        engine.noteOn(60, 0.8f);
+        engine.noteOn(64, 0.8f);
+        engine.noteOn(67, 0.8f);
+        expect(engine.getActiveVoiceCount() > 0,
+               "the arpeggiator did not play its first step immediately");
+        const auto pattern = captureArpeggiatorPattern(engine, rate, 1.2, 7);
+        const std::vector<int> expected { 60, 64, 67, 60, 64, 67, 60 };
+        expect(pattern == expected,
+               "Up mode did not ascend through the sorted chord");
+    }
+
+    // Down reverses it.
+    {
+        mars::MarsEngine engine;
+        makeEngine(engine, mars::ArpeggiatorMode::Down, 1, 0.5f, false);
+        engine.noteOn(67, 0.8f);
+        engine.noteOn(64, 0.8f);
+        engine.noteOn(60, 0.8f);
+        const auto pattern = captureArpeggiatorPattern(engine, rate, 1.2, 6);
+        const std::vector<int> expected { 67, 64, 60, 67, 64, 60 };
+        expect(pattern == expected, "Down mode did not descend through the chord");
+    }
+
+    // Up-down reflects without repeating the turning notes.
+    {
+        mars::MarsEngine engine;
+        makeEngine(engine, mars::ArpeggiatorMode::UpDown, 1, 0.5f, false);
+        engine.noteOn(60, 0.8f);
+        engine.noteOn(64, 0.8f);
+        engine.noteOn(67, 0.8f);
+        const auto pattern = captureArpeggiatorPattern(engine, rate, 1.4, 7);
+        const std::vector<int> expected { 60, 64, 67, 64, 60, 64, 67 };
+        expect(pattern == expected, "Up-down mode did not ping-pong correctly");
+    }
+
+    // As played keeps the physical press order.
+    {
+        mars::MarsEngine engine;
+        makeEngine(engine, mars::ArpeggiatorMode::AsPlayed, 1, 0.5f, false);
+        engine.noteOn(67, 0.8f);
+        engine.noteOn(60, 0.8f);
+        engine.noteOn(64, 0.8f);
+        const auto pattern = captureArpeggiatorPattern(engine, rate, 1.0, 4);
+        const std::vector<int> expected { 67, 60, 64, 67 };
+        expect(pattern == expected, "As-played mode reordered the pressed keys");
+    }
+
+    // Range repeats the pattern an octave higher, and never leaves MIDI range.
+    {
+        mars::MarsEngine engine;
+        makeEngine(engine, mars::ArpeggiatorMode::Up, 3, 0.5f, false);
+        engine.noteOn(60, 0.8f);
+        engine.noteOn(64, 0.8f);
+        const auto pattern = captureArpeggiatorPattern(engine, rate, 1.4, 7);
+        const std::vector<int> expected { 60, 64, 72, 76, 84, 88, 60 };
+        expect(pattern == expected, "Range did not repeat the pattern by octaves");
+
+        mars::MarsEngine high;
+        makeEngine(high, mars::ArpeggiatorMode::Up, 4, 0.5f, false);
+        high.noteOn(126, 0.8f);
+        const auto highPattern = captureArpeggiatorPattern(high, rate, 0.6, 3);
+        for (const int note : highPattern)
+            expect(note >= 0 && note <= 127,
+                   "arpeggiator range produced an out-of-range MIDI note");
+    }
+
+    // Random mode stays inside the chord and does actually vary.
+    {
+        mars::MarsEngine engine;
+        makeEngine(engine, mars::ArpeggiatorMode::Random, 1, 0.5f, false);
+        engine.noteOn(60, 0.8f);
+        engine.noteOn(64, 0.8f);
+        engine.noteOn(67, 0.8f);
+        const auto pattern = captureArpeggiatorPattern(engine, rate, 2.0, 24);
+        bool inRange = true;
+        bool varied = false;
+        for (const int note : pattern)
+            inRange = inRange && (note == 60 || note == 64 || note == 67);
+        for (std::size_t index = 1; index < pattern.size(); ++index)
+            varied = varied || pattern[index] != pattern[0];
+        expect(inRange, "Random mode left the held chord");
+        expect(pattern.size() > 8 && varied,
+               "Random mode did not produce a varying sequence");
+    }
+
+    // Gate: a short gate releases the step before the next one begins.
+    {
+        mars::MarsEngine shortGate;
+        makeEngine(shortGate, mars::ArpeggiatorMode::Up, 1, 0.2f, false);
+        shortGate.noteOn(60, 0.8f);
+        shortGate.noteOn(64, 0.8f);
+        int silentBlocks = 0;
+        std::array<float, 32> left {};
+        std::array<float, 32> right {};
+        for (int block = 0; block < 800; ++block)
+        {
+            shortGate.process(left.data(), right.data(), 32);
+            if (mars::MarsEngineTestAccess::arpeggiatorSoundingNote(shortGate) < 0)
+                ++silentBlocks;
+        }
+        expect(silentBlocks > 50,
+               "a short arpeggiator gate never released its step");
+
+        mars::MarsEngine legato;
+        makeEngine(legato, mars::ArpeggiatorMode::Up, 1, 1.0f, false);
+        legato.noteOn(60, 0.8f);
+        legato.noteOn(64, 0.8f);
+        int legatoSilentBlocks = 0;
+        for (int block = 0; block < 800; ++block)
+        {
+            legato.process(left.data(), right.data(), 32);
+            if (mars::MarsEngineTestAccess::arpeggiatorSoundingNote(legato) < 0)
+                ++legatoSilentBlocks;
+        }
+        expect(legatoSilentBlocks == 0,
+               "a fully open arpeggiator gate still released between steps");
+    }
+
+    // Hold latches the chord after the keys are lifted; without it the
+    // arpeggiator stops and every voice releases.
+    {
+        mars::MarsEngine held;
+        auto heldParameters = makeEngine(held, mars::ArpeggiatorMode::Up, 1, 0.5f, true);
+        held.noteOn(60, 0.8f);
+        held.noteOn(64, 0.8f);
+        render(held, 4096);
+        held.noteOff(60);
+        held.noteOff(64);
+        const auto pattern = captureArpeggiatorPattern(held, rate, 1.0, 4);
+        expect(pattern.size() >= 3,
+               "Hold did not keep the latched arpeggio running");
+        expect(mars::MarsEngineTestAccess::arpeggiatorKeyCount(held) == 2,
+               "Hold discarded the latched keys");
+
+        // A fresh press starts a new chord instead of stacking onto the latch.
+        held.noteOn(72, 0.8f);
+        render(held, 2048);
+        expect(mars::MarsEngineTestAccess::arpeggiatorKeyCount(held) == 1,
+               "a new press after Hold did not replace the latched chord");
+
+        // Switching Hold off while latched releases the pattern.
+        held.noteOff(72);
+        heldParameters.arpHold = false;
+        held.setParameters(heldParameters);
+        render(held, static_cast<int>(0.6 * rate));
+        expect(mars::MarsEngineTestAccess::arpeggiatorKeyCount(held) == 0,
+               "turning Hold off did not release the latched chord");
+        expect(held.getActiveVoiceCount() == 0,
+               "turning Hold off left a latched voice sounding");
+
+        mars::MarsEngine released;
+        makeEngine(released, mars::ArpeggiatorMode::Up, 1, 0.5f, false);
+        released.noteOn(60, 0.8f);
+        released.noteOn(64, 0.8f);
+        render(released, 4096);
+        released.noteOff(60);
+        released.noteOff(64);
+        render(released, static_cast<int>(0.6 * rate));
+        expect(released.getActiveVoiceCount() == 0,
+               "releasing every key did not stop the arpeggiator");
+        expect(mars::MarsEngineTestAccess::arpeggiatorKeyCount(released) == 0,
+               "releasing every key left arpeggiator state behind");
+    }
+
+    // Turning the arpeggiator off mid-phrase releases its note and hands note
+    // handling straight back to the keyboard.
+    {
+        mars::MarsEngine engine;
+        auto p = makeEngine(engine, mars::ArpeggiatorMode::Up, 1, 0.8f, true);
+        engine.noteOn(60, 0.8f);
+        engine.noteOn(64, 0.8f);
+        render(engine, 8192);
+        p.arpEnabled = false;
+        engine.setParameters(p);
+        render(engine, static_cast<int>(0.6 * rate));
+        expect(engine.getActiveVoiceCount() == 0,
+               "disabling the arpeggiator stranded a latched voice");
+        expect(mars::MarsEngineTestAccess::arpeggiatorKeyCount(engine) == 0,
+               "disabling the arpeggiator kept its key list");
+        engine.noteOn(60, 0.8f);
+        expect(engine.getActiveVoiceCount() > 0,
+               "the keyboard did not resume direct note handling");
+    }
+
+    // Deterministic and finite under an extreme rate with every voice mode.
+    for (const auto mode : { mars::VoiceMode::Poly, mars::VoiceMode::Unison,
+                             mars::VoiceMode::Fifth, mars::VoiceMode::Mono })
+    {
+        mars::MarsEngine first;
+        mars::MarsEngine second;
+        for (auto* engine : { &first, &second })
+        {
+            engine->prepare(rate, blockSize);
+            auto p = basicParameters();
+            p.voiceMode = mode;
+            p.arpEnabled = true;
+            p.arpMode = mars::ArpeggiatorMode::UpDown;
+            p.arpRateHz = 24.0f;
+            p.arpOctaves = 4;
+            p.arpGate = 0.35f;
+            engine->setParameters(p);
+            engine->noteOn(48, 0.9f);
+            engine->noteOn(52, 0.9f);
+            engine->noteOn(55, 0.9f);
+        }
+        std::array<float, blockSize> firstLeft {};
+        std::array<float, blockSize> firstRight {};
+        std::array<float, blockSize> secondLeft {};
+        std::array<float, blockSize> secondRight {};
+        bool identical = true;
+        bool finite = true;
+        for (int block = 0; block < 120; ++block)
+        {
+            first.process(firstLeft.data(), firstRight.data(), blockSize);
+            second.process(secondLeft.data(), secondRight.data(), blockSize);
+            for (int index = 0; index < blockSize; ++index)
+            {
+                identical = identical
+                    && firstLeft[static_cast<std::size_t>(index)]
+                           == secondLeft[static_cast<std::size_t>(index)];
+                finite = finite
+                    && std::isfinite(firstLeft[static_cast<std::size_t>(index)])
+                    && std::isfinite(firstRight[static_cast<std::size_t>(index)]);
+            }
+        }
+        expect(identical, "arpeggiated rendering was not deterministic");
+        expect(finite, "arpeggiated rendering produced a non-finite sample");
+    }
+
+    // All-notes-off follows key-release semantics: Hold keeps the latch.
+    {
+        mars::MarsEngine engine;
+        makeEngine(engine, mars::ArpeggiatorMode::Up, 1, 0.5f, false);
+        engine.noteOn(60, 0.8f);
+        engine.noteOn(64, 0.8f);
+        render(engine, 2048);
+        engine.allNotesOff();
+        render(engine, static_cast<int>(0.6 * rate));
+        expect(mars::MarsEngineTestAccess::arpeggiatorKeyCount(engine) == 0,
+               "all-notes-off did not clear the unlatched arpeggiator");
+        expect(engine.getActiveVoiceCount() == 0,
+               "all-notes-off left an arpeggiated voice sounding");
+    }
+}
+
+void testScopeReducerDisplayMath()
+{
+    mars::ScopeReducer reducer;
+    reducer.setColumns(4);
+    reducer.setBallistics(12.0f, 0.5f, 0.25f);
+    reducer.reset();
+    expect(reducer.getColumns() == 4, "scope reducer ignored its column count");
+
+    reducer.setColumns(1);
+    expect(reducer.getColumns() == mars::ScopeReducer::minimumColumns,
+           "scope reducer accepted fewer than two columns");
+    reducer.setColumns(100000);
+    expect(reducer.getColumns() == mars::ScopeReducer::maximumColumns,
+           "scope reducer accepted more than its maximum column count");
+
+    // Four columns over eight samples: each column sees one pair.
+    reducer.setColumns(4);
+    reducer.reset();
+    const std::array<float, 8> ramp {{ -1.0f, -0.5f, -0.25f, 0.0f,
+                                        0.25f, 0.5f, 0.75f, 1.0f }};
+    reducer.reduce(ramp.data(), static_cast<int>(ramp.size()));
+    expect(reducer.columnMinimum(0) == -1.0f && reducer.columnMaximum(0) == -0.5f,
+           "scope reducer mis-reduced its first column");
+    expect(reducer.columnMinimum(3) == 0.75f && reducer.columnMaximum(3) == 1.0f,
+           "scope reducer mis-reduced its last column");
+    expect(reducer.columnMinimum(-1) == 0.0f && reducer.columnMaximum(9) == 0.0f,
+           "scope reducer did not bound an out-of-range column query");
+    expect(std::abs(reducer.peak() - 1.0f) < 1.0e-6f,
+           "scope reducer did not report the block peak");
+    const float expectedRms = std::sqrt((1.0f + 0.25f + 0.0625f + 0.0f + 0.0625f
+                                         + 0.25f + 0.5625f + 1.0f) / 8.0f);
+    expect(reducer.rms() > 0.0f && reducer.rms() < expectedRms,
+           "scope reducer RMS ballistic did not rise towards the block value");
+    for (int frame = 0; frame < 40; ++frame)
+        reducer.reduce(ramp.data(), static_cast<int>(ramp.size()));
+    expect(std::abs(reducer.rms() - expectedRms) < 0.01f * expectedRms,
+           "scope reducer RMS ballistic did not settle on the block value");
+
+    // Silence must release the meter and eventually drop the held peak.
+    for (int frame = 0; frame < 200; ++frame)
+        reducer.reduce(nullptr, 0);
+    expect(reducer.peak() == 0.0f && reducer.rms() == 0.0f
+               && reducer.peakHold() == 0.0f,
+           "scope reducer did not decay to silence");
+    expect(reducer.columnMaximum(0) == 0.0f,
+           "scope reducer left a stale trace after silence");
+
+    // Non-finite input must not poison the display.
+    reducer.reset();
+    const std::array<float, 4> poisoned {{
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        0.5f,
+        -0.5f,
+    }};
+    reducer.reduce(poisoned.data(), 4);
+    bool columnsFinite = true;
+    for (int column = 0; column < reducer.getColumns(); ++column)
+        columnsFinite = columnsFinite && std::isfinite(reducer.columnMinimum(column))
+                     && std::isfinite(reducer.columnMaximum(column));
+    expect(columnsFinite && std::isfinite(reducer.peak())
+               && std::isfinite(reducer.rms()),
+           "scope reducer propagated a non-finite sample");
+
+    // Trigger search.
+    std::array<float, 512> sine {};
+    for (std::size_t index = 0; index < sine.size(); ++index)
+        sine[index] = std::sin(2.0f * 3.14159265358979f * 4.0f
+                               * static_cast<float>(index)
+                               / static_cast<float>(sine.size()) + 1.0f);
+    const int edge = mars::ScopeReducer::findRisingEdge(sine.data(),
+                                                        static_cast<int>(sine.size()));
+    expect(edge > 0 && edge < static_cast<int>(sine.size()) / 2,
+           "scope trigger did not find a rising edge inside the first half");
+    expect(sine[static_cast<std::size_t>(edge) - 1] <= 0.0f
+               && sine[static_cast<std::size_t>(edge)] > 0.0f,
+           "scope trigger did not land on an upward zero crossing");
+    const std::array<float, 8> flat {};
+    expect(mars::ScopeReducer::findRisingEdge(flat.data(), 8) == 0,
+           "scope trigger invented an edge in a silent block");
+    expect(mars::ScopeReducer::findRisingEdge(nullptr, 512) == 0,
+           "scope trigger did not reject a null block");
+
+    // Meter mapping.
+    expect(std::abs(mars::ScopeReducer::amplitudeToMeter(1.0f) - 1.0f) < 1.0e-5f,
+           "full scale did not map to the top of the meter");
+    expect(mars::ScopeReducer::amplitudeToMeter(0.0f) == 0.0f,
+           "silence did not map to the bottom of the meter");
+    expect(std::abs(mars::ScopeReducer::amplitudeToMeter(0.001f)) < 1.0e-5f,
+           "-60 dBFS did not map to the bottom of the default meter window");
+    expect(std::abs(mars::ScopeReducer::amplitudeToMeter(0.5f) - 0.8996f) < 0.002f,
+           "-6 dBFS did not map to its expected meter position");
+    expect(mars::ScopeReducer::amplitudeToMeter(
+               std::numeric_limits<float>::quiet_NaN()) == 0.0f,
+           "a non-finite amplitude did not read as silence");
+    float previousMeter = -1.0f;
+    bool monotonic = true;
+    bool warmthMonotonic = true;
+    float previousWarmth = -1.0f;
+    for (int step = 0; step <= 40; ++step)
+    {
+        const float amplitude = std::pow(10.0f, -3.0f + 3.0f * static_cast<float>(step) / 40.0f);
+        const float meter = mars::ScopeReducer::amplitudeToMeter(amplitude);
+        const float warmth = mars::ScopeReducer::meterWarmth(meter);
+        monotonic = monotonic && meter >= previousMeter - 1.0e-6f;
+        warmthMonotonic = warmthMonotonic && warmth >= previousWarmth - 1.0e-6f
+                       && warmth >= 0.0f && warmth <= 1.0f;
+        previousMeter = meter;
+        previousWarmth = warmth;
+    }
+    expect(monotonic, "the meter mapping was not monotonic in amplitude");
+    expect(warmthMonotonic, "the meter colour ramp was not monotonic or bounded");
+    expect(mars::ScopeReducer::meterWarmth(1.0f) == 1.0f
+               && mars::ScopeReducer::meterWarmth(0.0f) == 0.0f,
+           "the meter colour ramp did not span its full range");
+}
+
 double benchmarkCpuModel(mars::FilterModel filterModel)
 {
     constexpr double rate = 96000.0;
@@ -3297,8 +4167,62 @@ double benchmarkCpuModel(mars::FilterModel filterModel)
     return ratio;
 }
 
+// A realistic default-patch workload: eight Moog-VCO poly voices with the
+// ladder, the ensemble, and 4x HQ at 48 kHz. This is the configuration the
+// oscillator freeze, the control-rate hoisting, and the ladder solver changes
+// were measured against.
+double benchmarkDefaultPatch()
+{
+    constexpr double rate = 48000.0;
+    constexpr double renderSeconds = 0.35;
+    const int trialCount = sanitizerBuild ? 1 : 3;
+    mars::MarsEngine engine;
+    engine.prepare(rate, blockSize);
+    auto p = basicParameters();
+    p.voiceMode = mars::VoiceMode::Poly;
+    p.osc1Model = mars::OscillatorModel::Vco;
+    p.osc2Model = mars::OscillatorModel::Vco;
+    p.filterModel = mars::FilterModel::Ladder;
+    p.chorusMix = 0.3f;
+    engine.setParameters(p);
+    engine.reset();
+    for (int note = 48; note < 56; ++note)
+        engine.noteOn(note, 0.85f);
+    expect(engine.getActiveVoiceCount() == 8,
+           "the default-patch benchmark did not sound eight voices");
+
+    render(engine, static_cast<int>(0.05 * rate));
+    double bestElapsed = std::numeric_limits<double>::infinity();
+    bool valid = true;
+    for (int trial = 0; trial < trialCount; ++trial)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        const auto metrics = render(engine, static_cast<int>(renderSeconds * rate));
+        bestElapsed = std::min(bestElapsed,
+                               std::chrono::duration<double>(
+                                   std::chrono::steady_clock::now() - start).count());
+        valid = valid && metrics.finite && metrics.rms() > 1.0e-6;
+    }
+    const double ratio = bestElapsed / renderSeconds;
+    std::cout << std::fixed << std::setprecision(4)
+              << "Moog VCO + Ladder 8-voice 48 kHz/4x HQ render, best of "
+              << trialCount << ": " << bestElapsed << " s (" << ratio
+              << "x real time)\n";
+    expect(valid, "default-patch benchmark render was invalid or silent");
+    // Shared CI runner speed is not a stable benchmark fixture, so the absolute
+    // guard stays deliberately loose; the measured value is printed for
+    // comparison and the relative ladder/SEM guard below catches solver
+    // regressions. A development machine renders this patch at about 0.38x real
+    // time, roughly a quarter faster than version 1.5 did.
+    const double maximumRatio = sanitizerBuild ? 20.0 : 4.0;
+    expect(ratio < maximumRatio,
+           "the default eight-voice patch lost its CPU headroom");
+    return ratio;
+}
+
 void testCpuRegression()
 {
+    (void) benchmarkDefaultPatch();
     const double semRatio = benchmarkCpuModel(mars::FilterModel::Sem);
     const double ladderRatio = benchmarkCpuModel(mars::FilterModel::Ladder);
     // The ladder may take several bounded residual-decreasing updates while the
@@ -3342,6 +4266,12 @@ int main()
     testGlideAndModulationMeaningfulness();
     testExtremeAutomationStability();
     testIdleChorusStateMaintenance();
+    testLadderSelfOscillation();
+    testSemNonlinearResonance();
+    testWaveformFreezeAndThaw();
+    testUnisonDetuneControl();
+    testArpeggiator();
+    testScopeReducerDisplayMath();
     testCpuRegression();
 
     if (failures != 0)

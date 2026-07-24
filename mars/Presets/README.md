@@ -1,17 +1,19 @@
 # Mars sound-design recipes
 
 Mars state is stored by the host. These original recipes are starting points
-for the version-1.5 parameter set; percentages are approximate and are meant to
+for the version-1.6 parameter set; percentages are approximate and are meant to
 be adjusted by ear. Parameters not listed in a recipe remain at their
-version-1.5 defaults; see the [complete parameter contract](../README.md#exact-48-parameter-contract).
+version-1.6 defaults; see the [complete parameter contract](../README.md#exact-55-parameter-contract).
 Both oscillator mixer switches and HQ oversampling are On unless a recipe says
-otherwise. Oscillators use the Moog-like VCO model, Mono and the non-Juno
+otherwise. Oscillators use the Moog-like VCO model, Mono, the arpeggiator, its
+Hold switch, and the non-Juno
 ensemble compander are Off, and polyphony is limited to 16 render voices unless
-a recipe says otherwise. HQ is a
+a recipe says otherwise. Unison detune stays at its 9.6-cent default, which
+reproduces the version-1.5 drift-derived spread. HQ is a
 persisted quality setting, not part of preset randomization, and changes take
 effect after the engine becomes idle.
 
-These recipes assume the Mars 1.5 signal path. HQ runs the complete nonlinear
+These recipes assume the Mars 1.6 signal path. HQ runs the complete nonlinear
 voice, VCA, and dual variable-clock BBD ensemble at 4x in 44.1/48 kHz sessions,
 2x at 88.2/96 kHz, and natively at 176.4 kHz and above. The Moog-like VCO has
 the measured saw contour and full seeded pitch wander; the Juno-like DCO has a
@@ -26,7 +28,9 @@ The `1%`, `10%`, and `100%` randomizer buttons draw independent legal targets
 in normalized parameter space and move the current sound toward each target by
 that amount. `1%` and `10%` are bounded variations of the current recipe;
 `100%` is a full-range draw. Output level, oscillator On/Off state, HQ, Mono,
-and the physical polyphony limit are preserved. Positive frequency and time
+the arpeggiator's own On and Hold switches, and the physical polyphony limit are
+preserved; the arpeggiator's mode, rate, range, and gate are ordinary
+sound-design controls and do take part. Positive frequency and time
 controls are smoothed multiplicatively, so even a large randomizer move follows
 their perceptual range without a raw parameter step.
 

@@ -43,7 +43,9 @@ The authoritative implementation is `Source/DSP/MarsEngine.cpp`:
    charge injection, asymmetric comparator slew, and a prewarped output pole add
    the low-order analogue behavior. A 2 ms model crossfade keeps automation
    continuous; at a settled VCO endpoint the MC5534A audio state is frozen.
-   Waveform changes use a separate 3 ms crossfade.
+   Waveform changes use a separate 3 ms crossfade, and at a settled waveform
+   endpoint only the audible generator runs; the two silent ones are frozen and
+   re-seeded analytically when a crossfade begins.
 2. The two oscillator mixer feeds have independent On/Off parameters. With both
    On, `Balance` uses an equal-power law. With only one On, that oscillator has unity gain
    at every Balance position. A 4 ms gain smoother prevents a hard automation
@@ -166,6 +168,22 @@ reset, the rising and falling pulse edges including narrow-pulse events that
 land in the next cycle, both edges of the triangle square driver, and the
 divide-by-two DCO sub. Multiple events add into independent correction queues.
 The corrected square driver is then integrated into a bounded triangle.
+
+Through version 1.5 all three waveform generators of both oscillator endpoints
+ran continuously so that a waveform change had no stale state to resume from.
+Version 1.6 freezes the two inaudible generators at a settled endpoint, exactly
+as the inactive VCO/DCO analogue core already was, and re-seeds them at the
+instant a crossfade begins - while the destination gain is still zero. The
+four-sample causal B-spline path needs two samples of history plus its scheduled
+residual and refills them from the current sample; the leaky-integrator triangle
+and the DCO's slewed comparator are restarted from their closed-form steady
+state at the current phase, which is the same seeding `initialiseVoice` uses at
+note-on. A frozen generator also stops scheduling residuals, so its correction
+accumulator cannot drift while it is silent. The regression suite checks that
+the switch transient never exceeds the destination waveform's own slew, that the
+settled output matches an engine whose generator ran continuously, and that a
+detour and return reproduce the never-switched reference to within 0.01.
+
 This follows the efficient event-correction family described by Stilson and
 Smith's
 [*Alias-Free Digital Synthesis of Classic Analog Waveforms*](https://quod.lib.umich.edu/i/icmc/bbp2372.1996.101/--alias-free-digital-synthesis-of-classic-analog-waveforms?rgn=main%3Bview%3Dfulltext)
@@ -242,7 +260,22 @@ that requires the deep-backtracking rescue. This validation avoids the finite-
 precision cutoff limitation of the paper's non-iterative form while keeping the
 production work bounded across Mars's full 20 kHz range in native and HQ modes.
 
-For four stages, normalized resonance maps to feedback `k = 4r`. Mars applies
+For four stages, normalized resonance maps to feedback
+`k = 4r * (1 + 0.055 * r^16)`. The linearized four-pole cascade loses stability
+at exactly `k = 4`, which is where a real Moog ladder starts to sing; the plain
+`k = 4r` map used through version 1.5 topped out at `3.98` and was clamped there
+internally, so the model could ring but never oscillate. The sixteenth-order
+lift crosses the threshold only in the last few percent of the control: the
+extra term is `6e-10` relative at the `0.28` default and about 1% at
+resonance `0.9`, reaching `k = 4.18` at the top of the knob. The differential
+pairs limit the loop gain as the ring grows, so the result is a bounded limit
+cycle rather than divergence, and the residual ceiling below still refuses to
+publish an out-of-contract state. A free-running fixture at a 1 kHz cutoff and
+192 kHz processing rate measures no sustained oscillation at `k = 3.98`
+(zero tail zero-crossings) and a 975 Hz limit cycle at `k = 4.18`, that is,
+within 2.5% of the cutoff, with the tail bounded well inside the output guard.
+
+Mars applies
 the paper's resonance-dependent cutoff correction and bilinear prewarping, and
 Panel Drive maps once into the physical voltage domain based on a 26 mV
 transistor thermal voltage. Every stage evaluates the differential-pair
@@ -250,6 +283,15 @@ nonlinearity; `(1 + k)` DC-gain compensation restores the otherwise severe
 static low-band loss as resonance rises without removing nonlinear resonance or
 self-oscillation. The state is reset on any non-finite result and the engine
 retains its final bounded-output guard.
+
+The solver's arithmetic was reorganized in version 1.6 without changing the
+equations it solves: the terms that depend only on the committed previous state
+are folded into four per-sample offsets, node voltages are scaled by the exact
+reciprocal of `2VT` instead of dividing, and the per-candidate finiteness sweep
+was replaced by a NaN-safe transfer table, so a diverging trial vector still
+poisons its own residual and is rejected. The measured equation residual moved
+from `3.080e-4 * (2VT)` to `3.089e-4 * (2VT)`, both far inside the documented
+`6e-4` ceiling.
 
 This is materially different from placing one saturator around four linear
 poles: the nonlinearity is inside every ladder stage. It is still a generalized
@@ -268,8 +310,24 @@ outputs. Mars therefore uses `(1 - shape) * low + shape * high`; the midpoint
 is the half-level notch sum `0.5 * (low + high)`, not band-pass.
 
 The core uses trapezoidal/TPT state-variable equations, bounded input
-nonlinearity, continuous cutoff and resonance, and finite state. This reproduces
-the topology's useful mode relationship, but it does not yet include a selected
+nonlinearity, continuous cutoff and resonance, and finite state.
+
+Version 1.6 adds a saturating resonance loop. The zero-delay solve itself is
+untouched and still closed-form; what changed is that the band-pass integrator
+state is bounded by the same smooth transfer used elsewhere in the voice, with
+four units of headroom. That is where the circuit actually runs out of room: the
+SEM closes its resonance loop through an OTA that leaves its linear region long
+before the integrator capacitors do. Loop gain therefore falls as the resonant
+ring grows. Driving the core at its own cutoff with resonance `0.99` measures a
+resonant peak gain of 12.5x for a small signal, 3.0x at an input amplitude of
+0.5, and 1.3x at 2.0, and the state cannot leave `+/- 4.8` by construction, so
+the filter cannot latch. The practical effect is a compressing, self-limiting
+resonance with odd-order colour instead of an ideal linear resonator whose peak
+was previously left for the VCA and the output guard to contain. At the `0.28`
+default resonance the compression is about 2% of state amplitude, and the
+default filter model is `Ladder`, so no shipped default sound moves audibly.
+
+This still does not include a selected
 SEM revision's transistor/OTA device equations or capture-derived error curves;
 the UI and documentation therefore say `SEM`-inspired rather than
 circuit-accurate SEM.
@@ -397,6 +455,18 @@ analogue-path and PWM variation. Identical initial state, MIDI, and automation
 still produce identical audio. `Drift` is not captured component statistics,
 injected hiss, simulated wear, or a newly randomized saved sound on each
 playback.
+
+## Arpeggiator timebase
+
+Mars's arpeggiator is deliberately a free-running rate control in steps per
+second rather than a host-tempo division. That is what the JUNO-6, JUNO-60, and
+JUNO-106 arpeggiators are: a rate potentiometer plus a mode and range switch,
+with synchronisation available only through an external clock input. Mars
+therefore takes no playhead information at all, which also keeps the whole
+feature inside the JUCE-free engine where it is unit-tested. Steps are played by
+calling the ordinary allocator, so Poly, Unison, Fifth, and Mono keep their
+existing group sizes, stealing rules, and 2 ms retrigger tail; the arpeggiator
+adds note timing, not a second voice engine.
 
 ## Why the runtime remains analytic
 

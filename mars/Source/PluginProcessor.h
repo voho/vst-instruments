@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include "DSP/MarsEngine.h"
+#include "DSP/MarsScope.h"
 
 #include <array>
 #include <atomic>
@@ -57,6 +58,13 @@ inline constexpr auto output          = "output";
 inline constexpr auto osc1Enabled     = "osc1Enabled";
 inline constexpr auto osc2Enabled     = "osc2Enabled";
 inline constexpr auto hqOversampling  = "hqOversampling";
+inline constexpr auto unisonDetune    = "unisonDetune";
+inline constexpr auto arpEnabled      = "arpEnabled";
+inline constexpr auto arpMode         = "arpMode";
+inline constexpr auto arpRate         = "arpRate";
+inline constexpr auto arpOctaves      = "arpOctaves";
+inline constexpr auto arpGate         = "arpGate";
+inline constexpr auto arpHold         = "arpHold";
 } // namespace mars::parameters
 
 class MarsAudioProcessorEditor;
@@ -117,6 +125,25 @@ public:
     }
     bool isEngineReady() const noexcept { return engineReady.load (std::memory_order_acquire); }
 
+    // Front-panel scope support. The audio thread writes a decimated mono trace
+    // into a fixed lock-free ring; the editor copies the most recent window on
+    // its repaint timer. A torn read is invisible on a 12 Hz display, so no
+    // lock or allocation is needed on either side.
+    static constexpr int scopeRingSize = 4096;
+    int copyScopeTrace (float* destination, int maximumSamples) const noexcept;
+    int getArpeggiatorNoteForDisplay() const noexcept
+    {
+        return displayArpNote.load (std::memory_order_relaxed);
+    }
+    float getArpeggiatorPhaseForDisplay() const noexcept
+    {
+        return displayArpPhase.load (std::memory_order_relaxed);
+    }
+    int getArpeggiatorKeyCountForDisplay() const noexcept
+    {
+        return displayArpKeys.load (std::memory_order_relaxed);
+    }
+
     juce::AudioProcessorValueTreeState parameters;
     juce::MidiKeyboardState keyboardState;
 
@@ -173,6 +200,13 @@ private:
         std::atomic<float>* osc1Enabled = nullptr;
         std::atomic<float>* osc2Enabled = nullptr;
         std::atomic<float>* hqOversampling = nullptr;
+        std::atomic<float>* unisonDetune = nullptr;
+        std::atomic<float>* arpEnabled = nullptr;
+        std::atomic<float>* arpMode = nullptr;
+        std::atomic<float>* arpRate = nullptr;
+        std::atomic<float>* arpOctaves = nullptr;
+        std::atomic<float>* arpGate = nullptr;
+        std::atomic<float>* arpHold = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
@@ -196,6 +230,7 @@ private:
     void dispatchUiMidiEvents() noexcept;
     void dispatchMidiData (const juce::uint8* data, int numBytes) noexcept;
     void updateEngineParameters() noexcept;
+    void pushScopeSamples (const juce::AudioBuffer<float>& buffer) noexcept;
 
     mars::MarsEngine engine;
     std::atomic<bool> panicRequested { false };
@@ -203,6 +238,12 @@ private:
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<double> displaySampleRate { 0.0 };
     std::atomic<int> displayOversamplingFactor { 1 };
+    std::atomic<int> displayArpNote { -1 };
+    std::atomic<float> displayArpPhase { 0.0f };
+    std::atomic<int> displayArpKeys { 0 };
+
+    std::array<float, scopeRingSize> scopeRing {};
+    std::atomic<int> scopeWriteIndex { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MarsAudioProcessor)
 };

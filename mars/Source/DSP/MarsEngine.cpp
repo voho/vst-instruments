@@ -61,17 +61,21 @@ float transistorPairTanh(float value) noexcept
     // polyphony. An exhaustive float-domain check measured less than 4.6e-6
     // absolute error (the analytic interpolation bound is 4.7e-6);
     // outside +/-7 the reference is already within 1.7e-6 of its asymptote.
+    //
+    // The negated comparison also catches NaN, which is returned unchanged so a
+    // diverging Newton candidate poisons its own residual instead of indexing
+    // the table. Callers therefore do not need a separate finiteness sweep over
+    // every trial vector.
     const float magnitude = std::abs(value);
-    if (magnitude < 0.000244140625f)
-        return value;
-    if (magnitude >= transistorPairTableLimit)
-        return std::copysign(1.0f, value);
+    if (!(magnitude < transistorPairTableLimit))
+        return std::isnan(value) ? value : std::copysign(1.0f, value);
 
     constexpr float tableScale = static_cast<float>(transistorPairTableIntervals)
                                / transistorPairTableLimit;
+    // magnitude < 7 keeps position < 1024, so the truncated index is always a
+    // legal left-hand table point and the interpolation partner exists.
     const float position = magnitude * tableScale;
-    const auto index = std::min(static_cast<std::size_t>(position),
-                                transistorPairTableIntervals - 1);
+    const auto index = static_cast<std::size_t>(position);
     const float t = position - static_cast<float>(index);
     const float y0 = transistorPairTable[index];
     const float y1 = transistorPairTable[index + 1];
@@ -529,20 +533,42 @@ float MarsEngine::LadderFilter::process(float inputVoltage,
 {
     inputVoltage = std::clamp(inputVoltage, -0.8f, 0.8f);
     frequencyTangent = std::clamp(frequencyTangent, 0.00001f, 8.0f);
-    const float k = std::clamp(feedbackGain, 0.0f, 3.98f);
+    // The linearised four-pole ladder loses stability at exactly k = 4, which is
+    // where a real Moog cascade starts to sing. The previous 3.98 ceiling made
+    // self-oscillation unreachable by construction. The transistor pairs limit
+    // the loop gain as the ring grows, so a bounded overshoot above the
+    // threshold produces a limit cycle rather than divergence; the damped Newton
+    // solve below still refuses to publish a state outside its residual bound.
+    const float k = std::clamp(feedbackGain, 0.0f, 4.5f);
     const float g = frequencyTangent * std::clamp(frequencyScale, 0.5f, 2.0f);
 
+    // The circuit equations divide every node voltage by 2 VT. Multiplying by
+    // the exact reciprocal of a compile-time constant removes five divisions
+    // from every residual evaluation without changing the value.
+    constexpr float inverseTwiceThermalVoltage = 1.0f / twiceThermalVoltage;
     const auto previous = stageVoltage;
     std::array<float, 4> estimate = previous;
     std::array<float, 4> previousTanh = stageTanh;
     if (!stageTanhValid)
         for (std::size_t stage = 0; stage < previous.size(); ++stage)
             previousTanh[stage] = transistorPairTanh(
-                previous[stage] / twiceThermalVoltage);
+                previous[stage] * inverseTwiceThermalVoltage);
     const float historyFeedbackTanh = feedbackTanhValid && cachedFeedbackGain == k
         ? previousFeedbackTanh
         : transistorPairTanh(
-            (previousInputVoltage + k * previous.back()) / twiceThermalVoltage);
+            (previousInputVoltage + k * previous.back()) * inverseTwiceThermalVoltage);
+
+    // Everything that depends only on the committed previous state is constant
+    // across the whole solve, so it is folded into four offsets instead of
+    // being recomputed inside each residual evaluation.
+    const float scaledConductance = twiceThermalVoltage * g;
+    std::array<float, 4> residualOffset {};
+    residualOffset[0] = previous[0]
+                      - scaledConductance * (previousTanh[0] + historyFeedbackTanh);
+    for (std::size_t stage = 1; stage < residualOffset.size(); ++stage)
+        residualOffset[stage] = previous[stage]
+                              + scaledConductance
+                                    * (previousTanh[stage - 1] - previousTanh[stage]);
 
     struct Evaluation
     {
@@ -558,34 +584,23 @@ float MarsEngine::LadderFilter::process(float inputVoltage,
                                const std::array<float, 4>* knownTanh = nullptr) noexcept
     {
         Evaluation result;
-        result.finite = std::all_of(candidate.begin(), candidate.end(),
-                                    [] (float value) noexcept
-                                    {
-                                        return std::isfinite(value);
-                                    });
-        if (!result.finite)
-            return result;
-
         if (knownTanh != nullptr)
             result.currentTanh = *knownTanh;
         else
             for (std::size_t stage = 0; stage < candidate.size(); ++stage)
                 result.currentTanh[stage] = transistorPairTanh(
-                    candidate[stage] / twiceThermalVoltage);
+                    candidate[stage] * inverseTwiceThermalVoltage);
 
         result.feedbackTanh = transistorPairTanh(
-            (inputVoltage + k * candidate.back()) / twiceThermalVoltage);
-        result.residual[0] = candidate[0] - previous[0]
-                           + twiceThermalVoltage * g
-                               * (result.currentTanh[0] + previousTanh[0]
-                                  + result.feedbackTanh + historyFeedbackTanh);
+            (inputVoltage + k * candidate.back()) * inverseTwiceThermalVoltage);
+        result.residual[0] = candidate[0] - residualOffset[0]
+                           + scaledConductance
+                                 * (result.currentTanh[0] + result.feedbackTanh);
         for (std::size_t stage = 1; stage < result.residual.size(); ++stage)
-            result.residual[stage] = candidate[stage] - previous[stage]
-                                   - twiceThermalVoltage * g
-                                       * (result.currentTanh[stage - 1]
-                                          + previousTanh[stage - 1]
-                                          - result.currentTanh[stage]
-                                          - previousTanh[stage]);
+            result.residual[stage] = candidate[stage] - residualOffset[stage]
+                                   - scaledConductance
+                                         * (result.currentTanh[stage - 1]
+                                            - result.currentTanh[stage]);
 
         result.squaredResidual = 0.0f;
         result.maximumResidual = 0.0f;
@@ -595,6 +610,9 @@ float MarsEngine::LadderFilter::process(float inputVoltage,
             result.maximumResidual = std::max(result.maximumResidual,
                                               std::abs(value));
         }
+        // A non-finite candidate propagates NaN or an infinity through the
+        // transfer table into the squared residual, so this single test also
+        // rejects a diverging trial vector.
         result.finite = std::isfinite(result.squaredResidual)
                      && std::isfinite(result.maximumResidual);
         return result;
@@ -754,7 +772,8 @@ void MarsEngine::StateVariableFilter::process(float input, float g,
     resonance = std::clamp(resonance, 0.0f, 0.995f);
 
     // This remains a stable TPT state-variable approximation rather than a
-    // component-level SEM clone. Nonlinearity is applied once, at the shared
+    // component-level SEM clone. The zero-delay solve itself is unchanged and
+    // still closed-form; the input nonlinearity is applied once, at the shared
     // physical-voltage filter input, before this method is called.
     const float driven = input;
     const float damping = 2.0f - 1.94f * resonance;
@@ -764,7 +783,22 @@ void MarsEngine::StateVariableFilter::process(float input, float g,
     const float v3 = driven - ic2eq;
     const float v1 = a1 * ic1eq + a2 * v3;
     const float v2 = ic2eq + a2 * ic1eq + a3 * v3;
-    ic1eq = 2.0f * v1 - ic1eq;
+
+    // The SEM closes its resonance loop through an OTA that leaves its linear
+    // region long before the integrator capacitors do. Bounding the band-pass
+    // integrator state with the same smooth transfer used elsewhere in the voice
+    // therefore models where the circuit actually runs out of headroom: loop
+    // gain falls as the resonant ring grows, so a high-resonance peak
+    // compresses into a stable limit cycle and gains odd-order colour instead of
+    // behaving like an ideal linear resonator. The headroom is chosen so normal
+    // programme level stays within a fraction of a percent of the linear
+    // response; the saturator is monotonic and bounded, so the state can never
+    // leave +/- 4 * 1.2 and the filter cannot latch.
+    constexpr float resonanceHeadroom = 4.0f;
+    constexpr float inverseResonanceHeadroom = 1.0f / resonanceHeadroom;
+    const float rawBandState = 2.0f * v1 - ic1eq;
+    ic1eq = resonanceHeadroom
+          * MarsEngine::softSaturate(rawBandState * inverseResonanceHeadroom);
     ic2eq = 2.0f * v2 - ic2eq;
 
     band = v1;
@@ -806,6 +840,15 @@ EngineParameters MarsEngine::sanitise(const EngineParameters& source) noexcept
     if (p.lfoWave != LfoWaveform::Triangle && p.lfoWave != LfoWaveform::Sine
         && p.lfoWave != LfoWaveform::SampleHold)
         p.lfoWave = LfoWaveform::Triangle;
+    if (p.arpMode != ArpeggiatorMode::Up && p.arpMode != ArpeggiatorMode::Down
+        && p.arpMode != ArpeggiatorMode::UpDown
+        && p.arpMode != ArpeggiatorMode::Random
+        && p.arpMode != ArpeggiatorMode::AsPlayed)
+        p.arpMode = ArpeggiatorMode::Up;
+    p.arpOctaves = std::clamp(p.arpOctaves, 1, maxArpOctaves);
+    p.arpRateHz = std::clamp(finiteOr(p.arpRateHz, 4.0f), 0.1f, 24.0f);
+    p.arpGate = std::clamp(finiteOr(p.arpGate, 0.55f), 0.05f, 1.0f);
+    p.unisonDetuneCents = std::clamp(finiteOr(p.unisonDetuneCents, 9.6f), 0.0f, 50.0f);
     p.unisonVoices = std::clamp(p.unisonVoices, 2, 8);
     p.polyphonyLimit = std::clamp(p.polyphonyLimit, 1, maxVoices);
     p.osc1Octave = std::clamp(p.osc1Octave, -2, 2);
@@ -1016,6 +1059,21 @@ void MarsEngine::reset()
     lastPlayedMidi_ = 60.0f;
     hasLastPlayedMidi_ = false;
     clearHeldNotes();
+    arpKeyNotes_.fill(0);
+    arpKeyVelocities_.fill(0.0f);
+    arpKeyPhysicallyHeld_.fill(false);
+    arpSoundingNote_ = -1;
+    arpGateOpen_ = false;
+    arpRunning_ = false;
+    arpKeyCount_ = 0;
+    arpPhysicalKeyCount_ = 0;
+    arpStepIndex_ = 0;
+    arpDirection_ = 1;
+    arpPhase_ = 0.0;
+    arpRandomState_ = 0x9e3779b9u;
+    arpWasEnabled_ = targetParameters_.arpEnabled;
+    voiceListDirty_ = true;
+    refreshActiveVoiceList();
 }
 
 void MarsEngine::setParameters(const EngineParameters& parameters)
@@ -1549,6 +1607,7 @@ void MarsEngine::initialiseVoice(Voice& voice, int slot, int rootMidi,
     voice = Voice {};
     voice.active = true;
     anyVoiceActive_ = true;
+    voiceListDirty_ = true;
     voice.keyDown = true;
     voice.rootMidi = rootMidi;
     voice.soundingMidi = soundingMidi;
@@ -1568,7 +1627,10 @@ void MarsEngine::initialiseVoice(Voice& voice, int slot, int rootMidi,
         : 0.0f;
     if (parameters.voiceMode == VoiceMode::Unison)
     {
-        voice.unisonCents = layerPosition * (4.0f + 20.0f * parameters.drift);
+        // Detune is a panel value rather than a side effect of the drift
+        // control: a stack can now be tightly beating without also freezing the
+        // card-to-card component spread, and vice versa.
+        voice.unisonCents = layerPosition * parameters.unisonDetuneCents;
         voice.panBase = 0.86f * layerPosition;
         voice.groupGain = 0.72f / std::sqrt(static_cast<float>(layerCount));
     }
@@ -1617,6 +1679,27 @@ void MarsEngine::noteOn(int midiNote, float velocity)
 
     midiNote = std::clamp(midiNote, 0, 127);
     velocity = std::clamp(velocity, 0.0f, 1.0f);
+    if (targetParameters_.arpEnabled)
+    {
+        arpKeyDown(midiNote, velocity);
+        return;
+    }
+    noteOnInternal(midiNote, velocity);
+}
+
+void MarsEngine::noteOff(int midiNote)
+{
+    midiNote = std::clamp(midiNote, 0, 127);
+    if (targetParameters_.arpEnabled)
+    {
+        arpKeyUp(midiNote);
+        return;
+    }
+    noteOffInternal(midiNote);
+}
+
+void MarsEngine::noteOnInternal(int midiNote, float velocity) noexcept
+{
     const EngineParameters parameters = targetParameters_;
     if (parameters.voiceMode == VoiceMode::Mono)
     {
@@ -1669,9 +1752,8 @@ void MarsEngine::noteOn(int midiNote, float velocity)
     updateActiveVoiceCount();
 }
 
-void MarsEngine::noteOff(int midiNote)
+void MarsEngine::noteOffInternal(int midiNote) noexcept
 {
-    midiNote = std::clamp(midiNote, 0, 127);
     if (targetParameters_.voiceMode == VoiceMode::Mono)
     {
         forgetHeldNote(midiNote);
@@ -1726,6 +1808,15 @@ void MarsEngine::noteOff(int midiNote)
 void MarsEngine::allNotesOff()
 {
     clearHeldNotes();
+    // CC 123 is "every key released", so the arpeggiator sees the same event a
+    // physical key lift produces: Hold still latches the pattern, and without
+    // Hold the sequence stops after the current step is released below.
+    if (arpKeyCount_ > 0)
+    {
+        for (int index = arpKeyCount_ - 1; index >= 0; --index)
+            if (arpKeyPhysicallyHeld_[static_cast<std::size_t>(index)])
+                arpKeyUp(arpKeyNotes_[static_cast<std::size_t>(index)]);
+    }
     for (auto& voice : voices_)
     {
         if (!voice.active)
@@ -1747,6 +1838,283 @@ void MarsEngine::allNotesOff()
             voice.filterEnvelope.noteOff();
         }
     }
+}
+
+/*
+    Arpeggiator.
+
+    Mars follows the JUNO-6/60/106 convention rather than a host-synchronised
+    step sequencer: the rate is a free-running control in steps per second, the
+    pattern is derived from the keys currently held (or latched by Hold), and the
+    range repeats that pattern over one to four octaves. Every step is played
+    through the ordinary allocator, so Poly, Unison, Fifth, and Mono all behave
+    exactly as they do from the keyboard, including the 2 ms retrigger tail.
+
+    The key list is a fixed 32-entry, press-ordered array; nothing here
+    allocates, locks, or performs I/O, so it is safe on the render thread.
+*/
+void MarsEngine::arpKeyDown(int midiNote, float velocity) noexcept
+{
+    // A fresh press after every physical key has been lifted starts a new
+    // latched chord instead of piling onto the previous one.
+    if (arpPhysicalKeyCount_ == 0 && targetParameters_.arpHold && arpKeyCount_ > 0)
+        clearArpeggiator(true);
+
+    for (int index = 0; index < arpKeyCount_; ++index)
+    {
+        if (arpKeyNotes_[static_cast<std::size_t>(index)] != midiNote)
+            continue;
+
+        arpKeyVelocities_[static_cast<std::size_t>(index)] = velocity;
+        if (!arpKeyPhysicallyHeld_[static_cast<std::size_t>(index)])
+        {
+            arpKeyPhysicallyHeld_[static_cast<std::size_t>(index)] = true;
+            ++arpPhysicalKeyCount_;
+        }
+        return;
+    }
+
+    if (arpKeyCount_ >= maxArpKeys)
+        return;
+
+    const auto slot = static_cast<std::size_t>(arpKeyCount_);
+    arpKeyNotes_[slot] = midiNote;
+    arpKeyVelocities_[slot] = velocity;
+    arpKeyPhysicallyHeld_[slot] = true;
+    ++arpKeyCount_;
+    ++arpPhysicalKeyCount_;
+
+    if (!arpRunning_)
+    {
+        // The first key of a phrase plays immediately rather than waiting out a
+        // slow clock period, which is what a hardware arpeggiator gate does.
+        arpRunning_ = true;
+        arpStepIndex_ = 0;
+        arpDirection_ = 1;
+        arpPhase_ = 0.0;
+        triggerArpeggiatorStep(targetParameters_);
+    }
+}
+
+void MarsEngine::arpKeyUp(int midiNote) noexcept
+{
+    for (int index = 0; index < arpKeyCount_; ++index)
+    {
+        if (arpKeyNotes_[static_cast<std::size_t>(index)] != midiNote)
+            continue;
+
+        if (arpKeyPhysicallyHeld_[static_cast<std::size_t>(index)])
+        {
+            arpKeyPhysicallyHeld_[static_cast<std::size_t>(index)] = false;
+            arpPhysicalKeyCount_ = std::max(0, arpPhysicalKeyCount_ - 1);
+        }
+
+        if (targetParameters_.arpHold)
+            return;
+
+        for (int shift = index; shift + 1 < arpKeyCount_; ++shift)
+        {
+            const auto target = static_cast<std::size_t>(shift);
+            const auto source = static_cast<std::size_t>(shift + 1);
+            arpKeyNotes_[target] = arpKeyNotes_[source];
+            arpKeyVelocities_[target] = arpKeyVelocities_[source];
+            arpKeyPhysicallyHeld_[target] = arpKeyPhysicallyHeld_[source];
+        }
+        --arpKeyCount_;
+        if (arpKeyCount_ == 0)
+            clearArpeggiator(true);
+        return;
+    }
+}
+
+void MarsEngine::clearArpeggiator(bool releaseSounding) noexcept
+{
+    if (releaseSounding && arpSoundingNote_ >= 0)
+        noteOffInternal(arpSoundingNote_);
+    arpSoundingNote_ = -1;
+    arpGateOpen_ = false;
+    arpRunning_ = false;
+    arpKeyCount_ = 0;
+    arpPhysicalKeyCount_ = 0;
+    arpStepIndex_ = 0;
+    arpDirection_ = 1;
+    arpPhase_ = 0.0;
+}
+
+int MarsEngine::buildArpeggiatorSequence(
+    std::array<int, maxArpSteps>& notes,
+    std::array<float, maxArpSteps>& velocities,
+    const EngineParameters& parameters) const noexcept
+{
+    const int keyCount = std::min(arpKeyCount_, maxArpKeys);
+    if (keyCount <= 0)
+        return 0;
+
+    std::array<int, maxArpKeys> order {};
+    for (int index = 0; index < keyCount; ++index)
+        order[static_cast<std::size_t>(index)] = index;
+
+    if (parameters.arpMode != ArpeggiatorMode::AsPlayed)
+    {
+        // Insertion sort over at most 32 latched keys: deterministic, in place,
+        // and cheaper than a general sort at this size.
+        for (int index = 1; index < keyCount; ++index)
+        {
+            const int current = order[static_cast<std::size_t>(index)];
+            const int currentNote = arpKeyNotes_[static_cast<std::size_t>(current)];
+            int position = index - 1;
+            while (position >= 0
+                   && arpKeyNotes_[static_cast<std::size_t>(
+                          order[static_cast<std::size_t>(position)])] > currentNote)
+            {
+                order[static_cast<std::size_t>(position + 1)] =
+                    order[static_cast<std::size_t>(position)];
+                --position;
+            }
+            order[static_cast<std::size_t>(position + 1)] = current;
+        }
+    }
+
+    const int octaves = std::clamp(parameters.arpOctaves, 1, maxArpOctaves);
+    int count = 0;
+    for (int octave = 0; octave < octaves; ++octave)
+    {
+        for (int index = 0; index < keyCount && count < maxArpSteps; ++index)
+        {
+            const auto key = static_cast<std::size_t>(order[static_cast<std::size_t>(index)]);
+            const int transposed = arpKeyNotes_[key] + 12 * octave;
+            if (transposed > 127)
+                continue;
+            notes[static_cast<std::size_t>(count)] = transposed;
+            velocities[static_cast<std::size_t>(count)] = arpKeyVelocities_[key];
+            ++count;
+        }
+    }
+    return count;
+}
+
+void MarsEngine::triggerArpeggiatorStep(const EngineParameters& parameters) noexcept
+{
+    std::array<int, maxArpSteps> notes {};
+    std::array<float, maxArpSteps> velocities {};
+    const int length = buildArpeggiatorSequence(notes, velocities, parameters);
+    if (length <= 0)
+    {
+        clearArpeggiator(true);
+        return;
+    }
+
+    // The cursor is kept in ascending sequence order and remapped per mode, so
+    // the pattern survives a chord change, an octave-range change, or a mode
+    // change without ever indexing outside the freshly built sequence.
+    arpStepIndex_ = ((arpStepIndex_ % length) + length) % length;
+    int step = arpStepIndex_;
+    if (parameters.arpMode == ArpeggiatorMode::Down)
+    {
+        step = length - 1 - arpStepIndex_;
+    }
+    else if (parameters.arpMode == ArpeggiatorMode::Random)
+    {
+        arpRandomState_ = hash32(arpRandomState_ + 0x9e3779b9u);
+        step = static_cast<int>(arpRandomState_ % static_cast<std::uint32_t>(length));
+    }
+
+    const auto stepSlot = static_cast<std::size_t>(std::clamp(step, 0, length - 1));
+    if (arpSoundingNote_ >= 0)
+        noteOffInternal(arpSoundingNote_);
+    arpSoundingNote_ = notes[stepSlot];
+    arpGateOpen_ = true;
+    noteOnInternal(arpSoundingNote_, velocities[stepSlot]);
+
+    // Advance the cursor for the next step now that this one has been played.
+    if (parameters.arpMode == ArpeggiatorMode::UpDown)
+    {
+        if (length <= 1)
+        {
+            arpStepIndex_ = 0;
+        }
+        else
+        {
+            arpStepIndex_ += arpDirection_;
+            if (arpStepIndex_ >= length)
+            {
+                // Reflect without repeating the turning note, so a three-note
+                // chord reads 0 1 2 1 0 1 2 rather than 0 1 2 2 1 0 0.
+                arpStepIndex_ = length - 2;
+                arpDirection_ = -1;
+            }
+            else if (arpStepIndex_ < 0)
+            {
+                arpStepIndex_ = 1;
+                arpDirection_ = 1;
+            }
+        }
+    }
+    else if (parameters.arpMode != ArpeggiatorMode::Random)
+    {
+        arpStepIndex_ = (arpStepIndex_ + 1) % length;
+    }
+}
+
+void MarsEngine::advanceArpeggiator(const EngineParameters& parameters) noexcept
+{
+    if (!parameters.arpEnabled)
+    {
+        if (arpWasEnabled_)
+        {
+            // Leaving arpeggiator mode must not strand a latched step or the
+            // pattern's key list. The current note is released normally so the
+            // amplifier envelope still finishes.
+            clearArpeggiator(true);
+            arpWasEnabled_ = false;
+        }
+        return;
+    }
+
+    arpWasEnabled_ = true;
+    // Switching Hold off while a chord is latched releases it, exactly as
+    // lifting the last key would have done without Hold.
+    if (!parameters.arpHold && arpPhysicalKeyCount_ == 0 && arpKeyCount_ > 0)
+    {
+        clearArpeggiator(true);
+        return;
+    }
+    if (!arpRunning_ || arpKeyCount_ <= 0)
+        return;
+
+    const double stepIncrement =
+        static_cast<double>(parameters.arpRateHz) / std::max(sampleRate_, 1.0);
+    arpPhase_ += stepIncrement;
+
+    // Gate: releasing part-way through the step is what makes a hardware
+    // arpeggiator staccato. A fully open gate is legato and simply holds until
+    // the following step retriggers.
+    if (arpGateOpen_ && parameters.arpGate < 0.995f
+        && arpPhase_ >= static_cast<double>(parameters.arpGate))
+    {
+        if (arpSoundingNote_ >= 0)
+            noteOffInternal(arpSoundingNote_);
+        arpSoundingNote_ = -1;
+        arpGateOpen_ = false;
+    }
+
+    if (arpPhase_ < 1.0)
+        return;
+
+    // A pathological rate change cannot make this loop unbounded: the phase is
+    // reduced modulo one and at most one step is played per host sample.
+    arpPhase_ -= std::floor(arpPhase_);
+    triggerArpeggiatorStep(parameters);
+}
+
+void MarsEngine::refreshActiveVoiceList() noexcept
+{
+    int count = 0;
+    for (int slot = 0; slot < maxVoices; ++slot)
+        if (voices_[static_cast<std::size_t>(slot)].active)
+            activeVoiceSlots_[static_cast<std::size_t>(count++)] = slot;
+    activeVoiceSlotCount_ = count;
+    voiceListDirty_ = false;
 }
 
 void MarsEngine::setPitchBend(float normalisedBipolar) noexcept
@@ -1808,6 +2176,7 @@ void MarsEngine::silenceVoice(Voice& voice, bool preserveTail) noexcept
 {
     if (preserveTail)
         addVoiceToStealTail(voice);
+    voiceListDirty_ = voiceListDirty_ || voice.active;
     voice.active = false;
     voice.releasing = false;
     voice.keyDown = false;
@@ -1894,6 +2263,13 @@ void MarsEngine::updateVoiceControl(Voice& voice,
     const float ageScale = 0.25f + 0.75f * parameters.drift;
     const float voiceAge = static_cast<float>(voice.ageSamples) / oversampledRate_;
     const float lfoFade = smoothStep(voiceAge / 0.14f);
+    voice.lfoFade = lfoFade;
+    voice.pulseSkewOffset = 0.035f * ageScale * card.pulseSkew;
+    // An OTA/diode VCA keeps its transfer characteristic at every control gain,
+    // so the colour stage runs before the envelope. Both the drive and its
+    // reciprocal normalisation depend only on the card and the drift control.
+    voice.vcaDrive = 1.05f + 0.14f * ageScale * std::abs(card.driveError);
+    voice.vcaNormalisation = 1.0f / std::max(0.2f, softSaturate(voice.vcaDrive));
 
     // Two bounded Ornstein-Uhlenbeck states model slow thermal motion and a
     // lower-amplitude fast component. They are advanced globally above, so
@@ -1995,7 +2371,18 @@ void MarsEngine::updateVoiceControl(Voice& voice,
     // materially reduces the 16-voice worst-case cost without changing the
     // circuit equations.
     constexpr float cosPiOverFour = 0.7071067811865475f;
-    voice.ladderFeedbackGain = 4.0f * voice.resonance;
+    // A four-pole transistor ladder starts to oscillate at k = 4. The old
+    // 4 * resonance map topped out at 3.98, so the model could ring but never
+    // sing. A sixteenth-order lift crosses the threshold only in the last few
+    // percent of the control: the extra term is 6e-10 relative at the 0.28
+    // default and about 1% at resonance 0.9, so ordinary settings keep their
+    // previous feedback while the top of the knob reaches k = 4.18.
+    const float resonanceSquared = voice.resonance * voice.resonance;
+    const float resonanceFourth = resonanceSquared * resonanceSquared;
+    const float resonanceSixteenth = resonanceFourth * resonanceFourth
+                                   * resonanceFourth * resonanceFourth;
+    voice.ladderFeedbackGain =
+        4.0f * voice.resonance * (1.0f + 0.055f * resonanceSixteenth);
     const float fourthRootK = std::sqrt(std::sqrt(voice.ladderFeedbackGain));
     const float alphaSquared =
         1.0f + std::sqrt(voice.ladderFeedbackGain) - 2.0f * fourthRootK * cosPiOverFour;
@@ -2044,6 +2431,43 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
     dcoRangeClockHz = std::clamp(finiteOr(dcoRangeClockHz, 2000000.0f), 500000.0f, 8000000.0f);
 
     const int requestedWave = waveformIndex(waveform);
+    // Only the audible waveform generator runs at a settled endpoint. The two
+    // silent ones are frozen exactly as the inactive VCO/DCO analogue core
+    // already is, and are re-seeded analytically at the start of a crossfade,
+    // while the destination gain is still zero. A four-sample causal B-spline
+    // path needs two samples of history plus its scheduled residual; the
+    // integrator-based triangle is restarted from its closed-form steady state,
+    // so the destination is fully warm long before it becomes audible across a
+    // 3 ms transition.
+    const auto thawWaveformPath = [&oscillator](int index) noexcept
+    {
+        switch (index)
+        {
+            case 0:
+                oscillator.vcoSawBlepInitialised = false;
+                oscillator.sawContourInitialised = false;
+                oscillator.dcoSawBlepInitialised = false;
+                oscillator.dcoReconstructionInitialised[0] = false;
+                break;
+            case 1:
+                oscillator.pulseBlepInitialised = false;
+                oscillator.expectedPulseInitialised = false;
+                oscillator.dcoPulseBlepInitialised = false;
+                oscillator.dcoExpectedPulseInitialised = false;
+                oscillator.dcoReconstructionInitialised[1] = false;
+                oscillator.dcoPulseSlew =
+                    oscillator.dcoRampVolts < 12.0f * oscillator.dcoHeldPulseWidth ? 1.0f : -1.0f;
+                break;
+            default:
+                oscillator.triangleSquareBlepInitialised = false;
+                oscillator.dcoTriangleSquareBlepInitialised = false;
+                oscillator.dcoReconstructionInitialised[2] = false;
+                oscillator.triangle = 0.25f * triangleAtPhase(oscillator.phase);
+                oscillator.dcoTriangle = 0.25f * triangleAtPhase(oscillator.dcoPhase);
+                break;
+        }
+    };
+
     if (!oscillator.waveformInitialised)
     {
         oscillator.activeWave = waveform;
@@ -2053,6 +2477,8 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
     }
     else if (oscillator.activeWave != waveform)
     {
+        const int previousWave = waveformIndex(oscillator.activeWave);
+        const bool wasSettled = oscillator.waveformCrossfadeRemaining == 0;
         oscillator.activeWave = waveform;
         oscillator.waveformCrossfadeRemaining = waveformCrossfadeSamples_;
         for (std::size_t index = 0; index < oscillator.waveformBlend.size(); ++index)
@@ -2061,7 +2487,21 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
             oscillator.waveformBlendStep[index] = (target - oscillator.waveformBlend[index])
                                                   / static_cast<float>(waveformCrossfadeSamples_);
         }
+        // A reversal that arrives while a transition is already running finds
+        // every generator warm; only a settled endpoint has frozen paths.
+        if (wasSettled)
+            for (int index = 0; index < 3; ++index)
+                if (index != previousWave)
+                    thawWaveformPath(index);
     }
+
+    const bool waveformCrossfading = oscillator.waveformCrossfadeRemaining > 0;
+    const int audibleWave = waveformIndex(oscillator.activeWave);
+    const std::array<bool, 3> renderWave {{
+        waveformCrossfading || audibleWave == 0,
+        waveformCrossfading || audibleWave == 1,
+        waveformCrossfading || audibleWave == 2,
+    }};
 
     if (!oscillator.modelInitialised)
     {
@@ -2176,92 +2616,96 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
     std::array<float, 3> vcoOutputs{};
     if (needsVco)
     {
-        // Keep every VCO waveform generator warm while the VCO endpoint is
-        // audible. The same causal integrated
-        // third-order B-spline correction now bandlimits the saw reset, both pulse
-        // edges, and the square driver integrated into the triangle. This matters
-        // most under PWM and cross-mod, where the former compact two-sample BLEP
-        // was the weakest oscillator path. Warm parallel states also make preset
-        // randomisation and host waveform automation crossfade without a click.
-        const float rawSaw = 2.0f * vcoPhase - 1.0f;
-        const float rawPulse = vcoPhase < pulseWidth ? 1.0f : -1.0f;
-        const float rawTriangleSquare = vcoPhase < 0.5f ? 1.0f : -1.0f;
-        if (!oscillator.expectedPulseInitialised)
+        // The same causal integrated third-order B-spline correction bandlimits
+        // the saw reset, both pulse edges, and the square driver integrated into
+        // the triangle. This matters most under PWM and cross-mod, where a
+        // compact two-sample BLEP is the weakest oscillator path.
+        float bandlimitedSaw = 0.0f;
+        if (renderWave[0])
+            bandlimitedSaw = processFourthOrderBlep(2.0f * vcoPhase - 1.0f,
+                                                    oscillator.vcoSawDelay,
+                                                    oscillator.vcoSawCorrection,
+                                                    oscillator.vcoSawBlepInitialised);
+        if (renderWave[1])
         {
-            oscillator.expectedPulseAtNextSample = rawPulse;
-            oscillator.expectedPulseInitialised = true;
+            const float rawPulse = vcoPhase < pulseWidth ? 1.0f : -1.0f;
+            if (!oscillator.expectedPulseInitialised)
+            {
+                oscillator.expectedPulseAtNextSample = rawPulse;
+                oscillator.expectedPulseInitialised = true;
+            }
+            else if (rawPulse != oscillator.expectedPulseAtNextSample)
+            {
+                // A moving PWM comparator can cross the already-advanced phase
+                // even when the previous sample's constant-width prediction saw
+                // no edge. Schedule that threshold-motion step at the sample
+                // boundary; the two-sample causal B-spline delay leaves the
+                // correction on time.
+                addFourthOrderBlep(oscillator.pulseCorrection,
+                                   rawPulse - oscillator.expectedPulseAtNextSample,
+                                   0.0f);
+            }
+            vcoOutputs[1] = processFourthOrderBlep(rawPulse,
+                                                   oscillator.pulseDelay,
+                                                   oscillator.pulseCorrection,
+                                                   oscillator.pulseBlepInitialised);
         }
-        else if (rawPulse != oscillator.expectedPulseAtNextSample)
+        if (renderWave[2])
         {
-            // A moving PWM comparator can cross the already-advanced phase even
-            // when the previous sample's constant-width prediction saw no edge.
-            // Schedule that threshold-motion step at the sample boundary; the
-            // two-sample causal B-spline delay leaves the correction on time.
-            addFourthOrderBlep(
-                oscillator.pulseCorrection, rawPulse - oscillator.expectedPulseAtNextSample, 0.0f);
+            const float bandlimitedTriangleSquare =
+                processFourthOrderBlep(vcoPhase < 0.5f ? 1.0f : -1.0f,
+                                       oscillator.triangleSquareDelay,
+                                       oscillator.triangleSquareCorrection,
+                                       oscillator.triangleSquareBlepInitialised);
+            oscillator.triangle = increment * bandlimitedTriangleSquare
+                                  + (1.0f - increment) * oscillator.triangle;
+            oscillator.triangle = std::clamp(finiteOr(oscillator.triangle, 0.0f), -0.35f, 0.35f);
+            vcoOutputs[2] = 4.0f * oscillator.triangle;
         }
-        const float bandlimitedSaw = processFourthOrderBlep(rawSaw,
-                                                            oscillator.vcoSawDelay,
-                                                            oscillator.vcoSawCorrection,
-                                                            oscillator.vcoSawBlepInitialised);
-        const float bandlimitedPulse = processFourthOrderBlep(rawPulse,
-                                                              oscillator.pulseDelay,
-                                                              oscillator.pulseCorrection,
-                                                              oscillator.pulseBlepInitialised);
-        const float bandlimitedTriangleSquare =
-            processFourthOrderBlep(rawTriangleSquare,
-                                   oscillator.triangleSquareDelay,
-                                   oscillator.triangleSquareCorrection,
-                                   oscillator.triangleSquareBlepInitialised);
-
-        oscillator.triangle = increment * bandlimitedTriangleSquare
-                              + (1.0f - increment) * oscillator.triangle;
-        oscillator.triangle = std::clamp(finiteOr(oscillator.triangle, 0.0f), -0.35f, 0.35f);
-        vcoOutputs = {{
-            bandlimitedSaw,
-            bandlimitedPulse,
-            4.0f * oscillator.triangle,
-        }};
-
         // Pekonen et al.'s source-specific Table 4(b) fit matches this exact
-        // fourth-order B-spline BLEP to recorded Minimoog Voyager spectra. Keep it
-        // warm even while another waveform is selected, so a switch has no stale
-        // post-EQ state.
-        const float oscillatorFrequency = increment * oversampledRate_;
-        const float fittedFrequency = std::clamp(oscillatorFrequency, 86.0f, 8300.0f);
-        const float frequencySquared = fittedFrequency * fittedFrequency;
-        const float referenceGain = 0.7105f + 3.380e-5f * fittedFrequency;
-        const float referenceZero =
-            1.0161f - 5.850e-4f * fittedFrequency + 5.220e-8f * frequencySquared;
-        const float referencePole =
-            1.0294f - 4.8921e-4f * fittedFrequency + 3.974e-8f * frequencySquared;
-        constexpr float referenceRate = 44100.0f;
-        const float rateRatio = referenceRate / oversampledRate_;
-        const auto remapCoefficient = [rateRatio](float coefficient) noexcept
+        // fourth-order B-spline BLEP to recorded Minimoog Voyager spectra. It is
+        // part of the saw generator and follows the same freeze/thaw rule.
+        if (renderWave[0])
         {
-            return ((1.0f + rateRatio) * coefficient + (1.0f - rateRatio))
-                   / ((1.0f - rateRatio) * coefficient + (1.0f + rateRatio));
-        };
-        const float zero = remapCoefficient(referenceZero);
-        const float pole = remapCoefficient(referencePole);
-        const float referenceDcGain =
-            referenceGain * (1.0f - referenceZero) / (1.0f - referencePole);
-        const float gain = referenceDcGain * (1.0f - pole) / (1.0f - zero);
-        if (!oscillator.sawContourInitialised)
-        {
-            oscillator.previousSawInput = bandlimitedSaw;
-            oscillator.previousSawOutput = bandlimitedSaw;
-            oscillator.sawContourInitialised = true;
-        }
-        else
-        {
-            const float contoured = gain * (bandlimitedSaw - zero * oscillator.previousSawInput)
-                                    + pole * oscillator.previousSawOutput;
-            oscillator.previousSawInput = bandlimitedSaw;
-            oscillator.previousSawOutput = std::isfinite(contoured) ? contoured : bandlimitedSaw;
-            const float contourBlend = smoothStep((oscillatorFrequency - 43.0f) / 43.0f);
-            vcoOutputs[0] =
-                bandlimitedSaw + contourBlend * (oscillator.previousSawOutput - bandlimitedSaw);
+            vcoOutputs[0] = bandlimitedSaw;
+            const float oscillatorFrequency = increment * oversampledRate_;
+            const float fittedFrequency = std::clamp(oscillatorFrequency, 86.0f, 8300.0f);
+            const float frequencySquared = fittedFrequency * fittedFrequency;
+            const float referenceGain = 0.7105f + 3.380e-5f * fittedFrequency;
+            const float referenceZero =
+                1.0161f - 5.850e-4f * fittedFrequency + 5.220e-8f * frequencySquared;
+            const float referencePole =
+                1.0294f - 4.8921e-4f * fittedFrequency + 3.974e-8f * frequencySquared;
+            constexpr float referenceRate = 44100.0f;
+            const float rateRatio = referenceRate / oversampledRate_;
+            const auto remapCoefficient = [rateRatio](float coefficient) noexcept
+            {
+                return ((1.0f + rateRatio) * coefficient + (1.0f - rateRatio))
+                       / ((1.0f - rateRatio) * coefficient + (1.0f + rateRatio));
+            };
+            const float zero = remapCoefficient(referenceZero);
+            const float pole = remapCoefficient(referencePole);
+            const float referenceDcGain =
+                referenceGain * (1.0f - referenceZero) / (1.0f - referencePole);
+            const float gain = referenceDcGain * (1.0f - pole) / (1.0f - zero);
+            if (!oscillator.sawContourInitialised)
+            {
+                oscillator.previousSawInput = bandlimitedSaw;
+                oscillator.previousSawOutput = bandlimitedSaw;
+                oscillator.sawContourInitialised = true;
+            }
+            else
+            {
+                const float contoured =
+                    gain * (bandlimitedSaw - zero * oscillator.previousSawInput)
+                    + pole * oscillator.previousSawOutput;
+                oscillator.previousSawInput = bandlimitedSaw;
+                oscillator.previousSawOutput =
+                    std::isfinite(contoured) ? contoured : bandlimitedSaw;
+                const float contourBlend = smoothStep((oscillatorFrequency - 43.0f) / 43.0f);
+                vcoOutputs[0] =
+                    bandlimitedSaw + contourBlend * (oscillator.previousSawOutput - bandlimitedSaw);
+            }
         }
     }
 
@@ -2297,55 +2741,60 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
             oscillator.dcoAnalogueInitialised = true;
         }
 
-        const float rawDcoSaw = normaliseDcoSaw(oscillator.dcoRampVolts);
-        const float dcoThresholdVolts = 12.0f * oscillator.dcoHeldPulseWidth;
-        const float rawDcoPulse = oscillator.dcoRampVolts < dcoThresholdVolts ? 1.0f : -1.0f;
-        if (!oscillator.dcoExpectedPulseInitialised)
+        std::array<float, 3> dcoInputs{};
+        if (renderWave[0])
+            dcoInputs[0] = processFourthOrderBlep(normaliseDcoSaw(oscillator.dcoRampVolts),
+                                                  oscillator.dcoSawDelay,
+                                                  oscillator.dcoSawCorrection,
+                                                  oscillator.dcoSawBlepInitialised);
+        if (renderWave[1])
         {
-            oscillator.dcoExpectedPulseAtNextSample = rawDcoPulse;
-            oscillator.dcoExpectedPulseInitialised = true;
+            const float dcoThresholdVolts = 12.0f * oscillator.dcoHeldPulseWidth;
+            const float rawDcoPulse = oscillator.dcoRampVolts < dcoThresholdVolts ? 1.0f : -1.0f;
+            if (!oscillator.dcoExpectedPulseInitialised)
+            {
+                oscillator.dcoExpectedPulseAtNextSample = rawDcoPulse;
+                oscillator.dcoExpectedPulseInitialised = true;
+            }
+            else if (rawDcoPulse != oscillator.dcoExpectedPulseAtNextSample)
+            {
+                // The PWM CV is sample-and-held at the control scan. If its new
+                // threshold crosses the already-running ramp, the comparator step
+                // occurs at that control boundary rather than being missed.
+                addFourthOrderBlep(oscillator.dcoPulseCorrection,
+                                   rawDcoPulse - oscillator.dcoExpectedPulseAtNextSample,
+                                   0.0f);
+            }
+            const float dcoPulse = processFourthOrderBlep(rawDcoPulse,
+                                                          oscillator.dcoPulseDelay,
+                                                          oscillator.dcoPulseCorrection,
+                                                          oscillator.dcoPulseBlepInitialised);
+            const float pulseSlew =
+                dcoPulse > oscillator.dcoPulseSlew ? dcoPulseRise_ : dcoPulseFall_;
+            oscillator.dcoPulseSlew += pulseSlew * (dcoPulse - oscillator.dcoPulseSlew);
+            dcoInputs[1] = oscillator.dcoPulseSlew;
         }
-        else if (rawDcoPulse != oscillator.dcoExpectedPulseAtNextSample)
+        if (renderWave[2])
         {
-            // The PWM CV is sample-and-held at the control scan. If its new
-            // threshold crosses the already-running ramp, the comparator step
-            // occurs at that control boundary rather than being missed.
-            addFourthOrderBlep(oscillator.dcoPulseCorrection,
-                               rawDcoPulse - oscillator.dcoExpectedPulseAtNextSample,
-                               0.0f);
-        }
-
-        const float dcoSaw = processFourthOrderBlep(rawDcoSaw,
-                                                    oscillator.dcoSawDelay,
-                                                    oscillator.dcoSawCorrection,
-                                                    oscillator.dcoSawBlepInitialised);
-        const float dcoPulse = processFourthOrderBlep(rawDcoPulse,
-                                                      oscillator.dcoPulseDelay,
-                                                      oscillator.dcoPulseCorrection,
-                                                      oscillator.dcoPulseBlepInitialised);
-        const float rawDcoTriangleSquare = dcoPhase < 0.5f ? 1.0f : -1.0f;
-        const float dcoTriangleSquare =
-            processFourthOrderBlep(rawDcoTriangleSquare,
-                                   oscillator.dcoTriangleSquareDelay,
-                                   oscillator.dcoTriangleSquareCorrection,
-                                   oscillator.dcoTriangleSquareBlepInitialised);
-        oscillator.dcoTriangle = oscillator.dcoIncrement * dcoTriangleSquare
-                                 + (1.0f - oscillator.dcoIncrement) * oscillator.dcoTriangle;
-        oscillator.dcoTriangle =
-            std::clamp(finiteOr(oscillator.dcoTriangle, 0.0f), -0.35f, 0.35f);
-        const float pulseSlew = dcoPulse > oscillator.dcoPulseSlew ? dcoPulseRise_ : dcoPulseFall_;
-        oscillator.dcoPulseSlew += pulseSlew * (dcoPulse - oscillator.dcoPulseSlew);
-
-        const std::array<float, 3> dcoInputs{{
-            dcoSaw,
-            oscillator.dcoPulseSlew,
+            const float dcoTriangleSquare =
+                processFourthOrderBlep(dcoPhase < 0.5f ? 1.0f : -1.0f,
+                                       oscillator.dcoTriangleSquareDelay,
+                                       oscillator.dcoTriangleSquareCorrection,
+                                       oscillator.dcoTriangleSquareBlepInitialised);
+            oscillator.dcoTriangle = oscillator.dcoIncrement * dcoTriangleSquare
+                                     + (1.0f - oscillator.dcoIncrement) * oscillator.dcoTriangle;
+            oscillator.dcoTriangle =
+                std::clamp(finiteOr(oscillator.dcoTriangle, 0.0f), -0.35f, 0.35f);
             // The MC5534A has no triangle output. Retaining it here is an
             // explicitly documented Mars extension through the same output
             // bandwidth, not a hardware claim.
-            4.0f * oscillator.dcoTriangle,
-        }};
+            dcoInputs[2] = 4.0f * oscillator.dcoTriangle;
+        }
         for (std::size_t index = 0; index < dcoOutputs.size(); ++index)
         {
+            if (!renderWave[index])
+                continue;
+
             if (!oscillator.dcoReconstructionInitialised[index])
             {
                 oscillator.dcoReconstruction[index] = dcoInputs[index];
@@ -2363,11 +2812,21 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
     }
 
     float output = 0.0f;
-    for (std::size_t index = 0; index < oscillator.waveformBlend.size(); ++index)
+    if (waveformCrossfading)
     {
-        const float modelOutput =
-            vcoOutputs[index] + oscillator.modelBlend * (dcoOutputs[index] - vcoOutputs[index]);
-        output += oscillator.waveformBlend[index] * modelOutput;
+        for (std::size_t index = 0; index < oscillator.waveformBlend.size(); ++index)
+        {
+            const float modelOutput =
+                vcoOutputs[index] + oscillator.modelBlend * (dcoOutputs[index] - vcoOutputs[index]);
+            output += oscillator.waveformBlend[index] * modelOutput;
+        }
+    }
+    else
+    {
+        // A settled blend is exactly one-hot on the audible generator.
+        const auto index = static_cast<std::size_t>(audibleWave);
+        output = vcoOutputs[index]
+               + oscillator.modelBlend * (dcoOutputs[index] - vcoOutputs[index]);
     }
     if (!std::isfinite(output))
         output = 0.0f;
@@ -2384,14 +2843,20 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
 
         // With increment < 0.5 there can be one cycle reset plus, for a
         // narrow pulse, its second edge in the new cycle. Corrections add.
-        if (vcoPhase < pulseWidth && unwrappedVcoPhase >= pulseWidth)
-            addFourthOrderBlep(
-                oscillator.pulseCorrection, -2.0f, (unwrappedVcoPhase - pulseWidth) / increment);
-        if (unwrappedVcoPhase >= 1.0f + pulseWidth)
-            addFourthOrderBlep(oscillator.pulseCorrection,
-                               -2.0f,
-                               (unwrappedVcoPhase - (1.0f + pulseWidth)) / increment);
-        if (vcoPhase < 0.5f && unwrappedVcoPhase >= 0.5f)
+        // A frozen generator schedules nothing, so its residual accumulator
+        // cannot drift while it is silent.
+        if (renderWave[1])
+        {
+            if (vcoPhase < pulseWidth && unwrappedVcoPhase >= pulseWidth)
+                addFourthOrderBlep(oscillator.pulseCorrection,
+                                   -2.0f,
+                                   (unwrappedVcoPhase - pulseWidth) / increment);
+            if (unwrappedVcoPhase >= 1.0f + pulseWidth)
+                addFourthOrderBlep(oscillator.pulseCorrection,
+                                   -2.0f,
+                                   (unwrappedVcoPhase - (1.0f + pulseWidth)) / increment);
+        }
+        if (renderWave[2] && vcoPhase < 0.5f && unwrappedVcoPhase >= 0.5f)
             addFourthOrderBlep(oscillator.triangleSquareCorrection,
                                -2.0f,
                                (unwrappedVcoPhase - 0.5f) / increment);
@@ -2400,9 +2865,12 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
         {
             oscillator.phase -= std::floor(oscillator.phase);
             const float samplesToNext = oscillator.phase / increment;
-            addFourthOrderBlep(oscillator.vcoSawCorrection, -2.0f, samplesToNext);
-            addFourthOrderBlep(oscillator.pulseCorrection, 2.0f, samplesToNext);
-            addFourthOrderBlep(oscillator.triangleSquareCorrection, 2.0f, samplesToNext);
+            if (renderWave[0])
+                addFourthOrderBlep(oscillator.vcoSawCorrection, -2.0f, samplesToNext);
+            if (renderWave[1])
+                addFourthOrderBlep(oscillator.pulseCorrection, 2.0f, samplesToNext);
+            if (renderWave[2])
+                addFourthOrderBlep(oscillator.triangleSquareCorrection, 2.0f, samplesToNext);
         }
         oscillator.expectedPulseAtNextSample = oscillator.phase < pulseWidth ? 1.0f : -1.0f;
     }
@@ -2413,7 +2881,7 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
         const float oldDcoIncrement = oscillator.dcoIncrement;
         const float unwrappedDcoPhase = dcoPhase + oldDcoIncrement;
         dcoWrapped = unwrappedDcoPhase >= 1.0f;
-        if (dcoPhase < 0.5f && unwrappedDcoPhase >= 0.5f)
+        if (renderWave[2] && dcoPhase < 0.5f && unwrappedDcoPhase >= 0.5f)
             addFourthOrderBlep(oscillator.dcoTriangleSquareCorrection,
                                -2.0f,
                                (unwrappedDcoPhase - 0.5f) / oldDcoIncrement);
@@ -2424,7 +2892,9 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
         {
             return rampVolts < thresholdVolts ? 1.0f : -1.0f;
         };
-        const auto advanceRampSegment = [this, &oscillator, comparatorOutput, thresholdVolts](
+        const bool schedulePulseEvents = renderWave[1];
+        const auto advanceRampSegment = [this, &oscillator, comparatorOutput, thresholdVolts,
+                                         schedulePulseEvents](
                                             float startFraction,
                                             float endFraction) noexcept
         {
@@ -2436,7 +2906,8 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
                                            - startRamp / integratorLeakSeconds);
             const float startPulse = comparatorOutput(startRamp);
             const float endPulse = comparatorOutput(endRamp);
-            if (startPulse != endPulse && std::abs(endRamp - startRamp) > 1.0e-12f)
+            if (schedulePulseEvents && startPulse != endPulse
+                && std::abs(endRamp - startRamp) > 1.0e-12f)
             {
                 const float localCrossing =
                     std::clamp((thresholdVolts - startRamp) / (endRamp - startRamp), 0.0f, 1.0f);
@@ -2464,11 +2935,15 @@ float MarsEngine::renderOscillator(Oscillator &oscillator,
             oscillator.dcoRampVolts = oscillator.dcoResetResidue * beforeReset
                                     + oscillator.dcoChargeInjectionVolts;
             const float pulseAfterReset = comparatorOutput(oscillator.dcoRampVolts);
-            const float normalisedResetStep = normaliseDcoSaw(oscillator.dcoRampVolts)
-                                            - normaliseDcoSaw(beforeReset);
-            addFourthOrderBlep(oscillator.dcoSawCorrection, normalisedResetStep, samplesToNext);
-            addFourthOrderBlep(oscillator.dcoTriangleSquareCorrection, 2.0f, samplesToNext);
-            if (pulseAfterReset != pulseBeforeReset)
+            if (renderWave[0])
+            {
+                const float normalisedResetStep = normaliseDcoSaw(oscillator.dcoRampVolts)
+                                                - normaliseDcoSaw(beforeReset);
+                addFourthOrderBlep(oscillator.dcoSawCorrection, normalisedResetStep, samplesToNext);
+            }
+            if (renderWave[2])
+                addFourthOrderBlep(oscillator.dcoTriangleSquareCorrection, 2.0f, samplesToNext);
+            if (renderWave[1] && pulseAfterReset != pulseBeforeReset)
                 addFourthOrderBlep(oscillator.dcoPulseCorrection,
                                    pulseAfterReset - pulseBeforeReset,
                                    samplesToNext);
@@ -2561,27 +3036,19 @@ float MarsEngine::renderVoiceOversample(Voice &voice,
                               parameters.filterSustain,
                               voice.filterReleaseCoefficient);
 
-    const float voiceAge = static_cast<float>(voice.ageSamples) / oversampledRate_;
-    const float lfoFade = smoothStep(voiceAge / 0.14f);
-    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
-    const float ageScale = 0.25f + 0.75f * parameters.drift;
+    // The LFO fade, the card's pulse skew, and the octave-to-range-clock map are
+    // control-rate quantities. They are refreshed on the same 8-sample grid as
+    // pitch and cutoff instead of being recomputed for every internal sample.
     const float pulseWidth = std::clamp(parameters.pulseWidth
-                                        + 0.42f * parameters.lfoPwm * lfoFade * lfoValue
-                                        + 0.035f * ageScale * card.pulseSkew,
+                                        + 0.42f * parameters.lfoPwm * voice.lfoFade * lfoValue
+                                        + voice.pulseSkewOffset,
                                         0.05f, 0.95f);
-    const auto dcoRangeClock = [] (int octave) noexcept
-    {
-        // -1/0/+1 are the JUNO 16'/8'/4' 1/2/4 MHz clocks. Mars keeps its
-        // existing outer octave positions as explicit 500 kHz/8 MHz range
-        // divider extensions.
-        return std::ldexp(2000000.0f, std::clamp(octave, -2, 2));
-    };
 
     bool oscillator2Wrapped = false;
     float oscillator2 = renderOscillator(voice.oscillator2, parameters.osc2Wave,
                                          parameters.osc2Model,
                                          voice.oscillator2Increment, pulseWidth,
-                                         dcoRangeClock(parameters.osc2Octave),
+                                         blockDcoRangeClock2_,
                                          oscillator2Wrapped);
     (void) oscillator2Wrapped;
 
@@ -2619,7 +3086,7 @@ float MarsEngine::renderVoiceOversample(Voice &voice,
     float oscillator1 = renderOscillator(voice.oscillator1, parameters.osc1Wave,
                                          parameters.osc1Model,
                                          oscillator1Increment, pulseWidth,
-                                         dcoRangeClock(parameters.osc1Octave),
+                                         blockDcoRangeClock1_,
                                          oscillator1Wrapped);
     (void) oscillator1Wrapped;
 
@@ -2674,10 +3141,10 @@ float MarsEngine::renderVoiceOversample(Voice &voice,
     if (dcoWrapped)
         voice.oscillator1CycleOdd = !voice.oscillator1CycleOdd;
 
-    const float shaping = 1.05f + 0.28f * parameters.drift;
-    const float normalisation = std::max(0.2f, softSaturate(shaping));
-    oscillator1 = softSaturate(oscillator1 * shaping) / normalisation;
-    oscillator2 = softSaturate(oscillator2 * shaping) / normalisation;
+    const float shaping = blockShapingGain_;
+    const float inverseNormalisation = 1.0f / blockShapingNormalisation_;
+    oscillator1 = softSaturate(oscillator1 * shaping) * inverseNormalisation;
+    oscillator2 = softSaturate(oscillator2 * shaping) * inverseNormalisation;
 
     const float whiteNoise = nextNoise(voice);
     voice.noiseColour += noiseColourCoefficient_ * (whiteNoise - voice.noiseColour);
@@ -2769,14 +3236,11 @@ float MarsEngine::renderVoiceOversample(Voice &voice,
 
     const float velocityCurve = std::sqrt(voice.velocity);
     const float velocityGain = 1.0f + parameters.velocityAmount * (velocityCurve - 1.0f);
-    // An OTA/diode VCA's transfer is controlled by gain; it does not stop
-    // having a transfer characteristic merely because the envelope is low.
-    // Colour the signal first, then apply the smoothly moving control gain.
-    // This keeps the harmonic balance stable through a decay instead of the
-    // old f(g*x) topology becoming progressively cleaner as the note closed.
-    const float vcaDrive = 1.05f + 0.14f * ageScale * std::abs(card.driveError);
-    const float vcaNormalisation = std::max(0.2f, softSaturate(vcaDrive));
-    const float vcaColour = softSaturate(filtered * vcaDrive) / vcaNormalisation;
+    // The VCA colours the signal before the envelope applies its control gain,
+    // so the harmonic balance stays stable through a decay instead of becoming
+    // progressively cleaner as the note closes. Its drive and reciprocal
+    // normalisation are prepared at control rate above.
+    const float vcaColour = softSaturate(filtered * voice.vcaDrive) * voice.vcaNormalisation;
     const float output = vcaColour * ampEnvelope * velocityGain * voice.groupGain;
     voice.lastOutput = output;
     voice.outputEnergy += outputEnergySmoothing_
@@ -2959,6 +3423,31 @@ void MarsEngine::process(float *left, float *right, int numSamples)
     smoothedParameters_.osc1Octave = targets.osc1Octave;
     smoothedParameters_.osc2Octave = targets.osc2Octave;
     smoothedParameters_.osc2Semitones = targets.osc2Semitones;
+    smoothedParameters_.arpEnabled = targets.arpEnabled;
+    smoothedParameters_.arpHold = targets.arpHold;
+    smoothedParameters_.arpMode = targets.arpMode;
+    smoothedParameters_.arpOctaves = targets.arpOctaves;
+    smoothedParameters_.arpRateHz = targets.arpRateHz;
+    smoothedParameters_.arpGate = targets.arpGate;
+    smoothedParameters_.unisonDetuneCents = targets.unisonDetuneCents;
+
+    // These depend only on smoothed parameters and the prepared rate, so they
+    // are resolved once per block instead of inside the oversampled voice loop.
+    // The octave-to-range-clock map in particular used to call ldexp for every
+    // oscillator of every voice on every internal sample.
+    const auto dcoRangeClock = [](int octave) noexcept
+    {
+        // -1/0/+1 are the JUNO 16'/8'/4' 1/2/4 MHz clocks. Mars keeps its
+        // existing outer octave positions as explicit 500 kHz/8 MHz range
+        // divider extensions.
+        static constexpr std::array<float, 5> clocks {{
+            500000.0f, 1000000.0f, 2000000.0f, 4000000.0f, 8000000.0f,
+        }};
+        return clocks[static_cast<std::size_t>(std::clamp(octave, -2, 2) + 2)];
+    };
+    blockDcoRangeClock1_ = dcoRangeClock(smoothedParameters_.osc1Octave);
+    blockDcoRangeClock2_ = dcoRangeClock(smoothedParameters_.osc2Octave);
+    blockLatencyCompensation_ = oversampling_ == 1 ? getProcessingLatencySamples() : 0;
 
     const float smoothing = 1.0f - std::exp(-inverseSampleRate_ / 0.014f);
     const float performanceSmoothing = 1.0f - std::exp(-inverseSampleRate_ / 0.005f);
@@ -3053,6 +3542,17 @@ void MarsEngine::process(float *left, float *right, int numSamples)
         if (std::abs(oscillator2MixGain_ - oscillator2TargetGain) < 1.0e-5f)
             oscillator2MixGain_ = oscillator2TargetGain;
 
+        // The drift-derived voice constants move at the parameter smoother's
+        // rate, not at audio rate, so one evaluation per host sample replaces
+        // one per voice per oversampled sample.
+        blockShapingGain_ = 1.05f + 0.28f * smoothedParameters_.drift;
+        blockShapingNormalisation_ = std::max(0.2f, softSaturate(blockShapingGain_));
+
+        // The arpeggiator clock is a host-rate control process. Running it
+        // before the idle bypass keeps a latched pattern alive through the
+        // silent part of a slow gate.
+        advanceArpeggiator(smoothedParameters_);
+
         // Every audible path has reached exact digital silence: no voice, no
         // steal tail, a snapped-closed chorus gate, and a whole latency ring
         // of exactly zero output. Only the documented free-running state (the
@@ -3106,10 +3606,15 @@ void MarsEngine::process(float *left, float *right, int numSamples)
             const float lfoValue = nextLfoValue(smoothedParameters_);
             float voiceLeft = 0.0f;
             float voiceRight = 0.0f;
-            for (auto& voice : voices_)
+            // A compact list of occupied slots replaces a 16-slot scan of
+            // ~1.5 KiB voice records per internal sample. It is rebuilt only
+            // when allocation actually changes.
+            if (voiceListDirty_)
+                refreshActiveVoiceList();
+            for (int index = 0; index < activeVoiceSlotCount_; ++index)
             {
-                if (!voice.active)
-                    continue;
+                auto& voice = voices_[static_cast<std::size_t>(
+                    activeVoiceSlots_[static_cast<std::size_t>(index)])];
                 const float rendered = renderVoiceOversample(
                     voice, smoothedParameters_, lfoValue);
                 voiceLeft += rendered * voice.panLeft;
@@ -3179,8 +3684,7 @@ void MarsEngine::process(float *left, float *right, int numSamples)
         // reported for this prepared host rate. The ring is bounded and reset
         // during the already-idle quality transition, so no host call, lock,
         // allocation, or boundary click is introduced on the audio thread.
-        const int compensation = oversampling_ == 1
-            ? getProcessingLatencySamples() : 0;
+        const int compensation = blockLatencyCompensation_;
         if (compensation > 0)
         {
             const auto write = static_cast<std::size_t>(latencyDelayWriteIndex_);
