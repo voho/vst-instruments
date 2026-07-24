@@ -2539,6 +2539,42 @@ void testStrumSpread()
     expect(engine.getActiveVoiceCount() == static_cast<int>(chord.size()),
            "a strum-delayed string was retired before it was picked");
     expect(peakAbs(settle.left) > 1.0e-4f, "the delayed strings never sounded");
+
+    // Lifting a key before the pick reaches that string cancels the stroke.
+    // Leaving the countdown running excited the string after its release, so a
+    // short strummed chord grew a late attack once the keys were already up.
+    {
+        ElectryEngine released;
+        released.prepare(sampleRate, 512);
+        EngineParameters spread;
+        spread.artifactAmount = 0.0f;
+        spread.sympatheticAmount = 0.0f;
+        spread.strumSpreadSeconds = 0.12f;
+        released.setParameters(spread);
+        released.reset();
+        for (const int note : chord)
+            released.noteOn(note, 0.85f);
+
+        // Every key is up long before the pick has crossed the neck.
+        StereoBuffer opening(static_cast<int>(0.02 * sampleRate));
+        renderInto(released, opening);
+        for (const int note : chord)
+            released.noteOff(note);
+
+        for (int stringIndex = 0; stringIndex < ElectryEngine::stringCount; ++stringIndex)
+            expect(TestAccess::snapshot(released, stringIndex).startDelaySamples == 0,
+                   "string " + std::to_string(stringIndex)
+                       + " kept a pending strum excitation after its key was lifted");
+
+        StereoBuffer tail(static_cast<int>(1.0 * sampleRate));
+        renderInto(released, tail);
+        // By this point the damped strings have decayed; any energy here is a
+        // pick that landed after the key was released.
+        const float late = peakAbs(tail.left, static_cast<int>(0.15 * sampleRate));
+        expect(late < 0.01f,
+               "a string was picked after its key was released (late peak "
+                   + std::to_string(late) + ")");
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -1831,6 +1831,12 @@ void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
     voice.releasing = true;
     voice.sustained = false;
 
+    // A strum spreads the pick across the strings by up to 280 ms. If the key
+    // is lifted before the pick arrives, it never lands: leaving the countdown
+    // running would excite the string after the release and produce a late
+    // attack on short notes.
+    voice.startDelaySamples = 0;
+
     // The fretting or picking hand damps the string over tens of
     // milliseconds; the loop then decays with roughly a 60 ms T60.
     const float sampleRate = static_cast<float>(sampleRate_);
