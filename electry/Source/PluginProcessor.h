@@ -3,9 +3,11 @@
 #include <JuceHeader.h>
 
 #include "DSP/ElectryEngine.h"
+#include "DSP/ElectryVisuals.h"
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <vector>
 
 namespace electry::parameters
@@ -37,6 +39,11 @@ inline constexpr auto amp            = "amp";
 inline constexpr auto compressor     = "compressor";
 inline constexpr auto delay          = "delay";
 inline constexpr auto room           = "room";
+// Version 1.1 additions, appended so every existing automation index is kept.
+inline constexpr auto sympathetic    = "sympathetic";
+inline constexpr auto palmMute       = "palmMute";
+inline constexpr auto strumSpread    = "strumSpread";
+inline constexpr auto vibratoDepth   = "vibratoDepth";
 } // namespace electry::parameters
 
 class ElectryAudioProcessor final : public juce::AudioProcessor,
@@ -81,6 +88,21 @@ public:
     int getActiveVoiceCount() const noexcept
     {
         return activeVoiceCount.load (std::memory_order_relaxed);
+    }
+    int getSympatheticStringCount() const noexcept
+    {
+        return sympatheticStringCount.load (std::memory_order_relaxed);
+    }
+    // One packed 32-bit word per string, published by the audio thread and
+    // read by the editor's timer. Each word is self-consistent, so the
+    // fretboard can never draw one string's note with another string's level.
+    electry::StringVisualState getStringVisualState (int stringIndex) const noexcept
+    {
+        if (stringIndex < 0 || stringIndex >= electry::ElectryEngine::stringCount)
+            return {};
+        return electry::visuals::unpackStringVisual (
+            stringVisuals[static_cast<std::size_t> (stringIndex)].load (
+                std::memory_order_relaxed));
     }
     int getCurrentArticulationIndex() const noexcept
     {
@@ -130,6 +152,10 @@ private:
         std::atomic<float>* compressor = nullptr;
         std::atomic<float>* delay = nullptr;
         std::atomic<float>* room = nullptr;
+        std::atomic<float>* sympathetic = nullptr;
+        std::atomic<float>* palmMute = nullptr;
+        std::atomic<float>* strumSpread = nullptr;
+        std::atomic<float>* vibratoDepth = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
@@ -153,6 +179,7 @@ private:
     void dispatchUiMidiEvents() noexcept;
     void dispatchMidiData (const juce::uint8* data, int numBytes) noexcept;
     void updateEngineParameters() noexcept;
+    void publishStringVisualState() noexcept;
 
     electry::ElectryEngine engine;
     void processEffects (juce::AudioBuffer<float>&, int startSample, int numSamples) noexcept;
@@ -162,11 +189,16 @@ private:
     float compressorEnvelope = 0.0f;
     int delayWriteIndex = 0;
     double effectSampleRate = 48000.0;
+    std::array<electry::StringVisualState,
+               electry::ElectryEngine::stringCount> visualScratch {};
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };
+    std::atomic<int> sympatheticStringCount { 0 };
     std::atomic<int> articulationIndex { 0 };
     std::atomic<double> displaySampleRate { 0.0 };
+    std::array<std::atomic<std::uint32_t>,
+               electry::ElectryEngine::stringCount> stringVisuals {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ElectryAudioProcessor)
 };

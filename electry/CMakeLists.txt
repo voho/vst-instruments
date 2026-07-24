@@ -23,7 +23,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(Electry VERSION 1.0.0 LANGUAGES C CXX)
+project(Electry VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,8 +36,12 @@ set(ELECTRY_JUCE_PATH "" CACHE PATH
 
 include(CTest)
 
-set(ELECTRY_DSP_SOURCES Source/DSP/ElectryEngine.cpp)
-set(ELECTRY_DSP_HEADERS Source/DSP/ElectryEngine.h)
+set(ELECTRY_DSP_SOURCES
+    Source/DSP/ElectryEngine.cpp
+    Source/DSP/ElectryVisuals.cpp)
+set(ELECTRY_DSP_HEADERS
+    Source/DSP/ElectryEngine.h
+    Source/DSP/ElectryVisuals.h)
 
 add_library(ElectryDSP STATIC
     ${ELECTRY_DSP_SOURCES}
