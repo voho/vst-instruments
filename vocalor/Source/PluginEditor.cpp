@@ -22,6 +22,18 @@ void styleHeaderLabel (juce::Label& label, float size, juce::Colour colour)
     label.setColour (juce::Label::textColourId, colour);
     label.setInterceptsMouseClicks (false, false);
 }
+
+void drawInsetPanel (juce::Graphics& g, juce::Rectangle<float> bounds, const juce::String& title)
+{
+    g.setColour (c (0xf0080d13));
+    g.fillRoundedRectangle (bounds, 8.0f);
+    g.setColour (c (panelEdge).withAlpha (0.85f));
+    g.drawRoundedRectangle (bounds, 8.0f, 1.0f);
+    g.setColour (c (textDim));
+    g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+    g.drawText (title, bounds.reduced (11.0f, 5.0f).removeFromTop (14.0f).toNearestInt(),
+                juce::Justification::centredLeft);
+}
 } // namespace
 
 VocalorLookAndFeel::VocalorLookAndFeel()
@@ -46,7 +58,7 @@ void VocalorLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int 
                                           float rotaryEndAngle, juce::Slider& slider)
 {
     const auto diameter = juce::jmax (
-        58.0f, static_cast<float> (juce::jmin (width, height)) - 12.0f);
+        50.0f, static_cast<float> (juce::jmin (width, height)) - 12.0f);
     const auto radius = diameter * 0.5f;
     const auto centre = juce::Point<float> (
         static_cast<float> (x) + static_cast<float> (width) * 0.5f,
@@ -250,7 +262,7 @@ VocalorKnob::VocalorKnob (juce::String name, juce::String suffix)
     slider.setColour (juce::Slider::textBoxOutlineColourId,
                       c (panelEdge).withAlpha (0.82f));
     slider.setColour (juce::Slider::textBoxTextColourId, c (textBright));
-    slider.setNumDecimalPlacesToDisplay (suffix == "dB" ? 1 : 0);
+    slider.setNumDecimalPlacesToDisplay (suffix == "%" ? 0 : 1);
     if (suffix == "%")
     {
         slider.textFromValueFunction = [] (double value)
@@ -318,6 +330,334 @@ void VocalorStatusDisplay::paint (juce::Graphics& g)
     g.drawText (rateText, 105, 0, getWidth() - 114, getHeight(), juce::Justification::centredRight);
 }
 
+//==============================================================================
+VocalorVowelPad::VocalorVowelPad()
+{
+    setName ("Vowel space");
+    setTitle ("Vowel space");
+    setDescription ("Drag to place the morph target in the continuous vowel space");
+    setWantsKeyboardFocus (false);
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+juce::Rectangle<float> VocalorVowelPad::padArea() const
+{
+    auto bounds = getLocalBounds().toFloat().reduced (2.0f);
+    bounds.removeFromTop (22.0f);
+    return bounds.reduced (20.0f, 16.0f);
+}
+
+void VocalorVowelPad::setTargetX (float x)
+{
+    if (dragging)
+        return;
+    x = juce::jlimit (0.0f, 1.0f, x);
+    if (std::abs (x - targetX) < 1.0e-4f)
+        return;
+    targetX = x;
+    repaint();
+}
+
+void VocalorVowelPad::setTargetY (float y)
+{
+    if (dragging)
+        return;
+    y = juce::jlimit (0.0f, 1.0f, y);
+    if (std::abs (y - targetY) < 1.0e-4f)
+        return;
+    targetY = y;
+    repaint();
+}
+
+void VocalorVowelPad::setMorph (float newMorph)
+{
+    newMorph = juce::jlimit (0.0f, 1.0f, newMorph);
+    if (std::abs (newMorph - morph) < 1.0e-4f)
+        return;
+    morph = newMorph;
+    repaint();
+}
+
+void VocalorVowelPad::setAnchor (int presetVowelIndex, bool isMale)
+{
+    if (anchorVowel == presetVowelIndex && male == isMale)
+        return;
+    anchorVowel = presetVowelIndex;
+    male = isMale;
+    repaint();
+}
+
+void VocalorVowelPad::setLivePosition (float x, float y)
+{
+    x = juce::jlimit (0.0f, 1.0f, x);
+    y = juce::jlimit (0.0f, 1.0f, y);
+    if (std::abs (x - liveX) < 2.0e-3f && std::abs (y - liveY) < 2.0e-3f)
+        return;
+    liveX = x;
+    liveY = y;
+    repaint();
+}
+
+void VocalorVowelPad::paint (juce::Graphics& g)
+{
+    drawInsetPanel (g, getLocalBounds().toFloat().reduced (1.0f), "VOWEL SPACE");
+
+    const auto area = padArea();
+    if (area.getWidth() <= 1.0f || area.getHeight() <= 1.0f)
+        return;
+
+    const auto toScreen = [&area] (float x, float y)
+    {
+        return juce::Point<float> (area.getX() + x * area.getWidth(),
+                                   area.getY() + y * area.getHeight());
+    };
+
+    g.setColour (c (0xff0d1520));
+    g.fillRoundedRectangle (area, 5.0f);
+    for (int step = 1; step < 4; ++step)
+    {
+        const auto proportion = static_cast<float> (step) * 0.25f;
+        g.setColour (c (panelEdge).withAlpha (0.30f));
+        g.drawLine (area.getX() + proportion * area.getWidth(), area.getY(),
+                    area.getX() + proportion * area.getWidth(), area.getBottom(), 0.7f);
+        g.drawLine (area.getX(), area.getY() + proportion * area.getHeight(),
+                    area.getRight(), area.getY() + proportion * area.getHeight(), 0.7f);
+    }
+    g.setColour (c (panelEdge).withAlpha (0.65f));
+    g.drawRoundedRectangle (area, 5.0f, 1.0f);
+
+    g.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
+    g.setColour (c (textDim).withAlpha (0.55f));
+    g.drawText ("BACK", juce::Rectangle<float> (area.getX(), area.getBottom() + 1.0f,
+                                                46.0f, 12.0f).toNearestInt(),
+                juce::Justification::centredLeft);
+    g.drawText ("FRONT", juce::Rectangle<float> (area.getRight() - 46.0f, area.getBottom() + 1.0f,
+                                                 46.0f, 12.0f).toNearestInt(),
+                juce::Justification::centredRight);
+    g.drawText ("CLOSE", juce::Rectangle<float> (area.getX(), area.getY() - 13.0f,
+                                                 46.0f, 12.0f).toNearestInt(),
+                juce::Justification::centredLeft);
+    g.drawText ("OPEN", juce::Rectangle<float> (area.getRight() - 46.0f, area.getY() - 13.0f,
+                                                46.0f, 12.0f).toNearestInt(),
+                juce::Justification::centredRight);
+
+    for (int index = 0; index < vocalor::kCardinalVowelCount; ++index)
+    {
+        const auto position = vocalor::cardinalVowelPosition (index);
+        const auto point = toScreen (position.x, position.y);
+        g.setColour (c (accentBlue).withAlpha (0.24f));
+        g.drawEllipse (juce::Rectangle<float> (13.0f, 13.0f).withCentre (point), 1.0f);
+        g.setColour (c (textDim).withAlpha (0.80f));
+        g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+        g.drawText (vocalor::cardinalVowelName (index),
+                    juce::Rectangle<float> (26.0f, 12.0f).withCentre (point).toNearestInt(),
+                    juce::Justification::centred);
+    }
+
+    const auto anchorPosition = vocalor::presetVowelPosition (anchorVowel);
+    const auto anchorPoint = toScreen (anchorPosition.x, anchorPosition.y);
+    const auto targetPoint = toScreen (targetX, targetY);
+    const auto livePoint = toScreen (liveX, liveY);
+
+    g.setColour (c (ultraviolet).withAlpha (0.45f));
+    g.drawLine ({ anchorPoint, targetPoint }, 1.0f);
+
+    g.setColour (c (textDim).withAlpha (0.85f));
+    g.drawEllipse (juce::Rectangle<float> (9.0f, 9.0f).withCentre (anchorPoint), 1.4f);
+
+    g.setColour (c (ultraviolet).withAlpha (0.30f + 0.60f * morph));
+    g.drawEllipse (juce::Rectangle<float> (17.0f, 17.0f).withCentre (targetPoint), 1.6f);
+    g.setColour (c (ultraviolet).withAlpha (0.55f + 0.45f * morph));
+    g.fillEllipse (juce::Rectangle<float> (8.0f, 8.0f).withCentre (targetPoint));
+
+    g.setColour (c (accent).withAlpha (0.18f));
+    g.fillEllipse (juce::Rectangle<float> (20.0f, 20.0f).withCentre (livePoint));
+    g.setColour (c (accent));
+    g.fillEllipse (juce::Rectangle<float> (8.5f, 8.5f).withCentre (livePoint));
+
+    g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
+    g.setColour (c (accent).withAlpha (0.85f));
+    g.drawText ("MORPH " + juce::String (juce::roundToInt (morph * 100.0f)) + "%",
+                getLocalBounds().reduced (11, 5).removeFromTop (14),
+                juce::Justification::centredRight);
+}
+
+void VocalorVowelPad::mouseDown (const juce::MouseEvent& event)
+{
+    dragging = true;
+    if (onGesture)
+        onGesture (true);
+    sendFromMouse (event);
+}
+
+void VocalorVowelPad::mouseDrag (const juce::MouseEvent& event)
+{
+    sendFromMouse (event);
+}
+
+void VocalorVowelPad::mouseUp (const juce::MouseEvent&)
+{
+    dragging = false;
+    if (onGesture)
+        onGesture (false);
+}
+
+void VocalorVowelPad::sendFromMouse (const juce::MouseEvent& event)
+{
+    const auto area = padArea();
+    if (area.getWidth() <= 1.0f || area.getHeight() <= 1.0f)
+        return;
+
+    targetX = juce::jlimit (0.0f, 1.0f,
+                            (event.position.x - area.getX()) / area.getWidth());
+    targetY = juce::jlimit (0.0f, 1.0f,
+                            (event.position.y - area.getY()) / area.getHeight());
+    if (onPosition)
+        onPosition (targetX, targetY);
+    repaint();
+}
+
+//==============================================================================
+VocalorScopeDisplay::VocalorScopeDisplay()
+{
+    setName ("Vocal tract response");
+    setTitle ("Vocal tract response");
+    setDescription ("Live magnitude response of the five formant resonators and the output level");
+    setInterceptsMouseClicks (false, false);
+}
+
+void VocalorScopeDisplay::setState (const vocalor::EngineDisplayState& newState)
+{
+    bool changed = std::abs (newState.levelLeft - state.levelLeft) > 1.0e-4f
+                || std::abs (newState.levelRight - state.levelRight) > 1.0e-4f
+                || std::abs (newState.sampleRate - state.sampleRate) > 1.0f;
+
+    for (int i = 0; i < vocalor::kFormantCount && ! changed; ++i)
+    {
+        const auto index = static_cast<size_t> (i);
+        changed = std::abs (newState.formantHz[index] - state.formantHz[index]) > 0.5f
+               || std::abs (newState.formantGain[index] - state.formantGain[index]) > 1.0e-3f
+               || std::abs (newState.formantBandwidth[index] - state.formantBandwidth[index]) > 0.5f;
+    }
+
+    if (! changed)
+        return;
+
+    state = newState;
+    repaint();
+}
+
+void VocalorScopeDisplay::paint (juce::Graphics& g)
+{
+    drawInsetPanel (g, getLocalBounds().toFloat().reduced (1.0f), "VOCAL TRACT RESPONSE");
+
+    auto content = getLocalBounds().toFloat().reduced (12.0f, 6.0f);
+    content.removeFromTop (18.0f);
+    auto meterRow = content.removeFromBottom (13.0f);
+    content.removeFromBottom (5.0f);
+    if (content.getWidth() <= 4.0f || content.getHeight() <= 4.0f)
+        return;
+
+    const float gridFrequencies[] = { 100.0f, 200.0f, 500.0f, 1000.0f,
+                                      2000.0f, 5000.0f, 10000.0f };
+    g.setFont (juce::Font (juce::FontOptions (8.5f)));
+    for (const auto hz : gridFrequencies)
+    {
+        const auto proportion = vocalor::normalisedLogFrequency (hz, minimumHz, maximumHz);
+        const auto x = content.getX() + proportion * content.getWidth();
+        g.setColour (c (panelEdge).withAlpha (0.42f));
+        g.drawLine (x, content.getY(), x, content.getBottom(), 0.7f);
+        g.setColour (c (textDim).withAlpha (0.50f));
+        g.drawText (hz >= 1000.0f ? juce::String (juce::roundToInt (hz / 1000.0f)) + "k"
+                                  : juce::String (juce::roundToInt (hz)),
+                    juce::Rectangle<float> (x - 18.0f, content.getBottom() - 11.0f,
+                                            36.0f, 11.0f).toNearestInt(),
+                    juce::Justification::centred);
+    }
+    for (int step = 1; step < 4; ++step)
+    {
+        const auto y = content.getY() + static_cast<float> (step) * 0.25f * content.getHeight();
+        g.setColour (c (panelEdge).withAlpha (0.28f));
+        g.drawLine (content.getX(), y, content.getRight(), y, 0.6f);
+    }
+
+    juce::Path curve;
+    juce::Path fill;
+    for (int i = 0; i < curvePoints; ++i)
+    {
+        const auto proportion = static_cast<float> (i) / static_cast<float> (curvePoints - 1);
+        const auto hz = vocalor::logFrequencyForNormalised (proportion, minimumHz, maximumHz);
+        const auto decibels = vocalor::formantResponseDb (
+            hz, state.formantHz.data(), state.formantBandwidth.data(),
+            state.formantGain.data(), vocalor::kFormantCount, state.sampleRate);
+        const auto height = vocalor::decibelsToMeterPosition (decibels, floorDb, ceilingDb);
+        const auto x = content.getX() + proportion * content.getWidth();
+        const auto y = content.getBottom() - height * content.getHeight();
+
+        if (i == 0)
+        {
+            curve.startNewSubPath (x, y);
+            fill.startNewSubPath (x, content.getBottom());
+            fill.lineTo (x, y);
+        }
+        else
+        {
+            curve.lineTo (x, y);
+            fill.lineTo (x, y);
+        }
+    }
+    fill.lineTo (content.getRight(), content.getBottom());
+    fill.closeSubPath();
+
+    juce::ColourGradient under (c (accent).withAlpha (0.26f), content.getX(), content.getY(),
+                                c (accent).withAlpha (0.02f), content.getX(),
+                                content.getBottom(), false);
+    g.setGradientFill (under);
+    g.fillPath (fill);
+
+    juce::ColourGradient stroke (c (accent), content.getX(), content.getY(),
+                                 c (accentBlue), content.getRight(), content.getBottom(), false);
+    g.setGradientFill (stroke);
+    g.strokePath (curve, juce::PathStrokeType (1.7f, juce::PathStrokeType::curved,
+                                               juce::PathStrokeType::rounded));
+
+    for (int i = 0; i < vocalor::kFormantCount; ++i)
+    {
+        const auto index = static_cast<size_t> (i);
+        const auto hz = state.formantHz[index];
+        if (! (hz > 0.0f))
+            continue;
+        const auto proportion = vocalor::normalisedLogFrequency (hz, minimumHz, maximumHz);
+        const auto x = content.getX() + proportion * content.getWidth();
+        g.setColour (c (ultraviolet).withAlpha (0.55f));
+        g.drawLine (x, content.getY() + 2.0f, x, content.getY() + 12.0f, 1.2f);
+        g.setColour (c (textDim).withAlpha (0.80f));
+        g.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
+        g.drawText ("F" + juce::String (i + 1),
+                    juce::Rectangle<float> (x - 12.0f, content.getY() + 12.0f, 24.0f, 10.0f).toNearestInt(),
+                    juce::Justification::centred);
+    }
+
+    const auto drawMeter = [&g, &meterRow] (float level, bool upper)
+    {
+        auto bar = meterRow.withHeight (5.0f);
+        bar.setY (upper ? meterRow.getY() : meterRow.getY() + 7.0f);
+        g.setColour (c (0xff0a1017));
+        g.fillRoundedRectangle (bar, 2.0f);
+        const auto decibels = vocalor::linearToDecibels (level, -60.0f);
+        const auto position = vocalor::decibelsToMeterPosition (decibels, -60.0f, 0.0f);
+        if (position <= 0.002f)
+            return;
+        auto filled = bar.withWidth (juce::jmax (3.0f, bar.getWidth() * position));
+        g.setColour (decibels > -1.0f ? c (0xffff7383)
+                                      : decibels > -9.0f ? c (accent) : c (accentBlue));
+        g.fillRoundedRectangle (filled, 2.0f);
+    };
+    drawMeter (state.levelLeft, true);
+    drawMeter (state.levelRight, false);
+}
+
+//==============================================================================
 VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor& p)
     : AudioProcessorEditor (&p), processor (p),
       keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
@@ -331,7 +671,8 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     logoLabel.setTitle ("Vocalor human voice synthesizer");
     addAndMakeVisible (logoLabel);
 
-    editionLabel.setText ("HUMAN VOICE INSTRUMENT  ·  DUAL-STAGE ENGINE", juce::dontSendNotification);
+    editionLabel.setText ("HUMAN VOICE INSTRUMENT  ·  MORPHING SOURCE-FILTER ENGINE",
+                          juce::dontSendNotification);
     styleHeaderLabel (editionLabel, 10.5f, c (textDim));
     addAndMakeVisible (editionLabel);
 
@@ -346,7 +687,7 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     };
     addAndMakeVisible (panicButton);
 
-    for (auto* strip : { &profileStrip, &modeStrip, &chordStrip, &vowelStrip })
+    for (auto* strip : { &profileStrip, &modeStrip, &chordStrip, &vowelStrip, &legatoStrip })
         addAndMakeVisible (*strip);
 
     choirSizeLabel.setText ("ENSEMBLE SIZE", juce::dontSendNotification);
@@ -362,8 +703,12 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     choirSizeSlider.setDescription ("Number of independently humanised singers");
     addAndMakeVisible (choirSizeSlider);
 
-    for (auto* knob : { &breathKnob, &resonanceKnob, &vibratoKnob, &humanizeKnob,
-                        &spreadKnob, &tensionKnob, &roomKnob, &outputKnob })
+    addAndMakeVisible (vowelPad);
+    addAndMakeVisible (scopeDisplay);
+
+    for (auto* knob : { &morphKnob, &formantShiftKnob, &breathKnob, &resonanceKnob,
+                        &tensionKnob, &vibratoKnob, &humanizeKnob, &glideKnob,
+                        &spreadKnob, &roomKnob, &roomSizeKnob, &outputKnob })
         addAndMakeVisible (*knob);
 
     keyboard.setAvailableRange (36, 84);
@@ -388,30 +733,83 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     attachChoice (modeStrip, vocalor::parameters::mode, modeAttachment);
     attachChoice (chordStrip, vocalor::parameters::chordQuality, chordAttachment);
     attachChoice (vowelStrip, vocalor::parameters::vowel, vowelAttachment);
+    attachChoice (legatoStrip, vocalor::parameters::legato, legatoAttachment);
+
+    // The morph readout on the pad follows the knob, including the initial
+    // update the attachment sends when it is constructed below.
+    morphKnob.slider.onValueChange = [this]
+    {
+        vowelPad.setMorph (static_cast<float> (morphKnob.slider.getValue()));
+    };
 
     choirSizeAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::choirSize, choirSizeSlider);
+    morphAttachment = std::make_unique<SliderAttachment> (
+        processor.parameters, vocalor::parameters::vowelMorph, morphKnob.slider);
+    formantShiftAttachment = std::make_unique<SliderAttachment> (
+        processor.parameters, vocalor::parameters::formantShift, formantShiftKnob.slider);
     breathAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::breath, breathKnob.slider);
     resonanceAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::resonance, resonanceKnob.slider);
+    tensionAttachment = std::make_unique<SliderAttachment> (
+        processor.parameters, vocalor::parameters::tension, tensionKnob.slider);
     vibratoAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::vibrato, vibratoKnob.slider);
     humanizeAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::humanize, humanizeKnob.slider);
+    glideAttachment = std::make_unique<SliderAttachment> (
+        processor.parameters, vocalor::parameters::glide, glideKnob.slider);
     spreadAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::spread, spreadKnob.slider);
-    tensionAttachment = std::make_unique<SliderAttachment> (
-        processor.parameters, vocalor::parameters::tension, tensionKnob.slider);
     roomAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::room, roomKnob.slider);
+    roomSizeAttachment = std::make_unique<SliderAttachment> (
+        processor.parameters, vocalor::parameters::roomSize, roomSizeKnob.slider);
     outputAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::output, outputKnob.slider);
 
+    if (auto* parameter = processor.parameters.getParameter (vocalor::parameters::vowelX))
+        vowelXAttachment = std::make_unique<juce::ParameterAttachment> (
+            *parameter, [this] (float value) { vowelPad.setTargetX (value); }, nullptr);
+    if (auto* parameter = processor.parameters.getParameter (vocalor::parameters::vowelY))
+        vowelYAttachment = std::make_unique<juce::ParameterAttachment> (
+            *parameter, [this] (float value) { vowelPad.setTargetY (value); }, nullptr);
+    jassert (vowelXAttachment != nullptr && vowelYAttachment != nullptr);
+
+    vowelPad.onGesture = [this] (bool begin)
+    {
+        if (vowelXAttachment == nullptr || vowelYAttachment == nullptr)
+            return;
+        if (begin)
+        {
+            vowelXAttachment->beginGesture();
+            vowelYAttachment->beginGesture();
+        }
+        else
+        {
+            vowelXAttachment->endGesture();
+            vowelYAttachment->endGesture();
+        }
+    };
+    vowelPad.onPosition = [this] (float x, float y)
+    {
+        if (vowelXAttachment == nullptr || vowelYAttachment == nullptr)
+            return;
+        vowelXAttachment->setValueAsPartOfGesture (x);
+        vowelYAttachment->setValueAsPartOfGesture (y);
+    };
+    if (vowelXAttachment != nullptr)
+        vowelXAttachment->sendInitialUpdate();
+    if (vowelYAttachment != nullptr)
+        vowelYAttachment->sendInitialUpdate();
+
     setResizable (true, true);
-    setResizeLimits (900, 620, 1500, 840);
-    setSize (1160, 750);
-    startTimerHz (12);
+    // The vertical floor is set by the fixed panel stack: below 800 px the
+    // keyboard deck would push past the bottom of its panel.
+    setResizeLimits (1020, 800, 1720, 1200);
+    setSize (1240, 900);
+    startTimerHz (24);
     updateConditionalControls();
 }
 
@@ -453,16 +851,49 @@ void VocalorAudioProcessorEditor::updateConditionalControls()
     choirSizeLabel.setEnabled (ensembleMode);
     choirSizeSlider.setAlpha (ensembleMode ? 1.0f : 0.62f);
     choirSizeLabel.setAlpha (ensembleMode ? 1.0f : 0.62f);
+    vowelPad.setAnchor (vowelStrip.getSelectedIndex(), profileStrip.getSelectedIndex() == 1);
 }
 
 void VocalorAudioProcessorEditor::timerCallback()
 {
     statusDisplay.setStatus (processor.getActiveVoiceCount(), processor.isEngineReady(),
                              processor.getCurrentSampleRateForDisplay());
+
+    const auto display = processor.getDisplayState();
+    scopeDisplay.setState (display);
+    vowelPad.setLivePosition (display.vowelX, display.vowelY);
+}
+
+VocalorAudioProcessorEditor::Layout VocalorAudioProcessorEditor::computeLayout() const
+{
+    Layout layout;
+    const auto width = getWidth();
+    const auto height = getHeight();
+    layout.contentX = 34;
+    layout.contentWidth = width - 68;
+
+    layout.performancePanel = juce::Rectangle<int> (18, 82, width - 36, 146);
+    layout.vowelPanel = juce::Rectangle<int> (18, 240, width - 36, 218);
+    layout.tonePanel = juce::Rectangle<int> (18, 470, width - 36, 196);
+    layout.keyboardPanel = juce::Rectangle<int> (18, 678, width - 36,
+                                                 juce::jmax (60, height - 696));
+
+    const auto padWidth = juce::jlimit (186, 268, width / 5);
+    const auto morphWidth = 2 * juce::jlimit (92, 128, width / 11);
+    layout.vowelPad = juce::Rectangle<int> (layout.contentX, 256, padWidth, 190);
+    layout.morphColumn = juce::Rectangle<int> (layout.vowelPad.getRight() + 14, 256,
+                                               morphWidth, 190);
+    const auto scopeX = layout.morphColumn.getRight() + 16;
+    layout.scope = juce::Rectangle<int> (scopeX, 256,
+                                         juce::jmax (170, width - 34 - scopeX), 190);
+    layout.knobRow = juce::Rectangle<int> (31, 496, width - 62, 164);
+    return layout;
 }
 
 void VocalorAudioProcessorEditor::paint (juce::Graphics& g)
 {
+    const auto layout = computeLayout();
+
     juce::ColourGradient background (c (0xff101720), 0.0f, 0.0f,
                                      c (0xff070b11), 0.0f,
                                      static_cast<float> (getHeight()), false);
@@ -515,9 +946,10 @@ void VocalorAudioProcessorEditor::paint (juce::Graphics& g)
         g.drawRoundedRectangle (b.reduced (2.0f), 8.0f, 0.8f);
     };
 
-    drawPanel (juce::Rectangle<int> (18, 82, getWidth() - 36, 150));
-    drawPanel (juce::Rectangle<int> (18, 245, getWidth() - 36, 235));
-    drawPanel (juce::Rectangle<int> (18, 514, getWidth() - 36, getHeight() - 532));
+    drawPanel (layout.performancePanel);
+    drawPanel (layout.vowelPanel);
+    drawPanel (layout.tonePanel);
+    drawPanel (layout.keyboardPanel);
 
     const auto railWidth = static_cast<float> (juce::jmax (210, getWidth() / 5));
     juce::ColourGradient rail (c (accent), 18.0f, 0.0f,
@@ -526,83 +958,104 @@ void VocalorAudioProcessorEditor::paint (juce::Graphics& g)
     g.setGradientFill (rail);
     g.fillRect (18.0f, 67.0f, railWidth, 2.5f);
 
-    const auto knobContentX = 31.0f;
-    const auto knobContentWidth = static_cast<float> (getWidth() - 62);
-    const auto knobCellWidth = knobContentWidth / 8.0f;
-    const auto groupTop = 250.0f;
-    const auto groupBottom = 469.0f;
-    g.setColour (c (accent).withAlpha (0.022f));
-    g.fillRoundedRectangle (knobContentX, groupTop, knobCellWidth * 4.0f,
-                            groupBottom - groupTop, 7.0f);
-    g.setColour (c (accentBlue).withAlpha (0.020f));
-    g.fillRect (knobContentX + knobCellWidth * 4.0f, groupTop,
-                knobCellWidth * 3.0f, groupBottom - groupTop);
-    g.setColour (c (ultraviolet).withAlpha (0.026f));
-    g.fillRoundedRectangle (knobContentX + knobCellWidth * 7.0f, groupTop,
-                            knobCellWidth, groupBottom - groupTop, 7.0f);
-
-    for (const auto dividerX : { knobContentX + knobCellWidth * 4.0f,
-                                 knobContentX + knobCellWidth * 7.0f })
+    // Knob groups. The tint bands and the captions are driven by the same cell
+    // width the layout uses, so they cannot drift apart when the editor resizes.
+    struct Group
     {
-        g.setColour (c (panelEdge).withAlpha (0.64f));
-        g.drawVerticalLine (juce::roundToInt (dividerX), 259.0f, 463.0f);
-    }
+        int first;
+        int count;
+        unsigned int colour;
+        float alpha;
+        const char* caption;
+    };
+    static constexpr Group groups[] = {
+        { 0, 5, accent,      0.022f, "VOICE CHARACTER" },
+        { 5, 1, ultraviolet, 0.020f, "PHRASING" },
+        { 6, 3, accentBlue,  0.020f, "SPACE" },
+        { 9, 1, ultraviolet, 0.026f, "MASTER" }
+    };
 
-    g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
-    g.setColour (c (accent).withAlpha (0.86f));
-    g.drawText ("VOICE CHARACTER", juce::roundToInt (knobContentX + 12.0f), 252,
-                juce::roundToInt (knobCellWidth * 4.0f - 24.0f), 18,
-                juce::Justification::centredLeft);
-    g.setColour (c (accentBlue).withAlpha (0.88f));
-    g.drawText ("WIDTH + SPACE", juce::roundToInt (knobContentX + knobCellWidth * 4.0f + 12.0f),
-                252, juce::roundToInt (knobCellWidth * 3.0f - 24.0f), 18,
-                juce::Justification::centredLeft);
-    g.setColour (c (ultraviolet).withAlpha (0.90f));
-    g.drawText ("MASTER", juce::roundToInt (knobContentX + knobCellWidth * 7.0f + 12.0f),
-                252, juce::roundToInt (knobCellWidth - 24.0f), 18,
-                juce::Justification::centredLeft);
+    const auto knobRow = layout.knobRow.toFloat();
+    const auto cellWidth = knobRow.getWidth() / 10.0f;
+    const auto bandTop = static_cast<float> (layout.tonePanel.getY() + 6);
+    const auto bandBottom = static_cast<float> (layout.tonePanel.getBottom() - 6);
+
+    for (const auto& group : groups)
+    {
+        const auto x = knobRow.getX() + cellWidth * static_cast<float> (group.first);
+        const auto w = cellWidth * static_cast<float> (group.count);
+        g.setColour (c (group.colour).withAlpha (group.alpha));
+        g.fillRoundedRectangle (x, bandTop, w, bandBottom - bandTop, 7.0f);
+        g.setColour (c (group.colour).withAlpha (0.88f));
+        g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+        g.drawText (group.caption, juce::roundToInt (x + 11.0f),
+                    juce::roundToInt (bandTop + 2.0f),
+                    juce::jmax (40, juce::roundToInt (w - 20.0f)), 16,
+                    juce::Justification::centredLeft);
+
+        if (group.first > 0)
+        {
+            g.setColour (c (panelEdge).withAlpha (0.64f));
+            g.drawVerticalLine (juce::roundToInt (x), bandTop + 6.0f, bandBottom - 6.0f);
+        }
+    }
 }
 
 void VocalorAudioProcessorEditor::resized()
 {
+    const auto layout = computeLayout();
+
     auto bounds = getLocalBounds();
     auto header = bounds.removeFromTop (72).reduced (24, 10);
     logoLabel.setBounds (header.removeFromLeft (150));
-    editionLabel.setBounds (header.removeFromLeft (350));
+    editionLabel.setBounds (header.removeFromLeft (400));
     panicButton.setBounds (header.removeFromRight (74).reduced (2, 7));
     header.removeFromRight (10);
     statusDisplay.setBounds (header.removeFromRight (205).reduced (0, 5));
 
-    const int contentX = 34;
-    const int contentWidth = getWidth() - 68;
+    const auto contentX = layout.contentX;
+    const auto contentWidth = layout.contentWidth;
     const int gap = 14;
     const int voiceWidth = juce::jmax (150, contentWidth * 19 / 100);
     const int modeWidth = juce::jmax (230, contentWidth * 29 / 100);
     const int harmonyWidth = juce::jmax (155, contentWidth * 20 / 100);
-    const int vowelWidth = contentWidth - voiceWidth - modeWidth - harmonyWidth - gap * 3;
+    const int vowelWidth = juce::jmax (170, contentWidth - voiceWidth - modeWidth
+                                                - harmonyWidth - gap * 3);
 
     auto x = contentX;
-    profileStrip.setBounds (x, 98, voiceWidth, 55); x += voiceWidth + gap;
-    modeStrip.setBounds (x, 98, modeWidth, 55); x += modeWidth + gap;
-    chordStrip.setBounds (x, 98, harmonyWidth, 55); x += harmonyWidth + gap;
-    vowelStrip.setBounds (x, 98, vowelWidth, 55);
+    profileStrip.setBounds (x, 96, voiceWidth, 55); x += voiceWidth + gap;
+    modeStrip.setBounds (x, 96, modeWidth, 55); x += modeWidth + gap;
+    chordStrip.setBounds (x, 96, harmonyWidth, 55); x += harmonyWidth + gap;
+    vowelStrip.setBounds (x, 96, vowelWidth, 55);
 
-    choirSizeLabel.setBounds (contentX, 172, 104, 27);
-    choirSizeSlider.setBounds (contentX + 106, 169, juce::jmin (360, contentWidth / 3), 31);
+    choirSizeLabel.setBounds (contentX, 164, 104, 27);
+    const int ensembleWidth = juce::jlimit (170, 320, contentWidth / 4);
+    choirSizeSlider.setBounds (contentX + 106, 161, ensembleWidth, 31);
+    legatoStrip.setBounds (contentX + 106 + ensembleWidth + 34, 158,
+                           juce::jmax (190, contentWidth / 5), 55);
 
-    auto knobArea = juce::Rectangle<int> (31, 274, getWidth() - 62, 186);
-    constexpr int knobCount = 8;
+    vowelPad.setBounds (layout.vowelPad);
+    scopeDisplay.setBounds (layout.scope);
+
+    auto morphColumn = layout.morphColumn;
+    const auto morphCell = morphColumn.getWidth() / 2;
+    morphKnob.setBounds (morphColumn.removeFromLeft (morphCell).reduced (4, 8));
+    formantShiftKnob.setBounds (morphColumn.reduced (4, 8));
+
+    auto knobArea = layout.knobRow;
+    constexpr int knobCount = 10;
     const auto knobWidth = knobArea.getWidth() / knobCount;
-    VocalorKnob* knobs[] = { &breathKnob, &resonanceKnob, &vibratoKnob, &humanizeKnob,
-                            &spreadKnob, &tensionKnob, &roomKnob, &outputKnob };
+    VocalorKnob* knobs[knobCount] = { &breathKnob, &resonanceKnob, &tensionKnob,
+                                      &vibratoKnob, &humanizeKnob, &glideKnob,
+                                      &spreadKnob, &roomKnob, &roomSizeKnob, &outputKnob };
     for (int i = 0; i < knobCount; ++i)
     {
         auto cell = knobArea.removeFromLeft (i == knobCount - 1 ? knobArea.getWidth() : knobWidth);
-        knobs[i]->setBounds (cell.reduced (4, 0));
+        knobs[i]->setBounds (cell.reduced (3, 0));
     }
 
-    keyboardHintLabel.setBounds (32, 488, getWidth() - 64, 20);
-    keyboard.setBounds (31, 530, getWidth() - 62, juce::jmax (70, getHeight() - 554));
+    keyboardHintLabel.setBounds (32, 684, getWidth() - 64, 18);
+    keyboard.setBounds (31, 708, getWidth() - 62, juce::jmax (70, getHeight() - 738));
     // The available 36..84 range contains 29 white keys. Scale them to fill the
     // deck instead of leaving an inert blank tail at wider editor sizes.
     keyboard.setKeyWidth (juce::jmax (24.0f,

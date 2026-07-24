@@ -22,6 +22,15 @@ inline constexpr auto spread       = "spread";
 inline constexpr auto tension      = "tension";
 inline constexpr auto room         = "room";
 inline constexpr auto output       = "output";
+// Added in 1.1. These IDs are appended after the version-1 set so existing
+// host automation lanes keep pointing at the same parameters.
+inline constexpr auto legato       = "legato";
+inline constexpr auto vowelX       = "vowelX";
+inline constexpr auto vowelY       = "vowelY";
+inline constexpr auto vowelMorph   = "vowelMorph";
+inline constexpr auto formantShift = "formantShift";
+inline constexpr auto glide        = "glide";
+inline constexpr auto roomSize     = "roomSize";
 } // namespace vocalor::parameters
 
 class VocalorAudioProcessorEditor;
@@ -45,7 +54,9 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 4.0; }
+    // The release envelope runs for about two seconds and the largest room
+    // setting keeps ringing after it, so the advertised tail has headroom.
+    double getTailLengthSeconds() const override { return 6.0; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
@@ -63,6 +74,13 @@ public:
         return displaySampleRate.load (std::memory_order_relaxed);
     }
     bool isEngineReady() const noexcept { return engineReady.load (std::memory_order_acquire); }
+
+    /** Lock-free snapshot of the running tract, meters and vowel position.
+        Safe to call from the message thread while audio is rendering. */
+    vocalor::EngineDisplayState getDisplayState() const noexcept
+    {
+        return engine.getDisplayState();
+    }
 
     juce::AudioProcessorValueTreeState parameters;
     juce::MidiKeyboardState keyboardState;
@@ -85,6 +103,13 @@ private:
         std::atomic<float>* tension = nullptr;
         std::atomic<float>* room = nullptr;
         std::atomic<float>* output = nullptr;
+        std::atomic<float>* legato = nullptr;
+        std::atomic<float>* vowelX = nullptr;
+        std::atomic<float>* vowelY = nullptr;
+        std::atomic<float>* vowelMorph = nullptr;
+        std::atomic<float>* formantShift = nullptr;
+        std::atomic<float>* glide = nullptr;
+        std::atomic<float>* roomSize = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent

@@ -35,8 +35,16 @@ VocalorAudioProcessor::VocalorAudioProcessor()
     parameterPointers.tension      = parameters.getRawParameterValue (tension);
     parameterPointers.room         = parameters.getRawParameterValue (room);
     parameterPointers.output       = parameters.getRawParameterValue (output);
+    parameterPointers.legato       = parameters.getRawParameterValue (legato);
+    parameterPointers.vowelX       = parameters.getRawParameterValue (vowelX);
+    parameterPointers.vowelY       = parameters.getRawParameterValue (vowelY);
+    parameterPointers.vowelMorph   = parameters.getRawParameterValue (vowelMorph);
+    parameterPointers.formantShift = parameters.getRawParameterValue (formantShift);
+    parameterPointers.glide        = parameters.getRawParameterValue (glide);
+    parameterPointers.roomSize     = parameters.getRawParameterValue (roomSize);
 
     jassert (parameterPointers.profile != nullptr && parameterPointers.output != nullptr);
+    jassert (parameterPointers.vowelMorph != nullptr && parameterPointers.roomSize != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -93,6 +101,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
         juce::ParameterID { output, 1 }, "Output",
         juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -6.0f,
         juce::AudioParameterFloatAttributes().withLabel ("dB")));
+
+    // Version 1.1 additions. They are appended so every version-1 parameter
+    // keeps its index, and every default reproduces the version-1 sound.
+    result.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { legato, 1 }, "Legato",
+        juce::StringArray { "Off", "On" }, 0));
+
+    addPercent (vowelX, "Vowel front-back", 0.50f);
+    addPercent (vowelY, "Vowel open-close", 0.50f);
+    addPercent (vowelMorph, "Vowel morph", 0.0f);
+
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { formantShift, 1 }, "Formant shift",
+        juce::NormalisableRange<float> { -12.0f, 12.0f, 0.1f }, 0.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("st")));
+
+    addPercent (glide, "Glide", 0.0f);
+    addPercent (roomSize, "Room size", 0.50f);
 
     return { result.begin(), result.end() };
 }
@@ -214,6 +240,13 @@ void VocalorAudioProcessor::updateEngineParameters() noexcept
     next.room = parameterPointers.room->load (std::memory_order_relaxed);
     next.outputGain = juce::Decibels::decibelsToGain (
         parameterPointers.output->load (std::memory_order_relaxed));
+    next.legato = parameterPointers.legato->load (std::memory_order_relaxed) >= 0.5f;
+    next.vowelX = parameterPointers.vowelX->load (std::memory_order_relaxed);
+    next.vowelY = parameterPointers.vowelY->load (std::memory_order_relaxed);
+    next.vowelMorph = parameterPointers.vowelMorph->load (std::memory_order_relaxed);
+    next.formantShift = parameterPointers.formantShift->load (std::memory_order_relaxed);
+    next.glide = parameterPointers.glide->load (std::memory_order_relaxed);
+    next.roomSize = parameterPointers.roomSize->load (std::memory_order_relaxed);
     engine.setParameters (next);
 }
 
