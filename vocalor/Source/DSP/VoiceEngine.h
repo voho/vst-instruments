@@ -224,7 +224,9 @@ private:
     void makeRoomFor(int required);
     bool retuneForLegato(int midiNote, const EngineParameters& parameters);
     void pushHeldNote(int midiNote) noexcept;
-    bool removeHeldNote(int midiNote) noexcept;
+    // Outcome of a note-off against the held stack.
+    enum class HeldNoteState { NotHeld, StillHeld, Released };
+    HeldNoteState releaseHeldNote(int midiNote) noexcept;
     int countActiveVoices() const noexcept;
     float glottalPair(int level, float phase, float tension) const noexcept;
     float sine(float phase) const noexcept;
@@ -295,6 +297,10 @@ private:
     std::atomic<int> activeVoiceCount_ { 0 };
 
     std::array<int, heldNoteCapacity> heldNotes_ {};
+    // The engine is MIDI-omni, so one pitch can be held by several controllers
+    // at once. The stack keeps one entry per pitch; this saturating count keeps
+    // the pitch held until its final note-off.
+    std::array<std::uint16_t, 128> heldNoteCounts_ {};
     int heldCount_ { 0 };
     int soundingRoot_ { -1 };
     int lastRootMidi_ { -1 };

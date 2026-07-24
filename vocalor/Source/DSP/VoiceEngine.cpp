@@ -138,6 +138,7 @@ void VoiceEngine::reset()
     samplePosition_ = 0;
     generation_ = 0;
     heldCount_ = 0;
+    heldNoteCounts_.fill(0);
     soundingRoot_ = -1;
     lastRootMidi_ = -1;
     blockParameters_ = snapshotParameters();
@@ -450,13 +451,40 @@ void VoiceEngine::makeRoomFor(int required)
 
 void VoiceEngine::pushHeldNote(int midiNote) noexcept
 {
-    removeHeldNote(midiNote);
-    if (heldCount_ < heldNoteCapacity)
-        heldNotes_[static_cast<std::size_t>(heldCount_++)] = midiNote;
+    const auto pitch = static_cast<std::size_t>(std::clamp(midiNote, 0, 127));
+    if (heldNoteCounts_[pitch] == 0)
+    {
+        if (heldCount_ < heldNoteCapacity)
+            heldNotes_[static_cast<std::size_t>(heldCount_++)] = midiNote;
+    }
+    else
+    {
+        // Already held by another source: keep one entry, moved to the top so
+        // the legato fallback still sees the most recent press last.
+        for (int i = 0; i < heldCount_; ++i)
+        {
+            if (heldNotes_[static_cast<std::size_t>(i)] != midiNote)
+                continue;
+            for (int j = i; j + 1 < heldCount_; ++j)
+                heldNotes_[static_cast<std::size_t>(j)]
+                    = heldNotes_[static_cast<std::size_t>(j + 1)];
+            heldNotes_[static_cast<std::size_t>(heldCount_ - 1)] = midiNote;
+            break;
+        }
+    }
+
+    if (heldNoteCounts_[pitch] < std::numeric_limits<std::uint16_t>::max())
+        ++heldNoteCounts_[pitch];
 }
 
-bool VoiceEngine::removeHeldNote(int midiNote) noexcept
+VoiceEngine::HeldNoteState VoiceEngine::releaseHeldNote(int midiNote) noexcept
 {
+    const auto pitch = static_cast<std::size_t>(std::clamp(midiNote, 0, 127));
+    if (heldNoteCounts_[pitch] == 0)
+        return HeldNoteState::NotHeld;
+    if (--heldNoteCounts_[pitch] != 0)
+        return HeldNoteState::StillHeld;
+
     for (int i = 0; i < heldCount_; ++i)
     {
         if (heldNotes_[static_cast<std::size_t>(i)] != midiNote)
@@ -464,9 +492,9 @@ bool VoiceEngine::removeHeldNote(int midiNote) noexcept
         for (int j = i; j + 1 < heldCount_; ++j)
             heldNotes_[static_cast<std::size_t>(j)] = heldNotes_[static_cast<std::size_t>(j + 1)];
         --heldCount_;
-        return true;
+        break;
     }
-    return false;
+    return HeldNoteState::Released;
 }
 
 bool VoiceEngine::retuneForLegato(int midiNote, const EngineParameters& p)
@@ -589,7 +617,11 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
 void VoiceEngine::noteOff(int midiNote)
 {
     midiNote = std::clamp(midiNote, 0, 127);
-    const bool wasHeld = removeHeldNote(midiNote);
+    const auto heldState = releaseHeldNote(midiNote);
+    // Another controller still holds this pitch, so it keeps sounding.
+    if (heldState == HeldNoteState::StillHeld)
+        return;
+    const bool wasHeld = heldState == HeldNoteState::Released;
     const EngineParameters p = snapshotParameters();
 
     // Releasing the top of a legato phrase falls back to the note underneath.
@@ -615,6 +647,7 @@ void VoiceEngine::noteOff(int midiNote)
 void VoiceEngine::allNotesOff()
 {
     heldCount_ = 0;
+    heldNoteCounts_.fill(0);
     soundingRoot_ = -1;
     for (auto& voice : voices_)
         if (voice.active)
@@ -627,6 +660,7 @@ void VoiceEngine::allSoundOff() noexcept
         silenceVoice(voice);
     clearRoom();
     heldCount_ = 0;
+    heldNoteCounts_.fill(0);
     soundingRoot_ = -1;
     lastRootMidi_ = -1;
     meterLeft_ = meterRight_ = 0.0f;

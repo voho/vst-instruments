@@ -704,6 +704,24 @@ void testGlideAndLegato()
                 "a repeated root under legato did not re-attack");
         expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (repeated) == 60,
                 "the repeated root did not stay on its own pitch");
+
+        // Both sources are still holding the pitch, so the stack keeps one
+        // entry and the first note-off must not release the retriggered voice.
+        expect (vocalor::VoiceEngineTestAccess::heldNoteCount (repeated) == 1,
+                "an overlapping repeat added a duplicate held-stack entry");
+
+        render (repeated, static_cast<int> (sampleRate * 0.4));
+        repeated.noteOff (60);
+        render (repeated, 256);
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (repeated) == 60
+                    && vocalor::VoiceEngineTestAccess::soundingEnvelope (repeated) > 0.9f,
+                "one note-off released a pitch another controller still held");
+
+        repeated.noteOff (60);
+        render (repeated, 256);
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (repeated) == -1
+                    && vocalor::VoiceEngineTestAccess::heldNoteCount (repeated) == 0,
+                "the final note-off did not release the overlapping repeat");
     }
 
     legato.noteOff (64);
