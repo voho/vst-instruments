@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include "DSP/ModelVisualisation.h"
 #include "DSP/NeuramarEngine.h"
 #include "DSP/NeuralModel.h"
 #include "DSP/SampleLearner.h"
@@ -30,6 +31,9 @@ inline constexpr auto spread        = "spread";
 inline constexpr auto rootCorrection = "rootCorrection";
 inline constexpr auto output        = "output";
 inline constexpr auto noise         = "noise";
+inline constexpr auto stretch       = "stretch";
+inline constexpr auto formant       = "formant";
+inline constexpr auto touch         = "touch";
 } // namespace neuramar::parameters
 
 class NeuramarAudioProcessorEditor;
@@ -72,6 +76,15 @@ public:
         std::array<float, 256> waveform {};
     };
 
+    // A display-only reduction of the published memory, rebuilt once per
+    // publication on the thread that publishes it. The editor fetches it only
+    // when the generation changes, so no per-frame model access is required.
+    struct ModelAnatomySnapshot
+    {
+        std::uint64_t modelGeneration = 0;
+        neuramar::ModelAnatomy anatomy;
+    };
+
     NeuramarAudioProcessor();
     ~NeuramarAudioProcessor() override;
 
@@ -112,6 +125,7 @@ public:
     void requestPanic() noexcept;
 
     [[nodiscard]] LearningSnapshot getLearningSnapshot() const;
+    [[nodiscard]] ModelAnatomySnapshot getModelAnatomySnapshot() const;
     [[nodiscard]] int getActiveVoiceCount() const noexcept
     {
         return activeVoiceCount.load (std::memory_order_relaxed);
@@ -149,6 +163,9 @@ private:
         std::atomic<float>* rootCorrection = nullptr;
         std::atomic<float>* output = nullptr;
         std::atomic<float>* noise = nullptr;
+        std::atomic<float>* stretch = nullptr;
+        std::atomic<float>* formant = nullptr;
+        std::atomic<float>* touch = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
@@ -234,6 +251,7 @@ private:
 
     mutable juce::CriticalSection displayLock;
     LearningSnapshot displayState;
+    ModelAnatomySnapshot displayAnatomy;
 
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> engineReady { false };

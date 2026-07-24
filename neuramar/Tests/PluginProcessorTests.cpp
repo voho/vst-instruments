@@ -423,9 +423,10 @@ void testContractsAndLearning()
     expect (processor.getNumPrograms() == 1
                 && processor.getProgramName (0).isNotEmpty(),
             "the VST3 factory program has no host-visible name");
-    expect (processor.getParameters().size() == 14,
-            "host parameter count does not include the appended Noise control");
-    constexpr std::array<const char*, 14> expectedParameterOrder {
+    expect (processor.getParameters().size() == 17,
+            "host parameter count does not include the appended Noise, "
+            "Stretch, Formant, and Touch controls");
+    constexpr std::array<const char*, 17> expectedParameterOrder {
         neuramar::parameters::imprint,
         neuramar::parameters::bodyLock,
         neuramar::parameters::air,
@@ -439,7 +440,10 @@ void testContractsAndLearning()
         neuramar::parameters::spread,
         neuramar::parameters::rootCorrection,
         neuramar::parameters::output,
-        neuramar::parameters::noise
+        neuramar::parameters::noise,
+        neuramar::parameters::stretch,
+        neuramar::parameters::formant,
+        neuramar::parameters::touch
     };
     for (std::size_t index = 0; index < expectedParameterOrder.size(); ++index)
     {
@@ -466,6 +470,54 @@ void testContractsAndLearning()
                         parameterValue (processor, neuramar::parameters::noise),
                         0.0f),
                 "Noise no longer defaults to exact model recall");
+    }
+
+    auto* stretch = processor.parameters.getParameter (neuramar::parameters::stretch);
+    expect (stretch != nullptr, "Stretch parameter is missing");
+    if (stretch != nullptr)
+    {
+        const auto range = stretch->getNormalisableRange();
+        expect (approximatelyEqual (range.start, 0.0f)
+                    && approximatelyEqual (range.end, 2.0f)
+                    && approximatelyEqual (range.interval, 0.001f),
+                "Stretch no longer exposes the exact 0-200% contract");
+        expect (approximatelyEqual (
+                    stretch->convertFrom0to1 (stretch->getDefaultValue()), 1.0f)
+                    && approximatelyEqual (
+                        parameterValue (processor, neuramar::parameters::stretch),
+                        1.0f),
+                "Stretch no longer defaults to the fitted partial series");
+    }
+
+    auto* formant = processor.parameters.getParameter (neuramar::parameters::formant);
+    expect (formant != nullptr, "Formant parameter is missing");
+    if (formant != nullptr)
+    {
+        const auto range = formant->getNormalisableRange();
+        expect (approximatelyEqual (range.start, -24.0f)
+                    && approximatelyEqual (range.end, 24.0f)
+                    && approximatelyEqual (range.interval, 0.01f),
+                "Formant no longer exposes the exact +/-24 semitone contract");
+        expect (approximatelyEqual (
+                    formant->convertFrom0to1 (formant->getDefaultValue()), 0.0f)
+                    && approximatelyEqual (
+                        parameterValue (processor, neuramar::parameters::formant),
+                        0.0f),
+                "Formant no longer defaults to the learned body position");
+    }
+
+    auto* touch = processor.parameters.getParameter (neuramar::parameters::touch);
+    expect (touch != nullptr, "Touch parameter is missing");
+    if (touch != nullptr)
+    {
+        const auto range = touch->getNormalisableRange();
+        expect (approximatelyEqual (range.start, 0.0f)
+                    && approximatelyEqual (range.end, 1.0f)
+                    && approximatelyEqual (range.interval, 0.001f),
+                "Touch no longer exposes the exact 0-100% contract");
+        expect (approximatelyEqual (
+                    touch->convertFrom0to1 (touch->getDefaultValue()), 0.35f),
+                "Touch no longer defaults to a moderate velocity response");
     }
 
     auto* awaken = processor.parameters.getParameter (neuramar::parameters::attack);
@@ -529,14 +581,39 @@ void testContractsAndLearning()
     constexpr auto retainedImprint = 0.31f;
     constexpr auto rejectedImprint = 0.76f;
     constexpr auto retainedNoise = 0.43f;
+    constexpr auto retainedStretch = 0.62f;
+    constexpr auto retainedFormant = -7.25f;
+    constexpr auto retainedTouch = 0.81f;
     setParameterValue (processor, neuramar::parameters::imprint, retainedImprint);
     setParameterValue (processor, neuramar::parameters::noise, retainedNoise);
+    setParameterValue (processor, neuramar::parameters::stretch, retainedStretch);
+    setParameterValue (processor, neuramar::parameters::formant, retainedFormant);
+    setParameterValue (processor, neuramar::parameters::touch, retainedTouch);
     expect (approximatelyEqual (
                 parameterValue (processor, neuramar::parameters::imprint), retainedImprint),
             "could not establish the retained parameter-state fixture");
     expect (approximatelyEqual (
                 parameterValue (processor, neuramar::parameters::noise), retainedNoise),
             "could not establish the retained Noise parameter fixture");
+    expect (approximatelyEqual (
+                parameterValue (processor, neuramar::parameters::stretch),
+                retainedStretch)
+                && approximatelyEqual (
+                    parameterValue (processor, neuramar::parameters::formant),
+                    retainedFormant)
+                && approximatelyEqual (
+                    parameterValue (processor, neuramar::parameters::touch),
+                    retainedTouch),
+            "could not establish the retained Stretch/Formant/Touch fixture");
+
+    const auto anatomySnapshot = processor.getModelAnatomySnapshot();
+    expect (anatomySnapshot.modelGeneration == learned.modelGeneration
+                && anatomySnapshot.anatomy.valid
+                && anatomySnapshot.anatomy.peakAmplitude > 0.0f
+                && approximatelyEqual (
+                    anatomySnapshot.anatomy.rootFrequencyHz,
+                    static_cast<float> (learned.rootFrequencyHz), 0.01f),
+            "the editor's model anatomy was not published with the learned memory");
 
     juce::MemoryBlock state;
     processor.getStateInformation (state);
@@ -560,6 +637,35 @@ void testContractsAndLearning()
                     == NeuramarAudioProcessor::LearningStage::Ready,
             "a pre-Noise session inherited the live Noise value instead of "
             "migrating to exact recall");
+
+    struct MigrationCase
+    {
+        const char* id;
+        float liveValue;
+        float expectedDefault;
+    };
+    for (const auto& migration : std::array<MigrationCase, 3> {
+             MigrationCase { neuramar::parameters::stretch, 0.05f, 1.0f },
+             MigrationCase { neuramar::parameters::formant, 19.5f, 0.0f },
+             MigrationCase { neuramar::parameters::touch, 0.97f, 0.35f } })
+    {
+        const auto olderState = removeParameterFromSerializedState (
+            state, migration.id);
+        expect (! olderState.isEmpty(),
+                std::string ("could not construct the pre-")
+                    + migration.id + " state migration fixture");
+        NeuramarAudioProcessor olderRestored;
+        setParameterValue (olderRestored, migration.id, migration.liveValue);
+        olderRestored.setStateInformation (
+            olderState.getData(), static_cast<int> (olderState.getSize()));
+        expect (approximatelyEqual (
+                    parameterValue (olderRestored, migration.id),
+                    migration.expectedDefault)
+                    && olderRestored.getLearningSnapshot().stage
+                        == NeuramarAudioProcessor::LearningStage::Ready,
+                std::string ("a session saved before ") + migration.id
+                    + " inherited the live value instead of its default");
+    }
 
     const auto defaultAttack = renderInitialAttack (state, false, 0.0f);
     const auto explicitZeroAttack = renderInitialAttack (state, true, 0.0f);
@@ -684,6 +790,18 @@ void testContractsAndLearning()
     expect (approximatelyEqual (
                 parameterValue (restored, neuramar::parameters::noise), retainedNoise),
             "state round trip changed the saved Noise parameter");
+    expect (approximatelyEqual (
+                parameterValue (restored, neuramar::parameters::stretch),
+                retainedStretch)
+                && approximatelyEqual (
+                    parameterValue (restored, neuramar::parameters::formant),
+                    retainedFormant)
+                && approximatelyEqual (
+                    parameterValue (restored, neuramar::parameters::touch),
+                    retainedTouch),
+            "state round trip changed the saved Stretch/Formant/Touch values");
+    expect (restored.getModelAnatomySnapshot().anatomy.valid,
+            "a restored memory did not publish an anatomy for the editor");
     restored.prepareToPlay (48000.0, 128);
     const auto restoredRender = renderNote (restored, 55, 50);
     expect (restoredRender.finite && restoredRender.energy > 1.0e-8,
@@ -711,6 +829,8 @@ void testContractsAndLearning()
     restored.processBlock (clearedAudio, clearedMidi);
     expect (measure (clearedAudio).energy == 0.0,
             "processor rendered the previous model after restoring an empty state");
+    expect (! restored.getModelAnatomySnapshot().anatomy.valid,
+            "the model anatomy survived a cleared memory");
 
     processor.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
     expect (processor.getLearningSnapshot().stage
@@ -721,7 +841,7 @@ void testContractsAndLearning()
     expect (editor != nullptr, "processor did not create its custom editor");
     if (editor != nullptr)
     {
-        expect (editor->getWidth() == 1180 && editor->getHeight() == 760,
+        expect (editor->getWidth() == 1180 && editor->getHeight() == 880,
                 "editor default size changed unexpectedly");
 
         std::set<std::string> buttonTexts;
@@ -744,6 +864,10 @@ void testContractsAndLearning()
                 "editor did not default to the balanced 10% random range");
         expect (componentTreeContainsLabel (*editor, "NOISE"),
                 "editor is missing the neural-input Noise control");
+        for (const auto* knobTitle : { "STRETCH", "FORMANT", "TOUCH" })
+            expect (componentTreeContainsLabel (*editor, knobTitle),
+                    std::string ("editor is missing the ") + knobTitle
+                        + " control");
 
         const auto renderAndCheckEditor = [&editor] (int width, int height,
                                                       const char* snapshotVariable)
@@ -794,10 +918,10 @@ void testContractsAndLearning()
             }
         };
 
-        renderAndCheckEditor (1180, 760, "NEURAMAR_EDITOR_SNAPSHOT");
-        renderAndCheckEditor (960, 619, "NEURAMAR_EDITOR_SNAPSHOT_MIN");
-        renderAndCheckEditor (1500, 966, "NEURAMAR_EDITOR_SNAPSHOT_MAX");
-        editor->setSize (1180, 760);
+        renderAndCheckEditor (1180, 880, "NEURAMAR_EDITOR_SNAPSHOT");
+        renderAndCheckEditor (960, 716, "NEURAMAR_EDITOR_SNAPSHOT_MIN");
+        renderAndCheckEditor (1500, 1119, "NEURAMAR_EDITOR_SNAPSHOT_MAX");
+        editor->setSize (1180, 880);
     }
 
     processor.randomizeModel (

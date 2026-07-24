@@ -4,6 +4,7 @@
 
 #include "PluginProcessor.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -61,6 +62,48 @@ private:
     float animationPhase = 0.0f;
 };
 
+// Draws the DSP layer's ModelAnatomy reduction: what the learned memory
+// actually contains, rather than a decorative animation. Clicking swaps
+// between the spectral fingerprint and the layer-evolution view; hovering
+// reads out the frequency and per-layer level under the cursor.
+class ModelAnatomyDisplay final : public juce::Component,
+                                  public juce::SettableTooltipClient
+{
+public:
+    ModelAnatomyDisplay();
+
+    void setAnatomy (const neuramar::ModelAnatomy& next,
+                     std::uint64_t generation);
+    void advance (int activeVoiceCount, float stretchAmount);
+    void paint (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+
+private:
+    enum class View
+    {
+        Spectrum,
+        Evolution
+    };
+
+    [[nodiscard]] juce::Rectangle<float> plotBounds() const;
+    void paintSpectrum (juce::Graphics&, juce::Rectangle<float> plot);
+    void paintEvolution (juce::Graphics&, juce::Rectangle<float> plot);
+    void paintGrid (juce::Graphics&, juce::Rectangle<float> plot) const;
+
+    neuramar::ModelAnatomy anatomy;
+    std::uint64_t anatomyGeneration = 0;
+    View view = View::Spectrum;
+    float playhead = 0.0f;
+    float coreMeter = 0.0f;
+    float airMeter = 0.0f;
+    float boneMeter = 0.0f;
+    float stretchAmount = 1.0f;
+    float hoverPosition = -1.0f;
+    bool hovering = false;
+};
+
 class NeuramarAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                            public juce::FileDragAndDropTarget,
                                            private juce::Timer
@@ -100,6 +143,8 @@ private:
     juce::Label rootConfidenceLabel;
 
     NeuralPoolDisplay neuralPool;
+    ModelAnatomyDisplay modelAnatomy;
+    std::uint64_t lastAnatomyGeneration = 0;
     juce::TextButton loadButton { "DROP / OPEN" };
     juce::TextButton cancelButton { "CANCEL" };
     juce::TextButton panicButton { "PANIC" };
@@ -126,6 +171,9 @@ private:
     NeuramarKnob releaseKnob { "DISSOLVE", "release" };
     NeuramarKnob spreadKnob { "HORIZON", "stereo spread" };
     NeuramarKnob outputKnob { "OUTPUT", "level" };
+    NeuramarKnob stretchKnob { "STRETCH", "ideal  /  stiff" };
+    NeuramarKnob formantKnob { "FORMANT", "body size" };
+    NeuramarKnob touchKnob { "TOUCH", "velocity colour" };
 
     juce::MidiKeyboardComponent keyboard;
     std::unique_ptr<juce::FileChooser> fileChooser;

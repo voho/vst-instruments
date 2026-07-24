@@ -319,7 +319,7 @@ void fft(std::vector<Complex>& values)
 
 [[nodiscard]] HarmonicAnalysisFrame analyseHarmonicResidual(
     const std::vector<float>& sample, double sampleRate,
-    float normalisedTime, float fundamentalHz,
+    float normalisedTime, float fundamentalHz, float inharmonicity,
     std::size_t windowSize = spectrumSize)
 {
     windowSize = std::clamp(windowSize, std::size_t { 512 }, spectrumSize);
@@ -360,8 +360,12 @@ void fft(std::vector<Complex>& values)
     for (std::size_t harmonic = 0;
          harmonic < NeuralModel::harmonicCount; ++harmonic)
     {
+        // Projecting at the stretched partial position is what lets a stiff
+        // source keep clean amplitudes; a harmonic source is unaffected
+        // because the ratio is then exactly the harmonic number.
         const double frequency = static_cast<double>(fundamentalHz)
-            * static_cast<double>(harmonic + 1);
+            * static_cast<double>(stretchedHarmonicRatio(
+                static_cast<float>(harmonic + 1), inharmonicity));
         if (!(frequency > 0.0) || frequency >= 0.48 * sampleRate)
             break;
 
@@ -447,6 +451,47 @@ void fft(std::vector<Complex>& values)
     return std::sin(angle) / angle;
 }
 
+constexpr int resamplerHalfTaps = 24;
+constexpr int resamplerTaps = 2 * resamplerHalfTaps;
+// The kernel only depends on the fractional distance between the requested
+// output position and the sample grid, so it is evaluated once into a
+// polyphase table instead of calling sin() and cos() 48 times for every one
+// of the hundreds of thousands of output samples.
+constexpr int resamplerPhases = 1024;
+
+struct ResamplerKernel
+{
+    // Row `phase` holds the 48 taps for a fractional offset of
+    // phase / resamplerPhases, followed by that row's weight sum.
+    std::vector<double> weights;
+    std::vector<double> weightSums;
+
+    explicit ResamplerKernel(double cutoff)
+        : weights(static_cast<std::size_t>(resamplerPhases) * resamplerTaps,
+                  0.0),
+          weightSums(static_cast<std::size_t>(resamplerPhases), 0.0)
+    {
+        for (int phase = 0; phase < resamplerPhases; ++phase)
+        {
+            const double fraction = static_cast<double>(phase)
+                / static_cast<double>(resamplerPhases);
+            double sum = 0.0;
+            auto* row = weights.data()
+                + static_cast<std::size_t>(phase) * resamplerTaps;
+            for (int tap = 0; tap < resamplerTaps; ++tap)
+            {
+                const double distance = fraction
+                    + static_cast<double>(resamplerHalfTaps - 1 - tap);
+                const double window = 0.5 + 0.5 * std::cos(
+                    static_cast<double>(pi) * distance / resamplerHalfTaps);
+                row[tap] = cutoff * sinc(cutoff * distance) * window;
+                sum += row[tap];
+            }
+            weightSums[static_cast<std::size_t>(phase)] = sum;
+        }
+    }
+};
+
 [[nodiscard]] std::vector<float> resampleWindowedSinc(
     const std::vector<float>& source, double sourceRate, double destinationRate,
     const SampleLearner::CancelPredicate& cancel = {})
@@ -458,34 +503,50 @@ void fft(std::vector<Complex>& values)
     if (std::abs(sourceRate - destinationRate) < 1.0e-6)
         return source;
 
-    constexpr int halfTaps = 24;
     const double sourcePerOutput = sourceRate / destinationRate;
     const double cutoff = 0.94 * std::min(1.0, destinationRate / sourceRate);
     const auto destinationSize = static_cast<std::size_t>(
         std::max(1.0, std::round(static_cast<double>(source.size())
                                 * destinationRate / sourceRate)));
+    const ResamplerKernel kernel(cutoff);
+    const auto sourceSize = static_cast<std::ptrdiff_t>(source.size());
     std::vector<float> destination(destinationSize, 0.0f);
     for (std::size_t output = 0; output < destinationSize; ++output)
     {
         if ((output & 1023u) == 0u && cancellationRequested(cancel))
             return {};
         const double centre = static_cast<double>(output) * sourcePerOutput;
-        const auto first = static_cast<std::ptrdiff_t>(std::floor(centre))
-                         - halfTaps + 1;
+        const double centreFloor = std::floor(centre);
+        const auto first = static_cast<std::ptrdiff_t>(centreFloor)
+                         - resamplerHalfTaps + 1;
+        auto phase = static_cast<int>((centre - centreFloor)
+            * static_cast<double>(resamplerPhases));
+        phase = std::clamp(phase, 0, resamplerPhases - 1);
+        const auto* row = kernel.weights.data()
+            + static_cast<std::size_t>(phase) * resamplerTaps;
+
         double weighted = 0.0;
+        if (first >= 0 && first + resamplerTaps <= sourceSize)
+        {
+            const auto* input = source.data() + first;
+            for (int tap = 0; tap < resamplerTaps; ++tap)
+                weighted += static_cast<double>(input[tap]) * row[tap];
+            const double weightSum
+                = kernel.weightSums[static_cast<std::size_t>(phase)];
+            destination[output] = std::abs(weightSum) > 1.0e-12
+                ? static_cast<float>(weighted / weightSum) : 0.0f;
+            continue;
+        }
+
         double weightSum = 0.0;
-        for (int tap = 0; tap < 2 * halfTaps; ++tap)
+        for (int tap = 0; tap < resamplerTaps; ++tap)
         {
             const auto input = first + tap;
-            if (input < 0 || input >= static_cast<std::ptrdiff_t>(source.size()))
+            if (input < 0 || input >= sourceSize)
                 continue;
-            const double distance = centre - static_cast<double>(input);
-            const double window = 0.5 + 0.5 * std::cos(
-                static_cast<double>(pi) * distance / halfTaps);
-            const double weight = cutoff * sinc(cutoff * distance) * window;
             weighted += static_cast<double>(source[static_cast<std::size_t>(input)])
-                      * weight;
-            weightSum += weight;
+                      * row[tap];
+            weightSum += row[tap];
         }
         destination[output] = std::abs(weightSum) > 1.0e-12
             ? static_cast<float>(weighted / weightSum) : 0.0f;
@@ -596,12 +657,11 @@ void fft(std::vector<Complex>& values)
 
 [[nodiscard]] PitchEstimate estimatePitch(const std::vector<float>& sample,
                                           double sampleRate,
+                                          const std::vector<float>& pitchSample,
+                                          double pitchRate,
                                           const SampleLearner::CancelPredicate& cancel)
 {
-    double pitchRate = 0.0;
-    const auto pitchSample = downsampleForPitch(
-        sample, sampleRate, pitchRate, cancel);
-    if (cancellationRequested(cancel))
+    if (pitchSample.empty() || !(pitchRate > 0.0))
         return {};
     std::vector<PitchEstimate> candidates;
     constexpr std::array<std::size_t, 3> resolutions { 2048, 4096, 8192 };
@@ -693,20 +753,252 @@ void fft(std::vector<Complex>& values)
     return combined;
 }
 
+struct SpectralPeak
+{
+    float frequencyHz { 0.0f };
+    float magnitude { 0.0f };
+};
+
+// Locates the interpolated local maximum nearest a predicted partial. The
+// parabolic vertex of three log-magnitude bins resolves the frequency far
+// below the bin spacing, which is what makes a small stiffness coefficient
+// measurable from a 4096-point aperture at all.
+[[nodiscard]] SpectralPeak findSpectralPeak(const SpectrumFrame& frame,
+                                            float targetHz, float searchHz,
+                                            double sampleRate) noexcept
+{
+    SpectralPeak result;
+    const auto binCount = static_cast<std::ptrdiff_t>(frame.bins.size());
+    const float binWidth = static_cast<float>(sampleRate)
+        / static_cast<float>(binCount);
+    if (!(targetHz > 0.0f) || !(searchHz > 0.0f) || !(binWidth > 0.0f))
+        return result;
+
+    const auto firstBin = std::max<std::ptrdiff_t>(2,
+        static_cast<std::ptrdiff_t>(std::floor((targetHz - searchHz) / binWidth)));
+    const auto lastBin = std::min<std::ptrdiff_t>(binCount / 2 - 2,
+        static_cast<std::ptrdiff_t>(std::ceil((targetHz + searchHz) / binWidth)));
+    if (lastBin <= firstBin + 1)
+        return result;
+
+    auto best = firstBin;
+    float bestMagnitude = 0.0f;
+    for (auto bin = firstBin; bin <= lastBin; ++bin)
+    {
+        const float magnitude = std::abs(
+            frame.bins[static_cast<std::size_t>(bin)]);
+        if (magnitude > bestMagnitude)
+        {
+            bestMagnitude = magnitude;
+            best = bin;
+        }
+    }
+    // An edge maximum means the true partial is probably outside the window.
+    if (!(bestMagnitude > 0.0f) || best <= firstBin || best >= lastBin)
+        return result;
+
+    const float left = std::log(std::max(std::abs(
+        frame.bins[static_cast<std::size_t>(best - 1)]), 1.0e-20f));
+    const float centre = std::log(std::max(bestMagnitude, 1.0e-20f));
+    const float right = std::log(std::max(std::abs(
+        frame.bins[static_cast<std::size_t>(best + 1)]), 1.0e-20f));
+    const float denominator = left - 2.0f * centre + right;
+    float offset = 0.0f;
+    if (denominator < -1.0e-12f)
+        offset = std::clamp(0.5f * (left - right) / denominator, -0.5f, 0.5f);
+    result.frequencyHz = (static_cast<float>(best) + offset) * binWidth;
+    result.magnitude = 2.0f * bestMagnitude
+        / std::max(frame.normalisation, 1.0f);
+    return result;
+}
+
+struct StretchEstimate
+{
+    float inharmonicity { 0.0f };
+    float refinedRootHz { 0.0f };
+    int supportingPartials { 0 };
+    float explainedFraction { 0.0f };
+};
+
+// Fits the stiff-string law f(n) = n f0 sqrt(1 + B n^2) to the measured
+// partial positions. Wound strings, tines, and struck bars all sharpen their
+// upper partials this way; an ideal harmonic source returns exactly zero and
+// therefore keeps the analysis and the renderer bit-identical to before.
+[[nodiscard]] StretchEstimate estimateInharmonicity(
+    const std::vector<float>& sample, double sampleRate, float rootFrequencyHz,
+    const SampleLearner::CancelPredicate& cancel)
+{
+    StretchEstimate result;
+    result.refinedRootHz = rootFrequencyHz;
+    if (!(rootFrequencyHz > 0.0f) || sample.size() < spectrumSize / 2)
+        return result;
+
+    constexpr std::array<float, 3> probeTimes { 0.22f, 0.40f, 0.58f };
+    std::vector<SpectrumFrame> probes;
+    probes.reserve(probeTimes.size());
+    for (const float time : probeTimes)
+    {
+        if (cancellationRequested(cancel))
+            return result;
+        probes.push_back(makeSpectrumFrame(sample, sampleRate, time));
+    }
+
+    float referenceMagnitude = 0.0f;
+    for (const auto& probe : probes)
+    {
+        for (int harmonic = 1; harmonic <= 6; ++harmonic)
+        {
+            referenceMagnitude = std::max(referenceMagnitude,
+                spectrumMagnitude(probe,
+                    rootFrequencyHz * static_cast<float>(harmonic), sampleRate));
+        }
+    }
+    if (!(referenceMagnitude > 1.0e-6f))
+        return result;
+
+    // Widening the partial set as the estimate converges prevents an early
+    // mis-prediction from locking a high partial onto its neighbour.
+    constexpr std::array<int, 4> passPartialLimits { 8, 16, 24, 32 };
+    const float searchHz = 0.40f * rootFrequencyHz;
+    float inharmonicity = 0.0f;
+    float root = rootFrequencyHz;
+    float explained = 0.0f;
+    int supporting = 0;
+    int runLength = 0;
+    for (const int partialLimit : passPartialLimits)
+    {
+        runLength = 0;
+        if (cancellationRequested(cancel))
+            return result;
+
+        // Squaring the stiff-string law linearises it exactly:
+        //   (f(n) / n)^2 = f0^2 + (f0^2 B) n^2
+        // so one weighted straight-line fit recovers the fundamental and the
+        // coefficient together. Solving for B alone against an assumed
+        // fundamental biases both, because a slightly sharp root absorbs part
+        // of the stretch it is supposed to measure.
+        double weightSum = 0.0;
+        double sumX = 0.0;
+        double sumY = 0.0;
+        double sumXX = 0.0;
+        double sumXY = 0.0;
+        struct Observation
+        {
+            double x { 0.0 };
+            double y { 0.0 };
+            double weight { 0.0 };
+        };
+        std::vector<Observation> observations;
+        observations.reserve(static_cast<std::size_t>(partialLimit)
+                             * probes.size());
+        for (int partial = 1; partial <= partialLimit; ++partial)
+        {
+            const auto number = static_cast<float>(partial);
+            const float predicted = root
+                * stretchedHarmonicRatio(number, inharmonicity);
+            if (predicted >= 0.45f * static_cast<float>(sampleRate))
+                break;
+
+            bool found = false;
+            for (const auto& probe : probes)
+            {
+                const auto peak = findSpectralPeak(
+                    probe, predicted, searchHz, sampleRate);
+                if (!(peak.frequencyHz > 0.0f)
+                    || peak.magnitude < 0.004f * referenceMagnitude)
+                    continue;
+
+                const double partialRoot = static_cast<double>(peak.frequencyHz)
+                    / number;
+                const double x = static_cast<double>(number) * number;
+                const double y = partialRoot * partialRoot;
+                const double weight = peak.magnitude;
+                observations.push_back({ x, y, weight });
+                weightSum += weight;
+                sumX += weight * x;
+                sumY += weight * y;
+                sumXX += weight * x * x;
+                sumXY += weight * x * y;
+                found = true;
+            }
+            // Stop at the first missing partial. A stiff string has a dense,
+            // uninterrupted series; a sparse spectrum with a few strong
+            // resonances does not, and following it past a gap is exactly how
+            // a modal body would be mistaken for a stretched string.
+            if (!found)
+                break;
+            runLength = partial;
+        }
+
+        supporting = static_cast<int>(observations.size());
+        const double determinant = weightSum * sumXX - sumX * sumX;
+        if (supporting < 6 || !(weightSum > 0.0)
+            || !(std::abs(determinant) > 1.0e-9))
+            return result;
+
+        const double slope = (weightSum * sumXY - sumX * sumY) / determinant;
+        const double intercept = (sumY - slope * sumX) / weightSum;
+        if (!(intercept > 0.0) || !std::isfinite(slope))
+            return result;
+
+        double residualSquares = 0.0;
+        double totalSquares = 0.0;
+        const double meanY = sumY / weightSum;
+        for (const auto& observation : observations)
+        {
+            const double modelled = intercept + slope * observation.x;
+            const double residual = observation.y - modelled;
+            const double centred = observation.y - meanY;
+            residualSquares += observation.weight * residual * residual;
+            totalSquares += observation.weight * centred * centred;
+        }
+        explained = totalSquares > 1.0e-12
+            ? static_cast<float>(std::clamp(
+                  1.0 - residualSquares / totalSquares, 0.0, 1.0))
+            : 0.0f;
+
+        inharmonicity = std::clamp(static_cast<float>(slope / intercept),
+                                   0.0f, NeuralModel::maximumInharmonicity);
+        // The regression's own fundamental replaces the period-based one. A
+        // stiff string always fools a period detector slightly sharp; the
+        // correction stays bounded so an ordinary source cannot drift.
+        const auto refined = static_cast<float>(std::sqrt(intercept));
+        root = std::clamp(refined, 0.94f * rootFrequencyHz,
+                          1.06f * rootFrequencyHz);
+    }
+
+    result.supportingPartials = supporting;
+    result.explainedFraction = explained;
+
+    // Below this the stretch is inaudible and within measurement noise, so it
+    // is reported as an exactly harmonic series instead. A short partial run
+    // cannot distinguish stiffness from a handful of modal resonances, so it
+    // is reported as harmonic too.
+    constexpr float minimumUsefulInharmonicity = 1.5e-5f;
+    constexpr int minimumPartialRun = 10;
+    if (inharmonicity < minimumUsefulInharmonicity || explained < 0.55f
+        || runLength < minimumPartialRun)
+    {
+        result.inharmonicity = 0.0f;
+        result.refinedRootHz = rootFrequencyHz;
+        return result;
+    }
+
+    result.inharmonicity = inharmonicity;
+    result.refinedRootHz = root;
+    return result;
+}
+
 [[nodiscard]] std::vector<float> estimatePitchContour(
-    const std::vector<float>& sample, double sampleRate,
+    const std::vector<float>& pitchSample, double pitchRate,
     const std::vector<SpectrumFrame>& spectra, float rootFrequencyHz,
     const SampleLearner::CancelPredicate& cancel)
 {
     std::vector<float> semitoneOffsets(spectra.size(), 0.0f);
-    if (spectra.empty() || !(rootFrequencyHz > 0.0f))
+    if (spectra.empty() || !(rootFrequencyHz > 0.0f)
+        || pitchSample.empty() || !(pitchRate > 0.0))
         return semitoneOffsets;
 
-    double pitchRate = 0.0;
-    const auto pitchSample = downsampleForPitch(
-        sample, sampleRate, pitchRate, cancel);
-    if (cancellationRequested(cancel))
-        return semitoneOffsets;
     const std::size_t windowLength = std::min<std::size_t>(4096,
                                                            pitchSample.size());
     const double expectedLag = pitchRate / rootFrequencyHz;
@@ -919,7 +1211,7 @@ void makePreview(const std::vector<float>& sample,
 
 [[nodiscard]] BoneSelection findPersistentBoneModes(
     const std::vector<SpectrumFrame>& residualSpectra,
-    float rootFrequencyHz, double sampleRate)
+    float rootFrequencyHz, float inharmonicity, double sampleRate)
 {
     struct Peak
     {
@@ -959,7 +1251,25 @@ void makePreview(const std::vector<float>& sample,
                 continue;
             const float ratio = static_cast<float>(bin) * binWidth
                 / rootFrequencyHz;
-            if (std::abs(ratio - std::round(ratio)) < 0.13f)
+            // Reject anything sitting on a Core partial. With a stretched
+            // series those no longer land on integer ratios, so the guard has
+            // to measure the distance to the nearest stiff-string partial.
+            float partialDistance = std::abs(ratio - std::round(ratio));
+            if (inharmonicity > 0.0f)
+            {
+                partialDistance = std::numeric_limits<float>::max();
+                for (std::size_t harmonic = 0;
+                     harmonic < NeuralModel::harmonicCount; ++harmonic)
+                {
+                    const float partialRatio = stretchedHarmonicRatio(
+                        static_cast<float>(harmonic + 1), inharmonicity);
+                    partialDistance = std::min(partialDistance,
+                                               std::abs(ratio - partialRatio));
+                    if (partialRatio > ratio)
+                        break;
+                }
+            }
+            if (partialDistance < 0.13f)
                 continue;
 
             const auto existing = std::find_if(peaks.begin(), peaks.end(),
@@ -1330,8 +1640,10 @@ void chooseLoop(const std::vector<TargetFrame>& targets,
              std::exp(-40.0f * timeSeconds) };
 }
 
+using NetworkInputs = std::array<float, NeuralModel::inputSize>;
+
 [[nodiscard]] float networkLoss(const NeuralModel& model,
-                                const std::vector<SpectrumFrame>& spectra,
+                                const std::vector<NetworkInputs>& frameInputs,
                                 const std::vector<TargetFrame>& normalisedTargets)
 {
     const auto& hiddenBiases = NeuralModelTrainingAccess::hiddenBiases(model);
@@ -1339,10 +1651,9 @@ void chooseLoop(const std::vector<TargetFrame>& targets,
     const auto& outputBiases = NeuralModelTrainingAccess::outputBiases(model);
     const auto& outputWeights = NeuralModelTrainingAccess::outputWeights(model);
     double loss = 0.0;
-    for (std::size_t frame = 0; frame < spectra.size(); ++frame)
+    for (std::size_t frame = 0; frame < frameInputs.size(); ++frame)
     {
-        const auto inputs = networkInputs(spectra[frame].normalisedTime,
-                                          model.durationSeconds());
+        const auto& inputs = frameInputs[frame];
         std::array<float, NeuralModel::hiddenSize> hidden {};
         for (std::size_t unit = 0; unit < NeuralModel::hiddenSize; ++unit)
         {
@@ -1364,7 +1675,7 @@ void chooseLoop(const std::vector<TargetFrame>& targets,
         }
     }
     return static_cast<float>(loss
-        / static_cast<double>(spectra.size() * NeuralModel::outputSize));
+        / static_cast<double>(frameInputs.size() * NeuralModel::outputSize));
 }
 
 template <std::size_t Size>
@@ -1444,8 +1755,18 @@ struct AdamState
     for (auto& weight : outputWeights)
         weight = 0.025f * randomBipolar();
 
-    initialLoss = networkLoss(model, spectra, normalisedTargets);
-    float bestLoss = initialLoss;
+    // The conditioning inputs depend only on the frame time, so they are built
+    // once instead of being re-derived from eight transcendental calls on
+    // every frame of every epoch.
+    std::vector<NetworkInputs> frameInputs(spectra.size());
+    for (std::size_t frame = 0; frame < spectra.size(); ++frame)
+        frameInputs[frame] = networkInputs(spectra[frame].normalisedTime,
+                                           model.durationSeconds());
+
+    const double lossScale = 1.0 / static_cast<double>(
+        spectra.size() * NeuralModel::outputSize);
+    initialLoss = 0.0f;
+    float bestLoss = std::numeric_limits<float>::max();
     auto bestInputWeights = inputWeights;
     auto bestHiddenBiases = hiddenBiases;
     auto bestOutputWeights = outputWeights;
@@ -1468,10 +1789,10 @@ struct AdamState
         std::array<float, NeuralModel::outputSize * NeuralModel::hiddenSize> outputGradient {};
         std::array<float, NeuralModel::outputSize> biasGradient {};
 
+        double epochLoss = 0.0;
         for (std::size_t frame = 0; frame < spectra.size(); ++frame)
         {
-            const auto inputs = networkInputs(spectra[frame].normalisedTime,
-                                              model.durationSeconds());
+            const auto& inputs = frameInputs[frame];
             std::array<float, NeuralModel::hiddenSize> hidden {};
             for (std::size_t unit = 0; unit < NeuralModel::hiddenSize; ++unit)
             {
@@ -1490,6 +1811,12 @@ struct AdamState
                     prediction += outputWeights[output * NeuralModel::hiddenSize + unit]
                         * hidden[unit];
                 errors[output] = prediction - normalisedTargets[frame][output];
+                // The gradient pass already evaluates the whole network, so
+                // the loss of these weights is free. The separate full
+                // forward pass that used to follow every update is gone; the
+                // final weights are evaluated once after the loop instead, so
+                // exactly the same set of candidate states is still scored.
+                epochLoss += static_cast<double>(errors[output]) * errors[output];
                 biasGradient[output] += errors[output];
                 for (std::size_t unit = 0; unit < NeuralModel::hiddenSize; ++unit)
                     outputGradient[output * NeuralModel::hiddenSize + unit]
@@ -1508,6 +1835,18 @@ struct AdamState
                     inputGradient[unit * NeuralModel::inputSize + input]
                         += propagated * inputs[input];
             }
+        }
+
+        const auto loss = static_cast<float>(epochLoss * lossScale);
+        if (epoch == 0)
+            initialLoss = loss;
+        if (std::isfinite(loss) && loss < bestLoss)
+        {
+            bestLoss = loss;
+            bestInputWeights = inputWeights;
+            bestHiddenBiases = hiddenBiases;
+            bestOutputWeights = outputWeights;
+            bestOutputBiases = outputBiases;
         }
 
         const float gradientScale = 1.0f / static_cast<float>(spectra.size());
@@ -1556,16 +1895,6 @@ struct AdamState
                         beta1Correction, beta2Correction, epoch + 1);
         completedEpochs = epoch + 1;
 
-        const float loss = networkLoss(model, spectra, normalisedTargets);
-        if (std::isfinite(loss) && loss < bestLoss)
-        {
-            bestLoss = loss;
-            bestInputWeights = inputWeights;
-            bestHiddenBiases = hiddenBiases;
-            bestOutputWeights = outputWeights;
-            bestOutputBiases = outputBiases;
-        }
-
         if ((epoch & 3) == 0 || epoch + 1 == trainingEpochCount)
             report(callback, SampleLearner::Stage::Training,
                    0.55f + 0.44f * static_cast<float>(epoch + 1)
@@ -1573,14 +1902,31 @@ struct AdamState
                    pitch, "Teaching the neural timbre map");
     }
 
-    inputWeights = bestInputWeights;
-    hiddenBiases = bestHiddenBiases;
-    outputWeights = bestOutputWeights;
-    outputBiases = bestOutputBiases;
-    finalLoss = bestLoss;
+    // Score the state produced by the final update as well, so the candidate
+    // set is exactly the one the previous per-epoch evaluation covered.
+    const float lastLoss = networkLoss(model, frameInputs, normalisedTargets);
+    if (!(std::isfinite(lastLoss) && lastLoss < bestLoss))
+    {
+        inputWeights = bestInputWeights;
+        hiddenBiases = bestHiddenBiases;
+        outputWeights = bestOutputWeights;
+        outputBiases = bestOutputBiases;
+        finalLoss = bestLoss;
+    }
+    else
+    {
+        finalLoss = lastLoss;
+    }
     return true;
 }
 } // namespace
+
+std::vector<float> SampleLearner::resampleForTests(
+    const std::vector<float>& input, double sourceRate,
+    double destinationRate)
+{
+    return resampleWindowedSinc(input, sourceRate, destinationRate);
+}
 
 SampleLearner::LearnResult SampleLearner::learn(
     const std::vector<float>& monoSample,
@@ -1625,7 +1971,18 @@ SampleLearner::LearnResult SampleLearner::learn(
 
     report(progressCallback, Stage::Pitch, 0.10f, pitch,
            "Listening across several pitch resolutions");
-    pitch = estimatePitch(sample, analysisSampleRate, cancelPredicate);
+    // One band-limited decimation feeds both the multi-window root search and
+    // the local pitch contour instead of being computed twice.
+    double pitchRate = 0.0;
+    const auto pitchSample = downsampleForPitch(
+        sample, analysisSampleRate, pitchRate, cancelPredicate);
+    if (cancellationRequested(cancelPredicate))
+    {
+        result.cancelled = true;
+        return result;
+    }
+    pitch = estimatePitch(sample, analysisSampleRate, pitchSample, pitchRate,
+                          cancelPredicate);
     if (cancellationRequested(cancelPredicate))
     {
         result.cancelled = true;
@@ -1636,8 +1993,22 @@ SampleLearner::LearnResult SampleLearner::learn(
         result.error = "No stable root pitch could be identified";
         return result;
     }
+
+    report(progressCallback, Stage::Pitch, 0.20f, pitch,
+           "Measuring the partial series");
+    const auto stretch = estimateInharmonicity(
+        sample, analysisSampleRate, pitch.frequencyHz, cancelPredicate);
+    if (cancellationRequested(cancelPredicate))
+    {
+        result.cancelled = true;
+        return result;
+    }
+    if (stretch.inharmonicity > 0.0f)
+        pitch.frequencyHz = stretch.refinedRootHz;
     report(progressCallback, Stage::Pitch, 0.25f, pitch,
-           "Root note identified");
+           stretch.inharmonicity > 0.0f
+               ? "Root note identified with a stretched partial series"
+               : "Root note identified");
     if (cancellationRequested(cancelPredicate))
     {
         result.cancelled = true;
@@ -1645,6 +2016,7 @@ SampleLearner::LearnResult SampleLearner::learn(
     }
 
     auto model = std::unique_ptr<NeuralModel>(new NeuralModel());
+    model->inharmonicity_ = stretch.inharmonicity;
     auto& metadata = model->metadata_;
     metadata.sourceSampleRate = sampleRate;
     metadata.rootFrequencyHz = pitch.frequencyHz;
@@ -1683,7 +2055,7 @@ SampleLearner::LearnResult SampleLearner::learn(
         }
     }
     const auto pitchContour = estimatePitchContour(
-        sample, analysisSampleRate, spectra, pitch.frequencyHz,
+        pitchSample, pitchRate, spectra, pitch.frequencyHz,
         cancelPredicate);
     if (cancellationRequested(cancelPredicate))
     {
@@ -1705,7 +2077,7 @@ SampleLearner::LearnResult SampleLearner::learn(
             * std::exp2(pitchContour[frameIndex] / 12.0f);
         auto longAnalysis = analyseHarmonicResidual(
             sample, analysisSampleRate, spectra[frameIndex].normalisedTime,
-            framePitchHz);
+            framePitchHz, stretch.inharmonicity);
         const auto transientWindow = transientAnalysisWindowSize(
             framePitchHz, analysisSampleRate);
         if (transientWindow < spectrumSize)
@@ -1713,7 +2085,7 @@ SampleLearner::LearnResult SampleLearner::learn(
             auto transientAnalysis = analyseHarmonicResidual(
                 sample, analysisSampleRate,
                 spectra[frameIndex].normalisedTime, framePitchHz,
-                transientWindow);
+                stretch.inharmonicity, transientWindow);
             harmonicAmplitudes.push_back(transientAnalysis.amplitudes);
             harmonicPhases.push_back(transientAnalysis.sinePhases);
             transientResidualSpectra.push_back(
@@ -1736,7 +2108,8 @@ SampleLearner::LearnResult SampleLearner::learn(
     }
 
     const auto boneSelection = findPersistentBoneModes(
-        residualSpectra, pitch.frequencyHz, analysisSampleRate);
+        residualSpectra, pitch.frequencyHz, stretch.inharmonicity,
+        analysisSampleRate);
     model->boneFrequencyRatios_ = boneSelection.ratios;
     model->boneModeReliabilities_ = boneSelection.reliabilities;
     model->initialHarmonicPhases_ = harmonicPhases.front();
