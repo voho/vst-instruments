@@ -600,8 +600,8 @@ void MarsAudioProcessor::pushScopeSamples (const juce::AudioBuffer<float>& buffe
     const auto first = juce::jmax (0, numSamples - scopeRingSize);
     for (int sample = first; sample < numSamples; ++sample)
     {
-        scopeRing[static_cast<size_t> (write)] =
-            0.5f * (left[sample] + right[sample]);
+        scopeRing[static_cast<size_t> (write)].store (
+            0.5f * (left[sample] + right[sample]), std::memory_order_relaxed);
         write = (write + 1) & (scopeRingSize - 1);
     }
 
@@ -619,7 +619,8 @@ int MarsAudioProcessor::copyScopeTrace (float* destination, int maximumSamples) 
 
     for (int sample = 0; sample < count; ++sample)
     {
-        destination[sample] = scopeRing[static_cast<size_t> (read)];
+        destination[sample] = scopeRing[static_cast<size_t> (read)].load (
+            std::memory_order_relaxed);
         read = (read + 1) & (scopeRingSize - 1);
     }
     return count;

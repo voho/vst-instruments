@@ -242,7 +242,11 @@ private:
     std::atomic<float> displayArpPhase { 0.0f };
     std::atomic<int> displayArpKeys { 0 };
 
-    std::array<float, scopeRingSize> scopeRing {};
+    // The audio thread fills this ring while the editor's timer copies it, so
+    // the samples themselves are atomic. Relaxed ordering keeps the cost of a
+    // plain store on every supported target while removing the data race; the
+    // trace is a display, so a wrapped read overtaking the writer is fine.
+    std::array<std::atomic<float>, scopeRingSize> scopeRing {};
     std::atomic<int> scopeWriteIndex { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MarsAudioProcessor)
