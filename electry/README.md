@@ -139,6 +139,14 @@ Notes Off.
   the sounding length grows by `2^(fret/12)`, so a note fretted high up moves
   toward the hollow, mid-string comb of a real guitar. At the nut this is
   identical to the previous behaviour.
+- **Pick release:** the plectrum does not leave every string equally quickly. A
+  wound .080 carries far more mass per unit length than a plain .009 at
+  comparable tension, so it leaves the pick more slowly, and the duration of
+  that release low-passes what enters the string. The corner follows the square
+  root of the string's own open frequency, so the treble register keeps its
+  brightness while the wound low strings lose the upper-partial surplus the
+  ideal law gives them, and the pole's own attenuation at the fundamental is
+  divided back out so the release governs timbre rather than level.
 - **Pick contact:** the plectrum is neither a point nor symmetric. It touches
   the string over a patch — half a millimetre for a stiff sharp pick, around a
   millimetre and a half for a soft rounded one — so the reflected image of the
@@ -160,6 +168,17 @@ Notes Off.
   so hard attacks start audibly sharp and relax over hundreds of
   milliseconds; slaps deepen the effect. Bend styles move the same pitch
   program along a finger-shaped curve.
+- **Low-register voicing:** the wound strings' decay law and the plectrum's
+  release spectrum are calibrated against a dry electric low-E reference
+  recording. A solid-body electric's low strings ring for tens of seconds while
+  their content above a kilohertz is gone inside a tenth of a second, and the
+  ideal 1/n^2 pluck the literature describes - which the pickup's induced-EMF
+  differentiation turns into a 1/n voltage spectrum - overstates a real string's
+  upper partials by roughly 9 dB by the fourteenth. Correcting both is what
+  removed the hollow, nasal, clavinet-like character the low register used to
+  have: the mean per-partial error against that reference falls from 4.5 dB to
+  2.9 dB, and a palm-muted chug is now dominated by its own fundamental instead
+  of by its low mids.
 - **Velocity:** one coherent response profile drives attack level, pulse
   width and brightness, the string-scaled modal release, contact noise,
   tension glide, and collision likelihood. The principal release passes two
@@ -266,6 +285,15 @@ every platform rather than only inside a host.
   of a bounded diode-pair clipper: passing the whole low end of a Drop-E eighth
   string into a clipper turns the fundamental into intermodulation mud instead
   of a note.
+- **Voiced for the eighth string.** The input stage passes the whole Drop-E
+  fundamental rather than cutting it at 84 Hz, because clipping it is what
+  generates the second and third harmonics the cabinet turns into a chug's
+  weight; the pre-gain mid emphasis sits at 850 Hz, above the cabinet's scoop
+  instead of inside it; the cabinet's thump is deeper and its boxy region cut
+  harder; and the compressor's attack is 18 ms rather than 3 ms, so a pick
+  attack passes instead of being levelled away. Measured on a chugged Drop-E
+  figure, the 80-160 Hz octave carries 55% of the amplified energy against 24%
+  of the dry DI's, while 320-640 Hz drops from 22% to 4%.
 - **Amplifier.** Two cascaded triode stages with a standing grid bias, an
   interstage Miller roll-off, and a grid-current bias drift that moves the
   operating point under sustained level, so a held chord thickens and thins

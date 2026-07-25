@@ -460,6 +460,16 @@ private:
         // instead of landing on a single point of the string.
         float excitationCombWidth { 0.0f };
         float excitationModalCoefficient { 0.99f };
+        // The plectrum does not leave every string equally quickly. The
+        // release's own duration low-passes the excitation, and its corner
+        // follows the string rather than the fretted note.
+        float excitationReleaseCoefficient { 0.9f };
+        // The image's loss comes from the extra distance it travels through
+        // the string, so unlike the release it does not depend on how the
+        // string was excited. Sharing the release's corner made a dark
+        // articulation leave far more of its own high end uncancelled than a
+        // bright one, which inverted the styles' relative brightness.
+        float excitationImageCoefficient { 0.9f };
         int excitationTailLength { 0 };
         float contactFeedbackGain { 1.0f };
         float noiseAmplitude { 0.0f };
@@ -470,6 +480,12 @@ private:
         OnePole excitationShaper {};
         OnePole excitationModalShaper1 {};
         OnePole excitationModalShaper2 {};
+        OnePole excitationReleaseShaper {};
+        // The reflected excitation image has travelled to the pick and back
+        // through the same lossy, dispersive string, so it returns darker than
+        // the direct wave and cannot cancel it perfectly. Unity DC gain keeps
+        // the comb's exact rejection of a net displacement.
+        OnePole excitationImageShaper {};
         OnePole noiseShaper {};
         float noiseBandState { 0.0f };
 
