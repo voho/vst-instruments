@@ -1396,12 +1396,15 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         case Articulation::Chug:
             amplitude *= 1.05f;
             pulseMs *= 0.58f;
-            pulseCutoff *= 1.12f;
+            // A chug is tighter and harder than the general Muted style, but it
+            // is still a hand on the string: it cannot be brighter than an open
+            // note, which is what a multiplier above one made it.
+            pulseCutoff *= 0.88f;
             pluckFraction = clampf(pluckFraction * 0.58f, 0.03f, 0.24f);
             noiseLevel *= 1.75f;
             noiseMs *= 0.62f;
             noiseCutoff *= 0.86f;
-            modalBrightness *= 1.18f;
+            modalBrightness *= 0.94f;
             break;
         case Articulation::DeadNote:
             amplitude *= 0.72f;
@@ -1459,6 +1462,31 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             modalBrightness *= 2.0f;
             break;
     }
+
+    // The heel of the hand is already resting on the string when the pick
+    // reaches it, so it absorbs the attack's high end as the pluck forms rather
+    // than only afterwards. Without this the bridge hand changes how long a
+    // note lasts and almost nothing about its tone: measured, a palm-muted
+    // chord's attack centroid sat within one percent of an open one's, which is
+    // why a muted note read as a short pick rather than as a muted note. The
+    // reference recordings' muted attacks sit around 1.4-1.7 kHz where an
+    // unmuted Electry attack sits at 2.4 kHz, with an order of magnitude less
+    // energy above 2.6 kHz.
+    //
+    // The depths match the values the sympathetic bus already uses for the same
+    // hand, so one bridge hand damps the played string, its own attack, and the
+    // strings it is covering by the same amount.
+    float handDamping = palmMuteBlend_;
+    if (voice.articulation == Articulation::Muted)
+        handDamping = std::max(handDamping, 0.55f + 0.45f * parameters.muteDamping);
+    else if (voice.articulation == Articulation::Chug)
+        handDamping = std::max(handDamping, 0.75f + 0.25f * parameters.muteDamping);
+    else if (voice.articulation == Articulation::DeadNote)
+        handDamping = std::max(handDamping, 0.95f);
+    handDamping = clampf(handDamping, 0.0f, 1.0f);
+    // A hand of exactly zero pressure leaves every factor below at one.
+    pulseCutoff *= lerp(1.0f, 0.26f, handDamping);
+    noiseCutoff *= lerp(1.0f, 0.40f, handDamping);
 
     // Player effort and the guitar build change more than level: hard notes
     // are shorter/brighter at the contact, old strings lose the initial edge,
@@ -1524,6 +1552,14 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         default:
             break;
     }
+
+    // The plectrum's edge is the sharpest thing in the attack, so it is what the
+    // heel of the hand absorbs most completely. Narrowing only its bandwidth
+    // left it dominating the 1-3 kHz band of a muted note - measured, it was
+    // 2.6x the modal path's level at 2 kHz - so the hand changed how long a
+    // note lasted without changing its tone at all. This is the term that makes
+    // a muted note sound muted rather than merely short.
+    transientGain *= lerp(1.0f, 0.10f, handDamping);
 
     // A compact excitation is projected into a delay line whose modal DFT
     // contains `period` samples.  Without compensating for that length, the
@@ -1645,8 +1681,14 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                * lerp(0.32f, 2.70f, parameters.pickHardness)
                * lerp(0.72f, 1.45f, profile.effortCurve)
                * lerp(1.12f, 0.72f, parameters.stringAge);
+    // The bridge hand darkens the release, but deliberately not the reflected
+    // image: the image's loss comes from the extra distance it travels through
+    // the string, and lowering its corner leaves more of the direct wave's high
+    // end uncancelled - which brightens exactly the notes the hand is supposed
+    // to be dulling. Coupling the two cancelled the mute's whole effect on the
+    // attack spectrum.
     const float releaseCutoff = clampf(
-        stringReleaseCutoff * modalBrightness,
+        stringReleaseCutoff * modalBrightness * lerp(1.0f, 0.30f, handDamping),
         60.0f, std::min(9000.0f, 0.30f * sampleRate));
     voice.excitationReleaseCoefficient = std::exp(
         -twoPi * releaseCutoff * inverseSampleRate_);

@@ -56,7 +56,7 @@ The rendered peak before normalisation, for the record:
 | --- | --- | --- |
 | `01-range-open-strings.wav` | −12.6 dBFS | +9.6 dB |
 | `02-range-full-fretboard.wav` | −10.9 dBFS | +7.9 dB |
-| `03-play-styles.wav` | −2.5 dBFS | −0.5 dB |
+| `03-play-styles.wav` | −2.8 dBFS | −0.2 dB |
 | `04-drop-e-rhythm-dry.wav` | −13.8 dBFS | +10.8 dB |
 | `05-drop-e-rhythm-amp.wav` | −19.3 dBFS | +16.3 dB |
 | `06-lead-amp-delay-room.wav` | −15.9 dBFS | +12.9 dB |

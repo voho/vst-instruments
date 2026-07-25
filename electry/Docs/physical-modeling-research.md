@@ -679,6 +679,29 @@ independently - fixed it, and the reference-derived depths land the Muted style
 at 0/-1/-3/-10/-13 dB over the first 150 ms against the reference's
 0/-2/-4/-10/-13.
 
+A third round addressed what the envelope work did not: a muted note whose
+length was right still read as a short pick rather than as a muted note, because
+the hand damped only the *loop*. A real hand is already resting on the string
+when the pick arrives, so it absorbs the attack as the pluck forms. Measured, a
+palm-muted chord's attack centroid sat within one percent of an open one's, and
+the Chug style was actually *brighter* than an open note - a hand on a string
+cannot do that. The bridge hand now also darkens the excitation: the release
+corner, the contact-noise band and, most importantly, the level of the plectrum
+edge, which was 2.6x the modal path at 2 kHz and therefore dominated the muted
+attack's whole upper band. Chug's brightness multipliers above one were removed.
+
+That closed part of the gap and not all of it. The muted attack's upper bands
+came down (Chug 1.3-2.6 kHz from 25% to 22%, Muted from 17% to 14%, and the
+2.6-5.1 kHz band roughly halved), but its centre of mass still sits about an
+octave above the reference's: Electry's muted chord peaks in 640-1300 Hz where
+the reference peaks in 320-640 Hz, a centroid of roughly 2.6 kHz against
+1.4-1.7 kHz. That residual is a property of the pickup transfer rather than of
+the mute - the induced-EMF differentiation and the bridge-position comb together
+tilt the output upward by about 12 dB per octave at the low end - and lowering
+the excitation's corners further is repeatedly cancelled by that tilt and by the
+comb image's own interaction with it. It is recorded here as a known open gap
+rather than presented as solved.
+
 The amplifier chain was voiced against the same goal on a chugged Drop-E figure.
 Its input stage now passes the whole eighth-string fundamental instead of cutting
 it at 84 Hz, because clipping that fundamental is what generates the harmonics

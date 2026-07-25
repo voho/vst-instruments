@@ -234,7 +234,12 @@ Notes Off.
   of decibels in its first 25 ms and reaches -40 dB around half a second later,
   while a looser one holds a low tail for seconds. Because the damping
   re-solves the same loop filters and re-applies the analytic phase
-  compensation, a damped string stays exactly in tune. Zero pressure is a
+  compensation, a damped string stays exactly in tune. The same hand also
+  darkens the attack, because it is already on the string when the pick arrives:
+  it lowers the release corner, the contact-noise band and the level of the
+  plectrum edge. A known remaining gap is that a muted note's spectral centre of
+  mass still sits about an octave above the reference recordings'; see the
+  research contract. Zero pressure is a
   mathematical no-op. MIDI CC 2 adds to it live.
 - **Strum travel:** simultaneous note-ons inside a 35 ms window are one pick
   stroke. The first string the pick meets fires immediately and every further
