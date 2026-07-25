@@ -232,7 +232,11 @@ void ElectryFx::prepare(double sampleRate)
     engagementCoefficient_ = 1.0f - std::exp(
         -1.0f / static_cast<float>(0.012 * sampleRate_));
 
-    compressorAttack_ = std::exp(-1.0f / static_cast<float>(0.003 * sampleRate_));
+    // 18 ms of attack, not 3. A rhythm compressor that closes inside a pick
+    // attack removes the very transient that makes a palm-muted part
+    // percussive; letting the attack through and holding the sustain is what
+    // makes a chug hit.
+    compressorAttack_ = std::exp(-1.0f / static_cast<float>(0.018 * sampleRate_));
     compressorRelease_ = std::exp(-1.0f / static_cast<float>(0.090 * sampleRate_));
 
     // Repeats darken and thin as they recirculate, as an analogue or tape
@@ -338,23 +342,33 @@ void ElectryFx::designFilters() noexcept
         // Pedal: a tight input coupling network, a mid-focused voice and a soft
         // top. A distortion pedal that passes the whole low end of a Drop-E
         // eighth string into its clipper turns the fundamental into
-        // intermodulation mud instead of a note.
-        channel.pedalHighpass.setHighpass(120.0f, 0.78f, rate);
-        channel.pedalVoice.setPeaking(720.0f, 0.90f, 5.5f, rate);
+        // intermodulation mud instead of a note - but the corner has to sit
+        // below that fundamental, not on top of it. At 120 Hz the eighth
+        // string's own 41 Hz was already 20 dB down before it reached the
+        // clipper, so the stage had almost no low end to generate weight from.
+        channel.pedalHighpass.setHighpass(88.0f, 0.78f, rate);
+        channel.pedalVoice.setPeaking(800.0f, 0.85f, 5.5f, rate);
         channel.pedalTilt.setLowpass(6800.0f, 0.70f, rate);
 
-        // Amp: the input stage rolls off slightly lower than the pedal, and a
-        // gentler mid emphasis keeps a chug's fundamental audible.
-        channel.ampHighpass.setHighpass(84.0f, 0.80f, rate);
-        channel.ampVoice.setPeaking(560.0f, 0.80f, 3.5f, rate);
+        // Amp: the input stage passes the whole Drop-E fundamental, because
+        // clipping it is what generates the second and third harmonics the
+        // cabinet turns into a chug's weight. The mid emphasis sits above the
+        // cabinet's scoop rather than inside it: pushing 560 Hz into the stage
+        // and then cutting 470 Hz after it wasted gain on the one region a
+        // metal rhythm tone wants out of the way.
+        channel.ampHighpass.setHighpass(52.0f, 0.80f, rate);
+        channel.ampVoice.setPeaking(850.0f, 0.75f, 4.0f, rate);
 
         // Cabinet. A single one-pole - the previous model - has neither the
         // thump, the mid character nor the steep top-end death of a real sealed
         // 4x12, and those three features are most of what makes a recorded
         // metal guitar recognisable as a guitar rather than as a waveshaper.
-        channel.cabinet[0].setHighpass(82.0f, 0.80f, rate);   // no output below the box
-        channel.cabinet[1].setPeaking(108.0f, 1.30f, 4.0f, rate);  // cabinet thump
-        channel.cabinet[2].setPeaking(470.0f, 0.90f, -5.0f, rate); // boxy honk removed
+        // A 4x12's useful output starts just below the low strings' second
+        // harmonic, and the thump that a palm-muted chug lives on sits in the
+        // octave above that.
+        channel.cabinet[0].setHighpass(74.0f, 0.80f, rate);   // no output below the box
+        channel.cabinet[1].setPeaking(102.0f, 1.20f, 5.5f, rate);  // cabinet thump
+        channel.cabinet[2].setPeaking(430.0f, 0.85f, -6.5f, rate); // boxy honk removed
         channel.cabinet[3].setPeaking(3100.0f, 1.10f, 4.5f, rate); // presence
         // Fourth-order Butterworth roll-off: a 12-inch speaker is essentially
         // gone an octave above five kilohertz. Running it here rather than

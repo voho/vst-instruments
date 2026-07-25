@@ -380,7 +380,10 @@ void testGainStageAliasing()
 void testCabinetVoicing()
 {
     const double reference = ampPathMagnitudeDb(1000.0);
-    const double low = ampPathMagnitudeDb(60.0);
+    // The probe sits below the modelled box corner, which is deliberately low
+    // enough for a Drop-E instrument that the eighth string's own fundamental
+    // reaches the cabinet rather than being cut before it.
+    const double low = ampPathMagnitudeDb(45.0);
     const double thump = ampPathMagnitudeDb(110.0);
     const double honk = ampPathMagnitudeDb(470.0);
     const double presence = ampPathMagnitudeDb(3100.0);

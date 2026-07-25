@@ -191,17 +191,24 @@ ElectryEngine::stringSpecs() noexcept
     // rather than `const`: a runtime-initialised function-local static costs a
     // guard-variable check on every call, and this table is read from the
     // per-sample render path.
+    // The fundamental T60 targets follow a dry electric low-E reference
+    // recording rather than a round number: its overall level falls about
+    // 24 dB over the eight seconds after the attack, and its fundamental
+    // partial decays more slowly still. A solid-body electric's low strings
+    // ring for tens of seconds, and the earlier ten-second-scale targets were
+    // what left the low register sounding hollow - the fundamental faded while
+    // the upper partials were still going.
     static constexpr std::array<StringSpec, stringCount> specs {{
         // Effective bending cores are smaller than the geometric core: the
         // wrap slips under flexure instead of behaving like a solid rod.
-        { 28, true, 2.0320f, 0.22f, 8.2f },  // E1, wound (.080)
-        { 35, true, 1.5240f, 0.25f, 7.8f },  // B1, wound (.060)
-        { 40, true, 1.0668f, 0.28f, 7.5f },  // E2, wound
-        { 45, true, 0.8128f, 0.30f, 7.0f },  // A2, wound
-        { 50, true, 0.6096f, 0.32f, 6.4f },  // D3, wound
-        { 55, false, 0.4064f, 1.0f, 5.4f },  // G3, plain
-        { 59, false, 0.2794f, 1.0f, 4.6f },  // B3, plain
-        { 64, false, 0.2286f, 1.0f, 4.0f },  // E4, plain
+        { 28, true, 2.0320f, 0.22f, 20.0f }, // E1, wound (.080)
+        { 35, true, 1.5240f, 0.25f, 19.0f }, // B1, wound (.060)
+        { 40, true, 1.0668f, 0.28f, 18.0f }, // E2, wound
+        { 45, true, 0.8128f, 0.30f, 16.5f }, // A2, wound
+        { 50, true, 0.6096f, 0.32f, 15.0f }, // D3, wound
+        { 55, false, 0.4064f, 1.0f, 12.0f }, // G3, plain
+        { 59, false, 0.2794f, 1.0f, 10.0f }, // B3, plain
+        { 64, false, 0.2286f, 1.0f, 8.5f },  // E4, plain
     }};
     return specs;
 }
@@ -795,7 +802,7 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     voice.bodyLossFactor = 1.0f
         / (1.0f + 3.8f * structuralCoupling * voice.bodyConductance);
     t60 *= voice.bodyLossFactor;
-    t60 = clampf(t60, 0.02f, 9.5f);
+    t60 = clampf(t60, 0.02f, 26.0f);
 
     if (voice.articulation == Articulation::Muted)
     {
@@ -826,12 +833,22 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         t60 = std::min(t60, 2.9f);
     }
 
-    // High-frequency decay target relative to the fundamental's decay.
-    float highRatio = lerp(0.44f, 0.055f, parameters.stringAge);
-    highRatio *= spec.wound ? 0.72f : 1.0f;
+    // High-frequency decay target relative to the fundamental's decay, at the
+    // `fHigh` reference below.
+    //
+    // A wound string is not a plain one with a thicker core: the wrap slides
+    // over the core and dissipates bending energy, so its top end dies far
+    // faster than its fundamental. Measured on the reference low E, content
+    // above a kilohertz has effectively gone inside a tenth of a second while
+    // the fundamental is still ringing seconds later. The ratio was previously
+    // an order of magnitude too generous, which is what kept a low note's
+    // 1-2 kHz partials sounding for as long as its fundamental - the nasal,
+    // clavinet-like register the reference does not have.
+    float highRatio = lerp(0.036f, 0.010f, parameters.stringAge);
+    highRatio *= spec.wound ? 1.0f : 7.5f;
     highRatio *= lerp(1.15f, 0.78f, parameters.stringGauge);
     highRatio *= lerp(0.86f, 1.16f, parameters.bodyWood);
-    highRatio *= lerp(0.90f, 1.15f, parameters.construction);
+    highRatio *= lerp(0.58f, 1.70f, parameters.construction);
 
     // Continuous bridge-hand damping. Unlike the Muted and Chug keyswitches
     // this is a smooth pressure that applies to every play style, so a phrase
@@ -846,7 +863,7 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         t60 = std::exp(lerp(std::log(t60), std::log(0.040f), palmMuteBlend_));
         highRatio *= lerp(1.0f, 0.50f, palmMuteBlend_);
     }
-    highRatio = clampf(highRatio, 0.02f, 0.9f);
+    highRatio = clampf(highRatio, 0.0015f, 0.9f);
 
     const float sampleRate = static_cast<float>(sampleRate_);
     const float f0 = voice.baseFrequency;
@@ -1256,7 +1273,10 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const auto& parameters = smoothedParameters_;
     const float sampleRate = static_cast<float>(sampleRate_);
     const auto& profile = voice.velocityProfile;
-    const float hardnessGain = lerp(0.82f, 1.48f, parameters.pickHardness);
+    // A stiffer pick is a little louder, but most of what it changes is the
+    // spectrum: the release corner below carries that, and leaving a wide
+    // amplitude range here as well turned Pick Hardness into a level control.
+    const float hardnessGain = lerp(0.98f, 1.26f, parameters.pickHardness);
 
     float amplitude = 0.48f * profile.amplitude * hardnessGain
                     * lerp(1.0f, 0.90f, parameters.stringAge);
@@ -1275,6 +1295,9 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     float noiseCutoff = spec.wound ? 2100.0f : 4800.0f;
     float modalBrightness = 1.0f;
+    // Hammer-ons and taps are fingered: their contact noise is a fingertip on
+    // the fingerboard, so the plectrum's hardness must not colour it.
+    bool plectrumContact = true;
     voice.excitationPolarity = 1.0f;
 
     const auto applyUpstrokeVoicing = [&]
@@ -1310,7 +1333,8 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             noiseLevel = 0.10f * fingerControl
                        * (0.10f + 0.30f * profile.noise);
             noiseMs = 1.6f;
-            noiseCutoff = 250.0f;
+            noiseCutoff = 185.0f;
+            plectrumContact = false;
             modalBrightness *= 0.25f;
             break;
         case Articulation::Tap:
@@ -1321,6 +1345,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             noiseLevel = fingerControl * (0.14f + 0.34f * profile.noise);
             noiseMs = 1.9f;
             noiseCutoff = 1150.0f;
+            plectrumContact = false;
             modalBrightness *= 0.72f;
             break;
         case Articulation::Muted:
@@ -1408,6 +1433,8 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                  * lerp(0.92f, 1.12f, parameters.construction)
                  * (1.0f + 0.24f * lowString);
     noiseCutoff *= lerp(0.72f, 1.22f, profile.effortCurve)
+                 * (plectrumContact
+                        ? lerp(0.55f, 1.75f, parameters.pickHardness) : 1.0f)
                  * (1.0f + 0.12f * lowString);
 
     // Most of a real pluck's sustained tone comes from the triangular string
@@ -1422,7 +1449,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     switch (voice.articulation)
     {
         case Articulation::HammerOn:
-            displacementGain = 0.42f;
+            displacementGain = 0.72f;
             transientGain = 0.0f;
             break;
         case Articulation::Tap:
@@ -1554,13 +1581,62 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         28.0f, std::min(900.0f, 0.20f * sampleRate));
     voice.excitationModalCoefficient = std::exp(
         -twoPi * articulationModalCutoff * inverseSampleRate_);
+    // The plectrum does not release every string equally quickly: a wound .080
+    // carries an order of magnitude more mass per unit length than a plain
+    // .009 at comparable tension, so it leaves the pick more slowly, and the
+    // duration of that release low-passes what enters the string. One further
+    // pole supplies it, with a corner that follows the square root of the
+    // string's own open frequency so the treble register keeps its brightness
+    // while the wound low strings lose the upper-partial excess.
+    //
+    // The ideal 1/n^2 release the two modal sections above implement is what a
+    // point pluck of a perfectly flexible string would give, and the pickup's
+    // induced-EMF differentiation turns that into a 1/n voltage spectrum. A dry
+    // low-E reference recording falls roughly 9 dB faster than 1/n by its
+    // fourteenth partial, and that surplus is what made the low register sound
+    // nasal and clavinet-like. This corner is therefore calibrated against that
+    // reference rather than derived; the research contract records it as
+    // voicing.
+    // A stiff pick, a hard stroke and a bright articulation all shorten the
+    // release, so the corner follows the same three factors the rest of the
+    // excitation does - a fingered hammer-on leaves the string far more slowly
+    // than a slapped one. `modalBrightness` is the per-style factor already
+    // resolved above, so the styles stay as distinct as they were.
+    const float openFrequency = midiToHz(static_cast<float>(spec.openMidiNote));
+    const float stringReleaseCutoff =
+        330.0f * std::sqrt(openFrequency / 82.4069f)
+               * lerp(0.32f, 2.70f, parameters.pickHardness)
+               * lerp(0.72f, 1.45f, profile.effortCurve)
+               * lerp(1.12f, 0.72f, parameters.stringAge);
+    const float releaseCutoff = clampf(
+        stringReleaseCutoff * modalBrightness,
+        60.0f, std::min(9000.0f, 0.30f * sampleRate));
+    voice.excitationReleaseCoefficient = std::exp(
+        -twoPi * releaseCutoff * inverseSampleRate_);
+    voice.excitationImageCoefficient = std::exp(
+        -twoPi * clampf(stringReleaseCutoff, 60.0f,
+                        std::min(9000.0f, 0.30f * sampleRate))
+        * inverseSampleRate_);
+
+    // The duration of the release governs the excitation's spectrum, not how
+    // hard the note lands, so the pole's own attenuation at the sounding
+    // fundamental is divided back out. Without this, reaching for Pick
+    // Hardness or playing harder would change the loudness as much as the
+    // timbre.
+    const float releaseRatio = 2.0f * voice.baseFrequency / releaseCutoff;
+    voice.excitationAmplitude *= clampf(
+        std::sqrt(1.0f + releaseRatio * releaseRatio), 1.0f, 6.0f);
+
     voice.excitationTailLength = std::clamp(
         static_cast<int>(8.0f * sampleRate
-                         / (twoPi * articulationModalCutoff)),
+                         / (twoPi * std::min(articulationModalCutoff,
+                                             releaseCutoff))),
         16, static_cast<int>(0.075f * sampleRate));
     voice.excitationShaper.reset();
     voice.excitationModalShaper1.reset();
     voice.excitationModalShaper2.reset();
+    voice.excitationReleaseShaper.reset();
+    voice.excitationImageShaper.reset();
     voice.noiseBandCoefficient = std::exp(
         -twoPi * clampf(noiseCutoff, 250.0f, 0.45f * sampleRate) * inverseSampleRate_);
     voice.noiseShaper.state = 0.0f;
@@ -2290,11 +2366,13 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         const float slip = smoothStep((1.0f - progress) * voice.excitationSlipScale);
         const float window = load * slip;
         const float releasePulse = window * voice.excitationPolarity;
-        const float modal = voice.excitationModalShaper2.process(
-            voice.excitationModalShaper1.process(
-                voice.excitationAmplitude * releasePulse,
+        const float modal = voice.excitationReleaseShaper.process(
+            voice.excitationModalShaper2.process(
+                voice.excitationModalShaper1.process(
+                    voice.excitationAmplitude * releasePulse,
+                    voice.excitationModalCoefficient),
                 voice.excitationModalCoefficient),
-            voice.excitationModalCoefficient);
+            voice.excitationReleaseCoefficient);
         const float edge = voice.excitationShaper.process(
             voice.excitationTransientAmplitude * releasePulse,
             voice.excitationPulseCoefficient);
@@ -2307,10 +2385,12 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     }
     else if (voice.excitationPhase == ExcitationPhase::Tail)
     {
-        const float modal = voice.excitationModalShaper2.process(
-            voice.excitationModalShaper1.process(
-                0.0f, voice.excitationModalCoefficient),
-            voice.excitationModalCoefficient);
+        const float modal = voice.excitationReleaseShaper.process(
+            voice.excitationModalShaper2.process(
+                voice.excitationModalShaper1.process(
+                    0.0f, voice.excitationModalCoefficient),
+                voice.excitationModalCoefficient),
+            voice.excitationReleaseCoefficient);
         const float edge = voice.excitationShaper.process(
             0.0f, voice.excitationPulseCoefficient);
         excitation = modal + edge;
@@ -2358,11 +2438,21 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         // reduces exactly to the previous single-point image, while a real
         // width washes the comb notches out with frequency instead of holding
         // them razor sharp all the way to Nyquist.
+        //
+        // It is also darker than the direct wave: it has travelled to the pick
+        // and back through the same lossy string. The low-pass has unity DC
+        // gain, so the comb still rejects a net displacement exactly - which
+        // matters, because the loop deliberately carries no DC blocker - while
+        // the high-order nulls stop cancelling perfectly. An exact copy gave
+        // notches twenty decibels deep where the reference recording's comb
+        // ripple is a few decibels.
+        const float imageSource = voice.excitationImageShaper.process(
+            injected, voice.excitationImageCoefficient);
         const float width = voice.excitationCombWidth;
         const float centre = voice.excitationCombDelay;
         for (auto* loop : { &vertical, &horizontal })
         {
-            const float image = -injected
+            const float image = -imageSource
                 * (loop == &vertical ? verticalWeight : horizontalWeight);
             loop->writeAdd(centre - width, 0.25f * image);
             loop->writeAdd(centre, 0.5f * image);

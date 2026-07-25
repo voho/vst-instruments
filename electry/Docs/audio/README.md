@@ -26,6 +26,10 @@ the physical model and the modelled amplifier.
 
 All files are 44.1 kHz 16-bit PCM.
 
+The low register and the palm-muted rhythm tone in this set were voiced against
+a dry electric low-E reference recording; `Docs/physical-modeling-research.md`
+records what was compared and what changed.
+
 ## Mono files are exact, not downmixed
 
 Electry's Mono output field is exact dual mono: the engine renders one channel
@@ -50,20 +54,20 @@ The rendered peak before normalisation, for the record:
 
 | File | Rendered peak | Normalisation applied |
 | --- | --- | --- |
-| `01-range-open-strings.wav` | −8.4 dBFS | +5.4 dB |
-| `02-range-full-fretboard.wav` | −11.0 dBFS | +8.0 dB |
-| `03-play-styles.wav` | −2.4 dBFS | −0.6 dB |
-| `04-drop-e-rhythm-dry.wav` | −12.5 dBFS | +9.5 dB |
-| `05-drop-e-rhythm-amp.wav` | −20.0 dBFS | +17.0 dB |
-| `06-lead-amp-delay-room.wav` | −16.1 dBFS | +13.1 dB |
-| `07-pickups-and-tone.wav` | −11.4 dBFS | +8.4 dB |
-| `08-sympathetic-strum-stereo.wav` | −13.3 dBFS | +10.3 dB |
-| `09-guitar-build-contrasts.wav` | −7.5 dBFS | +4.5 dB |
-| `10-velocity-dynamics.wav` | −13.7 dBFS | +10.7 dB |
+| `01-range-open-strings.wav` | −12.6 dBFS | +9.6 dB |
+| `02-range-full-fretboard.wav` | −10.9 dBFS | +7.9 dB |
+| `03-play-styles.wav` | −2.5 dBFS | −0.5 dB |
+| `04-drop-e-rhythm-dry.wav` | −13.8 dBFS | +10.8 dB |
+| `05-drop-e-rhythm-amp.wav` | −19.2 dBFS | +16.2 dB |
+| `06-lead-amp-delay-room.wav` | −15.9 dBFS | +12.9 dB |
+| `07-pickups-and-tone.wav` | −13.2 dBFS | +10.2 dB |
+| `08-sympathetic-strum-stereo.wav` | −15.2 dBFS | +12.2 dB |
+| `09-guitar-build-contrasts.wav` | −8.9 dBFS | +5.9 dB |
+| `10-velocity-dynamics.wav` | −14.8 dBFS | +11.8 dB |
 
-`05` renders 7.5 dB *below* `04` at the peak while sitting slightly above it in
-average level: the amplifier compresses and the cabinet removes the top of the
-pick transient, which is what an amplifier is supposed to do to a rhythm part.
+`05` renders 5.4 dB *below* `04` at the peak while sitting above it in average
+level: the amplifier compresses and the cabinet removes the top of the pick
+transient, which is what an amplifier is supposed to do to a rhythm part.
 
 ## Regenerating
 
