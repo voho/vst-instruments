@@ -295,6 +295,16 @@ mode shape; it is fitted against the muted reference power chords, where it
 recovered 5.4 dB in the 60-85 Hz band and removed 2.4 dB of the 1.4-2.7 kHz
 excess.
 
+The dead-note choke is tracked as a separate rate and stays broadband. It is
+the fretting hand somewhere up the neck rather than the heel resting by the
+bridge, so the mode-shape argument above does not describe it. The two rates are
+added rather than switched between, so a dead note played under palm-mute
+pressure carries both contacts with each one's own frequency behaviour. In
+isolation the distinction turns out to be inaudible - a dead note's 32 ms decay
+means what is heard is the percussion transient rather than the loop's ring, and
+measured high-frequency energy moves by 0.04 percentage points either way - but
+the model now says what it means.
+
 That distinction is not cosmetic. The previous model applied the hand as a
 minimum on the fundamental's T60 and then multiplied *that* result by the
 string's high-frequency ratio. With the wound strings' corrected ratio - around
@@ -474,6 +484,10 @@ a resonant electrical circuit. Electry implements each element:
   the references do not have. Because the comb no longer rejects DC exactly,
   the 5 Hz output blocker is now the only stage removing an offset rather
   than a second line of defence.
+
+  The same weight applies to the bridge-coupled sympathetic strings, which are
+  sensed by the same physical pickup and so cancel no better there than on a
+  played string.
 
   Modelling the humbucker's two coils explicitly was tried as the alternative,
   summing two position combs 19 mm apart. The arithmetic is attractive - two

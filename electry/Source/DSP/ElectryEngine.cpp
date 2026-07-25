@@ -839,10 +839,18 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     // millisecond high-frequency target and the note collapsed 36 dB inside
     // 25 ms. That is what read as a cut chug rather than a muted note.
     //
-    // Zero hand means exactly zero: `handT60` stays at zero and the parallel
+    // Zero hand means exactly zero: both targets stay at zero and the parallel
     // combination below is skipped entirely, so an unmuted string is
     // bit-for-bit what it was.
+    //
+    // The two contacts are tracked apart because they sit in different places.
+    // `handT60` is the bridge hand - the Muted and Chug styles and the
+    // continuous pressure - whose loss is tilted with frequency below.
+    // `chokeT60` is the fretting hand's dead-note choke, which is not near the
+    // bridge and stays broadband. They still combine in parallel, so a dead
+    // note played under palm-mute pressure gets both.
     float handT60 = 0.0f;
+    float chokeT60 = 0.0f;
     if (voice.articulation == Articulation::Muted)
     {
         handT60 = std::exp(lerp(std::log(2.60f), std::log(0.32f),
@@ -860,8 +868,12 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     {
         // Fretting-hand pressure releases before the string establishes a
         // sustained pitch, leaving only a short deterministic percussion hit.
-        // This one really is a choke rather than a load.
-        handT60 = 0.032f;
+        // This one really is a choke rather than a load, and it is tracked
+        // separately from the bridge hand for exactly that reason: it is a
+        // contact somewhere up the neck, so the near-the-bridge mode-shape
+        // argument that tilts the bridge hand's loss with frequency does not
+        // describe it. It stays broadband.
+        chokeT60 = 0.032f;
     }
     else if (voice.articulation == Articulation::NaturalHarmonic)
     {
@@ -907,12 +919,12 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     }
     highRatio = clampf(highRatio, 0.0015f, 0.9f);
 
-    // The string's own targets, before the hand.
+    // The string's own targets, before either hand.
     float t60High = t60 * highRatio;
-    if (handT60 > 0.0f)
+    if (handT60 > 0.0f || chokeT60 > 0.0f)
     {
         // Losses in parallel: decay rates add, so the reciprocals of the decay
-        // times do. The hand therefore dominates wherever it is tighter than
+        // times do. A hand therefore dominates wherever it is tighter than
         // the string and disappears wherever it is not, at every frequency
         // independently - which is why a muted note keeps a body instead of
         // having its top end scaled into nothing.
@@ -934,10 +946,19 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // resolve the mode shape. Fitted against the muted reference power
         // chords, where it recovered 5.4 dB in the 60-85 Hz band and removed
         // 2.4 dB of the 1.4-2.7 kHz excess.
+        //
+        // The dead-note choke is added at the same rate on both, because it is
+        // the fretting hand somewhere up the neck rather than the heel resting
+        // by the bridge, and none of the reasoning above describes it. Adding
+        // the two rates rather than switching between them keeps a dead note
+        // played under palm-mute pressure correct: both contacts are present,
+        // and each contributes with its own frequency behaviour.
         constexpr float handHighFrequencyTilt = 3.0f;
-        const float handRate = 1.0f / handT60;
-        t60 = 1.0f / (1.0f / t60 + handRate);
-        t60High = 1.0f / (1.0f / t60High + handRate * handHighFrequencyTilt);
+        const float handRate = handT60 > 0.0f ? 1.0f / handT60 : 0.0f;
+        const float chokeRate = chokeT60 > 0.0f ? 1.0f / chokeT60 : 0.0f;
+        t60 = 1.0f / (1.0f / t60 + handRate + chokeRate);
+        t60High = 1.0f / (1.0f / t60High
+                          + handRate * handHighFrequencyTilt + chokeRate);
     }
     t60 = clampf(t60, 0.02f, 26.0f);
     t60High = clampf(t60High, 0.008f, t60);
@@ -2773,7 +2794,13 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
     const float total = sample + sympatheticInjection_ * drive;
     loop.line[static_cast<std::size_t>(loop.writeIndex & (delayLineSize - 1))]
         = total;
-    const float tap = total - loop.readFractional(voice.sympatheticPickupDelay);
+    // The same physical pickup senses this string, so it cancels no better here
+    // than it does on a played one: `pickupCombDepth` has to apply to the
+    // coupled ring too, or a sympathetically excited low string keeps the
+    // hollow fundamental and the infinitely deep position nulls this weight
+    // exists to remove.
+    const float tap = total
+        - pickupCombDepth * loop.readFractional(voice.sympatheticPickupDelay);
     loop.writeIndex = (loop.writeIndex + 1) & (delayLineSize - 1);
     loop.currentDelay += loop.delaySmoothing
                        * (loop.targetDelay - loop.currentDelay);
