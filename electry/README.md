@@ -224,11 +224,16 @@ Notes Off.
   injected into, so the control is an exact bypass and not a small residue.
   Coupled strings reuse the idle voice's own delay line, so the feature costs
   no extra memory, and they retire as soon as they fall below audibility.
-- **Bridge-hand damping:** Palm Mute is a continuous pressure, independent of
-  the Muted and Chug keyswitches, that applies to every play style. It
-  interpolates the string's decay geometrically from its own T60 toward a hard
-  40 ms stop and darkens it as the heel of the hand covers more of the string.
-  Because it re-solves the same loop filters and re-applies the analytic phase
+- **Bridge-hand damping:** the heel of the hand is a broadband absorber, so its
+  loss is added to the string's own rather than rescaling it: the decay rates
+  sum, which is to say the reciprocals of the decay times do. That is what makes
+  a palm mute behave like a hand instead of like a gate. The Muted and Chug
+  keyswitches and the continuous Palm Mute pressure are the same absorber at
+  different depths, and they combine in parallel too. Their targets follow dry
+  muted power-chord reference recordings: a real short muted chord falls a couple
+  of decibels in its first 25 ms and reaches -40 dB around half a second later,
+  while a looser one holds a low tail for seconds. Because the damping
+  re-solves the same loop filters and re-applies the analytic phase
   compensation, a damped string stays exactly in tune. Zero pressure is a
   mathematical no-op. MIDI CC 2 adds to it live.
 - **Strum travel:** simultaneous note-ons inside a 35 ms window are one pick

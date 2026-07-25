@@ -804,25 +804,43 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     t60 *= voice.bodyLossFactor;
     t60 = clampf(t60, 0.02f, 26.0f);
 
+    // The bridge hand is a broadband absorber, not a rescaling of the string's
+    // own frequency-dependent loss. Modelling it as a separate loss that adds
+    // to the string's - in parallel, so the reciprocal decay rates sum - is
+    // what makes a palm mute behave like a hand and not like a gate.
+    //
+    // The targets come from dry muted power-chord reference recordings. A real
+    // short muted chord falls only a couple of decibels in its first 25 ms and
+    // takes around half a second to reach -40 dB; a long one holds a low tail
+    // for seconds. The previous model applied the hand as a minimum on the
+    // fundamental's T60 and then multiplied *that* by the string's
+    // high-frequency ratio, so a half-second mute target implied a seventeen
+    // millisecond high-frequency target and the note collapsed 36 dB inside
+    // 25 ms. That is what read as a cut chug rather than a muted note.
+    //
+    // Zero hand means exactly zero: `handT60` stays at zero and the parallel
+    // combination below is skipped entirely, so an unmuted string is
+    // bit-for-bit what it was.
+    float handT60 = 0.0f;
     if (voice.articulation == Articulation::Muted)
     {
-        const float muteT60 = std::exp(lerp(std::log(1.0f), std::log(0.055f),
-                                            parameters.muteDamping));
-        t60 = std::min(t60, muteT60);
+        handT60 = std::exp(lerp(std::log(2.60f), std::log(0.32f),
+                                parameters.muteDamping));
     }
     else if (voice.articulation == Articulation::Chug)
     {
-        // A chug is a firmer bridge-hand mute than the general Muted style:
-        // its low fundamental survives briefly while the loop is stopped hard.
-        const float chugT60 = std::exp(lerp(std::log(0.32f), std::log(0.028f),
-                                            parameters.muteDamping));
-        t60 = std::min(t60, chugT60);
+        // A chug is a firmer bridge-hand mute than the general Muted style, so
+        // it lands nearer the reference's short mute than its long one - but it
+        // still has to be a note.
+        handT60 = std::exp(lerp(std::log(1.40f), std::log(0.20f),
+                                parameters.muteDamping));
     }
     else if (voice.articulation == Articulation::DeadNote)
     {
         // Fretting-hand pressure releases before the string establishes a
         // sustained pitch, leaving only a short deterministic percussion hit.
-        t60 = std::min(t60, 0.032f);
+        // This one really is a choke rather than a load.
+        handT60 = 0.032f;
     }
     else if (voice.articulation == Articulation::NaturalHarmonic)
     {
@@ -853,17 +871,36 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     // Continuous bridge-hand damping. Unlike the Muted and Chug keyswitches
     // this is a smooth pressure that applies to every play style, so a phrase
     // can open from a dead chug into a ringing chord without a style change.
-    // It interpolates geometrically from the string's own decay toward a hard
-    // 40 ms stop, so a pressure of exactly zero is a mathematical no-op, and
-    // it darkens the string as the heel of the hand covers more of it. The
-    // loop filters are re-solved and the loop delay re-compensated, so the
-    // damped string stays exactly in tune.
+    // It is the same absorber as those styles, so it joins them in parallel
+    // rather than overriding them, and a pressure of exactly zero remains a
+    // mathematical no-op. The heel of the hand is a soft, lossy contact, so it
+    // also darkens the string as it covers more of it.
     if (palmMuteBlend_ > 0.0f)
     {
-        t60 = std::exp(lerp(std::log(t60), std::log(0.040f), palmMuteBlend_));
-        highRatio *= lerp(1.0f, 0.50f, palmMuteBlend_);
+        const float pressureT60 = std::exp(lerp(std::log(4.0f), std::log(0.080f),
+                                                palmMuteBlend_));
+        handT60 = handT60 > 0.0f
+            ? 1.0f / (1.0f / handT60 + 1.0f / pressureT60)
+            : pressureT60;
+        highRatio *= lerp(1.0f, 0.62f, palmMuteBlend_);
     }
     highRatio = clampf(highRatio, 0.0015f, 0.9f);
+
+    // The string's own targets, before the hand.
+    float t60High = t60 * highRatio;
+    if (handT60 > 0.0f)
+    {
+        // Losses in parallel: decay rates add, so the reciprocals of the decay
+        // times do. The hand therefore dominates wherever it is tighter than
+        // the string and disappears wherever it is not, at every frequency
+        // independently - which is why a muted note keeps a body instead of
+        // having its top end scaled into nothing.
+        const float handRate = 1.0f / handT60;
+        t60 = 1.0f / (1.0f / t60 + handRate);
+        t60High = 1.0f / (1.0f / t60High + handRate);
+    }
+    t60 = clampf(t60, 0.02f, 26.0f);
+    t60High = clampf(t60High, 0.008f, t60);
 
     const float sampleRate = static_cast<float>(sampleRate_);
     const float f0 = voice.baseFrequency;
@@ -874,12 +911,12 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     const auto configureLoop = [&] (PolarisationLoop& loop, float t60Scale)
     {
         const float t60Fundamental = std::max(0.02f, t60 * t60Scale);
-        const float t60High = std::max(0.012f, t60Fundamental * highRatio);
+        const float t60HighTarget = std::max(0.008f, t60High * t60Scale);
         const float period = sampleRate / f0;
         const float gainAtF0 =
             std::pow(10.0f, -3.0f * period / (t60Fundamental * sampleRate));
         const float gainAtHigh =
-            std::pow(10.0f, -3.0f * period / (t60High * sampleRate));
+            std::pow(10.0f, -3.0f * period / (t60HighTarget * sampleRate));
         const float ratio = clampf(gainAtHigh / std::max(gainAtF0, 1.0e-6f),
                                    1.0e-4f, 1.0f);
 
@@ -1228,7 +1265,7 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
               * lerp(1.08f, 0.38f, parameters.stringAge)
               * lerp(0.88f, 1.18f, parameters.stringGauge);
     if (palmMuteBlend_ > 0.0f)
-        t60 = std::exp(lerp(std::log(t60), std::log(0.040f), palmMuteBlend_));
+        t60 = std::exp(lerp(std::log(t60), std::log(0.080f), palmMuteBlend_));
     t60 = clampf(t60, 0.03f, 9.5f);
 
     // A gentle fixed high-frequency loss: the coupled ring is a low-level

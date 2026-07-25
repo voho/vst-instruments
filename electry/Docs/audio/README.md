@@ -58,14 +58,14 @@ The rendered peak before normalisation, for the record:
 | `02-range-full-fretboard.wav` | −10.9 dBFS | +7.9 dB |
 | `03-play-styles.wav` | −2.5 dBFS | −0.5 dB |
 | `04-drop-e-rhythm-dry.wav` | −13.8 dBFS | +10.8 dB |
-| `05-drop-e-rhythm-amp.wav` | −19.2 dBFS | +16.2 dB |
+| `05-drop-e-rhythm-amp.wav` | −19.3 dBFS | +16.3 dB |
 | `06-lead-amp-delay-room.wav` | −15.9 dBFS | +12.9 dB |
 | `07-pickups-and-tone.wav` | −13.2 dBFS | +10.2 dB |
 | `08-sympathetic-strum-stereo.wav` | −15.2 dBFS | +12.2 dB |
 | `09-guitar-build-contrasts.wav` | −8.9 dBFS | +5.9 dB |
 | `10-velocity-dynamics.wav` | −14.8 dBFS | +11.8 dB |
 
-`05` renders 5.4 dB *below* `04` at the peak while sitting above it in average
+`05` renders 5.5 dB *below* `04` at the peak while sitting above it in average
 level: the amplifier compresses and the cabinet removes the top of the pick
 transient, which is what an amplifier is supposed to do to a rhythm part.
 
