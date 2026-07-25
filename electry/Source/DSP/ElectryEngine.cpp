@@ -27,6 +27,25 @@ constexpr float telecasterNeckPickupMetres = 0.163f;
 constexpr float humbuckerApertureMetres = 0.0210f;
 constexpr float singleCoilApertureMetres = 0.0048f;
 
+// Weight on the delayed tap of the pickup position comb.
+//
+// Subtracting two taps of equal weight puts an exact zero at DC and an
+// infinitely deep null at every multiple of c/2x, which is what a point sensor
+// on an ideal one-dimensional string would do. A real pickup does not: it sees
+// the string through a finite aperture, a humbucker sums two coils at two
+// different distances from the bridge, and the field is three-dimensional, so
+// the two contributions never cancel exactly. Measured pickup responses notch
+// by something like 6 to 15 dB rather than vanishing.
+//
+// A weight of b makes the null (1-b)/(1+b) deep - 12 dB here - and leaves a
+// finite response at low frequencies, where perfect cancellation was costing
+// the fundamental most. Against the dry reference recordings this recovered
+// 4.7 dB in the 60-85 Hz band on an open low E and 5.4 dB on a muted power
+// chord, which is the hollow, bodyless low register the references do not
+// have. Explicitly modelling the humbucker's two coils was tried instead and
+// measured no better than this, at two extra fractional reads per string.
+constexpr float pickupCombDepth = 0.60f;
+
 // Loaded electrical resonance of the two anchor pickup circuits (coil
 // inductance and capacitance with typical pot and cable loading).
 constexpr float humbuckerResonanceHz = 2000.0f;
@@ -393,8 +412,10 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // The output DC blocker corner stays at 5 Hz regardless of rate. Inside
     // the string loops there is deliberately no DC filter: a fixed-corner
     // blocker's steep phase lead near a low fundamental would detune the
-    // upper partials against the compensated fundamental, and the pickup
-    // position comb already rejects DC exactly.
+    // upper partials against the compensated fundamental. The pickup position
+    // comb no longer rejects DC exactly - `pickupCombDepth` is deliberately
+    // below one - so this output stage is now the only thing removing any
+    // offset the comb passes, rather than a second line of defence.
     outputDcCoefficient_ = std::exp(-twoPi * 5.0f * inverseSampleRate_);
     bodyEmfLowpassCoefficient_ = std::exp(
         -twoPi * std::min(4000.0f, 0.30f * static_cast<float>(sampleRate_))
@@ -895,9 +916,28 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // the string and disappears wherever it is not, at every frequency
         // independently - which is why a muted note keeps a body instead of
         // having its top end scaled into nothing.
+        //
+        // The heel of the hand rests near the bridge, and a contact there does
+        // not absorb every mode equally: mode n's displacement under the hand
+        // goes as sin(n*pi*x/L), so the energy it can take out of that mode
+        // rises steeply with n while the fundamental, which barely moves that
+        // close to the bridge, is left comparatively free. Treating the hand as
+        // a broadband absorber - the same rate at both fitted points - damped
+        // the fundamental as hard as the top end, which is what made a palm
+        // mute read as a thin, cut-off pick rather than a heavy chug.
+        //
+        // The mode-shape ratio between the fundamental and the 3.6 kHz fitted
+        // point is nearly two orders of magnitude, and it oscillates once
+        // n*pi*x/L passes the first quarter period. This bounded factor is a
+        // deliberately conservative monotone stand-in for it: enough to keep
+        // the fundamental while the hand kills the top, without pretending to
+        // resolve the mode shape. Fitted against the muted reference power
+        // chords, where it recovered 5.4 dB in the 60-85 Hz band and removed
+        // 2.4 dB of the 1.4-2.7 kHz excess.
+        constexpr float handHighFrequencyTilt = 3.0f;
         const float handRate = 1.0f / handT60;
         t60 = 1.0f / (1.0f / t60 + handRate);
-        t60High = 1.0f / (1.0f / t60High + handRate);
+        t60High = 1.0f / (1.0f / t60High + handRate * handHighFrequencyTilt);
     }
     t60 = clampf(t60, 0.02f, 26.0f);
     t60High = clampf(t60High, 0.008f, t60);
@@ -2578,8 +2618,10 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     if (neckPathActive_)
     {
         const float delay = voice.pickupDelayNeck;
-        float tap = 0.85f * (verticalTotal - vertical.readFractional(delay))
-                  + 0.35f * (horizontalTotal - horizontal.readFractional(delay))
+        float tap = 0.85f * (verticalTotal
+                             - pickupCombDepth * vertical.readFractional(delay))
+                  + 0.35f * (horizontalTotal
+                             - pickupCombDepth * horizontal.readFractional(delay))
                   + 0.55f * artifactPickup;
         tap = voice.apertureNeck.process(tap, voice.apertureNeckLength);
         const float flux = voice.fluxScale
@@ -2603,8 +2645,10 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     if (bridgePathActive_)
     {
         const float delay = voice.pickupDelayBridge;
-        float tap = 0.85f * (verticalTotal - vertical.readFractional(delay))
-                  + 0.35f * (horizontalTotal - horizontal.readFractional(delay))
+        float tap = 0.85f * (verticalTotal
+                             - pickupCombDepth * vertical.readFractional(delay))
+                  + 0.35f * (horizontalTotal
+                             - pickupCombDepth * horizontal.readFractional(delay))
                   + artifactPickup;
         tap = voice.apertureBridge.process(tap, voice.apertureBridgeLength);
         const float flux = voice.fluxScale

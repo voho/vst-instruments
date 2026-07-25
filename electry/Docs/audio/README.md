@@ -11,6 +11,13 @@ the plug-in actually sounds like. No samples, impulse responses or external
 processing are involved anywhere in this directory: the whole set comes out of
 the physical model and the modelled amplifier.
 
+All ten files were last re-rendered after the pickup position comb was given a
+finite null depth and the bridge hand a frequency-dependent absorption rate.
+Both changes touch every note, so every file here moved: the low register
+carries substantially more fundamental, and palm mutes read as weighted chugs
+rather than as short picks. The measurements behind both are in the
+[research contract](../physical-modeling-research.md#voicing-against-a-reference-recording).
+
 | File | Channels | Length | What it demonstrates |
 | --- | --- | --- | --- |
 | [`01-range-open-strings.wav`](01-range-open-strings.wav) | mono | 6.2 s | The eight open strings of the Drop-E instrument, low to high (E1 B1 E2 A2 D3 G3 B3 E4), then all eight ringing together. Default settings. |
