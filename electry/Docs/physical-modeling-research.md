@@ -22,12 +22,12 @@ level-matched blind listening.
 | Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase excitation combines contact retention and scrape, a principal string-period-scaled two-pole modal release that approximates triangular pluck displacement, one further release pole whose corner follows the square root of the string's open frequency (a heavier string leaves the pick more slowly) with its own attenuation at the fundamental divided back out, and a normally much smaller broadband pick-edge transient for sustained pick styles; the release window is asymmetric (a slow load and a fast slip, both smoothsteps, at constant area) and its reflected image is distributed over a hardness-dependent contact patch of 0.5 to 1.5 mm; delay-line projection is level-calibrated to open E4 so equal effort remains usable on E1, while polarity, polarisation split, spectrum, and comb position differ per style | A realtime modal approximation to released-string displacement plus a separate pick edge, a distributed contact width, and bounded register calibration; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, or force-based finger contact solver |
 | Fret collisions (slap) | Bilbao and Torin's energy-balanced string/fretboard collision modeling | A decaying collision window whose soft limit clips vertical displacement against a velocity-dependent threshold and re-radiates deterministic rattle noise | Collision-informed slap behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved, with a soft finger excitation and no plectrum noise | Continuous-state legato with fingered attacks; not a distributed finger-force model |
-| Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element or capture-fitted model of named pickups |
+| Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite, as a real aperture, two-coil sum and three-dimensional field never cancel exactly; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
 | Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Structural bridge displacement is differentiated before four double-precision, peak-normalised modal resonators and a 4 kHz guard, producing body-induced voltage before the loaded pickup coils; positive real modal conductance across each note's first six partials can only shorten loop T60 | Geometry-informed structural pickup voltage plus passive mode-dependent energy extraction; not undifferentiated acoustic body displacement mixed into pickup voltage, and the mode tables remain voicing estimates rather than measured admittance data |
 | Construction controls | Solid-body material/geometry contrasts, humbucker vs single-coil construction, set-neck vs bolt-on, and modern extended-range scale practice | Wood, size, shape, construction, and pickup type interpolate between contrasting reference voicings; scale length spans 25.5 to 28 inches for Drop-E | Parametrized construction and extended-range voicing; not a licensed or capture-verified reproduction of a named instrument |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, release damping noise, and slap body knock, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
 | Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with its own T60-derived loop filter, exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
-| Bridge-hand damping | Palm-muting practice, the same decay-targeted loop design, and dry muted power-chord reference recordings for the depths | The hand is a broadband absorber whose loss adds to the string's own in parallel, so decay rates sum at every frequency independently; the Muted and Chug keyswitches and the continuous pressure are one absorber at different depths and combine the same way, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as an additive broadband loss with reference-calibrated depths, applied identically to every play style; not a distributed hand/string contact solve |
+| Bridge-hand damping | Palm-muting practice, the same decay-targeted loop design, and dry muted power-chord reference recordings for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; its rate at the high reference is three times its rate at the fundamental, because a contact near the bridge removes far more energy from high modes than from a fundamental that barely moves there; the Muted and Chug keyswitches and the continuous pressure are one absorber at different depths and combine the same way, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as an additive loss with reference-calibrated depths and a bounded, conservative frequency tilt, applied identically to every play style; not a distributed hand/string contact solve or a resolved mode-shape weighting |
 | Strum travel | Ordinary plectrum kinematics | Note-ons inside a 35 ms window are treated as one stroke; the first string fixes the edge the pick starts from and every further string's excitation is delayed by the travel time per string crossed | Constant-velocity pick travel across the string plane; not a model of pick angle, chord voicing, or the player's hand position |
 | Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, partial non-slap fret contact, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
 | Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
@@ -280,6 +280,31 @@ The hand dominates wherever it is tighter than the string and vanishes wherever
 it is not, which is the whole point: a muted note keeps a body instead of having
 its top end scaled into nothing.
 
+The hand's own rate is not equal at those two points. The heel rests near the
+bridge, and mode `n`'s displacement under it goes as `sin(n pi x / L)`, so the
+energy the contact can remove rises steeply with `n` while the fundamental,
+which barely moves that close to the bridge, is left comparatively free. The
+high reference therefore takes the hand's rate multiplied by three. Treating the
+hand as a genuinely broadband absorber - the same rate at both points - damped
+the fundamental as hard as the top end, and that is what made a palm mute read
+as a thin, cut-off pick rather than a heavy chug. The mode-shape ratio between
+the fundamental and the 3.6 kHz point is nearly two orders of magnitude and
+oscillates once `n pi x / L` passes its first quarter period, so the factor of
+three is a deliberately conservative monotone stand-in rather than a resolved
+mode shape; it is fitted against the muted reference power chords, where it
+recovered 5.4 dB in the 60-85 Hz band and removed 2.4 dB of the 1.4-2.7 kHz
+excess.
+
+The dead-note choke is tracked as a separate rate and stays broadband. It is
+the fretting hand somewhere up the neck rather than the heel resting by the
+bridge, so the mode-shape argument above does not describe it. The two rates are
+added rather than switched between, so a dead note played under palm-mute
+pressure carries both contacts with each one's own frequency behaviour. In
+isolation the distinction turns out to be inaudible - a dead note's 32 ms decay
+means what is heard is the percussion transient rather than the loop's ring, and
+measured high-frequency energy moves by 0.04 percentage points either way - but
+the model now says what it means.
+
 That distinction is not cosmetic. The previous model applied the hand as a
 minimum on the fundamental's T60 and then multiplied *that* result by the
 string's high-frequency ratio. With the wound strings' corrected ratio - around
@@ -437,14 +462,40 @@ Pickups*](https://www.researchgate.net/publication/234034228_Acoustics_and_Model
 finite sensing aperture, a distance-dependent magnetic-flux distortion, and
 a resonant electrical circuit. Electry implements each element:
 
-- **Position comb.** Per string and pickup, `y(n) = s(n) - s(n - D)` with
+- **Position comb.** Per string and pickup, `y(n) = s(n) - b * s(n - D)` with
   `D = (d / L_sounding) * period`. The distances from the bridge morph
   between the anchors (bridge pickup 43 mm to 28 mm, neck pickup 155 mm to
   163 mm), and because `D` follows the sounding length, fretting up the neck
   moves the comb exactly as the geometry does. Partials with a node at the
-  pickup cancel; the bridge position's weak fundamental sensing is why it
-  reads thin and bright, which the regression suite checks as a centroid
-  ordering.
+  pickup are attenuated; the bridge position's weak fundamental sensing is
+  why it reads thin and bright, which the regression suite checks as a
+  centroid ordering.
+
+  The delayed tap carries weight `b = 0.60` rather than one. Equal weights
+  would put an exact zero at DC and an infinitely deep null at every multiple
+  of `c / 2d`, which is what a point sensor on an ideal one-dimensional string
+  would give. A real pickup does not cancel exactly: it senses through a
+  finite aperture, a humbucker sums two coils at two different distances, and
+  the field is three-dimensional. Measured responses notch by roughly 6 to
+  15 dB, and `b = 0.60` places the null at 12 dB, mid-range of that. The
+  perfect cancellation was costing the fundamental most: against the dry
+  reference recordings this recovered 4.7 dB in the 60-85 Hz band on an open
+  low E and 5.4 dB on a muted power chord, the hollow, bodyless low register
+  the references do not have. Because the comb no longer rejects DC exactly,
+  the 5 Hz output blocker is now the only stage removing an offset rather
+  than a second line of defence.
+
+  The same weight applies to the bridge-coupled sympathetic strings, which are
+  sensed by the same physical pickup and so cancel no better there than on a
+  played string.
+
+  Modelling the humbucker's two coils explicitly was tried as the alternative,
+  summing two position combs 19 mm apart. The arithmetic is attractive - two
+  combs sum to `2 - 2b cos(w Δ/c) e^{-j w 2 d̄ / c}`, whose depth modulation
+  vanishes at `c / 4Δ`, almost exactly where the single-tap model's null sits -
+  but measured against the same references it scored no better than the finite
+  weight above, with or without narrowing the aperture to a single coil, at the
+  cost of two extra fractional reads per string. It is not in the model.
 - **Aperture.** A fractional rectangular moving average of length `Fs*w/c`,
   where transverse wave speed `c = 2 L f_open`. A cumulative-sum ring gives
   this finite spatial window in O(1) per sample, including fractional window
@@ -692,15 +743,36 @@ attack's whole upper band. Chug's brightness multipliers above one were removed.
 
 That closed part of the gap and not all of it. The muted attack's upper bands
 came down (Chug 1.3-2.6 kHz from 25% to 22%, Muted from 17% to 14%, and the
-2.6-5.1 kHz band roughly halved), but its centre of mass still sits about an
-octave above the reference's: Electry's muted chord peaks in 640-1300 Hz where
-the reference peaks in 320-640 Hz, a centroid of roughly 2.6 kHz against
-1.4-1.7 kHz. That residual is a property of the pickup transfer rather than of
-the mute - the induced-EMF differentiation and the bridge-position comb together
-tilt the output upward by about 12 dB per octave at the low end - and lowering
-the excitation's corners further is repeatedly cancelled by that tilt and by the
-comb image's own interaction with it. It is recorded here as a known open gap
-rather than presented as solved.
+2.6-5.1 kHz band roughly halved), but its centre of mass still sat about an
+octave above the reference's, and the instrument was still described as hollow.
+
+A fourth round found why, and it was neither the mute nor the excitation. Scored
+on half-octave band energies against the same references - per-partial scoring
+turned out to be dominated by comb-null alignment, where a one-partial offset
+between two different guitars swamped everything else - Electry was missing 5 to
+11 dB in the 60-85 Hz band across three independent windows, including the open
+unmuted note. The same deficit on an *unmuted* note is what ruled the mute out
+as the cause. Two candidate explanations were measured and rejected outright:
+moving the excitation's two modal sections' corner across a wide range changed
+the fundamental's relative level by a fraction of a decibel, and switching the
+plectrum-edge path off entirely changed it by 0.1 dB, so the excitation was not
+the lever its comments implied it was. What remained was the pickup, and
+specifically that its position comb subtracted two taps of *equal* weight: an
+exact zero at DC and an infinitely deep null, neither of which a real pickup
+has. The reference showed this directly - it has no dip at all in 1360-1920 Hz
+where Electry had a 34 dB hole. Weighting the delayed tap at 0.60 recovered
+4.7 dB of fundamental on the open low E and 5.4 dB on the muted chord, and the
+frequency-tilted hand above supplied the rest of the muted case. The mean
+absolute half-octave band error against the references fell from 5.55 dB to
+4.31 dB, and the 60-85 Hz error on the open attack from 5.4 dB to 0.7 dB.
+
+The remaining residual is honest to record: the open note's sustain window still
+scores 6.05 dB, mostly in 1360-1920 Hz where Electry's comb null and the
+reference's do not coincide, and null *positions* are a property of each
+instrument's pluck point and pickup distance rather than a target. Explicitly
+modelling the humbucker as two coils 19 mm apart was the obvious candidate for
+filling that hole and is described above; it measured no better and is not in
+the model.
 
 The amplifier chain was voiced against the same goal on a chugged Drop-E figure.
 Its input stage now passes the whole eighth-string fundamental instead of cutting

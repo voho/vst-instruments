@@ -2818,6 +2818,113 @@ void testPickContactGeometry()
     }
 }
 
+// A low note has to be carried by its own fundamental. Measured against dry
+// reference recordings, the two ways this engine has failed that were a pickup
+// position comb that cancelled exactly - which put a zero at DC and cost the
+// fundamental most - and a bridge hand modelled as a genuinely broadband
+// absorber, which damped the fundamental as hard as the top end and turned a
+// palm mute into a short pick. Both are voicing, so neither is pinned to a
+// number here; what is pinned is the audible consequence each one had.
+void testLowRegisterFundamentalWeight()
+{
+    constexpr double sampleRate = 48000.0;
+
+    EngineParameters parameters;
+    parameters.pickupSelector = PickupSelector::Bridge;
+    parameters.outputMode = electry::OutputMode::Mono;
+    parameters.pickHardness = 0.85f;
+    parameters.pickPosition = 0.18f;
+    // Silence the deterministic mechanical noise: this measures where the
+    // string's own energy sits, not the plectrum's.
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    parameters.artifactAmount = 0.0f;
+
+    // Energy in a band as a fraction of the tone's total, sampled at the
+    // partials so the figure measures the spectral envelope rather than window
+    // leakage between harmonic lines - the same approach spectralCentroid takes.
+    const auto bandFraction = [] (const std::vector<float>& data, int start,
+                                  int length, double fundamentalHz,
+                                  double lowHz, double highHz)
+    {
+        double inBand = 0.0;
+        double total = 0.0;
+        for (int partial = 1; partial <= 48; ++partial)
+        {
+            const double frequency = fundamentalHz * partial;
+            if (frequency >= 0.45 * sampleRate)
+                break;
+            const double magnitude = dftMagnitude(data, start, length,
+                                                  sampleRate, frequency);
+            const double power = magnitude * magnitude;
+            total += power;
+            if (frequency >= lowHz && frequency < highHz)
+                inBand += power;
+        }
+        return total > 0.0 ? inBand / total : 0.0;
+    };
+
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(parameters);
+
+    // The open low E of the Drop-E instrument, MIDI 28, and its own fundamental.
+    constexpr double lowE = 82.4069;
+    const int window = static_cast<int>(0.25 * sampleRate);
+
+    const auto open = renderNote(engine, sampleRate, 40, 0.9f,
+                                 Articulation::Downstroke, 1.2);
+    const auto muted = renderNote(engine, sampleRate, 40, 0.9f,
+                                  Articulation::Muted, 1.2);
+
+    const double openFundamental = bandFraction(open.left, 0, window, lowE,
+                                                0.0, 1.6 * lowE);
+    const double mutedFundamental = bandFraction(muted.left, 0, window, lowE,
+                                                 0.0, 1.6 * lowE);
+
+    // With the comb cancelling exactly this sat near a twentieth of the tone's
+    // energy, under persistent low mids, which is the hollow, clavinet-like
+    // register the references do not have.
+    // Thresholds separate the two failures above from the corrected voicing by
+    // a factor of roughly two in each direction: an exactly cancelling comb
+    // measured 0.0039 here against 0.0126 now.
+    expect(openFundamental > 0.008,
+           "the open low E does not carry its own fundamental ("
+               + std::to_string(openFundamental) + " of its energy)");
+
+    // A bridge hand loads a string; it does not filter its fundamental out. A
+    // broadband absorber took this to a small fraction of the open note's,
+    // which is what read as a thin, cut-off pick instead of a chug.
+    // A mute removes the top end, so the fundamental should end up a *larger*
+    // share of what is left than on the open note, not a smaller one. A
+    // broadband hand measured 0.0091 against 0.0311 now.
+    expect(mutedFundamental > 0.018,
+           "a palm mute strips the fundamental rather than damping the string ("
+               + std::to_string(mutedFundamental) + " of its energy)");
+    expect(mutedFundamental > openFundamental,
+           "a muted low E is not more fundamental-dominated than an open one ("
+               + std::to_string(mutedFundamental) + " muted against "
+               + std::to_string(openFundamental) + " open)");
+
+    // The comb must still be a position comb: weighting its delayed tap below
+    // one shortens the null without removing the geometry, so the bridge
+    // position stays the brighter of the two.
+    EngineParameters neckParameters = parameters;
+    neckParameters.pickupSelector = PickupSelector::Neck;
+    ElectryEngine neckEngine;
+    neckEngine.prepare(sampleRate, 512);
+    neckEngine.setParameters(neckParameters);
+    const auto neck = renderNote(neckEngine, sampleRate, 40, 0.9f,
+                                 Articulation::Downstroke, 1.2);
+    const double neckFundamental = bandFraction(neck.left, 0, window, lowE,
+                                                0.0, 1.6 * lowE);
+    expect(neckFundamental > openFundamental,
+           "the neck pickup does not sense more fundamental than the bridge ("
+               + std::to_string(neckFundamental) + " against "
+               + std::to_string(openFundamental) + ")");
+}
+
 // ---------------------------------------------------------------------------
 // Version 1.1: display readout and fretboard geometry
 // ---------------------------------------------------------------------------
@@ -3243,6 +3350,7 @@ int main()
     testStrumSpread();
     testVibratoDepthAndPickGeometry();
     testPickContactGeometry();
+    testLowRegisterFundamentalWeight();
     testVisualStateAndGeometry();
     testPickupCullingAndChannelLinking();
     testIdleFreezeAndDenormalSafety();

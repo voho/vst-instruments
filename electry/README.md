@@ -175,10 +175,15 @@ Notes Off.
   ideal 1/n^2 pluck the literature describes - which the pickup's induced-EMF
   differentiation turns into a 1/n voltage spectrum - overstates a real string's
   upper partials by roughly 9 dB by the fourteenth. Correcting both is what
-  removed the hollow, nasal, clavinet-like character the low register used to
+  removed the nasal, clavinet-like character the low register used to
   have: the mean per-partial error against that reference falls from 4.5 dB to
   2.9 dB, and a palm-muted chug is now dominated by its own fundamental instead
-  of by its low mids.
+  of by its low mids. The hollowness that outlasted this work turned out not to
+  be an excitation problem at all - moving these corners changes the
+  fundamental's relative level by a fraction of a decibel - but a pickup one;
+  see the position comb below. Scored on half-octave bands against the same
+  references, the mean error is now 4.31 dB where it was 5.55 dB, and the
+  60-85 Hz error on an open attack is 0.7 dB where it was 5.4 dB.
 - **Velocity:** one coherent response profile drives attack level, pulse
   width and brightness, the string-scaled modal release, contact noise,
   tension glide, and collision likelihood. The principal release passes two
@@ -191,7 +196,13 @@ Notes Off.
   dimensions are velocity-invariant; at 100% they span soft finger-light
   notes through aggressive metal attacks.
 - **Pickups and coils:** per-string position combs at morphing
-  bridge/neck distances, a wave-speed-scaled finite rectangular magnetic
+  bridge/neck distances, whose delayed tap is weighted below unity so the
+  notch is about 12 dB deep rather than infinite - a real pickup senses through
+  an aperture, sums two coils at two distances and sits in a three-dimensional
+  field, so its taps never cancel exactly, and making them cancel exactly was
+  costing the fundamental most. Correcting it recovered nearly 5 dB in the
+  60-85 Hz band and is what removed the last of the hollowness. Then a
+  wave-speed-scaled finite rectangular magnetic
   aperture with its exact sinc response (wide humbucker window to narrow
   single-coil window), a bounded second-order-dominant flux nonlinearity,
   induced-EMF differentiation with an oversampled ultrasonic guard, and one
@@ -224,10 +235,16 @@ Notes Off.
   injected into, so the control is an exact bypass and not a small residue.
   Coupled strings reuse the idle voice's own delay line, so the feature costs
   no extra memory, and they retire as soon as they fall below audibility.
-- **Bridge-hand damping:** the heel of the hand is a broadband absorber, so its
+- **Bridge-hand damping:** the heel of the hand is an absorber, so its
   loss is added to the string's own rather than rescaling it: the decay rates
   sum, which is to say the reciprocals of the decay times do. That is what makes
-  a palm mute behave like a hand instead of like a gate. The Muted and Chug
+  a palm mute behave like a hand instead of like a gate. It is not equally
+  absorbent at every frequency: resting near the bridge, it removes far more
+  energy from the high modes, which move a great deal there, than from a
+  fundamental that barely moves at all, so its rate at the high reference is
+  three times its rate at the fundamental. Treating it as genuinely broadband
+  damped the fundamental as hard as the top end, which is what made a mute read
+  as a thin, cut-off pick rather than a heavy chug. The Muted and Chug
   keyswitches and the continuous Palm Mute pressure are the same absorber at
   different depths, and they combine in parallel too. Their targets follow dry
   muted power-chord reference recordings: a real short muted chord falls a couple
@@ -237,9 +254,7 @@ Notes Off.
   compensation, a damped string stays exactly in tune. The same hand also
   darkens the attack, because it is already on the string when the pick arrives:
   it lowers the release corner, the contact-noise band and the level of the
-  plectrum edge. A known remaining gap is that a muted note's spectral centre of
-  mass still sits about an octave above the reference recordings'; see the
-  research contract. Zero pressure is a
+  plectrum edge. Zero pressure is a
   mathematical no-op. MIDI CC 2 adds to it live.
 - **Strum travel:** simultaneous note-ons inside a 35 ms window are one pick
   stroke. The first string the pick meets fires immediately and every further
