@@ -3,12 +3,12 @@
 #include <JuceHeader.h>
 
 #include "DSP/ElectryEngine.h"
+#include "DSP/ElectryFx.h"
 #include "DSP/ElectryVisuals.h"
 
 #include <array>
 #include <atomic>
 #include <cstdint>
-#include <vector>
 
 namespace electry::parameters
 {
@@ -179,16 +179,14 @@ private:
     void dispatchUiMidiEvents() noexcept;
     void dispatchMidiData (const juce::uint8* data, int numBytes) noexcept;
     void updateEngineParameters() noexcept;
+    void updateEffectParameters() noexcept;
     void publishStringVisualState() noexcept;
 
     electry::ElectryEngine engine;
-    void processEffects (juce::AudioBuffer<float>&, int startSample, int numSamples) noexcept;
-    std::array<std::vector<float>, 2> delayLines;
-    std::array<float, 2> ampLowpass {};
-    std::array<float, 2> roomState {};
-    float compressorEnvelope = 0.0f;
-    int delayWriteIndex = 0;
-    double effectSampleRate = 48000.0;
+    // The amplifier, cabinet and time effects live in the JUCE-free DSP
+    // library alongside the string model, so the complete signal path is
+    // regression tested on every platform rather than only inside a host.
+    electry::ElectryFx effects;
     std::array<electry::StringVisualState,
                electry::ElectryEngine::stringCount> visualScratch {};
     std::atomic<bool> panicRequested { false };

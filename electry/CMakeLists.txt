@@ -38,9 +38,11 @@ include(CTest)
 
 set(ELECTRY_DSP_SOURCES
     Source/DSP/ElectryEngine.cpp
+    Source/DSP/ElectryFx.cpp
     Source/DSP/ElectryVisuals.cpp)
 set(ELECTRY_DSP_HEADERS
     Source/DSP/ElectryEngine.h
+    Source/DSP/ElectryFx.h
     Source/DSP/ElectryVisuals.h)
 
 add_library(ElectryDSP STATIC
@@ -131,6 +133,25 @@ if(ELECTRY_BUILD_PLUGIN)
             JUCE_VST3_CAN_REPLACE_VST2=0)
 endif()
 
+# The committed demonstration WAVs under Docs/audio are rendered by this tool
+# from the same JUCE-free path the plug-in uses, so they cannot drift away from
+# what Electry actually produces. It is built by default, including on Linux CI,
+# so it cannot rot unnoticed.
+option(ELECTRY_BUILD_TOOLS "Build the demo WAV renderer" ON)
+
+if(ELECTRY_BUILD_TOOLS)
+    add_executable(ElectryRenderDemos Tools/RenderDemos.cpp)
+    target_link_libraries(ElectryRenderDemos PRIVATE ElectryDSP)
+    target_compile_features(ElectryRenderDemos PRIVATE cxx_std_20)
+
+    if(MSVC)
+        target_compile_options(ElectryRenderDemos PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(ElectryRenderDemos PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
 if(BUILD_TESTING)
     add_executable(ElectryEngineTests Tests/ElectryEngineTests.cpp)
     target_link_libraries(ElectryEngineTests PRIVATE ElectryDSP)
@@ -154,6 +175,35 @@ if(BUILD_TESTING)
     endif()
     set_tests_properties(Electry.ElectryEngine PROPERTIES
         TIMEOUT ${ELECTRY_ENGINE_TEST_TIMEOUT})
+
+    add_executable(ElectryFxTests Tests/ElectryFxTests.cpp)
+    target_link_libraries(ElectryFxTests PRIVATE ElectryDSP)
+    target_compile_features(ElectryFxTests PRIVATE cxx_std_20)
+
+    if(MSVC)
+        target_compile_options(ElectryFxTests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(ElectryFxTests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_test(NAME Electry.ElectryFx COMMAND ElectryFxTests)
+    if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
+        set(ELECTRY_FX_TEST_TIMEOUT 600)
+    else()
+        set(ELECTRY_FX_TEST_TIMEOUT 120)
+    endif()
+    set_tests_properties(Electry.ElectryFx PROPERTIES
+        TIMEOUT ${ELECTRY_FX_TEST_TIMEOUT})
+
+    if(ELECTRY_BUILD_TOOLS)
+        # Guards the renderer that produces the committed demonstration WAVs:
+        # it renders a short take to a temporary directory and checks that the
+        # audio is finite, audible and written as a readable WAV.
+        add_test(NAME Electry.RenderDemos
+                 COMMAND ElectryRenderDemos --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
+        set_tests_properties(Electry.RenderDemos PROPERTIES TIMEOUT 60)
+    endif()
 
     if(ELECTRY_BUILD_PLUGIN)
         add_executable(ElectryPluginProcessorTests Tests/PluginProcessorTests.cpp)

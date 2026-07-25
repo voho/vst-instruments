@@ -447,6 +447,18 @@ private:
         // pick styles use a much smaller broad pulse for the physical edge;
         // deliberately percussive styles may weight that edge more strongly.
         float excitationTransientAmplitude { 0.0f };
+        // Pick release geometry. A plectrum loads the string over most of the
+        // contact and then slips off it in a fraction of that time, so the
+        // release is strongly asymmetric; the symmetric raised cosine this
+        // replaced gave every attack the same even bump regardless of pick.
+        // The reciprocals are cached because the window is evaluated per
+        // rendered sample.
+        float excitationLoadScale { 1.0f / 0.72f };
+        float excitationSlipScale { 1.0f / 0.28f };
+        // Half of the plectrum's contact patch, in delay-line samples, so the
+        // reflected excitation image is spread over the real contact width
+        // instead of landing on a single point of the string.
+        float excitationCombWidth { 0.0f };
         float excitationModalCoefficient { 0.99f };
         int excitationTailLength { 0 };
         float contactFeedbackGain { 1.0f };

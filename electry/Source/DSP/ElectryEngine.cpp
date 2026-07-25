@@ -1516,6 +1516,26 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float fretStretch = std::exp2(static_cast<float>(voice.fret) / 12.0f);
     voice.excitationCombDelay = clampf(pluckFraction * fretStretch, 0.02f, 0.49f)
                               * voice.vertical.targetDelay;
+
+    // A plectrum touches the string over a patch, not at a point: half a
+    // millimetre of contact for a stiff sharp pick, around a millimetre and a
+    // half for a soft rounded one. Mapped through the same sounding-length
+    // geometry the comb itself uses, that width is a little over one sample on
+    // an open Drop-E eighth string and a small fraction of one at the top of
+    // the range, which is exactly the frequency dependence a real contact has.
+    const float contactMetres = 0.001f * lerp(1.5f, 0.5f, parameters.pickHardness);
+    const float soundingMetres = std::max(scaleLengthMetres() / fretStretch,
+                                          0.05f);
+    voice.excitationCombWidth = 0.5f * (contactMetres / soundingMetres)
+                              * voice.vertical.targetDelay;
+
+    // The pick draws the string aside over most of the contact and then slips
+    // off it: the release edge is several times faster than the load, and a
+    // stiffer pick lets go later and more abruptly.
+    const float slipPoint = lerp(0.62f, 0.82f, parameters.pickHardness);
+    voice.excitationLoadScale = 1.0f / slipPoint;
+    voice.excitationSlipScale = 1.0f / (1.0f - slipPoint);
+
     voice.excitationPulseCoefficient = std::exp(
         -twoPi * clampf(pulseCutoff, 300.0f, 0.45f * sampleRate) * inverseSampleRate_);
 
@@ -2261,7 +2281,14 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     {
         const float progress = 1.0f - static_cast<float>(voice.excitationRemaining)
             / static_cast<float>(std::max(1, voice.excitationLength));
-        const float window = 0.5f - 0.5f * std::cos(twoPi * clampf(progress, 0.0f, 1.0f));
+        // Load, then slip. Both halves are smoothsteps, so the product is
+        // continuous with a continuous derivative and its area over the window
+        // is exactly one half whatever the slip point is - the same area the
+        // symmetric raised cosine had, so the asymmetry changes the attack's
+        // spectrum without changing how hard the note lands.
+        const float load = smoothStep(progress * voice.excitationLoadScale);
+        const float slip = smoothStep((1.0f - progress) * voice.excitationSlipScale);
+        const float window = load * slip;
         const float releasePulse = window * voice.excitationPolarity;
         const float modal = voice.excitationModalShaper2.process(
             voice.excitationModalShaper1.process(
@@ -2326,10 +2353,21 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // travelling-wave image of the excitation point.
     if (injected != 0.0f)
     {
-        vertical.writeAdd(voice.excitationCombDelay,
-                          -injected * verticalWeight);
-        horizontal.writeAdd(voice.excitationCombDelay,
-                            -injected * horizontalWeight);
+        // The image is distributed over the plectrum's contact patch with a
+        // 1/4, 1/2, 1/4 kernel. The weights sum to one, so a zero width
+        // reduces exactly to the previous single-point image, while a real
+        // width washes the comb notches out with frequency instead of holding
+        // them razor sharp all the way to Nyquist.
+        const float width = voice.excitationCombWidth;
+        const float centre = voice.excitationCombDelay;
+        for (auto* loop : { &vertical, &horizontal })
+        {
+            const float image = -injected
+                * (loop == &vertical ? verticalWeight : horizontalWeight);
+            loop->writeAdd(centre - width, 0.25f * image);
+            loop->writeAdd(centre, 0.5f * image);
+            loop->writeAdd(centre + width, 0.25f * image);
+        }
     }
 
     // Pickups read the string displacement at their positions: the freshly
@@ -2337,12 +2375,22 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // delay. The magnetic pole senses the perpendicular polarisation more
     // strongly than the parallel one. Taps are taken before the write index
     // advances so the interpolator never touches a stale slot.
-    // Distance-dependent flux nonlinearity, second-order dominant. The 0.5
-    // keeps a full eight-string strum inside the output guard's linear region.
+    // Distance-dependent flux nonlinearity, second-order dominant. The
+    // saturating pre-map bounds the polynomial's argument the way approaching
+    // magnetic saturation actually bounds it: smoothly, with a unity slope and
+    // an unchanged second-order term at small displacement. The previous hard
+    // clamp had the same ceiling but a corner in its first derivative, so a
+    // full eight-string chord - the one case that reaches the ceiling - was
+    // clipped into harmonics of unbounded order and folded them back as
+    // aliasing rather than saturating.
     const auto magneticTransfer = [] (float displacement, float drive,
                                       float inverseDrive)
     {
-        const float x = clampf(displacement * drive, -0.9f, 0.9f);
+        constexpr float ceiling = 0.9f;
+        constexpr float inverseCeilingSquared = 1.0f / (ceiling * ceiling);
+        const float driven = displacement * drive;
+        const float x = driven
+            / std::sqrt(1.0f + driven * driven * inverseCeilingSquared);
         return (x + x * x * (0.55f + 0.30f * x)) * inverseDrive;
     };
 

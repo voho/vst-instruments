@@ -9,10 +9,28 @@ Remember that the play style comes from the latched keyswitch (C0..D#1) or
 the PLAY STYLE strip, not from a parameter. Material controls span the named
 solid-body endpoints; Scale spans 25.5" to 28" for the Drop-E instrument.
 
-The output is always dry. Mono is the summed DI; Stereo is the physical
-low-to-high divided-pickup string field and adds no widening effect. These
-recipes describe the guitar itself; put your favourite amp simulation after
-Electry for finished tones.
+With the five FX controls at their 0% defaults the output is exactly dry. Mono
+is the summed DI; Stereo is the physical low-to-high divided-pickup string field
+and adds no widening effect. These recipes describe the guitar itself; reach for
+the built-in amplifier and cabinet, or put your favourite amp simulation after
+Electry, for finished tones.
+
+## Drop-E Rhythm (through the built-in amplifier)
+
+The voicing behind
+[`Docs/audio/05-drop-e-rhythm-amp.wav`](../Docs/audio/README.md), a Drop-E
+metal rhythm sound that needs nothing after it:
+
+- Pickup selector `Bridge`; pickup type 32% (toward a hot humbucker); tone 100%.
+- Scale 27.6" (85%), string gauge 80%, string age 10%.
+- Pick position 18% — close to the bridge; hardness 85%.
+- Velocity 70%; sympathetic ring 25%; output +6 dB, because a single chugged
+  low note is a quiet signal next to a full eight-string chord and the default
+  level leaves headroom for the chord.
+- Distortion 45%, amp 95%, compressor 60%; delay and room at 0%.
+- Latch F#0 (Chug) for the muted notes and C0 (Downstroke) for the open
+  accents. The bridge hand also damps the coupled strings, so the chug stays
+  tight without turning the sympathetic ring off.
 
 ## Between Worlds (default check)
 

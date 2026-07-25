@@ -48,6 +48,9 @@ struct ElectryEngineTestAccess
         bool sympatheticReady { false };
         float sympatheticEnergy { 0.0f };
         float excitationCombDelay { 0.0f };
+        float excitationCombWidth { 0.0f };
+        float excitationLoadScale { 0.0f };
+        float excitationSlipScale { 0.0f };
         float loopDampingCoefficient { 0.0f };
     };
 
@@ -85,6 +88,9 @@ struct ElectryEngineTestAccess
         result.sympatheticReady = voice.sympatheticReady;
         result.sympatheticEnergy = voice.sympatheticEnergy;
         result.excitationCombDelay = voice.excitationCombDelay;
+        result.excitationCombWidth = voice.excitationCombWidth;
+        result.excitationLoadScale = voice.excitationLoadScale;
+        result.excitationSlipScale = voice.excitationSlipScale;
         result.loopDampingCoefficient = voice.vertical.loopDampingCoefficient;
         return result;
     }
@@ -2703,6 +2709,101 @@ void testVibratoDepthAndPickGeometry()
                + std::to_string(expectedRatio) + ")");
 }
 
+void testPickContactGeometry()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // A plectrum is neither a point nor symmetric: it touches the string over a
+    // patch and it slips off far faster than it loaded.
+    const auto pickGeometry = [] (int midiNote, float hardness)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickHardness = hardness;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(midiNote, 0.9f);
+        const int stringIndex = TestAccess::stringForNote(engine, midiNote);
+        expect(stringIndex >= 0, "note " + std::to_string(midiNote)
+                                     + " was not allocated");
+        return TestAccess::snapshot(engine, std::max(stringIndex, 0));
+    };
+
+    const auto lowDefault = pickGeometry(28, 0.6f);
+    const auto highDefault = pickGeometry(64, 0.6f);
+    const auto lowSoft = pickGeometry(28, 0.0f);
+    const auto lowHard = pickGeometry(28, 1.0f);
+
+    expect(lowDefault.excitationCombWidth > 0.0f,
+           "the pick contact patch has no width");
+    // A fixed physical patch is a larger share of the low string's much longer
+    // round trip, so it spans more delay-line samples there.
+    expect(lowDefault.excitationCombWidth > 4.0f * highDefault.excitationCombWidth,
+           "the contact patch does not scale with the string's length ("
+               + std::to_string(lowDefault.excitationCombWidth) + " vs "
+               + std::to_string(highDefault.excitationCombWidth) + ")");
+    // A soft rounded pick touches over roughly three times the patch of a stiff
+    // sharp one.
+    expect(lowSoft.excitationCombWidth > 2.0f * lowHard.excitationCombWidth,
+           "pick hardness does not narrow the contact patch");
+
+    // The patch spans a fixed distance along the string and the wave speed does
+    // not change when the string is fretted, so its width in delay samples is
+    // the same open and at the twelfth fret. The allocator prefers the free
+    // string with the lowest fret, so note 64 is the top string open and note
+    // 76 is that same string at fret 12; both are unambiguous.
+    const auto openTop = pickGeometry(64, 0.6f);
+    const auto frettedTop = pickGeometry(76, 0.6f);
+    expect(openTop.stringIndex == frettedTop.stringIndex,
+           "the fretted comparison did not stay on one physical string");
+    // The remaining few percent is the loop delay's own analytic phase
+    // compensation, which differs between the two notes because their decay
+    // targets and dead-spot damping do.
+    expect(std::abs(openTop.excitationCombWidth
+                    - frettedTop.excitationCombWidth)
+               < 0.08f * openTop.excitationCombWidth,
+           "the contact patch is not fret invariant in delay samples ("
+               + std::to_string(openTop.excitationCombWidth) + " vs "
+               + std::to_string(frettedTop.excitationCombWidth) + ")");
+
+    // A stiffer pick holds the string longer and then releases it faster.
+    const float softSlip = 1.0f / lowSoft.excitationLoadScale;
+    const float hardSlip = 1.0f / lowHard.excitationLoadScale;
+    expect(hardSlip > softSlip + 0.10f,
+           "pick hardness does not move the slip point later ("
+               + std::to_string(softSlip) + " to " + std::to_string(hardSlip)
+               + ")");
+    expect(lowHard.excitationSlipScale > lowSoft.excitationSlipScale,
+           "a stiffer pick does not release the string faster");
+
+    // The release window is a load smoothstep times a slip smoothstep. Whatever
+    // the slip point, its area is exactly one half - the same area the
+    // symmetric raised cosine it replaced had - so the asymmetry changes the
+    // attack's spectrum without changing how hard the note lands.
+    for (const auto& snapshot : { lowSoft, lowDefault, lowHard })
+    {
+        const auto smoothStep = [] (double value)
+        {
+            value = std::clamp(value, 0.0, 1.0);
+            return value * value * (3.0 - 2.0 * value);
+        };
+        constexpr int steps = 200000;
+        double area = 0.0;
+        for (int step = 0; step < steps; ++step)
+        {
+            const double progress = (static_cast<double>(step) + 0.5)
+                                  / static_cast<double>(steps);
+            area += smoothStep(progress * snapshot.excitationLoadScale)
+                  * smoothStep((1.0 - progress) * snapshot.excitationSlipScale);
+        }
+        area /= static_cast<double>(steps);
+        expect(std::abs(area - 0.5) < 1.0e-3,
+               "the asymmetric pick release window is not level neutral ("
+                   + std::to_string(area) + ")");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Version 1.1: display readout and fretboard geometry
 // ---------------------------------------------------------------------------
@@ -3124,6 +3225,7 @@ int main()
     testPalmMuteContinuum();
     testStrumSpread();
     testVibratoDepthAndPickGeometry();
+    testPickContactGeometry();
     testVisualStateAndGeometry();
     testPickupCullingAndChannelLinking();
     testIdleFreezeAndDenormalSafety();
