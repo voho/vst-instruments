@@ -27,7 +27,7 @@ level-matched blind listening.
 | Construction controls | Solid-body material/geometry contrasts, humbucker vs single-coil construction, set-neck vs bolt-on, and modern extended-range scale practice | Wood, size, shape, construction, and pickup type interpolate between contrasting reference voicings; scale length spans 25.5 to 28 inches for Drop-E | Parametrized construction and extended-range voicing; not a licensed or capture-verified reproduction of a named instrument |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, release damping noise, and slap body knock, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
 | Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with its own T60-derived loop filter, exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
-| Bridge-hand damping | Palm-muting practice and the same decay-targeted loop design | A continuous pressure interpolates the string's T60 geometrically toward a 40 ms stop and scales the high-frequency decay ratio, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as a decay target, applied identically to every play style; not a distributed hand/string contact solve |
+| Bridge-hand damping | Palm-muting practice, the same decay-targeted loop design, and dry muted power-chord reference recordings for the depths | The hand is a broadband absorber whose loss adds to the string's own in parallel, so decay rates sum at every frequency independently; the Muted and Chug keyswitches and the continuous pressure are one absorber at different depths and combine the same way, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as an additive broadband loss with reference-calibrated depths, applied identically to every play style; not a distributed hand/string contact solve |
 | Strum travel | Ordinary plectrum kinematics | Note-ons inside a 35 ms window are treated as one stroke; the first string fixes the edge the pick starts from and every further string's excitation is delayed by the travel time per string crossed | Constant-velocity pick travel across the string plane; not a model of pick angle, chord voicing, or the player's hand position |
 | Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, partial non-slap fret contact, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
 | Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
@@ -269,13 +269,36 @@ instead of washing it in open-string ring.
 
 ## Bridge-hand damping
 
-The Muted and Chug keyswitches cap a note's T60 at fixed points. Palm Mute is
-the continuous version of the same physics, available to every play style and
-performable from MIDI CC 2: the pressure interpolates the string's decay
-geometrically from its own T60 toward a 40 ms stop,
-`T60' = exp((1-p) ln T60 + p ln 0.040)`, and multiplies the high-frequency
-decay ratio by `1 - 0.5 p` as more of the string is covered. Zero pressure is
-therefore a mathematical no-op, not a small effect.
+A bridge hand loads a string; it does not stop it. Electry therefore models it
+as a loss that runs *in parallel* with the string's own, so the decay rates add
+and the decay times combine reciprocally:
+
+    1 / T60' = 1 / T60_string + 1 / T60_hand
+
+applied independently at the fundamental and at the high reference frequency.
+The hand dominates wherever it is tighter than the string and vanishes wherever
+it is not, which is the whole point: a muted note keeps a body instead of having
+its top end scaled into nothing.
+
+That distinction is not cosmetic. The previous model applied the hand as a
+minimum on the fundamental's T60 and then multiplied *that* result by the
+string's high-frequency ratio. With the wound strings' corrected ratio - around
+0.035 - a half-second mute target implied a seventeen millisecond
+high-frequency target, and a muted power chord collapsed 36 dB inside its first
+25 ms. Measured against dry muted power-chord reference recordings, a real short
+muted chord falls 2 dB over that span and takes about half a second to reach
+-40 dB; a looser one holds a low tail for seconds. The old behaviour was an
+impulse where the reference is a note.
+
+The Muted and Chug keyswitches, the Dead Note choke and the continuous Palm Mute
+pressure are all the same absorber at different depths, and they combine in
+parallel with each other as well. Their reference-derived targets are 2.60 s to
+0.32 s across Mute Damp for the Muted style, 1.40 s to 0.20 s for the firmer
+Chug, and 4.0 s to 0.080 s across the continuous pressure; the pressure also
+multiplies the high-frequency ratio by `1 - 0.38 p`, because the heel of the hand
+is a soft, lossy contact. Zero pressure leaves `T60_hand` at zero and the
+parallel combination is skipped outright, so an unmuted string is bit-for-bit
+what it would be without the feature.
 
 The important detail is that this runs through the ordinary loop-filter solve
 rather than as a gain after the fact. The one-pole is re-bisected against the
@@ -643,6 +666,18 @@ The perceptual point of all of it: a low note whose fundamental sustains and
 whose upper partials die quickly reads as round and full-bodied, and the
 opposite - a weak fundamental under persistent 1-2 kHz partials - is what a
 clavinet sounds like. That was the character the low register had.
+
+The palm mute was measured the same way, from dry muted power-chord references
+at two mute depths. Electry's chug was falling 36 dB in its first 25 ms where the
+reference falls 2 dB - an impulse rather than a note, which is what "cut chugs"
+describes. The cause was not the mute's decay target but the *shape* of the
+model: the hand was applied as a minimum on the fundamental's T60 and that
+result then multiplied by the string's high-frequency ratio, so a half-second
+mute implied a seventeen millisecond top end. Modelling the hand as a broadband
+loss in parallel with the string's own - decay rates adding at each frequency
+independently - fixed it, and the reference-derived depths land the Muted style
+at 0/-1/-3/-10/-13 dB over the first 150 ms against the reference's
+0/-2/-4/-10/-13.
 
 The amplifier chain was voiced against the same goal on a chugged Drop-E figure.
 Its input stage now passes the whole eighth-string fundamental instead of cutting
