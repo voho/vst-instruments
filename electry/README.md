@@ -12,16 +12,28 @@ the playable range. The individual models have named research references
 contract](Docs/physical-modeling-research.md)); Electry does not claim to be
 a capture-accurate clone of any one instrument.
 
-The compact FX panel provides parallel distortion, amp/cab simulation,
-compression, lead delay, and a stereo room; every effect defaults to a true
-0% dry setting. Mono is the authentic summed dry DI; Stereo is a phase-coherent
-divided-pickup view of the eight physical strings, not an effect or delay.
-Both are ready for the amp simulation of your choice. Material, body, pickup,
-and construction controls span deliberately contrasting solid-body anchors;
-scale length spans a conventional 25.5-inch electric to a modern 28-inch
-baritone/8-string build.
+The compact FX panel provides a distortion pedal, an amplifier and modelled
+cabinet, compression, lead delay, and a stereo room; every effect defaults to a
+true 0% dry setting, and the two clipping stages run inside a 4x oversampled
+domain so a high-gain metal tone saturates instead of folding its own harmonics
+back into the guitar band. Mono is the authentic summed dry DI; Stereo is a
+phase-coherent divided-pickup view of the eight physical strings, not an effect
+or delay. Both are also ready for the amp simulation of your choice. Material,
+body, pickup, and construction controls span deliberately contrasting
+solid-body anchors; scale length spans a conventional 25.5-inch electric to a
+modern 28-inch baritone/8-string build.
 
 ![Electry electric guitar interface](Docs/screenshots/electry-standalone.png)
+
+## Hear it
+
+Ten rendered examples — the full playable range, all sixteen play styles, the
+guitar-build and pickup axes, and the Drop-E rhythm and lead tones dry and
+through the amplifier — are committed under
+[`Docs/audio/`](Docs/audio/README.md), with the score for each one in
+`Tools/RenderDemos.cpp`. They are produced by the shipping JUCE-free signal
+path, so they cannot drift away from what the plug-in sounds like, and they are
+reproducible on any platform with a C++20 toolchain.
 
 **Note:** this committed screenshot was rendered from the 1.0 editor. The 1.1
 interface adds the live FRETBOARD panel and the PERFORMANCE controls described
@@ -127,6 +139,17 @@ Notes Off.
   the sounding length grows by `2^(fret/12)`, so a note fretted high up moves
   toward the hollow, mid-string comb of a real guitar. At the nut this is
   identical to the previous behaviour.
+- **Pick contact:** the plectrum is neither a point nor symmetric. It touches
+  the string over a patch — half a millimetre for a stiff sharp pick, around a
+  millimetre and a half for a soft rounded one — so the reflected image of the
+  excitation is spread over that width through the same sounding-length
+  geometry the comb uses, and the comb notches wash out with frequency instead
+  of staying razor sharp up to Nyquist. Its release is asymmetric: the string is
+  drawn aside over most of the contact and then slips off in a fraction of that
+  time, and a stiffer pick lets go later and more abruptly. Both halves of the
+  window are smoothsteps, so its area is exactly what the symmetric raised
+  cosine it replaced had, and the asymmetry changes the attack's spectrum
+  without changing how hard the note lands.
 - **Frets:** fretting position drives sounding length, inharmonicity,
   pickup comb geometry, and Fleischer-style dead-spot damping (deeper on
   the bolt-on end of the construction axis). Slap opens a decaying
@@ -220,6 +243,64 @@ Notes Off.
   in physical low-to-high string order, keeps the body centred, folds down
   coherently, and adds no chorus, modulation, random phase, or Haas delay.
 
+## Amplifier chain
+
+The five FX controls run in the same JUCE-free library as the string model
+(`Source/DSP/ElectryFx.*`), so the complete signal path is regression tested on
+every platform rather than only inside a host.
+
+- **Oversampled clipping.** The distortion pedal and the amplifier run inside a
+  4x oversampled domain, reached through two cascaded Kaiser-windowed halfband
+  stages whose kernels are designed at `prepare()` time rather than tabulated. A
+  gain stage fed at host rate folds its own upper harmonics straight back into
+  the guitar band, and that folded intermodulation is most of what makes a
+  modelled high-gain tone read as digital: measured on a steady tone, the
+  non-harmonic floor is 43 to 74 dB below what the previous host-rate chain
+  produced at every setting where that chain aliased at all. Above 96 kHz one halfband stage is
+  dropped and above 192 kHz both are, because a host already running that fast
+  supplies the bandwidth the stages need. While the block is engaged it adds
+  17.25 host samples of fixed group delay (0.36 ms at 48 kHz); with both gain
+  controls at zero it is skipped outright, costs nothing, and adds no delay at
+  all.
+- **Pedal.** A tight 120 Hz input coupling network and a mid-focused voice ahead
+  of a bounded diode-pair clipper: passing the whole low end of a Drop-E eighth
+  string into a clipper turns the fundamental into intermodulation mud instead
+  of a note.
+- **Amplifier.** Two cascaded triode stages with a standing grid bias, an
+  interstage Miller roll-off, and a grid-current bias drift that moves the
+  operating point under sustained level, so a held chord thickens and thins
+  again as it decays. Each stage is one smooth curve rather than a different
+  curve above and below zero: selecting a knee by sign leaves a
+  third-derivative kink at the origin that a near-square second-stage waveform
+  crosses at full slew, which radiates far more high-order content than the
+  saturation itself. Asymmetry — and the even-order harmonics that come with it
+  — comes from the operating point, which is where a real stage's comes from.
+- **Cabinet.** A second-order high-pass at the box frequency, a low-mid thump,
+  a scooped boxy region, a presence peak, and a fourth-order Butterworth
+  roll-off from 5 kHz, all inside the oversampled domain so the
+  alias-generating content is removed before decimation rather than after it.
+  This replaces a single one-pole low-pass, which had none of the four features
+  that make a recorded metal guitar recognisable as a guitar.
+- **Level.** Each gain stage divides its own small-signal gain back out, so
+  reaching for the amp control is a change of tone rather than a jump in level;
+  a saturating stage still ends up a few decibels louder than the dry DI,
+  because compressing a signal raises its average.
+- **Compressor, delay, room.** The compressor eases into roughly 3.5:1 above
+  -20 dBFS through a soft knee, with makeup, so a palm-muted part sits still
+  instead of the level grabbing at every pick attack. The 360 ms lead delay
+  damps its feedback path, so repeats darken and thin as an analogue delay's
+  do. The room is three allpass diffusers into two damped combs per channel at
+  coprime lengths, with no modulation, Haas delay or randomised phase — the
+  same constraint the instrument's own stereo field obeys.
+- **Bypass and smoothing.** All five mixes are smoothed per sample rather than
+  stepped per block, and each snaps to exactly zero, so a control left at zero
+  is a bit-exact dry bypass — verified by the regression suite — while engaging
+  or disengaging the gain block is crossfaded and cannot click.
+- **Cost.** Stereo at 48 kHz, best of three runs: 0.003x realtime with all five
+  controls at zero, the same with only the compressor, delay and room open, and
+  0.048x with the oversampled gain block engaged. For reference the eight-string
+  model itself runs at roughly 0.21-0.27x realtime at 96 kHz.
+
 ## Guitar construction axes
 
 The material controls use contrasting classic solid-body anchors and default
@@ -269,8 +350,8 @@ roughly 4 ms.
 | 20 | `output` | Output level | -24..+6 dB, default -6 dB |
 | 21 | `artifacts` | Artifacts | clean bypass..ring/contact/saddle detail, default 18% |
 | 22 | `outputMode` | Output field | **Mono** / Stereo divided-pickup field |
-| 23 | `distortion` | Distortion | dry..high-gain saturation, default 0% |
-| 24 | `amp` | Amp simulation | dry..amp/cab saturation, default 0% |
+| 23 | `distortion` | Distortion | dry..oversampled pedal-style clipping, default 0% |
+| 24 | `amp` | Amp simulation | dry..oversampled cascaded gain stages into the modelled cabinet, default 0% |
 | 25 | `compressor` | Compressor | dry..fast rhythm levelling, default 0% |
 | 26 | `delay` | Delay | dry..360 ms lead delay, default 0% |
 | 27 | `room` | Room | dry..compact stereo ambience, default 0% |
@@ -310,7 +391,7 @@ JUCE 8.0.14 checkout.
 
 ## JUCE-free DSP build
 
-The complete string, interaction, and pickup engine builds and tests
+The complete string, interaction, pickup, and amplifier path builds and tests
 without JUCE on any platform with CMake and a C++20 toolchain (this is what
 Linux CI runs):
 
@@ -321,6 +402,15 @@ cmake -S . -B build-dsp -DCMAKE_BUILD_TYPE=Release \
 cmake --build build-dsp --parallel
 ctest --test-dir build-dsp --output-on-failure
 ```
+
+That configuration also builds `ElectryRenderDemos`, which re-renders the
+committed demonstration audio:
+
+```bash
+./build-dsp/ElectryRenderDemos Docs/audio
+```
+
+`ELECTRY_BUILD_TOOLS=OFF` leaves the renderer out.
 
 ## Install and validate locally
 
@@ -352,12 +442,15 @@ distribution, provide `APP_SIGN_IDENTITY` (Developer ID Application),
 ## Project layout
 
 ```text
-CMakeLists.txt       DSP library, JUCE plug-in, and CTest targets
-Source/DSP/          ElectryEngine (JUCE-free physical model) and
+CMakeLists.txt       DSP library, demo renderer, JUCE plug-in, and CTest targets
+Source/DSP/          ElectryEngine (JUCE-free physical model), ElectryFx
+                     (JUCE-free amplifier, cabinet and time effects), and
                      ElectryVisuals (JUCE-free fretboard geometry/ballistics)
 Source/              PluginProcessor and PluginEditor (JUCE shell)
-Tests/               Engine regression suite and plug-in contract tests
-Docs/                Physical-modeling research and implementation contract
+Tests/               Engine, amplifier-chain, and plug-in contract tests
+Tools/               RenderDemos, which produces the committed Docs/audio set
+Docs/                Physical-modeling research, implementation contract, and
+                     the rendered demonstration audio
 Presets/             Sound-design recipes for the 31-parameter set
 scripts/             macOS build and packaging helpers
 ThirdParty/          JUCE licence notice

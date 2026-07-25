@@ -19,7 +19,7 @@ level-matched blind listening.
 | Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E1..D6 at tested host rates through 384 kHz); not per-partial measured decay matching |
 | Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
 | Tension modulation | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity | A string-energy envelope drives a bounded shortening of the loop delay, producing the attack pitch glide that relaxes over hundreds of milliseconds; slaps deepen it | The published phenomenon in its energy-envelope shortcut form; not the exact elongation integral or a time-varying-fraction-delay implementation |
-| Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase excitation combines contact retention and scrape, a principal string-period-scaled two-pole modal release that approximates triangular pluck displacement, and a normally much smaller broadband pick-edge transient for sustained pick styles; delay-line projection is level-calibrated to open E4 so equal effort remains usable on E1, while polarity, polarisation split, spectrum, and comb position differ per style | A realtime modal approximation to released-string displacement plus a separate pick edge and bounded register calibration; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, or force-based finger contact solver |
+| Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase excitation combines contact retention and scrape, a principal string-period-scaled two-pole modal release that approximates triangular pluck displacement, and a normally much smaller broadband pick-edge transient for sustained pick styles; the release window is asymmetric (a slow load and a fast slip, both smoothsteps, at constant area) and its reflected image is distributed over a hardness-dependent contact patch of 0.5 to 1.5 mm; delay-line projection is level-calibrated to open E4 so equal effort remains usable on E1, while polarity, polarisation split, spectrum, and comb position differ per style | A realtime modal approximation to released-string displacement plus a separate pick edge, a distributed contact width, and bounded register calibration; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, or force-based finger contact solver |
 | Fret collisions (slap) | Bilbao and Torin's energy-balanced string/fretboard collision modeling | A decaying collision window whose soft limit clips vertical displacement against a velocity-dependent threshold and re-radiates deterministic rattle noise | Collision-informed slap behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved, with a soft finger excitation and no plectrum noise | Continuous-state legato with fingered attacks; not a distributed finger-force model |
 | Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element or capture-fitted model of named pickups |
@@ -33,6 +33,7 @@ level-matched blind listening.
 | Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
 | Oversampling | Standard nonlinear-audio antialiasing practice | The complete physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x | Genuine internal oversampling and filtered decimation, not a quality label applied to a native-rate nonlinear stage |
 | Output field | Phase-coherent divided/hex pickup practice | Mono is the conventional summed DI. Stereo weights each modeled string by its physical lateral position, keeps shared body modes centered, uses linked output limiting and independent matched decimation, and folds coherently to mono | A virtual divided-pickup string field with no time or phase widening; not room, amplifier, cabinet, chorus, or acoustic stereo |
+| Amplifier and cabinet | Pakarinen and Yeh's review of vacuum-tube amplifier modeling; standard antialiasing practice for cascaded nonlinear stages; sealed-guitar-cabinet response measurements | Two cascaded smooth triode ceilings driven off a standing grid bias with a level-tracking bias drift and an interstage Miller roll-off, a tight input coupling network, and a five-section cabinet (box high-pass, low-mid thump, scooped mid, presence peak, fourth-order roll-off), all inside a 4x oversampled domain reached through Kaiser-windowed halfband stages designed at prepare time | Structurally motivated static-nonlinearity amplifier voicing with genuine oversampling and a filter-modelled cabinet; not a circuit-solved (Wave Digital or nodal state-space) amplifier, a measured impulse response, or a model of any named amplifier or speaker |
 
 ## Implemented signal path
 
@@ -332,13 +333,36 @@ in signal form:
   the sounding string period. Their combined modal slope approximates the
   `1/n^2` falloff of triangular released-string displacement without filling
   or replacing a complete delay line. For ordinary sustained pick styles, a
-  much smaller raised-cosine pulse of roughly 0.10-1.15 ms before
-  velocity/style scaling supplies the pick edge.
+  much smaller pulse of roughly 0.10-1.15 ms before velocity/style scaling
+  supplies the pick edge.
   Both components enter the polarisations with a style-dependent split and
   polarity: downstrokes and upstrokes displace the string in opposite
   directions, upstrokes sit slightly closer to the bridge and brighter,
   hammer-ons are wider, darker, and fingered, and slaps retain the sharpest
   edge.
+- **Release geometry.** The release window itself is asymmetric, because a
+  plectrum is: it draws the string aside over most of the contact and then
+  slips off it in a fraction of that time, and a stiffer pick lets go later and
+  more abruptly (the slip point runs from 62% to 82% of the window with pick
+  hardness). Both halves are smoothsteps, so the product is continuous with a
+  continuous derivative and its area over the window is exactly one half
+  whatever the slip point is — the same area the symmetric raised cosine this
+  replaced had. The asymmetry therefore changes the attack's spectrum without
+  changing how hard the note lands. Measured over the first 85 ms of an open
+  E1, the difference from the symmetric window is small (about 5 Hz of spectral
+  centroid at constant level), because the two string-period-scaled modal
+  sections downstream dominate the released displacement; the change is made
+  because the physical shape is known, not because it is a large effect.
+- **Contact width.** A plectrum touches the string over a patch rather than at
+  a point, so the reflected image of the excitation is distributed with a
+  1/4, 1/2, 1/4 kernel spanning a hardness-dependent 0.5 mm (stiff and sharp)
+  to 1.5 mm (soft and rounded) of contact, mapped into delay-line samples
+  through the same sounding-length geometry the pluck comb uses. On an open
+  Drop-E eighth string that is a little over one internal sample and on the
+  top string a small fraction of one, so the comb notches wash out with
+  frequency as a real finite contact does rather than staying razor sharp to
+  Nyquist. The weights sum to one, so a zero width reduces exactly to the
+  previous single-point image.
 - **Noise controls.** Plectrum, finger, and release noise have independent
   levels; all noise is seeded deterministically per note, so identical MIDI
   renders identical audio. A one-percent trace excites the string while the
@@ -472,6 +496,94 @@ default to 0.5. Scale length is independent and extended for Drop-E:
 Scale length enters the string physics directly: tension, wave speed,
 aperture cutoff, inharmonicity, and pickup comb fractions all follow it.
 
+## Amplifier, cabinet, and time effects
+
+`Source/DSP/ElectryFx.cpp` holds the five FX-panel controls. It is downstream of
+the instrument and is not part of the physical model, but it is where most of
+what a listener calls "the metal guitar sound" is actually produced, so it is
+held to the same explicitness as the string engine — and, like the engine, it is
+JUCE-free and regression tested on every platform.
+
+Pakarinen and Yeh,
+[*A Review of Digital Techniques for Modeling Vacuum-Tube Guitar
+Amplifiers*](https://direct.mit.edu/comj/article/33/2/85/94374/A-Review-of-Digital-Techniques-for-Modeling-Vacuum)
+(Computer Music Journal 33(2), 2009), survey the field from static waveshapers
+through circuit-solved methods, and are explicit about the antialiasing problem:
+a cascaded gain stage generates harmonics far above the audio band, and at host
+rate those fold straight back into it. Electry takes the static-nonlinearity
+route with genuine oversampling rather than the circuit-solved route:
+
+- **Oversampling.** Both clipping blocks run at 4x, reached through two
+  cascaded halfband stages. The kernels are Kaiser-windowed ideal halfband
+  responses designed in `prepare()` rather than transcribed constants, with the
+  odd taps normalised so the kernel sums to exactly one; the regression suite
+  measures unity DC gain, the -6 dB halfband symmetry point, passband ripple
+  under 0.05 dB to 0.15 of the stage rate, and better than 50 dB of stopband
+  rejection from 0.35 of it. Above 96 kHz one stage is dropped and above
+  192 kHz both are, on the same grounds as the engine's own 2x policy: the
+  point is a fixed absolute bandwidth for the stages, and a host already
+  running that fast supplies it. Engaged, the chain adds 17.25 host samples of
+  fixed group delay at 4x and 11.5 at 2x. With both gain controls at zero the
+  block is skipped outright and adds neither cost nor delay.
+- **Measured effect.** Non-harmonic energy in the output of a steady tone,
+  relative to the energy that legitimately belongs to the harmonic series, is
+  the direct measure of folded intermodulation. Against the previous host-rate
+  chain on the same probes: -128 dB versus -128 dB for the pedal on a quiet
+  signal, -86 versus -44 dB for the pedal at full drive, -86 versus -39 dB for
+  the amplifier at full drive, and -102 versus -28 dB for the pedal stacked
+  into the amplifier. The regression suite asserts that all four stay below
+  -60 dB.
+- **Smooth transfer functions.** Every nonlinearity is bounded and infinitely
+  differentiable. The pedal uses a diode-pair form `x / sqrt(1 + x^2)`; the
+  triode stages use `x / sqrt(1 + 0.85 x^2)`. Neither selects a curve by the
+  sign of its argument: an asymmetric transfer built that way leaves a
+  third-derivative kink at the origin, and because a cascaded second stage sees
+  a near-square waveform it crosses that kink at full slew. Measured on a quiet
+  signal, that one detail cost 69 dB of alias floor on its own — -43 dB with a
+  sign-selected knee against -112 dB for the same stage carrying a single smooth
+  curve — which is why the asymmetry is produced by the operating point instead.
+- **Operating point.** Each triode stage is driven off a standing grid bias
+  plus a drift term that follows the rectified signal with a 45 ms follower, and
+  the transfer at the bias point is subtracted so the stage stays centred rather
+  than pumping DC into the cabinet. Driving a symmetric ceiling off centre is
+  the physically motivated source of even-order harmonics, and the drift is the
+  reason a held chord thickens and thins again as it decays. An interstage
+  one-pole stands in for Miller capacitance, so each stage is progressively
+  darker.
+- **Cabinet.** Five biquad sections inside the oversampled domain: a
+  second-order high-pass at the box frequency (a sealed cabinet has no useful
+  output below it), a low-mid thump, a scooped boxy mid, a presence peak, and a
+  fourth-order Butterworth roll-off from 5 kHz, because a twelve-inch speaker is
+  essentially gone an octave above that. Running it before decimation rather
+  than after removes the alias-generating content first. The regression suite
+  asserts each of those five features relative to 1 kHz. This is a filter model
+  of the *class* of response, deliberately not an impulse response of a
+  measured cabinet: no capture is included and none is claimed.
+- **Level.** Each stage divides its own small-signal gain back out, so the
+  control travels through tone rather than through level. Measured on a loud
+  Drop-E rhythm figure from the string model, the whole travel of the amp
+  control stays inside a few decibels of the dry DI; a saturating stage still
+  ends up slightly louder, because compressing a signal raises its average, and
+  the suite bounds rather than denies that.
+- **Compressor, delay, room.** The compressor eases into roughly 3.5:1 above
+  -20 dBFS through a soft knee, with makeup. The 360 ms lead delay damps and
+  thins its feedback path, so repeats darken as an analogue delay's do rather
+  than returning identical copies. The room is three allpass diffusers into two
+  damped combs per channel at coprime, channel-offset lengths, with no
+  modulation, Haas delay or randomised phase — the same constraint the
+  instrument's own stereo field obeys.
+- **Bypass.** All five mixes are smoothed per sample and snap to exactly zero,
+  so a control left at zero is a bit-exact bypass; the regression suite compares
+  the output to the input with `memcmp`, and checks that the chain returns to
+  that state after the gain block has been engaged and released. Engagement and
+  disengagement are crossfaded, and the suite bounds the largest sample step
+  across both transitions against the dry and settled-wet slew.
+
+What is deliberately not claimed: no circuit is solved (no Wave Digital
+Filters, no nodal state-space, no K-method), there is no power-supply sag or
+output-transformer model, the cabinet is not a measured impulse response, and
+none of it is a model of any named amplifier or speaker.
+
 ## Cost model
 
 The engine's arithmetic is bounded by what is audible rather than by what is
@@ -604,6 +716,28 @@ output-field effects, two visible non-overlapping mode buttons,
 the sympathetic, palm-mute (parameter and CC 2) and strum-spread controls
 reaching the rendered audio, offscreen editor rendering including the live
 fretboard's bounds, and prepare/release cycles at three rates.
+
+The amplifier chain has its own suite: halfband unity DC gain, the -6 dB
+halfband symmetry point, passband ripple and stopband rejection; a bit-exact
+dry bypass with every control at zero and an audible effect from each control
+on its own at 100%; the alias floor of the pedal, the amplifier, and the two
+stacked, at two input levels; each of the cabinet's five voicing features
+relative to 1 kHz; loudness bounds across the whole amp travel and every
+combination of the gain and compressor controls on a rendered Drop-E rhythm
+figure, dry and palm muted; the lead delay's first repeat at 360 ms with a
+clean gap before it; a decaying, decorrelated room tail; bounded sample steps
+across gain-stage engagement and disengagement and a return to bit-exact
+bypass afterwards; render determinism; finiteness, output-clamp headroom and
+the expected group delay at eight host rates from 22.05 to 384 kHz; and
+recovery from NaN, infinite, and out-of-range input as well as null and
+zero-length calls. A further test renders a short take through the demo
+renderer, so the committed demonstration audio's toolchain is covered too.
+
+Ten rendered examples of the whole path are committed under
+[`Docs/audio/`](audio/README.md) and produced from this same JUCE-free code by
+`Tools/RenderDemos.cpp`, so what the document describes can be listened to
+rather than only read. They are demonstrations, not evidence: an audible
+example is not a measurement, and none of the claims above rest on them.
 
 Those engineering tests do not replace hardware validation. A stronger claim
 about any named instrument would additionally require documented capture
