@@ -19,7 +19,9 @@ have something to work with. The two single-note rhythm takes are now two bars
 rather than one.
 
 The audio itself reflects the pickup position comb's finite null depth and the
-bridge hand's frequency-dependent absorption rate; both touch every note, and
+bridge hand's frequency-dependent absorption rate - including the halved rate at
+the fundamental, which is what gives the muted takes a tail instead of going
+silent a second after the pick; both touch every note, and
 the measurements behind them are in the
 [research contract](../physical-modeling-research.md#voicing-against-a-reference-recording).
 
@@ -78,7 +80,7 @@ The rendered peak before normalisation, for the record:
 | `02-range-full-fretboard.wav` | −12.0 dBFS | +9.0 dB |
 | `03-play-styles.wav` | −2.8 dBFS | −0.2 dB |
 | `04-drop-e-rhythm-dry.wav` | −15.7 dBFS | +12.7 dB |
-| `05-drop-e-rhythm-amp.wav` | −19.9 dBFS | +16.9 dB |
+| `05-drop-e-rhythm-amp.wav` | −20.0 dBFS | +17.0 dB |
 | `06-lead-amp-delay-room.wav` | −16.3 dBFS | +13.3 dB |
 | `07-pickups-and-tone.wav` | −13.8 dBFS | +10.8 dB |
 | `08-sympathetic-strum-stereo.wav` | −15.8 dBFS | +12.8 dB |

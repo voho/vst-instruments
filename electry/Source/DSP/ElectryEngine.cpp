@@ -947,6 +947,40 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // chords, where it recovered 5.4 dB in the 60-85 Hz band and removed
         // 2.4 dB of the 1.4-2.7 kHz excess.
         //
+        // The tilt only ever raised the hand's loss at the top; the same mode
+        // shape says the fundamental has to be let go at the bottom, and the
+        // reference recordings say so far more bluntly than the tilt allowed.
+        // In the five looser muted reference chords the fundamental's own level
+        // barely moves over the first third of a second - its loss between 50
+        // and 350 ms is +1.0 to -2.8 dB - while the third harmonic drops 7 to
+        // 13 dB and the fourth as much as 24 dB in the same window. A palm mute
+        // does not shorten f0; it removes the harmonics above it. Charging the
+        // hand's full rate at f0 is what left a muted power chord with no bottom
+        // and no tail: against those references it sat 13.6 dB low at 400 ms and
+        // 30.5 dB low at 800 ms, with the root partial 15 dB under Electry's own
+        // strongest low peak where every reference has it at the top.
+        //
+        // The mode shape on its own argues for a divisor near eight - the heel
+        // a tenth of the sounding length from the bridge leaves the fundamental
+        // at a few per cent of the plateau the upper modes reach. That number
+        // cannot be used here, and the reason is worth recording: the loop is a
+        // single one-pole whose corner sits far above these partials, so
+        // relieving f0 relieves the second, third and fourth harmonics by very
+        // nearly the same amount. Measured, h1 to h4 then move together within
+        // about 2 dB at four of the five reference pitches, against references
+        // that damp h3 and h4 8 to 24 dB harder than h1. A divisor of eight
+        // therefore over-relieves the whole low-mid comb: it overshoots the
+        // reference contour by +7 dB at 400 ms and +6 dB at 800 ms, and at a
+        // muteDamping of 0.25 or looser the muted note stops decaying faster
+        // than an open one at all. Two is what the aggregate supports. Fitted
+        // over all nine muted references at their own pitches it moves the
+        // 400 ms error from -13.6 to -2.0 dB, the 800 ms error from -30.5 to
+        // -11.2 dB and the joint band-plus-contour error from 11.64 to 10.87 dB
+        // (11.96 to 8.93 against the five looser takes this mute pressure
+        // matches), and it stays a mute at every setting of the control. Prising
+        // h1 apart from h2 needs a steeper loss curve than one pole between f0
+        // and 3.6 kHz can carry, not a larger number here.
+        //
         // The dead-note choke is added at the same rate on both, because it is
         // the fretting hand somewhere up the neck rather than the heel resting
         // by the bridge, and none of the reasoning above describes it. Adding
@@ -954,9 +988,10 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // played under palm-mute pressure correct: both contacts are present,
         // and each contributes with its own frequency behaviour.
         constexpr float handHighFrequencyTilt = 3.0f;
+        constexpr float handFundamentalRelief = 2.0f;
         const float handRate = handT60 > 0.0f ? 1.0f / handT60 : 0.0f;
         const float chokeRate = chokeT60 > 0.0f ? 1.0f / chokeT60 : 0.0f;
-        t60 = 1.0f / (1.0f / t60 + handRate + chokeRate);
+        t60 = 1.0f / (1.0f / t60 + handRate / handFundamentalRelief + chokeRate);
         t60High = 1.0f / (1.0f / t60High
                           + handRate * handHighFrequencyTilt + chokeRate);
     }

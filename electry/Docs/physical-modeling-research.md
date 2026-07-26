@@ -774,6 +774,89 @@ modelling the humbucker as two coils 19 mm apart was the obvious candidate for
 filling that hole and is described above; it measured no better and is not in
 the model.
 
+A fifth round fitted the mute against nine dry muted power-chord references
+spanning five pitches, which is the first time the set could distinguish a
+pitch-scaling error from a constant offset. The decisive measurement is
+per-harmonic, and it overturns how the hand had been modelled:
+
+| 50 to 350 ms drop | h1 | h2 | h3 | h4 | h8 | span |
+| --- | --- | --- | --- | --- | --- | --- |
+| reference, lowest pitch | +1.0 | -4.4 | -12.7 | -24.4 | -58.5 | 59.5 dB |
+| Electry before | -20.1 | -19.4 | -20.0 | -19.4 | -26.3 | 6.2 dB |
+
+A palm mute does not shorten the fundamental. Across all five reference pitches
+the fundamental's own level moves by +1.0 to -2.8 dB over the first third of a
+second while the third harmonic drops 7 to 13 dB and the fourth as much as 24 dB.
+The loss climbs steeply with harmonic number, and more steeply at low pitch.
+Electry's loss was flat in harmonic number at every pitch: a broadband gate with
+an absolute-frequency tilt, not a mode-selective absorber. That is what "muted
+but not muted-sounding" was describing, and the regression suite had been saying
+it from the other side - a check asks a muted note to sit 12 dB below an open one
+around a second in, and Electry sat 57 dB below it.
+
+Charging the hand's full rate at the fundamental left a muted power chord with no
+bottom and no tail: measured against the references it sat 13.6 dB low at 400 ms,
+30.5 dB low at 800 ms, and at -100 dBFS a second after the pick where every
+reference still has audible content. The hand's rate at the fundamental is now
+halved. The mode shape on its own argues for a divisor near eight - a heel a
+tenth of the sounding length from the bridge leaves the fundamental at a few per
+cent of the plateau the upper modes reach - but that number cannot be used, and
+the reason is the model's real limit: the loop is a single one-pole whose corner
+sits far above these partials, so relieving the fundamental relieves the second,
+third and fourth harmonics by very nearly the same amount. A divisor of eight
+therefore over-relieves the whole low-mid comb and overshoots the reference
+contour. Two is what the aggregate supports. It moves the 400 ms error from
+-13.6 to -2.0 dB, the 800 ms error from -30.5 to -11.2 dB, and the joint
+band-plus-contour error from 11.64 to 10.87 dB across all nine references
+(11.96 to 8.93 against the five looser takes the shipped mute pressure matches).
+Once each voicing is allowed its own Mute Damp setting - the honest comparison,
+since that is a user control and this change moves its optimum from 0.45 to 0.70 -
+the gain is 0.3 to 0.5 dB. The attack is bit-identical, and so is every unmuted
+articulation, because the term is multiplied by a hand rate that is exactly zero
+without one.
+
+Three other candidates were fitted against the same references and rejected, all
+for reasons worth keeping:
+
+- **Anchoring the fitted high point to the string's own series** - `fHigh = k*f0`
+  rather than an absolute 3.6 kHz - is almost certainly the right answer to the
+  harmonic-number problem, and it produced by far the largest improvement
+  measured anywhere in this work: body-window band error 11.03 to 4.09 dB, with
+  the error's pitch slope flattening from -2.11 to -0.73 dB per semitone. It
+  cannot ship as it stands. `highRatio` was calibrated at 3.6 kHz, so moving the
+  point requires re-deriving it, and re-deriving it in log frequency raises it to
+  a power near 0.6 in the low register, which compresses every parameter that
+  acts through it. The Les Paul to Telecaster spread is 3.95x at stock and 2.26x
+  after, which collapses the centroid separation the suite pins, and halves the
+  construction axis's audibility on the lowest string. Un-compressing needs
+  k >= 19, by which point the improvement is gone. Fixing this needs the loop to
+  carry a steeper loss curve, not a re-anchored two-point fit.
+- **An intrinsic strum spread for the stroke articulations** improved the
+  objective on its own (11.64 to 11.33) but must not be combined with the shipped
+  change: it improves the decay contour by removing attack peak while the shipped
+  change improves it by adding body energy, and applied together they overshoot
+  into positive error - 11.72, worse than doing nothing. Measured at 2, 3 and 6 ms
+  of travel; there is no spread at which the pair beats the shipped change alone.
+- **Scaling the hand's decay time by the string's mass** measured exactly zero
+  change to the objective.
+
+What remains wrong, named because it has been understated before. The
+harmonic-number tilt is still essentially flat: the shipped change lifts the
+whole profile rather than tilting it, so the span is 6.6 dB against the
+reference's 59.5. The body-window brightness excess above 480 Hz is essentially
+untouched at +15.6 dB mean against +16.2 before. The root partial still sits
+13.9 dB below Electry's own strongest low peak where every reference has it at
+the top. The attack is untouched: onset-to-peak is still 1 to 4 ms against the
+references' 17 to 26 ms. And the model still cannot represent the tight-versus-
+loose mute distinction at all - the same note's two reference takes differ by 11
+to 17 dB at 400 ms, and no single setting of Mute Damp matches both.
+
+The next structural step is a hand-specific loss filter inside the loop, gated to
+the muted articulations. Gating matters: the two thresholds that blocked both the
+re-anchored high point above and the in-loop body coupling are measured on single
+unmuted notes, so a filter that exists only while the hand is on the string
+cannot reach them.
+
 The amplifier chain was voiced against the same goal on a chugged Drop-E figure.
 Its input stage now passes the whole eighth-string fundamental instead of cutting
 it at 84 Hz, because clipping that fundamental is what generates the harmonics

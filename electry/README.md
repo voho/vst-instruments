@@ -246,7 +246,14 @@ Notes Off.
   damped the fundamental as hard as the top end, which is what made a mute read
   as a thin, cut-off pick rather than a heavy chug. The Muted and Chug
   keyswitches and the continuous Palm Mute pressure are the same absorber at
-  different depths, and they combine in parallel too. Their targets follow dry
+  different depths, and they combine in parallel too. Its rate at the
+  fundamental is halved as well as tripled at the top, because a palm mute
+  measurably does not shorten the fundamental at all: across nine dry muted
+  power-chord references at five pitches the fundamental moves +1.0 to -2.8 dB
+  over the first third of a second while the fourth harmonic drops as much as
+  24 dB. Charging the full rate at the fundamental is what left a muted chord
+  with no bottom and no tail - inaudible a second after the pick, where every
+  reference still rings. Their targets follow dry
   muted power-chord reference recordings: a real short muted chord falls a couple
   of decibels in its first 25 ms and reaches -40 dB around half a second later,
   while a looser one holds a low tail for seconds. Because the damping
