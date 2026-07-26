@@ -35,7 +35,7 @@ the measurements behind them are in the
 | [`08-sympathetic-strum-stereo.wav`](08-sympathetic-strum-stereo.wav) | stereo | 7.3 s | Strum travel (22 ms per string crossed), the divided-pickup stereo field, and bridge-coupled sympathetic strings: a down-strum, an up-strum, the same chord with the coupling at exactly zero, then one low note setting the unfingered strings ringing. |
 | [`09-guitar-build-contrasts.wav`](09-guitar-build-contrasts.wav) | mono | 7.7 s | The same short figure on three instruments: a 25.5-inch light-strung build, the default 26.75-inch guitar, and a 28-inch baritone with a heavy set and older strings. |
 | [`10-velocity-dynamics.wav`](10-velocity-dynamics.wav) | mono | 4.4 s | Velocity response at full travel — six strokes from a finger-light touch to a hard metal attack, then four more with the palm mute at 60%. Level, brightness, contact noise and attack pitch glide all move together. |
-| [`11-power-chords-dry.wav`](11-power-chords-dry.wav) | mono | 19.9 s | Power chords as the raw DI. Four held root-fifth-octave shapes so the decay and the bridge coupling are audible, a twelve-chord chugged progression, then eight tight stabs under 55% continuous palm-mute pressure. Nothing after the pickups. |
+| [`11-power-chords-dry.wav`](11-power-chords-dry.wav) | mono | 19.9 s | Power chords as the raw DI. Four held root-fifth-octave shapes so the decay and the bridge coupling are audible, a twelve-chord chugged progression, then eight tight stabs under 55% continuous palm-mute pressure. Roots stay in MIDI 28–32, where the allocator gives the idiomatic three-adjacent-string shape. Nothing after the pickups. |
 | [`12-power-chords-amp.wav`](12-power-chords-amp.wav) | mono | 20.1 s | The identical MIDI and guitar settings through the amplifier, cabinet and compressor. Compare directly with `11`: three fundamentals and their harmonic series intermodulating in the clipping stages is what the oversampling is there for. |
 | [`13-long-rhythm-arrangement.wav`](13-long-rhythm-arrangement.wav) | stereo | 14.0 s | The longest take here: two bars of the chugged single-note figure, a bar of descending power chords, then a full eight-string open ring-out, amped with a little room behind it. The instrument in a part rather than under a microscope. |
 
@@ -65,9 +65,10 @@ inside a take is altered: the velocity ramp in `10`, the decay of each chug in
 `04`, and the dry-versus-amplified comparisons between `04` and `05` and
 between `11` and `12` all keep their shape and their internal balance.
 
-`11` is the loudest raw take in the set at −6.4 dBFS: three strings struck as
-one stroke stack their initial peaks, which is exactly why the instrument's own
-output control is left lower for chord work than for a single chugged note.
+`11` renders about 5 dB hotter than the single-note figure in `04` from the same
+output setting: three strings struck as one stroke stack their initial peaks,
+which is why a player tracking chords leaves the instrument's own output control
+lower than for a single chugged note.
 
 The rendered peak before normalisation, for the record:
 
@@ -83,8 +84,8 @@ The rendered peak before normalisation, for the record:
 | `08-sympathetic-strum-stereo.wav` | −15.8 dBFS | +12.8 dB |
 | `09-guitar-build-contrasts.wav` | −10.5 dBFS | +7.5 dB |
 | `10-velocity-dynamics.wav` | −16.0 dBFS | +13.0 dB |
-| `11-power-chords-dry.wav` | −6.4 dBFS | +3.4 dB |
-| `12-power-chords-amp.wav` | −18.9 dBFS | +15.9 dB |
+| `11-power-chords-dry.wav` | −10.8 dBFS | +7.8 dB |
+| `12-power-chords-amp.wav` | −19.6 dBFS | +16.6 dB |
 | `13-long-rhythm-arrangement.wav` | −18.1 dBFS | +15.1 dB |
 
 `05` renders 4.2 dB *below* `04` at the peak while sitting above it in average

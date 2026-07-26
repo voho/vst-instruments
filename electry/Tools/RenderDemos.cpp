@@ -627,16 +627,24 @@ Take renderVelocityDynamics()
 // very differently from a single note: three strings share one bridge, so the
 // sympathetic coupling, the strum travel and the amplifier's intermodulation
 // all have something to work with.
+//
+// The roots stay inside MIDI 28..32 deliberately. The allocator gives each note
+// the free string with the lowest fret, which for those roots is the idiomatic
+// shape - strings 8, 7 and 6 at one fret, three adjacent courses. Above that it
+// stops being adjacent: a root of 33 puts the fifth and octave on open strings
+// and lands on 8, 6 and 5, and a root of 38 lands on 7, 5 and 4. Those are
+// still correct notes and a legitimate voicing, but they cross a different
+// number of string gaps, which changes exactly the strum travel and coupling
+// these takes exist to demonstrate. Verified against the engine's own per-string
+// readout rather than assumed.
 void playPowerChordProgression(Take& take, bool muted)
 {
-    // Root positions on the Drop-E instrument, low to high, as a player would
-    // move a two-finger shape along the eighth and seventh strings.
     struct Shape { int root; double length; float velocity; };
     static const std::array<Shape, 12> progression {{
-        { 28, 0.90, 1.00f }, { 28, 0.45, 0.86f }, { 33, 0.90, 0.96f },
-        { 31, 0.45, 0.90f }, { 28, 0.90, 1.00f }, { 36, 0.45, 0.92f },
-        { 35, 0.90, 0.96f }, { 33, 0.45, 0.88f }, { 30, 0.90, 0.94f },
-        { 28, 0.45, 0.90f }, { 38, 0.90, 0.98f }, { 28, 1.60, 1.00f },
+        { 28, 0.90, 1.00f }, { 28, 0.45, 0.86f }, { 31, 0.90, 0.96f },
+        { 30, 0.45, 0.90f }, { 28, 0.90, 1.00f }, { 32, 0.45, 0.92f },
+        { 31, 0.90, 0.96f }, { 29, 0.45, 0.88f }, { 30, 0.90, 0.94f },
+        { 28, 0.45, 0.90f }, { 32, 0.90, 0.98f }, { 28, 1.60, 1.00f },
     }};
 
     take.style(muted ? Articulation::Chug : Articulation::Downstroke);
@@ -662,7 +670,7 @@ Take renderPowerChordsDry()
     Take take(parameters, FxParameters {}, false);
 
     take.style(Articulation::Downstroke);
-    for (const int root : { 28, 33, 31, 28 })
+    for (const int root : { 28, 31, 30, 28 })
     {
         take.chord({ root, root + 7, root + 12 }, 0.95f);
         take.wait(1.30);
@@ -680,7 +688,7 @@ Take renderPowerChordsDry()
     take.style(Articulation::Chug);
     for (int repeat = 0; repeat < 8; ++repeat)
     {
-        const int root = repeat % 4 == 3 ? 33 : 28;
+        const int root = repeat % 4 == 3 ? 32 : 28;
         take.chord({ root, root + 7, root + 12 }, repeat % 2 == 0 ? 1.0f : 0.85f);
         take.wait(0.16);
         take.releaseChord({ root, root + 7, root + 12 });
@@ -706,7 +714,7 @@ Take renderPowerChordsAmped()
     Take take(parameters, fx, false);
 
     take.style(Articulation::Downstroke);
-    for (const int root : { 28, 33, 31, 28 })
+    for (const int root : { 28, 31, 30, 28 })
     {
         take.chord({ root, root + 7, root + 12 }, 0.95f);
         take.wait(1.30);
@@ -723,7 +731,7 @@ Take renderPowerChordsAmped()
     take.style(Articulation::Chug);
     for (int repeat = 0; repeat < 8; ++repeat)
     {
-        const int root = repeat % 4 == 3 ? 33 : 28;
+        const int root = repeat % 4 == 3 ? 32 : 28;
         take.chord({ root, root + 7, root + 12 }, repeat % 2 == 0 ? 1.0f : 0.85f);
         take.wait(0.16);
         take.releaseChord({ root, root + 7, root + 12 });
@@ -756,7 +764,7 @@ Take renderLongRhythmArrangement()
     take.wait(0.20);
 
     take.style(Articulation::Downstroke);
-    for (const int root : { 33, 31, 30, 28 })
+    for (const int root : { 32, 31, 30, 28 })
     {
         take.chord({ root, root + 7, root + 12 }, 0.96f);
         take.wait(0.70);
