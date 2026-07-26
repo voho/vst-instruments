@@ -680,11 +680,16 @@ Take renderPowerChordsDry()
 
     take.wait(0.35);
     playPowerChordProgression(take, true);
-    take.wait(0.5);
-
-    // Tight stabs under continuous bridge-hand pressure.
+    // Tight stabs under continuous bridge-hand pressure. The pressure is set
+    // *before* the pause rather than after it: continuous parameters are
+    // smoothed with a 14 ms time constant, and the mute depth is resolved when a
+    // voice is configured, so a note-on issued in the same instant as the change
+    // would be built against a value still on its way to 55%. The first of the
+    // eight stabs would then be looser than the other seven, which is precisely
+    // the comparison this passage exists to make.
     parameters.palmMute = 0.55f;
     take.setEngineParameters(parameters);
+    take.wait(0.5);
     take.style(Articulation::Chug);
     for (int repeat = 0; repeat < 8; ++repeat)
     {
@@ -724,10 +729,11 @@ Take renderPowerChordsAmped()
 
     take.wait(0.35);
     playPowerChordProgression(take, true);
-    take.wait(0.5);
-
+    // As above: the pressure is set before the pause so the first stab is
+    // configured at the full 55% rather than partway through the 14 ms ramp.
     parameters.palmMute = 0.55f;
     take.setEngineParameters(parameters);
+    take.wait(0.5);
     take.style(Articulation::Chug);
     for (int repeat = 0; repeat < 8; ++repeat)
     {
