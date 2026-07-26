@@ -852,20 +852,48 @@ references' 17 to 26 ms. And the model still cannot represent the tight-versus-
 loose mute distinction at all - the same note's two reference takes differ by 11
 to 17 dB at 400 ms, and no single setting of Mute Damp matches both.
 
-That hand-specific loss filter was then built and measured, gated to the muted
-articulations so it could not reach the thresholds that blocked the re-anchored
-high point. It works as a mechanism - the drop from the first harmonic to the
-eighth spans 22 dB with it against under 4 dB without - and it is still not
-shippable, for a reason that explains why this problem resisted so many attempts.
-Across its whole usable range it trades the two terms of the objective almost
-exactly one for one: tilt 17.9 to 13.7 dB against contour 6.6 to 11.3 dB, so the
-joint score never improves and at the depths that produce real tilt the note goes
-inaudible again. In this architecture the harmonic tilt and the note's total
-energy are one degree of freedom rather than two, because a string's energy lives
-in the same low harmonics the tilt has to remove - and in a power chord the
-root's second and third harmonics are the fifth's and octave's fundamentals.
-Separating them requires the tilt and the decay to stop sharing a single one-pole,
-which is a change to the loop's order rather than to any constant in it.
+That hand-specific loss filter is now in the model, and getting it to work turned
+on one detail rather than on any constant. Gated to the muted articulations so it
+cannot reach the thresholds that blocked the re-anchored high point, it is a shelf: unity at DC, falling above a corner set as a multiple of the
+fundamental, so its slope is expressed in harmonic number and the same shape
+works an octave down.
+
+The detail that matters is that its magnitude at both fitted points is divided
+back out of the decay targets, so the one-pole is solved for what is left. A first
+attempt left the shelf outside the solve, and the result was the clearest negative
+in this whole body of work: across its entire usable range it traded the two terms
+of the objective almost exactly one for one - tilt 17.9 to 13.7 dB against contour
+6.6 to 11.3 dB - so the joint score never improved, and at the depths that
+produced real tilt the note went inaudible again. The extra loss was simply being
+added on top of a decay that had already been fitted.
+
+Inside the solve the trade breaks. Swept over depths of 0 to 0.50 against corners
+of 2 to 15 times the fundamental, the minimum is at a depth of 0.35 and a corner
+of eight, where the tilt error falls 17.69 to 11.50 dB while the contour term
+rises only 4.00 to 5.45 - six decibels bought for one and a half, against one for
+one outside the solve. The joint objective improves 10.85 to 8.48 dB.
+
+This is possible only because a muted note has the headroom for it. Its loop gain
+is around 0.69 per round trip where an unmuted twenty-second decay runs at 0.996,
+so there is room to redistribute loss between the fitted points; the same
+compensation on an open string would ask for a loop gain above unity and clamp.
+That is also why the shelf is gated rather than global.
+
+What it does not do is close the gap. The measured span from the first harmonic to
+the eighth is about 11 dB against the references' 59.5, and the envelope gives up
+roughly five decibels in the 150-500 ms window to buy it - still seven decibels
+better than before any of this work, and forty better at one to two seconds, but
+a trade rather than a free gain. Going further needs the loop's order raised
+again, not this shelf deepened: at depths beyond 0.5 the contour term turns and
+the joint score worsens.
+
+One consequence of restoring the mute's tail had to be corrected alongside it.
+The release-noise burst's level was set when the muted register was far quieter
+than it now is, so with an audible note underneath it the same burst read as a
+click at the end of every phrase. Its coefficient drops from 0.34 to 0.20 on the
+wound strings and 0.20 to 0.13 on the plain ones. The control's own range is
+unchanged; what moved is what a given setting means against a note that no longer
+disappears.
 
 The amplifier chain was voiced against the same goal on a chugged Drop-E figure.
 Its input stage now passes the whole eighth-string fundamental instead of cutting

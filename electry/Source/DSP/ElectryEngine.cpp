@@ -53,6 +53,20 @@ constexpr float singleCoilResonanceHz = 6000.0f;
 constexpr float humbuckerResonanceQ = 1.0f;
 constexpr float singleCoilResonanceQ = 2.40f;
 
+// The bridge hand's loss slope: how deep the shelf goes and where it turns over
+// as a multiple of the sounding fundamental. Fitted jointly with the relief
+// below against nine dry muted power-chord references at five pitches, on an
+// objective that scores the harmonic-number tilt and the peak-relative energy
+// contour together so neither can be bought with the other.
+// Swept jointly: depth 0, 0.10, 0.20, 0.35, 0.50 against corners of 2, 4, 6, 8,
+// 11 and 15 times the fundamental. The minimum is clear and it is not a trade -
+// tilt error falls 17.69 to 11.50 dB while the contour term rises only 4.00 to
+// 5.45, where the same shelf outside the solve moved the two one for one and
+// bought nothing. Corners nearer the fundamental collapse the contour (at 2x the
+// term reaches 34 dB); much above eight the tilt returns to where it started.
+constexpr float handLossDepthScale = 0.35f;
+constexpr float handLossCornerRatio = 8.0f;
+
 constexpr float steelDensity = 7850.0f;      // kg/m^3
 constexpr float steelYoungModulus = 2.0e11f; // Pa
 
@@ -177,6 +191,7 @@ void ElectryEngine::PolarisationLoop::clear() noexcept
     line.fill(0.0f);
     writeIndex = 0;
     damping.reset();
+    handLoss.reset();
     dispersion1.reset();
     dispersion2.reset();
     dispersion3.reset();
@@ -339,6 +354,35 @@ float ElectryEngine::onePolePhaseDelay(float coefficient, float omega) noexcept
     const float angle = -std::atan2(coefficient * std::sin(omega),
                                     1.0f - coefficient * std::cos(omega));
     return omega > 1.0e-9f ? -angle / omega : coefficient / (1.0f - coefficient);
+}
+
+// Magnitude and phase of the hand's loss shelf, H(z) = (1-d) + d(1-a)/(1-a/z).
+// Used by both the decay solve and the tuning compensation, so the two can never
+// disagree about what is in the loop.
+void ElectryEngine::handLossResponse(float depth, float coefficient, float omega,
+                                     float& magnitude, float& phase) noexcept
+{
+    if (depth <= 0.0f)
+    {
+        magnitude = 1.0f;
+        phase = 0.0f;
+        return;
+    }
+    const float cw = std::cos(omega), sw = std::sin(omega);
+    const float nr = 1.0f - depth * coefficient
+                   - (1.0f - depth) * coefficient * cw;
+    const float ni = (1.0f - depth) * coefficient * sw;
+    const float dr = 1.0f - coefficient * cw;
+    const float di = coefficient * sw;
+    const float dn = dr * dr + di * di;
+    if (dn < 1.0e-20f)
+    {
+        magnitude = 1.0f;
+        phase = 0.0f;
+        return;
+    }
+    magnitude = std::sqrt((nr * nr + ni * ni) / dn);
+    phase = std::atan2(ni, nr) - std::atan2(di, dr);
 }
 
 float ElectryEngine::allpassPhaseDelay(float coefficient, float omega) noexcept
@@ -919,6 +963,8 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     }
     highRatio = clampf(highRatio, 0.0015f, 0.9f);
 
+    // Whether a hand is on the string at all, for the loss shelf below.
+    float handRateForSlope = 0.0f;
     // The string's own targets, before either hand.
     float t60High = t60 * highRatio;
     if (handT60 > 0.0f || chokeT60 > 0.0f)
@@ -1002,6 +1048,7 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         constexpr float handHighFrequencyTilt = 3.0f;
         constexpr float handFundamentalRelief = 6.0f;
         const float handRate = handT60 > 0.0f ? 1.0f / handT60 : 0.0f;
+        handRateForSlope = handRate;
         const float chokeRate = chokeT60 > 0.0f ? 1.0f / chokeT60 : 0.0f;
         t60 = 1.0f / (1.0f / t60 + handRate / handFundamentalRelief + chokeRate);
         t60High = 1.0f / (1.0f / t60High
@@ -1016,8 +1063,33 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     const float omega0 = twoPi * f0 * inverseSampleRate_;
     const float omegaHigh = twoPi * std::max(fHigh, f0 * 1.5f) * inverseSampleRate_;
 
+    // The shelf, resolved once for both polarisations. Gated on a hand actually
+    // being present, so this is arithmetically nothing for every other style.
+    const float shelfDepth = handRateForSlope > 0.0f ? handLossDepthScale : 0.0f;
+    const float shelfCoefficient = shelfDepth > 0.0f
+        ? std::exp(-twoPi * clampf(handLossCornerRatio * f0, 40.0f,
+                                   0.40f * sampleRate) * inverseSampleRate_)
+        : 0.0f;
+
     const auto configureLoop = [&] (PolarisationLoop& loop, float t60Scale)
     {
+        loop.handLossDepth = shelfDepth;
+        loop.handLossCoefficient = shelfCoefficient;
+        if (shelfDepth <= 0.0f)
+            loop.handLoss.reset();
+        // Divide the shelf out of both targets. This is the whole point: the
+        // one-pole is then solved for what is left, so the envelope stays where
+        // the references put it and the shelf's slope is free to bend the curve
+        // in between. A muted note spends most of its loop gain on the mute
+        // itself, which is what leaves the headroom for this to be possible -
+        // on an unmuted 20 s decay the same compensation would ask for a loop
+        // gain above unity and clamp.
+        float shelfF0 = 1.0f, shelfHigh = 1.0f, shelfPhase = 0.0f;
+        handLossResponse(shelfDepth, shelfCoefficient, omega0, shelfF0, shelfPhase);
+        handLossResponse(shelfDepth, shelfCoefficient, omegaHigh, shelfHigh,
+                         shelfPhase);
+        shelfF0 = clampf(shelfF0, 1.0e-3f, 1.0f);
+        shelfHigh = clampf(shelfHigh, 1.0e-3f, 1.0f);
         const float t60Fundamental = std::max(0.02f, t60 * t60Scale);
         const float t60HighTarget = std::max(0.008f, t60High * t60Scale);
         const float period = sampleRate / f0;
@@ -1036,19 +1108,22 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
             const float denom = 1.0f + a * a - 2.0f * a * std::cos(omega);
             return (1.0f - a) / std::sqrt(std::max(denom, 1.0e-12f));
         };
+        const float onePoleRatio = clampf(
+            ratio / clampf(shelfHigh / shelfF0, 1.0e-4f, 1.0e4f), 1.0e-4f, 1.0f);
         float low = 0.0f;
         float high = 0.9995f;
         for (int i = 0; i < 18; ++i)
         {
             const float mid = 0.5f * (low + high);
             const float value = magnitude(mid, omegaHigh) / magnitude(mid, omega0);
-            if (value > ratio)
+            if (value > onePoleRatio)
                 low = mid;
             else
                 high = mid;
         }
         loop.loopDampingCoefficient = 0.5f * (low + high);
-        const float f0Magnitude = magnitude(loop.loopDampingCoefficient, omega0);
+        const float f0Magnitude =
+            magnitude(loop.loopDampingCoefficient, omega0) * shelfF0;
         loop.loopGain = clampf(gainAtF0 / std::max(f0Magnitude, 1.0e-6f),
                                0.0f, 0.99999f);
     };
@@ -1224,7 +1299,14 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         // the sounding pitch matches the target frequency.
         const auto loopPhaseDelay = [&] (const PolarisationLoop& loop)
         {
+            // The shelf is in the loop, so its phase is part of the sounding
+            // period; without this a palm-muted string sits 12.5 cents flat.
+            float shelfMagnitude = 1.0f, shelfPhase = 0.0f;
+            handLossResponse(loop.handLossDepth, loop.handLossCoefficient, omega,
+                             shelfMagnitude, shelfPhase);
+            const float shelfDelay = omega > 1.0e-9f ? -shelfPhase / omega : 0.0f;
             return onePolePhaseDelay(loop.loopDampingCoefficient, omega)
+                 + shelfDelay
                  + 4.0f * allpassPhaseDelay(
                        loop.dispersionLowCoefficient, omega)
                  + 4.0f * allpassPhaseDelay(
@@ -2138,8 +2220,12 @@ void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
     {
         voice.releaseNoiseDone = true;
         const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
+        // The wound coefficient was set when the muted register was much
+        // quieter than it is now. With the mute's tail restored the release
+        // burst sits on top of an audible note instead of near silence, and at
+        // the previous level it read as a click at the end of every phrase.
         const float level = std::pow(smoothedParameters_.releaseNoise, 0.75f)
-                          * (spec.wound ? 0.34f : 0.20f)
+                          * (spec.wound ? 0.20f : 0.13f)
                           * voice.velocityProfile.noise;
         voice.noiseAmplitude = level;
         const float releaseSeconds = lerp(
@@ -2440,6 +2526,12 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         sample = loop.dispersion7.process(sample, loop.dispersionHighCoefficient);
         sample = loop.dispersion8.process(sample, loop.dispersionHighCoefficient);
         sample = loop.damping.process(sample, loop.loopDampingCoefficient);
+        // A convex blend of the wave and a lowpass of it, so the magnitude never
+        // exceeds one whatever the depth, and depth zero is exactly the identity.
+        if (loop.handLossDepth > 0.0f)
+            sample += loop.handLossDepth
+                    * (loop.handLoss.process(sample, loop.handLossCoefficient)
+                       - sample);
         sample *= loop.loopGain * voice.releaseGain * extraFeedback;
         return sample;
     };

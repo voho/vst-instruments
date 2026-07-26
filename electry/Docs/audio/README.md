@@ -67,7 +67,7 @@ inside a take is altered: the velocity ramp in `10`, the decay of each chug in
 `04`, and the dry-versus-amplified comparisons between `04` and `05` and
 between `11` and `12` all keep their shape and their internal balance.
 
-`11` renders about 4.6 dB hotter than the single-note figure in `04` from the same
+`11` renders about 4.8 dB hotter than the single-note figure in `04` from the same
 output setting: three strings struck as one stroke stack their initial peaks,
 which is why a player tracking chords leaves the instrument's own output control
 lower than for a single chugged note.
@@ -79,7 +79,7 @@ The rendered peak before normalisation, for the record:
 | `01-range-open-strings.wav` | −12.8 dBFS | +9.8 dB |
 | `02-range-full-fretboard.wav` | −12.0 dBFS | +9.0 dB |
 | `03-play-styles.wav` | −2.8 dBFS | −0.2 dB |
-| `04-drop-e-rhythm-dry.wav` | −15.4 dBFS | +12.4 dB |
+| `04-drop-e-rhythm-dry.wav` | −15.6 dBFS | +12.6 dB |
 | `05-drop-e-rhythm-amp.wav` | −20.0 dBFS | +17.0 dB |
 | `06-lead-amp-delay-room.wav` | −16.3 dBFS | +13.3 dB |
 | `07-pickups-and-tone.wav` | −13.8 dBFS | +10.8 dB |
@@ -90,7 +90,7 @@ The rendered peak before normalisation, for the record:
 | `12-power-chords-amp.wav` | −19.6 dBFS | +16.6 dB |
 | `13-long-rhythm-arrangement.wav` | −18.1 dBFS | +15.1 dB |
 
-`05` renders 4.6 dB *below* `04` at the peak while sitting above it in average
+`05` renders 4.4 dB *below* `04` at the peak while sitting above it in average
 level: the amplifier compresses and the cabinet removes the top of the pick
 transient, which is what an amplifier is supposed to do to a rhythm part.
 
