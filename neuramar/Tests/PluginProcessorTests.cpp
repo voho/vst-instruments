@@ -423,10 +423,10 @@ void testContractsAndLearning()
     expect (processor.getNumPrograms() == 1
                 && processor.getProgramName (0).isNotEmpty(),
             "the VST3 factory program has no host-visible name");
-    expect (processor.getParameters().size() == 17,
+    expect (processor.getParameters().size() == 18,
             "host parameter count does not include the appended Noise, "
             "Stretch, Formant, and Touch controls");
-    constexpr std::array<const char*, 17> expectedParameterOrder {
+    constexpr std::array<const char*, 18> expectedParameterOrder {
         neuramar::parameters::imprint,
         neuramar::parameters::bodyLock,
         neuramar::parameters::air,
@@ -443,7 +443,8 @@ void testContractsAndLearning()
         neuramar::parameters::noise,
         neuramar::parameters::stretch,
         neuramar::parameters::formant,
-        neuramar::parameters::touch
+        neuramar::parameters::touch,
+        neuramar::parameters::registerTilt
     };
     for (std::size_t index = 0; index < expectedParameterOrder.size(); ++index)
     {

@@ -36,6 +36,10 @@ struct EngineParameters
     // Velocity-to-timbre depth. Zero preserves the pure amplitude response
     // that every earlier Neuramar build had.
     float touch { 0.0f };                 // 0..1
+    // Key tracking. Positive darkens notes played above the learned root and
+    // opens up notes played below it, the way a real instrument's spectrum
+    // changes across its compass. It changes tone, not level.
+    float registerTilt { 0.0f };          // -1..1
 };
 
 class NeuramarEngine final
@@ -93,12 +97,18 @@ private:
         std::atomic<float> stretch { 1.0f };
         std::atomic<float> formantShiftSemitones { 0.0f };
         std::atomic<float> touch { 0.0f };
+        std::atomic<float> registerTilt { 0.0f };
     };
 
+    // One coefficient set with two independent state pairs. The Air layer needs
+    // a decorrelated second realisation for stereo width, and the side copy
+    // must track exactly the same ramped response as the centred one.
     struct Bandpass
     {
         float z1 { 0.0f };
         float z2 { 0.0f };
+        float sideZ1 { 0.0f };
+        float sideZ2 { 0.0f };
         float b0 { 0.0f };
         float b2 { 0.0f };
         float a1 { 0.0f };
@@ -113,10 +123,13 @@ private:
         float configuredBandwidthOctaves { -1.0f };
         int rampRemaining { 0 };
 
-        void clear() noexcept { z1 = z2 = 0.0f; }
+        void clear() noexcept { z1 = z2 = sideZ1 = sideZ2 = 0.0f; }
         void set(float centreHz, float bandwidthOctaves,
                  float sampleRate, int rampSamples) noexcept;
         [[nodiscard]] float tick(float input) noexcept;
+        // Uses the coefficients that tick() has already advanced this sample,
+        // so it must be called after it and only once per sample.
+        [[nodiscard]] float tickSide(float input) noexcept;
     };
 
     struct Voice
@@ -127,6 +140,7 @@ private:
         int controlCountdown { 0 };
         std::uint64_t ageStamp { 0 };
         std::array<std::uint32_t, NeuralModel::airBandCount> airNoiseStates {};
+        std::array<std::uint32_t, NeuralModel::airBandCount> airSideNoiseStates {};
         float velocity { 0.0f };
         float velocityGain { 0.0f };
         float envelope { 0.0f };
@@ -138,15 +152,21 @@ private:
         float latentRateAHertz { 0.0f };
         float latentRateBHertz { 0.0f };
         float cachedBrightnessTilt { -1000.0f };
+        float cachedReferenceTilt { -1000.0f };
         // Covers the whole rendered bank so the control-rate target loop can
         // factor pow(index * scale, tilt) into one cached table lookup and one
         // scalar instead of a pow() per rendered harmonic.
         std::array<float, renderedHarmonicCount> brightnessTiltTable {};
+        std::array<float, NeuralModel::harmonicCount> referenceTiltTable {};
         std::array<float, NeuralModel::harmonicCount> harmonicVariationSin {};
         std::array<float, NeuralModel::airBandCount> airVariationSin {};
         float pan { 0.0f };
         float panLeft { 0.70710678f };
         float panRight { 0.70710678f };
+        float panLeftStep { 0.0f };
+        float panRightStep { 0.0f };
+        float airSideGain { 0.0f };
+        float airSideGainStep { 0.0f };
         float transpositionRatio { 1.0f };
         float pitchRatio { 1.0f };
         float pitchRatioStep { 0.0f };
@@ -169,12 +189,16 @@ private:
         void clear() noexcept;
     };
 
+    // A stolen voice leaves its last sample behind, so the tail is a step to be
+    // removed rather than a signal to be faded. A raised cosine has zero slope
+    // at both ends, which keeps that removal from adding the click it exists to
+    // prevent; a linear ramp corners at both ends instead.
     struct FadeTail
     {
         float left { 0.0f };
         float right { 0.0f };
-        float gain { 0.0f };
-        float gainStep { 0.0f };
+        float position { 0.0f };
+        float positionStep { 0.0f };
         int remaining { 0 };
 
         void clear() noexcept { *this = FadeTail {}; }
@@ -218,6 +242,12 @@ private:
     float coreNyquistLimitHz_ { 0.49f * 48000.0f };
     float coreNyquistFadeScale_ { 1.0f / (0.06f * 48000.0f) };
     int controlPeriod_ { 192 };
+    // Output level is the one control applied straight to the summed signal
+    // rather than through a control-rate target, so it carries its own
+    // smoother. The sentinel means "not yet primed": the first block after
+    // prepare() adopts the host's value instead of sliding up to it.
+    float smoothedOutputGain_ { -1.0f };
+    float outputGainCoefficient_ { 1.0f };
     std::uint64_t ageCounter_ { 0 };
 };
 

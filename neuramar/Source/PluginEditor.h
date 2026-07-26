@@ -174,6 +174,7 @@ private:
     NeuramarKnob stretchKnob { "STRETCH", "ideal  /  stiff" };
     NeuramarKnob formantKnob { "FORMANT", "body size" };
     NeuramarKnob touchKnob { "TOUCH", "velocity colour" };
+    NeuramarKnob registerKnob { "REGISTER", "key-tracked tilt" };
 
     juce::MidiKeyboardComponent keyboard;
     std::unique_ptr<juce::FileChooser> fileChooser;

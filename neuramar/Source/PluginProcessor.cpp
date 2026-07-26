@@ -75,24 +75,32 @@ void addDefaultParameterStateIfMissing (
     }
 }
 
-void addLegacyTouchIfMissing (juce::ValueTree& state)
+// Some appended controls have a declared default that is not their identity
+// value, so restoring the declared default would change how a legacy memory
+// sounds. Touch 0 leaves the harmonic tilt and Air gain alone at every
+// velocity, and Register 0 leaves the key-tracked tilt alone, while new
+// instances open at 0.35 for both. A session saved before the control existed
+// therefore restores the identity, which is what this migration exists for.
+void addLegacyIdentityIfMissing (juce::ValueTree& state,
+                                 const char* parameterId,
+                                 float identityValue)
 {
-    if (containsParameterState (state, neuramar::parameters::touch))
+    if (containsParameterState (state, parameterId))
         return;
 
-    // Touch is the one appended control whose declared default is not its
-    // identity value: the pre-1.1 synthesis path is Touch 0, which leaves the
-    // harmonic tilt and Air gain untouched at every velocity, while new
-    // instances open at 0.35. Restoring the declared default here would make a
-    // legacy memory respond to velocity, which is what this migration exists
-    // to prevent.
     static const juce::Identifier parameterType { "PARAM" };
     static const juce::Identifier idProperty { "id" };
     static const juce::Identifier valueProperty { "value" };
     juce::ValueTree parameterState { parameterType };
-    parameterState.setProperty (idProperty, neuramar::parameters::touch, nullptr);
-    parameterState.setProperty (valueProperty, 0.0f, nullptr);
+    parameterState.setProperty (idProperty, parameterId, nullptr);
+    parameterState.setProperty (valueProperty, identityValue, nullptr);
     state.appendChild (parameterState, nullptr);
+}
+
+void addLegacyIdentitiesIfMissing (juce::ValueTree& state)
+{
+    addLegacyIdentityIfMissing (state, neuramar::parameters::touch, 0.0f);
+    addLegacyIdentityIfMissing (state, neuramar::parameters::registerTilt, 0.0f);
 }
 
 std::uint64_t mixRandomizationSeed (std::uint64_t value) noexcept
@@ -164,6 +172,8 @@ NeuramarAudioProcessor::NeuramarAudioProcessor()
     parameterPointers.stretch = parameters.getRawParameterValue (neuramar::parameters::stretch);
     parameterPointers.formant = parameters.getRawParameterValue (neuramar::parameters::formant);
     parameterPointers.touch = parameters.getRawParameterValue (neuramar::parameters::touch);
+    parameterPointers.registerTilt = parameters.getRawParameterValue (
+        neuramar::parameters::registerTilt);
 
     neuramar::clearModelAnatomy (displayAnatomy.anatomy);
     keyboardState.addListener (this);
@@ -189,7 +199,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout
 NeuramarAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
-    result.reserve (17);
+    result.reserve (18);
 
     result.push_back (makePercentParameter (
         neuramar::parameters::imprint, "Imprint", 0.90f));
@@ -302,6 +312,23 @@ NeuramarAudioProcessor::createParameterLayout()
 
     result.push_back (makePercentParameter (
         neuramar::parameters::touch, "Touch", 0.35f));
+
+    // Key tracking, appended so every control above keeps its established
+    // automation identity. Positive darkens notes played above the learned
+    // root and opens up notes played below it; negative inverts that.
+    result.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { neuramar::parameters::registerTilt, 1 }, "Register",
+        juce::NormalisableRange<float> { -1.0f, 1.0f, 0.001f }, 0.35f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value * 100.0f));
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.-").getFloatValue() / 100.0f;
+            })));
 
     return { result.begin(), result.end() };
 }
@@ -431,6 +458,7 @@ void NeuramarAudioProcessor::updateEngineParameters() noexcept
     next.stretch = valueOf (parameterPointers.stretch, 1.0f);
     next.formantShiftSemitones = valueOf (parameterPointers.formant, 0.0f);
     next.touch = valueOf (parameterPointers.touch, 0.35f);
+    next.registerTilt = valueOf (parameterPointers.registerTilt, 0.35f);
     engine.setParameters (next);
 }
 
@@ -1079,7 +1107,7 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
             xml != nullptr && xml->hasTagName (parameters.state.getType()))
         {
             auto restoredState = juce::ValueTree::fromXml (*xml);
-            addLegacyTouchIfMissing (restoredState);
+            addLegacyIdentitiesIfMissing (restoredState);
             addDefaultParameterStateIfMissing (
                 restoredState, parameters, neuramar::parameters::noise);
             addDefaultParameterStateIfMissing (
@@ -1127,7 +1155,7 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // Touch controls. APVTS otherwise retains the live value for a missing
     // parameter child, which could make a legacy exact-recall preset
     // unexpectedly evolve, stretch, shift, or respond to velocity.
-    addLegacyTouchIfMissing (restoredParameterState);
+    addLegacyIdentitiesIfMissing (restoredParameterState);
     addDefaultParameterStateIfMissing (
         restoredParameterState, parameters, neuramar::parameters::noise);
     addDefaultParameterStateIfMissing (

@@ -288,7 +288,11 @@ Air band.
 - **Core** renders the learned harmonic distribution and bounded source pitch
   contour at the played MIDI pitch.
 - **Air** renders fitted harmonic-subtracted residual-power trajectories through
-  eight overlapping log-spaced biquads. Each filtered noise stream is normalized
+  eight overlapping log-spaced biquads, with a decorrelated second realization
+  supplying stereo width that cancels exactly in a mono sum. The measured
+  residual excludes both active Bone neighbourhoods and the narrowband residue
+  left at each subtracted partial, and each fit cell is weighted by how many
+  spectrum bins it actually observed. Each filtered noise stream is normalized
   to unit expected RMS, so a learned amplitude has a consistent power meaning
   across band centre and ordinary host sample rates.
 - **Bone** renders persistence-selected inharmonic candidates when the model

@@ -146,6 +146,10 @@ using AirResponseMatrix = std::array<
 struct AirFitDesign
 {
     AirResponseMatrix response {};
+    // How many spectrum bins actually contributed to each cell. The cells are
+    // log-spaced over a linear FFT grid, so the lowest hold a single bin while
+    // the highest hold well over a hundred.
+    std::array<int, airFitCellCount> evidence {};
     float lowerFrequencyHz { airLowerFrequencyHz };
     float upperFrequencyHz { airUpperFrequencyHz };
 };
@@ -1012,6 +1016,7 @@ struct StretchEstimate
 
     std::vector<float> correlations(maximumLag - minimumLag + 1, -1.0f);
     std::vector<float> rawOffsets(spectra.size(), 0.0f);
+    std::vector<bool> measured(spectra.size(), false);
     for (std::size_t frame = 0; frame < spectra.size(); ++frame)
     {
         if (cancellationRequested(cancel))
@@ -1073,6 +1078,42 @@ struct StretchEstimate
         rawOffsets[frame] = std::clamp(
             12.0f * std::log2(frequency / rootFrequencyHz),
             -maximumContourSemitones, maximumContourSemitones);
+        measured[frame] = true;
+    }
+
+    // Frames whose correlation was too weak to trust carry no measurement.
+    // Leaving them at zero snaps the contour back to the root pitch and out
+    // again, and because the residual trajectory reproduces this signal
+    // exactly, that snap is rendered as an audible warble - worst on low notes,
+    // where unvoiced frames are most common. Bridge the gaps instead, so an
+    // unmeasured stretch glides between the pitches on either side of it.
+    if (std::find(measured.begin(), measured.end(), true) != measured.end())
+    {
+        std::size_t previous = rawOffsets.size();
+        for (std::size_t frame = 0; frame < rawOffsets.size(); ++frame)
+        {
+            if (!measured[frame])
+                continue;
+            if (previous == rawOffsets.size())
+            {
+                for (std::size_t gap = 0; gap < frame; ++gap)
+                    rawOffsets[gap] = rawOffsets[frame];
+            }
+            else if (frame > previous + 1)
+            {
+                const float span = static_cast<float>(frame - previous);
+                for (std::size_t gap = previous + 1; gap < frame; ++gap)
+                {
+                    const float position = static_cast<float>(gap - previous)
+                        / span;
+                    rawOffsets[gap] = rawOffsets[previous]
+                        + position * (rawOffsets[frame] - rawOffsets[previous]);
+                }
+            }
+            previous = frame;
+        }
+        for (std::size_t gap = previous + 1; gap < rawOffsets.size(); ++gap)
+            rawOffsets[gap] = rawOffsets[previous];
     }
 
     // A three-frame median rejects isolated lag choices while retaining the
@@ -1397,6 +1438,48 @@ void makePreview(const std::vector<float>& sample,
     return false;
 }
 
+// The sinusoidal subtraction leaves a narrowband residue at each fitted
+// partial - one only 0.5 % off its assumed frequency keeps several dB of its
+// energy there. Counting that residue as noise inflates the Air layer and makes
+// a tonal source come back breathier than it was, so the neighbourhood
+// exclusion already used for Bone modes is applied to the partials that were
+// actually subtracted. Removing a bin from the measured power also removes it
+// from the filterbank's modelled response, so the fit stays unbiased; it simply
+// measures the noise between the partials.
+[[nodiscard]] bool belongsToSubtractedHarmonic(float frequencyHz,
+                                               float analysisBinWidth,
+                                               float rootFrequencyHz,
+                                               float inharmonicity) noexcept
+{
+    if (!(rootFrequencyHz > 0.0f) || !(analysisBinWidth > 0.0f))
+        return false;
+    // Once the partials are closer together than the analysis can resolve there
+    // is no gap left to measure, and excluding would discard the band rather
+    // than its contaminated neighbourhoods.
+    if (rootFrequencyHz < 3.0f * analysisBinWidth)
+        return false;
+
+    // Invert f = f0 * n * sqrt(1 + B n^2) exactly: with u = n^2 and
+    // L = f / f0 this is B u^2 + u - L^2 = 0.
+    const float ratio = frequencyHz / rootFrequencyHz;
+    float index = ratio;
+    if (inharmonicity > 0.0f && std::isfinite(inharmonicity))
+    {
+        const float squared = (std::sqrt(
+            1.0f + 4.0f * inharmonicity * ratio * ratio) - 1.0f)
+            / (2.0f * inharmonicity);
+        index = std::sqrt(std::max(squared, 0.0f));
+    }
+
+    const float rounded = std::round(index);
+    if (!(rounded >= 1.0f)
+        || rounded > static_cast<float>(NeuralModel::harmonicCount))
+        return false;
+    const float partial = rootFrequencyHz
+        * stretchedHarmonicRatio(rounded, inharmonicity);
+    return std::abs(frequencyHz - partial) < 1.25f * analysisBinWidth;
+}
+
 [[nodiscard]] std::size_t airCellForFrequency(float frequencyHz,
                                               const AirFitDesign& design) noexcept
 {
@@ -1411,6 +1494,7 @@ void makePreview(const std::vector<float>& sample,
     const std::array<float, NeuralModel::airBandCount>& centreFrequencies,
     const std::array<float, NeuralModel::airBandCount>& bandwidthOctaves,
     const BoneSelection& boneSelection, float rootFrequencyHz,
+    float inharmonicity,
     double sampleRate, std::size_t analysisWindowSize)
 {
     AirFitDesign design;
@@ -1437,9 +1521,12 @@ void makePreview(const std::vector<float>& sample,
     {
         const float frequency = static_cast<float>(bin) * fftBinWidth;
         if (belongsToActiveBone(frequency, analysisBinWidth, boneSelection,
-                                rootFrequencyHz))
+                                rootFrequencyHz)
+            || belongsToSubtractedHarmonic(frequency, analysisBinWidth,
+                                           rootFrequencyHz, inharmonicity))
             continue;
         const auto cell = airCellForFrequency(frequency, design);
+        ++design.evidence[cell];
         for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
         {
             design.response[cell][band] += 2.0
@@ -1455,7 +1542,7 @@ void makePreview(const std::vector<float>& sample,
 [[nodiscard]] AirFitResult fitAirFilterbank(
     const SpectrumFrame& spectrum, const AirFitDesign& design,
     const BoneSelection& boneSelection, float rootFrequencyHz,
-    double sampleRate,
+    float inharmonicity, double sampleRate,
     const std::array<double, NeuralModel::airBandCount>& initialPowers)
 {
     std::array<double, airFitCellCount> target {};
@@ -1474,7 +1561,9 @@ void makePreview(const std::vector<float>& sample,
     {
         const float frequency = static_cast<float>(bin) * fftBinWidth;
         if (belongsToActiveBone(frequency, analysisBinWidth, boneSelection,
-                                rootFrequencyHz))
+                                rootFrequencyHz)
+            || belongsToSubtractedHarmonic(frequency, analysisBinWidth,
+                                           rootFrequencyHz, inharmonicity))
             continue;
         const float magnitude = 2.0f * std::abs(spectrum.bins[bin])
             / std::max(spectrum.normalisation, 1.0f);
@@ -1488,8 +1577,15 @@ void makePreview(const std::vector<float>& sample,
     std::array<double, airFitCellCount> weights {};
     for (std::size_t cell = 0; cell < airFitCellCount; ++cell)
     {
+        // 1/target^2 turns this into a relative-error fit, which is what makes
+        // quiet cells count at all. On its own it also gives a cell holding one
+        // FFT bin the same authority as one holding a hundred and forty, so a
+        // single noisy bin near 80 Hz could set a whole Air band. Scaling by the
+        // evidence count restores the balance: the variance of a cell's relative
+        // error falls with the number of bins averaged into it.
         const double denominator = target[cell] + tau;
-        weights[cell] = 1.0 / (denominator * denominator);
+        weights[cell] = static_cast<double>(std::max(design.evidence[cell], 0))
+            / (denominator * denominator);
     }
 
     auto powers = initialPowers;
@@ -1587,20 +1683,42 @@ void makePreview(const std::vector<float>& sample,
     return std::clamp(static_cast<float>(-1.0 / slope), 0.02f, 60.0f);
 }
 
+// Orbit revisits this region for as long as a note is held, so it has to be a
+// stable part of the sound. The candidate window is expressed in normalised
+// TIME rather than frame indices: the analysis grid is deliberately warped so
+// that 48 of its 128 frames describe the first 120 ms, and index-based bounds
+// therefore put both loop points inside the attack. A decaying source was then
+// re-attacked on every orbit.
 void chooseLoop(const std::vector<TargetFrame>& targets,
                 const std::vector<SpectrumFrame>& spectra,
                 float duration, float& loopStart, float& loopEnd)
 {
-    float bestDistance = std::numeric_limits<float>::max();
-    std::size_t bestStart = targets.size() / 3;
-    std::size_t bestEnd = 5 * targets.size() / 6;
-    const std::size_t minimumSeparation = targets.size() / 4;
-    for (std::size_t first = targets.size() / 5;
-         first < 3 * targets.size() / 5; ++first)
+    constexpr float earliestStartTime = 0.22f;
+    constexpr float latestStartTime = 0.62f;
+    constexpr float minimumSpanTime = 0.16f;
+
+    const auto frameAtOrAfter = [&spectra](float time) noexcept
     {
-        for (std::size_t second = first + minimumSeparation;
+        for (std::size_t frame = 0; frame < spectra.size(); ++frame)
+            if (spectra[frame].normalisedTime >= time)
+                return frame;
+        return spectra.size() - 1;
+    };
+
+    float bestDistance = std::numeric_limits<float>::max();
+    std::size_t bestStart = frameAtOrAfter(0.30f);
+    std::size_t bestEnd = frameAtOrAfter(0.86f);
+    const std::size_t firstCandidate = frameAtOrAfter(earliestStartTime);
+    const std::size_t lastCandidate = frameAtOrAfter(latestStartTime);
+    for (std::size_t first = firstCandidate;
+         first <= lastCandidate && first + 1 < targets.size(); ++first)
+    {
+        const float startTime = spectra[first].normalisedTime;
+        for (std::size_t second = first + 1;
              second + 1 < targets.size(); ++second)
         {
+            if (spectra[second].normalisedTime - startTime < minimumSpanTime)
+                continue;
             float distance = 0.0f;
             for (std::size_t output = 0; output < NeuralModel::outputSize; ++output)
             {
@@ -2151,8 +2269,8 @@ SampleLearner::LearnResult SampleLearner::learn(
     {
         airFitDesigns[index] = makeAirFitDesign(
             model->airCentreFrequenciesHz_, model->airBandwidthOctaves_,
-            boneSelection, pitch.frequencyHz, analysisSampleRate,
-            airAnalysisWindowSizes[index]);
+            boneSelection, pitch.frequencyHz, stretch.inharmonicity,
+            analysisSampleRate, airAnalysisWindowSizes[index]);
     }
     const auto airDesignIndex = [&airAnalysisWindowSizes] (
         std::size_t windowSize) noexcept
@@ -2166,6 +2284,7 @@ SampleLearner::LearnResult SampleLearner::learn(
 
     std::vector<TargetFrame> targets(spectra.size());
     std::array<double, NeuralModel::airBandCount> previousAirPowers {};
+    float loudestAirAmplitude = 0.0f;
     for (std::size_t frameIndex = 0; frameIndex < spectra.size(); ++frameIndex)
     {
         const auto& boneSpectrum = residualSpectra[frameIndex];
@@ -2182,11 +2301,13 @@ SampleLearner::LearnResult SampleLearner::learn(
             transientSpectrum,
             airFitDesigns[airDesignIndex(
                 transientSpectrum.analysisWindowSize)],
-            boneSelection, pitch.frequencyHz,
+            boneSelection, pitch.frequencyHz, stretch.inharmonicity,
             analysisSampleRate, previousAirPowers);
         previousAirPowers = airFit.powers;
         for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
         {
+            loudestAirAmplitude = std::max(loudestAirAmplitude,
+                                           airFit.amplitudes[band]);
             target[NeuralModel::harmonicCount + band] = std::log(
                 std::max(airFit.amplitudes[band], amplitudeFloor));
         }
@@ -2202,6 +2323,24 @@ SampleLearner::LearnResult SampleLearner::learn(
                 = std::log(std::max(amplitude, amplitudeFloor));
         }
         target[NeuralModel::pitchOutputIndex] = pitchContour[frameIndex];
+    }
+
+    // The non-negative solver returns exact zeros for bands it rejects, and
+    // log(amplitudeFloor) is -139 dB. Left alone, a band that drops out for a
+    // few frames makes its target jump by more than 100 dB and back, which
+    // dominates that output's normalisation and gates the whole noise layer on
+    // and off. Sixty dB below the loudest band this sound ever produced is
+    // inaudible and leaves the trajectory continuous.
+    if (loudestAirAmplitude > 0.0f)
+    {
+        const float airFloor = std::log(std::max(
+            1.0e-3f * loudestAirAmplitude, amplitudeFloor));
+        for (auto& target : targets)
+            for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+            {
+                auto& value = target[NeuralModel::harmonicCount + band];
+                value = std::max(value, airFloor);
+            }
     }
 
     chooseLoop(targets, spectra, metadata.durationSeconds,

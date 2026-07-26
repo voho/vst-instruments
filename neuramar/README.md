@@ -106,7 +106,7 @@ The neighbouring root display shows the inferred note, tuning offset,
 confidence, and any manual semitone correction. The editor is resizable and all
 controls are drawn with native JUCE graphics.
 
-Neuramar exposes 17 host parameters: fifteen continuous front-panel controls,
+Neuramar exposes 18 host parameters: sixteen continuous front-panel controls,
 **Orbit**, and the persisted root correction.
 
 | Control | Musical role |
@@ -118,13 +118,14 @@ Neuramar exposes 17 host parameters: fifteen continuous front-panel controls,
 | **Stretch** | 0–200%; scales the partial stretch fitted from the source. 100% renders the learned stiff-string series, 0% forces an ideal harmonic bank, 200% exaggerates it. A memory with no fitted stretch is unaffected at any setting. |
 | **Formant** | -24 to +24 semitones; moves the learned resonant body — the Body-Locked Core envelope, the Air bands, and the Bone modes — without moving the played pitch. |
 | **Touch** | 0–100%; sets how much MIDI velocity shapes timbre as well as level. Harder notes become brighter and breathier; at 0% velocity only sets level. |
+| **Register** | -100% to +100%; key tracking. Positive values darken notes played above the learned root and open up notes played below it, the way an acoustic instrument's spectrum changes across its compass; negative values invert that. It changes tone, not level. |
 | **Gravity** | -100% to +100%; tilts the reconstructed spectrum from darker to brighter. |
 | **Memory** | 0.25x–4.00x; changes how quickly a note travels through the learned time evolution. |
 | **Mutation** | 0–100%; adds bounded, voice-local movement around the learned character. |
 | **Noise** | 0–100%; sends smooth voice-local randomness through the neural time/Fourier input coordinate, making the model wander through its own learned or generated behaviour. It does not add an audio-noise layer. |
 | **Awaken** | 0–2 s; at zero, preserves the learned attack; higher values add a performance fade-in. |
 | **Dissolve** | 20 ms–8 s; shapes the performance release. |
-| **Horizon** | 0–100%; widens voices across the stereo field. |
+| **Horizon** | 0–100%; widens voices across the stereo field and gives the Air layer a decorrelated second realization, which cancels exactly in a mono sum. |
 | **Output** | -24 to +6 dB; sets the final level. |
 | **Orbit** | Revisits a stable learned region while a note remains held. |
 | **Root correction** | Shifts the inferred source root from -12 to +12 semitones without retraining. |
@@ -170,10 +171,23 @@ end-to-end through a differentiable renderer:
   attacks without sacrificing low-note resolution; a parallel 4096-sample
   residual supplies the steadier evidence used for six persistence-scored Bone
   candidates;
-- residual power, excluding active Bone neighbourhoods, is accumulated into 48
-  log-frequency cells; a deterministic non-negative solver then fits eight
+- residual power, excluding both active Bone neighbourhoods and the narrowband
+  residue left at each subtracted partial, is accumulated into 48
+  log-frequency cells weighted by how many spectrum bins each one actually
+  observed; a deterministic non-negative solver then fits eight
   overlapping log-spaced Air bands against the analytic power response of the
-  same normalized biquads used by the renderer;
+  same normalized biquads used by the renderer. Excluding a bin from the
+  measured power also excludes it from the modelled response, so the fit
+  measures the noise between the partials rather than the imperfection of
+  their removal, and band amplitudes are floored 60 dB below the loudest band
+  the sound produces so a momentarily rejected band cannot gate the layer;
+- unmeasured pitch-contour frames are bridged rather than snapped back to the
+  root, which the correction trajectory would otherwise reproduce exactly as an
+  audible warble;
+- the Orbit loop is searched in normalized time rather than in analysis-frame
+  indices. The grid is deliberately warped so that 48 of its 128 frames
+  describe the first 120 ms, so an index-based search placed both loop points
+  inside the attack and a decaying source was re-attacked on every orbit;
 - deterministic Adam optimization fits a 32-unit, time-conditioned neural
   controller with polynomial, Fourier, and onset-aware inputs to the low-rate
   log-amplitude targets; a bounded 128-frame `int16` correction trajectory then
@@ -207,17 +221,33 @@ end-to-end through a differentiable renderer:
   span, and the kernel reflects at both evidence boundaries instead of
   renormalising a truncated, parity-biased weight sum;
 - fractional Body-Locked coordinates use a positive, local, shape-preserving
-  cubic in a log-like magnitude domain; learned harmonics remain exact, sharp
-  spectral turns cannot overshoot, and the evidence-boundary fades stay linear
-  so very low notes do not lose their first virtual partials;
-- circular onset-phase mapping, a smooth capacity edge, and bounded
-  post-Nyquist power normalization keep wide transpositions coherent and avoid
-  large register-dependent level jumps; the full-Imprint learned path does not
-  invent out-of-range energy, and lower Imprint fades virtual Body-Locked
-  harmonics outside the learned envelope toward silence;
+  cubic in a log-like magnitude domain; learned harmonics remain exact and
+  sharp spectral turns cannot overshoot. Below the first observed partial the
+  envelope holds its lowest observed value, which makes Body Lock degenerate
+  cleanly to pitch-following there rather than notching the bottom partials of
+  a deeply transposed note; above the last observed partial it still fades to
+  silence, because inventing energy there is what Body Lock exists to prevent;
+- circular onset-phase mapping, a smooth capacity edge, and register power
+  normalization keep wide transpositions coherent and hold the level steady
+  across the keyboard; the full-Imprint learned path does not invent
+  out-of-range energy, and lower Imprint fades virtual Body-Locked harmonics
+  outside the learned envelope toward silence. The register reference covers
+  only as many partials as the played note actually renders: measuring against
+  the model's full bank asks a high note to make up energy that cannot exist
+  past the anti-alias limit, a demand that grows without bound. Core, Air, and
+  Bone all take the same compensation, so the balance between the three layers
+  is the source's at every point on the keyboard;
+- **Register** applies a key-tracked spectral tilt that is deliberately left out
+  of that reference, so it changes tone without changing level;
 - each Air filter is normalized to unit expected RMS for its noise input, and a
   smooth gain taper prevents transposed or brightened bands from accumulating at
   the host Nyquist edge;
+- stereo placement is ramped like every other control-rate target, so adding or
+  removing a chord note glides the remaining voices into their new positions
+  instead of stepping them; Output carries its own smoother because it is the
+  one control applied straight to the summed signal; and the voice-steal tail is
+  windowed with a raised cosine rather than a linear ramp, which removes the
+  corner that a frozen last sample would otherwise leave at both ends;
 - the final output uses the host's floating-point headroom and remains linear
   at ordinary operating levels; only a pathological ±7.95 guard is
   retained, avoiding the folded high-register harmonics produced by an

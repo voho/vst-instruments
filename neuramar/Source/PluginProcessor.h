@@ -34,6 +34,7 @@ inline constexpr auto noise         = "noise";
 inline constexpr auto stretch       = "stretch";
 inline constexpr auto formant       = "formant";
 inline constexpr auto touch         = "touch";
+inline constexpr auto registerTilt  = "registerTilt";
 } // namespace neuramar::parameters
 
 class NeuramarAudioProcessorEditor;
@@ -166,6 +167,7 @@ private:
         std::atomic<float>* stretch = nullptr;
         std::atomic<float>* formant = nullptr;
         std::atomic<float>* touch = nullptr;
+        std::atomic<float>* registerTilt = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent

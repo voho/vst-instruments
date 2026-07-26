@@ -185,6 +185,14 @@ void NeuramarEngine::Bandpass::set(float centreHz, float bandwidthOctaves,
     rampRemaining = rampSamples;
 }
 
+float NeuramarEngine::Bandpass::tickSide(float input) noexcept
+{
+    const float output = b0 * input + sideZ1;
+    sideZ1 = sideZ2 - a1 * output;
+    sideZ2 = b2 * input - a2 * output;
+    return output * outputScale;
+}
+
 float NeuramarEngine::Bandpass::tick(float input) noexcept
 {
     if (rampRemaining > 0)
@@ -253,6 +261,11 @@ void NeuramarEngine::prepare(double sampleRate, int maxBlockSize)
         1.0 / (0.06 * sampleRate_));
     controlPeriod_ = std::clamp(static_cast<int>(std::lround(sampleRate_ / 250.0)),
                                 16, 4096);
+    // A 6 ms smoother: fast enough to feel immediate, slow enough that a host
+    // sending one value per block cannot step the level between blocks.
+    outputGainCoefficient_ = static_cast<float>(
+        1.0 - std::exp(-1.0 / (0.006 * sampleRate_)));
+    smoothedOutputGain_ = -1.0f;
     reset();
 }
 
@@ -325,6 +338,9 @@ void NeuramarEngine::setParameters(const EngineParameters& parameters) noexcept
         std::memory_order_relaxed);
     parameters_.touch.store(clampParameter(parameters.touch, 0.0f, 1.0f, 0.0f),
                             std::memory_order_relaxed);
+    parameters_.registerTilt.store(
+        clampParameter(parameters.registerTilt, -1.0f, 1.0f, 0.0f),
+        std::memory_order_relaxed);
 }
 
 EngineParameters NeuramarEngine::loadParameters() const noexcept
@@ -348,6 +364,8 @@ EngineParameters NeuramarEngine::loadParameters() const noexcept
     result.formantShiftSemitones = parameters_.formantShiftSemitones.load(
         std::memory_order_relaxed);
     result.touch = parameters_.touch.load(std::memory_order_relaxed);
+    result.registerTilt = parameters_.registerTilt.load(
+        std::memory_order_relaxed);
     return result;
 }
 
@@ -423,6 +441,12 @@ void NeuramarEngine::noteOn(int midiNote, float velocity) noexcept
         selected->airNoiseStates[band] = mixHash(
             airNoiseHash
                 ^ (0x9e3779b9u * static_cast<std::uint32_t>(band + 1)));
+        // The stereo side realisation must be uncorrelated with the centred
+        // one, but just as reproducible.
+        selected->airSideNoiseStates[band] = mixHash(
+            airNoiseHash
+                ^ (0x85ebca6bu * static_cast<std::uint32_t>(band + 1))
+                ^ 0x165667b1u);
     }
     selected->mutationOffset = 2.0f
         * static_cast<float>(voiceHash & 0xffffu) / 65535.0f - 1.0f;
@@ -530,8 +554,8 @@ void NeuramarEngine::beginFadeTail(std::size_t voiceIndex) noexcept
         0.003 * sampleRate_)));
     tail.left = voice.lastLeft;
     tail.right = voice.lastRight;
-    tail.gain = 1.0f;
-    tail.gainStep = 1.0f / static_cast<float>(fadeSamples);
+    tail.position = 0.0f;
+    tail.positionStep = 1.0f / static_cast<float>(fadeSamples);
     tail.remaining = fadeSamples;
 }
 
@@ -665,8 +689,18 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     const float touchAirGain = std::clamp(
         1.0f + parameters.touch * 1.35f * touchOffset, 0.0f, 3.0f);
 
-    const float brightnessTilt = (parameters.brightness - 0.5f) * 1.2f
+    // Three contributions shape the spectrum: Brightness is the player's
+    // control, Touch is the performance, and Register is key tracking - a note
+    // transposed far above its source is darkened and one transposed far below
+    // is opened up. Only the register term is left out of the reference below,
+    // which is what makes it change tone without changing loudness.
+    const float referenceTilt = (parameters.brightness - 0.5f) * 1.2f
         + touchTilt;
+    const float registerOctaves = std::log2(
+        std::max(voice.transpositionRatio, 1.0e-4f));
+    const float registerContribution = std::clamp(
+        -parameters.registerTilt * 0.30f * registerOctaves, -0.45f, 0.45f);
+    const float brightnessTilt = referenceTilt + registerContribution;
     const float characteristic = parameters.imprint;
     // Formant moves the learned resonant body in absolute frequency without
     // moving the played pitch. Dividing the envelope lookup coordinate by the
@@ -698,6 +732,14 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
         for (std::size_t harmonic = 0; harmonic < renderedHarmonicCount; ++harmonic)
             voice.brightnessTiltTable[harmonic] = std::pow(
                 static_cast<float>(harmonic + 1), brightnessTilt);
+    }
+    if (referenceTilt != voice.cachedReferenceTilt)
+    {
+        voice.cachedReferenceTilt = referenceTilt;
+        for (std::size_t harmonic = 0;
+             harmonic < NeuralModel::harmonicCount; ++harmonic)
+            voice.referenceTiltTable[harmonic] = std::pow(
+                static_cast<float>(harmonic + 1), referenceTilt);
     }
 
     const float availableMappedHarmonics =
@@ -833,14 +875,14 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
         {
             const float referenceNeutral = fundamentalReference
                 * inverseHarmonicRolloff_[harmonic];
-            const float referenceTilt = voice.brightnessTiltTable[harmonic];
+            const float referenceTiltValue = voice.referenceTiltTable[harmonic];
             const float referenceVariation = 1.0f
                 + parameters.mutation * 0.045f
                     * voice.harmonicVariationSin[harmonic];
             referenceTargets[harmonic] = std::clamp(
                 (referenceNeutral + characteristic
                     * (pitchFollowing - referenceNeutral))
-                    * referenceTilt * referenceVariation,
+                    * referenceTiltValue * referenceVariation,
                 0.0f, 2.0f);
         }
     }
@@ -850,11 +892,24 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     // harmonics safely removed near Nyquist on high notes. The upper bound is
     // deliberately modest: unavailable spectrum must never become a huge gain
     // boost, and all changes continue to use the normal control-rate ramp.
+    //
+    // The reference deliberately covers only as many partials as this note
+    // actually renders. Measuring against the model's full bank instead asks a
+    // high note - whose upper partials do not exist, because they are past the
+    // anti-alias limit or past the observed Body-Lock envelope - to make up
+    // that missing energy from the few partials it has left. The demand grows
+    // without bound, so the gain saturated at its ceiling somewhere around
+    // root+17 semitones and the whole upper keyboard faded out behind it:
+    // 3.9 dB across MIDI 12-108 at the default Body Lock and 14.4 dB at full
+    // Body Lock. Like-for-like leaves the low register's genuine grid-density
+    // difference, which is what this exists to correct, and makes the bound
+    // below a safety limit rather than a routine constraint.
     double referencePower = 0.0;
     const float referenceFundamental = model.metadata_.rootFrequencyHz
         * frame.pitchRatio;
-    for (std::size_t harmonic = 0;
-         harmonic < referenceTargets.size(); ++harmonic)
+    const std::size_t comparableHarmonics = std::min(
+        desiredHarmonicCount, NeuralModel::harmonicCount);
+    for (std::size_t harmonic = 0; harmonic < comparableHarmonics; ++harmonic)
     {
         const float antialias = coreNyquistGain(
             referenceFundamental * harmonicStretchRatio_[harmonic],
@@ -866,7 +921,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     if (referencePower > 1.0e-12 && renderedPower > 1.0e-12)
     {
         registerGain = std::clamp(static_cast<float>(std::sqrt(
-            referencePower / renderedPower)), 0.50f, 1.5848932f);
+            referencePower / renderedPower)), 0.25f, 4.0f);
     }
     for (std::size_t harmonic = 0;
          harmonic < desiredHarmonicCount; ++harmonic)
@@ -891,9 +946,12 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
                           - desiredFrequency)
                              / (0.07f * static_cast<float>(sampleRate_)),
                          0.0f, 1.0f);
+        // Air and Bone take the same register compensation as Core, so the
+        // balance between the tonal, noise, and modal layers is the one the
+        // source had at every point on the keyboard.
         targets[output] = std::clamp(frame.airAmplitudes[band]
-            * parameters.air * variation * edgeGain * touchAirGain,
-            0.0f, 2.0f);
+            * parameters.air * variation * edgeGain * touchAirGain
+            * registerGain, 0.0f, 2.0f);
 
         voice.airFilters[band].set(
             desiredFrequency,
@@ -915,7 +973,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
                              / (0.04f * static_cast<float>(sampleRate_)),
                          0.0f, 1.0f);
         targets[output] = std::clamp(frame.boneAmplitudes[mode]
-            * active * parameters.bone * edgeGain, 0.0f, 2.0f);
+            * active * parameters.bone * edgeGain * registerGain, 0.0f, 2.0f);
         const float boundedFrequency = std::clamp(
             desiredFrequency,
             10.0f, 0.49f * static_cast<float>(sampleRate_));
@@ -974,8 +1032,34 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
 
     const float pan = std::clamp(voice.pan * parameters.spread
         + 0.08f * parameters.mutation * voice.mutationOffset, -1.0f, 1.0f);
-    voice.panLeft = std::sqrt(0.5f * (1.0f - pan));
-    voice.panRight = std::sqrt(0.5f * (1.0f + pan));
+    const float targetLeft = std::sqrt(0.5f * (1.0f - pan));
+    const float targetRight = std::sqrt(0.5f * (1.0f + pan));
+    // Air gains a decorrelated side realisation so the noise layer occupies the
+    // stereo field instead of collapsing to the voice's pan position. It is
+    // added to the left and subtracted from the right, so it cancels exactly in
+    // a mono sum and a wider setting cannot change what a mono listener hears.
+    const float targetSideGain = 0.7071068f * parameters.spread;
+    if (firstControlFrame)
+    {
+        voice.panLeft = targetLeft;
+        voice.panRight = targetRight;
+        voice.panLeftStep = 0.0f;
+        voice.panRightStep = 0.0f;
+        voice.airSideGain = targetSideGain;
+        voice.airSideGainStep = 0.0f;
+    }
+    else
+    {
+        voice.airSideGainStep = (targetSideGain - voice.airSideGain)
+            / static_cast<float>(controlPeriod_);
+        // Adding or removing a chord note re-ranks every sounding voice. A
+        // stepped gain change there is an audible click, so the new placement
+        // is reached over one control interval like every other target.
+        voice.panLeftStep = (targetLeft - voice.panLeft)
+            / static_cast<float>(controlPeriod_);
+        voice.panRightStep = (targetRight - voice.panRight)
+            / static_cast<float>(controlPeriod_);
+    }
 }
 
 void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
@@ -990,6 +1074,9 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
     // most once per block and usually never. No allocation is involved.
     refreshHarmonicStretch(model != nullptr
         ? model->inharmonicity() * parameters.stretch : 0.0f);
+    // Adopt the host's level on the first block rather than sliding up to it.
+    if (!(smoothedOutputGain_ >= 0.0f))
+        smoothedOutputGain_ = parameters.outputGain;
     const float attackCoefficient = parameters.attackSeconds <= 0.0f
         ? 1.0f
         : 1.0f - std::exp(-inverseSampleRate_ / parameters.attackSeconds);
@@ -1079,12 +1166,19 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                 }
 
                 float airSample = 0.0f;
+                float airSideSample = 0.0f;
+                const bool stereoAir = voice.airSideGain > 1.0e-4f
+                    || voice.airSideGainStep > 0.0f;
                 for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
                 {
                     const std::size_t output = airOutputOffset + band;
-                    airSample += voice.amplitudes[output]
-                        * voice.airFilters[band].tick(
-                            nextNoise(voice.airNoiseStates[band]));
+                    const float level = voice.amplitudes[output];
+                    auto& filter = voice.airFilters[band];
+                    airSample += level * filter.tick(
+                        nextNoise(voice.airNoiseStates[band]));
+                    if (stereoAir)
+                        airSideSample += level * filter.tickSide(
+                            nextNoise(voice.airSideNoiseStates[band]));
                 }
 
                 float boneSample = 0.0f;
@@ -1101,10 +1195,16 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                         + voice.boneFrequenciesHz[mode] * inverseSampleRate_);
                 }
 
-                const float voiceSample = voice.envelope * voice.velocityGain
+                voice.panLeft += voice.panLeftStep;
+                voice.panRight += voice.panRightStep;
+                voice.airSideGain += voice.airSideGainStep;
+                const float gain = voice.envelope * voice.velocityGain;
+                const float voiceSample = gain
                     * (coreSample + airSample + boneSample);
-                voice.lastLeft = voiceSample * voice.panLeft;
-                voice.lastRight = voiceSample * voice.panRight;
+                const float sideSample = gain * voice.airSideGain
+                    * airSideSample;
+                voice.lastLeft = voiceSample * voice.panLeft + sideSample;
+                voice.lastRight = voiceSample * voice.panRight - sideSample;
                 outputLeft += voice.lastLeft;
                 outputRight += voice.lastRight;
                 voice.modelTimeSeconds += static_cast<double>(parameters.evolutionRate)
@@ -1126,14 +1226,18 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
         {
             if (tail.remaining <= 0)
                 continue;
-            outputLeft += tail.left * tail.gain;
-            outputRight += tail.right * tail.gain;
-            tail.gain = std::max(0.0f, tail.gain - tail.gainStep);
+            const float window = 0.5f + 0.5f * sine(
+                0.25f + 0.5f * std::min(tail.position, 1.0f));
+            outputLeft += tail.left * window;
+            outputRight += tail.right * window;
+            tail.position += tail.positionStep;
             if (--tail.remaining <= 0)
                 tail.clear();
         }
 
-        const auto finishOutput = [gain = parameters.outputGain](float value) noexcept
+        smoothedOutputGain_ += outputGainCoefficient_
+            * (parameters.outputGain - smoothedOutputGain_);
+        const auto finishOutput = [gain = smoothedOutputGain_](float value) noexcept
         {
             return guardFiniteOutput(gain * value);
         };

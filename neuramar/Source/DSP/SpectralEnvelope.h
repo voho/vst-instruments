@@ -12,8 +12,15 @@ namespace neuramar::spectral
 // The log1p compander behaves linearly around silence and logarithmically for
 // audible partials. Every learned harmonic remains an exact knot and interval
 // clamping prevents a cubic from inventing a resonance between observations.
-// The two evidence shoulders deliberately remain linear in amplitude: a
-// logarithmic fade from silence would erase the first virtual low-note partials.
+//
+// The two evidence shoulders are deliberately asymmetric. Below the first
+// observed partial the envelope holds its lowest observed value: the renderer
+// multiplies it by the complementary excitation residual, so holding makes
+// Body Lock degenerate exactly to pitch-following there instead of notching
+// partials 2-4 of every deeply transposed note by up to 12 dB. Above the last
+// observed partial it still fades linearly to zero within one interval,
+// because inventing energy above the measured envelope is what Body Lock
+// exists to prevent.
 template <std::size_t HarmonicCount>
 class ShapePreservingEnvelope final
 {
@@ -58,7 +65,7 @@ public:
             || oneBasedCoordinate >= lastCoordinate)
             return 0.0f;
         if (oneBasedCoordinate < 1.0f)
-            return magnitudes_.front() * oneBasedCoordinate;
+            return magnitudes_.front();
         if (oneBasedCoordinate > lastHarmonic)
             return magnitudes_.back() * (lastCoordinate - oneBasedCoordinate);
 

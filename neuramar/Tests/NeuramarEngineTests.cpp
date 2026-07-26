@@ -3465,6 +3465,268 @@ void testHighRegisterRenderThroughput(const neuramar::NeuralModel& model)
            "high-register throughput fixture rendered silence");
 }
 
+[[nodiscard]] std::vector<float> renderNoteAtVelocity(
+    neuramar::NeuramarEngine& engine, int midiNote, float velocity,
+    int sampleCount)
+{
+    std::vector<float> left(static_cast<std::size_t>(sampleCount), 0.0f);
+    std::vector<float> right(static_cast<std::size_t>(sampleCount), 0.0f);
+    engine.noteOn(midiNote, velocity);
+    constexpr int blockSize = 128;
+    for (int offset = 0; offset < sampleCount; offset += blockSize)
+    {
+        const int count = std::min(blockSize, sampleCount - offset);
+        engine.process(left.data() + offset, right.data() + offset, count);
+    }
+    engine.allSoundOff();
+    for (std::size_t index = 0; index < left.size(); ++index)
+        left[index] = 0.5f * (left[index] + right[index]);
+    return left;
+}
+
+// The instrument has to hold a usable level across the whole compass. Measuring
+// the register reference against the model's full bank instead of against the
+// partials a note actually renders saturated the compensator at its ceiling
+// around root+17 semitones: the upper keyboard then faded out by 3.9 dB at the
+// default Body Lock and 14.4 dB at full Body Lock.
+void testKeyboardLevelFlatness()
+{
+    constexpr double sampleRate = 48000.0;
+    const auto model = neuramar::NeuralModel::createRandom(1234, 0.0f);
+    expect(model != nullptr, "keyboard flatness fixture could not be created");
+    if (!model)
+        return;
+
+    const auto noteLevel = [&model](int midiNote, float bodyLock)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(model.get());
+        neuramar::EngineParameters parameters;
+        parameters.imprint = 1.0f;
+        parameters.bodyLock = bodyLock;
+        parameters.air = 0.0f;
+        parameters.bone = 0.0f;
+        parameters.brightness = 0.5f;
+        parameters.orbit = 0.0f;
+        parameters.mutation = 0.0f;
+        parameters.attackSeconds = 0.0f;
+        parameters.spread = 0.0f;
+        parameters.touch = 0.0f;
+        parameters.registerTilt = 0.0f;
+        parameters.outputGain = 1.0f;
+        engine.setParameters(parameters);
+        const auto audio = renderNote(engine, midiNote,
+                                      static_cast<int>(0.32 * sampleRate));
+        // Skip the attack so the measurement describes the sustained body.
+        return rms(audio, audio.size() / 4);
+    };
+
+    for (const float bodyLock : { 0.0f, 0.52f, 1.0f })
+    {
+        const float reference = noteLevel(model->rootMidiNote(), bodyLock);
+        expect(reference > 1.0e-5f, "keyboard flatness reference was silent");
+        if (!(reference > 1.0e-5f))
+            continue;
+
+        float lowest = 1.0e9f;
+        float highest = -1.0e9f;
+        int lowestNote = 0;
+        int highestNote = 0;
+        for (int midiNote = 12; midiNote <= 108; midiNote += 12)
+        {
+            const float decibels = 20.0f * std::log10(
+                std::max(noteLevel(midiNote, bodyLock), 1.0e-9f) / reference);
+            if (decibels < lowest) { lowest = decibels; lowestNote = midiNote; }
+            if (decibels > highest) { highest = decibels; highestNote = midiNote; }
+        }
+        const float span = highest - lowest;
+        std::cout << "Keyboard flatness diagnostics: Body Lock " << bodyLock
+                  << " span " << span << " dB (min " << lowest << " dB at MIDI "
+                  << lowestNote << ", max " << highest << " dB at MIDI "
+                  << highestNote << ")\n";
+        // Full Body Lock deliberately loses upper partials past the observed
+        // envelope, so it is allowed slightly more drift than the other modes.
+        const float limit = bodyLock >= 1.0f ? 3.0f : 2.0f;
+        expect(span < limit,
+               "MIDI 12-108 level drifted by " + std::to_string(span)
+                   + " dB at Body Lock " + std::to_string(bodyLock));
+    }
+}
+
+// Register is key tracking: a note played above the learned root is darkened
+// and one played below it is opened up, without changing its level.
+void testRegisterTiltTracksTheKeyboard(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double analysisTime = 0.22;
+    const int highNote = std::min(120, model.rootMidiNote() + 12);
+    const auto measure = [&model, highNote](float registerTilt)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        neuramar::EngineParameters parameters;
+        parameters.imprint = 1.0f;
+        parameters.bodyLock = 0.0f;
+        parameters.air = 0.0f;
+        parameters.bone = 0.0f;
+        parameters.brightness = 0.5f;
+        parameters.orbit = 0.0f;
+        parameters.mutation = 0.0f;
+        parameters.attackSeconds = 0.0f;
+        parameters.spread = 0.0f;
+        parameters.touch = 0.0f;
+        parameters.registerTilt = registerTilt;
+        parameters.outputGain = 1.0f;
+        engine.setParameters(parameters);
+        const auto audio = renderNoteAtVelocity(
+            engine, highNote, 0.8f, static_cast<int>(0.40 * sampleRate));
+        neuramar::SynthesisFrame frame;
+        model.evaluate(static_cast<float>(analysisTime / model.durationSeconds()),
+                       frame);
+        const double fundamental = model.rootFrequencyHz() * frame.pitchRatio
+            * std::exp2((highNote - model.rootMidiNote()) / 12.0);
+        const float first = windowedSinusoidAmplitude(
+            audio, sampleRate, analysisTime, fundamental);
+        const float upper = windowedSinusoidAmplitude(
+            audio, sampleRate, analysisTime, 6.0 * fundamental);
+        return std::make_pair(upper / std::max(first, 1.0e-9f),
+                              rms(audio, audio.size() / 4));
+    };
+
+    const auto neutral = measure(0.0f);
+    const auto tracked = measure(1.0f);
+    const double timbreRatio = tracked.first / std::max(neutral.first, 1.0e-9f);
+    const double levelRatio = tracked.second / std::max(neutral.second, 1.0e-9f);
+    std::cout << "Register diagnostics: harmonic-6 ratio " << timbreRatio
+              << ", level ratio " << levelRatio << '\n';
+    expect(timbreRatio < 0.85,
+           "Register did not darken a note an octave above the root (ratio "
+               + std::to_string(timbreRatio) + ")");
+    expect(levelRatio > 0.75 && levelRatio < 1.33,
+           "Register changed level rather than only timbre (ratio "
+               + std::to_string(levelRatio) + ")");
+}
+
+// Output is the one control applied straight to the summed signal, so it needs
+// its own smoother; without one, a host that writes it once per block steps the
+// level at every block boundary.
+void testOutputGainIsSmoothed(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    neuramar::NeuramarEngine engine;
+    engine.prepare(sampleRate, 128);
+    engine.setModel(&model);
+    neuramar::EngineParameters parameters;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 1.0f;
+    engine.setParameters(parameters);
+
+    constexpr int segment = 2048;
+    std::vector<float> left(2 * segment, 0.0f);
+    std::vector<float> right(2 * segment, 0.0f);
+    engine.noteOn(model.rootMidiNote(), 0.8f);
+    engine.process(left.data(), right.data(), segment);
+    parameters.outputGain = 0.25f;   // a 12 dB automation jump
+    engine.setParameters(parameters);
+    engine.process(left.data() + segment, right.data() + segment, segment);
+
+    float neighbouringStep = 0.0f;
+    for (int index = segment - 512; index + 1 < segment; ++index)
+        neighbouringStep = std::max(neighbouringStep,
+            std::abs(left[static_cast<std::size_t>(index + 1)]
+                     - left[static_cast<std::size_t>(index)]));
+    const float boundaryStep = std::abs(
+        left[static_cast<std::size_t>(segment)]
+        - left[static_cast<std::size_t>(segment - 1)]);
+    std::cout << "Output smoothing diagnostics: boundary step " << boundaryStep
+              << " vs neighbouring " << neighbouringStep << '\n';
+    expect(boundaryStep <= 2.0f * neighbouringStep + 1.0e-5f,
+           "a mid-note Output change stepped at the block boundary (step "
+               + std::to_string(boundaryStep) + ")");
+}
+
+// The Air layer carries a decorrelated second realisation for stereo width. It
+// is added to the left and subtracted from the right, so it must vanish from a
+// mono sum: a wider setting must never change what a mono listener hears.
+void testStereoAirIsMonoSafe(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int sampleCount = 6000;
+    const auto render = [&model](float spread,
+                                 std::vector<float>& left,
+                                 std::vector<float>& right)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        neuramar::EngineParameters parameters;
+        parameters.air = 1.0f;
+        parameters.bone = 0.0f;
+        parameters.mutation = 0.0f;
+        parameters.attackSeconds = 0.0f;
+        parameters.spread = spread;
+        parameters.outputGain = 1.0f;
+        engine.setParameters(parameters);
+        left.assign(sampleCount, 0.0f);
+        right.assign(sampleCount, 0.0f);
+        engine.noteOn(model.rootMidiNote(), 0.82f);
+        for (int offset = 0; offset < sampleCount; offset += 128)
+            engine.process(left.data() + offset, right.data() + offset,
+                           std::min(128, sampleCount - offset));
+    };
+
+    std::vector<float> centredLeft;
+    std::vector<float> centredRight;
+    std::vector<float> wideLeft;
+    std::vector<float> wideRight;
+    render(0.0f, centredLeft, centredRight);
+    render(1.0f, wideLeft, wideRight);
+
+    float monoDifference = 0.0f;
+    float sideEnergy = 0.0f;
+    for (std::size_t index = 0; index < wideLeft.size(); ++index)
+    {
+        monoDifference = std::max(monoDifference, std::abs(
+            (wideLeft[index] + wideRight[index])
+            - (centredLeft[index] + centredRight[index])));
+        sideEnergy = std::max(sideEnergy,
+            std::abs(wideLeft[index] - wideRight[index]));
+    }
+    std::cout << "Stereo Air diagnostics: mono difference " << monoDifference
+              << ", side level " << sideEnergy << '\n';
+    expect(sideEnergy > 1.0e-3f,
+           "maximum Horizon produced no stereo width in the Air layer");
+    expect(monoDifference < 1.0e-5f,
+           "Air stereo width changed the mono sum (difference "
+               + std::to_string(monoDifference) + ")");
+}
+
+// Orbit revisits the learned loop for as long as a note is held, so the loop
+// has to sit past the attack rather than inside it.
+void testLoopRegionAvoidsTheAttack(const LearnedFixture& fixture)
+{
+    if (!fixture.first.model)
+        return;
+    const auto& metadata = fixture.first.model->metadata();
+    const float duration = std::max(metadata.durationSeconds, 1.0e-6f);
+    const float start = metadata.loopStartSeconds / duration;
+    const float end = metadata.loopEndSeconds / duration;
+    std::cout << "Loop region diagnostics: " << start << " to " << end
+              << " of the learned duration\n";
+    expect(start > 0.18f,
+           "the learned loop started inside the attack (normalised "
+               + std::to_string(start) + ")");
+    expect(end - start > 0.12f,
+           "the learned loop was too short to be a stable region (span "
+               + std::to_string(end - start) + ")");
+}
+
 void testRoughPerformance(const neuramar::NeuralModel& model)
 {
     neuramar::NeuramarEngine engine;
@@ -3502,6 +3764,7 @@ void testRoughPerformance(const neuramar::NeuralModel& model)
 int main()
 {
     testShapePreservingSpectralInterpolation();
+    testKeyboardLevelFlatness();
     testInputValidationAndCancellation();
     testAirFilterNormalisation();
     testRandomNeuralSeed();
@@ -3538,6 +3801,10 @@ int main()
         testMutationZeroRetriggerDeterminism(*fixture.first.model);
         testStereoPanAndOverlappingNoteOff(*fixture.first.model);
         testHighRegisterRenderThroughput(*fixture.first.model);
+        testRegisterTiltTracksTheKeyboard(*fixture.first.model);
+        testOutputGainIsSmoothed(*fixture.first.model);
+        testStereoAirIsMonoSafe(*fixture.first.model);
+        testLoopRegionAvoidsTheAttack(fixture);
         testRoughPerformance(*fixture.first.model);
     }
 

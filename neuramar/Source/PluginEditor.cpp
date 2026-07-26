@@ -1131,11 +1131,11 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     rootDownButton.onClick = [this] { nudgeRoot (-1); };
     rootUpButton.onClick = [this] { nudgeRoot (1); };
 
-    for (auto* knob : std::array<NeuramarKnob*, 15> {
+    for (auto* knob : std::array<NeuramarKnob*, 16> {
              &imprintKnob, &bodyLockKnob, &airKnob, &boneKnob,
              &brightnessKnob, &evolutionKnob, &mutationKnob,
              &noiseKnob, &attackKnob, &releaseKnob, &spreadKnob, &outputKnob,
-             &stretchKnob, &formantKnob, &touchKnob })
+             &stretchKnob, &formantKnob, &touchKnob, &registerKnob })
         addAndMakeVisible (*knob);
 
     bodyLockKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
@@ -1147,6 +1147,14 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     outputKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (amber));
     formantKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (violet));
     touchKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (amber));
+    registerKnob.slider.setColour (juce::Slider::rotarySliderFillColourId, colour (amber));
+    registerKnob.slider.setDescription (
+        "Key tracking: darkens notes above the learned root and opens up notes "
+        "below it.");
+    registerKnob.slider.setTooltip (
+        "Key-tracked spectral tilt. Positive darkens notes played above the "
+        "learned root and opens up notes below it; negative inverts that. It "
+        "changes tone, not level.");
     stretchKnob.slider.setDescription (
         "Scales the memory's fitted stiff-string partial stretch.");
     stretchKnob.slider.setTooltip (
@@ -1184,6 +1192,7 @@ NeuramarAudioProcessorEditor::NeuramarAudioProcessorEditor (NeuramarAudioProcess
     attachSlider (stretchKnob.slider, neuramar::parameters::stretch);
     attachSlider (formantKnob.slider, neuramar::parameters::formant);
     attachSlider (touchKnob.slider, neuramar::parameters::touch);
+    attachSlider (registerKnob.slider, neuramar::parameters::registerTilt);
     attachButton (orbitButton, neuramar::parameters::orbit);
 
     keyboard.setAvailableRange (0, 127);
@@ -1284,14 +1293,13 @@ void NeuramarAudioProcessorEditor::resized()
     rootConfidenceLabel.setBounds (rootArea);
 
     dnaArea.removeFromTop (2);
-    constexpr int columns = 3;
-    constexpr int rows = 3;
+    constexpr int columns = 5;
+    constexpr int rows = 2;
     const auto cellWidth = dnaArea.getWidth() / columns;
     const auto cellHeight = dnaArea.getHeight() / rows;
-    std::array<NeuramarKnob*, 9> dnaKnobs {
-        &imprintKnob, &bodyLockKnob, &airKnob,
-        &boneKnob, &brightnessKnob, &mutationKnob,
-        &stretchKnob, &formantKnob, &touchKnob
+    std::array<NeuramarKnob*, 10> dnaKnobs {
+        &imprintKnob, &bodyLockKnob, &airKnob, &boneKnob, &brightnessKnob,
+        &stretchKnob, &formantKnob, &touchKnob, &registerKnob, &mutationKnob
     };
     for (int i = 0; i < static_cast<int> (dnaKnobs.size()); ++i)
     {

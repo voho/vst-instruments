@@ -133,6 +133,18 @@ if(NEURAMAR_BUILD_PLUGIN)
 endif()
 
 if(BUILD_TESTING)
+    # A measurement tool rather than a pass/fail test, so it is built with the
+    # suite but deliberately not registered with CTest.
+    add_executable(NeuramarEngineBenchmark Tests/EngineBenchmark.cpp)
+    target_link_libraries(NeuramarEngineBenchmark PRIVATE NeuramarDSP)
+    target_compile_features(NeuramarEngineBenchmark PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(NeuramarEngineBenchmark PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(NeuramarEngineBenchmark PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+
     add_executable(NeuramarEngineTests Tests/NeuramarEngineTests.cpp)
     target_link_libraries(NeuramarEngineTests PRIVATE NeuramarDSP)
     target_compile_features(NeuramarEngineTests PRIVATE cxx_std_20)
