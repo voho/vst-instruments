@@ -1,6 +1,6 @@
 # Electry demonstration audio
 
-Ten rendered examples of what Electry produces: its full playable range, all
+Thirteen rendered examples of what Electry produces: its full playable range, all
 sixteen keyswitched play styles, the guitar-build and pickup axes, and the
 Drop-E metal rhythm and lead tones through the built-in amplifier chain.
 
@@ -11,11 +11,16 @@ the plug-in actually sounds like. No samples, impulse responses or external
 processing are involved anywhere in this directory: the whole set comes out of
 the physical model and the modelled amplifier.
 
-All ten files were last re-rendered after the pickup position comb was given a
-finite null depth and the bridge hand a frequency-dependent absorption rate.
-Both changes touch every note, so every file here moved: the low register
-carries substantially more fundamental, and palm mutes read as weighted chugs
-rather than as short picks. The measurements behind both are in the
+The set was last extended with three longer takes built around power chords —
+dry, amped, and inside a two-bar arrangement — because a chord loads the model
+very differently from a single note: three strings share one bridge, so the
+sympathetic coupling, the strum travel and the amplifier's intermodulation all
+have something to work with. The two single-note rhythm takes are now two bars
+rather than one.
+
+The audio itself reflects the pickup position comb's finite null depth and the
+bridge hand's frequency-dependent absorption rate; both touch every note, and
+the measurements behind them are in the
 [research contract](../physical-modeling-research.md#voicing-against-a-reference-recording).
 
 | File | Channels | Length | What it demonstrates |
@@ -23,13 +28,16 @@ rather than as short picks. The measurements behind both are in the
 | [`01-range-open-strings.wav`](01-range-open-strings.wav) | mono | 6.2 s | The eight open strings of the Drop-E instrument, low to high (E1 B1 E2 A2 D3 G3 B3 E4), then all eight ringing together. Default settings. |
 | [`02-range-full-fretboard.wav`](02-range-full-fretboard.wav) | mono | 4.1 s | Every playable note, MIDI 28 to 86 — E1 to D6, five and a half octaves — with the string allocator choosing which physical string each one lands on. |
 | [`03-play-styles.wav`](03-play-styles.wav) | mono | 9.6 s | All sixteen play styles in keyswitch order on the same two notes: downstroke, upstroke, alternate, hammer-on, tap, palm mute, chug, dead note, natural and pinch harmonic, tremolo picking, the four bend programs, and slap. |
-| [`04-drop-e-rhythm-dry.wav`](04-drop-e-rhythm-dry.wav) | mono | 4.2 s | A chugged Drop-E rhythm figure as the raw DI: bridge humbucker, 28-inch-leaning build, heavy set, picked close to the bridge. |
-| [`05-drop-e-rhythm-amp.wav`](05-drop-e-rhythm-amp.wav) | mono | 4.2 s | The identical MIDI and identical guitar settings through the oversampled gain stage, the modelled cabinet and the rhythm compressor. Compare directly with `04`. |
+| [`04-drop-e-rhythm-dry.wav`](04-drop-e-rhythm-dry.wav) | mono | 7.5 s | A chugged Drop-E rhythm figure as the raw DI: bridge humbucker, 28-inch-leaning build, heavy set, picked close to the bridge. |
+| [`05-drop-e-rhythm-amp.wav`](05-drop-e-rhythm-amp.wav) | mono | 7.5 s | The identical MIDI and identical guitar settings through the oversampled gain stage, the modelled cabinet and the rhythm compressor. Compare directly with `04`. |
 | [`06-lead-amp-delay-room.wav`](06-lead-amp-delay-room.wav) | stereo | 7.5 s | A lead phrase — picked notes, a hammer-on, a bend up held with CC 1 vibrato, a release bend, tremolo picking and a pinch harmonic — into the amplifier, the 360 ms lead delay and the room. |
 | [`07-pickups-and-tone.wav`](07-pickups-and-tone.wav) | mono | 7.0 s | One phrase played three times through Neck, Both and Bridge, then a single note repeated as the guitar's own passive tone control closes from 100% to 0%. |
 | [`08-sympathetic-strum-stereo.wav`](08-sympathetic-strum-stereo.wav) | stereo | 7.3 s | Strum travel (22 ms per string crossed), the divided-pickup stereo field, and bridge-coupled sympathetic strings: a down-strum, an up-strum, the same chord with the coupling at exactly zero, then one low note setting the unfingered strings ringing. |
 | [`09-guitar-build-contrasts.wav`](09-guitar-build-contrasts.wav) | mono | 7.7 s | The same short figure on three instruments: a 25.5-inch light-strung build, the default 26.75-inch guitar, and a 28-inch baritone with a heavy set and older strings. |
 | [`10-velocity-dynamics.wav`](10-velocity-dynamics.wav) | mono | 4.4 s | Velocity response at full travel — six strokes from a finger-light touch to a hard metal attack, then four more with the palm mute at 60%. Level, brightness, contact noise and attack pitch glide all move together. |
+| [`11-power-chords-dry.wav`](11-power-chords-dry.wav) | mono | 19.9 s | Power chords as the raw DI. Four held root-fifth-octave shapes so the decay and the bridge coupling are audible, a twelve-chord chugged progression, then eight tight stabs under 55% continuous palm-mute pressure. Nothing after the pickups. |
+| [`12-power-chords-amp.wav`](12-power-chords-amp.wav) | mono | 20.1 s | The identical MIDI and guitar settings through the amplifier, cabinet and compressor. Compare directly with `11`: three fundamentals and their harmonic series intermodulating in the clipping stages is what the oversampling is there for. |
+| [`13-long-rhythm-arrangement.wav`](13-long-rhythm-arrangement.wav) | stereo | 14.0 s | The longest take here: two bars of the chugged single-note figure, a bar of descending power chords, then a full eight-string open ring-out, amped with a little room behind it. The instrument in a part rather than under a microscope. |
 
 All files are 44.1 kHz 16-bit PCM.
 
@@ -54,25 +62,32 @@ settings of the instrument's own output control, and their raw peaks span more
 than fifteen decibels, so without this the set would be uncomfortable to
 audition one after another. Because it is a single gain per file, nothing
 inside a take is altered: the velocity ramp in `10`, the decay of each chug in
-`04`, and the dry-versus-amplified comparison between `04` and `05` all keep
-their shape and their internal balance.
+`04`, and the dry-versus-amplified comparisons between `04` and `05` and
+between `11` and `12` all keep their shape and their internal balance.
+
+`11` is the loudest raw take in the set at −6.4 dBFS: three strings struck as
+one stroke stack their initial peaks, which is exactly why the instrument's own
+output control is left lower for chord work than for a single chugged note.
 
 The rendered peak before normalisation, for the record:
 
 | File | Rendered peak | Normalisation applied |
 | --- | --- | --- |
-| `01-range-open-strings.wav` | −12.6 dBFS | +9.6 dB |
-| `02-range-full-fretboard.wav` | −10.9 dBFS | +7.9 dB |
+| `01-range-open-strings.wav` | −12.8 dBFS | +9.8 dB |
+| `02-range-full-fretboard.wav` | −12.0 dBFS | +9.0 dB |
 | `03-play-styles.wav` | −2.8 dBFS | −0.2 dB |
-| `04-drop-e-rhythm-dry.wav` | −13.8 dBFS | +10.8 dB |
-| `05-drop-e-rhythm-amp.wav` | −19.3 dBFS | +16.3 dB |
-| `06-lead-amp-delay-room.wav` | −15.9 dBFS | +12.9 dB |
-| `07-pickups-and-tone.wav` | −13.2 dBFS | +10.2 dB |
-| `08-sympathetic-strum-stereo.wav` | −15.2 dBFS | +12.2 dB |
-| `09-guitar-build-contrasts.wav` | −8.9 dBFS | +5.9 dB |
-| `10-velocity-dynamics.wav` | −14.8 dBFS | +11.8 dB |
+| `04-drop-e-rhythm-dry.wav` | −15.7 dBFS | +12.7 dB |
+| `05-drop-e-rhythm-amp.wav` | −19.9 dBFS | +16.9 dB |
+| `06-lead-amp-delay-room.wav` | −16.3 dBFS | +13.3 dB |
+| `07-pickups-and-tone.wav` | −13.8 dBFS | +10.8 dB |
+| `08-sympathetic-strum-stereo.wav` | −15.8 dBFS | +12.8 dB |
+| `09-guitar-build-contrasts.wav` | −10.5 dBFS | +7.5 dB |
+| `10-velocity-dynamics.wav` | −16.0 dBFS | +13.0 dB |
+| `11-power-chords-dry.wav` | −6.4 dBFS | +3.4 dB |
+| `12-power-chords-amp.wav` | −18.9 dBFS | +15.9 dB |
+| `13-long-rhythm-arrangement.wav` | −18.1 dBFS | +15.1 dB |
 
-`05` renders 5.5 dB *below* `04` at the peak while sitting above it in average
+`05` renders 4.2 dB *below* `04` at the peak while sitting above it in average
 level: the amplifier compresses and the cabinet removes the top of the pick
 transient, which is what an amplifier is supposed to do to a rhythm part.
 
