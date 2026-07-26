@@ -954,8 +954,19 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     // also darkens the string as it covers more of it.
     if (palmMuteBlend_ > 0.0f)
     {
-        const float pressureT60 = std::exp(lerp(std::log(4.0f), std::log(0.080f),
-                                                palmMuteBlend_));
+        // The mapped time is what a hand at this pressure would impose once it is
+        // on the string; the rate is that scaled by the pressure itself, so it
+        // vanishes as the pressure does. Without the scaling the mapped time
+        // tends to four seconds rather than to infinity, so the first nonzero
+        // value of the parameter or of CC2 applied a quarter-per-second loss
+        // rate from nothing - a step that was inaudible while it only nudged the
+        // decay, and became audible once it also gated the loss shelf's depth.
+        // At full pressure the rate is unchanged, so the calibrated endpoint
+        // stands.
+        const float pressureRate = palmMuteBlend_
+            / std::exp(lerp(std::log(4.0f), std::log(0.080f), palmMuteBlend_));
+        const float pressureT60 = pressureRate > 0.0f ? 1.0f / pressureRate
+                                                      : 0.0f;
         handT60 = handT60 > 0.0f
             ? 1.0f / (1.0f / handT60 + 1.0f / pressureT60)
             : pressureT60;
