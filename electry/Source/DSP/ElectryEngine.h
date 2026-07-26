@@ -327,6 +327,30 @@ private:
         float dispersionLowCoefficient { 0.0f };
         float dispersionHighCoefficient { 0.0f };
         OnePole damping {};
+        // The bridge hand's loss slope, as a second pole in the loop.
+        //
+        // One pole fitted between f0 and 3.6 kHz has one slope, so the decay
+        // envelope and the way loss varies with harmonic number are the same
+        // degree of freedom - which is why no single constant could ever make
+        // the fourth harmonic die while the first rings, the thing a real palm
+        // mute measurably does. This shelf is the second degree of freedom:
+        // unity at DC, falling above a corner set as a multiple of the
+        // fundamental, so its slope is expressed in harmonic number rather than
+        // in hertz and the same shape works an octave down.
+        //
+        // Crucially it is inside the decay solve, not added after it. Its
+        // magnitude at both fitted points is divided back out of the targets, so
+        // the envelope stays pinned where the references put it and the shelf
+        // only bends the curve between them. An earlier attempt left it outside
+        // the solve, and the extra loss simply shortened the whole note: the
+        // 150-500 ms window fell 13 dB and the tail went inaudible again.
+        //
+        // Both terms are zero unless a hand is on the string, and OnePole with a
+        // zero coefficient is an exact pass-through, so unmuted articulations
+        // are bit-identical and the checks measuring them cannot be reached.
+        OnePole handLoss {};
+        float handLossCoefficient { 0.0f };
+        float handLossDepth { 0.0f };
         DispersionAllpass dispersion1 {};
         DispersionAllpass dispersion2 {};
         DispersionAllpass dispersion3 {};
@@ -606,7 +630,9 @@ private:
     }
     static float lerp(float a, float b, float t) noexcept { return a + (b - a) * t; }
     static float onePolePhaseDelay(float coefficient, float omega) noexcept;
-    static float allpassPhaseDelay(float coefficient, float omega) noexcept;
+static void handLossResponse(float depth, float coefficient, float omega,
+                                 float& magnitude, float& phase) noexcept;
+        static float allpassPhaseDelay(float coefficient, float omega) noexcept;
     // Per-string magnetic balance. It depends only on the string, so it is
     // solved once instead of inside the sample loop.
     static float stringFluxScale(int stringIndex) noexcept;
