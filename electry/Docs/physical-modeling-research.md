@@ -797,18 +797,19 @@ around a second in, and Electry sat 57 dB below it.
 Charging the hand's full rate at the fundamental left a muted power chord with no
 bottom and no tail: measured against the references it sat 13.6 dB low at 400 ms,
 30.5 dB low at 800 ms, and at -100 dBFS a second after the pick where every
-reference still has audible content. The hand's rate at the fundamental is now
-halved. The mode shape on its own argues for a divisor near eight - a heel a
+reference still has audible content. The hand's rate at the fundamental is now divided by six. The mode shape on its own argues for a divisor near eight - a heel a
 tenth of the sounding length from the bridge leaves the fundamental at a few per
 cent of the plateau the upper modes reach - but that number cannot be used, and
 the reason is the model's real limit: the loop is a single one-pole whose corner
 sits far above these partials, so relieving the fundamental relieves the second,
 third and fourth harmonics by very nearly the same amount. A divisor of eight
 therefore over-relieves the whole low-mid comb and overshoots the reference
-contour. Two is what the aggregate supports. It moves the 400 ms error from
--13.6 to -2.0 dB, the 800 ms error from -30.5 to -11.2 dB, and the joint
-band-plus-contour error from 11.64 to 10.87 dB across all nine references
-(11.96 to 8.93 against the five looser takes the shipped mute pressure matches).
+contour. Swept against the five matched reference pitches on a joint objective of tilt
+shape plus peak-relative energy contour, the contour error falls 11.74, 6.64,
+4.84, 4.11, 4.00, 4.38, 5.31 dB at divisors of 2, 3, 4, 5, 6, 8 and 12 - a clear
+minimum at six. Measured in absolute level, the muted chord's 150-500 ms window
+gains 12.5 dB against the old voicing, its 500-1000 ms window 29.9 dB and its
+1-2 s window 48.9 dB, with the attack peak unchanged within 0.5 dB.
 Once each voicing is allowed its own Mute Damp setting - the honest comparison,
 since that is a user control and this change moves its optimum from 0.45 to 0.70 -
 the gain is 0.3 to 0.5 dB. The attack is bit-identical, and so is every unmuted
@@ -851,11 +852,20 @@ references' 17 to 26 ms. And the model still cannot represent the tight-versus-
 loose mute distinction at all - the same note's two reference takes differ by 11
 to 17 dB at 400 ms, and no single setting of Mute Damp matches both.
 
-The next structural step is a hand-specific loss filter inside the loop, gated to
-the muted articulations. Gating matters: the two thresholds that blocked both the
-re-anchored high point above and the in-loop body coupling are measured on single
-unmuted notes, so a filter that exists only while the hand is on the string
-cannot reach them.
+That hand-specific loss filter was then built and measured, gated to the muted
+articulations so it could not reach the thresholds that blocked the re-anchored
+high point. It works as a mechanism - the drop from the first harmonic to the
+eighth spans 22 dB with it against under 4 dB without - and it is still not
+shippable, for a reason that explains why this problem resisted so many attempts.
+Across its whole usable range it trades the two terms of the objective almost
+exactly one for one: tilt 17.9 to 13.7 dB against contour 6.6 to 11.3 dB, so the
+joint score never improves and at the depths that produce real tilt the note goes
+inaudible again. In this architecture the harmonic tilt and the note's total
+energy are one degree of freedom rather than two, because a string's energy lives
+in the same low harmonics the tilt has to remove - and in a power chord the
+root's second and third harmonics are the fifth's and octave's fundamentals.
+Separating them requires the tilt and the decay to stop sharing a single one-pole,
+which is a change to the loop's order rather than to any constant in it.
 
 The amplifier chain was voiced against the same goal on a chugged Drop-E figure.
 Its input stage now passes the whole eighth-string fundamental instead of cutting

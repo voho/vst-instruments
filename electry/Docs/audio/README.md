@@ -19,7 +19,7 @@ have something to work with. The two single-note rhythm takes are now two bars
 rather than one.
 
 The audio itself reflects the pickup position comb's finite null depth and the
-bridge hand's frequency-dependent absorption rate - including the halved rate at
+bridge hand's frequency-dependent absorption rate - including its much lighter rate at
 the fundamental, which is what gives the muted takes a tail instead of going
 silent a second after the pick; both touch every note, and
 the measurements behind them are in the

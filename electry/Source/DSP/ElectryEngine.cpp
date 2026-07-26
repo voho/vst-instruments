@@ -969,17 +969,29 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // nearly the same amount. Measured, h1 to h4 then move together within
         // about 2 dB at four of the five reference pitches, against references
         // that damp h3 and h4 8 to 24 dB harder than h1. A divisor of eight
-        // therefore over-relieves the whole low-mid comb: it overshoots the
-        // reference contour by +7 dB at 400 ms and +6 dB at 800 ms, and at a
-        // muteDamping of 0.25 or looser the muted note stops decaying faster
-        // than an open one at all. Two is what the aggregate supports. Fitted
-        // over all nine muted references at their own pitches it moves the
-        // 400 ms error from -13.6 to -2.0 dB, the 800 ms error from -30.5 to
-        // -11.2 dB and the joint band-plus-contour error from 11.64 to 10.87 dB
-        // (11.96 to 8.93 against the five looser takes this mute pressure
-        // matches), and it stays a mute at every setting of the control. Prising
-        // h1 apart from h2 needs a steeper loss curve than one pole between f0
-        // and 3.6 kHz can carry, not a larger number here.
+        // therefore over-relieves the whole low-mid comb if the loop is asked to
+        // carry the harmonic tilt as well. It is not: this term is fitted purely
+        // on the decay envelope, and there the mode shape's own answer is close
+        // to right. Swept against the five matched reference pitches on a joint
+        // objective of tilt shape plus peak-relative energy contour, the contour
+        // error falls 11.74, 6.64, 4.84, 4.11, 4.00, 4.38, 5.31 dB at divisors
+        // of 2, 3, 4, 5, 6, 8, 12 - a clear minimum at six, and 7.7 dB better
+        // than the two this replaced.
+        //
+        // Prising the harmonics apart from the fundamental is a separate problem
+        // and it is not solved here. A mute-gated loss shelf, unity at f0 and
+        // falling above a corner set as a multiple of it, was built and measured
+        // because it is the only mechanism that can express loss in harmonic
+        // number rather than in hertz. It works, and it is still not shippable:
+        // across its whole usable range it trades the two terms almost exactly
+        // one for one - tilt 17.9 to 13.7 dB against contour 6.6 to 11.3 dB - so
+        // the joint score never improves. In this architecture the tilt and the
+        // note's total energy are one degree of freedom, not two, because a
+        // string's energy lives in the same low harmonics the tilt has to
+        // remove, and in a power chord the root's second and third harmonics are
+        // the fifth's and octave's fundamentals. Separating them needs the two
+        // to stop sharing a single one-pole, which is a change to the loop's
+        // order rather than to any constant in it.
         //
         // The dead-note choke is added at the same rate on both, because it is
         // the fretting hand somewhere up the neck rather than the heel resting
@@ -988,7 +1000,7 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // played under palm-mute pressure correct: both contacts are present,
         // and each contributes with its own frequency behaviour.
         constexpr float handHighFrequencyTilt = 3.0f;
-        constexpr float handFundamentalRelief = 2.0f;
+        constexpr float handFundamentalRelief = 6.0f;
         const float handRate = handT60 > 0.0f ? 1.0f / handT60 : 0.0f;
         const float chokeRate = chokeT60 > 0.0f ? 1.0f / chokeT60 : 0.0f;
         t60 = 1.0f / (1.0f / t60 + handRate / handFundamentalRelief + chokeRate);
