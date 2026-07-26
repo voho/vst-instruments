@@ -27,7 +27,7 @@ level-matched blind listening.
 | Construction controls | Solid-body material/geometry contrasts, humbucker vs single-coil construction, set-neck vs bolt-on, and modern extended-range scale practice | Wood, size, shape, construction, and pickup type interpolate between contrasting reference voicings; scale length spans 25.5 to 28 inches for Drop-E | Parametrized construction and extended-range voicing; not a licensed or capture-verified reproduction of a named instrument |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, release damping noise, and slap body knock, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
 | Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with its own T60-derived loop filter, exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
-| Bridge-hand damping | Palm-muting practice, the same decay-targeted loop design, and dry muted power-chord reference recordings for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; the raw hand rate is multiplied by three at the high reference and divided by six at the fundamental, an effective 18:1 ratio between the two fitted points, because a contact near the bridge removes far more energy from high modes than from a fundamental that barely moves there; the Muted and Chug keyswitches and the continuous pressure are one absorber at different depths and combine the same way, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as an additive loss with reference-calibrated depths and a bounded, conservative frequency tilt, applied identically to every play style; not a distributed hand/string contact solve or a resolved mode-shape weighting |
+| Bridge-hand damping | Palm-muting practice, the same decay-targeted loop design, and dry muted power-chord reference recordings for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; the raw hand rate is multiplied by three at the high reference and divided by twenty-two at the fundamental, an effective 66:1 ratio between the two fitted points, because a contact near the bridge removes far more energy from high modes than from a fundamental that barely moves there; a relief that large only works paired with a band of loss centred on five times the fundamental, which removes the harmonics the longer tail would otherwise let ring - alone, each of the two is worse than neither; the Muted and Chug keyswitches and the continuous pressure are one absorber at different depths and combine the same way, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as an additive loss with reference-calibrated depths and a bounded, conservative frequency tilt, applied identically to every play style; not a distributed hand/string contact solve or a resolved mode-shape weighting |
 | Strum travel | Ordinary plectrum kinematics | Note-ons inside a 35 ms window are treated as one stroke; the first string fixes the edge the pick starts from and every further string's excitation is delayed by the travel time per string crossed | Constant-velocity pick travel across the string plane; not a model of pick angle, chord voicing, or the player's hand position |
 | Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, partial non-slap fret contact, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
 | Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
@@ -843,15 +843,24 @@ for reasons worth keeping:
   change to the objective.
 
 What remains wrong, named because it has been understated before. The
-harmonic-number tilt is still essentially flat: the shipped change lifts the
-whole profile rather than tilting it, so the span is 6.6 dB against the
-reference's 59.5. The body-window brightness excess above 480 Hz is essentially
-untouched at +15.6 dB mean against +16.2 before. The root partial still sits
-13.9 dB below Electry's own strongest low peak where every reference has it at
-the top. The attack is untouched: onset-to-peak is still 1 to 4 ms against the
-references' 17 to 26 ms. And the model still cannot represent the tight-versus-
-loose mute distinction at all - the same note's two reference takes differ by 11
-to 17 dB at 400 ms, and no single setting of Mute Damp matches both.
+harmonic-number tilt is still shallow: the tilt error is 9.07 dB against the
+references and roughly half the per-round-trip shortfall is still there. The
+body-window brightness excess above 480 Hz is essentially untouched at +15.6 dB
+mean against +16.2 before. The root partial still sits well below Electry's own
+strongest low peak where every reference has it at the top. And the model still
+cannot represent the tight-versus-loose mute distinction at all - the same note's
+two reference takes differ by 11 to 17 dB at 400 ms, and no single setting of Mute
+Damp matches both.
+
+One earlier entry on this list was wrong and is worth correcting rather than
+quietly dropping, because it nearly sent the next pass in the wrong direction. The
+attack was recorded as 1 to 4 ms of onset-to-peak against the references' 17 to
+26 ms, which reads as a transient far too sharp. Measured with one definition
+applied identically to both - a 2 ms sliding envelope from the 25% threshold to
+the maximum - Electry rises **more slowly** than every reference: 22 to 44 ms
+against 10 to 35 ms. The attack is not too spiky, and softening it would move away
+from the references, not toward them. The two figures in the old entry were not
+measured the same way as each other.
 
 That hand-specific loss filter is now in the model, and getting it to work turned
 on one detail rather than on any constant. Gated to the muted articulations so it
@@ -880,13 +889,110 @@ so there is room to redistribute loss between the fitted points; the same
 compensation on an open string would ask for a loop gain above unity and clamp.
 That is also why the shelf is gated rather than global.
 
-What it does not do is close the gap. The measured span from the first harmonic to
-the eighth is about 11 dB against the references' 59.5, and the envelope gives up
-roughly five decibels in the 150-500 ms window to buy it - still seven decibels
-better than before any of this work, and forty better at one to two seconds, but
-a trade rather than a free gain. Going further needs the loop's order raised
-again, not this shelf deepened: at depths beyond 0.5 the contour term turns and
-the joint score worsens.
+### The shelf was the wrong shape, and the reason is measurable
+
+The shelf has since been removed. Deleting it entirely costs 0.01 dB on the joint
+objective once the band dip below is present, which is to say it does nothing that
+the dip does not do better, and it was shipping a stage in the audio loop for no
+measured benefit. Why it could not work is worth recording, because the diagnosis
+took a wrong turn first.
+
+The stated reason for going further was that the model needed a steeper loss curve
+- a higher-order loop. That was wrong, and one measurement settles it. A loop
+filter controls loss **per round trip**, and the string makes f0 round trips a
+second, so a drop of D dB over a window of t seconds needs only D/(f0*t) dB of
+loss per round trip. At the bottom of this instrument's range that divisor is
+around 13.8. The references' towering 59.5 dB h1-to-h8 span is therefore asking
+for about 4.3 dB per round trip at the very bottom and a mean of 1.35 dB across
+the five pitches - a *shallow* requirement that a single one-pole produces across
+three octaves without effort. The span is large because it accumulates, not
+because the curve is steep. Order was never the constraint.
+
+The real constraint was where the shelf spends its depth. A shelf is flat above
+its corner, so it applies its full depth at the 3.6 kHz fitted point, where the
+references ask for no extra loss at all. The one-pole cannot get flatter than flat
+to pay that back, so the feasibility bisection refuses anything deeper - and it
+refuses it silently. Measured, requesting depths of 0.50, 0.70 and 0.90 produced
+*bit-identical* decay, because the outer bisection converged on the same feasible
+maximum every time. The shelf was saturated at roughly a fifth of the loss the
+lowest reference pitch needed, and no constant could have changed that.
+
+Lowering the corner does not help either, and the reason is the same fit geometry
+seen from the other side. For the lowest reference pitch, h1 to h8 spans 46 to
+368 Hz - the bottom sixth of the f0-to-3.6 kHz fitted span, with both pins outside
+it. A corner at 2.5*f0 is nearly flat across that whole span, so it reads to the
+solve as a constant gain and is almost entirely compensated away: it shifts level
+without reshaping anything. Measured at a depth of 0.08 and that corner, tilt
+moved 11.82 to 11.54 while contour worsened 5.04 to 6.63.
+
+### Two degrees of freedom, and neither one works alone
+
+What ships instead is a band of loss - a peaking section with sub-unity gain,
+centred on a multiple of the fundamental and returning to unity above it. Because
+it returns to unity it costs almost nothing at the high fitted point, so the
+feasibility ceiling stops binding and the depth can be what the references ask
+for. It is centred at five times the fundamental with a Q of 0.7; the centre is a
+clear minimum at five and does not move with anything else tried, and Q is a clear
+minimum at 0.7. Its depth saturates - 4 dB and 14 dB score within 0.02 dB of each
+other, because feasibility takes over well before the constant does.
+
+Alongside it, the hand's relief at the fundamental moves from a divisor of six to
+twenty-two. That is a large change and it needs the pairing to be legible, because
+the two are complementary in a way neither is alone:
+
+| configuration | tilt | contour | joint |
+| --- | --- | --- | --- |
+| relief 6, no dip (before) | 17.69 | 4.00 | 10.85 |
+| relief 22, no dip | 17.55 | 6.90 | **12.23** |
+| relief 6, dip 10 dB | 9.41 | 8.86 | 9.13 |
+| relief 22, dip 10 dB | 9.08 | 2.92 | **6.00** |
+
+The relief alone is **worse than doing nothing**: it lengthens the tail and gives
+the contour term back more than it gains, because nothing is removing the
+harmonics that then ring on. The dip alone trades one for one, as the shelf did.
+Together they are 4.85 dB better than the state before any of this work and 2.4 dB
+better than the shelf they replace. This is the point at which the tilt and the
+note's total energy stop being one degree of freedom - the thing the previous pass
+correctly identified as necessary and incorrectly diagnosed as filter order.
+
+The relief is bounded above by the suite's own requirement that a muted note decay
+dramatically faster than an open one. That still holds at a divisor of 70 and
+fails at 110, so twenty-two sits with about a factor of four in hand rather than
+against a cliff. Its own sweep is a flat minimum - 6.20, 6.05, 6.03, 6.05, 6.09 dB
+at 16, 19, 22, 25 and 28 - so the middle of the flat region is used rather than an
+edge.
+
+Measured where the defect actually was, which was the tail rather than the tilt.
+Electry's energy relative to its own attack peak, against the five references:
+
+| window | reference | before | after |
+| --- | --- | --- | --- |
+| 150-500 ms | -9.4 to -13.5 | -11.0 to -12.4 | -11.8 to -13.0 |
+| 500 ms-1 s | -13.9 to -22.4 | -21.1 to -22.3 | -18.5 to -19.6 |
+| 1-1.8 s | -18.0 to -29.4 | -31.6 to -32.2 | -23.7 to -25.0 |
+
+The one-to-two-second window was 10 to 14 dB short of every reference and is now
+within 2 to 6 dB of four of them, overshooting the fifth - the fastest-decaying
+take - by 4.7 dB. Note also how nearly pitch-invariant the old column is: -11,
+-21, -32 at every pitch, against references spanning 4 dB, 8 dB and 11 dB across
+the same five notes. Per round trip, the shortfall against the reference tilt at
+h2 through h8 falls from -0.10, -0.58, -0.57, -0.85, -0.58, -0.93, -0.88 dB to
+-0.00, -0.26, -0.23, -0.41, -0.37, -0.64, -0.58: a little over half of it closed,
+and exact at the second harmonic.
+
+One implementation detail is load-bearing rather than fastidious. The dip runs in
+double, and its numerator is renormalised so its gain at DC is exactly one. The
+section is analytically unity at DC - numerator and denominator both sum to
+(2 - 2cos w0)/a0 - but at the bottom of this range that quantity is around 3.6e-5
+formed by subtracting two numbers near two, so in float the two sums disagree in
+their leading digits. Measured, the section's real gain at DC was 1.00066. It sits
+inside the string's feedback loop, and the only DC blocker in this engine is on
+the output where it cannot reach: against a loop gain at its 0.99999 ceiling that
+is a mode growing 0.07% per round trip and never decaying. Normalising in float
+alone brought it to 1.00033, which is the float representation error rather than
+the algebra; double brings it to exactly 1.00000000, asserted over 3920 live
+configurations by `testHandDipNeverExpands`. This is the same trap the modal
+resonator bank already documents, met a second time in a different filter.
 
 Separately, and on listening feedback rather than measurement, the release-noise
 burst was too loud. Its coefficient drops from 0.34 to 0.20 on the wound strings

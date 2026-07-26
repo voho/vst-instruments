@@ -222,6 +222,45 @@ private:
         }
     };
 
+    // The hand's loss dip, in double for the same reason ModalResonator is: its
+    // centre can sit at a few tens of hertz, where 2 - 2cos(w) is around 3.6e-5
+    // formed by subtracting two numbers near two. In float the section's gain at
+    // DC then carries about 0.3% of error, and since it lives inside the string's
+    // feedback loop - where the only DC blocker in this engine, being on the
+    // output, cannot reach it - an error in that direction is a mode that grows
+    // by 0.03% per round trip and never decays. Double makes the residual around
+    // 1e-16 instead, and it is only ever run while a hand is on the string.
+    struct DipBiquad
+    {
+        double b0 { 1.0 }, b1 { 0.0 }, b2 { 0.0 }, a1 { 0.0 }, a2 { 0.0 };
+        double z1 { 0.0 }, z2 { 0.0 };
+
+        void reset() noexcept { z1 = z2 = 0.0; }
+        float process(float input) noexcept
+        {
+            const double in = input;
+            const double output = b0 * in + z1;
+            z1 = b1 * in - a1 * output + z2;
+            z2 = b2 * in - a2 * output;
+            return static_cast<float>(output);
+        }
+    };
+
+    // What the bridge hand does to the loop, as a shape rather than as running
+    // state, so the decay solve and the tuning compensation read it from one
+    // place and cannot disagree about what is in the loop.
+    //
+    // A band of loss centred on a multiple of the fundamental and returning to
+    // unity above it. Returning to unity is what lets it be deep: a shelf pays
+    // its full depth at the high fitted point, where the references ask for no
+    // extra loss at all, and the feasibility ceiling then refuses to go further.
+    struct HandLossShape
+    {
+        float dipOmega { 0.0f };
+        float dipQ { 0.70f };
+        float dipFullDepthDb { 0.0f };
+    };
+
     struct ModalResonator
     {
         // Low structural modes can run at 384 kHz, where float coefficient
@@ -348,9 +387,18 @@ private:
         // Both terms are zero unless a hand is on the string, and OnePole with a
         // zero coefficient is an exact pass-through, so unmuted articulations
         // are bit-identical and the checks measuring them cannot be reached.
-        OnePole handLoss {};
-        float handLossCoefficient { 0.0f };
+        // The shelf alone could not be deep enough, and the reason is worth
+        // keeping: it is flat above its corner, so it spends its full depth at
+        // the 3.6 kHz fitted point, where the references ask for no extra loss
+        // at all. The one-pole cannot get flatter than flat to pay that back, so
+        // feasibility refused anything deeper - measurably, since requesting
+        // 0.50, 0.70 and 0.90 produced bit-identical decay. The dip returns to
+        // unity above its band, so it costs almost nothing at the fitted point
+        // and the ceiling stops binding.
+        DipBiquad handDip {};
+        HandLossShape handLossShape {};
         float handLossDepth { 0.0f };
+        bool handDipActive { false };
         DispersionAllpass dispersion1 {};
         DispersionAllpass dispersion2 {};
         DispersionAllpass dispersion3 {};
@@ -630,8 +678,14 @@ private:
     }
     static float lerp(float a, float b, float t) noexcept { return a + (b - a) * t; }
     static float onePolePhaseDelay(float coefficient, float omega) noexcept;
-static void handLossResponse(float depth, float coefficient, float omega,
-                                 float& magnitude, float& phase) noexcept;
+    static void handLossResponse(float depth, const HandLossShape& shape,
+                                 float omega, float& magnitude,
+                                 float& phase) noexcept;
+    // The dip's biquad coefficients for a given depth. Shared by the solve, the
+    // phase compensation and the per-voice setup for the same reason as above.
+    static void handDipCoefficients(float depth, const HandLossShape& shape,
+                                    double& b0, double& b1, double& b2,
+                                    double& a1, double& a2) noexcept;
         static float allpassPhaseDelay(float coefficient, float omega) noexcept;
     // Per-string magnetic balance. It depends only on the string, so it is
     // solved once instead of inside the sample loop.

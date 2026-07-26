@@ -25,6 +25,14 @@ silent a second after the pick; both touch every note, and
 the measurements behind them are in the
 [research contract](../physical-modeling-research.md#voicing-against-a-reference-recording).
 
+The muted takes were last revoiced when the hand's loss stopped being a shelf and
+became a band centred on the string's own fifth harmonic, paired with a much
+lighter rate at the fundamental. Seven of the thirteen files changed; the six that
+did not - the open-string, fretboard, lead, pickup, strum and build takes - are
+byte-identical, because both terms multiply a rate that is exactly zero when no
+hand is on the string. That partition is the check that the change went only where
+it was meant to.
+
 | File | Channels | Length | What it demonstrates |
 | --- | --- | --- | --- |
 | [`01-range-open-strings.wav`](01-range-open-strings.wav) | mono | 6.2 s | The eight open strings of the Drop-E instrument, low to high (E1 B1 E2 A2 D3 G3 B3 E4), then all eight ringing together. Default settings. |

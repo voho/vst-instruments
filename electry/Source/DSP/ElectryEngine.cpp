@@ -53,19 +53,26 @@ constexpr float singleCoilResonanceHz = 6000.0f;
 constexpr float humbuckerResonanceQ = 1.0f;
 constexpr float singleCoilResonanceQ = 2.40f;
 
-// The bridge hand's loss slope: how deep the shelf goes and where it turns over
-// as a multiple of the sounding fundamental. Fitted jointly with the relief
-// below against nine dry muted power-chord references at five pitches, on an
-// objective that scores the harmonic-number tilt and the peak-relative energy
-// contour together so neither can be bought with the other.
-// Swept jointly: depth 0, 0.10, 0.20, 0.35, 0.50 against corners of 2, 4, 6, 8,
-// 11 and 15 times the fundamental. The minimum is clear and it is not a trade -
-// tilt error falls 17.69 to 11.50 dB while the contour term rises only 4.00 to
-// 5.45, where the same shelf outside the solve moved the two one for one and
-// bought nothing. Corners nearer the fundamental collapse the contour (at 2x the
-// term reaches 34 dB); much above eight the tilt returns to where it started.
-constexpr float handLossDepthScale = 0.35f;
-constexpr float handLossCornerRatio = 8.0f;
+// The bridge hand's loss band: how deep it goes at full pressure, where it sits
+// as a multiple of the sounding fundamental, and how wide it is. Fitted jointly
+// with the relief below against nine dry muted power-chord references at five
+// pitches, on an objective that scores the harmonic-number tilt and the
+// peak-relative energy contour together so neither can be bought with the other.
+//
+// Anchoring the centre to the string's own series rather than to a frequency is
+// the point: the loss a palm mute applies is a function of harmonic number, so
+// the same shape has to work an octave down, where a fixed centre in hertz lands
+// on a different partial.
+//
+// Swept: centres of 3, 3.5, 5, 7, 8, 10 and 12 times the fundamental against
+// depths of 2 to 20 dB and Q of 0.5, 0.7 and 1.0. The centre is a clear minimum
+// at five and it does not move with the relief - it is the best value at every
+// relief tried from 20 to 30. Q is a clear minimum at 0.7. Depth saturates:
+// 10 dB and 18 dB score within 0.05 dB of each other because the feasibility
+// bisection has taken over by then, so the shallower of the two is used.
+constexpr float handDipFullDepthDb = 10.0f;
+constexpr float handDipCentreRatio = 5.0f;
+constexpr float handDipQ = 0.70f;
 
 constexpr float steelDensity = 7850.0f;      // kg/m^3
 constexpr float steelYoungModulus = 2.0e11f; // Pa
@@ -191,7 +198,7 @@ void ElectryEngine::PolarisationLoop::clear() noexcept
     line.fill(0.0f);
     writeIndex = 0;
     damping.reset();
-    handLoss.reset();
+    handDip.reset();
     dispersion1.reset();
     dispersion2.reset();
     dispersion3.reset();
@@ -356,33 +363,97 @@ float ElectryEngine::onePolePhaseDelay(float coefficient, float omega) noexcept
     return omega > 1.0e-9f ? -angle / omega : coefficient / (1.0f - coefficient);
 }
 
-// Magnitude and phase of the hand's loss shelf, H(z) = (1-d) + d(1-a)/(1-a/z).
-// Used by both the decay solve and the tuning compensation, so the two can never
-// disagree about what is in the loop.
-void ElectryEngine::handLossResponse(float depth, float coefficient, float omega,
-                                     float& magnitude, float& phase) noexcept
+// The dip: a textbook RBJ peaking section with a gain below unity, so its
+// magnitude runs from one at DC down to the requested depth at the centre and
+// back to one at Nyquist. That bound is why it is safe in a feedback loop at any
+// depth - the section can only ever remove energy - and it is asserted over the
+// whole shipped parameter range by testHandDipNeverExpands.
+void ElectryEngine::handDipCoefficients(float depth, const HandLossShape& shape,
+                                        double& b0, double& b1, double& b2,
+                                        double& a1, double& a2) noexcept
 {
+    b0 = 1.0;
+    b1 = b2 = a1 = a2 = 0.0;
+    if (depth <= 0.0f || shape.dipFullDepthDb <= 0.0f || shape.dipOmega <= 0.0f)
+        return;
+
+    // Computed in double, and then the numerator is renormalised so the section's
+    // gain at DC is exactly one. Both are necessary rather than fastidious. The
+    // section is analytically unity at DC - numerator and denominator both sum to
+    // (2 - 2 cos w0)/a0 - but at the bottom of this instrument's range that
+    // quantity is around 3.6e-5 formed by subtracting two numbers near two, so in
+    // float the two sums disagree in their leading digits. Measured, that left a
+    // real DC gain of 1.00066, and with the loop gain at its 0.99999 ceiling the
+    // product exceeds one: a DC component in the loop would then grow by about
+    // 0.07% per round trip forever, since the only DC blocker in this engine is
+    // on the output and not inside the string. Normalising removes the mode
+    // instead of relying on it being small, and can only ever scale the section
+    // down, so the magnitude bound the loop depends on is preserved.
+    const double gainDb = -(double) depth * (double) shape.dipFullDepthDb;
+    const double a = std::pow(10.0, gainDb / 40.0);
+    const double w = shape.dipOmega;
+    const double alpha = std::sin(w) / (2.0 * std::max((double) shape.dipQ, 0.05));
+    const double a0 = 1.0 + alpha / a;
+    if (a0 < 1.0e-12)
+        return;
+    const double inv = 1.0 / a0;
+    const double cosw = std::cos(w);
+    double nb0 = (1.0 + alpha * a) * inv;
+    double nb1 = (-2.0 * cosw) * inv;
+    double nb2 = (1.0 - alpha * a) * inv;
+    const double na1 = (-2.0 * cosw) * inv;
+    const double na2 = (1.0 - alpha / a) * inv;
+
+    const double sumB = nb0 + nb1 + nb2;
+    const double sumA = 1.0 + na1 + na2;
+    if (std::fabs(sumB) > 1.0e-30 && sumA > 0.0)
+    {
+        const double correction = sumA / sumB;
+        nb0 *= correction;
+        nb1 *= correction;
+        nb2 *= correction;
+    }
+
+    b0 = nb0;
+    b1 = nb1;
+    b2 = nb2;
+    a1 = na1;
+    a2 = na2;
+}
+
+// Magnitude and phase of what the hand puts in the loop. Used by the decay
+// solve, the tuning compensation and the per-voice setup, so none of the three
+// can disagree about what is actually in the loop.
+void ElectryEngine::handLossResponse(float depth, const HandLossShape& shape,
+                                     float omega, float& magnitude,
+                                     float& phase) noexcept
+{
+    magnitude = 1.0f;
+    phase = 0.0f;
     if (depth <= 0.0f)
-    {
-        magnitude = 1.0f;
-        phase = 0.0f;
         return;
-    }
+
     const float cw = std::cos(omega), sw = std::sin(omega);
-    const float nr = 1.0f - depth * coefficient
-                   - (1.0f - depth) * coefficient * cw;
-    const float ni = (1.0f - depth) * coefficient * sw;
-    const float dr = 1.0f - coefficient * cw;
-    const float di = coefficient * sw;
-    const float dn = dr * dr + di * di;
-    if (dn < 1.0e-20f)
-    {
-        magnitude = 1.0f;
-        phase = 0.0f;
+    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+    handDipCoefficients(depth, shape, b0, b1, b2, a1, a2);
+    if (b1 == 0.0 && b2 == 0.0 && a1 == 0.0 && a2 == 0.0)
         return;
-    }
-    magnitude = std::sqrt((nr * nr + ni * ni) / dn);
-    phase = std::atan2(ni, nr) - std::atan2(di, dr);
+
+    // Evaluated at z = e^{j omega}, in double for the same cancellation reason
+    // the section itself runs in double: the solve divides this magnitude out of
+    // its targets, so an error here becomes an error in the fitted decay.
+    const double dw = omega;
+    const double dcw = std::cos(dw), dsw = std::sin(dw);
+    const double c2 = std::cos(2.0 * dw), s2 = std::sin(2.0 * dw);
+    const double nr = b0 + b1 * dcw + b2 * c2;
+    const double ni = -(b1 * dsw + b2 * s2);
+    const double dr = 1.0 + a1 * dcw + a2 * c2;
+    const double di = -(a1 * dsw + a2 * s2);
+    const double dn = dr * dr + di * di;
+    if (dn < 1.0e-20)
+        return;
+    magnitude *= (float) std::sqrt((nr * nr + ni * ni) / dn);
+    phase += (float) (std::atan2(ni, nr) - std::atan2(di, dr));
 }
 
 float ElectryEngine::allpassPhaseDelay(float coefficient, float omega) noexcept
@@ -1028,28 +1099,26 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // about 2 dB at four of the five reference pitches, against references
         // that damp h3 and h4 8 to 24 dB harder than h1. A divisor of eight
         // therefore over-relieves the whole low-mid comb if the loop is asked to
-        // carry the harmonic tilt as well. It is not: this term is fitted purely
-        // on the decay envelope, and there the mode shape's own answer is close
-        // to right. Swept against the five matched reference pitches on a joint
-        // objective of tilt shape plus peak-relative energy contour, the contour
-        // error falls 11.74, 6.64, 4.84, 4.11, 4.00, 4.38, 5.31 dB at divisors
-        // of 2, 3, 4, 5, 6, 8, 12 - a clear minimum at six, and 7.7 dB better
-        // than the two this replaced.
+        // carry the harmonic tilt as well - and with the dip below in the loop it
+        // is not asked to, which is exactly why this divisor is now far larger
+        // than the mode shape alone suggests.
         //
-        // Prising the harmonics apart from the fundamental is a separate problem
-        // and it is not solved here. A mute-gated loss shelf, unity at f0 and
-        // falling above a corner set as a multiple of it, was built and measured
-        // because it is the only mechanism that can express loss in harmonic
-        // number rather than in hertz. It works, and it is still not shippable:
-        // across its whole usable range it trades the two terms almost exactly
-        // one for one - tilt 17.9 to 13.7 dB against contour 6.6 to 11.3 dB - so
-        // the joint score never improves. In this architecture the tilt and the
-        // note's total energy are one degree of freedom, not two, because a
-        // string's energy lives in the same low harmonics the tilt has to
-        // remove, and in a power chord the root's second and third harmonics are
-        // the fifth's and octave's fundamentals. Separating them needs the two
-        // to stop sharing a single one-pole, which is a change to the loop's
-        // order rather than to any constant in it.
+        // The two are complementary rather than competing, and that is the whole
+        // finding. The relief lengthens the tail; the dip removes the harmonics.
+        // Applied alone each one is nearly a wash on the joint objective - the
+        // relief buys contour and gives back tilt, the dip the reverse - but
+        // together they separate the two terms that used to be one degree of
+        // freedom. Re-swept against the five matched reference pitches with the
+        // dip present, the joint objective reads 6.20, 6.05, 6.03, 6.05, 6.09 dB
+        // at divisors of 16, 19, 22, 25 and 28: a flat minimum, so the middle of
+        // it is used rather than an edge. The old value of six scores 8.43 there.
+        //
+        // What set the ceiling before was measurement, not taste. The reference
+        // fundamental barely decays under a mute at all - its level moves +1.0 to
+        // -2.8 dB over the first third of a second - so the divisor wants to be
+        // large. It is bounded above by the suite's own requirement that a muted
+        // note decay dramatically faster than an open one, which still holds at
+        // 70 and fails at 110, so this sits with about a factor of four in hand.
         //
         // The dead-note choke is added at the same rate on both, because it is
         // the fretting hand somewhere up the neck rather than the heel resting
@@ -1058,9 +1127,9 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // played under palm-mute pressure correct: both contacts are present,
         // and each contributes with its own frequency behaviour.
         constexpr float handHighFrequencyTilt = 3.0f;
-        constexpr float handFundamentalRelief = 6.0f;
+        constexpr float handFundamentalRelief = 22.0f;
         const float handRate = handT60 > 0.0f ? 1.0f / handT60 : 0.0f;
-        // The shelf's depth follows this rather than switching on. It is the
+        // The dip's depth follows this rather than switching on. It is the
         // hand's share of the string's total loss rate, so it is zero without a
         // hand, near one under a firm mute, and continuous in between - which
         // matters because Palm Mute and CC2 are swept live. Gating full depth on
@@ -1080,14 +1149,19 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     const float omega0 = twoPi * f0 * inverseSampleRate_;
     const float omegaHigh = twoPi * std::max(fHigh, f0 * 1.5f) * inverseSampleRate_;
 
-    // The shelf's corner is shared; its depth is settled per polarisation below,
-    // because how much of it is feasible depends on that loop's own decay ratio.
-    const float shelfRequestedDepth =
-        clampf(handLossDepthScale * handShareForSlope, 0.0f, 0.95f);
-    const float shelfCoefficient = shelfRequestedDepth > 0.0f
-        ? std::exp(-twoPi * clampf(handLossCornerRatio * f0, 40.0f,
-                                   0.40f * sampleRate) * inverseSampleRate_)
+    // The shape is shared; how much of it is feasible is settled per
+    // polarisation below, because that depends on the loop's own decay ratio.
+    // It follows the hand's share of the total loss rate, so it is zero without a
+    // hand and continuous in between - Palm Mute and CC2 are swept live.
+    const float dipRequestedDepth = clampf(handShareForSlope, 0.0f, 0.95f);
+    HandLossShape shape {};
+    // Clamped below Nyquist so a high note cannot fold the centre.
+    shape.dipOmega = dipRequestedDepth > 0.0f
+        ? twoPi * clampf(handDipCentreRatio * f0, 40.0f, 0.40f * sampleRate)
+              * inverseSampleRate_
         : 0.0f;
+    shape.dipQ = handDipQ;
+    shape.dipFullDepthDb = handDipFullDepthDb;
 
     const auto configureLoop = [&] (PolarisationLoop& loop, float t60Scale)
     {
@@ -1101,18 +1175,18 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         const float ratio = clampf(gainAtHigh / std::max(gainAtF0, 1.0e-6f),
                                    1.0e-4f, 1.0f);
 
-        loop.handLossCoefficient = shelfCoefficient;
-        // Divide the shelf out of both targets. This is the whole point: the
+        loop.handLossShape = shape;
+        // Divide the dip out of both targets. This is the whole point: the
         // one-pole is then solved for what is left, so the envelope stays where
-        // the references put it and the shelf's slope is free to bend the curve
-        // in between. A muted note spends most of its loop gain on the mute
+        // the references put it and the dip is free to bend the curve in
+        // between. A muted note spends most of its loop gain on the mute
         // itself, which is what leaves the headroom for this to be possible -
         // on an unmuted 20 s decay the same compensation would ask for a loop
         // gain above unity and clamp.
         //
-        // The shelf can only be as deep as the note's own decay ratio leaves
+        // The dip can only be as deep as the note's own decay ratio leaves
         // room for. A one-pole cannot raise the high end relative to the low, so
-        // if the shelf's own tilt is already steeper than the total the targets
+        // if the dip's own tilt is already steeper than the total the targets
         // ask for, the remainder is unsolvable. Clamping that quotient to one -
         // which is what this did first - hid the problem and let it through: the
         // damping pole collapsed to near zero, the loop gain hit its ceiling, and
@@ -1146,11 +1220,11 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // both limits harder - so the outer bisection is as reliable as the
         // inner one.
         const auto solveFor = [&] (float depth, float& coefficientOut,
-                                   float& gainOut, float& shelfAtF0Out)
+                                   float& gainOut, float& dipAtF0Out)
         {
             float atF0 = 1.0f, atHigh = 1.0f, unused = 0.0f;
-            handLossResponse(depth, shelfCoefficient, omega0, atF0, unused);
-            handLossResponse(depth, shelfCoefficient, omegaHigh, atHigh, unused);
+            handLossResponse(depth, shape, omega0, atF0, unused);
+            handLossResponse(depth, shape, omegaHigh, atHigh, unused);
             atF0 = clampf(atF0, 1.0e-3f, 1.0f);
             atHigh = clampf(atHigh, 1.0e-3f, 1.0f);
             // The shelf must not be what makes the remainder unsolvable. The
@@ -1176,29 +1250,29 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
                     high = mid;
             }
             coefficientOut = 0.5f * (low + high);
-            shelfAtF0Out = atF0;
+            dipAtF0Out = atF0;
             gainOut = gainAtF0
                 / std::max(magnitude(coefficientOut, omega0) * atF0, 1.0e-6f);
             return gainOut <= 0.99999f;
         };
 
-        float coefficient = 0.0f, gain = 0.0f, shelfF0 = 1.0f;
-        float depth = shelfRequestedDepth;
-        if (depth <= 0.0f || ! solveFor(depth, coefficient, gain, shelfF0))
+        float coefficient = 0.0f, gain = 0.0f, dipF0 = 1.0f;
+        float depth = dipRequestedDepth;
+        if (depth <= 0.0f || ! solveFor(depth, coefficient, gain, dipF0))
         {
             // Zero always solves: it is the model without the shelf at all.
             float lowDepth = 0.0f, highDepth = depth;
-            solveFor(0.0f, coefficient, gain, shelfF0);
+            solveFor(0.0f, coefficient, gain, dipF0);
             for (int i = 0; i < 12; ++i)
             {
                 const float mid = 0.5f * (lowDepth + highDepth);
-                float tryCoefficient = 0.0f, tryGain = 0.0f, tryShelf = 1.0f;
-                if (solveFor(mid, tryCoefficient, tryGain, tryShelf))
+                float tryCoefficient = 0.0f, tryGain = 0.0f, tryDip = 1.0f;
+                if (solveFor(mid, tryCoefficient, tryGain, tryDip))
                 {
                     lowDepth = mid;
                     coefficient = tryCoefficient;
                     gain = tryGain;
-                    shelfF0 = tryShelf;
+                    dipF0 = tryDip;
                 }
                 else
                 {
@@ -1209,8 +1283,17 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         }
 
         loop.handLossDepth = depth;
-        if (depth <= 0.0f)
-            loop.handLoss.reset();
+        double dipB0 = 1.0, dipB1 = 0.0, dipB2 = 0.0, dipA1 = 0.0, dipA2 = 0.0;
+        handDipCoefficients(depth, shape, dipB0, dipB1, dipB2, dipA1, dipA2);
+        loop.handDip.b0 = dipB0;
+        loop.handDip.b1 = dipB1;
+        loop.handDip.b2 = dipB2;
+        loop.handDip.a1 = dipA1;
+        loop.handDip.a2 = dipA2;
+        loop.handDipActive = dipB1 != 0.0 || dipB2 != 0.0
+                          || dipA1 != 0.0 || dipA2 != 0.0;
+        if (! loop.handDipActive)
+            loop.handDip.reset();
         loop.loopDampingCoefficient = coefficient;
         loop.loopGain = clampf(gain, 0.0f, 0.99999f);
     };
@@ -1388,12 +1471,12 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         {
             // The shelf is in the loop, so its phase is part of the sounding
             // period; without this a palm-muted string sits 12.5 cents flat.
-            float shelfMagnitude = 1.0f, shelfPhase = 0.0f;
-            handLossResponse(loop.handLossDepth, loop.handLossCoefficient, omega,
-                             shelfMagnitude, shelfPhase);
-            const float shelfDelay = omega > 1.0e-9f ? -shelfPhase / omega : 0.0f;
+            float dipMagnitude = 1.0f, dipPhase = 0.0f;
+            handLossResponse(loop.handLossDepth, loop.handLossShape, omega,
+                             dipMagnitude, dipPhase);
+            const float dipDelay = omega > 1.0e-9f ? -dipPhase / omega : 0.0f;
             return onePolePhaseDelay(loop.loopDampingCoefficient, omega)
-                 + shelfDelay
+                 + dipDelay
                  + 4.0f * allpassPhaseDelay(
                        loop.dispersionLowCoefficient, omega)
                  + 4.0f * allpassPhaseDelay(
@@ -2618,10 +2701,12 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         sample = loop.damping.process(sample, loop.loopDampingCoefficient);
         // A convex blend of the wave and a lowpass of it, so the magnitude never
         // exceeds one whatever the depth, and depth zero is exactly the identity.
-        if (loop.handLossDepth > 0.0f)
-            sample += loop.handLossDepth
-                    * (loop.handLoss.process(sample, loop.handLossCoefficient)
-                       - sample);
+        // A peaking section with sub-unity gain: its magnitude never exceeds one
+        // anywhere, so it cannot destabilise the loop at any depth, and because
+        // it returns to unity above its band it costs almost nothing at the high
+        // fitted point - which is what lets it be deep enough to matter.
+        if (loop.handDipActive)
+            sample = loop.handDip.process(sample);
         sample *= loop.loopGain * voice.releaseGain * extraFeedback;
         return sample;
     };

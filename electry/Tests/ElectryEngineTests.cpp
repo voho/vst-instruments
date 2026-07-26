@@ -100,6 +100,22 @@ struct ElectryEngineTestAccess
         return engine.channelsLinked_;
     }
 
+    // The hand's loss dip sits inside the feedback loop, so its magnitude must
+    // never exceed one at any frequency. Read from the live voice rather than
+    // recomputed, so the check is on what actually runs.
+    static void handDip(const ElectryEngine& engine, int stringIndex,
+                        double& b0, double& b1, double& b2, double& a1,
+                        double& a2, bool& active) noexcept
+    {
+        const auto& loop = engine.voices_[static_cast<std::size_t>(stringIndex)].vertical;
+        b0 = loop.handDip.b0;
+        b1 = loop.handDip.b1;
+        b2 = loop.handDip.b2;
+        a1 = loop.handDip.a1;
+        a2 = loop.handDip.a2;
+        active = loop.handDipActive;
+    }
+
     static bool pickupPathActive(const ElectryEngine& engine, bool neck) noexcept
     {
         return neck ? engine.neckPathActive_ : engine.bridgePathActive_;
@@ -2825,6 +2841,120 @@ void testPickContactGeometry()
 // absorber, which damped the fundamental as hard as the top end and turned a
 // palm mute into a short pick. Both are voicing, so neither is pinned to a
 // number here; what is pinned is the audible consequence each one had.
+// The hand's loss dip is the one filter in this model that sits inside the
+// feedback loop with a shape solved per note rather than a fixed one. Its safety
+// rests entirely on a peaking section with sub-unity gain having a magnitude
+// bounded by one everywhere, so that bound is asserted directly on the
+// coefficients the engine actually runs, across the playable range and the whole
+// travel of both mute controls. If it ever exceeded one the loop would grow at
+// that frequency, which is the one failure this model cannot absorb.
+void testHandDipNeverExpands()
+{
+    constexpr double sampleRate = 48000.0;
+    int activeConfigurations = 0;
+    float worstMagnitude = 0.0f;
+    double worstOmegaFraction = 0.0;
+
+    for (const float pressure : { 0.0f, 0.15f, 0.55f, 1.0f })
+    {
+        for (const auto articulation : { Articulation::Muted, Articulation::Chug,
+                                         Articulation::DeadNote,
+                                         Articulation::Downstroke })
+        {
+            for (const float muteDamping : { 0.0f, 0.55f, 1.0f })
+            {
+                EngineParameters parameters;
+                parameters.palmMute = pressure;
+                parameters.muteDamping = muteDamping;
+
+                ElectryEngine engine;
+                engine.prepare(sampleRate, 512);
+                engine.setParameters(parameters);
+
+                // Sweep the playable range: the dip's centre tracks the
+                // fundamental, so a high note pushes it toward Nyquist where the
+                // coefficients are most awkward.
+                for (int note = ElectryEngine::lowestPlayableNote;
+                     note <= ElectryEngine::highestPlayableNote; note += 3)
+                {
+                    engine.allNotesOff();
+                    engine.noteOn(ElectryEngine::firstKeyswitchNote
+                                      + static_cast<int>(articulation), 1.0f);
+                    engine.noteOn(note, 0.9f);
+
+                    float left[64] {};
+                    float right[64] {};
+                    engine.process(left, right, 64);
+
+                    for (int stringIndex = 0;
+                         stringIndex < ElectryEngine::stringCount; ++stringIndex)
+                    {
+                        double b0 = 1.0, b1 = 0.0, b2 = 0.0;
+                        double a1 = 0.0, a2 = 0.0;
+                        bool active = false;
+                        TestAccess::handDip(engine, stringIndex,
+                                            b0, b1, b2, a1, a2, active);
+                        if (! active)
+                            continue;
+                        ++activeConfigurations;
+
+                        for (int step = 0; step <= 600; ++step)
+                        {
+                            const double omega =
+                                3.14159265358979323846 * step / 600.0;
+                            const double cw = std::cos(omega);
+                            const double sw = std::sin(omega);
+                            const double c2 = std::cos(2.0 * omega);
+                            const double s2 = std::sin(2.0 * omega);
+                            const double nr = b0 + b1 * cw + b2 * c2;
+                            const double ni = -(b1 * sw + b2 * s2);
+                            const double dr = 1.0 + a1 * cw + a2 * c2;
+                            const double di = -(a1 * sw + a2 * s2);
+                            const double dn = dr * dr + di * di;
+                            if (dn < 1.0e-20)
+                                continue;
+                            const auto magnitude = static_cast<float>(
+                                std::sqrt((nr * nr + ni * ni) / dn));
+                            if (magnitude > worstMagnitude)
+                            {
+                                worstMagnitude = magnitude;
+                                worstOmegaFraction = omega
+                                    / 3.14159265358979323846;
+                            }
+                            // The bound is an equality at DC and Nyquist by
+                            // construction, so the slack here is for double
+                            // rounding only. It was 6.6e-4 out when the section
+                            // ran in float, which is what put it in double.
+                            if (! (magnitude <= 1.000001f))
+                            {
+                                std::printf("  |H| = %.6f at note %d, "
+                                            "pressure %.2f, mute %.2f\n",
+                                            magnitude, note, pressure,
+                                            muteDamping);
+                                expect(false, "hand loss dip expands inside "
+                                              "the loop");
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A bound that holds because nothing was ever configured proves nothing.
+    if (activeConfigurations < 100)
+    {
+        std::printf("  only %d active configurations\n", activeConfigurations);
+        expect(false, "hand loss dip never engaged, so its bound is vacuous");
+        return;
+    }
+
+    std::printf("Hand dip peak magnitude %.8f at omega/pi = %.6f over %d "
+                "active configurations\n",
+                worstMagnitude, worstOmegaFraction, activeConfigurations);
+}
+
 void testLowRegisterFundamentalWeight()
 {
     constexpr double sampleRate = 48000.0;
@@ -3350,6 +3480,7 @@ int main()
     testStrumSpread();
     testVibratoDepthAndPickGeometry();
     testPickContactGeometry();
+    testHandDipNeverExpands();
     testLowRegisterFundamentalWeight();
     testVisualStateAndGeometry();
     testPickupCullingAndChannelLinking();
