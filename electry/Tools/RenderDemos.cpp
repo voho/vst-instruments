@@ -381,7 +381,9 @@ Take renderRhythmDry()
 {
     Take take(metalRhythmVoicing(), FxParameters {}, false);
     playRhythmFigure(take);
-    take.wait(0.9);
+    take.wait(0.12);
+    playRhythmFigure(take);
+    take.wait(1.1);
     return take;
 }
 
@@ -395,7 +397,9 @@ Take renderRhythmAmped()
     fx.compressor = 0.60f;
     Take take(metalRhythmVoicing(), fx, false);
     playRhythmFigure(take);
-    take.wait(0.9);
+    take.wait(0.12);
+    playRhythmFigure(take);
+    take.wait(1.1);
     return take;
 }
 
@@ -617,6 +621,171 @@ Take renderVelocityDynamics()
     return take;
 }
 
+
+// A power chord is a root, its fifth and its octave struck as one stroke. It is
+// the shape a metal rhythm part is actually built from, and it loads the model
+// very differently from a single note: three strings share one bridge, so the
+// sympathetic coupling, the strum travel and the amplifier's intermodulation
+// all have something to work with.
+//
+// The roots stay inside MIDI 28..32 deliberately. The allocator gives each note
+// the free string with the lowest fret, which for those roots is the idiomatic
+// shape - strings 8, 7 and 6 at one fret, three adjacent courses. Above that it
+// stops being adjacent: a root of 33 puts the fifth and octave on open strings
+// and lands on 8, 6 and 5, and a root of 38 lands on 7, 5 and 4. Those are
+// still correct notes and a legitimate voicing, but they cross a different
+// number of string gaps, which changes exactly the strum travel and coupling
+// these takes exist to demonstrate. Verified against the engine's own per-string
+// readout rather than assumed.
+void playPowerChordProgression(Take& take, bool muted)
+{
+    struct Shape { int root; double length; float velocity; };
+    static const std::array<Shape, 12> progression {{
+        { 28, 0.90, 1.00f }, { 28, 0.45, 0.86f }, { 31, 0.90, 0.96f },
+        { 30, 0.45, 0.90f }, { 28, 0.90, 1.00f }, { 32, 0.45, 0.92f },
+        { 31, 0.90, 0.96f }, { 29, 0.45, 0.88f }, { 30, 0.90, 0.94f },
+        { 28, 0.45, 0.90f }, { 32, 0.90, 0.98f }, { 28, 1.60, 1.00f },
+    }};
+
+    take.style(muted ? Articulation::Chug : Articulation::Downstroke);
+    for (const auto& shape : progression)
+    {
+        const int fifth = shape.root + 7;
+        const int octave = shape.root + 12;
+        take.chord({ shape.root, fifth, octave }, shape.velocity);
+        take.wait(shape.length * 0.90);
+        take.releaseChord({ shape.root, fifth, octave });
+        take.wait(shape.length * 0.10);
+    }
+}
+
+// Held chords first, so the decay and the coupling are audible, then the same
+// shapes chugged, then a run of tight muted stabs. Dry, so what is heard is the
+// string model and the pickups with nothing after them.
+Take renderPowerChordsDry()
+{
+    auto parameters = metalRhythmVoicing();
+    parameters.strumSpreadSeconds = 0.006f;  // a real stroke crosses the strings
+    parameters.sympatheticAmount = 0.35f;
+    Take take(parameters, FxParameters {}, false);
+
+    take.style(Articulation::Downstroke);
+    for (const int root : { 28, 31, 30, 28 })
+    {
+        take.chord({ root, root + 7, root + 12 }, 0.95f);
+        take.wait(1.30);
+        take.releaseChord({ root, root + 7, root + 12 });
+        take.wait(0.35);
+    }
+
+    take.wait(0.35);
+    playPowerChordProgression(take, true);
+    // Tight stabs under continuous bridge-hand pressure. The pressure is set
+    // *before* the pause rather than after it: continuous parameters are
+    // smoothed with a 14 ms time constant, and the mute depth is resolved when a
+    // voice is configured, so a note-on issued in the same instant as the change
+    // would be built against a value still on its way to 55%. The first of the
+    // eight stabs would then be looser than the other seven, which is precisely
+    // the comparison this passage exists to make.
+    parameters.palmMute = 0.55f;
+    take.setEngineParameters(parameters);
+    take.wait(0.5);
+    take.style(Articulation::Chug);
+    for (int repeat = 0; repeat < 8; ++repeat)
+    {
+        const int root = repeat % 4 == 3 ? 32 : 28;
+        take.chord({ root, root + 7, root + 12 }, repeat % 2 == 0 ? 1.0f : 0.85f);
+        take.wait(0.16);
+        take.releaseChord({ root, root + 7, root + 12 });
+        take.wait(0.06);
+    }
+    take.wait(1.2);
+    return take;
+}
+
+// The same material through the amplifier, cabinet and compressor. Power chords
+// are where a high-gain chain earns its oversampling: three fundamentals and
+// their harmonic series intermodulate in the clipping stages, and at host rate
+// that folds straight back into the guitar band.
+Take renderPowerChordsAmped()
+{
+    auto parameters = metalRhythmVoicing();
+    parameters.strumSpreadSeconds = 0.006f;
+    parameters.sympatheticAmount = 0.35f;
+    FxParameters fx;
+    fx.distortion = 0.45f;
+    fx.amp = 0.95f;
+    fx.compressor = 0.60f;
+    Take take(parameters, fx, false);
+
+    take.style(Articulation::Downstroke);
+    for (const int root : { 28, 31, 30, 28 })
+    {
+        take.chord({ root, root + 7, root + 12 }, 0.95f);
+        take.wait(1.30);
+        take.releaseChord({ root, root + 7, root + 12 });
+        take.wait(0.35);
+    }
+
+    take.wait(0.35);
+    playPowerChordProgression(take, true);
+    // As above: the pressure is set before the pause so the first stab is
+    // configured at the full 55% rather than partway through the 14 ms ramp.
+    parameters.palmMute = 0.55f;
+    take.setEngineParameters(parameters);
+    take.wait(0.5);
+    take.style(Articulation::Chug);
+    for (int repeat = 0; repeat < 8; ++repeat)
+    {
+        const int root = repeat % 4 == 3 ? 32 : 28;
+        take.chord({ root, root + 7, root + 12 }, repeat % 2 == 0 ? 1.0f : 0.85f);
+        take.wait(0.16);
+        take.releaseChord({ root, root + 7, root + 12 });
+        take.wait(0.06);
+    }
+    take.wait(1.4);
+    return take;
+}
+
+// A longer arrangement: two bars of the chugged single-note figure, a bar of
+// power chords, and an open ring-out, all through the amplifier with a little
+// room behind it. This is the closest thing here to hearing the instrument in
+// a part rather than under a microscope.
+Take renderLongRhythmArrangement()
+{
+    auto parameters = metalRhythmVoicing();
+    parameters.strumSpreadSeconds = 0.005f;
+    parameters.sympatheticAmount = 0.30f;
+    FxParameters fx;
+    fx.distortion = 0.42f;
+    fx.amp = 0.95f;
+    fx.compressor = 0.55f;
+    fx.room = 0.18f;
+    // The room decorrelates the channels, so this one is a stereo file.
+    Take take(parameters, fx, true);
+
+    playRhythmFigure(take);
+    take.wait(0.12);
+    playRhythmFigure(take);
+    take.wait(0.20);
+
+    take.style(Articulation::Downstroke);
+    for (const int root : { 32, 31, 30, 28 })
+    {
+        take.chord({ root, root + 7, root + 12 }, 0.96f);
+        take.wait(0.70);
+        take.releaseChord({ root, root + 7, root + 12 });
+        take.wait(0.10);
+    }
+
+    // Ring-out on the full open instrument.
+    take.chord({ 28, 35, 40, 45, 50, 55, 59, 64 }, 0.92f);
+    take.wait(2.6);
+    take.releaseChord({ 28, 35, 40, 45, 50, 55, 59, 64 });
+    take.wait(1.6);
+    return take;
+}
+
 struct Demo
 {
     const char* fileName;
@@ -624,9 +793,9 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 10>& demos()
+const std::array<Demo, 13>& demos()
 {
-    static const std::array<Demo, 10> table {{
+    static const std::array<Demo, 13> table {{
         { "01-range-open-strings.wav",
           "the eight open strings, then all of them ringing together",
           renderOpenStrings },
@@ -661,6 +830,16 @@ const std::array<Demo, 10>& demos()
         { "10-velocity-dynamics.wav",
           "the velocity response at full travel, open and palm muted",
           renderVelocityDynamics },
+        { "11-power-chords-dry.wav",
+          "power chords dry: held, chugged, then tight muted stabs",
+          renderPowerChordsDry },
+        { "12-power-chords-amp.wav",
+          "the same power chords through the amp, cabinet and compressor",
+          renderPowerChordsAmped },
+        { "13-long-rhythm-arrangement.wav",
+          "two bars of the chugged figure, a bar of power chords and an open "
+          "ring-out, amped",
+          renderLongRhythmArrangement },
     }};
     return table;
 }
