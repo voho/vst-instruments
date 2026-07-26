@@ -963,8 +963,9 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     }
     highRatio = clampf(highRatio, 0.0015f, 0.9f);
 
-    // Whether a hand is on the string at all, for the loss shelf below.
-    float handRateForSlope = 0.0f;
+    // How much of the string's loss the bridge hand accounts for, for the
+    // loss shelf below. Zero means no hand and an exactly bypassed shelf.
+    float handShareForSlope = 0.0f;
     // The string's own targets, before either hand.
     float t60High = t60 * highRatio;
     if (handT60 > 0.0f || chokeT60 > 0.0f)
@@ -1048,7 +1049,12 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         constexpr float handHighFrequencyTilt = 3.0f;
         constexpr float handFundamentalRelief = 6.0f;
         const float handRate = handT60 > 0.0f ? 1.0f / handT60 : 0.0f;
-        handRateForSlope = handRate;
+        // The shelf's depth follows this rather than switching on. It is the
+        // hand's share of the string's total loss rate, so it is zero without a
+        // hand, near one under a firm mute, and continuous in between - which
+        // matters because Palm Mute and CC2 are swept live. Gating full depth on
+        // any positive rate put a step in the middle of an expression pedal.
+        handShareForSlope = handRate / std::max(1.0f / t60 + handRate, 1.0e-9f);
         const float chokeRate = chokeT60 > 0.0f ? 1.0f / chokeT60 : 0.0f;
         t60 = 1.0f / (1.0f / t60 + handRate / handFundamentalRelief + chokeRate);
         t60High = 1.0f / (1.0f / t60High
@@ -1063,33 +1069,17 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     const float omega0 = twoPi * f0 * inverseSampleRate_;
     const float omegaHigh = twoPi * std::max(fHigh, f0 * 1.5f) * inverseSampleRate_;
 
-    // The shelf, resolved once for both polarisations. Gated on a hand actually
-    // being present, so this is arithmetically nothing for every other style.
-    const float shelfDepth = handRateForSlope > 0.0f ? handLossDepthScale : 0.0f;
-    const float shelfCoefficient = shelfDepth > 0.0f
+    // The shelf's corner is shared; its depth is settled per polarisation below,
+    // because how much of it is feasible depends on that loop's own decay ratio.
+    const float shelfRequestedDepth =
+        clampf(handLossDepthScale * handShareForSlope, 0.0f, 0.95f);
+    const float shelfCoefficient = shelfRequestedDepth > 0.0f
         ? std::exp(-twoPi * clampf(handLossCornerRatio * f0, 40.0f,
                                    0.40f * sampleRate) * inverseSampleRate_)
         : 0.0f;
 
     const auto configureLoop = [&] (PolarisationLoop& loop, float t60Scale)
     {
-        loop.handLossDepth = shelfDepth;
-        loop.handLossCoefficient = shelfCoefficient;
-        if (shelfDepth <= 0.0f)
-            loop.handLoss.reset();
-        // Divide the shelf out of both targets. This is the whole point: the
-        // one-pole is then solved for what is left, so the envelope stays where
-        // the references put it and the shelf's slope is free to bend the curve
-        // in between. A muted note spends most of its loop gain on the mute
-        // itself, which is what leaves the headroom for this to be possible -
-        // on an unmuted 20 s decay the same compensation would ask for a loop
-        // gain above unity and clamp.
-        float shelfF0 = 1.0f, shelfHigh = 1.0f, shelfPhase = 0.0f;
-        handLossResponse(shelfDepth, shelfCoefficient, omega0, shelfF0, shelfPhase);
-        handLossResponse(shelfDepth, shelfCoefficient, omegaHigh, shelfHigh,
-                         shelfPhase);
-        shelfF0 = clampf(shelfF0, 1.0e-3f, 1.0f);
-        shelfHigh = clampf(shelfHigh, 1.0e-3f, 1.0f);
         const float t60Fundamental = std::max(0.02f, t60 * t60Scale);
         const float t60HighTarget = std::max(0.008f, t60High * t60Scale);
         const float period = sampleRate / f0;
@@ -1099,6 +1089,59 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
             std::pow(10.0f, -3.0f * period / (t60HighTarget * sampleRate));
         const float ratio = clampf(gainAtHigh / std::max(gainAtF0, 1.0e-6f),
                                    1.0e-4f, 1.0f);
+
+        loop.handLossCoefficient = shelfCoefficient;
+        // Divide the shelf out of both targets. This is the whole point: the
+        // one-pole is then solved for what is left, so the envelope stays where
+        // the references put it and the shelf's slope is free to bend the curve
+        // in between. A muted note spends most of its loop gain on the mute
+        // itself, which is what leaves the headroom for this to be possible -
+        // on an unmuted 20 s decay the same compensation would ask for a loop
+        // gain above unity and clamp.
+        //
+        // The shelf can only be as deep as the note's own decay ratio leaves
+        // room for. A one-pole cannot raise the high end relative to the low, so
+        // if the shelf's own tilt is already steeper than the total the targets
+        // ask for, the remainder is unsolvable. Clamping that quotient to one -
+        // which is what this did first - hid the problem and let it through: the
+        // damping pole collapsed to near zero, the loop gain hit its ceiling, and
+        // muted notes above about A2 had their decay set by the shelf instead of
+        // by their fitted T60s. Bisecting the depth down until the remainder is
+        // solvable keeps the fit honest and simply gives those notes a shallower
+        // shelf, which is the correct answer rather than a silent failure.
+        const auto shelfTilt = [&] (float depth)
+        {
+            float atF0 = 1.0f, atHigh = 1.0f, unused = 0.0f;
+            handLossResponse(depth, shelfCoefficient, omega0, atF0, unused);
+            handLossResponse(depth, shelfCoefficient, omegaHigh, atHigh, unused);
+            return clampf(atHigh, 1.0e-3f, 1.0f) / clampf(atF0, 1.0e-3f, 1.0f);
+        };
+        float depth = shelfRequestedDepth;
+        // Leave the one-pole a little to do, so it stays the thing that meets
+        // the targets and the shelf stays a correction to its shape.
+        const float feasibleTilt = ratio / 0.98f;
+        if (depth > 0.0f && shelfTilt(depth) < feasibleTilt)
+        {
+            float lowDepth = 0.0f, highDepth = depth;
+            for (int i = 0; i < 12; ++i)
+            {
+                const float mid = 0.5f * (lowDepth + highDepth);
+                if (shelfTilt(mid) < feasibleTilt)
+                    highDepth = mid;
+                else
+                    lowDepth = mid;
+            }
+            depth = lowDepth;
+        }
+        loop.handLossDepth = depth;
+        if (depth <= 0.0f)
+            loop.handLoss.reset();
+
+        float shelfF0 = 1.0f, shelfHigh = 1.0f, shelfPhase = 0.0f;
+        handLossResponse(depth, shelfCoefficient, omega0, shelfF0, shelfPhase);
+        handLossResponse(depth, shelfCoefficient, omegaHigh, shelfHigh, shelfPhase);
+        shelfF0 = clampf(shelfF0, 1.0e-3f, 1.0f);
+        shelfHigh = clampf(shelfHigh, 1.0e-3f, 1.0f);
 
         // Solve the one-pole coefficient whose magnitude ratio between f0 and
         // fHigh matches the decay-time ratio. The response is monotonic in
@@ -2220,10 +2263,13 @@ void ElectryEngine::beginVoiceRelease(Voice& voice) noexcept
     {
         voice.releaseNoiseDone = true;
         const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
-        // The wound coefficient was set when the muted register was much
-        // quieter than it is now. With the mute's tail restored the release
-        // burst sits on top of an audible note instead of near silence, and at
-        // the previous level it read as a click at the end of every phrase.
+        // Reduced from 0.34/0.20 on listening feedback that the release burst was
+        // simply too loud. This is a global voicing change, not a consequence of
+        // the mute work: it applies to every articulation, and the earlier
+        // justification here - that the restored muted tail had left the burst
+        // sitting proud - would only have argued for a muted-only reduction.
+        // The control's own range is untouched; what moved is what a given
+        // setting means.
         const float level = std::pow(smoothedParameters_.releaseNoise, 0.75f)
                           * (spec.wound ? 0.20f : 0.13f)
                           * voice.velocityProfile.noise;

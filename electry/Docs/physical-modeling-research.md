@@ -812,7 +812,8 @@ gains 12.5 dB against the old voicing, its 500-1000 ms window 29.9 dB and its
 1-2 s window 48.9 dB, with the attack peak unchanged within 0.5 dB.
 Once each voicing is allowed its own Mute Damp setting - the honest comparison,
 since that is a user control and this change moves its optimum from 0.45 to 0.70 -
-the gain is 0.3 to 0.5 dB. The attack is bit-identical, and so is every unmuted
+the gain is 0.3 to 0.5 dB. The attack is bit-identical, and so is the string
+model for every unmuted
 articulation, because the term is multiplied by a hand rate that is exactly zero
 without one.
 
@@ -887,13 +888,15 @@ a trade rather than a free gain. Going further needs the loop's order raised
 again, not this shelf deepened: at depths beyond 0.5 the contour term turns and
 the joint score worsens.
 
-One consequence of restoring the mute's tail had to be corrected alongside it.
-The release-noise burst's level was set when the muted register was far quieter
-than it now is, so with an audible note underneath it the same burst read as a
-click at the end of every phrase. Its coefficient drops from 0.34 to 0.20 on the
-wound strings and 0.20 to 0.13 on the plain ones. The control's own range is
-unchanged; what moved is what a given setting means against a note that no longer
-disappears.
+Separately, and on listening feedback rather than measurement, the release-noise
+burst was too loud. Its coefficient drops from 0.34 to 0.20 on the wound strings
+and 0.20 to 0.13 on the plain ones. This is a global voicing change and it is
+worth being precise about that, because the surrounding work is not: it applies to
+every articulation, so unmuted notes are no longer bit-for-bit what they were even
+though the string model underneath them is untouched. An earlier phrasing here
+attributed it to the restored muted tail, which would only have justified a
+muted-only reduction; the reduction is wanted everywhere. The control's own range
+is unchanged, and Release Noise at zero remains an exact no-op.
 
 The amplifier chain was voiced against the same goal on a chugged Drop-E figure.
 Its input stage now passes the whole eighth-string fundamental instead of cutting
