@@ -1109,40 +1109,6 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // by their fitted T60s. Bisecting the depth down until the remainder is
         // solvable keeps the fit honest and simply gives those notes a shallower
         // shelf, which is the correct answer rather than a silent failure.
-        const auto shelfTilt = [&] (float depth)
-        {
-            float atF0 = 1.0f, atHigh = 1.0f, unused = 0.0f;
-            handLossResponse(depth, shelfCoefficient, omega0, atF0, unused);
-            handLossResponse(depth, shelfCoefficient, omegaHigh, atHigh, unused);
-            return clampf(atHigh, 1.0e-3f, 1.0f) / clampf(atF0, 1.0e-3f, 1.0f);
-        };
-        float depth = shelfRequestedDepth;
-        // Leave the one-pole a little to do, so it stays the thing that meets
-        // the targets and the shelf stays a correction to its shape.
-        const float feasibleTilt = ratio / 0.98f;
-        if (depth > 0.0f && shelfTilt(depth) < feasibleTilt)
-        {
-            float lowDepth = 0.0f, highDepth = depth;
-            for (int i = 0; i < 12; ++i)
-            {
-                const float mid = 0.5f * (lowDepth + highDepth);
-                if (shelfTilt(mid) < feasibleTilt)
-                    highDepth = mid;
-                else
-                    lowDepth = mid;
-            }
-            depth = lowDepth;
-        }
-        loop.handLossDepth = depth;
-        if (depth <= 0.0f)
-            loop.handLoss.reset();
-
-        float shelfF0 = 1.0f, shelfHigh = 1.0f, shelfPhase = 0.0f;
-        handLossResponse(depth, shelfCoefficient, omega0, shelfF0, shelfPhase);
-        handLossResponse(depth, shelfCoefficient, omegaHigh, shelfHigh, shelfPhase);
-        shelfF0 = clampf(shelfF0, 1.0e-3f, 1.0f);
-        shelfHigh = clampf(shelfHigh, 1.0e-3f, 1.0f);
-
         // Solve the one-pole coefficient whose magnitude ratio between f0 and
         // fHigh matches the decay-time ratio. The response is monotonic in
         // the coefficient, so bisection is reliable.
@@ -1151,24 +1117,91 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
             const float denom = 1.0f + a * a - 2.0f * a * std::cos(omega);
             return (1.0f - a) / std::sqrt(std::max(denom, 1.0e-12f));
         };
-        const float onePoleRatio = clampf(
-            ratio / clampf(shelfHigh / shelfF0, 1.0e-4f, 1.0e4f), 1.0e-4f, 1.0f);
-        float low = 0.0f;
-        float high = 0.9995f;
-        for (int i = 0; i < 18; ++i)
+
+        // How deep the shelf can be is bounded by the note, and by two separate
+        // limits rather than one. A one-pole cannot raise the high end relative
+        // to the low, so the shelf's own tilt must leave a solvable remainder;
+        // and the loop gain cannot exceed unity, so the shelf's loss at the
+        // fundamental must fit inside the headroom the note has there. The
+        // second limit is the tighter one at the top of the range, where a short
+        // period means very little loss per round trip: with only the ratio
+        // constrained, muted notes on the top string above about the eighteenth
+        // fret still drove the gain into its ceiling and decayed by the shelf
+        // rather than by their fitted T60s.
+        //
+        // Both limits are checked by solving the whole thing for a candidate
+        // depth, which is cheap because it only happens when a voice is
+        // configured. The predicate is monotonic in depth - a deeper shelf makes
+        // both limits harder - so the outer bisection is as reliable as the
+        // inner one.
+        const auto solveFor = [&] (float depth, float& coefficientOut,
+                                   float& gainOut, float& shelfAtF0Out)
         {
-            const float mid = 0.5f * (low + high);
-            const float value = magnitude(mid, omegaHigh) / magnitude(mid, omega0);
-            if (value > onePoleRatio)
-                low = mid;
-            else
-                high = mid;
+            float atF0 = 1.0f, atHigh = 1.0f, unused = 0.0f;
+            handLossResponse(depth, shelfCoefficient, omega0, atF0, unused);
+            handLossResponse(depth, shelfCoefficient, omegaHigh, atHigh, unused);
+            atF0 = clampf(atF0, 1.0e-3f, 1.0f);
+            atHigh = clampf(atHigh, 1.0e-3f, 1.0f);
+            // The shelf must not be what makes the remainder unsolvable. The
+            // baseline - no shelf at all - is feasible by definition even where
+            // the note's own ratio needs clamping, which is the pre-existing
+            // behaviour for a nearly flat decay; an earlier version of this
+            // predicate rejected that case too and left the damping coefficient
+            // at zero, detuning every such note by around a semitone. The 0.98
+            // leaves the one-pole a little to do, so it stays the thing that
+            // meets the targets and the shelf stays a correction to its shape.
+            const float rawTarget = ratio / (atHigh / atF0);
+            if (depth > 0.0f && rawTarget > 0.98f)
+                return false;
+            const float target = clampf(rawTarget, 1.0e-4f, 1.0f);
+            float low = 0.0f;
+            float high = 0.9995f;
+            for (int i = 0; i < 18; ++i)
+            {
+                const float mid = 0.5f * (low + high);
+                if (magnitude(mid, omegaHigh) / magnitude(mid, omega0) > target)
+                    low = mid;
+                else
+                    high = mid;
+            }
+            coefficientOut = 0.5f * (low + high);
+            shelfAtF0Out = atF0;
+            gainOut = gainAtF0
+                / std::max(magnitude(coefficientOut, omega0) * atF0, 1.0e-6f);
+            return gainOut <= 0.99999f;
+        };
+
+        float coefficient = 0.0f, gain = 0.0f, shelfF0 = 1.0f;
+        float depth = shelfRequestedDepth;
+        if (depth <= 0.0f || ! solveFor(depth, coefficient, gain, shelfF0))
+        {
+            // Zero always solves: it is the model without the shelf at all.
+            float lowDepth = 0.0f, highDepth = depth;
+            solveFor(0.0f, coefficient, gain, shelfF0);
+            for (int i = 0; i < 12; ++i)
+            {
+                const float mid = 0.5f * (lowDepth + highDepth);
+                float tryCoefficient = 0.0f, tryGain = 0.0f, tryShelf = 1.0f;
+                if (solveFor(mid, tryCoefficient, tryGain, tryShelf))
+                {
+                    lowDepth = mid;
+                    coefficient = tryCoefficient;
+                    gain = tryGain;
+                    shelfF0 = tryShelf;
+                }
+                else
+                {
+                    highDepth = mid;
+                }
+            }
+            depth = lowDepth;
         }
-        loop.loopDampingCoefficient = 0.5f * (low + high);
-        const float f0Magnitude =
-            magnitude(loop.loopDampingCoefficient, omega0) * shelfF0;
-        loop.loopGain = clampf(gainAtF0 / std::max(f0Magnitude, 1.0e-6f),
-                               0.0f, 0.99999f);
+
+        loop.handLossDepth = depth;
+        if (depth <= 0.0f)
+            loop.handLoss.reset();
+        loop.loopDampingCoefficient = coefficient;
+        loop.loopGain = clampf(gain, 0.0f, 0.99999f);
     };
 
     // The polarisation parallel to the body outlives the perpendicular one,
