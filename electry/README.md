@@ -3,11 +3,15 @@
 Electry is an original, physically modeled dry electric guitar instrument.
 Eight string voices run dual-polarisation waveguide loops with physically
 derived stiffness dispersion, decay-targeted damping, tension-modulation
-pitch glide, collision-informed slap behavior, one-way bridge coupling into
+pitch glide, a pitch wheel that bends every string like a vibrato bar,
+a resonance wheel that can push a distorted tone into self-sustaining
+amplifier feedback, one-way bridge coupling into
 the strings you are *not* fingering, and a published pickup signal
 structure (position comb, finite magnetic aperture, nonlinear flux, induced
-EMF, and loaded coil resonance). Play styles are selected with latching keyswitches below
-the playable range. The individual models have named research references
+EMF, and loaded coil resonance). The performance is selected with two
+independent banks of latching keyswitches below the playable range - one for
+the picking style, one for the play style - so any stroke can drive any
+style. The individual models have named research references
 (see the [physical-modeling research
 contract](Docs/physical-modeling-research.md)); Electry does not claim to be
 a capture-accurate clone of any one instrument.
@@ -27,9 +31,10 @@ modern 28-inch baritone/8-string build.
 
 ## Hear it
 
-Ten rendered examples — the full playable range, all sixteen play styles, the
-guitar-build and pickup axes, and the Drop-E rhythm and lead tones dry and
-through the amplifier — are committed under
+Fourteen rendered examples — the full playable range, the pick-stroke and
+play-style combinations, the guitar-build and pickup axes, the
+pitch-wheel bar and resonance-wheel feedback, and the Drop-E rhythm and lead
+tones dry and through the amplifier — are committed under
 [`Docs/audio/`](Docs/audio/README.md), with the score for each one in
 `Tools/RenderDemos.cpp`. They are produced by the shipping JUCE-free signal
 path, so they cannot drift away from what the plug-in sounds like, and they are
@@ -37,7 +42,9 @@ reproducible on any platform with a C++20 toolchain.
 
 **Note:** this committed screenshot was rendered from the 1.0 editor. The 1.1
 interface adds the live FRETBOARD panel and the PERFORMANCE controls described
-below, and the image will be regenerated on the next macOS build. The
+below, the 1.2 interface splits the keyswitch strip into the independent PICK
+STROKE and PLAY STYLE banks, and the image will be regenerated on the next
+macOS build. The
 screenshot is produced by the plug-in regression suite itself
 (`ELECTRY_EDITOR_SNAPSHOT`), so it is always a real editor render rather than a
 mock-up. The Standalone, VST3, and Audio Unit use that same
@@ -79,44 +86,53 @@ that change what it shows.
 
 ## Keyswitches and playable range
 
-MIDI notes 12..27 (C0..D#1) are latching keyswitches; they never sound, and
-the most recent one selects the play style for every following note until
-changed. Keyswitch note-offs are ignored. The editor's PLAY STYLE strip
-sends the same keyswitches and always shows the currently latched style. The
-on-screen keyboard colours and labels the entire keyswitch bank separately
+MIDI notes 12..18 are two independent banks of latching keyswitches; they
+never sound, and each bank keeps its most recent selection for every
+following note until changed. Notes 12..14 (C0..D0) latch how the pick
+moves; notes 15..18 (D#0..F#0) latch what the hands do. The two latch
+independently, so any of the twelve combinations — an up-stroke palm mute,
+alternate-picked harmonics — is reachable in at most two keyswitches.
+Keyswitch note-offs are ignored. The editor's PICK STROKE and PLAY STYLE
+strips send the same keyswitches and always show the currently latched pair.
+The on-screen keyboard colours and labels both keyswitch banks separately
 from the playable instrument.
+
+| MIDI note | Key | Picking style |
+| --- | --- | --- |
+| 12 | C0 | Down (default) |
+| 13 | C#0 | Up — opposite displacement polarity, slightly closer to the bridge, thinner and brighter |
+| 14 | D0 | Alternate — starts down, then alternates down/up for each accepted picked note-on; hammered notes neither take nor consume a stroke |
 
 | MIDI note | Key | Play style |
 | --- | --- | --- |
-| 12 | C0 | Downstroke (default) |
-| 13 | C#0 | Upstroke — opposite displacement polarity, slightly closer to the bridge, thinner and brighter |
-| 14 | D0 | Alternate stroke — starts down, then alternates down/up for each accepted note-on |
-| 15 | D#0 | Hammer-on / pull-off — continues a sounding string legato within a nine-fret reach, fingered attack, no plectrum noise |
-| 16 | E0 | Tap — a fresh, focused fingerboard attack without plectrum scrape |
-| 17 | F0 | Palm mute — damping follows the Mute Damp control |
-| 18 | F#0 | Chug — harder contact and a tighter, shorter metal rhythm mute |
-| 19 | G0 | Dead note — short, percussive fretting-hand choke |
-| 20 | G#0 | Natural harmonic — glassy octave harmonic with a soft node-focused touch |
-| 21 | A0 | Pinch harmonic — bright octave-plus-fifth squeal with a hard pick edge |
-| 22 | A#0 | Tremolo pick — repeated alternating strokes while the note remains held |
-| 23 | B0 | Bend 1 up — picks the played note, bends +1 semitone over the Bend Time |
-| 24 | C1 | Bend 2 up — picks the played note, bends +2 semitones |
-| 25 | C#1 | Bend 1 down — picks 1 semitone above, releases onto the played note |
-| 26 | D1 | Bend 2 down — picks 2 semitones above, releases onto the played note |
-| 27 | D#1 | Slap — hard attack, fret-collision buzz window, deeper tension glide, thumb knock into the body |
+| 15 | D#0 | Sustain (default) — the ordinary ringing pick |
+| 16 | E0 | Palm mute — damping follows the Mute Damp control, from a loose half-mute to a tight metal chug at the firm end |
+| 17 | F0 | Hammer-on / pull-off — continues a sounding string legato within a nine-fret reach, fingered attack, no plectrum noise |
+| 18 | F#0 | Natural harmonic — glassy octave harmonic with a soft node-focused touch |
 
-Notes 28..86 are playable on a 22-fret, eight-string Drop-E instrument tuned
-E1-B1-E2-A2-D3-G3-B3-E4; notes outside both ranges are ignored. Each note is
+Notes 19..27 are ignored, and notes 28..86 are playable on a 22-fret,
+eight-string Drop-E instrument tuned
+E1-B1-E2-A2-D3-G3-B3-E4; notes outside these ranges are ignored. Each note is
 allocated to one of the eight physical strings: a repick of a sounding note
 grabs the same string, hammer-on continues the nearest sounding string,
 otherwise the free string with the lowest fret wins (which reproduces
 open-position chord shapes), and when everything sounds, the oldest string
-is stolen. The pitch wheel bends ±2 semitones and the sustain pedal (CC 64)
-holds released strings; the modulation wheel (CC 1) adds a delayed, natural
-5.4 Hz vibrato whose full-scale depth is set by the Vibrato Depth parameter
-(0..100 cents, 35 by default); breath/CC 2 adds continuous bridge-hand damping
-on top of the Palm Mute parameter; CC 120/123 behave as All Sound Off and All
-Notes Off.
+is stolen.
+
+The pitch wheel is a vibrato bar: it bends every string — the
+sympathetically ringing open strings included — over a nominal ±2 semitone
+range, each string by its own physically derived compliance (the slack low
+E1 and the plain G bend deepest, the stiff wound D-string least, the
+two-to-one smear a real bar puts on a chord), and the strings travel to the
+wheel over the Bend Time parameter rather than snapping. The modulation wheel (CC 1) is the
+performance resonance: it raises the sympathetic coupling from the
+Sympathetic Ring parameter toward total and opens an acoustic feedback path
+from the amplified output back into the strings, scaled by the Resonance
+Depth parameter — with the amp or distortion up and the wheel raised, a held
+note regenerates into self-sustaining feedback, and a dry DI never can. The
+sustain pedal (CC 64) holds released strings; breath/CC 2 adds continuous
+bridge-hand damping on top of the Palm Mute parameter; CC 120/123 behave as
+All Sound Off and All Notes Off.
 
 ## Sound architecture
 
@@ -160,14 +176,14 @@ Notes Off.
   without changing how hard the note lands.
 - **Frets:** fretting position drives sounding length, inharmonicity,
   pickup comb geometry, and Fleischer-style dead-spot damping (deeper on
-  the bolt-on end of the construction axis). Slap opens a decaying
-  fret-collision window that soft-limits displacement and re-radiates
-  deterministic rattle. Hammer-ons retarget a sounding loop without
-  clearing its state.
+  the bolt-on end of the construction axis). The Artifacts path can open a
+  decaying fret-collision window on hard-picked notes that soft-limits
+  displacement and re-radiates deterministic rattle. Hammer-ons retarget a
+  sounding loop without clearing its state.
 - **Tension modulation:** a string-energy envelope shortens the loop delay,
   so hard attacks start audibly sharp and relax over hundreds of
-  milliseconds; slaps deepen the effect. Bend styles move the same pitch
-  program along a finger-shaped curve.
+  milliseconds. The pitch wheel moves the same delay target along the Bend
+  Time glide, each string by its own compliance.
 - **Low-register voicing:** the wound strings' decay law and the plectrum's
   release spectrum are calibrated against a dry electric low-E reference
   recording. A solid-body electric's low strings ring for tens of seconds while
@@ -213,7 +229,7 @@ Notes Off.
   paired-coil resonance shift), or Bridge; the passive tone control moves
   the loaded resonance down and damps it.
 - **Body:** four modal resonators voiced along strongly separated wood, size,
-  shape, and construction endpoints receive bridge motion, slap knocks, and
+  shape, and construction endpoints receive bridge motion and
   contact noise. Each resonator is normalised at its own modal peak so low
   modes do not acquire an unintended frequency-dependent boost. The resulting
   structural drive is converted once to induced voltage before the modal
@@ -229,12 +245,15 @@ Notes Off.
   Only played voices write to the bus and only idle voices read it, so the
   coupling graph is acyclic and unconditionally stable at any coupling gain;
   each coupled loop additionally carries a bounded soft limit. The bridge hand
-  that mutes a palm-muted, chugged or dead-note passage covers every string, so
-  those styles damp and starve the coupled strings automatically and a Drop-E
+  that mutes a palm-muted passage covers every string, so the style damps and
+  starves the coupled strings automatically and a Drop-E
   chug stays tight. At 0% the coupled loops are never configured, rendered or
   injected into, so the control is an exact bypass and not a small residue.
   Coupled strings reuse the idle voice's own delay line, so the feature costs
-  no extra memory, and they retire as soon as they fall below audibility.
+  no extra memory, and they retire as soon as they fall below audibility. The
+  CC 1 resonance raises the coupling live toward total and opens the
+  amplifier-feedback path described under the keyswitch section, so the same
+  mechanism spans a polite studio ring to a howling wall of amp.
 - **Bridge-hand damping:** the heel of the hand is an absorber, so its
   loss is added to the string's own rather than rescaling it: the decay rates
   sum, which is to say the reciprocals of the decay times do. That is what makes
@@ -244,8 +263,8 @@ Notes Off.
   fundamental that barely moves at all, so its rate at the high reference is
   three times its rate at the fundamental. Treating it as genuinely broadband
   damped the fundamental as hard as the top end, which is what made a mute read
-  as a thin, cut-off pick rather than a heavy chug. The Muted and Chug
-  keyswitches and the continuous Palm Mute pressure are the same absorber at
+  as a thin, cut-off pick rather than a heavy chug. The Palm Mute keyswitch
+  style and the continuous Palm Mute pressure are the same absorber at
   different depths, and they combine in parallel too. Its rate at the
   fundamental is divided by twenty-two while the top is multiplied by three - an
   effective 66:1 ratio between the two fitted points - because a palm mute
@@ -273,7 +292,7 @@ Notes Off.
   chord sweeps instead of landing as a block and its stacked initial peak drops.
   At 0 ms chords are exactly simultaneous, as before.
 - **Play noise:** deterministic seeded plectrum scrape, finger contact,
-  release damping noise, and slap knock, band-shaped per string (wound
+  and release damping noise, band-shaped per string (wound
   versus plain) with independent level controls. Identical MIDI always
   renders identical audio.
 - **Artifacts:** a separate deterministic imperfection path adds controllable
@@ -390,9 +409,14 @@ Artifacts control is parameter 21 and Output field is appended as parameter
 22. The five FX controls are appended as parameters 23..27, and the four
 version-1.1 performance controls as parameters 28..31, so every existing host
 automation index keeps pointing at the same control. A session saved before
-1.1 loads unchanged and picks up the new defaults. Continuous controls are
-smoothed inside the engine; pickup and output mode changes crossfade over
-roughly 4 ms.
+1.1 loads unchanged and picks up the new defaults. Version 1.2 repurposes two
+existing slots rather than moving anything: Bend Time (parameter 18) now
+governs the pitch wheel's travel — the same finger-shaped glide it gave the
+former keyswitch bends — and parameter 31 became Resonance Depth, the
+full-scale reach of the CC 1 resonance wheel, keeping its stored ID and
+0..100 range so a saved session's value carries over sensibly. Continuous
+controls are smoothed inside the engine; pickup and output mode changes
+crossfade over roughly 4 ms.
 
 | # | ID | Name | Range and default |
 | --- | --- | --- | --- |
@@ -413,7 +437,7 @@ roughly 4 ms.
 | 15 | `fingerNoise` | Finger noise | 0..100%, default 40% |
 | 16 | `releaseNoise` | Release noise | 0..100%, default 40% |
 | 17 | `muteDamping` | Mute damping | 0..100%, default 55% |
-| 18 | `bendTime` | Bend time | 40 ms..2 s, default 280 ms |
+| 18 | `bendTime` | Bend time | pitch-wheel travel time, 40 ms..2 s, default 280 ms |
 | 19 | `velocity` | Velocity response | 0..100% multi-dimensional response, default 65% |
 | 20 | `output` | Output level | -24..+6 dB, default -6 dB |
 | 21 | `artifacts` | Artifacts | clean bypass..ring/contact/saddle detail, default 18% |
@@ -426,7 +450,7 @@ roughly 4 ms.
 | 28 | `sympathetic` | Sympathetic ring | exact bypass..full bridge coupling into the unfingered strings, default 20% |
 | 29 | `palmMute` | Palm mute | 0..100% continuous bridge-hand damping for every play style (adds to MIDI CC 2), default 0% |
 | 30 | `strumSpread` | Strum spread | 0..40 ms of pick travel per string crossed, default 0 ms (block chord) |
-| 31 | `vibratoDepth` | Vibrato depth | 0..100 cents of full-scale CC 1 vibrato, default 35 cents |
+| 31 | `vibratoDepth` | Resonance depth | 0..100% full-scale reach of the CC 1 resonance (coupling lift and amplifier feedback), default 35% |
 
 ## Build products
 
@@ -502,7 +526,7 @@ cd electry
 
 Without arguments the script stages the three bundles with their licence
 documentation, ad-hoc signs them, and writes
-`build-macos/dist/Electry-1.1.0-macOS-universal.zip` and `.pkg`. For
+`build-macos/dist/Electry-1.2.0-macOS-universal.zip` and `.pkg`. For
 distribution, provide `APP_SIGN_IDENTITY` (Developer ID Application),
 `INSTALLER_SIGN_IDENTITY` (Developer ID Installer), and optionally
 `NOTARY_PROFILE` for `notarytool` submission and stapling.

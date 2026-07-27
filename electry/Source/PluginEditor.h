@@ -26,14 +26,15 @@ public:
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 };
 
-// A guitar-oriented keyboard that keeps the latching play-style keys visually
-// separate from the playable Drop-E eight-string range.
+// A guitar-oriented keyboard that keeps the latching keyswitch banks visually
+// separate from the playable Drop-E eight-string range. The picking-style and
+// play-style banks latch independently, so one key of each is highlighted.
 class ElectryKeyboardComponent final : public juce::MidiKeyboardComponent
 {
 public:
     explicit ElectryKeyboardComponent (juce::MidiKeyboardState&);
 
-    void setSelectedKeyswitchIndex (int newIndex);
+    void setSelectedKeyswitches (int pickIndex, int styleIndex);
 
     void drawWhiteNote (int midiNoteNumber, juce::Graphics&,
                         juce::Rectangle<float> area, bool isDown, bool isOver,
@@ -44,7 +45,10 @@ public:
     juce::String getWhiteNoteText (int midiNoteNumber) override;
 
 private:
-    int selectedKeyswitchIndex = 0;
+    bool isKeyswitchSelected (int keyswitchIndex) const noexcept;
+
+    int selectedPickIndex = 0;
+    int selectedStyleIndex = 0;
 };
 
 // A titled row of exclusive buttons, used for the pickup selector and the
@@ -162,11 +166,15 @@ private:
     ElectryStatusDisplay statusDisplay;
     juce::TextButton panicButton { "PANIC" };
 
-    ElectryChoiceStrip articulationStrip {
-        "PLAY STYLE  (OXBLOOD KEYSWITCHES C0..D#1)",
-        { "DOWN", "UP", "ALT", "HAMMER", "TAP", "PALM MUTE", "CHUG", "DEAD",
-          "HARMONIC", "PINCH", "TREMOLO", "BEND 1^", "BEND 2^", "RELEASE 1",
-          "RELEASE 2", "SLAP" }
+    // The two independent keyswitch banks: how the pick moves and what the
+    // hands do. Any combination of the two is reachable.
+    ElectryChoiceStrip pickStyleStrip {
+        "PICK STROKE  (KEYSWITCHES C0..D0)",
+        { "DOWN", "UP", "ALTERNATE" }
+    };
+    ElectryChoiceStrip playStyleStrip {
+        "PLAY STYLE  (KEYSWITCHES D#0..F#0)",
+        { "SUSTAIN", "PALM MUTE", "HAMMER", "HARMONIC" }
     };
     ElectryChoiceStrip pickupStrip { "PICKUP", { "NECK", "BOTH", "BRIDGE" } };
     ElectryChoiceStrip outputModeStrip { "OUTPUT FIELD", { "MONO", "STEREO" } };
@@ -197,7 +205,7 @@ private:
     ElectryKnob sympatheticKnob { "SYMPATHY" };
     ElectryKnob palmMuteKnob { "PALM MUTE" };
     ElectryKnob strumSpreadKnob { "STRUM" };
-    ElectryKnob vibratoDepthKnob { "VIBRATO" };
+    ElectryKnob resonanceKnob { "RESONANCE" };
 
     ElectryKnob outputKnob { "OUTPUT" };
     ElectryKnob distortionKnob { "DISTORT" };

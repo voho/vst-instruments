@@ -25,13 +25,14 @@
 
 namespace
 {
-using electry::Articulation;
 using electry::ElectryEngine;
 using electry::ElectryFx;
 using electry::EngineParameters;
 using electry::FxParameters;
 using electry::OutputMode;
+using electry::PickStyle;
 using electry::PickupSelector;
+using electry::PlayStyle;
 
 // 44.1 kHz 16-bit is what a listener's browser, phone and DAW all handle
 // without conversion, and it is the rate the instrument is most often used at.
@@ -41,9 +42,14 @@ constexpr int renderBlockSize = 256;
 // headroom left so no 16-bit sample sits against full scale.
 constexpr double normalisedPeak = 0.7079457843841379;
 
-int keyswitchFor(Articulation articulation)
+int keyswitchFor(PickStyle pick)
 {
-    return ElectryEngine::firstKeyswitchNote + static_cast<int>(articulation);
+    return ElectryEngine::firstKeyswitchNote + static_cast<int>(pick);
+}
+
+int keyswitchFor(PlayStyle style)
+{
+    return ElectryEngine::firstPlayStyleKeyswitchNote + static_cast<int>(style);
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +139,7 @@ public:
         engine_.setParameters(engineParameters);
         engine_.reset();
         effects_.prepare(demoSampleRate);
-        effects_.setParameters(fxParameters);
+        setFxParameters(fxParameters);
         effects_.reset();
         // A short lead-in lets the engine's continuous-parameter smoothers
         // reach the take's settings before the first note, exactly as a host
@@ -149,17 +155,27 @@ public:
     void setFxParameters(const FxParameters& parameters)
     {
         effects_.setParameters(parameters);
+        // What the plug-in shell does: the rig's acoustic loudness in the
+        // room follows the amplifier controls, so the resonance wheel can
+        // push a distorted take into feedback.
+        engine_.setAcousticReturnLevel(
+            std::min(1.0f, parameters.amp + 0.6f * parameters.distortion));
     }
 
-    void style(Articulation articulation)
+    void pick(PickStyle pickStyle)
     {
-        engine_.noteOn(keyswitchFor(articulation), 1.0f);
+        engine_.noteOn(keyswitchFor(pickStyle), 1.0f);
+    }
+
+    void style(PlayStyle playStyle)
+    {
+        engine_.noteOn(keyswitchFor(playStyle), 1.0f);
     }
 
     void noteOn(int note, float velocity) { engine_.noteOn(note, velocity); }
     void noteOff(int note) { engine_.noteOff(note); }
     void pitchBend(float bipolar) { engine_.setPitchBend(bipolar); }
-    void vibrato(float amount) { engine_.setVibratoAmount(amount); }
+    void resonance(float amount) { engine_.setResonance(amount); }
     void palmMutePressure(float amount) { engine_.setPalmMutePressure(amount); }
     void sustain(bool down) { engine_.setSustainPedal(down); }
 
@@ -201,6 +217,11 @@ public:
                             samples);
             effects_.process(left_.data() + offset, right_.data() + offset,
                              samples);
+            // Close the acoustic loop the way the plug-in does: the amplified
+            // output is what the loudspeaker plays back at the strings. With
+            // the resonance wheel down this stores nothing audible.
+            engine_.pushAcousticReturn(left_.data() + offset,
+                                       right_.data() + offset, samples);
             remaining -= samples;
         }
     }
@@ -295,34 +316,38 @@ Take renderFullFretboard()
 
 Take renderPlayStyles()
 {
-    // All sixteen latching play styles on the same two notes, in keyswitch
-    // order, so their attacks and decays can be compared directly.
+    // The twelve combinations of the two independent keyswitch banks: each
+    // play style in bank order, played with a down stroke, an up stroke, and
+    // an alternate-picked pair, so the styles' hands and the strokes'
+    // geometry can be compared directly.
     Take take(EngineParameters {}, FxParameters {}, false);
-    for (int index = 0; index < ElectryEngine::keyswitchCount; ++index)
+    for (int styleIndex = 0;
+         styleIndex < ElectryEngine::playStyleKeyswitchCount; ++styleIndex)
     {
-        take.style(static_cast<Articulation>(index));
-        const auto articulation = static_cast<Articulation>(index);
-        // Hammer-on needs a sounding string to continue, and tremolo needs the
-        // note held long enough to hear the repeated strokes.
-        if (articulation == Articulation::HammerOn)
+        const auto style = static_cast<PlayStyle>(styleIndex);
+        take.style(style);
+        if (style == PlayStyle::Hammer)
         {
-            take.style(Articulation::Downstroke);
-            take.noteOn(40, 0.9f);
-            take.wait(0.16);
-            take.style(Articulation::HammerOn);
-            take.noteOn(45, 0.8f);
-            take.wait(0.34);
-            take.noteOff(45);
-            take.noteOff(40);
-            take.wait(0.04);
+            // A hammer-on continues a sounding string, whatever the latched
+            // stroke; the fresh attack that starts each pair is fingered too.
+            for (const auto pick : { PickStyle::Down, PickStyle::Up })
+            {
+                take.pick(pick);
+                take.noteOn(40, 0.9f);
+                take.wait(0.16);
+                take.noteOn(45, 0.8f);
+                take.wait(0.30);
+                take.noteOff(45);
+                take.noteOff(40);
+                take.wait(0.06);
+            }
+            continue;
         }
-        else if (articulation == Articulation::Tremolo)
+        for (const auto pick :
+             { PickStyle::Down, PickStyle::Up, PickStyle::Alternate })
         {
-            take.pluck(40, 0.9f, 0.48, 0.06);
-        }
-        else
-        {
-            take.pluck(40, 0.95f, 0.28, 0.04);
+            take.pick(pick);
+            take.pluck(40, 0.95f, 0.26, 0.04);
             take.pluck(52, 0.95f, 0.18, 0.04);
         }
     }
@@ -343,6 +368,9 @@ EngineParameters metalRhythmVoicing()
     parameters.pickPosition = 0.18f; // close to the bridge
     parameters.velocityAmount = 0.7f;
     parameters.sympatheticAmount = 0.25f;
+    // The rhythm chugs ride the Palm Mute style; a firm setting keeps them at
+    // the tight, metal end of the mute's travel.
+    parameters.muteDamping = 0.85f;
     // A single chugged low note is a quiet signal next to a full eight-string
     // chord, and the default output level leaves headroom for the chord. A
     // player tracking a rhythm part opens the output control instead.
@@ -366,12 +394,12 @@ void playRhythmFigure(Take& take)
         { 33, 0.300, 1.00f, true },  { 28, 0.450, 1.00f, true },
     }};
 
-    take.style(Articulation::Chug);
+    take.style(PlayStyle::PalmMute);
     for (const auto& hit : bar)
     {
         // The open accents lift the bridge hand off the strings; everything
         // else is chugged.
-        take.style(hit.open ? Articulation::Downstroke : Articulation::Chug);
+        take.style(hit.open ? PlayStyle::Sustain : PlayStyle::PalmMute);
         take.pluck(hit.note, hit.velocity, hit.length * 0.92,
                    hit.length * 0.08);
     }
@@ -405,8 +433,10 @@ Take renderRhythmAmped()
 
 Take renderLeadThroughAmp()
 {
-    // A lead phrase: picked notes, both bend programs, the CC1 vibrato and
-    // tremolo picking, through the amplifier, the lead delay and the room.
+    // A lead phrase: picked notes, a hammered run, pitch-wheel bends riding
+    // the Bend Time glide, a harmonic, and the resonance wheel pushing the
+    // final note into amplifier feedback - through the amplifier, the lead
+    // delay and the room.
     EngineParameters parameters;
     parameters.pickupSelector = PickupSelector::Bridge;
     parameters.pickupType = 0.4f;
@@ -414,7 +444,7 @@ Take renderLeadThroughAmp()
     parameters.bodyResonance = 0.45f;
     parameters.stringAge = 0.08f;
     parameters.pickPosition = 0.30f;
-    parameters.vibratoDepthCents = 55.0f;
+    parameters.resonanceDepth = 1.0f;
     parameters.bendTimeSeconds = 0.20f;
     parameters.sympatheticAmount = 0.35f;
     parameters.outputGain = 1.5f;
@@ -428,37 +458,46 @@ Take renderLeadThroughAmp()
     fx.room = 0.35f;
 
     Take take(parameters, fx, true);
-    take.style(Articulation::Downstroke);
+    take.pick(PickStyle::Alternate);
+    take.style(PlayStyle::Sustain);
     take.pluck(64, 0.9f, 0.28, 0.02);
     take.pluck(67, 0.9f, 0.28, 0.02);
-    take.style(Articulation::HammerOn);
+    take.style(PlayStyle::Hammer);
     take.noteOn(69, 0.85f);
     take.wait(0.30);
     take.noteOff(69);
 
-    take.style(Articulation::Bend1Up);
+    // A wheel bend up a step and back, gliding over the Bend Time.
+    take.style(PlayStyle::Sustain);
     take.noteOn(71, 0.95f);
-    take.wait(0.55);
-    take.vibrato(0.85f);
+    take.wait(0.35);
+    take.pitchBend(0.75f);
     take.wait(0.75);
-    take.vibrato(0.0f);
+    take.pitchBend(0.0f);
+    take.wait(0.45);
     take.noteOff(71);
     take.wait(0.10);
 
-    take.style(Articulation::Bend2Down);
-    take.pluck(74, 0.95f, 0.60, 0.05);
+    // A dive released back onto the note.
+    take.pitchBend(-1.0f);
+    take.noteOn(74, 0.95f);
+    take.wait(0.45);
+    take.pitchBend(0.0f);
+    take.wait(0.55);
+    take.noteOff(74);
+    take.wait(0.05);
 
-    take.style(Articulation::Tremolo);
-    take.noteOn(76, 0.9f);
-    take.wait(0.85);
-    take.noteOff(76);
+    take.style(PlayStyle::Harmonics);
+    take.pluck(64, 0.9f, 0.85, 0.05);
 
-    take.style(Articulation::PinchHarmonic);
+    // The last note is played into the loudspeaker: the resonance wheel opens
+    // and the amplifier keeps the string alive after the pick.
+    take.style(PlayStyle::Sustain);
     take.noteOn(69, 1.0f);
-    take.wait(0.9);
-    take.vibrato(0.7f);
-    take.wait(0.6);
-    take.vibrato(0.0f);
+    take.wait(0.5);
+    take.resonance(1.0f);
+    take.wait(2.2);
+    take.resonance(0.0f);
     take.noteOff(69);
     take.wait(1.9);
     return take;
@@ -520,10 +559,10 @@ Take renderSympatheticStrum()
     parameters.toneKnob = 1.0f;
 
     Take take(parameters, FxParameters {}, true);
-    take.style(Articulation::Downstroke);
+    take.style(PlayStyle::Sustain);
     take.chord({ 28, 35, 40, 47, 52, 56 }, 0.9f);
     take.wait(1.30);
-    take.style(Articulation::Upstroke);
+    take.pick(PickStyle::Up);
     take.chord({ 28, 35, 40, 47, 52, 56 }, 0.75f);
     take.wait(1.30);
     take.releaseChord({ 28, 35, 40, 47, 52, 56 });
@@ -532,7 +571,7 @@ Take renderSympatheticStrum()
     parameters.sympatheticAmount = 0.0f;
     take.setEngineParameters(parameters);
     take.wait(0.15);
-    take.style(Articulation::Downstroke);
+    take.pick(PickStyle::Down);
     take.chord({ 28, 35, 40, 47, 52, 56 }, 0.9f);
     take.wait(1.20);
     take.releaseChord({ 28, 35, 40, 47, 52, 56 });
@@ -591,7 +630,7 @@ Take renderBuildContrasts()
         // reach the ringing strings.
         take.wait(0.25);
 
-        take.style(Articulation::Downstroke);
+        take.style(PlayStyle::Sustain);
         take.pluck(28, 0.95f, 0.42, 0.03);
         take.pluck(33, 0.90f, 0.30, 0.03);
         take.pluck(40, 0.90f, 0.30, 0.03);
@@ -618,7 +657,7 @@ Take renderVelocityDynamics()
     parameters.outputGain = 2.0f;
 
     Take take(parameters, FxParameters {}, false);
-    take.style(Articulation::Downstroke);
+    take.style(PlayStyle::Sustain);
     for (const float velocity : { 0.12f, 0.30f, 0.50f, 0.70f, 0.85f, 1.00f })
         take.pluck(33, velocity, 0.30, 0.04);
 
@@ -658,7 +697,7 @@ void playPowerChordProgression(Take& take, bool muted)
         { 28, 0.45, 0.90f }, { 32, 0.90, 0.98f }, { 28, 1.60, 1.00f },
     }};
 
-    take.style(muted ? Articulation::Chug : Articulation::Downstroke);
+    take.style(muted ? PlayStyle::PalmMute : PlayStyle::Sustain);
     for (const auto& shape : progression)
     {
         const int fifth = shape.root + 7;
@@ -680,7 +719,7 @@ Take renderPowerChordsDry()
     parameters.sympatheticAmount = 0.35f;
     Take take(parameters, FxParameters {}, false);
 
-    take.style(Articulation::Downstroke);
+    take.style(PlayStyle::Sustain);
     for (const int root : { 28, 31, 30, 28 })
     {
         take.chord({ root, root + 7, root + 12 }, 0.95f);
@@ -701,7 +740,7 @@ Take renderPowerChordsDry()
     parameters.palmMute = 0.55f;
     take.setEngineParameters(parameters);
     take.wait(0.5);
-    take.style(Articulation::Chug);
+    take.style(PlayStyle::PalmMute);
     for (int repeat = 0; repeat < 8; ++repeat)
     {
         const int root = repeat % 4 == 3 ? 32 : 28;
@@ -729,7 +768,7 @@ Take renderPowerChordsAmped()
     fx.compressor = 0.60f;
     Take take(parameters, fx, false);
 
-    take.style(Articulation::Downstroke);
+    take.style(PlayStyle::Sustain);
     for (const int root : { 28, 31, 30, 28 })
     {
         take.chord({ root, root + 7, root + 12 }, 0.95f);
@@ -745,7 +784,7 @@ Take renderPowerChordsAmped()
     parameters.palmMute = 0.55f;
     take.setEngineParameters(parameters);
     take.wait(0.5);
-    take.style(Articulation::Chug);
+    take.style(PlayStyle::PalmMute);
     for (int repeat = 0; repeat < 8; ++repeat)
     {
         const int root = repeat % 4 == 3 ? 32 : 28;
@@ -780,7 +819,7 @@ Take renderLongRhythmArrangement()
     playRhythmFigure(take);
     take.wait(0.20);
 
-    take.style(Articulation::Downstroke);
+    take.style(PlayStyle::Sustain);
     for (const int root : { 32, 31, 30, 28 })
     {
         take.chord({ root, root + 7, root + 12 }, 0.96f);
@@ -797,6 +836,62 @@ Take renderLongRhythmArrangement()
     return take;
 }
 
+// The wheel as a vibrato bar and the modulation wheel as the player's distance
+// from a loud amplifier: a chord dived and returned with every string - the
+// ringing open ones included - following at its own compliance, then a single
+// note pushed into self-sustaining feedback and closed off again.
+Take renderWhammyAndFeedback()
+{
+    EngineParameters parameters;
+    parameters.pickupSelector = PickupSelector::Bridge;
+    parameters.toneKnob = 0.9f;
+    parameters.stringAge = 0.10f;
+    parameters.sympatheticAmount = 0.45f;
+    parameters.resonanceDepth = 1.0f;
+    parameters.bendTimeSeconds = 0.34f;
+    parameters.outputGain = 1.2f;
+
+    FxParameters fx;
+    fx.distortion = 0.55f;
+    fx.amp = 0.85f;
+    fx.compressor = 0.30f;
+
+    Take take(parameters, fx, false);
+    take.style(PlayStyle::Sustain);
+
+    // The bar: a ringing chord dived two semitones and brought back, then
+    // pushed sharp. The strings do not move by equal amounts - the slack low
+    // eighth string travels furthest - which is the smear a real bar has.
+    take.chord({ 28, 35, 40, 47 }, 0.95f);
+    take.wait(0.9);
+    take.pitchBend(-1.0f);
+    take.wait(1.1);
+    take.pitchBend(0.0f);
+    take.wait(0.8);
+    take.pitchBend(1.0f);
+    take.wait(0.9);
+    take.pitchBend(0.0f);
+    take.wait(0.6);
+    take.releaseChord({ 28, 35, 40, 47 });
+    take.wait(0.5);
+
+    // The feedback: one fretted note, the wheel raised, the key released -
+    // and the amplifier keeps the instrument singing until the wheel closes
+    // and the bridge hand lands on the strings, which is how a player
+    // actually stops a howl.
+    take.noteOn(47, 1.0f);
+    take.wait(0.6);
+    take.resonance(1.0f);
+    take.wait(1.2);
+    take.noteOff(47);
+    take.wait(2.6);
+    take.resonance(0.0f);
+    take.wait(0.15);
+    take.palmMutePressure(1.0f);
+    take.wait(1.6);
+    return take;
+}
+
 struct Demo
 {
     const char* fileName;
@@ -804,9 +899,9 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 13>& demos()
+const std::array<Demo, 14>& demos()
 {
-    static const std::array<Demo, 13> table {{
+    static const std::array<Demo, 14> table {{
         { "01-range-open-strings.wav",
           "the eight open strings, then all of them ringing together",
           renderOpenStrings },
@@ -814,7 +909,7 @@ const std::array<Demo, 13>& demos()
           "every playable note from E1 to D6 across the eight strings",
           renderFullFretboard },
         { "03-play-styles.wav",
-          "all sixteen keyswitched play styles on the same two notes",
+          "the pick-stroke and play-style combinations on the same two notes",
           renderPlayStyles },
         { "04-drop-e-rhythm-dry.wav",
           "a chugged Drop-E rhythm figure, dry DI",
@@ -823,8 +918,8 @@ const std::array<Demo, 13>& demos()
           "the same figure through the oversampled amp, cabinet and compressor",
           renderRhythmAmped },
         { "06-lead-amp-delay-room.wav",
-          "a lead phrase with bends, vibrato and tremolo picking into amp, "
-          "delay and room",
+          "a lead phrase with wheel bends, a harmonic and a feedback close "
+          "into amp, delay and room",
           renderLeadThroughAmp },
         { "07-pickups-and-tone.wav",
           "one phrase through neck, both and bridge, then the tone control "
@@ -851,6 +946,10 @@ const std::array<Demo, 13>& demos()
           "two bars of the chugged figure, a bar of power chords and an open "
           "ring-out, amped",
           renderLongRhythmArrangement },
+        { "14-whammy-and-feedback.wav",
+          "a chord dived and raised on the wheel, then a note pushed into "
+          "self-sustaining amplifier feedback",
+          renderWhammyAndFeedback },
     }};
     return table;
 }
@@ -864,9 +963,9 @@ int runSmokeTest(const std::filesystem::path& directory)
     fx.amp = 0.8f;
     fx.room = 0.3f;
     Take take(metalRhythmVoicing(), fx, true);
-    take.style(Articulation::Chug);
+    take.style(PlayStyle::PalmMute);
     take.pluck(28, 1.0f, 0.20, 0.05);
-    take.style(Articulation::Downstroke);
+    take.style(PlayStyle::Sustain);
     take.pluck(40, 0.9f, 0.20, 0.25);
 
     if (! take.finite())

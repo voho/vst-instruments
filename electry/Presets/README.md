@@ -1,13 +1,16 @@
 # Electry sound-design recipes
 
 Electry state is stored by the host. These original recipes are starting
-points for the version-1.1 31-parameter set; percentages are approximate and
+points for the version-1.2 31-parameter set; percentages are approximate and
 meant to be adjusted by ear. Parameters not listed in a recipe remain at
 their defaults; see the
 [complete parameter contract](../README.md#exact-31-parameter-contract).
-Remember that the play style comes from the latched keyswitch (C0..D#1) or
-the PLAY STYLE strip, not from a parameter. Material controls span the named
-solid-body endpoints; Scale spans 25.5" to 28" for the Drop-E instrument.
+Remember that the performance comes from the two latched keyswitch banks (or
+the PICK STROKE and PLAY STYLE strips), not from a parameter: C0..D0 latch
+the picking style - down, up, alternate - and D#0..F#0 latch the play style -
+sustain, palm mute, hammer-on, natural harmonic - and any combination of the
+two works. Material controls span the named solid-body endpoints; Scale spans
+25.5" to 28" for the Drop-E instrument.
 
 With the five FX controls at their 0% defaults the output is exactly dry. Mono
 is the summed DI; Stereo is the physical low-to-high divided-pickup string field
@@ -24,13 +27,15 @@ metal rhythm sound that needs nothing after it:
 - Pickup selector `Bridge`; pickup type 32% (toward a hot humbucker); tone 100%.
 - Scale 27.6" (85%), string gauge 80%, string age 10%.
 - Pick position 18% — close to the bridge; hardness 85%.
+- Mute damping 85% so the palm-muted notes chug rather than half-mute.
 - Velocity 70%; sympathetic ring 25%; output +6 dB, because a single chugged
   low note is a quiet signal next to a full eight-string chord and the default
   level leaves headroom for the chord.
 - Distortion 45%, amp 95%, compressor 60%; delay and room at 0%.
-- Latch F#0 (Chug) for the muted notes and C0 (Downstroke) for the open
-  accents. The bridge hand also damps the coupled strings, so the chug stays
-  tight without turning the sympathetic ring off.
+- Latch E0 (Palm Mute) for the muted notes and D#0 (Sustain) for the open
+  accents; the picking bank is free for down or alternate strokes throughout.
+  The bridge hand also damps the coupled strings, so the chug stays tight
+  without turning the sympathetic ring off.
 
 ## Factory Default (default check)
 
@@ -54,8 +59,9 @@ anchors with tone at 80%.)
 - Artifacts 22% for restrained saddle detail.
 - Sympathetic ring 45% and strum spread 14 ms: open chords bloom and sweep
   like a real strummed guitar.
-- Play mostly downstrokes with occasional upstroke accents; the release bends
-  (C#1/D1) give the classic behind-the-beat pedal-steel gesture.
+- Play mostly downstrokes with occasional up-stroke accents (C#0, back to C0);
+  a slow pre-bent entry - wheel down, pick, release the wheel over a long
+  Bend Time - gives the classic behind-the-beat pedal-steel gesture.
 
 ## Thick Set-Neck Rhythm
 
@@ -64,37 +70,43 @@ anchors with tone at 80%.)
 - String gauge 80%, string age 35%; pick position 55%, hardness 45%.
 - Body resonance 45%; velocity 55%; sympathetic ring 30%.
 - Artifacts 12% for a controlled studio-clean rhythm sound.
-- Downstrokes for chords; hammer-on (D#0) for legato figures.
+- Downstrokes for chords; hammer-on (F0) for legato figures.
 
 ## Palm-Muted Chug
 
-- Keyswitch F#0 (Chug) latched; mute damping 70%.
+- Keyswitch E0 (Palm Mute) latched; mute damping 85% - the firm end of the
+  mute's travel is the tight chug.
 - Pickup selector `Bridge`; pickup type 25%; tone 75%.
 - Pick noise 70%, hardness 85%, velocity 80%.
 - Artifacts 42% so hard low-string attacks occasionally catch a fret.
-- Palm mute 25% under the Chug keyswitch for an even tighter stop, or leave it
+- Palm mute 25% under the keyswitch for an even tighter stop, or leave it
   at 0% and ride MIDI CC 2 through the riff instead.
-- Alternate or tremolo strokes low on the Drop-E and B strings; raise mute
-  damping toward 85% for tighter chug, lower toward 40% for half-muted grit.
-
-## Funk Slap
-
-- Keyswitch D#1 (Slap) latched.
-- Pickup selector `Both`; pickup type 70%; tone 95%.
-- Construction 100%, scale 27.00"; string gauge 40%, age 5%.
-- Body resonance 55% (the thumb knock reads through the body).
-- Artifacts 30% for extra bridge and fretboard mechanics.
-- High velocities matter: the collision buzz window and the sharp-to-true
-  tension glide both scale with how hard the note is struck.
+- Latch D0 (Alternate) and drive fast even strokes low on the Drop-E and B
+  strings; lower mute damping toward 40% for half-muted grit.
 
 ## Singing Lead Bends
 
 - Pickup selector `Neck`; pickup type 15%; tone 65%.
 - Construction 20%; string gauge 25% (light strings glide more).
-- Bend time 320 ms; finger noise 55%; release noise 50%.
-- Vibrato depth 60 cents so the modulation wheel sings rather than shimmers.
-- Alternate B0/C1 (bend 1 and 2 up) with D#0 hammer-ons for a legato solo
-  voice; the pitch wheel still adds vibrato-style motion on top.
+- Bend time 320 ms - the wheel takes that long to reach its target, so bends
+  travel like a finger rather than snapping; finger noise 55%; release
+  noise 50%.
+- Resonance depth 60% so a raised modulation wheel makes the instrument sing
+  through the amp instead of merely ringing.
+- Ride the pitch wheel for bends and releases - each string follows with its
+  own compliance, the plain G deeper than its neighbours - with F0 hammer-ons
+  for a legato solo voice.
+
+## Feedback Sustainer
+
+- The singing-feedback setting behind the close of
+  [`Docs/audio/14-whammy-and-feedback.wav`](../Docs/audio/README.md).
+- Distortion 55%, amp 85%, compressor 30% - the rig has to be loud in the
+  room before the strings can feed.
+- Resonance depth 100%; sympathetic ring 45%.
+- Play a note, raise the modulation wheel, and release the key: the amplifier
+  keeps the instrument singing. Close the wheel, or land the palm (CC 2), to
+  stop the howl. Half a wheel blooms instead of howling.
 
 ## Old Strings, Small Room
 

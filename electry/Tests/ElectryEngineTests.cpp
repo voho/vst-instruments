@@ -1,4 +1,5 @@
 #include "DSP/ElectryEngine.h"
+#include "DSP/ElectryFx.h"
 #include "DSP/ElectryVisuals.h"
 
 #include <algorithm>
@@ -27,7 +28,8 @@ struct ElectryEngineTestAccess
         int stringIndex { -1 };
         int midiNote { -1 };
         int fret { -1 };
-        Articulation articulation { Articulation::Downstroke };
+        PlayStyle playStyle { PlayStyle::Sustain };
+        bool strokeIsUp { false };
         float verticalDelayTarget { 0.0f };
         float verticalDelayCurrent { 0.0f };
         float dispersionLowCoefficient { 0.0f };
@@ -39,10 +41,6 @@ struct ElectryEngineTestAccess
         float bodyLossFactor { 1.0f };
         float loopGain { 0.0f };
         float baseFrequency { 0.0f };
-        int collisionRemaining { 0 };
-        int tremoloSamplesUntilRetrigger { 0 };
-        std::uint32_t tremoloRetriggerCount { 0 };
-        bool tremoloStrokeIsUp { false };
         std::uint64_t ageSamples { 0 };
         int startDelaySamples { 0 };
         bool sympatheticReady { false };
@@ -67,7 +65,8 @@ struct ElectryEngineTestAccess
         result.stringIndex = voice.stringIndex;
         result.midiNote = voice.midiNote;
         result.fret = voice.fret;
-        result.articulation = voice.articulation;
+        result.playStyle = voice.playStyle;
+        result.strokeIsUp = voice.strokeIsUp;
         result.verticalDelayTarget = voice.vertical.targetDelay;
         result.verticalDelayCurrent = voice.vertical.currentDelay;
         result.dispersionLowCoefficient = voice.vertical.dispersionLowCoefficient;
@@ -79,10 +78,6 @@ struct ElectryEngineTestAccess
         result.bodyLossFactor = voice.bodyLossFactor;
         result.loopGain = voice.vertical.loopGain;
         result.baseFrequency = voice.baseFrequency;
-        result.collisionRemaining = voice.collisionRemaining;
-        result.tremoloSamplesUntilRetrigger = voice.tremoloSamplesUntilRetrigger;
-        result.tremoloRetriggerCount = voice.tremoloRetriggerCount;
-        result.tremoloStrokeIsUp = voice.tremoloStrokeIsUp;
         result.ageSamples = voice.ageSamples;
         result.startDelaySamples = voice.startDelaySamples;
         result.sympatheticReady = voice.sympatheticReady;
@@ -192,16 +187,34 @@ struct ElectryEngineTestAccess
         }
         return -1;
     }
+
+    // The per-string pitch-wheel compliance, so the audio checks can assert
+    // against exactly the constants the engine runs.
+    static float bendSensitivity(int stringIndex) noexcept
+    {
+        return ElectryEngine::bendSensitivity(stringIndex);
+    }
 };
 } // namespace electry
 
 namespace
 {
-using electry::Articulation;
 using electry::ElectryEngine;
 using electry::EngineParameters;
+using electry::PickStyle;
 using electry::PickupSelector;
+using electry::PlayStyle;
 using TestAccess = electry::ElectryEngineTestAccess;
+
+int pickKeyswitch(PickStyle pick)
+{
+    return ElectryEngine::firstKeyswitchNote + static_cast<int>(pick);
+}
+
+int styleKeyswitch(PlayStyle style)
+{
+    return ElectryEngine::firstPlayStyleKeyswitchNote + static_cast<int>(style);
+}
 
 int failures = 0;
 
@@ -243,12 +256,13 @@ void renderInto(ElectryEngine& engine, StereoBuffer& buffer, int blockSize = 512
 }
 
 StereoBuffer renderNote(ElectryEngine& engine, double sampleRate, int midiNote,
-                        float velocity, Articulation articulation,
-                        double seconds, double noteOffAfterSeconds = -1.0)
+                        float velocity, PlayStyle playStyle,
+                        double seconds, double noteOffAfterSeconds = -1.0,
+                        PickStyle pickStyle = PickStyle::Down)
 {
     engine.reset();
-    engine.noteOn(ElectryEngine::firstKeyswitchNote
-                      + static_cast<int>(articulation), 1.0f);
+    engine.noteOn(pickKeyswitch(pickStyle), 1.0f);
+    engine.noteOn(styleKeyswitch(playStyle), 1.0f);
     engine.noteOn(midiNote, velocity);
 
     const int totalSamples = static_cast<int>(seconds * sampleRate);
@@ -607,7 +621,7 @@ void testLowRegisterGuitarEnvelope()
             engine.setParameters(parameters);
             const auto render = renderNote(
                 engine, sampleRate, note.midiNote, 0.8f,
-                Articulation::Downstroke, 4.1);
+                PlayStyle::Sustain, 4.1);
             const double fundamental = midiHz(note.midiNote);
             const auto attack = measureHarmonicBalance(
                 render.left, static_cast<int>(0.03 * sampleRate),
@@ -706,13 +720,13 @@ void testOpenLowStringLevelBalance()
     engine.setParameters(parameters);
 
     const auto e1 = renderNote(engine, sampleRate, 28, 0.8f,
-                               Articulation::Downstroke, renderSeconds);
+                               PlayStyle::Sustain, renderSeconds);
     const auto b1 = renderNote(engine, sampleRate, 35, 0.8f,
-                               Articulation::Downstroke, renderSeconds);
+                               PlayStyle::Sustain, renderSeconds);
     const auto e2 = renderNote(engine, sampleRate, 40, 0.8f,
-                               Articulation::Downstroke, renderSeconds);
+                               PlayStyle::Sustain, renderSeconds);
     const auto a2 = renderNote(engine, sampleRate, 45, 0.8f,
-                               Articulation::Downstroke, renderSeconds);
+                               PlayStyle::Sustain, renderSeconds);
 
     const std::array<const StereoBuffer*, 4> renders {{ &e1, &b1, &e2, &a2 }};
     struct Window
@@ -829,7 +843,7 @@ void testInternalOversamplingPolicy()
         parameters.releaseNoise = 0.0f;
         engine.setParameters(parameters);
         const auto buffer = renderNote(engine, sampleRate, 45, 0.35f,
-                                       Articulation::Downstroke, 0.8);
+                                       PlayStyle::Sustain, 0.8);
         const double expected = midiHz(45);
         const double measured = measureFrequency(
             buffer.left, static_cast<int>(0.30 * sampleRate),
@@ -849,35 +863,39 @@ void testRenderMatrixFiniteAndBounded()
         EngineParameters parameters;
         engine.setParameters(parameters);
 
-        for (int articulationIndex = 0;
-             articulationIndex < ElectryEngine::keyswitchCount; ++articulationIndex)
+        for (int styleIndex = 0;
+             styleIndex < ElectryEngine::playStyleKeyswitchCount; ++styleIndex)
+        for (int pickIndex = 0;
+             pickIndex < ElectryEngine::pickStyleKeyswitchCount; ++pickIndex)
         {
-            const auto articulation = static_cast<Articulation>(articulationIndex);
-            auto buffer = renderNote(engine, sampleRate, 45, 0.9f, articulation,
-                                     0.5, 0.35);
+            const auto style = static_cast<PlayStyle>(styleIndex);
+            const auto pick = static_cast<PickStyle>(pickIndex);
+            const std::string comboName = "style " + std::to_string(styleIndex)
+                                        + " pick " + std::to_string(pickIndex);
+            auto buffer = renderNote(engine, sampleRate, 45, 0.9f, style,
+                                     0.5, 0.35, pick);
             expect(allFinite(buffer),
                    "non-finite output at rate " + std::to_string(sampleRate)
-                       + " articulation " + std::to_string(articulationIndex));
+                       + " " + comboName);
             const float peak = peakAbs(buffer.left);
             expect(peak < 0.80f,
                    "output beyond guard at rate " + std::to_string(sampleRate)
-                       + " articulation " + std::to_string(articulationIndex));
+                       + " " + comboName);
             expect(peak > 1.0e-4f,
-                   "articulation " + std::to_string(articulationIndex)
-                       + " is silent at rate " + std::to_string(sampleRate));
+                   comboName + " is silent at rate "
+                       + std::to_string(sampleRate));
 
             if (sampleRate == 48000.0)
             {
                 const auto low = renderNote(
-                    engine, sampleRate, 28, 0.9f, articulation, 0.5, 0.35);
+                    engine, sampleRate, 28, 0.9f, style, 0.5, 0.35, pick);
                 const float lowPeak = peakAbs(low.left);
                 expect(allFinite(low),
-                       "non-finite Drop-E output for articulation "
-                           + std::to_string(articulationIndex));
+                       "non-finite Drop-E output for " + comboName);
                 expect(lowPeak > 1.0e-4f && lowPeak < 0.80f,
-                       "Drop-E articulation is silent or driving the guard: "
-                           + std::to_string(articulationIndex) + " (peak "
-                           + std::to_string(lowPeak) + ")");
+                       "Drop-E combination is silent or driving the guard: "
+                           + comboName + " (peak " + std::to_string(lowPeak)
+                           + ")");
             }
         }
     }
@@ -898,7 +916,7 @@ void testPitchAccuracy()
         for (const int midiNote : { 28, 35, 40, 45, 50, 55, 59, 64, 69, 76, 86 })
         {
             auto buffer = renderNote(engine, sampleRate, midiNote, 0.3f,
-                                     Articulation::Downstroke, 1.1);
+                                     PlayStyle::Sustain, 1.1);
             const int start = static_cast<int>(0.45 * sampleRate);
             const int window = static_cast<int>(0.5 * sampleRate);
             const double expected = midiHz(midiNote);
@@ -960,12 +978,12 @@ void testDeterminism()
         engine.reset();
 
         StereoBuffer buffer(static_cast<int>(1.6 * sampleRate));
-        engine.noteOn(ElectryEngine::firstKeyswitchNote
-                          + static_cast<int>(Articulation::Slap), 1.0f);
+        engine.noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
+        engine.noteOn(pickKeyswitch(PickStyle::Up), 1.0f);
         engine.noteOn(45, 0.85f);
         engine.process(buffer.left.data(), buffer.right.data(), 12000);
-        engine.noteOn(ElectryEngine::firstKeyswitchNote
-                          + static_cast<int>(Articulation::Tremolo), 1.0f);
+        engine.noteOn(styleKeyswitch(PlayStyle::Harmonics), 1.0f);
+        engine.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
         engine.noteOn(52, 0.6f);
         engine.process(buffer.left.data() + 12000,
                        buffer.right.data() + 12000, 24000);
@@ -1001,14 +1019,19 @@ void testKeyswitchesSelectStylesSilently()
 
     expect(ElectryEngine::firstKeyswitchNote == 12,
            "keyswitch range does not start at MIDI 12");
-    expect(ElectryEngine::keyswitchCount == 16,
-           "keyswitch range does not expose all 16 play styles");
+    expect(ElectryEngine::pickStyleKeyswitchCount == 3
+               && ElectryEngine::playStyleKeyswitchCount == 4
+               && ElectryEngine::keyswitchCount == 7,
+           "the two keyswitch banks do not expose 3 picking and 4 play styles");
+    expect(ElectryEngine::firstPlayStyleKeyswitchNote == 15,
+           "the play-style bank does not follow the picking bank at MIDI 15");
     expect(ElectryEngine::lowestPlayableNote == 28
                && ElectryEngine::highestPlayableNote == 86,
            "Drop-E playable range is not MIDI 28..86");
 
-    expect(engine.getCurrentArticulation() == Articulation::Downstroke,
-           "default articulation is not Downstroke");
+    expect(engine.getCurrentPickStyle() == PickStyle::Down
+               && engine.getCurrentPlayStyle() == PlayStyle::Sustain,
+           "default styles are not a sustained downstroke");
 
     // Keyswitches alone must never make sound.
     StereoBuffer buffer(static_cast<int>(0.25 * sampleRate));
@@ -1018,34 +1041,56 @@ void testKeyswitchesSelectStylesSilently()
     expect(peakAbs(buffer.left) == 0.0f, "keyswitch notes produced audio");
     expect(engine.getActiveVoiceCount() == 0, "keyswitch notes created voices");
 
-    // The last pressed keyswitch latches.
-    expect(engine.getCurrentArticulation() == Articulation::Slap,
-           "keyswitch latching did not reach Slap");
+    // Walking every keyswitch leaves the last of each bank latched.
+    expect(engine.getCurrentPickStyle() == PickStyle::Alternate
+               && engine.getCurrentPlayStyle() == PlayStyle::Harmonics,
+           "walking the keyswitch banks did not latch the last of each");
 
-    engine.noteOn(ElectryEngine::firstKeyswitchNote
-                      + static_cast<int>(Articulation::Muted), 1.0f);
-    expect(engine.getCurrentArticulation() == Articulation::Muted,
-           "keyswitch did not switch to Muted");
+    // The two banks are independent: a play-style switch keeps the picking
+    // style, and a picking switch keeps the play style.
+    engine.noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
+    expect(engine.getCurrentPlayStyle() == PlayStyle::PalmMute
+               && engine.getCurrentPickStyle() == PickStyle::Alternate,
+           "a play-style keyswitch disturbed the latched picking style");
+    engine.noteOn(pickKeyswitch(PickStyle::Up), 1.0f);
+    expect(engine.getCurrentPickStyle() == PickStyle::Up
+               && engine.getCurrentPlayStyle() == PlayStyle::PalmMute,
+           "a picking keyswitch disturbed the latched play style");
 
-    // Keyswitch note-offs are ignored; the style persists for played notes.
-    engine.noteOff(ElectryEngine::firstKeyswitchNote
-                       + static_cast<int>(Articulation::Muted));
-    expect(engine.getCurrentArticulation() == Articulation::Muted,
-           "keyswitch note-off cleared the latched style");
+    // Keyswitch note-offs are ignored; the styles persist for played notes.
+    engine.noteOff(styleKeyswitch(PlayStyle::PalmMute));
+    engine.noteOff(pickKeyswitch(PickStyle::Up));
+    expect(engine.getCurrentPlayStyle() == PlayStyle::PalmMute
+               && engine.getCurrentPickStyle() == PickStyle::Up,
+           "keyswitch note-offs cleared the latched styles");
 
     engine.noteOn(52, 0.8f);
     const auto stringIndex = TestAccess::stringForNote(engine, 52);
     expect(stringIndex >= 0, "played note did not allocate a string");
     const auto snapshot = TestAccess::snapshot(engine, stringIndex);
-    expect(snapshot.articulation == Articulation::Muted,
-           "played note did not inherit the latched articulation");
+    expect(snapshot.playStyle == PlayStyle::PalmMute && snapshot.strokeIsUp,
+           "played note did not inherit the latched style combination");
 
-    // The adjacent range boundary is unambiguous: 27 is the final silent
-    // keyswitch and 28 is the sounding open low E.
+    // The notes between the keyswitch banks and the playable range are dead:
+    // they neither sound nor disturb either latch.
     engine.reset();
-    engine.noteOn(27, 0.9f);
-    expect(engine.getCurrentArticulation() == Articulation::Slap,
-           "MIDI 27 did not select the final play style");
+    engine.noteOn(styleKeyswitch(PlayStyle::Harmonics), 1.0f);
+    for (int note = ElectryEngine::firstKeyswitchNote
+                  + ElectryEngine::keyswitchCount;
+         note < ElectryEngine::lowestPlayableNote; ++note)
+        engine.noteOn(note, 0.9f);
+    expect(engine.getActiveVoiceCount() == 0,
+           "a note between the keyswitches and the playable range sounded");
+    expect(engine.getCurrentPlayStyle() == PlayStyle::Harmonics
+               && engine.getCurrentPickStyle() == PickStyle::Down,
+           "a dead-zone note disturbed a latched style");
+
+    // The range boundaries are unambiguous: 18 is the final silent keyswitch
+    // and 28 is the sounding open low E.
+    engine.reset();
+    engine.noteOn(18, 0.9f);
+    expect(engine.getCurrentPlayStyle() == PlayStyle::Harmonics,
+           "MIDI 18 did not select the final play style");
     expect(engine.getActiveVoiceCount() == 0,
            "final keyswitch note created a voice");
     engine.noteOn(28, 0.8f);
@@ -1064,11 +1109,10 @@ void testAlternateStrokeSequence()
     ElectryEngine engine;
     engine.prepare(48000.0, 512);
     engine.setParameters(EngineParameters {});
-    engine.noteOn(ElectryEngine::firstKeyswitchNote
-                      + static_cast<int>(Articulation::AlternateStroke), 1.0f);
+    engine.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
 
-    expect(engine.getCurrentArticulation() == Articulation::AlternateStroke,
-           "Alternate Stroke did not latch");
+    expect(engine.getCurrentPickStyle() == PickStyle::Alternate,
+           "Alternate did not latch");
 
     // Rejected performance events must not consume a stroke direction.
     engine.noteOn(100, 1.0f);
@@ -1084,23 +1128,51 @@ void testAlternateStrokeSequence()
     const auto third = TestAccess::snapshot(engine,
                                             TestAccess::stringForNote(engine, 50));
 
-    expect(first.articulation == Articulation::Downstroke,
-           "Alternate Stroke did not begin with a downstroke");
-    expect(second.articulation == Articulation::Upstroke,
-           "Alternate Stroke did not alternate to an upstroke");
-    expect(third.articulation == Articulation::Downstroke,
-           "Alternate Stroke did not alternate back to a downstroke");
-    expect(engine.getCurrentArticulation() == Articulation::AlternateStroke,
-           "resolved strokes replaced the latched Alternate Stroke style");
+    expect(first.valid && ! first.strokeIsUp,
+           "Alternate did not begin with a downstroke");
+    expect(second.valid && second.strokeIsUp,
+           "Alternate did not alternate to an upstroke");
+    expect(third.valid && ! third.strokeIsUp,
+           "Alternate did not alternate back to a downstroke");
+    expect(engine.getCurrentPickStyle() == PickStyle::Alternate,
+           "resolved strokes replaced the latched Alternate picking style");
+
+    // Alternate picking composes with any play style: the palm-muted phrase
+    // keeps alternating.
+    engine.noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
+    engine.noteOn(55, 0.8f);
+    const auto mutedUp = TestAccess::snapshot(
+        engine, TestAccess::stringForNote(engine, 55));
+    expect(mutedUp.valid && mutedUp.playStyle == PlayStyle::PalmMute
+               && mutedUp.strokeIsUp,
+           "Alternate did not continue through a play-style change");
+
+    // A hammered note has no pick, so it neither takes a stroke nor consumes
+    // one: the sequence resumes where it left off.
+    engine.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
+    engine.noteOn(57, 0.8f);
+    const auto hammered = TestAccess::snapshot(
+        engine, TestAccess::stringForNote(engine, 57));
+    expect(hammered.valid && hammered.playStyle == PlayStyle::Hammer
+               && ! hammered.strokeIsUp,
+           "a hammered note took a pick stroke");
+    engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+    engine.noteOn(59, 0.8f);
+    const auto resumed = TestAccess::snapshot(
+        engine, TestAccess::stringForNote(engine, 59));
+    expect(resumed.valid && ! resumed.strokeIsUp,
+           "a hammered note consumed a stroke from the alternate sequence");
 
     // Pressing the keyswitch again begins a fresh phrase on a downstroke.
-    engine.noteOn(ElectryEngine::firstKeyswitchNote
-                      + static_cast<int>(Articulation::AlternateStroke), 1.0f);
-    engine.noteOn(55, 0.8f);
+    // The pending stroke here is an UPstroke (down/up/down/up have been
+    // consumed and the hammered note took none), so a reset that failed to
+    // clear the phase would render an upstroke and fail this check.
+    engine.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
+    engine.noteOn(64, 0.8f);
     const auto restarted = TestAccess::snapshot(
-        engine, TestAccess::stringForNote(engine, 55));
-    expect(restarted.articulation == Articulation::Downstroke,
-           "reselecting Alternate Stroke did not reset its phase");
+        engine, TestAccess::stringForNote(engine, 64));
+    expect(restarted.valid && ! restarted.strokeIsUp,
+           "reselecting Alternate did not reset its phase");
 }
 
 void testArticulationsSoundDistinct()
@@ -1115,16 +1187,18 @@ void testArticulationsSoundDistinct()
     const int attackStart = static_cast<int>(0.002 * sampleRate);
     const int attackWindow = static_cast<int>(0.06 * sampleRate);
 
-    const auto renderStyle = [&] (Articulation articulation)
+    const auto renderStyle = [&] (PlayStyle style,
+                                  PickStyle pick = PickStyle::Down)
     {
-        return renderNote(engine, sampleRate, 48, 0.85f, articulation, 1.2);
+        return renderNote(engine, sampleRate, 48, 0.85f, style, 1.2, -1.0,
+                          pick);
     };
 
-    const auto down = renderStyle(Articulation::Downstroke);
-    const auto up = renderStyle(Articulation::Upstroke);
-    const auto hammer = renderStyle(Articulation::HammerOn);
-    const auto muted = renderStyle(Articulation::Muted);
-    const auto slap = renderStyle(Articulation::Slap);
+    const auto down = renderStyle(PlayStyle::Sustain);
+    const auto up = renderStyle(PlayStyle::Sustain, PickStyle::Up);
+    const auto hammer = renderStyle(PlayStyle::Hammer);
+    const auto muted = renderStyle(PlayStyle::PalmMute);
+    const auto harmonic = renderStyle(PlayStyle::Harmonics);
 
     const double f0 = midiHz(48);
     const double downCentroid = spectralCentroid(down.left, attackStart,
@@ -1133,11 +1207,12 @@ void testArticulationsSoundDistinct()
                                                attackWindow, sampleRate, f0);
     const double hammerCentroid = spectralCentroid(hammer.left, attackStart,
                                                    attackWindow, sampleRate, f0);
-    const double slapCentroid = spectralCentroid(slap.left, attackStart,
-                                                 attackWindow, sampleRate, f0);
+    const double harmonicCentroid = spectralCentroid(
+        harmonic.left, attackStart, attackWindow, sampleRate, f0);
 
     // The hammered attack is fingered, not picked: it must be darker than
-    // both pick strokes. The slap attack must be the brightest.
+    // both pick strokes. The harmonic's node touch removes the low modes, so
+    // its attack sits clearly brighter than the fretted downstroke.
     //
     // The margin is 0.95 rather than 0.9 because the picked attack's own
     // spectrum is now calibrated against a dry electric low-E reference
@@ -1153,10 +1228,10 @@ void testArticulationsSoundDistinct()
            "hammer-on attack is not darker than an upstroke (up "
                + std::to_string(upCentroid) + " Hz, hammer "
                + std::to_string(hammerCentroid) + " Hz)");
-    expect(slapCentroid > downCentroid * 1.05,
-           "slap attack is not brighter than a downstroke (down "
-               + std::to_string(downCentroid) + " Hz, slap "
-               + std::to_string(slapCentroid) + " Hz)");
+    expect(harmonicCentroid > downCentroid * 1.05,
+           "harmonic attack is not brighter than a downstroke (down "
+               + std::to_string(downCentroid) + " Hz, harmonic "
+               + std::to_string(harmonicCentroid) + " Hz)");
     expect(upCentroid > downCentroid * 1.01,
            "upstroke attack is not brighter than a downstroke (down "
                + std::to_string(downCentroid) + " Hz, up "
@@ -1194,7 +1269,7 @@ void testArticulationsSoundDistinct()
            "downstroke and upstroke render nearly identical audio");
 }
 
-void testExtendedPlayStyles()
+void testStyleAndStrokeCombinations()
 {
     constexpr double sampleRate = 48000.0;
     ElectryEngine engine;
@@ -1204,97 +1279,99 @@ void testExtendedPlayStyles()
     parameters.bodyResonance = 0.0f;
     engine.setParameters(parameters);
 
-    const auto down = renderNote(engine, sampleRate, 45, 0.85f,
-                                 Articulation::Downstroke, 0.9);
-    const auto tap = renderNote(engine, sampleRate, 45, 0.85f,
-                                Articulation::Tap, 0.9);
-    const auto muted = renderNote(engine, sampleRate, 45, 0.85f,
-                                  Articulation::Muted, 0.9);
-    const auto chug = renderNote(engine, sampleRate, 45, 0.85f,
-                                 Articulation::Chug, 0.9);
-    const auto dead = renderNote(engine, sampleRate, 45, 0.85f,
-                                 Articulation::DeadNote, 0.9);
-
-    const int attackStart = static_cast<int>(0.002 * sampleRate);
-    const int attackEnd = static_cast<int>(0.060 * sampleRate);
-    const double downAttack = rmsInRange(down.left, attackStart, attackEnd);
-    const double tapAttack = rmsInRange(tap.left, attackStart, attackEnd);
-    expect(tapAttack < downAttack * 0.85,
-           "tap is not a softer finger excitation than a downstroke");
+    // The stroke composes with every picked style. An upstroke palm mute is
+    // still a mute - the decay is the style's - but it is a genuinely
+    // different render with the upstroke's brighter, inverted contact.
+    const auto mutedDown = renderNote(engine, sampleRate, 45, 0.85f,
+                                      PlayStyle::PalmMute, 0.9);
+    const auto mutedUp = renderNote(engine, sampleRate, 45, 0.85f,
+                                    PlayStyle::PalmMute, 0.9, -1.0,
+                                    PickStyle::Up);
+    const double comboDifference = normalisedDifferenceRms(
+        mutedDown.left, mutedUp.left, 0, static_cast<int>(0.2 * sampleRate));
+    expect(comboDifference > 0.05,
+           "up and down palm mutes render nearly identical audio ("
+               + std::to_string(comboDifference) + ")");
 
     const int muteLateStart = static_cast<int>(0.36 * sampleRate);
     const int muteLateEnd = static_cast<int>(0.56 * sampleRate);
-    const double mutedLate = rmsInRange(muted.left, muteLateStart, muteLateEnd);
-    const double chugLate = rmsInRange(chug.left, muteLateStart, muteLateEnd);
-    expect(chugLate < mutedLate * 0.55,
-           "chug does not stop the string harder than Muted");
+    const auto openDown = renderNote(engine, sampleRate, 45, 0.85f,
+                                     PlayStyle::Sustain, 0.9);
+    const double openLate = rmsInRange(openDown.left, muteLateStart, muteLateEnd);
+    for (const auto* muted : { &mutedDown, &mutedUp })
+    {
+        const double mutedLate = rmsInRange(muted->left, muteLateStart,
+                                            muteLateEnd);
+        expect(mutedLate < openLate * 0.30,
+               "a palm mute did not keep its damping under both strokes");
+    }
 
-    const int deadLateStart = static_cast<int>(0.16 * sampleRate);
-    const int deadLateEnd = static_cast<int>(0.30 * sampleRate);
-    const double deadLate = rmsInRange(dead.left, deadLateStart, deadLateEnd);
-    const double chugSameWindow = rmsInRange(chug.left, deadLateStart, deadLateEnd);
-    // The anti-aliased high-rate path preserves slightly more of the dead
-    // note's low-frequency residue, but it must still decay at least four
-    // times below the firmer, pitched chug over the same late window.
-    expect(deadLate < chugSameWindow * 0.25,
-           "dead note is not a short percussive articulation");
+    const int attackStart = static_cast<int>(0.002 * sampleRate);
+    const int attackWindow = static_cast<int>(0.06 * sampleRate);
+    const double downMuteCentroid = spectralCentroid(
+        mutedDown.left, attackStart, attackWindow, sampleRate, midiHz(45));
+    const double upMuteCentroid = spectralCentroid(
+        mutedUp.left, attackStart, attackWindow, sampleRate, midiHz(45));
+    expect(upMuteCentroid > downMuteCentroid * 1.01,
+           "an upstroke palm mute is not brighter than a downstroke one (down "
+               + std::to_string(downMuteCentroid) + " Hz, up "
+               + std::to_string(upMuteCentroid) + " Hz)");
 
+    // The harmonic keeps its octave under either stroke.
     parameters.pickNoise = 0.0f;
     parameters.fingerNoise = 0.0f;
     parameters.releaseNoise = 0.0f;
     engine.setParameters(parameters);
-    const auto natural = renderNote(engine, sampleRate, 45, 0.35f,
-                                    Articulation::NaturalHarmonic, 1.1);
-    const auto pinch = renderNote(engine, sampleRate, 45, 0.35f,
-                                  Articulation::PinchHarmonic, 1.1);
     const int harmonicStart = static_cast<int>(0.35 * sampleRate);
     const int harmonicWindow = static_cast<int>(0.55 * sampleRate);
     const double naturalExpected = midiHz(57);
-    const double pinchExpected = midiHz(64);
-    const double naturalMeasured = measureFrequency(
-        natural.left, harmonicStart, harmonicWindow, sampleRate, naturalExpected);
-    const double pinchMeasured = measureFrequency(
-        pinch.left, harmonicStart, harmonicWindow, sampleRate, pinchExpected);
-    expect(std::abs(centsBetween(naturalMeasured, naturalExpected)) < 10.0,
-           "natural harmonic does not sound one octave above the played note");
-    expect(std::abs(centsBetween(pinchMeasured, pinchExpected)) < 10.0,
-           "pinch harmonic does not sound nineteen semitones above the played note");
+    for (const auto pick : { PickStyle::Down, PickStyle::Up })
+    {
+        const auto natural = renderNote(engine, sampleRate, 45, 0.35f,
+                                        PlayStyle::Harmonics, 1.1, -1.0, pick);
+        const double naturalMeasured = measureFrequency(
+            natural.left, harmonicStart, harmonicWindow, sampleRate,
+            naturalExpected);
+        expect(std::abs(centsBetween(naturalMeasured, naturalExpected)) < 10.0,
+               "natural harmonic does not sound one octave above the played "
+               "note under both strokes");
+    }
 
-    // Tremolo is one held string with deterministic scheduled re-excitations,
-    // not a stack of new voices.
-    engine.reset();
-    engine.noteOn(ElectryEngine::firstKeyswitchNote
-                      + static_cast<int>(Articulation::Tremolo), 1.0f);
-    engine.noteOn(45, 0.8f);
-    const int tremoloString = TestAccess::stringForNote(engine, 45);
-    const auto initial = TestAccess::snapshot(engine, tremoloString);
-    expect(initial.tremoloRetriggerCount == 0 && ! initial.tremoloStrokeIsUp,
-           "tremolo did not begin on its initial downstroke");
-
-    StereoBuffer tremoloAudio(static_cast<int>(0.24 * sampleRate));
-    renderInto(engine, tremoloAudio);
-    const auto running = TestAccess::snapshot(engine, tremoloString);
-    expect(running.tremoloRetriggerCount >= 3,
-           "held tremolo note did not schedule repeated strokes");
-    expect(running.tremoloStrokeIsUp
-               == ((running.tremoloRetriggerCount & 1u) != 0u),
-           "tremolo stroke directions did not alternate");
-    expect(engine.getActiveVoiceCount() == 1,
-           "tremolo retriggers allocated additional physical strings");
-
-    engine.setSustainPedal(true);
-    engine.noteOff(45);
-    const auto countAtRelease = running.tremoloRetriggerCount;
-    StereoBuffer sustained(static_cast<int>(0.20 * sampleRate));
-    renderInto(engine, sustained);
-    const auto afterRelease = TestAccess::snapshot(engine, tremoloString);
-    expect(afterRelease.active
-               && afterRelease.tremoloRetriggerCount == countAtRelease,
-           "tremolo continued retriggering after the key was released");
+    // A hammered note has no pick, so the latched picking style cannot change
+    // it: the renders are bit-identical.
+    const auto hammerDown = renderNote(engine, sampleRate, 45, 0.85f,
+                                       PlayStyle::Hammer, 0.6);
+    const auto hammerUp = renderNote(engine, sampleRate, 45, 0.85f,
+                                     PlayStyle::Hammer, 0.6, -1.0,
+                                     PickStyle::Up);
+    expect(hammerDown.left == hammerUp.left,
+           "the latched picking style changed a hammered note");
 }
 
-void testBendPrograms()
+void testPitchWheelPerStringSensitivity()
 {
+    // The wheel is a bar: every string bends, each by its own compliance.
+    // The constants themselves must be physical - the most compliant string
+    // reaches the nominal range exactly, none exceeds it, and the ordering
+    // follows the string set: the slack low E1 bends deepest, the plain G
+    // beats its neighbours, and the taut plain top E is among the shallowest.
+    expect(std::abs(TestAccess::bendSensitivity(0) - 1.0f) < 1.0e-6f,
+           "the low E1 is not the full-range reference string");
+    for (int string = 0; string < ElectryEngine::stringCount; ++string)
+    {
+        const float sensitivity = TestAccess::bendSensitivity(string);
+        expect(sensitivity > 0.30f && sensitivity <= 1.0f,
+               "bend sensitivity escaped its plausible range on string "
+                   + std::to_string(string));
+    }
+    expect(TestAccess::bendSensitivity(5) > TestAccess::bendSensitivity(4)
+               && TestAccess::bendSensitivity(5) > TestAccess::bendSensitivity(6),
+           "the plain G does not bend deeper than its neighbours");
+    expect(TestAccess::bendSensitivity(7) < TestAccess::bendSensitivity(5),
+           "the taut top E does not bend shallower than the plain G");
+
+    // And the audio must follow those constants: bend two strings with
+    // clearly different compliance and measure the travel of each.
     constexpr double sampleRate = 48000.0;
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
@@ -1304,65 +1381,143 @@ void testBendPrograms()
     parameters.releaseNoise = 0.0f;
     parameters.artifactAmount = 0.0f;
     parameters.bodyResonance = 0.0f;
-    parameters.bendTimeSeconds = 0.20f;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.bendTimeSeconds = 0.06f;
     engine.setParameters(parameters);
 
-    struct BendCase
+    for (const int openNote : { 28, 50 })
     {
-        Articulation articulation;
-        double startCentsFromPlayed;
-        double endCentsFromPlayed;
-    };
-    const std::array<BendCase, 4> cases {{
-        { Articulation::Bend1Up, 0.0, 100.0 },
-        { Articulation::Bend2Up, 0.0, 200.0 },
-        { Articulation::Bend1Down, 100.0, 0.0 },
-        { Articulation::Bend2Down, 200.0, 0.0 },
-    }};
+        engine.reset();
+        engine.setPitchBend(0.0f);
+        engine.noteOn(openNote, 0.35f);
+        StereoBuffer buffer(static_cast<int>(2.0 * sampleRate));
+        engine.process(buffer.left.data(), buffer.right.data(),
+                       static_cast<int>(0.6 * sampleRate));
+        engine.setPitchBend(1.0f);
+        engine.process(buffer.left.data() + static_cast<int>(0.6 * sampleRate),
+                       buffer.right.data() + static_cast<int>(0.6 * sampleRate),
+                       buffer.size() - static_cast<int>(0.6 * sampleRate));
 
-    for (const auto& bendCase : cases)
-    {
-        const int midiNote = 55;
-        auto buffer = renderNote(engine, sampleRate, midiNote, 0.35f,
-                                 bendCase.articulation, 2.0);
-        const double played = midiHz(midiNote);
-
-        // Early window: after the pick transient, before the bend departs
-        // (the bend holds for about 55 ms before travelling).
-        const int earlyStart = static_cast<int>(0.008 * sampleRate);
-        const int earlyLength = static_cast<int>(0.038 * sampleRate);
-        const double expectedStart = played
-            * std::pow(2.0, bendCase.startCentsFromPlayed / 1200.0);
-        const double startFrequency = measureFrequency(
-            buffer.left, earlyStart, earlyLength, sampleRate, expectedStart);
-        const double startError = centsBetween(startFrequency, expectedStart);
-        // The short analysis window and attack transient limit precision.
-        expect(std::abs(startError) < 35.0,
-               "bend start pitch off by " + std::to_string(startError)
-                   + " cents for articulation "
-                   + std::to_string(static_cast<int>(bendCase.articulation)));
-
-        // Late window: the bend has settled.
-        const int lateStart = static_cast<int>(1.0 * sampleRate);
-        const int lateLength = static_cast<int>(0.8 * sampleRate);
-        const double expectedEnd = played
-            * std::pow(2.0, bendCase.endCentsFromPlayed / 1200.0);
-        const double endFrequency = measureFrequency(
-            buffer.left, lateStart, lateLength, sampleRate, expectedEnd);
-        const double endError = centsBetween(endFrequency, expectedEnd);
-        expect(std::abs(endError) < 10.0,
-               "bend end pitch off by " + std::to_string(endError)
-                   + " cents for articulation "
-                   + std::to_string(static_cast<int>(bendCase.articulation)));
-
-        // And the travel is in the right direction by the right amount.
-        const double travel = centsBetween(endFrequency, startFrequency);
-        const double expectedTravel = bendCase.endCentsFromPlayed
-                                    - bendCase.startCentsFromPlayed;
-        expect(std::abs(travel - expectedTravel) < 40.0,
-               "bend travel measured " + std::to_string(travel)
-                   + " cents, expected " + std::to_string(expectedTravel));
+        const int stringIndex = TestAccess::stringForNote(engine, openNote);
+        const double sensitivity = TestAccess::bendSensitivity(stringIndex);
+        const double before = measureFrequency(
+            buffer.left, static_cast<int>(0.2 * sampleRate),
+            static_cast<int>(0.35 * sampleRate), sampleRate, midiHz(openNote));
+        const double expectedAfter = midiHz(openNote)
+            * std::pow(2.0, 2.0 * sensitivity / 12.0);
+        const double after = measureFrequency(
+            buffer.left, static_cast<int>(1.2 * sampleRate),
+            static_cast<int>(0.6 * sampleRate), sampleRate, expectedAfter);
+        const double travel = centsBetween(after, before);
+        const double expectedTravel = 200.0 * sensitivity;
+        expect(std::abs(travel - expectedTravel) < 15.0,
+               "note " + std::to_string(openNote) + " wheel travel measured "
+                   + std::to_string(travel) + " cents, expected "
+                   + std::to_string(expectedTravel));
     }
+}
+
+void testPitchWheelGlideFollowsBendTime()
+{
+    // The strings travel to the wheel over the Bend Time parameter, exactly
+    // as the finger bends it used to drive did: shortly after a full-range
+    // wheel move, a slow bend has covered far less of the distance than a
+    // fast one, and both settle on the same target.
+    constexpr double sampleRate = 48000.0;
+
+    const auto travelAfter = [&] (float bendTimeSeconds, double measureAt)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.bendTimeSeconds = bendTimeSeconds;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(28, 0.35f); // E1: full-range reference string
+        StereoBuffer settle(static_cast<int>(0.6 * sampleRate));
+        renderInto(engine, settle);
+        engine.setPitchBend(1.0f);
+        StereoBuffer bent(static_cast<int>((measureAt + 0.16) * sampleRate));
+        renderInto(engine, bent);
+        const double before = measureFrequency(
+            settle.left, static_cast<int>(0.2 * sampleRate),
+            static_cast<int>(0.35 * sampleRate), sampleRate, midiHz(28));
+        const double during = measureFrequency(
+            bent.left, static_cast<int>(measureAt * sampleRate),
+            static_cast<int>(0.15 * sampleRate), sampleRate,
+            midiHz(28) * std::pow(2.0, 1.0 / 12.0));
+        return centsBetween(during, before);
+    };
+
+    const double fast = travelAfter(0.05f, 0.25);
+    const double slow = travelAfter(1.60f, 0.25);
+    expect(fast > 175.0,
+           "a fast bend time did not reach the wheel target promptly ("
+               + std::to_string(fast) + " cents)");
+    expect(slow < fast - 60.0,
+           "a slow bend time did not slow the wheel's travel (fast "
+               + std::to_string(fast) + ", slow " + std::to_string(slow)
+               + " cents)");
+    const double slowSettled = travelAfter(1.60f, 5.5);
+    expect(std::abs(slowSettled - 200.0) < 15.0,
+           "a slow bend did not settle on the wheel target ("
+               + std::to_string(slowSettled) + " cents)");
+}
+
+void testPitchWheelBendsSympatheticStrings()
+{
+    // The bar bends the strings nobody is fingering too: a ringing coupled
+    // string follows the wheel at its own compliance.
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    parameters.artifactAmount = 0.0f;
+    parameters.bodyResonance = 0.0f;
+    parameters.sympatheticAmount = 0.9f;
+    parameters.bendTimeSeconds = 0.06f;
+    engine.setParameters(parameters);
+    engine.reset();
+
+    // A2's third partial rings the open high E through the bridge. The
+    // played string is released before the wheel moves, so what is measured
+    // afterwards is the coupled ring alone, not the played string's own bent
+    // partial landing nearby.
+    engine.noteOn(45, 0.95f);
+    StereoBuffer ringing(static_cast<int>(0.7 * sampleRate));
+    renderInto(engine, ringing);
+    const int highString = ElectryEngine::stringCount - 1;
+    expect(TestAccess::snapshot(engine, highString).sympatheticReady,
+           "the open high E did not ring for the wheel to bend");
+    engine.noteOff(45);
+    StereoBuffer damping(static_cast<int>(0.4 * sampleRate));
+    renderInto(engine, damping);
+
+    engine.setPitchBend(1.0f);
+    StereoBuffer bent(static_cast<int>(1.4 * sampleRate));
+    renderInto(engine, bent);
+
+    constexpr double openHighE = 329.62756;
+    const double sensitivity = TestAccess::bendSensitivity(highString);
+    const double bentHighE = openHighE * std::pow(2.0, 2.0 * sensitivity / 12.0);
+    const int start = static_cast<int>(0.6 * sampleRate);
+    const int length = static_cast<int>(0.7 * sampleRate);
+    const double atOpen = dftMagnitude(bent.left, start, length, sampleRate,
+                                       openHighE);
+    const double atBent = dftMagnitude(bent.left, start, length, sampleRate,
+                                       bentHighE);
+    expect(atBent > 2.0 * atOpen,
+           "the coupled high E did not follow the wheel ("
+               + std::to_string(atOpen) + " at open pitch, "
+               + std::to_string(atBent) + " at the bent pitch)");
 }
 
 void testHammerOnLegatoContinuity()
@@ -1386,8 +1541,7 @@ void testHammerOnLegatoContinuity()
     const int stringBefore = TestAccess::stringForNote(engine, 43);
     expect(stringBefore >= 0, "picked note did not allocate a string");
 
-    engine.noteOn(ElectryEngine::firstKeyswitchNote
-                      + static_cast<int>(Articulation::HammerOn), 1.0f);
+    engine.noteOn(styleKeyswitch(PlayStyle::Hammer), 1.0f);
     engine.noteOn(45, 0.7f);
 
     const int stringAfter = TestAccess::stringForNote(engine, 45);
@@ -1421,45 +1575,36 @@ void testHammerOnLegatoContinuity()
            "hammer-on transition produced a hard discontinuity");
 }
 
-void testSlapCollisionAndTensionGlide()
+void testTensionGlide()
 {
+    // Tension modulation: a hard attack sounds slightly sharp and relaxes as
+    // the string energy decays. Both measurements share the same scan
+    // reference so grid quantise bias cancels in the difference.
     constexpr double sampleRate = 48000.0;
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
     EngineParameters parameters;
     parameters.pickNoise = 0.0f;
     parameters.fingerNoise = 0.0f;
+    parameters.stringGauge = 0.0f; // the light set glides most
+    parameters.velocityAmount = 1.0f;
     engine.setParameters(parameters);
 
-    auto slap = renderNote(engine, sampleRate, 45, 0.95f, Articulation::Slap, 1.8);
+    auto hard = renderNote(engine, sampleRate, 45, 1.0f, PlayStyle::Sustain, 1.8);
 
-    // The collision window must actually have engaged.
-    engine.reset();
-    engine.noteOn(ElectryEngine::firstKeyswitchNote
-                      + static_cast<int>(Articulation::Slap), 1.0f);
-    engine.noteOn(45, 0.95f);
-    const int stringIndex = TestAccess::stringForNote(engine, 45);
-    const auto snapshot = TestAccess::snapshot(engine, stringIndex);
-    expect(snapshot.collisionRemaining > 0,
-           "slap did not open a fret-collision window");
-
-    // Tension modulation: the attack sounds sharp and relaxes as the string
-    // energy decays. The early window sits where the energy envelope peaks,
-    // and both measurements share the same scan reference so grid quantise
-    // bias cancels in the difference.
-    const double early = measureFrequency(slap.left,
+    const double early = measureFrequency(hard.left,
                                           static_cast<int>(0.05 * sampleRate),
                                           static_cast<int>(0.14 * sampleRate),
                                           sampleRate, midiHz(45));
-    const double late = measureFrequency(slap.left,
+    const double late = measureFrequency(hard.left,
                                          static_cast<int>(1.2 * sampleRate),
                                          static_cast<int>(0.5 * sampleRate),
                                          sampleRate, midiHz(45));
     const double glide = centsBetween(early, late);
-    expect(glide > 1.5,
-           "slap attack does not glide sharp-to-true (measured "
+    expect(glide > 0.4,
+           "a hard attack does not glide sharp-to-true (measured "
                + std::to_string(glide) + " cents)");
-    expect(glide < 80.0, "slap pitch glide is implausibly large");
+    expect(glide < 80.0, "the attack pitch glide is implausibly large");
 }
 
 void testPickupsToneAndModelMorph()
@@ -1478,12 +1623,12 @@ void testPickupsToneAndModelMorph()
     parameters.pickupSelector = PickupSelector::Bridge;
     engine.setParameters(parameters);
     const auto bridge = renderNote(engine, sampleRate, 45, 0.7f,
-                                   Articulation::Downstroke, 0.8);
+                                   PlayStyle::Sustain, 0.8);
 
     parameters.pickupSelector = PickupSelector::Neck;
     engine.setParameters(parameters);
     const auto neck = renderNote(engine, sampleRate, 45, 0.7f,
-                                 Articulation::Downstroke, 0.8);
+                                 PlayStyle::Sustain, 0.8);
 
     const double f0 = midiHz(45);
     // The bridge position senses far less of the fundamental's antinode, so
@@ -1502,7 +1647,7 @@ void testPickupsToneAndModelMorph()
     parameters.toneKnob = 0.05f;
     engine.setParameters(parameters);
     const auto dark = renderNote(engine, sampleRate, 45, 0.7f,
-                                 Articulation::Downstroke, 0.8);
+                                 PlayStyle::Sustain, 0.8);
     const double openRatio = highBandRatio(bridge.left, start, window,
                                            sampleRate, f0);
     const double darkRatio = highBandRatio(dark.left, start, window,
@@ -1520,7 +1665,7 @@ void testPickupsToneAndModelMorph()
     lesPaul.pickNoise = 0.0f;
     engine.setParameters(lesPaul);
     const auto lesPaulRender = renderNote(engine, sampleRate, 45, 0.7f,
-                                          Articulation::Downstroke, 0.8);
+                                          PlayStyle::Sustain, 0.8);
 
     EngineParameters telecaster;
     telecaster.bodyWood = telecaster.bodySize = telecaster.bodyShape = 1.0f;
@@ -1528,7 +1673,7 @@ void testPickupsToneAndModelMorph()
     telecaster.pickNoise = 0.0f;
     engine.setParameters(telecaster);
     const auto telecasterRender = renderNote(engine, sampleRate, 45, 0.7f,
-                                             Articulation::Downstroke, 0.8);
+                                             PlayStyle::Sustain, 0.8);
 
     const double lesPaulCentroid = spectralCentroid(lesPaulRender.left, start,
                                                     window, sampleRate, f0);
@@ -1586,7 +1731,7 @@ void testArtifactsControl()
         parameters.artifactAmount = amount;
         engine.setParameters(parameters);
         return renderNote(engine, sampleRate, 45, 0.95f,
-                          Articulation::Downstroke, 0.75);
+                          PlayStyle::Sustain, 0.75);
     };
 
     const auto clean = renderAt(0.0f);
@@ -1716,16 +1861,16 @@ void testMonoStereoOutputField()
     parameters.outputMode = electry::OutputMode::Mono;
     engine.setParameters(parameters);
     const auto monoLow = renderNote(engine, sampleRate, 28, 0.8f,
-                                    Articulation::Downstroke, 0.65);
+                                    PlayStyle::Sustain, 0.65);
     expect(monoLow.left == monoLow.right,
            "Mono output mode is not exact dual mono");
 
     parameters.outputMode = electry::OutputMode::Stereo;
     engine.setParameters(parameters);
     const auto stereoLow = renderNote(engine, sampleRate, 28, 0.8f,
-                                      Articulation::Downstroke, 0.65);
+                                      PlayStyle::Sustain, 0.65);
     const auto repeatedLow = renderNote(engine, sampleRate, 28, 0.8f,
-                                        Articulation::Downstroke, 0.65);
+                                        PlayStyle::Sustain, 0.65);
     expect(stereoLow.left == repeatedLow.left
                && stereoLow.right == repeatedLow.right,
            "Stereo divided-pickup field is not deterministic");
@@ -1740,7 +1885,7 @@ void testMonoStereoOutputField()
                + std::to_string(lowRight) + ")");
 
     const auto stereoHigh = renderNote(engine, sampleRate, 64, 0.8f,
-                                       Articulation::Downstroke, 0.65);
+                                       PlayStyle::Sustain, 0.65);
     const double highLeft = rmsInRange(stereoHigh.left, start, end);
     const double highRight = rmsInRange(stereoHigh.right, start, end);
     expect(highRight > highLeft * 1.10,
@@ -1795,11 +1940,11 @@ void testVelocityExpression()
     engine.setParameters(parameters);
 
     const auto low = renderNote(engine, sampleRate, 45, 0.2f,
-                                Articulation::Downstroke, 0.55);
+                                PlayStyle::Sustain, 0.55);
     const auto middle = renderNote(engine, sampleRate, 45, 0.6f,
-                                   Articulation::Downstroke, 0.55);
+                                   PlayStyle::Sustain, 0.55);
     const auto high = renderNote(engine, sampleRate, 45, 1.0f,
-                                 Articulation::Downstroke, 0.55);
+                                 PlayStyle::Sustain, 0.55);
     const int attackStart = static_cast<int>(0.004 * sampleRate);
     const int attackEnd = static_cast<int>(0.115 * sampleRate);
     const double lowRms = rmsInRange(low.left, attackStart, attackEnd);
@@ -1824,9 +1969,9 @@ void testVelocityExpression()
     parameters.velocityAmount = 0.0f;
     engine.setParameters(parameters);
     const auto flatLow = renderNote(engine, sampleRate, 45, 0.2f,
-                                    Articulation::Downstroke, 0.30);
+                                    PlayStyle::Sustain, 0.30);
     const auto flatHigh = renderNote(engine, sampleRate, 45, 1.0f,
-                                     Articulation::Downstroke, 0.30);
+                                     PlayStyle::Sustain, 0.30);
     expect(flatLow.left == flatHigh.left && flatLow.right == flatHigh.right,
            "zero velocity response still changes the rendered attack");
 }
@@ -1871,12 +2016,12 @@ void testMaterialAndControlAudibility()
         setAxis(lowParameters, 0.0f);
         engine.setParameters(lowParameters);
         const auto low = renderNote(engine, sampleRate, midiNote, 0.8f,
-                                    Articulation::Downstroke, 0.75);
+                                    PlayStyle::Sustain, 0.75);
         auto highParameters = base;
         setAxis(highParameters, 1.0f);
         engine.setParameters(highParameters);
         const auto high = renderNote(engine, sampleRate, midiNote, 0.8f,
-                                     Articulation::Downstroke, 0.75);
+                                     PlayStyle::Sustain, 0.75);
         return normalisedDifferenceRms(
             low.left, high.left, static_cast<int>(0.035 * sampleRate),
             static_cast<int>(0.60 * sampleRate));
@@ -1918,12 +2063,12 @@ void testMaterialAndControlAudibility()
     noBody.bodyResonance = 0.0f;
     engine.setParameters(noBody);
     const auto dry = renderNote(engine, sampleRate, 45, 0.8f,
-                                Articulation::Downstroke, 0.75);
+                                PlayStyle::Sustain, 0.75);
     auto fullBody = base;
     fullBody.bodyResonance = 1.0f;
     engine.setParameters(fullBody);
     const auto resonant = renderNote(engine, sampleRate, 45, 0.8f,
-                                     Articulation::Downstroke, 0.75);
+                                     PlayStyle::Sustain, 0.75);
     const double bodyDifference = normalisedDifferenceRms(
         dry.left, resonant.left, static_cast<int>(0.035 * sampleRate),
         static_cast<int>(0.60 * sampleRate));
@@ -1939,12 +2084,12 @@ void testMaterialAndControlAudibility()
     fresh.stringAge = 0.0f;
     engine.setParameters(fresh);
     const auto freshRender = renderNote(engine, sampleRate, 45, 0.8f,
-                                        Articulation::Downstroke, 1.3);
+                                        PlayStyle::Sustain, 1.3);
     auto old = fresh;
     old.stringAge = 1.0f;
     engine.setParameters(old);
     const auto oldRender = renderNote(engine, sampleRate, 45, 0.8f,
-                                      Articulation::Downstroke, 1.3);
+                                      PlayStyle::Sustain, 1.3);
     const double freshLate = rmsInRange(
         freshRender.left, static_cast<int>(0.8 * sampleRate),
         static_cast<int>(1.2 * sampleRate));
@@ -1959,12 +2104,12 @@ void testMaterialAndControlAudibility()
     bridgePick.pickPosition = 0.0f;
     engine.setParameters(bridgePick);
     const auto bridgePicked = renderNote(engine, sampleRate, 45, 0.8f,
-                                         Articulation::Downstroke, 0.6);
+                                         PlayStyle::Sustain, 0.6);
     auto neckPick = fresh;
     neckPick.pickPosition = 1.0f;
     engine.setParameters(neckPick);
     const auto neckPicked = renderNote(engine, sampleRate, 45, 0.8f,
-                                       Articulation::Downstroke, 0.6);
+                                       PlayStyle::Sustain, 0.6);
     const double positionDifference = normalisedDifferenceRms(
         bridgePicked.left, neckPicked.left, static_cast<int>(0.005 * sampleRate),
         static_cast<int>(0.40 * sampleRate));
@@ -1976,12 +2121,12 @@ void testMaterialAndControlAudibility()
     soft.pickHardness = 0.0f;
     engine.setParameters(soft);
     const auto softPick = renderNote(engine, sampleRate, 45, 0.8f,
-                                     Articulation::Downstroke, 0.5);
+                                     PlayStyle::Sustain, 0.5);
     auto hard = fresh;
     hard.pickHardness = 1.0f;
     engine.setParameters(hard);
     const auto hardPick = renderNote(engine, sampleRate, 45, 0.8f,
-                                     Articulation::Downstroke, 0.5);
+                                     PlayStyle::Sustain, 0.5);
     const int attackStart = static_cast<int>(0.004 * sampleRate);
     const int attackLength = static_cast<int>(0.10 * sampleRate);
     const double softCentroid = spectralCentroid(
@@ -2026,7 +2171,7 @@ void testNoiseComponentsAndSilence()
     noNoise.releaseNoise = 0.0f;
     engine.setParameters(noNoise);
     const auto clean = renderNote(engine, sampleRate, 45, 0.8f,
-                                  Articulation::Downstroke, 0.9, 0.6);
+                                  PlayStyle::Sustain, 0.9, 0.6);
 
     EngineParameters fullNoise;
     fullNoise.pickNoise = 1.0f;
@@ -2034,7 +2179,7 @@ void testNoiseComponentsAndSilence()
     fullNoise.releaseNoise = 1.0f;
     engine.setParameters(fullNoise);
     const auto noisy = renderNote(engine, sampleRate, 45, 0.8f,
-                                  Articulation::Downstroke, 0.9, 0.6);
+                                  PlayStyle::Sustain, 0.9, 0.6);
 
     // The pick contact lasts about 1.5 ms at the default hardness before the
     // release pulse starts; inside 1.2 ms the noiseless render is silent.
@@ -2054,7 +2199,7 @@ void testNoiseComponentsAndSilence()
     releaseOnly.releaseNoise = 1.0f;
     engine.setParameters(releaseOnly);
     const auto releaseNoisy = renderNote(engine, sampleRate, 45, 0.8f,
-                                         Articulation::Downstroke, 0.9, 0.6);
+                                         PlayStyle::Sustain, 0.9, 0.6);
 
     const int releaseStart = static_cast<int>(0.6 * sampleRate);
     const int releaseEnd = releaseStart + static_cast<int>(0.015 * sampleRate);
@@ -2158,7 +2303,7 @@ void testStringAllocationAndPolyphony()
            "restruck note moved to another string");
 }
 
-void testPitchWheelAndSustainPedal()
+void testSustainPedal()
 {
     constexpr double sampleRate = 48000.0;
     ElectryEngine engine;
@@ -2166,28 +2311,6 @@ void testPitchWheelAndSustainPedal()
     EngineParameters parameters;
     parameters.pickNoise = 0.0f;
     engine.setParameters(parameters);
-    engine.reset();
-
-    engine.noteOn(50, 0.4f);
-    StereoBuffer buffer(static_cast<int>(2.0 * sampleRate));
-    engine.process(buffer.left.data(), buffer.right.data(),
-                   static_cast<int>(0.6 * sampleRate));
-    engine.setPitchBend(1.0f); // +2 semitones
-    engine.process(buffer.left.data() + static_cast<int>(0.6 * sampleRate),
-                   buffer.right.data() + static_cast<int>(0.6 * sampleRate),
-                   buffer.size() - static_cast<int>(0.6 * sampleRate));
-
-    const double before = measureFrequency(buffer.left,
-                                           static_cast<int>(0.2 * sampleRate),
-                                           static_cast<int>(0.35 * sampleRate),
-                                           sampleRate, midiHz(50));
-    const double after = measureFrequency(buffer.left,
-                                          static_cast<int>(1.2 * sampleRate),
-                                          static_cast<int>(0.6 * sampleRate),
-                                          sampleRate, midiHz(52));
-    const double travel = centsBetween(after, before);
-    expect(std::abs(travel - 200.0) < 15.0,
-           "pitch wheel travel measured " + std::to_string(travel) + " cents");
 
     // Sustain pedal keeps a released note ringing.
     engine.reset();
@@ -2241,20 +2364,41 @@ void testParameterSanitisation()
     hostile.sympatheticAmount = std::numeric_limits<float>::quiet_NaN();
     hostile.palmMute = -7.0f;
     hostile.strumSpreadSeconds = std::numeric_limits<float>::infinity();
-    hostile.vibratoDepthCents = std::numeric_limits<float>::quiet_NaN();
+    hostile.resonanceDepth = std::numeric_limits<float>::quiet_NaN();
     hostile.pickupSelector = static_cast<PickupSelector>(999);
     hostile.outputMode = static_cast<electry::OutputMode>(999);
     engine.setParameters(hostile);
 
-    auto buffer = renderNote(engine, sampleRate, 45, 0.9f, Articulation::Slap, 0.6);
+    auto buffer = renderNote(engine, sampleRate, 45, 0.9f, PlayStyle::Sustain,
+                             0.6);
     expect(allFinite(buffer), "hostile parameters produced non-finite audio");
     expect(peakAbs(buffer.left) < 2.1f, "hostile parameters bypassed the guard");
 
     engine.setPitchBend(std::numeric_limits<float>::quiet_NaN());
+    engine.setResonance(std::numeric_limits<float>::quiet_NaN());
     engine.noteOn(45, std::numeric_limits<float>::quiet_NaN());
     StereoBuffer more(static_cast<int>(0.2 * sampleRate));
     renderInto(engine, more);
     expect(allFinite(more), "hostile performance input produced non-finite audio");
+
+    // The acoustic return path must swallow hostile input outright.
+    engine.setResonance(1.0f);
+    engine.setAcousticReturnLevel(std::numeric_limits<float>::quiet_NaN());
+    engine.setAcousticReturnLevel(1.0f);
+    engine.pushAcousticReturn(nullptr, nullptr, 128);
+    std::array<float, 64> poison {};
+    poison.fill(std::numeric_limits<float>::quiet_NaN());
+    engine.pushAcousticReturn(poison.data(), nullptr, -5);
+    engine.pushAcousticReturn(poison.data(), poison.data(),
+                              static_cast<int>(poison.size()));
+    for (int flood = 0; flood < 300; ++flood)
+        engine.pushAcousticReturn(poison.data(), poison.data(),
+                                  static_cast<int>(poison.size()));
+    engine.noteOn(45, 0.9f);
+    StereoBuffer poisoned(static_cast<int>(0.3 * sampleRate));
+    renderInto(engine, poisoned);
+    expect(allFinite(poisoned),
+           "a hostile acoustic return produced non-finite audio");
 }
 
 // ---------------------------------------------------------------------------
@@ -2282,7 +2426,7 @@ void testSympatheticBridgeCoupling()
         parameters.sympatheticAmount = amount;
         engine.setParameters(parameters);
         const auto buffer = renderNote(engine, sampleRate, 45, 0.95f,
-                                       Articulation::Downstroke, 2.6, 0.5);
+                                       PlayStyle::Sustain, 2.6, 0.5);
         expect(allFinite(buffer),
                "sympathetic coupling produced non-finite audio");
         const int start = static_cast<int>(1.4 * sampleRate);
@@ -2302,7 +2446,7 @@ void testSympatheticBridgeCoupling()
     parameters.sympatheticAmount = 0.0f;
     engine.setParameters(parameters);
     auto silentTail = renderNote(engine, sampleRate, 45, 0.95f,
-                                 Articulation::Downstroke, 2.6, 0.5);
+                                 PlayStyle::Sustain, 2.6, 0.5);
     for (int stringIndex = 0; stringIndex < ElectryEngine::stringCount; ++stringIndex)
     {
         const auto snapshot = TestAccess::snapshot(engine, stringIndex);
@@ -2324,9 +2468,9 @@ void testSympatheticBridgeCoupling()
 
     // Determinism, including across engine reuse.
     const auto first = renderNote(engine, sampleRate, 45, 0.8f,
-                                  Articulation::Downstroke, 0.9, 0.4);
+                                  PlayStyle::Sustain, 0.9, 0.4);
     const auto second = renderNote(engine, sampleRate, 45, 0.8f,
-                                   Articulation::Downstroke, 0.9, 0.4);
+                                   PlayStyle::Sustain, 0.9, 0.4);
     expect(first.left == second.left && first.right == second.right,
            "sympathetic coupling is not sample-deterministic");
 
@@ -2419,7 +2563,7 @@ void testPalmMuteContinuum()
         parameters.palmMute = amount;
         engine.setParameters(parameters);
         const auto buffer = renderNote(engine, sampleRate, 45, 0.9f,
-                                       Articulation::Downstroke, 0.9);
+                                       PlayStyle::Sustain, 0.9);
         expect(allFinite(buffer) && peakAbs(buffer.left) < 0.80f,
                "palm mute produced non-finite or unbounded audio at "
                    + std::to_string(amount));
@@ -2442,12 +2586,12 @@ void testPalmMuteContinuum()
     untouched.palmMute = 0.0f;
     engine.setParameters(untouched);
     const auto reference = renderNote(engine, sampleRate, 45, 0.9f,
-                                      Articulation::Downstroke, 0.5);
+                                      PlayStyle::Sustain, 0.5);
     EngineParameters explicitZero = untouched;
     explicitZero.palmMute = 0.0f;
     engine.setParameters(explicitZero);
     const auto atZero = renderNote(engine, sampleRate, 45, 0.9f,
-                                   Articulation::Downstroke, 0.5);
+                                   PlayStyle::Sustain, 0.5);
     expect(reference.left == atZero.left,
            "palm mute at zero is not an exact bypass");
 
@@ -2456,7 +2600,7 @@ void testPalmMuteContinuum()
     parameters.palmMute = 0.45f;
     engine.setParameters(parameters);
     const auto muted = renderNote(engine, sampleRate, 45, 0.9f,
-                                  Articulation::Downstroke, 0.5);
+                                  PlayStyle::Sustain, 0.5);
     const double expectedHz = midiHz(45);
     const double measured = measureFrequency(
         muted.left, static_cast<int>(0.02 * sampleRate),
@@ -2688,63 +2832,237 @@ void testStrumSpread()
 }
 
 // ---------------------------------------------------------------------------
-// Version 1.1: vibrato depth and fret-following pick position
+// CC1 resonance, acoustic feedback, and fret-following pick position
 // ---------------------------------------------------------------------------
 
-void testVibratoDepthAndPickGeometry()
+void testResonanceControlRaisesSympatheticRing()
 {
+    // CC1 lifts the sympathetic coupling from the parameter's base amount
+    // toward total, scaled by the Resonance Depth parameter, and a lowered
+    // wheel is a bit-exact no-op.
     constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
 
-    const auto vibratoExcursion = [&] (float cents)
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    parameters.sympatheticAmount = 0.15f;
+    parameters.resonanceDepth = 1.0f;
+
+    constexpr double openHighE = 329.62756;
+    const auto tailRingAt = [&] (float resonance)
     {
-        ElectryEngine engine;
-        engine.prepare(sampleRate, 512);
-        EngineParameters parameters;
-        parameters.artifactAmount = 0.0f;
-        parameters.sympatheticAmount = 0.0f;
-        parameters.vibratoDepthCents = cents;
         engine.setParameters(parameters);
         engine.reset();
-        engine.setVibratoAmount(1.0f);
-        engine.noteOn(45, 0.35f);
-
-        const int stringIndex = TestAccess::stringForNote(engine, 45);
-        // Let the attack's tension-modulation glide relax first; it moves the
-        // same delay target and would otherwise be measured as vibrato.
-        StereoBuffer settle(static_cast<int>(1.6 * sampleRate));
-        renderInto(engine, settle);
-
-        float lowest = 1.0e9f;
-        float highest = -1.0e9f;
-        StereoBuffer buffer(512);
-        // Roughly two and a half 5.4 Hz cycles, sampled every 10.7 ms, which
-        // is dense enough to land within a few per cent of the extremes.
-        for (int block = 0; block < 44; ++block)
-        {
-            renderInto(engine, buffer, 512);
-            const auto snapshot = TestAccess::snapshot(engine, stringIndex);
-            lowest = std::min(lowest, snapshot.verticalDelayTarget);
-            highest = std::max(highest, snapshot.verticalDelayTarget);
-        }
-        expect(allFinite(settle) && allFinite(buffer),
-               "vibrato produced non-finite audio");
-        return static_cast<double>(highest - lowest);
+        engine.setResonance(resonance);
+        engine.noteOn(45, 0.95f);
+        StereoBuffer body(static_cast<int>(0.5 * sampleRate));
+        renderInto(engine, body);
+        engine.noteOff(45);
+        StereoBuffer tail(static_cast<int>(2.1 * sampleRate));
+        renderInto(engine, tail);
+        expect(allFinite(tail), "the resonance control produced non-finite audio");
+        const int start = static_cast<int>(0.9 * sampleRate);
+        const int length = static_cast<int>(1.0 * sampleRate);
+        return dftMagnitude(tail.left, start, length, sampleRate, openHighE);
     };
 
-    const double none = vibratoExcursion(0.0f);
-    const double standard = vibratoExcursion(35.0f);
-    const double wide = vibratoExcursion(100.0f);
-    // The loop delay is measured on the internal 2x clock, where an A2 period
-    // is about 873 samples, so 35 cents is roughly a 35-sample excursion.
-    expect(none < 1.0, "zero vibrato depth still modulated the loop delay ("
-                           + std::to_string(none) + " samples)");
-    expect(standard > 25.0, "the default vibrato depth is far too shallow ("
-                                + std::to_string(standard) + " samples)");
-    // The delay excursion is proportional to the depth in cents to first order.
-    const double ratio = wide / std::max(standard, 1.0e-9);
-    expect(ratio > 2.4 && ratio < 3.3,
-           "vibrato depth does not scale the pitch excursion ("
-               + std::to_string(ratio) + ")");
+    const double base = tailRingAt(0.0f);
+    const double lifted = tailRingAt(1.0f);
+    expect(lifted > 2.5 * std::max(base, 1.0e-12),
+           "a raised wheel did not deepen the sympathetic ring ("
+               + std::to_string(base) + " -> " + std::to_string(lifted) + ")");
+
+    // Depth scales what the wheel can reach.
+    parameters.resonanceDepth = 0.25f;
+    const double shallow = tailRingAt(1.0f);
+    expect(shallow < lifted * 0.85 && shallow > base * 0.9,
+           "Resonance Depth does not scale the wheel's lift ("
+               + std::to_string(shallow) + " against "
+               + std::to_string(lifted) + " deep, "
+               + std::to_string(base) + " base)");
+
+    // A lowered wheel is exactly the parameter alone, bit for bit - even with
+    // a signal sitting in the acoustic-return ring.
+    parameters.resonanceDepth = 1.0f;
+    engine.setParameters(parameters);
+    const auto renderWheelDown = [&] (bool feedTheRing)
+    {
+        // The wheel is down before the reset, so the smoothed resonance state
+        // starts at zero rather than gliding down from the previous take.
+        engine.setResonance(0.0f);
+        engine.reset();
+        if (feedTheRing)
+        {
+            std::vector<float> loud(2048, 0.5f);
+            engine.pushAcousticReturn(loud.data(), loud.data(),
+                                      static_cast<int>(loud.size()));
+        }
+        engine.noteOn(45, 0.8f);
+        StereoBuffer take(static_cast<int>(0.7 * sampleRate));
+        renderInto(engine, take);
+        return take;
+    };
+    const auto reference = renderWheelDown(false);
+    const auto withWheelDown = renderWheelDown(true);
+    expect(reference.left == withWheelDown.left,
+           "a lowered resonance wheel is not an exact bypass");
+}
+
+void testResonanceFeedbackSelfSustains()
+{
+    // The whole point of the resonance wheel: close the loop the way the
+    // plug-in does - engine into the amplifier chain, the amplified output
+    // pushed back at the strings - and a distorted note at full wheel keeps
+    // itself alive, while the same loop with the wheel down decays, the same
+    // wheel without the amplifier decays, and nothing ever leaves the bounded
+    // range.
+    constexpr double sampleRate = 48000.0;
+    constexpr int blockSize = 512;
+
+    struct LoopResult
+    {
+        double earlyRms { 0.0 };
+        double lateRms { 0.0 };
+        float peak { 0.0f };
+        bool finite { true };
+    };
+
+    const auto runClosedLoop = [&] (float resonance, float distortion,
+                                    float amp, bool palmMuted = false)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, blockSize);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.sympatheticAmount = 0.2f;
+        parameters.resonanceDepth = 1.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.setResonance(resonance);
+        if (palmMuted)
+            engine.noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
+
+        electry::ElectryFx fx;
+        fx.prepare(sampleRate);
+        electry::FxParameters fxParameters;
+        fxParameters.distortion = distortion;
+        fxParameters.amp = amp;
+        fx.setParameters(fxParameters);
+        fx.reset();
+        // What the plug-in shell does: the rig's acoustic loudness in the
+        // room follows the amplifier controls, because the chain itself keeps
+        // its listening level roughly constant.
+        engine.setAcousticReturnLevel(std::min(1.0f, amp + 0.6f * distortion));
+
+        // The note is released early: a released string damps in tens of
+        // milliseconds, so anything still loud seconds later has to be the
+        // feedback loop keeping the instrument alive, exactly like a guitar
+        // left facing its amplifier.
+        engine.noteOn(40, 0.95f); // open E2
+        constexpr double seconds = 5.0;
+        constexpr double releaseAt = 0.75;
+        const int totalBlocks = static_cast<int>(seconds * sampleRate)
+                              / blockSize;
+        std::vector<float> left(blockSize), right(blockSize);
+        LoopResult result;
+        double earlySum = 0.0;
+        double lateSum = 0.0;
+        long earlyCount = 0;
+        long lateCount = 0;
+        bool released = false;
+        for (int block = 0; block < totalBlocks; ++block)
+        {
+            const double blockStart = block * blockSize / sampleRate;
+            // The palm-muted take keeps the note held: the muting hand is on
+            // the strings only while the muted note is, and lifting it under
+            // a raised wheel legitimately lets the howl return.
+            if (! palmMuted && ! released && blockStart >= releaseAt)
+            {
+                engine.noteOff(40);
+                released = true;
+            }
+            engine.process(left.data(), right.data(), blockSize);
+            fx.process(left.data(), right.data(), blockSize);
+            engine.pushAcousticReturn(left.data(), right.data(), blockSize);
+
+            for (int i = 0; i < blockSize; ++i)
+            {
+                const float sample = left[static_cast<std::size_t>(i)];
+                if (! std::isfinite(sample))
+                    result.finite = false;
+                result.peak = std::max(result.peak, std::abs(sample));
+                const double energy = static_cast<double>(sample)
+                                    * static_cast<double>(sample);
+                if (blockStart >= 0.25 && blockStart < 0.65)
+                {
+                    earlySum += energy;
+                    ++earlyCount;
+                }
+                else if (blockStart >= 4.0)
+                {
+                    lateSum += energy;
+                    ++lateCount;
+                }
+            }
+        }
+        result.earlyRms = std::sqrt(earlySum / std::max<long>(earlyCount, 1));
+        result.lateRms = std::sqrt(lateSum / std::max<long>(lateCount, 1));
+        return result;
+    };
+
+    const auto fed = runClosedLoop(1.0f, 0.75f, 0.8f);
+    expect(fed.finite, "the fed-back loop produced non-finite audio");
+    expect(fed.peak < 4.0f, "the fed-back loop escaped its bounded range");
+    expect(fed.lateRms > 0.25 * fed.earlyRms,
+           "full resonance with a distorted amplifier does not self-sustain "
+           "after the key is released ("
+               + std::to_string(decibels(fed.lateRms
+                                         / std::max(fed.earlyRms, 1.0e-15)))
+               + " dB after four seconds)");
+
+    const auto wheelDown = runClosedLoop(0.0f, 0.75f, 0.8f);
+    expect(wheelDown.finite && wheelDown.peak < 4.0f,
+           "the wheel-down loop was not bounded");
+    expect(wheelDown.lateRms < 0.05 * wheelDown.earlyRms,
+           "a released distorted note with the wheel down failed to decay ("
+               + std::to_string(decibels(
+                     wheelDown.lateRms
+                     / std::max(wheelDown.earlyRms, 1.0e-15)))
+               + " dB after four seconds)");
+    expect(fed.lateRms > 4.0 * std::max(wheelDown.lateRms, 1.0e-9),
+           "the wheel makes no difference to the closed distorted loop");
+
+    const auto dry = runClosedLoop(1.0f, 0.0f, 0.0f);
+    expect(dry.finite && dry.peak < 4.0f, "the dry loop was not bounded");
+    expect(dry.lateRms < 0.05 * dry.earlyRms,
+           "full resonance without the amplifier failed to decay ("
+               + std::to_string(decibels(dry.lateRms
+                                         / std::max(dry.earlyRms, 1.0e-15)))
+               + " dB after four seconds)");
+
+    // The muting hand starves the loop: the same full-wheel distorted rig
+    // with the Palm Mute style latched at the default Mute Damp must not
+    // howl. A linear or even squared hand residue measurably regenerated
+    // back to nearly the open level, which is what this pins against.
+    const auto muted = runClosedLoop(1.0f, 0.75f, 0.8f, true);
+    expect(muted.finite && muted.peak < 4.0f,
+           "the palm-muted loop was not bounded");
+    expect(muted.lateRms < 0.1 * fed.lateRms,
+           "a palm-muted passage still howls at full resonance ("
+               + std::to_string(muted.lateRms) + " against fed "
+               + std::to_string(fed.lateRms) + ")");
+}
+
+void testPickGeometryFollowsFret()
+{
+    constexpr double sampleRate = 48000.0;
 
     // The picking hand stays put while the fretting hand moves, so the pluck
     // position as a fraction of the sounding length grows by 2^(fret/12).
@@ -2919,7 +3237,7 @@ void testPalmMuteDoesNotShiftPitch()
             engine.prepare(sampleRate, 512);
             engine.setParameters(parameters);
             auto buffer = renderNote(engine, sampleRate, midiNote, 0.95f,
-                                     Articulation::Downstroke, 0.4);
+                                     PlayStyle::Sustain, 0.4);
             double sum = 0.0;
             for (int i = 0; i < length; ++i)
                 sum += static_cast<double>(buffer.left[start + i])
@@ -2985,9 +3303,7 @@ void testHandDipNeverExpands()
 
     for (const float pressure : { 0.0f, 0.15f, 0.55f, 1.0f })
     {
-        for (const auto articulation : { Articulation::Muted, Articulation::Chug,
-                                         Articulation::DeadNote,
-                                         Articulation::Downstroke })
+        for (const auto playStyle : { PlayStyle::PalmMute, PlayStyle::Sustain })
         {
             for (const float muteDamping : { 0.0f, 0.55f, 1.0f })
             {
@@ -3011,8 +3327,7 @@ void testHandDipNeverExpands()
                 for (const int ageBlocks : { 0, 4, 45 })
                 {
                     engine.allNotesOff();
-                    engine.noteOn(ElectryEngine::firstKeyswitchNote
-                                      + static_cast<int>(articulation), 1.0f);
+                    engine.noteOn(styleKeyswitch(playStyle), 1.0f);
                     engine.noteOn(note, 0.9f);
 
                     // Sampled at several ages, not just after the first block.
@@ -3146,9 +3461,9 @@ void testLowRegisterFundamentalWeight()
     const int window = static_cast<int>(0.25 * sampleRate);
 
     const auto open = renderNote(engine, sampleRate, 40, 0.9f,
-                                 Articulation::Downstroke, 1.2);
+                                 PlayStyle::Sustain, 1.2);
     const auto muted = renderNote(engine, sampleRate, 40, 0.9f,
-                                  Articulation::Muted, 1.2);
+                                  PlayStyle::PalmMute, 1.2);
 
     const double openFundamental = bandFraction(open.left, 0, window, lowE,
                                                 0.0, 1.6 * lowE);
@@ -3188,7 +3503,7 @@ void testLowRegisterFundamentalWeight()
     neckEngine.prepare(sampleRate, 512);
     neckEngine.setParameters(neckParameters);
     const auto neck = renderNote(neckEngine, sampleRate, 40, 0.9f,
-                                 Articulation::Downstroke, 1.2);
+                                 PlayStyle::Sustain, 1.2);
     const double neckFundamental = bandFraction(neck.left, 0, window, lowE,
                                                 0.0, 1.6 * lowE);
     expect(neckFundamental > openFundamental,
@@ -3291,15 +3606,17 @@ void testVisualStateAndGeometry()
             state.sympathetic = (fret % 2) == 0;
             state.releasing = (note % 3) == 0;
             state.level = 0.5f;
-            state.articulation = static_cast<Articulation>(
-                (note + 1) % ElectryEngine::keyswitchCount);
+            state.playStyle = static_cast<PlayStyle>(
+                (note + 1) % ElectryEngine::playStyleKeyswitchCount);
+            state.strokeUp = (note % 5) == 0;
             const auto round = visuals::unpackStringVisual(
                 visuals::packStringVisual(state));
             expect(round.midiNote == state.midiNote && round.fret == state.fret
                        && round.sounding == state.sounding
                        && round.sympathetic == state.sympathetic
                        && round.releasing == state.releasing
-                       && round.articulation == state.articulation
+                       && round.playStyle == state.playStyle
+                       && round.strokeUp == state.strokeUp
                        && std::abs(round.level - state.level) < 0.005f,
                    "packed string state did not survive a round trip");
         }
@@ -3313,19 +3630,20 @@ void testVisualStateAndGeometry()
     parameters.sympatheticAmount = 0.8f;
     engine.setParameters(parameters);
     engine.reset();
-    engine.noteOn(ElectryEngine::firstKeyswitchNote
-                      + static_cast<int>(Articulation::Chug), 1.0f);
+    engine.noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
+    engine.noteOn(pickKeyswitch(PickStyle::Up), 1.0f);
     engine.noteOn(45, 0.95f);
-    // A chug's decay target is tens of milliseconds, so the readout has to be
-    // sampled while the note is genuinely sounding: a quarter of a second in,
-    // the string is below -90 dBFS and the voice has correctly retired.
+    // A firm mute's decay target is short, so the readout has to be sampled
+    // while the note is genuinely sounding: a quarter of a second in, the
+    // string is far down and the voice may have correctly retired.
     StereoBuffer buffer(static_cast<int>(0.10 * sampleRate));
     renderInto(engine, buffer);
 
     std::array<electry::StringVisualState, ElectryEngine::stringCount> visual {};
     engine.getStringVisualState(visual);
     expect(visual[3].sounding && visual[3].midiNote == 45 && visual[3].fret == 0
-               && visual[3].articulation == Articulation::Chug,
+               && visual[3].playStyle == PlayStyle::PalmMute
+               && visual[3].strokeUp,
            "the display readout did not identify the played open A string");
     expect(visual[3].level > 0.0f, "a struck string reported no display level");
     expect(! visual[0].sounding, "an unplayed string reported a played note");
@@ -3587,6 +3905,28 @@ void testCpuGuardrail()
            "the default configuration is not measurably cheaper than the "
            "worst case (" + std::to_string(defaultCase) + "x vs "
                + std::to_string(worstCase) + "x)");
+
+    // A full-throw wheel glide on the same chord must not be a hidden second
+    // worst case. Re-fitting the dispersion grid on every control tick of the
+    // glide once cost several times the settled render - beyond realtime on
+    // this configuration - which the settled measurements above cannot see.
+    double glideCase = 1.0e9;
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        ElectryEngine glideEngine;
+        strike (glideEngine, PickupSelector::Both, electry::OutputMode::Stereo);
+        glideEngine.setPitchBend (1.0f);
+        glideCase = std::min (glideCase, timeRender (glideEngine));
+    }
+    std::cout << "Eight-string wheel-glide CPU ratio at 96 kHz: " << glideCase
+              << "x\n";
+    expect(glideCase < ceiling,
+           "a bent eight-string chord exceeded the portable CPU ceiling ("
+               + std::to_string(glideCase) + "x)");
+    expect(glideCase < worstCase * 2.0,
+           "the wheel glide costs far more than the settled worst case ("
+               + std::to_string(glideCase) + "x vs "
+               + std::to_string(worstCase) + "x)");
 }
 
 } // namespace
@@ -3602,10 +3942,12 @@ int main()
     testKeyswitchesSelectStylesSilently();
     testAlternateStrokeSequence();
     testArticulationsSoundDistinct();
-    testExtendedPlayStyles();
-    testBendPrograms();
+    testStyleAndStrokeCombinations();
+    testPitchWheelPerStringSensitivity();
+    testPitchWheelGlideFollowsBendTime();
+    testPitchWheelBendsSympatheticStrings();
     testHammerOnLegatoContinuity();
-    testSlapCollisionAndTensionGlide();
+    testTensionGlide();
     testPickupsToneAndModelMorph();
     testArtifactsControl();
     testAdvancedDispersionAndBodyConductance();
@@ -3616,11 +3958,13 @@ int main()
     testMaterialAndControlAudibility();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
-    testPitchWheelAndSustainPedal();
+    testSustainPedal();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();
     testStrumSpread();
-    testVibratoDepthAndPickGeometry();
+    testResonanceControlRaisesSympatheticRing();
+    testResonanceFeedbackSelfSustains();
+    testPickGeometryFollowsFret();
     testPickContactGeometry();
     testPalmMuteDoesNotShiftPitch();
     testHandDipNeverExpands();

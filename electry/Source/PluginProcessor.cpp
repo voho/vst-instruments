@@ -40,6 +40,12 @@ juce::String timeText (float value, int)
     return juce::String (value, 2) + " s";
 }
 
+// For parameters whose plain value already spans 0..100.
+juce::String percentText100 (float value, int)
+{
+    return juce::String (juce::roundToInt (value)) + "%";
+}
+
 float timeValue (const juce::String& text)
 {
     const auto value = text.retainCharacters ("0123456789.-").getFloatValue();
@@ -155,7 +161,7 @@ ElectryAudioProcessor::ElectryAudioProcessor()
     parameterPointers.sympathetic    = parameters.getRawParameterValue (sympathetic);
     parameterPointers.palmMute       = parameters.getRawParameterValue (palmMute);
     parameterPointers.strumSpread    = parameters.getRawParameterValue (strumSpread);
-    parameterPointers.vibratoDepth   = parameters.getRawParameterValue (vibratoDepth);
+    parameterPointers.resonanceDepth = parameters.getRawParameterValue (resonanceDepth);
 
     jassert (parameterPointers.pickupSelector != nullptr
              && parameterPointers.pickupType != nullptr
@@ -169,7 +175,7 @@ ElectryAudioProcessor::ElectryAudioProcessor()
              && parameterPointers.sympathetic != nullptr
              && parameterPointers.palmMute != nullptr
              && parameterPointers.strumSpread != nullptr
-             && parameterPointers.vibratoDepth != nullptr);
+             && parameterPointers.resonanceDepth != nullptr);
     keyboardState.addListener (this);
 }
 
@@ -305,16 +311,14 @@ ElectryAudioProcessor::createParameterLayout()
                           return juce::String (value, 1) + " ms/string";
                       })
                   .withValueFromStringFunction (plainNumericValue));
-    addFloat (vibratoDepth, "Vibrato depth", { 0.0f, 100.0f, 1.0f },
-              engineDefaults.vibratoDepthCents,
+    // The 1.2 resonance control lives in the slot the 1.1 vibrato depth used
+    // (same stored ID and 0..100 range), so a saved session's value carries
+    // over as a sensible resonance depth and every automation index is kept.
+    addFloat (resonanceDepth, "Resonance depth", { 0.0f, 100.0f, 1.0f },
+              100.0f * engineDefaults.resonanceDepth,
               juce::AudioParameterFloatAttributes()
-                  .withLabel ("cents")
-                  .withStringFromValueFunction (
-                      [] (float value, int)
-                      {
-                          return juce::String (juce::roundToInt (value))
-                               + " cents";
-                      })
+                  .withLabel ("%")
+                  .withStringFromValueFunction (percentText100)
                   .withValueFromStringFunction (plainNumericValue));
 
     return { result.begin(), result.end() };
@@ -328,7 +332,7 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     engine.reset();
     engine.setPitchBend (0.0f);
     engine.setSustainPedal (false);
-    engine.setVibratoAmount (0.0f);
+    engine.setResonance (0.0f);
     engine.setPalmMutePressure (0.0f);
     effects.prepare (sampleRate);
     updateEffectParameters();
@@ -338,8 +342,10 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     displaySampleRate.store (sampleRate, std::memory_order_relaxed);
     activeVoiceCount.store (0, std::memory_order_relaxed);
     sympatheticStringCount.store (0, std::memory_order_relaxed);
-    articulationIndex.store (
-        static_cast<int> (engine.getCurrentArticulation()), std::memory_order_relaxed);
+    pickStyleIndex.store (
+        static_cast<int> (engine.getCurrentPickStyle()), std::memory_order_relaxed);
+    playStyleIndex.store (
+        static_cast<int> (engine.getCurrentPlayStyle()), std::memory_order_relaxed);
     publishStringVisualState();
     engineReady.store (true, std::memory_order_release);
 }
@@ -349,6 +355,7 @@ void ElectryAudioProcessor::releaseResources()
     engineReady.store (false, std::memory_order_release);
     engine.setPitchBend (0.0f);
     engine.setSustainPedal (false);
+    engine.setResonance (0.0f);
     engine.setPalmMutePressure (0.0f);
     engine.allNotesOff();
     engine.reset();
@@ -417,11 +424,19 @@ void ElectryAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     effects.process (buffer.getWritePointer (0), buffer.getWritePointer (1),
                      numSamples);
 
+    // The amplified output is what the loudspeaker plays back at the guitar;
+    // the engine consumes it next block, which gives the resonance feedback
+    // loop the acoustic latency a real speaker-to-string path has.
+    engine.pushAcousticReturn (buffer.getReadPointer (0),
+                               buffer.getReadPointer (1), numSamples);
+
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
     sympatheticStringCount.store (engine.getSympatheticStringCount(),
                                   std::memory_order_relaxed);
-    articulationIndex.store (
-        static_cast<int> (engine.getCurrentArticulation()), std::memory_order_relaxed);
+    pickStyleIndex.store (
+        static_cast<int> (engine.getCurrentPickStyle()), std::memory_order_relaxed);
+    playStyleIndex.store (
+        static_cast<int> (engine.getCurrentPlayStyle()), std::memory_order_relaxed);
     publishStringVisualState();
 }
 
@@ -452,7 +467,12 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
         if (controller == 64u)
             engine.setSustainPedal (controllerValue >= 64u);
         else if (controller == 1u)
-            engine.setVibratoAmount (static_cast<float> (controllerValue) / 127.0f);
+        {
+            // The modulation wheel is the performance resonance: it lifts the
+            // sympathetic coupling toward total and opens the acoustic
+            // feedback path, so a distorted tone can be played into a howl.
+            engine.setResonance (static_cast<float> (controllerValue) / 127.0f);
+        }
         else if (controller == 2u)
         {
             // Breath/CC2 is the performable side of the Palm Mute parameter:
@@ -463,7 +483,7 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
         else if (controller == 121u)
         {
             engine.setPitchBend (0.0f);
-            engine.setVibratoAmount (0.0f);
+            engine.setResonance (0.0f);
             engine.setPalmMutePressure (0.0f);
             engine.setSustainPedal (false);
         }
@@ -520,7 +540,7 @@ void ElectryAudioProcessor::updateEngineParameters() noexcept
     next.sympatheticAmount = valueOf (parameterPointers.sympathetic);
     next.palmMute = valueOf (parameterPointers.palmMute);
     next.strumSpreadSeconds = 0.001f * valueOf (parameterPointers.strumSpread);
-    next.vibratoDepthCents = valueOf (parameterPointers.vibratoDepth);
+    next.resonanceDepth = 0.01f * valueOf (parameterPointers.resonanceDepth);
     const auto mode = juce::jlimit (0, 1,
         juce::roundToInt (valueOf (parameterPointers.outputMode)));
     next.outputMode = static_cast<electry::OutputMode> (mode);
@@ -536,6 +556,13 @@ void ElectryAudioProcessor::updateEffectParameters() noexcept
     next.delay = valueOf (parameterPointers.delay);
     next.room = valueOf (parameterPointers.room);
     effects.setParameters (next);
+
+    // How loud the rig actually is in the room. The chain manages its own
+    // listening level, but acoustically a cranked amplifier is deafening
+    // while a clean DI is not in the room at all - and that level is what
+    // decides whether the resonance wheel can push the strings into feedback.
+    engine.setAcousticReturnLevel (
+        juce::jmin (1.0f, next.amp + 0.6f * next.distortion));
 }
 
 void ElectryAudioProcessor::publishStringVisualState() noexcept

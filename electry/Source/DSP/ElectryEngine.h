@@ -8,25 +8,26 @@
 namespace electry
 {
 
-// Play styles selected with keyswitch notes below the playable range.
-enum class Articulation
+// How the plectrum moves. Latched by its own keyswitch bank, independently of
+// the play style, so any stroke can drive any style. Alternate resolves to a
+// concrete Down/Up stroke per accepted note-on.
+enum class PickStyle
 {
-    Downstroke,
-    Upstroke,
-    AlternateStroke,
-    HammerOn,
-    Tap,
-    Muted,
-    Chug,
-    DeadNote,
-    NaturalHarmonic,
-    PinchHarmonic,
-    Tremolo,
-    Bend1Up,
-    Bend2Up,
-    Bend1Down,
-    Bend2Down,
-    Slap
+    Down,
+    Up,
+    Alternate
+};
+
+// What the hands do to the string: the sustained default, the bridge-hand
+// palm mute, the fretting-hand legato (hammer-on / pull-off), or the natural
+// harmonic touch. Latched by its own keyswitch bank, independently of the
+// picking style.
+enum class PlayStyle
+{
+    Sustain,
+    PalmMute,
+    Hammer,
+    Harmonics
 };
 
 enum class PickupSelector { Neck, Both, Bridge };
@@ -82,8 +83,11 @@ struct EngineParameters
     // Per-string offset of a strummed chord, in seconds of pick travel per
     // string crossed. 0 keeps simultaneous note-ons exactly simultaneous.
     float strumSpreadSeconds { 0.0f };
-    // Full-scale depth of the CC1 performance vibrato, in cents.
-    float vibratoDepthCents { 35.0f };
+    // Full-scale depth of the CC1 resonance control: how far a fully raised
+    // modulation wheel can push the sympathetic coupling toward total and how
+    // much amplified output is allowed to feed back into the strings. At 1 a
+    // raised wheel lets a distorted tone self-resonate; at 0 CC1 does nothing.
+    float resonanceDepth { 0.35f };
 };
 
 // Per-string readout for the editor's fretboard display. It is produced on
@@ -97,7 +101,8 @@ struct StringVisualState
     int midiNote { -1 };          // sounding note, or -1
     int fret { -1 };              // stopped fret, or -1
     float level { 0.0f };         // 0..1 ballistic display level
-    Articulation articulation { Articulation::Downstroke };
+    PlayStyle playStyle { PlayStyle::Sustain };
+    bool strokeUp { false };      // the resolved stroke that started the note
 };
 
 class ElectryEngine
@@ -108,19 +113,29 @@ public:
     static constexpr int stringCount = 8;
     static constexpr int fretCount = 22;
 
-    // Keyswitches occupy one contiguous group below the playable range:
-    // 12 (C0) through 27 (D#1), in Articulation enum order.
+    // Keyswitches occupy one contiguous group below the playable range,
+    // starting at 12 (C0): first the picking-style bank (Down/Up/Alternate),
+    // then the play-style bank (Sustain/PalmMute/Hammer/Harmonics). The two
+    // banks latch independently, so any of the twelve combinations can be
+    // reached in two keyswitches at most. Notes between the banks and the
+    // playable range (19..27) are ignored.
     static constexpr int firstKeyswitchNote = 12;
-    static constexpr int keyswitchCount = static_cast<int>(Articulation::Slap) + 1;
+    static constexpr int pickStyleKeyswitchCount
+        = static_cast<int>(PickStyle::Alternate) + 1;
+    static constexpr int playStyleKeyswitchCount
+        = static_cast<int>(PlayStyle::Harmonics) + 1;
+    static constexpr int keyswitchCount = pickStyleKeyswitchCount
+                                        + playStyleKeyswitchCount;
+    static constexpr int firstPlayStyleKeyswitchNote
+        = firstKeyswitchNote + pickStyleKeyswitchCount;
     // Drop-E eight-string, 22-fret instrument: open low E1 to fret 22 on E4.
     static constexpr int lowestPlayableNote = 28;
     static constexpr int highestPlayableNote = 86;
 
-    static_assert(firstKeyswitchNote + keyswitchCount == lowestPlayableNote,
-                  "keyswitches must end immediately below the playable range");
-    static_assert(keyswitchCount == 16, "every articulation needs one keyswitch");
-    static_assert(static_cast<int>(Articulation::Slap) + 1 == keyswitchCount,
-                  "keyswitch count must match the Articulation enum");
+    static_assert(keyswitchCount == 7,
+                  "three picking styles and four play styles need one keyswitch each");
+    static_assert(firstKeyswitchNote + keyswitchCount <= lowestPlayableNote,
+                  "keyswitches must not overlap the playable range");
 
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
@@ -128,13 +143,36 @@ public:
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
     void allNotesOff();
+    // The pitch wheel bends every string - fingered and sympathetically
+    // ringing alike - over a nominal -2..+2 semitone range, like a vibrato
+    // bar. Each string follows with its own physically derived sensitivity
+    // (elastic core stiffness against tension), and the strings travel to the
+    // new pitch over the Bend Time parameter rather than jumping.
     void setPitchBend(float normalisedBipolar) noexcept;
-    // MIDI CC1 controls a performance vibrato (0 = still, 1 = wide).
-    void setVibratoAmount(float normalised) noexcept;
+    // MIDI CC1 controls the performance resonance (0 = the Sympathetic Ring
+    // parameter alone, 1 = full bridge coupling plus acoustic feedback from
+    // the amplified output, scaled by the Resonance Depth parameter).
+    void setResonance(float normalised) noexcept;
     // MIDI CC2 adds continuous bridge-hand damping on top of the Palm Mute
     // parameter, so a phrase can be muted and opened without automation.
     void setPalmMutePressure(float normalised) noexcept;
     void setSustainPedal(bool down) noexcept;
+    // The acoustic return path: what the loudspeaker is playing back at the
+    // guitar, typically the previous block of the amplified output. The
+    // engine keeps its own bounded copy, so the pointers only need to stay
+    // valid for this call. With the resonance control at zero the stored
+    // signal is never injected and the engine is bit-exact to one that was
+    // never fed.
+    void pushAcousticReturn(const float* left, const float* right,
+                            int numSamples) noexcept;
+    // How loud the returned signal actually is in the room, 0..1. The
+    // amplifier chain manages its own listening level - a saturating stage is
+    // only a few decibels louder than the dry DI - but in the room a cranked
+    // amplifier is deafening while a DI is not audible at all, and it is that
+    // acoustic level that decides whether the strings can regenerate. The
+    // host derives this from its amplifier and distortion controls; at zero
+    // the feedback path is exactly closed, so a dry instrument never howls.
+    void setAcousticReturnLevel(float normalised) noexcept;
     void process(float* left, float* right, int numSamples);
 
     // Snapshot of the eight physical strings for the editor's fretboard.
@@ -144,9 +182,13 @@ public:
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
     // Strings ringing purely through the sympathetic bridge coupling.
     [[nodiscard]] int getSympatheticStringCount() const noexcept;
-    [[nodiscard]] Articulation getCurrentArticulation() const noexcept
+    [[nodiscard]] PickStyle getCurrentPickStyle() const noexcept
     {
-        return articulation_;
+        return pickStyle_;
+    }
+    [[nodiscard]] PlayStyle getCurrentPlayStyle() const noexcept
+    {
+        return playStyle_;
     }
     [[nodiscard]] static bool isKeyswitchNote(int midiNote) noexcept
     {
@@ -480,7 +522,10 @@ private:
         int stringIndex { 0 };
         int midiNote { -1 };
         int fret { 0 };
-        Articulation articulation { Articulation::Downstroke };
+        PlayStyle playStyle { PlayStyle::Sustain };
+        // The concrete stroke this note was picked with, resolved from the
+        // latched PickStyle (Alternate resolves per note).
+        bool strokeIsUp { false };
         float velocity { 0.0f };
         VelocityProfile velocityProfile {};
         std::uint64_t startOrder { 0 };
@@ -493,19 +538,20 @@ private:
         // filter phase compensation so the tension-modulation factor can be
         // applied cheaply every control tick.
         float baseFrequency { 110.0f };
+        // The pitch the dispersion grid search was last fitted at; the fit is
+        // quantised to a few cents so a wheel glide does not re-run it on
+        // every control tick.
         float lastConfiguredSemitones { -999.0f };
         float lastConfiguredFrequency { -1.0f };
+        // The pitch the analytic phase compensation was last evaluated at;
+        // this one tracks every sub-cent move so tuning stays exact.
+        float lastCompensatedSemitones { -999.0f };
         // Set whenever the loop filters move without the pitch moving, so the
         // analytic phase compensation is refreshed without paying for the
         // expensive dispersion grid search again.
         bool compensationDirty { true };
         float compensatedPeriodVertical { 100.0f };
         float compensatedPeriodHorizontal { 100.0f };
-        float bendStartSemitones { 0.0f };
-        float bendTargetSemitones { 0.0f };
-        float bendProgress { 1.0f };
-        float bendIncrement { 0.0f };
-        int bendHoldSamples { 0 };
         float legatoFromFrequency { 0.0f };
         float legatoBlend { 1.0f };
         float legatoIncrement { 0.0f };
@@ -578,10 +624,6 @@ private:
         OnePole noiseShaper {};
         float noiseBandState { 0.0f };
 
-        // Fret-collision window used by the Slap style.
-        int collisionRemaining { 0 };
-        float collisionThreshold { 1.0f };
-
         // Optional deterministic imperfections. A separate PRNG guarantees
         // that the Artifacts control never changes the ordinary pick/finger
         // noise sequence. The modal rattle is excited only by real attacks or
@@ -595,13 +637,6 @@ private:
         float artifactClearance { 1.0f };
         std::uint32_t artifactCollisionCount { 0 };
         ModalResonator saddleRattle {};
-
-        // Tremolo picking repeatedly excites one held physical string. The
-        // direction flips on every scheduled stroke without changing the
-        // latched Tremolo articulation reported to the host/UI.
-        int tremoloSamplesUntilRetrigger { 0 };
-        std::uint32_t tremoloRetriggerCount { 0 };
-        bool tremoloStrokeIsUp { false };
 
         // Damping ramp applied by note release and palm muting.
         float releaseGain { 1.0f };
@@ -708,6 +743,11 @@ private:
     // Per-string magnetic balance. It depends only on the string, so it is
     // solved once instead of inside the sample loop.
     static float stringFluxScale(int stringIndex) noexcept;
+    // How far the wheel's nominal bend reaches on each string. A bar changes
+    // every string's tension by stretching it, and the pitch that change buys
+    // follows the string's elastic core stiffness against its tension, so the
+    // strings do not move by equal semitones. Depends only on the string set.
+    static float bendSensitivity(int stringIndex) noexcept;
 
     [[nodiscard]] VelocityProfile makeVelocityProfile(float velocity) const noexcept;
 
@@ -715,25 +755,28 @@ private:
     void configureVoiceDamping(Voice& voice) noexcept;
     void configureVoicePickups(Voice& voice) noexcept;
     void configureSympatheticString(Voice& voice) noexcept;
-    void updateArticulationWeights(Voice& voice) noexcept;
+    void updateStyleWeights(Voice& voice) noexcept;
     void refreshVoicingIfNeeded() noexcept;
     void configureBody() noexcept;
     void configurePickupFilters() noexcept;
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
     void startVoice(Voice& voice, int midiNote, float velocity,
-                    Articulation articulation, int startDelaySamples) noexcept;
+                    PlayStyle playStyle, bool strokeIsUp,
+                    int startDelaySamples) noexcept;
     void legatoRetarget(Voice& voice, int midiNote, float velocity) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
     void silenceVoice(Voice& voice) noexcept;
-    int chooseString(int midiNote, Articulation articulation) const noexcept;
+    int chooseString(int midiNote, PlayStyle playStyle) const noexcept;
     [[nodiscard]] float currentSoundingSemitoneOffset(const Voice& voice) const noexcept;
     void updateVoiceControl(Voice& voice) noexcept;
     void renderVoice(Voice& voice, RenderSums& sums) noexcept;
     void renderSympatheticString(Voice& voice, RenderSums& sums,
                                  float drive) noexcept;
     void freezeSharedPath() noexcept;
-    [[nodiscard]] StereoSample renderInternalSample() noexcept;
+    // `acousticIn` is the loudspeaker signal reaching the strings this
+    // internal sample; zero whenever the resonance feedback path is closed.
+    [[nodiscard]] StereoSample renderInternalSample(float acousticIn) noexcept;
     void updateActiveVoiceCount() noexcept;
     [[nodiscard]] float deadSpotFactor(int stringIndex, int fret) const noexcept;
     [[nodiscard]] float scaleLengthMetres() const noexcept;
@@ -746,18 +789,26 @@ private:
     float inverseSampleRate_ { 1.0f / 48000.0f };
     int oversamplingFactor_ { 1 };
     bool prepared_ { false };
-    Articulation articulation_ { Articulation::Downstroke };
+    PickStyle pickStyle_ { PickStyle::Down };
+    PlayStyle playStyle_ { PlayStyle::Sustain };
     bool alternateNextStrokeIsUp_ { false };
     std::uint64_t noteSequence_ { 0 };
     int activeVoiceCount_ { 0 };
     int sympatheticStringCount_ { 0 };
     int controlCountdown_ { 0 };
+    // The wheel's nominal semitone target and the glided position the strings
+    // have actually reached. The glide time constant follows the Bend Time
+    // parameter, so the wheel bends like a hand rather than snapping.
     float pitchBendTarget_ { 0.0f };
     float pitchBendSemitones_ { 0.0f };
-    float vibratoTarget_ { 0.0f };
-    float vibratoAmount_ { 0.0f };
-    float vibratoPhase_ { 0.0f };
-    float vibratoDepthSemitones_ { 0.35f };
+    float bendGlideCoefficient_ { 0.05f };
+    float appliedBendGlideSeconds_ { -1.0f };
+    // The wheel position the sympathetic strings were last retuned to.
+    float sympatheticAppliedBend_ { 0.0f };
+    // CC1 performance resonance and the acoustic feedback path it opens.
+    float resonanceTarget_ { 0.0f };
+    float resonanceAmount_ { 0.0f };
+    float resonanceCoefficient_ { 0.12f };
     bool sustainPedalDown_ { false };
 
     // Strum travel. The engine clock is the internal (oversampled) sample
@@ -788,6 +839,29 @@ private:
     float sympatheticHandGainTarget_ { 1.0f };
     float sympatheticHandMute_ { -1.0f };
     bool sympatheticActive_ { false };
+
+    // Acoustic feedback from the amplified output back into the strings. The
+    // host pushes its previous processed block through pushAcousticReturn();
+    // the ring holds a bounded mono copy that process() consumes one host
+    // sample at a time, which gives the loop the one-block latency a real
+    // speaker-to-string air path has. With the resonance control at zero the
+    // gain is exactly zero and nothing stored here is ever injected.
+    static constexpr int feedbackRingSize = 8192;
+    std::array<float, feedbackRingSize> feedbackRing_ {};
+    int feedbackWriteIndex_ { 0 };
+    int feedbackReadIndex_ { 0 };
+    int feedbackAvailable_ { 0 };
+    float feedbackCurrent_ { 0.0f };
+    float feedbackPrevious_ { 0.0f };
+    float feedbackGain_ { 0.0f };
+    // The rig's acoustic loudness, set by the host from its amplifier
+    // controls and smoothed at the control tick.
+    float returnLevelTarget_ { 0.0f };
+    float returnLevel_ { 0.0f };
+    // The bounded drive injected into the strings this internal sample, and
+    // its hand-starved copy for the sympathetic loops.
+    float feedbackDrive_ { 0.0f };
+    float feedbackHandScale_ { 1.0f };
 
     std::array<Voice, stringCount> voices_ {};
 
@@ -839,8 +913,6 @@ private:
     float retireAttackCoefficient_ { 0.01f };
     float retireReleaseCoefficient_ { 0.0009f };
     float artifactBandCoefficient_ { 0.12f };
-    float pitchBendCoefficient_ { 0.35f };
-    float vibratoCoefficient_ { 0.12f };
     float sympatheticEnergyCoefficient_ { 0.002f };
     float displayLevelAttack_ { 0.5f };
     float displayLevelRelease_ { 0.08f };
