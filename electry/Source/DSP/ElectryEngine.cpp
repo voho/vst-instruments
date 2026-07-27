@@ -199,6 +199,8 @@ void ElectryEngine::PolarisationLoop::clear() noexcept
     writeIndex = 0;
     damping.reset();
     handDip.reset();
+    handEnvelope = 0.0f;
+    handEnvelopePeak = 0.0f;
     dispersion1.reset();
     dispersion2.reset();
     dispersion3.reset();
@@ -368,6 +370,38 @@ float ElectryEngine::onePolePhaseDelay(float coefficient, float omega) noexcept
 // back to one at Nyquist. That bound is why it is safe in a feedback loop at any
 // depth - the section can only ever remove energy - and it is asserted over the
 // whole shipped parameter range by testHandDipNeverExpands.
+static void rbjDip(float depth, float fullDepthDb, float omega, float q,
+                   double& b0, double& b1, double& b2,
+                   double& a1, double& a2) noexcept
+{
+    b0 = 1.0;
+    b1 = b2 = a1 = a2 = 0.0;
+    if (depth <= 0.0f || fullDepthDb <= 0.0f || omega <= 0.0f)
+        return;
+    const double gainDb = -(double) depth * (double) fullDepthDb;
+    const double a = std::pow(10.0, gainDb / 40.0);
+    const double w = omega;
+    const double alpha = std::sin(w) / (2.0 * std::max((double) q, 0.05));
+    const double a0 = 1.0 + alpha / a;
+    if (a0 < 1.0e-12)
+        return;
+    const double inv = 1.0 / a0;
+    const double cosw = std::cos(w);
+    double nb0 = (1.0 + alpha * a) * inv;
+    double nb1 = (-2.0 * cosw) * inv;
+    double nb2 = (1.0 - alpha * a) * inv;
+    const double na1 = (-2.0 * cosw) * inv;
+    const double na2 = (1.0 - alpha / a) * inv;
+    const double sumB = nb0 + nb1 + nb2;
+    const double sumA = 1.0 + na1 + na2;
+    if (std::fabs(sumB) > 1.0e-30 && sumA > 0.0)
+    {
+        const double correction = sumA / sumB;
+        nb0 *= correction; nb1 *= correction; nb2 *= correction;
+    }
+    b0 = nb0; b1 = nb1; b2 = nb2; a1 = na1; a2 = na2;
+}
+
 void ElectryEngine::handDipCoefficients(float depth, const HandLossShape& shape,
                                         double& b0, double& b1, double& b2,
                                         double& a1, double& a2) noexcept
@@ -454,6 +488,23 @@ void ElectryEngine::handLossResponse(float depth, const HandLossShape& shape,
         return;
     magnitude *= (float) std::sqrt((nr * nr + ni * ni) / dn);
     phase += (float) (std::atan2(ni, nr) - std::atan2(di, dr));
+
+}
+
+// One place that pushes a depth into both bands, so the note-on solve and the
+// per-control-period modulation of the dynamic models cannot diverge.
+void ElectryEngine::applyDipDepth(PolarisationLoop& loop, float depth) noexcept
+{
+    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+    handDipCoefficients(depth, loop.handLossShape, b0, b1, b2, a1, a2);
+    loop.handDip.b0 = b0; loop.handDip.b1 = b1; loop.handDip.b2 = b2;
+    loop.handDip.a1 = a1; loop.handDip.a2 = a2;
+    const bool active = b1 != 0.0 || b2 != 0.0 || a1 != 0.0 || a2 != 0.0;
+    if (! active)
+        loop.handDip.reset();
+    loop.handDipActive = active;
+
+    loop.handLossDepth = depth;
 }
 
 float ElectryEngine::allpassPhaseDelay(float coefficient, float omega) noexcept
@@ -1282,18 +1333,8 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
             depth = lowDepth;
         }
 
-        loop.handLossDepth = depth;
-        double dipB0 = 1.0, dipB1 = 0.0, dipB2 = 0.0, dipA1 = 0.0, dipA2 = 0.0;
-        handDipCoefficients(depth, shape, dipB0, dipB1, dipB2, dipA1, dipA2);
-        loop.handDip.b0 = dipB0;
-        loop.handDip.b1 = dipB1;
-        loop.handDip.b2 = dipB2;
-        loop.handDip.a1 = dipA1;
-        loop.handDip.a2 = dipA2;
-        loop.handDipActive = dipB1 != 0.0 || dipB2 != 0.0
-                          || dipA1 != 0.0 || dipA2 != 0.0;
-        if (! loop.handDipActive)
-            loop.handDip.reset();
+        loop.handLossSolvedDepth = depth;
+        applyDipDepth(loop, depth);
         loop.loopDampingCoefficient = coefficient;
         loop.loopGain = clampf(gain, 0.0f, 0.99999f);
     };
@@ -2618,6 +2659,38 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
     if (! voice.active)
         return;
 
+    // A real palm mute is not one fixed amount of loss for the whole note, and
+    // the two ways it varies act at opposite ends of it. The heel's contact area
+    // grows over the first few tens of milliseconds, so the attack rings briefly
+    // before the mute takes hold; and the grip slackens as the string stops
+    // pressing into it, so the tail opens back up rather than staying clamped.
+    // They multiply because they are independent - one is a function of how old
+    // the note is, the other of how hard it is still driving the hand.
+    //
+    // Both leave the solved loop gain and damping pole alone and only re-push a
+    // scaled depth into the loss band, so at a factor of one this is exactly the
+    // static model and the fitted decay still holds. Away from one the decay
+    // departs from the fit deliberately: that departure is the behaviour.
+    {
+        const auto modulate = [&] (PolarisationLoop& loop)
+        {
+            if (loop.handLossSolvedDepth <= 0.0f)
+                return;
+            const float settle = clampf(
+                static_cast<float>(voice.ageSamples)
+                    / (0.040f * static_cast<float>(sampleRate_)),
+                0.0f, 1.0f);
+            const float settleFactor = 0.35f + 0.65f * smoothStep(settle);
+            const float reference = std::max(loop.handEnvelopePeak, 1.0e-7f);
+            const float relaxFactor = 0.40f + 0.60f
+                * clampf(loop.handEnvelope / reference, 0.0f, 1.0f);
+            applyDipDepth(loop, loop.handLossSolvedDepth
+                                    * settleFactor * relaxFactor);
+        };
+        modulate(voice.vertical);
+        modulate(voice.horizontal);
+    }
+
     // Advance the bend program.
     if (voice.bendProgress < 1.0f)
     {
@@ -2707,6 +2780,17 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         // fitted point - which is what lets it be deep enough to matter.
         if (loop.handDipActive)
             sample = loop.handDip.process(sample);
+        if (loop.handLossSolvedDepth > 0.0f)
+        {
+            // Cheap one-pole follower on the loop itself: what the heel's grip
+            // tracks is how hard the string is still pressing into it. Peak-
+            // relative rather than absolute deliberately - an absolute reference
+            // was built and measured, and was worse at every scale tried.
+            const float rectified = sample < 0.0f ? -sample : sample;
+            loop.handEnvelope += 0.0015f * (rectified - loop.handEnvelope);
+            if (loop.handEnvelope > loop.handEnvelopePeak)
+                loop.handEnvelopePeak = loop.handEnvelope;
+        }
         sample *= loop.loopGain * voice.releaseGain * extraFeedback;
         return sample;
     };

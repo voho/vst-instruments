@@ -2914,16 +2914,29 @@ void testHandDipNeverExpands()
                 // fundamental, so a high note pushes it toward Nyquist where the
                 // coefficients are most awkward.
                 for (int note = ElectryEngine::lowestPlayableNote;
-                     note <= ElectryEngine::highestPlayableNote; note += 3)
+                     note <= ElectryEngine::highestPlayableNote; note += 6)
+                // Three ages, chosen to straddle the modulation rather than to
+                // sample it densely: before the contact has settled, just after
+                // it has, and far enough into the tail that the grip has
+                // slackened. Denser sweeps cost minutes and found nothing more.
+                for (const int ageBlocks : { 0, 4, 45 })
                 {
                     engine.allNotesOff();
                     engine.noteOn(ElectryEngine::firstKeyswitchNote
                                       + static_cast<int>(articulation), 1.0f);
                     engine.noteOn(note, 0.9f);
 
-                    float left[64] {};
-                    float right[64] {};
+                    // Sampled at several ages, not just after the first block.
+                    // The dip's depth is modulated per control period - it fades
+                    // in as the contact settles and back out as the string stops
+                    // driving the hand - so the bound has to hold at every depth
+                    // that modulation produces, not only at the one the note
+                    // happens to start on.
+                    float left[512] {};
+                    float right[512] {};
                     engine.process(left, right, 64);
+                    for (int block = 0; block < ageBlocks; ++block)
+                        engine.process(left, right, 512);
 
                     for (int stringIndex = 0;
                          stringIndex < ElectryEngine::stringCount; ++stringIndex)
@@ -2967,9 +2980,10 @@ void testHandDipNeverExpands()
                             if (! (magnitude <= 1.000001f))
                             {
                                 std::printf("  |H| = %.6f at note %d, "
-                                            "pressure %.2f, mute %.2f\n",
+                                            "pressure %.2f, mute %.2f, "
+                                            "age %d blocks\n",
                                             magnitude, note, pressure,
-                                            muteDamping);
+                                            muteDamping, ageBlocks);
                                 expect(false, "hand loss dip expands inside "
                                               "the loop");
                                 return;

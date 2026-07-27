@@ -997,6 +997,50 @@ the algebra; double brings it to exactly 1.00000000, asserted over 3920 live
 configurations by `testHandDipNeverExpands`. This is the same trap the modal
 resonator bank already documents, met a second time in a different filter.
 
+### The mute varies over the note
+
+Five mute mechanisms were built and compared on the same figure, and the choice
+between them was made by ear because the measurement could not make it: on the
+shipped instrument the five score 6.22 to 6.29 dB on the joint objective, a
+spread of 0.07 dB against the roughly one decibel that separated things that
+mattered elsewhere. What ships is the pair that was preferred, at a measured cost
+of 0.05 dB against the best of the five - which is noise.
+
+Both are ways the loss varies with time rather than with frequency, and they act
+at opposite ends of the note, so they multiply rather than compete:
+
+- **The contact settles.** The heel's contact area grows over the first 40 ms, so
+  the attack rings briefly before the mute takes hold. A function of note age.
+- **The grip slackens.** As the string stops pressing into the hand the loss
+  falls back, so the tail opens up instead of staying clamped. A function of how
+  hard the string is still driving the contact, tracked by a one-pole follower on
+  the loop itself.
+
+Both re-push a scaled depth into the loss band and leave the solved loop gain and
+damping pole alone, so at a factor of one they are exactly the static model and
+the fitted decay still holds; away from one the decay departs from the fit
+deliberately, and that departure is the behaviour.
+
+Three mechanisms were measured and rejected. A **second loss band** at thirteen
+times the fundamental, aimed at the h7-h8 shortfall, scored 6.09 against 5.99 -
+no better, and it puts another biquad in the loop. **One much wider band** at
+Q 0.32 was clearly worse at 6.98, so what is missing is not reach. And an
+**absolutely-referenced** version of the grip model is worth recording in full,
+because it is the one that should have worked and did not.
+
+The premise was that a real mute reads tight when struck hard and loose when
+struck soft, which no depth-independent model can produce from one setting, and
+which the references demand - the same note's two takes differ by 11 to 17 dB at
+400 ms. The grip model as shipped normalises the envelope by the note's own peak,
+which is scale-invariant: measured, its velocity spread matched the static model
+to within 0.1 dB, so it does not do this at all. Referencing an absolute level
+instead does change the spread, but *narrows* it - 0.52, 0.71, 1.07 dB against
+the static model's 0.94, 1.18, 1.33 - and costs 1.45 dB on the joint objective.
+Swept across references from 0.0005 to 0.3 the score is monotone: its only good
+operating point is the one where it degenerates into the model without it. The
+tight-versus-loose distinction remains unrepresented, and this was a real attempt
+at it rather than an untried idea.
+
 ### The default voicing, and what moving it cost
 
 The shipped defaults were the midpoint of every axis, which is not an instrument

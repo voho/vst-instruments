@@ -32,7 +32,14 @@ point; the six that did not - the open-string, fretboard, lead, pickup, strum an
 build takes - were byte-identical, because both terms multiply a rate that is
 exactly zero when no hand is on the string.
 
-Every file then moved again, and for a different reason: the instrument's default
+The mute then stopped being one fixed amount of loss for the whole note. The
+heel's contact area now grows over the first 40 ms, so an attack rings briefly
+before the mute takes hold, and its grip slackens as the string stops pressing
+into it, so the tail opens back up instead of staying clamped. The two act at
+opposite ends of the note and multiply. Seven files carry it - the same seven,
+for the same reason.
+
+Every file also moved for a different reason again: the instrument's default
 voicing changed. The defaults were the midpoint of every axis, which is not a
 guitar anyone owns; they are now a thick carved set-neck blank with the heaviest
 set on a 27.63-inch scale, a humbucker-leaning bridge pickup, the tone a little
@@ -83,7 +90,7 @@ inside a take is altered: the velocity ramp in `10`, the decay of each chug in
 `04`, and the dry-versus-amplified comparisons between `04` and `05` and
 between `11` and `12` all keep their shape and their internal balance.
 
-`11` renders about 4.6 dB hotter than the single-note figure in `04` from the same
+`11` renders about 4.7 dB hotter than the single-note figure in `04` from the same
 output setting: three strings struck as one stroke stack their initial peaks,
 which is why a player tracking chords leaves the instrument's own output control
 lower than for a single chugged note.
@@ -95,8 +102,8 @@ The rendered peak before normalisation, for the record:
 | `01-range-open-strings.wav` | −12.4 dBFS | +9.4 dB |
 | `02-range-full-fretboard.wav` | −11.5 dBFS | +8.5 dB |
 | `03-play-styles.wav` | −3.7 dBFS | +0.7 dB |
-| `04-drop-e-rhythm-dry.wav` | −15.5 dBFS | +12.5 dB |
-| `05-drop-e-rhythm-amp.wav` | −20.4 dBFS | +17.4 dB |
+| `04-drop-e-rhythm-dry.wav` | −15.6 dBFS | +12.6 dB |
+| `05-drop-e-rhythm-amp.wav` | −20.3 dBFS | +17.3 dB |
 | `06-lead-amp-delay-room.wav` | −16.1 dBFS | +13.1 dB |
 | `07-pickups-and-tone.wav` | −13.1 dBFS | +10.1 dB |
 | `08-sympathetic-strum-stereo.wav` | −16.6 dBFS | +13.6 dB |
@@ -106,7 +113,7 @@ The rendered peak before normalisation, for the record:
 | `12-power-chords-amp.wav` | −19.5 dBFS | +16.5 dB |
 | `13-long-rhythm-arrangement.wav` | −18.1 dBFS | +15.1 dB |
 
-`05` renders 4.9 dB *below* `04` at the peak while sitting above it in average
+`05` renders 4.7 dB *below* `04` at the peak while sitting above it in average
 level: the amplifier compresses and the cabinet removes the top of the pick
 transient, which is what an amplifier is supposed to do to a rhythm part.
 

@@ -412,6 +412,9 @@ private:
         DipBiquad handDip {};
         HandLossShape handLossShape {};
         float handLossDepth { 0.0f };
+        float handLossSolvedDepth { 0.0f };
+        float handEnvelope { 0.0f };
+        float handEnvelopePeak { 0.0f };
         bool handDipActive { false };
         DispersionAllpass dispersion1 {};
         DispersionAllpass dispersion2 {};
@@ -700,6 +703,7 @@ private:
     static void handDipCoefficients(float depth, const HandLossShape& shape,
                                     double& b0, double& b1, double& b2,
                                     double& a1, double& a2) noexcept;
+    static void applyDipDepth(PolarisationLoop& loop, float depth) noexcept;
         static float allpassPhaseDelay(float coefficient, float omega) noexcept;
     // Per-string magnetic balance. It depends only on the string, so it is
     // solved once instead of inside the sample loop.
