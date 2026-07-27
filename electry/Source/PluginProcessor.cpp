@@ -185,6 +185,16 @@ ElectryAudioProcessor::createParameterLayout()
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> result;
     result.reserve (31);
 
+    // Every default below is read from the engine's own struct rather than
+    // written out again here. These two lists had drifted apart: the engine's
+    // defaults became a specific instrument - thick blank, heaviest set, tone
+    // back, pick near the bridge - while this layout still created every new
+    // plug-in instance at the old midpoints, so the shipping product and its
+    // reset-to-default kept a voicing the README and the demos no longer
+    // described. Deriving them makes that divergence impossible rather than
+    // merely fixed.
+    const electry::EngineParameters engineDefaults {};
+
     const auto addFloat = [&result] (const char* id, const char* name,
                                      juce::NormalisableRange<float> range, float defaultValue,
                                      juce::AudioParameterFloatAttributes attributes = {})
@@ -207,15 +217,22 @@ ElectryAudioProcessor::createParameterLayout()
 
     result.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { pickupSelector, 1 }, "Pickup selector",
-        juce::StringArray { "Neck", "Both", "Bridge" }, 2));
-    addMorph (pickupType, "Pickup type", 0.5f, "Humbucker", "Single coil");
-    addPercent (tone, "Tone", 0.8f);
+        juce::StringArray { "Neck", "Both", "Bridge" },
+        static_cast<int> (engineDefaults.pickupSelector)));
+    addMorph (pickupType, "Pickup type", engineDefaults.pickupType,
+              "Humbucker", "Single coil");
+    addPercent (tone, "Tone", engineDefaults.toneKnob);
 
-    addMorph (bodyWood, "Body wood", 0.5f, "Mahogany/maple", "Swamp ash");
-    addMorph (bodySize, "Body size", 0.5f, "Thick blank", "Thin slab");
-    addMorph (bodyShape, "Body shape", 0.5f, "Carved top", "Flat slab");
-    addMorph (construction, "Construction", 0.5f, "Set neck", "Bolt-on");
-    addFloat (scaleLength, "Scale length", { 0.0f, 1.0f, 0.001f }, 0.5f,
+    addMorph (bodyWood, "Body wood", engineDefaults.bodyWood,
+              "Mahogany/maple", "Swamp ash");
+    addMorph (bodySize, "Body size", engineDefaults.bodySize,
+              "Thick blank", "Thin slab");
+    addMorph (bodyShape, "Body shape", engineDefaults.bodyShape,
+              "Carved top", "Flat slab");
+    addMorph (construction, "Construction", engineDefaults.construction,
+              "Set neck", "Bolt-on");
+    addFloat (scaleLength, "Scale length", { 0.0f, 1.0f, 0.001f },
+              engineDefaults.scaleLength,
               juce::AudioParameterFloatAttributes()
                   .withLabel ("in")
                   .withStringFromValueFunction (
@@ -229,26 +246,27 @@ ElectryAudioProcessor::createParameterLayout()
                           const auto inches = plainNumericValue (text);
                           return juce::jlimit (0.0f, 1.0f, (inches - 25.5f) / 2.5f);
                       }));
-    addPercent (bodyResonance, "Body resonance", 0.35f);
+    addPercent (bodyResonance, "Body resonance", engineDefaults.bodyResonance);
 
-    addMorph (stringGauge, "String gauge", 0.5f, "9-80 set", "11-98 set");
-    addPercent (stringAge, "String age", 0.15f);
+    addMorph (stringGauge, "String gauge", engineDefaults.stringGauge,
+              "9-80 set", "11-98 set");
+    addPercent (stringAge, "String age", engineDefaults.stringAge);
 
-    addPercent (pickPosition, "Pick position", 0.35f);
-    addPercent (pickHardness, "Pick hardness", 0.6f);
-    addPercent (pickNoise, "Pick noise", 0.5f);
-    addPercent (fingerNoise, "Finger noise", 0.4f);
-    addPercent (releaseNoise, "Release noise", 0.4f);
-    addPercent (muteDamping, "Mute damping", 0.55f);
+    addPercent (pickPosition, "Pick position", engineDefaults.pickPosition);
+    addPercent (pickHardness, "Pick hardness", engineDefaults.pickHardness);
+    addPercent (pickNoise, "Pick noise", engineDefaults.pickNoise);
+    addPercent (fingerNoise, "Finger noise", engineDefaults.fingerNoise);
+    addPercent (releaseNoise, "Release noise", engineDefaults.releaseNoise);
+    addPercent (muteDamping, "Mute damping", engineDefaults.muteDamping);
 
     auto bendRange = juce::NormalisableRange<float> { 0.04f, 2.0f, 0.0f };
     bendRange.setSkewForCentre (0.30f);
-    addFloat (bendTime, "Bend time", bendRange, 0.28f,
+    addFloat (bendTime, "Bend time", bendRange, engineDefaults.bendTimeSeconds,
               juce::AudioParameterFloatAttributes()
                   .withLabel ("s")
                   .withStringFromValueFunction (timeText)
                   .withValueFromStringFunction (timeValue));
-    addPercent (velocity, "Velocity response", 0.65f);
+    addPercent (velocity, "Velocity response", engineDefaults.velocityAmount);
 
     addFloat (output, "Output level", { -24.0f, 6.0f, 0.1f }, -6.0f,
               juce::AudioParameterFloatAttributes()
@@ -258,10 +276,11 @@ ElectryAudioProcessor::createParameterLayout()
 
     // Appended after the original version-1 parameter sequence so existing
     // host automation IDs and ordering stay intact.
-    addPercent (artifacts, "Artifacts", 0.18f);
+    addPercent (artifacts, "Artifacts", engineDefaults.artifactAmount);
     result.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { outputMode, 1 }, "Output field",
-        juce::StringArray { "Mono", "Stereo" }, 0));
+        juce::StringArray { "Mono", "Stereo" },
+        static_cast<int> (engineDefaults.outputMode)));
 
     // Versioned additions are intentionally appended to preserve automation.
     addPercent (distortion, "Distortion", 0.0f);
@@ -272,9 +291,10 @@ ElectryAudioProcessor::createParameterLayout()
 
     // Version 1.1 additions, again appended so parameter indices 1..27 keep
     // pointing at exactly the same controls in existing host sessions.
-    addPercent (sympathetic, "Sympathetic ring", 0.20f);
-    addPercent (palmMute, "Palm mute", 0.0f);
-    addFloat (strumSpread, "Strum spread", { 0.0f, 40.0f, 0.1f }, 0.0f,
+    addPercent (sympathetic, "Sympathetic ring", engineDefaults.sympatheticAmount);
+    addPercent (palmMute, "Palm mute", engineDefaults.palmMute);
+    addFloat (strumSpread, "Strum spread", { 0.0f, 40.0f, 0.1f },
+              1000.0f * engineDefaults.strumSpreadSeconds,
               juce::AudioParameterFloatAttributes()
                   .withLabel ("ms")
                   .withStringFromValueFunction (
@@ -285,7 +305,8 @@ ElectryAudioProcessor::createParameterLayout()
                           return juce::String (value, 1) + " ms/string";
                       })
                   .withValueFromStringFunction (plainNumericValue));
-    addFloat (vibratoDepth, "Vibrato depth", { 0.0f, 100.0f, 1.0f }, 35.0f,
+    addFloat (vibratoDepth, "Vibrato depth", { 0.0f, 100.0f, 1.0f },
+              engineDefaults.vibratoDepthCents,
               juce::AudioParameterFloatAttributes()
                   .withLabel ("cents")
                   .withStringFromValueFunction (

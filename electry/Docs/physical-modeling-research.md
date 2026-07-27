@@ -566,8 +566,11 @@ only shorten T60; at 0% Body Resonance the additional structural loss is
 exactly bypassed. This gives note-dependent material sustain without an
 additive feedback loop.
 
-The material axes interpolate between contrasting solid-body references and
-default to 0.5. Scale length is independent and extended for Drop-E:
+The material axes interpolate between contrasting solid-body references. They
+default to 0 and scale length to 0.85, described below under the default
+voicing; the midpoints they replaced are recorded there together with the
+control range the change cost. Scale length is independent and extended for
+Drop-E:
 
 | Axis | 0 | 1 |
 | --- | --- | --- |

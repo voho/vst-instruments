@@ -367,8 +367,12 @@ every platform rather than only inside a host.
 
 ## Guitar construction axes
 
-The material controls use contrasting classic solid-body anchors and default
-to 0.5. Scale length is widened for the Drop-E instrument:
+The material controls use contrasting classic solid-body anchors. They default
+to 0, the thick carved mahogany/maple set-neck end of every axis, because the
+shipped instrument is a specific guitar rather than the average of the range -
+the reasoning and what it costs in control range are in the
+[research contract](Docs/physical-modeling-research.md#the-default-voicing-and-what-moving-it-cost).
+Scale length is widened for the Drop-E instrument and defaults to 27.63":
 
 | Control | 0 | 1 |
 | --- | --- | --- |
