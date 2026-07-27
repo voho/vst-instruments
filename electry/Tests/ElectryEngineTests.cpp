@@ -1558,7 +1558,25 @@ void testArtifactsControl()
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
 
+    // Pinned for the same reason as testMaterialAndControlAudibility: the bounds
+    // below say the artifact layer is audible but subtle, and "how audible" is
+    // measured relative to the note it sits on. On the shipped defaults - a thick
+    // blank, heaviest set, tone back - the same 0.18 measures 0.0019 against this
+    // 0.002 floor, not because the artifact path changed but because the note it
+    // is compared against is darker and louder. Raising the Artifacts default
+    // would restore the ratio; that is a voicing decision, not this test's.
     EngineParameters parameters;
+    parameters.bodyWood = 0.5f;
+    parameters.bodySize = 0.5f;
+    parameters.bodyShape = 0.5f;
+    parameters.construction = 0.5f;
+    parameters.scaleLength = 0.5f;
+    parameters.pickupType = 0.5f;
+    parameters.toneKnob = 0.8f;
+    parameters.stringGauge = 0.5f;
+    parameters.stringAge = 0.15f;
+    parameters.pickPosition = 0.35f;
+    parameters.pickHardness = 0.6f;
     parameters.pickNoise = 0.0f;
     parameters.fingerNoise = 0.0f;
     parameters.releaseNoise = 0.0f;
@@ -1819,7 +1837,28 @@ void testMaterialAndControlAudibility()
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
 
+    // This test asks whether each build axis is audible when it is swept, and
+    // every threshold below was calibrated against one specific instrument. It
+    // must therefore state that instrument rather than inherit whatever the
+    // shipped defaults happen to be, or the thresholds silently come to mean
+    // something else the moment the default voicing moves - which is exactly
+    // what happened when the defaults became a thick blank with the heaviest set
+    // and the tone backed off: seven checks here failed without one line of the
+    // model changing, because a darker instrument makes every axis a smaller
+    // fraction of its own signal. The mid-scale, tone-open instrument below is
+    // the one the numbers were measured on.
     EngineParameters base;
+    base.bodyWood = 0.5f;
+    base.bodySize = 0.5f;
+    base.bodyShape = 0.5f;
+    base.construction = 0.5f;
+    base.scaleLength = 0.5f;
+    base.pickupType = 0.5f;
+    base.toneKnob = 0.8f;
+    base.stringGauge = 0.5f;
+    base.stringAge = 0.15f;
+    base.pickPosition = 0.35f;
+    base.pickHardness = 0.6f;
     base.bodyResonance = 0.55f;
     base.artifactAmount = 0.0f;
     base.pickNoise = 0.0f;

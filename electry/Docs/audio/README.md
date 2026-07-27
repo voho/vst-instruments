@@ -25,13 +25,21 @@ silent a second after the pick; both touch every note, and
 the measurements behind them are in the
 [research contract](../physical-modeling-research.md#voicing-against-a-reference-recording).
 
-The muted takes were last revoiced when the hand's loss stopped being a shelf and
+The muted takes were revoiced when the hand's loss stopped being a shelf and
 became a band centred on the string's own fifth harmonic, paired with a much
-lighter rate at the fundamental. Seven of the thirteen files changed; the six that
-did not - the open-string, fretboard, lead, pickup, strum and build takes - are
-byte-identical, because both terms multiply a rate that is exactly zero when no
-hand is on the string. That partition is the check that the change went only where
-it was meant to.
+lighter rate at the fundamental. Seven of the thirteen files changed at that
+point; the six that did not - the open-string, fretboard, lead, pickup, strum and
+build takes - were byte-identical, because both terms multiply a rate that is
+exactly zero when no hand is on the string.
+
+Every file then moved again, and for a different reason: the instrument's default
+voicing changed. The defaults were the midpoint of every axis, which is not a
+guitar anyone owns; they are now a thick carved set-neck blank with the heaviest
+set on a 27.63-inch scale, a humbucker-leaning bridge pickup, the tone a little
+back and a softer pick close to the bridge. Against nine dry muted power-chord
+references at five pitches that voicing measures 5.03 dB of joint tilt-and-contour
+error where the midpoints measured 6.31. Every peak in the table below shifted
+with it, which is why the numbers there are not the ones an older checkout shows.
 
 | File | Channels | Length | What it demonstrates |
 | --- | --- | --- | --- |
@@ -43,7 +51,7 @@ it was meant to.
 | [`06-lead-amp-delay-room.wav`](06-lead-amp-delay-room.wav) | stereo | 7.5 s | A lead phrase — picked notes, a hammer-on, a bend up held with CC 1 vibrato, a release bend, tremolo picking and a pinch harmonic — into the amplifier, the 360 ms lead delay and the room. |
 | [`07-pickups-and-tone.wav`](07-pickups-and-tone.wav) | mono | 7.0 s | One phrase played three times through Neck, Both and Bridge, then a single note repeated as the guitar's own passive tone control closes from 100% to 0%. |
 | [`08-sympathetic-strum-stereo.wav`](08-sympathetic-strum-stereo.wav) | stereo | 7.3 s | Strum travel (22 ms per string crossed), the divided-pickup stereo field, and bridge-coupled sympathetic strings: a down-strum, an up-strum, the same chord with the coupling at exactly zero, then one low note setting the unfingered strings ringing. |
-| [`09-guitar-build-contrasts.wav`](09-guitar-build-contrasts.wav) | mono | 7.7 s | The same short figure on three instruments: a 25.5-inch light-strung build, the default 26.75-inch guitar, and a 28-inch baritone with a heavy set and older strings. |
+| [`09-guitar-build-contrasts.wav`](09-guitar-build-contrasts.wav) | mono | 7.7 s | The same short figure on three instruments: a 25.5-inch light-strung build, the default 27.63-inch guitar, and a 28-inch baritone with a heavy set and older strings. |
 | [`10-velocity-dynamics.wav`](10-velocity-dynamics.wav) | mono | 4.4 s | Velocity response at full travel — six strokes from a finger-light touch to a hard metal attack, then four more with the palm mute at 60%. Level, brightness, contact noise and attack pitch glide all move together. |
 | [`11-power-chords-dry.wav`](11-power-chords-dry.wav) | mono | 19.9 s | Power chords as the raw DI. Four held root-fifth-octave shapes so the decay and the bridge coupling are audible, a twelve-chord chugged progression, then eight tight stabs under 55% continuous palm-mute pressure. Roots stay in MIDI 28–32, where the allocator gives the idiomatic three-adjacent-string shape. Nothing after the pickups. |
 | [`12-power-chords-amp.wav`](12-power-chords-amp.wav) | mono | 20.1 s | The identical MIDI and guitar settings through the amplifier, cabinet and compressor. Compare directly with `11`: three fundamentals and their harmonic series intermodulating in the clipping stages is what the oversampling is there for. |
@@ -75,7 +83,7 @@ inside a take is altered: the velocity ramp in `10`, the decay of each chug in
 `04`, and the dry-versus-amplified comparisons between `04` and `05` and
 between `11` and `12` all keep their shape and their internal balance.
 
-`11` renders about 4.8 dB hotter than the single-note figure in `04` from the same
+`11` renders about 4.6 dB hotter than the single-note figure in `04` from the same
 output setting: three strings struck as one stroke stack their initial peaks,
 which is why a player tracking chords leaves the instrument's own output control
 lower than for a single chugged note.
@@ -84,21 +92,21 @@ The rendered peak before normalisation, for the record:
 
 | File | Rendered peak | Normalisation applied |
 | --- | --- | --- |
-| `01-range-open-strings.wav` | −12.8 dBFS | +9.8 dB |
-| `02-range-full-fretboard.wav` | −12.0 dBFS | +9.0 dB |
-| `03-play-styles.wav` | −2.8 dBFS | −0.2 dB |
-| `04-drop-e-rhythm-dry.wav` | −15.6 dBFS | +12.6 dB |
-| `05-drop-e-rhythm-amp.wav` | −20.0 dBFS | +17.0 dB |
-| `06-lead-amp-delay-room.wav` | −16.3 dBFS | +13.3 dB |
-| `07-pickups-and-tone.wav` | −13.8 dBFS | +10.8 dB |
-| `08-sympathetic-strum-stereo.wav` | −15.8 dBFS | +12.8 dB |
-| `09-guitar-build-contrasts.wav` | −10.5 dBFS | +7.5 dB |
-| `10-velocity-dynamics.wav` | −16.0 dBFS | +13.0 dB |
-| `11-power-chords-dry.wav` | −10.8 dBFS | +7.8 dB |
-| `12-power-chords-amp.wav` | −19.6 dBFS | +16.6 dB |
+| `01-range-open-strings.wav` | −12.4 dBFS | +9.4 dB |
+| `02-range-full-fretboard.wav` | −11.5 dBFS | +8.5 dB |
+| `03-play-styles.wav` | −3.7 dBFS | +0.7 dB |
+| `04-drop-e-rhythm-dry.wav` | −15.5 dBFS | +12.5 dB |
+| `05-drop-e-rhythm-amp.wav` | −20.4 dBFS | +17.4 dB |
+| `06-lead-amp-delay-room.wav` | −16.1 dBFS | +13.1 dB |
+| `07-pickups-and-tone.wav` | −13.1 dBFS | +10.1 dB |
+| `08-sympathetic-strum-stereo.wav` | −16.6 dBFS | +13.6 dB |
+| `09-guitar-build-contrasts.wav` | −9.7 dBFS | +6.7 dB |
+| `10-velocity-dynamics.wav` | −13.2 dBFS | +10.2 dB |
+| `11-power-chords-dry.wav` | −10.9 dBFS | +7.9 dB |
+| `12-power-chords-amp.wav` | −19.5 dBFS | +16.5 dB |
 | `13-long-rhythm-arrangement.wav` | −18.1 dBFS | +15.1 dB |
 
-`05` renders 4.4 dB *below* `04` at the peak while sitting above it in average
+`05` renders 4.9 dB *below* `04` at the peak while sitting above it in average
 level: the amplifier compresses and the cabinet removes the top of the pick
 transient, which is what an amplifier is supposed to do to a rhythm part.
 

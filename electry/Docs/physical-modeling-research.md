@@ -994,6 +994,58 @@ the algebra; double brings it to exactly 1.00000000, asserted over 3920 live
 configurations by `testHandDipNeverExpands`. This is the same trap the modal
 resonator bank already documents, met a second time in a different filter.
 
+### The default voicing, and what moving it cost
+
+The shipped defaults were the midpoint of every axis, which is not an instrument
+anyone owns. They are now a thick carved set-neck blank strung with the heaviest
+set on a 27.63-inch scale, a humbucker-leaning bridge pickup, the tone control a
+little back, and a softer pick close to the bridge. Against the same nine muted
+references at five pitches the joint error is 5.03 dB where the midpoints
+measured 6.31 - so this is not only a preference, it is a measurably closer
+instrument.
+
+The gain does not decompose, and that is worth recording because it nearly went
+in wrong. The four "weight" fields - body wood, size, shape, construction - moved
+on their own score **6.41**, slightly *worse* than the midpoints they replace,
+because the pick sitting at 0.35 costs more than a thick blank recovers. Swept
+separately: moving the pick out from 0.18 costs 2.1 dB and selecting the neck
+pickup costs 1.5 dB. The eleven fields are one voicing.
+
+What it cost is control range, and the number is not small. Sweeping each axis
+end to end on the new instrument, by the same normalised-difference measure the
+suite uses:
+
+| axis | on the old midpoints | on the new defaults | suite floor |
+| --- | --- | --- | --- |
+| body wood | 0.058 | 0.047 | 0.055 |
+| body size | 0.106 | 0.045 | 0.055 |
+| body shape | 0.066 | 0.042 | 0.055 |
+| construction | 0.065 | 0.058 | 0.055 |
+| string gauge | 0.125 | 0.050 | 0.080 |
+| body resonance | 0.080 | 0.028 | 0.080 |
+| pick position | 1.341 | 1.346 | 0.350 |
+
+Five axes lose between a tenth and two thirds of their audible range, and four
+now sit below the floors the suite had set for them. Nothing in the model
+changed: a darker, heavier, louder note simply makes every structural axis a
+smaller fraction of itself. Body resonance is worst hit, going from a clearly
+audible endpoint change to a subtle one.
+
+That is why `testMaterialAndControlAudibility` and `testArtifactsControl` now
+state the instrument they measure on rather than inheriting the defaults. Seven
+checks in those two functions failed when the defaults moved, without one line of
+the model changing, and the thresholds were calibrated on the mid-scale,
+tone-open instrument - so pinning it keeps the numbers meaning what they were
+measured to mean. It is worth being explicit that this is a real limitation of
+the suite as it now stands: with the instrument pinned, no check verifies that
+the *shipped* voicing keeps its controls audible. The table above is that check,
+run by hand, and it is the reason the cost is written down here rather than
+discovered later.
+
+Pick position is untouched at 1.35 and remains by far the largest lever a player
+has, so the structural colour is reachable - it is the default position that is
+darker, not the range that is smaller.
+
 Separately, and on listening feedback rather than measurement, the release-noise
 burst was too loud. Its coefficient drops from 0.34 to 0.20 on the wound strings
 and 0.20 to 0.13 on the plain ones. This is a global voicing change and it is

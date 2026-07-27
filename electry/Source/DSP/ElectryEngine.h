@@ -35,21 +35,35 @@ enum class OutputMode { Mono, Stereo };
 // Material and construction axes morph between classic solid-body anchors.
 // Scale length spans a conventional electric into a modern baritone/8-string
 // build, while the remaining performance controls use their full 0..1 range.
+// The defaults describe a specific instrument rather than the midpoint of every
+// axis, because the midpoint of every axis is not a guitar anyone owns. They are
+// a thick carved set-neck blank strung with the heaviest set on a 27.6-inch
+// scale, a humbucker-leaning bridge pickup, the tone control a little back, and a
+// softer pick close to the bridge - the Drop-E rhythm instrument this model
+// exists to be. Fitted against nine dry muted power-chord references at five
+// pitches: the joint tilt-and-contour error is 5.03 dB here against 6.31 for the
+// former all-midpoints defaults.
+//
+// The four "weight" fields on their own do not get there. Moved without the
+// scale length, pickup type and pick position below, the same body, gauge, age,
+// tone and pick-hardness values score 6.41 - slightly *worse* than the midpoints
+// they replaced, because the pick sitting further out costs more than the thick
+// blank recovers. The eleven fields are one voicing and do not decompose.
 struct EngineParameters
 {
     PickupSelector pickupSelector { PickupSelector::Bridge };
-    float bodyWood { 0.5f };        // 0 mahogany/maple set blank, 1 swamp-ash slab
-    float bodySize { 0.5f };        // 0 thick heavy blank, 1 thin light slab
-    float bodyShape { 0.5f };       // 0 carved single-cut, 1 flat single-cut slab
-    float construction { 0.5f };    // 0 set neck + stopbar, 1 bolt-on + through-body
-    float scaleLength { 0.5f };     // 0 = 25.5 in, 1 = 28 in
-    float pickupType { 0.5f };      // 0 humbucker, 1 narrow single coil
-    float toneKnob { 0.8f };        // guitar's own passive tone control
+    float bodyWood { 0.0f };        // 0 mahogany/maple set blank, 1 swamp-ash slab
+    float bodySize { 0.0f };        // 0 thick heavy blank, 1 thin light slab
+    float bodyShape { 0.0f };       // 0 carved single-cut, 1 flat single-cut slab
+    float construction { 0.0f };    // 0 set neck + stopbar, 1 bolt-on + through-body
+    float scaleLength { 0.85f };    // 0 = 25.5 in, 1 = 28 in
+    float pickupType { 0.32f };     // 0 humbucker, 1 narrow single coil
+    float toneKnob { 0.70f };       // guitar's own passive tone control
     float bodyResonance { 0.35f };  // solid-body structural colour level
-    float stringGauge { 0.5f };     // 0 = .009-.080 set, 1 = .011-.098 set
-    float stringAge { 0.15f };      // 0 fresh round-wounds, 1 old dead strings
-    float pickPosition { 0.35f };   // 0 close to bridge, 1 over the neck
-    float pickHardness { 0.6f };    // 0 soft/rounded contact, 1 stiff sharp pick
+    float stringGauge { 1.0f };     // 0 = .009-.080 set, 1 = .011-.098 set
+    float stringAge { 0.30f };      // 0 fresh round-wounds, 1 old dead strings
+    float pickPosition { 0.18f };   // 0 close to bridge, 1 over the neck
+    float pickHardness { 0.58f };   // 0 soft/rounded contact, 1 stiff sharp pick
     float pickNoise { 0.5f };       // plectrum contact/scrape level
     float fingerNoise { 0.4f };     // fretting-hand contact level
     float releaseNoise { 0.4f };    // note-end damping/lift noise level
