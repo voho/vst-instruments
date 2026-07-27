@@ -44,17 +44,34 @@ jobs:
         run: |
           set -euo pipefail
           ./electry/build-dsp/ElectryRenderDemos electry/Docs/audio
-          if git diff --quiet -- electry/Docs/audio; then
+          # Stage before checking: a newly added demo is an untracked file,
+          # which git diff alone would not see.
+          git add -A electry/Docs/audio
+          if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add electry/Docs/audio
           git commit -m "Nightly: re-render the committed Electry demo audio"
-          git push \
-            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-            HEAD:main
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for attempt in 1 2 3; do
+            git pull --rebase -X theirs "$REMOTE" main
+            # If render-relevant Electry code landed on main while this job
+            # ran, these WAVs describe the older model; publishing them would
+            # be wrong, and the next nightly will render the newer tree.
+            if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
+                electry ':(exclude)electry/Docs'; then
+              echo "Electry changed upstream during the render; deferring to the next nightly."
+              exit 0
+            fi
+            if git push "$REMOTE" HEAD:main; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "error: could not push the re-rendered demo audio" >&2
+          exit 1
 
   build-macos:
     if: github.ref == 'refs/heads/main'
@@ -132,17 +149,32 @@ jobs:
             neuramar/Docs/screenshots
             electry/Docs/screenshots
           )
-          if git diff --quiet -- "${paths[@]}"; then
+          # Stage before checking: a screenshot rendered for the first time is
+          # an untracked file, which git diff alone would not see.
+          git add -A "${paths[@]}"
+          if git diff --cached --quiet; then
             echo "Screenshots are unchanged; nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "${paths[@]}"
           git commit -m "Nightly: regenerate the committed editor screenshots"
           REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           for attempt in 1 2 3; do
-            git pull --rebase "$REMOTE" main
+            git pull --rebase -X theirs "$REMOTE" main
+            # If an instrument's code moved on main while this long build ran,
+            # these PNGs were rendered from the older tree and replaying them
+            # onto the newer one would publish stale editors. Skip: the next
+            # nightly builds the newer tree and refreshes them correctly.
+            # Docs-only churn (including the audio job's own commit) does not
+            # invalidate a render, so it does not defer the push.
+            if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
+                drumalor mars neuramar electry \
+                ':(exclude)drumalor/Docs' ':(exclude)mars/Docs' \
+                ':(exclude)neuramar/Docs' ':(exclude)electry/Docs'; then
+              echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
+              exit 0
+            fi
             if git push "$REMOTE" HEAD:main; then
               exit 0
             fi

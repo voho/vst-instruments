@@ -878,7 +878,10 @@ void testEditorRendering()
     {
         juce::FileOutputStream output { juce::File (snapshotPath) };
         juce::PNGImageFormat png;
-        const bool wroteSnapshot = output.openedOk()
+        const bool preparedOutput = output.openedOk()
+            && output.setPosition (0)
+            && output.truncate();
+        const bool wroteSnapshot = preparedOutput
             && png.writeImageToStream (snapshot, output);
         output.flush();
         expect (wroteSnapshot, "could not write requested editor snapshot");
