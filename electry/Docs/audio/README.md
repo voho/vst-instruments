@@ -51,20 +51,22 @@ error where the midpoints measured 6.31.
 
 The whole set was re-rendered for the version 1.2 performance model. The
 sixteen single-enum play styles became two independent keyswitch banks - three
-picking styles against four play styles - so `03` now walks the twelve
+picking styles against four play styles - so `03` now walks their
 combinations; the former chug takes ride the Palm Mute style with the Mute Damp
 control at the firm end of its travel; the lead take's keyswitch bends became
 pitch-wheel bends riding the Bend Time glide and its close is the new resonance
 wheel feeding the note back through the amplifier; and `14` demonstrates the
-wheel as a bar and the feedback loop on their own. Every peak in the table
-below shifted with these changes, which is why the numbers there are not the
-ones an older checkout shows.
+wheel as a bar and the feedback loop on their own. The re-scored takes' peaks
+moved (`03`-`06`, and `14` is new); the other rows kept their previous values
+at this table's precision, and four takes - `01`, `02`, `07` and `09`, whose
+scores use only the default sustained downstroke - re-render byte-identical,
+which pins the untouched signal paths.
 
 | File | Channels | Length | What it demonstrates |
 | --- | --- | --- | --- |
 | [`01-range-open-strings.wav`](01-range-open-strings.wav) | mono | 6.2 s | The eight open strings of the Drop-E instrument, low to high (E1 B1 E2 A2 D3 G3 B3 E4), then all eight ringing together. Default settings. |
 | [`02-range-full-fretboard.wav`](02-range-full-fretboard.wav) | mono | 4.1 s | Every playable note, MIDI 28 to 86 — E1 to D6, five and a half octaves — with the string allocator choosing which physical string each one lands on. |
-| [`03-play-styles.wav`](03-play-styles.wav) | mono | 6.7 s | The twelve combinations of the two keyswitch banks on the same two notes: each play style — sustain, palm mute, hammer-on, natural harmonic — under a down stroke, an up stroke and an alternate-picked pair. |
+| [`03-play-styles.wav`](03-play-styles.wav) | mono | 6.7 s | The two keyswitch banks combined on the same two notes: sustain, palm mute and natural harmonic each under a down stroke, an up stroke and an alternate-picked pair, and the hammer-on run under two latched strokes — audibly identical, because a fingered note takes no stroke. |
 | [`04-drop-e-rhythm-dry.wav`](04-drop-e-rhythm-dry.wav) | mono | 7.5 s | A chugged Drop-E rhythm figure as the raw DI: bridge humbucker, 28-inch-leaning build, heavy set, picked close to the bridge. |
 | [`05-drop-e-rhythm-amp.wav`](05-drop-e-rhythm-amp.wav) | mono | 7.5 s | The identical MIDI and identical guitar settings through the oversampled gain stage, the modelled cabinet and the rhythm compressor. Compare directly with `04`. |
 | [`06-lead-amp-delay-room.wav`](06-lead-amp-delay-room.wav) | stereo | 9.4 s | A lead phrase — alternate-picked notes, a hammer-on, a wheel bend up a step and a dive released onto the note (both riding the Bend Time glide), a natural harmonic, and a final note pushed into amplifier feedback by the resonance wheel — into the amplifier, the 360 ms lead delay and the room. |
@@ -117,7 +119,7 @@ The rendered peak before normalisation, for the record:
 | `03-play-styles.wav` | −5.9 dBFS | +2.9 dB |
 | `04-drop-e-rhythm-dry.wav` | −14.9 dBFS | +11.9 dB |
 | `05-drop-e-rhythm-amp.wav` | −20.2 dBFS | +17.2 dB |
-| `06-lead-amp-delay-room.wav` | −7.1 dBFS | +4.1 dB |
+| `06-lead-amp-delay-room.wav` | −7.0 dBFS | +4.0 dB |
 | `07-pickups-and-tone.wav` | −13.1 dBFS | +10.1 dB |
 | `08-sympathetic-strum-stereo.wav` | −16.6 dBFS | +13.6 dB |
 | `09-guitar-build-contrasts.wav` | −9.7 dBFS | +6.7 dB |

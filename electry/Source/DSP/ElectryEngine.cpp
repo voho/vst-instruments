@@ -661,6 +661,12 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // enough to group a chord and short enough not to merge separate beats.
     chordWindowSamples_ = std::max(1, static_cast<int>(0.035 * sampleRate_));
 
+    // The compliance table lives behind a guarded function-local static (its
+    // initializer is not constexpr-able); touch it here so the one-time
+    // initialization - and the lock an implementation may take for it -
+    // happens on this thread rather than inside the first audio callback.
+    (void) bendSensitivity(0);
+
     prepared_ = true;
     reset();
 }
@@ -798,10 +804,22 @@ void ElectryEngine::pushAcousticReturn(const float* left, const float* right,
     if (right == nullptr)
         right = left;
 
-    // The ring keeps roughly one host block of speaker signal in flight. If a
-    // hostile caller pushes more than the ring holds, the oldest samples are
-    // dropped: the read index is advanced so the path stays a delay rather
-    // than becoming an ever-growing queue.
+    // The ring keeps roughly one host block of speaker signal in flight.
+    // Anything still unread from an earlier push is stale: with a steady
+    // block size the reader has always drained the previous batch by now, so
+    // a leftover only appears when the host's block size just shrank - and
+    // keeping it would ratchet the modeled speaker-to-string latency up to
+    // the largest block ever seen, permanently. Dropping it re-anchors the
+    // path to one block and self-heals after a size change.
+    if (feedbackAvailable_ > 0)
+    {
+        feedbackReadIndex_ = feedbackWriteIndex_;
+        feedbackAvailable_ = 0;
+    }
+
+    // If a hostile caller pushes more than the ring holds, the oldest samples
+    // are dropped: the read index is advanced so the path stays a delay
+    // rather than becoming an ever-growing queue.
     for (int sample = 0; sample < numSamples; ++sample)
     {
         float value = 0.5f * (left[sample] + right[sample]);
@@ -1448,20 +1466,28 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
                             20.0f, 0.24f * static_cast<float>(sampleRate_));
 
-    const bool pitchMoved = forceDelayJump
-        || std::abs(semitones - voice.lastConfiguredSemitones) > 8.0e-4f
+    // The full dispersion grid search is only re-fitted once the pitch has
+    // moved beyond a small quantum. Re-fitting on every control tick of a
+    // wheel glide ran the 520-candidate search for every bent voice for the
+    // whole travel - measured beyond realtime on an eight-string chord at
+    // 96 kHz - while a fit six cents stale changes the two deficit targets by
+    // well under one percent, far inside the fit's own tolerance. The
+    // analytic phase compensation below still tracks every sub-cent move, so
+    // tuning stays exact; only the stiffness fit is quantised.
+    const bool fitMoved = forceDelayJump
+        || std::abs(semitones - voice.lastConfiguredSemitones) > 0.06f
         || std::abs(f0 - voice.lastConfiguredFrequency)
-               > 5.0e-5f * std::max(f0, 20.0f);
+               > 3.5e-3f * std::max(f0, 20.0f);
+    const bool pitchMoved =
+        std::abs(semitones - voice.lastCompensatedSemitones) > 8.0e-4f;
     const float omega = twoPi * f0 * inverseSampleRate_;
     const float period = static_cast<float>(sampleRate_) / f0;
 
-    // The dispersion solve is only refreshed when the sounding pitch actually
-    // moves; the tension-modulation factor below stays cheap enough for every
-    // control tick. Damping-only changes (palm-mute pressure, string age, body
+    // Damping-only changes (palm-mute pressure, string age, body
     // loss) reuse this fit and only redo the analytic phase compensation,
     // which avoids several hundred atan2 evaluations per automated control
     // tick per string.
-    if (pitchMoved)
+    if (fitMoved)
     {
         voice.lastConfiguredSemitones = semitones;
         voice.lastConfiguredFrequency = f0;
@@ -1581,6 +1607,7 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
 
     if (pitchMoved || voice.compensationDirty)
     {
+        voice.lastCompensatedSemitones = semitones;
         // Compensate every loop filter's phase delay at the fundamental so
         // the sounding pitch matches the target frequency.
         const auto loopPhaseDelay = [&] (const PolarisationLoop& loop)
@@ -2422,6 +2449,7 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.saddleRattle.reset();
     voice.lastConfiguredSemitones = -999.0f;
     voice.lastConfiguredFrequency = -1.0f;
+    voice.lastCompensatedSemitones = -999.0f;
     voice.compensationDirty = true;
     // The string is free again: the next bridge-coupled excitation reconfigures
     // and clears the loop for its open pitch.
@@ -2847,14 +2875,20 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     // The acoustic return pushes the sounding string the way a loudspeaker
     // does: broadband pressure that only the string's own resonances turn
     // into sustained motion. Exactly zero unless the resonance control is up.
+    // The muting hand lies across the played strings just as it does across
+    // the idle ones, so the same hand factor starves this injection too -
+    // without it a palm-muted passage howled at nearly the open level,
+    // because the mute's deliberate fundamental relief leaves f0 almost
+    // lossless and continuous drive there regenerates.
     float verticalTotal = verticalIn + injected * verticalWeight
                         + 0.35f * artifactContactSignal;
     float horizontalTotal = horizontalIn + injected * horizontalWeight
                           + 0.12f * artifactContactSignal;
     if (feedbackDrive_ != 0.0f)
     {
-        verticalTotal += feedbackDrive_;
-        horizontalTotal += 0.35f * feedbackDrive_;
+        const float handStarved = feedbackDrive_ * feedbackHandScale_;
+        verticalTotal += handStarved;
+        horizontalTotal += 0.35f * handStarved;
     }
 
     vertical.line[static_cast<std::size_t>(vertical.writeIndex
@@ -3294,7 +3328,18 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                 * (sympatheticHandGainTarget_ - sympatheticHandGain_);
             sympatheticInjection_ = sympatheticGain_
                 * std::max(0.0f, 1.0f - handMute);
-            feedbackHandScale_ = std::max(0.0f, 1.0f - handMute);
+            // A far steeper law than the bridge-bus injection above: feedback
+            // is a regenerating loop, so any residue above the loop's
+            // regeneration threshold climbs back to a full howl no matter how
+            // small it is - measured, the linear 20% residue of a default
+            // palm mute howled at nearly the open level, and even its square
+            // still regenerated through a cranked amplifier. The fourth power
+            // takes the default mute's residue 55 dB down, safely below the
+            // threshold, while a light touch (small handMute) still lets a
+            // deliberate howl through.
+            const float handOpen = std::max(0.0f, 1.0f - handMute);
+            const float handOpenSquared = handOpen * handOpen;
+            feedbackHandScale_ = handOpenSquared * handOpenSquared;
         }
         else
         {

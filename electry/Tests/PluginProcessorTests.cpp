@@ -453,6 +453,53 @@ void testMidiControllersAndVoiceLifecycle()
     processor.releaseResources();
 }
 
+// The CC1 resonance and the acoustic-return wiring live in the shell: the
+// processor pushes each processed block back into the engine and derives the
+// rig's loudness from its amplifier controls. This closes the actual plug-in
+// loop, so deleting the pushAcousticReturn call, the CC1 dispatch or the
+// return-level derivation makes it fail.
+void testResonanceWheelFeedback()
+{
+    ElectryAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+
+    setParameterValue (processor, electry::parameters::amp, 0.9f);
+    setParameterValue (processor, electry::parameters::distortion, 0.7f);
+    setParameterValue (processor, electry::parameters::resonanceDepth, 100.0f);
+
+    const auto playAndRelease = [&] (int wheelValue)
+    {
+        processor.requestPanic();
+        renderBlock (processor, audio, midi);
+        midi.addEvent (juce::MidiMessage::controllerEvent (1, 1, wheelValue), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (1, 40, (juce::uint8) 120), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 1.0);
+        midi.addEvent (juce::MidiMessage::noteOff (1, 40), 0);
+        renderBlock (processor, audio, midi);
+        renderSeconds (processor, audio, 2.0);
+        // The window well after the released string itself has damped: only
+        // the regenerating loop can still be loud here.
+        return renderSeconds (processor, audio, 0.5);
+    };
+
+    const auto fed = playAndRelease (127);
+    const auto decayed = playAndRelease (0);
+    expect (fed > 1.0e-3f,
+            "the resonance wheel did not sustain a released distorted note "
+            "through the acoustic return (late peak "
+                + std::to_string (fed) + ")");
+    expect (decayed < fed * 0.25f,
+            "a released note with the wheel down failed to decay (late peak "
+                + std::to_string (decayed) + " against fed "
+                + std::to_string (fed) + ")");
+
+    processor.releaseResources();
+}
+
 void testUiArticulationTriggerAndPanic()
 {
     ElectryAudioProcessor processor;
@@ -931,6 +978,7 @@ int main()
     testSampleAccurateNoteAndSound();
     testKeyswitchContract();
     testMidiControllersAndVoiceLifecycle();
+    testResonanceWheelFeedback();
     testUiArticulationTriggerAndPanic();
     testOutputGainImpact();
     testPerformanceControls();

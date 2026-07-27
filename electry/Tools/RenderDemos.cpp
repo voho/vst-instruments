@@ -909,8 +909,7 @@ const std::array<Demo, 14>& demos()
           "every playable note from E1 to D6 across the eight strings",
           renderFullFretboard },
         { "03-play-styles.wav",
-          "the twelve pick-stroke and play-style combinations on the same "
-          "two notes",
+          "the pick-stroke and play-style combinations on the same two notes",
           renderPlayStyles },
         { "04-drop-e-rhythm-dry.wav",
           "a chugged Drop-E rhythm figure, dry DI",

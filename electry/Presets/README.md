@@ -94,8 +94,8 @@ anchors with tone at 80%.)
 - Resonance depth 60% so a raised modulation wheel makes the instrument sing
   through the amp instead of merely ringing.
 - Ride the pitch wheel for bends and releases - each string follows with its
-  own compliance, the plain G deepest - with F0 hammer-ons for a legato solo
-  voice.
+  own compliance, the plain G deeper than its neighbours - with F0 hammer-ons
+  for a legato solo voice.
 
 ## Feedback Sustainer
 

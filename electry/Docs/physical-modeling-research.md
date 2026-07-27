@@ -471,8 +471,8 @@ stiffness against its standing tension. For strings tuned across one scale
 length that ratio reduces to `(core fraction)^2 / (mass factor * f_open^2)` -
 the overall gauge cancels, because core area and tension both scale with the
 diameter squared - so the slack low eighth string and the plain G are the
-deep benders and the taut plain top E the shallow one, which is exactly the
-chord smear a real tremolo bridge produces.
+deep benders and the stiff wound D-string the shallow one, which is exactly
+the chord smear a real tremolo bridge produces.
 
 Electry drives the wheel through that law. The raw physical spread across
 this string set is about six to one; a real bridge's geometry evens the

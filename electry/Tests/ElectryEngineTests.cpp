@@ -1128,11 +1128,11 @@ void testAlternateStrokeSequence()
     const auto third = TestAccess::snapshot(engine,
                                             TestAccess::stringForNote(engine, 50));
 
-    expect(! first.strokeIsUp,
+    expect(first.valid && ! first.strokeIsUp,
            "Alternate did not begin with a downstroke");
-    expect(second.strokeIsUp,
+    expect(second.valid && second.strokeIsUp,
            "Alternate did not alternate to an upstroke");
-    expect(! third.strokeIsUp,
+    expect(third.valid && ! third.strokeIsUp,
            "Alternate did not alternate back to a downstroke");
     expect(engine.getCurrentPickStyle() == PickStyle::Alternate,
            "resolved strokes replaced the latched Alternate picking style");
@@ -1143,7 +1143,8 @@ void testAlternateStrokeSequence()
     engine.noteOn(55, 0.8f);
     const auto mutedUp = TestAccess::snapshot(
         engine, TestAccess::stringForNote(engine, 55));
-    expect(mutedUp.playStyle == PlayStyle::PalmMute && mutedUp.strokeIsUp,
+    expect(mutedUp.valid && mutedUp.playStyle == PlayStyle::PalmMute
+               && mutedUp.strokeIsUp,
            "Alternate did not continue through a play-style change");
 
     // A hammered note has no pick, so it neither takes a stroke nor consumes
@@ -1152,22 +1153,25 @@ void testAlternateStrokeSequence()
     engine.noteOn(57, 0.8f);
     const auto hammered = TestAccess::snapshot(
         engine, TestAccess::stringForNote(engine, 57));
-    expect(hammered.playStyle == PlayStyle::Hammer && ! hammered.strokeIsUp,
+    expect(hammered.valid && hammered.playStyle == PlayStyle::Hammer
+               && ! hammered.strokeIsUp,
            "a hammered note took a pick stroke");
     engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
     engine.noteOn(59, 0.8f);
     const auto resumed = TestAccess::snapshot(
         engine, TestAccess::stringForNote(engine, 59));
-    expect(! resumed.strokeIsUp,
+    expect(resumed.valid && ! resumed.strokeIsUp,
            "a hammered note consumed a stroke from the alternate sequence");
 
     // Pressing the keyswitch again begins a fresh phrase on a downstroke.
-    engine.noteOn(45, 0.8f); // consume the pending downstroke
+    // The pending stroke here is an UPstroke (down/up/down/up have been
+    // consumed and the hammered note took none), so a reset that failed to
+    // clear the phase would render an upstroke and fail this check.
     engine.noteOn(pickKeyswitch(PickStyle::Alternate), 1.0f);
-    engine.noteOn(62, 0.8f);
+    engine.noteOn(64, 0.8f);
     const auto restarted = TestAccess::snapshot(
-        engine, TestAccess::stringForNote(engine, 62));
-    expect(! restarted.strokeIsUp,
+        engine, TestAccess::stringForNote(engine, 64));
+    expect(restarted.valid && ! restarted.strokeIsUp,
            "reselecting Alternate did not reset its phase");
 }
 
@@ -2928,7 +2932,7 @@ void testResonanceFeedbackSelfSustains()
     };
 
     const auto runClosedLoop = [&] (float resonance, float distortion,
-                                    float amp)
+                                    float amp, bool palmMuted = false)
     {
         ElectryEngine engine;
         engine.prepare(sampleRate, blockSize);
@@ -2942,6 +2946,8 @@ void testResonanceFeedbackSelfSustains()
         engine.setParameters(parameters);
         engine.reset();
         engine.setResonance(resonance);
+        if (palmMuted)
+            engine.noteOn(styleKeyswitch(PlayStyle::PalmMute), 1.0f);
 
         electry::ElectryFx fx;
         fx.prepare(sampleRate);
@@ -2974,7 +2980,10 @@ void testResonanceFeedbackSelfSustains()
         for (int block = 0; block < totalBlocks; ++block)
         {
             const double blockStart = block * blockSize / sampleRate;
-            if (! released && blockStart >= releaseAt)
+            // The palm-muted take keeps the note held: the muting hand is on
+            // the strings only while the muted note is, and lifting it under
+            // a raised wheel legitimately lets the howl return.
+            if (! palmMuted && ! released && blockStart >= releaseAt)
             {
                 engine.noteOff(40);
                 released = true;
@@ -3037,6 +3046,18 @@ void testResonanceFeedbackSelfSustains()
                + std::to_string(decibels(dry.lateRms
                                          / std::max(dry.earlyRms, 1.0e-15)))
                + " dB after four seconds)");
+
+    // The muting hand starves the loop: the same full-wheel distorted rig
+    // with the Palm Mute style latched at the default Mute Damp must not
+    // howl. A linear or even squared hand residue measurably regenerated
+    // back to nearly the open level, which is what this pins against.
+    const auto muted = runClosedLoop(1.0f, 0.75f, 0.8f, true);
+    expect(muted.finite && muted.peak < 4.0f,
+           "the palm-muted loop was not bounded");
+    expect(muted.lateRms < 0.1 * fed.lateRms,
+           "a palm-muted passage still howls at full resonance ("
+               + std::to_string(muted.lateRms) + " against fed "
+               + std::to_string(fed.lateRms) + ")");
 }
 
 void testPickGeometryFollowsFret()
@@ -3883,6 +3904,28 @@ void testCpuGuardrail()
     expect(defaultCase < worstCase * 0.92,
            "the default configuration is not measurably cheaper than the "
            "worst case (" + std::to_string(defaultCase) + "x vs "
+               + std::to_string(worstCase) + "x)");
+
+    // A full-throw wheel glide on the same chord must not be a hidden second
+    // worst case. Re-fitting the dispersion grid on every control tick of the
+    // glide once cost several times the settled render - beyond realtime on
+    // this configuration - which the settled measurements above cannot see.
+    double glideCase = 1.0e9;
+    for (int attempt = 0; attempt < 3; ++attempt)
+    {
+        ElectryEngine glideEngine;
+        strike (glideEngine, PickupSelector::Both, electry::OutputMode::Stereo);
+        glideEngine.setPitchBend (1.0f);
+        glideCase = std::min (glideCase, timeRender (glideEngine));
+    }
+    std::cout << "Eight-string wheel-glide CPU ratio at 96 kHz: " << glideCase
+              << "x\n";
+    expect(glideCase < ceiling,
+           "a bent eight-string chord exceeded the portable CPU ceiling ("
+               + std::to_string(glideCase) + "x)");
+    expect(glideCase < worstCase * 2.0,
+           "the wheel glide costs far more than the settled worst case ("
+               + std::to_string(glideCase) + "x vs "
                + std::to_string(worstCase) + "x)");
 }
 

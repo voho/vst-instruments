@@ -538,8 +538,14 @@ private:
         // filter phase compensation so the tension-modulation factor can be
         // applied cheaply every control tick.
         float baseFrequency { 110.0f };
+        // The pitch the dispersion grid search was last fitted at; the fit is
+        // quantised to a few cents so a wheel glide does not re-run it on
+        // every control tick.
         float lastConfiguredSemitones { -999.0f };
         float lastConfiguredFrequency { -1.0f };
+        // The pitch the analytic phase compensation was last evaluated at;
+        // this one tracks every sub-cent move so tuning stays exact.
+        float lastCompensatedSemitones { -999.0f };
         // Set whenever the loop filters move without the pitch moving, so the
         // analytic phase compensation is refreshed without paying for the
         // expensive dispersion grid search again.

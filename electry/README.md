@@ -31,8 +31,8 @@ modern 28-inch baritone/8-string build.
 
 ## Hear it
 
-Fourteen rendered examples — the full playable range, the twelve
-pick-stroke/play-style combinations, the guitar-build and pickup axes, the
+Fourteen rendered examples — the full playable range, the pick-stroke and
+play-style combinations, the guitar-build and pickup axes, the
 pitch-wheel bar and resonance-wheel feedback, and the Drop-E rhythm and lead
 tones dry and through the amplifier — are committed under
 [`Docs/audio/`](Docs/audio/README.md), with the score for each one in
@@ -122,9 +122,9 @@ is stolen.
 The pitch wheel is a vibrato bar: it bends every string — the
 sympathetically ringing open strings included — over a nominal ±2 semitone
 range, each string by its own physically derived compliance (the slack low
-E1 and the plain G bend deepest, the taut top E least, the two-to-one smear
-a real bar puts on a chord), and the strings travel to the wheel over the
-Bend Time parameter rather than snapping. The modulation wheel (CC 1) is the
+E1 and the plain G bend deepest, the stiff wound D-string least, the
+two-to-one smear a real bar puts on a chord), and the strings travel to the
+wheel over the Bend Time parameter rather than snapping. The modulation wheel (CC 1) is the
 performance resonance: it raises the sympathetic coupling from the
 Sympathetic Ring parameter toward total and opens an acoustic feedback path
 from the amplified output back into the strings, scaled by the Resonance
