@@ -151,6 +151,11 @@ cmake --build build-dsp --parallel
 The engine is deterministic — identical MIDI always renders identical audio —
 so re-rendering an unchanged model reproduces byte-identical files, and any
 difference in `git status` after a re-render is a real change in the sound.
+The repository's Nightly workflow runs exactly this build and render on every
+run and commits the result when it differs, so the committed set tracks the
+model automatically; its Linux toolchain is the canonical renderer, and a
+local re-render on a different compiler may legitimately differ in the last
+bits even when the model is unchanged.
 `ctest` runs the renderer in `--smoke` mode as `Electry.RenderDemos`, which
 renders a short take to a temporary directory and checks that it is finite,
 audible and a readable WAV, so the tool cannot rot unnoticed.
