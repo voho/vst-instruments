@@ -43,7 +43,10 @@ inline constexpr auto room           = "room";
 inline constexpr auto sympathetic    = "sympathetic";
 inline constexpr auto palmMute       = "palmMute";
 inline constexpr auto strumSpread    = "strumSpread";
-inline constexpr auto vibratoDepth   = "vibratoDepth";
+// Version 1.2 repurposed this slot from the CC1 vibrato to the CC1 resonance
+// control. The stored ID is kept so existing sessions and automation lanes
+// keep pointing at the same parameter index.
+inline constexpr auto resonanceDepth = "vibratoDepth";
 } // namespace electry::parameters
 
 class ElectryAudioProcessor final : public juce::AudioProcessor,
@@ -104,9 +107,13 @@ public:
             stringVisuals[static_cast<std::size_t> (stringIndex)].load (
                 std::memory_order_relaxed));
     }
-    int getCurrentArticulationIndex() const noexcept
+    int getCurrentPickStyleIndex() const noexcept
     {
-        return articulationIndex.load (std::memory_order_relaxed);
+        return pickStyleIndex.load (std::memory_order_relaxed);
+    }
+    int getCurrentPlayStyleIndex() const noexcept
+    {
+        return playStyleIndex.load (std::memory_order_relaxed);
     }
     double getCurrentSampleRateForDisplay() const noexcept
     {
@@ -155,7 +162,7 @@ private:
         std::atomic<float>* sympathetic = nullptr;
         std::atomic<float>* palmMute = nullptr;
         std::atomic<float>* strumSpread = nullptr;
-        std::atomic<float>* vibratoDepth = nullptr;
+        std::atomic<float>* resonanceDepth = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
@@ -193,7 +200,8 @@ private:
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<int> sympatheticStringCount { 0 };
-    std::atomic<int> articulationIndex { 0 };
+    std::atomic<int> pickStyleIndex { 0 };
+    std::atomic<int> playStyleIndex { 0 };
     std::atomic<double> displaySampleRate { 0.0 };
     std::array<std::atomic<std::uint32_t>,
                electry::ElectryEngine::stringCount> stringVisuals {};

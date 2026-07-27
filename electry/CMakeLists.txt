@@ -23,7 +23,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(Electry VERSION 1.1.0 LANGUAGES C CXX)
+project(Electry VERSION 1.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

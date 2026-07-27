@@ -115,13 +115,21 @@ void layoutKnobRow (juce::Rectangle<int> rowArea,
 }
 
 constexpr std::array<const char*, keyswitchCount> keyswitchLabels {
-    "DN", "UP", "ALT", "H/P", "TAP", "PM", "CHUG", "DEAD",
-    "HARM", "PINCH", "TREM", "B+1", "B+2", "R1", "R2", "SLAP"
+    "DN", "UP", "ALT", "SUS", "PM", "H/P", "HARM"
 };
 
 bool isKeyswitch (int midiNoteNumber) noexcept
 {
     return midiNoteNumber >= firstKeyboardNote
+        && midiNoteNumber < firstKeyboardNote + keyswitchCount;
+}
+
+// The notes between the keyswitch banks and the playable range are dead: the
+// engine ignores them, and they are drawn muted so nobody hunts for a sound
+// there.
+bool isDeadZoneNote (int midiNoteNumber) noexcept
+{
+    return midiNoteNumber >= firstKeyboardNote + keyswitchCount
         && midiNoteNumber < firstPlayableNote;
 }
 
@@ -338,14 +346,27 @@ ElectryKeyboardComponent::ElectryKeyboardComponent (juce::MidiKeyboardState& sta
 {
 }
 
-void ElectryKeyboardComponent::setSelectedKeyswitchIndex (int newIndex)
+void ElectryKeyboardComponent::setSelectedKeyswitches (int pickIndex,
+                                                       int styleIndex)
 {
-    const auto clamped = juce::jlimit (0, keyswitchCount - 1, newIndex);
-    if (selectedKeyswitchIndex == clamped)
+    const auto pickCount = electry::ElectryEngine::pickStyleKeyswitchCount;
+    const auto clampedPick = juce::jlimit (0, pickCount - 1, pickIndex);
+    const auto clampedStyle = juce::jlimit (
+        0, electry::ElectryEngine::playStyleKeyswitchCount - 1, styleIndex);
+    if (selectedPickIndex == clampedPick && selectedStyleIndex == clampedStyle)
         return;
 
-    selectedKeyswitchIndex = clamped;
+    selectedPickIndex = clampedPick;
+    selectedStyleIndex = clampedStyle;
     repaint();
+}
+
+bool ElectryKeyboardComponent::isKeyswitchSelected (int keyswitchIndex) const noexcept
+{
+    const auto pickCount = electry::ElectryEngine::pickStyleKeyswitchCount;
+    return keyswitchIndex < pickCount
+        ? keyswitchIndex == selectedPickIndex
+        : keyswitchIndex - pickCount == selectedStyleIndex;
 }
 
 juce::String ElectryKeyboardComponent::getWhiteNoteText (int midiNoteNumber)
@@ -380,7 +401,12 @@ void ElectryKeyboardComponent::drawWhiteNote (
     {
         const auto index = midiNoteNumber - firstKeyboardNote;
         drawKeyswitchDecoration (graphics, area, index,
-                                 index == selectedKeyswitchIndex, false);
+                                 isKeyswitchSelected (index), false);
+    }
+    else if (isDeadZoneNote (midiNoteNumber))
+    {
+        graphics.setColour (juce::Colours::black.withAlpha (0.55f));
+        graphics.fillRect (area);
     }
     else if (midiNoteNumber == firstPlayableNote)
     {
@@ -403,7 +429,12 @@ void ElectryKeyboardComponent::drawBlackNote (
     {
         const auto index = midiNoteNumber - firstKeyboardNote;
         drawKeyswitchDecoration (graphics, area, index,
-                                 index == selectedKeyswitchIndex, true);
+                                 isKeyswitchSelected (index), true);
+    }
+    else if (isDeadZoneNote (midiNoteNumber))
+    {
+        graphics.setColour (juce::Colours::black.withAlpha (0.55f));
+        graphics.fillRect (area);
     }
 }
 
@@ -832,7 +863,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     addAndMakeVisible (editionLabel);
 
     keyboardHintLabel.setText (
-        "Oxblood keys C0..D#1 latch the play style. Bone and ebony keys play the Drop-E 8-string range E1..D6.",
+        "Oxblood keys latch the two banks: C0..D0 the pick stroke, D#0..F#0 the play style - any combination. Bone and ebony keys play the Drop-E 8-string range E1..D6.",
         juce::dontSendNotification);
     keyboardHintLabel.setFont (juce::FontOptions (11.0f));
     keyboardHintLabel.setColour (juce::Label::textColourId, colours::dimText);
@@ -845,13 +876,24 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     panicButton.onClick = [this] { electryProcessor.requestPanic(); };
     addAndMakeVisible (panicButton);
 
-    articulationStrip.onChoice = [this] (int index)
+    pickStyleStrip.onChoice = [this] (int index)
     {
-        keyboard.setSelectedKeyswitchIndex (index);
+        keyboard.setSelectedKeyswitches (
+            index, electryProcessor.getCurrentPlayStyleIndex());
         electryProcessor.triggerArticulation (index);
     };
-    articulationStrip.setComponentID ("articulationStrip");
-    addAndMakeVisible (articulationStrip);
+    pickStyleStrip.setComponentID ("pickStyleStrip");
+    addAndMakeVisible (pickStyleStrip);
+
+    playStyleStrip.onChoice = [this] (int index)
+    {
+        keyboard.setSelectedKeyswitches (
+            electryProcessor.getCurrentPickStyleIndex(), index);
+        electryProcessor.triggerArticulation (
+            electry::ElectryEngine::pickStyleKeyswitchCount + index);
+    };
+    playStyleStrip.setComponentID ("playStyleStrip");
+    addAndMakeVisible (playStyleStrip);
 
     // The pickup selector strip binds to the choice parameter.
     pickupStrip.onChoice = [this] (int index)
@@ -954,12 +996,15 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
            "At 0% the coupled waveguides are bypassed exactly.");
     setup (palmMuteKnob, palmMute,
            "Continuous bridge-hand damping for every play style, on top of the "
-           "Muted and Chug keyswitches. MIDI CC2 adds to it while you play.");
+           "Palm Mute keyswitch. MIDI CC2 adds to it while you play.");
     setup (strumSpreadKnob, strumSpread,
            "Pick travel time per string crossed. At 0 ms a chord starts as one "
            "block; higher values sweep it string by string.");
-    setup (vibratoDepthKnob, vibratoDepth,
-           "Full-scale depth of the modulation-wheel (CC1) performance vibrato");
+    setup (resonanceKnob, resonanceDepth,
+           "Full-scale reach of the modulation-wheel (CC1) resonance: how far "
+           "the wheel can raise the sympathetic coupling and how much of the "
+           "amplified output may feed back into the strings. At 100% a "
+           "distorted tone self-resonates with the wheel up.");
     setup (outputKnob, output, "Master output level");
     setup (distortionKnob, distortion, "Parallel high-gain distortion drive");
     setup (ampKnob, amp, "Saturated guitar amp and cabinet simulation");
@@ -1007,9 +1052,11 @@ void ElectryAudioProcessorEditor::timerCallback()
                              electryProcessor.getSympatheticStringCount(),
                              electryProcessor.isEngineReady(),
                              electryProcessor.getCurrentSampleRateForDisplay());
-    const auto articulationIndex = electryProcessor.getCurrentArticulationIndex();
-    articulationStrip.setSelectedIndex (articulationIndex);
-    keyboard.setSelectedKeyswitchIndex (articulationIndex);
+    const auto pickIndex = electryProcessor.getCurrentPickStyleIndex();
+    const auto styleIndex = electryProcessor.getCurrentPlayStyleIndex();
+    pickStyleStrip.setSelectedIndex (pickIndex);
+    playStyleStrip.setSelectedIndex (styleIndex);
+    keyboard.setSelectedKeyswitches (pickIndex, styleIndex);
 
     if (fretboardDisplay.refresh (electryProcessor, 1.0f / static_cast<float> (timerHz)))
         fretboardDisplay.repaint();
@@ -1128,10 +1175,16 @@ void ElectryAudioProcessorEditor::resized()
                           / static_cast<float> (keyboardWhiteKeyCount));
     area.removeFromBottom (8);
 
-    // Articulation strip across the top.
-    auto articulationArea = area.removeFromTop (106);
+    // The two keyswitch strips across the top: the pick stroke and the play
+    // style, latched independently.
+    auto articulationArea = area.removeFromTop (76);
     sectionBounds[articulationSection] = articulationArea;
-    articulationStrip.setBounds (articulationArea.reduced (12, 8));
+    auto stripRow = articulationArea.reduced (12, 8);
+    const int pickWidth = juce::roundToInt (
+        static_cast<float> (stripRow.getWidth()) * 0.40f);
+    pickStyleStrip.setBounds (stripRow.removeFromLeft (pickWidth));
+    stripRow.removeFromLeft (12);
+    playStyleStrip.setBounds (stripRow);
     area.removeFromTop (8);
 
     // The live fretboard sits directly under the play styles, beside the four
@@ -1152,7 +1205,7 @@ void ElectryAudioProcessorEditor::resized()
             { { &sympatheticKnob, KnobTier::detail },
               { &palmMuteKnob, KnobTier::detail },
               { &strumSpreadKnob, KnobTier::detail },
-              { &vibratoDepthKnob, KnobTier::detail } },
+              { &resonanceKnob, KnobTier::detail } },
             4);
     }
 

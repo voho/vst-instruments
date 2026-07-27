@@ -295,11 +295,8 @@ EngineParameters ElectryEngine::sanitise(const EngineParameters& parameters) noe
         result.strumSpreadSeconds = clampf(parameters.strumSpreadSeconds,
                                            0.0f, 0.040f);
 
-    if (! std::isfinite(parameters.vibratoDepthCents))
-        result.vibratoDepthCents = defaults.vibratoDepthCents;
-    else
-        result.vibratoDepthCents = clampf(parameters.vibratoDepthCents,
-                                          0.0f, 100.0f);
+    result.resonanceDepth = clampUnit(parameters.resonanceDepth,
+                                      defaults.resonanceDepth);
 
     if (! std::isfinite(parameters.bendTimeSeconds))
         result.bendTimeSeconds = defaults.bendTimeSeconds;
@@ -355,6 +352,45 @@ float ElectryEngine::stringFluxScale(int stringIndex) noexcept
     return lerp(1.55f, 0.72f,
                 static_cast<float>(index) / static_cast<float>(stringCount - 1))
          * magneticMassBalance;
+}
+
+float ElectryEngine::bendSensitivity(int stringIndex) noexcept
+{
+    // A vibrato bar (and this instrument's pitch wheel) works by stretching
+    // every string by a comparable amount, and the pitch that stretch buys is
+    // dF/F = dT/2T with dT = E*A*(dl/l): the string's elastic core stiffness
+    // against its standing tension. For strings tuned over one scale length
+    // that ratio reduces to (core fraction)^2 / (mass factor * f_open^2) - the
+    // overall gauge cancels, because both the core area and the tension scale
+    // with the diameter squared. The floppy low strings and the plain G are
+    // therefore the deepest benders and the taut plain E the shallowest, which
+    // is exactly the chord smear a real bar produces.
+    //
+    // The exponent compresses the raw physical spread (about six to one)
+    // toward the two-to-one range measured on real tremolo bridges - the raw
+    // law assumes the bar stretches every string equally, and a real bridge's
+    // geometry evens the travel out. Normalised so the most compliant string
+    // reaches the wheel's full nominal range and no string exceeds it.
+    static const std::array<float, stringCount> sensitivities = []
+    {
+        std::array<float, stringCount> raw {};
+        float maximum = 0.0f;
+        for (int index = 0; index < stringCount; ++index)
+        {
+            const auto& spec = stringSpecs()[static_cast<std::size_t>(index)];
+            const float fOpen = midiToHz(static_cast<float>(spec.openMidiNote));
+            const float massScale = spec.wound ? 0.85f : 1.0f;
+            raw[static_cast<std::size_t>(index)] =
+                spec.woundCoreScale * spec.woundCoreScale
+                / (massScale * fOpen * fOpen);
+            maximum = std::max(maximum, raw[static_cast<std::size_t>(index)]);
+        }
+        for (auto& value : raw)
+            value = std::pow(value / maximum, 0.35f);
+        return raw;
+    }();
+    return sensitivities[static_cast<std::size_t>(
+        std::clamp(stringIndex, 0, stringCount - 1))];
 }
 
 float ElectryEngine::onePolePhaseDelay(float coefficient, float omega) noexcept
@@ -600,8 +636,14 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     retireAttackCoefficient_ = rateAdjustedCoefficient(0.01f, internalRate);
     retireReleaseCoefficient_ = rateAdjustedCoefficient(0.0009f, internalRate);
     artifactBandCoefficient_ = rateAdjustedCoefficient(0.12f, internalRate);
-    pitchBendCoefficient_ = rateAdjustedCoefficient(0.35f, internalRate);
-    vibratoCoefficient_ = rateAdjustedCoefficient(0.12f, internalRate);
+    // A 30 ms lag on the CC1 resonance control, advanced at the control tick:
+    // fast enough to ride the wheel, slow enough that a coarse 7-bit
+    // controller cannot step the coupling gain audibly.
+    resonanceCoefficient_ = 1.0f - std::exp(
+        -static_cast<float>(controlPeriod) / (0.030f * internalRate));
+    // The wheel's glide coefficient follows the Bend Time parameter; force a
+    // recompute at the first control tick of the new rate.
+    appliedBendGlideSeconds_ = -1.0f;
     // A 60 ms window on the sympathetic ring's own energy follower: long
     // enough to survive a bar of ringing, short enough to retire a coupled
     // string promptly once it is inaudible.
@@ -631,20 +673,31 @@ void ElectryEngine::reset()
         voice.vertical.clear();
         voice.horizontal.clear();
         voice.fluxScale = stringFluxScale(voice.stringIndex);
-        updateArticulationWeights(voice);
+        updateStyleWeights(voice);
     }
 
     smoothedParameters_ = sanitise(targetParameters_);
-    articulation_ = Articulation::Downstroke;
+    pickStyle_ = PickStyle::Down;
+    playStyle_ = PlayStyle::Sustain;
     alternateNextStrokeIsUp_ = false;
     noteSequence_ = 0;
     activeVoiceCount_ = 0;
     sympatheticStringCount_ = 0;
     controlCountdown_ = 0;
     pitchBendSemitones_ = pitchBendTarget_;
-    vibratoAmount_ = vibratoTarget_;
-    vibratoPhase_ = 0.0f;
-    vibratoDepthSemitones_ = 0.01f * smoothedParameters_.vibratoDepthCents;
+    sympatheticAppliedBend_ = pitchBendSemitones_;
+    appliedBendGlideSeconds_ = -1.0f;
+    resonanceAmount_ = resonanceTarget_;
+    feedbackRing_.fill(0.0f);
+    feedbackWriteIndex_ = 0;
+    feedbackReadIndex_ = 0;
+    feedbackAvailable_ = 0;
+    feedbackCurrent_ = 0.0f;
+    feedbackPrevious_ = 0.0f;
+    feedbackGain_ = 0.0f;
+    feedbackDrive_ = 0.0f;
+    feedbackHandScale_ = 1.0f;
+    returnLevel_ = returnLevelTarget_;
     sustainPedalDown_ = false;
     engineClock_ = 0;
     lastNoteOnClock_ = -(1ll << 40);
@@ -654,12 +707,17 @@ void ElectryEngine::reset()
     appliedPalmMute_ = palmMuteBlend_;
     sympatheticBus_ = 0.0f;
     sympatheticBusDelayed_ = 0.0f;
-    sympatheticGain_ = 0.0045f * smoothedParameters_.sympatheticAmount;
+    // CC1 raises the coupling from the parameter's base amount toward total.
+    const float resonanceLift = resonanceAmount_
+                              * smoothedParameters_.resonanceDepth;
+    const float effectiveSympathetic = smoothedParameters_.sympatheticAmount
+        + resonanceLift * (1.0f - smoothedParameters_.sympatheticAmount);
+    sympatheticGain_ = 0.0045f * effectiveSympathetic;
     sympatheticInjection_ = sympatheticGain_ * (1.0f - palmMuteBlend_);
     sympatheticHandGain_ = 1.0f;
     sympatheticHandGainTarget_ = 1.0f;
     sympatheticHandMute_ = -1.0f;
-    sympatheticActive_ = smoothedParameters_.sympatheticAmount > 0.0f;
+    sympatheticActive_ = effectiveSympathetic > 0.0f;
 
     for (auto& filter : neckCoils_)
         filter.reset();
@@ -720,10 +778,43 @@ void ElectryEngine::setPitchBend(float normalisedBipolar) noexcept
     pitchBendTarget_ = 2.0f * clampf(normalisedBipolar, -1.0f, 1.0f);
 }
 
-void ElectryEngine::setVibratoAmount(float normalised) noexcept
+void ElectryEngine::setResonance(float normalised) noexcept
 {
-    vibratoTarget_ = std::isfinite(normalised)
+    resonanceTarget_ = std::isfinite(normalised)
         ? clampf(normalised, 0.0f, 1.0f) : 0.0f;
+}
+
+void ElectryEngine::setAcousticReturnLevel(float normalised) noexcept
+{
+    returnLevelTarget_ = std::isfinite(normalised)
+        ? clampf(normalised, 0.0f, 1.0f) : 0.0f;
+}
+
+void ElectryEngine::pushAcousticReturn(const float* left, const float* right,
+                                       int numSamples) noexcept
+{
+    if (left == nullptr || numSamples <= 0)
+        return;
+    if (right == nullptr)
+        right = left;
+
+    // The ring keeps roughly one host block of speaker signal in flight. If a
+    // hostile caller pushes more than the ring holds, the oldest samples are
+    // dropped: the read index is advanced so the path stays a delay rather
+    // than becoming an ever-growing queue.
+    for (int sample = 0; sample < numSamples; ++sample)
+    {
+        float value = 0.5f * (left[sample] + right[sample]);
+        if (! std::isfinite(value))
+            value = 0.0f;
+        feedbackRing_[static_cast<std::size_t>(feedbackWriteIndex_)] = value;
+        feedbackWriteIndex_ = (feedbackWriteIndex_ + 1) & (feedbackRingSize - 1);
+        if (feedbackAvailable_ < feedbackRingSize)
+            ++feedbackAvailable_;
+        else
+            feedbackReadIndex_ = (feedbackReadIndex_ + 1)
+                               & (feedbackRingSize - 1);
+    }
 }
 
 void ElectryEngine::setPalmMutePressure(float normalised) noexcept
@@ -759,25 +850,38 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
 
     if (isKeyswitchNote(midiNote))
     {
-        articulation_ = static_cast<Articulation>(midiNote - firstKeyswitchNote);
-        if (articulation_ == Articulation::AlternateStroke)
-            alternateNextStrokeIsUp_ = false;
+        // The two banks latch independently: a picking-style switch never
+        // touches the play style and vice versa, so any of the twelve
+        // combinations survives switching either half.
+        const int index = midiNote - firstKeyswitchNote;
+        if (index < pickStyleKeyswitchCount)
+        {
+            pickStyle_ = static_cast<PickStyle>(index);
+            if (pickStyle_ == PickStyle::Alternate)
+                alternateNextStrokeIsUp_ = false;
+        }
+        else
+        {
+            playStyle_ = static_cast<PlayStyle>(index - pickStyleKeyswitchCount);
+        }
         return;
     }
 
     if (! isPlayableNote(midiNote) || velocity <= 0.0f)
         return;
 
-    const auto latchedArticulation = articulation_;
-    const auto voiceArticulation = latchedArticulation == Articulation::AlternateStroke
-        ? (alternateNextStrokeIsUp_ ? Articulation::Upstroke
-                                    : Articulation::Downstroke)
-        : latchedArticulation;
-    const int stringIndex = chooseString(midiNote, voiceArticulation);
+    // A hammered note has no pick stroke at all, so the latched picking style
+    // neither colours it nor advances the alternate sequence - a legato run
+    // in the middle of alternate picking resumes on the stroke it left off.
+    const bool picked = playStyle_ != PlayStyle::Hammer;
+    const bool strokeIsUp = picked
+        && (pickStyle_ == PickStyle::Up
+            || (pickStyle_ == PickStyle::Alternate && alternateNextStrokeIsUp_));
+    const int stringIndex = chooseString(midiNote, playStyle_);
     if (stringIndex < 0)
         return;
 
-    if (latchedArticulation == Articulation::AlternateStroke)
+    if (picked && pickStyle_ == PickStyle::Alternate)
         alternateNextStrokeIsUp_ = ! alternateNextStrokeIsUp_;
 
     auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
@@ -807,13 +911,14 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
             * stringsCrossed;
     }
 
-    const bool legato = voiceArticulation == Articulation::HammerOn
+    const bool legato = playStyle_ == PlayStyle::Hammer
                      && voice.active
                      && voice.midiNote != midiNote;
     if (legato)
         legatoRetarget(voice, midiNote, velocity);
     else
-        startVoice(voice, midiNote, velocity, voiceArticulation, startDelaySamples);
+        startVoice(voice, midiNote, velocity, playStyle_, strokeIsUp,
+                   startDelaySamples);
 
     updateActiveVoiceCount();
 }
@@ -847,7 +952,7 @@ void ElectryEngine::allNotesOff()
     }
 }
 
-int ElectryEngine::chooseString(int midiNote, Articulation articulation) const noexcept
+int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcept
 {
     const auto& specs = stringSpecs();
     const auto fretOn = [&specs, midiNote] (int stringIndex)
@@ -869,7 +974,7 @@ int ElectryEngine::chooseString(int midiNote, Articulation articulation) const n
 
     // Hammer-on/pull-off continues the closest sounding string when the new
     // note stays within a reachable stretch of the fretting hand.
-    if (articulation == Articulation::HammerOn)
+    if (playStyle == PlayStyle::Hammer)
     {
         int best = -1;
         int bestDistance = 10;
@@ -1020,38 +1125,16 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     // bridge and stays broadband. They still combine in parallel, so a dead
     // note played under palm-mute pressure gets both.
     float handT60 = 0.0f;
-    float chokeT60 = 0.0f;
-    if (voice.articulation == Articulation::Muted)
+    if (voice.playStyle == PlayStyle::PalmMute)
     {
         handT60 = std::exp(lerp(std::log(2.60f), std::log(0.32f),
                                 parameters.muteDamping));
     }
-    else if (voice.articulation == Articulation::Chug)
+    else if (voice.playStyle == PlayStyle::Harmonics)
     {
-        // A chug is a firmer bridge-hand mute than the general Muted style, so
-        // it lands nearer the reference's short mute than its long one - but it
-        // still has to be a note.
-        handT60 = std::exp(lerp(std::log(1.40f), std::log(0.20f),
-                                parameters.muteDamping));
-    }
-    else if (voice.articulation == Articulation::DeadNote)
-    {
-        // Fretting-hand pressure releases before the string establishes a
-        // sustained pitch, leaving only a short deterministic percussion hit.
-        // This one really is a choke rather than a load, and it is tracked
-        // separately from the bridge hand for exactly that reason: it is a
-        // contact somewhere up the neck, so the near-the-bridge mode-shape
-        // argument that tilts the bridge hand's loss with frequency does not
-        // describe it. It stays broadband.
-        chokeT60 = 0.032f;
-    }
-    else if (voice.articulation == Articulation::NaturalHarmonic)
-    {
+        // The touching finger stays near the node, so the harmonic rings but
+        // not forever.
         t60 = std::min(t60, 3.8f);
-    }
-    else if (voice.articulation == Articulation::PinchHarmonic)
-    {
-        t60 = std::min(t60, 2.9f);
     }
 
     // High-frequency decay target relative to the fundamental's decay, at the
@@ -1103,9 +1186,9 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     // How much of the string's loss the bridge hand accounts for, for the
     // loss shelf below. Zero means no hand and an exactly bypassed shelf.
     float handShareForSlope = 0.0f;
-    // The string's own targets, before either hand.
+    // The string's own targets, before the hand.
     float t60High = t60 * highRatio;
-    if (handT60 > 0.0f || chokeT60 > 0.0f)
+    if (handT60 > 0.0f)
     {
         // Losses in parallel: decay rates add, so the reciprocals of the decay
         // times do. A hand therefore dominates wherever it is tighter than
@@ -1175,12 +1258,6 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // note decay dramatically faster than an open one, which still holds at
         // 70 and fails at 110, so this sits with about a factor of four in hand.
         //
-        // The dead-note choke is added at the same rate on both, because it is
-        // the fretting hand somewhere up the neck rather than the heel resting
-        // by the bridge, and none of the reasoning above describes it. Adding
-        // the two rates rather than switching between them keeps a dead note
-        // played under palm-mute pressure correct: both contacts are present,
-        // and each contributes with its own frequency behaviour.
         constexpr float handHighFrequencyTilt = 3.0f;
         constexpr float handFundamentalRelief = 22.0f;
         const float handRate = handT60 > 0.0f ? 1.0f / handT60 : 0.0f;
@@ -1190,10 +1267,8 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // matters because Palm Mute and CC2 are swept live. Gating full depth on
         // any positive rate put a step in the middle of an expression pedal.
         handShareForSlope = handRate / std::max(1.0f / t60 + handRate, 1.0e-9f);
-        const float chokeRate = chokeT60 > 0.0f ? 1.0f / chokeT60 : 0.0f;
-        t60 = 1.0f / (1.0f / t60 + handRate / handFundamentalRelief + chokeRate);
-        t60High = 1.0f / (1.0f / t60High
-                          + handRate * handHighFrequencyTilt + chokeRate);
+        t60 = 1.0f / (1.0f / t60 + handRate / handFundamentalRelief);
+        t60High = 1.0f / (1.0f / t60High + handRate * handHighFrequencyTilt);
     }
     t60 = clampf(t60, 0.02f, 26.0f);
     t60High = clampf(t60High, 0.008f, t60);
@@ -1355,8 +1430,6 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
 
 void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexcept
 {
-    const float bendOffset = lerp(voice.bendStartSemitones, voice.bendTargetSemitones,
-                                  smoothStep(voice.bendProgress));
     float legatoOffset = 0.0f;
     if (voice.legatoBlend < 1.0f && voice.legatoFromFrequency > 0.0f)
     {
@@ -1365,15 +1438,13 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         legatoOffset = fromSemis * (1.0f - smoothStep(voice.legatoBlend));
     }
 
-    // A restrained, delayed guitar vibrato: the wheel becomes expressive
-    // without making newly picked attacks seasick. CC1 reaches +/- 35 cents.
-    const float vibratoFade = smoothStep(clampf(
-        static_cast<float>(voice.ageSamples) / (0.09f * static_cast<float>(sampleRate_)),
-        0.0f, 1.0f));
-    const float vibratoSemitones = vibratoDepthSemitones_ * vibratoAmount_
-                                 * vibratoFade * std::sin(vibratoPhase_);
-    const float semitones = bendOffset + legatoOffset + pitchBendSemitones_
-                          + vibratoSemitones;
+    // The wheel bends this string by its own physical share of the nominal
+    // range - a bar stretches every string, and each string's pitch answers
+    // with its own compliance - so a bent chord smears exactly the way a real
+    // tremolo bridge smears one.
+    const float semitones = legatoOffset
+                          + pitchBendSemitones_
+                            * bendSensitivity(voice.stringIndex);
     const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
                             20.0f, 0.24f * static_cast<float>(sampleRate_));
 
@@ -1662,7 +1733,12 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     const auto& parameters = smoothedParameters_;
     const float sampleRate = static_cast<float>(sampleRate_);
-    const float f0 = midiToHz(static_cast<float>(spec.openMidiNote));
+    // The wheel is a bar: it bends the strings nobody is fingering too, each
+    // by its own compliance. The control tick retunes a ringing coupled
+    // string whenever the wheel moves.
+    const float f0 = midiToHz(static_cast<float>(spec.openMidiNote))
+        * std::exp2(pitchBendSemitones_
+                    * bendSensitivity(voice.stringIndex) / 12.0f);
     const float period = sampleRate / f0;
     const float omega = twoPi * f0 * inverseSampleRate_;
 
@@ -1758,18 +1834,19 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         voice.excitationPolarity = -1.0f;
     };
 
-    switch (voice.articulation)
+    switch (voice.playStyle)
     {
-        case Articulation::Downstroke:
+        case PlayStyle::Sustain:
             break;
-        case Articulation::Upstroke:
-            applyUpstrokeVoicing();
+        case PlayStyle::PalmMute:
+            amplitude *= 0.88f;
+            pulseMs *= 1.2f;
+            pulseCutoff *= 0.72f;
+            pluckFraction *= 0.8f;
+            noiseLevel *= 1.5f;
+            modalBrightness *= 0.74f;
             break;
-        case Articulation::AlternateStroke:
-            // AlternateStroke is resolved to a concrete Down/Up stroke in
-            // noteOn(), while the latched articulation remains unchanged.
-            break;
-        case Articulation::HammerOn:
+        case PlayStyle::Hammer:
             amplitude *= legato ? 0.30f : 0.42f;
             pulseMs *= 1.9f;
             pulseCutoff *= 0.42f;
@@ -1781,50 +1858,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             plectrumContact = false;
             modalBrightness *= 0.25f;
             break;
-        case Articulation::Tap:
-            amplitude *= 0.50f;
-            pulseMs *= 1.55f;
-            pulseCutoff *= 0.48f;
-            pluckFraction = 0.11f;
-            noiseLevel = fingerControl * (0.14f + 0.34f * profile.noise);
-            noiseMs = 1.9f;
-            noiseCutoff = 1150.0f;
-            plectrumContact = false;
-            modalBrightness *= 0.72f;
-            break;
-        case Articulation::Muted:
-            amplitude *= 0.88f;
-            pulseMs *= 1.2f;
-            pulseCutoff *= 0.72f;
-            pluckFraction *= 0.8f;
-            noiseLevel *= 1.5f;
-            modalBrightness *= 0.74f;
-            break;
-        case Articulation::Chug:
-            amplitude *= 1.05f;
-            pulseMs *= 0.58f;
-            // A chug is tighter and harder than the general Muted style, but it
-            // is still a hand on the string: it cannot be brighter than an open
-            // note, which is what a multiplier above one made it.
-            pulseCutoff *= 0.88f;
-            pluckFraction = clampf(pluckFraction * 0.58f, 0.03f, 0.24f);
-            noiseLevel *= 1.75f;
-            noiseMs *= 0.62f;
-            noiseCutoff *= 0.86f;
-            modalBrightness *= 0.94f;
-            break;
-        case Articulation::DeadNote:
-            amplitude *= 0.72f;
-            pulseMs *= 0.42f;
-            pulseCutoff *= 0.62f;
-            pluckFraction = 0.08f;
-            noiseLevel = 0.10f + 0.42f
-                * (0.55f * parameters.fingerNoise + 0.45f * parameters.pickNoise)
-                * (0.3f + 0.7f * profile.noise);
-            noiseMs = 5.2f;
-            noiseCutoff = spec.wound ? 1650.0f : 2800.0f;
-            break;
-        case Articulation::NaturalHarmonic:
+        case PlayStyle::Harmonics:
             amplitude *= 0.62f;
             pulseMs *= 0.50f;
             pulseCutoff *= 1.65f;
@@ -1834,41 +1868,13 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             noiseCutoff *= 1.35f;
             modalBrightness *= 1.48f;
             break;
-        case Articulation::PinchHarmonic:
-            amplitude *= 0.80f;
-            pulseMs *= 0.38f;
-            pulseCutoff *= 1.95f;
-            pluckFraction = 0.13f;
-            noiseLevel *= 1.22f;
-            noiseMs *= 0.55f;
-            noiseCutoff *= 1.55f;
-            modalBrightness *= 1.75f;
-            break;
-        case Articulation::Tremolo:
-            amplitude *= 0.76f;
-            pulseMs *= 0.55f;
-            pulseCutoff *= 1.15f;
-            noiseLevel *= 0.62f;
-            noiseMs *= 0.58f;
-            if (voice.tremoloStrokeIsUp)
-                applyUpstrokeVoicing();
-            break;
-        case Articulation::Bend1Up:
-        case Articulation::Bend2Up:
-        case Articulation::Bend1Down:
-        case Articulation::Bend2Down:
-            break;
-        case Articulation::Slap:
-            amplitude *= 1.35f;
-            pulseMs *= 0.30f;
-            pulseCutoff *= 2.3f;
-            pluckFraction = 0.16f;
-            noiseLevel *= 1.35f;
-            noiseCutoff = 5200.0f;
-            noiseMs *= 0.7f;
-            modalBrightness *= 2.0f;
-            break;
     }
+
+    // The stroke composes with every picked style: an upstroke palm mute is a
+    // muted contact with the upstroke's geometry and polarity. A hammered
+    // note has no plectrum, so the latched stroke cannot colour it.
+    if (voice.strokeIsUp && voice.playStyle != PlayStyle::Hammer)
+        applyUpstrokeVoicing();
 
     // The heel of the hand is already resting on the string when the pick
     // reaches it, so it absorbs the attack's high end as the pluck forms rather
@@ -1884,12 +1890,8 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // hand, so one bridge hand damps the played string, its own attack, and the
     // strings it is covering by the same amount.
     float handDamping = palmMuteBlend_;
-    if (voice.articulation == Articulation::Muted)
+    if (voice.playStyle == PlayStyle::PalmMute)
         handDamping = std::max(handDamping, 0.55f + 0.45f * parameters.muteDamping);
-    else if (voice.articulation == Articulation::Chug)
-        handDamping = std::max(handDamping, 0.75f + 0.25f * parameters.muteDamping);
-    else if (voice.articulation == Articulation::DeadNote)
-        handDamping = std::max(handDamping, 0.95f);
     handDamping = clampf(handDamping, 0.0f, 1.0f);
     // A hand of exactly zero pressure leaves every factor below at one.
     pulseCutoff *= lerp(1.0f, 0.26f, handDamping);
@@ -1918,45 +1920,21 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     float displacementGain = 1.55f;
     float transientGain = lerp(0.0006f, 0.0025f, parameters.pickHardness)
                         * lerp(0.88f, 1.08f, profile.effortCurve);
-    switch (voice.articulation)
+    switch (voice.playStyle)
     {
-        case Articulation::HammerOn:
-            displacementGain = 0.72f;
-            transientGain = 0.0f;
+        case PlayStyle::Sustain:
             break;
-        case Articulation::Tap:
-            displacementGain = 0.38f;
-            transientGain = 0.008f;
-            break;
-        case Articulation::Muted:
+        case PlayStyle::PalmMute:
             displacementGain = 1.28f;
             transientGain *= 1.10f;
             break;
-        case Articulation::Chug:
-            displacementGain = 1.20f;
-            transientGain *= 1.35f;
+        case PlayStyle::Hammer:
+            displacementGain = 0.72f;
+            transientGain = 0.0f;
             break;
-        case Articulation::DeadNote:
-            displacementGain = 0.0f;
-            transientGain = 0.72f;
-            break;
-        case Articulation::NaturalHarmonic:
+        case PlayStyle::Harmonics:
             displacementGain = 0.30f;
             transientGain = 0.42f;
-            break;
-        case Articulation::PinchHarmonic:
-            displacementGain = 0.18f;
-            transientGain = 0.68f;
-            break;
-        case Articulation::Tremolo:
-            displacementGain = 1.18f;
-            transientGain *= 1.20f;
-            break;
-        case Articulation::Slap:
-            displacementGain = 0.62f;
-            transientGain = 0.42f;
-            break;
-        default:
             break;
     }
 
@@ -1996,12 +1974,8 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // engagement, not ten percent every oversampled frame.  The old 0.90
     // per-sample multiplier erased essentially all energy on a repick.
     float contactRetention = lerp(0.88f, 0.64f, parameters.pickHardness);
-    if (voice.articulation == Articulation::Muted)
+    if (voice.playStyle == PlayStyle::PalmMute)
         contactRetention *= 0.82f;
-    else if (voice.articulation == Articulation::Chug)
-        contactRetention *= 0.68f;
-    else if (voice.articulation == Articulation::DeadNote)
-        contactRetention *= 0.48f;
     voice.contactFeedbackGain = contactSamples > 0
         ? std::pow(clampf(contactRetention, 0.20f, 1.0f),
                    1.0f / static_cast<float>(contactSamples))
@@ -2131,12 +2105,12 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     voice.noiseLength = std::max(8, static_cast<int>(noiseMs * 0.001f * sampleRate));
     voice.noiseRemaining = voice.noiseLength;
     voice.releaseNoiseDone = false;
-    updateArticulationWeights(voice);
+    updateStyleWeights(voice);
 }
 
-void ElectryEngine::updateArticulationWeights(Voice& voice) noexcept
+void ElectryEngine::updateStyleWeights(Voice& voice) noexcept
 {
-    // Articulations attack the string at different angles, splitting energy
+    // Play styles attack the string at different angles, splitting energy
     // differently between the two polarisations, and a perceptual makeup keeps
     // keyswitch changes usable inside one phrase while the excitation spectra
     // and envelopes remain strongly different. Both used to be re-selected by
@@ -2144,45 +2118,30 @@ void ElectryEngine::updateArticulationWeights(Voice& voice) noexcept
     float verticalWeight = 0.92f;
     float horizontalWeight = 0.42f;
     float makeup = 1.0f;
-    switch (voice.articulation)
+    switch (voice.playStyle)
     {
-        case Articulation::Upstroke:
-            verticalWeight = 0.90f; horizontalWeight = 0.46f; makeup = 1.06f;
+        case PlayStyle::Sustain:
             break;
-        case Articulation::HammerOn:
-            verticalWeight = 0.95f; horizontalWeight = 0.28f; makeup = 1.48f;
-            break;
-        case Articulation::Tap:
-            verticalWeight = 0.96f; horizontalWeight = 0.24f; makeup = 1.30f;
-            break;
-        case Articulation::Muted:
+        case PlayStyle::PalmMute:
             makeup = 1.18f;
             break;
-        case Articulation::Chug:
-            verticalWeight = 0.88f; horizontalWeight = 0.50f;
+        case PlayStyle::Hammer:
+            verticalWeight = 0.95f; horizontalWeight = 0.28f; makeup = 1.48f;
             break;
-        case Articulation::DeadNote:
-            verticalWeight = 0.76f; horizontalWeight = 0.62f; makeup = 1.16f;
-            break;
-        case Articulation::NaturalHarmonic:
+        case PlayStyle::Harmonics:
             verticalWeight = 0.86f; horizontalWeight = 0.52f; makeup = 1.34f;
             break;
-        case Articulation::PinchHarmonic:
-            verticalWeight = 0.98f; horizontalWeight = 0.30f; makeup = 1.18f;
-            break;
-        case Articulation::Tremolo:
-            if (voice.tremoloStrokeIsUp)
-            {
-                verticalWeight = 0.90f;
-                horizontalWeight = 0.46f;
-            }
-            makeup = 1.12f;
-            break;
-        case Articulation::Slap:
-            verticalWeight = 1.00f; horizontalWeight = 0.22f; makeup = 0.84f;
-            break;
-        default:
-            break;
+    }
+    // The upstroke approaches from below, tilting the attack toward the
+    // horizontal polarisation. For a plain sustained upstroke these ratios
+    // land exactly on the fitted upstroke voicing; for the other picked
+    // styles they compose with the style's own split. A hammered note has no
+    // pick, so the stroke leaves it alone.
+    if (voice.strokeIsUp && voice.playStyle != PlayStyle::Hammer)
+    {
+        verticalWeight *= 0.90f / 0.92f;
+        horizontalWeight *= 0.46f / 0.42f;
+        makeup *= 1.06f;
     }
     voice.verticalWeight = verticalWeight;
     voice.horizontalWeight = horizontalWeight;
@@ -2190,7 +2149,7 @@ void ElectryEngine::updateArticulationWeights(Voice& voice) noexcept
 }
 
 void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
-                               Articulation articulation,
+                               PlayStyle playStyle, bool strokeIsUp,
                                int startDelaySamples) noexcept
 {
     const auto& parameters = smoothedParameters_;
@@ -2219,7 +2178,8 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.releasing = false;
     voice.midiNote = midiNote;
     voice.fret = std::clamp(fret, 0, fretCount);
-    voice.articulation = articulation;
+    voice.playStyle = playStyle;
+    voice.strokeIsUp = strokeIsUp;
     voice.velocity = velocity;
     voice.velocityProfile = makeVelocityProfile(velocity);
     voice.startOrder = ++noteSequence_;
@@ -2236,14 +2196,13 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.noiseState = hash32(static_cast<std::uint32_t>(voice.stringIndex * 7349)
                               ^ static_cast<std::uint32_t>(midiNote * 131)
                               ^ static_cast<std::uint32_t>(
-                                  static_cast<int>(articulation) * 17)
+                                  (static_cast<int>(playStyle) * 2
+                                   + (strokeIsUp ? 1 : 0)) * 17)
                               ^ static_cast<std::uint32_t>(noteSequence_ * 2654435761u));
     voice.artifactNoiseState = hash32(voice.noiseState ^ 0xa53c9e17u);
-    int harmonicOffset = 0;
-    if (articulation == Articulation::NaturalHarmonic)
-        harmonicOffset = 12;
-    else if (articulation == Articulation::PinchHarmonic)
-        harmonicOffset = 19;
+    // The natural-harmonic touch divides the string at its midpoint node and
+    // sounds the octave above the fretted note.
+    const int harmonicOffset = playStyle == PlayStyle::Harmonics ? 12 : 0;
     voice.baseFrequency = midiToHz(static_cast<float>(midiNote + harmonicOffset));
 
     // Each physical string has a slightly different saddle/bridge rattle.
@@ -2274,60 +2233,14 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         voice.energyEnvelope = 0.0f;
         voice.outputEnergy = 0.0f;
     }
-    voice.tremoloStrokeIsUp = false;
-    voice.tremoloRetriggerCount = 0;
-    voice.tremoloSamplesUntilRetrigger = articulation == Articulation::Tremolo
-        ? std::max(controlPeriod,
-                   static_cast<int>(0.075f * static_cast<float>(sampleRate_)))
-        : 0;
 
-    // Bend programs: upward bends start on the played note and travel up;
-    // downward bends start above and release onto the played note.
-    voice.bendStartSemitones = 0.0f;
-    voice.bendTargetSemitones = 0.0f;
-    switch (articulation)
-    {
-        case Articulation::Bend1Up: voice.bendTargetSemitones = 1.0f; break;
-        case Articulation::Bend2Up: voice.bendTargetSemitones = 2.0f; break;
-        case Articulation::Bend1Down: voice.bendStartSemitones = 1.0f; break;
-        case Articulation::Bend2Down: voice.bendStartSemitones = 2.0f; break;
-        default: break;
-    }
-    const bool bending = voice.bendStartSemitones != voice.bendTargetSemitones;
-    voice.bendProgress = bending ? 0.0f : 1.0f;
-    voice.bendHoldSamples = bending
-        ? static_cast<int>(0.055f * static_cast<float>(sampleRate_))
-        : 0;
-    voice.bendIncrement = bending
-        ? static_cast<float>(controlPeriod)
-          / (clampf(parameters.bendTimeSeconds, 0.04f, 2.0f)
-             * static_cast<float>(sampleRate_))
-        : 0.0f;
-
-    // Tension-modulation depth: lighter strings glide more, slaps push the
-    // string much harder against its tension.
+    // Tension-modulation depth: lighter strings glide more.
     voice.tensionDepth = 0.042f * lerp(1.45f, 0.70f, parameters.stringGauge)
                        * voice.velocityProfile.tension;
-    if (articulation == Articulation::Slap)
-        voice.tensionDepth *= 14.0f;
 
-    // Slap drives the string against the frets: a decaying collision window
-    // soft-limits displacement and adds rattle noise.
-    if (articulation == Articulation::Slap)
-    {
-        const float collision = voice.velocityProfile.collision;
-        voice.collisionRemaining = static_cast<int>(
-            lerp(0.055f, 0.100f, collision) * static_cast<float>(sampleRate_));
-        voice.collisionThreshold = lerp(0.40f, 0.20f, collision);
-    }
-    else
-    {
-        voice.collisionRemaining = 0;
-        voice.collisionThreshold = 1.0f;
-    }
-
-    const bool incidentalContact = articulation != Articulation::Slap
-                                && articulation != Articulation::HammerOn;
+    // A fingered hammer-on lands cleanly; every picked attack can graze a
+    // fret on the way.
+    const bool incidentalContact = playStyle != PlayStyle::Hammer;
     if (incidentalContact && parameters.artifactAmount > 0.0f)
     {
         const float lowString = 1.0f
@@ -2377,7 +2290,7 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     // pick has not reached them yet. The excitation fires from the control
     // tick once the travel time has elapsed.
     voice.startDelaySamples = std::max(0, startDelaySamples);
-    updateArticulationWeights(voice);
+    updateStyleWeights(voice);
     if (voice.startDelaySamples == 0)
         startExcitation(voice, velocity, false);
 }
@@ -2385,12 +2298,11 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
 void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity) noexcept
 {
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
-    voice.legatoFromFrequency = voice.baseFrequency
-        * std::exp2(lerp(voice.bendStartSemitones, voice.bendTargetSemitones,
-                         smoothStep(voice.bendProgress)) / 12.0f);
+    voice.legatoFromFrequency = voice.baseFrequency;
     voice.midiNote = midiNote;
     voice.fret = std::clamp(midiNote - spec.openMidiNote, 0, fretCount);
-    voice.articulation = Articulation::HammerOn;
+    voice.playStyle = PlayStyle::Hammer;
+    voice.strokeIsUp = false;
     voice.baseFrequency = midiToHz(static_cast<float>(midiNote));
     voice.keyDown = true;
     voice.sustained = false;
@@ -2398,12 +2310,6 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity) n
     voice.startOrder = ++noteSequence_;
     voice.velocity = velocity;
     voice.velocityProfile = makeVelocityProfile(velocity);
-    voice.bendStartSemitones = 0.0f;
-    voice.bendTargetSemitones = 0.0f;
-    voice.bendProgress = 1.0f;
-    voice.tremoloSamplesUntilRetrigger = 0;
-    voice.tremoloRetriggerCount = 0;
-    voice.tremoloStrokeIsUp = false;
     voice.releaseGain = 1.0f;
     voice.releaseGainTarget = 1.0f;
     voice.artifactCollisionRemaining = 0;
@@ -2485,13 +2391,9 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.excitationTailLength = 0;
     voice.contactFeedbackGain = 1.0f;
     voice.noiseRemaining = 0;
-    voice.collisionRemaining = 0;
     voice.artifactCollisionRemaining = 0;
     voice.artifactCollisionLength = 0;
     voice.artifactCollisionCount = 0;
-    voice.tremoloSamplesUntilRetrigger = 0;
-    voice.tremoloRetriggerCount = 0;
-    voice.tremoloStrokeIsUp = false;
     voice.energyEnvelope = 0.0f;
     voice.outputEnergy = 0.0f;
     voice.displayLevel = 0.0f;
@@ -2500,9 +2402,6 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.releaseGainTarget = 1.0f;
     voice.releaseGainCoefficient = 0.0f;
     voice.legatoBlend = 1.0f;
-    voice.bendProgress = 1.0f;
-    voice.bendStartSemitones = 0.0f;
-    voice.bendTargetSemitones = 0.0f;
     // Every retained filter state must clear with the voice, or a silenced
     // string could leak residue into a later, otherwise identical render and
     // break the engine's determinism contract.
@@ -2722,16 +2621,6 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
         modulate(voice.horizontal);
     }
 
-    // Advance the bend program.
-    if (voice.bendProgress < 1.0f)
-    {
-        if (voice.bendHoldSamples > 0)
-            voice.bendHoldSamples -= controlPeriod;
-        else
-            voice.bendProgress = clampf(voice.bendProgress + voice.bendIncrement,
-                                        0.0f, 1.0f);
-    }
-
     if (voice.legatoBlend < 1.0f)
         voice.legatoBlend = clampf(voice.legatoBlend + voice.legatoIncrement,
                                    0.0f, 1.0f);
@@ -2743,22 +2632,6 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
         if (voice.startDelaySamples <= 0)
         {
             voice.startDelaySamples = 0;
-            startExcitation(voice, voice.velocity, false);
-        }
-    }
-
-    if (voice.articulation == Articulation::Tremolo
-        && voice.keyDown && ! voice.releasing)
-    {
-        voice.tremoloSamplesUntilRetrigger -= controlPeriod;
-        if (voice.tremoloSamplesUntilRetrigger <= 0)
-        {
-            const int interval = std::max(
-                controlPeriod,
-                static_cast<int>(0.075f * static_cast<float>(sampleRate_)));
-            voice.tremoloSamplesUntilRetrigger += interval;
-            voice.tremoloStrokeIsUp = ! voice.tremoloStrokeIsUp;
-            ++voice.tremoloRetriggerCount;
             startExcitation(voice, voice.velocity, false);
         }
     }
@@ -2833,23 +2706,6 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
 
     float verticalSample = advanceLoop(vertical, contactChoke);
     float horizontalSample = advanceLoop(horizontal, contactChoke);
-
-    // Slap window: displacement beyond the fret clearance is limited and
-    // re-radiated as rattle.
-    if (voice.collisionRemaining > 0)
-    {
-        voice.collisionRemaining--;
-        const float progress = 1.0f - static_cast<float>(voice.collisionRemaining)
-            / std::max(1.0f, 0.085f * static_cast<float>(sampleRate_));
-        const float threshold = voice.collisionThreshold * (1.0f + 3.0f * progress);
-        const float excess = std::abs(verticalSample) - threshold;
-        if (excess > 0.0f)
-        {
-            const float sign = verticalSample > 0.0f ? 1.0f : -1.0f;
-            verticalSample = sign * (threshold + excess / (1.0f + 6.0f * excess));
-            verticalSample += 0.18f * excess * bipolarNoise(voice.noiseState);
-        }
-    }
 
     // Ordinary hard-picked notes can make brief, irregular fret contact too.
     // The Artifacts control blends toward the same bounded collision law used
@@ -2988,10 +2844,18 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     const float verticalWeight = voice.verticalWeight;
     const float horizontalWeight = voice.horizontalWeight;
 
-    const float verticalTotal = verticalIn + injected * verticalWeight
-                              + 0.35f * artifactContactSignal;
-    const float horizontalTotal = horizontalIn + injected * horizontalWeight
-                                + 0.12f * artifactContactSignal;
+    // The acoustic return pushes the sounding string the way a loudspeaker
+    // does: broadband pressure that only the string's own resonances turn
+    // into sustained motion. Exactly zero unless the resonance control is up.
+    float verticalTotal = verticalIn + injected * verticalWeight
+                        + 0.35f * artifactContactSignal;
+    float horizontalTotal = horizontalIn + injected * horizontalWeight
+                          + 0.12f * artifactContactSignal;
+    if (feedbackDrive_ != 0.0f)
+    {
+        verticalTotal += feedbackDrive_;
+        horizontalTotal += 0.35f * feedbackDrive_;
+    }
 
     vertical.line[static_cast<std::size_t>(vertical.writeIndex
                                            & (delayLineSize - 1))] = verticalTotal;
@@ -3156,9 +3020,6 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     if (artifactsActive_)
         sums.body += 0.9f * artifactContactSignal
                    + 0.09f * artifactBuzzAmount_ * saddleRattle;
-    if (voice.articulation == Articulation::Slap
-        && voice.excitationPhase != ExcitationPhase::Idle)
-        sums.body += 2.4f * excitation;
 
     // The slow energy envelope feeds tension modulation: its release side
     // follows the string's own decay scale so the attack pitch glide relaxes
@@ -3221,7 +3082,11 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
                * (1.0f + excess / (1.0f + 4.0f * excess));
     }
 
-    const float total = sample + sympatheticInjection_ * drive;
+    // The bridge bus carries the played strings' force; the acoustic return
+    // carries the loudspeaker's. Both are starved by the muting hand, which
+    // is what keeps a palm-muted passage from howling even at full resonance.
+    const float total = sample + sympatheticInjection_ * drive
+                      + feedbackDrive_ * feedbackHandScale_;
     loop.line[static_cast<std::size_t>(loop.writeIndex & (delayLineSize - 1))]
         = total;
     // The same physical pickup senses this string, so it cancels no better here
@@ -3284,7 +3149,8 @@ void ElectryEngine::freezeSharedPath() noexcept
     silentInternalSamples_ = 0;
 }
 
-ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
+ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
+    float acousticIn) noexcept
 {
     if (controlCountdown_ <= 0)
     {
@@ -3327,23 +3193,51 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
         smoothTowards(s.artifactAmount, t.artifactAmount);
         smoothTowards(s.sympatheticAmount, t.sympatheticAmount);
         smoothTowards(s.palmMute, t.palmMute);
-        smoothTowards(s.vibratoDepthCents, t.vibratoDepthCents);
+        smoothTowards(s.resonanceDepth, t.resonanceDepth);
         s.strumSpreadSeconds = t.strumSpreadSeconds;
         s.bendTimeSeconds = t.bendTimeSeconds;
         s.pickupSelector = t.pickupSelector;
         s.outputMode = t.outputMode;
         smoothTowards(s.outputGain, t.outputGain);
 
-        vibratoDepthSemitones_ = 0.01f * s.vibratoDepthCents;
         palmMuteBlend_ = clampf(s.palmMute + palmMutePressure_, 0.0f, 1.0f);
         if (t.palmMute <= 0.0f && s.palmMute < 1.0e-5f)
             s.palmMute = 0.0f;
 
+        // CC1 is the performance resonance: it lifts the coupling from the
+        // Sympathetic Ring parameter's base amount toward total, and opens
+        // the acoustic feedback path, both scaled by the Resonance Depth
+        // parameter. At a lowered wheel it snaps to an exact zero so the
+        // parameter alone decides everything, bit for bit.
+        resonanceAmount_ += resonanceCoefficient_
+                          * (resonanceTarget_ - resonanceAmount_);
+        if (resonanceTarget_ <= 0.0f && resonanceAmount_ < 1.0e-5f)
+            resonanceAmount_ = 0.0f;
+        const float resonanceLift = resonanceAmount_ * s.resonanceDepth;
+        const float effectiveSympathetic = s.sympatheticAmount
+            + resonanceLift * (1.0f - s.sympatheticAmount);
+
+        // The feedback gain grows with the square of the lift, so half a
+        // wheel adds bloom while the top of the wheel lets a loud amplified
+        // tone regenerate outright. It also scales with the rig's acoustic
+        // loudness: a DI that is not audible in the room cannot excite the
+        // strings however far the wheel is pushed. The drive itself is
+        // soft-clipped where it is consumed, so no input signal can make this
+        // gain unsafe.
+        returnLevel_ += resonanceCoefficient_
+                      * (returnLevelTarget_ - returnLevel_);
+        if (returnLevelTarget_ <= 0.0f && returnLevel_ < 1.0e-5f)
+            returnLevel_ = 0.0f;
+        feedbackGain_ = resonanceLift > 0.0f && returnLevel_ > 0.0f
+            ? 0.045f * resonanceLift * resonanceLift * returnLevel_
+            : 0.0f;
+
         // The sympathetic coupling bypasses exactly at zero: the coupled loops
         // stop being rendered and their state is dropped, so an idle engine is
         // bit-for-bit identical to one built without the feature.
-        sympatheticGain_ = 0.0045f * s.sympatheticAmount;
-        if (t.sympatheticAmount <= 0.0f && s.sympatheticAmount < 1.0e-5f)
+        sympatheticGain_ = 0.0045f * effectiveSympathetic;
+        if (t.sympatheticAmount <= 0.0f && s.sympatheticAmount < 1.0e-5f
+            && resonanceLift <= 0.0f)
         {
             s.sympatheticAmount = 0.0f;
             sympatheticGain_ = 0.0f;
@@ -3380,20 +3274,9 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
             {
                 if (! voice.active)
                     continue;
-                switch (voice.articulation)
-                {
-                    case Articulation::Muted:
-                        handMute = std::max(handMute, 0.55f + 0.45f * s.muteDamping);
-                        break;
-                    case Articulation::Chug:
-                        handMute = std::max(handMute, 0.75f + 0.25f * s.muteDamping);
-                        break;
-                    case Articulation::DeadNote:
-                        handMute = std::max(handMute, 0.95f);
-                        break;
-                    default:
-                        break;
-                }
+                if (voice.playStyle == PlayStyle::PalmMute)
+                    handMute = std::max(handMute,
+                                        0.55f + 0.45f * s.muteDamping);
             }
             if (handMute != sympatheticHandMute_)
             {
@@ -3411,10 +3294,12 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
                 * (sympatheticHandGainTarget_ - sympatheticHandGain_);
             sympatheticInjection_ = sympatheticGain_
                 * std::max(0.0f, 1.0f - handMute);
+            feedbackHandScale_ = std::max(0.0f, 1.0f - handMute);
         }
         else
         {
             sympatheticInjection_ = 0.0f;
+            feedbackHandScale_ = 1.0f;
         }
 
         if (t.artifactAmount <= 0.0f && s.artifactAmount < 1.0e-5f)
@@ -3441,14 +3326,34 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
         artifactContactShape_ = smoothStep(s.artifactAmount);
         artifactBuzzAmount_ = s.artifactAmount * s.artifactAmount;
 
-        pitchBendSemitones_ += pitchBendCoefficient_
+        // The strings glide to the wheel rather than snapping: the Bend Time
+        // parameter is the travel time of the bend, exactly as it was for the
+        // finger bends it used to drive, so the wheel bends like a hand on
+        // the bar. Settling exactly on the target stops the glide from
+        // re-flagging every voice's pitch solve forever.
+        if (std::abs(s.bendTimeSeconds - appliedBendGlideSeconds_) > 1.0e-4f)
+        {
+            appliedBendGlideSeconds_ = s.bendTimeSeconds;
+            bendGlideCoefficient_ = 1.0f - std::exp(
+                -static_cast<float>(controlPeriod)
+                / (0.33f * std::max(s.bendTimeSeconds, 0.01f)
+                   * static_cast<float>(sampleRate_)));
+        }
+        pitchBendSemitones_ += bendGlideCoefficient_
                              * (pitchBendTarget_ - pitchBendSemitones_);
-        vibratoAmount_ += vibratoCoefficient_
-                        * (vibratoTarget_ - vibratoAmount_);
-        vibratoPhase_ += twoPi * 5.4f * static_cast<float>(controlPeriod)
-                       / static_cast<float>(sampleRate_);
-        if (vibratoPhase_ >= twoPi)
-            vibratoPhase_ -= twoPi;
+        if (std::abs(pitchBendSemitones_ - pitchBendTarget_) < 5.0e-4f)
+            pitchBendSemitones_ = pitchBendTarget_;
+
+        // The bar bends the strings nobody is fingering too: retune the
+        // ringing coupled strings in place whenever the wheel has moved.
+        if (sympatheticActive_
+            && std::abs(pitchBendSemitones_ - sympatheticAppliedBend_) > 1.0e-3f)
+        {
+            sympatheticAppliedBend_ = pitchBendSemitones_;
+            for (auto& voice : voices_)
+                if (! voice.active && voice.sympatheticReady)
+                    configureSympatheticString(voice);
+        }
 
         if (pickupDirty)
             configurePickupFilters();
@@ -3524,6 +3429,21 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
     const float sympatheticDrive = sympatheticBusDelayed_;
     sympatheticBus_ = 0.0f;
 
+    // The loudspeaker's pressure on the strings this sample. The rational
+    // soft clip bounds any host signal to +/-1 before the gain, so the
+    // injection is bounded whatever comes back around the loop; the gain is
+    // exactly zero unless the resonance wheel is up and the rig is audible.
+    if (feedbackGain_ > 0.0f)
+    {
+        const float bounded = acousticIn
+            / std::sqrt(1.0f + acousticIn * acousticIn);
+        feedbackDrive_ = feedbackGain_ * bounded;
+    }
+    else
+    {
+        feedbackDrive_ = 0.0f;
+    }
+
     bool rendered = false;
     for (auto& voice : voices_)
     {
@@ -3534,7 +3454,8 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample() noexcept
         }
         else if (sympatheticActive_
                  && (voice.sympatheticEnergy > 1.0e-11f
-                     || std::abs(sympatheticDrive) > 1.0e-6f))
+                     || std::abs(sympatheticDrive) > 1.0e-6f
+                     || std::abs(feedbackDrive_) > 1.0e-9f))
         {
             renderSympatheticString(voice, sums, sympatheticDrive);
             rendered = true;
@@ -3676,6 +3597,22 @@ void ElectryEngine::process(float* left, float* right, int numSamples)
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
+        // One acoustic-return sample per host sample. The path is silent
+        // until the host pushes something and while the ring has run dry.
+        feedbackPrevious_ = feedbackCurrent_;
+        if (feedbackAvailable_ > 0)
+        {
+            feedbackCurrent_ =
+                feedbackRing_[static_cast<std::size_t>(feedbackReadIndex_)];
+            feedbackReadIndex_ = (feedbackReadIndex_ + 1)
+                               & (feedbackRingSize - 1);
+            --feedbackAvailable_;
+        }
+        else
+        {
+            feedbackCurrent_ = 0.0f;
+        }
+
         StereoSample output;
         if (oversamplingFactor_ == 2)
         {
@@ -3685,7 +3622,12 @@ void ElectryEngine::process(float* left, float* right, int numSamples)
             bool frozen = true;
             for (int phase = 0; phase < 2; ++phase)
             {
-                const auto internal = renderInternalSample();
+                // A linear midpoint upsamples the host-rate acoustic return;
+                // the air path this stands in for is far darker than that.
+                const float acoustic = phase == 0
+                    ? 0.5f * (feedbackPrevious_ + feedbackCurrent_)
+                    : feedbackCurrent_;
+                const auto internal = renderInternalSample(acoustic);
                 if (idleFrozen_)
                     continue;
                 frozen = false;
@@ -3702,7 +3644,7 @@ void ElectryEngine::process(float* left, float* right, int numSamples)
         }
         else
         {
-            output = renderInternalSample();
+            output = renderInternalSample(feedbackCurrent_);
         }
 
         if (! finitef(output.left) || ! finitef(output.right))
@@ -3751,7 +3693,8 @@ void ElectryEngine::getStringVisualState(
         auto& state = destination[static_cast<std::size_t>(stringIndex)];
         state.sounding = voice.active;
         state.releasing = voice.active && voice.releasing;
-        state.articulation = voice.articulation;
+        state.playStyle = voice.playStyle;
+        state.strokeUp = voice.strokeIsUp;
         if (voice.active)
         {
             state.sympathetic = false;
@@ -3781,9 +3724,7 @@ void ElectryEngine::getStringVisualState(
 
 float ElectryEngine::currentSoundingSemitoneOffset(const Voice& voice) const noexcept
 {
-    return lerp(voice.bendStartSemitones, voice.bendTargetSemitones,
-                smoothStep(voice.bendProgress))
-         + pitchBendSemitones_;
+    return pitchBendSemitones_ * bendSensitivity(voice.stringIndex);
 }
 
 } // namespace electry

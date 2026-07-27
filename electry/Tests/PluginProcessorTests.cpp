@@ -70,7 +70,7 @@ constexpr std::array<ParameterExpectation, 31> expectedParameters {{
     { electry::parameters::sympathetic,    0.20f, 1.0e-5f },
     { electry::parameters::palmMute,       0.0f,  1.0e-5f },
     { electry::parameters::strumSpread,    0.0f,  1.0e-4f },
-    { electry::parameters::vibratoDepth,  35.0f,  1.0e-4f },
+    { electry::parameters::resonanceDepth,  35.0f,  1.0e-4f },
 }};
 
 float parameterValue (const ElectryAudioProcessor& processor, const char* id)
@@ -168,8 +168,8 @@ void testParameterTextFormatting()
                          "Block chord");
     expectParameterText (processor, electry::parameters::strumSpread, 18.0f,
                          "18.0 ms/string");
-    expectParameterText (processor, electry::parameters::vibratoDepth, 35.0f,
-                         "35 cents");
+    expectParameterText (processor, electry::parameters::resonanceDepth, 35.0f,
+                         "35%");
 
     const auto* selector = processor.parameters.getParameter (
         electry::parameters::pickupSelector);
@@ -191,7 +191,7 @@ void testStateRoundTrip()
     setParameterValue (source, electry::parameters::sympathetic, 0.66f);
     setParameterValue (source, electry::parameters::palmMute, 0.44f);
     setParameterValue (source, electry::parameters::strumSpread, 22.0f);
-    setParameterValue (source, electry::parameters::vibratoDepth, 80.0f);
+    setParameterValue (source, electry::parameters::resonanceDepth, 80.0f);
 
     juce::MemoryBlock state;
     source.getStateInformation (state);
@@ -230,9 +230,9 @@ void testStateRoundTrip()
     expect (std::abs (parameterValue (restored, electry::parameters::strumSpread)
                           - 22.0f) < 1.0e-3f,
             "strum spread did not survive a state round trip");
-    expect (std::abs (parameterValue (restored, electry::parameters::vibratoDepth)
+    expect (std::abs (parameterValue (restored, electry::parameters::resonanceDepth)
                           - 80.0f) < 1.0e-3f,
-            "vibrato depth did not survive a state round trip");
+            "resonance depth did not survive a state round trip");
 
     // A session saved before the 1.1 controls existed must still load: the
     // original values carry over and the four new parameters fall back to
@@ -247,7 +247,7 @@ void testStateRoundTrip()
         if (id == electry::parameters::sympathetic
             || id == electry::parameters::palmMute
             || id == electry::parameters::strumSpread
-            || id == electry::parameters::vibratoDepth)
+            || id == electry::parameters::resonanceDepth)
             legacyState.removeChild (child, nullptr);
     }
 
@@ -277,9 +277,9 @@ void testStateRoundTrip()
     expect (std::abs (parameterValue (upgraded, electry::parameters::strumSpread))
                 < 1.0e-3f,
             "a pre-1.1 session did not pick up the strum-spread default");
-    expect (std::abs (parameterValue (upgraded, electry::parameters::vibratoDepth)
+    expect (std::abs (parameterValue (upgraded, electry::parameters::resonanceDepth)
                           - 35.0f) < 1.0e-3f,
-            "a pre-1.1 session did not pick up the vibrato-depth default");
+            "a pre-1.1 session did not pick up the resonance-depth default");
 
     // The same load into an instance that has already been played. APVTS keeps
     // a parameter's live value when the stored tree omits it, so without the
@@ -289,14 +289,14 @@ void testStateRoundTrip()
     setParameterValue (used, electry::parameters::sympathetic, 0.93f);
     setParameterValue (used, electry::parameters::palmMute, 0.68f);
     setParameterValue (used, electry::parameters::strumSpread, 0.21f);
-    setParameterValue (used, electry::parameters::vibratoDepth, 80.0f);
+    setParameterValue (used, electry::parameters::resonanceDepth, 80.0f);
     used.setStateInformation (legacyStored.getData(),
                               static_cast<int> (legacyStored.getSize()));
 
     for (const char* id : { electry::parameters::sympathetic,
                             electry::parameters::palmMute,
                             electry::parameters::strumSpread,
-                            electry::parameters::vibratoDepth })
+                            electry::parameters::resonanceDepth })
         expect (std::abs (parameterValue (used, id) - parameterValue (upgraded, id))
                     < 1.0e-3f,
                 std::string ("a pre-1.1 session kept the live value of ") + id
@@ -371,27 +371,37 @@ void testKeyswitchContract()
     juce::AudioBuffer<float> audio;
     juce::MidiBuffer midi;
 
-    expect (processor.getCurrentArticulationIndex() == 0,
-            "default play style is not Downstroke");
+    expect (processor.getCurrentPickStyleIndex() == 0
+                && processor.getCurrentPlayStyleIndex() == 0,
+            "default styles are not a sustained downstroke");
 
-    const auto mutedIndex = static_cast<int> (electry::Articulation::Muted);
-    const auto mutedNote = electry::ElectryEngine::firstKeyswitchNote + mutedIndex;
+    const auto mutedIndex = static_cast<int> (electry::PlayStyle::PalmMute);
+    const auto mutedNote = electry::ElectryEngine::firstPlayStyleKeyswitchNote
+                         + mutedIndex;
+    const auto upNote = electry::ElectryEngine::firstKeyswitchNote
+                      + static_cast<int> (electry::PickStyle::Up);
 
-    // A keyswitch note alone changes the style and never sounds.
+    // A keyswitch note alone changes the style and never sounds, and the two
+    // banks latch independently.
     midi.addEvent (juce::MidiMessage::noteOn (1, mutedNote, (juce::uint8) 100), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (1, upNote, (juce::uint8) 100), 0);
     renderBlock (processor, audio, midi);
     expect (audio.getMagnitude (0, blockSize) <= 0.0f,
             "keyswitch note produced audio");
     expect (processor.getActiveVoiceCount() == 0, "keyswitch note created a voice");
-    expect (processor.getCurrentArticulationIndex() == mutedIndex,
-            "palm-mute keyswitch did not latch the Muted style");
+    expect (processor.getCurrentPlayStyleIndex() == mutedIndex,
+            "palm-mute keyswitch did not latch the Palm Mute style");
+    expect (processor.getCurrentPickStyleIndex()
+                == static_cast<int> (electry::PickStyle::Up),
+            "upstroke keyswitch did not latch alongside the play style");
 
-    // The latched style survives its own note-off and applies to played notes.
+    // The latched styles survive their own note-offs and apply to played notes.
     midi.addEvent (juce::MidiMessage::noteOff (1, mutedNote), 0);
+    midi.addEvent (juce::MidiMessage::noteOff (1, upNote), 0);
     midi.addEvent (juce::MidiMessage::noteOn (
         1, electry::ElectryEngine::lowestPlayableNote, (juce::uint8) 96), 16);
     renderBlock (processor, audio, midi);
-    expect (processor.getCurrentArticulationIndex() == mutedIndex,
+    expect (processor.getCurrentPlayStyleIndex() == mutedIndex,
             "keyswitch note-off cleared the latched style");
     expect (processor.getActiveVoiceCount() == 1,
             "played note after keyswitch did not sound");
@@ -451,17 +461,27 @@ void testUiArticulationTriggerAndPanic()
     juce::AudioBuffer<float> audio;
     juce::MidiBuffer midi;
 
-    // The editor's play-style buttons route through the UI queue.
-    const auto slapIndex = static_cast<int> (electry::Articulation::Slap);
-    processor.triggerArticulation (slapIndex);
+    // The editor's keyswitch buttons route through the UI queue: index 0..2
+    // is the picking bank, 3..6 the play-style bank.
+    const auto harmonicsKeyswitch = electry::ElectryEngine::pickStyleKeyswitchCount
+                                  + static_cast<int> (electry::PlayStyle::Harmonics);
+    processor.triggerArticulation (harmonicsKeyswitch);
+    processor.triggerArticulation (static_cast<int> (electry::PickStyle::Alternate));
     renderBlock (processor, audio, midi);
-    expect (processor.getCurrentArticulationIndex() == slapIndex,
-            "UI articulation trigger did not latch Slap");
+    expect (processor.getCurrentPlayStyleIndex()
+                == static_cast<int> (electry::PlayStyle::Harmonics),
+            "UI keyswitch trigger did not latch Harmonics");
+    expect (processor.getCurrentPickStyleIndex()
+                == static_cast<int> (electry::PickStyle::Alternate),
+            "UI keyswitch trigger did not latch Alternate");
 
     processor.triggerArticulation (99);
     renderBlock (processor, audio, midi);
-    expect (processor.getCurrentArticulationIndex() == slapIndex,
-            "out-of-range articulation index was not ignored");
+    expect (processor.getCurrentPlayStyleIndex()
+                    == static_cast<int> (electry::PlayStyle::Harmonics)
+                && processor.getCurrentPickStyleIndex()
+                       == static_cast<int> (electry::PickStyle::Alternate),
+            "out-of-range keyswitch index was not ignored");
 
     // Panic silences a ringing string within one block.
     midi.addEvent (juce::MidiMessage::noteOn (1, 45, (juce::uint8) 110), 0);
@@ -780,7 +800,7 @@ void testEditorRendering()
     for (const auto* performance : { electry::parameters::sympathetic,
                                      electry::parameters::palmMute,
                                      electry::parameters::strumSpread,
-                                     electry::parameters::vibratoDepth })
+                                     electry::parameters::resonanceDepth })
         expect (effectiveDialSize (performance)
                     >= effectiveDialSize (electry::parameters::artifacts),
                 std::string (performance)
@@ -798,17 +818,23 @@ void testEditorRendering()
                         + knob->getName().toStdString());
     }
 
-    const auto* articulation = findControl ("articulationStrip");
+    const auto* pickStrip = findControl ("pickStyleStrip");
+    const auto* styleStrip = findControl ("playStyleStrip");
     const auto* keyboard = findControl ("keyboard");
     const auto* keyboardHint = findControl ("keyboardHint");
-    expect (articulation != nullptr && keyboard != nullptr && keyboardHint != nullptr,
+    expect (pickStrip != nullptr && styleStrip != nullptr && keyboard != nullptr
+                && keyboardHint != nullptr,
             "editor hierarchy components are missing stable IDs");
-    if (articulation != nullptr && keyboard != nullptr && keyboardHint != nullptr)
+    if (pickStrip != nullptr && styleStrip != nullptr && keyboard != nullptr
+        && keyboardHint != nullptr)
     {
+        expect (! pickStrip->getBounds().intersects (styleStrip->getBounds()),
+                "the two keyswitch strips overlap");
         for (const auto* knob : knobs)
         {
-            expect (articulation->getBottom() <= knob->getY(),
-                    "sound control overlaps the articulation selector");
+            expect (pickStrip->getBottom() <= knob->getY()
+                        && styleStrip->getBottom() <= knob->getY(),
+                    "sound control overlaps a keyswitch strip");
             expect (knob->getBottom() <= keyboard->getY(),
                     "sound control overlaps the keyboard");
         }
@@ -818,23 +844,30 @@ void testEditorRendering()
         expect (keyboard->getBottom() <= keyboardHint->getY(),
                 "keyboard hint is not below the keyboard");
 
-        int articulationButtons = 0;
         std::vector<juce::Rectangle<int>> buttonBounds;
-        for (auto* child : articulation->getChildren())
+        const auto countButtons = [&buttonBounds] (const juce::Component* strip)
         {
-            if (dynamic_cast<juce::TextButton*> (child) == nullptr)
-                continue;
-            ++articulationButtons;
-            buttonBounds.push_back (child->getBounds());
-            expect (child->getWidth() >= 60 && child->getHeight() >= 24,
-                    "articulation button fell below its practical target size");
-        }
-        expect (articulationButtons == 16,
-                "editor did not retain all 16 articulation buttons");
+            int count = 0;
+            for (auto* child : strip->getChildren())
+            {
+                if (dynamic_cast<juce::TextButton*> (child) == nullptr)
+                    continue;
+                ++count;
+                buttonBounds.push_back (
+                    child->getBounds() + strip->getPosition());
+                expect (child->getWidth() >= 60 && child->getHeight() >= 24,
+                        "keyswitch button fell below its practical target size");
+            }
+            return count;
+        };
+        expect (countButtons (pickStrip) == 3,
+                "editor did not retain the three picking-style buttons");
+        expect (countButtons (styleStrip) == 4,
+                "editor did not retain the four play-style buttons");
         for (std::size_t first = 0; first < buttonBounds.size(); ++first)
             for (std::size_t second = first + 1u; second < buttonBounds.size(); ++second)
                 expect (! buttonBounds[first].intersects (buttonBounds[second]),
-                        "articulation buttons overlap");
+                        "keyswitch buttons overlap");
     }
 
     const auto snapshot = renderEditorSnapshot (*editor);

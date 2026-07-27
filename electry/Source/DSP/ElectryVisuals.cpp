@@ -102,16 +102,17 @@ std::uint32_t packStringVisual(const StringVisualState& state) noexcept
         std::clamp(state.midiNote, -1, 127) + 1);
     const auto fret = static_cast<std::uint32_t>(
         std::clamp(state.fret, -1, ElectryEngine::fretCount) + 1);
-    const auto articulation = static_cast<std::uint32_t>(
-        std::clamp(static_cast<int>(state.articulation), 0,
-                   ElectryEngine::keyswitchCount - 1));
+    const auto playStyle = static_cast<std::uint32_t>(
+        std::clamp(static_cast<int>(state.playStyle), 0,
+                   static_cast<int>(PlayStyle::Harmonics)));
     const float level = std::isfinite(state.level)
         ? clampf(state.level, 0.0f, 1.0f) : 0.0f;
     const auto quantised = static_cast<std::uint32_t>(level * 255.0f + 0.5f);
 
     return (note & 0xffu)
          | ((fret & 0x3fu) << 8)
-         | ((articulation & 0x0fu) << 14)
+         | ((playStyle & 0x03u) << 14)
+         | (state.strokeUp ? (1u << 16) : 0u)
          | (state.sounding ? (1u << 18) : 0u)
          | (state.sympathetic ? (1u << 19) : 0u)
          | (state.releasing ? (1u << 20) : 0u)
@@ -123,7 +124,8 @@ StringVisualState unpackStringVisual(std::uint32_t packed) noexcept
     StringVisualState state;
     state.midiNote = static_cast<int>(packed & 0xffu) - 1;
     state.fret = static_cast<int>((packed >> 8) & 0x3fu) - 1;
-    state.articulation = static_cast<Articulation>((packed >> 14) & 0x0fu);
+    state.playStyle = static_cast<PlayStyle>((packed >> 14) & 0x03u);
+    state.strokeUp = (packed & (1u << 16)) != 0u;
     state.sounding = (packed & (1u << 18)) != 0u;
     state.sympathetic = (packed & (1u << 19)) != 0u;
     state.releasing = (packed & (1u << 20)) != 0u;
