@@ -40,15 +40,12 @@ tones dry and through the amplifier — are committed under
 path, so they cannot drift away from what the plug-in sounds like, and they are
 reproducible on any platform with a C++20 toolchain.
 
-**Note:** this committed screenshot was rendered from the 1.0 editor. The 1.1
-interface adds the live FRETBOARD panel and the PERFORMANCE controls described
-below, the 1.2 interface splits the keyswitch strip into the independent PICK
-STROKE and PLAY STYLE banks, and the image will be regenerated on the next
-macOS build. The
-screenshot is produced by the plug-in regression suite itself
-(`ELECTRY_EDITOR_SNAPSHOT`), so it is always a real editor render rather than a
-mock-up. The Standalone, VST3, and Audio Unit use that same
-JUCE component. Panels, knobs, the fretboard, the keyswitch strip, and the
+The screenshot is produced by the plug-in regression suite itself
+(`ELECTRY_EDITOR_SNAPSHOT`), so it is always a real editor render rather than
+a mock-up; the repository's "Update Electry screenshot" workflow re-renders
+and commits it on demand after an editor change. The Standalone, VST3, and
+Audio Unit use that same
+JUCE component. Panels, knobs, the fretboard, the keyswitch strips, and the
 on-screen keyboard are drawn as resolution-independent JUCE graphics;
 interactive controls stay native for automation, keyboard operation, and
 accessibility.
