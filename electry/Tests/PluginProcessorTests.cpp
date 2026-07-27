@@ -34,20 +34,25 @@ struct ParameterExpectation
     float tolerance;
 };
 
+// These are the shipped defaults, and they are written out rather than read from
+// EngineParameters on purpose: the layout now derives its defaults from that
+// struct, so reading it here too would make the check tautological. This table is
+// the independent statement of what the plug-in promises a new instance, and it is
+// what would have caught the two lists silently drifting apart.
 constexpr std::array<ParameterExpectation, 31> expectedParameters {{
     { electry::parameters::pickupSelector, 2.0f,  1.0e-5f },
-    { electry::parameters::pickupType,     0.5f,  1.0e-5f },
-    { electry::parameters::tone,           0.8f,  1.0e-5f },
-    { electry::parameters::bodyWood,       0.5f,  1.0e-5f },
-    { electry::parameters::bodySize,       0.5f,  1.0e-5f },
-    { electry::parameters::bodyShape,      0.5f,  1.0e-5f },
-    { electry::parameters::construction,   0.5f,  1.0e-5f },
-    { electry::parameters::scaleLength,    0.5f,  1.0e-5f },
+    { electry::parameters::pickupType,     0.32f,  1.0e-5f },
+    { electry::parameters::tone,           0.70f,  1.0e-5f },
+    { electry::parameters::bodyWood,       0.0f,  1.0e-5f },
+    { electry::parameters::bodySize,       0.0f,  1.0e-5f },
+    { electry::parameters::bodyShape,      0.0f,  1.0e-5f },
+    { electry::parameters::construction,   0.0f,  1.0e-5f },
+    { electry::parameters::scaleLength,    0.85f,  1.0e-5f },
     { electry::parameters::bodyResonance,  0.35f, 1.0e-5f },
-    { electry::parameters::stringGauge,    0.5f,  1.0e-5f },
-    { electry::parameters::stringAge,      0.15f, 1.0e-5f },
-    { electry::parameters::pickPosition,   0.35f, 1.0e-5f },
-    { electry::parameters::pickHardness,   0.6f,  1.0e-5f },
+    { electry::parameters::stringGauge,    1.0f,  1.0e-5f },
+    { electry::parameters::stringAge,      0.30f, 1.0e-5f },
+    { electry::parameters::pickPosition,   0.18f, 1.0e-5f },
+    { electry::parameters::pickHardness,   0.58f,  1.0e-5f },
     { electry::parameters::pickNoise,      0.5f,  1.0e-5f },
     { electry::parameters::fingerNoise,    0.4f,  1.0e-5f },
     { electry::parameters::releaseNoise,   0.4f,  1.0e-5f },

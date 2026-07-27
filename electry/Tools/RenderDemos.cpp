@@ -548,13 +548,24 @@ Take renderSympatheticStrum()
 Take renderBuildContrasts()
 {
     // The same two-bar figure across the construction axes: a conventional
-    // 25.5-inch light-string build, the default 26.75-inch instrument, and a
+    // A 25.5-inch light-string build, the shipped default instrument, and a
     // 28-inch baritone with a heavy set and old strings.
+    //
+    // The middle entry is read from EngineParameters rather than written out,
+    // because the point of this take is to place the default between two
+    // deliberate extremes. It had been a copy of the old midpoints, so when the
+    // defaults became a thick blank with the heaviest set this segment quietly
+    // went on rendering an instrument the plug-in no longer ships - a take whose
+    // whole subject is the default, no longer containing it.
     struct Build { const char* name; float scale; float gauge; float age;
                    float wood; float size; float shape; float construction; };
-    static constexpr std::array<Build, 3> builds {{
+    const EngineParameters shipped {};
+    const std::array<Build, 3> builds {{
         { "short scale, light, fresh", 0.0f, 0.15f, 0.05f, 0.2f, 0.7f, 0.2f, 0.15f },
-        { "default build",             0.5f, 0.50f, 0.15f, 0.5f, 0.5f, 0.5f, 0.50f },
+        { "default build",             shipped.scaleLength, shipped.stringGauge,
+                                       shipped.stringAge, shipped.bodyWood,
+                                       shipped.bodySize, shipped.bodyShape,
+                                       shipped.construction },
         { "28-inch baritone, heavy",   1.0f, 0.95f, 0.55f, 0.8f, 0.2f, 0.9f, 0.85f },
     }};
 

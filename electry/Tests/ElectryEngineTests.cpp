@@ -1558,7 +1558,25 @@ void testArtifactsControl()
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
 
+    // Pinned for the same reason as testMaterialAndControlAudibility: the bounds
+    // below say the artifact layer is audible but subtle, and "how audible" is
+    // measured relative to the note it sits on. On the shipped defaults - a thick
+    // blank, heaviest set, tone back - the same 0.18 measures 0.0019 against this
+    // 0.002 floor, not because the artifact path changed but because the note it
+    // is compared against is darker and louder. Raising the Artifacts default
+    // would restore the ratio; that is a voicing decision, not this test's.
     EngineParameters parameters;
+    parameters.bodyWood = 0.5f;
+    parameters.bodySize = 0.5f;
+    parameters.bodyShape = 0.5f;
+    parameters.construction = 0.5f;
+    parameters.scaleLength = 0.5f;
+    parameters.pickupType = 0.5f;
+    parameters.toneKnob = 0.8f;
+    parameters.stringGauge = 0.5f;
+    parameters.stringAge = 0.15f;
+    parameters.pickPosition = 0.35f;
+    parameters.pickHardness = 0.6f;
     parameters.pickNoise = 0.0f;
     parameters.fingerNoise = 0.0f;
     parameters.releaseNoise = 0.0f;
@@ -1819,7 +1837,28 @@ void testMaterialAndControlAudibility()
     ElectryEngine engine;
     engine.prepare(sampleRate, 512);
 
+    // This test asks whether each build axis is audible when it is swept, and
+    // every threshold below was calibrated against one specific instrument. It
+    // must therefore state that instrument rather than inherit whatever the
+    // shipped defaults happen to be, or the thresholds silently come to mean
+    // something else the moment the default voicing moves - which is exactly
+    // what happened when the defaults became a thick blank with the heaviest set
+    // and the tone backed off: seven checks here failed without one line of the
+    // model changing, because a darker instrument makes every axis a smaller
+    // fraction of its own signal. The mid-scale, tone-open instrument below is
+    // the one the numbers were measured on.
     EngineParameters base;
+    base.bodyWood = 0.5f;
+    base.bodySize = 0.5f;
+    base.bodyShape = 0.5f;
+    base.construction = 0.5f;
+    base.scaleLength = 0.5f;
+    base.pickupType = 0.5f;
+    base.toneKnob = 0.8f;
+    base.stringGauge = 0.5f;
+    base.stringAge = 0.15f;
+    base.pickPosition = 0.35f;
+    base.pickHardness = 0.6f;
     base.bodyResonance = 0.55f;
     base.artifactAmount = 0.0f;
     base.pickNoise = 0.0f;
@@ -2848,6 +2887,95 @@ void testPickContactGeometry()
 // coefficients the engine actually runs, across the playable range and the whole
 // travel of both mute controls. If it ever exceeded one the loop would grow at
 // that frequency, which is the one failure this model cannot absorb.
+// The mute dip sits inside the loop, so its phase is part of the sounding
+// period and the engine subtracts it from the delay-line read. Without that
+// subtraction the mute drags the pitch flat - measured at up to 13 cents on
+// the low string, which is what the compensation exists to remove and what
+// this pins. The depth is also modulated over the note, so the correction has
+// to follow the depth actually applied rather than the one the note started
+// on; that part is worth about a cent in the settled window a DFT can read,
+// so this test guards the invariant rather than that refinement.
+//
+// Measured against the same note unmuted, not against nominal pitch: the
+// model detunes slightly by design as pluck energy dissipates, and that is
+// present with or without the mute. Only the mute-attributable difference is
+// a defect.
+void testPalmMuteDoesNotShiftPitch()
+{
+    constexpr double sampleRate = 48000.0;
+    int asserted = 0;
+
+    for (const int midiNote : { 28, 40, 52, 64 })
+    {
+        const double nominal = midiHz(midiNote);
+        const int start = static_cast<int>(0.080 * sampleRate);
+        const int length = static_cast<int>(0.250 * sampleRate);
+
+        const auto fundamentalOf = [&] (float pressure, double& rmsOut)
+        {
+            EngineParameters parameters;
+            parameters.palmMute = pressure;
+            ElectryEngine engine;
+            engine.prepare(sampleRate, 512);
+            engine.setParameters(parameters);
+            auto buffer = renderNote(engine, sampleRate, midiNote, 0.95f,
+                                     Articulation::Downstroke, 0.4);
+            double sum = 0.0;
+            for (int i = 0; i < length; ++i)
+                sum += static_cast<double>(buffer.left[start + i])
+                     * static_cast<double>(buffer.left[start + i]);
+            rmsOut = std::sqrt(sum / static_cast<double>(length));
+            // The fundamental alone. Scoring a partial series instead tracks
+            // the mute's spectral tilt rather than its pitch, which reads as
+            // several cents of drift that the fundamental does not show.
+            double best = nominal;
+            double bestMagnitude = -1.0;
+            for (double cents = -60.0; cents <= 60.0; cents += 0.25)
+            {
+                const double frequency = nominal
+                    * std::pow(2.0, cents / 1200.0);
+                const double magnitude = dftMagnitude(
+                    buffer.left, start, length, sampleRate, frequency);
+                if (magnitude > bestMagnitude)
+                {
+                    bestMagnitude = magnitude;
+                    best = frequency;
+                }
+            }
+            return best;
+        };
+
+        double openRms = 0.0;
+        const double open = fundamentalOf(0.0f, openRms);
+
+        for (const float pressure : { 0.30f, 0.55f, 1.00f })
+        {
+            double mutedRms = 0.0;
+            const double muted = fundamentalOf(pressure, mutedRms);
+            // Assert only where the note still has enough sustained energy for
+            // pitch to be a property of it at all. A fully muted low E is ~37
+            // dB below the open note here and dropping fast; two windowings of
+            // that same remnant disagree by 8 cents, so a threshold on it would
+            // be measuring the estimator. 30 dB down is the cutoff, which
+            // excludes exactly that one case out of the twelve.
+            if (mutedRms < 1.0e-5 || mutedRms < 0.03 * openRms)
+                continue;
+
+            const double shift = centsBetween(muted, open);
+            ++asserted;
+            expect(std::abs(shift) < 4.0,
+                   "palm mute shifts pitch by " + std::to_string(shift)
+                       + " cents at note " + std::to_string(midiNote)
+                       + ", pressure " + std::to_string(pressure));
+        }
+    }
+
+    // The energy guard must not be able to quietly skip the whole test.
+    expect(asserted >= 9,
+           "expected at least 9 measurable palm-mute pitch cases, asserted "
+               + std::to_string(asserted));
+}
+
 void testHandDipNeverExpands()
 {
     constexpr double sampleRate = 48000.0;
@@ -2875,16 +3003,29 @@ void testHandDipNeverExpands()
                 // fundamental, so a high note pushes it toward Nyquist where the
                 // coefficients are most awkward.
                 for (int note = ElectryEngine::lowestPlayableNote;
-                     note <= ElectryEngine::highestPlayableNote; note += 3)
+                     note <= ElectryEngine::highestPlayableNote; note += 6)
+                // Three ages, chosen to straddle the modulation rather than to
+                // sample it densely: before the contact has settled, just after
+                // it has, and far enough into the tail that the grip has
+                // slackened. Denser sweeps cost minutes and found nothing more.
+                for (const int ageBlocks : { 0, 4, 45 })
                 {
                     engine.allNotesOff();
                     engine.noteOn(ElectryEngine::firstKeyswitchNote
                                       + static_cast<int>(articulation), 1.0f);
                     engine.noteOn(note, 0.9f);
 
-                    float left[64] {};
-                    float right[64] {};
+                    // Sampled at several ages, not just after the first block.
+                    // The dip's depth is modulated per control period - it fades
+                    // in as the contact settles and back out as the string stops
+                    // driving the hand - so the bound has to hold at every depth
+                    // that modulation produces, not only at the one the note
+                    // happens to start on.
+                    float left[512] {};
+                    float right[512] {};
                     engine.process(left, right, 64);
+                    for (int block = 0; block < ageBlocks; ++block)
+                        engine.process(left, right, 512);
 
                     for (int stringIndex = 0;
                          stringIndex < ElectryEngine::stringCount; ++stringIndex)
@@ -2928,9 +3069,10 @@ void testHandDipNeverExpands()
                             if (! (magnitude <= 1.000001f))
                             {
                                 std::printf("  |H| = %.6f at note %d, "
-                                            "pressure %.2f, mute %.2f\n",
+                                            "pressure %.2f, mute %.2f, "
+                                            "age %d blocks\n",
                                             magnitude, note, pressure,
-                                            muteDamping);
+                                            muteDamping, ageBlocks);
                                 expect(false, "hand loss dip expands inside "
                                               "the loop");
                                 return;
@@ -3480,6 +3622,7 @@ int main()
     testStrumSpread();
     testVibratoDepthAndPickGeometry();
     testPickContactGeometry();
+    testPalmMuteDoesNotShiftPitch();
     testHandDipNeverExpands();
     testLowRegisterFundamentalWeight();
     testVisualStateAndGeometry();

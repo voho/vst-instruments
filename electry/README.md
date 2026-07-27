@@ -367,8 +367,12 @@ every platform rather than only inside a host.
 
 ## Guitar construction axes
 
-The material controls use contrasting classic solid-body anchors and default
-to 0.5. Scale length is widened for the Drop-E instrument:
+The material controls use contrasting classic solid-body anchors. They default
+to 0, the thick carved mahogany/maple set-neck end of every axis, because the
+shipped instrument is a specific guitar rather than the average of the range -
+the reasoning and what it costs in control range are in the
+[research contract](Docs/physical-modeling-research.md#the-default-voicing-and-what-moving-it-cost).
+Scale length is widened for the Drop-E instrument and defaults to 27.63":
 
 | Control | 0 | 1 |
 | --- | --- | --- |
@@ -393,18 +397,18 @@ roughly 4 ms.
 | # | ID | Name | Range and default |
 | --- | --- | --- | --- |
 | 1 | `pickupSelector` | Pickup selector | Neck / Both / **Bridge** |
-| 2 | `pickupType` | Pickup type | 0..100%, default 50% |
-| 3 | `tone` | Tone | 0..100%, default 80% |
-| 4 | `bodyWood` | Body wood | 0..100%, default 50% |
-| 5 | `bodySize` | Body size | 0..100%, default 50% |
-| 6 | `bodyShape` | Body shape | 0..100%, default 50% |
-| 7 | `construction` | Construction | 0..100%, default 50% |
-| 8 | `scaleLength` | Scale length | 25.50"..28.00", default 26.75" |
+| 2 | `pickupType` | Pickup type | 0..100%, default 32% |
+| 3 | `tone` | Tone | 0..100%, default 70% |
+| 4 | `bodyWood` | Body wood | 0..100%, default 0% (mahogany/maple set blank) |
+| 5 | `bodySize` | Body size | 0..100%, default 0% (thick heavy blank) |
+| 6 | `bodyShape` | Body shape | 0..100%, default 0% (carved single-cut) |
+| 7 | `construction` | Construction | 0..100%, default 0% (set neck + stopbar) |
+| 8 | `scaleLength` | Scale length | 25.50"..28.00", default 27.63" |
 | 9 | `bodyResonance` | Body resonance | 0..100%, default 35% |
-| 10 | `stringGauge` | String gauge | Drop-E .009-.080 set to .011-.098 set, default 50% |
-| 11 | `stringAge` | String age | 0..100%, default 15% |
-| 12 | `pickPosition` | Pick position | bridge..neck, default 35% |
-| 13 | `pickHardness` | Pick hardness | 0..100%, default 60% |
+| 10 | `stringGauge` | String gauge | Drop-E .009-.080 set to .011-.098 set, default 100% (.011-.098) |
+| 11 | `stringAge` | String age | 0..100%, default 30% |
+| 12 | `pickPosition` | Pick position | bridge..neck, default 18% |
+| 13 | `pickHardness` | Pick hardness | 0..100%, default 58% |
 | 14 | `pickNoise` | Pick noise | 0..100%, default 50% |
 | 15 | `fingerNoise` | Finger noise | 0..100%, default 40% |
 | 16 | `releaseNoise` | Release noise | 0..100%, default 40% |

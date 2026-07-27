@@ -32,10 +32,18 @@ metal rhythm sound that needs nothing after it:
   accents. The bridge hand also damps the coupled strings, so the chug stays
   tight without turning the sympathetic ring off.
 
-## Between Worlds (default check)
+## Factory Default (default check)
 
-Everything at its default: both anchors blended 50/50, bridge pickup,
-tone 80%. A neutral, honest DI tone for testing amp chains.
+Everything at its default, which is no longer a blend of the anchors: the
+four material controls sit at 0 - the thick carved mahogany/maple set-neck
+end of each - on a 27.63" scale with the heaviest string set, a
+humbucker-leaning bridge pickup at 32%, and tone at 70%. Not neutral and not
+the midpoint of any axis; it is one specific Drop-E rhythm guitar, which is
+what makes it the right reference to hang an amp chain off. See
+[why the defaults are an instrument rather than an average](../README.md#guitar-construction-axes).
+
+(Formerly "Between Worlds", when the defaults really were 50/50 on both
+anchors with tone at 80%.)
 
 ## Vintage Twang
 
