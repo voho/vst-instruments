@@ -43,8 +43,7 @@ reproducible on any platform with a C++20 toolchain.
 The screenshot is produced by the plug-in regression suite itself
 (`ELECTRY_EDITOR_SNAPSHOT`), so it is always a real editor render rather than
 a mock-up; the Nightly workflow re-renders it on every run and commits it
-when the editor has changed, and the repository's "Update Electry screenshot"
-workflow does the same on demand for a branch. The Standalone, VST3, and
+when the editor has changed. The Standalone, VST3, and
 Audio Unit use that same
 JUCE component. Panels, knobs, the fretboard, the keyswitch strips, and the
 on-screen keyboard are drawn as resolution-independent JUCE graphics;
