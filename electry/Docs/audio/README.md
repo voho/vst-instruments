@@ -167,4 +167,6 @@ renders a short take to a temporary directory and checks that it is finite,
 audible and a readable WAV, so the tool cannot rot unnoticed.
 
 The score for each demonstration is a short, readable function in
-`Tools/RenderDemos.cpp`; add a `Demo` entry there to add a file.
+`Tools/RenderDemos.cpp`; add a `Demo` entry there to add a file. The renderer
+owns this directory's WAV set: an entry that is removed or renamed also
+deletes its old file on the next full render.

@@ -1003,6 +1003,36 @@ int runSmokeTest(const std::filesystem::path& directory)
                 take.peak());
     return 0;
 }
+// A demo removed from or renamed in demos() must also disappear from the
+// output directory, or automation that commits the directory preserves the
+// stale file forever while the level table drops its row.
+bool removeStaleWavs(const std::filesystem::path& directory)
+{
+    std::vector<std::string> current;
+    for (const auto& demo : demos())
+        current.push_back(demo.fileName);
+
+    bool removedAll = true;
+    for (const auto& entry : std::filesystem::directory_iterator(directory))
+    {
+        if (! entry.is_regular_file() || entry.path().extension() != ".wav")
+            continue;
+        const auto name = entry.path().filename().string();
+        if (std::find(current.begin(), current.end(), name) != current.end())
+            continue;
+        std::error_code error;
+        if (std::filesystem::remove(entry.path(), error))
+            std::printf("Removed stale demo %s\n", name.c_str());
+        else
+        {
+            std::fprintf(stderr, "could not remove stale demo %s\n",
+                         name.c_str());
+            removedAll = false;
+        }
+    }
+    return removedAll;
+}
+
 // The per-file level table in the output directory's README is regenerated in
 // place on every full render, so the documented rendered peaks can never
 // drift away from the committed WAVs. The markers bound exactly what the
@@ -1168,7 +1198,10 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "%d demo render(s) failed.\n", failures);
         return 1;
     }
-    // Only a complete render may rewrite the documented level table.
+    // Only a complete render may prune stale files and rewrite the
+    // documented level table.
+    if (! removeStaleWavs(directory))
+        return 1;
     if (! updatePeaksTable(directory, levels))
         return 1;
     return 0;
