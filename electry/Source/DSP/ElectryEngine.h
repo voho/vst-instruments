@@ -833,6 +833,7 @@ private:
     // Rate-derived constants that used to be recomputed with std::pow on
     // every rendered sample of every string. They depend only on the internal
     // clock, so prepare() is their only correct home.
+    float handEnvelopeCoefficient_ { 0.0015f };
     float energyAttackCoefficient_ { 0.004f };
     float energyReleaseCoefficient_ { 0.00006f };
     float retireAttackCoefficient_ { 0.01f };

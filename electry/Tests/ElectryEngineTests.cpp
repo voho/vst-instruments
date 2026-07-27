@@ -2887,6 +2887,95 @@ void testPickContactGeometry()
 // coefficients the engine actually runs, across the playable range and the whole
 // travel of both mute controls. If it ever exceeded one the loop would grow at
 // that frequency, which is the one failure this model cannot absorb.
+// The mute dip sits inside the loop, so its phase is part of the sounding
+// period and the engine subtracts it from the delay-line read. Without that
+// subtraction the mute drags the pitch flat - measured at up to 13 cents on
+// the low string, which is what the compensation exists to remove and what
+// this pins. The depth is also modulated over the note, so the correction has
+// to follow the depth actually applied rather than the one the note started
+// on; that part is worth about a cent in the settled window a DFT can read,
+// so this test guards the invariant rather than that refinement.
+//
+// Measured against the same note unmuted, not against nominal pitch: the
+// model detunes slightly by design as pluck energy dissipates, and that is
+// present with or without the mute. Only the mute-attributable difference is
+// a defect.
+void testPalmMuteDoesNotShiftPitch()
+{
+    constexpr double sampleRate = 48000.0;
+    int asserted = 0;
+
+    for (const int midiNote : { 28, 40, 52, 64 })
+    {
+        const double nominal = midiHz(midiNote);
+        const int start = static_cast<int>(0.080 * sampleRate);
+        const int length = static_cast<int>(0.250 * sampleRate);
+
+        const auto fundamentalOf = [&] (float pressure, double& rmsOut)
+        {
+            EngineParameters parameters;
+            parameters.palmMute = pressure;
+            ElectryEngine engine;
+            engine.prepare(sampleRate, 512);
+            engine.setParameters(parameters);
+            auto buffer = renderNote(engine, sampleRate, midiNote, 0.95f,
+                                     Articulation::Downstroke, 0.4);
+            double sum = 0.0;
+            for (int i = 0; i < length; ++i)
+                sum += static_cast<double>(buffer.left[start + i])
+                     * static_cast<double>(buffer.left[start + i]);
+            rmsOut = std::sqrt(sum / static_cast<double>(length));
+            // The fundamental alone. Scoring a partial series instead tracks
+            // the mute's spectral tilt rather than its pitch, which reads as
+            // several cents of drift that the fundamental does not show.
+            double best = nominal;
+            double bestMagnitude = -1.0;
+            for (double cents = -60.0; cents <= 60.0; cents += 0.25)
+            {
+                const double frequency = nominal
+                    * std::pow(2.0, cents / 1200.0);
+                const double magnitude = dftMagnitude(
+                    buffer.left, start, length, sampleRate, frequency);
+                if (magnitude > bestMagnitude)
+                {
+                    bestMagnitude = magnitude;
+                    best = frequency;
+                }
+            }
+            return best;
+        };
+
+        double openRms = 0.0;
+        const double open = fundamentalOf(0.0f, openRms);
+
+        for (const float pressure : { 0.30f, 0.55f, 1.00f })
+        {
+            double mutedRms = 0.0;
+            const double muted = fundamentalOf(pressure, mutedRms);
+            // Assert only where the note still has enough sustained energy for
+            // pitch to be a property of it at all. A fully muted low E is ~37
+            // dB below the open note here and dropping fast; two windowings of
+            // that same remnant disagree by 8 cents, so a threshold on it would
+            // be measuring the estimator. 30 dB down is the cutoff, which
+            // excludes exactly that one case out of the twelve.
+            if (mutedRms < 1.0e-5 || mutedRms < 0.03 * openRms)
+                continue;
+
+            const double shift = centsBetween(muted, open);
+            ++asserted;
+            expect(std::abs(shift) < 4.0,
+                   "palm mute shifts pitch by " + std::to_string(shift)
+                       + " cents at note " + std::to_string(midiNote)
+                       + ", pressure " + std::to_string(pressure));
+        }
+    }
+
+    // The energy guard must not be able to quietly skip the whole test.
+    expect(asserted >= 9,
+           "expected at least 9 measurable palm-mute pitch cases, asserted "
+               + std::to_string(asserted));
+}
+
 void testHandDipNeverExpands()
 {
     constexpr double sampleRate = 48000.0;
@@ -3533,6 +3622,7 @@ int main()
     testStrumSpread();
     testVibratoDepthAndPickGeometry();
     testPickContactGeometry();
+    testPalmMuteDoesNotShiftPitch();
     testHandDipNeverExpands();
     testLowRegisterFundamentalWeight();
     testVisualStateAndGeometry();

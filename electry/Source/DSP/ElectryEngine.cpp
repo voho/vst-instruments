@@ -593,6 +593,10 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     const float internalRate = static_cast<float>(sampleRate_);
     energyAttackCoefficient_ = rateAdjustedCoefficient(0.004f, internalRate);
     energyReleaseCoefficient_ = rateAdjustedCoefficient(0.00006f, internalRate);
+    // Calibrated at 48 kHz like its neighbours. Left as a bare per-sample
+    // literal it would give the hand a different physical response time at
+    // every host rate, while the 40 ms settle beside it is rate-normalised.
+    handEnvelopeCoefficient_ = rateAdjustedCoefficient(0.0015f, internalRate);
     retireAttackCoefficient_ = rateAdjustedCoefficient(0.01f, internalRate);
     retireReleaseCoefficient_ = rateAdjustedCoefficient(0.0009f, internalRate);
     artifactBandCoefficient_ = rateAdjustedCoefficient(0.12f, internalRate);
@@ -1510,8 +1514,10 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         // the sounding pitch matches the target frequency.
         const auto loopPhaseDelay = [&] (const PolarisationLoop& loop)
         {
-            // The shelf is in the loop, so its phase is part of the sounding
-            // period; without this a palm-muted string sits 12.5 cents flat.
+            // The loss band is in the loop, so its phase is part of the
+            // sounding period; without this the mute drags the string flat by
+            // up to 13 cents on the low E. ("Shelf" here until the band
+            // replaced it - the figure was re-measured for the band.)
             float dipMagnitude = 1.0f, dipPhase = 0.0f;
             handLossResponse(loop.handLossDepth, loop.handLossShape, omega,
                              dipMagnitude, dipPhase);
@@ -2218,6 +2224,15 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.velocityProfile = makeVelocityProfile(velocity);
     voice.startOrder = ++noteSequence_;
     voice.ageSamples = 0;
+    // Per-note, for the same reason ageSamples is: the relax factor is
+    // measured against this note's own peak. Carried over, a quiet note
+    // following a loud one on the same string is divided by the loud one's
+    // peak and sits near the floor for its whole length, which makes two
+    // identical notes sound different depending on what preceded them.
+    voice.vertical.handEnvelope = 0.0f;
+    voice.vertical.handEnvelopePeak = 0.0f;
+    voice.horizontal.handEnvelope = 0.0f;
+    voice.horizontal.handEnvelopePeak = 0.0f;
     voice.noiseState = hash32(static_cast<std::uint32_t>(voice.stringIndex * 7349)
                               ^ static_cast<std::uint32_t>(midiNote * 131)
                               ^ static_cast<std::uint32_t>(
@@ -2684,8 +2699,24 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
             const float reference = std::max(loop.handEnvelopePeak, 1.0e-7f);
             const float relaxFactor = 0.40f + 0.60f
                 * clampf(loop.handEnvelope / reference, 0.0f, 1.0f);
+            // The dip sits inside the loop, so its phase is part of the
+            // sounding period - the same reason the loop compensates for it at
+            // all. Moving the depth moves that phase, so the correction has to
+            // move with it; left alone it stays pinned to the depth the note
+            // started on while the audible depth walks away from it.
+            //
+            // Worth about a cent where it can be measured, not the 13 the
+            // compensation is worth in total: most of that is already right
+            // because the depth at note-on is the depth the correction was
+            // built from, and the error only opens up as the factors depart
+            // from one. Kept because the invariant should hold rather than
+            // nearly hold, and it costs a recompute only while it is moving.
+            // Re-flagged only on real movement so a settled tail stops paying.
+            const float previousDepth = loop.handLossDepth;
             applyDipDepth(loop, loop.handLossSolvedDepth
                                     * settleFactor * relaxFactor);
+            if (std::fabs(loop.handLossDepth - previousDepth) > 1.0e-4f)
+                voice.compensationDirty = true;
         };
         modulate(voice.vertical);
         modulate(voice.horizontal);
@@ -2787,7 +2818,8 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
             // relative rather than absolute deliberately - an absolute reference
             // was built and measured, and was worse at every scale tried.
             const float rectified = sample < 0.0f ? -sample : sample;
-            loop.handEnvelope += 0.0015f * (rectified - loop.handEnvelope);
+            loop.handEnvelope += handEnvelopeCoefficient_
+                               * (rectified - loop.handEnvelope);
             if (loop.handEnvelope > loop.handEnvelopePeak)
                 loop.handEnvelopePeak = loop.handEnvelope;
         }
