@@ -19,9 +19,12 @@ libraries.
 | :---: | :---: | :---: | :---: | :---: |
 | [![Vocalor standalone interface](vocalor/Docs/screenshots/vocalor-standalone.png)](vocalor/README.md) | [![Drumalor standalone interface](drumalor/Docs/screenshots/drumalor-standalone.png)](drumalor/README.md) | [![Mars standalone interface](mars/Docs/screenshots/mars-standalone.png)](mars/README.md) | [![Neuramar standalone interface](neuramar/Docs/screenshots/neuramar-standalone.png)](neuramar/README.md) | [![Electry standalone interface](electry/Docs/screenshots/electry-standalone.png)](electry/README.md) |
 
-Every screenshot above was captured from the previous release of its instrument
-and predates the interface work described in each README. They are regenerated
-from a macOS standalone build, so they will be refreshed on the next one.
+Each screenshot above is rendered by its instrument's own regression suite
+during the Nightly workflow's macOS build and committed automatically when the
+editor has changed, so the images track the real editors (Vocalor's suite does
+not render one yet, so its screenshot still dates from its previous release).
+The Nightly also re-renders and commits Electry's
+[demonstration audio](electry/Docs/audio/README.md) the same way.
 
 ## Instruments
 
@@ -136,7 +139,11 @@ The two GitHub Actions workflows cover every instrument explicitly:
 - **Nightly** runs the same macOS helpers in universal mode, packages ZIP and
   PKG artifacts containing ad-hoc-signed bundles, retains a combined workflow
   artifact for 14 days, and preserves the prior complete rolling-release set
-  until all eight uniquely named replacement assets have uploaded.
+  until all ten uniquely named replacement assets have uploaded. It also keeps
+  the committed documentation media honest: a Linux job re-renders Electry's
+  demonstration audio through the JUCE-free renderer, the macOS build renders
+  each supporting instrument's editor screenshot through its test suite, and
+  either is committed back to `main` only when the bytes actually changed.
 
 The JUCE source dependency is pinned to an immutable 8.0.14 archive and SHA-256
 checksum in every project. Runner images and Xcode are supplied by GitHub Actions,

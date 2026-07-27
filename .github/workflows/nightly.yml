@@ -15,6 +15,64 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The committed Electry demonstration WAVs are rendered by the JUCE-free
+  # renderer, so any model change shows up as changed bytes. Re-rendering and
+  # committing them nightly keeps the audible record in lockstep with the
+  # code; the nightly Linux toolchain is the canonical renderer, and a run on
+  # an unchanged model commits nothing because the render is deterministic.
+  refresh-audio-demos:
+    if: github.ref == 'refs/heads/main'
+    name: Re-render committed Electry demo audio
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The build must not inherit the write credential; the push step
+          # below supplies the token explicitly instead.
+          persist-credentials: false
+
+      - name: Build the JUCE-free demo renderer
+        run: |
+          cmake -S electry -B electry/build-dsp -DCMAKE_BUILD_TYPE=Release \
+            -DELECTRY_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
+          cmake --build electry/build-dsp --parallel \
+            --target ElectryRenderDemos
+
+      - name: Render and commit the demo audio if it changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ./electry/build-dsp/ElectryRenderDemos electry/Docs/audio
+          # Stage before checking: a newly added demo is an untracked file,
+          # which git diff alone would not see.
+          git add -A electry/Docs/audio
+          if git diff --cached --quiet; then
+            echo "Demo audio is unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Nightly: re-render the committed Electry demo audio"
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for attempt in 1 2 3; do
+            git pull --rebase -X theirs "$REMOTE" main
+            # If render-relevant Electry code landed on main while this job
+            # ran, these WAVs describe the older model; publishing them would
+            # be wrong, and the next nightly will render the newer tree.
+            if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
+                electry ':(exclude)electry/Docs'; then
+              echo "Electry changed upstream during the render; deferring to the next nightly."
+              exit 0
+            fi
+            if git push "$REMOTE" HEAD:main; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "error: could not push the re-rendered demo audio" >&2
+          exit 1
+
   build-macos:
     if: github.ref == 'refs/heads/main'
     name: Universal builds, packages, and rolling release
@@ -25,7 +83,10 @@ jobs:
           # Build-time FetchContent code must not inherit the write credential.
           persist-credentials: false
 
-      # Full arm64 + x86_64 universal builds (script default) plus project tests.
+      # Full arm64 + x86_64 universal builds (script default) plus project
+      # tests. Each suite that supports it renders its committed editor
+      # screenshot while it runs, so the images in the READMEs track the real
+      # editors; the commit step below pushes any that changed.
       - name: Build Vocalor and run tests
         working-directory: vocalor
         run: ./scripts/build-macos.sh
@@ -36,6 +97,8 @@ jobs:
 
       - name: Build Drumalor and run tests
         working-directory: drumalor
+        env:
+          DRUMALOR_EDITOR_SNAPSHOT: ${{ github.workspace }}/drumalor/Docs/screenshots/drumalor-standalone.png
         run: ./scripts/build-macos.sh
 
       - name: Package Drumalor (ad-hoc-signed bundles)
@@ -44,6 +107,8 @@ jobs:
 
       - name: Build Mars and run tests
         working-directory: mars
+        env:
+          MARS_EDITOR_SNAPSHOT: ${{ github.workspace }}/mars/Docs/screenshots/mars-standalone.png
         run: ./scripts/build-macos.sh
 
       - name: Package Mars (ad-hoc-signed bundles)
@@ -52,6 +117,8 @@ jobs:
 
       - name: Build Neuramar and run tests
         working-directory: neuramar
+        env:
+          NEURAMAR_EDITOR_SNAPSHOT: ${{ github.workspace }}/neuramar/Docs/screenshots/neuramar-standalone.png
         run: ./scripts/build-macos.sh
 
       - name: Package Neuramar (ad-hoc-signed bundles)
@@ -60,11 +127,61 @@ jobs:
 
       - name: Build Electry and run tests
         working-directory: electry
+        env:
+          ELECTRY_EDITOR_SNAPSHOT: ${{ github.workspace }}/electry/Docs/screenshots/electry-standalone.png
         run: ./scripts/build-macos.sh
 
       - name: Package Electry (ad-hoc-signed bundles)
         working-directory: electry
         run: ./scripts/sign-and-package-macos.sh
+
+      # Vocalor's suite has no snapshot hook yet, so its screenshot is not
+      # regenerated here. The rebase-and-retry loop absorbs the audio-demos
+      # job (or anything else) having pushed to main while this job built.
+      - name: Commit regenerated screenshots if they changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          paths=(
+            drumalor/Docs/screenshots
+            mars/Docs/screenshots
+            neuramar/Docs/screenshots
+            electry/Docs/screenshots
+          )
+          # Stage before checking: a screenshot rendered for the first time is
+          # an untracked file, which git diff alone would not see.
+          git add -A "${paths[@]}"
+          if git diff --cached --quiet; then
+            echo "Screenshots are unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Nightly: regenerate the committed editor screenshots"
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for attempt in 1 2 3; do
+            git pull --rebase -X theirs "$REMOTE" main
+            # If an instrument's code moved on main while this long build ran,
+            # these PNGs were rendered from the older tree and replaying them
+            # onto the newer one would publish stale editors. Skip: the next
+            # nightly builds the newer tree and refreshes them correctly.
+            # Docs-only churn (including the audio job's own commit) does not
+            # invalidate a render, so it does not defer the push.
+            if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
+                drumalor mars neuramar electry \
+                ':(exclude)drumalor/Docs' ':(exclude)mars/Docs' \
+                ':(exclude)neuramar/Docs' ':(exclude)electry/Docs'; then
+              echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
+              exit 0
+            fi
+            if git push "$REMOTE" HEAD:main; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "error: could not push the regenerated screenshots" >&2
+          exit 1
 
       # Retained on the workflow run itself (downloadable by anyone with repo
       # access). Instrument-specific patterns prevent one output from
