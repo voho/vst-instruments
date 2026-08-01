@@ -320,9 +320,21 @@ float TaikoEngine::radiationEfficiency (int order, float ka) noexcept
     // is why a centre strike is heard as a boom and an edge strike as a slap.
     const float x = ka > 1.0e-4f ? ka : 1.0e-4f;
     const float exponent = 2.0f * static_cast<float> (order) + 2.0f;
-    const float raised = std::pow (x, exponent);
-    const float knee = std::pow (1.0f + 1.4f * static_cast<float> (order), exponent);
-    return raised / (raised + knee);
+    const float kneeBase = 1.0f + 1.4f * static_cast<float> (order);
+
+    // Algebraically x^n/(x^n + knee^n), but evaluated as 1/(1 + (knee/x)^n) so
+    // neither term is ever formed on its own. The direct version overflows: the
+    // top modes carry a circumferential order of eight, so the exponent is
+    // eighteen, and x^18 leaves float range once ka passes about 138. That is
+    // reachable - a small, hard, high-tension head two octaves up, rendered at
+    // 384 kHz - and it produced inf/inf, a NaN decay rate, and seven high
+    // partials silently retired out of an edge stroke.
+    //
+    // In this form the extremes are exactly the limits they should be: a large
+    // ka drives the ratio to zero and the efficiency to one, and a small ka
+    // overflows the ratio to infinity, which divides to a clean zero rather
+    // than to NaN.
+    return 1.0f / (1.0f + std::pow (kneeBase / x, exponent));
 }
 
 float TaikoEngine::readDelayLine (const std::array<float, directLineSize>& line,
@@ -514,8 +526,15 @@ void TaikoEngine::setParameters (const EngineParameters& parameters) noexcept
     // Only the terms that actually enter the physical solve invalidate the
     // cached drums. Mic placement does too, because the mode weights are baked
     // per stroke; the output stage does not.
+    //
+    // Bachi Hardness belongs here now that the sticks are cached beside the
+    // drums: it sets the wood's stiffness, density and loss, so it moves the
+    // whole stick bank and not just the contact stiffness, which is solved per
+    // stroke. Leaving it out froze the stick-on-stick stroke at whatever
+    // hardness happened to be set when the cache was first filled.
     const bool physicsChanged =
-        next.headDiameter != applied_.headDiameter
+        next.bachiHardness != applied_.bachiHardness
+        || next.headDiameter != applied_.headDiameter
         || next.bodyDepth != applied_.bodyDepth
         || next.tension != applied_.tension
         || next.headMaterial != applied_.headMaterial

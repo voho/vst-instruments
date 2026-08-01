@@ -97,6 +97,44 @@ struct TaikoEngineTestAccess
         return -1;
     }
 
+    // The whole modal bank of the most recently struck voice. Slot zero is not
+    // it once anything else is still ringing.
+    static std::vector<std::array<float, 5>> newestVoiceBank (const TaikoEngine& engine)
+    {
+        std::size_t newest = 0;
+        for (std::size_t index = 1; index < engine.voices_.size(); ++index)
+            if (engine.voices_[index].startOrder > engine.voices_[newest].startOrder)
+                newest = index;
+
+        std::vector<std::array<float, 5>> bank;
+        const auto& voice = engine.voices_[newest];
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            bank.push_back ({ mode.omega, mode.decayRate, mode.drive, mode.micLeft,
+                              mode.micRight });
+        }
+        return bank;
+    }
+
+    static bool everyDecayIsFinite (const TaikoEngine& engine)
+    {
+        for (const auto& voice : engine.voices_)
+            for (int index = 0; index < voice.modeCount; ++index)
+            {
+                const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+                if (! std::isfinite (mode.decayRate) || ! std::isfinite (mode.drive)
+                    || ! std::isfinite (mode.omega))
+                    return false;
+            }
+        return true;
+    }
+
+    static float radiationEfficiency (int order, float ka) noexcept
+    {
+        return TaikoEngine::radiationEfficiency (order, ka);
+    }
+
     static std::uint64_t strokeCount (const TaikoEngine& engine) noexcept
     {
         return engine.noteSequence_;
@@ -951,6 +989,177 @@ void testVoiceStealingStaysBounded()
     expect (rendered.peak <= 1.0001, "voice stealing exceeded full scale");
     expect (engine.getActiveVoiceCount() <= 16,
             "the engine must not exceed its declared voice pool");
+}
+
+// Caching must be invisible. The engine keeps a resolved drum and a resolved
+// pair of sticks per octave, and a parameter that feeds either of them but is
+// missing from the invalidation list freezes it at whatever value happened to be
+// set when the cache was first filled. That is how Bachi Hardness came to be
+// ignored: before the sticks were cached it only fed the per-stroke contact
+// solve, so its absence from the list was correct, and adding the cache made it
+// wrong without touching the list.
+//
+// This sweeps every parameter rather than that one, so the next field to grow a
+// cached dependency is caught by the same test.
+void testEveryParameterSurvivesTheCache()
+{
+    struct Control
+    {
+        const char* name;
+        void (*apply) (taikor::EngineParameters&, float);
+    };
+    static const std::array<Control, 21> controls {{
+        { "Head Diameter",      [] (taikor::EngineParameters& p, float v) { p.headDiameter = 0.20f + 1.00f * v; } },
+        { "Body Depth",         [] (taikor::EngineParameters& p, float v) { p.bodyDepth = v; } },
+        { "Tension",            [] (taikor::EngineParameters& p, float v) { p.tension = v; } },
+        { "Head Material",      [] (taikor::EngineParameters& p, float v) { p.headMaterial = v; } },
+        { "Shell Material",     [] (taikor::EngineParameters& p, float v) { p.shellMaterial = v; } },
+        { "Resonant Head",      [] (taikor::EngineParameters& p, float v) { p.resonantTension = v; } },
+        { "Air Coupling",       [] (taikor::EngineParameters& p, float v) { p.cavityCoupling = v; } },
+        { "Head Damping",       [] (taikor::EngineParameters& p, float v) { p.headDamping = v; } },
+        { "Shell Resonance",    [] (taikor::EngineParameters& p, float v) { p.shellResonance = v; } },
+        { "Pitch",              [] (taikor::EngineParameters& p, float v) { p.pitch = -24.0f + 48.0f * v; } },
+        { "Bachi Hardness",     [] (taikor::EngineParameters& p, float v) { p.bachiHardness = v; } },
+        { "Strike Position",    [] (taikor::EngineParameters& p, float v) { p.strikePosition = -1.0f + 2.0f * v; } },
+        { "Velocity Depth",     [] (taikor::EngineParameters& p, float v) { p.velocityDepth = v; } },
+        { "Tension Modulation", [] (taikor::EngineParameters& p, float v) { p.tensionModulation = v; } },
+        { "Strike Noise",       [] (taikor::EngineParameters& p, float v) { p.strikeNoise = v; } },
+        { "Octave Body",        [] (taikor::EngineParameters& p, float v) { p.octaveBody = v; } },
+        { "Mic Distance",       [] (taikor::EngineParameters& p, float v) { p.micDistance = v; } },
+        { "Mic Spread",         [] (taikor::EngineParameters& p, float v) { p.micSpread = v; } },
+        { "Stereo Width",       [] (taikor::EngineParameters& p, float v) { p.stereoWidth = v; } },
+        { "Drive",              [] (taikor::EngineParameters& p, float v) { p.drive = v; } },
+        { "Output",             [] (taikor::EngineParameters& p, float v) { p.outputGain = 0.1f + 0.9f * v; } },
+    }};
+
+    // Humanisation is seeded from the stroke's own index, so a reused engine's
+    // second stroke would differ from a fresh engine's first for a reason that
+    // has nothing to do with caching. Turning it off is what makes the two
+    // comparable at all.
+    const auto base = [] {
+        auto parameters = defaultParameters();
+        parameters.humanise = 0.0f;
+        return parameters;
+    }();
+
+    for (const auto& control : controls)
+        for (const auto articulation : { taikor::Articulation::Don,
+                                         taikor::Articulation::Katsu,
+                                         taikor::Articulation::Bachi })
+        {
+            auto before = base;
+            auto after = base;
+            control.apply (before, 0.15f);
+            control.apply (after, 0.85f);
+
+            // A fresh engine that has only ever seen the new value.
+            taikor::TaikoEngine fresh;
+            fresh.prepare (48000.0, defaultBlockSize);
+            fresh.setParameters (after);
+            fresh.trigger (articulation, 0, 0.85f);
+            const auto expected = taikor::TaikoEngineTestAccess::newestVoiceBank (fresh);
+
+            // One that was used at the old value first, exactly as a player
+            // would: strike, turn the control, strike again.
+            taikor::TaikoEngine reused;
+            reused.prepare (48000.0, defaultBlockSize);
+            reused.setParameters (before);
+            reused.trigger (articulation, 0, 0.85f);
+            render (reused, 2400);
+            reused.setParameters (after);
+            reused.trigger (articulation, 0, 0.85f);
+            const auto actual = taikor::TaikoEngineTestAccess::newestVoiceBank (reused);
+
+            const std::string where = std::string (" (") + control.name + ", "
+                                    + std::string (taikor::getArticulationDisplayName (articulation))
+                                    + ")";
+
+            expect (actual.size() == expected.size(),
+                    "turning a control changed how many modes a stroke builds "
+                    "depending on what came before it" + where);
+            if (actual.size() != expected.size())
+                continue;
+
+            bool identical = true;
+            for (std::size_t mode = 0; mode < actual.size() && identical; ++mode)
+                for (std::size_t term = 0; term < actual[mode].size(); ++term)
+                    if (std::abs (actual[mode][term] - expected[mode][term])
+                        > 1.0e-4f * std::max (1.0f, std::abs (expected[mode][term])))
+                    {
+                        identical = false;
+                        break;
+                    }
+
+            expect (identical,
+                    "a stroke after this control moved does not match the same "
+                    "stroke on an engine that always had the new value - a cache "
+                    "is holding a stale value" + where);
+        }
+}
+
+// The top membrane modes carry a circumferential order of eight, so the
+// radiation law's exponent is eighteen, and forming (ka)^18 on its own leaves
+// float range once ka passes about 138. That is reachable on a small, hard,
+// high-tension head two octaves up at a high sample rate, and it produced
+// inf/inf: a NaN decay rate, which the lifetime pass then read as zero samples
+// and quietly retired seven high partials out of an edge stroke.
+void testRadiationEfficiencyStaysFinite()
+{
+    for (int order = 0; order <= 8; ++order)
+    {
+        float previous = -1.0f;
+        for (float ka : { 1.0e-6f, 1.0e-3f, 0.1f, 1.0f, 10.0f, 100.0f, 138.0f, 260.0f,
+                          1.0e4f, 1.0e8f, 1.0e20f, 1.0e30f })
+        {
+            const auto efficiency =
+                taikor::TaikoEngineTestAccess::radiationEfficiency (order, ka);
+            const std::string where = " (order " + std::to_string (order) + ", ka "
+                                    + std::to_string (ka) + ")";
+
+            expect (std::isfinite (efficiency),
+                    "radiation efficiency must stay finite" + where);
+            expect (efficiency >= 0.0f && efficiency <= 1.0f,
+                    "radiation efficiency must stay a fraction" + where);
+            expect (efficiency >= previous - 1.0e-6f,
+                    "radiation efficiency must rise with ka" + where);
+            previous = efficiency;
+        }
+
+        expect (taikor::TaikoEngineTestAccess::radiationEfficiency (order, 1.0e20f)
+                    > 0.99f,
+                "a very large ka must saturate the efficiency, not annihilate it "
+                "(order " + std::to_string (order) + ")");
+    }
+
+    // And the whole way through the engine, at the extremes that reach it: the
+    // smallest, hardest, most sharply tuned head this instrument can describe,
+    // at every supported sample rate.
+    for (const double rate : { 8000.0, 48000.0, 96000.0, 192000.0, 384000.0 })
+    {
+        auto parameters = defaultParameters();
+        parameters.tension = 1.0f;
+        parameters.headMaterial = 0.0f;
+        parameters.pitch = 24.0f;
+        parameters.octaveBody = 0.0f;
+        parameters.headDiameter = 0.20f;
+
+        taikor::TaikoEngine engine;
+        engine.prepare (rate, defaultBlockSize);
+        engine.setParameters (parameters);
+
+        for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+            engine.trigger (static_cast<taikor::Articulation> (index),
+                            taikor::highestOctaveOffset, 1.0f);
+
+        expect (taikor::TaikoEngineTestAccess::everyDecayIsFinite (engine),
+                "an extreme drum produced a non-finite mode at "
+                + std::to_string (static_cast<int> (rate)) + " Hz");
+
+        const auto rendered = render (engine, 4800);
+        expect (rendered.finite,
+                "an extreme drum produced non-finite audio at "
+                + std::to_string (static_cast<int> (rate)) + " Hz");
+    }
 }
 
 // The editor's readout has to name modes the drum actually sounds. With Air
@@ -2057,6 +2266,8 @@ int main()
     testCloseMicrophonePair();
     testTailsTerminateAndVoicesRetire();
     testVoiceStealingStaysBounded();
+    testEveryParameterSurvivesTheCache();
+    testRadiationEfficiencyStaysFinite();
     testReportedModesAreActuallySounded();
     testStickStrokeIsIndependentOfTheDrum();
     testSimultaneousStrokesDoNotShareOneVoice();
