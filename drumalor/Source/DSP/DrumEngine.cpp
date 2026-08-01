@@ -64,6 +64,21 @@ constexpr std::array<float, 6> membraneModeRatios {{
     1.000f, 1.593f, 2.135f, 2.295f, 2.653f, 2.917f
 }};
 
+// Every recursive state in the engine - envelopes, resonators, biquads, the DC
+// blockers and the bus detector - decays geometrically for as long as its voice
+// lives. Once one of them falls under the smallest normal float, every further
+// multiply is a subnormal operation, which on x86 traps into microcode. Measured
+// on a busy thirteen-voice kit that cost 3.1x the engine's normal CPU time in
+// any host that does not set flush-to-zero on our behalf. Snapping to zero at
+// -600 dBFS is far below the -100 dB at which a voice already counts as silent,
+// so it is inaudible while making the cost independent of the host FPU mode.
+constexpr float denormalFloor = 1.0e-30f;
+
+float flushDenormal (float value) noexcept
+{
+    return std::abs (value) < denormalFloor ? 0.0f : value;
+}
+
 float clampUnit (float value, float fallback = 0.5f) noexcept
 {
     return std::isfinite (value) ? std::clamp (value, 0.0f, 1.0f) : fallback;
@@ -78,6 +93,14 @@ float decibelsToGain (float decibels) noexcept
     // Exactly 1.0f at the 0 dB default, so a factory kit is bit-identical to
     // the engine before the per-voice mixer existed.
     return decibels == 0.0f ? 1.0f : std::pow (10.0f, 0.05f * decibels);
+}
+
+// One-pole approach that lands exactly, so a control returned to zero actually
+// reaches bypass instead of gliding toward it for the rest of the session.
+float approachTarget (float current, float target, float coefficient) noexcept
+{
+    current += coefficient * (target - current);
+    return std::abs (target - current) < 1.0e-5f ? target : current;
 }
 
 float coefficientForTime (float seconds, float sampleRate) noexcept
@@ -132,31 +155,65 @@ float constantPowerRight (float pan) noexcept
 float rationalShaper (float value, float positiveCurvature,
                       float negativeCurvature) noexcept
 {
-    value = std::clamp (std::isfinite (value) ? value : 0.0f, -64.0f, 64.0f);
+    value = flushDenormal (std::clamp (std::isfinite (value) ? value : 0.0f, -64.0f, 64.0f));
     const float curvature = value >= 0.0f ? positiveCurvature : negativeCurvature;
     return value / (1.0f + curvature * std::abs (value));
 }
 
+// The antiderivative of rationalShaper: F(x) = integral of t / (1 + c|t|).
+//
+// Both signs collapse to F(x) = x^2 * h(c|x|) with h(u) = (u - log1p(u)) / u^2,
+// which is what this evaluates. That is algebraically the same function as the
+// textbook x/c - log1p(cx)/c^2, but it is a very different computation: the
+// textbook form subtracts two quantities of size x/c to leave a result of size
+// x^2/2, so as the curvature falls the answer is nothing but rounding noise.
+// That matters because the ADAA divided difference below then divides F by a
+// sample-to-sample step of order 1e-3 and amplifies the noise by three orders
+// of magnitude: with c = 1e-4 and x = 0.5 the two terms are ~5e3 with an ulp of
+// ~5e-4, and the bus saturator emitted a full-scale square wave. Bus Drive
+// reaches that region both statically (its smallest non-zero parameter step is
+// 0.001) and, once it is smoothed, on every ramp toward bypass.
+//
+// h() has no cancellation of its own beyond the numerator, which is evaluated
+// in double so the subtraction stays exact far past float precision, and below
+// u = 1e-6 - where even double would start to lose digits - by the leading
+// terms of the power series h(u) = 1/2 - u/3 + u^2/4 - ... The two agree to
+// 1.3e-10 relative at the crossover, three orders inside float precision.
+//
+// Checked against a long-double evaluation over curvatures from 1e-6 to 10 and
+// the stage's whole input range: this form holds 5.8e-8 relative everywhere,
+// where the textbook one reached 1.9e-3 at c = 1e-3 and lost the value entirely
+// at 1e-6.
+//
+// The form is also well defined at c = 0 (h -> 1/2, F -> x^2/2), so the stage
+// degrades continuously into a straight wire instead of into a 0/0.
 float rationalShaperPrimitive (float value, float positiveCurvature,
                                float negativeCurvature) noexcept
 {
     value = std::clamp (std::isfinite (value) ? value : 0.0f, -64.0f, 64.0f);
     const float curvature = value >= 0.0f ? positiveCurvature : negativeCurvature;
-    const float inverseCurvature = 1.0f / curvature;
-    if (value >= 0.0f)
-        return value * inverseCurvature
-            - std::log1p (curvature * value) * inverseCurvature * inverseCurvature;
-    return (-curvature * value - std::log1p (-curvature * value))
-        * inverseCurvature * inverseCurvature;
+    const double magnitude = std::abs (static_cast<double> (value));
+    const double product = std::max (0.0, static_cast<double> (curvature) * magnitude);
+    if (product > 1.0e-6)
+    {
+        // x^2 * h(u) with u = c|x| is the same value as (u - log1p(u)) / c^2,
+        // and the second spelling saves the two multiplies.
+        const double scale = static_cast<double> (curvature);
+        return static_cast<float> (
+            (product - std::log1p (product)) / (scale * scale));
+    }
+    return static_cast<float> (
+        magnitude * magnitude * (0.5 - product * (1.0 / 3.0 - 0.25 * product)));
 }
 
 float antialiasedRationalShaper (float input, float& previousInput,
                                  float positiveCurvature,
                                  float negativeCurvature) noexcept
 {
-    input = std::clamp (std::isfinite (input) ? input : 0.0f, -64.0f, 64.0f);
-    const float previous = std::clamp (
-        std::isfinite (previousInput) ? previousInput : input, -64.0f, 64.0f);
+    input = flushDenormal (
+        std::clamp (std::isfinite (input) ? input : 0.0f, -64.0f, 64.0f));
+    const float previous = flushDenormal (std::clamp (
+        std::isfinite (previousInput) ? previousInput : input, -64.0f, 64.0f));
     const float difference = input - previous;
     const float threshold = 1.0e-4f * (1.0f + std::abs (input) + std::abs (previous));
     float output = 0.0f;
@@ -180,6 +237,61 @@ float antialiasedRationalShaper (float input, float& previousInput,
     output += input - 0.5f * (input + previous);
     previousInput = input;
     return std::isfinite (output) ? output : 0.0f;
+}
+
+// Cached-antiderivative form of the same stage. F(previous) is bit-identical to
+// the F(input) this function already evaluated one sample earlier, so carrying
+// it forward removes one log1p per call. That is only true while the two
+// curvatures stay fixed between calls, which holds for every voice (they follow
+// from the instrument and characterB, both frozen at note-on) and for the
+// master stage (fixed at 1.0). The bus drive stage retunes its curvature from
+// the smoothed Drive control every sample and keeps the recomputing form above.
+// Measured
+// on a dense thirteen-voice kit, the voice stage was 41 % of engine time.
+float antialiasedRationalShaperCached (float input, float& previousInput,
+                                       float& previousPrimitive,
+                                       float positiveCurvature,
+                                       float negativeCurvature) noexcept
+{
+    input = flushDenormal (
+        std::clamp (std::isfinite (input) ? input : 0.0f, -64.0f, 64.0f));
+    const float previous = flushDenormal (std::clamp (
+        std::isfinite (previousInput) ? previousInput : input, -64.0f, 64.0f));
+    const float primitive = rationalShaperPrimitive (
+        input, positiveCurvature, negativeCurvature);
+    const float difference = input - previous;
+    const float threshold = 1.0e-4f * (1.0f + std::abs (input) + std::abs (previous));
+    float output = std::abs (difference) <= threshold
+        ? rationalShaper (0.5f * (input + previous),
+                          positiveCurvature, negativeCurvature)
+        : (primitive - previousPrimitive) / difference;
+    output += input - 0.5f * (input + previous);
+    previousInput = input;
+    previousPrimitive = primitive;
+    return std::isfinite (output) ? output : 0.0f;
+}
+
+// The voice output stage's transfer curve. Only the kick opens its curvature up
+// with Drive; every other voice shares one fixed slightly-mismatched pair.
+struct AnalogCurve
+{
+    float positiveCurvature { 0.205f };
+    float negativeCurvature { 0.165f };
+    float makeup { 1.0f };
+};
+
+AnalogCurve analogCurveFor (Instrument instrument, float characterB) noexcept
+{
+    // A saturating stage that is exactly gain-compensated only ever takes level
+    // away, so both voices whose second control is labelled Drive get modest
+    // drive-dependent makeup: saturation should add density rather than making
+    // the voice retreat as the knob comes up.
+    if (instrument == Instrument::Kick)
+        return { 0.18f + 0.30f * characterB, 0.18f - 0.08f * characterB,
+                 1.0f + 0.32f * characterB };
+    if (instrument == Instrument::Perc1)
+        return { 0.205f, 0.165f, 1.0f + 0.42f * characterB };
+    return {};
 }
 } // namespace
 
@@ -238,8 +350,8 @@ std::optional<Instrument> instrumentForMidiNote (int midiNote) noexcept
 float DrumEngine::Biquad::tick (float input) noexcept
 {
     const float output = b0 * input + z1;
-    z1 = b1 * input - a1 * output + z2;
-    z2 = b2 * input - a2 * output;
+    z1 = flushDenormal (b1 * input - a1 * output + z2);
+    z2 = flushDenormal (b2 * input - a2 * output);
     return output;
 }
 
@@ -250,7 +362,7 @@ void DrumEngine::Biquad::clear() noexcept
 
 float DrumEngine::Resonator::tick (float input) noexcept
 {
-    const float output = inputGain * input + a1 * y1 + a2 * y2;
+    const float output = flushDenormal (inputGain * input + a1 * y1 + a2 * y2);
     y2 = y1;
     y1 = output;
     return output;
@@ -305,8 +417,11 @@ void DrumEngine::prepare (double sampleRate, int maxBlockSize) noexcept
         -1.0f / std::max (1.0f, supplySagReleaseSeconds * floatSampleRate));
     gainSmoothingCoefficient_ = 1.0f - std::exp (-inverseSampleRate_ / 0.020f);
     dcBlockerCoefficient_ = std::exp (-twoPi * 12.0f * inverseSampleRate_);
+    // Modal excitation energy scales with the sample period; the audible noise
+    // layers instead read a fixed 48 kHz grid, so both follow the same ratio for
+    // different reasons.
     modalNoiseScale_ = referenceSampleRate / floatSampleRate;
-    modalNoisePhaseIncrement_ = modalNoiseScale_;
+    bandLimitedNoiseIncrement_ = referenceSampleRate / floatSampleRate;
     // The discontinuous metallic source islands run at a high internal rate,
     // while resonators, envelopes and the per-voice circuit stages remain at
     // the host rate. This targets oversampling where Schmitt edges and ring
@@ -352,9 +467,12 @@ void DrumEngine::reset() noexcept
     anyVoiceActive_ = false;
     generation_ = 0;
     smoothedOutputGain_ = outputGain_.load (std::memory_order_relaxed);
+    smoothedBusDrive_ = busDrive_.load (std::memory_order_relaxed);
+    smoothedBusCompression_ = busCompression_.load (std::memory_order_relaxed);
     dcInputLeft_ = dcInputRight_ = 0.0f;
     dcOutputLeft_ = dcOutputRight_ = 0.0f;
     masterAdaaPreviousLeft_ = masterAdaaPreviousRight_ = 0.0f;
+    masterAdaaPrimitiveLeft_ = masterAdaaPrimitiveRight_ = 0.0f;
     resetBusStage();
     meterPeakLeft_ = meterPeakRight_ = 0.0f;
     outputLevelLeft_.store (0.0f, std::memory_order_relaxed);
@@ -475,24 +593,35 @@ float DrumEngine::nextNoise (Voice& voice) noexcept
     return static_cast<float> (voice.noiseState & 0x00ffffffu) / 8388607.5f - 1.0f;
 }
 
-float DrumEngine::nextModalNoise (Voice& voice) const noexcept
+// Every noise layer in the kit - snare wires, clap bursts, stick and shaker
+// grain - is heard through a filter whose bandwidth is fixed in hertz, so what
+// reaches the listener is the noise's power *density*, not its variance. Raw
+// full-rate white noise spreads a fixed variance over the whole Nyquist band,
+// which means its density, and therefore every filtered noise layer, loses
+// 3 dB per doubling of the host sample rate. That measured as a 6 dB quieter
+// clap and a snare whose spectral centroid fell from 1.9 kHz to 0.9 kHz between
+// 44.1 and 192 kHz. Generating the noise on a fixed 48 kHz grid and reading it
+// with linear interpolation holds the density constant instead: the audible
+// band is identical at every rate, and at 48 kHz the increment is exactly 1 so
+// this reproduces the raw generator sample for sample.
+float DrumEngine::nextBandLimitedNoise (Voice& voice) const noexcept
 {
-    if (! voice.modalNoiseReady)
+    if (! voice.bandLimitedNoiseReady)
     {
-        voice.modalNoiseCurrent = nextNoise (voice);
-        voice.modalNoiseNext = nextNoise (voice);
-        voice.modalNoisePhase = 0.0f;
-        voice.modalNoiseReady = true;
+        voice.bandLimitedNoiseCurrent = nextNoise (voice);
+        voice.bandLimitedNoiseNext = nextNoise (voice);
+        voice.bandLimitedNoisePhase = 0.0f;
+        voice.bandLimitedNoiseReady = true;
     }
 
-    const float output = voice.modalNoiseCurrent
-        + voice.modalNoisePhase * (voice.modalNoiseNext - voice.modalNoiseCurrent);
-    voice.modalNoisePhase += modalNoisePhaseIncrement_;
-    while (voice.modalNoisePhase >= 1.0f)
+    const float output = voice.bandLimitedNoiseCurrent
+        + voice.bandLimitedNoisePhase * (voice.bandLimitedNoiseNext - voice.bandLimitedNoiseCurrent);
+    voice.bandLimitedNoisePhase += bandLimitedNoiseIncrement_;
+    while (voice.bandLimitedNoisePhase >= 1.0f)
     {
-        voice.modalNoisePhase -= 1.0f;
-        voice.modalNoiseCurrent = voice.modalNoiseNext;
-        voice.modalNoiseNext = nextNoise (voice);
+        voice.bandLimitedNoisePhase -= 1.0f;
+        voice.bandLimitedNoiseCurrent = voice.bandLimitedNoiseNext;
+        voice.bandLimitedNoiseNext = nextNoise (voice);
     }
     return output;
 }
@@ -507,7 +636,8 @@ float DrumEngine::applyAnalogOutputStage (Voice& voice, float input) const noexc
     const float rectified = std::min (2.0f, std::abs (input));
     const float sagCoefficient = rectified > voice.supplySag
         ? sagAttackCoefficient_ : sagReleaseCoefficient_;
-    voice.supplySag += sagCoefficient * (rectified - voice.supplySag);
+    voice.supplySag = flushDenormal (
+        voice.supplySag + sagCoefficient * (rectified - voice.supplySag));
     const float rail = 1.0f - 0.042f * std::min (1.5f, voice.supplySag);
     const float drive = voice.circuitDrive / std::max (0.90f, rail);
 
@@ -515,34 +645,33 @@ float DrumEngine::applyAnalogOutputStage (Voice& voice, float input) const noexc
     // transfer over the interval between consecutive inputs. It suppresses
     // the dominant discontinuity in the derivative without oversampling. The
     // operating-point form keeps drive and transistor-pair bias independent.
-    const bool isKick = voice.instrument == Instrument::Kick;
-    const float positiveCurvature = isKick
-        ? 0.18f + 0.30f * voice.characterB : 0.205f;
-    const float negativeCurvature = isKick
-        ? 0.18f - 0.08f * voice.characterB : 0.165f;
     const float shaperInput = drive * input + voice.circuitBias;
-    const float shaped = antialiasedRationalShaper (
-        shaperInput, voice.analogPreviousInput,
-        positiveCurvature, negativeCurvature);
-    const float zero = rationalShaper (
-        voice.circuitBias, positiveCurvature, negativeCurvature);
-    // The kick output stage is allowed modest drive-dependent makeup:
-    // saturation should add density without making the low end retreat.
-    const float makeup = isKick ? 1.0f + 0.32f * voice.characterB : 1.0f;
-    const float output = makeup * rail * (shaped - zero) / std::max (1.0f, drive);
+    const float shaped = antialiasedRationalShaperCached (
+        shaperInput, voice.analogPreviousInput, voice.analogPreviousPrimitive,
+        voice.analogPositiveCurvature, voice.analogNegativeCurvature);
+    const float output = voice.analogMakeup * rail * (shaped - voice.analogZero)
+        / std::max (1.0f, drive);
     return std::isfinite (output) ? std::clamp (output, -4.0f, 4.0f) : 0.0f;
 }
 
-float DrumEngine::sineLookup (float phase) const noexcept
+// One interpolated read of the shared table yields both quadrature components,
+// because the table length is an exact multiple of four so the cosine is the
+// same phasor a fixed quarter of the table further on. The caller guarantees a
+// phase already reduced to [0, 1), so no wrap is needed here.
+void DrumEngine::sineAndCosineLookup (float phase, float& sine,
+                                      float& cosine) const noexcept
 {
-    phase -= std::floor (phase);
     const float position = phase * static_cast<float> (sineTableSize);
     const int whole = static_cast<int> (position);
-    const int index = whole & sineTableMask;
     const float fraction = position - static_cast<float> (whole);
-    const float a = sineTable_[static_cast<std::size_t> (index)];
-    const float b = sineTable_[static_cast<std::size_t> ((index + 1) & sineTableMask)];
-    return a + fraction * (b - a);
+    const int sineIndex = whole & sineTableMask;
+    const int cosineIndex = (whole + sineTableSize / 4) & sineTableMask;
+    const float sineA = sineTable_[static_cast<std::size_t> (sineIndex)];
+    const float sineB = sineTable_[static_cast<std::size_t> ((sineIndex + 1) & sineTableMask)];
+    const float cosineA = sineTable_[static_cast<std::size_t> (cosineIndex)];
+    const float cosineB = sineTable_[static_cast<std::size_t> ((cosineIndex + 1) & sineTableMask)];
+    sine = sineA + fraction * (sineB - sineA);
+    cosine = cosineA + fraction * (cosineB - cosineA);
 }
 
 float DrumEngine::oscillator (Voice& voice, int oscillatorIndex) const noexcept
@@ -564,9 +693,18 @@ float DrumEngine::oscillator (Voice& voice, int oscillatorIndex) const noexcept
         * std::clamp ((0.48f - 2.0f * increment) / 0.08f, 0.0f, 1.0f);
     const float thirdGain = (0.004f + 0.005f * std::abs (asymmetry))
         * std::clamp ((0.48f - 3.0f * increment) / 0.08f, 0.0f, 1.0f);
-    const float output = sineLookup (phase)
-        + secondGain * sineLookup (2.0f * phase)
-        + thirdGain * sineLookup (3.0f * phase);
+    // The two asymmetry harmonics sit 33 and 41 dB under the fundamental, yet
+    // reading them from the table cost two further interpolated lookups - about
+    // a tenth of the whole engine. The double- and triple-angle identities
+    // produce them from the quadrature pair instead, for one table read in
+    // total. The fundamental is bit-identical; the harmonics move by well under
+    // -140 dB relative to the voice.
+    float sine = 0.0f;
+    float cosine = 0.0f;
+    sineAndCosineLookup (phase, sine, cosine);
+    const float second = 2.0f * sine * cosine;
+    const float third = sine * (3.0f - 4.0f * sine * sine);
+    const float output = sine + secondGain * second + thirdGain * third;
     return output / (1.0f + std::abs (secondGain) + thirdGain);
 }
 
@@ -749,8 +887,8 @@ void DrumEngine::addBankReference (Instrument instrument) noexcept
     if (bankIndex < 0)
         return;
     const auto index = static_cast<std::size_t> (bankIndex);
-    if (++metallicBankVoiceCounts_[index] > 0)
-        metallicBankMask_ |= std::uint32_t { 1 } << static_cast<unsigned> (bankIndex);
+    ++metallicBankVoiceCounts_[index];
+    metallicBankMask_ |= std::uint32_t { 1 } << static_cast<unsigned> (bankIndex);
 }
 
 void DrumEngine::releaseBankReference (Instrument instrument) noexcept
@@ -805,6 +943,11 @@ void DrumEngine::configureMetallicOscillatorBank (Instrument instrument,
 
     bank.activeOscillators = instrument == Instrument::Perc1
         ? 2 : metallicOscillatorCount;
+    // Only the hi-hat and Perc 1 mixes read the RC ramps. The ride and crash
+    // banks sum their Schmitt pulses alone, so integrating their capacitors
+    // every substep was pure dead work in one of the engine's hottest loops.
+    bank.usesCapacitors = instrument != Instrument::Ride
+        && instrument != Instrument::Crash;
     for (int oscillatorIndex = 0; oscillatorIndex < bank.activeOscillators;
          ++oscillatorIndex)
     {
@@ -904,13 +1047,16 @@ float DrumEngine::renderMetallicBankSubstep (
         // making overlapping cymbals pull on the master DC blocker.
         pulses[index] = pulse - (2.0f * duty - 1.0f);
 
-        const float target = phase < duty ? 1.0f : -1.0f;
-        const float coefficient = phase < duty
-            ? bank.riseCoefficients[index] : bank.fallCoefficients[index];
-        bank.capacitorStates[index] += coefficient
-            * (target - bank.capacitorStates[index]);
-        capacitors[index] = bank.capacitorStates[index]
-            / std::max (0.25f, bank.thresholds[index]);
+        if (bank.usesCapacitors)
+        {
+            const float target = phase < duty ? 1.0f : -1.0f;
+            const float coefficient = phase < duty
+                ? bank.riseCoefficients[index] : bank.fallCoefficients[index];
+            bank.capacitorStates[index] += coefficient
+                * (target - bank.capacitorStates[index]);
+            capacitors[index] = bank.capacitorStates[index]
+                / std::max (0.25f, bank.thresholds[index]);
+        }
     }
 
     if (bank.instrument == Instrument::ClosedHat
@@ -1031,8 +1177,9 @@ float DrumEngine::nextCymbalPcm (Voice& voice, float source) const noexcept
     // A real reconstruction network does not expose the held DAC steps
     // directly. This exact one-pole update removes their broadband digital
     // edge while retaining the audible 30 kHz clock grain at ordinary rates.
-    voice.cymbalPcmReconstructed += cymbalReconstructionCoefficient_
-        * (voice.cymbalPcmValue - voice.cymbalPcmReconstructed);
+    voice.cymbalPcmReconstructed = flushDenormal (
+        voice.cymbalPcmReconstructed + cymbalReconstructionCoefficient_
+            * (voice.cymbalPcmValue - voice.cymbalPcmReconstructed));
     return voice.cymbalPcmReconstructed;
 }
 
@@ -1293,9 +1440,6 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
         1.10f + 0.48f * voice.characterB + variation.circuitDriveOffset,
         1.02f, 1.72f);
     voice.circuitBias = variation.circuitBias;
-    // ADAA starts from the quiescent circuit operating point. This avoids a
-    // fictitious interval from zero to the bias voltage on the first sample.
-    voice.analogPreviousInput = voice.circuitBias;
     voice.envelopeMultiplier = coefficientForTime (voice.decaySeconds,
                                                      static_cast<float> (sampleRate_));
     voice.auxiliaryMultiplier = coefficientForTime (voice.decaySeconds * 0.85f,
@@ -1367,7 +1511,6 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // between the virtual diode/transistor branches. This creates the
             // musically useful even harmonics of a biased analogue stage.
             voice.circuitBias += 0.12f * voice.characterB;
-            voice.analogPreviousInput = voice.circuitBias;
             configureBandpass (voice.filterA,
                                (1900.0f + 5400.0f * voice.characterA) * voice.velocityTimbre,
                                0.72f);
@@ -1544,9 +1687,14 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             configureBandpass (voice.filterA, std::min (6200.0f, voice.baseFrequency * 1.55f), 1.0f);
             configureHighpass (voice.filterB, 1800.0f, 0.70f);
             voice.transientMultiplier = coefficientForTime (0.0035f, static_cast<float> (sampleRate_));
+            // Perc 1's Drive used to span 1.15 to 3.55 with the output stage's
+            // 1/drive compensation cancelling almost all of it: over the whole
+            // travel of the knob the voice changed by 6.9 % against a panel
+            // average of 90 %, and lost 0.9 dB doing it. The wider span reaches
+            // real saturation, and the makeup above keeps it a timbre control.
             voice.circuitDrive = std::clamp (
-                1.15f + 2.4f * voice.characterB + variation.circuitDriveOffset,
-                1.05f, 3.75f);
+                1.15f + 8.2f * voice.characterB + variation.circuitDriveOffset,
+                1.05f, 9.60f);
             break;
         }
 
@@ -1570,6 +1718,20 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
         case Instrument::Count:
             break;
     }
+
+    // The output stage's transfer curve is now fully determined, so resolve it
+    // once here rather than rebuilding it for every sample of the voice. ADAA
+    // starts from the quiescent circuit operating point, which avoids a
+    // fictitious interval from zero to the bias voltage on the first sample.
+    const auto curve = analogCurveFor (instrument, voice.characterB);
+    voice.analogPositiveCurvature = curve.positiveCurvature;
+    voice.analogNegativeCurvature = curve.negativeCurvature;
+    voice.analogMakeup = curve.makeup;
+    voice.analogZero = rationalShaper (
+        voice.circuitBias, curve.positiveCurvature, curve.negativeCurvature);
+    voice.analogPreviousInput = voice.circuitBias;
+    voice.analogPreviousPrimitive = rationalShaperPrimitive (
+        voice.circuitBias, curve.positiveCurvature, curve.negativeCurvature);
 
     const int metallicBankIndex = metallicBankIndexFor (instrument);
     if (metallicBankIndex >= 0)
@@ -1713,14 +1875,15 @@ float DrumEngine::renderKick (Voice& voice) noexcept
     // to the stored charge independently of sample rate.
     const float discharge = voice.kickCharge
         * (1.0f - voice.kickChargeMultiplier);
-    voice.kickCharge *= voice.kickChargeMultiplier;
+    voice.kickCharge = flushDenormal (voice.kickCharge * voice.kickChargeMultiplier);
     const float stateX = voice.kickStateX + discharge;
     const float stateY = voice.kickStateY;
-    voice.kickStateX = radius * (cosine * stateX - sine * stateY);
-    voice.kickStateY = radius * (sine * stateX + cosine * stateY);
+    voice.kickStateX = flushDenormal (radius * (cosine * stateX - sine * stateY));
+    voice.kickStateY = flushDenormal (radius * (sine * stateX + cosine * stateY));
 
-    const float click = voice.filterA.tick (nextNoise (voice)) * voice.transientEnvelope
-        * voice.transientScale * (0.08f + 0.25f * voice.characterA);
+    const float click = voice.filterA.tick (nextBandLimitedNoise (voice))
+        * voice.transientEnvelope * voice.transientScale
+        * (0.08f + 0.25f * voice.characterA);
     const float body = (1.30f + 0.16f * voice.characterB) * voice.kickStateY;
     // Harmonics and level-dependent coloration are intentionally delegated to
     // the shared antialiased circuit stage, avoiding a second aliasing clipper.
@@ -1731,7 +1894,7 @@ float DrumEngine::renderSnare (Voice& voice) noexcept
 {
     const float body = (0.72f * oscillator (voice, 0) + 0.36f * oscillator (voice, 1))
         * voice.envelope;
-    const float noise = nextNoise (voice);
+    const float noise = nextBandLimitedNoise (voice);
 
     // Coupled head modes. The strike excites the air-loaded membrane series
     // once and then leaves it ringing, which is what gives a real snare its
@@ -1769,7 +1932,8 @@ float DrumEngine::renderClap (Voice& voice) noexcept
     for (const auto start : voice.burstStarts)
         if (voice.ageSamples == start)
             voice.transientEnvelope += 1.0f;
-    const float noise = voice.filterB.tick (voice.filterA.tick (nextNoise (voice)));
+    const float noise = voice.filterB.tick (
+        voice.filterA.tick (nextBandLimitedNoise (voice)));
     const float burst = (0.38f + 0.16f * voice.characterA)
         * voice.transientEnvelope * voice.transientScale;
     const float tail = (0.13f + 0.24f * voice.characterB) * voice.envelope;
@@ -1778,7 +1942,7 @@ float DrumEngine::renderClap (Voice& voice) noexcept
 
 float DrumEngine::renderHat (Voice& voice) noexcept
 {
-    const float noise = nextNoise (voice);
+    const float noise = nextBandLimitedNoise (voice);
     // The persistent Schmitt/RC bank is evaluated once per engine sample, so
     // overlapping hits hear the same free-running hardware source instead of
     // restarting six ideal sines with newly randomized components.
@@ -1795,7 +1959,7 @@ float DrumEngine::renderHat (Voice& voice) noexcept
 float DrumEngine::renderRide (Voice& voice) noexcept
 {
     const float oscillatorBank = metallicSourceFor (voice.instrument);
-    const float noise = nextModalNoise (voice);
+    const float noise = nextBandLimitedNoise (voice);
     const float pcm = nextCymbalPcm (
         voice, 0.68f * oscillatorBank + 0.24f * noise);
 
@@ -1841,7 +2005,7 @@ float DrumEngine::renderRide (Voice& voice) noexcept
 float DrumEngine::renderCrash (Voice& voice) noexcept
 {
     const float oscillatorBank = metallicSourceFor (voice.instrument);
-    const float noise = nextModalNoise (voice);
+    const float noise = nextBandLimitedNoise (voice);
     const float pcm = nextCymbalPcm (
         voice, 0.52f * oscillatorBank + 0.34f * noise);
     const float spread = voice.characterA;
@@ -1898,7 +2062,7 @@ float DrumEngine::renderTom (Voice& voice) noexcept
     voice.phaseIncrements[0] = std::min (0.45f, frequency * inverseSampleRate_);
     const float fundamental = oscillator (voice, 0);
     const float shell = oscillator (voice, 1);
-    const float noise = nextNoise (voice);
+    const float noise = nextBandLimitedNoise (voice);
     const float skin = voice.filterA.tick (noise) * voice.transientEnvelope
         * voice.transientScale;
 
@@ -1924,10 +2088,13 @@ float DrumEngine::renderTom (Voice& voice) noexcept
 
 float DrumEngine::renderShaker (Voice& voice) noexcept
 {
+    // A collision either happens this sample or it does not, so the scheduler
+    // draws straight from the generator; only the grain it excites is audio and
+    // therefore has to carry a rate-independent noise density.
     const float decision = 0.5f + 0.5f * nextNoise (voice);
     const float collisionsPerSecond = 320.0f + 4800.0f * voice.characterA;
     const float probability = std::min (0.80f, collisionsPerSecond * inverseSampleRate_);
-    const float grainNoise = nextNoise (voice);
+    const float grainNoise = nextBandLimitedNoise (voice);
     if (decision < probability)
         voice.transientEnvelope += voice.transientScale * voice.excitationScale
             * (0.45f + 0.55f * std::abs (grainNoise));
@@ -1939,8 +2106,8 @@ float DrumEngine::renderShaker (Voice& voice) noexcept
 float DrumEngine::renderPerc1 (Voice& voice) noexcept
 {
     const float metallic = metallicSourceFor (voice.instrument);
-    const float click = voice.filterB.tick (nextNoise (voice)) * voice.transientEnvelope
-        * voice.transientScale;
+    const float click = voice.filterB.tick (nextBandLimitedNoise (voice))
+        * voice.transientEnvelope * voice.transientScale;
     const float shaped = voice.filterA.tick (metallic) * voice.envelope + 0.12f * click;
     // Drive is handled by the shared antialiased stage. Keeping a single
     // nonlinear memory here avoids cascading a memoryless alias source.
@@ -1949,7 +2116,7 @@ float DrumEngine::renderPerc1 (Voice& voice) noexcept
 
 float DrumEngine::renderPerc2 (Voice& voice) noexcept
 {
-    const float noise = nextModalNoise (voice);
+    const float noise = nextBandLimitedNoise (voice);
     float body = 0.0f;
     if (voice.ageSamples < voice.modalActiveSamples)
     {
@@ -1993,13 +2160,15 @@ float DrumEngine::renderVoice (Voice& voice) noexcept
 
     output *= voice.velocity * voice.chokeGain * voice.levelGain;
     output = applyAnalogOutputStage (voice, output);
-    voice.lastOutput = output;
-    voice.recentPeak = std::max (
-        std::abs (output), voice.recentPeak * peakReleaseMultiplier_);
-    voice.envelope *= voice.envelopeMultiplier;
-    voice.auxiliaryEnvelope *= voice.auxiliaryMultiplier;
-    voice.transientEnvelope *= voice.transientMultiplier;
-    voice.pitchEnvelope *= voice.pitchEnvelopeMultiplier;
+    voice.recentPeak = flushDenormal (std::max (
+        std::abs (output), voice.recentPeak * peakReleaseMultiplier_));
+    voice.envelope = flushDenormal (voice.envelope * voice.envelopeMultiplier);
+    voice.auxiliaryEnvelope = flushDenormal (
+        voice.auxiliaryEnvelope * voice.auxiliaryMultiplier);
+    voice.transientEnvelope = flushDenormal (
+        voice.transientEnvelope * voice.transientMultiplier);
+    voice.pitchEnvelope = flushDenormal (
+        voice.pitchEnvelope * voice.pitchEnvelopeMultiplier);
     if (voice.choking)
         voice.chokeGain *= voice.chokeMultiplier;
     ++voice.ageSamples;
@@ -2034,13 +2203,28 @@ void DrumEngine::applyBusStage (float& left, float& right, float driveAmount,
         // jumped straight to a third of the full curve -- a steady 0.5 landed
         // at roughly 0.435 -- so automation crossing zero clicked. Both the
         // gain and its compensation already reach unity at zero, so this is
-        // the last discontinuity, and full drive is unchanged at 1.0.
+        // the last discontinuity, and full drive is unchanged at 1.0. Letting
+        // the curvature run all the way down to zero is only safe because
+        // rationalShaperPrimitive() is evaluated in a form that stays accurate
+        // there; the textbook antiderivative loses every significant digit
+        // below about 1e-3 and turned this stage into a square wave.
         const float curvature = driveAmount;
         const float compensation = (1.0f + 0.55f * driveAmount) / driveGain;
         left = compensation * antialiasedRationalShaper (
             driveGain * left, busDriveAdaaLeft_, curvature, curvature);
         right = compensation * antialiasedRationalShaper (
             driveGain * right, busDriveAdaaRight_, curvature, curvature);
+    }
+    else
+    {
+        // Keep the ADAA memory tracking the signal while the stage is bypassed.
+        // Otherwise the first sample after Drive is switched back on takes its
+        // divided difference against whatever was on the bus when it was
+        // switched off, however long ago that was - the same stale-state click
+        // the detector below already avoids. driveGain is 1 at zero drive, so
+        // the bypassed stage's input is the sample itself.
+        busDriveAdaaLeft_ = left;
+        busDriveAdaaRight_ = right;
     }
 
     // Stereo-linked peak detector with a 4 ms attack and 140 ms release. It
@@ -2051,7 +2235,8 @@ void DrumEngine::applyBusStage (float& left, float& right, float driveAmount,
     const float detector = std::max (std::abs (left), std::abs (right));
     const float detectorCoefficient = detector > busEnvelope_
         ? busAttackCoefficient_ : busReleaseCoefficient_;
-    busEnvelope_ += detectorCoefficient * (detector - busEnvelope_);
+    busEnvelope_ = flushDenormal (
+        busEnvelope_ + detectorCoefficient * (detector - busEnvelope_));
 
     if (compressionAmount > 0.0f)
     {
@@ -2118,7 +2303,8 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         mixer.panRight = constantPowerRight (pan);
     }
 
-    const bool busActive = driveAmount > 0.0f || compressionAmount > 0.0f;
+    const bool busActive = driveAmount > 0.0f || compressionAmount > 0.0f
+        || smoothedBusDrive_ > 0.0f || smoothedBusCompression_ > 0.0f;
     if (! busActive)
         resetBusStage();
     std::uint64_t silentSamples = 0;
@@ -2134,6 +2320,10 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         {
             ++silentSamples;
             smoothedOutputGain_ += gainSmoothing * (gainTarget - smoothedOutputGain_);
+            smoothedBusDrive_ = approachTarget (
+                smoothedBusDrive_, driveAmount, gainSmoothing);
+            smoothedBusCompression_ = approachTarget (
+                smoothedBusCompression_, compressionAmount, gainSmoothing);
             if (left != nullptr)
                 left[sample] = 0.0f;
             if (right != nullptr && right != left)
@@ -2173,26 +2363,36 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         }
 
         smoothedOutputGain_ += gainSmoothing * (gainTarget - smoothedOutputGain_);
+        // Both bus stages follow the same 20 ms law as the master gain. Taking
+        // them straight from the block's parameter value put a hard step in the
+        // mix: measured on a sustained 24 Hz kick, switching Bus Compression on
+        // between two blocks produced a sample-to-sample jump 143 times the
+        // largest step anywhere else in that waveform - an audible click.
+        smoothedBusDrive_ = approachTarget (
+            smoothedBusDrive_, driveAmount, gainSmoothing);
+        smoothedBusCompression_ = approachTarget (
+            smoothedBusCompression_, compressionAmount, gainSmoothing);
         float busLeft = dryLeft - dcInputLeft_ + dcCoefficient * dcOutputLeft_;
         float busRight = dryRight - dcInputRight_ + dcCoefficient * dcOutputRight_;
-        dcInputLeft_ = dryLeft;
-        dcInputRight_ = dryRight;
-        dcOutputLeft_ = busLeft;
-        dcOutputRight_ = busRight;
+        dcInputLeft_ = flushDenormal (dryLeft);
+        dcInputRight_ = flushDenormal (dryRight);
+        dcOutputLeft_ = flushDenormal (busLeft);
+        dcOutputRight_ = flushDenormal (busRight);
 
         if (busActive)
-            applyBusStage (busLeft, busRight, driveAmount, compressionAmount);
+            applyBusStage (busLeft, busRight, smoothedBusDrive_,
+                           smoothedBusCompression_);
 
-        const float outputLeft = std::clamp (antialiasedRationalShaper (
-            smoothedOutputGain_ * busLeft, masterAdaaPreviousLeft_, 1.0f, 1.0f),
-            -1.0f, 1.0f);
-        const float outputRight = std::clamp (antialiasedRationalShaper (
-            smoothedOutputGain_ * busRight, masterAdaaPreviousRight_, 1.0f, 1.0f),
-            -1.0f, 1.0f);
-        meterPeakLeft_ = std::max (std::abs (outputLeft),
-                                   meterPeakLeft_ * peakReleaseMultiplier_);
-        meterPeakRight_ = std::max (std::abs (outputRight),
-                                    meterPeakRight_ * peakReleaseMultiplier_);
+        const float outputLeft = std::clamp (antialiasedRationalShaperCached (
+            smoothedOutputGain_ * busLeft, masterAdaaPreviousLeft_,
+            masterAdaaPrimitiveLeft_, 1.0f, 1.0f), -1.0f, 1.0f);
+        const float outputRight = std::clamp (antialiasedRationalShaperCached (
+            smoothedOutputGain_ * busRight, masterAdaaPreviousRight_,
+            masterAdaaPrimitiveRight_, 1.0f, 1.0f), -1.0f, 1.0f);
+        meterPeakLeft_ = flushDenormal (std::max (
+            std::abs (outputLeft), meterPeakLeft_ * peakReleaseMultiplier_));
+        meterPeakRight_ = flushDenormal (std::max (
+            std::abs (outputRight), meterPeakRight_ * peakReleaseMultiplier_));
         if (left != nullptr && right == left)
         {
             left[sample] = 0.5f * (outputLeft + outputRight);
@@ -2212,6 +2412,7 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
             dcInputLeft_ = dcInputRight_ = 0.0f;
             dcOutputLeft_ = dcOutputRight_ = 0.0f;
             masterAdaaPreviousLeft_ = masterAdaaPreviousRight_ = 0.0f;
+            masterAdaaPrimitiveLeft_ = masterAdaaPrimitiveRight_ = 0.0f;
         }
         anyVoiceActive_ = hasActiveVoices;
     }

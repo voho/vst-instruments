@@ -170,7 +170,7 @@ private:
     {
         bool active { false };
         bool choking { false };
-        bool modalNoiseReady { false };
+        bool bandLimitedNoiseReady { false };
         Instrument instrument { Instrument::Kick };
         int chokeGroup { 0 };
         std::uint64_t generation { 0 };
@@ -204,7 +204,18 @@ private:
         float levelGain { 1.0f };
         float circuitDrive { 1.2f };
         float circuitBias { 0.0f };
+        // Transfer curve of the voice's output stage. Both curvatures, the
+        // quiescent operating point and the makeup gain follow only from the
+        // instrument and characterB, so they are resolved once at note-on
+        // instead of being rebuilt for every sample of the voice.
+        float analogPositiveCurvature { 0.205f };
+        float analogNegativeCurvature { 0.165f };
+        float analogMakeup { 1.0f };
+        float analogZero { 0.0f };
         float analogPreviousInput { 0.0f };
+        // Antiderivative of the transfer curve at analogPreviousInput. Carrying
+        // it forward halves the transcendental count of the ADAA stage.
+        float analogPreviousPrimitive { 0.0f };
         float supplySag { 0.0f };
         float kickStateX { 0.0f };
         float kickStateY { 0.0f };
@@ -214,10 +225,9 @@ private:
         float chokeGain { 1.0f };
         float chokeMultiplier { 1.0f };
         float recentPeak { 0.0f };
-        float lastOutput { 0.0f };
-        float modalNoiseCurrent { 0.0f };
-        float modalNoiseNext { 0.0f };
-        float modalNoisePhase { 0.0f };
+        float bandLimitedNoiseCurrent { 0.0f };
+        float bandLimitedNoiseNext { 0.0f };
+        float bandLimitedNoisePhase { 0.0f };
         float cymbalClockPhase { 1.0f };
         float cymbalPcmValue { 0.0f };
         float cymbalPcmReconstructed { 0.0f };
@@ -240,6 +250,9 @@ private:
     {
         Instrument instrument { Instrument::ClosedHat };
         int activeOscillators { metallicOscillatorCount };
+        // False for the ride and crash banks, whose mix reads only the Schmitt
+        // pulses, so their RC integrators can be skipped entirely.
+        bool usesCapacitors { true };
         float characterA { 0.5f };
         float output { 0.0f };
         float lastParameterPitch { 0.0f };
@@ -311,9 +324,9 @@ private:
     [[nodiscard]] float metallicSourceFor (Instrument instrument) const noexcept;
     [[nodiscard]] static int metallicBankIndexFor (Instrument instrument) noexcept;
     [[nodiscard]] float nextCymbalPcm (Voice& voice, float source) const noexcept;
-    [[nodiscard]] float sineLookup (float phase) const noexcept;
+    void sineAndCosineLookup (float phase, float& sine, float& cosine) const noexcept;
     [[nodiscard]] static float nextNoise (Voice& voice) noexcept;
-    [[nodiscard]] float nextModalNoise (Voice& voice) const noexcept;
+    [[nodiscard]] float nextBandLimitedNoise (Voice& voice) const noexcept;
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;
     [[nodiscard]] static float signedUnitFromHash (std::uint32_t value) noexcept;
     [[nodiscard]] float applyAnalogOutputStage (Voice& voice, float input) const noexcept;
@@ -369,7 +382,7 @@ private:
     float gainSmoothingCoefficient_ { 0.001f };
     float dcBlockerCoefficient_ { 0.9984f };
     float modalNoiseScale_ { 1.0f };
-    float modalNoisePhaseIncrement_ { 1.0f };
+    float bandLimitedNoiseIncrement_ { 1.0f };
     float metallicInternalSampleRate_ { 192000.0f };
     float metallicInverseSampleRate_ { 1.0f / 192000.0f };
     float metallicIncrementSmoothing_ { 0.01f };
@@ -378,12 +391,18 @@ private:
     int metallicOversampleFactor_ { 4 };
     int metallicDecimatorTapCount_ { 257 };
     float smoothedOutputGain_ { 0.82f };
+    // Both bus controls are ramped at the master gain's 20 ms constant instead
+    // of stepping once per block, which used to click on automation.
+    float smoothedBusDrive_ { 0.0f };
+    float smoothedBusCompression_ { 0.0f };
     float dcInputLeft_ { 0.0f };
     float dcInputRight_ { 0.0f };
     float dcOutputLeft_ { 0.0f };
     float dcOutputRight_ { 0.0f };
     float masterAdaaPreviousLeft_ { 0.0f };
     float masterAdaaPreviousRight_ { 0.0f };
+    float masterAdaaPrimitiveLeft_ { 0.0f };
+    float masterAdaaPrimitiveRight_ { 0.0f };
     float busEnvelope_ { 0.0f };
     float busGain_ { 1.0f };
     float busDriveAdaaLeft_ { 0.0f };

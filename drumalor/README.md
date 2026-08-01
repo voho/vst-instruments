@@ -120,6 +120,32 @@ and hard limiting so no per-sample transcendental is needed. Both stages are
 fully bypassed at their 0% defaults - not almost bypassed, but skipped entirely,
 which the regression suite verifies sample for sample.
 
+Both bus controls are ramped at the master gain's 20 ms constant rather than
+stepped once per block. Taking them straight from the block's parameter value
+put a hard discontinuity into the mix whenever either was automated: on a
+sustained 24 Hz kick, switching Bus Compression on between two blocks produced a
+sample-to-sample jump 143 times the largest step anywhere else in that waveform,
+and Bus Drive one 37 times as large. The ramp lands exactly on zero, so bypass
+is still reachable and still skipped entirely.
+
+Ramping Drive means its saturator's curvature is now swept continuously down to
+zero, and that exposed a numerical fault in the antiderivative the stage's
+antialiasing evaluates. Written the textbook way, as `x/c - log1p(cx)/c^2`, it
+subtracts two quantities of size `x/c` to leave a result of size `x^2/2`, so
+below a curvature of roughly 1e-3 the answer is pure rounding noise - and the
+divided difference that follows divides it by a sample-to-sample step of about
+1e-3 and amplifies it to full scale. Bus Drive reached that region on the very
+first increment of its 0.1 % parameter grid, so this was never only a ramp
+problem: on the engine as it stood before this fix, a kit held at a steady Drive
+of 0.1 % already peaked at 0.92 with 0.80 sample-to-sample jumps, against 0.58
+and 0.10 at bypass.
+The stage now evaluates the algebraically identical `x^2 * h(c|x|)` with
+`h(u) = (u - log1p(u))/u^2`, which has no such cancellation. Automating Drive
+either way now leaves the mix within its own settled peak and its own largest
+sample-to-sample motion at 44.1, 48, 96 and 192 kHz, where before the ramp down
+to bypass produced about 80 ms of full-scale clipped noise - peak 1.0, jump 2.0
+- a fifth of a second after the move.
+
 ## Sound engine
 
 The JUCE-free C++20 DSP core combines short pitch envelopes and tuned bodies for
@@ -201,6 +227,46 @@ percentages are specific to that machine and say nothing about a Mac; only the
 before/after ratio is meaningful. The JUCE-free regression suite over the same
 period went from 27.5 s to 17.5 s despite gaining ten new test groups.
 
+A later pass measured the same dense thirteen-voice kit, ten seconds of audio at
+48 kHz in 128-sample blocks, on one Linux x86-64 machine:
+
+| Host FPU mode | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| Denormals enabled (offline renderers, plain DSP use) | 11.10 s | 3.31 s | -70% |
+| Flush-to-zero set by the host | 3.61 s | 3.36 s | -7% |
+
+Most of that is the denormal floor described below; the remainder came from
+resolving each voice's output-stage transfer curve once at note-on instead of
+per sample, carrying the ADAA antiderivative forward instead of recomputing it
+(one `log1p` per voice-sample instead of two), deriving the tonal oscillator's
+two asymmetry harmonics from double- and triple-angle identities instead of two
+further interpolated table reads, and skipping the RC integrators in the ride and
+crash relaxation banks, whose mixes read only the Schmitt pulses. None of these
+changes the audible signal.
+
+Repairing the shaper antiderivative described under the kit bus gave part of
+that back: it evaluates one double-precision `log1p` per call where the previous
+form used a single-precision one, which on the same dense thirteen-voice
+benchmark costs about 7% (3.47 s to 3.70 s, median of five runs with
+flush-to-zero set). That buys a stage that is correct over its whole curvature
+range instead of only above about 1e-3, and it is the same one `log1p` per
+voice-sample, not two.
+
+Because the old antiderivative was inaccurate wherever the curvature was small
+relative to the signal, correcting it also moves every voice slightly. Nulled at
+48 kHz against a reference build that evaluates the same antiderivative in long
+double, the current engine is bit-identical for twelve of the thirteen voices and
+-220 dB for the Ride; the previous engine sat -68 to -83 dB from that reference.
+The audible signal is therefore unchanged - the whole difference is rounding
+error being removed - but the earlier claim that seven voices null bit-exactly
+against the 1.0 engine no longer holds. Against 1.0 the eleven voices that are
+not deliberately changed now null at -68 to -83 dB RMS instead of at -70 to -86
+or exactly; the Shaker still draws a different but statistically identical noise
+realisation because it is the one voice that takes two noise samples per sample;
+and Perc 1 sits at -23 dB, which is the deliberate Drive change and nothing else.
+The only deliberately audible change at 48 kHz is still Perc 1's Drive. The JUCE-free regression suite went from 16.3 s to 9.8 s on the
+same machine while gaining three test groups.
+
 Each voice finishes through a lightweight asymmetric diode/transistor-style
 transfer with a variable operating point and a virtual supply rail that sags
 quickly on strong transients and recovers more slowly. First-order analytic
@@ -209,6 +275,29 @@ stereo output shaper. Only the discontinuous metallic oscillator/ring-modulation
 islands are adaptively oversampled and reconstructed before returning to the
 host rate; the rest of the voice path is not multiplied in cost. The undelayed
 linear component is preserved so quiet hits keep their transient definition.
+
+Every noise layer in the kit - the kick click, the snare wires and snap, the
+clap bursts, the hi-hat air, the stick skin on a tom, the shaker grain and the
+Perc 1 click - is generated on a fixed 48 kHz grid and read with interpolation
+rather than drawn fresh at the host rate. Those layers are all heard through
+filters whose bandwidth is fixed in hertz, so what reaches the listener is the
+noise's power *density*; a generator that spreads a fixed variance over the whole
+Nyquist band loses 3 dB of it per doubling of the sample rate. Measured before
+the change, the Clap lost 5.9 dB of level and the Snare's spectral centroid fell
+from 1.9 kHz to 0.9 kHz between 44.1 and 192 kHz - the kit audibly thinned out
+and darkened on a high-rate session. The fixed grid holds the audible band
+constant instead, and because the grid rate is the reference rate, a 48 kHz
+render is unchanged sample for sample.
+
+The engine also flushes its own recursive states to zero at -600 dBFS. Every
+envelope, resonator, biquad, DC blocker and detector decays geometrically for as
+long as its voice lives, so without an explicit floor they all spend a stretch of
+every note in the subnormal range, where x86 traps into microcode. A host that
+sets flush-to-zero hides that; an offline renderer or a wrapper that does not
+leaves the plug-in paying for it. On a dense thirteen-voice kit the engine used
+to cost 3.1 times as much with denormals enabled as with them flushed - slower
+than real time on the measuring machine. The sound can no longer depend on the
+host's FPU configuration.
 
 The Kick has a dedicated charged-energy model: a virtual capacitor discharges
 into a contractive two-state resonator whose frequency and loss change with the
@@ -225,7 +314,15 @@ adaptive oversampling retain the unstable metallic detail with substantially
 less aliasing than naive square waves or multiplied ideal sines. An
 approximately 80 dB Kaiser-windowed reconstruction FIR precedes each adaptive
 rate change. Perc 1 now derives its cowbell body from the familiar approximately
-535/800 Hz Schmitt pair. Tonal snare and tom cores remain smooth resonators, but
+535/800 Hz Schmitt pair. Its **Drive** spans a wider circuit-drive range than its
+neighbours and carries modest drive-dependent makeup, because the output stage's
+exact 1/drive compensation otherwise cancelled almost all of it: the control used
+to change the voice by 6.9 % over its whole travel, against a 90 % average for
+the other character controls, and delivered that as a 0.9 dB level drop rather
+than as saturation. Measured end to end over the control's whole travel, it now
+takes 1.69 dB off the crest factor for a 0.15 dB level change; the regression
+suite requires at least 1.4 dB of crest reduction and less than 0.5 dB of level
+drift. Tonal snare and tom cores remain smooth resonators, but
 add explicitly band-limited component asymmetry and subtle virtual-rail pitch
 coupling instead of mathematically perfect table sines.
 
@@ -428,7 +525,24 @@ rattle, and darker soft hits on all ten velocity-timbred voices. A dedicated
 efficiency contract proves that a metallic bank frozen behind an unrelated drum
 wakes into exactly the same state as one frozen during silence, and measures
 that adding a hi-hat costs meaningfully more than the same kick alone, which is
-only true while unobservable banks stay frozen. The presentation library gets
+only true while unobservable banks stay frozen. On x86 it also renders a busy
+kit twice, once with flush-to-zero set and once without, and requires the two to
+cost the same, which only holds while the engine floors its own recursive states.
+
+Three further contracts guard the later pass. A noise-density contract holds the
+kick click, the snare wires, the clap burst and the shaker grain to a flat
+filtered level from 44.1 to 192 kHz - each of them moved by 2.9 to 6.4 dB before
+the noise generator was moved onto a fixed grid. A bus-automation contract sweeps
+Bus Drive and Bus Compression both on and off mid-tail over a sustained deep
+kick, at 0.1 %, 50 % and 100 % and at 44.1, 48, 96 and 192 kHz, and requires the
+boundary step, the peak and the largest sample-to-sample jump of the whole half
+second that follows to stay within what that tail was already doing. The step at
+the boundary used to be 24 to 143 times the waveform's own motion; the ramp down
+to bypass used to put jumps up to 1800 times larger into the second after the
+move, which watching only the boundary sample of only the off-to-on direction
+missed entirely. And a Perc 1 contract requires its Drive to reduce the crest
+factor while holding the level, which
+distinguishes a saturation control from the level trim it had become. The presentation library gets
 its own contracts for the meter curve and its inverse, ballistics, pad-grid
 geometry, and sanitisation of invalid input.
 
