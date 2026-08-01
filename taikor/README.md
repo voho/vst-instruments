@@ -334,7 +334,19 @@ cd taikor
 ```
 
 By default this ad-hoc signs the bundles and writes a ZIP and a PKG below
-`build-macos/dist/`. For distribution, supply your own identities:
+`build-macos/dist/`. The release version is read from the built bundles'
+`CFBundleShortVersionString` rather than kept separately in the script, and the
+three bundles are checked to agree with each other on both version and
+architecture — so a mislabelled package cannot be produced. Setting `VERSION`
+asserts an expected value rather than overriding it, and the script fails if it
+disagrees with what was actually built.
+
+Taikor's licence, its third-party notices and the JUCE licence are staged into
+the installer and into each independently copyable bundle before signing, so the
+signatures cover them and a bundle carried out of the package on its own still
+carries the notices the MIT licence requires it to retain.
+
+For distribution, supply your own identities:
 
 ```bash
 APP_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
@@ -356,6 +368,7 @@ Source/PluginEditor.*       Resizable editor, stroke pads, head display, meterin
 Tests/TaikoEngineTests.cpp  JUCE-free DSP and presentation regression suite
 Tests/PluginProcessorTests.cpp  JUCE processor and editor contract tests
 Tools/RenderDemos.cpp       Renders the committed demonstration WAVs
+ThirdParty/                 Vendored JUCE licence text, staged into every package
 Docs/audio/                 Twenty-three rendered demonstrations and their manifest
 Presets/                    Preset guidance and drum-building reference
 scripts/                    macOS build and packaging helpers

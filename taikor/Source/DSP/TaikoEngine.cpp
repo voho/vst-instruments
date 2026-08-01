@@ -284,6 +284,31 @@ float TaikoEngine::radiationEfficiency (int order, float ka) noexcept
     return raised / (raised + knee);
 }
 
+float TaikoEngine::readDelayLine (const std::array<float, directLineSize>& line,
+                                  int writeIndex, float delaySamples) noexcept
+{
+    static_assert ((directLineSize & (directLineSize - 1)) == 0,
+                   "the airborne delay line must be a power of two");
+    constexpr int mask = directLineSize - 1;
+
+    delaySamples = clampFloat (delaySamples, 0.0f,
+                               static_cast<float> (directLineSize - 2));
+
+    const float position = static_cast<float> (writeIndex) - delaySamples;
+    const int index = static_cast<int> (std::floor (position));
+    const float fraction = position - static_cast<float> (index);
+
+    // `index` sits just past the requested delay, so the other end of the
+    // interpolation is the sample after it, towards the present. Reaching
+    // backwards instead adds the fractional part to the delay rather than
+    // subtracting it - a quarter of a sample becomes one and three quarters,
+    // with a step at every integer - and this delay is the inter-microphone
+    // timing cue that places a stroke across the image.
+    const float older = line[static_cast<std::size_t> (index & mask)];
+    const float newer = line[static_cast<std::size_t> ((index + 1) & mask)];
+    return older + (newer - older) * fraction;
+}
+
 std::uint32_t TaikoEngine::hash32 (std::uint32_t value) noexcept
 {
     value ^= value >> 16;
@@ -377,6 +402,7 @@ void TaikoEngine::reset() noexcept
     pitchBend_ = pitchBendTarget_;
     smoothedOutputGain_ = applied_.outputGain;
     smoothedDrive_ = applied_.drive;
+    smoothedWidth_ = applied_.stereoWidth;
     dcInputLeft_ = dcInputRight_ = 0.0f;
     dcOutputLeft_ = dcOutputRight_ = 0.0f;
     driveAdaaLeft_ = driveAdaaRight_ = 0.0f;
@@ -832,16 +858,44 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 // which case the modes are already the two heads themselves.
                 float vectorB = offDiagonal;
                 float vectorR = eigenvalue - diagonalB;
-                const float length = std::sqrt (vectorB * vectorB + vectorR * vectorR);
-                if (length > 1.0e-12f)
+                // Whether the two heads are coupled at all is a structural
+                // question, not a question of magnitude: the deciding quantity
+                // is the off-diagonal, and testing the vector's own length
+                // against a fixed epsilon does not answer it. These values run
+                // from 1e5 to 1e10, so the float residue left in
+                // `eigenvalue - diagonalB` when the heads are uncoupled is
+                // itself far larger than any absolute epsilon, and the
+                // degenerate branch was never taken.
+                const float couplingScale =
+                    1.0e-6f * std::max (std::abs (diagonalB - diagonalR), 1.0f);
+                if (std::abs (offDiagonal) > couplingScale)
                 {
+                    const float length =
+                        std::sqrt (vectorB * vectorB + vectorR * vectorR);
                     vectorB /= length;
                     vectorR /= length;
                 }
                 else
                 {
-                    vectorB = branch == 0 ? 1.0f : 0.0f;
-                    vectorR = branch == 0 ? 0.0f : 1.0f;
+                    // The heads are uncoupled, so this eigenvector is one head
+                    // or the other. Which one is decided by the diagonal the
+                    // eigenvalue came from, not by the branch index: the
+                    // resonant head is lighter than the batter head and so is
+                    // usually the higher of the two, and picking by branch then
+                    // hands both branches to the resonant head. The batter
+                    // share would be zero on both, and a centre strike would
+                    // lose its boom entirely the moment Air Coupling reached 0.
+                    const float toBatter = std::abs (eigenvalue - diagonalB);
+                    const float toResonant = std::abs (eigenvalue - diagonalR);
+                    const bool tied =
+                        std::abs (toBatter - toResonant)
+                        <= 1.0e-6f * std::max (1.0f, std::abs (eigenvalue));
+                    // Two identical heads give one repeated eigenvalue; there
+                    // the branch index is the only thing that can separate them.
+                    const bool isBatter = tied ? (branch == 0)
+                                               : (toBatter < toResonant);
+                    vectorB = isBatter ? 1.0f : 0.0f;
+                    vectorR = isBatter ? 0.0f : 1.0f;
                 }
 
                 // The batter head is the one being struck and the one the
@@ -892,6 +946,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 auto& mode = voice.modes[static_cast<std::size_t> (count)];
                 mode.omega = omega;
                 mode.decayRate = decay;
+                mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 // Axisymmetric modes look identical from both sides of the
                 // head, so they are the part of the image that stays centred.
@@ -981,6 +1036,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 auto& mode = voice.modes[static_cast<std::size_t> (count)];
                 mode.omega = omega;
                 mode.decayRate = decay;
+                mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 mode.micLeft = observedL;
                 mode.micRight = observedR;
@@ -1043,6 +1099,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         auto& mode = voice.modes[static_cast<std::size_t> (count)];
         mode.omega = omega;
         mode.decayRate = decay;
+        mode.membrane = false;
         mode.drive = level * modelScale;
         mode.micLeft = shellL;
         mode.micRight = shellR;
@@ -1344,6 +1401,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     }
 
     voice.handGain = 1.0f;
+    voice.bendAtStrike = pitchBend_;
     voice.ageSamples = 0;
     voice.peakLevel = 0.0f;
     voice.controlCountdown = 0;
@@ -1383,6 +1441,12 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
     for (int index = 0; index < voice.activeModeCount; ++index)
     {
         auto& mode = voice.modes[static_cast<std::size_t> (index)];
+        // Stretching the head does not stretch the body it is nailed to, and
+        // the bank is sorted by lifetime so the shell modes are scattered
+        // through it rather than sitting at the end.
+        if (! mode.membrane)
+            continue;
+
         const float frequency = mode.omega * shift / (2.0f * piFloat);
         if (frequency >= nyquist * 0.98f || ! (frequency > 0.0f))
         {
@@ -1430,19 +1494,24 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
         voice.handGain = 1.0f;
     }
 
-    // Attack pitch glide.
+    // The attack glide and the wheel are one thing: both press the head, both
+    // raise its tension, and both therefore scale the membrane's frequencies.
+    // Applying them together also means a stroke that is already ringing bends
+    // with the wheel, rather than the wheel only reaching the next stroke.
     if (voice.tensionEnvelope > 1.0e-4f)
-    {
         voice.tensionEnvelope *= voice.tensionDecay;
-        const float shift = 1.0f + voice.tensionDepth * voice.tensionEnvelope;
-        if (std::abs (shift - voice.appliedTensionShift) > 1.0e-4f)
-            applyTensionShift (voice, shift);
-    }
-    else if (voice.tensionDepth > 0.0f && voice.appliedTensionShift != 1.0f)
-    {
+    else
         voice.tensionEnvelope = 0.0f;
-        applyTensionShift (voice, 1.0f);
-    }
+
+    // The voice's modes were built with the bend that stood at the strike, so
+    // only the movement since then is left to apply. Frequency goes as the
+    // square root of tension, and the wheel spans two semitones.
+    const float bendSemitones = 2.0f * (pitchBend_ - voice.bendAtStrike);
+    const float shift = (1.0f + voice.tensionDepth * voice.tensionEnvelope)
+                      * std::exp2 (bendSemitones / 12.0f);
+
+    if (std::abs (shift - voice.appliedTensionShift) > 1.0e-5f)
+        applyTensionShift (voice, shift);
 }
 
 float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
@@ -1514,26 +1583,14 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
             voice.directLowpassCoefficient * (slope - voice.directLowpassState);
         const float radiated = voice.directLowpassState;
 
-        constexpr int mask = directLineSize - 1;
         voice.directLine[static_cast<std::size_t> (voice.directWriteIndex)] = radiated;
 
-        const auto readAt = [&] (float delaySamples) noexcept
-        {
-            const float position =
-                static_cast<float> (voice.directWriteIndex) - delaySamples;
-            const int index = static_cast<int> (std::floor (position));
-            const float fraction = position - static_cast<float> (index);
-            const float a =
-                voice.directLine[static_cast<std::size_t> (index & mask)];
-            const float b =
-                voice.directLine[static_cast<std::size_t> ((index - 1) & mask)];
-            return a + (b - a) * fraction;
-        };
+        left += readDelayLine (voice.directLine, voice.directWriteIndex,
+                               voice.directDelayLeft) * voice.directGainLeft;
+        right += readDelayLine (voice.directLine, voice.directWriteIndex,
+                                voice.directDelayRight) * voice.directGainRight;
 
-        left += readAt (voice.directDelayLeft) * voice.directGainLeft;
-        right += readAt (voice.directDelayRight) * voice.directGainRight;
-
-        voice.directWriteIndex = (voice.directWriteIndex + 1) & mask;
+        voice.directWriteIndex = (voice.directWriteIndex + 1) & (directLineSize - 1);
     }
 
     left *= voice.handGain;
@@ -1571,7 +1628,7 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
 
     const float targetGain = applied_.outputGain;
     const float targetDrive = applied_.drive;
-    const float width = applied_.stereoWidth;
+    const float targetWidth = applied_.stereoWidth;
 
     // A hand laid on the head, as a per-sample multiplier the voices
     // accumulate and the control tick folds into their states.
@@ -1592,6 +1649,8 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
 
         smoothedOutputGain_ += gainSmoothing_ * (targetGain - smoothedOutputGain_);
         smoothedDrive_ += gainSmoothing_ * (targetDrive - smoothedDrive_);
+        // Width multiplies the side signal, so a step in it steps the audio.
+        smoothedWidth_ += gainSmoothing_ * (targetWidth - smoothedWidth_);
 
         float mixLeft = 0.0f;
         float mixRight = 0.0f;
@@ -1649,7 +1708,7 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
         // them - already a real stereo image rather than a widened one - and
         // above that the difference is exaggerated.
         const float mid = 0.5f * (mixLeft + mixRight);
-        const float side = 0.5f * (mixLeft - mixRight) * (2.0f * width);
+        const float side = 0.5f * (mixLeft - mixRight) * (2.0f * smoothedWidth_);
         float outLeft = mid + side;
         float outRight = mid - side;
 

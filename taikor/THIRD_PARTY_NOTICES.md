@@ -10,6 +10,11 @@ JUCE is Copyright (c) Raw Material Software Limited.
 
 Repository: <https://github.com/juce-framework/JUCE/tree/8.0.14>
 
+A copy of the JUCE licence text is vendored at
+[`ThirdParty/JUCE-LICENSE.md`](ThirdParty/JUCE-LICENSE.md) so that it can be
+included in every distributed bundle and installer package alongside Taikor's
+own licence, as the packaging script does.
+
 License: JUCE framework modules are dual-licensed under the GNU Affero General
 Public License version 3 (AGPLv3) and the commercial JUCE licence. Building or
 distributing Taikor with JUCE therefore requires either compliance with the

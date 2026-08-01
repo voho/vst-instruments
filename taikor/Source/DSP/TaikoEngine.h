@@ -312,6 +312,10 @@ private:
         // can retune the resonator without redoing the whole physical solve.
         float omega { 0.0f };
         float decayRate { 0.0f };
+        // True for the membrane, false for the shell. The attack glide and the
+        // wheel stretch the head; neither of them touches the wooden body, and
+        // the bank is sorted by lifetime so the two kinds interleave.
+        bool membrane { true };
         // Sample count after which this mode has fallen below the retirement
         // floor. Modes are stored in descending order of this value, so the
         // render loop only has to track a shrinking count.
@@ -363,6 +367,11 @@ private:
         // Accumulated hand damping, folded into the resonator states at the
         // control tick so the envelope never runs away.
         float handGain { 1.0f };
+
+        // Where the wheel stood when this stroke was struck. The voice's modes
+        // already carry that much bend, so only the change since then has to be
+        // applied to a voice that is already ringing.
+        float bendAtStrike { 0.0f };
 
         // The airborne path from the stick to each microphone. A close pair
         // hears the impact itself, not only what the head does afterwards, and
@@ -461,6 +470,12 @@ private:
     // strike is heard as a boom and an edge strike as a slap: modes with a
     // circumferential order move the same air in and out and barely radiate.
     [[nodiscard]] static float radiationEfficiency (int order, float ka) noexcept;
+    // Fractional read of the airborne-path delay line. Extracted from the
+    // render loop so the trickiest index arithmetic in this file can be tested
+    // against a known ramp rather than inferred from the stereo image.
+    [[nodiscard]] static float readDelayLine (
+        const std::array<float, directLineSize>& line, int writeIndex,
+        float delaySamples) noexcept;
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;
     [[nodiscard]] static float signedUnitFromHash (std::uint32_t value) noexcept;
     [[nodiscard]] static float nextNoise (std::uint32_t& state) noexcept;
@@ -522,6 +537,7 @@ private:
 
     float smoothedOutputGain_ { 0.5f };
     float smoothedDrive_ { 0.0f };
+    float smoothedWidth_ { 0.6f };
     float gainSmoothing_ { 0.001f };
     float dcCoefficient_ { 0.9985f };
     float dcInputLeft_ { 0.0f };

@@ -12,6 +12,22 @@
 #include <string>
 #include <vector>
 
+namespace taikor
+{
+// The engine grants this struct access so the suite can exercise the airborne
+// delay line's index arithmetic directly. It is not part of the plug-in API.
+struct TaikoEngineTestAccess
+{
+    static float readDelayLine (const std::array<float, TaikoEngine::directLineSize>& line,
+                                int writeIndex, float delaySamples) noexcept
+    {
+        return TaikoEngine::readDelayLine (line, writeIndex, delaySamples);
+    }
+
+    static constexpr int lineSize = TaikoEngine::directLineSize;
+};
+} // namespace taikor
+
 namespace
 {
 constexpr int defaultBlockSize = 253;
@@ -1104,6 +1120,219 @@ void testIdleCostAndStressPerformance()
     expect (elapsed < 20.0,
             "a two-second dense render exceeded the generous performance guardrail");
 }
+
+// Regressions for control endpoints and performance gestures. Each of these
+// was a real defect: they are checked here because every one of them is
+// invisible to a test that only looks at the solved drum, and audible to a
+// player immediately.
+void testControlEndpointsAndGestures()
+{
+    const auto parameters = defaultParameters();
+
+    // Air Coupling at exactly zero must not be a cliff. The axisymmetric modes
+    // are solved as a two-by-two eigenproblem, and at zero coupling that system
+    // becomes degenerate; resolving the degeneracy by branch index rather than
+    // by which head the eigenvalue belongs to handed both branches to the
+    // resonant head and silenced the drum's boom at the endpoint.
+    const auto bodyEnergy = [&parameters] (float coupling)
+    {
+        auto tuned = parameters;
+        tuned.cavityCoupling = coupling;
+        tuned.humanise = 0.0f;
+        const auto rendered =
+            strike (tuned, taikor::Articulation::Don, 0, 0.9f, 48000.0, 48000);
+        const auto mono = rendered.mono();
+        double sum = 0.0;
+        for (std::size_t index = 4800; index < 24000 && index < mono.size(); ++index)
+            sum += static_cast<double> (mono[index]) * mono[index];
+        return std::sqrt (sum / 19200.0);
+    };
+
+    const auto sealedBody = bodyEnergy (0.85f);
+    const auto openBody = bodyEnergy (0.0f);
+    const auto barelyCoupled = bodyEnergy (0.001f);
+
+    expect (openBody > sealedBody * 0.5,
+            "an uncoupled body must still have a centre boom");
+    expect (std::abs (openBody - barelyCoupled) < barelyCoupled * 0.10,
+            "the Air Coupling control must be continuous at zero");
+
+    // The wheel presses the head, so a stroke that is already ringing has to
+    // bend with it - not merely the strokes that follow it.
+    {
+        auto tuned = parameters;
+        tuned.humanise = 0.0f;
+        tuned.tensionModulation = 0.0f;
+
+        taikor::TaikoEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setParameters (tuned);
+        engine.trigger (taikor::Articulation::Don, 0, 0.95f);
+
+        const auto before = render (engine, 24000).mono();
+        engine.setPitchBend (1.0f);
+        const auto after = render (engine, 72000).mono();
+
+        const auto restingPitch =
+            dominantFrequency (before, 48000.0, 60.0, 200.0, 0.25, 2400u);
+        // Skip the glide itself and measure where the drum settled.
+        const auto bentPitch =
+            dominantFrequency (after, 48000.0, 60.0, 200.0, 0.25, 16000u);
+        const auto semitones = 12.0 * std::log2 (bentPitch / restingPitch);
+
+        expect (semitones > 1.5 && semitones < 2.5,
+                "a fully raised wheel must bend a ringing stroke by about two semitones");
+    }
+
+    // The attack glide stretches the head. It must not stretch the wooden body
+    // the head is nailed to: a stick-on-stick stroke drives no membrane mode at
+    // all, so Tension Mod has nothing it could legitimately change there.
+    {
+        auto without = parameters;
+        without.humanise = 0.0f;
+        without.tensionModulation = 0.0f;
+        auto with = without;
+        with.tensionModulation = 1.0f;
+
+        // A shell strike does run the glide - its depth is scaled by the
+        // stroke's own membrane gain, which is small but not zero - so what has
+        // to be true is that the glide moves only that small membrane share and
+        // leaves the wooden bank, which carries most of the stroke, alone.
+        const auto shellQuiet =
+            strike (without, taikor::Articulation::Katsu, 0, 0.95f, 48000.0, 24000);
+        const auto shellGlided =
+            strike (with, taikor::Articulation::Katsu, 0, 0.95f, 48000.0, 24000);
+        const auto shellChange =
+            maximumAbsoluteDifference (shellQuiet.left, shellGlided.left);
+        expect (shellChange < 1.0e-3,
+                "the tension glide must not retune the wooden shell");
+
+        // And it must still do its job on the head, which is many times larger
+        // than anything the shell stroke is allowed to move by.
+        const auto openWithout =
+            strike (without, taikor::Articulation::Don, 0, 0.95f, 48000.0, 24000);
+        const auto openWith =
+            strike (with, taikor::Articulation::Don, 0, 0.95f, 48000.0, 24000);
+        const auto headChange =
+            maximumAbsoluteDifference (openWithout.left, openWith.left);
+        expect (headChange > 1.0e-2, "the tension glide must still bend the head");
+        expect (headChange > shellChange * 20.0,
+                "the glide must move the head far more than the body");
+    }
+
+    // Width multiplies the side signal, so automating it must not step the
+    // audio at a block boundary. Measured as the jump across the exact sample
+    // where the control changed, against the steps the signal is making anyway
+    // just after it: a smoothed control disappears into the signal, an
+    // unsmoothed one stands several times above it.
+    {
+        const auto boundaryAgainstSignal = [&parameters] (bool slam)
+        {
+            auto tuned = parameters;
+            tuned.humanise = 0.0f;
+            tuned.micSpread = 1.0f;
+            tuned.stereoWidth = 0.0f;
+
+            constexpr int block = 256;
+            constexpr int slamBlock = 3;
+
+            taikor::TaikoEngine engine;
+            engine.prepare (48000.0, block);
+            engine.setParameters (tuned);
+            engine.trigger (taikor::Articulation::Ka, 0, 0.95f);
+
+            std::vector<float> left (static_cast<std::size_t> (block));
+            std::vector<float> right (static_cast<std::size_t> (block));
+            std::vector<float> history;
+
+            for (int index = 0; index < slamBlock + 4; ++index)
+            {
+                if (slam && index == slamBlock)
+                {
+                    auto opened = tuned;
+                    opened.stereoWidth = 1.0f;
+                    engine.setParameters (opened);
+                }
+                engine.process (left.data(), right.data(), block);
+                history.insert (history.end(), left.begin(), left.end());
+            }
+
+            const auto at = static_cast<std::size_t> (slamBlock * block);
+            const auto boundary =
+                std::abs (static_cast<double> (history[at]) - history[at - 1]);
+
+            double typical = 0.0;
+            for (std::size_t index = at + 8; index < at + 200; ++index)
+                typical = std::max (typical,
+                                    std::abs (static_cast<double> (history[index])
+                                              - history[index - 1]));
+
+            return boundary / std::max (typical, 1.0e-9);
+        };
+
+        expect (boundaryAgainstSignal (true) < 2.0,
+                "automating the width stepped the audio at the block boundary");
+        expect (boundaryAgainstSignal (false) < 2.0,
+                "the width step measurement is picking up ordinary signal content");
+    }
+
+    // The airborne delay line's fractional read, checked exactly. A ramp makes
+    // the correct answer arithmetic: reading it back at delay d must return the
+    // ramp's value d samples ago, to within interpolation error. Reading the
+    // wrong neighbour adds the fractional part instead of subtracting it, which
+    // this catches at every non-integer delay.
+    {
+        using Access = taikor::TaikoEngineTestAccess;
+        std::array<float, Access::lineSize> line {};
+        constexpr int writeIndex = 600;
+        for (int index = 0; index < Access::lineSize; ++index)
+            line[static_cast<std::size_t> (index)] = static_cast<float> (index);
+
+        for (const float delay : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 7.5f,
+                                   19.75f, 63.0f, 100.5f })
+        {
+            const auto value = Access::readDelayLine (line, writeIndex, delay);
+            const auto expected = static_cast<float> (writeIndex) - delay;
+            expect (std::abs (value - expected) < 1.0e-3f,
+                    "the airborne delay line read " + std::to_string (value)
+                        + " where a delay of " + std::to_string (delay)
+                        + " should have returned " + std::to_string (expected));
+        }
+    }
+
+    // The airborne path is what places a stroke across the image, and it
+    // carries a real time difference. An off-centre stroke must therefore reach
+    // the nearer microphone first.
+    {
+        auto tuned = parameters;
+        tuned.humanise = 0.0f;
+        tuned.micSpread = 1.0f;
+        tuned.micDistance = 0.0f;
+        tuned.strikePosition = 1.0f;
+
+        const auto rendered =
+            strike (tuned, taikor::Articulation::Ka, 0, 0.95f, 48000.0, 4000, 64);
+
+        const auto onset = [] (const std::vector<float>& samples)
+        {
+            double peak = 0.0;
+            for (const float value : samples)
+                peak = std::max (peak, std::abs (static_cast<double> (value)));
+            for (std::size_t index = 0; index < samples.size(); ++index)
+                if (std::abs (static_cast<double> (samples[index])) > 0.25 * peak)
+                    return static_cast<double> (index);
+            return 0.0;
+        };
+
+        const auto separation = std::abs (onset (rendered.left) - onset (rendered.right));
+        expect (separation > 1.0,
+                "an off-centre stroke must reach the two microphones at different times");
+        // A path difference cannot exceed the drum crossed at the speed of
+        // sound; anything larger means the delay line is being read wrongly.
+        expect (separation < 0.005 * 48000.0,
+                "the inter-microphone delay is longer than the drum is wide");
+    }
+}
 } // namespace
 
 int main()
@@ -1122,6 +1351,7 @@ int main()
     testPerformanceControls();
     testInvalidInputSafety();
     testUiPresentationMath();
+    testControlEndpointsAndGestures();
     testIdleCostAndStressPerformance();
 
     if (failureCount != 0)

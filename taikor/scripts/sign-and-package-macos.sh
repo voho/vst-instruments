@@ -5,24 +5,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-${PROJECT_DIR}/build-macos}"
 CONFIG="${CONFIG:-Release}"
-VERSION="${VERSION:-1.0.0}"
+VERSION_OVERRIDE="${VERSION:-}"
 APP_SIGN_IDENTITY="${APP_SIGN_IDENTITY:--}"
 INSTALLER_SIGN_IDENTITY="${INSTALLER_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
 ARTIFACT_DIR="${BUILD_DIR}/Taikor_artefacts/${CONFIG}"
 DIST_DIR="${BUILD_DIR}/dist"
+PACKAGE_ROOT="${BUILD_DIR}/package-root"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "error: this script requires macOS" >&2
     exit 1
 fi
 
-if [[ ! "${VERSION}" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
-    echo "error: VERSION contains unsafe filename characters: ${VERSION}" >&2
-    exit 1
-fi
-
-for tool in codesign ditto lipo mktemp pkgbuild; do
+for tool in codesign ditto lipo pkgbuild; do
     command -v "${tool}" >/dev/null 2>&1 || {
         echo "error: required tool '${tool}' was not found" >&2
         exit 1
@@ -41,44 +37,97 @@ for artifact in "${VST3}" "${AU}" "${APP}"; do
     fi
 done
 
-executables=(
-    "${VST3}/Contents/MacOS/Taikor"
-    "${AU}/Contents/MacOS/Taikor"
-    "${APP}/Contents/MacOS/Taikor"
-)
-ARCHITECTURES=""
-for executable in "${executables[@]}"; do
-    current_architectures="$(lipo -archs "${executable}")"
-    if [[ -z "${ARCHITECTURES}" ]]; then
-        ARCHITECTURES="${current_architectures}"
-    elif [[ "${current_architectures}" != "${ARCHITECTURES}" ]]; then
-        echo "error: build artifacts have mismatched architectures" >&2
-        exit 1
-    fi
-done
-
-if [[ " ${ARCHITECTURES} " == *" arm64 "* \
-      && " ${ARCHITECTURES} " == *" x86_64 "* ]]; then
-    ARCH_LABEL="universal"
-else
-    ARCH_LABEL="${ARCHITECTURES// /-}"
+PLIST_BUDDY="/usr/libexec/PlistBuddy"
+if [[ ! -x "${PLIST_BUDDY}" ]]; then
+    echo "error: PlistBuddy was not found" >&2
+    exit 1
 fi
 
-mkdir -p "${BUILD_DIR}" "${DIST_DIR}"
-PACKAGE_ROOT="$(mktemp -d "${BUILD_DIR%/}/taikor-package-root.XXXXXX")"
-cleanup() {
-    rm -rf -- "${PACKAGE_ROOT}"
+bundle_version() {
+    "${PLIST_BUDDY}" -c "Print :CFBundleShortVersionString" \
+        "$1/Contents/Info.plist"
 }
-trap cleanup EXIT
 
+VST3_VERSION="$(bundle_version "${VST3}")"
+AU_VERSION="$(bundle_version "${AU}")"
+APP_VERSION="$(bundle_version "${APP}")"
+if [[ -z "${VST3_VERSION}" || "${VST3_VERSION}" != "${AU_VERSION}" \
+      || "${VST3_VERSION}" != "${APP_VERSION}" ]]; then
+    echo "error: build artifact versions disagree" >&2
+    echo "  VST3: ${VST3_VERSION:-missing}" >&2
+    echo "  AU: ${AU_VERSION:-missing}" >&2
+    echo "  App: ${APP_VERSION:-missing}" >&2
+    exit 1
+fi
+
+VERSION="${VST3_VERSION}"
+if [[ -n "${VERSION_OVERRIDE}" && "${VERSION_OVERRIDE}" != "${VERSION}" ]]; then
+    echo "error: VERSION=${VERSION_OVERRIDE} does not match bundle version ${VERSION}" >&2
+    exit 1
+fi
+
+VST3_ARCHS="$(lipo -archs "${VST3}/Contents/MacOS/Taikor")"
+AU_ARCHS="$(lipo -archs "${AU}/Contents/MacOS/Taikor")"
+APP_ARCHS="$(lipo -archs "${APP}/Contents/MacOS/Taikor")"
+if [[ "${VST3_ARCHS}" != "${AU_ARCHS}" || "${VST3_ARCHS}" != "${APP_ARCHS}" ]]; then
+    echo "error: build artifact architectures disagree" >&2
+    echo "  VST3: ${VST3_ARCHS}" >&2
+    echo "  AU: ${AU_ARCHS}" >&2
+    echo "  App: ${APP_ARCHS}" >&2
+    exit 1
+fi
+
+if [[ "${APP_ARCHS}" == *arm64* && "${APP_ARCHS}" == *x86_64* ]]; then
+    ARTIFACT_ARCH="universal"
+else
+    ARTIFACT_ARCH="${APP_ARCHS// /-}"
+fi
+
+case "${PACKAGE_ROOT}" in
+    "${BUILD_DIR}"/*) ;;
+    *) echo "error: unsafe package staging path: ${PACKAGE_ROOT}" >&2; exit 1 ;;
+esac
+
+rm -rf "${PACKAGE_ROOT}"
 mkdir -p \
     "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/VST3" \
     "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components" \
-    "${PACKAGE_ROOT}/Applications"
+    "${PACKAGE_ROOT}/Applications" \
+    "${DIST_DIR}"
 
 ditto "${VST3}" "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/VST3/Taikor.vst3"
 ditto "${AU}" "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components/Taikor.component"
 ditto "${APP}" "${PACKAGE_ROOT}/Applications/Taikor.app"
+
+NOTICE_ROOT="${PACKAGE_ROOT}/Library/Application Support/Taikor/Documentation"
+JUCE_NOTICE="${PROJECT_DIR}/ThirdParty/JUCE-LICENSE.md"
+for notice in "${PROJECT_DIR}/LICENSE" "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
+              "${JUCE_NOTICE}"; do
+    if [[ ! -f "${notice}" ]]; then
+        echo "error: missing distribution notice: ${notice}" >&2
+        exit 1
+    fi
+done
+
+mkdir -p "${NOTICE_ROOT}"
+ditto "${PROJECT_DIR}/LICENSE" "${NOTICE_ROOT}/Taikor-LICENSE.txt"
+ditto "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
+    "${NOTICE_ROOT}/THIRD_PARTY_NOTICES.md"
+ditto "${JUCE_NOTICE}" "${NOTICE_ROOT}/JUCE-LICENSE.md"
+
+# Keep the same notices inside every independently copyable bundle. They are
+# installed before signing so the bundle signatures cover the documentation.
+for bundle in \
+    "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/VST3/Taikor.vst3" \
+    "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components/Taikor.component" \
+    "${PACKAGE_ROOT}/Applications/Taikor.app"; do
+    bundle_notice_root="${bundle}/Contents/Resources/Documentation"
+    mkdir -p "${bundle_notice_root}"
+    ditto "${PROJECT_DIR}/LICENSE" "${bundle_notice_root}/Taikor-LICENSE.txt"
+    ditto "${PROJECT_DIR}/THIRD_PARTY_NOTICES.md" \
+        "${bundle_notice_root}/THIRD_PARTY_NOTICES.md"
+    ditto "${JUCE_NOTICE}" "${bundle_notice_root}/JUCE-LICENSE.md"
+done
 
 sign_bundle() {
     local bundle="$1"
@@ -95,14 +144,17 @@ sign_bundle "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/VST3/Taikor.vst3"
 sign_bundle "${PACKAGE_ROOT}/Library/Audio/Plug-Ins/Components/Taikor.component"
 sign_bundle "${PACKAGE_ROOT}/Applications/Taikor.app"
 
-ZIP_PATH="${DIST_DIR}/Taikor-${VERSION}-macOS-${ARCH_LABEL}.zip"
+ZIP_PATH="${DIST_DIR}/Taikor-${VERSION}-macOS-${ARTIFACT_ARCH}.zip"
 PKG_UNSIGNED="${DIST_DIR}/Taikor-${VERSION}-unsigned.pkg"
-PKG_FINAL="${DIST_DIR}/Taikor-${VERSION}-macOS-${ARCH_LABEL}.pkg"
+PKG_FINAL="${DIST_DIR}/Taikor-${VERSION}-macOS-${ARTIFACT_ARCH}.pkg"
 
-rm -f "${ZIP_PATH}" "${PKG_UNSIGNED}" "${PKG_FINAL}"
-ditto -c -k --sequesterRsrc "${PACKAGE_ROOT}" "${ZIP_PATH}"
+# Leave exactly one Taikor release set in dist, avoiding stale version or
+# architecture names in wildcard-driven CI publication.
+rm -f "${DIST_DIR}/Taikor-"*-macOS-*.zip
+rm -f "${DIST_DIR}/Taikor-"*-macOS-*.pkg
+rm -f "${DIST_DIR}/Taikor-"*-unsigned.pkg
 
-pkgbuild \
+COPYFILE_DISABLE=1 pkgbuild \
     --root "${PACKAGE_ROOT}" \
     --identifier audio.taikor.synth.pkg \
     --version "${VERSION}" \
@@ -121,6 +173,11 @@ else
     mv "${PKG_UNSIGNED}" "${PKG_FINAL}"
 fi
 
+# Create the ZIP after pkgbuild from the same signed tree, explicitly omitting
+# local extended attributes, quarantine state, ACLs, and resource metadata.
+ditto -c -k --norsrc --noextattr --noqtn --noacl \
+    "${PACKAGE_ROOT}" "${ZIP_PATH}"
+
 if [[ -n "${NOTARY_PROFILE}" ]]; then
     if [[ "${APP_SIGN_IDENTITY}" == "-" || -z "${INSTALLER_SIGN_IDENTITY}" ]]; then
         echo "error: notarization requires Developer ID Application and Installer identities" >&2
@@ -130,7 +187,6 @@ if [[ -n "${NOTARY_PROFILE}" ]]; then
         --keychain-profile "${NOTARY_PROFILE}" --wait
     xcrun stapler staple "${PKG_FINAL}"
     xcrun stapler validate "${PKG_FINAL}"
-    echo "Note: notarization was applied to the installer package, not the ZIP." >&2
 fi
 
 echo
