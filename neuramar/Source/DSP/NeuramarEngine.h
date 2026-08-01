@@ -21,6 +21,8 @@ struct EngineParameters
     float orbit { 0.15f };               // one-shot to learned-loop blend, 0..1
     float mutation { 0.10f };            // deterministic per-voice variation, 0..1
     float noise { 0.0f };                // voice-local model-space drift, 0..1
+    // How long the performance fade-in takes, end to end, not an exponential
+    // time constant. Zero renders the model's own onset untouched.
     float attackSeconds { 0.0f };         // 0..10 seconds
     float releaseSeconds { 0.35f };       // 0.005..20 seconds
     float spread { 0.35f };               // stereo voice spread, 0..1
@@ -67,7 +69,6 @@ public:
     [[nodiscard]] int getActiveVoiceCount() const noexcept;
 
 private:
-    static constexpr int sineTableSize = 4096;
     // The neural controller remains a compact 64-partial model. A larger,
     // engine-only bank lets Body Lock resample that observed spectrum onto the
     // denser harmonic grid required by lower notes without changing presets.
@@ -126,6 +127,11 @@ private:
         void clear() noexcept { z1 = z2 = sideZ1 = sideZ2 = 0.0f; }
         void set(float centreHz, float bandwidthOctaves,
                  float sampleRate, int rampSamples) noexcept;
+        // Retires a coefficient ramp without running the filter, leaving it
+        // where tick() would have left it. A band whose layer is silent for a
+        // whole control period is never ticked, so without this its ramp would
+        // stay open forever and defeat the early-out in set().
+        void finishRamp() noexcept;
         [[nodiscard]] float tick(float input) noexcept;
         // Uses the coefficients that tick() has already advanced this sample,
         // so it must be called after it and only once per sample.
@@ -144,6 +150,10 @@ private:
         float velocity { 0.0f };
         float velocityGain { 0.0f };
         float envelope { 0.0f };
+        // Position along the performance fade-in, 0 at note-on and 1 once the
+        // whole Awaken time has elapsed. Kept separate from the envelope so
+        // release still decays whatever level the fade-in had reached.
+        float attackPosition { 0.0f };
         double modelTimeSeconds { 0.0 };
         std::uint64_t renderedSampleCount { 0 };
         float mutationOffset { 0.0f };
@@ -178,6 +188,12 @@ private:
         // the whole coming control period, so the audio loop skips them
         // entirely instead of advancing a phase nothing reads.
         std::size_t soundingHarmonicCount { 0 };
+        // The same idea for the two body layers: a layer that is silent now
+        // and stays silent for the whole coming control period contributes
+        // exactly zero, so the audio loop runs neither its filters nor its
+        // oscillators.
+        bool airSounding { false };
+        bool boneSounding { false };
         std::array<float, renderedHarmonicCount> harmonicPhases {};
         std::array<float, NeuralModel::boneModeCount> bonePhases {};
         std::array<float, NeuralModel::boneModeCount> boneFrequenciesHz {};
@@ -205,18 +221,8 @@ private:
     };
 
     [[nodiscard]] EngineParameters loadParameters() const noexcept;
-    [[nodiscard]] float sine(float phase) const noexcept;
-    // Table lookup for a phase already reduced to [0, 1). The two wrapped
-    // guard entries make the top cell and the rounded-up edge case safe.
-    [[nodiscard]] float sineUnit(float unitPhase) const noexcept
-    {
-        const float tablePosition = unitPhase
-            * static_cast<float>(sineTableSize);
-        const auto lower = static_cast<std::size_t>(tablePosition);
-        const float fraction = tablePosition - static_cast<float>(lower);
-        return sineTable_[lower]
-            + fraction * (sineTable_[lower + 1] - sineTable_[lower]);
-    }
+    [[nodiscard]] float initialPhaseAt(const NeuralModel& model,
+                                       float oneBasedIndex) const noexcept;
     void refreshHarmonicStretch(float inharmonicity) noexcept;
     void updateVoiceControl(Voice& voice, const NeuralModel& model,
                             const EngineParameters& parameters) noexcept;
@@ -228,8 +234,11 @@ private:
     AtomicParameters parameters_ {};
     std::array<Voice, maximumVoices> voices_ {};
     std::array<FadeTail, maximumVoices> fadeTails_ {};
-    std::array<float, sineTableSize + 2> sineTable_ {};
     std::array<float, NeuralModel::harmonicCount> inverseHarmonicRolloff_ {};
+    // Unit vectors for the published model's learned onset phases, refreshed
+    // once per model rather than per note-on.
+    std::array<float, NeuralModel::harmonicCount> initialPhaseCos_ {};
+    std::array<float, NeuralModel::harmonicCount> initialPhaseSin_ {};
     // Rendered partial frequency divided by the fundamental. Identity for an
     // ideal harmonic series; rebuilt only when the effective stiff-string
     // coefficient actually changes, never per voice and never per sample.
@@ -241,6 +250,17 @@ private:
     // per-sample harmonic loop needs no division.
     float coreNyquistLimitHz_ { 0.49f * 48000.0f };
     float coreNyquistFadeScale_ { 1.0f / (0.06f * 48000.0f) };
+    // The same ceiling as a plain float, so the per-sample Bone frequency
+    // ramp needs neither a double-to-float conversion nor a multiply.
+    float boneCeilingHz_ { 0.49f * 48000.0f };
+    // Where the Air and Bone layers fade out. Both are anchored to a fixed
+    // audio-band ceiling as well as to the host Nyquist, so a memory keeps the
+    // same audible top octave at every supported rate instead of losing it at
+    // 44.1 kHz and rendering it ultrasonically at 96 kHz.
+    float airEdgeLimitHz_ { 20000.0f };
+    float airEdgeFadeHz_ { 2000.0f };
+    float boneEdgeLimitHz_ { 20000.0f };
+    float boneEdgeFadeHz_ { 1400.0f };
     int controlPeriod_ { 192 };
     // Output level is the one control applied straight to the summed signal
     // rather than through a control-rate target, so it carries its own

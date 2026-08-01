@@ -3759,11 +3759,501 @@ void testRoughPerformance(const neuramar::NeuralModel& model)
            "eight-voice wide-register render exceeded its coarse wall-time guard");
     expect(rms(left) > 0.001f, "performance fixture rendered silence");
 }
+
+// Core-only render of one note at an arbitrary host rate, downmixed to mono.
+[[nodiscard]] std::vector<float> renderCoreAtRate(
+    const neuramar::NeuralModel& model, int midiNote, double sampleRate,
+    double seconds)
+{
+    neuramar::NeuramarEngine engine;
+    engine.prepare(sampleRate, 128);
+    engine.setModel(&model);
+    auto parameters = cleanCoreParameters();
+    parameters.bodyLock = 0.0f;
+    parameters.outputGain = 1.0f;
+    engine.setParameters(parameters);
+
+    const auto sampleCount = static_cast<int>(sampleRate * seconds);
+    std::vector<float> left(static_cast<std::size_t>(sampleCount), 0.0f);
+    std::vector<float> right(static_cast<std::size_t>(sampleCount), 0.0f);
+    engine.noteOn(midiNote, 0.8f);
+    for (int offset = 0; offset < sampleCount; offset += 128)
+    {
+        const int count = std::min(128, sampleCount - offset);
+        engine.process(left.data() + offset, right.data() + offset, count);
+    }
+    for (std::size_t index = 0; index < left.size(); ++index)
+        left[index] = 0.5f * (left[index] + right[index]);
+    return left;
+}
+
+// Hann-windowed single-frequency projection, returned as an amplitude.
+[[nodiscard]] double narrowbandAmplitude(const std::vector<float>& signal,
+                                         std::size_t first, std::size_t count,
+                                         double frequencyHz, double sampleRate)
+{
+    double real = 0.0;
+    double imaginary = 0.0;
+    double windowSum = 0.0;
+    const auto span = static_cast<double>(count - 1);
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const double window = 0.5 - 0.5 * std::cos(
+            2.0 * pi * static_cast<double>(index) / span);
+        const double angle = 2.0 * pi * frequencyHz
+            * static_cast<double>(first + index) / sampleRate;
+        const double value = signal[first + index] * window;
+        real += value * std::cos(angle);
+        imaginary -= value * std::sin(angle);
+        windowSum += window;
+    }
+    return 2.0 * std::hypot(real, imaginary) / std::max(windowSum, 1.0);
+}
+
+[[nodiscard]] double peakedAmplitude(const std::vector<float>& signal,
+                                     std::size_t first, std::size_t count,
+                                     double frequencyHz, double sampleRate)
+{
+    double best = 0.0;
+    for (int step = -10; step <= 10; ++step)
+    {
+        const double probe = frequencyHz * (1.0 + 0.0015 * step);
+        best = std::max(best, narrowbandAmplitude(signal, first, count, probe,
+                                                  sampleRate));
+    }
+    return best;
+}
+
+// Nothing may live below the played fundamental: the partial series starts
+// there, the anti-alias taper deletes everything that would fold back, and the
+// oscillator's sine approximation is the only other candidate for a spurious
+// line. This is the guard that keeps a cheaper approximation, a broken taper,
+// or an unbandlimited shortcut from shipping.
+void testCoreSpurFloor()
+{
+    const auto model = neuramar::NeuralModel::createRandom(
+        0x9e3779b97f4a7c15ull, 0.6f);
+    expect(model != nullptr, "spur-floor fixture could not be created");
+    if (!model)
+        return;
+
+    double worstRatioDb = -300.0;
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0 })
+    {
+        for (const int offset : { 24, 36, 45 })
+        {
+            const int note = std::clamp(model->rootMidiNote() + offset, 0, 127);
+            const auto rendered = renderCoreAtRate(*model, note, sampleRate,
+                                                   0.42);
+            const auto first = static_cast<std::size_t>(sampleRate * 0.30);
+            const auto count = static_cast<std::size_t>(sampleRate * 0.10);
+            const double fundamentalHz = static_cast<double>(
+                model->rootFrequencyHz())
+                * std::exp2((note - model->rootMidiNote()) / 12.0);
+            // Stop well below the lowest pitch the learned contour can bend
+            // the fundamental to, so a valid partial can never be counted.
+            const double ceilingHz = 0.60 * fundamentalHz;
+            // Half the analysis resolution, so no narrow line can hide
+            // between two probes.
+            const double probeStep = 0.5 * sampleRate
+                / static_cast<double>(count);
+            double spur = 0.0;
+            for (double probe = 40.0; probe < ceilingHz; probe += probeStep)
+                spur = std::max(spur, narrowbandAmplitude(
+                    rendered, first, count, probe, sampleRate));
+
+            const std::vector<float> window(
+                rendered.begin() + static_cast<std::ptrdiff_t>(first),
+                rendered.begin() + static_cast<std::ptrdiff_t>(first + count));
+            const double reference = rms(window);
+            expect(reference > 1.0e-4,
+                   "spur-floor fixture rendered silence at MIDI "
+                       + std::to_string(note));
+            const double ratioDb = 20.0 * std::log10(
+                std::max(spur, 1.0e-30) / std::max(reference, 1.0e-30));
+            worstRatioDb = std::max(worstRatioDb, ratioDb);
+        }
+    }
+
+    std::cout << "Spur diagnostics: worst sub-fundamental line "
+              << worstRatioDb << " dB relative to the rendered signal\n";
+    expect(worstRatioDb < -85.0,
+           "the Core oscillator bank produced a sub-fundamental spur above its "
+           "regression floor (" + std::to_string(worstRatioDb) + " dB)");
+}
+
+// The instrument must sound the same whatever the host rate is. Every partial
+// that fits below the strictest anti-alias limit of the compared rates is
+// measured against the 48 kHz render.
+void testRenderIsSampleRateInvariant()
+{
+    const auto model = neuramar::NeuralModel::createRandom(
+        0x9e3779b97f4a7c15ull, 0.6f);
+    expect(model != nullptr, "sample-rate invariance fixture failed");
+    if (!model)
+        return;
+
+    constexpr double rates[] { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 };
+    constexpr std::size_t referenceRate = 1;
+    double worstDeviationDb = 0.0;
+    for (const int offset : { 0, 12, 24 })
+    {
+        const int note = std::clamp(model->rootMidiNote() + offset, 0, 127);
+        const double fundamentalHz = static_cast<double>(
+            model->rootFrequencyHz())
+            * std::exp2((note - model->rootMidiNote()) / 12.0);
+        std::vector<std::vector<double>> amplitudes;
+        for (const double sampleRate : rates)
+        {
+            const auto rendered = renderCoreAtRate(*model, note, sampleRate,
+                                                   0.32);
+            const auto first = static_cast<std::size_t>(sampleRate * 0.20);
+            const auto count = static_cast<std::size_t>(sampleRate * 0.10);
+            std::vector<double> partials;
+            for (int partial = 1; partial <= 12; ++partial)
+            {
+                // 15 kHz is below the anti-alias taper of every compared rate,
+                // so a partial there exists in all five renders.
+                const double frequencyHz = fundamentalHz * partial;
+                partials.push_back(frequencyHz < 15000.0
+                    ? peakedAmplitude(rendered, first, count, frequencyHz,
+                                      sampleRate)
+                    : 0.0);
+            }
+            amplitudes.push_back(std::move(partials));
+        }
+
+        for (std::size_t rate = 0; rate < std::size(rates); ++rate)
+        {
+            for (std::size_t partial = 0;
+                 partial < amplitudes[rate].size(); ++partial)
+            {
+                const double reference = amplitudes[referenceRate][partial];
+                if (reference < 1.0e-3)
+                    continue;
+                worstDeviationDb = std::max(worstDeviationDb, std::abs(
+                    20.0 * std::log10(std::max(amplitudes[rate][partial],
+                                               1.0e-12) / reference)));
+            }
+        }
+    }
+
+    std::cout << "Sample-rate diagnostics: worst partial deviation across "
+              << "44.1/48/88.2/96/192 kHz " << worstDeviationDb << " dB\n";
+    expect(worstDeviationDb < 0.35,
+           "the render is not sample-rate invariant (worst partial deviation "
+               + std::to_string(worstDeviationDb) + " dB)");
+}
+
+// Air is stochastic and Bone is modal, so neither can be compared partial by
+// partial. Subtracting an otherwise identical Core-only render isolates the
+// two layers exactly - the Core path never reads the Air or Bone controls, so
+// everything else cancels sample for sample - and their total power is then a
+// low-variance quantity that must not move with the host rate.
+//
+// Their edge tapers used to be anchored to the host Nyquist, so the same
+// memory faded its top band out at 44.1 kHz, kept most of it at 48 kHz and
+// rendered it in full - often entirely above 20 kHz - at 96 kHz. Both tapers
+// are now anchored to the audible band as well.
+//
+// This is a guard on the two layers as a whole, not a discriminator for the
+// taper anchor: on this fixture the anchor is worth at most a few tenths of a
+// dB of total layer power, because the top Air band carries little of it. What
+// the anchor actually changes is pinned deterministically by
+// testBoneCeilingIsAnchoredToTheAudibleBand below.
+void testBodyLayersAreSampleRateInvariant()
+{
+    const auto model = neuramar::NeuralModel::createRandom(
+        0x5851f42d4c957f2dull, 0.7f);
+    expect(model != nullptr, "body-layer invariance fixture failed");
+    if (!model)
+        return;
+
+    constexpr double rates[] { 44100.0, 48000.0, 96000.0, 192000.0 };
+    double referencePower = 0.0;
+    double worstDeviationDb = 0.0;
+    // An octave above the root with Body Lock open pushes the memory's top Air
+    // bands into the region where the host-anchored taper used to disagree.
+    const int note = std::clamp(model->rootMidiNote() + 12, 0, 127);
+    for (const double sampleRate : rates)
+    {
+        const auto render = [&](bool bodyLayers)
+        {
+            neuramar::NeuramarEngine engine;
+            engine.prepare(sampleRate, 128);
+            engine.setModel(model.get());
+            auto parameters = cleanCoreParameters();
+            parameters.bodyLock = 0.0f;
+            parameters.air = bodyLayers ? 1.0f : 0.0f;
+            parameters.bone = bodyLayers ? 1.0f : 0.0f;
+            parameters.outputGain = 1.0f;
+            engine.setParameters(parameters);
+            return renderNoteAtVelocity(engine, note, 0.8f,
+                                        static_cast<int>(sampleRate * 0.30));
+        };
+        const auto withLayers = render(true);
+        const auto coreOnly = render(false);
+
+        const auto first = static_cast<std::size_t>(sampleRate * 0.12);
+        const auto last = static_cast<std::size_t>(sampleRate * 0.29);
+        double power = 0.0;
+        for (std::size_t index = first; index < last; ++index)
+        {
+            const double layers = static_cast<double>(withLayers[index])
+                - coreOnly[index];
+            power += layers * layers;
+        }
+        power /= static_cast<double>(last - first);
+        expect(power > 1.0e-10, "body-layer fixture rendered no Air or Bone");
+        if (referencePower <= 0.0)
+            referencePower = power;
+        worstDeviationDb = std::max(worstDeviationDb, std::abs(
+            10.0 * std::log10(power / std::max(referencePower, 1.0e-30))));
+    }
+
+    std::cout << "Body-layer diagnostics: worst Air+Bone power deviation "
+              << "across 44.1/48/96/192 kHz " << worstDeviationDb << " dB\n";
+    expect(worstDeviationDb < 1.0,
+           "the Air and Bone layers do not hold their level across host sample "
+           "rates (worst deviation " + std::to_string(worstDeviationDb)
+               + " dB)");
+}
+
+// The Bone layer is modal, so unlike Air it can be probed one line at a time,
+// which makes it the deterministic gate on the audible-band ceiling that the
+// total-power test above cannot be. Three octaves up with Body Lock open puts
+// this memory's top mode at about 22.7 kHz: inaudible at every host rate, but
+// well inside 0.49 * 96 kHz, part-way down the fade below 0.49 * 48 kHz and
+// above 0.49 * 44.1 kHz altogether, so the host-anchored taper this replaces
+// rendered it in full at 96 kHz, some 5 dB down at 48 kHz and not at all at
+// 44.1 kHz. The audible mode below it is measured in
+// the same renders, both to prove the fixture is really sounding and because
+// it must not move with the host rate either.
+void testBoneCeilingIsAnchoredToTheAudibleBand()
+{
+    const auto model = neuramar::NeuralModel::createRandom(
+        0x5851f42d4c957f2dull, 0.7f);
+    expect(model != nullptr, "bone-ceiling fixture failed");
+    if (!model)
+        return;
+
+    const auto ratios = model->boneFrequencyRatios();
+    const auto reliabilities = model->boneModeReliabilities();
+    std::size_t topMode = 0;
+    for (std::size_t mode = 0; mode < ratios.size(); ++mode)
+        if (reliabilities[mode] > 0.0f)
+            topMode = mode;
+    expect(topMode > 0, "bone-ceiling fixture has no usable mode pair");
+    if (topMode == 0)
+        return;
+
+    constexpr int semitones = 36;
+    const int note = std::clamp(model->rootMidiNote() + semitones, 0, 127);
+    const double spectralScale = std::exp2(
+        static_cast<double>(note - model->rootMidiNote()) / 12.0);
+    const double ultrasonicHz = static_cast<double>(model->rootFrequencyHz())
+        * ratios[topMode] * spectralScale;
+    const double audibleHz = static_cast<double>(model->rootFrequencyHz())
+        * ratios[topMode - 1] * spectralScale;
+    expect(ultrasonicHz > 20000.0 && ultrasonicHz < 23500.0,
+           "bone-ceiling fixture no longer straddles the audible ceiling ("
+               + std::to_string(ultrasonicHz) + " Hz)");
+    expect(audibleHz < 19000.0,
+           "bone-ceiling reference mode is not inside the audible band");
+
+    // 44.1 kHz cannot represent the ultrasonic mode at all, so the comparison
+    // runs at the two rates whose Nyquist sits above it.
+    constexpr double rates[] { 48000.0, 96000.0 };
+    double worstUltrasonicDb = -300.0;
+    double worstAudibleDeviationDb = 0.0;
+    double audibleReference = 0.0;
+    for (const double sampleRate : rates)
+    {
+        const auto render = [&](bool boneLayer)
+        {
+            neuramar::NeuramarEngine engine;
+            engine.prepare(sampleRate, 128);
+            engine.setModel(model.get());
+            auto parameters = cleanCoreParameters();
+            parameters.bodyLock = 0.0f;
+            parameters.bone = boneLayer ? 1.0f : 0.0f;
+            parameters.outputGain = 1.0f;
+            engine.setParameters(parameters);
+            return renderNoteAtVelocity(engine, note, 0.8f,
+                                        static_cast<int>(sampleRate * 0.30));
+        };
+        const auto withBone = render(true);
+        const auto coreOnly = render(false);
+        std::vector<float> boneOnly(withBone.size(), 0.0f);
+        for (std::size_t index = 0; index < boneOnly.size(); ++index)
+            boneOnly[index] = withBone[index] - coreOnly[index];
+
+        const auto first = static_cast<std::size_t>(sampleRate * 0.12);
+        const auto count = static_cast<std::size_t>(sampleRate * 0.10);
+        const double audible = peakedAmplitude(boneOnly, first, count,
+                                               audibleHz, sampleRate);
+        const double ultrasonic = peakedAmplitude(boneOnly, first, count,
+                                                  ultrasonicHz, sampleRate);
+        expect(audible > 1.0e-4,
+               "bone-ceiling fixture rendered no audible mode");
+        worstUltrasonicDb = std::max(worstUltrasonicDb, 20.0 * std::log10(
+            std::max(ultrasonic, 1.0e-30) / std::max(audible, 1.0e-30)));
+        if (audibleReference <= 0.0)
+            audibleReference = audible;
+        worstAudibleDeviationDb = std::max(worstAudibleDeviationDb, std::abs(
+            20.0 * std::log10(audible / std::max(audibleReference, 1.0e-30))));
+    }
+
+    std::cout << "Bone-ceiling diagnostics: mode at "
+              << static_cast<int>(ultrasonicHz) << " Hz renders at "
+              << worstUltrasonicDb << " dB relative to the audible mode at "
+              << static_cast<int>(audibleHz) << " Hz, whose own level moves "
+              << worstAudibleDeviationDb << " dB between 48 and 96 kHz\n";
+    expect(worstUltrasonicDb < -60.0,
+           "a Bone mode above the audible ceiling still renders (level "
+               + std::to_string(worstUltrasonicDb)
+               + " dB relative to the audible mode)");
+    expect(worstAudibleDeviationDb < 0.5,
+           "an audible Bone mode changed level with the host sample rate ("
+               + std::to_string(worstAudibleDeviationDb) + " dB)");
+}
+
+// A voice slot stolen again and again inside one 3 ms fade window is the only
+// path that carries a still-running tail into a new frozen sample. Nothing else
+// in the suite reaches it - it needs more than one steal of the same slot per
+// 144 samples at 48 kHz, far denser than any voice-steal, finite-output or
+// determinism fixture here - so it is exercised directly. The carry must stay a
+// bounded hand-off: an earlier version re-armed a full fade window around the
+// carried remainder, which made the tail an integrator whose level grew with
+// the length of the burst until the mix sat on the pathological-state guard.
+// Both properties are pinned: the peak stays far below that guard, and it does
+// not grow when the same burst is made sixteen times longer.
+void testDenseVoiceStealTailStaysBounded(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    const auto burstPeak = [&model](int noteOnCount, int spacingSamples)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 64);
+        engine.setModel(&model);
+        auto parameters = cleanCoreParameters();
+        parameters.outputGain = 0.08f;
+        engine.setParameters(parameters);
+
+        float left = 0.0f;
+        float right = 0.0f;
+        double peak = 0.0;
+        const auto advance = [&](int samples)
+        {
+            for (int sample = 0; sample < samples; ++sample)
+            {
+                // One sample at a time, exactly as the processor splits a block
+                // on a sample-accurate note-on.
+                engine.process(&left, &right, 1);
+                peak = std::max(peak, std::abs(static_cast<double>(left)));
+                peak = std::max(peak, std::abs(static_cast<double>(right)));
+            }
+        };
+        for (int index = 0; index < noteOnCount; ++index)
+        {
+            engine.noteOn(48 + index % 25, 0.9f);
+            advance(spacingSamples);
+        }
+        // Let every fade tail finish inside the measurement.
+        advance(1024);
+        return peak;
+    };
+
+    const double shortBurst = burstPeak(200, 1);
+    const double longBurst = burstPeak(3200, 1);
+    const double spacedBurst = burstPeak(3200, 4);
+    std::cout << "Voice-steal burst diagnostics: peak " << shortBurst
+              << " after 200 note-ons, " << longBurst << " after 3200, "
+              << spacedBurst << " at four-sample spacing (guard 2.0)\n";
+    expect(longBurst < 2.0 && spacedBurst < 2.0,
+           "a dense note-on burst drove the output toward the finite-output "
+           "guard (peak " + std::to_string(std::max(longBurst, spacedBurst))
+               + ")");
+    expect(longBurst < 1.25 * shortBurst + 0.05,
+           "the voice-steal fade tail grows with the length of a note-on burst "
+           "(peak " + std::to_string(shortBurst) + " after 200 note-ons, "
+               + std::to_string(longBurst) + " after 3200)");
+}
+
+// Awaken advertises seconds, so it has to deliver seconds. Dividing a faded
+// render by an otherwise identical unfaded one recovers the envelope exactly:
+// nothing else about the two voices differs.
+void testAwakenIsAFadeDuration(const neuramar::NeuralModel& model)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr float fadeSeconds = 0.25f;
+    const auto renderWithAttack = [&model](float attackSeconds)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        auto parameters = cleanCoreParameters();
+        parameters.attackSeconds = attackSeconds;
+        parameters.outputGain = 1.0f;
+        engine.setParameters(parameters);
+        return renderNoteAtVelocity(engine, model.rootMidiNote(), 0.8f,
+                                    static_cast<int>(sampleRate * 0.5));
+    };
+
+    const auto reference = renderWithAttack(0.0f);
+    const auto faded = renderWithAttack(fadeSeconds);
+    const auto bucket = static_cast<std::size_t>(sampleRate * 0.002);
+    std::vector<double> envelope;
+    for (std::size_t start = 0; start + bucket <= reference.size();
+         start += bucket)
+    {
+        double fadedPower = 0.0;
+        double referencePower = 0.0;
+        for (std::size_t index = start; index < start + bucket; ++index)
+        {
+            fadedPower += static_cast<double>(faded[index]) * faded[index];
+            referencePower += static_cast<double>(reference[index])
+                * reference[index];
+        }
+        envelope.push_back(referencePower > 1.0e-12
+            ? std::sqrt(fadedPower / referencePower) : 0.0);
+    }
+
+    const auto at = [&envelope](double seconds)
+    {
+        const auto index = static_cast<std::size_t>(seconds / 0.002);
+        return index < envelope.size() ? envelope[index] : 0.0;
+    };
+    const double early = at(0.05 * fadeSeconds);
+    const double middle = at(0.5 * fadeSeconds);
+    const double complete = at(1.05 * fadeSeconds);
+    std::cout << "Awaken diagnostics: " << fadeSeconds << " s fade reaches "
+              << early << " at 5%, " << middle << " at 50%, " << complete
+              << " at 105% of its stated time\n";
+    expect(complete > 0.99,
+           "Awaken did not finish within the time it advertises (level "
+               + std::to_string(complete) + " just past the stated fade)");
+    expect(middle > 0.42 && middle < 0.58,
+           "Awaken is not centred halfway through its stated time (level "
+               + std::to_string(middle) + ")");
+    expect(early < 0.05,
+           "Awaken opens with a step rather than a zero slope (level "
+               + std::to_string(early) + " at 5% of the fade)");
+    bool monotone = true;
+    for (std::size_t index = 1;
+         index < envelope.size() && index * 0.002 < fadeSeconds; ++index)
+        monotone = monotone && envelope[index] >= envelope[index - 1] - 0.01;
+    expect(monotone, "the Awaken fade was not monotone");
+}
 } // namespace
 
 int main()
 {
     testShapePreservingSpectralInterpolation();
+    testCoreSpurFloor();
+    testRenderIsSampleRateInvariant();
+    testBodyLayersAreSampleRateInvariant();
+    testBoneCeilingIsAnchoredToTheAudibleBand();
     testKeyboardLevelFlatness();
     testInputValidationAndCancellation();
     testAirFilterNormalisation();
@@ -3798,6 +4288,8 @@ int main()
         testStretchFormantTouchSafety(*fixture.first.model);
         testReleaseAndVoiceBound(*fixture.first.model);
         testReleaseDurationSemantics(*fixture.first.model);
+        testAwakenIsAFadeDuration(*fixture.first.model);
+        testDenseVoiceStealTailStaysBounded(*fixture.first.model);
         testMutationZeroRetriggerDeterminism(*fixture.first.model);
         testStereoPanAndOverlappingNoteOff(*fixture.first.model);
         testHighRegisterRenderThroughput(*fixture.first.model);

@@ -123,7 +123,7 @@ Neuramar exposes 18 host parameters: sixteen continuous front-panel controls,
 | **Memory** | 0.25x–4.00x; changes how quickly a note travels through the learned time evolution. |
 | **Mutation** | 0–100%; adds bounded, voice-local movement around the learned character. |
 | **Noise** | 0–100%; sends smooth voice-local randomness through the neural time/Fourier input coordinate, making the model wander through its own learned or generated behaviour. It does not add an audio-noise layer. |
-| **Awaken** | 0–2 s; at zero, preserves the learned attack; higher values add a performance fade-in. |
+| **Awaken** | 0–2 s; at zero, preserves the learned attack. Above zero it adds a performance fade-in that takes exactly the stated time, end to end, and leaves the note at full level from then on. |
 | **Dissolve** | 20 ms–8 s; shapes the performance release. |
 | **Horizon** | 0–100%; widens voices across the stereo field and gives the Air layer a decorrelated second realization, which cancels exactly in a mono sum. |
 | **Output** | -24 to +6 dB; sets the final level. |
@@ -241,13 +241,24 @@ end-to-end through a differentiable renderer:
   of that reference, so it changes tone without changing level;
 - each Air filter is normalized to unit expected RMS for its noise input, and a
   smooth gain taper prevents transposed or brightened bands from accumulating at
-  the host Nyquist edge;
+  the band edge. That taper, and the matching one on the Bone modes, is anchored
+  to the top of the audible band as well as to the host Nyquist, so a memory
+  keeps the same audible top octave at 44.1 kHz as at 96 kHz instead of losing
+  it at one rate and rendering it purely ultrasonically at the other;
 - stereo placement is ramped like every other control-rate target, so adding or
   removing a chord note glides the remaining voices into their new positions
   instead of stepping them; Output carries its own smoother because it is the
   one control applied straight to the summed signal; and the voice-steal tail is
   windowed with a raised cosine rather than a linear ramp, which removes the
-  corner that a frozen last sample would otherwise leave at both ends;
+  corner that a frozen last sample would otherwise leave at both ends. A slot
+  stolen twice inside one fade carries the remainder of the first tail into the
+  second instead of discarding it, without re-arming the window: all the energy
+  stacked into one slot still dies within one fade of the first steal, and the
+  carried level is bounded, so even an unmusically dense note-on burst cannot
+  walk the tail into the output guard;
+- **Awaken** advances a position rather than driving a one-pole, so its stated
+  seconds are the whole fade and not an exponential time constant, and the fade
+  has zero slope at both ends rather than its steepest slope at the note-on;
 - the final output uses the host's floating-point headroom and remains linear
   at ordinary operating levels; only a pathological ±7.95 guard is
   retained, avoiding the folded high-register harmonics produced by an
@@ -261,8 +272,20 @@ end-to-end through a differentiable renderer:
   moves in absolute frequency while the played pitch does not move at all;
 - the band-limiting taper is folded into the control-rate amplitude ramp, so the
   audio loop performs no per-sample anti-alias arithmetic and skips every
-  partial the taper has silenced; stored phases are kept reduced to `[0, 1)` so
-  each audible partial costs one table lookup, one multiply-add, and one wrap;
+  partial the taper has silenced. The oscillator evaluates a quarter-period
+  folded polynomial rather than reading an interpolated table: it is both more
+  accurate than the 4096-entry table it replaces (peak error -133.6 dB against
+  -125.6 dB, RMS -148.5 dB against -134.6 dB, over 2e7 uniformly spaced phases
+  against double-precision `sin()`) and free of the memory gather that stopped
+  the partial loop vectorising. Stored phases are kept reduced to `[0, 1)` and
+  the phase increment is non-negative, so the wrap is a truncation rather than a
+  rounding instruction;
+- the Air and Bone layers are skipped outright for any voice where they are
+  silent for a whole control period - not just their filtering, oscillators and
+  noise draws, but their band design and their amplitude ramps as well, each
+  layer independently of the other - and the learned onset phases' unit vectors
+  are cached per published memory rather than recomputed on every note-on,
+  because note-on runs on the audio thread as well;
 - each voice owns its envelope, phase, note age, per-band noise, and variation
   state, while controller outputs are forward-interpolated between low-rate
   evaluations so a learned target is reached at the time it describes.
@@ -333,7 +356,13 @@ the fitted stiff-string coefficient; version-2 and version-3 memories saved by
 earlier releases still load and render exactly as they did, with the missing
 fields left at their neutral zero values. Sessions saved before Noise, Stretch,
 Formant, or Touch existed restore those controls at their defaults rather than
-inheriting whatever the running instance happened to hold. It does not store the source recording or its full
+inheriting whatever the running instance happened to hold. One stored value now
+means something different: **Awaken** used to be an exponential time constant,
+so a saved non-zero setting took roughly 4.6 times its stated seconds to open
+fully. It is now the fade duration itself, and a recalled session will therefore
+open about that much sooner; multiply an old setting by roughly 4.6 to
+reproduce the previous feel. No parameter was added, removed, or renamed, so
+every other stored value recalls exactly as before. It does not store the source recording or its full
 path, so a saved session can recall the synthesized instrument after the
 original file moves or disappears. Imported audio stays local during learning,
 and performance performs no file or network access.
@@ -412,7 +441,17 @@ ctest --test-dir build-dsp --output-on-failure
 ```
 
 The JUCE-free suite covers analysis, deterministic learning and rendering,
-finite output, pitch response, and model serialization. Plug-in builds add
+finite output, pitch response, and model serialization. It also pins the
+render-path measurements reported in
+[`Docs/resynthesis-quality-benchmark.md`](Docs/resynthesis-quality-benchmark.md):
+the worst spectral line below the played fundamental (-108 dB relative to the
+rendered signal, guard -85 dB), partial-level agreement across 44.1, 48, 88.2,
+96, and 192 kHz for the root and for root+12 and root+24 (0.08 dB, guard
+0.35 dB), Air and Bone layer power across those rates (0.13 dB, guard 1.0 dB),
+the removal of a Bone mode pushed above the audible ceiling (128 dB down, guard
+60 dB), the Awaken fade contract, and the bound on the voice-steal fade tail
+under a note-on burst dense enough to steal the same slot inside one fade
+window. Plug-in builds add
 processor, parameter, MIDI, editor, and host-state contracts. These regression
 checks complement rather than replace listening, validator, multi-host, and CPU
 profiling passes.

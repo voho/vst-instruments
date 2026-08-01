@@ -245,8 +245,12 @@ NeuramarAudioProcessor::createParameterLayout()
     result.push_back (makePercentParameter (
         neuramar::parameters::mutation, "Mutation", 0.12f));
 
+    // Awaken is a fade-in duration rather than an exponential time constant,
+    // so half the travel now genuinely covers a quarter of a second. The
+    // former 0.08 s centre was chosen when the same knob position produced a
+    // fade roughly 4.6 times longer than its label claimed.
     auto attackRange = juce::NormalisableRange<float> { 0.0f, 2.0f, 0.0001f };
-    attackRange.setSkewForCentre (0.08f);
+    attackRange.setSkewForCentre (0.25f);
     result.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { neuramar::parameters::attack, 1 }, "Awaken",
         attackRange, 0.0f,
