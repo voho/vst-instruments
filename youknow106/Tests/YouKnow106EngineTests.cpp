@@ -193,6 +193,42 @@ void testSubIsOneOctaveDown()
     expectNear(frequency, 220.0, 1.0, "the sub is not one octave below the note");
 }
 
+void testSelfOscillationLandsOnTheServiceAnchor()
+{
+    // The service procedure's own check: converter code 6272 -- panel byte
+    // 49 -- must self-oscillate at 248 Hz. The loop's own divider-limited
+    // transconductor is what bounds the limit cycle, and the per-voice
+    // trimmer absorbs the forward stages' residual compression, so the
+    // rendered oscillation must land on the law within a few cents, as a
+    // calibrated instrument's does.
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = false;
+    parameters.subLevel = 0.0f;
+    parameters.noiseLevel = 0.0f;
+    parameters.resonance = 1.0f;
+    parameters.envDepth = 0.0f;
+    parameters.keyFollow = 0.0f;
+    parameters.attack = 0.0f;
+    parameters.sustain = 1.0f;
+    parameters.cutoff = 49.0f / 127.0f;
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+
+    const auto rendered = render(engine, static_cast<int>(sampleRate * 3.0));
+    const auto frequency = measuredFrequency(
+        rendered.left, rendered.left.size() * 2 / 3, sampleRate);
+    const double law = YouKnow106Engine::vcfCutoffHz(
+        YouKnow106Engine::vcfPanelCounts(parameters.cutoff));
+    expectNear(law, 248.1, 0.5, "panel byte 49 does not read the service code");
+    expectNear(1200.0 * std::log2(frequency / law), 0.0, 5.0,
+               "the self-oscillation does not land on the service anchor");
+}
+
 void testAliasFloor()
 {
     // The oscillator's discontinuities are repaired with residuals built by
@@ -387,19 +423,26 @@ void testUnisonReturnsToAHeldKey()
     expect(peakOf(rendered.left, rendered.left.size() / 2) > 0.01,
            "the unison stack fell silent with a key still down");
 
-    const auto frequency = measuredFrequency(rendered.left, rendered.left.size() / 2,
-                                             48000.0);
-    expectNear(frequency, 261.6, 4.0,
-               "the unison stack did not return to the key still held");
+    // Six voices whose scan rewrites land at different phases of the pass do
+    // not stay phase-locked through a retarget -- exactly as the hardware's
+    // free-running ramps do not -- so the pitch is read spectrally rather
+    // than from zero crossings of the sum.
+    const std::size_t half = rendered.left.size() / 2;
+    const auto atHeld = magnitudeAt(rendered.left, half, 8192, 261.6, 48000.0);
+    const auto atReleased = magnitudeAt(rendered.left, half, 8192, 329.6, 48000.0);
+    expect(atHeld > 4.0 * atReleased,
+           "the unison stack did not return to the key still held");
 
     // Releasing an older key the stack has already left must change nothing.
     engine.noteOn(67, 1.0f);
     render(engine, 4096);
     engine.noteOff(60);
     const auto after = render(engine, static_cast<int>(48000.0 * 0.5));
-    expectNear(measuredFrequency(after.left, after.left.size() / 2, 48000.0),
-               392.0, 6.0,
-               "releasing a key the stack had left moved the sounding note");
+    const std::size_t afterHalf = after.left.size() / 2;
+    const auto atSounding = magnitudeAt(after.left, afterHalf, 8192, 392.0, 48000.0);
+    const auto atOld = magnitudeAt(after.left, afterHalf, 8192, 261.6, 48000.0);
+    expect(atSounding > 4.0 * atOld,
+           "releasing a key the stack had left moved the sounding note");
 
     engine.noteOff(67);
     render(engine, static_cast<int>(48000.0));
@@ -441,7 +484,9 @@ void testLoweringTheVoiceCountLetsNotesFinish()
     YouKnow106Engine engine;
     engine.prepare(48000.0, blockSize, true);
     auto parameters = plainPatch();
-    parameters.release = 0.5f;
+    // A third of the travel falls to a tenth in about half a second, and the
+    // truncated tail is gone within two -- comfortably inside the wait below.
+    parameters.release = 0.35f;
     engine.setParameters(parameters);
 
     for (int note = 60; note < 66; ++note)
@@ -642,7 +687,7 @@ void testUnisonDoesNotResurrectPolyphonicTails()
     // Long enough that the tails are unmistakably still ringing when the mode
     // changes underneath them, short enough to be gone well inside the final
     // render if nothing revives them.
-    parameters.release = 0.6f;
+    parameters.release = 0.4f;
     engine.setParameters(parameters);
 
     for (int note = 48; note < 52; ++note)
@@ -835,8 +880,11 @@ void testPortamentoRateFollowsItsControl()
         YouKnow106Engine engine;
         engine.prepare(sampleRate, blockSize, true);
         auto parameters = plainPatch();
-        // Unison keeps it monophonic, so the glide is one unambiguous slide.
+        // Unison keeps it monophonic, and one voice keeps the zero-crossing
+        // measurement clean: staggered scan rewrites leave a wider stack's
+        // ramps phase-decorrelated, as the hardware's are.
         parameters.keyMode = KeyMode::Unison;
+        parameters.polyphony = 1;
         parameters.portamento = 0.8f;
         engine.setParameters(parameters);
 
@@ -1068,31 +1116,34 @@ void testComponentDriftRateIsIndependentOfOversampling()
     // The modelled component wander has to advance in seconds, not in internal
     // samples, or the same patch would drift four times faster with the quality
     // setting on.
+    // The self-oscillating filter is the cleanest probe there is: its pitch
+    // tracks the drifting control voltage directly, with no harmonics or
+    // beats to confuse the measurement at either rate.
     const auto wander = [](bool oversampled) {
         YouKnow106Engine engine;
         engine.prepare(48000.0, blockSize, oversampled);
         auto parameters = plainPatch();
         parameters.calibration = 1.0f;
+        parameters.sawEnabled = false;
         parameters.cutoff = 0.45f;
-        parameters.resonance = 0.5f;
+        parameters.resonance = 1.0f;
         engine.setParameters(parameters);
         engine.noteOn(57, 1.0f);
         const auto rendered = render(engine, static_cast<int>(48000.0 * 3.0));
 
-        // Energy below a few hertz in the envelope of the output is what the
-        // wander shows up as; compare its scale between the two settings.
+        // Pitch per quarter-second window; the wander is the total movement.
         double previous = 0.0;
         double movement = 0.0;
         for (std::size_t index = rendered.left.size() / 3;
-             index < rendered.left.size(); index += 480)
+             index + 12000 <= rendered.left.size(); index += 12000)
         {
-            double peak = 0.0;
-            for (std::size_t inner = index;
-                 inner < std::min(index + 480, rendered.left.size()); ++inner)
-                peak = std::max(peak, static_cast<double>(std::abs(rendered.left[inner])));
-            if (previous > 0.0)
-                movement += std::abs(peak - previous);
-            previous = peak;
+            std::vector<float> window(rendered.left.begin() + static_cast<long>(index),
+                                      rendered.left.begin() + static_cast<long>(index + 12000));
+            const double pitch = measuredFrequency(window, 0, 48000.0);
+            if (previous > 0.0 && pitch > 0.0)
+                movement += std::abs(pitch - previous);
+            if (pitch > 0.0)
+                previous = pitch;
         }
         return movement;
     };
@@ -1101,7 +1152,7 @@ void testComponentDriftRateIsIndependentOfOversampling()
     const double shallow = wander(false);
     expect(deep > 0.0 && shallow > 0.0, "no component wander was measurable");
     const double ratio = deep / shallow;
-    expect(ratio > 0.4 && ratio < 2.5,
+    expect(ratio > 0.5 && ratio < 2.0,
            "component wander advances at a different rate with oversampling on ("
                + std::to_string(ratio) + "x)");
 }
@@ -1114,16 +1165,17 @@ void testEnvelopeAndGateModes()
 
     auto parameters = plainPatch();
     parameters.attack = 0.0f;
-    parameters.decay = 0.6f;
+    parameters.decay = 0.3f;
     parameters.sustain = 0.0f;
     parameters.release = 0.0f;
     engine.setParameters(parameters);
     engine.noteOn(60, 1.0f);
     const auto decaying = render(engine, static_cast<int>(sampleRate * 2));
 
-    // The generator is linear and the amplifier exponential, so equal slices of
-    // time must fall by roughly equal numbers of decibels while the segment
-    // runs.
+    // The generator's falling segment is exponential and the amplifier
+    // quasi-linear, so equal slices of time must fall by roughly equal
+    // numbers of decibels while the segment runs through the amplifier's
+    // linear region.
     const auto levelAt = [&](double seconds) {
         const auto start = static_cast<std::size_t>(seconds * sampleRate);
         return 20.0 * std::log10(peakOf({ decaying.left.begin() + static_cast<long>(start),
@@ -1491,6 +1543,7 @@ int main()
 {
     testRangeTransposesByOctaves();
     testSubIsOneOctaveDown();
+    testSelfOscillationLandsOnTheServiceAnchor();
     testAliasFloor();
     testRampHasARampSpectrum();
     testKeyAssignerDropsRatherThanSteals();

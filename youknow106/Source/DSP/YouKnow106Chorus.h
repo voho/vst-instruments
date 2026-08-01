@@ -90,9 +90,12 @@ private:
         float held { 0.0f };
         float previousInput { 0.0f };
         float antiAliasState { 0.0f };
-        // One pole each side. The line's zero-order-hold images sit at the
-        // clock rate, which the engine's own decimation removes, so the
-        // support filters only have to do what the hardware's do.
+        // One pole each side. When the engine oversamples, the line's
+        // zero-order-hold images at the clock rate land above the host band
+        // and the decimators remove them; with oversampling off the clock
+        // exceeds the host Nyquist and the images fold, with only the
+        // reconstruction pole to soften them. That is a documented cost of
+        // the low-quality setting, not of the model.
         float reconstructionState { 0.0f };
         float transferState { 0.0f };
         std::uint32_t noiseState { 0x9e3779b9u };
