@@ -120,7 +120,8 @@ public:
     // The engine is held indirectly because it is large; a take, on the other
     // hand, is returned by value from every score below.
     explicit Take (EngineParameters parameters)
-        : engine_ (std::make_unique<YouKnow106Engine>())
+        : engine_ (std::make_unique<YouKnow106Engine>()),
+          volume_ (parameters.volume)
     {
         engine_->prepare (demoSampleRate, renderBlockSize, true);
         engine_->setParameters (parameters);
@@ -128,7 +129,18 @@ public:
 
     void setParameters (const EngineParameters& parameters)
     {
+        volume_ = parameters.volume;
         engine_->setParameters (parameters);
+    }
+
+    // The output stage's rails sit *before* the volume control, exactly as on
+    // the hardware, so the region of the output that is provably linear is
+    // bounded by the rails' linear ceiling times the volume law. A take whose
+    // peak lands above that has folded the rails, and the demo would be
+    // documenting the rails rather than the circuit behind them.
+    [[nodiscard]] double linearCeiling() const noexcept
+    {
+        return 0.8 * static_cast<double> (volume_) * static_cast<double> (volume_);
     }
 
     void on (int note, float velocity = 1.0f) { engine_->noteOn (note, velocity); }
@@ -215,16 +227,19 @@ private:
     }
 
     std::unique_ptr<YouKnow106Engine> engine_;
+    float volume_ { 0.8f };
     std::vector<float> left_;
     std::vector<float> right_;
 };
 
 // The panel every score starts from: a plain saw voice with the filter well
-// open, no effects, and the Volume low enough that a six-voice chord stays
-// clear of the output stage's rails. A demo that had been through the rails
-// would be showing the listener the rails rather than the circuit, and every
-// take is normalised to a common level afterwards, so rendering quietly costs
-// nothing.
+// open and no effects. The output stage's rails come *before* the volume
+// control, exactly as on the hardware, so keeping a demo clean means keeping
+// the voice bus itself out of the rails -- the VCA LEVEL slider is the
+// control that does that, and a six-voice chord needs it well down. Every
+// take is normalised to a common level afterwards, so rendering quietly
+// costs nothing; a take that needs the rails' colour on purpose would raise
+// this deliberately and say so.
 EngineParameters plainPanel()
 {
     EngineParameters parameters;
@@ -241,7 +256,7 @@ EngineParameters plainPanel()
     parameters.decay = 0.45f;
     parameters.sustain = 0.70f;
     parameters.release = 0.30f;
-    parameters.vcaLevel = 0.80f;
+    parameters.vcaLevel = 0.30f;
     parameters.chorus = ChorusMode::Off;
     parameters.volume = 0.45f;
     return parameters;
@@ -257,6 +272,7 @@ Take renderChorusPad()
 {
     auto parameters = plainPanel();
     parameters.subLevel = 0.7f;
+    parameters.vcaLevel = 0.115f;
     parameters.cutoff = 0.48f;
     parameters.envDepth = 0.25f;
     parameters.attack = 0.35f;
@@ -282,6 +298,7 @@ Take renderPwmStrings()
     parameters.pulseEnabled = true;
     parameters.pwmSource = PwmSource::Lfo;
     parameters.pwmDepth = 0.75f;
+    parameters.vcaLevel = 0.115f;
     parameters.lfoRate = 0.35f;
     parameters.cutoff = 0.55f;
     parameters.attack = 0.25f;
@@ -304,6 +321,7 @@ Take renderBassline()
 {
     auto parameters = plainPanel();
     parameters.range = DcoRange::Sixteen;
+    parameters.vcaLevel = 0.16f;
     parameters.subLevel = 0.85f;
     parameters.cutoff = 0.34f;
     parameters.resonance = 0.30f;
@@ -334,6 +352,7 @@ Take renderFilterBrass()
 {
     auto parameters = plainPanel();
     parameters.subLevel = 0.4f;
+    parameters.vcaLevel = 0.14f;
     parameters.cutoff = 0.30f;
     parameters.resonance = 0.42f;
     parameters.envDepth = 0.55f;
@@ -373,6 +392,7 @@ Take renderSelfOscillation()
 {
     auto parameters = plainPanel();
     parameters.sawEnabled = false;
+    parameters.vcaLevel = 0.8f;
     parameters.cutoff = 0.34f;
     parameters.resonance = 1.0f;
     parameters.envDepth = 0.0f;
@@ -403,6 +423,7 @@ Take renderChorusModes()
 {
     auto parameters = plainPanel();
     parameters.subLevel = 0.6f;
+    parameters.vcaLevel = 0.115f;
     parameters.cutoff = 0.52f;
     parameters.attack = 0.12f;
     parameters.sustain = 0.9f;
@@ -429,6 +450,7 @@ Take renderUnisonLead()
 {
     auto parameters = plainPanel();
     parameters.keyMode = KeyMode::Unison;
+    parameters.vcaLevel = 0.10f;
     parameters.subLevel = 0.5f;
     parameters.cutoff = 0.45f;
     parameters.envDepth = 0.4f;
@@ -457,6 +479,7 @@ Take renderUnisonLead()
 Take renderDelayedVibrato()
 {
     auto parameters = plainPanel();
+    parameters.vcaLevel = 0.13f;
     parameters.subLevel = 0.5f;
     parameters.cutoff = 0.5f;
     parameters.dcoLfoDepth = 0.45f;
@@ -478,6 +501,7 @@ Take renderHighPassLadder()
 {
     auto parameters = plainPanel();
     parameters.subLevel = 0.8f;
+    parameters.vcaLevel = 0.105f;
     parameters.cutoff = 0.66f;
     parameters.attack = 0.02f;
     parameters.sustain = 0.9f;
@@ -504,6 +528,7 @@ Take renderCalibrationDrift()
 {
     auto parameters = plainPanel();
     parameters.subLevel = 0.55f;
+    parameters.vcaLevel = 0.11f;
     parameters.cutoff = 0.42f;
     parameters.resonance = 0.55f;
     parameters.envDepth = 0.3f;
@@ -813,14 +838,18 @@ int main (int argc, char** argv)
                           renderedPeak);
             return 1;
         }
-        // A take that reached full scale has been through the output stage's
-        // rails, and would document the rails rather than the circuit. The
-        // fix is always to render that take quieter, never to ship it.
-        if (renderedPeak >= 0.999)
+        // The rails' linear ceiling, referred through the volume law, bounds
+        // what a clean take can measure; anything above it has folded the
+        // rails and would document them rather than the circuit. The small
+        // margin covers the decimation filter's ripple on a legitimately
+        // bounded signal. The fix is always to lower the take's bus level,
+        // never to ship it.
+        if (renderedPeak > take.linearCeiling() * 1.05)
         {
             std::fprintf (stderr,
-                          "%s reached full scale (peak %.3f); render it quieter\n",
-                          demo.fileName, renderedPeak);
+                          "%s drove the output rails (peak %.3f against a "
+                          "linear ceiling of %.3f); lower its VCA level\n",
+                          demo.fileName, renderedPeak, take.linearCeiling());
             return 1;
         }
 
