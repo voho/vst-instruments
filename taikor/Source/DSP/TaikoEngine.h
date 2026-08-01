@@ -80,7 +80,7 @@ struct EngineParameters
     // --- The drum -------------------------------------------------------
     // Head diameter in metres. Sets the membrane radius directly, so it moves
     // pitch as 1/a while leaving the modal ratios (fixed Bessel zeros) alone.
-    float headDiameter { 0.55f };
+    float headDiameter { 0.95f };
     // Body depth as a fraction of the diameter, 0 -> 0.40, 1 -> 1.30. The
     // enclosed volume is what couples the two heads, so a shallow drum splits
     // its axisymmetric modes much further apart than a deep one.
@@ -106,7 +106,7 @@ struct EngineParameters
     // same amount of air in and out and cannot compress the cavity.
     float cavityCoupling { 0.85f };
     // Extra loss in the head on top of the material's own, 0..1.
-    float headDamping { 0.35f };
+    float headDamping { 0.50f };
     // Level of the wooden shell's own ring modes, 0..1.
     float shellResonance { 0.4f };
     // Musical transposition applied on top of the physics, in semitones. It
@@ -310,21 +310,33 @@ private:
 
     // A single damped resonator. Coefficients are recomputed only when the
     // drum is retuned, so the inner loop is three multiplies and two adds.
+    // A two-pole resonator, in double precision.
+    //
+    // Not for elegance: a1 is -2 r cos(omega), which sits arbitrarily close to
+    // -2 as the mode's frequency falls against the sample rate, and the pair
+    // y[n-1], y[n-2] then very nearly cancel. Both effects consume mantissa in
+    // proportion to (rate / frequency)^2, and this instrument's lowest mode is
+    // around fifty hertz - one part in eight thousand at 384 kHz. In float that
+    // mistuned the drum by thirty cents there and by seven at 192 kHz, which is
+    // audible against anything else in the session. In double the same margin
+    // costs a handful of the fifty-three bits available and the drum stays in
+    // tune at every supported rate. The recursion is serial, so no vectorising
+    // is being given up for it.
     struct Resonator
     {
-        float a1 { 0.0f };
-        float a2 { 0.0f };
-        float b0 { 0.0f };
-        float y1 { 0.0f };
-        float y2 { 0.0f };
+        double a1 { 0.0 };
+        double a2 { 0.0 };
+        double b0 { 0.0 };
+        double y1 { 0.0 };
+        double y2 { 0.0 };
 
-        void clear() noexcept { y1 = y2 = 0.0f; }
+        void clear() noexcept { y1 = y2 = 0.0; }
         [[nodiscard]] float tick (float input) noexcept
         {
-            const float output = b0 * input - a1 * y1 - a2 * y2;
+            const double output = b0 * static_cast<double> (input) - a1 * y1 - a2 * y2;
             y2 = y1;
             y1 = output;
-            return output;
+            return static_cast<float> (output);
         }
     };
 

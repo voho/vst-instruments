@@ -58,16 +58,23 @@ head at 0.78 of its radius drives the modes that have a circumferential order an
 barely moves the axisymmetric ones — which is exactly why it is bright on a real
 taiko.
 
-| Octave | Notes | Drum |
-| --- | --- | --- |
-| C1 | 24–35 | Odaiko: the largest drum, a low boom with a long tail |
-| C2 | 36–47 | A large drum |
-| **C3** | **48–59** | **The drum the controls describe, unscaled** |
-| C4 | 60–71 | A smaller drum |
-| C5 | 72–83 | Shime-daiko territory: tight, high, and short |
-| C6 | 84–95 | Smaller still |
+| Octave | Notes | Drum | Fundamental |
+| --- | --- | --- | ---: |
+| C1 | 24–35 | Past the end of the family: felt rather than heard | 10 Hz |
+| C2 | 36–47 | Larger than anything ever actually built | 23 Hz |
+| **C3** | **48–59** | **The ō-daiko the controls describe, unscaled** | **51 Hz** |
+| C4 | 60–71 | Nagado-daiko: the everyday drum | 108 Hz |
+| C5 | 72–83 | Shime-daiko territory: tight, high and short | 227 Hz |
+| C6 | 84–95 | Smaller still | 466 Hz |
 
 Notes outside 24–95 are silent.
+
+The instrument opens on the big drum rather than on a middling one, because the
+big drum is the point of a taiko. That does put the bottom two octaves below
+where a drum can usefully be pitched — they are sub-bass, useful under something
+else rather than on their own. Turn Head Diameter down if you would rather have
+the family centred higher; the octave mapping scales with whatever drum the
+controls describe.
 
 **Velocity** sets the impact speed of the stick. The timbre change that comes
 with it is not a separate control, because it is not a separate effect: Hertz
@@ -90,14 +97,14 @@ a voicing offset.
 
 | Control | Range | Default | What it changes |
 | --- | --- | --- | --- |
-| Head Diameter | 15–120 cm | 55 cm | The membrane radius. Pitch moves as 1/a; the modal *ratios* are fixed by the Bessel zeros and do not move at all |
+| Head Diameter | 15–180 cm | 95 cm | The membrane radius. Pitch moves as 1/a; the modal *ratios* are fixed by the Bessel zeros and do not move at all. The default is an ō-daiko, so the instrument opens on its heaviest voice rather than asking you to go and find it |
 | Body Depth | 0–100 % | 50 % | Enclosed volume. A shallow body is a stiffer air spring, so it splits the two heads further apart |
 | Head Tension | 0–100 % | 55 % | 1.2–22 kN/m. Wave speed is √(T/σ) |
 | Head Material | 0–100 % | 75 % | Thin synthetic film → thick cowhide. Sets areal density *and* internal loss, because both come from the same hide |
 | Shell Material | 0–100 % | 80 % | Light laminated ply → dense carved zelkova. Moves the body's ring modes, their Q, and how much the rim absorbs |
 | Resonant Head | 0–100 % | 50 % | Far head's tension relative to the batter head, 0.85×–1.15× |
 | Air Coupling | 0–100 % | 85 % | How strongly the enclosed air ties the two heads together |
-| Head Damping | 0–100 % | 35 % | Extra loss on top of the material's own |
+| Head Damping | 0–100 % | 50 % | Extra loss on top of the material's own, in the hide and at the rim. At zero the hoop is left free and a large drum will ring for seconds |
 | Shell Resonance | 0–100 % | 40 % | How much the body colours an ordinary head stroke |
 | Pitch | ±24 st | 0.0 | Musical transposition, applied as head tension |
 
@@ -125,7 +132,7 @@ a voicing offset.
 
 The default output is quieter than a synthesizer's usually is, deliberately: the
 loudest stroke the instrument can make — a full-velocity rim shot on the largest
-drum — sits about 9.7 dB above unity, and the default leaves that stroke just
+drum — sits about 9 dB above unity, and the default leaves that stroke just
 under full scale rather than making a middling stroke as loud as possible.
 
 ## Sound engine
@@ -163,7 +170,7 @@ applied to those modes alone, weighted by how much volume each one displaces.
 The result is that each axisymmetric mode splits in two: a **breathing** mode
 where both heads move outward together, lifted well above its uncoupled
 frequency by the air spring, and a volume-preserving mode that is left roughly
-where it was. On the default drum the pair lands at about 94 Hz and 134 Hz. The
+where it was. On the default drum the pair lands at about 51 Hz and 88 Hz. The
 breathing mode is also the one that radiates, because it is the one that changes
 the drum's volume — which is why a sealed taiko is heard higher than its
 membrane fundamental.
@@ -182,6 +189,30 @@ the shell material moves their frequencies, their spacing and their Q together.
 It is driven through the same force-over-modal-mass path the head uses, so a
 heavy carved log genuinely refuses to move while a light laminated shell
 genuinely rings — audibly so on the Katsu stroke, which hits the body directly.
+
+The body's Q is low, because a drum shell is a thick, short piece of wood
+clamped at both ends by the hoops rather than a free bar. That matters more than
+it sounds: when the shell rang longer than the head, it put a wooden pitch on
+top of the drum where the body should only have been adding weight, and it left
+a hand laid on the head unable to damp anything anyone could still hear — since
+a hand on the head does not touch the body.
+
+### Why a stroke does not end as a sine
+
+Hysteretic loss in the hide goes as *ω*, which means a T60 proportional to
+*1/f*. On a large drum that alone leaves the fundamental ringing nearly four
+times longer than the mode above it, and a drum whose lowest mode outlives
+everything else is heard as a tone rather than as a drum: after half a second
+there is nothing left but a sine.
+
+What holds that in check on a real instrument is the rim. A hide laced over a
+heavy wooden hoop loses a great deal there, and unlike the loss inside the hide
+it does not scale with frequency — so it shortens the long low modes far more
+than the short high ones. With it, the spread across the bank is about two to
+one instead of four, the modes decay together, and the tail reads as a dense
+roar with the weight still in it. Head Damping scales that term from almost
+nothing to a great deal, so the long ō-daiko boom is still there at the bottom
+of the control.
 
 ### The stick
 

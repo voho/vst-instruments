@@ -447,7 +447,7 @@ TaikoEngine::TaikoEngine() noexcept
 EngineParameters TaikoEngine::sanitise (const EngineParameters& parameters) noexcept
 {
     EngineParameters result;
-    result.headDiameter = clampFloat (parameters.headDiameter, 0.15f, 1.20f);
+    result.headDiameter = clampFloat (parameters.headDiameter, 0.15f, 1.80f);
     result.bodyDepth = clampFloat (parameters.bodyDepth, 0.0f, 1.0f);
     result.tension = clampFloat (parameters.tension, 0.0f, 1.0f);
     result.headMaterial = clampFloat (parameters.headMaterial, 0.0f, 1.0f);
@@ -691,8 +691,22 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
 
     // Loss into the hoop and the tacks. A soft laminated shell absorbs far
     // more of what reaches the rim than a dense carved log does.
-    drum.edgeLoss = (0.40f + 1.80f * (1.0f - applied.shellMaterial))
-                  * (0.60f + 1.40f * applied.headDamping);
+    //
+    // This is the one loss term that does not scale with frequency, so it is
+    // what decides how far apart the modes' lifetimes spread. The hysteretic
+    // loss in the hide goes as omega, which means a T60 proportional to 1/f:
+    // on a large drum that left the fundamental ringing nearly four times
+    // longer than the mode above it, and a drum whose lowest mode outlives
+    // everything else is heard as a sine rather than as a drum. A hide laced
+    // over a heavy wooden hoop genuinely loses a great deal at the rim, and
+    // restoring that brings the spread down to about two to one - which is
+    // what makes the tail read as a dense roar with the weight still in it.
+    // Head Damping scales it from almost nothing to a great deal, rather than
+    // from a little to a lot: a drum mounted so that the hoop is free really
+    // can ring for several seconds, and collapsing that end of the control
+    // would take the long ō-daiko boom off the instrument altogether.
+    drum.edgeLoss = (2.40f + 10.80f * (1.0f - applied.shellMaterial))
+                  * (0.15f + 1.85f * applied.headDamping);
 
     // Cavity stiffness per unit area. The per-mode 4/lambda^2 volume weighting
     // is applied where the modes are built, since it belongs to the mode.
@@ -712,7 +726,13 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
     const float wallThickness = 2.0f * drum.radius
                               * (0.035f + 0.045f * applied.shellMaterial);
     const float geometry = wallThickness / (2.0f * piFloat * drum.radius * drum.radius);
-    const float shellQ = 18.0f + 70.0f * applied.shellMaterial;
+    // A drum shell is a thick, short, heavily loaded piece of wood clamped at
+    // both ends by the hoops, not a free bar, so it does not ring for long. It
+    // used to, and on a large drum its ring outlasted the head's - which put a
+    // wooden pitch on top of the drum where the body should only be adding
+    // weight, and left a hand laid on the head unable to damp what anyone could
+    // still hear, because a hand on the head does not touch the body.
+    const float shellQ = 12.0f + 40.0f * applied.shellMaterial;
 
     for (int index = 0; index < shellResonatorCount; ++index)
     {
@@ -938,20 +958,25 @@ void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
 
     if (! (frequencyHz > 0.0f) || frequencyHz >= nyquist * 0.98f)
     {
-        resonator.a1 = 0.0f;
-        resonator.a2 = 0.0f;
-        resonator.b0 = 0.0f;
+        resonator.a1 = 0.0;
+        resonator.a2 = 0.0;
+        resonator.b0 = 0.0;
         return;
     }
 
-    const float omega = 2.0f * piFloat * frequencyHz / rate;
-    const float radius = std::exp (-decayRate / rate);
-    resonator.a1 = -2.0f * radius * std::cos (omega);
+    // Solved in double for the same reason the resonator runs in double: at
+    // fifty hertz against a high sample rate, cos(omega) differs from one by
+    // less than a float mantissa can hold, and rounding the coefficient is
+    // itself enough to mistune the drum audibly.
+    const auto omega = 2.0 * static_cast<double> (piFloat)
+                     * static_cast<double> (frequencyHz) / sampleRate_;
+    const auto radius = std::exp (-static_cast<double> (decayRate) / sampleRate_);
+    resonator.a1 = -2.0 * radius * std::cos (omega);
     resonator.a2 = radius * radius;
     // Impulse-invariant scaling: with this numerator the resonator's impulse
     // response is exactly the sampled r^n sin(omega n), so the drive gain the
     // caller computes carries its physical meaning through unchanged.
-    resonator.b0 = gain * std::sin (omega);
+    resonator.b0 = static_cast<double> (gain) * std::sin (omega);
 }
 
 void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
@@ -1572,12 +1597,12 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // Stretching the head raises its tension, so a hard stroke starts sharp
     // and settles as it decays. The depth follows the impact speed because
     // that is what sets how far the head is pushed.
-    const float glideDepth = applied_.tensionModulation * 0.055f
+    const float glideDepth = applied_.tensionModulation * 0.115f
                            * clampFloat (impactSpeed / maximumImpactSpeed, 0.0f, 1.0f)
                            * profile.membraneGain;
     voice.tensionDepth = glideDepth;
     voice.tensionEnvelope = glideDepth > 0.0f ? 1.0f : 0.0f;
-    voice.tensionDecay = std::exp (-1.0f / (0.055f * static_cast<float> (sampleRate_))
+    voice.tensionDecay = std::exp (-1.0f / (0.115f * static_cast<float> (sampleRate_))
                                    * static_cast<float> (controlPeriod));
     voice.appliedTensionShift = 1.0f;
     if (glideDepth > 0.0f)

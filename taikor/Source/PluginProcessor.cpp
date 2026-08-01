@@ -161,7 +161,7 @@ TaikorAudioProcessor::createParameterLayout()
     // --- The drum -------------------------------------------------------
     result.push_back (makeCentimetreParameter (
         ids::headDiameter, "Head Diameter", ids::minimumDiameterCentimetres,
-        ids::maximumDiameterCentimetres, 55.0f, 0.5f));
+        ids::maximumDiameterCentimetres, 95.0f, 0.5f));
     result.push_back (makePercentParameter (ids::bodyDepth, "Body Depth", 0.5f));
     result.push_back (makePercentParameter (ids::tension, "Head Tension", 0.55f));
     result.push_back (makePercentParameter (ids::headMaterial, "Head Material", 0.75f));
@@ -169,7 +169,7 @@ TaikorAudioProcessor::createParameterLayout()
     result.push_back (makePercentParameter (
         ids::resonantTension, "Resonant Head", 0.5f));
     result.push_back (makePercentParameter (ids::cavityCoupling, "Air Coupling", 0.85f));
-    result.push_back (makePercentParameter (ids::headDamping, "Head Damping", 0.35f));
+    result.push_back (makePercentParameter (ids::headDamping, "Head Damping", 0.50f));
     result.push_back (makePercentParameter (
         ids::shellResonance, "Shell Resonance", 0.4f));
 

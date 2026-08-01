@@ -43,7 +43,7 @@ inline constexpr int parameterCount = 22;
 // Head diameter is presented in centimetres because that is how drums are
 // sold; the engine works in metres.
 inline constexpr float minimumDiameterCentimetres = 15.0f;
-inline constexpr float maximumDiameterCentimetres = 120.0f;
+inline constexpr float maximumDiameterCentimetres = 180.0f;
 inline constexpr float minimumMicDistanceCentimetres = 3.0f;
 inline constexpr float maximumMicDistanceCentimetres = 40.0f;
 } // namespace taikor::parameters
