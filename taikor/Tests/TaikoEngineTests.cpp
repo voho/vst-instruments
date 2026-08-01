@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <iostream>
 #include <set>
@@ -25,6 +26,32 @@ struct TaikoEngineTestAccess
     }
 
     static constexpr int lineSize = TaikoEngine::directLineSize;
+
+    static int activeModeCount (const TaikoEngine& engine) noexcept
+    {
+        return engine.voices_[0].activeModeCount;
+    }
+
+    // The two airborne path delays, in samples, as the strike geometry
+    // resolved them. Read directly because the membrane modes reach both
+    // microphones instantaneously in this model, so an onset measured from the
+    // audio is dominated by them and says nothing about the airborne path.
+    static void directDelays (const TaikoEngine& engine, float& left,
+                              float& right) noexcept
+    {
+        left = engine.voices_[0].directDelayLeft;
+        right = engine.voices_[0].directDelayRight;
+    }
+
+    static constexpr float delayCeiling = TaikoEngine::directLineSize - 4;
+
+    static std::uint32_t lastContactStart (const TaikoEngine& engine) noexcept
+    {
+        const auto& voice = engine.voices_[0];
+        return voice.contactCount > 0
+            ? voice.contacts[static_cast<std::size_t> (voice.contactCount - 1)].startSample
+            : 0u;
+    }
 };
 } // namespace taikor
 
@@ -1274,6 +1301,85 @@ void testControlEndpointsAndGestures()
                 "automating the width stepped the audio at the block boundary");
         expect (boundaryAgainstSignal (false) < 2.0,
                 "the width step measurement is picking up ordinary signal content");
+    }
+
+    // Later scheduled contacts must still find the bank they are meant to
+    // drive. A flam's main stroke lands 32 ms after its grace note and a press
+    // roll bounces for a tenth of a second; measuring mode lifetimes from the
+    // voice's start retired the bank out from under them, and a press roll at
+    // high damping reached its last bounce with nine of its thirty modes left.
+    {
+        for (const auto articulation : { taikor::Articulation::Flam,
+                                         taikor::Articulation::Buzz })
+        {
+            for (const float damping : { 0.35f, 1.0f })
+            {
+                auto tuned = parameters;
+                tuned.humanise = 0.0f;
+                tuned.headDamping = damping;
+
+                taikor::TaikoEngine engine;
+                engine.prepare (48000.0, 64);
+                engine.setParameters (tuned);
+                engine.trigger (articulation, 0, 0.95f);
+
+                using Access = taikor::TaikoEngineTestAccess;
+                const auto atStart = Access::activeModeCount (engine);
+                const auto lastContact = Access::lastContactStart (engine);
+                expect (lastContact > 0u,
+                        "a multi-contact stroke must schedule a later contact");
+
+                render (engine, static_cast<int> (lastContact), 64);
+                const auto atLastContact = Access::activeModeCount (engine);
+
+                expect (atLastContact == atStart,
+                        std::string (taikor::getArticulationDisplayName (articulation))
+                            + " lost modes before its last scheduled contact");
+            }
+        }
+    }
+
+    // The airborne delay line must reach across the largest drum the controls
+    // can produce at the highest supported rate. If the line is too short the
+    // delays clamp, two different strike positions collapse onto the same
+    // arrival time, and the cue that places a stroke across the image stops
+    // working. The clamp is checked directly: the membrane modes reach both
+    // microphones instantaneously here, so an onset measured from the rendered
+    // audio is dominated by them and cannot see the airborne path at all.
+    {
+        auto extreme = parameters;
+        extreme.humanise = 0.0f;
+        extreme.headDiameter = 1.20f;   // the largest head
+        extreme.octaveBody = 1.0f;      // realised as size, so two octaves down
+        extreme.micSpread = 1.0f;       // microphones fully opened
+        extreme.micDistance = 1.0f;
+
+        const auto delaysAt = [&extreme] (float position, float& left, float& right)
+        {
+            auto tuned = extreme;
+            tuned.strikePosition = position;
+
+            taikor::TaikoEngine engine;
+            engine.prepare (384000.0, 256);
+            engine.setParameters (tuned);
+            engine.trigger (taikor::Articulation::Ka, taikor::lowestOctaveOffset,
+                            0.95f);
+            taikor::TaikoEngineTestAccess::directDelays (engine, left, right);
+        };
+
+        float rimLeft = 0.0f, rimRight = 0.0f;
+        float centreLeft = 0.0f, centreRight = 0.0f;
+        delaysAt (1.0f, rimLeft, rimRight);
+        delaysAt (-1.0f, centreLeft, centreRight);
+
+        const auto ceiling = taikor::TaikoEngineTestAccess::delayCeiling;
+        for (const float delay : { rimLeft, rimRight, centreLeft, centreRight })
+            expect (delay < ceiling,
+                    "an airborne path delay reached the end of the delay line, so "
+                    "the line is too short for the geometry the controls allow");
+
+        expect (std::abs ((rimLeft - rimRight) - (centreLeft - centreRight)) > 1.0f,
+                "two strike positions resolved to the same inter-microphone delay");
     }
 
     // The airborne delay line's fractional read, checked exactly. A ramp makes

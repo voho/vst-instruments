@@ -40,11 +40,24 @@ juce::Colour roleColour (TaikorKnob::VisualRole role) noexcept
     return accentColour;
 }
 
+// Scientific pitch notation puts middle C (MIDI 60) at C4, which makes this
+// instrument's reference note - MIDI 48 - C3. Both the octave strip and the
+// pads derive their labels from that one constant rather than each carrying
+// their own idea of it, because they disagreed by an octave when they did:
+// JUCE's note-name helper takes the octave number to give middle C, and it was
+// being handed the reference note's octave instead.
+constexpr int referenceOctaveNumber = taikor::referenceNote / 12 - 1;
+constexpr int octaveNumberForMiddleC =
+    referenceOctaveNumber + (60 - taikor::referenceNote) / 12;
+
+static_assert (referenceOctaveNumber == 3,
+               "the documented mapping calls MIDI 48 C3");
+static_assert (octaveNumberForMiddleC == 4,
+               "middle C must be C4 if MIDI 48 is C3");
+
 juce::String octaveName (int octaveOffset)
 {
-    // The reference octave is C3, so the label is the octave number the notes
-    // of that stroke bank actually carry.
-    return "C" + juce::String (taikor::referenceNote / 12 - 1 + octaveOffset);
+    return "C" + juce::String (referenceOctaveNumber + octaveOffset);
 }
 
 // A short description of the drum an octave produces, so the octave row reads
@@ -182,7 +195,8 @@ TaikorPad::TaikorPad (taikor::Articulation articulationToUse)
 void TaikorPad::refreshNoteText()
 {
     const auto note = taikor::midiNoteFor (articulation, octaveOffset);
-    noteText = juce::MidiMessage::getMidiNoteName (note, true, true, 3)
+    noteText = juce::MidiMessage::getMidiNoteName (note, true, true,
+                                                   octaveNumberForMiddleC)
              + " (" + juce::String (note) + ")";
 }
 

@@ -191,8 +191,11 @@ public:
     void trigger (Articulation articulation, int octaveOffset, float velocity) noexcept;
     // Returns false for notes outside the playable range, which stay silent.
     [[nodiscard]] bool triggerMidi (int midiNote, float velocity) noexcept;
-    // A hand laid on the head, from MIDI CC1. Damps everything still ringing
-    // without touching the strokes that follow.
+    // A hand laid on the head, from MIDI CC1. It damps everything still
+    // ringing, and it keeps damping while it is held - so a stroke struck with
+    // the hand down is a muted stroke, which is what a hand resting on a drum
+    // head actually does. Exempting new strokes would model a hand that lifts
+    // itself out of the way.
     void setHandDamping (float normalised) noexcept;
     // Pressing the head raises its tension, so the wheel bends the drum up the
     // way a palm does: sharp, and with a slightly shorter tail.
@@ -263,9 +266,15 @@ private:
     // sample. 32 samples is 0.67 ms at 48 kHz, well under the shortest glide.
     static constexpr int controlPeriod = 32;
     static constexpr int maxContactEvents = 12;
-    // Long enough for the widest path difference an odaiko can produce at the
-    // highest supported sample rate. Must be a power of two.
-    static constexpr int directLineSize = 1024;
+    // Long enough for the widest path difference the model can produce at the
+    // highest supported sample rate. The worst case is the largest reachable
+    // drum - a 120 cm head with Octave Body at Family, two octaves down, which
+    // resolves to a 2.4 m radius - struck at the rim with the microphones fully
+    // opened: about 4.25 m of path, 12.4 ms, or 4763 samples at 384 kHz. A
+    // shorter line would clamp those delays and collapse distinct strike
+    // positions onto the same arrival time, which is the cue that places a
+    // stroke across the image. Must be a power of two.
+    static constexpr int directLineSize = 8192;
     static constexpr double minimumSupportedSampleRate = 8000.0;
     static constexpr double maximumSupportedSampleRate = 384000.0;
     // A resonator is dropped from the render once its envelope has fallen this

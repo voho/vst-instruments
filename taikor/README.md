@@ -74,9 +74,12 @@ with it is not a separate control, because it is not a separate effect: Hertz
 contact time falls as the fifth root of impact speed, so a harder stroke is
 shorter, brighter and louder at once.
 
-**MIDI CC1** lays a hand on the head, damping whatever is still ringing without
-changing the strokes that follow. **The pitch wheel** presses the head, which
-raises its tension and bends the drum sharp.
+**MIDI CC1** lays a hand on the head. It damps whatever is still ringing, and
+it goes on damping while it is held — so a stroke played with the hand down is
+a muted stroke, exactly as it would be on the real drum. Release the wheel and
+the head is open again. **The pitch wheel** presses the head, which raises its
+tension and bends the drum sharp; a stroke that is already ringing bends with
+it rather than waiting for the next one.
 
 ## Controls
 

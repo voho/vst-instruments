@@ -1400,6 +1400,33 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
             * inverseSampleRate_);
     }
 
+    // A flam's main stroke lands 32 ms after its grace note, and a press roll
+    // goes on bouncing for a tenth of a second. Those later contacts drive the
+    // same modal bank, but a mode's lifetime was measured from the voice's
+    // start, so the bank was being retired out from under them - a press roll
+    // at high damping reached its last bounce with nine of its thirty modes
+    // left. Shift every lifetime by however long the schedule runs.
+    if (voice.contactCount > 0)
+    {
+        const auto& lastContact =
+            voice.contacts[static_cast<std::size_t> (voice.contactCount - 1)];
+        const auto scheduleEnd = static_cast<std::uint64_t> (lastContact.startSample)
+                               + lastContact.lengthSamples;
+
+        // Adding a constant preserves the descending sort, and leaves the modes
+        // that were never audible at zero so the trailing trim still finds them.
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (mode.audibleSamples > 0)
+                mode.audibleSamples += scheduleEnd;
+        }
+
+        voice.maximumSamples = std::min (
+            voice.maximumSamples + scheduleEnd,
+            static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_));
+    }
+
     voice.handGain = 1.0f;
     voice.bendAtStrike = pitchBend_;
     voice.ageSamples = 0;
