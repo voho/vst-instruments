@@ -1143,6 +1143,13 @@ void YouKnow106Engine::retargetUnison(int midiNote) noexcept
         if (voice.glideSemitonesPerScan <= 0.0f)
             voice.currentMidi = voice.targetMidi;
     }
+    rememberGlideOrigin(midiNote);
+}
+
+// Where the next note glides from. Set once per note-on, after every slot the
+// note reaches has been given its starting pitch.
+void YouKnow106Engine::rememberGlideOrigin(int midiNote) noexcept
+{
     lastPlayedMidi_ = static_cast<float>(midiNote);
     hasLastPlayedMidi_ = true;
 }
@@ -1253,9 +1260,6 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
                                   + static_cast<std::uint32_t>(midiNote) + 1u) | 1u;
     }
     voice.envelope.noteOn();
-
-    lastPlayedMidi_ = static_cast<float>(midiNote);
-    hasLastPlayedMidi_ = true;
 }
 
 void YouKnow106Engine::silenceVoice(Voice& voice) noexcept
@@ -1295,6 +1299,11 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
         // all: what separates the six is the analogue block after them. Adding
         // a detune here would be inventing a behaviour the instrument does not
         // have.
+        // The stack is one note, so every slot in it glides from the same
+        // place. The saved origin is only moved on once the whole stack has
+        // been built -- moving it as each slot is initialised would make the
+        // first slot the origin for the rest, and the ones that had been idle
+        // would jump straight to the destination while the others slid.
         const int limit = voiceLimit();
         for (int slot = 0; slot < limit; ++slot)
         {
@@ -1303,6 +1312,7 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
             initialiseVoice(voice, slot, midiNote, velocity, retrigger);
             voice.unisonMember = true;
         }
+        rememberGlideOrigin(midiNote);
         // A voice count lowered while a wider stack was sounding leaves slots
         // above the new count still keyed to the old note. They leave the stack
         // here rather than holding that note against the new one, which would
@@ -1325,6 +1335,7 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
     auto& voice = voices_[static_cast<std::size_t>(slot)];
     initialiseVoice(voice, slot, midiNote, velocity, true);
     voice.unisonMember = false;
+    rememberGlideOrigin(midiNote);
     updateActiveVoiceCount();
 }
 

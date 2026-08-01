@@ -283,6 +283,49 @@ void testShortNoteInsideOneBlockIsHeard()
     processor.releaseResources();
 }
 
+void testUiKeyboardPressAndReleaseIsHeard()
+{
+    // The on-screen keyboard's events carry no sample position, so they are
+    // applied at the block boundary. A press and its release arriving in the
+    // same drain -- which is what happens after the audio thread has been held
+    // up -- would then cancel before anything was rendered.
+    YouKnow106AudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::attack, 0.0f);
+    setParameterValue (processor, parameters::sustain, 1.0f);
+    setParameterValue (processor, parameters::release, 0.0f);
+
+    processor.keyboardState.noteOn (1, 60, 1.0f);
+    processor.keyboardState.noteOff (1, 60, 0.0f);
+
+    float peak = 0.0f;
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    for (int block = 0; block < 4; ++block)
+    {
+        buffer.clear();
+        processor.processBlock (buffer, midi);
+        peak = std::max (peak, bufferPeak (buffer));
+    }
+
+    expect (peak > 0.0f,
+            "a keyboard press and release in one drain produced no audio at all");
+    processor.releaseResources();
+}
+
+void testDeferredQualitySwitchIsNotAutomatable()
+{
+    // The engine holds a quality change until the output path is quiet, so an
+    // automation point would not take effect where it was written.
+    YouKnow106AudioProcessor processor;
+    const auto* parameter = processor.parameters.getParameter (parameters::hq);
+    expect (parameter != nullptr, "the quality switch is missing");
+    if (parameter != nullptr)
+        expect (! parameter->isAutomatable(),
+                "the deferred quality switch is offered to the host as automatable");
+}
+
 void testAllNotesOffReleasesAndAllSoundOffCuts()
 {
     YouKnow106AudioProcessor processor;
@@ -508,6 +551,8 @@ int main()
     testParameterTextRoundTrips();
     testProcessingProducesSound();
     testShortNoteInsideOneBlockIsHeard();
+    testUiKeyboardPressAndReleaseIsHeard();
+    testDeferredQualitySwitchIsNotAutomatable();
     testAllNotesOffReleasesAndAllSoundOffCuts();
     testTransportOfControllers();
     testPanicSilencesEverything();

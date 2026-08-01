@@ -460,6 +460,7 @@ private:
     void initialiseVoice(Voice& voice, int slot, int midiNote, float velocity,
                          bool retrigger) noexcept;
     void silenceVoice(Voice& voice) noexcept;
+    void rememberGlideOrigin(int midiNote) noexcept;
     // Empties everything downstream of the voices.
     void clearOutputPath() noexcept;
     // Glide rate for a panel position, in semitones per converter scan.

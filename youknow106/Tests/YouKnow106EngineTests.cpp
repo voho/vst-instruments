@@ -871,6 +871,41 @@ void testPortamentoRateFollowsItsControl()
                "turning portamento off mid-glide did not land the note");
 }
 
+void testUnisonStackGlidesFromOneOrigin()
+{
+    // The stack is one note, so widening it mid-performance must not leave the
+    // slots that had been idle starting where the others are still heading.
+    // They all glide from the same place or the mode is not unison.
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Unison;
+    parameters.polyphony = 1;
+    parameters.portamento = 0.8f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(48, 1.0f);
+    render(engine, static_cast<int>(sampleRate * 0.3));
+
+    // Widen the stack, then move: five slots wake up for this note.
+    parameters.polyphony = 6;
+    engine.setParameters(parameters);
+    engine.noteOn(64, 1.0f);
+    const auto gliding = render(engine, static_cast<int>(sampleRate * 0.1));
+    expect(engine.getActiveVoiceCount() == 6, "the stack did not widen");
+
+    const std::size_t window = gliding.left.size() / 2;
+    const double destination = 440.0 * std::pow(2.0, (64 - 69) / 12.0);
+    const double atDestination =
+        magnitudeAt(gliding.left, gliding.left.size() - window,
+                    static_cast<int>(window), destination, sampleRate);
+    const double sounding = peakOf(gliding.left, gliding.left.size() - window);
+    expect(sounding > 0.01, "the widened stack is not sounding at all");
+    expect(atDestination < sounding * 0.1,
+           "part of the unison stack jumped to the new note instead of gliding");
+}
+
 void testQualityChangeWaitsForTheOutputPathToEmpty()
 {
     // The last voice retiring is not the instrument going quiet: the delay
@@ -1374,6 +1409,7 @@ int main()
     testContinuousControlsDoNotStepAtBlockBoundaries();
     testNotesWaitForTheSharedConverterScan();
     testPortamentoRateFollowsItsControl();
+    testUnisonStackGlidesFromOneOrigin();
     testQualityChangeWaitsForTheOutputPathToEmpty();
     testHardStopSilencesTheWholeOutputPath();
     testComponentDriftRateIsIndependentOfOversampling();

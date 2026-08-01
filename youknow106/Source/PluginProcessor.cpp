@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 
 namespace
@@ -262,8 +263,25 @@ YouKnow106AudioProcessor::createParameterLayout()
         juce::ParameterID { polyphony, 1 }, "Polyphony", 1,
         youknow106::YouKnow106Engine::maxVoices,
         youknow106::YouKnow106Engine::hardwareVoices));
+    // Persisted with the patch, but deliberately not automatable: changing the
+    // internal rate empties the whole output path, so the engine holds the
+    // change until it has been quiet long enough for that to be inaudible. An
+    // automation point would therefore not take effect where it was written --
+    // or at all, if it were automated back before the engine went idle.
     layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { hq, 1 }, "HQ", true));
+        juce::ParameterID { hq, 1 }, "HQ", true,
+        juce::AudioParameterBoolAttributes()
+            .withAutomatable (false)
+            .withStringFromValueFunction (
+                [] (bool enabled, int) { return enabled ? "On" : "Off"; })
+            .withValueFromStringFunction (
+                [] (const juce::String& text)
+                {
+                    return text.containsIgnoreCase ("on")
+                        || text.containsIgnoreCase ("hq")
+                        || text.containsIgnoreCase ("2")
+                        || text.containsIgnoreCase ("4");
+                })));
 
     return layout;
 }
@@ -527,9 +545,26 @@ void YouKnow106AudioProcessor::dispatchUiMidiEvents() noexcept
     auto read = uiReadIndex.load (std::memory_order_relaxed);
     const auto write = uiWriteIndex.load (std::memory_order_acquire);
 
+    // The on-screen keyboard has no sample clock, so its events arrive at the
+    // block boundary with nothing to place them within the block. Applying a
+    // whole backlog at that one instant would let a press and its release land
+    // together and cancel out -- which is what happens when the audio thread
+    // was stalled or the host buffer is long. So the drain stops at the second
+    // event for any one key and leaves the rest queued: every press then gets
+    // at least a block of its own, at the cost of a block of latency in the
+    // case that would otherwise have lost the note entirely.
+    std::array<std::uint64_t, 2> touched { 0u, 0u };
+
     while (read != write)
     {
         const auto event = uiMidiQueue[read % uiQueueCapacity];
+        const auto note = static_cast<unsigned> (juce::jlimit (0, 127, event.note));
+        const auto word = static_cast<std::size_t> (note >> 6);
+        const std::uint64_t bit = 1ull << (note & 63u);
+        if ((touched[word] & bit) != 0)
+            break;
+        touched[word] |= bit;
+
         if (event.noteOn)
             engine.noteOn (event.note, event.velocity);
         else
