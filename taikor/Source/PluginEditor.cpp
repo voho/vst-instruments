@@ -1111,7 +1111,7 @@ void TaikorAudioProcessorEditor::timerCallback()
     headDisplay.setMeasurements (measurements.loadedFundamentalHz,
                                  measurements.breathingModeHz,
                                  measurements.radiusMetres * 200.0f,
-                                 measurements.fundamentalT60Seconds);
+                                 measurements.tailSeconds);
 
     for (std::size_t index = 0; index < taikor::articulationCount; ++index)
     {

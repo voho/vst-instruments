@@ -309,6 +309,54 @@ float TaikoEngine::readDelayLine (const std::array<float, directLineSize>& line,
     return older + (newer - older) * fraction;
 }
 
+void TaikoEngine::solveAxisymmetricBranch (float diagonalB, float diagonalR,
+                                           float offDiagonal, int branch,
+                                           float& eigenvalue, float& vectorB,
+                                           float& vectorR) noexcept
+{
+    const float centre = 0.5f * (diagonalB + diagonalR);
+    const float half = 0.5f * (diagonalB - diagonalR);
+    const float discriminant = std::sqrt (half * half + offDiagonal * offDiagonal);
+
+    eigenvalue = branch == 0 ? centre + discriminant : centre - discriminant;
+
+    vectorB = offDiagonal;
+    vectorR = eigenvalue - diagonalB;
+
+    // Whether the two heads are coupled at all is a structural question, not a
+    // question of magnitude: the deciding quantity is the off-diagonal, and
+    // testing the vector's own length against a fixed epsilon does not answer
+    // it. These values run from 1e5 to 1e10, so the float residue left in
+    // `eigenvalue - diagonalB` when the heads are uncoupled is itself far
+    // larger than any absolute epsilon.
+    const float couplingScale =
+        1.0e-6f * std::max (std::abs (diagonalB - diagonalR), 1.0f);
+
+    if (std::abs (offDiagonal) > couplingScale)
+    {
+        const float length = std::sqrt (vectorB * vectorB + vectorR * vectorR);
+        vectorB /= length;
+        vectorR /= length;
+        return;
+    }
+
+    // Uncoupled: this eigenvector is one head or the other, and which one is
+    // decided by the diagonal the eigenvalue came from, not by the branch
+    // index. The resonant head is lighter than the batter head and so is
+    // usually the higher of the two; picking by branch handed both branches to
+    // it, the batter share was zero on both, and a centre strike lost its boom
+    // entirely the moment Air Coupling reached zero.
+    const float toBatter = std::abs (eigenvalue - diagonalB);
+    const float toResonant = std::abs (eigenvalue - diagonalR);
+    const bool tied = std::abs (toBatter - toResonant)
+                    <= 1.0e-6f * std::max (1.0f, std::abs (eigenvalue));
+    // Two identical heads give one repeated eigenvalue; there the branch index
+    // is the only thing that can separate them.
+    const bool isBatter = tied ? (branch == 0) : (toBatter < toResonant);
+    vectorB = isBatter ? 1.0f : 0.0f;
+    vectorR = isBatter ? 0.0f : 1.0f;
+}
+
 std::uint32_t TaikoEngine::hash32 (std::uint32_t value) noexcept
 {
     value ^= value >> 16;
@@ -834,17 +882,16 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
             const float diagonalR = omegaResonant * omegaResonant + cavity / sigmaR;
             const float offDiagonal = cavity / std::sqrt (sigmaB * sigmaR);
 
-            const float centre = 0.5f * (diagonalB + diagonalR);
-            const float half = 0.5f * (diagonalB - diagonalR);
-            const float discriminant = std::sqrt (half * half + offDiagonal * offDiagonal);
-
             for (int branch = 0; branch < 2; ++branch)
             {
                 if (count >= membraneResonatorCount)
                     break;
 
-                const float eigenvalue =
-                    branch == 0 ? centre + discriminant : centre - discriminant;
+                float eigenvalue = 0.0f;
+                float vectorB = 0.0f;
+                float vectorR = 0.0f;
+                solveAxisymmetricBranch (diagonalB, diagonalR, offDiagonal, branch,
+                                         eigenvalue, vectorB, vectorR);
                 if (! (eigenvalue > 0.0f))
                     continue;
 
@@ -852,51 +899,6 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 const float frequency = omega / (2.0f * piFloat);
                 if (frequency >= nyquist * 0.98f)
                     continue;
-
-                // Eigenvector, normalised. [offDiagonal, eigenvalue - diagonalB]
-                // is well conditioned unless the coupling has vanished, in
-                // which case the modes are already the two heads themselves.
-                float vectorB = offDiagonal;
-                float vectorR = eigenvalue - diagonalB;
-                // Whether the two heads are coupled at all is a structural
-                // question, not a question of magnitude: the deciding quantity
-                // is the off-diagonal, and testing the vector's own length
-                // against a fixed epsilon does not answer it. These values run
-                // from 1e5 to 1e10, so the float residue left in
-                // `eigenvalue - diagonalB` when the heads are uncoupled is
-                // itself far larger than any absolute epsilon, and the
-                // degenerate branch was never taken.
-                const float couplingScale =
-                    1.0e-6f * std::max (std::abs (diagonalB - diagonalR), 1.0f);
-                if (std::abs (offDiagonal) > couplingScale)
-                {
-                    const float length =
-                        std::sqrt (vectorB * vectorB + vectorR * vectorR);
-                    vectorB /= length;
-                    vectorR /= length;
-                }
-                else
-                {
-                    // The heads are uncoupled, so this eigenvector is one head
-                    // or the other. Which one is decided by the diagonal the
-                    // eigenvalue came from, not by the branch index: the
-                    // resonant head is lighter than the batter head and so is
-                    // usually the higher of the two, and picking by branch then
-                    // hands both branches to the resonant head. The batter
-                    // share would be zero on both, and a centre strike would
-                    // lose its boom entirely the moment Air Coupling reached 0.
-                    const float toBatter = std::abs (eigenvalue - diagonalB);
-                    const float toResonant = std::abs (eigenvalue - diagonalR);
-                    const bool tied =
-                        std::abs (toBatter - toResonant)
-                        <= 1.0e-6f * std::max (1.0f, std::abs (eigenvalue));
-                    // Two identical heads give one repeated eigenvalue; there
-                    // the branch index is the only thing that can separate them.
-                    const bool isBatter = tied ? (branch == 0)
-                                               : (toBatter < toResonant);
-                    vectorB = isBatter ? 1.0f : 0.0f;
-                    vectorR = isBatter ? 0.0f : 1.0f;
-                }
 
                 // The batter head is the one being struck and the one the
                 // microphones are in front of, so the batter component of the
@@ -1428,7 +1430,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     }
 
     voice.handGain = 1.0f;
-    voice.bendAtStrike = pitchBend_;
+    voice.tuningAtStrike = applied_.pitch + 2.0f * pitchBend_;
     voice.ageSamples = 0;
     voice.peakLevel = 0.0f;
     voice.controlCountdown = 0;
@@ -1514,9 +1516,11 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
     {
         for (int index = 0; index < voice.activeModeCount; ++index)
         {
-            auto& resonator = voice.modes[static_cast<std::size_t> (index)].resonator;
-            resonator.y1 *= voice.handGain;
-            resonator.y2 *= voice.handGain;
+            auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (! mode.membrane)
+                continue;
+            mode.resonator.y1 *= voice.handGain;
+            mode.resonator.y2 *= voice.handGain;
         }
         voice.handGain = 1.0f;
     }
@@ -1530,12 +1534,14 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
     else
         voice.tensionEnvelope = 0.0f;
 
-    // The voice's modes were built with the bend that stood at the strike, so
-    // only the movement since then is left to apply. Frequency goes as the
-    // square root of tension, and the wheel spans two semitones.
-    const float bendSemitones = 2.0f * (pitchBend_ - voice.bendAtStrike);
+    // The voice's modes were built with whatever tuning stood at the strike, so
+    // only the movement since then is left to apply. Both the Pitch control and
+    // the wheel are head tension - a host automating Pitch through a ringing
+    // tail retunes it for the same reason the wheel does - so they are carried
+    // together as one offset in semitones.
+    const float tuningNow = applied_.pitch + 2.0f * pitchBend_;
     const float shift = (1.0f + voice.tensionDepth * voice.tensionEnvelope)
-                      * std::exp2 (bendSemitones / 12.0f);
+                      * std::exp2 ((tuningNow - voice.tuningAtStrike) / 12.0f);
 
     if (std::abs (shift - voice.appliedTensionShift) > 1.0e-5f)
         applyTensionShift (voice, shift);
@@ -1590,12 +1596,25 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
     float left = 0.0f;
     float right = 0.0f;
 
+    // The head and the body are summed apart so a hand laid on the head can
+    // damp what it is actually touching.
+    float membraneLeft = 0.0f;
+    float membraneRight = 0.0f;
+
     for (int index = 0; index < voice.activeModeCount; ++index)
     {
         auto& mode = voice.modes[static_cast<std::size_t> (index)];
         const float value = mode.resonator.tick (excitation * mode.drive);
-        left += value * mode.micLeft;
-        right += value * mode.micRight;
+        if (mode.membrane)
+        {
+            membraneLeft += value * mode.micLeft;
+            membraneRight += value * mode.micRight;
+        }
+        else
+        {
+            left += value * mode.micLeft;
+            right += value * mode.micRight;
+        }
     }
 
     // The impact heard straight through the air. Pressure follows the rate of
@@ -1620,8 +1639,12 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
         voice.directWriteIndex = (voice.directWriteIndex + 1) & (directLineSize - 1);
     }
 
-    left *= voice.handGain;
-    right *= voice.handGain;
+    // Only the membrane is damped. The wooden shell is not what the hand is
+    // resting on, the stick-on-stick stroke has nothing to do with the drum at
+    // all, and the airborne click of the impact itself reaches the microphones
+    // through the air rather than through the head.
+    left += membraneLeft * voice.handGain;
+    right += membraneRight * voice.handGain;
 
     ++voice.ageSamples;
 
@@ -1911,22 +1934,45 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     const float offDiagonal =
         cavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
 
-    const float centre = 0.5f * (diagonalB + diagonalR);
-    const float half = 0.5f * (diagonalB - diagonalR);
-    const float discriminant = std::sqrt (half * half + offDiagonal * offDiagonal);
+    // Solved through the same routine the render path uses, so the readout and
+    // the audio cannot disagree about the drum - including at zero coupling,
+    // where the pair is degenerate.
+    float upperEigen = 0.0f, upperB = 0.0f, upperR = 0.0f;
+    float lowerEigen = 0.0f, lowerB = 0.0f, lowerR = 0.0f;
+    solveAxisymmetricBranch (diagonalB, diagonalR, offDiagonal, 0, upperEigen,
+                             upperB, upperR);
+    solveAxisymmetricBranch (diagonalB, diagonalR, offDiagonal, 1, lowerEigen,
+                             lowerB, lowerR);
 
-    const float upper = std::sqrt (std::max (centre + discriminant, 0.0f));
-    const float lower = std::sqrt (std::max (centre - discriminant, 0.0f));
+    const float upper = std::sqrt (std::max (upperEigen, 0.0f));
+    const float lower = std::sqrt (std::max (lowerEigen, 0.0f));
 
     result.breathingModeHz = upper / (2.0f * piFloat);
     result.loadedFundamentalHz = lower / (2.0f * piFloat);
 
-    const float efficiency = radiationEfficiency (0, upper * drum.radius / soundSpeed);
-    const float decay = 0.5f * drum.headLossFactor * upper
-                      + drum.radiationScale * airDensity * soundSpeed * efficiency
-                            / (2.0f * drum.batterDensity)
-                      + drum.edgeLoss;
-    result.fundamentalT60Seconds = decay > 0.0f ? 6.9078f / decay : 0.0f;
+    // How long each branch rings, each with its own radiation share. The two
+    // differ a great deal on a sealed drum, because only the branch that
+    // changes the body's volume radiates - so reporting one branch's decay
+    // beside the other branch's frequency described neither. What the editor
+    // labels a tail is how long the drum rings, which is the longer of them.
+    const auto branchTail = [&drum] (float omega, float vectorB, float vectorR)
+    {
+        if (! (omega > 0.0f))
+            return 0.0f;
+
+        const float volumeShare = vectorB / std::sqrt (drum.batterDensity)
+                                + vectorR / std::sqrt (drum.resonantDensity);
+        const float efficiency =
+            radiationEfficiency (0, omega * drum.radius / soundSpeed);
+        const float decay = 0.5f * drum.headLossFactor * omega
+                          + drum.radiationScale * airDensity * soundSpeed * efficiency
+                                * std::abs (volumeShare) / (2.0f * drum.batterDensity)
+                          + drum.edgeLoss;
+        return decay > 0.0f ? 6.9078f / decay : 0.0f;
+    };
+
+    result.tailSeconds = std::max (branchTail (upper, upperB, upperR),
+                                   branchTail (lower, lowerB, lowerR));
 
     return result;
 }

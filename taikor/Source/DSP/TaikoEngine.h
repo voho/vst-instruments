@@ -227,7 +227,11 @@ public:
         // changes the body's volume well above the one that does not.
         float loadedFundamentalHz { 88.0f };
         float breathingModeHz { 140.0f };
-        float fundamentalT60Seconds { 1.2f };
+        // How long the drum audibly rings: the longer-lived of the two
+        // axisymmetric branches, each solved with its own radiation share.
+        // Reporting only one of them described whichever mode happened to be
+        // chosen rather than the drum.
+        float tailSeconds { 1.2f };
     };
 
     [[nodiscard]] DrumMeasurements measureDrum (int octaveOffset) const noexcept;
@@ -377,10 +381,13 @@ private:
         // control tick so the envelope never runs away.
         float handGain { 1.0f };
 
-        // Where the wheel stood when this stroke was struck. The voice's modes
-        // already carry that much bend, so only the change since then has to be
-        // applied to a voice that is already ringing.
-        float bendAtStrike { 0.0f };
+        // The drum's total tuning offset, in semitones, when this stroke was
+        // struck - the Pitch control and the wheel together. The voice's modes
+        // already carry that much, so only the change since then has to be
+        // applied to a voice that is already ringing. Both belong here because
+        // both are head tension: automating Pitch retunes a ringing tail for
+        // exactly the reason the wheel does.
+        float tuningAtStrike { 0.0f };
 
         // The airborne path from the stick to each microphone. A close pair
         // hears the impact itself, not only what the head does afterwards, and
@@ -485,6 +492,14 @@ private:
     [[nodiscard]] static float readDelayLine (
         const std::array<float, directLineSize>& line, int writeIndex,
         float delaySamples) noexcept;
+    // One branch of the coupled axisymmetric pair: its eigenvalue and the two
+    // head components of its eigenvector. Shared by the render path and the
+    // readout so they cannot disagree about the drum - in particular about the
+    // degenerate, uncoupled case.
+    static void solveAxisymmetricBranch (float diagonalB, float diagonalR,
+                                         float offDiagonal, int branch,
+                                         float& eigenvalue, float& vectorB,
+                                         float& vectorR) noexcept;
     [[nodiscard]] static std::uint32_t hash32 (std::uint32_t value) noexcept;
     [[nodiscard]] static float signedUnitFromHash (std::uint32_t value) noexcept;
     [[nodiscard]] static float nextNoise (std::uint32_t& state) noexcept;

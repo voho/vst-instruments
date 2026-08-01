@@ -185,6 +185,21 @@ double correlation (const std::vector<float>& a, const std::vector<float>& b)
     return sumAB / std::sqrt (sumAA * sumBB);
 }
 
+// Root-mean-square over a window, so a test can ask about the settled tail
+// rather than about an attack that swamps it.
+double windowedRms (const std::vector<float>& samples, std::size_t first,
+                    std::size_t last)
+{
+    double sum = 0.0;
+    std::size_t count = 0;
+    for (std::size_t index = first; index < last && index < samples.size(); ++index)
+    {
+        sum += static_cast<double> (samples[index]) * samples[index];
+        ++count;
+    }
+    return count > 0 ? std::sqrt (sum / static_cast<double> (count)) : 0.0;
+}
+
 double maximumAbsoluteDifference (const std::vector<float>& a,
                                   const std::vector<float>& b)
 {
@@ -612,9 +627,9 @@ void testPhysicalParameterInfluence()
     // Half of the fundamental's loss is radiation, which the damping control
     // cannot reach, so the achievable range is bounded by physics rather than
     // by taste. It still has to be a large effect to be worth a knob.
-    expect (dampedDrum.fundamentalT60Seconds < reference.fundamentalT60Seconds * 0.5f,
+    expect (dampedDrum.tailSeconds < reference.tailSeconds * 0.5f,
             "raising the damping must substantially shorten the tail");
-    expect (dampedDrum.fundamentalT60Seconds > 0.0f,
+    expect (dampedDrum.tailSeconds > 0.0f,
             "a fully damped head must still have a finite tail");
     expect (std::abs (dampedDrum.idealFundamentalHz - reference.idealFundamentalHz)
                 < reference.idealFundamentalHz * 0.001f,
@@ -896,11 +911,15 @@ void testPerformanceControls()
     const auto parameters = defaultParameters();
 
     // A hand on the head must shorten what is already ringing.
+    // Both takes are rendered over the same window from the same instant, or
+    // the comparison is between an open take that includes its attack and a
+    // damped one that does not - which would pass whether the damping worked
+    // or not.
     taikor::TaikoEngine open;
     open.prepare (48000.0, defaultBlockSize);
     open.setParameters (parameters);
     open.trigger (taikor::Articulation::Don, 0, 0.95f);
-    const auto openTail = render (open, 48000 * 3);
+    const auto openTail = render (open, 48000 * 3).mono();
 
     taikor::TaikoEngine damped;
     damped.prepare (48000.0, defaultBlockSize);
@@ -908,9 +927,12 @@ void testPerformanceControls()
     damped.trigger (taikor::Articulation::Don, 0, 0.95f);
     render (damped, 4800);
     damped.setHandDamping (1.0f);
-    const auto dampedTail = render (damped, 48000 * 3);
+    const auto dampedTail = render (damped, 48000 * 3 - 4800).mono();
 
-    expect (dampedTail.rms < openTail.rms * 0.6,
+    // Compared over the same stretch of the tail, well after the hand has
+    // landed and long before either take has run out.
+    expect (windowedRms (dampedTail, 24000u, 96000u)
+                < windowedRms (openTail, 28800u, 100800u) * 0.2,
             "a hand on the head must damp what is still ringing");
 
     // The wheel must raise the pitch, because pressing a head tightens it. It
@@ -1301,6 +1323,107 @@ void testControlEndpointsAndGestures()
                 "automating the width stepped the audio at the block boundary");
         expect (boundaryAgainstSignal (false) < 2.0,
                 "the width step measurement is picking up ordinary signal content");
+    }
+
+    // Automating Pitch must retune a stroke that is already ringing, for the
+    // same reason the wheel does: both are head tension.
+    {
+        auto tuned = parameters;
+        tuned.humanise = 0.0f;
+        tuned.tensionModulation = 0.0f;
+
+        taikor::TaikoEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setParameters (tuned);
+        engine.trigger (taikor::Articulation::Don, 0, 0.95f);
+
+        const auto before = render (engine, 24000).mono();
+
+        auto raised = tuned;
+        raised.pitch = 7.0f;
+        engine.setParameters (raised);
+        const auto after = render (engine, 72000).mono();
+
+        const auto restingPitch =
+            dominantFrequency (before, 48000.0, 60.0, 260.0, 0.25, 2400u);
+        const auto raisedPitch =
+            dominantFrequency (after, 48000.0, 60.0, 260.0, 0.25, 16000u);
+        const auto semitones = 12.0 * std::log2 (raisedPitch / restingPitch);
+
+        expect (semitones > 6.0 && semitones < 8.0,
+                "automating Pitch must retune a ringing stroke by the amount asked for");
+    }
+
+    // A hand laid on the head damps the head. It is not resting on the wooden
+    // shell, and it has nothing at all to do with two sticks clicked together.
+    {
+        auto tuned = parameters;
+        tuned.humanise = 0.0f;
+
+        // Measured over the settled tail rather than the whole stroke: a hand
+        // takes about a fifth of a second to arrive and press, so the attack is
+        // barely touched either way and averaging it in hides the effect.
+        // Each stroke is measured over its own tail, because they are wildly
+        // different lengths: the drum rings for seconds and a stick click is
+        // gone in a tenth of a second. Measuring the click over the drum's
+        // window compares silence with silence and proves nothing.
+        const auto tailEnergy = [&tuned] (taikor::Articulation articulation,
+                                          bool handDown, std::size_t first,
+                                          std::size_t last)
+        {
+            taikor::TaikoEngine engine;
+            engine.prepare (48000.0, defaultBlockSize);
+            engine.setParameters (tuned);
+            if (handDown)
+                engine.setHandDamping (1.0f);
+            engine.trigger (articulation, 0, 0.95f);
+            const auto rendered = render (engine, 48000 * 2);
+            return windowedRms (rendered.mono(), first, last);
+        };
+
+        const auto openHead =
+            tailEnergy (taikor::Articulation::Don, false, 24000u, 72000u);
+        const auto dampedHead =
+            tailEnergy (taikor::Articulation::Don, true, 24000u, 72000u);
+        expect (openHead > 1.0e-5,
+                "the head's tail measurement window caught no signal");
+        expect (dampedHead < openHead * 0.10,
+                "a hand on the head must damp the head");
+
+        // The wooden shell is not what the hand is resting on, and two sticks
+        // clicked together above the drum have nothing to do with it at all.
+        const auto openSticks =
+            tailEnergy (taikor::Articulation::Bachi, false, 1200u, 9600u);
+        const auto dampedSticks =
+            tailEnergy (taikor::Articulation::Bachi, true, 1200u, 9600u);
+        expect (openSticks > 1.0e-5,
+                "the stick stroke's measurement window caught no signal");
+        expect (std::abs (dampedSticks - openSticks) < openSticks * 0.02,
+                "a hand on the head must not damp a stick-on-stick stroke");
+    }
+
+    // The tail readout has to describe the drum the fundamental readout
+    // describes. Reporting the breathing mode's decay beside the other
+    // branch's frequency described neither, and the two diverge on a sealed
+    // drum because only one of them radiates.
+    {
+        taikor::TaikoEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+
+        auto sealed = parameters;
+        sealed.cavityCoupling = 1.0f;
+        engine.setParameters (sealed);
+        const auto sealedDrum = engine.measureDrum (0);
+
+        expect (sealedDrum.tailSeconds > 0.0f, "a drum must report a tail");
+
+        // The rendered tail must be in the same country as the reported one.
+        const auto rendered =
+            strike (sealed, taikor::Articulation::Don, 0, 0.95f, 48000.0, 48000 * 6);
+        const auto measured = decayTime (rendered.mono(), 48000.0, -60.0);
+        expect (measured > sealedDrum.tailSeconds * 0.4
+                    && measured < sealedDrum.tailSeconds * 2.5,
+                "the reported tail does not match the tail the drum actually has");
     }
 
     // Later scheduled contacts must still find the bank they are meant to
