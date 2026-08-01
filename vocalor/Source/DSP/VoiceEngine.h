@@ -126,11 +126,12 @@ private:
         float y1 { 0.0f };
         float y2 { 0.0f };
         float a1 { 0.0f };
+        // Unit-peak normalisation, polarity and formant amplitude all folded
+        // into one coefficient by the control update. a2 depends only on the
+        // bandwidth, which every voice shares, so the caller passes it in.
+        float b0 { 0.0f };
 
-        // b0 and a2 depend only on the formant bandwidth, which is shared by
-        // every voice, so the caller passes them in and the per-voice state
-        // stays three floats wide.
-        float tick(float input, float b0, float a2) noexcept
+        float tick(float input, float a2) noexcept
         {
             const float value = b0 * input + a1 * y1 + a2 * y2;
             y2 = y1;
@@ -141,6 +142,12 @@ private:
         void clear() noexcept { y1 = y2 = 0.0f; }
     };
 
+    struct SineCosine
+    {
+        float sine { 0.0f };
+        float cosine { 1.0f };
+    };
+
     struct SingerIdentity
     {
         float detuneCents { 0.0f };
@@ -149,9 +156,11 @@ private:
         float onsetOffset { 0.0f };
         float vibratoRate { 5.1f };
         float vibratoDepth { 1.0f };
-        float driftPhase { 0.0f };
-        float depthPhase { 0.0f };
-        float formantPhase { 0.0f };
+        // Sampled once per chunk, not once per voice control update: every
+        // voice sharing a singer identity reads the same three values.
+        float drift { 0.0f };
+        float depthDrift { 0.0f };
+        float formantDrift { 0.0f };
         float driftIncrement { 0.0f };
         float depthIncrement { 0.0f };
         float formantIncrement { 0.0f };
@@ -180,7 +189,6 @@ private:
         float vibratoPhase { 0.0f };
         float velocity { 0.0f };
         float amplitudeGain { 0.0f };
-        float groupGain { 1.0f };
         float phase { 0.0f };
         float phaseIncrement { 0.0f };
         float targetPhaseIncrement { 0.0f };
@@ -197,10 +205,17 @@ private:
         float lastNoise { 0.0f };
         float sourceTilt { 0.0f };
         float tiltCoefficient { 1.0f };
+        // Vocal effort and pan only move when a parameter does, but their
+        // coefficients cost an exp2, an exp and two square roots. Cache the
+        // input so a sustained note pays for them once.
+        float tiltEffort { -1.0f };
+        float panPosition { -2.0f };
         float irregularity { 0.0f };
         float baseFrequency { 261.63f };
         float panLeft { 0.7071f };
         float panRight { 0.7071f };
+        float panTargetLeft { 0.7071f };
+        float panTargetRight { 0.7071f };
         float onsetMix { 0.0f };
         float onsetMixStep { 1.0f };
         std::array<float, formantCount> formantHz {};
@@ -230,7 +245,7 @@ private:
     int countActiveVoices() const noexcept;
     float glottalPair(int level, float phase, float tension) const noexcept;
     float sine(float phase) const noexcept;
-    float cosineFromCycles(float cycles) const noexcept;
+    SineCosine sineCosineFromCycles(float cycles) const noexcept;
     static float randomBipolar(std::uint32_t& state) noexcept;
     void updateRoom(float inputLeft, float inputRight, float& wetLeft, float& wetRight) noexcept;
     void clearRoom() noexcept;
@@ -271,6 +286,21 @@ private:
     float onsetAirMultiplier_ { 0.0f };
     float scoopMultiplier_ { 0.0f };
     float shimmerDepth_ { 0.0f };
+    // Every one of these used to be a bare per-sample or per-control-period
+    // constant, which made the instrument sound different at every sample rate.
+    // They are now derived from a time constant in prepare().
+    float shimmerCoefficient_ { 0.0f };
+    float aspirationPreEmphasis_ { 0.0f };
+    float aspirationScale_ { 1.0f };
+    float controlGlide_ { 0.0f };
+    float jitterCoefficient_ { 0.0f };
+    float jitterSlowCoefficient_ { 0.0f };
+    // A noise-driven one-pole's output variance is c / (2 - c), so once c comes
+    // from a time constant the depth of the shimmer and of the pitch jitter
+    // would fall as 1/sqrt(sampleRate). These restore the 48 kHz depth.
+    float shimmerScale_ { 1.0f };
+    float jitterScale_ { 1.0f };
+    float roomEnvelopeDecay_ { 0.0f };
 
     // Chunk-rate tract state shared by every voice.
     std::array<float, formantCount> chunkFormantHz_ {};
@@ -278,21 +308,35 @@ private:
     std::array<float, formantCount> chunkBandwidth_ {};
     std::array<float, formantCount> chunkPoleScale_ {};
     std::array<float, formantCount> chunkA2_ {};
-    std::array<float, formantCount> chunkB0_ {};
+    std::array<float, formantCount> chunkRadius_ {};
     std::array<float, 2> earlyPoleScale_ {};
     std::array<float, 2> earlyA2_ {};
-    std::array<float, 2> earlyB0_ {};
+    std::array<float, 2> earlyRadius_ {};
+    // Vowel targets, formant shift and bandwidth scale the tract was last
+    // resolved from. Resolving it costs more than the whole rest of the chunk
+    // update, and on a sustained note none of these inputs move.
+    std::array<float, formantCount + 2> tractInputs_ {};
+    std::array<float, formantCount> chunkAmplitude_ {};
+    float jitterHumanize_ { -1.0f };
+    float glideAmount_ { -1.0f };
+    // Bit per singer identity currently sounding, so the ensemble drift is only
+    // advanced for the singers a note actually uses.
+    std::uint32_t singersInUse_ { ~0u };
     float chunkGainCoefficient_ { 1.0f };
     float chunkGlideDecay_ { 0.0f };
     bool chunkStateValid_ { false };
 
-    float sharedPitchPhase_ { 0.0f };
-    float sharedRatePhase_ { 0.0f };
-    float sharedFormantPhase_ { 0.0f };
+    float sharedPitchDrift_ { 0.0f };
+    float sharedRateDrift_ { 0.0f };
+    float sharedFormantDrift_ { 0.0f };
     float smoothedRoom_ { 0.0f };
     float smoothedGain_ { 0.8f };
     float smoothedBreath_ { 0.28f };
     float smoothedTension_ { 0.48f };
+    // Resonance and formant shift set the pole radii directly, and a pole radius
+    // cannot be smoothed after the fact, so they are smoothed before use.
+    float smoothedResonance_ { 0.72f };
+    float smoothedFormantShift_ { 0.0f };
     float roomEnvelope_ { 0.0f };
     std::atomic<int> activeVoiceCount_ { 0 };
 
@@ -322,6 +366,7 @@ private:
     float roomLowCutLeft_ { 0.0f };
     float roomLowCutRight_ { 0.0f };
     float roomLowCutCoefficient_ { 0.01f };
+    float roomDampingCoefficient_ { 0.28f };
     float smoothedRoomSize_ { 0.5f };
 
     float meterLeft_ { 0.0f };

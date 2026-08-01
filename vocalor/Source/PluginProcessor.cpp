@@ -115,7 +115,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
         juce::ParameterID { chordQuality, 1 }, "Chord quality",
         juce::StringArray { "Major", "Minor" }, 0));
     result.push_back (std::make_unique<juce::AudioParameterInt> (
-        juce::ParameterID { choirSize, 1 }, "Choir size", 2, 16, 8));
+        juce::ParameterID { choirSize, 1 }, "Choir size", 2, 12, 8));
 
     const auto addPercent = [&result] (const char* id, const char* name, float defaultValue)
     {
@@ -273,7 +273,7 @@ void VocalorAudioProcessor::updateEngineParameters() noexcept
     next.mode = enumFromParameter<vocalor::PerformanceMode> (parameterPointers.mode, 2);
     next.vowel = enumFromParameter<vocalor::Vowel> (parameterPointers.vowel, 2);
     next.chordQuality = enumFromParameter<vocalor::ChordQuality> (parameterPointers.chordQuality, 1);
-    next.choirSize = juce::jlimit (2, 16, juce::roundToInt (
+    next.choirSize = juce::jlimit (2, 12, juce::roundToInt (
         parameterPointers.choirSize->load (std::memory_order_relaxed)));
     next.breath = parameterPointers.breath->load (std::memory_order_relaxed);
     next.resonance = parameterPointers.resonance->load (std::memory_order_relaxed);
