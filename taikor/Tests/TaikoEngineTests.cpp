@@ -139,6 +139,19 @@ struct TaikoEngineTestAccess
         return result;
     }
 
+    // The continuum's band-pass corners, which is where a retune of the head
+    // shows up: the region is too broad and too short-lived to see it in the
+    // summed spectrum.
+    static std::vector<float> continuumCoefficients (const TaikoEngine& engine)
+    {
+        std::vector<float> result;
+        const auto& voice = engine.voices_[0];
+        for (const auto& band : voice.continuum)
+            if (band.level > 0.0f)
+                result.push_back (band.highCoefficient);
+        return result;
+    }
+
     static bool everyDecayIsFinite (const TaikoEngine& engine)
     {
         for (const auto& voice : engine.voices_)
@@ -1140,6 +1153,112 @@ void testTheDrumSoundsLikeADrumAndNotLikeATone()
         expect (bank[0] < bank[1] * 3.0f,
                 "the lowest mode must not outlive the one above it so far that "
                 "the stroke ends as a sine");
+}
+
+// The head's continuum belongs to the head, so everything that happens to the
+// head has to reach it. Three things did not, and all three were invisible in
+// the resolved bank because that is not where most of the drum's high-frequency
+// energy lives any more.
+void testTheContinuumFollowsTheHead()
+{
+    const auto highBand = [] (const std::vector<float>& samples, std::size_t first,
+                              std::size_t last)
+    {
+        double total = 0.0;
+        for (double frequency = 700.0; frequency < 6000.0; frequency *= 1.06)
+            total += binMagnitude (samples, frequency, 48000.0, first, last);
+        return total;
+    };
+
+    auto parameters = defaultParameters();
+    parameters.humanise = 0.0f;
+
+    // A flam is two strikes. The second is the loud one and it lands 32 ms
+    // after the first, so it has to bring its own brightness rather than
+    // inheriting whatever is left of the grace note's.
+    {
+        const auto flam = strike (parameters, taikor::Articulation::Flam, 0, 1.0f,
+                                  48000.0, 96256).mono();
+        const auto grace = highBand (flam, 0u, 1200u);
+        const auto main = highBand (flam, 1536u, 2736u);
+        expect (grace > 0.0, "the flam's grace note made no high-frequency sound");
+        expect (main > grace * 1.5,
+                "a flam's main stroke must be brighter than its grace note, which "
+                "means every scheduled contact has to light the continuum");
+    }
+
+    // A press roll is seven, and each bounce is a real blow on the head.
+    {
+        const auto buzz = strike (parameters, taikor::Articulation::Buzz, 0, 1.0f,
+                                  48000.0, 96256).mono();
+        const auto first = highBand (buzz, 0u, 1200u);
+        const auto second = highBand (buzz, 1440u, 2640u);
+        expect (first > 0.0, "the press roll made no high-frequency sound");
+        expect (second > first * 0.2,
+                "each bounce of a press roll must relight the continuum rather "
+                "than living off the first contact's residue");
+    }
+
+    // Pitch and the wheel are head tension, and the continuum is the head, so a
+    // stroke that is already ringing has to be carried with the resolved bank
+    // rather than left standing under it.
+    //
+    // Checked on the filters rather than on the audio. The bands are wide and
+    // overlapping and the whole region is gone inside a couple of hundred
+    // milliseconds, so moving their centres by an octave changes the summed
+    // spectrum by less than the measurement noise - the effect is real and
+    // worth having for coherence, but it is not one a spectral test can resolve
+    // honestly, and an assertion that cannot fail is worse than none.
+    {
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.trigger (taikor::Articulation::Don, 0, 1.0f);
+        render (engine, 480);
+
+        const auto before = taikor::TaikoEngineTestAccess::continuumCoefficients (engine);
+        expect (! before.empty(), "the stroke built no continuum to retune");
+
+        auto raised = parameters;
+        raised.pitch = 12.0f;
+        engine.setParameters (raised);
+        render (engine, 480);
+
+        const auto after = taikor::TaikoEngineTestAccess::continuumCoefficients (engine);
+        expect (after.size() == before.size(),
+                "retuning must not change how many continuum bands there are");
+
+        bool everyBandRose = ! before.empty();
+        for (std::size_t index = 0; index < before.size() && index < after.size(); ++index)
+            everyBandRose = everyBandRose && after[index] > before[index] * 1.2f;
+
+        expect (everyBandRose,
+                "automating Pitch up must carry the ringing head's continuum up "
+                "with its modes");
+    }
+
+    // And the articulation's head gain must reach it exactly once. It is
+    // already inside the drive the continuum is measured against, so applying
+    // it again squared it and left the quiet strokes far darker than their
+    // profile asks for.
+    {
+        const auto brightnessOf = [&] (taikor::Articulation articulation)
+        {
+            const auto mono = strike (parameters, articulation, 0, 1.0f, 48000.0,
+                                      48128).mono();
+            const auto measurements = taikor::TaikoEngine::measure (parameters, 0);
+            const auto low =
+                binMagnitude (mono, measurements.loadedFundamentalHz, 48000.0, 0u, 4800u);
+            return highBand (mono, 0u, 4800u) / std::max (low, 1.0e-9);
+        };
+
+        // Su is a ghost stroke: much quieter than a Don, but struck the same way
+        // and so not fundamentally darker in proportion to itself.
+        expect (brightnessOf (taikor::Articulation::Su)
+                    > brightnessOf (taikor::Articulation::Don) * 1.5,
+                "a quiet articulation must not lose its continuum to a squared "
+                "head gain");
+    }
 }
 
 // Caching must be invisible. The engine keeps a resolved drum and a resolved
@@ -2472,6 +2591,7 @@ int main()
     testTailsTerminateAndVoicesRetire();
     testVoiceStealingStaysBounded();
     testTheDrumSoundsLikeADrumAndNotLikeATone();
+    testTheContinuumFollowsTheHead();
     testEveryParameterSurvivesTheCache();
     testRadiationEfficiencyStaysFinite();
     testReportedModesAreActuallySounded();

@@ -165,7 +165,7 @@ struct EngineParameters
     // Gentle output-stage saturation, 0 = exactly bypassed.
     float drive { 0.0f };
     // Linear output gain.
-    float outputGain { 0.1f };
+    float outputGain { 0.100000f };
 };
 
 // Snapshot of the drum for the editor's head display. Produced on the audio
@@ -407,6 +407,9 @@ private:
         std::uint32_t contactLength { 0u };
         float contactAmplitude { 0.0f };
         float contactNoiseAmplitude { 0.0f };
+        // Amplitude of the stroke's first contact, so a later one can relight
+        // the continuum in proportion to it.
+        float contactReference { 0.0f };
         float noiseBandState { 0.0f };
         float noiseBandCoefficient { 0.5f };
 

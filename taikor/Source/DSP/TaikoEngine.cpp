@@ -624,6 +624,7 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.tensionEnvelope = 0.0f;
     voice.appliedTensionShift = 1.0f;
     voice.noiseBandState = 0.0f;
+    voice.contactReference = 0.0f;
     for (auto& band : voice.continuum)
     {
         band.envelope = 0.0f;
@@ -1440,7 +1441,12 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                                     * (1.0f + 1.5f * extraDamping)
                               + drum.edgeLoss;
             entry.envelopeDecay = std::exp (-decay / rate);
-            entry.envelope = 1.0f;
+            // Left dark. Every band is lit by the contacts themselves, each in
+            // proportion to how hard it lands, so a flam's grace note gets its
+            // share and its main stroke gets the whole of it. Starting them
+            // alight handed the first contact everything regardless of how
+            // gently it touched the head.
+            entry.envelope = 0.0f;
 
             // Falling with frequency, so the region joins onto the top of the
             // resolved bank rather than sitting on it as a shelf.
@@ -1472,8 +1478,13 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
             // continuum is the head going on above where its modes can be told
             // apart, so a stroke that is loud because it caught the hoop and
             // rang the body must not drag it up with them.
-            entry.level = continuumCalibration * profile.membraneGain * edgeBoost
-                        * tilt * membranePeak / std::sqrt (variance);
+            // No membraneGain here: membranePeak is measured from mode.drive,
+            // which already carries it. Applying it twice made the continuum
+            // scale as the square of the articulation's head gain, so the
+            // quieter strokes came out far darker than their profile asks for -
+            // Katsu's 0.06 became 0.0036 and lost its continuum altogether.
+            entry.level = continuumCalibration * edgeBoost * tilt * membranePeak
+                        / std::sqrt (variance);
         }
     }
 
@@ -1751,12 +1762,20 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // continuum, while a hard one lights all of it. This is the same v^(-1/5)
     // contact law that shortens the pulse and brightens the resolved modes,
     // finally reaching the region where most of the brightness actually lives.
+    voice.contactReference = excitationScale;
+
     const float corner = 1.0f / std::max (contactSeconds, 1.0e-5f);
     for (auto& band : voice.continuum)
     {
         const float ratio = band.centre / corner;
         band.level *= excitationScale / (1.0f + ratio * ratio);
     }
+
+    // What a contact's amplitude is measured against when it relights the
+    // continuum: the force the continuum was scaled by, not the first contact's
+    // amplitude. A flam's first contact is its quiet grace note, so measuring
+    // against that gave the main stroke well over twice the continuum it should
+    // have had - and put the loudest articulation on the limiter.
 
     // Contact noise is stick and hide texture, so it sits an octave or so
     // above the drum and follows how sharp the contact was.
@@ -1920,6 +1939,23 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         mode.resonator.b0 = std::sin (omega);
     }
 
+    // The continuum is the same head above where its modes can be told apart,
+    // so it moves with them. Leaving it fixed let a two-octave Pitch move carry
+    // the resolved bank away while the region that now dominates the upper
+    // spectrum stood still, and put a smaller version of the same mismatch into
+    // the attack glide of every hard stroke.
+    for (auto& band : voice.continuum)
+    {
+        if (! (band.centre > 0.0f))
+            continue;
+
+        const float centre = band.centre * shift;
+        const float low = std::min (centre / continuumBandwidth, nyquist * 0.9f);
+        const float high = std::min (centre * continuumBandwidth, nyquist * 0.9f);
+        band.lowCoefficient = 1.0f - std::exp (-2.0f * piFloat * low / rate);
+        band.highCoefficient = 1.0f - std::exp (-2.0f * piFloat * high / rate);
+    }
+
     voice.appliedTensionShift = shift;
 }
 
@@ -2008,6 +2044,22 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
             voice.contactAmplitude = contact.amplitude;
             voice.contactNoiseAmplitude = contact.noiseAmplitude;
             ++voice.nextContact;
+
+            // Every impact lights the head's continuum, not just the first. A
+            // flam is two strikes and a press roll is seven, and the later ones
+            // are real blows on the head - leaving them out gave the grace note
+            // the whole stroke's brightness and the main hit thirty-two
+            // milliseconds later nothing but the residue.
+            //
+            // In proportion to how hard this particular contact lands, and
+            // taken as the louder of what is already ringing and what the new
+            // blow brings, so a bounce cannot cut the tail of the one before.
+            if (voice.contactReference > 0.0f)
+            {
+                const float share = contact.amplitude / voice.contactReference;
+                for (auto& band : voice.continuum)
+                    band.envelope = std::max (band.envelope, share);
+            }
         }
     }
 
