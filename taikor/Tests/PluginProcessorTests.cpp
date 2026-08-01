@@ -195,7 +195,7 @@ void testParameterLayoutAndDefaults()
         { pids::strikeNoise, 0.35f },    { pids::humanise, 0.4f },
         { pids::octaveBody, 0.7f },      { pids::micDistance, 16.0f },
         { pids::micSpread, 0.55f },      { pids::stereoWidth, 0.5f },
-        { pids::drive, 0.0f },           { pids::output, -22.0f },
+        { pids::drive, 0.0f },           { pids::output, -20.0f },
     }};
 
     for (const auto& [id, expected] : expectedDefaults)
@@ -211,7 +211,7 @@ void testParameterLayoutAndDefaults()
                 < 1.0e-3f,
             "mic distance must reach the engine normalised");
     expect (std::abs (engineParameters.outputGain
-                      - juce::Decibels::decibelsToGain (-22.0f)) < 1.0e-4f,
+                      - juce::Decibels::decibelsToGain (-20.0f)) < 1.0e-4f,
             "output must reach the engine as a linear gain");
 
     // The default drum must be the o-daiko the documentation describes. This
@@ -529,8 +529,13 @@ void testParametersReachTheEngine()
         return renderNote (processor, taikor::referenceNote, 0.9f, 8);
     };
 
-    const auto loud = peakAtOutput (0.0f);
-    const auto quiet = peakAtOutput (-12.0f);
+    // Both settings inside the control's linear region. A taiko has an enormous
+    // crest factor and this one models all of it, so the top of the Output
+    // range is deliberately far into the safety limiter - comparing a point up
+    // there against one below it would be measuring the limiter.
+    const auto loud = peakAtOutput (-12.0f);
+    const auto quiet = peakAtOutput (-24.0f);
+    expect (loud < 0.95f, "the louder of the two output checks must not limit");
     expect (quiet < loud * 0.6f, "the output control must scale the rendered audio");
     expect (loud > 1.0e-4f, "the output check rendered no audio to compare");
 

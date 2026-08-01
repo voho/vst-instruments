@@ -165,7 +165,7 @@ struct EngineParameters
     // Gentle output-stage saturation, 0 = exactly bypassed.
     float drive { 0.0f };
     // Linear output gain.
-    float outputGain { 0.07943f };
+    float outputGain { 0.1f };
 };
 
 // Snapshot of the drum for the editor's head display. Produced on the audio

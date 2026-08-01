@@ -213,7 +213,7 @@ EngineParameters nagadoVoicing()
     // continuum put a great deal more into every stroke than the resolved bank
     // alone did, and the loudest takes reached the limiter at the level that
     // used to be safe.
-    parameters.outputGain = 0.02f;
+    parameters.outputGain = 0.06f;
     return parameters;
 }
 

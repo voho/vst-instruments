@@ -117,7 +117,13 @@ constexpr float maximumImpactSpeed = 6.0f;
 // which are on the order of tens of microns; this is the only place a number
 // is chosen for how it sounds rather than for what it means, and it is a
 // single scalar so it cannot distort any relationship inside the model.
-constexpr float modelScale = 128.0f;
+//
+// It came down by ten decibels when the head gained its high-frequency
+// continuum, which added a great deal to every stroke. directCalibration moved
+// with it, because the airborne click is the one path that does not pass
+// through this scalar and would otherwise have grown by ten decibels relative
+// to everything else.
+constexpr float modelScale = 41.0f;
 
 // Radiation damping is the one loss term whose absolute size depends on how
 // the drum is mounted and how much of the body is free to move, none of which
@@ -136,7 +142,7 @@ constexpr float shellCalibration = 4200.0f;
 // stands in for the contact patch's radiating area and directivity, neither of
 // which this model describes; everything about how that path varies with
 // stroke, position and distance is geometry and is computed, not chosen.
-constexpr float directCalibration = 0.0021f;
+constexpr float directCalibration = 0.00067f;
 
 [[nodiscard]] float clampFloat (float value, float low, float high) noexcept
 {
@@ -1955,6 +1961,14 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
             mode.resonator.y1 *= voice.handGain;
             mode.resonator.y2 *= voice.handGain;
         }
+
+        // And the continuum with them. It is the head above where its modes can
+        // be told apart, so a hand laid on the head damps it for exactly the
+        // same reason - and by the time it was left out, it was most of what
+        // there was to damp.
+        for (auto& band : voice.continuum)
+            band.envelope *= voice.handGain;
+
         voice.handGain = 1.0f;
     }
 

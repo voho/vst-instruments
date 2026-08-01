@@ -2268,6 +2268,23 @@ void testControlEndpointsAndGestures()
         expect (dampedHead < openHead * 0.05,
                 "a hand on the head must damp the head");
 
+        // Broadband as well as at the modes. Measuring the modes alone is
+        // sharper about what the hand reaches, but it is blind to everything
+        // the head does above them - and when the continuum was first added it
+        // was not damped at all, which this check would have caught and the
+        // modal one did not.
+        // Early enough to still contain the continuum, which empties from the
+        // top down and is largely gone by a quarter of a second.
+        const auto openBroad =
+            tailEnergy (taikor::Articulation::Don, false, 2400u, 12000u);
+        const auto dampedBroad =
+            tailEnergy (taikor::Articulation::Don, true, 2400u, 12000u);
+        expect (openBroad > 1.0e-5,
+                "the broadband tail measurement window caught no signal");
+        expect (dampedBroad < openBroad * 0.68,
+                "a hand on the head must damp everything the head is doing, "
+                "not only its resolved modes");
+
         // The wooden shell is not what the hand is resting on, and two sticks
         // clicked together above the drum have nothing to do with it at all.
         const auto openSticks =

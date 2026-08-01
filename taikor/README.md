@@ -128,7 +128,7 @@ a voicing offset.
 | Mic Spread | 0–100 % | 55 % | How far apart the two microphones sit across the head |
 | Stereo Width | 0–100 % | 50 % | Width trim. 50 % is exactly what the pair picked up, and is the default; 0 is an exact mono sum; above 50 % exaggerates the side signal past the measurement |
 | Drive | 0–100 % | 0 % | Output-stage saturation, exactly bypassed at 0 |
-| Output | −24 to +6 dB | −22.0 dB | Output level |
+| Output | −24 to +6 dB | −20.0 dB | Output level |
 
 The default output is far quieter than a synthesizer's usually is, deliberately.
 A taiko is a very loud instrument with a very large crest factor, and this one
