@@ -128,12 +128,15 @@ a voicing offset.
 | Mic Spread | 0–100 % | 55 % | How far apart the two microphones sit across the head |
 | Stereo Width | 0–100 % | 50 % | Width trim. 50 % is exactly what the pair picked up, and is the default; 0 is an exact mono sum; above 50 % exaggerates the side signal past the measurement |
 | Drive | 0–100 % | 0 % | Output-stage saturation, exactly bypassed at 0 |
-| Output | −24 to +6 dB | −10.0 dB | Output level |
+| Output | −24 to +6 dB | −22.0 dB | Output level |
 
-The default output is quieter than a synthesizer's usually is, deliberately: the
-loudest stroke the instrument can make — a full-velocity rim shot on the largest
-drum — sits about 9 dB above unity, and the default leaves that stroke just
-under full scale rather than making a middling stroke as loud as possible.
+The default output is far quieter than a synthesizer's usually is, deliberately.
+A taiko is a very loud instrument with a very large crest factor, and this one
+models the whole of it: the loudest stroke it can make — a full-velocity rim
+shot on the largest drum — sits more than twenty decibels above unity. The
+default leaves that stroke just under full scale rather than making a middling
+stroke as loud as possible, so nothing in the instrument's range reaches the
+safety limiter at the factory setting.
 
 ## Sound engine
 
@@ -196,6 +199,36 @@ it sounds: when the shell rang longer than the head, it put a wooden pitch on
 top of the drum where the body should only have been adding weight, and it left
 a hand laid on the head unable to damp anything anyone could still hear — since
 a hand on the head does not touch the body.
+
+### Above the modes: the head's continuum
+
+A modal bank can only resolve so far. The mode table runs to the Bessel zeros
+around *λ = 13*, which on a large drum puts the highest resolved mode a couple
+of hundred hertz up — and a real head goes on having modes for another five
+octaves above that, spaced far closer together than their own bandwidths. Nobody
+hears those individually. What reaches the ear is a shaped burst that empties
+from the top down, so that is what Taikor models: five overlapping bands of
+noise, each carrying the head's own loss law and each lit by the same contact
+that drives the modes.
+
+It is not a decoration. Third-octave analysis of recorded taiko shows the attack
+is nearly flat from sixty hertz to a kilohertz and still within twenty-five
+decibels at ten; a bank that stops at three hundred hertz is short of that by
+twenty to thirty-five decibels across the entire upper half of the spectrum, and
+what is missing is exactly what a listener calls body. With the continuum in
+place the model tracks those measurements to within a few decibels from two
+hundred hertz upward.
+
+Three things fall out of modelling it as the head rather than as an effect. It
+follows the contact: a force pulse of duration *τ* has nothing much above *1/τ*,
+so a soft stroke — resting on the head nearly twice as long — cannot reach the
+top of it, while a full-arm stroke lights all of it. It follows the strike
+position, because the short-wavelength mode shapes pile up against the rim, so a
+Ka reaches into it far harder than a Don. And the two microphones hear the
+bottom of it in common and the top of it independently, because a wavelength
+long against their spacing arrives at both alike and a short one does not —
+which is why opening the pair now widens the drum's air and not merely its
+partials.
 
 ### Why a stroke does not end as a sine
 

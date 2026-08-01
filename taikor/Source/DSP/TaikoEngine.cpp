@@ -36,7 +36,12 @@ constexpr float maximumTension = 22000.0f;
 constexpr float tensionFloor = 3.0f;
 constexpr float tensionCeiling = 3.0e7f;
 constexpr float radiusFloor = 0.008f;
-constexpr float radiusCeiling = 2.50f;
+// The largest radius the geometry may resolve to. It has to clear the widest
+// head the control offers, taken to the bottom of the keyboard with the octave
+// bought entirely by size: 1.80 m across, halved to a radius, times four for two
+// octaves down, is 3.6 m. Clamping below that would stop the bottom octaves
+// being octaves - they would come out 1.39x apart rather than 2x.
+constexpr float radiusCeiling = 3.75f;
 
 // The bachi. A taiko stick is a heavy piece of hardwood; the hardness control
 // moves the Hertz contact stiffness across three orders of magnitude, from a
@@ -91,6 +96,18 @@ constexpr float maximumStickScale = 2.00f;
 // role as shellCalibration: the model has the stick's radiating area and modal
 // mass, but not the directivity of a small cylinder held over a drum.
 constexpr float stickCalibration = 150.0f;
+
+// The head's high-frequency continuum. The first band sits just above the
+// highest resolved mode and each one after it is an octave up; the bandwidth is
+// wide enough that neighbouring bands overlap into a continuous region rather
+// than reading as five separate whistles. The tilt is how fast the region falls
+// away with frequency, and the calibration is its overall weight against the
+// resolved bank - the one number here set against recordings of real drums
+// rather than derived.
+constexpr float continuumBandRatio = 2.0f;
+constexpr float continuumBandwidth = 1.35f;
+constexpr float continuumTilt = 0.6f;
+constexpr float continuumCalibration = 600.0f;
 
 // Impact speed in m/s at the softest and hardest MIDI velocity.
 constexpr float minimumImpactSpeed = 0.45f;
@@ -601,6 +618,15 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.tensionEnvelope = 0.0f;
     voice.appliedTensionShift = 1.0f;
     voice.noiseBandState = 0.0f;
+    for (auto& band : voice.continuum)
+    {
+        band.envelope = 0.0f;
+        band.level = 0.0f;
+        band.lowStateLeft = 0.0f;
+        band.highStateLeft = 0.0f;
+        band.lowStateRight = 0.0f;
+        band.highStateRight = 0.0f;
+    }
     for (auto& mode : voice.modes)
     {
         mode.resonator.clear();
@@ -1009,6 +1035,9 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
     int count = 0;
     float peakMagnitude = 1.0e-12f;
+    // The head's own share of that, which is what the high-frequency continuum
+    // is measured against.
+    float membranePeak = 1.0e-12f;
 
     // A real head is never quite uniform, so each degenerate pair sits a
     // fraction of a percent apart and beats. That asymmetry is a property of
@@ -1146,6 +1175,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
                 peakMagnitude = std::max (peakMagnitude,
                                           std::abs (mode.drive * mode.micLeft));
+                membranePeak = std::max (membranePeak,
+                                         std::abs (mode.drive * mode.micLeft));
             }
         }
         else
@@ -1236,6 +1267,10 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                     peakMagnitude,
                     std::max (std::abs (mode.drive * mode.micLeft),
                               std::abs (mode.drive * mode.micRight)));
+                membranePeak = std::max (
+                    membranePeak,
+                    std::max (std::abs (mode.drive * mode.micLeft),
+                              std::abs (mode.drive * mode.micRight)));
             }
         }
     }
@@ -1321,6 +1356,120 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     }
 
     voice.modeCount = count;
+
+    // The head's high-frequency continuum. The resolved bank stops at the
+    // highest Bessel zero in the table, which on a large drum is only a few
+    // hundred hertz; a real head goes on having modes for another five octaves
+    // above that, packed far closer together than their own bandwidths. Nobody
+    // hears those individually - what reaches the ear is a shaped burst that
+    // empties from the top down - so they are modelled as bands of noise rather
+    // than as several hundred more resonators.
+    //
+    // The bands start above the resolved bank and climb by octaves. Each one
+    // carries the head's own loss law, so the top of the drum goes first
+    // exactly as it does in the resolved region, and each is lit by the same
+    // contact the modes are, so a harder and therefore shorter stroke reaches
+    // further up - the v^(-1/5) contact law arriving by a third route.
+    {
+        float highestResolved = 0.0f;
+        for (int index = 0; index < count; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (mode.membrane)
+                highestResolved = std::max (highestResolved,
+                                            mode.omega / (2.0f * piFloat));
+        }
+
+        const float first = std::max (highestResolved * 1.25f, 120.0f);
+
+        // Short wavelengths live at the edge. The high-order mode shapes pile
+        // up against the rim, so a stroke out there couples into the continuum
+        // far harder than one over the middle - which is the same reason a Ka
+        // is bright and a Don is not, carried into the region the resolved bank
+        // cannot represent. A shot that catches the hoop is brighter still.
+        const float edgeBoost = 0.55f + 0.95f * rho + 0.85f * profile.rimGain;
+        for (int band = 0; band < continuumBandCount; ++band)
+        {
+            auto& entry = voice.continuum[static_cast<std::size_t> (band)];
+            const float centre =
+                first * std::pow (continuumBandRatio, static_cast<float> (band));
+
+            if (centre >= nyquist * 0.9f || profile.membraneGain <= 0.0f)
+            {
+                entry.level = 0.0f;
+                entry.envelope = 0.0f;
+                continue;
+            }
+
+            // A one-pole pair either side of the centre. Wide on purpose: this
+            // is a region of the spectrum, not a partial.
+            const float low = centre / continuumBandwidth;
+            const float high = centre * continuumBandwidth;
+            entry.lowCoefficient =
+                1.0f - std::exp (-2.0f * piFloat * std::min (low, nyquist * 0.9f) / rate);
+            entry.highCoefficient =
+                1.0f - std::exp (-2.0f * piFloat * std::min (high, nyquist * 0.9f) / rate);
+            entry.centre = centre;
+            entry.lowStateLeft = 0.0f;
+            entry.highStateLeft = 0.0f;
+            entry.lowStateRight = 0.0f;
+            entry.highStateRight = 0.0f;
+
+            // Two microphones a fixed distance apart hear a long wavelength in
+            // common and a short one independently. The crossover is where the
+            // wavelength matches the spacing, so the bottom of the continuum
+            // arrives as one signal and the top as two - which is also why
+            // opening the pair widens the drum's air rather than just its
+            // partials.
+            const float separation =
+                2.0f * drum.micRadius
+                * std::abs (std::sin (0.5f * (micAngleL - micAngleR)));
+            const float correlation =
+                std::exp (-2.0f * separation * centre / soundSpeed);
+            entry.common = std::sqrt (clampFloat (correlation, 0.0f, 1.0f));
+            entry.independent = std::sqrt (1.0f - entry.common * entry.common);
+
+            const float omega = 2.0f * piFloat * centre;
+            const float decay = 0.5f * drum.headLossFactor * omega
+                                    * (1.0f + 1.5f * extraDamping)
+                              + drum.edgeLoss;
+            entry.envelopeDecay = std::exp (-decay / rate);
+            entry.envelope = 1.0f;
+
+            // Falling with frequency, so the region joins onto the top of the
+            // resolved bank rather than sitting on it as a shelf.
+            const float tilt = std::pow (first / centre, continuumTilt);
+            // Two one-poles differenced make a band-pass, but a weak one: most
+            // of the noise's energy is thrown away and what survives depends on
+            // where the band sits against the sample rate. Normalising by the
+            // filter's own output variance means the calibration below sets a
+            // level rather than an accident of the geometry.
+            //
+            // For y[n] = (1-c) y[n-1] + c x[n] driven by white noise, the
+            // variance is c/(2-c), and two of them on the same input covary as
+            // c1 c2 / (1 - p1 p2).
+            const float poleLow = 1.0f - entry.lowCoefficient;
+            const float poleHigh = 1.0f - entry.highCoefficient;
+            const float varianceLow =
+                entry.lowCoefficient / (2.0f - entry.lowCoefficient);
+            const float varianceHigh =
+                entry.highCoefficient / (2.0f - entry.highCoefficient);
+            const float covariance = entry.lowCoefficient * entry.highCoefficient
+                                   / std::max (1.0f - poleLow * poleHigh, 1.0e-6f);
+            const float variance =
+                std::max (varianceLow + varianceHigh - 2.0f * covariance, 1.0e-9f);
+
+            // Relative to the resolved bank; trigger() scales the whole set by
+            // the force of the stroke, exactly as the modes are scaled by the
+            // excitation they are driven with.
+            // Against the head's own drive, not the whole bank's. The
+            // continuum is the head going on above where its modes can be told
+            // apart, so a stroke that is loud because it caught the hoop and
+            // rang the body must not drag it up with them.
+            entry.level = continuumCalibration * profile.membraneGain * edgeBoost
+                        * tilt * membranePeak / std::sqrt (variance);
+        }
+    }
 
     // How long each mode stays above the retirement floor, so the render loop
     // can drop them as they go. A drum starts with everything ringing and ends
@@ -1583,8 +1732,25 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     buildVoiceModes (voice, drum, stick, profile, extraDamping);
 
     const float noiseLevel = applied_.strikeNoise * profile.noiseGain * 0.35f;
-    scheduleContacts (voice, profile, contactSeconds, peakForce * profile.levelScale,
-                      noiseLevel);
+    const float excitationScale = peakForce * profile.levelScale;
+    scheduleContacts (voice, profile, contactSeconds, excitationScale, noiseLevel);
+
+    // The continuum was built against the resolved bank's drive; the modes are
+    // then driven by the contact, so the continuum has to be scaled by the same
+    // force to sit where it belongs against them.
+    //
+    // And shaded by how long that contact lasted. A force pulse of duration tau
+    // has no useful content much above 1/tau, so a soft stroke - which rests on
+    // the head nearly twice as long - simply cannot reach the top of the
+    // continuum, while a hard one lights all of it. This is the same v^(-1/5)
+    // contact law that shortens the pulse and brightens the resolved modes,
+    // finally reaching the region where most of the brightness actually lives.
+    const float corner = 1.0f / std::max (contactSeconds, 1.0e-5f);
+    for (auto& band : voice.continuum)
+    {
+        const float ratio = band.centre / corner;
+        band.level *= excitationScale / (1.0f + ratio * ratio);
+    }
 
     // Contact noise is stick and hide texture, so it sits an octave or so
     // above the drum and follows how sharp the contact was.
@@ -1728,15 +1894,22 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         const float frequency = mode.omega * shift / (2.0f * piFloat);
         if (frequency >= nyquist * 0.98f || ! (frequency > 0.0f))
         {
-            mode.resonator.a1 = 0.0f;
-            mode.resonator.a2 = 0.0f;
-            mode.resonator.b0 = 0.0f;
+            mode.resonator.a1 = 0.0;
+            mode.resonator.a2 = 0.0;
+            mode.resonator.b0 = 0.0;
             continue;
         }
 
-        const float omega = 2.0f * piFloat * frequency / rate;
-        const float poleRadius = std::exp (-mode.decayRate / rate);
-        mode.resonator.a1 = -2.0f * poleRadius * std::cos (omega);
+        // In double, exactly as configureResonator does it. This path runs on
+        // every stroke that has any Tension Mod at all - which is the default -
+        // and again on every wheel move and Pitch automation step, so rounding
+        // the coefficients here would put the mistuning straight back after the
+        // careful build.
+        const auto omega = 2.0 * static_cast<double> (piFloat)
+                         * static_cast<double> (frequency) / sampleRate_;
+        const auto poleRadius = std::exp (-static_cast<double> (mode.decayRate)
+                                          / sampleRate_);
+        mode.resonator.a1 = -2.0 * poleRadius * std::cos (omega);
         mode.resonator.a2 = poleRadius * poleRadius;
         mode.resonator.b0 = std::sin (omega);
     }
@@ -1860,6 +2033,31 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
     // damp what it is actually touching.
     float membraneLeft = 0.0f;
     float membraneRight = 0.0f;
+
+    // The head's high-frequency continuum: everything above the resolved bank,
+    // as bands of noise gated by the strike and decaying from the top down. It
+    // is part of the head, so it is summed with the head and damped with it.
+    for (auto& band : voice.continuum)
+    {
+        if (band.envelope <= 1.0e-5f || band.level <= 0.0f)
+            continue;
+
+        const float shared = nextNoise (voice.noiseState);
+        const float sideLeft = nextNoise (voice.noiseState);
+        const float sideRight = nextNoise (voice.noiseState);
+        const float inLeft = band.common * shared + band.independent * sideLeft;
+        const float inRight = band.common * shared + band.independent * sideRight;
+
+        band.lowStateLeft += band.lowCoefficient * (inLeft - band.lowStateLeft);
+        band.highStateLeft += band.highCoefficient * (inLeft - band.highStateLeft);
+        band.lowStateRight += band.lowCoefficient * (inRight - band.lowStateRight);
+        band.highStateRight += band.highCoefficient * (inRight - band.highStateRight);
+
+        const float gain = band.level * band.envelope;
+        band.envelope *= band.envelopeDecay;
+        membraneLeft += (band.highStateLeft - band.lowStateLeft) * gain;
+        membraneRight += (band.highStateRight - band.lowStateRight) * gain;
+    }
 
     for (int index = 0; index < voice.activeModeCount; ++index)
     {

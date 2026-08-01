@@ -258,7 +258,7 @@ TaikorAudioProcessor::createParameterLayout()
         // shot on the largest drum - sits about 9.7 dB above unity, so this
         // default is chosen to leave that stroke just under full scale rather
         // than to make a middling stroke as loud as possible.
-        juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -10.0f,
+        juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -22.0f,
         juce::AudioParameterFloatAttributes()
             .withLabel ("dB")
             .withStringFromValueFunction ([] (float value, int)

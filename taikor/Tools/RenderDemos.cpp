@@ -209,7 +209,11 @@ private:
 EngineParameters nagadoVoicing()
 {
     EngineParameters parameters;
-    parameters.outputGain = 0.20f;
+    // Well below the plug-in's own default. The head's high-frequency
+    // continuum put a great deal more into every stroke than the resolved bank
+    // alone did, and the loudest takes reached the limiter at the level that
+    // used to be safe.
+    parameters.outputGain = 0.02f;
     return parameters;
 }
 

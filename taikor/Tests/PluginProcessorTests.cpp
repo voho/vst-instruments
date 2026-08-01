@@ -195,7 +195,7 @@ void testParameterLayoutAndDefaults()
         { pids::strikeNoise, 0.35f },    { pids::humanise, 0.4f },
         { pids::octaveBody, 0.7f },      { pids::micDistance, 16.0f },
         { pids::micSpread, 0.55f },      { pids::stereoWidth, 0.5f },
-        { pids::drive, 0.0f },           { pids::output, -10.0f },
+        { pids::drive, 0.0f },           { pids::output, -22.0f },
     }};
 
     for (const auto& [id, expected] : expectedDefaults)
@@ -211,7 +211,7 @@ void testParameterLayoutAndDefaults()
                 < 1.0e-3f,
             "mic distance must reach the engine normalised");
     expect (std::abs (engineParameters.outputGain
-                      - juce::Decibels::decibelsToGain (-10.0f)) < 1.0e-4f,
+                      - juce::Decibels::decibelsToGain (-22.0f)) < 1.0e-4f,
             "output must reach the engine as a linear gain");
 
     // The default drum must be the o-daiko the documentation describes. This

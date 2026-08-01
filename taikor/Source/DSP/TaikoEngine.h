@@ -165,7 +165,7 @@ struct EngineParameters
     // Gentle output-stage saturation, 0 = exactly bypassed.
     float drive { 0.0f };
     // Linear output gain.
-    float outputGain { 0.5f };
+    float outputGain { 0.07943f };
 };
 
 // Snapshot of the drum for the editor's head display. Produced on the audio
@@ -273,6 +273,17 @@ private:
     static constexpr int shellResonatorCount = 6;
     static constexpr int resonatorCount =
         membraneResonatorCount + shellResonatorCount;
+    // Bands of the head's high-frequency modal continuum. Above a few hundred
+    // hertz a struck membrane has far more modes than can usefully be resolved
+    // one at a time - the spacing falls below their own bandwidth and the
+    // response stops being a set of peaks and becomes statistical. Resolving
+    // that region mode by mode would need hundreds of resonators; what it
+    // actually sounds like is a shaped noise burst that decays faster the
+    // higher it sits, which is what these bands are. Without them the model
+    // simply stopped at its highest resolved mode and the drum had no body
+    // above about three hundred hertz at all.
+    static constexpr int continuumBandCount = 5;
+
     // Free-free bending modes of one bachi, used by the stick-on-stick stroke.
     // It borrows the shell's slots in the bank because the two never sound
     // together, but it is a separate count so that changing one bank's size
@@ -398,6 +409,32 @@ private:
         float contactNoiseAmplitude { 0.0f };
         float noiseBandState { 0.0f };
         float noiseBandCoefficient { 0.5f };
+
+        // One band of the continuum: noise through a one-pole band-pass, under
+        // its own decaying envelope. It belongs to the head, so the hand damps
+        // it along with the resolved modes.
+        struct ContinuumBand
+        {
+            float lowStateLeft { 0.0f };
+            float highStateLeft { 0.0f };
+            float lowStateRight { 0.0f };
+            float highStateRight { 0.0f };
+            float lowCoefficient { 0.5f };
+            float highCoefficient { 0.5f };
+            float level { 0.0f };
+            float envelope { 0.0f };
+            float envelopeDecay { 0.99f };
+            // Kept so the strike can shade the band by how long the stick
+            // stayed on the head: a short contact reaches further up.
+            float centre { 0.0f };
+            // How much of the band the two microphones hear in common. A
+            // wavelength long against the spacing arrives at both alike; one
+            // short against it does not, so the top of the continuum is very
+            // nearly two independent signals and the bottom is one.
+            float common { 1.0f };
+            float independent { 0.0f };
+        };
+        std::array<ContinuumBand, continuumBandCount> continuum {};
 
         // Attack pitch glide. The head is stretched by the stroke, so its
         // tension - and every mode with it - starts sharp and settles.
