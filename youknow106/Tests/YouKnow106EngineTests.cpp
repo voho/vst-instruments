@@ -460,6 +460,74 @@ void testLoweringTheVoiceCountLetsNotesFinish()
            "raising the voice count resumed a stale note");
 }
 
+void testTransposeReachesSoundingVoices()
+{
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    engine.setParameters(parameters);
+    engine.noteOn(69, 1.0f);
+    render(engine, static_cast<int>(sampleRate * 0.3));
+
+    // Moving the transpose control has to take a note that is already sounding
+    // with it, not wait for the next keypress.
+    parameters.keyTranspose = 12;
+    engine.setParameters(parameters);
+    const auto rendered = render(engine, static_cast<int>(sampleRate * 0.5));
+    expectNear(measuredFrequency(rendered.left, rendered.left.size() / 2, sampleRate),
+               880.0, 3.0,
+               "transposing while a note was held left it at its old pitch");
+}
+
+void testFirstGlidedNoteStartsAtItsOwnPitch()
+{
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.portamento = 1.0f;  // the slowest glide there is
+    engine.setParameters(parameters);
+
+    // With nothing to glide from, the first note must simply be at its pitch.
+    // Starting it wherever the voice happened to be constructed would make it
+    // crawl there over several seconds.
+    engine.noteOn(72, 1.0f);
+    const auto rendered = render(engine, static_cast<int>(sampleRate * 0.4));
+    expectNear(measuredFrequency(rendered.left, rendered.left.size() / 2, sampleRate),
+               523.25, 4.0,
+               "the first note under portamento glided from somewhere else");
+}
+
+void testVoicesRetireWithComponentToleranceApplied()
+{
+    // A voice card's own amplifier offset can sit above any small raw control
+    // threshold while still being inside the converter's deadband. Such a voice
+    // is silent, and it has to retire, or it would be processed forever and
+    // would block a deferred quality change.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.calibration = 1.0f;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    for (int note = 60; note < 66; ++note)
+        engine.noteOn(note, 1.0f);
+    render(engine, 8192);
+    expect(engine.getActiveVoiceCount() == 6, "six keys did not take six voices");
+
+    for (int note = 60; note < 66; ++note)
+        engine.noteOff(note);
+    render(engine, static_cast<int>(48000.0 * 2.0));
+    expect(engine.getActiveVoiceCount() == 0,
+           "voices with a component tolerance offset never retired");
+
+    // And with nothing left running, a deferred quality change can apply.
+    expect(engine.setOversamplingEnabled(false),
+           "a quality change stayed deferred with no voice sounding");
+}
+
 void testEnvelopeAndGateModes()
 {
     constexpr double sampleRate = 48000.0;
@@ -588,13 +656,42 @@ void testSampleRateAndOversamplingConsistency()
     YouKnow106Engine engine;
     engine.prepare(48000.0, blockSize, true);
     expect(engine.getOversamplingFactor() == 4, "48 kHz does not run oversampled");
-    expect(engine.getProcessingLatencySamples() > 0,
-           "an oversampled engine reports no latency");
+    const int reported = engine.getProcessingLatencySamples();
+    expect(reported > 0, "an oversampled engine reports no latency");
+
+    // The reported figure has to stay put across every configuration: the
+    // quality setting can move while the host is playing, and a plug-in that
+    // renegotiated its latency mid-transport would make the host re-align
+    // everything around it.
     engine.prepare(192000.0, blockSize, true);
     expect(engine.getOversamplingFactor() == 1,
            "a high-rate host is oversampled unnecessarily");
-    expect(engine.getProcessingLatencySamples() == 0,
-           "a native-rate engine reports latency");
+    expect(engine.getProcessingLatencySamples() == reported,
+           "the reported latency moved with the oversampling factor");
+    engine.prepare(48000.0, blockSize, false);
+    expect(engine.getProcessingLatencySamples() == reported,
+           "the reported latency moved when oversampling was switched off");
+
+    // And the shallower configurations must actually be padded out to it,
+    // otherwise the constant figure would be a lie the host acts on.
+    const auto onsetOffset = [](bool oversampled) {
+        YouKnow106Engine local;
+        local.prepare(48000.0, blockSize, oversampled);
+        auto parameters = plainPatch();
+        parameters.attack = 0.0f;
+        local.setParameters(parameters);
+        local.noteOn(60, 1.0f);
+        const auto rendered = render(local, 4096);
+        for (std::size_t index = 0; index < rendered.left.size(); ++index)
+            if (std::abs(rendered.left[index]) > 1.0e-4f)
+                return static_cast<int>(index);
+        return -1;
+    };
+    const int deep = onsetOffset(true);
+    const int shallow = onsetOffset(false);
+    expect(deep >= 0 && shallow >= 0, "a configuration produced no onset at all");
+    expect(std::abs(deep - shallow) <= 2,
+           "the two configurations do not share an onset, so the padding is wrong");
 }
 
 void testDeterminismAndSilence()
@@ -821,6 +918,9 @@ int main()
     testKeyAssignerDropsRatherThanSteals();
     testPolyModesDifferInAllocation();
     testUnisonUsesEveryVoiceWithoutDetuning();
+    testTransposeReachesSoundingVoices();
+    testFirstGlidedNoteStartsAtItsOwnPitch();
+    testVoicesRetireWithComponentToleranceApplied();
     testUnisonReturnsToAHeldKey();
     testAllNotesOffReleasesRatherThanCutting();
     testLoweringTheVoiceCountLetsNotesFinish();

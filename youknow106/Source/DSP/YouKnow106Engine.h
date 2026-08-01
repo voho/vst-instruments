@@ -199,6 +199,7 @@ private:
     static constexpr int controlPeriod = 8;
     static constexpr int halfbandTaps = 63;
     static constexpr int halfbandRingSize = 128;
+    static constexpr int latencyPadRingSize = 64;
 
     // --- Modelled hardware constants ---------------------------------------
 
@@ -452,6 +453,15 @@ private:
     void updateVoiceCardDrift(VoiceCard& card) noexcept;
     void updateProcessingRate() noexcept;
     bool applyPendingOversamplingIfIdle() noexcept;
+    // Padding that keeps the reported latency constant. Reporting a different
+    // figure when the quality setting changes would make the host renegotiate
+    // its compensation mid-transport, so the shallower configurations are
+    // padded out to the deepest one's group delay instead.
+    void applyLatencyPad(float& left, float& right) noexcept;
+    // Group delay of the whole chain for an oversampling factor, in output
+    // samples: the bandlimiting tracks' own delay, which runs at the internal
+    // rate, plus each decimation stage's.
+    [[nodiscard]] static double totalLatencySamples(int factor) noexcept;
     void downsamplePair(HalfbandDecimator& decimator,
                         float firstLeft, float firstRight,
                         float secondLeft, float secondRight,
@@ -485,7 +495,6 @@ private:
     // rather than a continuous triangle.
     int lfoScanCountdown_ { 0 };
     float lfoDelayHoldoff_ { 0.0f };
-    bool lfoDelayArmed_ { true };
     bool anyKeyDown_ { false };
 
     // One noise generator serves every voice, so noise sums coherently as more
@@ -516,6 +525,10 @@ private:
     std::array<float, halfbandTaps> halfbandKernel_ {};
     std::array<float, correctionTableLength> stepResidual_ {};
     std::array<float, correctionTableLength> slopeResidual_ {};
+    std::array<float, latencyPadRingSize> latencyPadLeft_ {};
+    std::array<float, latencyPadRingSize> latencyPadRight_ {};
+    int latencyPadWriteIndex_ { 0 };
+    int latencyPadSamples_ { 0 };
 
     int driftControlCountdown_ { 0 };
 

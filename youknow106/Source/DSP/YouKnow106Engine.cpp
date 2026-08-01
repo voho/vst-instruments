@@ -765,6 +765,14 @@ void YouKnow106Engine::updateProcessingRate() noexcept
 
     oversampledRate_ = sampleRate_ * oversampling_;
     inverseOversampledRate_ = static_cast<float>(1.0 / oversampledRate_);
+    const double deepest = totalLatencySamples(maximumOversampleFactor);
+    const double running = totalLatencySamples(oversampling_);
+    latencyPadSamples_ = std::clamp(
+        static_cast<int>(std::floor(deepest - running + 0.5)),
+        0, latencyPadRingSize - 1);
+    latencyPadLeft_.fill(0.0f);
+    latencyPadRight_.fill(0.0f);
+    latencyPadWriteIndex_ = 0;
     chorus_.prepare(oversampledRate_);
     dcCoefficient_ = static_cast<float>(
         std::exp(-2.0 * 3.14159265358979323846 * 12.0 / oversampledRate_));
@@ -791,18 +799,45 @@ bool YouKnow106Engine::applyPendingOversamplingIfIdle() noexcept
     return true;
 }
 
+double YouKnow106Engine::totalLatencySamples(int factor) noexcept
+{
+    const int limited = std::max(1, factor);
+    // The oscillator's residual tracks delay by their own half width, and that
+    // delay is in internal samples -- so it shrinks, in output samples, as the
+    // factor grows, while the decimators' delay grows. Both have to be counted,
+    // or the two configurations do not line up.
+    double latency = static_cast<double>(correctionHalfWidth)
+                   / static_cast<double>(limited);
+    constexpr double half = (halfbandTaps - 1) / 2.0;
+    for (int step = limited; step > 1; step /= 2)
+        latency += half / static_cast<double>(step);
+    return latency;
+}
+
 int YouKnow106Engine::getProcessingLatencySamples() const noexcept
 {
-    if (oversampling_ <= 1)
-        return 0;
+    // Always the deepest configuration's figure, whatever is running. The
+    // quality setting can change while the host is playing, and a plug-in that
+    // renegotiated its latency mid-transport would make the host re-align
+    // everything around it; padding the shallower settings costs half a
+    // millisecond and keeps the number the host was told true.
+    return static_cast<int>(
+        std::floor(totalLatencySamples(maximumOversampleFactor) + 0.5));
+}
 
-    // Each decimation stage contributes its own group delay, measured at the
-    // rate that stage runs at and expressed in output samples.
-    constexpr double half = (halfbandTaps - 1) / 2.0;
-    double latency = 0.0;
-    for (int factor = oversampling_; factor > 1; factor /= 2)
-        latency += half / static_cast<double>(factor);
-    return static_cast<int>(std::floor(latency + 0.5));
+void YouKnow106Engine::applyLatencyPad(float& left, float& right) noexcept
+{
+    if (latencyPadSamples_ <= 0)
+        return;
+
+    latencyPadLeft_[static_cast<std::size_t>(latencyPadWriteIndex_)] = left;
+    latencyPadRight_[static_cast<std::size_t>(latencyPadWriteIndex_)] = right;
+    const int readIndex =
+        (latencyPadWriteIndex_ - latencyPadSamples_ + latencyPadRingSize)
+        % latencyPadRingSize;
+    left = latencyPadLeft_[static_cast<std::size_t>(readIndex)];
+    right = latencyPadRight_[static_cast<std::size_t>(readIndex)];
+    latencyPadWriteIndex_ = (latencyPadWriteIndex_ + 1) % latencyPadRingSize;
 }
 
 void YouKnow106Engine::reset()
@@ -826,7 +861,15 @@ void YouKnow106Engine::reset()
     lfoPhase_ = 0.0f;
     lfoValue_ = 0.0f;
     lfoDelayLevel_ = 0.0f;
+    // The hold has to go with the level: a note arriving at the very first
+    // sample of a new run gives the scan no idle pass in which to clear it, so
+    // a hold left over from the previous run would be skipped.
+    lfoDelayHoldoff_ = 0.0f;
+    lfoScanCountdown_ = 0;
     anyKeyDown_ = false;
+    latencyPadLeft_.fill(0.0f);
+    latencyPadRight_.fill(0.0f);
+    latencyPadWriteIndex_ = 0;
     noiseState_ = 0x6d2b79f5u;
     pitchBend_ = pitchBendTarget_;
     modWheel_ = modWheelTarget_;
@@ -1058,9 +1101,13 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     const float secondsPerOctave = portamentoSeconds(parameters.portamento);
     if (secondsPerOctave > 0.0f)
     {
-        if (!wasSounding && hasLastPlayedMidi_)
-            voice.currentMidi = lastPlayedMidi_
-                              + static_cast<float>(parameters.keyTranspose);
+        // With nothing to glide from, the note starts where it is asked to.
+        // Leaving the voice at its constructed pitch would make the first note
+        // of a session crawl up from middle C.
+        if (!wasSounding)
+            voice.currentMidi = hasLastPlayedMidi_
+                ? lastPlayedMidi_ + static_cast<float>(parameters.keyTranspose)
+                : target;
         // Constant rate in pitch: a wider leap takes proportionally longer,
         // rather than every glide finishing in the same time.
         voice.glideSemitonesPerScan = static_cast<float>(
@@ -1303,7 +1350,6 @@ void YouKnow106Engine::advanceLfo(const EngineParameters& parameters) noexcept
 
     if (!anyKeyDown_ && !anyVoiceActive_)
     {
-        lfoDelayArmed_ = true;
         lfoDelayHoldoff_ = 0.0f;
         lfoDelayLevel_ = total > 1.0e-4f ? 0.0f : 1.0f;
     }
@@ -1313,7 +1359,6 @@ void YouKnow106Engine::advanceLfo(const EngineParameters& parameters) noexcept
     }
     else
     {
-        lfoDelayArmed_ = false;
         if (lfoDelayHoldoff_ < holdoff)
             lfoDelayHoldoff_ += scanPeriod;
         else if (fade > 1.0e-4f)
@@ -1364,6 +1409,11 @@ void YouKnow106Engine::updateVoiceScan(Voice& voice,
     const float envelope = voice.envelope.value;
 
     // --- Pitch ------------------------------------------------------------
+    // Recomputed from the key rather than cached at note-on, so moving the
+    // transpose control takes a held note with it.
+    if (voice.rootMidi >= 0)
+        voice.targetMidi = static_cast<float>(voice.rootMidi + parameters.keyTranspose);
+
     if (voice.glideSemitonesPerScan > 0.0f)
     {
         const float distance = voice.targetMidi - voice.currentMidi;
@@ -1516,6 +1566,12 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // and again when the reset drags it back down past it.
     const double duty = std::clamp(static_cast<double>(voice.pulseWidth), 0.05, 0.95);
     const double riseEdge = rise * (1.0 - duty);
+
+    // Three edges can fall inside one sample at a high pitch with a wide pulse:
+    // this cycle's threshold crossing, the reset, and the next cycle's
+    // threshold crossing on the far side of the wrap. Taking them in order
+    // matters -- handling only the first would hold the comparator low for a
+    // whole period and drop it an octave.
     if (previousPhase < riseEdge && unwrapped >= riseEdge && dco.pulseState < 0.0f)
     {
         addStep(dco.pulse, 2.0f, samplesAgo(riseEdge));
@@ -1525,6 +1581,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     {
         addStep(dco.pulse, -2.0f, samplesAgo(rise));
         dco.pulseState = -1.0f;
+    }
+    if (wrapped && phase >= riseEdge && dco.pulseState < 0.0f)
+    {
+        addStep(dco.pulse, 2.0f, samplesAgo(1.0 + riseEdge));
+        dco.pulseState = 1.0f;
     }
     const float pulseOut = dco.pulse.advance(dco.pulseState) * pulseMixVolts;
 
@@ -1703,9 +1764,14 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 mono += renderVoice(voice, parameters, noiseSample);
                 loudestEnvelope = std::max(loudestEnvelope, voice.envelope.value);
 
+                // Retire on the amplifier actually being shut. A voice card's
+                // own control offset can sit above any small raw threshold yet
+                // still be inside the converter's deadband, in which case the
+                // voice is silent but would never be retired -- it would be
+                // processed forever and would block a deferred quality change.
                 if (voice.envelope.stage == EnvelopeStage::Idle
                     && !voice.keyDown && !voice.sustained
-                    && voice.vcaControl < 1.0e-4f)
+                    && vcaGain(voice.vcaControl) <= 0.0f)
                     silenceVoice(voice);
             }
 
@@ -1753,6 +1819,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             outputLeft = stageLeft[0];
             outputRight = stageRight[0];
         }
+
+        applyLatencyPad(outputLeft, outputRight);
 
         const float volume = parameters.volume * parameters.volume;
         left[sample] = std::isfinite(outputLeft) ? outputLeft * volume : 0.0f;

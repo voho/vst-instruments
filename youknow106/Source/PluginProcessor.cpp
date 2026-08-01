@@ -371,12 +371,12 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         discardUiMidiEvents();
     }
 
-    if (engine.setOversamplingEnabled (valueOf (youknow106::parameters::hq) > 0.5f))
-    {
-        const int latency = engine.getProcessingLatencySamples();
-        if (latency != getLatencySamples())
-            setLatencySamples (latency);
-    }
+    // The engine reports one latency for every configuration and pads the
+    // shallower ones out to it, so the quality setting can change here without
+    // the host having to be told anything. Calling setLatencySamples from the
+    // audio callback would be a notification into host code that is free to
+    // lock or allocate.
+    engine.setOversamplingEnabled (valueOf (youknow106::parameters::hq) > 0.5f);
     displayOversamplingFactor.store (engine.getOversamplingFactor(),
                                      std::memory_order_relaxed);
 
