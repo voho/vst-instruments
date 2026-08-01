@@ -97,6 +97,10 @@ public:
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
+    // Releases every sounding key through the normal envelope path, as a
+    // controller asking for all notes off means. `allNotesOff` is the hard
+    // stop, for all-sound-off and for panic.
+    void releaseAllNotes();
     void allNotesOff();
     // The bender lever: left/right bends pitch, and sweeps the filter when the
     // VCF bender slider is up. Its separate LFO axis arrives as the mod wheel.
@@ -430,6 +434,9 @@ private:
     int findVoiceForNote(int midiNote) const noexcept;
     int allocateVoice(int midiNote) noexcept;
     void rememberHeldNote(int midiNote, float velocity) noexcept;
+    // Newest key still physically held, or -1.
+    [[nodiscard]] int newestHeldNote() const noexcept;
+    void retargetUnison(int midiNote) noexcept;
     void forgetHeldNote(int midiNote) noexcept;
     void clearHeldNotes() noexcept;
     // Called when the converter scan reaches this voice: everything the
@@ -464,7 +471,6 @@ private:
     int oversamplingIdleSamples_ { 0 };
     bool prepared_ { false };
     bool anyVoiceActive_ { false };
-    int idleZeroRun_ { 0 };
     int activeVoiceCount_ { 0 };
     std::uint64_t generation_ { 0 };
     int roundRobinCursor_ { 0 };

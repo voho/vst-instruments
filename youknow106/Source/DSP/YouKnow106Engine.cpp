@@ -835,7 +835,6 @@ void YouKnow106Engine::reset()
     roundRobinCursor_ = 0;
     activeVoiceCount_ = 0;
     anyVoiceActive_ = false;
-    idleZeroRun_ = 0;
     displayEnvelope_ = 0.0f;
     displayLfo_ = 0.0f;
     displayVoiceMask_ = 0;
@@ -935,6 +934,48 @@ void YouKnow106Engine::clearHeldNotes() noexcept
     heldNoteVelocities_.fill(0.0f);
     heldNoteCounts_.fill(0);
     heldNoteCount_ = 0;
+}
+
+int YouKnow106Engine::newestHeldNote() const noexcept
+{
+    int best = -1;
+    int newest = 0;
+    for (int note = 0; note < 128; ++note)
+        if (heldNoteCounts_[static_cast<std::size_t>(note)] > 0
+            && heldNoteOrder_[static_cast<std::size_t>(note)] > newest)
+        {
+            newest = heldNoteOrder_[static_cast<std::size_t>(note)];
+            best = note;
+        }
+    return best;
+}
+
+// Unison is monophonic, so releasing the key that is sounding has to hand the
+// stack back to whichever key is still down rather than silencing everything.
+void YouKnow106Engine::retargetUnison(int midiNote) noexcept
+{
+    const int limit = voiceLimit();
+    const float velocity = heldNoteVelocities_[static_cast<std::size_t>(midiNote)];
+    for (int slot = 0; slot < limit; ++slot)
+    {
+        auto& voice = voices_[static_cast<std::size_t>(slot)];
+        if (!voice.active)
+            continue;
+        voice.rootMidi = midiNote;
+        voice.keyDown = true;
+        voice.sustained = false;
+        voice.releasing = false;
+        voice.velocity = velocity;
+        voice.targetMidi = static_cast<float>(midiNote + smoothedParameters_.keyTranspose);
+        // Returning to a key that was never let go is a legato move: the
+        // envelope keeps running rather than starting again.
+        if (voice.envelope.stage == EnvelopeStage::Release)
+            voice.envelope.stage = EnvelopeStage::Sustain;
+        if (voice.glideSemitonesPerScan <= 0.0f)
+            voice.currentMidi = voice.targetMidi;
+    }
+    lastPlayedMidi_ = static_cast<float>(midiNote);
+    hasLastPlayedMidi_ = true;
 }
 
 int YouKnow106Engine::findVoiceForNote(int midiNote) const noexcept
@@ -1120,20 +1161,49 @@ void YouKnow106Engine::noteOffInternal(int midiNote) noexcept
     if (heldNoteCounts_[static_cast<std::size_t>(midiNote)] > 0)
         return;
 
-    bool stillHeld = false;
-    for (const auto count : heldNoteCounts_)
-        if (count > 0)
+    const int remaining = newestHeldNote();
+    anyKeyDown_ = remaining >= 0;
+
+    if (smoothedParameters_.keyMode == KeyMode::Unison && remaining >= 0)
+    {
+        // Only the key that is actually sounding hands the stack on; releasing
+        // an older one that the stack has already left changes nothing.
+        bool sounding = false;
+        for (const auto& voice : voices_)
+            sounding = sounding || (voice.active && voice.rootMidi == midiNote);
+        if (sounding)
         {
-            stillHeld = true;
-            break;
+            retargetUnison(remaining);
+            return;
         }
-    anyKeyDown_ = stillHeld;
+    }
 
     for (auto& voice : voices_)
     {
         if (!voice.active || voice.rootMidi != midiNote || !voice.keyDown)
             continue;
 
+        voice.keyDown = false;
+        if (sustainPedalDown_)
+        {
+            voice.sustained = true;
+        }
+        else
+        {
+            voice.releasing = true;
+            voice.envelope.noteOff();
+        }
+    }
+}
+
+void YouKnow106Engine::releaseAllNotes()
+{
+    clearHeldNotes();
+    anyKeyDown_ = false;
+    for (auto& voice : voices_)
+    {
+        if (!voice.active || !voice.keyDown)
+            continue;
         voice.keyDown = false;
         if (sustainPedalDown_)
         {
@@ -1558,7 +1628,6 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
         1.0f - std::exp(-inverseOversampledRate_ / controlSlewSeconds);
     const int scanPeriodSamples =
         std::max(1, static_cast<int>(oversampledRate_ / controlScanHz));
-    const int limit = voiceLimit();
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -1581,8 +1650,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             if (--driftControlCountdown_ <= 0)
             {
                 driftControlCountdown_ = controlPeriod * 64;
-                for (int index = 0; index < limit; ++index)
-                    updateVoiceCardDrift(cards_[static_cast<std::size_t>(index)]);
+                for (auto& card : cards_)
+                    updateVoiceCardDrift(card);
             }
 
             // One noise generator feeds every voice, so noise grows as more
@@ -1596,7 +1665,10 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             float mono = 0.0f;
             float loudestEnvelope = 0.0f;
 
-            for (int slot = 0; slot < limit; ++slot)
+            // Every slot, not just the first `limit` of them. The voice count
+            // bounds what the key assigner may take; lowering it must stop new
+            // notes rather than freeze notes that are already sounding.
+            for (int slot = 0; slot < maxVoices; ++slot)
             {
                 auto& voice = voices_[static_cast<std::size_t>(slot)];
                 if (!voice.active)

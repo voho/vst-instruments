@@ -24,6 +24,15 @@ using namespace youknow106;
 
 int failures = 0;
 
+#if defined(__has_feature)
+constexpr bool sanitizerBuild = __has_feature(address_sanitizer)
+                             || __has_feature(undefined_behavior_sanitizer);
+#elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+constexpr bool sanitizerBuild = true;
+#else
+constexpr bool sanitizerBuild = false;
+#endif
+
 void expect(bool condition, const std::string& message)
 {
     if (!condition)
@@ -346,6 +355,109 @@ void testUnisonUsesEveryVoiceWithoutDetuning()
                                  rendered.left.end() }, 0);
     expectNear(20.0 * std::log10((late + 1e-12) / (early + 1e-12)), 0.0, 0.5,
                "unison voices are beating against one another");
+}
+
+void testUnisonReturnsToAHeldKey()
+{
+    // Unison is monophonic. Holding one key, pressing a second and releasing
+    // the second must hand the stack back to the first, not silence it.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Unison;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    render(engine, 4096);
+    engine.noteOn(64, 1.0f);
+    render(engine, 4096);
+    engine.noteOff(64);
+    const auto rendered = render(engine, static_cast<int>(48000.0 * 0.5));
+
+    expect(engine.getActiveVoiceCount() == 6,
+           "releasing the newer unison key silenced the key still held");
+    expect(peakOf(rendered.left, rendered.left.size() / 2) > 0.01,
+           "the unison stack fell silent with a key still down");
+
+    const auto frequency = measuredFrequency(rendered.left, rendered.left.size() / 2,
+                                             48000.0);
+    expectNear(frequency, 261.6, 4.0,
+               "the unison stack did not return to the key still held");
+
+    // Releasing an older key the stack has already left must change nothing.
+    engine.noteOn(67, 1.0f);
+    render(engine, 4096);
+    engine.noteOff(60);
+    const auto after = render(engine, static_cast<int>(48000.0 * 0.5));
+    expectNear(measuredFrequency(after.left, after.left.size() / 2, 48000.0),
+               392.0, 6.0,
+               "releasing a key the stack had left moved the sounding note");
+
+    engine.noteOff(67);
+    render(engine, static_cast<int>(48000.0));
+    expect(engine.getActiveVoiceCount() == 0,
+           "the unison stack did not release when the last key was let go");
+}
+
+void testAllNotesOffReleasesRatherThanCutting()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.release = 0.75f;  // long enough that a cut would be obvious
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    render(engine, 8192);
+    engine.releaseAllNotes();
+    const auto tail = render(engine, 8192);
+    expect(peakOf(tail.left, 0) > 0.005,
+           "releasing all notes cut the sound instead of letting it ring");
+    expect(engine.getActiveVoiceCount() == 1,
+           "releasing all notes retired the voice immediately");
+
+    // The hard stop still is a hard stop. What remains afterwards is the
+    // output coupling settling, which decays on its own time constant and is
+    // not a voice -- so the claim is that it is far below the note, not that it
+    // is bit-exact zero.
+    const double sounding = peakOf(tail.left, 0);
+    engine.allNotesOff();
+    const auto silence = render(engine, 4096);
+    expect(engine.getActiveVoiceCount() == 0, "the hard stop left a voice active");
+    expect(peakOf(silence.left, silence.left.size() / 2) < sounding * 0.01,
+           "the hard stop left something sounding");
+}
+
+void testLoweringTheVoiceCountLetsNotesFinish()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.release = 0.5f;
+    engine.setParameters(parameters);
+
+    for (int note = 60; note < 66; ++note)
+        engine.noteOn(note, 1.0f);
+    render(engine, 4096);
+    expect(engine.getActiveVoiceCount() == 6, "six keys did not take six voices");
+
+    // Reducing the count must stop new allocations, not freeze the voices that
+    // are already sounding -- a frozen voice never retires and would come back
+    // audibly if the count were raised again.
+    parameters.polyphony = 2;
+    engine.setParameters(parameters);
+    for (int note = 60; note < 66; ++note)
+        engine.noteOff(note);
+    render(engine, static_cast<int>(48000.0 * 4.0));
+    expect(engine.getActiveVoiceCount() == 0,
+           "voices outside a reduced voice count never finished");
+
+    parameters.polyphony = 6;
+    engine.setParameters(parameters);
+    const auto after = render(engine, 8192);
+    expect(peakOf(after.left, 0) < 1.0e-4,
+           "raising the voice count resumed a stale note");
 }
 
 void testEnvelopeAndGateModes()
@@ -689,9 +801,14 @@ void testCpuBudget()
     const double realtimeRatio = elapsed.count() / 2.0;
 
     expect(peakOf(rendered.left, 0) > 0.0, "the benchmark patch produced silence");
-    expect(realtimeRatio < 1.0,
-           "six voices with the effect engaged cost more than realtime ("
-               + std::to_string(realtimeRatio) + "x)");
+    // Instrumentation costs roughly an order of magnitude, so an instrumented
+    // build cannot meet a realtime target. The CMake timeout already allows for
+    // that; a looser ceiling keeps the runaway guard without making sanitizer
+    // runs impossible.
+    const double ceiling = sanitizerBuild ? 12.0 : 1.0;
+    expect(realtimeRatio < ceiling,
+           "six voices with the effect engaged cost "
+               + std::to_string(realtimeRatio) + "x realtime");
 }
 } // namespace
 
@@ -704,6 +821,9 @@ int main()
     testKeyAssignerDropsRatherThanSteals();
     testPolyModesDifferInAllocation();
     testUnisonUsesEveryVoiceWithoutDetuning();
+    testUnisonReturnsToAHeldKey();
+    testAllNotesOffReleasesRatherThanCutting();
+    testLoweringTheVoiceCountLetsNotesFinish();
     testEnvelopeAndGateModes();
     testChorusWidthAndSilence();
     testChorusNoiseIsPresentAndDefeatable();

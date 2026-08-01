@@ -101,18 +101,25 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
     antiAliasState += antiAliasG * (input - antiAliasState);
     const float limited = antiAliasState;
 
-    clockPhase += static_cast<double>(clockHz) / static_cast<double>(sampleRate);
-    // A clock far above the host rate would need more than one shift per
-    // sample; bound the work rather than letting the loop run away.
+    const double increment =
+        static_cast<double>(clockHz) / static_cast<double>(sampleRate);
+    clockPhase += increment;
+    // A clock above the host rate needs more than one shift per sample, which
+    // is exactly what happens at 44.1 or 48 kHz with oversampling switched off;
+    // bound the work rather than letting the loop run away.
     int shifts = 0;
     while (clockPhase >= 1.0 && shifts < 8)
     {
         clockPhase -= 1.0;
         ++shifts;
 
-        // Resample the input onto the clock edge. The edge sits `clockPhase`
-        // of a host sample before now, so interpolate backwards.
-        const float fraction = static_cast<float>(clockPhase);
+        // Resample the input onto the clock edge. What is left in `clockPhase`
+        // is measured in clock cycles, so it has to be divided by the increment
+        // to become the fraction of a host sample since the edge -- using it
+        // raw would place every edge far too close to the current sample.
+        const float fraction = increment > 0.0
+            ? static_cast<float>(std::clamp(clockPhase / increment, 0.0, 1.0))
+            : 0.0f;
         const float atEdge = limited + (previousInput - limited) * fraction;
 
         writeIndex = writeIndex + 1 < cellPairs ? writeIndex + 1 : 0;

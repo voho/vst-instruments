@@ -242,6 +242,80 @@ void testProcessingProducesSound()
     processor.releaseResources();
 }
 
+void testShortNoteInsideOneBlockIsHeard()
+{
+    // A note that opens and closes inside a single buffer must still sound.
+    // Dispatching a block's MIDI at its boundary would apply both events before
+    // any audio was rendered and lose the note entirely.
+    YouKnow106AudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::attack, 0.0f);
+    setParameterValue (processor, parameters::sustain, 1.0f);
+    setParameterValue (processor, parameters::release, 0.0f);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    midi.addEvent (juce::MidiMessage::noteOff (1, 60), blockSize - 1);
+    buffer.clear();
+    processor.processBlock (buffer, midi);
+
+    expect (bufferPeak (buffer) > 0.0f,
+            "a note contained inside one block produced no audio at all");
+
+    // The two events must also land where they were timed: an event at the end
+    // of the block cannot affect the start of it.
+    juce::AudioBuffer<float> late (2, blockSize);
+    juce::MidiBuffer lateMidi;
+    lateMidi.addEvent (juce::MidiMessage::noteOn (1, 72, 1.0f), blockSize - 2);
+    late.clear();
+    processor.releaseResources();
+    processor.prepareToPlay (sampleRate, blockSize);
+    processor.processBlock (late, lateMidi);
+
+    float earlyPeak = 0.0f;
+    for (int index = 0; index < blockSize / 2; ++index)
+        earlyPeak = std::max (earlyPeak, std::abs (late.getSample (0, index)));
+    expect (earlyPeak == 0.0f,
+            "an event timed at the end of a block was applied at its start");
+
+    processor.releaseResources();
+}
+
+void testAllNotesOffReleasesAndAllSoundOffCuts()
+{
+    YouKnow106AudioProcessor processor;
+    processor.setPlayConfigDetails (0, 2, sampleRate, blockSize);
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::release, 0.75f);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    buffer.clear();
+    processor.processBlock (buffer, midi);
+    renderBlocks (processor, buffer, 16);
+
+    juce::MidiBuffer notesOff;
+    notesOff.addEvent (juce::MidiMessage::allNotesOff (1), 0);
+    buffer.clear();
+    processor.processBlock (buffer, notesOff);
+    renderBlocks (processor, buffer, 8);
+    expect (bufferPeak (buffer) > 0.001f,
+            "all-notes-off cut the release instead of letting it ring");
+
+    juce::MidiBuffer soundOff;
+    soundOff.addEvent (juce::MidiMessage::allSoundOff (1), 0);
+    buffer.clear();
+    processor.processBlock (buffer, soundOff);
+    renderBlocks (processor, buffer, 4);
+    expect (processor.getActiveVoiceCount() == 0,
+            "all-sound-off left a voice running");
+
+    processor.releaseResources();
+}
+
 void testTransportOfControllers()
 {
     YouKnow106AudioProcessor processor;
@@ -408,7 +482,11 @@ void testEditorBuildsAndRenders()
         juce::SystemStats::getEnvironmentVariable ("YOUKNOW106_EDITOR_SNAPSHOT", {});
     if (snapshotPath.isNotEmpty() && snapshot.isValid())
     {
-        juce::FileOutputStream output { juce::File (snapshotPath) };
+        // A clean checkout has no screenshots directory: git does not track an
+        // empty one, and the first nightly run is what creates the image.
+        const juce::File snapshotFile { snapshotPath };
+        snapshotFile.getParentDirectory().createDirectory();
+        juce::FileOutputStream output { snapshotFile };
         juce::PNGImageFormat png;
         const bool prepared = output.openedOk() && output.setPosition (0)
                            && output.truncate();
@@ -429,6 +507,8 @@ int main()
     testParameterContract();
     testParameterTextRoundTrips();
     testProcessingProducesSound();
+    testShortNoteInsideOneBlockIsHeard();
+    testAllNotesOffReleasesAndAllSoundOffCuts();
     testTransportOfControllers();
     testPanicSilencesEverything();
     testStateRoundTripAndMigration();

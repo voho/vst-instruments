@@ -383,15 +383,33 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     updateEngineParameters();
     dispatchUiMidiEvents();
 
+    // Render up to each event before applying it. Dispatching the whole buffer's
+    // MIDI at the block boundary would collapse a short note-on/note-off pair
+    // onto the same instant and lose the note entirely.
+    int renderedTo = 0;
     for (const auto metadata : midiMessages)
     {
+        const int eventSample = juce::jlimit (0, numSamples, metadata.samplePosition);
+        if (eventSample > renderedTo)
+        {
+            engine.process (buffer.getWritePointer (0, renderedTo),
+                            buffer.getWritePointer (1, renderedTo),
+                            eventSample - renderedTo);
+            renderedTo = eventSample;
+        }
+
         const auto message = metadata.getMessage();
         if (message.isNoteOn())
             engine.noteOn (message.getNoteNumber(), message.getFloatVelocity());
         else if (message.isNoteOff())
             engine.noteOff (message.getNoteNumber());
-        else if (message.isAllNotesOff() || message.isAllSoundOff())
+        else if (message.isAllSoundOff())
             engine.allNotesOff();
+        else if (message.isAllNotesOff())
+            // All notes off means release the keys, not cut the sound: the
+            // envelope's release is up to twelve seconds and truncating it
+            // would be an all-sound-off.
+            engine.releaseAllNotes();
         else if (message.isPitchWheel())
             engine.setPitchBend ((static_cast<float> (message.getPitchWheelValue())
                                   - 8192.0f) / 8192.0f);
@@ -406,9 +424,13 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                 engine.setSustainPedal (message.getControllerValue() >= 64);
         }
     }
-    midiMessages.clear();
 
-    engine.process (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples);
+    if (renderedTo < numSamples)
+        engine.process (buffer.getWritePointer (0, renderedTo),
+                        buffer.getWritePointer (1, renderedTo),
+                        numSamples - renderedTo);
+
+    midiMessages.clear();
 
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
     displayVoiceMask.store (engine.getDisplayVoiceMask(), std::memory_order_relaxed);
@@ -552,8 +574,11 @@ void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeIn
         if (pointer.id != nullptr)
             addDefaultParameterStateIfMissing (state, parameters, pointer.id);
 
+    // Deliberately no engine update here. This runs on the message thread while
+    // the audio thread may be inside process(), and the engine's parameter
+    // structs are plain values it reads without synchronisation. The next
+    // processBlock picks the restored patch up on the thread that owns them.
     parameters.replaceState (state);
-    updateEngineParameters();
 }
 
 juce::AudioProcessorEditor* YouKnow106AudioProcessor::createEditor()
