@@ -22,7 +22,7 @@ jobs:
   # an unchanged model commits nothing because the render is deterministic.
   refresh-audio-demos:
     if: github.ref == 'refs/heads/main'
-    name: Re-render committed Electry demo audio
+    name: Re-render committed Electry and Taikor demo audio
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,12 +31,16 @@ jobs:
           # below supplies the token explicitly instead.
           persist-credentials: false
 
-      - name: Build the JUCE-free demo renderer
+      - name: Build the JUCE-free demo renderers
         run: |
           cmake -S electry -B electry/build-dsp -DCMAKE_BUILD_TYPE=Release \
             -DELECTRY_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
           cmake --build electry/build-dsp --parallel \
             --target ElectryRenderDemos
+          cmake -S taikor -B taikor/build-dsp -DCMAKE_BUILD_TYPE=Release \
+            -DTAIKOR_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
+          cmake --build taikor/build-dsp --parallel \
+            --target TaikorRenderDemos
 
       - name: Render and commit the demo audio if it changed
         env:
@@ -44,16 +48,17 @@ jobs:
         run: |
           set -euo pipefail
           ./electry/build-dsp/ElectryRenderDemos electry/Docs/audio
+          ./taikor/build-dsp/TaikorRenderDemos taikor/Docs/audio
           # Stage before checking: a newly added demo is an untracked file,
           # which git diff alone would not see.
-          git add -A electry/Docs/audio
+          git add -A electry/Docs/audio taikor/Docs/audio
           if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Nightly: re-render the committed Electry demo audio"
+          git commit -m "Nightly: re-render the committed demo audio"
           REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           for attempt in 1 2 3; do
             git pull --rebase -X theirs "$REMOTE" main
@@ -61,8 +66,8 @@ jobs:
             # ran, these WAVs describe the older model; publishing them would
             # be wrong, and the next nightly will render the newer tree.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                electry ':(exclude)electry/Docs'; then
-              echo "Electry changed upstream during the render; deferring to the next nightly."
+                electry taikor ':(exclude)electry/Docs' ':(exclude)taikor/Docs'; then
+              echo "An instrument changed upstream during the render; deferring to the next nightly."
               exit 0
             fi
             if git push "$REMOTE" HEAD:main; then
@@ -135,6 +140,16 @@ jobs:
         working-directory: electry
         run: ./scripts/sign-and-package-macos.sh
 
+      - name: Build Taikor and run tests
+        working-directory: taikor
+        env:
+          TAIKOR_EDITOR_SNAPSHOT: ${{ github.workspace }}/taikor/Docs/screenshots/taikor-standalone.png
+        run: ./scripts/build-macos.sh
+
+      - name: Package Taikor (ad-hoc-signed bundles)
+        working-directory: taikor
+        run: ./scripts/sign-and-package-macos.sh
+
       # Vocalor's suite has no snapshot hook yet, so its screenshot is not
       # regenerated here. The rebase-and-retry loop absorbs the audio-demos
       # job (or anything else) having pushed to main while this job built.
@@ -148,6 +163,7 @@ jobs:
             mars/Docs/screenshots
             neuramar/Docs/screenshots
             electry/Docs/screenshots
+            taikor/Docs/screenshots
           )
           # Stage before checking: a screenshot rendered for the first time is
           # an untracked file, which git diff alone would not see.
@@ -169,9 +185,10 @@ jobs:
             # Docs-only churn (including the audio job's own commit) does not
             # invalidate a render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                drumalor mars neuramar electry \
+                drumalor mars neuramar electry taikor \
                 ':(exclude)drumalor/Docs' ':(exclude)mars/Docs' \
-                ':(exclude)neuramar/Docs' ':(exclude)electry/Docs'; then
+                ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
+                ':(exclude)taikor/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
             fi
@@ -201,6 +218,8 @@ jobs:
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.pkg
             electry/build-macos/dist/Electry-*-macOS-universal.zip
             electry/build-macos/dist/Electry-*-macOS-universal.pkg
+            taikor/build-macos/dist/Taikor-*-macOS-universal.zip
+            taikor/build-macos/dist/Taikor-*-macOS-universal.pkg
           if-no-files-found: error
           retention-days: 14
 
@@ -225,9 +244,11 @@ jobs:
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.pkg
             electry/build-macos/dist/Electry-*-macOS-universal.zip
             electry/build-macos/dist/Electry-*-macOS-universal.pkg
+            taikor/build-macos/dist/Taikor-*-macOS-universal.zip
+            taikor/build-macos/dist/Taikor-*-macOS-universal.pkg
           )
-          if (( ${#assets[@]} != 10 )); then
-            echo "error: expected exactly ten release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 12 )); then
+            echo "error: expected exactly twelve release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]}" >&2
             exit 1
           fi
@@ -259,7 +280,7 @@ jobs:
           done
 
           TITLE="VST instruments nightly ($DATE)"
-          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, Mars, Neuramar, and Electry from \`main\` ($SHORT_SHA).
+          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, Mars, Neuramar, Electry, and Taikor from \`main\` ($SHORT_SHA).
 
           **These bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally, clear the quarantine flag after unzipping, e.g.:
 
@@ -269,6 +290,7 @@ jobs:
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Mars.vst3 Library/Audio/Plug-Ins/Components/Mars.component Applications/Mars.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Neuramar.vst3 Library/Audio/Plug-Ins/Components/Neuramar.component Applications/Neuramar.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Electry.vst3 Library/Audio/Plug-Ins/Components/Electry.component Applications/Electry.app
+          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Taikor.vst3 Library/Audio/Plug-Ins/Components/Taikor.component Applications/Taikor.app
           \`\`\`
 
           Not intended for production distribution."
