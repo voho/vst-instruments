@@ -387,14 +387,32 @@ void testParametersReachTheEngine()
             "twelve semitones of pitch must roughly double the sounding pitch");
     setParameterValue (processor, pids::pitch, 0.0f);
 
-    // Output must scale what the host receives.
-    setParameterValue (processor, pids::output, 0.0f);
-    processor.requestPanic();
-    const auto loud = renderNote (processor, taikor::referenceNote, 0.9f, 8);
-    setParameterValue (processor, pids::output, -12.0f);
-    processor.requestPanic();
-    const auto quiet = renderNote (processor, taikor::referenceNote, 0.9f, 8);
+    // Output must scale what the host receives. The gain is smoothed so that
+    // automating it cannot click, which means a stroke struck in the same
+    // block as the change still has its attack rendered at the previous
+    // setting - the peak this measures happens inside the first millisecond.
+    // Let the smoother arrive before striking, or the test compares two
+    // strokes that were both rendered at whatever the gain was before.
+    const auto peakAtOutput = [&processor] (float decibels)
+    {
+        setParameterValue (processor, taikor::parameters::output, decibels);
+        processor.requestPanic();
+
+        juce::AudioBuffer<float> settle { 2, blockSize };
+        juce::MidiBuffer empty;
+        for (int block = 0; block < 8; ++block)
+        {
+            settle.clear();
+            processor.processBlock (settle, empty);
+        }
+
+        return renderNote (processor, taikor::referenceNote, 0.9f, 8);
+    };
+
+    const auto loud = peakAtOutput (0.0f);
+    const auto quiet = peakAtOutput (-12.0f);
     expect (quiet < loud * 0.6f, "the output control must scale the rendered audio");
+    expect (loud > 1.0e-4f, "the output check rendered no audio to compare");
 
     processor.releaseResources();
 }
