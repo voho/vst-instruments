@@ -433,6 +433,16 @@ void TaikorAudioProcessor::dispatchMidiData (const juce::uint8* data,
             // changing anything about the strokes that follow.
             engine.setHandDamping (value);
         }
+        else if (controller == 121u)
+        {
+            // Reset All Controllers. Both of Taikor's performable controls go
+            // back to where they started: the hand comes off the head and the
+            // wheel returns to centre. Without this a host that resets its
+            // controller state left the drum muted or bent, and every stroke
+            // after it inherited a gesture the sender believed it had cleared.
+            engine.setHandDamping (0.0f);
+            engine.setPitchBend (0.0f);
+        }
         else if (controller == 120u || controller == 123u)
         {
             engine.allSoundsOff();

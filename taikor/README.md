@@ -168,6 +168,13 @@ breathing mode is also the one that radiates, because it is the one that changes
 the drum's volume — which is why a sealed taiko is heard higher than its
 membrane fundamental.
 
+Turn Air Coupling all the way down and there is no split at all: the two heads
+are independent, and a stroke on the batter head cannot reach the far one. The
+editor then shows the same figure for both, because an open body has one
+axisymmetric mode you can hear rather than two. It matters which one is named:
+with the resonant head slack, the far head's mode is the *lower* of the pair,
+so reading off the lower frequency reported a mode that nothing was driving.
+
 ### The shell
 
 The wooden body's ring modes come from the standard thin-cylinder result, so

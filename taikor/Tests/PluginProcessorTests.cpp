@@ -91,6 +91,63 @@ float renderNote (TaikorAudioProcessor& processor, int midiNote, float velocity,
     return peak;
 }
 
+// Renders a stroke and returns the frequency of its strongest low partial, by
+// the Goertzel recurrence over a window that starts after the attack. Used to
+// see where the head is actually tuned, which is the only way to observe the
+// pitch wheel from outside the processor.
+double dominantLowPartial (TaikorAudioProcessor& processor, int midiNote,
+                           const juce::MidiBuffer& before)
+{
+    juce::AudioBuffer<float> buffer { 2, blockSize };
+
+    {
+        auto controls = before;
+        buffer.clear();
+        processor.processBlock (buffer, controls);
+    }
+
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, midiNote, 1.0f), 0);
+
+    std::vector<float> samples;
+    for (int block = 0; block < 90; ++block)
+    {
+        buffer.clear();
+        processor.processBlock (buffer, midi);
+        midi.clear();
+        for (int sample = 0; sample < blockSize; ++sample)
+            samples.push_back (0.5f * (buffer.getSample (0, sample)
+                                       + buffer.getSample (1, sample)));
+    }
+
+    // Past the attack, so the measurement is the ringing head rather than the
+    // broadband contact.
+    const std::size_t first = std::min<std::size_t> (samples.size(), 4800);
+
+    double best = -1.0;
+    double bestFrequency = 0.0;
+    for (double frequency = 50.0; frequency < 320.0; frequency += 0.05)
+    {
+        const double omega = 2.0 * 3.14159265358979 * frequency / sampleRate;
+        const double coefficient = 2.0 * std::cos (omega);
+        double s1 = 0.0;
+        double s2 = 0.0;
+        for (std::size_t index = first; index < samples.size(); ++index)
+        {
+            const double s0 = samples[index] + coefficient * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+        }
+        const double magnitude = s1 * s1 + s2 * s2 - coefficient * s1 * s2;
+        if (magnitude > best)
+        {
+            best = magnitude;
+            bestFrequency = frequency;
+        }
+    }
+    return bestFrequency;
+}
+
 // ---------------------------------------------------------------------------
 
 void testParameterLayoutAndDefaults()
@@ -339,6 +396,66 @@ void testControllersAndPitchBend()
         processor.processBlock (buffer, empty);
         expect (peakOf (buffer) < 1.0e-6f,
                 "controller " + std::to_string (controller) + " must silence the drum");
+    }
+
+    // Reset All Controllers must release both performable gestures. A host that
+    // resets its controller state and then plays would otherwise inherit a hand
+    // still on the head and a wheel still off centre.
+    {
+        juce::MidiBuffer handDownThenReset;
+        handDownThenReset.addEvent (juce::MidiMessage::controllerEvent (1, 1, 127), 0);
+        handDownThenReset.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 1);
+        processor.requestPanic();
+        const auto releasedEnergy = renderTail (handDownThenReset);
+
+        expect (releasedEnergy > openEnergy * 0.7,
+                "CC121 must take the hand back off the head");
+
+        // Non-vacuity: the same buffer without the reset must still damp, or
+        // the check above would pass on a processor that ignored CC1 entirely.
+        juce::MidiBuffer handDownOnly;
+        handDownOnly.addEvent (juce::MidiMessage::controllerEvent (1, 1, 127), 0);
+        processor.requestPanic();
+        expect (renderTail (handDownOnly) < openEnergy * 0.7,
+                "the CC121 check is vacuous unless CC1 still damps");
+
+        juce::MidiBuffer release;
+        release.addEvent (juce::MidiMessage::controllerEvent (1, 1, 0), 0);
+        juce::AudioBuffer<float> scratch { 2, blockSize };
+        scratch.clear();
+        processor.processBlock (scratch, release);
+    }
+
+    // The same for the wheel, measured where it actually shows: the pitch of a
+    // stroke played afterwards.
+    {
+        const auto note = taikor::midiNoteFor (taikor::Articulation::Don, 0);
+
+        juce::MidiBuffer nothingAtAll;
+        processor.requestPanic();
+        const auto centred = dominantLowPartial (processor, note, nothingAtAll);
+
+        juce::MidiBuffer wheelUp;
+        wheelUp.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+        processor.requestPanic();
+        const auto bent = dominantLowPartial (processor, note, wheelUp);
+
+        juce::MidiBuffer wheelUpThenReset;
+        wheelUpThenReset.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+        wheelUpThenReset.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 1);
+        processor.requestPanic();
+        const auto reset = dominantLowPartial (processor, note, wheelUpThenReset);
+
+        expect (bent > centred * 1.02,
+                "the wheel must raise the pitch, or the reset check is vacuous");
+        expect (std::abs (reset - centred) < 0.5,
+                "CC121 must return the wheel to centre");
+
+        juce::MidiBuffer recentre;
+        recentre.addEvent (juce::MidiMessage::pitchWheel (1, 8192), 0);
+        juce::AudioBuffer<float> scratch { 2, blockSize };
+        scratch.clear();
+        processor.processBlock (scratch, recentre);
     }
 
     // The wheel presses the head, so it must raise the pitch.

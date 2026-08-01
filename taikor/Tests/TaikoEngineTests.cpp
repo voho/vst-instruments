@@ -953,6 +953,99 @@ void testVoiceStealingStaysBounded()
             "the engine must not exceed its declared voice pool");
 }
 
+// The editor's readout has to name modes the drum actually sounds. With Air
+// Coupling at zero the two heads are independent, and one branch belongs
+// entirely to the far head - a mode a stroke on the batter head never touches.
+// Reporting the lower eigenvalue regardless named that silent mode the
+// fundamental: at Resonant Head zero the readout said 88.5 Hz while the drum
+// sounded 92.9 Hz, and it named the batter head's own mode the breathing mode,
+// which on an open body does not exist at all.
+//
+// The test is presence, not dominance. The fundamental is the lowest mode the
+// stroke drives, which is not always the loudest survivor of a two-second tail:
+// under weak coupling the volume-changing branch is driven harder while the
+// other one outlives it. Asserting dominance would be asserting something the
+// model never claimed.
+void testReportedModesAreActuallySounded()
+{
+    for (float cavity : { 0.0f, 0.02f, 0.05f, 0.10f, 0.20f, 0.35f, 0.85f, 1.0f })
+        for (float resonant : { 0.0f, 0.25f, 0.5f, 1.0f })
+        {
+            auto parameters = defaultParameters();
+            parameters.cavityCoupling = cavity;
+            parameters.resonantTension = resonant;
+
+            const auto measurements = taikor::TaikoEngine::measure (parameters, 0);
+            // A second and a half of tail: long enough to resolve the pair,
+            // which is four hertz apart at its closest, without spending the
+            // whole suite's runtime on Goertzel sweeps.
+            const auto rendered = strike (parameters, taikor::Articulation::Don, 0, 0.9f,
+                                          48000.0, 81920);
+            const auto mono = rendered.mono();
+            // Past the attack, so this is the ringing head rather than the
+            // broadband contact.
+            constexpr std::size_t afterAttack = 9600;
+
+            double bandPeak = 0.0;
+            for (double frequency = 50.0; frequency < 320.0; frequency += 1.0)
+                bandPeak = std::max (bandPeak,
+                                     binMagnitude (mono, frequency, 48000.0, afterAttack));
+
+            const std::string where = " (cavity " + std::to_string (cavity)
+                                    + ", resonant " + std::to_string (resonant) + ")";
+            expect (bandPeak > 0.0, "the drum must sound at all" + where);
+            if (! (bandPeak > 0.0))
+                continue;
+
+            const auto atFundamental =
+                binMagnitude (mono, measurements.loadedFundamentalHz, 48000.0, afterAttack)
+                / bandPeak;
+            const auto atBreathing =
+                binMagnitude (mono, measurements.breathingModeHz, 48000.0, afterAttack)
+                / bandPeak;
+
+            expect (atFundamental > 0.15,
+                    "the reported fundamental must be a mode the stroke drives"
+                    + where);
+            expect (atBreathing > 0.004,
+                    "the reported breathing mode must be a mode the stroke drives"
+                    + where);
+
+            // On an open body only one branch sounds at all, so there the
+            // strongest partial is unambiguously the fundamental and the check
+            // can be exact. This is the reviewer's case: the readout used to say
+            // 88.5 Hz where the drum plainly sounded 92.9 Hz. Under partial
+            // coupling both branches are genuinely driven and the louder one is
+            // not always the lower, so dominance is only the right question
+            // once the cavity is out of the picture.
+            if (cavity <= 0.0f)
+            {
+                const auto dominant = dominantFrequency (mono, 48000.0, 50.0, 320.0,
+                                                         0.25, afterAttack);
+                expect (std::abs (dominant - measurements.loadedFundamentalHz) < 1.0,
+                        "with no cavity the reported fundamental must be the "
+                        "partial the drum sounds" + where);
+            }
+
+            expect (measurements.breathingModeHz >= measurements.loadedFundamentalHz,
+                    "the breathing mode must never be reported below the fundamental"
+                    + where);
+            expect (measurements.tailSeconds > 0.0f,
+                    "the reported tail must describe a mode that sounds" + where);
+
+            // An uncoupled body has no split to report, so both figures must be
+            // the single mode it has. A sealed one must still show the split.
+            if (cavity <= 0.0f)
+                expect (std::abs (measurements.breathingModeHz
+                                  - measurements.loadedFundamentalHz) < 0.01f,
+                        "an uncoupled body must not report a breathing mode" + where);
+            else if (cavity >= 0.85f)
+                expect (measurements.breathingModeHz
+                            > measurements.loadedFundamentalHz * 1.2f,
+                        "a sealed body must still report the cavity split" + where);
+        }
+}
+
 // The stick-on-stick stroke is two pieces of wood that never touch the drum, so
 // nothing about the drum may reach it. It used to build its bank by stretching
 // the shell's ring modes by a constant, which meant Shell Material moved the
@@ -1964,6 +2057,7 @@ int main()
     testCloseMicrophonePair();
     testTailsTerminateAndVoicesRetire();
     testVoiceStealingStaysBounded();
+    testReportedModesAreActuallySounded();
     testStickStrokeIsIndependentOfTheDrum();
     testSimultaneousStrokesDoNotShareOneVoice();
     testDeterminismAndBlockPartitioning();

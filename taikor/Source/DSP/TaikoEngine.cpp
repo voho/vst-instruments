@@ -2182,8 +2182,35 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     const float upper = std::sqrt (std::max (upperEigen, 0.0f));
     const float lower = std::sqrt (std::max (lowerEigen, 0.0f));
 
-    result.breathingModeHz = upper / (2.0f * piFloat);
-    result.loadedFundamentalHz = lower / (2.0f * piFloat);
+    // Only the branches the batter head moves in are worth reporting, because
+    // those are the only ones a stroke on the batter head can excite. The
+    // eigenvectors are unit length, so a batter share this small is forty
+    // decibels down and is not what anyone hears.
+    //
+    // It matters at zero Air Coupling, where the two heads are independent and
+    // one branch belongs entirely to the far head. With the resonant head
+    // slack it is also the lower of the two, so the readout named a silent
+    // 88.5 Hz as the fundamental while the drum actually sounded 92.9 Hz - and
+    // named the batter head's own mode the breathing mode, which on an open
+    // body does not exist at all.
+    constexpr float audibleShare = 0.01f;
+    const bool upperAudible = std::abs (upperB) > audibleShare;
+    const bool lowerAudible = std::abs (lowerB) > audibleShare;
+
+    if (upperAudible && lowerAudible)
+    {
+        result.breathingModeHz = upper / (2.0f * piFloat);
+        result.loadedFundamentalHz = lower / (2.0f * piFloat);
+    }
+    else
+    {
+        // One branch only: the drum has a single axisymmetric mode you can
+        // hear, and both figures are it. Reporting the same number twice is
+        // the honest description of a body with no cavity to split it.
+        const float audible = upperAudible ? upper : lower;
+        result.breathingModeHz = audible / (2.0f * piFloat);
+        result.loadedFundamentalHz = audible / (2.0f * piFloat);
+    }
 
     // How long each branch rings, each with its own radiation share. The two
     // differ a great deal on a sealed drum, because only the branch that
@@ -2206,8 +2233,11 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
         return decay > 0.0f ? 6.9078f / decay : 0.0f;
     };
 
-    result.tailSeconds = std::max (branchTail (upper, upperB, upperR),
-                                   branchTail (lower, lowerB, lowerR));
+    // Same restriction: a branch the stroke never drives cannot be how long the
+    // drum rings, however long it would ring if something did drive it.
+    result.tailSeconds = std::max (
+        upperAudible ? branchTail (upper, upperB, upperR) : 0.0f,
+        lowerAudible ? branchTail (lower, lowerB, lowerR) : 0.0f);
 
     return result;
 }
