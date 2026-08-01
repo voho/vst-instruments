@@ -251,11 +251,15 @@ end-to-end through a differentiable renderer:
   one control applied straight to the summed signal; and the voice-steal tail is
   windowed with a raised cosine rather than a linear ramp, which removes the
   corner that a frozen last sample would otherwise leave at both ends. A slot
-  stolen twice inside one fade carries the remainder of the first tail into the
-  second instead of discarding it, without re-arming the window: all the energy
-  stacked into one slot still dies within one fade of the first steal, and the
-  carried level is bounded, so even an unmusically dense note-on burst cannot
-  walk the tail into the output guard;
+  stolen twice inside one fade carries the value the first tail was about to
+  emit into the second instead of discarding it, so the hand-off steps by
+  exactly the stolen voice's own last sample wherever in the fade it lands —
+  including the closing third, where scaling that sample by the window rather
+  than carrying it left a step behind. The window is re-cut across the samples
+  the first steal already budgeted rather than re-armed: all the energy stacked
+  into one slot still dies within one fade of the first steal, and the carried
+  level is bounded, so even an unmusically dense note-on burst cannot walk the
+  tail into the output guard;
 - **Awaken** advances a position rather than driving a one-pole, so its stated
   seconds are the whole fade and not an exponential time constant, and the fade
   has zero slope at both ends rather than its steepest slope at the note-on;
@@ -449,9 +453,10 @@ rendered signal, guard -85 dB), partial-level agreement across 44.1, 48, 88.2,
 96, and 192 kHz for the root and for root+12 and root+24 (0.08 dB, guard
 0.35 dB), Air and Bone layer power across those rates (0.13 dB, guard 1.0 dB),
 the removal of a Bone mode pushed above the audible ceiling (128 dB down, guard
-60 dB), the Awaken fade contract, and the bound on the voice-steal fade tail
-under a note-on burst dense enough to steal the same slot inside one fade
-window. Plug-in builds add
+60 dB), the Awaken fade contract, the bound on the voice-steal fade tail under a
+note-on burst dense enough to steal the same slot inside one fade window, and
+the continuity of that hand-off across every phase of the window (worst
+inter-sample step 0.0124, guard 0.016). Plug-in builds add
 processor, parameter, MIDI, editor, and host-state contracts. These regression
 checks complement rather than replace listening, validator, multi-host, and CPU
 profiling passes.

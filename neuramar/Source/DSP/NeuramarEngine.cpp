@@ -617,41 +617,40 @@ void NeuramarEngine::beginFadeTail(std::size_t voiceIndex) noexcept
     auto& tail = fadeTails_[voiceIndex];
 
     // A slot stolen twice inside one fade window still owes the listener the
-    // remainder of the first tail, so the new frozen sample is added to the
-    // running tail rather than replacing it. What it must not do is re-arm the
-    // window: restarting a full fade on every steal makes the tail an
-    // integrator whose value grows with the length of a note-on burst rather
-    // than a hand-off bounded by one voice's level, and a dense enough burst
-    // then drives the mix into the finite-output guard. The running window is
-    // therefore left exactly as it is - all the energy stacked into one slot
-    // still dies within one fade of the *first* steal - and the stored level is
-    // bounded, so even a pathological burst can only add an offset that stays
-    // well inside the guard.
-    if (tail.remaining > 0)
-    {
-        const float window = 0.5f + 0.5f * sine(
-            0.25f + 0.5f * std::min(tail.position, 1.0f));
-        // The tail stores the level the window scales, so the frozen sample has
-        // to be divided by the window value in force to make the emitted signal
-        // step by exactly voice.lastLeft. The floor keeps that division finite
-        // as the window closes; past it the tail is nearly gone and the
-        // uncompensated remainder is a fraction of a sample that was about to
-        // be removed anyway.
-        const float scale = 1.0f / std::max(window, 0.25f);
-        tail.left = std::clamp(tail.left + scale * voice.lastLeft,
-                               -maximumFadeTailLevel, maximumFadeTailLevel);
-        tail.right = std::clamp(tail.right + scale * voice.lastRight,
-                                -maximumFadeTailLevel, maximumFadeTailLevel);
-        return;
-    }
+    // remainder of the first tail, so the value the running tail was about to
+    // emit is carried into a fresh window rather than discarded. Because the
+    // carry is the *emitted* value, the hand-off steps by exactly
+    // voice.lastLeft wherever in the fade it lands, and the running tail's own
+    // decay is applied before the sum rather than compensated for afterwards.
+    //
+    // What a steal must not do is push the deadline out. Restarting a
+    // full-length fade on every steal makes the tail an integrator whose value
+    // grows with the length of a note-on burst rather than a hand-off bounded
+    // by one voice's level, and a dense enough burst then drives the mix into
+    // the finite-output guard. So the window is re-cut across the samples the
+    // first steal already budgeted: all the energy stacked into one slot still
+    // dies within one fade of that first steal.
+    const float window = tail.remaining > 0
+        ? 0.5f + 0.5f * sine(0.25f + 0.5f * std::min(tail.position, 1.0f))
+        : 0.0f;
 
     const int fadeSamples = std::max(16, static_cast<int>(std::lround(
         0.003 * sampleRate_)));
-    tail.left = voice.lastLeft;
-    tail.right = voice.lastRight;
+    // Once the running window has closed to nothing the old tail contributes
+    // nothing to carry, so a fresh full-length fade is both safe and better:
+    // the 50x attenuation on anything carried across it is what keeps repeated
+    // late steals from accumulating.
+    const int remaining = (tail.remaining > 0 && window > 0.02f)
+        ? tail.remaining
+        : fadeSamples;
+
+    tail.left = std::clamp(tail.left * window + voice.lastLeft,
+                           -maximumFadeTailLevel, maximumFadeTailLevel);
+    tail.right = std::clamp(tail.right * window + voice.lastRight,
+                            -maximumFadeTailLevel, maximumFadeTailLevel);
     tail.position = 0.0f;
-    tail.positionStep = 1.0f / static_cast<float>(fadeSamples);
-    tail.remaining = fadeSamples;
+    tail.positionStep = 1.0f / static_cast<float>(remaining);
+    tail.remaining = remaining;
 }
 
 void NeuramarEngine::refreshVoicePans() noexcept

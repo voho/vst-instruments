@@ -4164,12 +4164,91 @@ void testDenseVoiceStealTailStaysBounded(const neuramar::NeuralModel& model)
         return peak;
     };
 
+    // Voices are stolen oldest-first, so a given slot is re-stolen once every
+    // maximumVoices note-ons: at a spacing of S samples its tail is interrupted
+    // S * maximumVoices samples in. Sweeping S therefore walks the steal across
+    // every phase of the 3 ms window, and the closing third - where a hand-off
+    // that fails to carry the running tail's emitted value leaves a step the
+    // size of the stolen voice's own output - falls inside the sweep.
+    //
+    // The default Awaken of zero is what makes this reachable: it puts a voice
+    // at full envelope within the 3 ms window, so the voice being stolen the
+    // second time still has a full-amplitude sample to hand over. Lengthening
+    // Awaken to quieten the mix would also quieten that sample and hide the
+    // very step being measured.
+    //
+    // Measured worst jump over the sweep: 0.0124 here, against 0.0203 for a
+    // hand-off that divides by a floored window instead of carrying the emitted
+    // value. That older form degrades monotonically across S = 13..17 (0.0100,
+    // 0.0134, 0.0164, 0.0187, 0.0203) and snaps back to the 0.0098 baseline at
+    // S = 18, where the tail has just ended and no carry is needed.
+    const auto burstJump = [&model](int spacingSamples)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 64);
+        engine.setModel(&model);
+        auto parameters = cleanCoreParameters();
+        parameters.outputGain = 0.08f;
+        engine.setParameters(parameters);
+
+        float left = 0.0f;
+        float right = 0.0f;
+        double previous = 0.0;
+        double jump = 0.0;
+        bool measuring = false;
+        const auto advance = [&](int samples)
+        {
+            for (int sample = 0; sample < samples; ++sample)
+            {
+                engine.process(&left, &right, 1);
+                const auto current = static_cast<double>(left);
+                if (measuring)
+                    jump = std::max(jump, std::abs(current - previous));
+                previous = current;
+            }
+        };
+
+        // Fill every slot and let the voices climb to a usable level.
+        for (int index = 0; index < 8; ++index)
+            engine.noteOn(48 + index, 0.9f);
+        advance(24000);
+        // Now steal round-robin: slot k is re-stolen every eight note-ons, so
+        // the spacing sweep walks that steal through every phase of the window.
+        measuring = true;
+        for (int index = 0; index < 64; ++index)
+        {
+            engine.noteOn(48 + index % 25, 0.9f);
+            advance(spacingSamples);
+        }
+        advance(1024);
+        return jump;
+    };
+
     const double shortBurst = burstPeak(200, 1);
     const double longBurst = burstPeak(3200, 1);
     const double spacedBurst = burstPeak(3200, 4);
     std::cout << "Voice-steal burst diagnostics: peak " << shortBurst
               << " after 200 note-ons, " << longBurst << " after 3200, "
               << spacedBurst << " at four-sample spacing (guard 2.0)\n";
+
+    double worstJump = 0.0;
+    int worstSpacing = 0;
+    for (int spacing = 1; spacing <= 24; ++spacing)
+    {
+        const double jump = burstJump(spacing);
+        if (jump > worstJump)
+        {
+            worstJump = jump;
+            worstSpacing = spacing;
+        }
+    }
+    std::cout << "Voice-steal hand-off diagnostics: worst inter-sample jump "
+              << worstJump << " at " << worstSpacing
+              << "-sample spacing (guard 0.016)\n";
+    expect(worstJump < 0.016,
+           "stealing a slot part-way through its fade tail left a step in the "
+           "output (worst inter-sample jump " + std::to_string(worstJump)
+               + " at " + std::to_string(worstSpacing) + "-sample spacing)");
     expect(longBurst < 2.0 && spacedBurst < 2.0,
            "a dense note-on burst drove the output toward the finite-output "
            "guard (peak " + std::to_string(std::max(longBurst, spacedBurst))
