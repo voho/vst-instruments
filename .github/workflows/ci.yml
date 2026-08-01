@@ -37,6 +37,9 @@ jobs:
           - name: Taikor
             directory: taikor
             build_plugin_option: TAIKOR_BUILD_PLUGIN
+          - name: YouKnow106
+            directory: youknow106
+            build_plugin_option: YOUKNOW106_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@v4
 
@@ -74,6 +77,8 @@ jobs:
             directory: electry
           - name: Taikor
             directory: taikor
+          - name: YouKnow106
+            directory: youknow106
     steps:
       - uses: actions/checkout@v4
 

@@ -150,6 +150,16 @@ jobs:
         working-directory: taikor
         run: ./scripts/sign-and-package-macos.sh
 
+      - name: Build YouKnow106 and run tests
+        working-directory: youknow106
+        env:
+          YOUKNOW106_EDITOR_SNAPSHOT: ${{ github.workspace }}/youknow106/Docs/screenshots/youknow106-standalone.png
+        run: ./scripts/build-macos.sh
+
+      - name: Package YouKnow106 (ad-hoc-signed bundles)
+        working-directory: youknow106
+        run: ./scripts/sign-and-package-macos.sh
+
       # Vocalor's suite has no snapshot hook yet, so its screenshot is not
       # regenerated here. The rebase-and-retry loop absorbs the audio-demos
       # job (or anything else) having pushed to main while this job built.
@@ -164,6 +174,7 @@ jobs:
             neuramar/Docs/screenshots
             electry/Docs/screenshots
             taikor/Docs/screenshots
+            youknow106/Docs/screenshots
           )
           # Stage before checking: a screenshot rendered for the first time is
           # an untracked file, which git diff alone would not see.
@@ -185,10 +196,10 @@ jobs:
             # Docs-only churn (including the audio job's own commit) does not
             # invalidate a render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                drumalor mars neuramar electry taikor \
+                drumalor mars neuramar electry taikor youknow106 \
                 ':(exclude)drumalor/Docs' ':(exclude)mars/Docs' \
                 ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs'; then
+                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
             fi
@@ -220,6 +231,8 @@ jobs:
             electry/build-macos/dist/Electry-*-macOS-universal.pkg
             taikor/build-macos/dist/Taikor-*-macOS-universal.zip
             taikor/build-macos/dist/Taikor-*-macOS-universal.pkg
+            youknow106/build-macos/dist/YouKnow106-*-macOS-universal.zip
+            youknow106/build-macos/dist/YouKnow106-*-macOS-universal.pkg
           if-no-files-found: error
           retention-days: 14
 
@@ -246,9 +259,11 @@ jobs:
             electry/build-macos/dist/Electry-*-macOS-universal.pkg
             taikor/build-macos/dist/Taikor-*-macOS-universal.zip
             taikor/build-macos/dist/Taikor-*-macOS-universal.pkg
+            youknow106/build-macos/dist/YouKnow106-*-macOS-universal.zip
+            youknow106/build-macos/dist/YouKnow106-*-macOS-universal.pkg
           )
-          if (( ${#assets[@]} != 12 )); then
-            echo "error: expected exactly twelve release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 14 )); then
+            echo "error: expected exactly fourteen release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]}" >&2
             exit 1
           fi
@@ -280,7 +295,7 @@ jobs:
           done
 
           TITLE="VST instruments nightly ($DATE)"
-          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, Mars, Neuramar, Electry, and Taikor from \`main\` ($SHORT_SHA).
+          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, Mars, Neuramar, Electry, Taikor, and YouKnow106 from \`main\` ($SHORT_SHA).
 
           **These bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally, clear the quarantine flag after unzipping, e.g.:
 
@@ -291,6 +306,7 @@ jobs:
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Neuramar.vst3 Library/Audio/Plug-Ins/Components/Neuramar.component Applications/Neuramar.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Electry.vst3 Library/Audio/Plug-Ins/Components/Electry.component Applications/Electry.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Taikor.vst3 Library/Audio/Plug-Ins/Components/Taikor.component Applications/Taikor.app
+          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/YouKnow106.vst3 Library/Audio/Plug-Ins/Components/YouKnow106.component Applications/YouKnow106.app
           \`\`\`
 
           Not intended for production distribution."
