@@ -43,6 +43,10 @@ public:
         return articulation;
     }
 
+    // What a screen reader is told this pad does. Built on demand because the
+    // note it plays follows the selected octave.
+    [[nodiscard]] juce::String accessibleHelpText() const;
+
 private:
     void refreshNoteText();
 

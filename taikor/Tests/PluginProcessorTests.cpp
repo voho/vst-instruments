@@ -517,6 +517,35 @@ void testUiQueueAndLifecycle()
             "releaseResources must free every voice");
 }
 
+// A pad's spoken description has to follow the octave strip. It used to be
+// composed once, when the accessibility handler was built, so a reader was told
+// whichever note the pad played at the moment it first asked - and after that
+// the announcement and the sound disagreed for five of the six octaves.
+void testPadAnnouncesTheNoteItCurrentlyPlays()
+{
+    TaikorPad pad { taikor::Articulation::Don };
+
+    pad.setOctaveOffset (0);
+    const auto atReference = pad.accessibleHelpText();
+    expect (atReference.contains (juce::String (
+                taikor::midiNoteFor (taikor::Articulation::Don, 0))),
+            "a pad must name the MIDI note it triggers");
+
+    for (int octave = taikor::lowestOctaveOffset;
+         octave <= taikor::highestOctaveOffset; ++octave)
+    {
+        pad.setOctaveOffset (octave);
+        const auto spoken = pad.accessibleHelpText();
+        const auto note = taikor::midiNoteFor (taikor::Articulation::Don, octave);
+
+        expect (spoken.contains (juce::String (note)),
+                "a pad must announce the note it plays now, not the one it was "
+                "built with");
+        expect (octave == 0 || spoken != atReference,
+                "a pad's description must change when the octave strip moves it");
+    }
+}
+
 void testEditorRendering()
 {
     TaikorAudioProcessor processor;
@@ -672,6 +701,7 @@ int main()
     testParametersReachTheEngine();
     testStateRoundTrip();
     testUiQueueAndLifecycle();
+    testPadAnnouncesTheNoteItCurrentlyPlays();
     testEditorRendering();
 
     if (failureCount != 0)

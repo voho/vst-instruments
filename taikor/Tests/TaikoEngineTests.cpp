@@ -52,6 +52,72 @@ struct TaikoEngineTestAccess
             ? voice.contacts[static_cast<std::size_t> (voice.contactCount - 1)].startSample
             : 0u;
     }
+
+    // The wooden half of a voice's bank: the drum's shell for eleven of the
+    // strokes, the pair of sticks for the twelfth. Read from the built voice
+    // rather than measured from the audio, because the question these answer -
+    // does a drum control reach the stick? - is about which numbers were used,
+    // and a spectral measurement of a click that lasts forty milliseconds
+    // cannot resolve it.
+    static std::vector<float> woodFrequencies (const TaikoEngine& engine,
+                                               int slot = 0)
+    {
+        std::vector<float> result;
+        const auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (! mode.membrane)
+                result.push_back (mode.omega / (2.0f * 3.14159265358979f));
+        }
+        return result;
+    }
+
+    static std::vector<float> woodDecays (const TaikoEngine& engine, int slot = 0)
+    {
+        std::vector<float> result;
+        const auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (! mode.membrane)
+                result.push_back (mode.decayRate);
+        }
+        return result;
+    }
+
+    // Which voice each of a run of strokes landed in, and how loud each slot
+    // ended up. Voice stealing is a decision about slots, so a test of it has
+    // to be able to see the slots.
+    static int voiceSlotOf (const TaikoEngine& engine, std::uint64_t startOrder) noexcept
+    {
+        for (int index = 0; index < TaikoEngine::maxVoices; ++index)
+            if (engine.voices_[static_cast<std::size_t> (index)].startOrder == startOrder)
+                return index;
+        return -1;
+    }
+
+    static std::uint64_t strokeCount (const TaikoEngine& engine) noexcept
+    {
+        return engine.noteSequence_;
+    }
+
+    static int activeVoices (const TaikoEngine& engine) noexcept
+    {
+        int count = 0;
+        for (const auto& voice : engine.voices_)
+            if (voice.active)
+                ++count;
+        return count;
+    }
+
+    static float contactSecondsFor (const EngineParameters& parameters,
+                                    Articulation articulation, int octaveOffset,
+                                    float velocity) noexcept
+    {
+        return TaikoEngine::measureContact (parameters, articulation, octaveOffset,
+                                            velocity);
+    }
 };
 } // namespace taikor
 
@@ -885,6 +951,158 @@ void testVoiceStealingStaysBounded()
     expect (rendered.peak <= 1.0001, "voice stealing exceeded full scale");
     expect (engine.getActiveVoiceCount() <= 16,
             "the engine must not exceed its declared voice pool");
+}
+
+// The stick-on-stick stroke is two pieces of wood that never touch the drum, so
+// nothing about the drum may reach it. It used to build its bank by stretching
+// the shell's ring modes by a constant, which meant Shell Material moved the
+// click by two octaves, Head Diameter by an octave and a half, and Head Tension
+// changed its level by five decibels - all from an object the stick never met.
+void testStickStrokeIsIndependentOfTheDrum()
+{
+    const auto bankFor = [] (const taikor::EngineParameters& parameters, int octave)
+    {
+        taikor::TaikoEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setParameters (parameters);
+        engine.trigger (taikor::Articulation::Bachi, octave, 0.85f);
+        return std::pair { taikor::TaikoEngineTestAccess::woodFrequencies (engine),
+                           taikor::TaikoEngineTestAccess::woodDecays (engine) };
+    };
+
+    const auto reference = bankFor (defaultParameters(), 0);
+    expect (reference.first.size() >= 4,
+            "the stick must present a bank to compare against");
+
+    // Every control that describes the drum rather than the stick, at both ends
+    // of its range.
+    struct DrumControl
+    {
+        const char* name;
+        void (*apply) (taikor::EngineParameters&, float);
+    };
+    static const std::array<DrumControl, 7> controls {{
+        { "Head Diameter",   [] (taikor::EngineParameters& p, float v) { p.headDiameter = 0.20f + 1.00f * v; } },
+        { "Body Depth",      [] (taikor::EngineParameters& p, float v) { p.bodyDepth = v; } },
+        { "Head Tension",    [] (taikor::EngineParameters& p, float v) { p.tension = v; } },
+        { "Head Material",   [] (taikor::EngineParameters& p, float v) { p.headMaterial = v; } },
+        { "Shell Material",  [] (taikor::EngineParameters& p, float v) { p.shellMaterial = v; } },
+        { "Shell Resonance", [] (taikor::EngineParameters& p, float v) { p.shellResonance = v; } },
+        { "Cavity Coupling", [] (taikor::EngineParameters& p, float v) { p.cavityCoupling = v; } },
+    }};
+
+    for (const auto& control : controls)
+        for (float value : { 0.0f, 1.0f })
+        {
+            auto parameters = defaultParameters();
+            control.apply (parameters, value);
+            const auto bank = bankFor (parameters, 0);
+
+            expect (bank.first.size() == reference.first.size(),
+                    std::string ("the stick's bank changed size with ") + control.name);
+            if (bank.first.size() != reference.first.size())
+                continue;
+
+            for (std::size_t index = 0; index < bank.first.size(); ++index)
+            {
+                expect (std::abs (bank.first[index] - reference.first[index]) < 0.01f,
+                        std::string ("the stick's pitch followed ") + control.name);
+                expect (std::abs (bank.second[index] - reference.second[index]) < 0.01f,
+                        std::string ("the stick's decay followed ") + control.name);
+            }
+        }
+
+    // The contact is the other route the drum reached the stick through: the
+    // solver used to floor the contact time on the head's own impedance even
+    // for a stroke that never lands on the head.
+    const auto referenceContact = taikor::TaikoEngineTestAccess::contactSecondsFor (
+        defaultParameters(), taikor::Articulation::Bachi, 0, 0.85f);
+    for (const auto& control : controls)
+        for (float value : { 0.0f, 1.0f })
+        {
+            auto parameters = defaultParameters();
+            control.apply (parameters, value);
+            const auto contact = taikor::TaikoEngineTestAccess::contactSecondsFor (
+                parameters, taikor::Articulation::Bachi, 0, 0.85f);
+            expect (std::abs (contact - referenceContact) < 1.0e-9f,
+                    std::string ("the stick's contact time followed ") + control.name);
+        }
+
+    // A drum stroke must still hear all of it, or the test above would pass on
+    // an engine that had simply stopped responding to the controls.
+    const auto drumReference = [&]
+    {
+        taikor::TaikoEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setParameters (defaultParameters());
+        engine.trigger (taikor::Articulation::Katsu, 0, 0.85f);
+        return taikor::TaikoEngineTestAccess::woodFrequencies (engine);
+    }();
+    auto shifted = defaultParameters();
+    shifted.shellMaterial = 0.0f;
+    taikor::TaikoEngine drumEngine;
+    drumEngine.prepare (48000.0, defaultBlockSize);
+    drumEngine.setParameters (shifted);
+    drumEngine.trigger (taikor::Articulation::Katsu, 0, 0.85f);
+    const auto drumShifted = taikor::TaikoEngineTestAccess::woodFrequencies (drumEngine);
+    expect (! drumReference.empty() && ! drumShifted.empty()
+                && std::abs (drumShifted[0] - drumReference[0]) > 1.0f,
+            "Shell Material must still retune a stroke on the drum's own body");
+
+    // And the octave must raise the stick's pitch, monotonically. Stretching
+    // the shell's modes used to push them past Nyquist, which dropped the top
+    // of the bank and made the click fall in pitch over the last two octaves.
+    float previous = 0.0f;
+    for (int octave = taikor::lowestOctaveOffset; octave <= taikor::highestOctaveOffset;
+         ++octave)
+    {
+        const auto bank = bankFor (defaultParameters(), octave);
+        expect (! bank.first.empty(),
+                "every octave of the stick stroke must sound something");
+        if (bank.first.empty())
+            continue;
+
+        expect (bank.first[0] > previous * 1.5f,
+                "each octave of the stick stroke must be higher than the last");
+        previous = bank.first[0];
+    }
+}
+
+// Sixteen voices, and several strokes can land on the same sample. A voice that
+// has been triggered but not yet rendered still reads as silent, so choosing
+// the quietest voice by level alone sent every stroke in a block to one slot -
+// and a chord, a flam or a roll on a buffer boundary sounded as a single note.
+void testSimultaneousStrokesDoNotShareOneVoice()
+{
+    taikor::TaikoEngine engine;
+    engine.prepare (48000.0, defaultBlockSize);
+    engine.setParameters (defaultParameters());
+
+    // Fill the pool and let it render, so every voice has a real level.
+    for (int index = 0; index < 16; ++index)
+        engine.trigger (taikor::Articulation::Don, 0, 0.9f);
+    render (engine, 4800);
+    expect (taikor::TaikoEngineTestAccess::activeVoices (engine) == 16,
+            "the pool must be full before the stealing case is exercised");
+
+    // Now six more strokes at the same sample, with nothing rendered between
+    // them. Each must displace a different voice.
+    std::set<int> slots;
+    for (int index = 0; index < 6; ++index)
+    {
+        engine.trigger (taikor::Articulation::Ka, 0, 0.9f);
+        const auto order = taikor::TaikoEngineTestAccess::strokeCount (engine);
+        const int slot = taikor::TaikoEngineTestAccess::voiceSlotOf (engine, order);
+        expect (slot >= 0, "a triggered stroke must be findable in the pool");
+        if (slot >= 0)
+            slots.insert (slot);
+    }
+
+    expect (slots.size() == 6,
+            "six simultaneous strokes must occupy six voices, not overwrite one");
+
+    const auto rendered = render (engine, 24000);
+    expect (rendered.finite, "simultaneous stealing produced non-finite audio");
 }
 
 void testDeterminismAndBlockPartitioning()
@@ -1746,6 +1964,8 @@ int main()
     testCloseMicrophonePair();
     testTailsTerminateAndVoicesRetire();
     testVoiceStealingStaysBounded();
+    testStickStrokeIsIndependentOfTheDrum();
+    testSimultaneousStrokesDoNotShareOneVoice();
     testDeterminismAndBlockPartitioning();
     testPerformanceControls();
     testInvalidInputSafety();

@@ -215,6 +215,19 @@ void TaikorPad::setOctaveOffset (int newOctaveOffset)
     octaveOffset = newOctaveOffset;
     refreshNoteText();
     repaint();
+
+    // The pad now plays a different note, so anything holding the old wording
+    // has to be told. A reader that had already fetched the help text would
+    // otherwise go on announcing the octave that was selected when it asked.
+    if (auto* handler = getAccessibilityHandler())
+        handler->notifyAccessibilityEvent (juce::AccessibilityEvent::titleChanged);
+}
+
+juce::String TaikorPad::accessibleHelpText() const
+{
+    const auto& metadata = taikor::getArticulationMetadata (articulation);
+    return juce::String (metadata.description.data(), metadata.description.size())
+         + ". Plays " + noteText;
 }
 
 void TaikorPad::triggerFlash()
@@ -279,32 +292,30 @@ void TaikorPad::paintButton (juce::Graphics& g, bool isMouseOver, bool isButtonD
 
 std::unique_ptr<juce::AccessibilityHandler> TaikorPad::createAccessibilityHandler()
 {
-    const auto& metadata = taikor::getArticulationMetadata (articulation);
-    const juce::String description {
-        juce::String (metadata.description.data(), metadata.description.size())
-        + ". Plays " + noteText
-    };
-
     class PadHandler final : public juce::AccessibilityHandler
     {
     public:
-        PadHandler (TaikorPad& padToUse, juce::String helpText)
+        explicit PadHandler (TaikorPad& padToUse)
             : juce::AccessibilityHandler (
                   padToUse, juce::AccessibilityRole::button,
                   juce::AccessibilityActions().addAction (
                       juce::AccessibilityActionType::press,
                       [&padToUse] { padToUse.triggerClick(); })),
-              help (std::move (helpText))
+              pad (padToUse)
         {
         }
 
-        juce::String getHelp() const override { return help; }
+        // Asked of the pad each time rather than captured when the handler is
+        // built. The octave strip moves every pad to a different MIDI note and
+        // the handler outlives that change, so a captured string would announce
+        // whichever octave happened to be selected when the editor opened.
+        juce::String getHelp() const override { return pad.accessibleHelpText(); }
 
     private:
-        juce::String help;
+        TaikorPad& pad;
     };
 
-    return std::make_unique<PadHandler> (*this, description);
+    return std::make_unique<PadHandler> (*this);
 }
 
 // ---------------------------------------------------------------------------
@@ -367,15 +378,26 @@ TaikorHeadDisplay::TaikorHeadDisplay()
 void TaikorHeadDisplay::setStrike (float normalisedRadius, float angleRadians,
                                    float level, taikor::Articulation articulation)
 {
-    strikeRadius = taikor::ui::clamp (normalisedRadius, 0.0f, 1.0f);
+    const auto radius = taikor::ui::clamp (normalisedRadius, 0.0f, 1.0f);
+    const auto bounded = taikor::ui::clamp (level, 0.0f, 1.0f);
+
+    // Every drawn property has to be in this decision, not just the level. A
+    // roll played at one velocity moves the marker around the head and changes
+    // the articulation without changing the level at all, and testing the level
+    // alone left the display showing the first stroke of the roll for as long
+    // as it went on.
+    const bool moved = std::abs (radius - strikeRadius) >= 0.002f
+                    || std::abs (angleRadians - strikeAngle) >= 0.002f
+                    || articulation != lastArticulation
+                    || std::abs (bounded - strikeLevel) >= 0.002f;
+
+    strikeRadius = radius;
     strikeAngle = angleRadians;
     lastArticulation = articulation;
-
-    const auto bounded = taikor::ui::clamp (level, 0.0f, 1.0f);
-    if (std::abs (bounded - strikeLevel) < 0.002f)
-        return;
     strikeLevel = bounded;
-    repaint();
+
+    if (moved)
+        repaint();
 }
 
 void TaikorHeadDisplay::setMicrophones (float spread, float normalisedDistance)

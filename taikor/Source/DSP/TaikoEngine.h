@@ -273,6 +273,13 @@ private:
     static constexpr int shellResonatorCount = 6;
     static constexpr int resonatorCount =
         membraneResonatorCount + shellResonatorCount;
+    // Free-free bending modes of one bachi, used by the stick-on-stick stroke.
+    // It borrows the shell's slots in the bank because the two never sound
+    // together, but it is a separate count so that changing one bank's size
+    // cannot silently resize the other.
+    static constexpr int stickResonatorCount = 6;
+    static_assert (stickResonatorCount <= shellResonatorCount,
+                   "the stick bank shares the shell's slots in Voice::modes");
     // Contact solves and mode retirement run on this stride rather than per
     // sample. 32 samples is 0.67 ms at 48 kHz, well under the shortest glide.
     static constexpr int controlPeriod = 32;
@@ -448,14 +455,15 @@ private:
         int contactCount { 1 };
         // Rim contribution: a shot that catches the hoop as well as the head.
         float rimGain { 0.0f };
-        // Shell mode retune, used by the stick-on-stick stroke to turn the
-        // wooden bank into a pair of bachi rather than a drum body.
+        // Shell mode retune, used by the strokes that catch the hoop to shorten
+        // the body's ring. Ignored when the bank is not the drum's body.
         float shellFrequencyScale { 1.0f };
         float shellDecayScale { 1.0f };
         // Whether this stroke's resonant bank is the drum's own body. The
-        // stick-on-stick stroke borrows the same machinery to make two pieces
-        // of wood ring, but it never touches the drum, so the control for how
-        // much the body colours a head stroke must not reach it.
+        // stick-on-stick stroke rings two pieces of wood that never touch the
+        // drum, so it reads a StickState instead and no drum control - the
+        // shell's material, the head's diameter, its depth or its tension - may
+        // reach it.
         bool usesDrumBody { true };
     };
 
@@ -491,6 +499,29 @@ private:
         // through a bare level constant.
         float shellModalMass { 12.0f };
         float shellLevel { 0.4f };
+    };
+
+    // A pair of bachi, for the stroke that claps them together and never
+    // touches the drum. It is deliberately a separate structure from DrumState
+    // and is resolved by a function that cannot see one: the stick's pitch is a
+    // property of the stick, and reading it off the drum's body made Shell
+    // Material, Head Diameter and Body Depth all retune the click.
+    struct StickState
+    {
+        std::array<float, stickResonatorCount> frequencies {};
+        std::array<float, stickResonatorCount> decays {};
+        // Effective mass of one stick in a bending mode, the analogue of
+        // DrumState::shellModalMass.
+        float modalMass { 0.08f };
+        // Reduced mass of the collision. Two equal sticks meeting each other
+        // give m/2, which is what sets the impulse.
+        float strikerMass { 0.04f };
+        // Resistive driving-point impedance of the bar at its first bending
+        // mode, the analogue of the membrane's 8*sqrt(T*sigma): the floor on
+        // how quickly the two sticks can separate.
+        float impedance { 300.0f };
+        // Projected side area of the cylinder, which is what pushes air.
+        float radiatingArea { 0.01f };
     };
 
     [[nodiscard]] static EngineParameters sanitise (
@@ -532,14 +563,25 @@ private:
                                                    float pitchBendSemitones,
                                                    int octaveOffset) noexcept;
     [[nodiscard]] DrumState resolveDrum (int octaveOffset) const noexcept;
-    // Hertz impact of the bachi on the head, returning the contact duration in
-    // seconds and the peak force. Contact time follows impact speed as
-    // v^(-1/5) and is floored by the membrane's own resistive impedance,
-    // because a stick cannot leave the head faster than the wave does.
-    static void solveContact (const DrumState& drum, const StrikeProfile& profile,
-                              float bachiHardness, float impactSpeed,
-                              float& contactSeconds, float& peakForce) noexcept;
-    void buildVoiceModes (Voice& voice, const DrumState& drum,
+    // The pair of sticks. Takes the parameter block rather than a DrumState on
+    // purpose: it reads only the hardness control and the octave, so no drum
+    // control can reach the stick-on-stick stroke through it.
+    [[nodiscard]] static StickState resolveStickFor (const EngineParameters& parameters,
+                                                     int octaveOffset) noexcept;
+    // Hertz impact, returning the contact duration in seconds and the peak
+    // force. Contact time follows impact speed as v^(-1/5) and is floored by
+    // the struck body's own resistive impedance, because the stick cannot leave
+    // faster than that body carries the energy away. The caller supplies both
+    // the striking mass and that impedance, so the same solver serves a stick
+    // meeting a head and a stick meeting another stick.
+    static void solveContact (float strikerMass, float targetImpedance,
+                              const StrikeProfile& profile, float bachiHardness,
+                              float impactSpeed, float& contactSeconds,
+                              float& peakForce) noexcept;
+    // The striking mass and the head's resistive impedance for a drum stroke.
+    static void drumContactTerms (const DrumState& drum, float& strikerMass,
+                                  float& impedance) noexcept;
+    void buildVoiceModes (Voice& voice, const DrumState& drum, const StickState& stick,
                           const StrikeProfile& profile, float extraDamping) noexcept;
     void scheduleContacts (Voice& voice, const StrikeProfile& profile,
                            float contactSeconds, float peakForce,
@@ -566,6 +608,10 @@ private:
     // involves a Bessel series and an eigen-decomposition per mode, so it is
     // done once per parameter change rather than once per stroke.
     std::array<DrumState, highestOctaveOffset - lowestOctaveOffset + 1> drumCache_ {};
+    // One pair of sticks per octave, cached alongside the drums. Smaller drums
+    // are played with smaller sticks, which is the only thing the octave does
+    // to them.
+    std::array<StickState, highestOctaveOffset - lowestOctaveOffset + 1> stickCache_ {};
     bool drumCacheValid_ { false };
     // The wheel position the cache was built at. Comparing against this rather
     // than against the per-sample increment matters at high sample rates, where

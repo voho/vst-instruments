@@ -55,6 +55,43 @@ constexpr float minimumContactStiffness = 2.0e6f;
 constexpr float maximumContactStiffness = 6.0e8f;
 constexpr float restitution = 0.42f;
 
+// The stick as an object in its own right, for the stroke that claps two of
+// them together. A nagado bachi is a plain wooden dowel about 24 mm across and
+// 40 cm long, so it rings in the free-free bending modes of a solid cylinder
+// and nothing about it depends on the drum it is normally used on.
+constexpr float stickLength = 0.40f;
+constexpr float stickRadius = 0.012f;
+// Hardness runs from a felt-wrapped odaiko beater to seasoned kashi oak, so it
+// moves the wood's stiffness, its density and its loss together - they are
+// three properties of one piece of material, not three controls.
+constexpr float minimumStickModulus = 3.0e9f;
+constexpr float maximumStickModulus = 13.5e9f;
+constexpr float minimumStickDensity = 430.0f;
+constexpr float maximumStickDensity = 880.0f;
+// Internal loss in the wood itself, which is a Q: a fixed number of cycles.
+constexpr float minimumStickQ = 20.0f;
+constexpr float maximumStickQ = 120.0f;
+// The hand. A grip is a resistance rather than a Q, so it takes a fixed number
+// of decibels per second out of every mode instead of a fixed number per cycle,
+// and a felt-wrapped beater is held in a far deader hand than a bare oak stick.
+// Without this term the model is a free bar: the bottom octave rang for half a
+// second and read as a marimba rather than as two sticks.
+constexpr float minimumGripLoss = 34.0f;
+constexpr float maximumGripLoss = 120.0f;
+// The octave picks a different pair of sticks. A bar's bending modes go as
+// kappa/L^2, so shortening it by sqrt(2) raises them by exactly the octave the
+// keyboard promises while leaving it the same thickness - which is both what a
+// rack of bachi actually looks like and what keeps the stroke at a usable
+// level. Scaling the whole stick instead would put the bottom octave at a metre
+// and a half and sixty times the mass, and it clipped.
+constexpr float minimumStickScale = 0.35f;
+constexpr float maximumStickScale = 2.00f;
+
+// How efficiently a stick reaches the pair compared with the head, in the same
+// role as shellCalibration: the model has the stick's radiating area and modal
+// mass, but not the directivity of a small cylinder held over a drum.
+constexpr float stickCalibration = 150.0f;
+
 // Impact speed in m/s at the softest and hardest MIDI velocity.
 constexpr float minimumImpactSpeed = 0.45f;
 constexpr float maximumImpactSpeed = 6.0f;
@@ -229,8 +266,11 @@ const TaikoEngine::StrikeProfile& TaikoEngine::strikeProfile (
         { 0.99f, 1.30f, 0.06f, 0.86f, 1.45f, 0.70f, 0.00f, 1, 0.45f, 1.0f, 0.55f }, // Katsu
         { 0.62f, 0.80f, 0.74f, 0.20f, 1.60f, 0.62f, 0.55f, 7, 0.00f, 1.0f, 1.0f },  // Buzz
         { 0.10f, 1.00f, 1.00f, 0.20f, 1.05f, 1.00f, 0.00f, 2, 0.00f, 1.0f, 1.0f },  // Flam
-        { 0.00f, 1.70f, 0.00f, 1.00f, 1.20f, 0.55f, 0.00f, 1, 0.00f, 5.4f, 0.16f,
-          false }, // Bachi: two sticks, not the drum
+        // Bachi: two sticks, not the drum. usesDrumBody switches its resonant
+        // bank over to the stick model, so the shell retune columns do not
+        // apply to it and are left at unity.
+        { 0.00f, 1.70f, 0.00f, 1.00f, 1.20f, 0.55f, 0.00f, 1, 0.00f, 1.0f, 1.0f,
+          false },
     }};
 
     const auto index = static_cast<std::size_t> (articulation);
@@ -697,20 +737,108 @@ void TaikoEngine::refreshDrumIfNeeded() noexcept
         return;
 
     for (int octave = lowestOctaveOffset; octave <= highestOctaveOffset; ++octave)
-        drumCache_[static_cast<std::size_t> (octave - lowestOctaveOffset)] =
-            resolveDrum (octave);
+    {
+        const auto index = static_cast<std::size_t> (octave - lowestOctaveOffset);
+        drumCache_[index] = resolveDrum (octave);
+        // The sticks do not follow the wheel - bending a drum's pitch does not
+        // change the wood in the player's hands - but they are refreshed here
+        // anyway, because they cost a handful of square roots and keeping one
+        // cache means there is only one way for it to go stale.
+        stickCache_[index] = resolveStickFor (applied_, octave);
+    }
 
     drumCacheBend_ = pitchBend_;
     drumCacheValid_ = true;
 }
 
 // ---------------------------------------------------------------------------
+// Resolving the pair of sticks
+// ---------------------------------------------------------------------------
+
+TaikoEngine::StickState TaikoEngine::resolveStickFor (const EngineParameters& raw,
+                                                      int octaveOffset) noexcept
+{
+    const auto applied = sanitise (raw);
+    StickState stick;
+
+    // Deliberately the only two things this function reads. A stick is not part
+    // of the drum, so nothing else may reach it.
+    const float hardness = applied.bachiHardness;
+    const auto octave = static_cast<float> (
+        std::clamp (octaveOffset, lowestOctaveOffset, highestOctaveOffset));
+
+    const float scale = clampFloat (std::exp2 (-0.5f * octave), minimumStickScale,
+                                    maximumStickScale);
+    const float length = stickLength * scale;
+    const float barRadius = stickRadius;
+
+    const float youngsModulus = lerp (minimumStickModulus, maximumStickModulus, hardness);
+    const float woodDensity = lerp (minimumStickDensity, maximumStickDensity, hardness);
+    const float barSpeed = std::sqrt (youngsModulus / woodDensity);
+    // Radius of gyration of a solid circular section, sqrt(I/A) = r/2.
+    const float gyration = 0.5f * barRadius;
+    const float area = piFloat * barRadius * barRadius;
+    const float massPerLength = woodDensity * area;
+    const float stickQ = lerp (minimumStickQ, maximumStickQ, hardness);
+    const float gripLoss = lerp (maximumGripLoss, minimumGripLoss, hardness);
+
+    // Free-free Bernoulli-Euler bar: f_n = (beta_n L)^2 / (2 pi L^2) * kappa *
+    // sqrt(E/rho). The eigenvalues are the roots of cos(x)cosh(x) = 1, and the
+    // resulting series is inharmonic - which is exactly why a stick click reads
+    // as a clack rather than as a note.
+    static constexpr std::array<float, stickResonatorCount> betaL {
+        4.730041f, 7.853205f, 10.995608f, 14.137165f, 17.278760f, 20.420352f
+    };
+
+    const float base = gyration * barSpeed / (2.0f * piFloat * length * length);
+    for (int index = 0; index < stickResonatorCount; ++index)
+    {
+        const float beta = betaL[static_cast<std::size_t> (index)];
+        const float frequency = beta * beta * base;
+        stick.frequencies[static_cast<std::size_t> (index)] = frequency;
+        stick.decays[static_cast<std::size_t> (index)] =
+            gripLoss + piFloat * frequency / stickQ;
+    }
+
+    // Half the bar's mass, the same convention the shell wall uses.
+    stick.modalMass = std::max (0.5f * massPerLength * length, 0.002f);
+
+    // Two equal sticks meeting each other: the reduced mass is m/2.
+    stick.strikerMass = std::max (0.5f * massPerLength * length, 0.002f);
+
+    // Driving-point impedance of an infinite bar, |Z| = 2*sqrt(2)*rho*A*c_B
+    // with the bending wave speed c_B = sqrt(omega * kappa * c_L), evaluated at
+    // the first bending mode. This is the bar's analogue of the membrane's
+    // 8*sqrt(T*sigma) and plays exactly the same part in the contact solve.
+    const float omegaFirst = 2.0f * piFloat * stick.frequencies[0];
+    const float bendingSpeed = std::sqrt (
+        std::max (omegaFirst * gyration * barSpeed, 1.0f));
+    stick.impedance = std::max (2.0f * 1.41421356f * massPerLength * bendingSpeed, 1.0f);
+
+    stick.radiatingArea = 2.0f * barRadius * length;
+    return stick;
+}
+
+// ---------------------------------------------------------------------------
 // The stick meeting the head
 // ---------------------------------------------------------------------------
 
-void TaikoEngine::solveContact (const DrumState& drum, const StrikeProfile& profile,
-                                float bachiHardness, float impactSpeed,
-                                float& contactSeconds, float& peakForce) noexcept
+void TaikoEngine::drumContactTerms (const DrumState& drum, float& strikerMass,
+                                    float& impedance) noexcept
+{
+    strikerMass = bachiMass
+                * clampFloat (drum.radius / referenceRadius, minimumBachiScale,
+                              maximumBachiScale);
+    // A membrane does not behave like a half-space: it carries the energy away
+    // resistively at 8*sqrt(T*sigma), so the stick cannot leave the head any
+    // faster than the wave does.
+    impedance = 8.0f * std::sqrt (drum.tension * drum.batterDensity);
+}
+
+void TaikoEngine::solveContact (float strikerMass, float targetImpedance,
+                                const StrikeProfile& profile, float bachiHardness,
+                                float impactSpeed, float& contactSeconds,
+                                float& peakForce) noexcept
 {
     const float stiffness = clampFloat (
         geometricLerp (minimumContactStiffness, maximumContactStiffness,
@@ -721,20 +849,16 @@ void TaikoEngine::solveContact (const DrumState& drum, const StrikeProfile& prof
     // falls as the fifth root of the impact speed, which is the whole reason a
     // hard stroke is brighter and not merely louder.
     const float speed = std::max (impactSpeed, 0.05f);
-    const float mass = bachiMass
-                     * clampFloat (drum.radius / referenceRadius, minimumBachiScale,
-                                   maximumBachiScale);
+    const float mass = std::max (strikerMass, 1.0e-4f);
     const float hertzTime = 2.94f
                           * std::pow (5.0f * mass / (4.0f * stiffness), 0.4f)
                           * std::pow (speed, -0.2f);
 
-    // A membrane does not behave like a half-space: it carries the energy away
-    // resistively at 8*sqrt(T*sigma), so the stick cannot leave the head any
-    // faster than the wave does. This is the floor that stops a very hard
-    // bachi from producing an impulse the drum could never make.
-    const float membraneImpedance =
-        8.0f * std::sqrt (drum.tension * drum.batterDensity);
-    const float impedanceTime = mass / std::max (membraneImpedance, 1.0f);
+    // The struck body carries the energy away resistively, so the stick cannot
+    // leave it any faster than that. This is the floor that stops a very hard
+    // bachi from producing an impulse the drum - or the other stick - could
+    // never make.
+    const float impedanceTime = mass / std::max (targetImpedance, 1.0f);
 
     contactSeconds = std::sqrt (hertzTime * hertzTime + impedanceTime * impedanceTime);
     contactSeconds = clampFloat (contactSeconds, 4.0e-5f, 0.05f);
@@ -756,16 +880,30 @@ float TaikoEngine::measureContact (const EngineParameters& raw,
                                    float velocity) noexcept
 {
     const auto parameters = sanitise (raw);
-    const auto drum = resolveDrumFor (parameters, 0.0f, octaveOffset);
     const auto& profile = strikeProfile (articulation);
     const float shaped = clampFloat (velocity, 0.0f, 1.0f);
     const float normalised = lerp (0.72f, shaped, parameters.velocityDepth);
     const float speed = geometricLerp (minimumImpactSpeed, maximumImpactSpeed,
                                        normalised * normalised);
+
+    float strikerMass = 0.0f;
+    float impedance = 0.0f;
+    if (profile.usesDrumBody)
+    {
+        drumContactTerms (resolveDrumFor (parameters, 0.0f, octaveOffset),
+                          strikerMass, impedance);
+    }
+    else
+    {
+        const auto stick = resolveStickFor (parameters, octaveOffset);
+        strikerMass = stick.strikerMass;
+        impedance = stick.impedance;
+    }
+
     float contactSeconds = 0.0f;
     float peakForce = 0.0f;
-    solveContact (drum, profile, parameters.bachiHardness, speed, contactSeconds,
-                  peakForce);
+    solveContact (strikerMass, impedance, profile, parameters.bachiHardness, speed,
+                  contactSeconds, peakForce);
     return contactSeconds;
 }
 
@@ -798,6 +936,7 @@ void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
 }
 
 void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
+                                   const StickState& stick,
                                    const StrikeProfile& profile,
                                    float extraDamping) noexcept
 {
@@ -1057,42 +1196,61 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         }
     }
 
-    // The shell. It is struck directly by a Katsu or a rim shot and picked up
-    // faintly the rest of the time, because a head cannot move without the
-    // body it is stretched over moving too. The Shell Resonance control scales
-    // how much of the body colours an ordinary head stroke, but it never
-    // silences the body completely: hitting wood makes a sound whatever the
-    // player has decided about sympathetic ring.
-    const float bodyLevel = profile.usesDrumBody
-        ? (0.30f + 0.70f * drum.shellLevel)
-        : 1.0f;
+    // The wooden bank. For eleven of the twelve strokes this is the drum's own
+    // shell: struck directly by a Katsu or a rim shot and picked up faintly the
+    // rest of the time, because a head cannot move without the body it is
+    // stretched over moving too. The Shell Resonance control scales how much of
+    // the body colours an ordinary head stroke, but it never silences the body
+    // completely: hitting wood makes a sound whatever the player has decided
+    // about sympathetic ring.
+    //
+    // The twelfth stroke is two sticks clapped together, and it reads the stick
+    // instead. It used to borrow the shell's frequencies and stretch them by a
+    // constant, which meant Shell Material, Head Diameter and Body Depth all
+    // retuned a click made by an object that never touches the drum - and, once
+    // the stretched modes ran past Nyquist, the click actually fell in pitch
+    // going up the keyboard.
+    const bool woodIsDrum = profile.usesDrumBody;
+    const float bodyLevel = woodIsDrum ? (0.30f + 0.70f * drum.shellLevel) : 1.0f;
     const float shellGain = profile.shellGain * bodyLevel
                           + profile.rimGain * 0.35f;
+    const int woodCount = woodIsDrum ? shellResonatorCount : stickResonatorCount;
+    const float woodCalibration = woodIsDrum ? shellCalibration : stickCalibration;
+    // The head's own volume displacement gives the membrane modes their
+    // radiating area for free; the wooden bank has to be told what it is.
+    const float radiatingArea = woodIsDrum ? drum.radius * drum.radius
+                                           : stick.radiatingArea;
+    const float woodModalMass = woodIsDrum ? drum.shellModalMass : stick.modalMass;
 
-    for (int index = 0; index < shellResonatorCount; ++index)
+    for (int index = 0; index < woodCount; ++index)
     {
         if (count >= resonatorCount)
             break;
 
-        const float frequency =
-            drum.shellFrequencies[static_cast<std::size_t> (index)]
-            * profile.shellFrequencyScale;
+        const auto slot = static_cast<std::size_t> (index);
+        const float frequency = woodIsDrum
+            ? drum.shellFrequencies[slot] * profile.shellFrequencyScale
+            : stick.frequencies[slot];
         if (! (frequency > 0.0f) || frequency >= nyquist * 0.98f)
             continue;
 
-        const float decay =
-            drum.shellDecays[static_cast<std::size_t> (index)]
-                / std::max (profile.shellDecayScale, 0.05f)
-            * (1.0f + 1.5f * extraDamping);
+        const float decay = (woodIsDrum
+                                 ? drum.shellDecays[slot]
+                                       / std::max (profile.shellDecayScale, 0.05f)
+                                 : stick.decays[slot])
+                          * (1.0f + 1.5f * extraDamping);
 
         // The shell is a ring, so the pair reads it from two places on it and
-        // the wooden component of the image opens with the microphones.
+        // the wooden component of the image opens with the microphones. A
+        // struck stick is a small source held over the head, not a ring around
+        // it, so it is read almost entirely in common.
         const auto ring = static_cast<float> (index + 2);
+        const float spread = woodIsDrum ? 0.20f : 0.08f;
         // The pair stands in front of the head, not around the body, so it
         // reads the shell mostly in common. A modest difference keeps the wood
         // from collapsing to a point without ever putting it out of phase.
-        const float shellL = 0.80f + 0.20f * std::cos (ring * micAngleL);
-        const float shellR = 0.80f + 0.20f * std::cos (ring * micAngleR);
+        const float shellL = (1.0f - spread) + spread * std::cos (ring * micAngleL);
+        const float shellR = (1.0f - spread) + spread * std::cos (ring * micAngleR);
         const float omega = 2.0f * piFloat * frequency;
         // Same force-over-modal-mass path the head uses, so a heavy body
         // genuinely refuses to move and a light one genuinely rings - times the
@@ -1100,9 +1258,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         // free through their own volume displacement and the shell was missing.
         // Without it a small body, whose modal mass falls as the cube of its
         // radius, ran away from the head it is stretched under.
-        const float radiatingArea = drum.radius * drum.radius;
-        const float level = shellGain * shellCalibration * radiatingArea
-                          / (drum.shellModalMass * omega * rate)
+        const float level = shellGain * woodCalibration * radiatingArea
+                          / (woodModalMass * omega * rate)
                           / (1.0f + 0.35f * static_cast<float> (index));
 
         auto& mode = voice.modes[static_cast<std::size_t> (count)];
@@ -1253,18 +1410,44 @@ int TaikoEngine::findVoiceSlot() noexcept
     // Everything is sounding, so take the quietest. On a drum this is very
     // nearly inaudible: by the time sixteen strokes overlap, the oldest is
     // buried under the newest ones anyway.
-    int quietest = 0;
-    float lowest = voices_[0].peakLevel;
-    for (int index = 1; index < maxVoices; ++index)
+    //
+    // A voice that has not been rendered yet is passed over, because its peak
+    // level is still zero and it would therefore look like the quietest thing
+    // in the engine to every stroke that followed it. A block carrying several
+    // strokes at the same sample - a flam, a chord, a roll landing on one
+    // buffer boundary - would drop all of them onto the one slot and sound a
+    // single note.
+    int quietest = -1;
+    float lowest = 0.0f;
+    std::uint64_t quietestOrder = 0;
+    for (int index = 0; index < maxVoices; ++index)
     {
-        const float level = voices_[static_cast<std::size_t> (index)].peakLevel;
-        if (level < lowest)
+        const auto& voice = voices_[static_cast<std::size_t> (index)];
+        if (voice.ageSamples == 0)
+            continue;
+
+        // Ties go to the oldest, so a rank of equally quiet voices is consumed
+        // in the order it was struck rather than from slot zero every time.
+        if (quietest < 0 || voice.peakLevel < lowest
+            || (voice.peakLevel == lowest && voice.startOrder < quietestOrder))
         {
-            lowest = level;
+            lowest = voice.peakLevel;
+            quietestOrder = voice.startOrder;
             quietest = index;
         }
     }
-    return quietest;
+
+    if (quietest >= 0)
+        return quietest;
+
+    // Sixteen strokes arrived without a single sample rendered between them.
+    // Nothing has a level to compare, so the oldest goes.
+    int oldest = 0;
+    for (int index = 1; index < maxVoices; ++index)
+        if (voices_[static_cast<std::size_t> (index)].startOrder
+            < voices_[static_cast<std::size_t> (oldest)].startOrder)
+            oldest = index;
+    return oldest;
 }
 
 void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
@@ -1280,7 +1463,9 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     refreshDrumIfNeeded();
 
     const int octave = std::clamp (octaveOffset, lowestOctaveOffset, highestOctaveOffset);
-    const auto& drum = drumCache_[static_cast<std::size_t> (octave - lowestOctaveOffset)];
+    const auto cacheIndex = static_cast<std::size_t> (octave - lowestOctaveOffset);
+    const auto& drum = drumCache_[cacheIndex];
+    const auto& stick = stickCache_[cacheIndex];
     const auto& profile = strikeProfile (articulation);
 
     const int slot = findVoiceSlot();
@@ -1330,15 +1515,28 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
             * speedJitter,
         0.05f, 12.0f);
 
+    // What is being struck. The stick-on-stick stroke never touches the drum,
+    // so it must not read the head's tension or the drum's size: the collision
+    // is one bachi against another.
+    float strikerMass = 0.0f;
+    float targetImpedance = 0.0f;
+    if (profile.usesDrumBody)
+        drumContactTerms (drum, strikerMass, targetImpedance);
+    else
+    {
+        strikerMass = stick.strikerMass;
+        targetImpedance = stick.impedance;
+    }
+
     float contactSeconds = 0.0f;
     float peakForce = 0.0f;
-    solveContact (drum, profile, applied_.bachiHardness, impactSpeed, contactSeconds,
-                  peakForce);
+    solveContact (strikerMass, targetImpedance, profile, applied_.bachiHardness,
+                  impactSpeed, contactSeconds, peakForce);
     contactSeconds *= 1.0f + 0.08f * humanise * signedUnitFromHash (seed + 4u);
 
     // The free hand resting on the head, for the muted strokes.
     const float extraDamping = profile.muteAmount;
-    buildVoiceModes (voice, drum, profile, extraDamping);
+    buildVoiceModes (voice, drum, stick, profile, extraDamping);
 
     const float noiseLevel = applied_.strikeNoise * profile.noiseGain * 0.35f;
     scheduleContacts (voice, profile, contactSeconds, peakForce * profile.levelScale,

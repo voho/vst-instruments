@@ -192,6 +192,32 @@ rather than of the instrument.
 A hard stroke also stretches the head, raising its tension until it decays: the
 attack pitch glide every large drum has.
 
+### Two sticks, and nothing else
+
+The twelfth stroke claps the bachi together and never touches the drum, so it is
+modelled as an object in its own right rather than as a retuning of the body. A
+bachi is a plain wooden dowel, so it rings in the free-free bending modes of a
+solid cylinder, *f_n = (β_n L)² κ √(E/ρ) / (2πL²)* with *κ = r/2* and the *β_n L*
+the roots of *cos x cosh x = 1*. That series — 1 : 2.76 : 5.40 : 8.93 — is
+inharmonic, which is why a stick click reads as a clack and not as a note.
+
+Bachi Hardness moves the wood's stiffness, its density and its internal loss
+together, because they are three properties of one piece of material: a
+felt-wrapped beater at one end, seasoned kashi oak at the other. On top of the
+wood's own Q there is the hand, which is a resistance rather than a Q and so
+takes a fixed number of decibels per second out of every mode. Without that term
+the model is a *free* bar and the bottom octave rings for half a second, which is
+a marimba rather than two sticks.
+
+The octave picks a different pair: shortening a bar by √2 raises its bending
+modes by exactly an octave while leaving it the same thickness, which is both
+what a rack of bachi looks like and what keeps the stroke at a usable level.
+Nothing in this path reads the drum — not its shell material, its head diameter,
+its depth or its tension — and the collision is solved against the other stick's
+own bending impedance rather than against the head's. Sharing the shell's modes
+meant Shell Material moved the click by two octaves and, once the stretched modes
+ran past Nyquist, the click actually fell in pitch going up the keyboard.
+
 ### Two microphones, and where the stereo comes from
 
 Taikor's output is a **close stereo pair**, and its image is a consequence of the
