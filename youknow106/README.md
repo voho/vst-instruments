@@ -15,6 +15,12 @@ What is modelled from documentation and what remains a voiced choice is set out
 control by control in the
 [circuit-modelling research and implementation contract](Docs/circuit-modelling-research.md).
 
+> **Listen first.** Ten [rendered demonstrations](Docs/audio/README.md) cover
+> the classic pad and PWM strings, the 16' bass, the self-oscillating filter,
+> the chorus modes, unison glide, the delayed vibrato, the high-pass ladder
+> and the instrument's own dispersion. They are rendered by the shipping
+> engine, so they cannot drift from what the plug-in does.
+
 ## What makes it a circuit model rather than a lookalike
 
 - **The oscillator is a divider, not a phase accumulator.** Pitch is one

@@ -132,6 +132,24 @@ if(DRUMALOR_BUILD_PLUGIN)
             JUCE_VST3_CAN_REPLACE_VST2=0)
 endif()
 
+# The committed demonstration WAVs under Docs/audio are rendered by this tool
+# from the same JUCE-free engine the plug-in uses, so they cannot drift away
+# from what Drumalor actually produces. It is built by default, including on
+# Linux CI, so it cannot rot unnoticed.
+option(DRUMALOR_BUILD_TOOLS "Build the demo WAV renderer" ON)
+
+if(DRUMALOR_BUILD_TOOLS)
+    add_executable(DrumalorRenderDemos Tools/RenderDemos.cpp)
+    target_link_libraries(DrumalorRenderDemos PRIVATE DrumalorDSP)
+    target_compile_features(DrumalorRenderDemos PRIVATE cxx_std_20)
+
+    if(MSVC)
+        target_compile_options(DrumalorRenderDemos PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(DrumalorRenderDemos PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
 if(BUILD_TESTING)
     add_executable(DrumalorDrumEngineTests Tests/DrumEngineTests.cpp)
     target_link_libraries(DrumalorDrumEngineTests PRIVATE DrumalorDSP)
@@ -146,6 +164,16 @@ if(BUILD_TESTING)
 
     add_test(NAME Drumalor.DrumEngine COMMAND DrumalorDrumEngineTests)
     set_tests_properties(Drumalor.DrumEngine PROPERTIES TIMEOUT 30)
+
+    if(DRUMALOR_BUILD_TOOLS)
+        # Guards the renderer that produces the committed demonstration WAVs:
+        # it renders a short take to a temporary directory and checks that the
+        # audio is finite, audible and written as a readable WAV.
+        add_test(NAME Drumalor.RenderDemos
+                 COMMAND DrumalorRenderDemos --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
+        set_tests_properties(Drumalor.RenderDemos PROPERTIES TIMEOUT 60)
+    endif()
 
     if(DRUMALOR_BUILD_PLUGIN)
         add_executable(DrumalorPluginProcessorTests Tests/PluginProcessorTests.cpp)
