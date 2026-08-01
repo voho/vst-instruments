@@ -246,13 +246,14 @@ void YouKnow106Display::refresh (const YouKnow106AudioProcessor& source)
 {
     const int mask = source.getVoiceMaskForDisplay();
     const int count = source.getActiveVoiceCount();
+    const int limit = source.getVoiceLimitForDisplay();
     const float env = source.getEnvelopeForDisplay();
     const float modulation = source.getLfoForDisplay();
     const double rate = source.getCurrentSampleRateForDisplay();
     const int factor = source.getOversamplingFactorForDisplay();
     const bool isReady = source.isEngineReady();
 
-    if (mask == voiceMask && count == voices
+    if (mask == voiceMask && count == voices && limit == voiceLimit
         && std::abs (env - envelope) < 0.004f
         && std::abs (modulation - lfo) < 0.004f
         && rate == sampleRate && factor == oversampling && isReady == ready)
@@ -260,6 +261,7 @@ void YouKnow106Display::refresh (const YouKnow106AudioProcessor& source)
 
     voiceMask = mask;
     voices = count;
+    voiceLimit = limit;
     envelope = env;
     lfo = modulation;
     sampleRate = rate;
@@ -279,14 +281,21 @@ void YouKnow106Display::paint (juce::Graphics& g)
     auto area = bounds.reduced (8.0f, 6.0f);
     const float rowHeight = area.getHeight() / 2.0f;
 
-    // Voice indicators.
+    // Voice indicators: one lamp per available voice, so the row follows the
+    // VOICES setting instead of always showing the default six.
     auto voiceRow = area.removeFromTop (rowHeight);
-    const float lampSize = juce::jmin (9.0f, voiceRow.getHeight() * 0.7f);
-    for (int voice = 0; voice < 6; ++voice)
+    const auto readout = voiceRow.removeFromRight (voiceRow.getWidth() * 0.44f);
+    const int lamps =
+        juce::jlimit (1, youknow106::YouKnow106Engine::maxVoices, voiceLimit);
+    // Fixed pitch across the available width, so sixteen lamps shrink to fit
+    // rather than running off the end of the display.
+    const float pitch = voiceRow.getWidth() / static_cast<float> (lamps);
+    const float lampSize = juce::jmin (9.0f, voiceRow.getHeight() * 0.7f, pitch * 0.62f);
+    for (int voice = 0; voice < lamps; ++voice)
     {
         const auto lamp = juce::Rectangle<float> (lampSize, lampSize)
-                              .withCentre ({ voiceRow.getX() + lampSize * 0.9f
-                                                 + static_cast<float> (voice) * lampSize * 2.0f,
+                              .withCentre ({ voiceRow.getX()
+                                                 + (static_cast<float> (voice) + 0.5f) * pitch,
                                              voiceRow.getCentreY() });
         const bool lit = (voiceMask & (1 << voice)) != 0;
         if (lit)
@@ -300,9 +309,9 @@ void YouKnow106Display::paint (juce::Graphics& g)
 
     g.setColour (fromPalette (panel::colour::textDim));
     g.setFont (panelFont (10.0f));
-    g.drawText (ready ? juce::String (voices) + " / 6 VOICES" : juce::String ("STANDBY"),
-                voiceRow.removeFromRight (voiceRow.getWidth() * 0.5f).toNearestInt(),
-                juce::Justification::centredRight);
+    g.drawText (ready ? juce::String (voices) + " / " + juce::String (lamps) + " VOICES"
+                      : juce::String ("STANDBY"),
+                readout.toNearestInt(), juce::Justification::centredRight);
 
     // Modulation and envelope meters.
     const auto meter = [&g] (juce::Rectangle<float> row, float value, bool bipolar,

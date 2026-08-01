@@ -156,6 +156,15 @@ if(BUILD_TESTING)
     if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
         set(YOUKNOW106_ENGINE_TEST_TIMEOUT 600)
         set(YOUKNOW106_CIRCUIT_TEST_TIMEOUT 900)
+        # The suites also have to know, because one of them asserts the engine
+        # renders faster than realtime and instrumentation makes that false.
+        # Compiler macros do not cover the cases this branch does -- GCC with
+        # only -fsanitize=undefined defines nothing a test can see -- so the
+        # build system tells them directly and the two decisions cannot drift
+        # apart.
+        foreach(target YouKnow106EngineTests YouKnow106CircuitTests)
+            target_compile_definitions(${target} PRIVATE YOUKNOW106_SANITIZER_BUILD=1)
+        endforeach()
     else()
         set(YOUKNOW106_ENGINE_TEST_TIMEOUT 60)
         set(YOUKNOW106_CIRCUIT_TEST_TIMEOUT 90)

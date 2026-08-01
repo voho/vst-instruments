@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -560,6 +561,74 @@ void testBucketBrigadeLine()
     expect(difference > 1.0, "the two delay lines are producing the same signal");
 }
 
+// A filter coefficient is only right in company with the update it is used
+// with. Asserting the formula would prove nothing, so this measures where the
+// corner of the pairing the line actually runs ends up, at the two rates the
+// engine uses. The mismatched pairing this catches put the 9.9 kHz corner at
+// 4.6 kHz -- inaudible as a bug report, obvious as a dull chorus.
+void testSupportFilterCornersLandWhereAsked()
+{
+    const auto gainAt = [](double frequency, float g, float sampleRate) {
+        // A whole number of cycles in the window, so the correlation is exact
+        // and no leakage creeps into the estimate.
+        constexpr int cycles = 64;
+        constexpr int settle = 4096;
+        const int window = static_cast<int>(
+            std::llround(cycles * static_cast<double>(sampleRate) / frequency));
+        float state = 0.0f;
+        std::complex<double> accumulator {};
+        for (int index = 0; index < settle + window; ++index)
+        {
+            const double phase = 2.0 * pi * frequency * index / sampleRate;
+            const float output = Chorus::supportFilterStep(
+                state, static_cast<float>(std::sin(phase)), g);
+            if (index >= settle)
+                accumulator += static_cast<double>(output)
+                             * std::exp(std::complex<double>(0.0, -phase));
+        }
+        return 2.0 * std::abs(accumulator) / window;
+    };
+
+    // A lowpass passes direct current untouched, whatever its corner. Checking
+    // it separately means the corner search below can be normalised against an
+    // exact figure rather than another measurement.
+    {
+        const float g = Chorus::onePoleG(9900.0f, 192000.0f);
+        float state = 0.0f;
+        float settled = 0.0f;
+        for (int index = 0; index < 8192; ++index)
+            settled = Chorus::supportFilterStep(state, 1.0f, g);
+        expectNear(settled, 1.0, 1.0e-5, "the support filter does not pass DC");
+    }
+
+    const auto measureCorner = [&gainAt](float requested, float sampleRate) {
+        const float g = Chorus::onePoleG(requested, sampleRate);
+        // Bisect for the half-power point rather than assuming the shape. The
+        // lower bound is far below any corner the circuit uses; a filter that
+        // converged onto it would fail the assertion, which is the point.
+        double low = 200.0;
+        double high = sampleRate * 0.45;
+        for (int step = 0; step < 40; ++step)
+        {
+            const double middle = 0.5 * (low + high);
+            if (gainAt(middle, g, sampleRate) > 0.70710678)
+                low = middle;
+            else
+                high = middle;
+        }
+        return 0.5 * (low + high);
+    };
+
+    // The internal rate the engine runs the chorus at, and the lowest host rate
+    // it accepts -- where the prewarping matters most.
+    expectNear(measureCorner(9900.0f, 192000.0f), 9900.0, 60.0,
+               "anti-alias corner at the internal rate");
+    expectNear(measureCorner(9500.0f, 192000.0f), 9500.0, 60.0,
+               "reconstruction corner at the internal rate");
+    expectNear(measureCorner(9900.0f, 48000.0f), 9900.0, 60.0,
+               "anti-alias corner without oversampling");
+}
+
 void testCorrectionResidualsVanishAtTheEdges()
 {
     // The bandlimiting residuals are built by integration at construction, so
@@ -630,6 +699,7 @@ int main()
     testModulationAndGlideLaws();
     testPanelLawsInvert();
     testBucketBrigadeLine();
+    testSupportFilterCornersLandWhereAsked();
     testCorrectionResidualsVanishAtTheEdges();
 
     if (failures != 0)

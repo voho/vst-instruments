@@ -57,6 +57,10 @@ public:
     {
         return displayVoiceMask.load (std::memory_order_relaxed);
     }
+    int getVoiceLimitForDisplay() const noexcept
+    {
+        return displayVoiceLimit.load (std::memory_order_relaxed);
+    }
     float getEnvelopeForDisplay() const noexcept
     {
         return displayEnvelope.load (std::memory_order_relaxed);
@@ -119,6 +123,7 @@ private:
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<int> displayVoiceMask { 0 };
+    std::atomic<int> displayVoiceLimit { youknow106::YouKnow106Engine::hardwareVoices };
     std::atomic<float> displayEnvelope { 0.0f };
     std::atomic<float> displayLfo { 0.0f };
     std::atomic<double> displaySampleRate { 0.0 };

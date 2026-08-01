@@ -69,6 +69,13 @@ public:
 
     [[nodiscard]] static ModeSettings settingsFor(ChorusMode mode) noexcept;
 
+    // The support filters either side of the line, exposed as a coefficient and
+    // a single step so the suites can measure where the corner actually lands
+    // rather than trusting that the two match. They only agree for one pairing:
+    // this coefficient belongs to this recursion and to no other.
+    [[nodiscard]] static float onePoleG(float cutoffHz, float sampleRate) noexcept;
+    static float supportFilterStep(float& state, float input, float g) noexcept;
+
     [[nodiscard]] float getLfoPhase() const noexcept { return lfoPhase_; }
 
 private:
@@ -95,8 +102,6 @@ private:
                       float antiAliasG, float reconstructionG,
                       float noiseScale) noexcept;
     };
-
-    static float onePoleG(float cutoffHz, float sampleRate) noexcept;
 
     Line lineA_ {};
     Line lineB_ {};

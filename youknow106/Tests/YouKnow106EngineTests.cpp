@@ -24,7 +24,14 @@ using namespace youknow106;
 
 int failures = 0;
 
-#if defined(__has_feature)
+// The build system defines this whenever it adds -fsanitize, because no macro
+// covers every case: GCC with only -fsanitize=undefined defines neither
+// __has_feature nor __SANITIZE_UNDEFINED__, and the realtime assertion below
+// would then hold instrumented code to an uninstrumented budget. The compiler
+// macros stay as a fallback for a sanitizer build configured some other way.
+#if defined(YOUKNOW106_SANITIZER_BUILD)
+constexpr bool sanitizerBuild = YOUKNOW106_SANITIZER_BUILD != 0;
+#elif defined(__has_feature)
 constexpr bool sanitizerBuild = __has_feature(address_sanitizer)
                              || __has_feature(undefined_behavior_sanitizer);
 #elif defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
@@ -581,6 +588,198 @@ void testUnisonSurvivesAReducedVoiceCount()
            "reducing the voice count left unison voices stuck on a released key");
 }
 
+void testUnisonNoteOnCollapsesAWiderStack()
+{
+    // Unison is one note on every voice it is given. A count lowered while a
+    // wider stack is sounding must not leave the old note held against the new
+    // one, which would turn the mode into a two-note chord.
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Unison;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    render(engine, 8192);
+    expect(engine.getActiveVoiceCount() == 6, "unison did not take every voice");
+
+    parameters.polyphony = 1;
+    engine.setParameters(parameters);
+    engine.noteOn(64, 1.0f);
+    // Long enough for the five dropped voices to finish their release.
+    const auto rendered = render(engine, static_cast<int>(sampleRate * 0.5));
+
+    const std::size_t window = rendered.left.size() / 2;
+    const double atOldNote =
+        magnitudeAt(rendered.left, rendered.left.size() - window,
+                    static_cast<int>(window), 261.626, sampleRate);
+    const double atNewNote =
+        magnitudeAt(rendered.left, rendered.left.size() - window,
+                    static_cast<int>(window), 329.628, sampleRate);
+    expect(atNewNote > 0.01, "the new unison note is not sounding");
+    expect(atOldNote < atNewNote * 0.05,
+           "a unison note-on left the previous note sounding on the dropped voices");
+    expect(engine.getActiveVoiceCount() == 1,
+           "the dropped unison voices never retired");
+}
+
+void testUnisonDoesNotResurrectPolyphonicTails()
+{
+    // Release tails from before the mode changed are not part of the unison
+    // stack. Sweeping them into a retarget would key them to a note they never
+    // played and pull their envelopes back out of release, so they would ring
+    // on for good and push the instrument past the voice count it was given.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    // Fixed priority from the first voice down, so the four notes land in the
+    // four lowest slots and the two the unison stack will take are known.
+    parameters.keyMode = KeyMode::Poly2;
+    parameters.polyphony = 6;
+    // Long enough that the tails are unmistakably still ringing when the mode
+    // changes underneath them, short enough to be gone well inside the final
+    // render if nothing revives them.
+    parameters.release = 0.6f;
+    engine.setParameters(parameters);
+
+    for (int note = 48; note < 52; ++note)
+        engine.noteOn(note, 1.0f);
+    render(engine, 8192);
+    for (int note = 48; note < 52; ++note)
+        engine.noteOff(note);
+    render(engine, 2048);
+    expect(engine.getActiveVoiceCount() == 4,
+           "the polyphonic tails are not ringing");
+
+    // The stack is narrower than the tails, so slots 2 and 3 stay outside it.
+    parameters.keyMode = KeyMode::Unison;
+    parameters.polyphony = 2;
+    engine.setParameters(parameters);
+    engine.noteOn(64, 1.0f);
+    render(engine, 2048);
+    engine.noteOn(65, 1.0f);
+    render(engine, 2048);
+    engine.noteOff(65);
+    render(engine, static_cast<int>(sampleRate * 3.0));
+
+    expect(engine.getActiveVoiceCount() == 2,
+           "a unison retarget resurrected a polyphonic release tail");
+}
+
+void testSubFlipsOnTheFirstWrap()
+{
+    // The divider's first output edge belongs one oscillator period after the
+    // retrigger, not two. Getting that wrong makes the opening half-cycle twice
+    // as long as every one after it -- a low transient the hardware does not
+    // have. A low note is used so the anomaly is far clear of the amplifier's
+    // own opening time.
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = false;
+    parameters.subLevel = 1.0f;
+    engine.setParameters(parameters);
+
+    constexpr int midiNote = 24;
+    const double fundamental = 440.0 * std::pow(2.0, (midiNote - 69) / 12.0);
+    const double periodSamples = sampleRate / fundamental;
+
+    engine.noteOn(midiNote, 1.0f);
+    const auto rendered = render(engine, static_cast<int>(periodSamples * 3.0));
+
+    // The first falling edge after the amplifier has opened.
+    const auto opened = static_cast<std::size_t>(sampleRate * 0.008);
+    std::size_t firstFall = 0;
+    for (std::size_t index = opened + 1; index < rendered.left.size(); ++index)
+        if (rendered.left[index - 1] > 0.0f && rendered.left[index] <= 0.0f)
+        {
+            firstFall = index;
+            break;
+        }
+
+    expect(firstFall > 0, "the sub never changed sign");
+    const double periods = static_cast<double>(firstFall) / periodSamples;
+    expect(periods < 1.5,
+           "the sub's first half-cycle lasted two oscillator periods instead of one");
+}
+
+void testControllersReturnToNeutralOnReset()
+{
+    // A run that stopped with the bender pushed over must not start the next
+    // one there. Hosts are not obliged to resend a neutral controller when the
+    // transport restarts, and nothing else would bring the pitch back.
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.benderDcoDepth = 1.0f;
+    engine.setParameters(parameters);
+
+    engine.setPitchBend(1.0f);
+    engine.noteOn(69, 1.0f);
+    const auto bent = render(engine, static_cast<int>(sampleRate));
+    const double bentPitch =
+        measuredFrequency(bent.left, bent.left.size() / 2, sampleRate);
+    expect(bentPitch > 500.0, "the bender did not raise the pitch");
+
+    engine.reset();
+    engine.noteOn(69, 1.0f);
+    const auto afterReset = render(engine, static_cast<int>(sampleRate));
+    const double resetPitch = measuredFrequency(afterReset.left,
+                                                afterReset.left.size() / 2, sampleRate);
+    expectNear(resetPitch, 440.0, 1.0,
+               "a reset left the previous run's pitch bend applied");
+}
+
+void testContinuousControlsDoNotStepAtBlockBoundaries()
+{
+    // Volume, sub and noise reach the samples directly rather than through the
+    // converter scan, so a host automating one of them across a held note would
+    // hear a block-rate step as a click unless they are glided.
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    engine.setParameters(parameters);
+    engine.noteOn(45, 1.0f);
+    render(engine, 8192);
+
+    std::vector<float> left(blockSize, 0.0f);
+    std::vector<float> right(blockSize, 0.0f);
+    engine.process(left.data(), right.data(), blockSize);
+
+    // The largest step the signal takes on its own, as the reference for what
+    // counts as a discontinuity.
+    double withinBlock = 0.0;
+    for (int index = 1; index < blockSize; ++index)
+        withinBlock = std::max(withinBlock,
+                               std::abs(static_cast<double>(left[index])
+                                        - left[index - 1]));
+    const float lastOfBlock = left[blockSize - 1];
+
+    // The whole range, in one automation move at a block boundary.
+    parameters.volume = 0.0f;
+    engine.setParameters(parameters);
+    engine.process(left.data(), right.data(), blockSize);
+
+    const double acrossBoundary =
+        std::abs(static_cast<double>(left[0]) - lastOfBlock);
+    expect(acrossBoundary <= withinBlock * 1.5 + 1.0e-4,
+           "a block-boundary volume change stepped the output");
+
+    // And it still gets there: a glide that never arrives is not a fix. Four
+    // time constants is long enough to be unambiguous and short enough that a
+    // glide slow enough to be audible as a fade would fail.
+    const auto settled = render(engine, static_cast<int>(sampleRate * 0.02));
+    expect(peakOf(settled.left, settled.left.size() / 2) < 0.02,
+           "the glided volume never reached its new setting");
+}
+
 void testComponentDriftRateIsIndependentOfOversampling()
 {
     // The modelled component wander has to advance in seconds, not in internal
@@ -1016,6 +1215,11 @@ int main()
     testUnisonUsesEveryVoiceWithoutDetuning();
     testVoiceCountAboveTheHardwareSixWorks();
     testUnisonSurvivesAReducedVoiceCount();
+    testUnisonNoteOnCollapsesAWiderStack();
+    testUnisonDoesNotResurrectPolyphonicTails();
+    testSubFlipsOnTheFirstWrap();
+    testControllersReturnToNeutralOnReset();
+    testContinuousControlsDoNotStepAtBlockBoundaries();
     testComponentDriftRateIsIndependentOfOversampling();
     testTransposeReachesSoundingVoices();
     testFirstGlidedNoteStartsAtItsOwnPitch();

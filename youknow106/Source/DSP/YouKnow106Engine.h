@@ -196,14 +196,19 @@ public:
     [[nodiscard]] static float highPassCornerHz(HighPassMode mode) noexcept;
     [[nodiscard]] static float highPassShelfGain(HighPassMode mode) noexcept;
 
+    // The instrument has six voice cards; the engine will run more of them for
+    // players who want the chords the hardware drops. Public because the host
+    // layer clamps its VOICES parameter to the same bound and the editor draws
+    // one lamp per available voice.
+    static constexpr int hardwareVoices = 6;
+    static constexpr int maxVoices = 16;
+
 private:
     // The JUCE-free suites use this narrow friend to drive one filter step, one
     // oscillator period and one envelope segment against independent
     // double-precision solves. It is not part of the plug-in API.
     friend struct YouKnow106TestAccess;
 
-    static constexpr int hardwareVoices = 6;
-    static constexpr int maxVoices = 16;
     static constexpr int maximumOversampleFactor = 4;
     static constexpr double minimumHqProcessingRate = 176400.0;
     static constexpr double maximumSupportedSampleRate = 768000.0;
@@ -325,8 +330,11 @@ private:
         double periodSamples { 100.0 };
         double phase { 0.0 };
         float pulseState { -1.0f };
+        // The divider's output level is the whole of its state. Holding a
+        // separate toggle alongside it only creates a way for the two to
+        // disagree, which is what made the first half-cycle after a retrigger
+        // twice as long as every other one.
         float subState { 1.0f };
-        bool subToggle { false };
         BandlimitedTrack saw {};
         BandlimitedTrack pulse {};
         BandlimitedTrack sub {};
@@ -384,6 +392,11 @@ private:
         bool keyDown { false };
         bool sustained { false };
         bool releasing { false };
+        // Whether this slot belongs to the current Unison stack. A polyphonic
+        // release tail left over from before the mode changed is still active
+        // and still has a root note, so without this it would be swept into the
+        // next unison retarget and resurrected on a key it never played.
+        bool unisonMember { false };
         int rootMidi { -1 };
         int cardIndex { 0 };
         int controlCountdown { 0 };
@@ -446,6 +459,13 @@ private:
     void initialiseVoice(Voice& voice, int slot, int midiNote, float velocity,
                          bool retrigger) noexcept;
     void silenceVoice(Voice& voice) noexcept;
+    // Lift the key on one slot: sustain it if the pedal is down, release it
+    // otherwise. Every path that lets go of a note goes through here.
+    void releaseVoiceKey(Voice& voice) noexcept;
+    // Hand a slot out of the Unison stack, releasing it as if its key had been
+    // let go. Used when the voice count shrinks below the stack that is
+    // already sounding.
+    void dropFromUnison(Voice& voice) noexcept;
     int findVoiceForNote(int midiNote) const noexcept;
     int allocateVoice(int midiNote) noexcept;
     void rememberHeldNote(int midiNote, float velocity) noexcept;
@@ -483,8 +503,24 @@ private:
     void updateActiveVoiceCount() noexcept;
     [[nodiscard]] int voiceLimit() const noexcept;
 
+    // What the panel is set to. Discrete settings -- key mode, voice count,
+    // waveform switches, chorus mode -- take effect the moment they are
+    // written, because the switches they model are switches.
     EngineParameters targetParameters_ {};
-    EngineParameters smoothedParameters_ {};
+    EngineParameters activeParameters_ {};
+    // The three controls that reach the sample stream directly rather than
+    // through the converter scan are potentiometers wired straight into the
+    // audio path, so they have to be glided per sample instead. Stepping them
+    // at a block boundary is a gain discontinuity, which a host automating
+    // Volume across a held note would hear as a click.
+    static constexpr float panelGlideSeconds = 0.005f;
+    float glidedVolume_ { 0.8f };
+    float glidedSubLevel_ { 0.0f };
+    float glidedNoiseLevel_ { 0.0f };
+    // A glide needs somewhere to start. The first render after a reset takes
+    // the panel as it stands rather than sliding up to it, or a patch loaded
+    // while stopped would fade in when the transport rolled.
+    bool panelGlidePrimed_ { false };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     double oversampledRate_ { 192000.0 };

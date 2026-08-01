@@ -11,7 +11,9 @@ namespace
 // stage hands on all but a small fraction of its charge, and the residue smears
 // forward; over 128 cell pairs the aggregate is well approximated by one pole
 // running at the clock rate. This is the standard first-order condensation, not
-// a per-stage solve.
+// a per-stage solve. Unlike the support filters below it is specified directly
+// as the per-edge retention coefficient rather than as a corner frequency, so
+// it belongs in the plain recursion and not in the prewarped one.
 constexpr float transferSmear = 0.34f;
 
 // Modelled noise floor of one line, referred to its own input. Uncompanded,
@@ -79,6 +81,19 @@ float Chorus::onePoleG(float cutoffHz, float sampleRate) noexcept
     return g / (1.0f + g);
 }
 
+// One topology-preserving-transform lowpass step. The coefficient above only
+// places the corner where it was asked for if the state is advanced by twice
+// the difference term: the plain `state += g * (input - state)` recursion wants
+// a different coefficient entirely and would put the 9.9 kHz corner near
+// 4.6 kHz at the engine's 192 kHz internal rate.
+float Chorus::supportFilterStep(float& state, float input, float g) noexcept
+{
+    const float difference = (input - state) * g;
+    const float output = difference + state;
+    state = output + difference;
+    return output;
+}
+
 void Chorus::Line::reset(std::uint32_t seed) noexcept
 {
     cells.fill(0.0f);
@@ -98,8 +113,7 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
 {
     // Band-limit ahead of the line. Everything above half the clock would fold,
     // exactly as it does in the part.
-    antiAliasState += antiAliasG * (input - antiAliasState);
-    const float limited = antiAliasState;
+    const float limited = Chorus::supportFilterStep(antiAliasState, input, antiAliasG);
 
     const double increment =
         static_cast<double>(clockHz) / static_cast<double>(sampleRate);
@@ -141,8 +155,7 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
     previousInput = limited;
 
     // Reconstruct the held staircase.
-    reconstructionState += reconstructionG * (held - reconstructionState);
-    return reconstructionState;
+    return Chorus::supportFilterStep(reconstructionState, held, reconstructionG);
 }
 
 void Chorus::prepare(double sampleRate) noexcept

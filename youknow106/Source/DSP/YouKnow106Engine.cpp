@@ -595,7 +595,6 @@ void YouKnow106Engine::Dco::reset() noexcept
     phase = 0.0;
     pulseState = -1.0f;
     subState = 1.0f;
-    subToggle = false;
     saw.reset();
     pulse.reset();
     sub.reset();
@@ -924,8 +923,14 @@ void YouKnow106Engine::reset()
     latencyPadRight_.fill(0.0f);
     latencyPadWriteIndex_ = 0;
     noiseState_ = 0x6d2b79f5u;
-    pitchBend_ = pitchBendTarget_;
-    modWheel_ = modWheelTarget_;
+    // Both the live value and the target, or a run that stopped with the bender
+    // pushed over would start the next one there: hosts are not obliged to
+    // resend a neutral controller when the transport restarts, and nothing
+    // would bring it back until the player touched the wheel.
+    pitchBendTarget_ = 0.0f;
+    modWheelTarget_ = 0.0f;
+    pitchBend_ = 0.0f;
+    modWheel_ = 0.0f;
     sustainPedalDown_ = false;
     generation_ = 0;
     roundRobinCursor_ = 0;
@@ -941,6 +946,7 @@ void YouKnow106Engine::reset()
     dcInput_ = 0.0f;
     dcOutput_ = 0.0f;
     driftControlCountdown_ = 0;
+    panelGlidePrimed_ = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -991,12 +997,15 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
 void YouKnow106Engine::setParameters(const EngineParameters& parameters)
 {
     targetParameters_ = sanitise(parameters);
-    smoothedParameters_ = targetParameters_;
+    // Switch positions land immediately. The three continuous controls that
+    // are applied straight to the samples glide towards their new positions in
+    // the render loop instead, so nothing here steps them at a block boundary.
+    activeParameters_ = targetParameters_;
 }
 
 int YouKnow106Engine::voiceLimit() const noexcept
 {
-    return std::clamp(smoothedParameters_.polyphony, 1, maxVoices);
+    return std::clamp(activeParameters_.polyphony, 1, maxVoices);
 }
 
 // ---------------------------------------------------------------------------
@@ -1050,25 +1059,54 @@ int YouKnow106Engine::newestHeldNote() const noexcept
     return best;
 }
 
+void YouKnow106Engine::releaseVoiceKey(Voice& voice) noexcept
+{
+    voice.keyDown = false;
+    if (sustainPedalDown_)
+    {
+        voice.sustained = true;
+    }
+    else
+    {
+        voice.releasing = true;
+        voice.envelope.noteOff();
+    }
+}
+
+void YouKnow106Engine::dropFromUnison(Voice& voice) noexcept
+{
+    voice.unisonMember = false;
+    if (voice.keyDown)
+        releaseVoiceKey(voice);
+}
+
 // Unison is monophonic, so releasing the key that is sounding has to hand the
 // stack back to whichever key is still down rather than silencing everything.
 void YouKnow106Engine::retargetUnison(int midiNote) noexcept
 {
-    // Every sounding slot, not just the ones inside the current voice count:
-    // lowering that count leaves earlier voices playing, and they have to be
-    // handed on with the rest or they stay keyed to a note nobody is holding.
+    // Every slot in the stack, not just the ones inside the current voice
+    // count: lowering that count leaves earlier voices playing, and they have
+    // to be dealt with or they stay keyed to a note nobody is holding. Slots
+    // that have fallen outside the count leave the stack instead of following
+    // it, so the count stays the number of voices a key can sound.
+    const int limit = voiceLimit();
     const float velocity = heldNoteVelocities_[static_cast<std::size_t>(midiNote)];
     for (int slot = 0; slot < maxVoices; ++slot)
     {
         auto& voice = voices_[static_cast<std::size_t>(slot)];
-        if (!voice.active)
+        if (!voice.active || !voice.unisonMember)
             continue;
+        if (slot >= limit)
+        {
+            dropFromUnison(voice);
+            continue;
+        }
         voice.rootMidi = midiNote;
         voice.keyDown = true;
         voice.sustained = false;
         voice.releasing = false;
         voice.velocity = velocity;
-        voice.targetMidi = static_cast<float>(midiNote + smoothedParameters_.keyTranspose);
+        voice.targetMidi = static_cast<float>(midiNote + activeParameters_.keyTranspose);
         // Returning to a key that was never let go is a legato move: the
         // envelope keeps running rather than starting again.
         if (voice.envelope.stage == EnvelopeStage::Release)
@@ -1104,7 +1142,7 @@ int YouKnow106Engine::allocateVoice(int midiNote) noexcept
         return !voice.active || (!voice.keyDown && !voice.sustained);
     };
 
-    if (smoothedParameters_.keyMode == KeyMode::Poly2)
+    if (activeParameters_.keyMode == KeyMode::Poly2)
     {
         // Fixed priority from the first voice down: low voices are reused
         // immediately, so only the most recent notes keep a full release.
@@ -1139,7 +1177,7 @@ int YouKnow106Engine::allocateVoice(int midiNote) noexcept
 void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
                                        float velocity, bool retrigger) noexcept
 {
-    const auto& parameters = smoothedParameters_;
+    const auto& parameters = activeParameters_;
     const bool wasSounding = voice.active;
 
     voice.cardIndex = slot;
@@ -1203,6 +1241,7 @@ void YouKnow106Engine::silenceVoice(Voice& voice) noexcept
     voice.keyDown = false;
     voice.sustained = false;
     voice.releasing = false;
+    voice.unisonMember = false;
     voice.rootMidi = -1;
     voice.vca = 0.0f;
     voice.vcaControlTarget = 0.0f;
@@ -1226,7 +1265,7 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
     rememberHeldNote(midiNote, velocity);
     anyKeyDown_ = true;
 
-    if (smoothedParameters_.keyMode == KeyMode::Unison)
+    if (activeParameters_.keyMode == KeyMode::Unison)
     {
         // Every voice takes the same note, and every note timer divides the
         // same reference by the same integer, so there is no pitch spread at
@@ -1239,6 +1278,17 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
             auto& voice = voices_[static_cast<std::size_t>(slot)];
             const bool retrigger = !voice.active || voice.rootMidi != midiNote;
             initialiseVoice(voice, slot, midiNote, velocity, retrigger);
+            voice.unisonMember = true;
+        }
+        // A voice count lowered while a wider stack was sounding leaves slots
+        // above the new count still keyed to the old note. They leave the stack
+        // here rather than holding that note against the new one, which would
+        // turn Unison into a chord.
+        for (int slot = limit; slot < maxVoices; ++slot)
+        {
+            auto& voice = voices_[static_cast<std::size_t>(slot)];
+            if (voice.active && voice.unisonMember)
+                dropFromUnison(voice);
         }
         updateActiveVoiceCount();
         return;
@@ -1249,8 +1299,9 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
     if (slot < 0)
         return; // Every key is held: the note is dropped, as on the hardware.
 
-    initialiseVoice(voices_[static_cast<std::size_t>(slot)], slot, midiNote,
-                    velocity, true);
+    auto& voice = voices_[static_cast<std::size_t>(slot)];
+    initialiseVoice(voice, slot, midiNote, velocity, true);
+    voice.unisonMember = false;
     updateActiveVoiceCount();
 }
 
@@ -1270,13 +1321,16 @@ void YouKnow106Engine::noteOffInternal(int midiNote) noexcept
     const int remaining = newestHeldNote();
     anyKeyDown_ = remaining >= 0;
 
-    if (smoothedParameters_.keyMode == KeyMode::Unison && remaining >= 0)
+    if (activeParameters_.keyMode == KeyMode::Unison && remaining >= 0)
     {
         // Only the key that is actually sounding hands the stack on; releasing
-        // an older one that the stack has already left changes nothing.
+        // an older one that the stack has already left changes nothing. A
+        // polyphonic tail on the same note is not the stack, so it does not
+        // count as sounding it either.
         bool sounding = false;
         for (const auto& voice : voices_)
-            sounding = sounding || (voice.active && voice.rootMidi == midiNote);
+            sounding = sounding
+                || (voice.active && voice.unisonMember && voice.rootMidi == midiNote);
         if (sounding)
         {
             retargetUnison(remaining);
@@ -1288,17 +1342,7 @@ void YouKnow106Engine::noteOffInternal(int midiNote) noexcept
     {
         if (!voice.active || voice.rootMidi != midiNote || !voice.keyDown)
             continue;
-
-        voice.keyDown = false;
-        if (sustainPedalDown_)
-        {
-            voice.sustained = true;
-        }
-        else
-        {
-            voice.releasing = true;
-            voice.envelope.noteOff();
-        }
+        releaseVoiceKey(voice);
     }
 }
 
@@ -1310,16 +1354,7 @@ void YouKnow106Engine::releaseAllNotes()
     {
         if (!voice.active || !voice.keyDown)
             continue;
-        voice.keyDown = false;
-        if (sustainPedalDown_)
-        {
-            voice.sustained = true;
-        }
-        else
-        {
-            voice.releasing = true;
-            voice.envelope.noteOff();
-        }
+        releaseVoiceKey(voice);
     }
 }
 
@@ -1653,12 +1688,12 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // octave down and takes no part in pulse-width modulation.
     if (wrapped)
     {
-        dco.subToggle = !dco.subToggle;
-        const float target = dco.subToggle ? 1.0f : -1.0f;
+        // Every wrap is an edge, including the first one after a retrigger.
+        const float target = -dco.subState;
         addStep(dco.sub, target - dco.subState, samplesAgo(1.0));
         dco.subState = target;
     }
-    const float subGain = subMixVolts * parameters.subLevel
+    const float subGain = subMixVolts * glidedSubLevel_
         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
     const float subOut = dco.sub.advance(dco.subState) * subGain;
 
@@ -1669,7 +1704,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     if (parameters.pulseEnabled)
         mixed += pulseOut;
     mixed += subOut;
-    mixed += noiseSample * noiseMixVolts * parameters.noiseLevel;
+    mixed += noiseSample * noiseMixVolts * glidedNoiseLevel_;
 
     voice.noiseState ^= voice.noiseState << 13;
     voice.noiseState ^= voice.noiseState >> 17;
@@ -1742,10 +1777,25 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
     applyPendingOversamplingIfIdle();
 
-    const auto& parameters = smoothedParameters_;
+    const auto& parameters = activeParameters_;
+
+    if (!panelGlidePrimed_)
+    {
+        glidedVolume_ = parameters.volume;
+        glidedSubLevel_ = parameters.subLevel;
+        glidedNoiseLevel_ = parameters.noiseLevel;
+        panelGlidePrimed_ = true;
+    }
+
     const float bendSmoothing = 1.0f - std::exp(-inverseOversampledRate_ * 60.0f);
     const float controlSlew =
         1.0f - std::exp(-inverseOversampledRate_ / controlSlewSeconds);
+    // One glide coefficient per rate, since the mixer pots are consumed inside
+    // the oversampled loop and the output pot outside it.
+    const float panelGlide =
+        1.0f - std::exp(-inverseOversampledRate_ / panelGlideSeconds);
+    const float outputGlide =
+        1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
     const int scanPeriodSamples =
         std::max(1, static_cast<int>(oversampledRate_ / controlScanHz));
 
@@ -1763,6 +1813,12 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
         {
             pitchBend_ += (pitchBendTarget_ - pitchBend_) * bendSmoothing;
             modWheel_ += (modWheelTarget_ - modWheel_) * bendSmoothing;
+
+            // The two mixer pots, glided at the rate they are consumed.
+            glidedSubLevel_ +=
+                (parameters.subLevel - glidedSubLevel_) * panelGlide;
+            glidedNoiseLevel_ +=
+                (parameters.noiseLevel - glidedNoiseLevel_) * panelGlide;
 
             advanceLfo(parameters);
             const float lfo = lfoValue_ * lfoDelayLevel_;
@@ -1886,7 +1942,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
         applyLatencyPad(outputLeft, outputRight);
 
-        const float volume = parameters.volume * parameters.volume;
+        glidedVolume_ += (parameters.volume - glidedVolume_) * outputGlide;
+        const float volume = glidedVolume_ * glidedVolume_;
         left[sample] = std::isfinite(outputLeft) ? outputLeft * volume : 0.0f;
         right[sample] = std::isfinite(outputRight) ? outputRight * volume : 0.0f;
     }

@@ -255,8 +255,13 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (travel (velocity, "Velocity", 0.0f, percentAttributes()));
     layout.add (travel (calibration, "Calibration", 0.35f, percentAttributes()));
     layout.add (travel (chorusNoise, "Chorus Noise", 1.0f, percentAttributes()));
+    // Taken from the engine rather than written out, so the host can never be
+    // offered a voice count the engine would clamp away. The default is the
+    // hardware's own six.
     layout.add (std::make_unique<juce::AudioParameterInt> (
-        juce::ParameterID { polyphony, 1 }, "Polyphony", 1, 16, 6));
+        juce::ParameterID { polyphony, 1 }, "Polyphony", 1,
+        youknow106::YouKnow106Engine::maxVoices,
+        youknow106::YouKnow106Engine::hardwareVoices));
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { hq, 1 }, "HQ", true));
 
@@ -388,6 +393,13 @@ void YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.polyphony = juce::roundToInt (valueOf (polyphony));
 
     engine.setParameters (engineParameters);
+
+    // The editor draws one lamp per available voice, so it needs the count the
+    // engine actually settled on rather than the raw parameter.
+    displayVoiceLimit.store (
+        juce::jlimit (1, youknow106::YouKnow106Engine::maxVoices,
+                      engineParameters.polyphony),
+        std::memory_order_relaxed);
 }
 
 void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,

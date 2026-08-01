@@ -52,6 +52,7 @@ public:
 private:
     int voiceMask = 0;
     int voices = 0;
+    int voiceLimit = 6;
     float envelope = 0.0f;
     float lfo = 0.0f;
     double sampleRate = 0.0;
