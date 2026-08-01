@@ -118,19 +118,19 @@ drift away from the committed files:
 | File | Rendered peak | Normalisation applied |
 | --- | --- | --- |
 | `01-range-open-strings.wav` | −12.4 dBFS | +9.4 dB |
-| `02-range-full-fretboard.wav` | −11.5 dBFS | +8.5 dB |
+| `02-range-full-fretboard.wav` | −11.4 dBFS | +8.4 dB |
 | `03-play-styles.wav` | −5.9 dBFS | +2.9 dB |
 | `04-drop-e-rhythm-dry.wav` | −14.9 dBFS | +11.9 dB |
 | `05-drop-e-rhythm-amp.wav` | −20.2 dBFS | +17.2 dB |
-| `06-lead-amp-delay-room.wav` | −7.0 dBFS | +4.0 dB |
+| `06-lead-amp-delay-room.wav` | −8.8 dBFS | +5.8 dB |
 | `07-pickups-and-tone.wav` | −13.1 dBFS | +10.1 dB |
-| `08-sympathetic-strum-stereo.wav` | −16.6 dBFS | +13.6 dB |
+| `08-sympathetic-strum-stereo.wav` | −16.7 dBFS | +13.7 dB |
 | `09-guitar-build-contrasts.wav` | −9.7 dBFS | +6.7 dB |
 | `10-velocity-dynamics.wav` | −13.2 dBFS | +10.2 dB |
 | `11-power-chords-dry.wav` | −10.9 dBFS | +7.9 dB |
 | `12-power-chords-amp.wav` | −19.5 dBFS | +16.5 dB |
 | `13-long-rhythm-arrangement.wav` | −18.1 dBFS | +15.1 dB |
-| `14-whammy-and-feedback.wav` | −13.6 dBFS | +10.6 dB |
+| `14-whammy-and-feedback.wav` | −14.3 dBFS | +11.3 dB |
 <!-- peaks-table-end -->
 
 `05` renders about 5 dB *below* `04` at the peak while sitting above it in

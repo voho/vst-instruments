@@ -344,9 +344,15 @@ saved: the audio loop performs no band-limiting work at all, and every partial
 the taper has silenced drops out of the render entirely rather than being
 phase-advanced for nothing. A partial re-entering the audible range starts from
 a zero amplitude ramp, so the discarded phase continuity is inaudible. Stored
-phases are kept reduced to `[0, 1)`, so each audible partial costs one table
-lookup, one multiply-add, and one wrap. At control rate the Body-Locked spectral
-coordinate is always a fixed multiple of the harmonic index, which lets
+phases are kept reduced to `[0, 1)` and the phase increment is non-negative, so
+each audible partial costs one quarter-period-folded polynomial sine, one
+multiply-add, and one truncating wrap. There is no oscillator table: the
+4096-entry interpolated one was replaced by a six-term odd polynomial that is
+both more accurate (measured peak error -133.6 dB against -125.6 dB, RMS
+-148.5 dB against -134.6 dB, over 2e7 uniformly spaced phases against
+double-precision `sin()`) and free of the random gather that kept the partial
+pass scalar. At control rate the Body-Locked spectral coordinate is always a
+fixed multiple of the harmonic index, which lets
 `pow(index * scale, tilt)` factor into one cached table lookup and one scalar
 and removes a `pow` and a `sin` from every rendered partial of every frame. The
 mixed output uses floating-point host headroom and remains linear at ordinary
@@ -359,11 +365,16 @@ are analysed by
 
 Analysis and rendering share the same Air coefficient and response equations.
 When transposition, the learned pitch contour, or `Gravity` moves a band toward
-a host's upper frequency limit, its gain tapers smoothly to zero by 0.45 times
-the sample rate. This
-prevents several out-of-range bands from being clamped onto one Nyquist-edge
-frequency. It also means that a low-rate host deliberately loses Air content it
-cannot represent.
+a host's upper frequency limit, its gain tapers smoothly to zero by
+`min(0.45 * sample rate, 20 kHz)`, over a fade width of
+`min(0.07 * sample rate, 2 kHz)`; the Bone modes take the matching taper,
+`min(0.49 * sample rate, 20 kHz)` with a `min(0.04 * sample rate, 1.4 kHz)`
+fade. This prevents several out-of-range bands from being clamped onto one
+Nyquist-edge frequency. The fixed 20 kHz term is what makes the two layers rate-invariant:
+without it a high-rate host kept body content the listener cannot hear while a
+44.1 or 48 kHz host removed the same content, so one memory had a different
+audible top octave on different hosts. The Nyquist term still means that a
+low-rate host deliberately loses content it cannot represent.
 
 The original root frequency, cents offset, and confidence remain visible. A
 manual semitone correction is part of the playable state because no pitch

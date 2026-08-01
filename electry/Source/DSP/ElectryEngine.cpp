@@ -74,6 +74,20 @@ constexpr float handDipFullDepthDb = 10.0f;
 constexpr float handDipCentreRatio = 5.0f;
 constexpr float handDipQ = 0.70f;
 
+// How much of one transverse polarisation crosses into the other over one
+// round trip of the string. The two meet at the bridge saddle and at the nut or
+// fret, which is where a real string's polarisations exchange energy, so this
+// is charged per round trip and not per rendered sample. A few per cent per
+// reflection is what a compliant saddle does; the former per-sample constant
+// worked out at 33% per round trip at the top of the range and over 900% at the
+// bottom, which mixed the polarisations into one and dissipated the difference.
+// Swept at 0.33, 0.16, 0.08, 0.04 and 0.02: everything at or below the open G3
+// moves by under 0.3 dB in every decay window, while the top of the range gains
+// monotonically. 0.04 takes the 22nd-fret high E from 32 dB down at half a
+// second - inaudible before the next beat of a moderate tempo - to 13 dB down,
+// which is the sustain the string's own fitted T60 was always asking for.
+constexpr float polarisationCouplingPerRoundTrip = 0.04f;
+
 constexpr float steelDensity = 7850.0f;      // kg/m^3
 constexpr float steelYoungModulus = 2.0e11f; // Pa
 
@@ -209,6 +223,27 @@ void ElectryEngine::PolarisationLoop::clear() noexcept
     dispersion6.reset();
     dispersion7.reset();
     dispersion8.reset();
+}
+
+void ElectryEngine::DelayTap::setDelay(float delaySamples) noexcept
+{
+    constexpr float maximumDelay = static_cast<float>(delayLineSize - 8);
+    delaySamples = delaySamples < 4.0f
+        ? 4.0f
+        : (delaySamples > maximumDelay ? maximumDelay : delaySamples);
+    // The read is `writeIndex - delaySamples`, and the write index is an
+    // integer, so the interpolation's unit interval starts `ceil(delay)` back
+    // and its fractional position is `ceil(delay) - delay`.
+    const float ceiling = std::ceil(delaySamples);
+    offset = static_cast<int>(ceiling);
+    const float t = ceiling - delaySamples;
+    const float tMinus1 = t - 1.0f;
+    const float tMinus2 = t - 2.0f;
+    const float tPlus1 = t + 1.0f;
+    c0 = -t * tMinus1 * tMinus2 * (1.0f / 6.0f);
+    c1 = tPlus1 * tMinus1 * tMinus2 * 0.5f;
+    c2 = -tPlus1 * t * tMinus2 * 0.5f;
+    c3 = tPlus1 * t * tMinus1 * (1.0f / 6.0f);
 }
 
 void ElectryEngine::PolarisationLoop::writeAdd(float offsetSamples, float value) noexcept
@@ -401,41 +436,135 @@ float ElectryEngine::onePolePhaseDelay(float coefficient, float omega) noexcept
     return omega > 1.0e-9f ? -angle / omega : coefficient / (1.0f - coefficient);
 }
 
-// The dip: a textbook RBJ peaking section with a gain below unity, so its
-// magnitude runs from one at DC down to the requested depth at the centre and
-// back to one at Nyquist. That bound is why it is safe in a feedback loop at any
-// depth - the section can only ever remove energy - and it is asserted over the
-// whole shipped parameter range by testHandDipNeverExpands.
-static void rbjDip(float depth, float fullDepthDb, float omega, float q,
-                   double& b0, double& b1, double& b2,
-                   double& a1, double& a2) noexcept
+float ElectryEngine::onePoleMagnitude(float coefficient, float omega) noexcept
 {
-    b0 = 1.0;
-    b1 = b2 = a1 = a2 = 0.0;
-    if (depth <= 0.0f || fullDepthDb <= 0.0f || omega <= 0.0f)
-        return;
-    const double gainDb = -(double) depth * (double) fullDepthDb;
-    const double a = std::pow(10.0, gainDb / 40.0);
-    const double w = omega;
-    const double alpha = std::sin(w) / (2.0 * std::max((double) q, 0.05));
-    const double a0 = 1.0 + alpha / a;
-    if (a0 < 1.0e-12)
-        return;
-    const double inv = 1.0 / a0;
-    const double cosw = std::cos(w);
-    double nb0 = (1.0 + alpha * a) * inv;
-    double nb1 = (-2.0 * cosw) * inv;
-    double nb2 = (1.0 - alpha * a) * inv;
-    const double na1 = (-2.0 * cosw) * inv;
-    const double na2 = (1.0 - alpha / a) * inv;
-    const double sumB = nb0 + nb1 + nb2;
-    const double sumA = 1.0 + na1 + na2;
-    if (std::fabs(sumB) > 1.0e-30 && sumA > 0.0)
+    // |1 - a e^-jw|^2 is written as (1 - a)^2 + 4 a sin^2(w/2) rather than as
+    // 1 + a^2 - 2 a cos w. The two are the same number and neither is more
+    // "physical", but the second one cannot be computed in float here. For the
+    // low fundamental of a wound string at an oversampled rate both a and
+    // cos w sit within a few parts per million of one, so the direct form
+    // subtracts two quantities near two to land on a result near 2e-5: the
+    // leading digits cancel and what is left is the float rounding of the
+    // operands. Measured, that put the magnitude of the coupled low E's solved
+    // filter 0.1% out at a 96 kHz host - which sounds negligible and is not,
+    // because the loop gain that compensates it is inside a logarithm: a 0.1%
+    // error in the magnitude moved the realised T60 by 5.6%, and by a different
+    // amount at every host rate, which is exactly the rate dependence the loop
+    // filters are solved to avoid. Both terms of this form are non-negative and
+    // computed from small quantities, so nothing cancels.
+    const float halfAngleSine = std::sin(0.5f * omega);
+    const float gap = 1.0f - coefficient;
+    const float denominator = gap * gap
+                            + 4.0f * coefficient * halfAngleSine * halfAngleSine;
+    return gap / std::sqrt(std::max(denominator, 1.0e-30f));
+}
+
+float ElectryEngine::solveOnePoleDamping(float magnitudeRatio, float omega0,
+                                         float omegaHigh) noexcept
+{
+    // The ratio falls monotonically with the coefficient, so bisection is
+    // reliable without a derivative. Eighteen halvings resolve the coefficient
+    // to below 4e-6, well inside what the decay targets are known to.
+    const float target = clampf(magnitudeRatio, 1.0e-4f, 1.0f);
+    float low = 0.0f;
+    float high = 0.9995f;
+    for (int i = 0; i < 18; ++i)
     {
-        const double correction = sumA / sumB;
-        nb0 *= correction; nb1 *= correction; nb2 *= correction;
+        const float mid = 0.5f * (low + high);
+        if (onePoleMagnitude(mid, omegaHigh) / onePoleMagnitude(mid, omega0)
+            > target)
+            low = mid;
+        else
+            high = mid;
     }
-    b0 = nb0; b1 = nb1; b2 = nb2; a1 = na1; a2 = na2;
+    return 0.5f * (low + high);
+}
+
+void ElectryEngine::solveLoopLoss(float t60Fundamental, float t60High,
+                                  float periodSamples, float sampleRate,
+                                  float omega0, float omegaHigh,
+                                  float gainCeiling, float& coefficientOut,
+                                  float& gainOut) noexcept
+{
+    // Two decay targets are two constraints on one first-order filter and one
+    // scalar, so they are not independent: the one-pole's own loss at the
+    // fundamental has to be bought back by the loop gain, and the loop gain
+    // cannot exceed one. A steep ratio drives the pole toward the unit circle,
+    // where the filter's magnitude at a low fundamental collapses toward
+    // (1 - a)/omega0, and the gain the fundamental would need to compensate
+    // runs past unity. Solving the ratio and then clamping the gain - which is
+    // what this did first - keeps the tilt and silently discards the
+    // fundamental's target with it, which is the wrong trade in both
+    // directions: the top end is gone either way, and now so is the note. On
+    // the coupled bank that clamp turned an 8.97 s open low E into a 0.099 s
+    // one at String Age 1.0, and every string into a click under the palm mute.
+    //
+    // The feasible thing to give up is the tilt. A high-frequency target equal
+    // to the fundamental's is always solvable - the ratio is then one, the pole
+    // is at zero, the filter is unity everywhere and the loop gain is exactly
+    // the fundamental's, which is below one for any positive T60 - so there is
+    // always a bracket. Feasibility is monotone in the high target because a
+    // gentler tilt only ever moves the pole toward zero, so bisection finds the
+    // darkest realisable filter that still keeps the fundamental where the
+    // reference put it.
+    const float decayExponent = -3.0f * periodSamples
+                              / std::max(sampleRate, 1.0f);
+    const float t60Low = std::max(t60Fundamental, 1.0e-3f);
+    const float gainAtF0 = std::pow(10.0f, decayExponent / t60Low);
+
+    const auto solveFor = [&] (float target, float& coefficient, float& gain)
+    {
+        const float gainAtHigh = std::pow(10.0f, decayExponent
+                                                 / std::max(target, 1.0e-4f));
+        coefficient = solveOnePoleDamping(gainAtHigh
+                                              / std::max(gainAtF0, 1.0e-6f),
+                                          omega0, omegaHigh);
+        gain = gainAtF0 / std::max(onePoleMagnitude(coefficient, omega0),
+                                   1.0e-6f);
+        return gain <= gainCeiling;
+    };
+
+    const float requested = clampf(t60High, 1.0e-4f, t60Low);
+    if (solveFor(requested, coefficientOut, gainOut))
+        return;
+
+    float infeasible = requested;
+    float feasible = t60Low;
+    solveFor(feasible, coefficientOut, gainOut);
+    // Halving in log space: the two ends can be three orders of magnitude
+    // apart, and what matters is the ratio between them.
+    for (int i = 0; i < 18; ++i)
+    {
+        const float mid = std::sqrt(infeasible * feasible);
+        float coefficient = 0.0f, gain = 0.0f;
+        if (solveFor(mid, coefficient, gain))
+        {
+            feasible = mid;
+            coefficientOut = coefficient;
+            gainOut = gain;
+        }
+        else
+        {
+            infeasible = mid;
+        }
+    }
+}
+
+float ElectryEngine::highFrequencyDecayRatio(int stringIndex) const noexcept
+{
+    // A wound string is not a plain one with a thicker core: the wrap slides
+    // over the core and dissipates bending energy, so its top end dies far
+    // faster than its fundamental. Measured on the reference low E, content
+    // above a kilohertz has effectively gone inside a tenth of a second while
+    // the fundamental is still ringing seconds later.
+    const auto& parameters = smoothedParameters_;
+    const auto& spec = stringSpecs()[static_cast<std::size_t>(stringIndex)];
+    float highRatio = lerp(0.036f, 0.010f, parameters.stringAge);
+    highRatio *= spec.wound ? 1.0f : 7.5f;
+    highRatio *= lerp(1.15f, 0.78f, parameters.stringGauge);
+    highRatio *= lerp(0.86f, 1.16f, parameters.bodyWood);
+    highRatio *= lerp(0.58f, 1.70f, parameters.construction);
+    return highRatio;
 }
 
 void ElectryEngine::handDipCoefficients(float depth, const HandLossShape& shape,
@@ -503,7 +632,6 @@ void ElectryEngine::handLossResponse(float depth, const HandLossShape& shape,
     if (depth <= 0.0f)
         return;
 
-    const float cw = std::cos(omega), sw = std::sin(omega);
     double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
     handDipCoefficients(depth, shape, b0, b1, b2, a1, a2);
     if (b1 == 0.0 && b2 == 0.0 && a1 == 0.0 && a2 == 0.0)
@@ -653,6 +781,7 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     displayLevelAttack_ = 1.0f - std::exp(-1.0f / (0.010f * controlTickRate));
     displayLevelRelease_ = 1.0f - std::exp(-1.0f / (0.220f * controlTickRate));
 
+    horizontalDetuneSamples_ = 0.11f * internalRate / 96000.0f;
     emfScale_ = internalRate / (twoPi * 220.0f);
     emfLowpassCoefficient_ = std::exp(
         -twoPi * std::min(16000.0f, 0.40f * internalRate) * inverseSampleRate_);
@@ -1158,19 +1287,11 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     // High-frequency decay target relative to the fundamental's decay, at the
     // `fHigh` reference below.
     //
-    // A wound string is not a plain one with a thicker core: the wrap slides
-    // over the core and dissipates bending energy, so its top end dies far
-    // faster than its fundamental. Measured on the reference low E, content
-    // above a kilohertz has effectively gone inside a tenth of a second while
-    // the fundamental is still ringing seconds later. The ratio was previously
-    // an order of magnitude too generous, which is what kept a low note's
-    // 1-2 kHz partials sounding for as long as its fundamental - the nasal,
-    // clavinet-like register the reference does not have.
-    float highRatio = lerp(0.036f, 0.010f, parameters.stringAge);
-    highRatio *= spec.wound ? 1.0f : 7.5f;
-    highRatio *= lerp(1.15f, 0.78f, parameters.stringGauge);
-    highRatio *= lerp(0.86f, 1.16f, parameters.bodyWood);
-    highRatio *= lerp(0.58f, 1.70f, parameters.construction);
+    // The ratio was previously an order of magnitude too generous, which is
+    // what kept a low note's 1-2 kHz partials sounding for as long as its
+    // fundamental - the nasal, clavinet-like register the reference does not
+    // have. The law itself is shared with the bridge-coupled strings.
+    float highRatio = highFrequencyDecayRatio(voice.stringIndex);
 
     // Continuous bridge-hand damping. Unlike the Muted and Chug keyswitches
     // this is a smooth pressure that applies to every play style, so a phrase
@@ -1343,14 +1464,8 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         // solvable keeps the fit honest and simply gives those notes a shallower
         // shelf, which is the correct answer rather than a silent failure.
         // Solve the one-pole coefficient whose magnitude ratio between f0 and
-        // fHigh matches the decay-time ratio. The response is monotonic in
-        // the coefficient, so bisection is reliable.
-        const auto magnitude = [] (float a, float omega)
-        {
-            const float denom = 1.0f + a * a - 2.0f * a * std::cos(omega);
-            return (1.0f - a) / std::sqrt(std::max(denom, 1.0e-12f));
-        };
-
+        // fHigh matches the decay-time ratio, through the shared bisection.
+        //
         // How deep the shelf can be is bounded by the note, and by two separate
         // limits rather than one. A one-pole cannot raise the high end relative
         // to the low, so the shelf's own tilt must leave a solvable remainder;
@@ -1386,21 +1501,11 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
             const float rawTarget = ratio / (atHigh / atF0);
             if (depth > 0.0f && rawTarget > 0.98f)
                 return false;
-            const float target = clampf(rawTarget, 1.0e-4f, 1.0f);
-            float low = 0.0f;
-            float high = 0.9995f;
-            for (int i = 0; i < 18; ++i)
-            {
-                const float mid = 0.5f * (low + high);
-                if (magnitude(mid, omegaHigh) / magnitude(mid, omega0) > target)
-                    low = mid;
-                else
-                    high = mid;
-            }
-            coefficientOut = 0.5f * (low + high);
+            coefficientOut = solveOnePoleDamping(rawTarget, omega0, omegaHigh);
             dipAtF0Out = atF0;
             gainOut = gainAtF0
-                / std::max(magnitude(coefficientOut, omega0) * atF0, 1.0e-6f);
+                / std::max(onePoleMagnitude(coefficientOut, omega0) * atF0,
+                           1.0e-6f);
             return gainOut <= 0.99999f;
         };
 
@@ -1639,8 +1744,15 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     const float verticalDelay = voice.compensatedPeriodVertical * tensionFactor;
     // A slightly longer horizontal path detunes the second polarisation by a
     // fraction of a cent, producing the natural slow beating of real strings.
+    // The additive term is a detuning, so it has to be a fixed fraction of the
+    // period rather than a fixed number of samples: left as a bare 0.11 it made
+    // the beat rate a function of the host's sample rate - at the top of the
+    // range the top string beat 45% faster at 48 kHz than at 192 kHz. It is
+    // referenced to the 96 kHz internal clock, so 44.1/48 kHz hosts are
+    // unchanged and the faster ones now agree with them in cents.
     const float horizontalDelay = voice.compensatedPeriodHorizontal
-                                * tensionFactor * 1.00023f + 0.11f;
+                                * tensionFactor * 1.00023f
+                                + horizontalDetuneSamples_;
 
     voice.vertical.targetDelay = clampf(verticalDelay, 4.0f,
                                         static_cast<float>(delayLineSize - 8));
@@ -1652,6 +1764,21 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
         voice.vertical.currentDelay = voice.vertical.targetDelay;
         voice.horizontal.currentDelay = voice.horizontal.targetDelay;
     }
+
+    // The two polarisations are coupled where they meet: at the bridge and the
+    // nut, once per round trip. Charging a fixed fraction on every rendered
+    // sample instead made the exchange proportional to the loop length, which
+    // is proportional to the sample rate and inversely proportional to the
+    // pitch. Measured, the former per-sample 0.004 exchanged 33% of the wave
+    // per round trip at the top of the range and over 900% at the bottom - so
+    // the low strings' two polarisations were averaged into one long before
+    // they could produce the two-stage decay and beating they exist for, while
+    // the high strings' loops lost 44 dB in the first second against a fitted
+    // T60 of eight seconds. Per round trip it is one number at every pitch.
+    voice.polarisationCoupling = clampf(
+        polarisationCouplingPerRoundTrip
+            / std::max(voice.vertical.targetDelay, 4.0f),
+        0.0f, 0.25f);
 
     // Delay smoothing time constant: fast enough to track bends transparently.
     const float coefficient = 1.0f - std::exp(-static_cast<float>(controlPeriod)
@@ -1730,10 +1857,10 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
     const float period = static_cast<float>(sampleRate_) / voice.baseFrequency;
     const float bridgeFraction = clampf(bridgeDistance / soundingLength, 0.01f, 0.95f);
     const float neckFraction = clampf(neckDistance / soundingLength, 0.01f, 0.95f);
-    voice.pickupDelayBridge = clampf(bridgeFraction * period, 2.0f,
-                                     static_cast<float>(delayLineSize - 8));
-    voice.pickupDelayNeck = clampf(neckFraction * period, 2.0f,
-                                   static_cast<float>(delayLineSize - 8));
+    voice.pickupTapBridge.setDelay(clampf(bridgeFraction * period, 2.0f,
+                                          static_cast<float>(delayLineSize - 8)));
+    voice.pickupTapNeck.setDelay(clampf(neckFraction * period, 2.0f,
+                                        static_cast<float>(delayLineSize - 8)));
 
     // Magnetic aperture: a true finite rectangular spatial window. Its
     // temporal length is Fs*w/c, where c is transverse wave speed. This has
@@ -1747,8 +1874,8 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
     const float apertureLength = clampf(
         static_cast<float>(sampleRate_) * aperture / std::max(waveSpeed, 1.0f),
         1.0f, static_cast<float>(apertureHistorySize - 2));
-    voice.apertureNeckLength = apertureLength;
-    voice.apertureBridgeLength = apertureLength;
+    voice.apertureNeck.setWindow(apertureLength);
+    voice.apertureBridge.setWindow(apertureLength);
 
 }
 
@@ -1778,40 +1905,61 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
         t60 = std::exp(lerp(std::log(t60), std::log(0.080f), palmMuteBlend_));
     t60 = clampf(t60, 0.03f, 9.5f);
 
-    // A gentle fixed high-frequency loss: the coupled ring is a low-level
-    // detail, so it needs no second bisection solve.
+    // A coupled string is the same piece of steel as a played one, so its loop
+    // loss is solved from the same two decay targets rather than from a fixed
+    // coefficient. The fixed one this replaced was a mild lowpass - 0.45 at the
+    // default string age - which left the wound strings' top end ringing for
+    // seconds: measured on the coupled low E at 48 kHz, its 3 kHz content had a
+    // T60 of 3.7 s where the same string played decays that band in 0.12 s. A
+    // sympathetic ring is not a bright metallic reverb, and the whole coupled
+    // bank was reading as one.
     auto& loop = voice.vertical;
-    loop.loopDampingCoefficient = clampf(
-        lerp(0.34f, 0.72f, parameters.stringAge), 0.0f, 0.9f);
     loop.dispersionLowCoefficient = 0.0f;
     loop.dispersionHighCoefficient = 0.0f;
-    const float magnitudeAtF0 = (1.0f - loop.loopDampingCoefficient)
-        / std::sqrt(std::max(
-            1.0f + loop.loopDampingCoefficient * loop.loopDampingCoefficient
-                - 2.0f * loop.loopDampingCoefficient * std::cos(omega),
-            1.0e-12f));
-    const float gainAtF0 = std::pow(10.0f, -3.0f * period / (t60 * sampleRate));
-    loop.loopGain = clampf(gainAtF0 / std::max(magnitudeAtF0, 1.0e-6f),
-                           0.0f, 0.9999f);
+    const float highRatio = clampf(
+        highFrequencyDecayRatio(voice.stringIndex)
+            * (palmMuteBlend_ > 0.0f ? lerp(1.0f, 0.62f, palmMuteBlend_) : 1.0f),
+        0.0015f, 0.9f);
+    const float t60High = clampf(t60 * highRatio, 0.008f, t60);
+    const float fHigh = std::min(3600.0f, 0.32f * sampleRate);
+    const float omegaHigh = twoPi * std::max(fHigh, f0 * 1.5f)
+                          * inverseSampleRate_;
+    // The pair is solved together rather than one after the other. A coupled
+    // string asks for a far steeper tilt than a played one at the same age -
+    // the mute shortens its fundamental target directly instead of in parallel
+    // with a relief - so above about String Age 0.8, and under any palm mute at
+    // all, the requested pair does not fit inside a loop gain of one. Solving
+    // the tilt and clamping the gain threw the fundamental's target away with
+    // it: the open low E realised 0.099 s against an 8.97 s target, and the
+    // sympathetic ring simply vanished. Backing the high target off instead
+    // keeps the fundamental pinned and costs only the top of the tilt, which is
+    // the band the clamp was destroying anyway.
+    constexpr float coupledGainCeiling = 0.9999f;
+    float coefficient = 0.0f, gain = 0.0f;
+    solveLoopLoss(t60, t60High, period, sampleRate, omega, omegaHigh,
+                  coupledGainCeiling, coefficient, gain);
+    loop.loopDampingCoefficient = coefficient;
+    loop.loopGain = clampf(gain, 0.0f, coupledGainCeiling);
 
-    voice.sympatheticDelay = clampf(
+    const float compensatedPeriod = clampf(
         period - onePolePhaseDelay(loop.loopDampingCoefficient, omega),
         4.0f, static_cast<float>(delayLineSize - 8));
-    loop.targetDelay = voice.sympatheticDelay;
+    loop.targetDelay = compensatedPeriod;
     loop.delaySmoothing = 1.0f - std::exp(-static_cast<float>(controlPeriod)
                                           / (0.006f * sampleRate));
     // A string that is already ringing glides to its new tuning; a freshly
     // woken one starts there, so a build change never clicks the ring.
     if (! voice.sympatheticReady)
-        loop.currentDelay = voice.sympatheticDelay;
+        loop.currentDelay = compensatedPeriod;
 
     const float bridgeDistance = lerp(lesPaulBridgePickupMetres,
                                       telecasterBridgePickupMetres,
                                       parameters.pickupType);
     const float bridgeFraction = clampf(bridgeDistance / scaleLengthMetres(),
                                         0.01f, 0.95f);
-    voice.sympatheticPickupDelay = clampf(bridgeFraction * period, 2.0f,
-                                          static_cast<float>(delayLineSize - 8));
+    voice.sympatheticPickupTap.setDelay(
+        clampf(bridgeFraction * period, 2.0f,
+               static_cast<float>(delayLineSize - 8)));
 }
 
 void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) noexcept
@@ -2249,7 +2397,6 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         -twoPi * (3400.0f + 280.0f * static_cast<float>(voice.stringIndex))
         * inverseSampleRate_);
     voice.artifactNoiseBandState = 0.0f;
-    voice.artifactCollisionCount = 0;
     voice.legatoBlend = 1.0f;
     voice.legatoFromFrequency = 0.0f;
     voice.releaseGain = 1.0f;
@@ -2420,7 +2567,6 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.noiseRemaining = 0;
     voice.artifactCollisionRemaining = 0;
     voice.artifactCollisionLength = 0;
-    voice.artifactCollisionCount = 0;
     voice.energyEnvelope = 0.0f;
     voice.outputEnergy = 0.0f;
     voice.displayLevel = 0.0f;
@@ -2437,11 +2583,12 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.excitationShaper.reset();
     voice.excitationModalShaper1.reset();
     voice.excitationModalShaper2.reset();
+    voice.excitationReleaseShaper.reset();
+    voice.excitationImageShaper.reset();
     voice.previousFluxNeck = 0.0f;
     voice.previousFluxBridge = 0.0f;
     voice.emfLowpassNeck.reset();
     voice.emfLowpassBridge.reset();
-    voice.excitationShaper.reset();
     voice.noiseShaper.reset();
     voice.noiseBandState = 0.0f;
     voice.artifactNoiseShaper.reset();
@@ -2770,13 +2917,13 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                 * (lowpassed - voice.artifactNoiseBandState);
             artifactContactSignal = (lowpassed - voice.artifactNoiseBandState)
                                   * artifactExcess * 0.22f * contact;
-            ++voice.artifactCollisionCount;
         }
     }
 
     // Passive bridge coupling exchanges a little energy between the two
-    // polarisations; the mixing matrix is contractive, so it stays stable.
-    constexpr float coupling = 0.004f;
+    // polarisations; the mixing matrix is contractive, so it stays stable. The
+    // depth is solved per round trip in configureVoicePitch().
+    const float coupling = voice.polarisationCoupling;
     const float verticalIn = verticalSample
                            + coupling * (horizontalSample - verticalSample);
     const float horizontalIn = horizontalSample
@@ -2966,13 +3113,13 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
 
     if (neckPathActive_)
     {
-        const float delay = voice.pickupDelayNeck;
+        const auto& delayTap = voice.pickupTapNeck;
         float tap = 0.85f * (verticalTotal
-                             - pickupCombDepth * vertical.readFractional(delay))
+                             - pickupCombDepth * vertical.readTap(delayTap))
                   + 0.35f * (horizontalTotal
-                             - pickupCombDepth * horizontal.readFractional(delay))
+                             - pickupCombDepth * horizontal.readTap(delayTap))
                   + 0.55f * artifactPickup;
-        tap = voice.apertureNeck.process(tap, voice.apertureNeckLength);
+        tap = voice.apertureNeck.process(tap);
         const float flux = voice.fluxScale
             * magneticTransfer(tap, magneticDriveNeck_, magneticDriveNeckInverse_);
         // Faraday's law: a magnetic pickup outputs induced voltage,
@@ -2993,13 +3140,13 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
 
     if (bridgePathActive_)
     {
-        const float delay = voice.pickupDelayBridge;
+        const auto& delayTap = voice.pickupTapBridge;
         float tap = 0.85f * (verticalTotal
-                             - pickupCombDepth * vertical.readFractional(delay))
+                             - pickupCombDepth * vertical.readTap(delayTap))
                   + 0.35f * (horizontalTotal
-                             - pickupCombDepth * horizontal.readFractional(delay))
+                             - pickupCombDepth * horizontal.readTap(delayTap))
                   + artifactPickup;
-        tap = voice.apertureBridge.process(tap, voice.apertureBridgeLength);
+        tap = voice.apertureBridge.process(tap);
         const float flux = voice.fluxScale
             * magneticTransfer(tap, magneticDriveBridge_,
                                magneticDriveBridgeInverse_);
@@ -3129,7 +3276,7 @@ void ElectryEngine::renderSympatheticString(Voice& voice, RenderSums& sums,
     // hollow fundamental and the infinitely deep position nulls this weight
     // exists to remove.
     const float tap = total
-        - pickupCombDepth * loop.readFractional(voice.sympatheticPickupDelay);
+        - pickupCombDepth * loop.readTap(voice.sympatheticPickupTap);
     loop.writeIndex = (loop.writeIndex + 1) & (delayLineSize - 1);
     loop.currentDelay += loop.delaySmoothing
                        * (loop.targetDelay - loop.currentDelay);

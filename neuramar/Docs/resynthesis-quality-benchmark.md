@@ -42,11 +42,11 @@ between each rendered partial and the independently generated target after
 removing one median level offset; `parity error` is the error in the mean
 odd-minus-even partial level.
 
-| Metric (mean over -24 … +24 st) | 1.0 | 1.1 |
-| --- | --- | --- |
-| Body-Locked shape MAE | 3.495 dB | **2.898 dB** |
-| Pitch-following shape MAE (reference) | 6.453 dB | 6.453 dB |
-| Excitation parity error | 0.609 dB | 0.898 dB |
+| Metric (mean over -24 … +24 st) | 1.0 | 1.1 | 1.2 |
+| --- | --- | --- | --- |
+| Body-Locked shape MAE | 3.495 dB | 2.898 dB | **2.790 dB** |
+| Pitch-following shape MAE (reference) | 6.453 dB | 6.453 dB | 6.453 dB |
+| Excitation parity error | 0.609 dB | 0.898 dB | 1.043 dB |
 
 Every one of the ten offsets improved. The largest gains are in the middle of
 the matrix (-7 st: 3.38 → 2.64 dB; +7 st: 2.49 → 1.96 dB; +12 st: 2.06 → 1.69 dB)
@@ -59,6 +59,13 @@ little more closely, so slightly less of the odd/even contrast survives into the
 excitation residual. The worst single offset is +24 st at 2.23 dB, well inside
 the 3.5 dB regression guard.
 
+The 1.2 column is the current tree, re-run on the container described above. Its
+renderer work is deliberately outside the fit path and the numbers confirm that:
+measured immediately before and immediately after the 1.2 render changes, the
+aggregate moved from 2.78976 dB to 2.78975 dB. The 1.1 column is reproduced as
+it was published; the small difference from 1.2 predates this release and was
+not re-derived here.
+
 ### Stiff-string partial placement
 
 A struck-string fixture with a known coefficient `B = 4.0e-4` is learned once and
@@ -67,11 +74,11 @@ absolute deviation, in cents, between rendered partials 6, 10, and 14 and the
 independently generated stiff-string targets, located by an analytic sweep with
 parabolic refinement.
 
-| Metric | 1.0 (no stiff-string model) | 1.1 |
-| --- | --- | --- |
-| Fitted coefficient | not modelled | 4.0145e-4 (true 4.0e-4) |
-| Detected root | — | 219.94 Hz (true 220 Hz) |
-| Partial placement, mean over -12/0/+12 st | 37.44 cents | **0.095 cents** |
+| Metric | 1.0 (no stiff-string model) | 1.1 | 1.2 |
+| --- | --- | --- | --- |
+| Fitted coefficient | not modelled | 4.0145e-4 (true 4.0e-4) | 4.0145e-4 |
+| Detected root | — | 219.94 Hz (true 220 Hz) | 219.94 Hz |
+| Partial placement, mean over -12/0/+12 st | 37.44 cents | **0.095 cents** | **0.094 cents** |
 
 The 1.0 column is measured by rendering the same 1.1 model with `Stretch` at 0%,
 which reproduces the ideal harmonic bank every earlier release used. The
@@ -82,24 +89,110 @@ a different coefficient (`B = 3.0e-4`) and a different fixture and reports
 This measures placement of the partial series only. It says nothing about
 amplitude, decay, or perceived similarity to a real piano.
 
+### Render-path quality
+
+Added in 1.2 and printed by `Tests/NeuramarEngineTests.cpp`. Every figure is a
+render measurement, not a fit measurement, and every one of them is now pinned
+by a regression guard in the same binary.
+
+| Measurement | 1.2 result | Regression guard |
+| --- | --- | --- |
+| Worst spectral line below the played fundamental, MIDI root+24/+36/+45 at 44.1/48/96 kHz | -108.2 dB relative to the rendered signal | -85 dB |
+| Worst partial deviation across 44.1/48/88.2/96/192 kHz, root and root+12/+24 | 0.078 dB | 0.35 dB |
+| Worst Air+Bone layer power deviation across 44.1/48/96/192 kHz | 0.126 dB | 1.0 dB |
+| Bone mode driven to 22.7 kHz, relative to the audible mode below it, at 48 and 96 kHz | -128.3 dB | -60 dB |
+| Level of that audible Bone mode between 48 and 96 kHz | 0.049 dB | 0.5 dB |
+| Awaken fade level at 5% / 50% / 105% of its stated time | 0.008 / 0.501 / 1.000 | < 0.05 / 0.42-0.58 / > 0.99 |
+| Peak output after 3200 note-ons one sample apart into eight voices, Output at 0.08 | 0.43 | 2.0, and no growth over the same burst at 200 note-ons |
+
+Nothing may live below the played fundamental: the partial series starts there
+and the anti-alias taper deletes everything that would fold back, so the first
+row is simultaneously an aliasing floor and a bound on the oscillator's own
+approximation error. The oscillator was measured separately against `sin()` in
+double precision over 2e7 uniformly spaced phases in `[0, 1)`: the 1.2
+polynomial has a peak error of 2.08e-7 (-133.6 dB) and an RMS error of 3.78e-8
+(-148.5 dB), against 5.28e-7 (-125.6 dB) and 1.87e-7 (-134.6 dB) for the
+4096-entry linearly interpolated table it replaces - 8.1 dB better on peak and
+13.9 dB on RMS. These figures come from a scratch harness rather than the test
+binary, so they are the one row here that a reader has to reproduce rather than
+run; the shipped guard on the same property is the spur-floor row above.
+
+The Air+Bone power row is a guard on the two layers as a whole and not a
+discriminator for the 20 kHz taper anchor that 1.2 added: on that fixture the
+anchor is worth at most a few tenths of a dB of total layer power, because the
+memory's top Air band carries little of it, and reverting the anchor still
+passes. The two Bone rows are the discriminating measurement. Bone is modal, so
+it can be probed one spectral line at a time: three octaves up with Body Lock
+open puts the fixture's top mode at 22.7 kHz, which is inaudible at every host
+rate, yet sits well inside `0.49 * 96 kHz`, part-way down the fade below
+`0.49 * 48 kHz`, and above `0.49 * 44.1 kHz` altogether. With the previous
+host-anchored taper that mode renders at +0.4 dB relative to the audible mode
+below it at 96 kHz, at -5.1 dB at 48 kHz and not at all at 44.1 kHz - the same
+memory, three different top ends. With the audible-band anchor it is gone at
+every rate, 128 dB down. The Air taper is the same one-line change against the
+same fixed ceiling, but it is applied to a noise layer whose bands cannot be
+separated line by line, so it is covered by inspection of `prepare()` plus the
+whole-layer power row above rather than by a discriminating render test.
+
+The voice-steal row is a stress bound, not a musical measurement: 3200 note-ons
+one sample apart is roughly 48000 note-ons per second, far past any real MIDI
+stream. It is pinned because the fade tail carries a still-running tail into a
+newly stolen slot, and an earlier version of that carry re-armed the fade window
+each time, which made it an integrator whose peak grew with the length of the
+burst - 1.38 after 200 note-ons and 7.61 after 3200, against the +-7.95
+finite-output guard - instead of a bounded hand-off.
+
+The Awaken row is the control's contract rather than a tolerance: dividing a
+faded render by an otherwise identical unfaded one recovers the envelope
+exactly. Before 1.2 the same knob drove a one-pole whose stated seconds were a
+time constant, so a 0.25 s setting stood at 0.393 halfway through and 0.65 just
+past its stated time, and reached full level only after about 1.15 s.
+
 ### Cost
 
 Measured with the same binaries, best of three runs, on the same container.
 The 1.0 column was produced by reverting only the changed hot paths in a
-scratch copy of the tree, so the workload is identical.
+scratch copy of the tree, so the workload is identical. The 1.1 column of the
+first two rows holds this container's own pre-1.2 measurement rather than the
+figure published with 1.1, because absolute times from another machine are not
+comparable; the 1.1 release numbers for those two rows were 0.067 s and
+0.211 s.
 
-| Case | 1.0 | 1.1 |
-| --- | --- | --- |
-| Eight voices, two octaves above the root, 1 s at 48 kHz | 0.156 s (6.40x realtime) | **0.067 s (15.0x realtime)** |
-| Eight voices, two octaves below the root, 0.5 s at 48 kHz | 0.354 s (1.41x realtime) | **0.211 s (2.37x realtime)** |
-| `learn()` on a 1.6 s / 44.1 kHz source | 0.715 s | **0.557 s** |
-| Tabulated vs direct windowed-sinc resampling of 5 s at 48 → 12 kHz | 0.060 s | **0.0033 s** |
+| Case | 1.0 | 1.1 | 1.2 |
+| --- | --- | --- | --- |
+| Eight voices, two octaves above the root, 1 s at 48 kHz | 0.156 s (6.40x realtime) | 0.0573 s (17.5x realtime) | **0.0487 s (20.5x realtime)** |
+| Eight voices, two octaves below the root, 0.5 s at 48 kHz | 0.354 s (1.41x realtime) | 0.1848 s (2.71x realtime) | **0.0890 s (5.62x realtime)** |
+| `learn()` on a 1.6 s / 44.1 kHz source | 0.715 s | **0.557 s** | unchanged |
+| Tabulated vs direct windowed-sinc resampling of 5 s at 48 → 12 kHz | 0.060 s | **0.0033 s** | unchanged |
 
 The resampler row is an in-test A/B: the same regression binary runs a literal
 transcription of the pre-1.1 direct-evaluation kernel and the shipped polyphase
 table over identical input and reports both the speedup and the difference
 between their outputs, which is below -150 dB. The 1.1 `learn()` figure includes
-the new stiff-string estimation pass, which 1.0 did not perform at all.
+the new stiff-string estimation pass, which 1.0 did not perform at all. Neither
+row moved in 1.2: the analysis and fit path is offline and was deliberately left
+alone, because only `NeuramarEngine::process()` and `noteOn()` run on the audio
+thread.
+
+`Tests/EngineBenchmark.cpp` covers the same render path with a longer musical
+workload. It is built with the suite but not registered with CTest, so it never
+gates a build on wall time.
+
+| Benchmark scenario, 8 s at 48 kHz / 256-sample blocks | 1.1 | 1.2 |
+| --- | --- | --- |
+| Low chord, C1 root, 8 voices | 2.868 s (2.8x realtime) | **1.352 s (5.9x realtime)** |
+| Mid chord, C3 root, 8 voices | 1.279 s (6.3x realtime) | **0.743 s (10.8x realtime)** |
+| High chord, C6 root, 8 voices | 0.528 s (15.1x realtime) | **0.497 s (16.1x realtime)** |
+| High chord with Air and Bone at zero | 0.499 s (16.0x realtime) | **0.190 s (42.2x realtime)** |
+| Single mid note | 0.150 s (53.4x realtime) | **0.083 s (96.0x realtime)** |
+| Note-on at C1 | 20.9 us | **13.4 us** |
+| Note-on at C4 | 5.77 us | **4.45 us** |
+
+The last three rows are targeted A/Bs against the current tree with one change
+reverted, because those cases did not exist as measurements before 1.2: the
+silent-layer rows were produced by forcing the Air and Bone loops to run
+unconditionally again, and the note-on rows by recomputing the learned onset
+phases' unit vectors per call instead of caching them per model.
 
 None of these are the acceptance gates below. In particular, the render-speed
 gates are specified for Apple silicon and Rosetta and have not been measured.

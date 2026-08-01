@@ -273,6 +273,9 @@ void VocalorAudioProcessor::updateEngineParameters() noexcept
     next.mode = enumFromParameter<vocalor::PerformanceMode> (parameterPointers.mode, 2);
     next.vowel = enumFromParameter<vocalor::Vowel> (parameterPointers.vowel, 2);
     next.chordQuality = enumFromParameter<vocalor::ChordQuality> (parameterPointers.chordQuality, 1);
+    // The published range stays 2 - 16 so a host automation lane written
+    // against it keeps mapping to the same singer count; VoiceEngine clamps to
+    // its own singerCount, so values above 12 render as 12.
     next.choirSize = juce::jlimit (2, 16, juce::roundToInt (
         parameterPointers.choirSize->load (std::memory_order_relaxed)));
     next.breath = parameterPointers.breath->load (std::memory_order_relaxed);

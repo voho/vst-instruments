@@ -76,6 +76,14 @@ Japanese polysynths without reproducing a branded hardware panel.
 - **Antialiased nonlinear mixer:** the active oscillator feeds, sub, and noise
   pass through a fixed first-order ADAA soft saturator. This reduces waveshaper
   aliasing without coupling the filter's `Drive` control into multiple stages.
+  The noise generator is calibrated as a density rather than as a fixed
+  amplitude, so the `Noise` control delivers the same audible-band level at
+  every session rate from 44.1 kHz to 192 kHz and with HQ either on or off. The
+  regression suite measures a 0.67 dB spread over those twelve configurations,
+  against 5.7 dB before the change. The calibration is referenced to 192 kHz, so
+  above that rate the amplitude exceeds unity and the ADAA saturator begins to
+  compress it: the engine still accepts up to 768 kHz, where the same reading
+  falls 1.4 dB.
 - **Two filter models:** `Ladder` uses a bounded, residual-decreasing damped
   Newton solution of the original implicit bilinear four-stage transistor-
   ladder equations described by D'Angelo and Valimaki. A differential-pair
@@ -83,12 +91,37 @@ Japanese polysynths without reproducing a branded hardware panel.
   delay, no state above the documented equation-residual ceiling is committed,
   the full 20 kHz control range remains stable, and `(1 + k)` DC-gain
   compensation restores the severe low-band loss that otherwise accompanies
-  rising resonance. The resonance map now crosses the ladder's own `k = 4`
+  rising resonance. The Newton updates target a fixed *relative* reduction of
+  the residual each step starts from rather than a fixed voltage. A fixed
+  voltage target behaved as an amplitude dead zone proportional to `1 / cutoff`:
+  at a 100 Hz cutoff every mixer signal below about -26 dBFS was gated to
+  silence and at 400 Hz everything below about -40 dBFS was, so quiet material
+  simply vanished into a bass patch. The residual floor beneath that relative
+  target is scaled to the magnitudes the residual is built from rather than left
+  as a fixed voltage, because any fixed floor reinstates the same `1 / cutoff`
+  dead zone further down. Passband gain is now level-independent within 1.2%
+  over a 60 dB input range at every cutoff across the whole 20 Hz - 20 kHz
+  control range. The solve does more work at low signal levels than it used to,
+  because it previously did none there: a 16-voice ladder worst case measures
+  about 2.5% slower, and the default eight-voice patch is unchanged. The
+  resonance
+  map crosses the ladder's own `k = 4`
   oscillation threshold in the last few percent of the control, so maximum
   resonance **self-oscillates** at the cutoff instead of merely ringing; the
+  limit cycle now also builds itself out of a millivolt-scale disturbance
+  instead of needing a large excitation, as a circuit past its threshold does,
+  and a voice at maximum resonance sings at every cutoff setting from 20 Hz to
+  20 kHz where before it stayed silent below roughly 500 Hz. The disturbance
+  still has to clear the deliberate 5.2 uV per-stage idle-silence guard that
+  snaps a genuinely resting filter to zero, which is why the isolated-core
+  fixture pins the millivolt kick at 200 Hz and above; inside a voice the
+  amplifier envelope's own opening transient clears it at every cutoff. The
   transistor pairs bound the limit cycle and the regression suite measures both
   its frequency and its amplitude. Below that knee the feedback gain is
-  unchanged. `SEM` is a
+  unchanged. The modulated cutoff is bounded by 20 kHz as well as by 0.45 of the
+  host rate, so a bright patch driven to the top of its filter envelope keeps
+  the same top octave at 44.1 kHz as at 192 kHz; those two used to differ by
+  10 dB at 19.8 kHz. `SEM` is a
   nonlinear, two-integrator TPT state-variable design inspired by the Oberheim
   topology; `Filter shape` sweeps low-pass through notch to high-pass. Its
   resonance loop now saturates where the circuit's OTA does, so a high-Q peak
@@ -98,7 +131,10 @@ Japanese polysynths without reproducing a branded hardware panel.
   transition runs both models to prevent switching clicks; at steady state the
   voice executes only the selected algorithm.
 - **Configurable rate-aware oversampling:** HQ is persisted, non-automatable,
-  and On by default. At standard production rates it holds the complete
+  and On by default. On a hot, resonant, driven high-note patch the regression
+  suite holds its worst audible-band inharmonic product at least 10 dB below the
+  native path's at 44.1 and 48 kHz, and prints the margin it actually measures.
+  At standard production rates it holds the complete
   nonlinear voice, ensemble, VCA, and output-colour island at a minimum
   176.4 kHz: 4x at 44.1/48 kHz, 2x at 88.2/96 kHz, and native at 176.4 kHz
   and above. Each 2:1 return stage is a
@@ -356,6 +392,14 @@ oscillator II's audio feed disabled, deferred HQ changes including large host
 blocks, meaningful glide and modulation, dynamic physical-voice limits, Mono
 mode-transition, duplicate-hold, legato/fallback/retrigger semantics,
 voice-mode allocation, and a CPU guardrail.
+The suite also pins level-independent ladder passband gain across a 60 dB
+input range at seven cutoffs spanning the whole 20 Hz - 20 kHz control range,
+proportional voice output for a quiet mixer feed, a
+ladder limit cycle that starts itself from a millivolt kick at 200 Hz, 1 kHz
+and 4 kHz cutoffs, mixer-noise level invariance
+across 44.1-192 kHz with HQ on and off, a bright patch's top-octave spectrum
+across 44.1-192 kHz, and HQ's audible-band inharmonic-folding advantage over the
+native path.
 Version 1.6 adds measurements of ladder self-oscillation frequency and
 boundedness at maximum resonance against the unchanged sub-threshold behaviour,
 the SEM's level-dependent resonance compression and its stability at every

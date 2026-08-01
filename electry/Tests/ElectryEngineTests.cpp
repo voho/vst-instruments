@@ -32,6 +32,8 @@ struct ElectryEngineTestAccess
         bool strokeIsUp { false };
         float verticalDelayTarget { 0.0f };
         float verticalDelayCurrent { 0.0f };
+        float horizontalDelayTarget { 0.0f };
+        float polarisationCoupling { 0.0f };
         float dispersionLowCoefficient { 0.0f };
         float dispersionHighCoefficient { 0.0f };
         float inharmonicity { 0.0f };
@@ -69,6 +71,8 @@ struct ElectryEngineTestAccess
         result.strokeIsUp = voice.strokeIsUp;
         result.verticalDelayTarget = voice.vertical.targetDelay;
         result.verticalDelayCurrent = voice.vertical.currentDelay;
+        result.horizontalDelayTarget = voice.horizontal.targetDelay;
+        result.polarisationCoupling = voice.polarisationCoupling;
         result.dispersionLowCoefficient = voice.vertical.dispersionLowCoefficient;
         result.dispersionHighCoefficient = voice.vertical.dispersionHighCoefficient;
         result.inharmonicity = voice.inharmonicity;
@@ -193,6 +197,20 @@ struct ElectryEngineTestAccess
     static float bendSensitivity(int stringIndex) noexcept
     {
         return ElectryEngine::bendSensitivity(stringIndex);
+    }
+
+    // The pitch a bridge-coupled string is running at - its open note, bent by
+    // the wheel through its own compliance - computed the way
+    // configureSympatheticString computes it, so the decay checks can invert
+    // the loop's response at exactly the frequency it was solved for.
+    static float sympatheticFrequency(const ElectryEngine& engine,
+                                      int stringIndex) noexcept
+    {
+        const auto& spec =
+            ElectryEngine::stringSpecs()[static_cast<std::size_t>(stringIndex)];
+        return ElectryEngine::midiToHz(static_cast<float>(spec.openMidiNote))
+             * std::exp2(engine.pitchBendSemitones_
+                         * ElectryEngine::bendSensitivity(stringIndex) / 12.0f);
     }
 };
 } // namespace electry
@@ -3759,6 +3777,404 @@ void testPickupCullingAndChannelLinking()
                + std::to_string(largestFieldStep) + ")");
 }
 
+// ---------------------------------------------------------------------------
+// Rate invariance, polarisation coupling, and the coupled strings' own loss
+// ---------------------------------------------------------------------------
+
+// Energy in a band, summed over logarithmically spaced probe frequencies.
+double bandEnergyDb(const std::vector<float>& data, int start, int length,
+                    double sampleRate, double lowHz, double highHz)
+{
+    double energy = 0.0;
+    for (double f = lowHz; f < highHz; f *= 1.03)
+    {
+        const double m = dftMagnitude(data, start, length, sampleRate, f);
+        energy += m * m;
+    }
+    return 10.0 * std::log10(energy + 1.0e-30);
+}
+
+// The instrument has to sound the same at every host rate, and the decay
+// envelope is where that is hardest: a per-sample constant anywhere inside the
+// string loop turns into a rate-dependent decay, because the number of samples
+// in a round trip is proportional to the sample rate.
+//
+// Two such constants used to be here. The second polarisation's detuning was a
+// bare 0.11 samples, which is a fixed offset rather than a fixed fraction of a
+// period, so the two polarisations beat at a rate that moved with the clock;
+// and the polarisation coupling was charged per rendered sample rather than per
+// round trip. Together they left the 22nd-fret high E 36.5 dB down at half a
+// second on a 44.1 kHz host and 14.5 dB down on a 96 kHz one - the same note,
+// the same patch, a 22 dB difference in how long it rings.
+void testDecayIsSampleRateInvariant()
+{
+    struct Window { double start, end; double toleranceDb; };
+    // The late window is allowed more slack: it is 20-30 dB down, and what is
+    // left there is the one-pole loop filter's own shape, which is fitted at
+    // two frequencies and can only interpolate between them in normalised
+    // radians.
+    const std::array<Window, 3> windows {{
+        { 0.10, 0.50, 3.0 }, { 0.50, 1.50, 3.0 }, { 1.50, 3.00, 8.0 } }};
+
+    for (const int note : { 28, 45, 64, 86 })
+    {
+        std::array<std::array<double, 3>, 5> levels {};
+        int rateIndex = 0;
+        for (const double rate : { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 })
+        {
+            ElectryEngine engine;
+            engine.prepare(rate, 512);
+            EngineParameters parameters;
+            parameters.sympatheticAmount = 0.0f;
+            parameters.artifactAmount = 0.0f;
+            parameters.pickNoise = 0.0f;
+            parameters.fingerNoise = 0.0f;
+            parameters.releaseNoise = 0.0f;
+            engine.setParameters(parameters);
+
+            const auto buffer = renderNote(engine, rate, note, 0.9f,
+                                           PlayStyle::Sustain, 3.0);
+            expect(allFinite(buffer),
+                   "the rate-invariance render was not finite at "
+                       + std::to_string(rate) + " Hz");
+            const double attack = rmsInRange(buffer.left, 0,
+                                             static_cast<int>(0.1 * rate));
+            expect(attack > 1.0e-5,
+                   "the rate-invariance render produced no attack at "
+                       + std::to_string(rate) + " Hz");
+            for (std::size_t w = 0; w < windows.size(); ++w)
+            {
+                const double level = rmsInRange(
+                    buffer.left, static_cast<int>(windows[w].start * rate),
+                    static_cast<int>(windows[w].end * rate));
+                levels[static_cast<std::size_t>(rateIndex)][w] =
+                    20.0 * std::log10(std::max(level, 1.0e-12) / attack);
+            }
+            ++rateIndex;
+        }
+
+        for (std::size_t w = 0; w < windows.size(); ++w)
+        {
+            double lowest = 1.0e30, highest = -1.0e30;
+            for (const auto& perRate : levels)
+            {
+                lowest = std::min(lowest, perRate[w]);
+                highest = std::max(highest, perRate[w]);
+            }
+            expect(highest - lowest < windows[w].toleranceDb,
+                   "note " + std::to_string(note) + "'s decay between "
+                       + std::to_string(windows[w].start) + " s and "
+                       + std::to_string(windows[w].end)
+                       + " s depends on the host sample rate ("
+                       + std::to_string(highest - lowest) + " dB spread)");
+        }
+    }
+}
+
+// The two polarisations meet at the bridge and at the nut or fret, so they
+// exchange energy once per round trip. Charging a fixed fraction per rendered
+// sample instead made the exchange proportional to the loop length: over 900%
+// per round trip on the open low E, which averaged its two polarisations into
+// one, and 33% at the top of the range, where the mismatch between the two loop
+// lengths turned that exchange into dissipation and cost the string 36 dB of
+// sustain against its own fitted decay target.
+void testPolarisationCouplingIsPerRoundTrip()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.sympatheticAmount = 0.0f;
+    parameters.artifactAmount = 0.0f;
+    engine.setParameters(parameters);
+    engine.reset();
+
+    // Two notes an octave and a half apart, on different strings, must exchange
+    // the same fraction of the wave per round trip.
+    //
+    // This first half is a construction check and nothing more, and it is worth
+    // being plain about that: the per-sample coupling is defined as
+    // `0.04 / max(delay, 4)`, so the product below is 0.04 by definition and can
+    // only move if one of that expression's clamps engages. What it pins is
+    // exactly that - that neither clamp engages anywhere in the playable range,
+    // which is the only way the "one number per round trip" property can fail
+    // once the definition is in place. The load-bearing assertions are the
+    // rendered ones underneath it.
+    double perRoundTrip[2] = { 0.0, 0.0 };
+    int index = 0;
+    for (const int note : { 28, 79 })
+    {
+        engine.reset();
+        engine.noteOn(note, 0.9f);
+        StereoBuffer settle(1024);
+        renderInto(engine, settle);
+        const int stringIndex = TestAccess::stringForNote(engine, note);
+        expect(stringIndex >= 0, "the coupling probe note was not allocated");
+        if (stringIndex < 0)
+            return;
+        const auto snapshot = TestAccess::snapshot(engine, stringIndex);
+        expect(snapshot.polarisationCoupling > 0.0f,
+               "the polarisation coupling was switched off");
+        expect(snapshot.polarisationCoupling < 0.25f
+                   && snapshot.verticalDelayTarget > 4.0f,
+               "a clamp in the per-round-trip coupling engaged inside the "
+               "playable range, so the exchange is no longer one number");
+        perRoundTrip[index++] = static_cast<double>(snapshot.polarisationCoupling)
+                              * static_cast<double>(snapshot.verticalDelayTarget);
+    }
+    expect(std::abs(perRoundTrip[0] - perRoundTrip[1])
+               < 0.02 * std::max(perRoundTrip[0], perRoundTrip[1]),
+           "the polarisation exchange per round trip depends on the pitch ("
+               + std::to_string(perRoundTrip[0]) + " vs "
+               + std::to_string(perRoundTrip[1]) + ")");
+
+    // What that buys audibly, and this is the part that carries weight: the top
+    // of the range keeps ringing, and it does so on every host. The former
+    // per-sample constant left this note 55.7 dB under its own attack a second
+    // later at 48 kHz - gone before the next beat of a moderate tempo - and
+    // 22.9 dB under it at 96 kHz, so the same patch was a different instrument
+    // on a different host.
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        ElectryEngine rateEngine;
+        rateEngine.prepare(rate, 512);
+        rateEngine.setParameters(parameters);
+        rateEngine.reset();
+        const auto buffer = renderNote(rateEngine, rate, 86, 0.9f,
+                                       PlayStyle::Sustain, 3.0);
+        const double attack = rmsInRange(buffer.left, 0,
+                                         static_cast<int>(0.1 * rate));
+        const double sustain = rmsInRange(buffer.left,
+                                          static_cast<int>(1.0 * rate),
+                                          static_cast<int>(2.0 * rate));
+        const double relative =
+            20.0 * std::log10(std::max(sustain, 1.0e-12) / attack);
+        expect(relative > -30.0,
+               "the 22nd-fret high E no longer sustains at "
+                   + std::to_string(static_cast<int>(rate)) + " Hz ("
+                   + std::to_string(relative) + " dB under its attack at 1-2 s)");
+    }
+}
+
+// A string nobody is fingering is the same piece of steel as one that is being
+// played, so its loop has to lose its top end at the same rate. The fixed
+// one-pole this replaced was a mild lowpass whatever the string, which left the
+// wound strings' coupled ring carrying kilohertz content for seconds - a bright
+// metallic reverb rather than strings.
+void testCoupledStringLosesItsTopEndLikeAPlayedString()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.sympatheticAmount = 0.6f;
+    parameters.artifactAmount = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    engine.setParameters(parameters);
+
+    const auto buffer = renderNote(engine, sampleRate, 45, 0.95f,
+                                   PlayStyle::Sustain, 3.0, 0.5);
+    expect(allFinite(buffer), "the coupled-ring render was not finite");
+
+    const int start = static_cast<int>(1.0 * sampleRate);
+    const int length = static_cast<int>(1.5 * sampleRate);
+    const double low = bandEnergyDb(buffer.left, start, length, sampleRate,
+                                    60.0, 700.0);
+    const double high = bandEnergyDb(buffer.left, start, length, sampleRate,
+                                     1500.0, 6000.0);
+    // The ring itself must still be there.
+    expect(rmsInRange(buffer.left, start, start + length) > 1.0e-5,
+           "the coupled strings stopped ringing altogether");
+    // ...and it must be a string, not a cymbal. The fixed coefficient scored
+    // -37.8 dB here; a played wound string's own decay law scores -87.5.
+    expect(high - low < -60.0,
+           "the coupled ring still carries a played string's worth of "
+           "kilohertz content (" + std::to_string(high - low) + " dB)");
+
+    // The wound low strings must be damped harder than the plain high ones,
+    // which is the whole point of solving the loss from the string rather than
+    // fixing it: a plain .009 keeps far more of its top end than a wound .080.
+    engine.reset();
+    engine.noteOn(45, 0.9f);
+    StereoBuffer settle(static_cast<int>(0.4 * sampleRate));
+    renderInto(engine, settle);
+    const auto lowString = TestAccess::snapshot(engine, 0);
+    const auto highString = TestAccess::snapshot(engine, ElectryEngine::stringCount - 1);
+    expect(lowString.sympatheticReady && highString.sympatheticReady,
+           "the coupled strings were not configured");
+    expect(lowString.loopDampingCoefficient
+               > highString.loopDampingCoefficient + 0.2f,
+           "the wound coupled low E is not damped harder than the plain high E ("
+               + std::to_string(lowString.loopDampingCoefficient) + " vs "
+               + std::to_string(highString.loopDampingCoefficient) + ")");
+}
+
+// The other half of solving the coupled loop from decay targets: the
+// fundamental's target is the one that must never be given up.
+//
+// Two decay targets are two constraints on a first-order filter and a scalar,
+// and they do not always both fit - the one-pole's own loss at the fundamental
+// has to be bought back by the loop gain, and that gain cannot exceed one.
+// Solving the tilt and then clamping the gain discards the fundamental's target
+// silently: the coupled open low E realised a 0.099 s T60 against its 8.97 s
+// target at String Age 1.0, and every string collapsed to between 8 and 53 ms
+// under the palm mute. The whole sympathetic bank disappeared wherever either
+// control was up. The engine now backs the high-frequency target off instead,
+// which costs only the top of the tilt.
+//
+// The loop's realised decay is read back from what actually runs - the solved
+// gain and one-pole coefficient - rather than from the solver's own arithmetic.
+void testCoupledStringKeepsItsFundamentalDecayTarget()
+{
+    // Realised round-trip T60 of a coupled loop at its own fundamental.
+    const auto realisedT60 = [] (const ElectryEngine& engine, int stringIndex)
+    {
+        const auto snapshot = TestAccess::snapshot(engine, stringIndex);
+        const double rate = TestAccess::internalSampleRate(engine);
+        const double f0 = TestAccess::sympatheticFrequency(engine, stringIndex);
+        const double omega = 2.0 * 3.14159265358979323846 * f0 / rate;
+        const double a = snapshot.loopDampingCoefficient;
+        const double magnitude = (1.0 - a)
+            / std::sqrt(std::max(1.0 + a * a - 2.0 * a * std::cos(omega),
+                                 1.0e-30));
+        const double perRoundTrip = snapshot.loopGain * magnitude;
+        if (perRoundTrip <= 0.0 || perRoundTrip >= 1.0)
+            return 1.0e9;
+        return -3.0 * (rate / f0) / (rate * std::log10(perRoundTrip));
+    };
+
+    const auto configured = [&] (double hostRate, float stringAge,
+                                 float palmMute, ElectryEngine& engine)
+    {
+        engine.prepare(hostRate, 512);
+        EngineParameters parameters;
+        parameters.stringAge = stringAge;
+        parameters.palmMute = palmMute;
+        parameters.sympatheticAmount = 0.6f;
+        engine.setParameters(parameters);
+        engine.reset();
+        // One note wakes the other seven strings as coupled loops.
+        engine.noteOn(45, 0.9f);
+        StereoBuffer settle(static_cast<int>(0.4 * hostRate));
+        renderInto(engine, settle);
+    };
+
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        const std::string at = " at " + std::to_string(static_cast<int>(rate))
+                             + " Hz";
+
+        // Worn strings. The wound coupled strings' targets are still seconds
+        // long here - 8.97, 8.52 and 8.07 s on the bottom three - and the
+        // clamp realised 0.099, 0.79 and 1.48.
+        {
+            ElectryEngine engine;
+            configured(rate, 1.0f, 0.0f, engine);
+            for (int s = 0; s < ElectryEngine::stringCount; ++s)
+            {
+                if (! TestAccess::snapshot(engine, s).sympatheticReady)
+                    continue;
+                const double t60 = realisedT60(engine, s);
+                expect(t60 > 3.0 && t60 < 12.0,
+                       "coupled string " + std::to_string(s)
+                           + " does not hold its multi-second decay target at "
+                             "String Age 1.0" + at + " (" + std::to_string(t60)
+                           + " s)");
+            }
+        }
+
+        // Under the palm mute the coupled fundamental target is the engine's
+        // own constant: `exp(lerp(log(t60), log(0.080), blend))` is exactly
+        // 0.080 s at full pressure, whatever the string and whatever the host
+        // rate. Six of the eight strings realised 8 to 53 ms instead.
+        {
+            ElectryEngine engine;
+            configured(rate, 0.30f, 1.0f, engine);
+            for (int s = 0; s < ElectryEngine::stringCount; ++s)
+            {
+                if (! TestAccess::snapshot(engine, s).sympatheticReady)
+                    continue;
+                const double t60 = realisedT60(engine, s);
+                expect(std::abs(t60 - 0.080) < 0.004,
+                       "coupled string " + std::to_string(s)
+                           + " does not realise the 0.080 s full-mute decay "
+                             "target" + at + " (" + std::to_string(t60) + " s)");
+            }
+        }
+
+        // Half pressure, where the targets run from 1.11 to 1.28 s and the
+        // clamp realised 16 to 99 ms.
+        {
+            ElectryEngine engine;
+            configured(rate, 0.30f, 0.5f, engine);
+            for (int s = 0; s < ElectryEngine::stringCount; ++s)
+            {
+                if (! TestAccess::snapshot(engine, s).sympatheticReady)
+                    continue;
+                const double t60 = realisedT60(engine, s);
+                expect(t60 > 0.6 && t60 < 1.8,
+                       "coupled string " + std::to_string(s)
+                           + " does not hold its half-mute decay target" + at
+                           + " (" + std::to_string(t60) + " s)");
+            }
+        }
+    }
+
+    // The same target on every host, not merely a plausible one on each: the
+    // clamp made the coupled low E's realised decay 0.094 s at 44.1 kHz,
+    // 0.099 at 48 and 0.159 at 96, in the release whose headline is rate
+    // invariance.
+    double lowE[3] = { 0.0, 0.0, 0.0 };
+    int index = 0;
+    for (const double rate : { 44100.0, 48000.0, 96000.0 })
+    {
+        ElectryEngine engine;
+        configured(rate, 1.0f, 0.0f, engine);
+        lowE[index++] = realisedT60(engine, 0);
+    }
+    const double spread = (std::max({ lowE[0], lowE[1], lowE[2] })
+                           - std::min({ lowE[0], lowE[1], lowE[2] }))
+                        / std::max(lowE[0], 1.0e-9);
+    expect(spread < 0.02,
+           "the coupled low E's realised decay depends on the host rate ("
+               + std::to_string(lowE[0]) + " / " + std::to_string(lowE[1])
+               + " / " + std::to_string(lowE[2]) + " s)");
+
+    // Finally, that the bank is still there and still finite at String Age 1.0,
+    // where the clamp used to leave it. This last check is deliberately a weak
+    // one and it is worth saying why rather than dressing it up: with the
+    // driving string itself still ringing, the rendered level in any window is
+    // set mostly by what the bus is feeding the coupled loops and only weakly
+    // by the loops' own decay, so it separates the two revisions by a few dB in
+    // the late windows and not at all in the early ones. The assertions that
+    // pin this regression are the analytic ones above, read off the gain and
+    // coefficient the loops actually run.
+    constexpr double sampleRate = 48000.0;
+    const auto ringEnergy = [&] (float sympathetic)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.stringAge = 1.0f;
+        parameters.sympatheticAmount = sympathetic;
+        parameters.artifactAmount = 0.0f;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        const auto buffer = renderNote(engine, sampleRate, 45, 0.95f,
+                                       PlayStyle::Sustain, 3.0, 0.5);
+        expect(allFinite(buffer), "the worn-string coupled render was not finite");
+        return rmsInRange(buffer.left, static_cast<int>(1.5 * sampleRate),
+                          static_cast<int>(2.5 * sampleRate));
+    };
+    expect(ringEnergy(0.6f) > 2.0 * ringEnergy(0.0f),
+           "the coupled bank contributes nothing at String Age 1.0");
+}
+
 void testIdleFreezeAndDenormalSafety()
 {
     constexpr double sampleRate = 48000.0;
@@ -3972,6 +4388,10 @@ int main()
     testVisualStateAndGeometry();
     testPickupCullingAndChannelLinking();
     testIdleFreezeAndDenormalSafety();
+    testDecayIsSampleRateInvariant();
+    testPolarisationCouplingIsPerRoundTrip();
+    testCoupledStringLosesItsTopEndLikeAPlayedString();
+    testCoupledStringKeepsItsFundamentalDecayTarget();
     testParameterSanitisation();
     testCpuGuardrail();
 

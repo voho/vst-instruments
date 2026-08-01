@@ -143,6 +143,93 @@ float roomSizeScale (float size) noexcept
     return std::exp2 (2.3f * (clampUnit (size) - 0.5f));
 }
 
+float formantResonatorGain (float poleRadius, float sinPoleAngle) noexcept
+{
+    // |1 - a1 z - a2 z^2| evaluated on the pole angle, with a1 = 2r cos and
+    // a2 = -r^2, collapses to (1 - r) * sqrt((1 - r)^2 + 4 r sin^2), which is
+    // exactly the reciprocal of the resonator's peak gain. Written against the
+    // sine rather than the cosine it is a sum of positive terms, so a narrow
+    // low formant at 192 kHz does not lose the answer to cancellation.
+    const float radius = std::clamp (poleRadius, 0.0f, 0.999999f);
+    const float sine = std::clamp (sinPoleAngle, -1.0f, 1.0f);
+    const float gap = 1.0f - radius;
+    return gap * std::sqrt (gap * gap + 4.0f * radius * sine * sine);
+}
+
+void parallelFormantAmplitudes (const float* formantHz, const float* formantBandwidth,
+                                int count, float sampleRate, float floorGain,
+                                float* outGain) noexcept
+{
+    if (formantHz == nullptr || formantBandwidth == nullptr || outGain == nullptr
+        || count <= 0 || ! (sampleRate > 0.0f))
+        return;
+
+    count = std::min (count, kFormantCount);
+    std::array<float, kFormantCount> a1 {};
+    std::array<float, kFormantCount> a2 {};
+    std::array<float, kFormantCount> numerator {};
+    std::array<float, kFormantCount> peakDenominator {};
+    std::array<float, kFormantCount> cosOmega {};
+    std::array<float, kFormantCount> sinOmega {};
+
+    for (int i = 0; i < count; ++i)
+    {
+        const auto index = static_cast<std::size_t> (i);
+        const float centre = std::clamp (formantHz[i], 25.0f, 0.465f * sampleRate);
+        const float bandwidth = std::clamp (formantBandwidth[i], 20.0f, 0.25f * sampleRate);
+        const float radius = std::exp (-pi * bandwidth / sampleRate);
+        const float omega = twoPi * centre / sampleRate;
+        cosOmega[index] = std::cos (omega);
+        sinOmega[index] = std::sin (omega);
+        a1[index] = 2.0f * radius * cosOmega[index];
+        a2[index] = -radius * radius;
+        // Klatt's resonator normalisation: unity gain at DC, so the cascade
+        // product is the tract shape alone rather than an arbitrary scaling.
+        numerator[index] = 1.0f - a1[index] - a2[index];
+        // On its own pole the general expression below is a difference of two
+        // near-equal numbers; the closed form is not.
+        peakDenominator[index] = formantResonatorGain (radius, sinOmega[index]);
+    }
+
+    float largest = 0.0f;
+    for (int i = 0; i < count; ++i)
+    {
+        const auto probe = static_cast<std::size_t> (i);
+        const float cosine = cosOmega[probe];
+        const float sine = sinOmega[probe];
+        const float cosTwo = 2.0f * cosine * cosine - 1.0f;
+        const float sinTwo = 2.0f * sine * cosine;
+
+        double magnitude = 1.0;
+        for (int k = 0; k < count; ++k)
+        {
+            const auto pole = static_cast<std::size_t> (k);
+            double denominator = peakDenominator[pole];
+            if (k != i)
+            {
+                const float real = 1.0f - a1[pole] * cosine - a2[pole] * cosTwo;
+                const float imaginary = a1[pole] * sine + a2[pole] * sinTwo;
+                denominator = std::sqrt (static_cast<double> (real) * real
+                                         + static_cast<double> (imaginary) * imaginary);
+            }
+            magnitude *= denominator > 0.0
+                ? static_cast<double> (numerator[pole]) / denominator : 0.0;
+        }
+        outGain[i] = static_cast<float> (magnitude);
+        largest = std::max (largest, outGain[i]);
+    }
+
+    // Half of the tract's absolute gain is kept and half is compensated. Keeping
+    // all of it makes the vowel pad a 16 dB fader; keeping none of it throws away
+    // the real reason an open vowel carries further than a closed one. The
+    // square root is the midpoint, and it is what a singer's own effort
+    // adjustment does to the difference.
+    const float scale = largest > 0.0f ? 1.0f / std::sqrt (largest) : 1.0f;
+    const float floor = std::clamp (floorGain, 0.0f, 1.0f) * largest * scale;
+    for (int i = 0; i < count; ++i)
+        outGain[i] = std::max (floor, outGain[i] * scale);
+}
+
 float formantResponseDb (float frequencyHz, const float* formantHz,
                          const float* formantBandwidth, const float* formantGain,
                          int count, float sampleRate) noexcept
@@ -167,9 +254,10 @@ float formantResponseDb (float frequencyHz, const float* formantHz,
         const float centre = std::clamp (formantHz[i], 25.0f, 0.465f * sampleRate);
         const float bandwidth = std::clamp (formantBandwidth[i], 20.0f, 0.25f * sampleRate);
         const float radius = std::exp (-pi * bandwidth / sampleRate);
-        const float a1 = 2.0f * radius * std::cos (twoPi * centre / sampleRate);
+        const float poleAngle = twoPi * centre / sampleRate;
+        const float a1 = 2.0f * radius * std::cos (poleAngle);
         const float a2 = -radius * radius;
-        const float b0 = std::max (0.00005f, 1.0f - radius);
+        const float b0 = formantResonatorGain (radius, std::sin (poleAngle));
 
         const float real = 1.0f - a1 * cosOmega - a2 * cosTwo;
         const float imaginary = a1 * sinOmega + a2 * sinTwo;
@@ -177,7 +265,7 @@ float formantResponseDb (float frequencyHz, const float* formantHz,
         if (! (denominator > 0.0f))
             continue;
 
-        const float scale = formantGain[i] * b0 / denominator;
+        const float scale = formantPolarity (i) * formantGain[i] * b0 / denominator;
         sumReal += scale * real;
         sumImaginary -= scale * imaginary;
     }

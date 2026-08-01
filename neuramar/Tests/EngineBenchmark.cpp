@@ -8,9 +8,7 @@
 #include "DSP/NeuramarEngine.h"
 
 #include <chrono>
-#include <cmath>
 #include <cstdio>
-#include <string>
 #include <vector>
 
 namespace
@@ -20,7 +18,23 @@ struct Scenario
     const char* name;
     int firstNote;
     int noteCount;
+    bool bodyLayers { true };
 };
+
+neuramar::EngineParameters makeParameters(bool bodyLayers)
+{
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 0.9f;
+    parameters.bodyLock = 0.52f;
+    parameters.air = bodyLayers ? 0.82f : 0.0f;
+    parameters.bone = bodyLayers ? 0.78f : 0.0f;
+    parameters.brightness = 0.5f;
+    parameters.mutation = 0.12f;
+    parameters.spread = 0.58f;
+    parameters.releaseSeconds = 0.65f;
+    parameters.outputGain = 0.5f;
+    return parameters;
+}
 
 double renderSeconds(const neuramar::NeuralModel& model,
                      const Scenario& scenario, double sampleRate,
@@ -30,16 +44,7 @@ double renderSeconds(const neuramar::NeuralModel& model,
     engine.prepare(sampleRate, blockSize);
     engine.setModel(&model);
 
-    neuramar::EngineParameters parameters;
-    parameters.imprint = 0.9f;
-    parameters.bodyLock = 0.52f;
-    parameters.air = 0.82f;
-    parameters.bone = 0.78f;
-    parameters.brightness = 0.5f;
-    parameters.mutation = 0.12f;
-    parameters.spread = 0.58f;
-    parameters.releaseSeconds = 0.65f;
-    parameters.outputGain = 0.5f;
+    const auto parameters = makeParameters(scenario.bodyLayers);
     engine.setParameters(parameters);
 
     for (int index = 0; index < scenario.noteCount; ++index)
@@ -61,6 +66,30 @@ double renderSeconds(const neuramar::NeuralModel& model,
 
     return std::chrono::duration<double>(finish - start).count();
 }
+
+// Note-on runs on the audio thread and maps every rendered partial's onset
+// phase, so its cost belongs in the same budget as the render loop.
+double noteOnMicroseconds(const neuramar::NeuralModel& model, int note,
+                          double sampleRate, int blockSize)
+{
+    neuramar::NeuramarEngine engine;
+    engine.prepare(sampleRate, blockSize);
+    engine.setModel(&model);
+    engine.setParameters(makeParameters(true));
+
+    constexpr int repeats = 2000;
+    for (int index = 0; index < 64; ++index)
+        engine.noteOn(note, 0.8f);
+    engine.allSoundOff();
+
+    const auto start = std::chrono::steady_clock::now();
+    for (int index = 0; index < repeats; ++index)
+        engine.noteOn(note, 0.8f);
+    const auto finish = std::chrono::steady_clock::now();
+    engine.allSoundOff();
+    return 1.0e6 * std::chrono::duration<double>(finish - start).count()
+        / static_cast<double>(repeats);
+}
 } // namespace
 
 int main()
@@ -78,10 +107,11 @@ int main()
     }
 
     const Scenario scenarios[] {
-        { "low chord (C1 root, 8 voices)", 24, 8 },
-        { "mid chord (C3 root, 8 voices)", 48, 8 },
-        { "high chord (C6 root, 8 voices)", 84, 8 },
-        { "single mid note", 60, 1 },
+        { "low chord (C1 root, 8 voices)", 24, 8, true },
+        { "mid chord (C3 root, 8 voices)", 48, 8, true },
+        { "high chord (C6 root, 8 voices)", 84, 8, true },
+        { "high chord, Air and Bone at zero", 84, 8, false },
+        { "single mid note", 60, 1, true },
     };
 
     double checksum = 0.0;
@@ -97,6 +127,10 @@ int main()
         std::printf("%-34s %10.4f %10.1f\n", scenario.name, elapsed,
                     renderedSeconds / elapsed);
     }
+    std::printf("%-34s %10.3f %10s\n", "note-on, C1 (us)",
+                noteOnMicroseconds(*model, 24, sampleRate, blockSize), "-");
+    std::printf("%-34s %10.3f %10s\n", "note-on, C4 (us)",
+                noteOnMicroseconds(*model, 60, sampleRate, blockSize), "-");
     std::printf("checksum %.6f\n", checksum);
     return 0;
 }

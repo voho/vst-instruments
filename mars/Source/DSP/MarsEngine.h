@@ -152,6 +152,13 @@ private:
         float triangle { -1.0f };
         float previousSawInput { 0.0f };
         float previousSawOutput { 0.0f };
+        // Measured-saw contour coefficients, refreshed only when the fitted
+        // oscillator frequency actually moves. -1 forces the first evaluation.
+        float contourFrequency { -1.0f };
+        float contourGain { 1.0f };
+        float contourZero { 0.0f };
+        float contourPole { 0.0f };
+        float contourBlend { 0.0f };
         std::array<float, 2> vcoSawDelay {};
         std::array<float, 4> vcoSawCorrection {};
         std::array<float, 2> pulseDelay {};
@@ -354,6 +361,8 @@ private:
         float resonance { 0.0f };
         float ladderFeedbackGain { 0.0f };
         float ladderFrequencyScale { 1.0f };
+        // -1 forces the first evaluation of the two coefficients above.
+        float cachedLadderResonance { -1.0f };
         float drive { 0.0f };
         float noiseColour { 0.0f };
         float ampAttackCoefficient { 1.0f };
@@ -406,8 +415,28 @@ private:
                                         bool& initialised) noexcept;
     static int waveformIndex(OscillatorWave waveform) noexcept;
     static float halfbandCoefficient(int tap) noexcept;
-    static float softSaturate(float value) noexcept;
-    static float softSaturateDerivative(float value) noexcept;
+    // Defined here, and without std::clamp, so that call sites with literal
+    // arguments (the BBD colour stage's fixed bias point) resolve at compile
+    // time instead of needing a guarded function-local static on the audio
+    // thread. The clamp bounds and the transfer itself are unchanged.
+    static constexpr float softSaturate(float value) noexcept
+    {
+        value = value < -3.0f ? -3.0f : (value > 3.0f ? 3.0f : value);
+        const float square = value * value;
+        return value * (27.0f + square) / (27.0f + 9.0f * square);
+    }
+    static constexpr float softSaturateDerivative(float value) noexcept
+    {
+        if (value <= -3.0f || value >= 3.0f)
+            return 0.0f;
+        const float square = value * value;
+        const float numerator = 27.0f * value + value * square;
+        const float denominator = 27.0f + 9.0f * square;
+        const float numeratorDerivative = 27.0f + 3.0f * square;
+        const float denominatorDerivative = 18.0f * value;
+        return (numeratorDerivative * denominator - numerator * denominatorDerivative)
+             / (denominator * denominator);
+    }
     static float adaaShape(float value) noexcept;
     static float adaaAntiderivative(float value) noexcept;
     static float processAdaaMixer(float value, Voice& voice) noexcept;
@@ -482,6 +511,7 @@ private:
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     float oversampledRate_ { 192000.0f };
+    float inverseOversampledRate_ { 1.0f / 192000.0f };
     int oversampling_ { 4 };
     bool oversamplingEnabled_ { true };
     bool oversamplingRequested_ { true };
@@ -499,11 +529,15 @@ private:
     float driftFastRho_ { 0.999445f };
     float driftSlowExcitation_ { 0.00945f };
     float driftFastExcitation_ { 0.05773f };
-    float noiseColourCoefficient_ { 0.1702f };
+    float noiseColourCoefficient_ { 0.1565f };
+    // Keeps the audible-band density of the mixer noise independent of the
+    // internal oversampling factor; see updateProcessingRate().
+    float noiseAmplitude_ { 1.0f };
     // Block-rate copies of quantities that depend only on smoothed parameters.
     // Recomputing an ldexp and two saturator evaluations for every oversampled
     // sample of every voice was pure overhead.
     float blockShapingGain_ { 1.128f };
+    // Stored as the reciprocal: the voice loop only ever multiplies by it.
     float blockShapingNormalisation_ { 1.0f };
     float blockDcoRangeClock1_ { 2000000.0f };
     float blockDcoRangeClock2_ { 2000000.0f };

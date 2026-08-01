@@ -70,6 +70,14 @@ struct VoiceEngineTestAccess
         return smallest == std::numeric_limits<float>::max() ? 0.0f : smallest;
     }
 
+    static std::array<float, kFormantCount> chunkBandwidths(const VoiceEngine& engine) noexcept
+    {
+        std::array<float, kFormantCount> result {};
+        for (int i = 0; i < kFormantCount; ++i)
+            result[static_cast<std::size_t>(i)] = engine.chunkBandwidth_[static_cast<std::size_t>(i)];
+        return result;
+    }
+
     static float frequencyForRoot(const VoiceEngine& engine, int rootMidi) noexcept
     {
         for (const auto& voice : engine.voices_)
@@ -95,6 +103,62 @@ struct VoiceEngineTestAccess
     }
 
     static int heldNoteCount(const VoiceEngine& engine) noexcept { return engine.heldCount_; }
+
+    /** Peak magnitude of F1 and F2 in the onset stage and in the main tract,
+        each evaluated at its own pole angle, read straight out of the live
+        coefficients. The onset stage runs 1.75x wider bandwidths, so before
+        both stages were peak-normalised on the same basis their levels differed
+        and the onset crossfade moved the level as well as the timbre.
+        Returned as { tract F1, tract F2, early F1, early F2 }. */
+    static std::array<float, 4> onsetStagePeakGains(const VoiceEngine& engine) noexcept
+    {
+        std::array<float, 4> result {};
+        for (const auto& voice : engine.voices_)
+        {
+            if (! voice.active || voice.releasing || voice.onsetComplete)
+                continue;
+
+            const auto peak = [](double a1, double a2, double b0) noexcept
+            {
+                // The pole angle is what the normalisation targets, and it is
+                // recoverable from the coefficients: a2 = -r^2, a1 = 2 r cos w.
+                const double radius = std::sqrt(std::max(-a2, 0.0));
+                const double omega = std::acos(
+                    std::clamp(a1 / std::max(2.0 * radius, 1.0e-12), -1.0, 1.0));
+                const double real = 1.0 - a1 * std::cos(omega) - a2 * std::cos(2.0 * omega);
+                const double imaginary = a1 * std::sin(omega) + a2 * std::sin(2.0 * omega);
+                return static_cast<float>(std::abs(b0)
+                                          / std::sqrt(real * real + imaginary * imaginary));
+            };
+
+            for (int f = 0; f < 2; ++f)
+            {
+                const auto index = static_cast<std::size_t>(f);
+                result[index] = peak(voice.tract[index].a1, engine.chunkA2_[index],
+                                     voice.tract[index].b0);
+                result[index + 2] = peak(voice.early[index].a1, engine.earlyA2_[index],
+                                         voice.early[index].b0);
+            }
+            break;
+        }
+        return result;
+    }
+
+    /** The humanisation noise of the sounding voice in the units the render
+        loop applies it in: the amplitude modulation depth the voiced drive is
+        multiplied by, and the cents of pitch deviation the two nested jitter
+        smoothers contribute. Both are read after the engine's own scaling, so
+        a smoother whose drive is not renormalised for the sample rate shows up
+        directly as a change in these numbers. */
+    static std::array<float, 2> humanisationDepth(const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                return { engine.shimmerDepth_ * voice.shimmer,
+                         engine.blockParameters_.humanize
+                             * (1.15f * voice.jitter + 1.35f * voice.jitterSlow) };
+        return { 0.0f, 0.0f };
+    }
 };
 } // namespace vocalor
 
@@ -772,6 +836,30 @@ void testGlideAndLegato()
             "a legato phrase left voices hanging after the final release");
 }
 
+/** Renders a note, releases it, and keeps rendering long enough for the room to
+    be the only thing left. Shared by the geometry and the tail-length checks. */
+std::vector<float> renderRoomProbe (float size, float room)
+{
+    constexpr auto sampleRate = 48000.0;
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, blockSize);
+    engine.reset();
+    auto parameters = makeParameters (0, 0, 0, 0);
+    parameters.breath = 0.0f;
+    parameters.vibrato = 0.0f;
+    parameters.humanize = 0.0f;
+    parameters.room = room;
+    parameters.roomSize = size;
+    engine.setParameters (parameters);
+    engine.noteOn (60, 0.9f);
+
+    auto result = renderMono (engine, static_cast<int> (sampleRate * 0.5));
+    engine.noteOff (60);
+    const auto tail = renderMono (engine, static_cast<int> (sampleRate * 1.7));
+    result.insert (result.end(), tail.begin(), tail.end());
+    return result;
+}
+
 void testRoomSizeGeometry()
 {
     constexpr auto sampleRate = 48000.0;
@@ -817,15 +905,24 @@ void testRoomSizeGeometry()
     expect (tightArrival < neutralArrival,
             "a smaller room did not bring its first reflection forward");
 
-    const auto energy = [] (const std::vector<float>& samples)
+    // What the size control has to buy musically is a longer tail, so measure
+    // the reflected signal on its own: rendering the same note with the room
+    // fully wet and fully dry and subtracting leaves nothing but the room.
+    const auto reflectedTail = [] (float size)
     {
+        const auto withRoom = renderRoomProbe (size, 1.0f);
+        const auto withoutRoom = renderRoomProbe (size, 0.0f);
+        const auto first = static_cast<std::size_t> (sampleRate * 1.4);
         double sum = 0.0;
-        for (const auto value : samples)
-            sum += static_cast<double> (value) * value;
+        for (std::size_t i = first; i < withRoom.size(); ++i)
+        {
+            const auto value = static_cast<double> (withRoom[i]) - withoutRoom[i];
+            sum += value * value;
+        }
         return sum;
     };
-    expect (energy (wide) > energy (tight) * 1.05,
-            "a larger room did not return more reflected energy");
+    expect (reflectedTail (0.95f) > reflectedTail (0.05f) * 100.0,
+            "a larger room did not ring for noticeably longer");
 
     // The tail still has to end, and the engine has to release its voices.
     vocalor::VoiceEngine engine;
@@ -1057,6 +1154,449 @@ void testDisplayStateTracksTheEngine()
             "all-sound-off did not reset the display meters");
 }
 
+/** RMS of a steady note, in dB, with everything stochastic switched off. */
+double steadyLevelDb (double sampleRate, const vocalor::EngineParameters& parameters,
+                      int midiNote)
+{
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, blockSize);
+    engine.reset();
+    engine.setParameters (parameters);
+    engine.noteOn (midiNote, 0.8f);
+    render (engine, static_cast<int> (sampleRate * 0.4));
+    const auto steady = render (engine, static_cast<int> (sampleRate * 0.6));
+    return 20.0 * std::log10 (std::max (steady.rms(), 1.0e-12));
+}
+
+/** Magnitude of one harmonic of @c fundamental, by direct evaluation. */
+double harmonicMagnitude (const std::vector<float>& samples, double frequency, double sampleRate)
+{
+    double real = 0.0;
+    double imaginary = 0.0;
+    for (std::size_t i = 0; i < samples.size(); ++i)
+    {
+        const auto angle = 2.0 * 3.14159265358979323846 * frequency
+                         * static_cast<double> (i) / sampleRate;
+        real += samples[i] * std::cos (angle);
+        imaginary -= samples[i] * std::sin (angle);
+    }
+    return std::sqrt (real * real + imaginary * imaginary) * 2.0
+         / std::max (static_cast<double> (samples.size()), 1.0);
+}
+
+vocalor::EngineParameters steadyParameters()
+{
+    auto parameters = makeParameters (0, 0, 0, 0);
+    parameters.vibrato = 0.0f;
+    parameters.humanize = 0.0f;
+    parameters.room = 0.0f;
+    return parameters;
+}
+
+/** Nothing about the sound may depend on the sample rate.
+
+    Before the formant bank was peak-normalised, each resonator's gain was
+    proportional to the sample rate: the same patch measured 12.7 dB louder at
+    192 kHz than at 44.1 kHz, harmonic for harmonic.
+*/
+void testSampleRateInvariance()
+{
+    constexpr std::array sampleRates { 44100.0, 48000.0, 88200.0, 96000.0, 192000.0 };
+    constexpr double fundamental = 261.6255653;
+
+    double quietest = 1.0e9;
+    double loudest = -1.0e9;
+    std::array<double, 4> lowest { 1.0e9, 1.0e9, 1.0e9, 1.0e9 };
+    std::array<double, 4> highest { -1.0e9, -1.0e9, -1.0e9, -1.0e9 };
+    constexpr std::array harmonics { 1, 2, 4, 8 };
+
+    for (const auto sampleRate : sampleRates)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (steadyParameters());
+        engine.noteOn (60, 0.8f);
+        renderMono (engine, static_cast<int> (sampleRate * 0.6));
+        const auto steady = renderMono (engine, static_cast<int> (sampleRate * 0.6));
+
+        double sumOfSquares = 0.0;
+        for (const auto value : steady)
+            sumOfSquares += static_cast<double> (value) * value;
+        const auto levelDb = 20.0 * std::log10 (std::max (
+            std::sqrt (sumOfSquares / static_cast<double> (steady.size())), 1.0e-12));
+        quietest = std::min (quietest, levelDb);
+        loudest = std::max (loudest, levelDb);
+
+        for (std::size_t h = 0; h < harmonics.size(); ++h)
+        {
+            const auto magnitude = 20.0 * std::log10 (std::max (
+                harmonicMagnitude (steady, fundamental * harmonics[h], sampleRate), 1.0e-12));
+            lowest[h] = std::min (lowest[h], magnitude);
+            highest[h] = std::max (highest[h], magnitude);
+        }
+    }
+
+    expect (loudest - quietest < 0.6,
+            "the rendered level still depends on the sample rate");
+    for (std::size_t h = 0; h < harmonics.size(); ++h)
+        expect (highest[h] - lowest[h] < 1.5,
+                "harmonic " + std::to_string (harmonics[h])
+                    + " changed level across the supported sample rates");
+}
+
+/** Humanisation must have the same depth at every sample rate, not merely the
+    same spectrum.
+
+    The shimmer and the first pitch-jitter smoother are one-poles driven by
+    white noise. Deriving their coefficients from a corner frequency and a time
+    constant fixed the spectrum, but a noise-driven one-pole settles at output
+    variance c / (2 - c), so with c now proportional to 1/sampleRate the depth
+    fell as 1/sqrt(sampleRate) unless the drive is renormalised: measured
+    shimmer standard deviation 0.0304 / 0.0228 / 0.0158 at 48 / 96 / 192 kHz
+    before the compensation went in. testSampleRateInvariance structurally
+    cannot see this, because its patch sets humanize = 0, which zeroes both the
+    shimmer depth and the jitter's contribution to the pitch.
+
+    Both halves are asserted here: the standard deviation is the depth, and the
+    autocorrelation at a fixed lag in seconds is the spectrum.
+*/
+void testHumanisationDepthIsRateInvariant()
+{
+    constexpr std::array sampleRates { 44100.0, 48000.0, 96000.0, 192000.0 };
+    constexpr double windowSeconds = 6.0;
+    // The observation stride is a duration, not a sample count, so the lag of
+    // the autocorrelation below means the same thing at every rate.
+    constexpr double strideSeconds = 0.004;
+    constexpr std::array names { "shimmer amplitude modulation",
+                                 "pitch jitter" };
+
+    std::array<double, names.size()> quietest {};
+    std::array<double, names.size()> loudest {};
+    std::array<double, names.size()> slowest {};
+    std::array<double, names.size()> fastest {};
+    quietest.fill (1.0e9);
+    loudest.fill (-1.0e9);
+    slowest.fill (-1.0e9);
+    fastest.fill (1.0e9);
+
+    for (const auto sampleRate : sampleRates)
+    {
+        auto parameters = steadyParameters();
+        parameters.humanize = 1.0f;
+
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.8f);
+        render (engine, static_cast<int> (sampleRate * 0.5));
+
+        const auto stride = std::max (1, static_cast<int> (sampleRate * strideSeconds));
+        const auto observations = static_cast<int> (windowSeconds / strideSeconds);
+        std::array<std::vector<double>, names.size()> series;
+        for (int i = 0; i < observations; ++i)
+        {
+            render (engine, stride);
+            const auto depth = vocalor::VoiceEngineTestAccess::humanisationDepth (engine);
+            for (std::size_t k = 0; k < names.size(); ++k)
+                series[k].push_back (static_cast<double> (depth[k]));
+        }
+
+        for (std::size_t k = 0; k < names.size(); ++k)
+        {
+            double sumOfSquares = 0.0;
+            double lagProduct = 0.0;
+            for (std::size_t i = 0; i < series[k].size(); ++i)
+            {
+                sumOfSquares += series[k][i] * series[k][i];
+                if (i > 0)
+                    lagProduct += series[k][i] * series[k][i - 1];
+            }
+            const auto deviation = std::sqrt (sumOfSquares
+                                              / static_cast<double> (series[k].size()));
+            expect (deviation > 1.0e-5,
+                    std::string (names[k]) + " is not running at all");
+            quietest[k] = std::min (quietest[k], deviation);
+            loudest[k] = std::max (loudest[k], deviation);
+
+            const auto correlation = lagProduct / std::max (sumOfSquares, 1.0e-30);
+            slowest[k] = std::max (slowest[k], correlation);
+            fastest[k] = std::min (fastest[k], correlation);
+        }
+    }
+
+    for (std::size_t k = 0; k < names.size(); ++k)
+    {
+        // Depth. Without the drive compensation this measured 6.5 dB for the
+        // shimmer and 6.2 dB for the jitter; with it, under 0.6 dB. Two leaves
+        // room for the sampling error of a six-second window and nothing else.
+        expect (20.0 * std::log10 (loudest[k] / std::max (quietest[k], 1.0e-12)) < 2.0,
+                std::string (names[k]) + " depth still depends on the sample rate");
+        // Spectrum. A fixed 4 ms lag: if a smoother's corner moved with the
+        // sample rate, so would this. With the old per-sample and per-control-
+        // period coefficients the shimmer measured 0.33 / 0.31 / 0.09 / 0.003
+        // and the jitter 0.88 / 0.86 / 0.69 / 0.39 across the four rates; both
+        // now hold to within 0.025.
+        expect (slowest[k] - fastest[k] < 0.06,
+                std::string (names[k]) + " spectrum still depends on the sample rate");
+    }
+}
+
+/** The vowel pad and the formant shift are timbre controls, not faders. */
+void testTractLevelStability()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr std::array padX { 0.0f, 0.5f, 1.0f, 0.0f, 0.5f, 1.0f, 0.0f, 0.5f, 1.0f };
+    constexpr std::array padY { 0.0f, 0.0f, 0.0f, 0.5f, 0.5f, 0.5f, 1.0f, 1.0f, 1.0f };
+
+    double quietest = 1.0e9;
+    double loudest = -1.0e9;
+    for (std::size_t i = 0; i < padX.size(); ++i)
+    {
+        auto parameters = steadyParameters();
+        parameters.vowelMorph = 1.0f;
+        parameters.vowelX = padX[i];
+        parameters.vowelY = padY[i];
+        const auto level = steadyLevelDb (sampleRate, parameters, 60);
+        quietest = std::min (quietest, level);
+        loudest = std::max (loudest, level);
+    }
+    // 15.9 dB before the bank was normalised. What is left is the genuine
+    // interaction between the fundamental and where F1 happens to sit.
+    expect (loudest - quietest < 10.0,
+            "the vowel pad still works as a volume control");
+
+    quietest = 1.0e9;
+    loudest = -1.0e9;
+    for (int semitones = -12; semitones <= 12; semitones += 3)
+    {
+        auto parameters = steadyParameters();
+        parameters.formantShift = static_cast<float> (semitones);
+        const auto level = steadyLevelDb (sampleRate, parameters, 60);
+        quietest = std::min (quietest, level);
+        loudest = std::max (loudest, level);
+    }
+    expect (loudest - quietest < 13.0,
+            "the formant shift still changes the level more than the timbre");
+
+    // The old bank's gain fell monotonically as the formants rose, so shifting
+    // an octave up cost 17.5 dB. Shifting must no longer have a level trend.
+    auto down = steadyParameters();
+    down.formantShift = -12.0f;
+    auto up = steadyParameters();
+    up.formantShift = 12.0f;
+    expect (std::abs (steadyLevelDb (sampleRate, down, 60)
+                      - steadyLevelDb (sampleRate, up, 60)) < 6.0,
+            "shifting the formants up an octave still acts as a fader");
+}
+
+/** The parallel formant bank has to behave like an all-pole vocal tract. */
+void testParallelFormantBank()
+{
+    // Peak normalisation: the resonator's gain at its own centre frequency must
+    // be one for every bandwidth, centre frequency and sample rate.
+    for (const float sampleRate : { 44100.0f, 48000.0f, 96000.0f, 192000.0f })
+    {
+        for (const float centre : { 60.0f, 310.0f, 850.0f, 2790.0f, 0.4f * sampleRate })
+        {
+            for (const float bandwidth : { 20.0f, 75.0f, 260.0f, 700.0f })
+            {
+                // The reference is evaluated in double on purpose: at 192 kHz
+                // 1 - a1 cos - a2 cos2 is a difference of near-equal ones and a
+                // float reference would be noisier than the value under test.
+                const auto radius = static_cast<double> (
+                    std::exp (-3.14159265358979323846f * bandwidth / sampleRate));
+                const auto omega = 2.0 * 3.14159265358979323846
+                                 * static_cast<double> (centre) / sampleRate;
+                const auto a1 = 2.0 * radius * std::cos (omega);
+                const auto a2 = -radius * radius;
+                const auto b0 = static_cast<double> (vocalor::formantResonatorGain (
+                    static_cast<float> (radius), static_cast<float> (std::sin (omega))));
+
+                const auto real = 1.0 - a1 * std::cos (omega) - a2 * std::cos (2.0 * omega);
+                const auto imaginary = a1 * std::sin (omega) + a2 * std::sin (2.0 * omega);
+                const auto gain = b0 / std::sqrt (real * real + imaginary * imaginary);
+                expect (std::abs (gain - 1.0) < 2.0e-3,
+                        "the formant resonator was not normalised to unit peak gain");
+            }
+        }
+    }
+
+    expect (vocalor::formantPolarity (0) > 0.0f && vocalor::formantPolarity (1) < 0.0f
+                && vocalor::formantPolarity (2) > 0.0f,
+            "the parallel formant bank stopped alternating its polarity");
+
+    // Cascade-derived amplitudes: finite, ordered, and vowel dependent.
+    const std::array<float, vocalor::kFormantCount> bandwidth {
+        75.0f, 90.0f, 125.0f, 185.0f, 260.0f };
+    std::array<float, vocalor::kFormantCount> openGain {};
+    std::array<float, vocalor::kFormantCount> closeGain {};
+    const std::array<float, vocalor::kFormantCount> openHz {
+        850.0f, 1220.0f, 2810.0f, 3650.0f, 4950.0f };
+    const std::array<float, vocalor::kFormantCount> closeHz {
+        310.0f, 2790.0f, 3310.0f, 3900.0f, 4950.0f };
+    vocalor::parallelFormantAmplitudes (openHz.data(), bandwidth.data(), vocalor::kFormantCount,
+                                        48000.0f, 0.010f, openGain.data());
+    vocalor::parallelFormantAmplitudes (closeHz.data(), bandwidth.data(), vocalor::kFormantCount,
+                                        48000.0f, 0.010f, closeGain.data());
+
+    bool finite = true;
+    for (int i = 0; i < vocalor::kFormantCount; ++i)
+    {
+        finite = finite && std::isfinite (openGain[static_cast<std::size_t> (i)])
+                        && std::isfinite (closeGain[static_cast<std::size_t> (i)]);
+        expect (openGain[static_cast<std::size_t> (i)] > 0.0f,
+                "a cascade-derived formant amplitude was not positive");
+    }
+    expect (finite, "the cascade-derived formant amplitudes were not finite");
+    // /a/ concentrates its energy in F1 and F2; /i/ carries F2 and F3 nearly as
+    // strongly as F1. If the amplitudes did not track the vowel this would not
+    // hold, and a front vowel would not sound front.
+    expect (openGain[2] / openGain[0] < closeGain[2] / closeGain[0] * 0.5f,
+            "the formant amplitudes no longer follow the vowel");
+
+    // Nothing may starve completely: the bank models nothing above F5.
+    const auto largest = *std::max_element (openGain.begin(), openGain.end());
+    for (const auto value : openGain)
+        expect (value >= largest * 0.0099f,
+                "a formant amplitude fell below the modelled floor");
+
+    // And the valley between F1 and F2 must stay within reach of the peak. A
+    // bank summed with a common sign digs a 64 dB notch there on a close front
+    // vowel, tens of dB deeper than any vocal tract produces.
+    // The onset crossfade blends a wide-bandwidth early stage into the full
+    // tract. The early stage used the unnormalised b0, so it sat at a different
+    // level from the tract it fades into and the crossfade moved the level as
+    // well as the timbre. Both stages are now normalised on the same basis, so
+    // each resonator delivers the same magnitude at its own centre frequency
+    // whatever bandwidth it runs.
+    for (const float sampleRate : { 44100.0f, 48000.0f, 96000.0f, 192000.0f })
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (static_cast<double> (sampleRate), blockSize);
+        engine.reset();
+        engine.setParameters (steadyParameters());
+        engine.noteOn (60, 0.8f);
+        // Short enough that the crossfade is still running: it ends 115-195 ms
+        // into the note.
+        render (engine, static_cast<int> (sampleRate * 0.05f));
+
+        const auto gains = vocalor::VoiceEngineTestAccess::onsetStagePeakGains (engine);
+        for (std::size_t f = 0; f < 2; ++f)
+        {
+            expect (gains[f] > 1.0e-6f,
+                    "the onset crossfade probe found no sounding voice");
+            expect (std::abs (gains[f + 2] - gains[f]) <= 2.0e-3f * gains[f],
+                    "the onset stage is no longer normalised like the main tract");
+        }
+    }
+
+    // Limits are the pre-change depths rounded down: /i/-like 64.2, /a/-like
+    // 24.9 and /u/-like 29.4 dB. The current bank measures 32.2, 9.6 and
+    // 13.7 dB at the same three corners.
+    struct Corner { float x; float y; double limit; };
+    for (const auto corner : { Corner { 1.0f, 0.0f, 42.0 }, Corner { 0.5f, 1.0f, 16.0 },
+                               Corner { 0.0f, 0.0f, 20.0 } })
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (48000.0, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.vowelMorph = 1.0f;
+        parameters.vowelX = corner.x;
+        parameters.vowelY = corner.y;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.8f);
+        render (engine, static_cast<int> (48000.0 * 0.5));
+
+        const auto state = engine.getDisplayState();
+        const auto response = [&state] (double hz)
+        {
+            return static_cast<double> (vocalor::formantResponseDb (
+                static_cast<float> (hz), state.formantHz.data(), state.formantBandwidth.data(),
+                state.formantGain.data(), vocalor::kFormantCount, state.sampleRate));
+        };
+
+        double peak = -1.0e9;
+        for (double hz = 80.0; hz < 11000.0; hz *= 1.002)
+            peak = std::max (peak, response (hz));
+        double valley = 1.0e9;
+        for (double hz = state.formantHz[0] * 1.08; hz < state.formantHz[1] * 0.92; hz *= 1.002)
+            valley = std::min (valley, response (hz));
+
+        expect (peak - valley < corner.limit,
+                "the formant bank cancelled itself between F1 and F2");
+    }
+}
+
+/** Ensemble size has to mean what it says: every value in its range renders
+    exactly that many independently humanised singers. */
+void testEnsembleSizeIsExact()
+{
+    constexpr auto sampleRate = 48000.0;
+    for (int singers = 2; singers <= 12; ++singers)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = makeParameters (1, 0, 0, 0);
+        parameters.choirSize = singers;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.8f);
+        render (engine, blockSize);
+        expect (engine.getActiveVoiceCount() == singers,
+                "an ensemble of " + std::to_string (singers)
+                    + " did not render that many singers");
+    }
+
+    // Out-of-range requests still land on the nearest usable ensemble.
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, blockSize);
+    engine.reset();
+    auto parameters = makeParameters (1, 0, 0, 0);
+    parameters.choirSize = 40;
+    engine.setParameters (parameters);
+    engine.noteOn (60, 0.8f);
+    render (engine, blockSize);
+    expect (engine.getActiveVoiceCount() == 12,
+            "an oversized ensemble request was not clamped to the singers available");
+}
+
+/** Resonance and formant shift reach the pole radius, which cannot be smoothed
+    downstream, so a jump on either has to be smoothed before it is used. */
+void testTractCoefficientSmoothing()
+{
+    constexpr auto sampleRate = 48000.0;
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, blockSize);
+    engine.reset();
+    auto parameters = steadyParameters();
+    parameters.resonance = 0.0f;
+    parameters.formantShift = 0.0f;
+    engine.setParameters (parameters);
+    engine.noteOn (60, 0.85f);
+    render (engine, static_cast<int> (sampleRate * 0.3));
+
+    const auto before = vocalor::VoiceEngineTestAccess::chunkBandwidths (engine);
+    parameters.resonance = 1.0f;
+    parameters.formantShift = 12.0f;
+    engine.setParameters (parameters);
+
+    // One chunk of a 20 ms smoother may cover only a small part of the jump.
+    render (engine, 64);
+    const auto afterOneChunk = vocalor::VoiceEngineTestAccess::chunkBandwidths (engine);
+    render (engine, static_cast<int> (sampleRate * 0.3));
+    const auto settled = vocalor::VoiceEngineTestAccess::chunkBandwidths (engine);
+
+    const auto span = std::abs (settled[0] - before[0]);
+    expect (span > 1.0f, "the resonance and shift jump did not move the bandwidths at all");
+    expect (std::abs (afterOneChunk[0] - before[0]) < span * 0.25f,
+            "the tract bandwidth stepped instead of gliding after a parameter jump");
+    expect (std::abs (afterOneChunk[0] - before[0]) > 0.0f,
+            "the tract bandwidth froze instead of gliding after a parameter jump");
+}
+
 void testRoughPerformance()
 {
     constexpr auto sampleRate = 96000.0;
@@ -1106,6 +1646,12 @@ int main()
     testVowelMorphAndFormantShift();
     testGlideAndLegato();
     testRoomSizeGeometry();
+    testSampleRateInvariance();
+    testHumanisationDepthIsRateInvariant();
+    testTractLevelStability();
+    testParallelFormantBank();
+    testEnsembleSizeIsExact();
+    testTractCoefficientSmoothing();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();

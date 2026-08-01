@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 
 namespace neuramar
 {
@@ -23,33 +22,6 @@ constexpr float twoPi = 2.0f * pi;
                                    float maximum, float fallback) noexcept
 {
     return std::clamp(finiteOr(value, fallback), minimum, maximum);
-}
-
-[[nodiscard]] float interpolatePhase(
-    const std::array<float, NeuralModel::harmonicCount>& phases,
-    float oneBasedIndex) noexcept
-{
-    if (!(oneBasedIndex >= 1.0f))
-        return phases.front();
-    if (oneBasedIndex >= static_cast<float>(phases.size()))
-        return phases.back();
-
-    const float zeroBased = oneBasedIndex - 1.0f;
-    const auto lower = static_cast<std::size_t>(zeroBased);
-    const float fraction = zeroBased - static_cast<float>(lower);
-    if (!(fraction > 0.0f))
-        return phases[lower];
-    const float firstAngle = twoPi * phases[lower];
-    const float secondAngle = twoPi * phases[lower + 1];
-    const float real = (1.0f - fraction) * std::cos(firstAngle)
-        + fraction * std::cos(secondAngle);
-    const float imaginary = (1.0f - fraction) * std::sin(firstAngle)
-        + fraction * std::sin(secondAngle);
-    if (std::abs(real) + std::abs(imaginary) < 1.0e-8f)
-        return phases[lower];
-    float result = std::atan2(imaginary, real) / twoPi;
-    result -= std::floor(result);
-    return result;
 }
 
 [[nodiscard]] float interpolatePhaseShortest(float first, float second,
@@ -71,6 +43,14 @@ constexpr float twoPi = 2.0f * pi;
     return std::clamp((nyquistLimitHz - frequencyHz) * nyquistFadeScale,
                       0.0f, 1.0f);
 }
+
+// Ceiling on the level a voice-steal fade tail may hold. One frozen sample from
+// one voice is far below this, and the first steal into an idle slot is stored
+// unclamped, so an ordinary hand-off never reaches it; it only bounds the case
+// where the same slot is stolen again and again inside one 3 ms window, where a
+// small residual step is preferable to walking the sum into the finite-output
+// guard.
+constexpr float maximumFadeTailLevel = 4.0f;
 
 [[nodiscard]] float guardFiniteOutput(float value) noexcept
 {
@@ -145,6 +125,40 @@ makeSourceFilterEnvelope(
     phase -= std::floor(phase);
     return phase;
 }
+
+// sin(2 pi unitPhase) for a phase already reduced to [0, 1).
+//
+// The quarter-period fold is exact in floating point: every subtraction below
+// is between neighbouring magnitudes, so the folded coordinate carries the
+// argument's full precision. The remaining series is the odd Taylor expansion
+// through theta^11 over [0, pi/2]; it alternates, so its truncation error is
+// bounded by the first omitted term, (pi/2)^13/13! = 5.7e-8, about -145 dB, and
+// what is left on top of that is float rounding. Measured against
+// double-precision sin() over 2e7 uniformly spaced phases the result is a peak
+// error of 2.08e-7 (-133.6 dB) and an RMS error of 3.78e-8 (-148.5 dB), against
+// 5.28e-7 (-125.6 dB) and 1.87e-7 (-134.6 dB) for the 4096-entry linearly
+// interpolated table this replaces. It also needs no memory at all and - unlike
+// a table gather - lets the whole partial loop vectorise.
+[[nodiscard]] float unitSine(float unitPhase) noexcept
+{
+    const float offset = unitPhase - 0.5f;
+    const float folded = 0.25f - std::abs(std::abs(offset) - 0.25f);
+    const float angle = twoPi * folded;
+    const float square = angle * angle;
+    float series = -2.50521084e-8f;              // -1/11!
+    series = series * square + 2.75573192e-6f;   //  1/9!
+    series = series * square - 1.98412698e-4f;   // -1/7!
+    series = series * square + 8.33333333e-3f;   //  1/5!
+    series = series * square - 1.66666667e-1f;   // -1/3!
+    series = series * square + 1.0f;
+    const float magnitude = angle * series;
+    return offset < 0.0f ? magnitude : -magnitude;
+}
+
+[[nodiscard]] float sine(float phase) noexcept
+{
+    return unitSine(wrapUnit(phase));
+}
 } // namespace
 
 void NeuramarEngine::Bandpass::set(float centreHz, float bandwidthOctaves,
@@ -185,6 +199,20 @@ void NeuramarEngine::Bandpass::set(float centreHz, float bandwidthOctaves,
     rampRemaining = rampSamples;
 }
 
+void NeuramarEngine::Bandpass::finishRamp() noexcept
+{
+    if (rampRemaining <= 0)
+        return;
+    const auto remaining = static_cast<float>(rampRemaining);
+    b0 += b0Step * remaining;
+    b2 += b2Step * remaining;
+    a1 += a1Step * remaining;
+    a2 += a2Step * remaining;
+    outputScale += outputScaleStep * remaining;
+    b0Step = b2Step = a1Step = a2Step = outputScaleStep = 0.0f;
+    rampRemaining = 0;
+}
+
 float NeuramarEngine::Bandpass::tickSide(float input) noexcept
 {
     const float output = b0 * input + sideZ1;
@@ -218,19 +246,39 @@ void NeuramarEngine::Voice::clear() noexcept
 
 NeuramarEngine::NeuramarEngine() noexcept
 {
-    for (int index = 0; index < sineTableSize; ++index)
-        sineTable_[static_cast<std::size_t>(index)] = std::sin(
-            twoPi * static_cast<float>(index) / static_cast<float>(sineTableSize));
-    // Two wrapped guard entries: the first lets the final cell interpolate
-    // across the phase wrap, and the second keeps the lookup in bounds for
-    // wrapped phases within half an ulp of 1.0, whose scaled table position
-    // rounds up to exactly sineTableSize.
-    sineTable_[sineTableSize] = sineTable_.front();
-    sineTable_.back() = sineTable_[1];
     for (std::size_t harmonic = 0; harmonic < NeuralModel::harmonicCount; ++harmonic)
         inverseHarmonicRolloff_[harmonic] = 1.0f
             / std::pow(static_cast<float>(harmonic + 1), 1.15f);
     refreshHarmonicStretch(0.0f);
+}
+
+// Circular interpolation of the learned onset phases at a fractional harmonic
+// coordinate. The unit vectors are cached by setModel(), so a note-on that has
+// to map all 256 rendered partials costs one atan2 each instead of two sines,
+// two cosines and an atan2 - the whole mapping happens on the audio thread.
+float NeuramarEngine::initialPhaseAt(const NeuralModel& model,
+                                     float oneBasedIndex) const noexcept
+{
+    const auto& phases = model.initialHarmonicPhases_;
+    if (!(oneBasedIndex >= 1.0f))
+        return phases.front();
+    if (oneBasedIndex >= static_cast<float>(phases.size()))
+        return phases.back();
+
+    const float zeroBased = oneBasedIndex - 1.0f;
+    const auto lower = static_cast<std::size_t>(zeroBased);
+    const float fraction = zeroBased - static_cast<float>(lower);
+    if (!(fraction > 0.0f))
+        return phases[lower];
+    const float real = (1.0f - fraction) * initialPhaseCos_[lower]
+        + fraction * initialPhaseCos_[lower + 1];
+    const float imaginary = (1.0f - fraction) * initialPhaseSin_[lower]
+        + fraction * initialPhaseSin_[lower + 1];
+    if (std::abs(real) + std::abs(imaginary) < 1.0e-8f)
+        return phases[lower];
+    float result = std::atan2(imaginary, real) / twoPi;
+    result -= std::floor(result);
+    return result;
 }
 
 void NeuramarEngine::refreshHarmonicStretch(float inharmonicity) noexcept
@@ -259,6 +307,16 @@ void NeuramarEngine::prepare(double sampleRate, int maxBlockSize)
     coreNyquistLimitHz_ = 0.49f * static_cast<float>(sampleRate_);
     coreNyquistFadeScale_ = static_cast<float>(
         1.0 / (0.06 * sampleRate_));
+    boneCeilingHz_ = coreNyquistLimitHz_;
+    // 20 kHz is the top of the audible band, so an Air band or a Bone mode
+    // that reaches it is faded out identically whether the host runs at 48 or
+    // at 192 kHz. Only a host rate low enough to bring its own Nyquist below
+    // that ceiling narrows the limit further, which is unavoidable.
+    const auto rate = static_cast<float>(sampleRate_);
+    airEdgeLimitHz_ = std::min(0.45f * rate, 20000.0f);
+    airEdgeFadeHz_ = std::min(0.07f * rate, 2000.0f);
+    boneEdgeLimitHz_ = std::min(0.49f * rate, 20000.0f);
+    boneEdgeFadeHz_ = std::min(0.04f * rate, 1400.0f);
     controlPeriod_ = std::clamp(static_cast<int>(std::lround(sampleRate_ / 250.0)),
                                 16, 4096);
     // A 6 ms smoother: fast enough to feel immediate, slow enough that a host
@@ -296,6 +354,14 @@ void NeuramarEngine::setModel(const NeuralModel* immutableModel) noexcept
         if (voices_[index].active)
             beginFadeTail(index);
         voices_[index].clear();
+    }
+    for (std::size_t harmonic = 0; harmonic < NeuralModel::harmonicCount;
+         ++harmonic)
+    {
+        const float angle = twoPi
+            * immutableModel->initialHarmonicPhases_[harmonic];
+        initialPhaseCos_[harmonic] = std::cos(angle);
+        initialPhaseSin_[harmonic] = std::sin(angle);
     }
     model_.store(immutableModel, std::memory_order_release);
 }
@@ -495,14 +561,13 @@ void NeuramarEngine::noteOn(int midiNote, float velocity) noexcept
         const bool hasPitchFollowingPhase = harmonic < NeuralModel::harmonicCount;
         const float pitchFollowingPhase = hasPitchFollowingPhase
             ? model->initialHarmonicPhases_[harmonic]
-            : interpolatePhase(model->initialHarmonicPhases_,
-                               harmonicNumber * phaseRatio);
+            : initialPhaseAt(*model, harmonicNumber * phaseRatio);
         const float sourceCoordinate = harmonicNumber * phaseRatio;
         const bool hasBodyPhase = sourceCoordinate > 0.0f
             && sourceCoordinate
                 <= static_cast<float>(NeuralModel::harmonicCount) + 0.999f;
         const float bodyPhase = hasBodyPhase
-            ? interpolatePhase(model->initialHarmonicPhases_, sourceCoordinate)
+            ? initialPhaseAt(*model, sourceCoordinate)
             : pitchFollowingPhase;
         selected->harmonicPhases[harmonic] = wrapUnit(
             interpolatePhaseShortest(pitchFollowingPhase, bodyPhase, bodyLock)
@@ -550,13 +615,42 @@ void NeuramarEngine::beginFadeTail(std::size_t voiceIndex) noexcept
 
     const auto& voice = voices_[voiceIndex];
     auto& tail = fadeTails_[voiceIndex];
+
+    // A slot stolen twice inside one fade window still owes the listener the
+    // remainder of the first tail, so the value the running tail was about to
+    // emit is carried into a fresh window rather than discarded. Because the
+    // carry is the *emitted* value, the hand-off steps by exactly
+    // voice.lastLeft wherever in the fade it lands, and the running tail's own
+    // decay is applied before the sum rather than compensated for afterwards.
+    //
+    // What a steal must not do is push the deadline out. Restarting a
+    // full-length fade on every steal makes the tail an integrator whose value
+    // grows with the length of a note-on burst rather than a hand-off bounded
+    // by one voice's level, and a dense enough burst then drives the mix into
+    // the finite-output guard. So the window is re-cut across the samples the
+    // first steal already budgeted: all the energy stacked into one slot still
+    // dies within one fade of that first steal.
+    const float window = tail.remaining > 0
+        ? 0.5f + 0.5f * sine(0.25f + 0.5f * std::min(tail.position, 1.0f))
+        : 0.0f;
+
     const int fadeSamples = std::max(16, static_cast<int>(std::lround(
         0.003 * sampleRate_)));
-    tail.left = voice.lastLeft;
-    tail.right = voice.lastRight;
+    // Once the running window has closed to nothing the old tail contributes
+    // nothing to carry, so a fresh full-length fade is both safe and better:
+    // the 50x attenuation on anything carried across it is what keeps repeated
+    // late steals from accumulating.
+    const int remaining = (tail.remaining > 0 && window > 0.02f)
+        ? tail.remaining
+        : fadeSamples;
+
+    tail.left = std::clamp(tail.left * window + voice.lastLeft,
+                           -maximumFadeTailLevel, maximumFadeTailLevel);
+    tail.right = std::clamp(tail.right * window + voice.lastRight,
+                            -maximumFadeTailLevel, maximumFadeTailLevel);
     tail.position = 0.0f;
-    tail.positionStep = 1.0f / static_cast<float>(fadeSamples);
-    tail.remaining = fadeSamples;
+    tail.positionStep = 1.0f / static_cast<float>(remaining);
+    tail.remaining = remaining;
 }
 
 void NeuramarEngine::refreshVoicePans() noexcept
@@ -588,16 +682,6 @@ void NeuramarEngine::refreshVoicePans() noexcept
         // waiting up to one control interval after a chord changes shape.
         ordered[rank]->controlCountdown = 0;
     }
-}
-
-float NeuramarEngine::sine(float phase) const noexcept
-{
-    phase = wrapUnit(phase);
-    const float tablePosition = phase * static_cast<float>(sineTableSize);
-    const auto lower = static_cast<std::size_t>(tablePosition);
-    const float fraction = tablePosition - static_cast<float>(lower);
-    return sineTable_[lower]
-        + fraction * (sineTable_[lower + 1] - sineTable_[lower]);
 }
 
 float NeuramarEngine::nextNoise(std::uint32_t& state) noexcept
@@ -933,6 +1017,8 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
         voice.transpositionRatio * frame.pitchRatio,
         1.0f - parameters.bodyLock) * formantScale;
     const float brightnessScale = std::exp2(parameters.brightness - 0.5f);
+    std::array<float, NeuralModel::airBandCount> airCentresHz {};
+    bool airSounding = false;
     for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
     {
         const std::size_t output = airOutputOffset + band;
@@ -942,9 +1028,8 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             * spectralScale * brightnessScale;
         const float edgeGain = std::clamp(
             (desiredFrequency - 20.0f) / 30.0f, 0.0f, 1.0f)
-            * std::clamp((0.45f * static_cast<float>(sampleRate_)
-                          - desiredFrequency)
-                             / (0.07f * static_cast<float>(sampleRate_)),
+            * std::clamp((airEdgeLimitHz_ - desiredFrequency)
+                             / airEdgeFadeHz_,
                          0.0f, 1.0f);
         // Air and Bone take the same register compensation as Core, so the
         // balance between the tonal, noise, and modal layers is the one the
@@ -952,11 +1037,30 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
         targets[output] = std::clamp(frame.airAmplitudes[band]
             * parameters.air * variation * edgeGain * touchAirGain
             * registerGain, 0.0f, 2.0f);
+        airCentresHz[band] = desiredFrequency;
+        airSounding = airSounding || targets[output] > 0.0f
+            || voice.amplitudes[output] > 0.0f;
+    }
 
-        voice.airFilters[band].set(
-            desiredFrequency,
-            model.airBandwidthOctaves_[band], static_cast<float>(sampleRate_),
-            firstControlFrame ? 0 : controlPeriod_);
+    // Designing the bands is the expensive half of the Air layer, so a layer
+    // that contributes exactly zero for this whole control period skips it as
+    // well as the per-sample filtering. Retiring any open coefficient ramp is
+    // what makes that free rather than merely deferred: tick() is what normally
+    // retires it, and a silent band is never ticked, so an open ramp would
+    // otherwise defeat the unchanged-centre early-out in set() and redesign
+    // every band on every frame for as long as the layer stays silent.
+    if (airSounding)
+    {
+        for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+            voice.airFilters[band].set(
+                airCentresHz[band], model.airBandwidthOctaves_[band],
+                static_cast<float>(sampleRate_),
+                firstControlFrame ? 0 : controlPeriod_);
+    }
+    else
+    {
+        for (auto& filter : voice.airFilters)
+            filter.finishRamp();
     }
 
     for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
@@ -968,15 +1072,13 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             * model.boneFrequencyRatios_[mode] * spectralScale;
         const float edgeGain = std::clamp(
             (desiredFrequency - 10.0f) / 20.0f, 0.0f, 1.0f)
-            * std::clamp((0.49f * static_cast<float>(sampleRate_)
-                          - desiredFrequency)
-                             / (0.04f * static_cast<float>(sampleRate_)),
+            * std::clamp((boneEdgeLimitHz_ - desiredFrequency)
+                             / boneEdgeFadeHz_,
                          0.0f, 1.0f);
         targets[output] = std::clamp(frame.boneAmplitudes[mode]
             * active * parameters.bone * edgeGain * registerGain, 0.0f, 2.0f);
-        const float boundedFrequency = std::clamp(
-            desiredFrequency,
-            10.0f, 0.49f * static_cast<float>(sampleRate_));
+        const float boundedFrequency = std::clamp(desiredFrequency, 10.0f,
+                                                  boneCeilingHz_);
         if (firstControlFrame)
         {
             voice.boneFrequenciesHz[mode] = boundedFrequency;
@@ -1001,6 +1103,13 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             soundingHarmonics = harmonic + 1;
     }
     voice.soundingHarmonicCount = soundingHarmonics;
+
+    voice.airSounding = airSounding;
+    voice.boneSounding = false;
+    for (std::size_t output = boneOutputOffset; output < renderAmplitudeCount;
+         ++output)
+        voice.boneSounding = voice.boneSounding
+            || targets[output] > 0.0f || voice.amplitudes[output] > 0.0f;
 
     for (std::size_t output = 0; output < renderAmplitudeCount; ++output)
     {
@@ -1077,9 +1186,15 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
     // Adopt the host's level on the first block rather than sliding up to it.
     if (!(smoothedOutputGain_ >= 0.0f))
         smoothedOutputGain_ = parameters.outputGain;
-    const float attackCoefficient = parameters.attackSeconds <= 0.0f
+    // Awaken is a fade-in time, so it advances a position rather than driving
+    // a one-pole. A one-pole reaches only 63% of the level in the time its
+    // label promises - full opening took roughly 4.6 times the stated seconds
+    // - and it has its steepest slope at the instant of the note-on, which is
+    // the very thing a soft attack exists to remove. The smoothstep below
+    // finishes exactly on time and has zero slope at both ends.
+    const float attackStep = parameters.attackSeconds <= 0.0f
         ? 1.0f
-        : 1.0f - std::exp(-inverseSampleRate_ / parameters.attackSeconds);
+        : inverseSampleRate_ / parameters.attackSeconds;
     constexpr float retirementLevel = 1.0e-5f;
     const float releaseMultiplier = std::exp(
         std::log(retirementLevel) * inverseSampleRate_
@@ -1100,6 +1215,11 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
             std::fill(right, right + numSamples, 0.0f);
         return;
     }
+
+    // One kilobyte of stack that stays hot in the first-level cache for the
+    // whole call. It decouples the vectorised partial evaluation from the
+    // running sum without touching the heap or growing the voice state.
+    std::array<float, renderedHarmonicCount> partialScratch {};
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -1131,68 +1251,117 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                 };
                 const std::size_t soundingHarmonics
                     = voice.soundingHarmonicCount;
-                for (std::size_t harmonic = 0;
-                     harmonic < soundingHarmonics; ++harmonic)
-                    advanceAmplitude(harmonic);
-                for (std::size_t output = airOutputOffset;
-                     output < renderAmplitudeCount; ++output)
-                    advanceAmplitude(output);
+                // A silent layer's amplitudes and steps are all exactly zero for
+                // the whole control period, so skipping its ramp is not an
+                // approximation; each layer is skipped on its own so a silent
+                // Bone does not ride along with a sounding Air.
+                if (voice.airSounding)
+                    for (std::size_t output = airOutputOffset;
+                         output < boneOutputOffset; ++output)
+                        advanceAmplitude(output);
+                if (voice.boneSounding)
+                    for (std::size_t output = boneOutputOffset;
+                         output < renderAmplitudeCount; ++output)
+                        advanceAmplitude(output);
                 voice.pitchRatio = std::clamp(
                     voice.pitchRatio + voice.pitchRatioStep, 0.75f, 1.35f);
                 --voice.controlCountdown;
 
                 if (voice.releasing)
+                {
                     voice.envelope *= releaseMultiplier;
+                }
                 else
-                    voice.envelope += attackCoefficient * (1.0f - voice.envelope);
+                {
+                    voice.attackPosition = std::min(
+                        voice.attackPosition + attackStep, 1.0f);
+                    voice.envelope = voice.attackPosition * voice.attackPosition
+                        * (3.0f - 2.0f * voice.attackPosition);
+                }
 
                 const float fundamentalHz = model->metadata_.rootFrequencyHz
                     * voice.transpositionRatio * voice.pitchRatio;
                 const float phaseStep = fundamentalHz * inverseSampleRate_;
-                float coreSample = 0.0f;
                 // The band-limiting taper already lives in the ramped
-                // amplitude, and every stored phase is already reduced to
-                // [0, 1), so the inner loop is one table lookup, one
-                // multiply-add and one wrap per audible partial.
+                // amplitude, so this pass carries no per-sample anti-alias
+                // arithmetic. It is deliberately split in two: the first loop
+                // is purely elementwise over contiguous arrays - no reduction,
+                // no memory gather, and no library call - so the compiler
+                // vectorises it, while the running sum stays in a separate
+                // pass with four independent accumulators so its serial
+                // floating-point addition chain does not set the throughput of
+                // the whole low-register render. Every stored phase is already
+                // in [0, 1) and the increment is non-negative, so truncation
+                // is exactly floor() and needs no rounding instruction.
                 for (std::size_t harmonic = 0;
                      harmonic < soundingHarmonics; ++harmonic)
                 {
+                    const float ramped = voice.amplitudes[harmonic]
+                        + voice.amplitudeSteps[harmonic];
+                    const float amplitude = ramped > 0.0f ? ramped : 0.0f;
+                    voice.amplitudes[harmonic] = amplitude;
                     const float phase = voice.harmonicPhases[harmonic];
-                    coreSample += voice.amplitudes[harmonic] * sineUnit(phase);
+                    partialScratch[harmonic] = amplitude * unitSine(phase);
                     const float advanced = phase
                         + phaseStep * harmonicStretchRatio_[harmonic];
                     voice.harmonicPhases[harmonic] = advanced
-                        - std::floor(advanced);
+                        - static_cast<float>(static_cast<int>(advanced));
                 }
+                float coreAccumulator[4] { 0.0f, 0.0f, 0.0f, 0.0f };
+                const std::size_t unrolledHarmonics
+                    = soundingHarmonics & ~std::size_t { 3 };
+                for (std::size_t harmonic = 0;
+                     harmonic < unrolledHarmonics; harmonic += 4)
+                {
+                    coreAccumulator[0] += partialScratch[harmonic];
+                    coreAccumulator[1] += partialScratch[harmonic + 1];
+                    coreAccumulator[2] += partialScratch[harmonic + 2];
+                    coreAccumulator[3] += partialScratch[harmonic + 3];
+                }
+                float coreSample = (coreAccumulator[0] + coreAccumulator[1])
+                    + (coreAccumulator[2] + coreAccumulator[3]);
+                for (std::size_t harmonic = unrolledHarmonics;
+                     harmonic < soundingHarmonics; ++harmonic)
+                    coreSample += partialScratch[harmonic];
 
                 float airSample = 0.0f;
                 float airSideSample = 0.0f;
-                const bool stereoAir = voice.airSideGain > 1.0e-4f
-                    || voice.airSideGainStep > 0.0f;
-                for (std::size_t band = 0; band < NeuralModel::airBandCount; ++band)
+                if (voice.airSounding)
                 {
-                    const std::size_t output = airOutputOffset + band;
-                    const float level = voice.amplitudes[output];
-                    auto& filter = voice.airFilters[band];
-                    airSample += level * filter.tick(
-                        nextNoise(voice.airNoiseStates[band]));
-                    if (stereoAir)
-                        airSideSample += level * filter.tickSide(
-                            nextNoise(voice.airSideNoiseStates[band]));
+                    const bool stereoAir = voice.airSideGain > 1.0e-4f
+                        || voice.airSideGainStep > 0.0f;
+                    for (std::size_t band = 0;
+                         band < NeuralModel::airBandCount; ++band)
+                    {
+                        const std::size_t output = airOutputOffset + band;
+                        const float level = voice.amplitudes[output];
+                        auto& filter = voice.airFilters[band];
+                        airSample += level * filter.tick(
+                            nextNoise(voice.airNoiseStates[band]));
+                        if (stereoAir)
+                            airSideSample += level * filter.tickSide(
+                                nextNoise(voice.airSideNoiseStates[band]));
+                    }
                 }
 
                 float boneSample = 0.0f;
-                for (std::size_t mode = 0; mode < NeuralModel::boneModeCount; ++mode)
+                if (voice.boneSounding)
                 {
-                    const std::size_t output = boneOutputOffset + mode;
-                    boneSample += voice.amplitudes[output]
-                        * sine(voice.bonePhases[mode]);
-                    voice.boneFrequenciesHz[mode] = std::clamp(
-                        voice.boneFrequenciesHz[mode]
-                            + voice.boneFrequencySteps[mode],
-                        10.0f, 0.49f * static_cast<float>(sampleRate_));
-                    voice.bonePhases[mode] = wrapUnit(voice.bonePhases[mode]
-                        + voice.boneFrequenciesHz[mode] * inverseSampleRate_);
+                    for (std::size_t mode = 0;
+                         mode < NeuralModel::boneModeCount; ++mode)
+                    {
+                        const std::size_t output = boneOutputOffset + mode;
+                        boneSample += voice.amplitudes[output]
+                            * unitSine(voice.bonePhases[mode]);
+                        voice.boneFrequenciesHz[mode] = std::clamp(
+                            voice.boneFrequenciesHz[mode]
+                                + voice.boneFrequencySteps[mode],
+                            10.0f, boneCeilingHz_);
+                        const float advanced = voice.bonePhases[mode]
+                            + voice.boneFrequenciesHz[mode] * inverseSampleRate_;
+                        voice.bonePhases[mode] = advanced
+                            - static_cast<float>(static_cast<int>(advanced));
+                    }
                 }
 
                 voice.panLeft += voice.panLeftStep;

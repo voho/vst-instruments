@@ -37,10 +37,17 @@ The project builds three products from one JUCE codebase:
 
 ## Interface and controls
 
-Vocalor exposes 20 automatable host parameters. The 13 parameters that shipped
-in version 1 keep their identifiers, ranges, defaults, and host ordering, so
-existing sessions recall exactly as before. The seven parameters added in 1.1
-are appended and all default to a neutral setting.
+Vocalor exposes 20 automatable host parameters. Every parameter keeps its
+identifier, range, default, and host ordering, so existing sessions and any
+automation written against them recall in place.
+
+**Ensemble size** advertises 2 – 16 but used to quantise to three tiers of 4, 8,
+or 12 singers, so ten of its fifteen settings were silently identical to a
+neighbour. Every value from 2 to 12 is now rendered exactly. The engine carries
+12 singer identities, so 13 – 16 still render 12 — the published range is kept
+at 2 – 16 rather than narrowed, because a host stores automation as a normalised
+0 – 1 position and renumbering the range would move every existing lane onto a
+different singer count.
 
 | Parameter ID | Control | Range | Default | Added |
 | --- | --- | --- | --- | --- |
@@ -48,7 +55,7 @@ are appended and all default to a neutral setting.
 | `mode` | Performance mode | Solo / Choir / Chord | Solo | 1.0 |
 | `vowel` | Vowel anchor | AAH / OOH / UUH | AAH | 1.0 |
 | `chordQuality` | Chord quality | Major / Minor | Major | 1.0 |
-| `choirSize` | Ensemble size | 2 – 16 | 8 | 1.0 |
+| `choirSize` | Ensemble size | 2 – 16 (13 – 16 render 12) | 8 | 1.0 |
 | `breath` | Breath | 0 – 100 % | 30 % | 1.0 |
 | `resonance` | Resonance | 0 – 100 % | 64 % | 1.0 |
 | `vibrato` | Vibrato | 0 – 100 % | 38 % | 1.0 |
@@ -66,21 +73,23 @@ are appended and all default to a neutral setting.
 | `roomSize` | Room size | 0 – 100 % | 50 % | 1.1 |
 
 The top row selects the voice profile, the performance mode, the chord quality,
-and the vowel anchor. **Ensemble size** is available from 2 to 16; the engine
-renders Choir in 4-, 8-, or 12-singer tiers and Chord as six singers distributed
-across the triad. **Legato** switches between retriggering every note and
-bending the sounding voices into the new pitch, with a held-note stack so
-releasing the top of a phrase falls back to the note underneath.
+and the vowel anchor. **Ensemble size** renders exactly that many independently
+humanised singers, from 2 to 12 — the number of distinct singer identities the
+engine models — and Chord renders six singers distributed across the triad.
+**Legato** switches between retriggering every note and bending the sounding
+voices into the new pitch, with a held-note stack so releasing the top of a
+phrase falls back to the note underneath.
 
 The **vowel-space pad** places a morph target anywhere between five cardinal
 vowels (front to back on the horizontal axis, close to open on the vertical
-axis). **Morph** crossfades from the selected preset vowel to that target, so at
-0 % the pad has no effect at all and the instrument sounds exactly as it did in
-version 1. **Shift** moves every formant by up to an octave in either direction
-without touching the pitch, which is an effective vocal-tract-length or body-size
-control. Next to the pad, the **vocal-tract response** display draws the live
-magnitude response of the five formant resonators of a sounding voice on a
-logarithmic axis, marks F1 to F5, and carries the stereo output meters.
+axis). **Morph** crossfades from the selected preset vowel to that target, so
+at 0 % the pad and its two axes have no effect at all and the vowel anchor
+alone decides the tract. **Shift** moves every formant by up to an octave in either
+direction without touching the pitch, which is an effective vocal-tract-length
+or body-size control; it changes the timbre without doubling as a fader. Next
+to the pad, the **vocal-tract response** display draws the live magnitude
+response of the five formant resonators of a sounding voice on a logarithmic
+axis, marks F1 to F5, and carries the stereo output meters.
 
 Ten continuous controls shape **Breath**, **Resonance**, **Tension**,
 **Vibrato**, **Humanize**, **Glide**, **Spread**, **Room**, room **Size**, and
@@ -102,16 +111,76 @@ and the resulting spectral tilt for a physical reason instead of interpolating
 two hand-tuned spectra. A one-pole tilt driven by velocity and tension is
 applied on top, which is why a soft note is now dull as well as quiet.
 
-**Vocal tract.** Five two-pole resonators model the formants. The three preset
-vowels anchor a continuous inverse-distance-weighted vowel space, and every
-formant target is resolved once per 64-sample chunk and then shaped per voice by
-that singer's tract-length and per-formant dispersion, by note-dependent formant
-tuning, and by the shared ensemble drift.
+**Vocal tract.** Five two-pole resonators in parallel model the formants. The
+three preset vowels anchor a continuous inverse-distance-weighted vowel space,
+and every formant target is resolved once per 64-sample chunk and then shaped
+per voice by that singer's tract-length and per-formant dispersion, by
+note-dependent formant tuning, and by the shared ensemble drift.
+
+Each resonator is normalised to unit gain at its own centre frequency, adjacent
+formants alternate in polarity, and the five amplitudes are derived from the
+all-pole cascade the same poles would realise, with half of that cascade's
+absolute gain compensated. Those three properties are what make the bank behave
+like a tract rather than like five independent peaking filters:
+
+- **The level no longer follows the sample rate.** An unnormalised two-pole
+  resonator's peak height is proportional to the sample rate. The same patch
+  used to measure 12.7 dB louder at 192 kHz than at 44.1 kHz, harmonic for
+  harmonic; it now holds to within 0.05 dB across 44.1, 48, 88.2, 96 and
+  192 kHz.
+- **The vowel pad and the formant shift are timbre controls.** Peak height also
+  ran inversely with centre frequency, so the level fell monotonically as the
+  formants rose: the pad swung 16 dB across its corners and shifting an octave
+  up cost 17.5 dB against an octave down. The trend is gone. On a middle C the
+  pad now spans 7.5 dB and the two octave extremes differ by under 1 dB; what
+  remains is the genuine interaction between the fundamental and where F1
+  happens to land, which is note dependent rather than a fader.
+- **The bank no longer cancels between its formants.** Summed with a common
+  sign, adjacent resonators are close to antiphase in the valley between them.
+  On a close front vowel that dug a 64 dB notch between F1 and F2, tens of dB
+  deeper than any vocal tract produces; alternating the polarity brings it to
+  32 dB. Cascade-derived amplitudes are also why a front vowel now sounds
+  front: F2 and F3 of /i/ are carried nearly as strongly as F1 instead of
+  sitting 22 dB below it.
+
+**Resonance** sets the formant bandwidths and nothing else. Because narrower
+formants make the cascade peakier, it now widens the contrast between the
+formant amplitudes instead of simply raising the output level.
 
 **Aspiration.** Breath noise is injected at the glottis and passes through the
 same tract as the voiced excitation, which is both more faithful than a separate
 noise filter and two resonators per voice cheaper. A small unfiltered component
-keeps the consonantal air audible.
+keeps the consonantal air audible. The noise is scaled by the square root of the
+sample rate so its density in the audio band, rather than its power per sample,
+is what the Breath control sets.
+
+**Sample rate.** Every filter coefficient in the engine is derived from a corner
+frequency or a time constant at `prepare()` time: the room damping and low cut,
+the aspiration pre-emphasis, the source tilt, the shimmer and pitch-jitter
+smoothers, the control-rate formant and pan glides, and the envelope and drift
+rates. Correct coefficients are only half of it. A one-pole smoother driven by
+white noise settles at output variance `c / (2 - c)`, so once `c` is tied to the
+sample rate the shimmer and the pitch jitter arrive with the right spectrum at
+the wrong depth: uncompensated they measured 6.5 dB and 6.2 dB smaller at
+192 kHz than at 44.1 kHz. Both drives are renormalised against a 48 kHz
+reference, as is the unsmoothed aspiration noise.
+
+Two tests cover this, because one cannot. The five-rate render measures the
+tract alone — its patch sets humanisation to zero, so it says nothing about the
+shimmer or the jitter — and compares the overall level and individual harmonic
+magnitudes. A second test holds a note at full humanisation and measures both
+halves of the problem at 44.1, 48, 96 and 192 kHz: the standard deviation of the
+shimmer's modulation depth and of the jitter's pitch deviation, which agree to
+within 0.6 dB, and their autocorrelation at a fixed 4 ms lag, which agrees to
+within 0.025 and is what pins the spectrum. With the old fixed per-sample
+coefficients that correlation ran from 0.33 at 44.1 kHz to 0.003 at 192 kHz.
+
+**Parameter smoothing.** Resonance and formant shift reach the pole radius,
+which cannot be smoothed after the filter has run, so both are smoothed at the
+chunk rate before the coefficients are built; the bandwidth scale reads the
+per-sample breath smoother at the same chunk boundary. Formant targets, pan
+gains, breath, tension, room mix and output gain are smoothed downstream of
+that.
 
 **Humanisation.** Each singer has slowly moving pitch, vibrato rate and depth,
 spectral balance, breath, and timing rather than sharing a perfectly periodic
@@ -122,40 +191,48 @@ phase-locked oscillator sound common to simple choir patches.
 **Room.** The four-tap cross-coupled network reads through interpolated,
 slowly modulated taps that break up the metallic ringing a static comb produces
 on sustained vowels, and a gentle low cut keeps the tail out of the low mids.
-Room size scales the tap geometry from a tight booth to a large space and
-reaches exactly the historical geometry at its 50 % default.
+Room size scales both the tap geometry and the feedback, so a large room spaces
+its reflections further apart and rings far longer than a booth; it reaches
+exactly the historical geometry at its 50 % default. The damping filter in the
+feedback path is now anchored to a fixed corner frequency, so the tail decays at
+the same rate at every sample rate.
 
 This is a synthesizer, not a speech model or voice-cloning system. It is suited
 to sustained vowels and expressive musical parts; it does not generate words.
 
 ## Performance
 
-The 1.1 engine renders roughly a third faster than 1.0 in the audio path.
-Measured with an offline benchmark on one core of a 2.1 GHz Xeon, `-O3`,
-48 kHz, 128-sample blocks, best of five two-second runs:
+The peak-normalised formant bank is a strictly more expensive filter than the
+one it replaces — every voice now derives its own feed-forward gain per
+formant — and the engine is still slightly faster than before, because the work
+that was being repeated needlessly was removed at the same time. Measured with
+an offline benchmark on one core, `-O3`, 48 kHz, 128-sample blocks, best of four
+two-second runs:
 
-| Case | 1.0 | 1.1 | Change |
+| Case | Before | After | Change |
 | --- | --- | --- | --- |
-| Solo, one note | 67.2 ns/sample | 56.0 ns/sample | −16.6 % |
-| Solo, six notes | 291.7 ns/sample | 196.6 ns/sample | −32.6 % |
-| Choir, 12 singers | 558.2 ns/sample | 353.9 ns/sample | −36.6 % |
-| Choir, 12 singers × 4 notes | 2134.6 ns/sample | 1368.6 ns/sample | −35.9 % |
-| Chord, 6 singers × 3 notes | 833.2 ns/sample | 544.1 ns/sample | −34.7 % |
+| Solo, one note | 46.6 ns/sample | 45.0 ns/sample | −3.4 % |
+| Solo, six notes | 161.2 ns/sample | 157.6 ns/sample | −2.2 % |
+| Choir, 12 singers | 290.9 ns/sample | 288.4 ns/sample | −0.9 % |
+| Choir, 12 singers × 4 notes | 1100.4 ns/sample | 1075.9 ns/sample | −2.2 % |
+| Chord, 6 singers × 3 notes | 437.8 ns/sample | 426.8 ns/sample | −2.5 % |
+| Fully idle | 2.5 ns/sample | 1.6 ns/sample | −36 % |
 
-The savings come from rendering voices over aligned 64-sample chunks instead of
-sample-major across all voices, from hoisting the resonator bandwidth, radius,
-and gain out of the per-voice control update (only the pole angle still varies
-per voice, and it comes from the shared sine table rather than `exp` and `cos`),
-from interleaving the two glottal wavetables so the oscillator touches half as
-many cache lines, and from folding the aspiration path into the tract.
+The savings come from resolving the tract only when one of its inputs actually
+moves (a held note re-ran seven exponentials and a five-by-five cascade
+evaluation every 64 samples for an answer that had not changed), from sampling
+the ensemble-drift oscillators once per chunk instead of once per voice control
+update, from advancing drift only for the singer identities a note actually
+uses, from caching the vocal-effort and pan coefficients against their inputs,
+and from folding the formant amplitude, polarity and peak normalisation into a
+single per-resonator coefficient so the render loop multiplies once instead of
+twice per formant per sample.
 
-Building the wavetables now uses the sine table for both the analysis and the
-additive synthesis instead of calling `sin()` two million times, which cuts
-`prepare()` from about 8 ms to about 3.5 ms on the same machine. The one place
-that is slightly slower is the fully idle path, which rose from 2.1 to about
-3.4 ns/sample because the tract targets and drift are still refreshed while the
-instrument is silent so the editor keeps following the controls. That is about
-0.03 % of one core at 48 kHz.
+Earlier work that still stands: voices render voice-major over aligned 64-sample
+chunks, the two glottal wavetables are interleaved so the oscillator touches half
+as many cache lines, the aspiration path runs through the tract rather than
+through its own filter, and the wavetables are built from the sine table instead
+of two million `sin()` calls, which keeps `prepare()` at a few milliseconds.
 
 Chunk boundaries are aligned to the absolute sample position, so the rendered
 output is bit-identical no matter how a host splits its buffers; the test suite
@@ -241,11 +318,24 @@ non-silent audio, that the release decays, and that a short offline render does
 not exceed a generous performance guardrail. It also covers the vowel-space
 model and the display maths, proves that the vowel pad is inaudible while morph
 is at zero, checks the formant-shift scaling, the glide and legato note stack,
-the room tap geometry, the absence of denormal state during a long release,
-the behaviour under non-finite parameters, and that a full-range parameter jump
-glides instead of stepping. This catches regressions; it is not a substitute for
-listening tests, host automation tests, or profiling on the oldest supported
-Mac.
+the room tap geometry and tail length, the absence of denormal state during a
+long release, the behaviour under non-finite parameters, and that a full-range
+parameter jump glides instead of stepping.
+
+The formant bank has its own checks, since it is where the audible defects were:
+the rendered level and the individual harmonic magnitudes must agree across
+44.1, 48, 88.2, 96 and 192 kHz; the depth *and* the correlation time of the
+shimmer and of the pitch jitter must likewise agree across rates, measured with
+humanisation at full so the noise-driven smoothers are actually running; the
+vowel pad and the formant shift
+must not move the level more than a bounded amount; every resonator must measure
+unit gain at its own centre frequency for every bandwidth and sample rate; the
+onset stage must measure the same peak gain as the main tract it crossfades
+into, despite running wider bandwidths; the bank must not cancel between F1 and
+F2 at any of three vowel corners; an ensemble of *n* must render *n* singers; and
+a resonance or formant-shift jump must glide the pole radii rather than step
+them. This catches regressions; it is not a substitute for listening tests, host
+automation tests, or profiling on the oldest supported Mac.
 
 ## Install locally
 

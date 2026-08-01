@@ -120,8 +120,11 @@ private:
     static constexpr int curvePoints = 192;
     static constexpr float minimumHz = 80.0f;
     static constexpr float maximumHz = 11000.0f;
-    static constexpr float floorDb = -30.0f;
-    static constexpr float ceilingDb = 30.0f;
+    // The peak-normalised formant bank spans about +4 to +16 dB across every
+    // setting, so this window frames the curve instead of clipping its peaks
+    // against the top of the plot the way a +30 dB ceiling used to.
+    static constexpr float floorDb = -36.0f;
+    static constexpr float ceilingDb = 18.0f;
 
     vocalor::EngineDisplayState state;
 };

@@ -50,6 +50,41 @@ void formantsForPresetVowel (bool male, int vowelIndex, float* outHz) noexcept;
     0.5 returns exactly 1.0 so the historical room geometry is the default. */
 [[nodiscard]] float roomSizeScale (float size) noexcept;
 
+/** Feed-forward gain that normalises a two-pole formant resonator to unity gain
+    at its own centre frequency.
+
+    @c poleRadius is exp(-pi * bandwidth / sampleRate) and @c sinPoleAngle the
+    sine of 2*pi * centreHz / sampleRate. Without this normalisation a
+    resonator's peak height is proportional to the sample rate and inversely
+    proportional to its centre frequency, so both the sample rate and the vowel
+    would change the loudness of the instrument.
+*/
+[[nodiscard]] float formantResonatorGain (float poleRadius, float sinPoleAngle) noexcept;
+
+/** Polarity of formant @c index in a parallel formant bank.
+
+    Adjacent formants have to alternate in sign. Summed with a common sign they
+    cancel in the valley between two peaks and dig a notch tens of dB deeper than
+    anything an all-pole vocal tract produces.
+*/
+[[nodiscard]] constexpr float formantPolarity (int index) noexcept
+{
+    return (index & 1) != 0 ? -1.0f : 1.0f;
+}
+
+/** Writes @c count relative peak amplitudes for a parallel formant bank whose
+    spectral envelope follows the all-pole cascade the same poles would realise.
+
+    A real vocal tract does not give its formants independent amplitudes: they
+    follow from the formant frequencies and bandwidths. Half of the cascade's
+    absolute gain is compensated so that moving the vowel or the formant shift
+    changes the timbre far more than it changes the loudness, and the weakest
+    formants are floored at @c floorGain of the strongest.
+*/
+void parallelFormantAmplitudes (const float* formantHz, const float* formantBandwidth,
+                                int count, float sampleRate, float floorGain,
+                                float* outGain) noexcept;
+
 /** Magnitude of the summed two-pole formant bank at @c frequencyHz, in dB.
     This is the transfer function the engine actually realises, so the editor's
     curve is a measurement of the running tract rather than a decoration. */

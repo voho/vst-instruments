@@ -12,6 +12,16 @@
 #include <string>
 #include <vector>
 
+// Toggling flush-to-zero is how the denormal-cost contract below is measured.
+// Only x86 exposes it portably here; elsewhere that one assertion is skipped.
+#if defined(__SSE2__) || defined(_M_X64) || defined(_M_AMD64)
+#define DRUMALOR_CAN_TOGGLE_FLUSH_TO_ZERO 1
+#include <pmmintrin.h>
+#include <xmmintrin.h>
+#else
+#define DRUMALOR_CAN_TOGGLE_FLUSH_TO_ZERO 0
+#endif
+
 namespace
 {
 constexpr int defaultBlockSize = 257;
@@ -196,6 +206,34 @@ std::vector<float> renderMonoHit (double sampleRate,
         const auto index = static_cast<std::size_t> (sample) * 2u;
         mono[static_cast<std::size_t> (sample)] = 0.5f
             * (interleaved[index] + interleaved[index + 1u]);
+    }
+    return mono;
+}
+
+// Repeated strikes into one engine, averaged down to mono. The stochastic
+// layers need several hits before a level measurement stops being dominated by
+// which particular noise realisation a single strike happened to draw.
+std::vector<float> renderMonoSequence (double sampleRate,
+                                       drumalor::Instrument instrument,
+                                       const drumalor::InstrumentParameters& parameters,
+                                       int hitCount, double spacingSeconds,
+                                       float velocity)
+{
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+    engine.setInstrumentParameters (instrument, parameters);
+    const auto spacing = static_cast<int> (std::ceil (spacingSeconds * sampleRate));
+    std::vector<float> mono;
+    mono.reserve (static_cast<std::size_t> (spacing * hitCount));
+    for (int hit = 0; hit < hitCount; ++hit)
+    {
+        engine.trigger (instrument, velocity);
+        const auto interleaved = renderInterleaved (engine, spacing, defaultBlockSize);
+        for (int sample = 0; sample < spacing; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono.push_back (0.5f * (interleaved[index] + interleaved[index + 1u]));
+        }
     }
     return mono;
 }
@@ -827,6 +865,69 @@ void testModalSampleRateConsistency()
     }
     expect (decibelSpread (impulseLevels) < 0.25,
             "Perc 2 resonator impulse changed by more than 0.25 dB across sample rates");
+}
+
+// Every noise layer in the kit - the kick click, the snare wires and snap, the
+// clap bursts, the stick skin on a tom, the shaker grain and the Perc 1 click -
+// is heard through a filter whose bandwidth is fixed in hertz, so what reaches
+// the listener is the noise's power *density*. A generator that spreads a fixed
+// variance across the whole Nyquist band therefore loses 3 dB of that density
+// per doubling of the host sample rate. Measured before the engine moved those
+// layers onto a fixed 48 kHz grid, the clap lost 5.9 dB of level and the snare's
+// spectral centroid fell from 1.9 kHz to 0.9 kHz between 44.1 and 192 kHz.
+void testNoiseDensityAcrossSampleRates()
+{
+    constexpr std::array sampleRates { 44100.0, 48000.0, 96000.0, 192000.0 };
+    struct NoiseLayer
+    {
+        drumalor::Instrument instrument;
+        double lowFrequency;
+        double highFrequency;
+        double toleranceDecibels;
+        // Character position that opens this voice's noise layer up furthest,
+        // so the measurement is dominated by the layer under test.
+        float characterA;
+        float characterB;
+    };
+    // The bands isolate each voice's filtered noise layer from its tonal core.
+    // These four cover the distinct ways the kit consumes noise - a bandpassed
+    // click, wires plus snap, a twice-filtered burst and a grain train - and the
+    // unnormalised generator failed every one of them by 2.9 to 6.4 dB. Voices
+    // whose noise sits far under their tonal core (the toms, the hats, Perc 1)
+    // share these code paths but cannot measure them, so they are not listed.
+    constexpr std::array layers {
+        NoiseLayer { drumalor::Instrument::Kick,      2000.0,  8000.0, 2.0, 1.0f, 0.42f },
+        NoiseLayer { drumalor::Instrument::Snare,     2000.0,  9000.0, 2.0, 0.62f, 1.0f },
+        NoiseLayer { drumalor::Instrument::Clap,      1000.0,  6000.0, 2.0, 0.48f, 0.62f },
+        NoiseLayer { drumalor::Instrument::Shaker,    4000.0, 14000.0, 2.5, 0.62f, 0.62f },
+    };
+
+    for (const auto& layer : layers)
+    {
+        const auto name = std::string (
+            drumalor::getInstrumentDisplayName (layer.instrument));
+        std::array<double, sampleRates.size()> levels {};
+        for (std::size_t rateIndex = 0; rateIndex < sampleRates.size(); ++rateIndex)
+        {
+            const auto rate = sampleRates[rateIndex];
+            auto parameters = drumalor::getInstrumentMetadata (
+                layer.instrument).defaultParameters;
+            parameters.characterA = layer.characterA;
+            parameters.characterB = layer.characterB;
+            const auto mono = renderMonoSequence (
+                rate, layer.instrument, parameters, 8, 0.20, 0.90f);
+            levels[rateIndex] = std::sqrt (bandPowerInRange (
+                mono, rate, layer.lowFrequency, layer.highFrequency, 0.0,
+                static_cast<double> (mono.size()) / rate));
+            expect (levels[rateIndex] > 1.0e-7,
+                    name + " noise-density probe was silent at "
+                        + std::to_string (static_cast<int> (rate)) + " Hz");
+        }
+        expect (decibelSpread (levels) < layer.toleranceDecibels,
+                name + " filtered noise level moved by "
+                    + std::to_string (decibelSpread (levels))
+                    + " dB across sample rates (" + describeValues (levels) + ")");
+    }
 }
 
 void testTailsTerminate()
@@ -1571,6 +1672,44 @@ void testParameterInfluence()
     }
 }
 
+// Perc 1's second control is labelled Drive, and the voice already reserved a
+// wider circuit-drive span than its neighbours for it - but the output stage's
+// exact 1/drive compensation cancelled nearly all of it. Over the whole travel
+// of the knob the render changed by 6.9 %, against a 90 % average for the other
+// twenty-five character controls, and what little arrived came as a 0.9 dB level
+// drop rather than as saturation. A drive control has to add density: the peak
+// comes down while the level holds. The kick's identically labelled control is
+// deliberately not measured here - it retunes the resonator's loss and body gain
+// as well, so it is not a pure output-stage drive.
+void testPerc1DriveAddsDensity()
+{
+    const auto probe = [] (float drive)
+    {
+        auto parameters = drumalor::getInstrumentMetadata (
+            drumalor::Instrument::Perc1).defaultParameters;
+        parameters.characterB = drive;
+        return renderMonoHit (48000.0, drumalor::Instrument::Perc1, parameters, 0.30, 0.95f);
+    };
+    const auto clean = probe (0.0f);
+    const auto driven = probe (1.0f);
+    const double cleanPeak = peakInRange (clean, 0u, clean.size());
+    const double drivenPeak = peakInRange (driven, 0u, driven.size());
+    const double cleanRms = rmsInRange (clean, 0u, clean.size());
+    const double drivenRms = rmsInRange (driven, 0u, driven.size());
+    expect (cleanPeak > 1.0e-3 && cleanRms > 1.0e-4,
+            "the Perc 1 drive probe produced no signal");
+
+    const double levelChangeDb = 20.0 * std::log10 (drivenRms / cleanRms);
+    const double crestReductionDb = 20.0 * std::log10 (cleanPeak / drivenPeak)
+        + levelChangeDb;
+    expect (crestReductionDb > 1.4,
+            "Perc 1 Drive barely saturates across its whole travel (crest factor "
+            "fell by only " + std::to_string (crestReductionDb) + " dB)");
+    expect (std::abs (levelChangeDb) < 0.5,
+            "Perc 1 Drive behaves as a level control rather than a saturation "
+            "control (" + std::to_string (levelChangeDb) + " dB across its travel)");
+}
+
 std::vector<float> renderLevelProbe (drumalor::Instrument instrument,
                                      const drumalor::InstrumentParameters& parameters)
 {
@@ -1873,8 +2012,11 @@ void testKitBusStage()
     const auto renderKitAt = [] (const drumalor::KitParameters& kit, float velocity)
     {
         drumalor::DrumEngine engine;
-        engine.prepare (sampleRate, defaultBlockSize);
+        // Publish the kit before prepare(), exactly as the processor does, so
+        // the bus smoothers adopt the restored setting instead of ramping up to
+        // it across the probe's own opening transient.
         engine.setKitParameters (kit);
+        engine.prepare (sampleRate, defaultBlockSize);
         for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
             engine.trigger (static_cast<drumalor::Instrument> (index), velocity);
         return renderInterleaved (engine, captureSamples, defaultBlockSize);
@@ -2041,14 +2183,138 @@ void testKitBusStage()
     const auto renderPartitioned = [&both] (int blockSize)
     {
         drumalor::DrumEngine engine;
-        engine.prepare (sampleRate, 512);
         engine.setKitParameters (both);
+        engine.prepare (sampleRate, 512);
         for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
             engine.trigger (static_cast<drumalor::Instrument> (index), 0.95f);
         return renderInterleaved (engine, 12000, blockSize);
     };
     expect (renderPartitioned (1) == renderPartitioned (383),
             "the kit bus stage changed with host block partitioning");
+}
+
+// Both bus controls used to be taken straight from the block's parameter value.
+// Stepping one between two blocks put a hard discontinuity into the mix: on a
+// sustained 24 Hz kick, switching Bus Compression on produced a sample-to-sample
+// jump 143 times the largest step anywhere else in that waveform, and Bus Drive
+// one 37 times as large. Both stages now follow the master gain's 20 ms law.
+//
+// Watching only the single sample at the block boundary, and only the OFF -> ON
+// direction, is not enough. Bus Drive sets its saturator's curvature straight
+// from the control, and the antiderivative that stage's antialiasing evaluates
+// used to lose every significant digit once the curvature fell below about
+// 1e-3 - a region the control reaches on its own smallest parameter step and
+// dwells in for ~80 ms on every ramp toward bypass. The boundary sample was
+// perfectly smooth while the next 3500 were a full-scale clipped square wave:
+// peak 1.0, sample-to-sample jump 2.0, at every supported rate. So each sweep
+// below runs both directions and scans the whole half-second that follows,
+// bounding its peak and its largest jump against what the same tail was already
+// doing before the control moved.
+void testBusAutomationIsClickFree()
+{
+    constexpr int blockSize = 64;
+    struct SweepResult
+    {
+        double boundaryRatio { 0.0 };
+        double peakRatio { 0.0 };
+        double jumpRatio { 0.0 };
+    };
+
+    const auto sweep = [] (double sampleRate, bool automateDrive,
+                           float from, float to)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        // A deep kick tail is the clearest probe available: it is smooth,
+        // sustained and slow, so its own sample-to-sample motion is tiny and any
+        // gain step at a block boundary stands out unmistakably.
+        auto kick = drumalor::getInstrumentMetadata (
+            drumalor::Instrument::Kick).defaultParameters;
+        kick.decay = 1.0f;
+        kick.pitch = -12.0f;
+        engine.setInstrumentParameters (drumalor::Instrument::Kick, kick);
+
+        drumalor::KitParameters start;
+        (automateDrive ? start.busDrive : start.busCompression) = from;
+        engine.setKitParameters (start);
+        engine.trigger (drumalor::Instrument::Kick, 1.0f);
+
+        std::vector<float> left (static_cast<std::size_t> (blockSize));
+        std::vector<float> right (static_cast<std::size_t> (blockSize));
+        for (int block = 0; block < 75; ++block)
+            engine.process (left.data(), right.data(), blockSize);
+
+        // A quarter second of the settled tail is the reference: whatever the
+        // waveform's own peak and largest neighbour step are here, automating a
+        // bus control must not multiply either of them.
+        const auto measure = [&left, &right, &engine] (int blocks, double& peak,
+                                                       double& step, float& previous,
+                                                       double* firstJump)
+        {
+            for (int block = 0; block < blocks; ++block)
+            {
+                engine.process (left.data(), right.data(), blockSize);
+                for (int sample = 0; sample < blockSize; ++sample)
+                {
+                    const double value = left[static_cast<std::size_t> (sample)];
+                    const double jump = std::abs (value - previous);
+                    if (firstJump != nullptr && block == 0 && sample == 0)
+                        *firstJump = jump;
+                    peak = std::max (peak, std::abs (value));
+                    step = std::max (step, jump);
+                    previous = left[static_cast<std::size_t> (sample)];
+                }
+            }
+        };
+
+        const int settledBlocks = static_cast<int> (0.25 * sampleRate) / blockSize;
+        double settledPeak = 0.0;
+        double settledStep = 0.0;
+        float previous = left[static_cast<std::size_t> (blockSize - 1)];
+        measure (settledBlocks, settledPeak, settledStep, previous, nullptr);
+
+        drumalor::KitParameters changed;
+        (automateDrive ? changed.busDrive : changed.busCompression) = to;
+        engine.setKitParameters (changed);
+
+        const int settlingBlocks = static_cast<int> (0.5 * sampleRate) / blockSize;
+        double peak = 0.0;
+        double step = 0.0;
+        double boundaryJump = 0.0;
+        measure (settlingBlocks, peak, step, previous, &boundaryJump);
+
+        return SweepResult { boundaryJump / std::max (1.0e-9, settledStep),
+                             peak / std::max (1.0e-9, settledPeak),
+                             step / std::max (1.0e-9, settledStep) };
+    };
+
+    // 0.001 is the smallest step the host can send either control: it is one
+    // increment of the 0.1 % parameter grid, and it is exactly where the old
+    // antiderivative fell apart.
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    for (const bool automateDrive : { true, false })
+    for (const float target : { 0.001f, 0.5f, 1.0f })
+    for (const bool turningOn : { true, false })
+    {
+        const std::string what = std::string (automateDrive ? "Bus Drive" : "Bus Compression")
+            + (turningOn ? " to " : " from ") + std::to_string (target)
+            + " at " + std::to_string (static_cast<int> (sampleRate)) + " Hz";
+        const auto result = turningOn ? sweep (sampleRate, automateDrive, 0.0f, target)
+                                      : sweep (sampleRate, automateDrive, target, 0.0f);
+        expect (result.boundaryRatio < 3.0,
+                "automating " + what + " stepped the mix at the block boundary by "
+                    + std::to_string (result.boundaryRatio)
+                    + " times the waveform's own largest sample-to-sample motion");
+        expect (result.peakRatio < 3.0,
+                "automating " + what + " pushed the half second that followed to "
+                    + std::to_string (result.peakRatio)
+                    + " times the settled tail's own peak");
+        expect (result.jumpRatio < 4.0,
+                "automating " + what + " put a sample-to-sample jump of "
+                    + std::to_string (result.jumpRatio)
+                    + " times the settled tail's own largest step into the half"
+                      " second that followed");
+    }
 }
 
 void testMetering()
@@ -2416,9 +2682,62 @@ void testIdleMetallicCostAndDenormalSafety()
             "four seconds of a sustained kick and hi-hat exceeded the offline "
             "guardrail (" + std::to_string (withHat) + " s)");
 
-    // Long, very quiet tails must not fall into denormal arithmetic or leave
-    // residue behind. Render a full maximum-decay kit down to silence and check
-    // that the deep tail is exactly zero once every voice has retired.
+    // Every envelope, resonator, biquad and detector in the engine decays
+    // geometrically for as long as its voice lives, so without an explicit floor
+    // they all spend a stretch of every note in the subnormal range - where x86
+    // traps into microcode. A host that sets flush-to-zero for us hides that,
+    // but an offline renderer or a wrapper that does not leaves the plug-in
+    // paying for it: measured on this workload the engine used to cost 3.1 times
+    // as much with denormals enabled as with them flushed. The engine now snaps
+    // its own recursive states to zero at -600 dBFS, so the two modes must cost
+    // the same and the sound cannot depend on the host's FPU configuration.
+#if DRUMALOR_CAN_TOGGLE_FLUSH_TO_ZERO
+    const auto timeDecayingKit = [] (bool flushToZero)
+    {
+        _MM_SET_FLUSH_ZERO_MODE (flushToZero ? _MM_FLUSH_ZERO_ON : _MM_FLUSH_ZERO_OFF);
+        _MM_SET_DENORMALS_ZERO_MODE (
+            flushToZero ? _MM_DENORMALS_ZERO_ON : _MM_DENORMALS_ZERO_OFF);
+        double best = std::numeric_limits<double>::max();
+        for (int attempt = 0; attempt < 2; ++attempt)
+        {
+            drumalor::DrumEngine engine;
+            engine.prepare (sampleRate, blockSize);
+            std::array<float, blockSize> left {};
+            std::array<float, blockSize> right {};
+            const auto start = std::chrono::steady_clock::now();
+            for (int rendered = 0, step = 0; rendered < static_cast<int> (sampleRate) * 2;
+                 rendered += blockSize, ++step)
+            {
+                if ((step % 6) == 0)
+                    engine.trigger (
+                        static_cast<drumalor::Instrument> (
+                            static_cast<std::size_t> (step / 6) % drumalor::instrumentCount),
+                        0.9f);
+                engine.process (left.data(), right.data(), blockSize);
+            }
+            best = std::min (best, std::chrono::duration<double> (
+                std::chrono::steady_clock::now() - start).count());
+        }
+        _MM_SET_FLUSH_ZERO_MODE (_MM_FLUSH_ZERO_OFF);
+        _MM_SET_DENORMALS_ZERO_MODE (_MM_DENORMALS_ZERO_OFF);
+        return best;
+    };
+
+    const double flushed = timeDecayingKit (true);
+    const double unflushed = timeDecayingKit (false);
+    // This is a wall-clock ratio, so the bound has to leave room for a busy CI
+    // machine. It sits between the ~1.0 the floored engine actually measures and
+    // the 3.1 to 3.2 the unfloored one does, which is the only distinction the
+    // assertion needs to make.
+    expect (unflushed < 2.0 * flushed,
+            "the engine still falls into denormal arithmetic when the host does "
+            "not set flush-to-zero (flushed/unflushed "
+                + std::to_string (flushed) + "/" + std::to_string (unflushed) + " s)");
+#endif
+
+    // Long, very quiet tails must not leave residue behind. Render a full
+    // maximum-decay kit down to silence and check that the deep tail is exactly
+    // zero once every voice has retired.
     drumalor::DrumEngine tails;
     tails.prepare (sampleRate, 256);
     for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
@@ -2524,6 +2843,7 @@ int main()
     testMetadataAndMidiMapping();
     testEveryInstrumentAndSampleRate();
     testModalSampleRateConsistency();
+    testNoiseDensityAcrossSampleRates();
     testTailsTerminate();
     testHatChokeAndPanic();
     testDeterminismAndBlockPartitioning();
@@ -2534,10 +2854,12 @@ int main()
     testLowFrequencyTailAndVoiceStealing();
     testCymbalQualityContract();
     testParameterInfluence();
+    testPerc1DriveAddsDensity();
     testPerVoiceMixer();
     testChokeGroups();
     testHumaniseDepth();
     testKitBusStage();
+    testBusAutomationIsClickFree();
     testMetering();
     testMembraneAndVelocityTimbre();
     testUiPresentationMath();
