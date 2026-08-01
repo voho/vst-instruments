@@ -76,6 +76,34 @@ struct MarsEngineTestAccess
         return output;
     }
 
+    // Steady-state transfer gain of the ladder core for a sine well inside its
+    // passband. The implicit solve must deliver the same gain at every level:
+    // an absolute residual target used to freeze the state below
+    // tolerance / (2 g) volts and gate quiet material to silence.
+    static double ladderSineGain(float frequencyTangent, float feedbackGain,
+                                 float frequencyScale, double amplitude,
+                                 double normalisedFrequency, int sampleCount)
+    {
+        MarsEngine::LadderFilter filter;
+        double outputEnergy = 0.0;
+        double inputEnergy = 0.0;
+        for (int sample = 0; sample < sampleCount; ++sample)
+        {
+            const double drive = amplitude
+                * std::sin(6.283185307179586 * normalisedFrequency
+                           * static_cast<double>(sample));
+            const double output = filter.process(static_cast<float>(drive),
+                                                 frequencyTangent, feedbackGain,
+                                                 frequencyScale);
+            if (sample > sampleCount / 2)
+            {
+                outputEnergy += output * output;
+                inputEnergy += drive * drive;
+            }
+        }
+        return std::sqrt(outputEnergy / std::max(inputEnergy, 1.0e-300));
+    }
+
     // Steady-state low-pass gain of the SEM core driven at its own cutoff. The
     // ratio is measured after the resonant build-up has settled.
     static float stateVariablePeakGain(float g, float resonance, float amplitude,
@@ -3424,6 +3452,452 @@ void testLadderSelfOscillation()
     expect(metrics.rms() > 1.0e-4, "self-oscillating voice was silent");
 }
 
+// The implicit ladder solve must integrate at every signal level. Before the
+// relative convergence target it stopped as soon as the *previous* state
+// already satisfied a fixed voltage residual, which is an amplitude dead zone
+// of tolerance / (2 g): at a 100 Hz cutoff the measured transfer gain fell from
+// 21.5 to 0.07 between a 50 mV and a 5 mV drive and to exactly zero below that.
+//
+// The sweep deliberately spans the whole 20 Hz - 20 kHz Cutoff control range,
+// not just its middle. Any *absolute* floor under the relative iteration target
+// reinstates the same 1 / cutoff dead zone lower down, and the low end of the
+// control is where it reappears first: with the floor expressed as a constant
+// 1e-3 of the publish ceiling, the 20 Hz gain was still 0.33 of reference at a
+// 50 uV drive. Dropping 20 Hz and 20 kHz from this list would stop the suite
+// seeing that class of regression at all.
+void testLadderLevelIndependence()
+{
+    constexpr float processingRate = 192000.0f;
+    constexpr float ladderFrequencyScale = 1.0f;
+    // Well below the resonant knee so the reference gain is the plain
+    // (1 + k) / (2 VT) passband gain rather than a level-dependent peak.
+    constexpr float feedbackGain = 1.2f;
+    for (const float cutoff : { 20.0f, 40.0f, 100.0f, 200.0f, 500.0f, 2000.0f,
+                                20000.0f })
+    {
+        const float g = std::tan(3.14159265358979f * cutoff / processingRate);
+        const double normalisedFrequency =
+            0.4 * static_cast<double>(cutoff / processingRate);
+        // A 20 Hz cutoff is driven at 8 Hz, so a fixed sample count would leave
+        // the measurement window inside the first cycle. Ask for at least
+        // twenty cycles of the drive tone and measure the second half.
+        const int sampleCount = static_cast<int>(
+            std::max(120000.0, 20.0 / normalisedFrequency));
+        const double reference = mars::MarsEngineTestAccess::ladderSineGain(
+            g, feedbackGain, ladderFrequencyScale, 5.0e-2,
+            normalisedFrequency, sampleCount);
+        expect(reference > 15.0,
+               "ladder passband reference gain collapsed at "
+                   + std::to_string(cutoff) + " Hz");
+        // Four decades of level, ending 60 dB below the reference drive.
+        for (const double amplitude : { 5.0e-3, 5.0e-4, 5.0e-5 })
+        {
+            const double gain = mars::MarsEngineTestAccess::ladderSineGain(
+                g, feedbackGain, ladderFrequencyScale, amplitude,
+                normalisedFrequency, sampleCount);
+            expect(gain > 0.95 * reference && gain < 1.05 * reference,
+                   "ladder gain became level dependent at "
+                       + std::to_string(cutoff) + " Hz (" + std::to_string(gain)
+                       + " against " + std::to_string(reference) + ")");
+        }
+    }
+
+    // The same defect at the voice level: a quiet mixer feed through a low
+    // cutoff used to lose more than 30 dB. Output must stay proportional.
+    const auto levelFor = [](float subLevel, float cutoffHz)
+    {
+        mars::MarsEngine engine;
+        engine.prepare(48000.0, blockSize);
+        auto p = isolatedOscillatorParameters();
+        p.filterModel = mars::FilterModel::Ladder;
+        p.osc1Enabled = false;
+        p.osc2Enabled = false;
+        p.subLevel = subLevel;
+        p.noiseLevel = 0.0f;
+        p.cutoffHz = cutoffHz;
+        p.resonance = 0.2f;
+        p.filterDrive = 0.22f;
+        p.outputGain = 1.0f;
+        engine.setParameters(p);
+        engine.noteOn(45, 1.0f);
+        return render(engine, 24000, 12000).rms();
+    };
+    for (const float cutoffHz : { 100.0f, 400.0f })
+    {
+        const double loud = levelFor(1.0f, cutoffHz);
+        expect(loud > 0.05, "quiet-feed reference render was silent");
+        for (const float subLevel : { 0.30f, 0.10f, 0.03f })
+        {
+            const double quiet = levelFor(subLevel, cutoffHz);
+            const double normalised = quiet / static_cast<double>(subLevel);
+            expect(normalised > 0.7 * loud && normalised < 1.6 * loud,
+                   "a quiet mixer feed was gated by the ladder at "
+                       + std::to_string(cutoffHz) + " Hz");
+        }
+    }
+}
+
+// A ladder above k = 4 must build its limit cycle out of an arbitrarily small
+// disturbance, at every cutoff. The dead zone previously froze the state, so
+// the ring only existed when it was kicked hard and never started at all below
+// roughly a 500 Hz cutoff.
+void testLadderSelfOscillationStartsFromRest()
+{
+    constexpr float processingRate = 192000.0f;
+    const auto scaleFor = [](float k)
+    {
+        constexpr float cosPiOverFour = 0.7071067811865475f;
+        const float fourthRootK = std::sqrt(std::sqrt(k));
+        return 1.0f / std::sqrt(std::max(
+            1.0f + std::sqrt(k) - 2.0f * fourthRootK * cosPiOverFour, 1.0e-8f));
+    };
+    const auto tailRms = [](const std::vector<float>& ring)
+    {
+        double sumSquares = 0.0;
+        constexpr int first = 340000;
+        constexpr int last = 399000;
+        for (int sample = first; sample < last; ++sample)
+            sumSquares += static_cast<double>(ring[static_cast<std::size_t>(sample)])
+                        * static_cast<double>(ring[static_cast<std::size_t>(sample)]);
+        return std::sqrt(sumSquares / static_cast<double>(last - first));
+    };
+
+    for (const float cutoff : { 200.0f, 1000.0f, 4000.0f })
+    {
+        const float g = std::tan(3.14159265358979f * cutoff / processingRate);
+        // A millivolt-scale kick: fifty times smaller than the excitation the
+        // original self-oscillation check needed, and still comfortably above
+        // the deliberate 5.2 uV silence guard at the bottom of the solve.
+        const auto singing = mars::MarsEngineTestAccess::renderLadderRing(
+            g, 4.182f, scaleFor(4.182f), 1.0e-3f, 8, 400000);
+        const auto quiet = mars::MarsEngineTestAccess::renderLadderRing(
+            g, 3.98f, scaleFor(3.98f), 1.0e-3f, 8, 400000);
+        const double singingRms = tailRms(singing);
+        const double quietRms = tailRms(quiet);
+        expect(std::all_of(singing.begin(), singing.end(),
+                           [](float value) { return std::isfinite(value); }),
+               "self-starting ladder ring produced a non-finite sample");
+        expect(singingRms > 0.1,
+               "maximum resonance did not start oscillating from rest at "
+                   + std::to_string(cutoff) + " Hz (rms "
+                   + std::to_string(singingRms) + ")");
+        expect(singingRms < 1.0,
+               "self-starting ladder ring left its bounded amplitude range");
+        expect(quietRms < 0.01 * singingRms,
+               "a sub-threshold ladder sustained an oscillation at "
+                   + std::to_string(cutoff) + " Hz");
+    }
+}
+
+// A bright patch has to keep its top octave at every session rate. The
+// modulated cutoff ceiling used to be built only from the host rate, so a saw
+// driven to the top of its filter envelope landed at 19.8 kHz at 44.1 kHz and
+// at 86 kHz at 192 kHz: measured at the 180th harmonic of a 110 Hz note the two
+// were 10.0 dB apart.
+void testBrightPatchSpectrumIsRateInvariant()
+{
+    const auto harmonicLevels = [](double sampleRate)
+    {
+        mars::MarsEngine engine;
+        engine.prepare(sampleRate, blockSize);
+        auto p = isolatedOscillatorParameters();
+        p.osc1Wave = mars::OscillatorWave::Saw;
+        p.osc2Enabled = false;
+        p.filterModel = mars::FilterModel::Ladder;
+        p.cutoffHz = 20000.0f;
+        p.resonance = 0.6f;
+        p.filterEnvAmount = 1.0f;
+        p.filterAttack = 0.001f;
+        p.filterDecay = 0.01f;
+        p.filterSustain = 1.0f;
+        p.outputGain = 1.0f;
+        engine.setParameters(p);
+        engine.noteOn(45, 1.0f);
+
+        std::array<float, blockSize> left {};
+        std::array<float, blockSize> right {};
+        const int discard = static_cast<int>(0.15 * sampleRate);
+        const int measured = static_cast<int>(0.4 * sampleRate);
+        std::vector<double> samples;
+        samples.reserve(static_cast<std::size_t>(measured));
+        for (int position = 0; position < discard + measured; position += blockSize)
+        {
+            engine.process(left.data(), right.data(), blockSize);
+            for (int i = 0; i < blockSize; ++i)
+                if (position + i >= discard)
+                    samples.push_back(0.5 * (static_cast<double>(left[static_cast<std::size_t>(i)])
+                                           + static_cast<double>(right[static_cast<std::size_t>(i)])));
+        }
+
+        // Hann-windowed single-bin Goertzel at fixed absolute frequencies.
+        const auto magnitudeAt = [&samples, sampleRate](double frequency)
+        {
+            const double count = static_cast<double>(samples.size());
+            double real = 0.0;
+            double imaginary = 0.0;
+            double windowSum = 0.0;
+            for (std::size_t index = 0; index < samples.size(); ++index)
+            {
+                const double window = 0.5 - 0.5 * std::cos(
+                    6.283185307179586 * static_cast<double>(index) / (count - 1.0));
+                const double angle = -6.283185307179586 * frequency
+                                   * static_cast<double>(index) / sampleRate;
+                windowSum += window;
+                real += window * samples[index] * std::cos(angle);
+                imaginary += window * samples[index] * std::sin(angle);
+            }
+            return 2.0 * std::sqrt(real * real + imaginary * imaginary) / windowSum;
+        };
+
+        // 110 Hz fundamental; the last two probes sit in the top octave, which
+        // is where the ceiling used to differ.
+        const double fundamental = magnitudeAt(110.0);
+        return std::array<double, 3> {
+            magnitudeAt(110.0 * 60.0) / fundamental,
+            magnitudeAt(110.0 * 150.0) / fundamental,
+            magnitudeAt(110.0 * 180.0) / fundamental,
+        };
+    };
+
+    constexpr std::array sampleRates { 44100.0, 48000.0, 96000.0, 192000.0 };
+    std::array<std::array<double, 3>, sampleRates.size()> levels {};
+    for (std::size_t index = 0; index < sampleRates.size(); ++index)
+        levels[index] = harmonicLevels(sampleRates[index]);
+
+    for (std::size_t harmonic = 0; harmonic < 3; ++harmonic)
+    {
+        double minimum = std::numeric_limits<double>::infinity();
+        double maximum = 0.0;
+        for (const auto& measurement : levels)
+        {
+            minimum = std::min(minimum, measurement[harmonic]);
+            maximum = std::max(maximum, measurement[harmonic]);
+        }
+        expect(minimum > 1.0e-6, "bright-patch harmonic probe was empty");
+        const double spread = 20.0 * std::log10(maximum / minimum);
+        expect(spread < 1.5,
+               "a bright patch changed its spectrum across sample rates ("
+                   + std::to_string(spread) + " dB at harmonic index "
+                   + std::to_string(harmonic) + ")");
+    }
+}
+
+// The README tells the user that HQ buys less aliasing, so the suite has to be
+// the thing that measures it. A hot high note is the case that matters: at
+// MIDI 93 the saw's own harmonics already reach Nyquist, and a driven,
+// resonant ladder generates products well above it, which fold back as
+// inharmonic tones.
+//
+// The figure is only meaningful if the measurement band is stated. This one
+// scores the worst non-harmonic product *below 18 kHz*, i.e. inside the
+// audible band at every rate compared, rather than the worst bin anywhere
+// below Nyquist - an ultrasonic product just under a 48 kHz Nyquist is not
+// something a listener can hear, and including it roughly halves the apparent
+// advantage. The bound is deliberately well inside the measured margin
+// (24.6 dB at 44.1 kHz and 28.1 dB at 48 kHz on this machine; the test prints
+// both) so that ordinary floating-point differences between platforms cannot
+// flip it. Do not restate the measured number as a claim anywhere else - it
+// moves with the patch, the band, and the harmonic-exclusion width. The bound
+// this test enforces is the only figure that travels.
+void testOversamplingReducesInharmonicFolding()
+{
+    const auto worstAudibleInharmonic = [](double sampleRate, bool hq)
+    {
+        mars::MarsEngine engine;
+        engine.prepare(sampleRate, blockSize, hq);
+        auto p = isolatedOscillatorParameters();
+        p.osc1Wave = mars::OscillatorWave::Saw;
+        p.osc2Enabled = false;
+        p.filterModel = mars::FilterModel::Ladder;
+        p.cutoffHz = 16000.0f;
+        p.resonance = 0.9f;
+        p.filterDrive = 1.0f;
+        p.outputGain = 1.0f;
+        engine.setParameters(p);
+        engine.noteOn(93, 1.0f);
+
+        std::array<float, blockSize> left {};
+        std::array<float, blockSize> right {};
+        const int discard = static_cast<int>(0.15 * sampleRate);
+        const int measured = static_cast<int>(0.4 * sampleRate);
+        std::vector<double> windowed;
+        windowed.reserve(static_cast<std::size_t>(measured));
+        for (int position = 0; position < discard + measured; position += blockSize)
+        {
+            engine.process(left.data(), right.data(), blockSize);
+            for (int i = 0; i < blockSize; ++i)
+                if (position + i >= discard)
+                    windowed.push_back(
+                        0.5 * (static_cast<double>(left[static_cast<std::size_t>(i)])
+                             + static_cast<double>(right[static_cast<std::size_t>(i)])));
+        }
+
+        const double count = static_cast<double>(windowed.size());
+        double windowSum = 0.0;
+        for (std::size_t index = 0; index < windowed.size(); ++index)
+        {
+            const double window = 0.5 - 0.5 * std::cos(
+                6.283185307179586 * static_cast<double>(index) / (count - 1.0));
+            windowSum += window;
+            windowed[index] *= window;
+        }
+
+        const auto magnitudeAt = [&windowed, windowSum, sampleRate](double frequency)
+        {
+            double real = 0.0;
+            double imaginary = 0.0;
+            const double step = -6.283185307179586 * frequency / sampleRate;
+            for (std::size_t index = 0; index < windowed.size(); ++index)
+            {
+                const double angle = step * static_cast<double>(index);
+                real += windowed[index] * std::cos(angle);
+                imaginary += windowed[index] * std::sin(angle);
+            }
+            return 2.0 * std::sqrt(real * real + imaginary * imaginary) / windowSum;
+        };
+
+        // MIDI 93 is exactly 1760 Hz against the engine's A440 reference, and
+        // this patch has drift, spread, and detune switched off, so every
+        // legitimate partial sits on a multiple of it.
+        constexpr double fundamentalHz = 1760.0;
+        const double fundamental = magnitudeAt(fundamentalHz);
+        expect(fundamental > 1.0e-4,
+               "hot high-note patch produced no fundamental");
+
+        double worst = 0.0;
+        const double top = std::min(18000.0, 0.5 * sampleRate - 40.0);
+        for (double frequency = 40.0; frequency < top; frequency += 25.0)
+        {
+            // Skip the neighbourhood of each real harmonic: the Hann main lobe
+            // and the note's own envelope give every partial a finite width.
+            const double nearestHarmonic =
+                std::round(frequency / fundamentalHz) * fundamentalHz;
+            if (std::abs(frequency - nearestHarmonic) < 70.0)
+                continue;
+            worst = std::max(worst, magnitudeAt(frequency));
+        }
+        return 20.0 * std::log10(std::max(worst, 1.0e-12) / fundamental);
+    };
+
+    for (const double sampleRate : { 44100.0, 48000.0 })
+    {
+        const double oversampled = worstAudibleInharmonic(sampleRate, true);
+        const double native = worstAudibleInharmonic(sampleRate, false);
+        const double advantage = native - oversampled;
+        std::cout << "HQ inharmonic-folding advantage at "
+                  << static_cast<int>(sampleRate) << " Hz: "
+                  << std::fixed << std::setprecision(1) << advantage << " dB\n";
+        expect(advantage > 10.0,
+               "HQ did not measurably reduce inharmonic folding at "
+                   + std::to_string(static_cast<int>(sampleRate)) + " Hz ("
+                   + std::to_string(advantage) + " dB)");
+    }
+}
+
+// The mixer noise source emits one sample per internal step, so without
+// compensation its audible-band density scaled as 1 / oversampling: the same
+// Noise setting measured 7.9 dB apart across the supported sample rates and
+// jumped 5.2 dB when the HQ switch was toggled at one rate.
+void testNoiseLevelRateInvariance()
+{
+    const auto noiseBandLevel = [](double sampleRate, bool hq)
+    {
+        mars::MarsEngine engine;
+        engine.prepare(sampleRate, blockSize, hq);
+        auto p = isolatedOscillatorParameters();
+        p.osc1Enabled = false;
+        p.osc2Enabled = false;
+        p.subLevel = 0.0f;
+        p.noiseLevel = 1.0f;
+        p.cutoffHz = 20000.0f;
+        p.filterDrive = 0.0f;
+        p.resonance = 0.0f;
+        p.outputGain = 1.0f;
+        engine.setParameters(p);
+        engine.noteOn(60, 1.0f);
+
+        // Measure through a fixed 3 kHz analysis band-pass rather than over the
+        // whole output: a broadband RMS would mostly report how wide the host's
+        // own bandwidth is. Its noise bandwidth is set in hertz, so the reading
+        // is directly comparable between sample rates, and integrating over the
+        // full render keeps the estimator variance far below the effect.
+        constexpr double centre = 3000.0;
+        constexpr double quality = 1.0;
+        const double omega = 6.283185307179586 * centre / sampleRate;
+        const double alpha = std::sin(omega) / (2.0 * quality);
+        const double a0 = 1.0 + alpha;
+        const double b0 = alpha / a0;
+        const double b2 = -alpha / a0;
+        const double a1 = -2.0 * std::cos(omega) / a0;
+        const double a2 = (1.0 - alpha) / a0;
+        double x1 = 0.0;
+        double x2 = 0.0;
+        double y1 = 0.0;
+        double y2 = 0.0;
+
+        std::array<float, blockSize> left {};
+        std::array<float, blockSize> right {};
+        const int discard = static_cast<int>(0.2 * sampleRate);
+        const int measured = static_cast<int>(1.0 * sampleRate);
+        double sumSquares = 0.0;
+        int counted = 0;
+        for (int position = 0; position < discard + measured; position += blockSize)
+        {
+            engine.process(left.data(), right.data(), blockSize);
+            for (int i = 0; i < blockSize; ++i)
+            {
+                const double x = 0.5 * (static_cast<double>(left[static_cast<std::size_t>(i)])
+                                      + static_cast<double>(right[static_cast<std::size_t>(i)]));
+                const double y = b0 * x + b2 * x2 - a1 * y1 - a2 * y2;
+                x2 = x1;
+                x1 = x;
+                y2 = y1;
+                y1 = y;
+                if (position + i >= discard)
+                {
+                    sumSquares += y * y;
+                    ++counted;
+                }
+            }
+        }
+        // Normalise by the analysis filter's noise bandwidth so the reading is
+        // a density rather than a band power.
+        const double noiseBandwidth = centre / quality * 1.5707963267948966;
+        return std::sqrt(sumSquares / std::max(counted, 1) / noiseBandwidth);
+    };
+
+    // The list spans every rate the documentation claims invariance over,
+    // including the two where HQ selects native processing, so the claim and
+    // the coverage cannot drift apart. Above 192 kHz the calibration amplitude
+    // sqrt(rate / 192 kHz) exceeds 1.0 and the ADAA mixer saturator begins to
+    // compress it (measured -0.41 dB at 384 kHz and -1.44 dB at the engine's
+    // 768 kHz ceiling), so those rates are deliberately outside both the bound
+    // below and the documented claim.
+    constexpr std::array sampleRates { 44100.0, 48000.0, 88200.0, 96000.0,
+                                       176400.0, 192000.0 };
+    double minimum = std::numeric_limits<double>::infinity();
+    double maximum = 0.0;
+    for (const double rate : sampleRates)
+        for (const bool hq : { true, false })
+        {
+            const double level = noiseBandLevel(rate, hq);
+            expect(level > 1.0e-6, "noise band measurement was empty");
+            minimum = std::min(minimum, level);
+            maximum = std::max(maximum, level);
+        }
+    const double spreadDecibels = 20.0 * std::log10(maximum / minimum);
+    std::cout << "Mixer noise band level spread across 44.1-192 kHz, HQ on and off: "
+              << std::fixed << std::setprecision(2) << spreadDecibels << " dB\n";
+    expect(spreadDecibels < 1.2,
+           "the noise level still depends on the sample rate or the HQ switch ("
+               + std::to_string(spreadDecibels) + " dB)");
+
+    const double hqOn = noiseBandLevel(48000.0, true);
+    const double hqOff = noiseBandLevel(48000.0, false);
+    expect(std::abs(20.0 * std::log10(hqOn / hqOff)) < 0.8,
+           "toggling HQ changed the noise level at one sample rate");
+}
+
 void testSemNonlinearResonance()
 {
     // 2% of the processing rate, driven at the same frequency so the measured
@@ -4402,6 +4876,11 @@ int main()
     testExtremeAutomationStability();
     testIdleChorusStateMaintenance();
     testLadderSelfOscillation();
+    testLadderLevelIndependence();
+    testLadderSelfOscillationStartsFromRest();
+    testNoiseLevelRateInvariance();
+    testBrightPatchSpectrumIsRateInvariant();
+    testOversamplingReducesInharmonicFolding();
     testSemNonlinearResonance();
     testWaveformFreezeAndThaw();
     testUnisonDetuneControl();

@@ -54,8 +54,22 @@ The authoritative implementation is `Source/DSP/MarsEngine.cpp`:
 3. Active oscillator feeds, sub, and noise enter a fixed first-order antiderivative-
    antialiased (ADAA) mixer. `Filter drive` is then converted once into the
    voltage scale used by the filter; it no longer changes the mixer and VCA as
-   unrelated extra gain stages.
-4. The selected `Ladder` or `SEM` algorithm processes the mixer signal. The
+   unrelated extra gain stages. The mixer's noise generator emits one
+   independent sample per internal step, so its amplitude follows the square
+   root of the internal rate: a physical noise source has a fixed density in
+   volts per root hertz, and a fixed generator amplitude would instead spread a
+   fixed total power over whatever bandwidth the HQ setting happened to choose.
+   Its 5.2 kHz colour pole uses the exact one-pole coefficient at the internal
+   rate rather than the small-angle approximation. The calibration is referred
+   to a 192 kHz internal rate, so the amplitude is at or below unity for every
+   session rate up to 192 kHz; above that it exceeds unity and the ADAA
+   saturator compresses it, costing 0.4 dB at 384 kHz and 1.4 dB at the
+   engine's 768 kHz ceiling.
+4. The selected `Ladder` or `SEM` algorithm processes the mixer signal. Its
+   modulated cutoff is bounded by 20 kHz as well as by 0.45 of the host rate, so
+   a bright patch driven to the top of its filter envelope keeps the same top
+   octave at every session rate from 44.1 kHz up, rather than sitting at
+   19.8 kHz at 44.1 kHz and above 40 kHz at 96 kHz. The
    ladder uses a bounded residual-decreasing Newton solve without an artificial
    feedback delay and compensates its resonance-dependent static bass loss. A
    3 ms crossfade protects live model changes; at a steady endpoint only the
@@ -248,6 +262,47 @@ that ceiling, the last coherent state and input are held for one sample instead
 of publishing an out-of-contract estimate. The next sample starts a fresh
 bounded solve from that committed history.
 
+That publish ceiling is deliberately *not* the target the updates stop at.
+Every transistor current in the residual is multiplied by `2VT * g`, so the
+residual of the trivial candidate - the committed previous state, which is where
+each solve starts - is about `2g * |v0 + u + k * v3|`. Stopping at a fixed
+voltage therefore behaved as an amplitude dead zone of `tolerance / (2g)`: at a
+low cutoff the starting guess already satisfied it, no update ran, and the
+filter held its previous state instead of integrating. Measured at 48 kHz with
+`Filter drive` at its default, a 100 Hz cutoff gated every mixer signal below
+about -26 dBFS to silence and a 400 Hz cutoff gated below about -40 dBFS, and a
+`k > 4` ring could not start from small state at all. The
+updates instead target a fixed *relative* reduction of whatever residual the
+step actually starts from. That asks for the same number of updates as the
+previous fixed target did at programme level, and leaves the publish ceiling,
+the rescue pass and the one-sample hold unchanged.
+
+The floor beneath that relative target needs the same care, because a floor is
+just a smaller version of the same bug. Any *constant* floor `f` re-creates a
+dead zone of `f / (2g)`, which is still inversely proportional to cutoff; a
+floor of `1e-3` of the publish ceiling merely moved the knee down by three
+decades, which still put it at about 24 uV at the 20 Hz bottom of the `Cutoff`
+control - measurable inside the shipped range, where the passband gain at a
+50 uV drive read 0.33 of its 50 mV reference. The floor is therefore a *scale*:
+the residual is a voltage assembled from the previous state, the input, and
+`2VT * g`, so it is floored at a few ulp of the largest of those. Because the
+`2VT * g` term dominates at small signals, the resulting dead zone collapses to
+about `8 eps * 2VT`, or 49 nV, which is cutoff-*independent* by construction.
+Measured by bisection at `k = 1.2` and 192 kHz, the drive at which passband gain
+falls to half of reference is 128 nV at a 20 Hz cutoff and 61 nV at 20 kHz - a
+2.1x spread over a 1000x cutoff range, against the 1000x spread of a constant
+floor, and 136 dB below the filter's own +/-0.8 V input clamp. That is the
+honest bound: the dependence is not removed to zero, it is pushed below the
+point where a float residual carries information at all.
+
+The regression suite pins the ladder's passband gain to within 5% over a 60 dB
+input range at 20 Hz, 40 Hz, 100 Hz, 200 Hz, 500 Hz, 2 kHz, and 20 kHz cutoffs -
+deliberately including both ends of the control, since the middle of the range
+is exactly where a constant floor stays invisible - and pins voice output
+proportional to a quiet mixer feed down to 3% of full level. The deliberate
+5.2 uV per-stage silence guard that snaps a genuinely idle filter to rest is
+unchanged.
+
 The regression suite drives the entire reachable filter-input voltage range
 with high-frequency square, sine, and deterministic-noise sequences at low,
 medium, and maximum prewarped cutoff and six resonance anchors. Every production
@@ -274,6 +329,22 @@ publish an out-of-contract state. A free-running fixture at a 1 kHz cutoff and
 192 kHz processing rate measures no sustained oscillation at `k = 3.98`
 (zero tail zero-crossings) and a 975 Hz limit cycle at `k = 4.18`, that is,
 within 2.5% of the cutoff, with the tail bounded well inside the output guard.
+A second fixture requires that limit cycle to build itself out of a millivolt
+disturbance at 200 Hz, 1 kHz, and 4 kHz cutoffs, which is what a circuit above
+its Hopf threshold does: before the relative convergence target above, the ring
+only existed when it was kicked hard, and below roughly a 500 Hz cutoff it never
+started at all.
+
+That fixture stops at 200 Hz for a reason worth stating rather than hiding. The
+excitation still has to leave the ladder above the deliberate 5.2 uV per-stage
+idle-silence guard, and the state a fixed-length kick deposits is proportional
+to `g`: at a 20 Hz cutoff a millivolt, eight-sample kick lands under the guard,
+which snaps the filter to rest before the ring can build, and no length of
+render recovers it. This is a property of the silence guard, not of the solve,
+and it is not reachable inside a voice - the amplifier envelope's own opening
+transient is orders of magnitude larger, and a full-engine render at maximum
+resonance with every mixer source muted sustains 0.273 RMS at a 20 Hz cutoff
+and 0.277 at 2 kHz.
 
 Mars applies
 the paper's resonance-dependent cutoff correction and bilinear prewarping, and
@@ -503,8 +574,15 @@ deterministic independent line noise/feedthrough, and the optional compander's
 2:1 law and nominal-BBD-gain-matched steady-level reconstruction. Oscillator coverage also
 checks that a moving PWM comparator schedules an antialiasing residual. Filter coverage includes full-range ladder
 stability, bass-gain compensation, implicit-equation residual and state error
-against an independent double-precision reference, and distinct Ladder/SEM
-responses. Integration tests cover click-resistant steals and model changes,
+against an independent double-precision reference, level-independent ladder
+passband gain across a 60 dB input range at seven cutoffs spanning the whole
+20 Hz - 20 kHz control range, a limit cycle that
+starts itself from a millivolt disturbance at every cutoff, and distinct
+Ladder/SEM responses. Sample-rate coverage additionally pins the mixer noise
+density across 44.1-192 kHz with HQ both on and off, a bright patch's
+top-octave spectrum across the same range, and the margin by which HQ lowers a
+hot patch's worst audible-band inharmonic product below the native path's.
+Integration tests cover click-resistant steals and model changes,
 oscillator switch isolation and smoothing, lone-oscillator unity behavior,
 cross-modulation with oscillator II audio disabled, deferred HQ changes,
 dynamic physical-voice budgets, Mono mode-transition/duplicate-hold/last-note/
