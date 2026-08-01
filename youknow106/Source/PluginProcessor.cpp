@@ -494,6 +494,15 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                     / 127.0f);
             else if (message.getControllerNumber() == 64)
                 engine.setSustainPedal (message.getControllerValue() >= 64);
+            else if (message.getControllerNumber() == 121)
+            {
+                // Reset All Controllers. Lifting the pedal matters most: with
+                // it down and keys already released, ignoring this message
+                // would leave those voices held until a panic.
+                engine.setSustainPedal (false);
+                engine.setModWheel (0.0f);
+                engine.setPitchBend (0.0f);
+            }
         }
     }
 
@@ -528,7 +537,20 @@ void YouKnow106AudioProcessor::enqueueUiMidiEvent (int note, float velocity,
     const auto write = uiWriteIndex.load (std::memory_order_relaxed);
     const auto read = uiReadIndex.load (std::memory_order_acquire);
     if (write - read >= uiQueueCapacity)
+    {
+        // The queue only fills if processing has stalled for a long time. A
+        // press dropped here is a note that never sounds, which is a shrug; a
+        // release dropped here is a note held down for good, which is not. So
+        // releases are never dropped -- they are remembered as a pending key
+        // lift and applied once the backlog has been worked through.
+        if (! isNoteOn)
+        {
+            const auto index = static_cast<unsigned> (juce::jlimit (0, 127, note));
+            uiPendingNoteOff[index >> 6].fetch_or (1ull << (index & 63u),
+                                                   std::memory_order_release);
+        }
         return;
+    }
 
     uiMidiQueue[write % uiQueueCapacity] = { note, velocity, isNoteOn };
     uiWriteIndex.store (write + 1, std::memory_order_release);
@@ -538,6 +560,9 @@ void YouKnow106AudioProcessor::discardUiMidiEvents() noexcept
 {
     uiReadIndex.store (uiWriteIndex.load (std::memory_order_acquire),
                        std::memory_order_release);
+    // Nothing is held any more, so there is no release left to honour.
+    for (auto& pending : uiPendingNoteOff)
+        pending.store (0, std::memory_order_release);
 }
 
 void YouKnow106AudioProcessor::dispatchUiMidiEvents() noexcept
@@ -573,6 +598,26 @@ void YouKnow106AudioProcessor::dispatchUiMidiEvents() noexcept
     }
 
     uiReadIndex.store (read, std::memory_order_release);
+
+    // Keys whose release was dropped by a full queue. A key already touched in
+    // this drain waits for the next one, so the press it just received is not
+    // cancelled before anything is rendered.
+    for (std::size_t word = 0; word < uiPendingNoteOff.size(); ++word)
+    {
+        const auto pending = uiPendingNoteOff[word].load (std::memory_order_acquire)
+                           & ~touched[word];
+        if (pending == 0)
+            continue;
+
+        for (unsigned bit = 0; bit < 64; ++bit)
+        {
+            const std::uint64_t mask = 1ull << bit;
+            if ((pending & mask) == 0)
+                continue;
+            uiPendingNoteOff[word].fetch_and (~mask, std::memory_order_acq_rel);
+            engine.noteOff (static_cast<int> (word * 64u + bit));
+        }
+    }
 }
 
 void YouKnow106AudioProcessor::randomizeParameters (float amount)

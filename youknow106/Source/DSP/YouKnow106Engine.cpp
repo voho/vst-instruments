@@ -827,6 +827,13 @@ void YouKnow106Engine::updateProcessingRate() noexcept
     latencyPadWriteIndex_ = 0;
     oversamplingQuietSamples_ =
         std::max(1, static_cast<int>(sampleRate_ * outputPathQuietSeconds));
+    // Every countdown here is measured in internal samples, so one left over
+    // from the previous rate would mean something else entirely at the new one:
+    // a scan pass still 806 samples away at 192 kHz is 4.2 ms, and 16.8 ms once
+    // the rate drops to 48 kHz. They start again rather than being carried.
+    scanCountdown_ = 0;
+    lfoScanCountdown_ = 0;
+    driftControlCountdown_ = 0;
     chorus_.prepare(oversampledRate_);
     dcCoefficient_ = static_cast<float>(
         std::exp(-2.0 * 3.14159265358979323846 * 12.0 / oversampledRate_));
@@ -1148,6 +1155,22 @@ void YouKnow106Engine::retargetUnison(int midiNote) noexcept
 
 // Where the next note glides from. Set once per note-on, after every slot the
 // note reaches has been given its starting pitch.
+bool YouKnow106Engine::anyVoiceSounding() const noexcept
+{
+    for (const auto& voice : voices_)
+        if (voice.active)
+            return true;
+    return false;
+}
+
+// The delay is a hold followed by a fade. Both start again for a new phrase.
+void YouKnow106Engine::rearmLfoDelay() noexcept
+{
+    lfoDelayHoldoff_ = 0.0f;
+    lfoDelayLevel_ =
+        lfoDelaySeconds(activeParameters_.lfoDelay) > 1.0e-4f ? 0.0f : 1.0f;
+}
+
 void YouKnow106Engine::rememberGlideOrigin(int midiNote) noexcept
 {
     lastPlayedMidi_ = static_cast<float>(midiNote);
@@ -1289,6 +1312,15 @@ void YouKnow106Engine::noteOn(int midiNote, float velocity)
 
 void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
 {
+    // A phrase starts when nothing was sounding and no key was down. The
+    // modulator's delay has to be re-armed here rather than waiting for an idle
+    // scan pass to notice: the last voice can retire part-way through a render
+    // call, and a note at the start of the next one would then find the delay
+    // still at the level the previous phrase left it -- full modulation from
+    // the first note instead of the delay the panel asks for.
+    if (!anyKeyDown_ && !anyVoiceSounding())
+        rearmLfoDelay();
+
     rememberHeldNote(midiNote, velocity);
     anyKeyDown_ = true;
 
@@ -1673,7 +1705,22 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
             ? static_cast<float>(std::clamp((unwrapped - p) / increment, 0.0, 1.0))
             : 0.0f;
     };
-    const bool crossedRise = previousPhase < rise && unwrapped >= rise;
+    const auto insideThisSample = [&](double p) {
+        return p > previousPhase && p <= unwrapped;
+    };
+
+    // A note timer can outrun the sample clock: the divider bottoms out at
+    // eight, so the top range reaches half a megahertz, and at the lowest host
+    // rate the model accepts that is some sixty cycles inside one sample. Each
+    // of them resets the ramp, works the comparator and clocks the divider, and
+    // collapsing them into one wrap would hold the pulse low for whole periods
+    // and drop the sub an octave. So every crossed cycle is walked. The bound
+    // is a runaway guard rather than a limit that is reached: sixty-four covers
+    // the fastest note the timer can be programmed for against the slowest rate
+    // the engine runs at.
+    constexpr int maximumWrapsPerSample = 64;
+    const double lastCycle =
+        std::min(std::floor(unwrapped), static_cast<double>(maximumWrapsPerSample));
 
     // --- Ramp -------------------------------------------------------------
     const float amplitude = sawMixVolts
@@ -1694,10 +1741,15 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float fallSlope = -2.0f / static_cast<float>(reset);
     const float incrementF = static_cast<float>(increment);
 
-    if (crossedRise)
-        addSlope(dco.saw, (fallSlope - slopeAtEnd) * incrementF, samplesAgo(rise));
-    if (wrapped)
-        addSlope(dco.saw, (slopeAtStart - fallSlope) * incrementF, samplesAgo(1.0));
+    for (double base = 0.0; base <= lastCycle; base += 1.0)
+    {
+        if (insideThisSample(base + rise))
+            addSlope(dco.saw, (fallSlope - slopeAtEnd) * incrementF,
+                     samplesAgo(base + rise));
+        if (insideThisSample(base + 1.0))
+            addSlope(dco.saw, (slopeAtStart - fallSlope) * incrementF,
+                     samplesAgo(base + 1.0));
+    }
 
     const float sawOut = dco.saw.advance(sawNaive) * amplitude;
 
@@ -1707,36 +1759,34 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const double duty = std::clamp(static_cast<double>(voice.pulseWidth), 0.05, 0.95);
     const double riseEdge = rise * (1.0 - duty);
 
-    // Three edges can fall inside one sample at a high pitch with a wide pulse:
-    // this cycle's threshold crossing, the reset, and the next cycle's
-    // threshold crossing on the far side of the wrap. Taking them in order
-    // matters -- handling only the first would hold the comparator low for a
-    // whole period and drop it an octave.
-    if (previousPhase < riseEdge && unwrapped >= riseEdge && dco.pulseState < 0.0f)
+    // The comparator's two edges per cycle, taken in the order they occur:
+    // threshold crossing on the way up, then the reset dragging the ramp back
+    // down past it. Both are walked for every cycle inside this sample.
+    for (double base = 0.0; base <= lastCycle; base += 1.0)
     {
-        addStep(dco.pulse, 2.0f, samplesAgo(riseEdge));
-        dco.pulseState = 1.0f;
-    }
-    if (crossedRise && dco.pulseState > 0.0f)
-    {
-        addStep(dco.pulse, -2.0f, samplesAgo(rise));
-        dco.pulseState = -1.0f;
-    }
-    if (wrapped && phase >= riseEdge && dco.pulseState < 0.0f)
-    {
-        addStep(dco.pulse, 2.0f, samplesAgo(1.0 + riseEdge));
-        dco.pulseState = 1.0f;
+        if (insideThisSample(base + riseEdge) && dco.pulseState < 0.0f)
+        {
+            addStep(dco.pulse, 2.0f, samplesAgo(base + riseEdge));
+            dco.pulseState = 1.0f;
+        }
+        if (insideThisSample(base + rise) && dco.pulseState > 0.0f)
+        {
+            addStep(dco.pulse, -2.0f, samplesAgo(base + rise));
+            dco.pulseState = -1.0f;
+        }
     }
     const float pulseOut = dco.pulse.advance(dco.pulseState) * pulseMixVolts;
 
     // --- Sub --------------------------------------------------------------
     // A flip-flop halves the note clock, so the sub is an exact square one
-    // octave down and takes no part in pulse-width modulation.
-    if (wrapped)
+    // octave down and takes no part in pulse-width modulation. Every wrap is an
+    // edge, including the first one after a retrigger.
+    for (double base = 1.0; base <= lastCycle; base += 1.0)
     {
-        // Every wrap is an edge, including the first one after a retrigger.
+        if (!insideThisSample(base))
+            continue;
         const float target = -dco.subState;
-        addStep(dco.sub, target - dco.subState, samplesAgo(1.0));
+        addStep(dco.sub, target - dco.subState, samplesAgo(base));
         dco.subState = target;
     }
     const float subGain = subMixVolts * glidedSubLevel_

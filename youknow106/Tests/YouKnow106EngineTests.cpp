@@ -871,6 +871,102 @@ void testPortamentoRateFollowsItsControl()
                "turning portamento off mid-glide did not land the note");
 }
 
+void testOscillatorSurvivesMoreThanOneCyclePerSample()
+{
+    // The note timer's divider bottoms out at eight, so the top range reaches
+    // half a megahertz -- far above any rate the engine runs at. Nothing about
+    // a waveform that fast is representable, and this does not pretend to
+    // check its pitch. What it does check is that the oscillator walks every
+    // crossed cycle instead of collapsing them: the state machine stays
+    // consistent, the output stays finite and bounded, and the per-sample loop
+    // cannot run away.
+    for (double sampleRate : { 8000.0, 48000.0 })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, false);
+        auto parameters = plainPatch();
+        parameters.range = DcoRange::Four;
+        parameters.keyTranspose = 12;
+        parameters.pulseEnabled = true;
+        parameters.subLevel = 1.0f;
+        engine.setParameters(parameters);
+
+        for (int note = 120; note <= 127; ++note)
+            engine.noteOn(note, 1.0f);
+        const auto rendered = render(engine, static_cast<int>(sampleRate * 0.25));
+
+        for (std::size_t index = 0; index < rendered.left.size(); ++index)
+            if (!std::isfinite(rendered.left[index])
+                || !std::isfinite(rendered.right[index]))
+            {
+                expect(false, "the oscillator produced a non-finite sample above "
+                              "one cycle per sample");
+                break;
+            }
+        expect(peakOf(rendered.left, 0) < 4.0,
+               "the oscillator ran away above one cycle per sample");
+    }
+}
+
+void testModulationDelayRearmsForANewPhrase()
+{
+    // The delay is per phrase, and a phrase begins when nothing is sounding and
+    // no key is down. The last voice can retire part-way through a render call,
+    // so waiting for an idle scan pass to notice would let the next note start
+    // with the modulation already faded all the way in.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.lfoDelay = 0.7f;
+    parameters.dcoLfoDepth = 1.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    // Long enough for the delay to finish and the modulation to reach full.
+    render(engine, static_cast<int>(sampleRate * 4.0));
+    const double atFullDepth = std::abs(engine.getDisplayLfo());
+    expect(atFullDepth > 0.05, "the modulation never faded in");
+
+    engine.noteOff(60);
+    // Exactly one block past the retirement, so the idle scan branch has had no
+    // block of its own in which to notice.
+    for (int block = 0; block < 200 && engine.getActiveVoiceCount() > 0; ++block)
+        render(engine, blockSize);
+    expect(engine.getActiveVoiceCount() == 0, "the voice never retired");
+
+    engine.noteOn(67, 1.0f);
+    render(engine, blockSize);
+    expect(std::abs(engine.getDisplayLfo()) < atFullDepth * 0.25,
+           "a new phrase started with the previous phrase's modulation depth");
+}
+
+void testScanTimersRestartWithTheProcessingRate()
+{
+    // Every countdown is in internal samples, so one carried across a rate
+    // change means something else at the new rate: a scan pass 806 samples away
+    // is 4.2 ms at 192 kHz and 16.8 ms at 48 kHz. A note in the block that
+    // applies the change would wait that stale interval to speak.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    engine.setParameters(parameters);
+    expect(engine.getOversamplingFactor() > 1, "the fixture needs the deep setting");
+
+    // Idle, so the change goes through, and stopped part-way between passes.
+    render(engine, 64);
+    expect(engine.setOversamplingEnabled(false),
+           "the quality change did not apply on an idle engine");
+    expect(engine.getOversamplingFactor() == 1, "the rate did not drop");
+
+    engine.noteOn(60, 1.0f);
+    // One documented scan interval, plus the amplifier's own slew.
+    const auto onset = render(engine, static_cast<int>(sampleRate * 0.007));
+    expect(peakOf(onset.left, 0) > 0.001,
+           "a note after a rate change waited a stale scan interval to speak");
+}
+
 void testUnisonStackGlidesFromOneOrigin()
 {
     // The stack is one note, so widening it mid-performance must not leave the
@@ -1409,6 +1505,9 @@ int main()
     testContinuousControlsDoNotStepAtBlockBoundaries();
     testNotesWaitForTheSharedConverterScan();
     testPortamentoRateFollowsItsControl();
+    testOscillatorSurvivesMoreThanOneCyclePerSample();
+    testModulationDelayRearmsForANewPhrase();
+    testScanTimersRestartWithTheProcessingRate();
     testUnisonStackGlidesFromOneOrigin();
     testQualityChangeWaitsForTheOutputPathToEmpty();
     testHardStopSilencesTheWholeOutputPath();

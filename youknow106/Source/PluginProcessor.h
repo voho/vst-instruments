@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdint>
 
 class YouKnow106AudioProcessorEditor;
 
@@ -99,6 +100,9 @@ private:
     std::array<UiMidiEvent, uiQueueCapacity> uiMidiQueue {};
     std::atomic<unsigned> uiWriteIndex { 0 };
     std::atomic<unsigned> uiReadIndex { 0 };
+    // Key releases the queue had no room for. Dropping a press costs a note
+    // nobody hears; dropping a release leaves one held down for good.
+    std::array<std::atomic<std::uint64_t>, 2> uiPendingNoteOff { };
 
     void handleNoteOn (juce::MidiKeyboardState*, int midiChannel,
                        int midiNoteNumber, float velocity) override;
