@@ -790,15 +790,49 @@ void testCloseMicrophonePair()
     expect (maximumAbsoluteDifference (folded.left, folded.right) < 1.0e-6,
             "zero width must produce identical channels");
 
-    // Every articulation must stay mono-compatible.
-    for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+    // No stroke may invert, anywhere in the microphone range, at or below the
+    // width the microphones actually captured. Above that the control is a
+    // deliberate exaggeration and can go out of phase like any widener, so the
+    // invariant is stated - and swept - only where it is meant to hold. The
+    // earlier version of this check used a single microphone distance and so
+    // said nothing about the endpoints, where the pair is at its widest.
+    double worstCorrelation = 1.0;
+    for (const float width : { 0.0f, 0.25f, 0.5f })
     {
-        const auto articulation = static_cast<taikor::Articulation> (index);
-        const auto rendered = strike (parameters, articulation, 0, 0.9f, 48000.0, 24000);
-        expect (correlation (rendered.left, rendered.right) > 0.0,
-                std::string (taikor::getArticulationDisplayName (articulation))
-                    + " produced an out-of-phase pair");
+        for (const float distance : { 0.0f, 0.5f, 1.0f })
+        {
+            for (const float spread : { 0.0f, 0.5f, 1.0f })
+            {
+                auto swept = parameters;
+                swept.stereoWidth = width;
+                swept.micDistance = distance;
+                swept.micSpread = spread;
+
+                for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+                {
+                    const auto articulation =
+                        static_cast<taikor::Articulation> (index);
+                    const auto rendered =
+                        strike (swept, articulation, 0, 0.9f, 48000.0, 24000);
+                    const auto value =
+                        correlation (rendered.left, rendered.right);
+                    worstCorrelation = std::min (worstCorrelation, value);
+
+                    expect (value > -0.05,
+                            std::string (taikor::getArticulationDisplayName (articulation))
+                                + " inverted at width "
+                                + std::to_string (width) + ", distance "
+                                + std::to_string (distance) + ", spread "
+                                + std::to_string (spread));
+                }
+            }
+        }
     }
+
+    // The sweep has to actually reach the decorrelated corner, or it is only
+    // testing the easy middle of the range.
+    expect (worstCorrelation < 0.5,
+            "the mono-compatibility sweep never reached a widely spaced pair");
 }
 
 void testTailsTerminateAndVoicesRetire()
@@ -1323,6 +1357,142 @@ void testControlEndpointsAndGestures()
                 "automating the width stepped the audio at the block boundary");
         expect (boundaryAgainstSignal (false) < 2.0,
                 "the width step measurement is picking up ordinary signal content");
+    }
+
+    // A stroke struck after a bend has settled must be in tune with the bend.
+    // The cached drums the render path builds strokes from were invalidated on
+    // the wheel's per-sample increment, which at high sample rates falls below
+    // any sensible epsilon long before the glide has actually arrived - leaving
+    // the cache, and every new stroke, flat.
+    {
+        auto tuned = parameters;
+        tuned.humanise = 0.0f;
+        tuned.tensionModulation = 0.0f;
+
+        constexpr double highRate = 384000.0;
+        taikor::TaikoEngine engine;
+        engine.prepare (highRate, 512);
+        engine.setParameters (tuned);
+
+        engine.setPitchBend (1.0f);
+        render (engine, static_cast<int> (highRate * 1.5), 512);
+
+        const auto predicted = engine.measureDrum (0).loadedFundamentalHz;
+        engine.trigger (taikor::Articulation::Don, 0, 0.95f);
+        const auto rendered = render (engine, static_cast<int> (highRate * 0.4), 512);
+        const auto sounded = dominantFrequency (
+            rendered.mono(), highRate, predicted * 0.85, predicted * 1.15, 0.05,
+            static_cast<std::size_t> (highRate * 0.02));
+
+        const auto cents = 1200.0 * std::log2 (sounded / predicted);
+        expect (std::abs (cents) < 10.0,
+                "a stroke struck after the bend settled is "
+                    + std::to_string (cents) + " cents from the bend it was struck at");
+    }
+
+    // A low-loss drum can ring far longer than the tail the host is told to
+    // expect, so a voice still has to end at the cap - but it has to be faded
+    // out, not cut. A cut at an audible level is a click, and it rings the
+    // shared DC blocker on the way out.
+    {
+        auto ringing = parameters;
+        ringing.humanise = 0.0f;
+        ringing.headDiameter = 1.20f;
+        ringing.headMaterial = 0.0f;
+        ringing.headDamping = 0.0f;
+        ringing.shellMaterial = 1.0f;
+        ringing.octaveBody = 1.0f;
+
+        taikor::TaikoEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setParameters (ringing);
+
+        // The configuration has to actually outlast the cap, or this proves
+        // nothing about what happens when a voice reaches it.
+        expect (engine.measureDrum (taikor::lowestOctaveOffset).tailSeconds
+                    > static_cast<float> (taikor::maximumTailSeconds) * 1.2f,
+                "the long-tail check no longer uses a drum that outlasts the cap");
+
+        engine.trigger (taikor::Articulation::Don, taikor::lowestOctaveOffset, 1.0f);
+        const auto rendered =
+            render (engine, static_cast<int> (48000 * (taikor::maximumTailSeconds + 1.0)));
+        const auto mono = rendered.mono();
+
+        const auto cap = static_cast<std::size_t> (48000 * taikor::maximumTailSeconds);
+
+        // How loud the drum still is as it reaches the cap. Cutting it here
+        // would put a step of about this size into the output; fading it out
+        // leaves steps a couple of orders of magnitude smaller.
+        double amplitudeAtCap = 0.0;
+        for (std::size_t index = cap - 9600; index < cap - 4800 && index < mono.size();
+             ++index)
+            amplitudeAtCap = std::max (amplitudeAtCap,
+                                       std::abs (static_cast<double> (mono[index])));
+        expect (amplitudeAtCap > 1.0e-3,
+                "this drum is no longer audible at the cap, so the check is vacuous");
+
+        double largestStep = 0.0;
+        for (std::size_t index = cap - 4800; index + 1 < mono.size()
+             && index < cap + 9600; ++index)
+            largestStep = std::max (largestStep,
+                                    std::abs (static_cast<double> (mono[index])
+                                              - mono[index - 1]));
+
+        expect (largestStep < amplitudeAtCap * 0.05,
+                "the voice was cut at the tail cap instead of faded out");
+        expect (windowedRms (mono, cap + 14400, cap + 24000) < 1.0e-6,
+                "the voice did not actually end at the tail cap");
+    }
+
+    // Drive must converge on bypass rather than switching into a shaper: the
+    // first nonzero step should be a hair of saturation, not a jump to a fully
+    // shaped signal.
+    {
+        auto dry = parameters;
+        dry.humanise = 0.0f;
+        dry.drive = 0.0f;
+        auto barely = dry;
+        barely.drive = 0.002f;
+        auto full = dry;
+        full.drive = 1.0f;
+
+        const auto rendered = [] (const taikor::EngineParameters& p)
+        {
+            return strike (p, taikor::Articulation::DonRim, -1, 1.0f, 48000.0, 12000);
+        };
+
+        const auto clean = rendered (dry);
+        const auto nudged = rendered (barely);
+        const auto driven = rendered (full);
+
+        const auto nudgedChange = maximumAbsoluteDifference (clean.left, nudged.left);
+        const auto drivenChange = maximumAbsoluteDifference (clean.left, driven.left);
+
+        expect (drivenChange > 1.0e-3, "the drive control must do something");
+        expect (nudgedChange < drivenChange * 0.05,
+                "the first step of Drive jumped most of the way to full saturation");
+    }
+
+    // The Shell Resonance control is described as how much the drum's body
+    // colours a head stroke. A stick-on-stick stroke never touches the body,
+    // so the control must not reach it at all.
+    {
+        auto quiet = parameters;
+        quiet.humanise = 0.0f;
+        quiet.shellResonance = 0.0f;
+        auto loud = quiet;
+        loud.shellResonance = 1.0f;
+
+        const auto a = strike (quiet, taikor::Articulation::Bachi, 0, 0.95f, 48000.0, 24000);
+        const auto b = strike (loud, taikor::Articulation::Bachi, 0, 0.95f, 48000.0, 24000);
+        expect (maximumAbsoluteDifference (a.left, b.left) == 0.0,
+                "Shell Resonance changed a stick-on-stick stroke");
+
+        // It must still do its job on a stroke that is the body.
+        const auto c = strike (quiet, taikor::Articulation::Katsu, 0, 0.95f, 48000.0, 24000);
+        const auto d = strike (loud, taikor::Articulation::Katsu, 0, 0.95f, 48000.0, 24000);
+        expect (maximumAbsoluteDifference (c.left, d.left) > 1.0e-3,
+                "Shell Resonance must still change a stroke on the body");
     }
 
     // Automating Pitch must retune a stroke that is already ringing, for the

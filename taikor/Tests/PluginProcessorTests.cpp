@@ -137,7 +137,7 @@ void testParameterLayoutAndDefaults()
         { pids::velocityDepth, 0.75f },  { pids::tensionModulation, 0.4f },
         { pids::strikeNoise, 0.35f },    { pids::humanise, 0.4f },
         { pids::octaveBody, 0.7f },      { pids::micDistance, 16.0f },
-        { pids::micSpread, 0.55f },      { pids::stereoWidth, 0.6f },
+        { pids::micSpread, 0.55f },      { pids::stereoWidth, 0.5f },
         { pids::drive, 0.0f },           { pids::output, -10.0f },
     }};
 

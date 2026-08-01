@@ -153,8 +153,15 @@ struct EngineParameters
     // and amplitudes of every mode with a circumferential order, so the pair
     // decorrelates for real rather than through a delay or a reverb.
     float micSpread { 0.55f };
-    // Final width trim on the resulting pair, 0 = mono sum, 1 = full spread.
-    float stereoWidth { 0.6f };
+    // Width trim on the resulting pair. At 0.5 the two channels are exactly
+    // what the microphones picked up, which is the default: this instrument's
+    // image comes from the model, so widening it by default would be widening
+    // a real measurement for effect. Below that it folds towards mono, and 0 is
+    // an exact mono sum. Above it the side signal is deliberately exaggerated
+    // past what the pair captured - useful, but with the microphones close
+    // together over the head it can push strokes out of phase, exactly as
+    // pushing a real wide spaced pair through a widener does.
+    float stereoWidth { 0.5f };
     // Gentle output-stage saturation, 0 = exactly bypassed.
     float drive { 0.0f };
     // Linear output gain.
@@ -284,6 +291,9 @@ private:
     // A resonator is dropped from the render once its envelope has fallen this
     // far below the level it started at.
     static constexpr float modeRetirementFloor = 1.0e-7f;
+    // Fade applied to a voice that reaches the hard tail cap while still
+    // audible. Long enough to be inaudible, short against the shortest cap.
+    static constexpr float forcedFadeSeconds = 0.060f;
 
     struct MembraneModeEntry
     {
@@ -381,6 +391,13 @@ private:
         // control tick so the envelope never runs away.
         float handGain { 1.0f };
 
+        // A low-loss drum can ring far longer than the tail the host is told
+        // to expect, so a voice still has to end at the cap - but it has to be
+        // faded out over the last few tens of milliseconds rather than cut,
+        // or the truncation is a click and the shared DC blocker rings for it.
+        float retireGain { 1.0f };
+        float retireStep { 0.0f };
+
         // The drum's total tuning offset, in semitones, when this stroke was
         // struck - the Pitch control and the wheel together. The voice's modes
         // already carry that much, so only the change since then has to be
@@ -435,6 +452,11 @@ private:
         // wooden bank into a pair of bachi rather than a drum body.
         float shellFrequencyScale { 1.0f };
         float shellDecayScale { 1.0f };
+        // Whether this stroke's resonant bank is the drum's own body. The
+        // stick-on-stick stroke borrows the same machinery to make two pieces
+        // of wood ring, but it never touches the drum, so the control for how
+        // much the body colours a head stroke must not reach it.
+        bool usesDrumBody { true };
     };
 
     // The physical drum, resolved from the parameters for one octave. Every
@@ -545,6 +567,12 @@ private:
     // done once per parameter change rather than once per stroke.
     std::array<DrumState, highestOctaveOffset - lowestOctaveOffset + 1> drumCache_ {};
     bool drumCacheValid_ { false };
+    // The wheel position the cache was built at. Comparing against this rather
+    // than against the per-sample increment matters at high sample rates, where
+    // the increment falls below any sensible epsilon long before the glide has
+    // actually arrived - leaving the cache stale, and new strokes flat, by up
+    // to a quarter of a semitone.
+    float drumCacheBend_ { 0.0f };
 
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };

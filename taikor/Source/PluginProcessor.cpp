@@ -249,7 +249,7 @@ TaikorAudioProcessor::createParameterLayout()
         ids::micDistance, "Mic Distance", ids::minimumMicDistanceCentimetres,
         ids::maximumMicDistanceCentimetres, 16.0f, 0.5f));
     result.push_back (makePercentParameter (ids::micSpread, "Mic Spread", 0.55f));
-    result.push_back (makePercentParameter (ids::stereoWidth, "Stereo Width", 0.6f));
+    result.push_back (makePercentParameter (ids::stereoWidth, "Stereo Width", 0.5f));
     result.push_back (makePercentParameter (ids::drive, "Drive", 0.0f));
 
     result.push_back (std::make_unique<juce::AudioParameterFloat> (

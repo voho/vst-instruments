@@ -119,7 +119,7 @@ a voicing offset.
 | --- | --- | --- | --- |
 | Mic Distance | 3–40 cm | 16 cm | How far the pair stands off the head |
 | Mic Spread | 0–100 % | 55 % | How far apart the two microphones sit across the head |
-| Stereo Width | 0–100 % | 60 % | Width trim. 0 is mono; 50 % is exactly what the pair picked up |
+| Stereo Width | 0–100 % | 50 % | Width trim. 50 % is exactly what the pair picked up, and is the default; 0 is an exact mono sum; above 50 % exaggerates the side signal past the measurement |
 | Drive | 0–100 % | 0 % | Output-stage saturation, exactly bypassed at 0 |
 | Output | −24 to +6 dB | −10.0 dB | Output level |
 
@@ -210,8 +210,17 @@ On top of that, each microphone hears the impact **through the air** from
 wherever the stick landed, at its own distance and so at its own level and its
 own arrival time. That is what places a stroke somewhere on the drum rather than
 in the middle of it, and it is what keeps a spaced pair in phase on an edge
-strike that the membrane modes alone would cancel. Every stroke is
-mono-compatible; the regression suite checks that for all twelve.
+strike that the membrane modes alone would cancel.
+
+Up to and including the default 50 % width — everything the microphones actually
+captured — no stroke ever inverts, anywhere in the microphone range: the worst
+case across all twelve strokes, both microphone controls fully swept, is a
+correlation of about −0.03, which is a decorrelated pair rather than an
+out-of-phase one. The regression suite sweeps that whole space. Past 50 % the
+width control exaggerates the side signal beyond the measurement, and with the
+pair close in and fully opened that can push strokes out of phase — the same
+thing that happens when a real wide spaced pair is pushed through a widener, and
+worth a phase check if the mix has to fold down.
 
 ### Octave Body
 

@@ -229,7 +229,8 @@ const TaikoEngine::StrikeProfile& TaikoEngine::strikeProfile (
         { 0.99f, 1.30f, 0.06f, 0.86f, 1.45f, 0.70f, 0.00f, 1, 0.45f, 1.0f, 0.55f }, // Katsu
         { 0.62f, 0.80f, 0.74f, 0.20f, 1.60f, 0.62f, 0.55f, 7, 0.00f, 1.0f, 1.0f },  // Buzz
         { 0.10f, 1.00f, 1.00f, 0.20f, 1.05f, 1.00f, 0.00f, 2, 0.00f, 1.0f, 1.0f },  // Flam
-        { 0.00f, 1.70f, 0.00f, 1.00f, 1.20f, 0.55f, 0.00f, 1, 0.00f, 5.4f, 0.16f }, // Bachi
+        { 0.00f, 1.70f, 0.00f, 1.00f, 1.20f, 0.55f, 0.00f, 1, 0.00f, 5.4f, 0.16f,
+          false }, // Bachi: two sticks, not the drum
     }};
 
     const auto index = static_cast<std::size_t> (articulation);
@@ -535,6 +536,8 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.contactRemaining = 0u;
     voice.ageSamples = 0;
     voice.handGain = 1.0f;
+    voice.retireGain = 1.0f;
+    voice.retireStep = 0.0f;
     voice.peakLevel = 0.0f;
     voice.tensionEnvelope = 0.0f;
     voice.appliedTensionShift = 1.0f;
@@ -697,6 +700,7 @@ void TaikoEngine::refreshDrumIfNeeded() noexcept
         drumCache_[static_cast<std::size_t> (octave - lowestOctaveOffset)] =
             resolveDrum (octave);
 
+    drumCacheBend_ = pitchBend_;
     drumCacheValid_ = true;
 }
 
@@ -1059,7 +1063,10 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     // how much of the body colours an ordinary head stroke, but it never
     // silences the body completely: hitting wood makes a sound whatever the
     // player has decided about sympathetic ring.
-    const float shellGain = profile.shellGain * (0.30f + 0.70f * drum.shellLevel)
+    const float bodyLevel = profile.usesDrumBody
+        ? (0.30f + 0.70f * drum.shellLevel)
+        : 1.0f;
+    const float shellGain = profile.shellGain * bodyLevel
                           + profile.rimGain * 0.35f;
 
     for (int index = 0; index < shellResonatorCount; ++index)
@@ -1497,6 +1504,17 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
 
 void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
 {
+    // Arm the forced fade once the hard cap is close enough that the voice
+    // would otherwise be cut while still sounding.
+    if (voice.retireStep <= 0.0f)
+    {
+        const auto fadeSamples =
+            static_cast<std::uint64_t> (forcedFadeSeconds * sampleRate_);
+        if (voice.maximumSamples > fadeSamples
+            && voice.ageSamples + fadeSamples >= voice.maximumSamples)
+            voice.retireStep = 1.0f / static_cast<float> (fadeSamples);
+    }
+
     // Retire the modes that have fallen below the floor. They are stored in
     // descending order of lifetime, so this is a walk from the end.
     while (voice.activeModeCount > 0
@@ -1646,6 +1664,18 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
     left += membraneLeft * voice.handGain;
     right += membraneRight * voice.handGain;
 
+    // The forced fade at the tail cap. Zero step until the cap is in sight, so
+    // an ordinary stroke - which retires because its modes ran out, not because
+    // it hit the cap - never touches this.
+    if (voice.retireStep > 0.0f)
+    {
+        voice.retireGain -= voice.retireStep;
+        if (voice.retireGain < 0.0f)
+            voice.retireGain = 0.0f;
+        left *= voice.retireGain;
+        right *= voice.retireGain;
+    }
+
     ++voice.ageSamples;
 
     const float magnitude = std::max (std::abs (left), std::abs (right));
@@ -1687,9 +1717,9 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
     for (int sample = 0; sample < numSamples; ++sample)
     {
         handDamping_ += handDampingCoefficient_ * (handDampingTarget_ - handDamping_);
-        const float previousBend = pitchBend_;
         pitchBend_ += pitchBendCoefficient_ * (pitchBendTarget_ - pitchBend_);
-        if (std::abs (pitchBend_ - previousBend) > 1.0e-5f)
+        // A tenth of a cent, measured against where the cache actually stands.
+        if (std::abs (pitchBend_ - drumCacheBend_) > 0.0005f)
             drumCacheValid_ = false;
 
         // Up to about 26 dB per second of extra loss at full pressure, which
@@ -1803,8 +1833,15 @@ void TaikoEngine::process (float* left, float* right, int numSamples) noexcept
                 return result;
             };
 
-            outLeft = shape (outLeft * amount, driveAdaaLeft_) * makeup;
-            outRight = shape (outRight * amount, driveAdaaRight_) * makeup;
+            // Blended against the dry signal rather than switched into, so the
+            // control converges on bypass as it approaches zero. Driving into
+            // tanh alone jumps to a fully shaped signal at the first nonzero
+            // step, because the shaper's gain approaches one rather than the
+            // identity.
+            const float wetLeft = shape (outLeft * amount, driveAdaaLeft_) * makeup;
+            const float wetRight = shape (outRight * amount, driveAdaaRight_) * makeup;
+            outLeft += smoothedDrive_ * (wetLeft - outLeft);
+            outRight += smoothedDrive_ * (wetRight - outRight);
         }
         else
         {
