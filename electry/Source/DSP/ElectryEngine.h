@@ -364,6 +364,13 @@ private:
         std::array<double, apertureHistorySize> cumulativeHistory {};
         double cumulative { 0.0 };
         int writeIndex { 0 };
+        // The window is a property of the pickup and the string, so it is
+        // clamped, split and inverted once when the voice is configured rather
+        // than on every sample of every pickup of every string. The division
+        // this removes was the only one left in the pickup path.
+        int windowWhole { 8 };
+        double windowFraction { 0.0 };
+        double inverseWindow { 1.0 / 8.0 };
 
         void reset() noexcept
         {
@@ -372,37 +379,54 @@ private:
             writeIndex = 0;
         }
 
-        // Defined here rather than in the .cpp so it inlines into the per-voice
-        // render loop, where it runs once per pickup per string per sample.
-        float process(float input, float lengthSamples) noexcept
+        void setWindow(float lengthSamples) noexcept
         {
-            static_assert((apertureHistorySize & (apertureHistorySize - 1)) == 0,
-                          "aperture history must be a power of two");
-            constexpr int mask = apertureHistorySize - 1;
             lengthSamples = lengthSamples < 1.0f
                 ? 1.0f
                 : (lengthSamples > static_cast<float>(apertureHistorySize - 2)
                        ? static_cast<float>(apertureHistorySize - 2)
                        : lengthSamples);
+            windowWhole = static_cast<int>(lengthSamples);
+            windowFraction = static_cast<double>(lengthSamples)
+                           - static_cast<double>(windowWhole);
+            inverseWindow = 1.0 / static_cast<double>(lengthSamples);
+        }
+
+        // Defined here rather than in the .cpp so it inlines into the per-voice
+        // render loop, where it runs once per pickup per string per sample.
+        float process(float input) noexcept
+        {
+            static_assert((apertureHistorySize & (apertureHistorySize - 1)) == 0,
+                          "aperture history must be a power of two");
+            constexpr int mask = apertureHistorySize - 1;
 
             cumulative += static_cast<double>(input);
             cumulativeHistory[static_cast<std::size_t>(writeIndex)] = cumulative;
 
-            const int whole = static_cast<int>(lengthSamples);
-            const double fraction = static_cast<double>(lengthSamples)
-                                  - static_cast<double>(whole);
-            const int recentIndex = (writeIndex - whole) & mask;
+            const int recentIndex = (writeIndex - windowWhole) & mask;
             const int olderIndex = (recentIndex - 1) & mask;
             const double recent =
                 cumulativeHistory[static_cast<std::size_t>(recentIndex)];
             const double older =
                 cumulativeHistory[static_cast<std::size_t>(olderIndex)];
-            const double delayed = recent + fraction * (older - recent);
+            const double delayed = recent + windowFraction * (older - recent);
 
             writeIndex = (writeIndex + 1) & mask;
-            return static_cast<float>((cumulative - delayed)
-                                      / static_cast<double>(lengthSamples));
+            return static_cast<float>((cumulative - delayed) * inverseWindow);
         }
+    };
+
+    // A read at a delay that only changes when the voice is reconfigured: the
+    // pickup position taps and the coupled string's bridge tap. Their
+    // interpolation weights are a function of the delay alone, so they are
+    // solved once instead of being rebuilt from a clamp, a floor and eight
+    // polynomial multiplies on every sample of every string.
+    struct DelayTap
+    {
+        int offset { 4 };
+        float c0 { 0.0f }, c1 { 1.0f }, c2 { 0.0f }, c3 { 0.0f };
+
+        void setDelay(float delaySamples) noexcept;
     };
 
     // One transverse polarisation of a string: a single-delay-loop waveguide
@@ -469,9 +493,11 @@ private:
 
         void clear() noexcept;
 
-        // The fractional read runs six times per string per sample (two loop
-        // reads plus two taps for each selected pickup). Defining it here lets
-        // it inline into the render loop instead of costing a call each time.
+        // The fully general read: the delay it is given moves every sample, so
+        // its interpolation weights have to be rebuilt each time. Only the two
+        // loop reads need that; the fixed pickup taps use readTap() below.
+        // Defining it here lets it inline into the render loop instead of
+        // costing a call each time.
         [[nodiscard]] float readFractional(float delaySamples) const noexcept
         {
             constexpr float maximumDelay = static_cast<float>(delayLineSize - 8);
@@ -495,6 +521,21 @@ private:
                     + y3 * (tPlus1 * t * tMinus1)) * (1.0f / 6.0f)
                  + (y1 * (tPlus1 * tMinus1 * tMinus2)
                     - y2 * (tPlus1 * t * tMinus2)) * 0.5f;
+        }
+
+        // The same third-order Lagrange read as above with its weights already
+        // solved. Four multiplies instead of the clamp, floor and eight-product
+        // polynomial, and its fractional position is derived from the delay
+        // itself rather than from a difference against a five-digit write
+        // index, so it is the more accurate of the two as well.
+        [[nodiscard]] float readTap(const DelayTap& tap) const noexcept
+        {
+            constexpr int mask = delayLineSize - 1;
+            const int index = writeIndex - tap.offset;
+            return tap.c0 * line[static_cast<std::size_t>((index - 1) & mask)]
+                 + tap.c1 * line[static_cast<std::size_t>(index & mask)]
+                 + tap.c2 * line[static_cast<std::size_t>((index + 1) & mask)]
+                 + tap.c3 * line[static_cast<std::size_t>((index + 2) & mask)];
         }
 
         void writeAdd(float offsetSamples, float value) noexcept;
@@ -635,7 +676,6 @@ private:
         int artifactCollisionRemaining { 0 };
         int artifactCollisionLength { 0 };
         float artifactClearance { 1.0f };
-        std::uint32_t artifactCollisionCount { 0 };
         ModalResonator saddleRattle {};
 
         // Damping ramp applied by note release and palm muting.
@@ -649,12 +689,10 @@ private:
         int startDelaySamples { 0 };
 
         // Pickup taps and per-string pickup colouring.
-        float pickupDelayNeck { 20.0f };
-        float pickupDelayBridge { 6.0f };
+        DelayTap pickupTapNeck {};
+        DelayTap pickupTapBridge {};
         FractionalMovingAverage apertureNeck {};
         FractionalMovingAverage apertureBridge {};
-        float apertureNeckLength { 8.0f };
-        float apertureBridgeLength { 8.0f };
         float previousFluxNeck { 0.0f };
         float previousFluxBridge { 0.0f };
         OnePole emfLowpassNeck {};
@@ -662,6 +700,12 @@ private:
         // Per-string magnetic balance, hoisted out of the sample loop: it
         // depends only on the string and the pickup geometry.
         float fluxScale { 1.0f };
+
+        // How much the two polarisations exchange per rendered sample. It is
+        // solved from the per-reflection constant and the loop length, so the
+        // exchange per round trip is the same at every pitch and every host
+        // rate. Resolved with the pitch, not per sample.
+        float polarisationCoupling { 0.0f };
 
         // Per-articulation constants, resolved once per attack instead of
         // being re-selected by a switch on every rendered sample.
@@ -674,8 +718,7 @@ private:
         // extra memory and cannot form a feedback loop: only voices with
         // `active` set drive the bridge bus, and only inactive voices read it.
         bool sympatheticReady { false };
-        float sympatheticDelay { 100.0f };
-        float sympatheticPickupDelay { 8.0f };
+        DelayTap sympatheticPickupTap {};
         float sympatheticPreviousFlux { 0.0f };
         float sympatheticEnergy { 0.0f };
         OnePole sympatheticEmf {};
@@ -730,6 +773,28 @@ private:
     }
     static float lerp(float a, float b, float t) noexcept { return a + (b - a) * t; }
     static float onePolePhaseDelay(float coefficient, float omega) noexcept;
+    // Magnitude of the loop's one-pole loss filter, and the coefficient whose
+    // magnitude ratio between the fundamental and the high reference matches a
+    // requested ratio of decay times. Both the played strings' damping solve
+    // and the bridge-coupled strings' run through these, so the two cannot
+    // disagree about what a string's frequency-dependent loss is.
+    static float onePoleMagnitude(float coefficient, float omega) noexcept;
+    static float solveOnePoleDamping(float magnitudeRatio, float omega0,
+                                     float omegaHigh) noexcept;
+    // A pair of decay targets is not always realisable: the one-pole's own
+    // loss at the fundamental has to be paid for out of the loop gain, and
+    // that gain cannot exceed one. This solves the pair, and where it does not
+    // fit it backs the high-frequency target off toward the fundamental's -
+    // which is always feasible - until it does, so the fundamental's decay is
+    // never the thing that gets thrown away.
+    static void solveLoopLoss(float t60Fundamental, float t60High,
+                              float periodSamples, float sampleRate,
+                              float omega0, float omegaHigh, float gainCeiling,
+                              float& coefficientOut, float& gainOut) noexcept;
+    // How much faster a string's content at the high reference decays than its
+    // fundamental, for the current string set and build. Shared for the same
+    // reason: a coupled string is the same piece of steel as a played one.
+    [[nodiscard]] float highFrequencyDecayRatio(int stringIndex) const noexcept;
     static void handLossResponse(float depth, const HandLossShape& shape,
                                  float omega, float& magnitude,
                                  float& phase) noexcept;
@@ -918,6 +983,10 @@ private:
     float displayLevelRelease_ { 0.08f };
     float emfScale_ { 34.7f };
     float emfLowpassCoefficient_ { 0.2f };
+    // The two polarisations' fixed detuning offset, calibrated at the 96 kHz
+    // internal clock and scaled so it stays the same fraction of a period -
+    // that is, the same number of cents - at every host rate.
+    float horizontalDetuneSamples_ { 0.11f };
 
     // Artifact shaping constants, evaluated once per control tick.
     float artifactContactShape_ { 0.0f };

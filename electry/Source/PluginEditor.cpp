@@ -982,9 +982,12 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
            "Picking spot: close to the bridge toward over the neck");
     setup (pickHardnessKnob, pickHardness,
            "Plectrum stiffness and edge: soft and round toward hard and sharp");
-    setup (bendTimeKnob, bendTime, "Travel time of keyswitched finger bends");
+    setup (bendTimeKnob, bendTime,
+           "Travel time of a pitch-wheel bend: how long the strings take to "
+           "reach the wheel rather than snapping to it");
     setup (muteDampingKnob, muteDamping,
-           "Palm-mute strength for the Muted play style");
+           "Palm-mute strength for the Palm mute play style: loose half-mute "
+           "toward a tight metal chug");
     setup (velocityKnob, velocity, "How strongly MIDI velocity drives the pluck");
     setup (pickNoiseKnob, pickNoise, "Plectrum contact and scrape level");
     setup (fingerNoiseKnob, fingerNoise, "Fretting-hand contact level");

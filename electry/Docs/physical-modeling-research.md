@@ -14,7 +14,7 @@ level-matched blind listening.
 | Block | Reference | What Electry 1.0 implements | Precise claim |
 | --- | --- | --- | --- |
 | String core | Karjalainen, Välimäki, and Tolonen's single-delay-loop condensation of digital waveguides | Eight independent strings in Drop-E tuning, each with two transverse-polarisation single-delay-loop waveguides, third-order Lagrange fractional reads, and a contractive bridge coupling matrix | The published SDL string family with two coupled polarisations per string; not a bidirectional multi-rail scattering simulation |
-| Two-stage decay and beating | Two-polarisation string behavior described in the same plucked-string literature | The polarisation parallel to the body carries a 1.7x longer decay target and a sub-cent detune, so the mixed output beats slowly and decays in two stages | A qualitative reproduction of the documented mechanism with voiced constants; not calibrated polarisation data from a measured instrument |
+| Two-stage decay and beating | Two-polarisation string behavior described in the same plucked-string literature | The polarisation parallel to the body carries a 1.7x longer decay target and a sub-cent detune, so the mixed output beats slowly and decays in two stages. Both the detune and the exchange between the polarisations are fractions of a round trip rather than fixed numbers of samples, so neither follows the host clock; the loop filter's own two-frequency fit still does, leaving a measured 4.5 dB residual spread across 44.1-192 kHz at the top of the range | A qualitative reproduction of the documented mechanism with voiced constants; not calibrated polarisation data from a measured instrument |
 | Stiffness dispersion | Stiff-string inharmonicity `B = pi^3 E d^4 / (64 T L^2)` (Fletcher and Rossing) and robust factored allpass design practice (Rauhala and Välimäki; Abel and Smith) | A per-note `B` from string diameter, effective wound-core bending fraction, scale length, and tension drives an eight-stage factored first-order cascade; two coefficients are fitted jointly at low and high partials, with exact fundamental phase compensation | A physically derived, bounded two-band fit whose regression error is under 20% at both references for the worst heavy Drop-E case; not a capture-fitted very-high-order piano dispersion filter |
 | Loop damping and tuning | Decay-time-targeted loop-filter design from the plucked-string literature; a dry electric low-E reference recording for the targets themselves | Per-string, per-fret one-pole loop filters solved by bisection from independent T60 targets at the fundamental and a high reference frequency, with all loop-filter phase delays compensated analytically at the fundamental. The wound strings' fundamental targets are tens of seconds and their high-frequency ratio two orders of magnitude smaller, following the reference | Decay-targeted loop design with exact fundamental tuning (regression bound: under 8 cents across E1..D6 at tested host rates through 384 kHz), whose fundamental and high-frequency targets are calibrated against one reference recording; not per-partial measured decay matching across a fretboard, and not a model of the reference instrument |
 | Dead spots | Fleischer's electric-guitar dead-spot studies relating neck conductance to decay time | A per-string fret-position Gaussian that locally shortens decay, deepened by the bolt-on end of the construction axis | The documented mechanism direction with voiced positions and depths; not measured conductance maps of specific instruments |
@@ -26,7 +26,7 @@ level-matched blind listening.
 | Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Structural bridge displacement is differentiated before four double-precision, peak-normalised modal resonators and a 4 kHz guard, producing body-induced voltage before the loaded pickup coils; positive real modal conductance across each note's first six partials can only shorten loop T60 | Geometry-informed structural pickup voltage plus passive mode-dependent energy extraction; not undifferentiated acoustic body displacement mixed into pickup voltage, and the mode tables remain voicing estimates rather than measured admittance data |
 | Construction controls | Solid-body material/geometry contrasts, humbucker vs single-coil construction, set-neck vs bolt-on, and modern extended-range scale practice | Wood, size, shape, construction, and pickup type interpolate between contrasting reference voicings; scale length spans 25.5 to 28 inches for Drop-E | Parametrized construction and extended-range voicing; not a licensed or capture-verified reproduction of a named instrument |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, and release damping noise, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
-| Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with its own T60-derived loop filter, exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
+| Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with a loop filter solved from the same pair of decay targets a played string of the same steel gets - the high-frequency one backed off toward the fundamental's wherever the pair would ask the loop for a gain above unity, so the fundamental's target is never the one given up - exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
 | Bridge-hand damping | Palm-muting practice, the same decay-targeted loop design, and dry muted power-chord reference recordings for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; the raw hand rate is multiplied by three at the high reference and divided by twenty-two at the fundamental, an effective 66:1 ratio between the two fitted points, because a contact near the bridge removes far more energy from high modes than from a fundamental that barely moves there; a relief that large only works paired with a band of loss centred on five times the fundamental, which removes the harmonics the longer tail would otherwise let ring - alone, each of the two is worse than neither; the Palm Mute style (whose depth the Mute Damp control spans from a loose half-mute to a tight chug) and the continuous pressure are one absorber at different depths and combine the same way, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as an additive loss with reference-calibrated depths and a bounded, conservative frequency tilt, applied identically to every play style; not a distributed hand/string contact solve or a resolved mode-shape weighting |
 | Strum travel | Ordinary plectrum kinematics | Note-ons inside a 35 ms window are treated as one stroke; the first string fixes the edge the pick starts from and every further string's excitation is delayed by the travel time per string crossed | Constant-velocity pick travel across the string plane; not a model of pick angle, chord voicing, or the player's hand position |
 | Pitch-wheel bar | The elastic string-tension relation `dF/F = dT/2T` with `dT = E A dl/l` (Fletcher and Rossing) applied to a whole-bridge stretch, as a vibrato bar applies it | The wheel stretches every string - fingered and sympathetically ringing alike - over a nominal +/-2 semitone range; each string's share follows its elastic core stiffness against its tension (which reduces to core-fraction squared over open frequency squared for one scale length), compressed toward the two-to-one spread measured on real tremolo bridges and normalised so the most compliant string spans the full range; the strings travel over the Bend Time glide rather than snapping | The documented per-string compliance direction with a voiced compression exponent; not a model of a specific bridge's geometry, spring balance, or friction |
@@ -59,7 +59,8 @@ The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
    read, eight factored first-order dispersion allpasses jointly fitted from
    the string's physical inharmonicity at two partials, a one-pole damping filter solved from T60 targets,
    and a release/mute gain ramp. A contractive bridge matrix exchanges a
-   small amount of energy between the polarisations.
+   small, fixed fraction of the wave between the polarisations per round trip
+   of the string, not per rendered sample.
 3. The loop delay compensates the exact phase delay of every loop filter at
    the sounding fundamental. Hammer-on glides, the pitch wheel, and
    tension modulation move the delay target; a short smoother keeps the
@@ -97,7 +98,9 @@ The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
    plucked voices' bridge force is accumulated into a bus that the coupled
    strings read one sample later, which removes any dependence on voice order
    and any algebraic loop. Each coupled string reuses its own otherwise idle
-   delay line at its open pitch with a T60-derived loop filter and exact
+   delay line at its open pitch with a loop filter solved from the same two
+   decay targets - the fundamental and the wound/plain high-frequency ratio -
+   that the same string gets when it is played, with exact
    fundamental phase compensation, is bounded by a rational soft limit, and is
    read through a bridge-position tap and an induced-EMF difference before
    joining the pickup sums. Because only `active` voices write the bus and only
@@ -170,8 +173,41 @@ Real strings vibrate in two transverse polarisations that decay differently
 and detune slightly, which produces beating and two-stage decay. Electry's
 horizontal loop targets a 1.7x longer T60 and a fraction-of-a-cent detune,
 and both loops exchange energy through the contractive bridge matrix
-`[[1-c, c], [c, 1-c]]` with `c = 0.004`, whose eigenvalues never exceed one.
-The constants are voicing decisions; the mechanism is the documented one.
+`[[1-c, c], [c, 1-c]]`, whose eigenvalues never exceed one.
+
+The two polarisations meet where the string is terminated - the saddle and the
+nut or fret - so the exchange is charged **per round trip**, not per rendered
+sample: `c = 0.04 / N` for a loop of `N` samples. Charging a fixed `c = 0.004`
+on every sample instead made the exchange proportional to the loop length,
+which is proportional to the sample rate and inversely proportional to the
+pitch. Measured, that worked out at 33% of the wave per round trip at the top
+of the range and over 900% on the open low E, so the low strings' two
+polarisations were averaged into one long before they could produce the
+two-stage decay they exist for; and because the matrix is contractive and the
+two loops have different lengths, the mismatch was dissipated. The 22nd-fret
+high E then sat 55.7 dB under its own attack a second later against a fitted
+T60 of eight seconds, and it did so 22 dB differently on a 44.1 kHz host than
+on a 96 kHz one. Per round trip it is one number at every pitch and every host
+rate: `0.04` was chosen from a sweep of 0.33, 0.16, 0.08, 0.04 and 0.02 in
+which everything at or below the open G3 moves by under 0.3 dB in every decay
+window while the top of the range gains monotonically. The rate and the value
+are voicing decisions; the mechanism is the documented one.
+
+The horizontal detune is likewise expressed as a fraction of the period rather
+than as a fixed number of samples, for the same reason: a bare 0.11-sample
+offset made the beat rate follow the host clock, 45% faster at 48 kHz than at
+192 kHz on the top string.
+
+Neither change makes the model exactly rate-invariant, and the residual belongs
+in the record rather than in a footnote. What is left is the loop filter itself:
+a one-pole fitted at two frequencies expressed in normalised radians is a
+different filter shape at a different sample rate, and no amount of expressing
+the coupling per round trip changes that. Measured on the 22nd-fret high E, the
+1-2 s level relative to its own attack reads -20.03, -19.29 and -15.51 dB at
+44.1, 48 and 96 kHz: a 4.5 dB spread, against 32.7 dB (-54.47 / -55.65 /
+-22.94 dB) before. The regression bound is deliberately set at that scale -
+under 3 dB through 1.5 s and under 8 dB through 3 s - rather than at something
+tighter the model cannot honour.
 
 ## Stiffness dispersion
 
@@ -252,11 +288,49 @@ the output with a resonator bank.
 
 The plucked voices accumulate their bridge-bound wave `0.5 (v + h)` into a bus.
 Every string that no note owns reuses its own otherwise idle delay line as a
-single-polarisation waveguide tuned to its open pitch, solves its loop gain
-from the same T60 machinery the played strings use, compensates the loop
-filter's phase delay at the fundamental, and is read through a
-bridge-position tap and an induced-EMF difference before joining the pickup
-sums. The bus is read one sample late, which makes the result independent of
+single-polarisation waveguide tuned to its open pitch, solves its loop filter
+from the same two decay targets the played strings use - the fundamental's T60
+and the same wound/plain high-frequency ratio, through the same bisection -
+compensates the loop filter's phase delay at the fundamental, and is read
+through a bridge-position tap and an induced-EMF difference before joining the
+pickup sums.
+
+Sharing the decay law matters: a coupled string is the same piece of steel as a
+played one. The fixed one-pole this replaced was a mild lowpass whatever the
+string (0.45 at the default string age), so the wound strings' top end, which
+a played low E loses inside a tenth of a second, rang for over three seconds in
+the coupled bank. Measured on the coupled ring left by a picked open A2, energy
+between 1.5 and 6 kHz sat 37.8 dB under the 60-700 Hz band; solved from the
+string it sits 87.1 dB under. The coupled bank now reads as strings ringing
+rather than as a bright plate.
+
+The two targets are two constraints on one first-order filter and one scalar,
+and they are not independent, which is the part that has to be handled
+explicitly rather than assumed away. A one-pole steep enough to meet a demanding
+high-frequency target has its pole close to the unit circle, where its own
+magnitude at a low fundamental collapses toward `(1 - a)/w0`; the loop gain that
+would have to buy that back exceeds one, and a loop gain above one is not
+available. Solving the ratio and then clamping the gain keeps the tilt and
+silently throws the fundamental's target away with it - which is the wrong trade
+in both directions, because the top end is lost either way and now the note is
+too. Measured, that clamp turned the coupled open low E's 8.97 s target into a
+realised 0.099 s at String Age 1.0, and every coupled string into an 8-to-53 ms
+click under the bridge hand.
+
+What can be given up is the tilt. A high-frequency target equal to the
+fundamental's is always solvable - the ratio is one, the pole is at zero, the
+filter is unity everywhere and the loop gain is exactly the fundamental's, which
+is below one for any positive T60 - so a bracket always exists, and feasibility
+is monotone in the high target because a gentler tilt only moves the pole toward
+zero. The engine bisects that bracket for the darkest realisable filter that
+still leaves the fundamental where the reference put it. This is where the
+coupled solve genuinely differs from the played one: a played string's solve
+carries the bridge-hand loss dip inside the same loop and backs *that* off
+instead when the pair does not fit, because the dip is the term the references
+put a tolerance on. The two paths share the loss law, the ratio law and the
+bisection; they do not share which term gives way.
+
+The bus is read one sample late, which makes the result independent of
 the order the voices happen to be rendered in.
 
 The stability argument is structural rather than numerical: only voices with
@@ -1287,6 +1361,14 @@ of an open string that the played note does not itself produce, exact bypass
 and never-configured coupled loops at 0%, coupling determinism, a coupled
 string handed back to the player when it is picked, and bounded, ring-out-to-
 exact-silence behaviour at maximum coupling across three host rates;
+a decay envelope that agrees across 44.1, 48, 88.2, 96 and 192 kHz to within
+3 dB in every window through 1.5 s, a polarisation exchange that is one number
+per round trip at every pitch with neither of its clamps engaged, a 22nd-fret
+high E that still sustains on 44.1, 48 and 96 kHz hosts, a coupled ring whose
+kilohertz band sits 60 dB or more under its low band, and coupled loops whose
+realised round-trip decay - read back from the gain and coefficient they
+actually run - holds its fundamental target at String Age 1.0 and at half and
+full bridge-hand pressure, to the same value on 44.1, 48 and 96 kHz hosts;
 monotonic palm-mute decay contraction, an exact no-op at zero pressure, an
 in-tune heavily muted string, the solved loop coefficient actually moving, and
 CC 2 pressure including hostile input; strum travel offsets in physical string

@@ -141,7 +141,20 @@ All Sound Off and All Notes Off.
   inharmonicity (diameter, effective wound core, scale length,
   tension), and a contractive bridge coupling. The horizontal polarisation
   decays 1.7x slower and is detuned by a fraction of a cent, giving the
-  natural two-stage decay and slow beating. Loop-filter phase is
+  natural two-stage decay and slow beating. Both that detune and the exchange
+  between the two polarisations are fractions of a round trip rather than fixed
+  numbers of samples, which is most of what makes the decay envelope the same
+  at every host rate: charged per rendered sample instead, they left the
+  22nd-fret high E 36.5 dB under its own attack half a second later on a
+  44.1 kHz host and 14.5 dB under it on a 96 kHz one, and dissipated the
+  mismatch between the two loop lengths as loss rather than exchanging it -
+  36 dB of the top string's sustain, against its own fitted decay target. It is
+  most of it rather than all of it, and the remainder is worth naming: the loop
+  filter itself is a one-pole interpolating between two fitted frequencies in
+  normalised radians, which is not exactly rate-invariant. The 22nd-fret high E
+  measures 20.0, 19.3 and 15.5 dB under its attack at 1-2 s on 44.1, 48 and
+  96 kHz hosts - a 4.5 dB residual spread, against 32.7 dB before. The regression
+  bound is 3 dB through 1.5 s and 8 dB through 3 s. Loop-filter phase is
   compensated analytically, holding the fundamental within a few cents
   across the fretboard at 44.1-384 kHz. At host rates through 96 kHz the
   complete physical and nonlinear signal path runs internally at 2x and is
@@ -238,7 +251,20 @@ All Sound Off and All Notes Off.
 - **Sympathetic bridge coupling:** every string you are not fingering is a
   real waveguide, not a resonator bank. The plucked strings' bridge force is
   summed into a one-sample-delayed bus that drives the idle strings' own loops
-  at their open pitch, with their own damping and their own bridge pickup tap.
+  at their open pitch, with their own bridge pickup tap and with their loop
+  filter solved from the same two decay targets a played string of the same
+  steel gets - its fundamental's T60 and the same wound/plain high-frequency
+  ratio. That last part is what makes the bank read as strings rather than as a
+  bright plate: a fixed loss coefficient left the wound strings' top end -
+  which a played low E loses inside a tenth of a second - ringing for over three
+  seconds, and the coupled ring's 1.5-6 kHz band sat 37.8 dB under its
+  60-700 Hz band where it now sits 87.1 dB under. The two targets are not always
+  both reachable: a one-pole steep enough to hit the high one costs gain at the
+  fundamental, and the loop gain cannot exceed one. Where they collide - which
+  is most of the range above String Age 0.8 and anywhere the bridge hand is on
+  the strings - the high-frequency target is bisected back toward the
+  fundamental's until the pair fits, so a coupled string always decays at the
+  rate its steel says and only the top of the tilt is given up.
   Only played voices write to the bus and only idle voices read it, so the
   coupling graph is acyclic and unconditionally stable at any coupling gain;
   each coupled loop additionally carries a bounded soft limit. The bridge hand
@@ -298,7 +324,16 @@ All Sound Off and All Notes Off.
   hardware, distinct from the Sympathetic Ring control above, which vibrates
   the actual strings. At 0% it is exactly bypassed and silent; the 18% default
   is intentionally subtle.
-- **Cost:** the model only pays for what is audible. A pickup the selector has
+- **Cost:** the model only pays for what is audible. The four pickup position
+  taps read at a delay that only moves when the voice is reconfigured, so their
+  interpolation weights are solved there instead of being rebuilt from a clamp,
+  a floor and an eight-product polynomial on every sample of every string; the
+  magnetic aperture window is split and inverted in the same place, which
+  removes the last division from the pickup path. Together those took the
+  eight-string render at 96 kHz from 0.190x to 0.166x realtime worst case
+  (Both + Stereo), 0.146x to 0.129x at the default Bridge + Mono, and a
+  full-throw wheel glide on the same chord from 0.210x to 0.172x. A pickup the
+  selector has
   faded out is skipped outright, including its two fractional reads, aperture
   window, flux polynomial and induced-EMF guard. Mono runs one shared coil, DC
   and decimation chain instead of two and mirrors it, which is exact because
@@ -379,7 +414,7 @@ every platform rather than only inside a host.
 - **Cost.** Stereo at 48 kHz, best of three runs: 0.003x realtime with all five
   controls at zero, the same with only the compressor, delay and room open, and
   0.048x with the oversampled gain block engaged. For reference the eight-string
-  model itself runs at roughly 0.21-0.27x realtime at 96 kHz.
+  model itself runs at roughly 0.13-0.17x realtime at 96 kHz.
 
 ## Guitar construction axes
 
