@@ -825,6 +825,8 @@ void YouKnow106Engine::updateProcessingRate() noexcept
     latencyPadLeft_.fill(0.0f);
     latencyPadRight_.fill(0.0f);
     latencyPadWriteIndex_ = 0;
+    oversamplingQuietSamples_ =
+        std::max(1, static_cast<int>(sampleRate_ * outputPathQuietSeconds));
     chorus_.prepare(oversampledRate_);
     dcCoefficient_ = static_cast<float>(
         std::exp(-2.0 * 3.14159265358979323846 * 12.0 / oversampledRate_));
@@ -840,15 +842,33 @@ bool YouKnow106Engine::applyPendingOversamplingIfIdle() noexcept
 {
     if (oversamplingRequested_ == oversamplingEnabled_)
         return true;
-    if (anyVoiceActive_)
+    // The last voice retiring is not the same as the instrument being quiet.
+    // The delay lines still hold up to their longest setting, the decimators
+    // their own group delay, and the output coupling decays with a time
+    // constant of its own -- and changing the rate empties all of them. So the
+    // change waits until what is left in them has left.
+    if (anyVoiceActive_ || oversamplingIdleSamples_ < oversamplingQuietSamples_)
         return false;
 
     oversamplingEnabled_ = oversamplingRequested_;
     updateProcessingRate();
+    clearOutputPath();
+    return true;
+}
+
+// Everything downstream of the voices: the delay lines, the decimation stages,
+// the output coupling and the latency pad. Emptied together, because emptying
+// one and not the others leaves a discontinuity where they meet.
+void YouKnow106Engine::clearOutputPath() noexcept
+{
     firstDecimator_.reset();
     secondDecimator_.reset();
     chorus_.reset();
-    return true;
+    dcInput_ = 0.0f;
+    dcOutput_ = 0.0f;
+    latencyPadLeft_.fill(0.0f);
+    latencyPadRight_.fill(0.0f);
+    latencyPadWriteIndex_ = 0;
 }
 
 double YouKnow106Engine::totalLatencySamples(int factor) noexcept
@@ -905,9 +925,7 @@ void YouKnow106Engine::reset()
     for (int index = 0; index < maxVoices; ++index)
         voices_[static_cast<std::size_t>(index)].cardIndex = index;
 
-    firstDecimator_.reset();
-    secondDecimator_.reset();
-    chorus_.reset();
+    clearOutputPath();
     clearHeldNotes();
 
     lfoPhase_ = 0.0f;
@@ -918,10 +936,8 @@ void YouKnow106Engine::reset()
     // a hold left over from the previous run would be skipped.
     lfoDelayHoldoff_ = 0.0f;
     lfoScanCountdown_ = 0;
+    scanCountdown_ = 0;
     anyKeyDown_ = false;
-    latencyPadLeft_.fill(0.0f);
-    latencyPadRight_.fill(0.0f);
-    latencyPadWriteIndex_ = 0;
     noiseState_ = 0x6d2b79f5u;
     // Both the live value and the target, or a run that stopped with the bender
     // pushed over would start the next one there: hosts are not obliged to
@@ -943,10 +959,11 @@ void YouKnow106Engine::reset()
     displayEnvelope_ = 0.0f;
     displayLfo_ = 0.0f;
     displayVoiceMask_ = 0;
-    dcInput_ = 0.0f;
-    dcOutput_ = 0.0f;
     driftControlCountdown_ = 0;
     panelGlidePrimed_ = false;
+    // A reset leaves nothing in the output path, so a quality change asked for
+    // before the first block does not have to wait for one that never comes.
+    oversamplingIdleSamples_ = oversamplingQuietSamples_;
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,6 +1018,18 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
     // are applied straight to the samples glide towards their new positions in
     // the render loop instead, so nothing here steps them at a block boundary.
     activeParameters_ = targetParameters_;
+}
+
+// Constant rate in pitch: a wider leap takes proportionally longer, rather than
+// every glide finishing in the same time. Zero means the control is off, and a
+// note steps straight to its pitch.
+float YouKnow106Engine::glideStepPerScan(float portamento) noexcept
+{
+    const float secondsPerOctave = portamentoSeconds(portamento);
+    if (!(secondsPerOctave > 0.0f))
+        return 0.0f;
+    return static_cast<float>(
+        12.0 / (static_cast<double>(secondsPerOctave) * controlScanHz));
 }
 
 int YouKnow106Engine::voiceLimit() const noexcept
@@ -1189,14 +1218,13 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     voice.velocity = velocity;
     voice.generation = ++generation_;
     voice.controlCountdown = 0;
-    voice.scanCountdown = 0;
     voice.energy = 0.0f;
 
     const float target = static_cast<float>(midiNote + parameters.keyTranspose);
     voice.targetMidi = target;
 
-    const float secondsPerOctave = portamentoSeconds(parameters.portamento);
-    if (secondsPerOctave > 0.0f)
+    voice.glideSemitonesPerScan = glideStepPerScan(parameters.portamento);
+    if (voice.glideSemitonesPerScan > 0.0f)
     {
         // With nothing to glide from, the note starts where it is asked to.
         // Leaving the voice at its constructed pitch would make the first note
@@ -1205,15 +1233,10 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
             voice.currentMidi = hasLastPlayedMidi_
                 ? lastPlayedMidi_ + static_cast<float>(parameters.keyTranspose)
                 : target;
-        // Constant rate in pitch: a wider leap takes proportionally longer,
-        // rather than every glide finishing in the same time.
-        voice.glideSemitonesPerScan = static_cast<float>(
-            12.0 / (static_cast<double>(secondsPerOctave) * controlScanHz));
     }
     else
     {
         voice.currentMidi = target;
-        voice.glideSemitonesPerScan = 0.0f;
     }
 
     if (!wasSounding || retrigger)
@@ -1365,6 +1388,11 @@ void YouKnow106Engine::allNotesOff()
     sustainPedalDown_ = false;
     for (auto& voice : voices_)
         silenceVoice(voice);
+    // A hard stop has to be silent now, not once the delay lines have run out.
+    // Cutting the voices alone would leave the chorus playing back the last
+    // few milliseconds of a held chord after the panic.
+    clearOutputPath();
+    oversamplingIdleSamples_ = oversamplingQuietSamples_;
     updateActiveVoiceCount();
 }
 
@@ -1507,6 +1535,13 @@ void YouKnow106Engine::updateVoiceScan(Voice& voice,
     // transpose control takes a held note with it.
     if (voice.rootMidi >= 0)
         voice.targetMidi = static_cast<float>(voice.rootMidi + parameters.keyTranspose);
+
+    // Taken from the control as it stands, not from what it read when the key
+    // went down. The glide rate is a resistance in the pitch integrator's path,
+    // and turning that control while a note is sliding changes the slide --
+    // including turning it off, which lands the note on its pitch at the next
+    // scan rather than leaving it crawling.
+    voice.glideSemitonesPerScan = glideStepPerScan(parameters.portamento);
 
     if (voice.glideSemitonesPerScan > 0.0f)
     {
@@ -1803,6 +1838,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     {
         float outputLeft = 0.0f;
         float outputRight = 0.0f;
+        bool sounding = false;
 
         // Two decimation stages at 4x, one at 2x, none at 1x. The inner loop
         // renders one oversampled frame.
@@ -1822,6 +1858,17 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
             advanceLfo(parameters);
             const float lfo = lfoValue_ * lfoDelayLevel_;
+
+            // One converter serves the whole instrument, so every voice is
+            // rewritten by the same pass rather than each keeping its own
+            // schedule from whenever its key went down. A note struck between
+            // passes waits for the next one -- which is why the shortest usable
+            // attack on this instrument is a scan interval and not the
+            // published figure, and why two keys struck a millisecond apart
+            // still speak together.
+            const bool scanPass = --scanCountdown_ <= 0;
+            if (scanPass)
+                scanCountdown_ = scanPeriodSamples;
 
             if (--driftControlCountdown_ <= 0)
             {
@@ -1856,16 +1903,12 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     continue;
 
                 // --- Converter scan -----------------------------------------
-                // The whole instrument shares one converter, so a voice's
-                // pitch, envelope and cutoff are only rewritten when the scan
-                // reaches it. This is why slow bends and vibrato staircase, and
-                // why the shortest usable attack is a scan pass rather than the
-                // published 1.5 ms.
-                if (--voice.scanCountdown <= 0)
-                {
-                    voice.scanCountdown = scanPeriodSamples;
+                // A voice's pitch, envelope and cutoff are only rewritten when
+                // the scan reaches it. This is why slow bends and vibrato
+                // staircase, and why the shortest usable attack is a scan pass
+                // rather than the published 1.5 ms.
+                if (scanPass)
                     updateVoiceScan(voice, parameters, lfo);
-                }
 
                 // The hold capacitor's own slew turns the scan's staircase back
                 // into a continuous control voltage before it reaches the
@@ -1893,6 +1936,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     && !voice.keyDown && !voice.sustained
                     && vcaGain(voice.vcaControl) <= 0.0f)
                     silenceVoice(voice);
+                else
+                    sounding = true;
             }
 
             displayEnvelope_ = loudestEnvelope;
@@ -1941,6 +1986,13 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
         }
 
         applyLatencyPad(outputLeft, outputRight);
+
+        // How long the voices have been gone, which is what a pending quality
+        // change waits on: the output path needs that long to run dry.
+        if (sounding)
+            oversamplingIdleSamples_ = 0;
+        else if (oversamplingIdleSamples_ < oversamplingQuietSamples_)
+            ++oversamplingIdleSamples_;
 
         glidedVolume_ += (parameters.volume - glidedVolume_) * outputGlide;
         const float volume = glidedVolume_ * glidedVolume_;

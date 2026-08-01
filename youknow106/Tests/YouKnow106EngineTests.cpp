@@ -780,6 +780,158 @@ void testContinuousControlsDoNotStepAtBlockBoundaries()
            "the glided volume never reached its new setting");
 }
 
+void testNotesWaitForTheSharedConverterScan()
+{
+    // One converter serves every voice, so a key struck between passes cannot
+    // be heard until the next one reaches it -- and two keys struck inside the
+    // same pass speak together rather than a fraction of a scan apart. A
+    // per-voice schedule started at each note-on gives neither.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine engine;
+    // No oversampling, so the internal rate is the host rate and the pass
+    // interval can be counted in output samples directly.
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    engine.setParameters(parameters);
+
+    // The documented converter pass, taken from the service note rather than
+    // from the engine, so this measures the model against the figure it claims.
+    const int scanPeriod = static_cast<int>(sampleRate * 0.0042);
+    expect(scanPeriod > 150, "the scan interval is too short for this fixture");
+
+    std::vector<float> left(blockSize, 0.0f);
+    std::vector<float> right(blockSize, 0.0f);
+    const auto run = [&](int count) {
+        engine.process(left.data(), right.data(), count);
+        return peakOf(std::vector<float>(left.begin(), left.begin() + count), 0);
+    };
+
+    // The first pass falls on the first rendered sample, so this lands the
+    // playhead midway between passes with the next one still ahead.
+    run(scanPeriod / 2);
+
+    engine.noteOn(60, 1.0f);
+    const double duringGap = run(scanPeriod / 4);
+    engine.noteOn(67, 1.0f);
+    const double stillWaiting = run(scanPeriod / 8);
+
+    expectNear(duringGap, 0.0, 1.0e-9,
+               "a note sounded before the converter scan reached it");
+    expectNear(stillWaiting, 0.0, 1.0e-9,
+               "the second note did not wait for the same pass as the first");
+
+    // And once the pass arrives, both are speaking.
+    const double afterScan = run(scanPeriod);
+    expect(afterScan > 0.01, "the notes never sounded after the scan pass");
+}
+
+void testPortamentoRateFollowsItsControl()
+{
+    // The glide rate is set by a control in the pitch integrator's path, not
+    // latched when the key went down. Turning it down mid-glide has to shorten
+    // the slide, and turning it off has to land the note at the next scan.
+    constexpr double sampleRate = 96000.0;
+    const auto glideTo = [&](bool switchOffMidway) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        // Unison keeps it monophonic, so the glide is one unambiguous slide.
+        parameters.keyMode = KeyMode::Unison;
+        parameters.portamento = 0.8f;
+        engine.setParameters(parameters);
+
+        engine.noteOn(48, 1.0f);
+        render(engine, static_cast<int>(sampleRate * 0.3));
+        engine.noteOn(72, 1.0f);
+        const auto midway = render(engine, static_cast<int>(sampleRate * 0.1));
+        const double partway = measuredFrequency(midway.left, midway.left.size() / 2,
+                                                 sampleRate);
+
+        if (switchOffMidway)
+        {
+            parameters.portamento = 0.0f;
+            engine.setParameters(parameters);
+        }
+        const auto after = render(engine, static_cast<int>(sampleRate * 0.05));
+        return std::pair<double, double> {
+            partway, measuredFrequency(after.left, after.left.size() / 2, sampleRate) };
+    };
+
+    const double destination = 440.0 * std::pow(2.0, (72 - 69) / 12.0);
+    const auto leftRunning = glideTo(false);
+    const auto switchedOff = glideTo(true);
+
+    // The fixture is only meaningful if the note really is still gliding when
+    // the control is moved.
+    expect(leftRunning.first < destination * 0.9,
+           "the glide had already finished before the control was moved");
+    expect(leftRunning.second < destination * 0.95,
+           "the glide finished on its own, so switching it off proves nothing");
+    expectNear(switchedOff.second, destination, destination * 0.01,
+               "turning portamento off mid-glide did not land the note");
+}
+
+void testQualityChangeWaitsForTheOutputPathToEmpty()
+{
+    // The last voice retiring is not the instrument going quiet: the delay
+    // lines still hold several milliseconds of it. Switching the processing
+    // rate empties them, so the switch has to wait for them to run dry.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.chorus = ChorusMode::Two;
+    engine.setParameters(parameters);
+    const int deepFactor = engine.getOversamplingFactor();
+    expect(deepFactor > 1, "the fixture needs the deeper quality setting running");
+
+    engine.noteOn(60, 1.0f);
+    render(engine, 8192);
+    engine.noteOff(60);
+    // Just past the point where the voices retire, with the lines still full.
+    for (int block = 0; block < 40 && engine.getActiveVoiceCount() > 0; ++block)
+        render(engine, blockSize);
+    expect(engine.getActiveVoiceCount() == 0, "the voice never retired");
+
+    expect(!engine.setOversamplingEnabled(false),
+           "the quality change applied while the delay lines were still full");
+    render(engine, blockSize);
+    expect(engine.getOversamplingFactor() == deepFactor,
+           "the quality change took effect before the output path had emptied");
+
+    // Once they have run dry it goes through by itself.
+    render(engine, static_cast<int>(sampleRate * 0.1));
+    expect(engine.getOversamplingFactor() == 1,
+           "the quality change never applied after the output path emptied");
+}
+
+void testHardStopSilencesTheWholeOutputPath()
+{
+    // All Sound Off and Panic mean silent now. Cutting the voices alone leaves
+    // the delay lines playing back the last few milliseconds of the chord.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.chorus = ChorusMode::Two;
+    // The modelled line hiss would mask the thing being measured, and it is
+    // not what the hard stop is being asked to remove.
+    parameters.chorusNoise = 0.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    const auto sounding = render(engine, 8192);
+    expect(peakOf(sounding.left, sounding.left.size() / 2) > 0.01,
+           "the fixture never made a sound to stop");
+
+    engine.allNotesOff();
+    const auto afterStop = render(engine, blockSize * 4);
+    expect(peakOf(afterStop.left, 0) < 1.0e-4,
+           "a hard stop left the delay lines playing the note back");
+    expect(peakOf(afterStop.right, 0) < 1.0e-4,
+           "a hard stop left the right channel ringing");
+}
+
 void testComponentDriftRateIsIndependentOfOversampling()
 {
     // The modelled component wander has to advance in seconds, not in internal
@@ -1220,6 +1372,10 @@ int main()
     testSubFlipsOnTheFirstWrap();
     testControllersReturnToNeutralOnReset();
     testContinuousControlsDoNotStepAtBlockBoundaries();
+    testNotesWaitForTheSharedConverterScan();
+    testPortamentoRateFollowsItsControl();
+    testQualityChangeWaitsForTheOutputPathToEmpty();
+    testHardStopSilencesTheWholeOutputPath();
     testComponentDriftRateIsIndependentOfOversampling();
     testTransposeReachesSoundingVoices();
     testFirstGlidedNoteStartsAtItsOwnPitch();

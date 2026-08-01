@@ -400,9 +400,10 @@ private:
         int rootMidi { -1 };
         int cardIndex { 0 };
         int controlCountdown { 0 };
-        int scanCountdown { 0 };
         std::uint64_t generation { 0 };
         float velocity { 0.0f };
+        // No per-voice scan schedule: one converter serves them all, so the
+        // pass that rewrites this voice is the engine's, not its own.
         float currentMidi { 60.0f };
         float targetMidi { 60.0f };
         float glideSemitonesPerScan { 0.0f };
@@ -459,6 +460,10 @@ private:
     void initialiseVoice(Voice& voice, int slot, int midiNote, float velocity,
                          bool retrigger) noexcept;
     void silenceVoice(Voice& voice) noexcept;
+    // Empties everything downstream of the voices.
+    void clearOutputPath() noexcept;
+    // Glide rate for a panel position, in semitones per converter scan.
+    [[nodiscard]] static float glideStepPerScan(float portamento) noexcept;
     // Lift the key on one slot: sustain it if the pedal is down, release it
     // otherwise. Every path that lets go of a note goes through here.
     void releaseVoiceKey(Voice& voice) noexcept;
@@ -528,7 +533,14 @@ private:
     int oversampling_ { 4 };
     bool oversamplingEnabled_ { true };
     bool oversamplingRequested_ { true };
+    // How long the voices have been silent, and how long the output path needs
+    // to run dry once they are: the delay lines' longest setting, the decimation
+    // stages' group delay and several time constants of the output coupling.
+    static constexpr double outputPathQuietSeconds = 0.04;
     int oversamplingIdleSamples_ { 0 };
+    int oversamplingQuietSamples_ { 1 };
+    // The shared converter's pass, counted in internal samples.
+    int scanCountdown_ { 0 };
     bool prepared_ { false };
     bool anyVoiceActive_ { false };
     int activeVoiceCount_ { 0 };
