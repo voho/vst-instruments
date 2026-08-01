@@ -38,11 +38,16 @@ The project builds three products from one JUCE codebase:
 ## Interface and controls
 
 Vocalor exposes 20 automatable host parameters. Every parameter keeps its
-identifier, default, and host ordering, so existing sessions recall in place.
-One range changed: **Ensemble size** used to advertise 2 – 16 while the engine
-quantised it to three tiers of 4, 8, or 12 singers, so a stored 16 silently
-rendered 12. It is now 2 – 12 and every value is honoured exactly. A session
-saved with a larger value recalls at 12, which is what it always sounded like.
+identifier, range, default, and host ordering, so existing sessions and any
+automation written against them recall in place.
+
+**Ensemble size** advertises 2 – 16 but used to quantise to three tiers of 4, 8,
+or 12 singers, so ten of its fifteen settings were silently identical to a
+neighbour. Every value from 2 to 12 is now rendered exactly. The engine carries
+12 singer identities, so 13 – 16 still render 12 — the published range is kept
+at 2 – 16 rather than narrowed, because a host stores automation as a normalised
+0 – 1 position and renumbering the range would move every existing lane onto a
+different singer count.
 
 | Parameter ID | Control | Range | Default | Added |
 | --- | --- | --- | --- | --- |
@@ -50,7 +55,7 @@ saved with a larger value recalls at 12, which is what it always sounded like.
 | `mode` | Performance mode | Solo / Choir / Chord | Solo | 1.0 |
 | `vowel` | Vowel anchor | AAH / OOH / UUH | AAH | 1.0 |
 | `chordQuality` | Chord quality | Major / Minor | Major | 1.0 |
-| `choirSize` | Ensemble size | 2 – 12 | 8 | 1.0 |
+| `choirSize` | Ensemble size | 2 – 16 (13 – 16 render 12) | 8 | 1.0 |
 | `breath` | Breath | 0 – 100 % | 30 % | 1.0 |
 | `resonance` | Resonance | 0 – 100 % | 64 % | 1.0 |
 | `vibrato` | Vibrato | 0 – 100 % | 38 % | 1.0 |
