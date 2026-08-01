@@ -34,6 +34,9 @@ jobs:
           - name: Electry
             directory: electry
             build_plugin_option: ELECTRY_BUILD_PLUGIN
+          - name: Taikor
+            directory: taikor
+            build_plugin_option: TAIKOR_BUILD_PLUGIN
     steps:
       - uses: actions/checkout@v4
 
@@ -69,6 +72,8 @@ jobs:
             directory: neuramar
           - name: Electry
             directory: electry
+          - name: Taikor
+            directory: taikor
     steps:
       - uses: actions/checkout@v4
 
