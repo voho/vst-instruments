@@ -126,7 +126,7 @@ double dominantLowPartial (TaikorAudioProcessor& processor, int midiNote,
 
     double best = -1.0;
     double bestFrequency = 0.0;
-    for (double frequency = 50.0; frequency < 320.0; frequency += 0.05)
+    for (double frequency = 35.0; frequency < 320.0; frequency += 0.05)
     {
         const double omega = 2.0 * 3.14159265358979 * frequency / sampleRate;
         const double coefficient = 2.0 * std::cos (omega);
@@ -185,17 +185,17 @@ void testParameterLayoutAndDefaults()
 
     namespace pids = taikor::parameters;
     const std::array<std::pair<const char*, float>, 22> expectedDefaults {{
-        { pids::headDiameter, 55.0f },   { pids::bodyDepth, 0.5f },
+        { pids::headDiameter, 95.0f },   { pids::bodyDepth, 0.5f },
         { pids::tension, 0.55f },        { pids::headMaterial, 0.75f },
         { pids::shellMaterial, 0.8f },   { pids::resonantTension, 0.5f },
-        { pids::cavityCoupling, 0.85f }, { pids::headDamping, 0.35f },
+        { pids::cavityCoupling, 0.85f }, { pids::headDamping, 0.50f },
         { pids::shellResonance, 0.4f },  { pids::pitch, 0.0f },
         { pids::bachiHardness, 0.7f },   { pids::strikePosition, 0.0f },
         { pids::velocityDepth, 0.75f },  { pids::tensionModulation, 0.4f },
         { pids::strikeNoise, 0.35f },    { pids::humanise, 0.4f },
         { pids::octaveBody, 0.7f },      { pids::micDistance, 16.0f },
         { pids::micSpread, 0.55f },      { pids::stereoWidth, 0.5f },
-        { pids::drive, 0.0f },           { pids::output, -10.0f },
+        { pids::drive, 0.0f },           { pids::output, -20.0f },
     }};
 
     for (const auto& [id, expected] : expectedDefaults)
@@ -205,20 +205,23 @@ void testParameterLayoutAndDefaults()
     // The engine block the processor hands the DSP must reflect the parameters,
     // including the two that are presented in centimetres.
     const auto engineParameters = processor.snapshotEngineParameters();
-    expect (std::abs (engineParameters.headDiameter - 0.55f) < 1.0e-4f,
+    expect (std::abs (engineParameters.headDiameter - 0.95f) < 1.0e-4f,
             "head diameter must reach the engine in metres");
     expect (std::abs (engineParameters.micDistance - (16.0f - 3.0f) / (40.0f - 3.0f))
                 < 1.0e-3f,
             "mic distance must reach the engine normalised");
     expect (std::abs (engineParameters.outputGain
-                      - juce::Decibels::decibelsToGain (-10.0f)) < 1.0e-4f,
+                      - juce::Decibels::decibelsToGain (-20.0f)) < 1.0e-4f,
             "output must reach the engine as a linear gain");
 
-    // The default drum must be the nagado-daiko the documentation describes.
+    // The default drum must be the o-daiko the documentation describes. This
+    // is the plug-in layer's half of the same statement the DSP suite makes:
+    // the instrument opens on its heaviest voice rather than an octave above
+    // it, because that is what a taiko is for.
     const auto measurements = processor.measureDrum (0);
-    expect (measurements.loadedFundamentalHz > 70.0f
-                && measurements.loadedFundamentalHz < 120.0f,
-            "the default drum is not in the nagado-daiko range");
+    expect (measurements.loadedFundamentalHz > 40.0f
+                && measurements.loadedFundamentalHz < 65.0f,
+            "the default drum is not in the o-daiko range");
     expect (measurements.breathingModeHz > measurements.loadedFundamentalHz,
             "the cavity must lift the breathing mode above the fundamental");
 }
@@ -494,10 +497,10 @@ void testParametersReachTheEngine()
             "the tension control must reach the engine");
     setParameterValue (processor, pids::tension, 0.55f);
 
-    setParameterValue (processor, pids::headDiameter, 100.0f);
+    setParameterValue (processor, pids::headDiameter, 160.0f);
     expect (fundamentalNow() < reference * 0.75f,
             "the head diameter control must reach the engine");
-    setParameterValue (processor, pids::headDiameter, 55.0f);
+    setParameterValue (processor, pids::headDiameter, 95.0f);
 
     setParameterValue (processor, pids::pitch, 12.0f);
     expect (std::abs (fundamentalNow() / reference - 2.0f) < 0.10f,
@@ -526,8 +529,13 @@ void testParametersReachTheEngine()
         return renderNote (processor, taikor::referenceNote, 0.9f, 8);
     };
 
-    const auto loud = peakAtOutput (0.0f);
-    const auto quiet = peakAtOutput (-12.0f);
+    // Both settings inside the control's linear region. A taiko has an enormous
+    // crest factor and this one models all of it, so the top of the Output
+    // range is deliberately far into the safety limiter - comparing a point up
+    // there against one below it would be measuring the limiter.
+    const auto loud = peakAtOutput (-12.0f);
+    const auto quiet = peakAtOutput (-24.0f);
+    expect (loud < 0.95f, "the louder of the two output checks must not limit");
     expect (quiet < loud * 0.6f, "the output control must scale the rendered audio");
     expect (loud > 1.0e-4f, "the output check rendered no audio to compare");
 

@@ -80,7 +80,7 @@ struct EngineParameters
     // --- The drum -------------------------------------------------------
     // Head diameter in metres. Sets the membrane radius directly, so it moves
     // pitch as 1/a while leaving the modal ratios (fixed Bessel zeros) alone.
-    float headDiameter { 0.55f };
+    float headDiameter { 0.95f };
     // Body depth as a fraction of the diameter, 0 -> 0.40, 1 -> 1.30. The
     // enclosed volume is what couples the two heads, so a shallow drum splits
     // its axisymmetric modes much further apart than a deep one.
@@ -106,7 +106,7 @@ struct EngineParameters
     // same amount of air in and out and cannot compress the cavity.
     float cavityCoupling { 0.85f };
     // Extra loss in the head on top of the material's own, 0..1.
-    float headDamping { 0.35f };
+    float headDamping { 0.50f };
     // Level of the wooden shell's own ring modes, 0..1.
     float shellResonance { 0.4f };
     // Musical transposition applied on top of the physics, in semitones. It
@@ -165,7 +165,7 @@ struct EngineParameters
     // Gentle output-stage saturation, 0 = exactly bypassed.
     float drive { 0.0f };
     // Linear output gain.
-    float outputGain { 0.5f };
+    float outputGain { 0.100000f };
 };
 
 // Snapshot of the drum for the editor's head display. Produced on the audio
@@ -273,6 +273,17 @@ private:
     static constexpr int shellResonatorCount = 6;
     static constexpr int resonatorCount =
         membraneResonatorCount + shellResonatorCount;
+    // Bands of the head's high-frequency modal continuum. Above a few hundred
+    // hertz a struck membrane has far more modes than can usefully be resolved
+    // one at a time - the spacing falls below their own bandwidth and the
+    // response stops being a set of peaks and becomes statistical. Resolving
+    // that region mode by mode would need hundreds of resonators; what it
+    // actually sounds like is a shaped noise burst that decays faster the
+    // higher it sits, which is what these bands are. Without them the model
+    // simply stopped at its highest resolved mode and the drum had no body
+    // above about three hundred hertz at all.
+    static constexpr int continuumBandCount = 5;
+
     // Free-free bending modes of one bachi, used by the stick-on-stick stroke.
     // It borrows the shell's slots in the bank because the two never sound
     // together, but it is a separate count so that changing one bank's size
@@ -310,21 +321,33 @@ private:
 
     // A single damped resonator. Coefficients are recomputed only when the
     // drum is retuned, so the inner loop is three multiplies and two adds.
+    // A two-pole resonator, in double precision.
+    //
+    // Not for elegance: a1 is -2 r cos(omega), which sits arbitrarily close to
+    // -2 as the mode's frequency falls against the sample rate, and the pair
+    // y[n-1], y[n-2] then very nearly cancel. Both effects consume mantissa in
+    // proportion to (rate / frequency)^2, and this instrument's lowest mode is
+    // around fifty hertz - one part in eight thousand at 384 kHz. In float that
+    // mistuned the drum by thirty cents there and by seven at 192 kHz, which is
+    // audible against anything else in the session. In double the same margin
+    // costs a handful of the fifty-three bits available and the drum stays in
+    // tune at every supported rate. The recursion is serial, so no vectorising
+    // is being given up for it.
     struct Resonator
     {
-        float a1 { 0.0f };
-        float a2 { 0.0f };
-        float b0 { 0.0f };
-        float y1 { 0.0f };
-        float y2 { 0.0f };
+        double a1 { 0.0 };
+        double a2 { 0.0 };
+        double b0 { 0.0 };
+        double y1 { 0.0 };
+        double y2 { 0.0 };
 
-        void clear() noexcept { y1 = y2 = 0.0f; }
+        void clear() noexcept { y1 = y2 = 0.0; }
         [[nodiscard]] float tick (float input) noexcept
         {
-            const float output = b0 * input - a1 * y1 - a2 * y2;
+            const double output = b0 * static_cast<double> (input) - a1 * y1 - a2 * y2;
             y2 = y1;
             y1 = output;
-            return output;
+            return static_cast<float> (output);
         }
     };
 
@@ -384,8 +407,37 @@ private:
         std::uint32_t contactLength { 0u };
         float contactAmplitude { 0.0f };
         float contactNoiseAmplitude { 0.0f };
+        // Amplitude of the stroke's first contact, so a later one can relight
+        // the continuum in proportion to it.
+        float contactReference { 0.0f };
         float noiseBandState { 0.0f };
         float noiseBandCoefficient { 0.5f };
+
+        // One band of the continuum: noise through a one-pole band-pass, under
+        // its own decaying envelope. It belongs to the head, so the hand damps
+        // it along with the resolved modes.
+        struct ContinuumBand
+        {
+            float lowStateLeft { 0.0f };
+            float highStateLeft { 0.0f };
+            float lowStateRight { 0.0f };
+            float highStateRight { 0.0f };
+            float lowCoefficient { 0.5f };
+            float highCoefficient { 0.5f };
+            float level { 0.0f };
+            float envelope { 0.0f };
+            float envelopeDecay { 0.99f };
+            // Kept so the strike can shade the band by how long the stick
+            // stayed on the head: a short contact reaches further up.
+            float centre { 0.0f };
+            // How much of the band the two microphones hear in common. A
+            // wavelength long against the spacing arrives at both alike; one
+            // short against it does not, so the top of the continuum is very
+            // nearly two independent signals and the bottom is one.
+            float common { 1.0f };
+            float independent { 0.0f };
+        };
+        std::array<ContinuumBand, continuumBandCount> continuum {};
 
         // Attack pitch glide. The head is stretched by the stroke, so its
         // tension - and every mode with it - starts sharp and settles.

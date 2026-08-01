@@ -117,6 +117,41 @@ struct TaikoEngineTestAccess
         return bank;
     }
 
+    // T60 of each membrane mode, ordered by frequency, for the voice just
+    // struck. The spread between the lowest two is what decides whether a
+    // stroke ends as a drum or as a sine.
+    static std::vector<float> membraneT60s (const TaikoEngine& engine)
+    {
+        std::vector<std::pair<float, float>> byFrequency;
+        const auto& voice = engine.voices_[0];
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (mode.membrane && mode.decayRate > 0.0f)
+                byFrequency.push_back ({ mode.omega, 6.9078f / mode.decayRate });
+        }
+        std::sort (byFrequency.begin(), byFrequency.end());
+
+        std::vector<float> result;
+        result.reserve (byFrequency.size());
+        for (const auto& entry : byFrequency)
+            result.push_back (entry.second);
+        return result;
+    }
+
+    // The continuum's band-pass corners, which is where a retune of the head
+    // shows up: the region is too broad and too short-lived to see it in the
+    // summed spectrum.
+    static std::vector<float> continuumCoefficients (const TaikoEngine& engine)
+    {
+        std::vector<float> result;
+        const auto& voice = engine.voices_[0];
+        for (const auto& band : voice.continuum)
+            if (band.level > 0.0f)
+                result.push_back (band.highCoefficient);
+        return result;
+    }
+
     static bool everyDecayIsFinite (const TaikoEngine& engine)
     {
         for (const auto& voice : engine.voices_)
@@ -334,9 +369,12 @@ double decayTime (const std::vector<float>& samples, double sampleRate,
 
 taikor::EngineParameters defaultParameters()
 {
-    taikor::EngineParameters parameters;
-    parameters.outputGain = 0.5f;
-    return parameters;
+    // Deliberately the shipping defaults, untouched. Overriding the output here
+    // used to be harmless because it restated the engine's own default; once
+    // the instrument grew loud enough to need a quieter one, the override left
+    // the whole suite running sixteen decibels hot and measuring the limiter
+    // rather than the model.
+    return taikor::EngineParameters {};
 }
 
 // A single stroke, rendered from a clean engine.
@@ -345,8 +383,8 @@ Rendered strike (taikor::EngineParameters parameters, taikor::Articulation artic
                  int blockSize = defaultBlockSize)
 {
     taikor::TaikoEngine engine;
-    engine.prepare (sampleRate, blockSize);
     engine.setParameters (parameters);
+    engine.prepare (sampleRate, blockSize);
     engine.reset();
     engine.trigger (articulation, octaveOffset, velocity);
     return render (engine, numSamples, blockSize);
@@ -413,8 +451,8 @@ void testArticulationMetadataAndMidiMapping()
     }
 
     taikor::TaikoEngine engine;
-    engine.prepare (48000.0, defaultBlockSize);
     engine.setParameters (defaultParameters());
+    engine.prepare (48000.0, defaultBlockSize);
 
     expect (! engine.triggerMidi (taikor::lowestPlayableNote - 1, 0.9f),
             "a note below the range must be rejected");
@@ -430,8 +468,8 @@ void testOctavesRaisePitch()
 {
     const auto parameters = defaultParameters();
     taikor::TaikoEngine engine;
-    engine.prepare (48000.0, defaultBlockSize);
     engine.setParameters (parameters);
+    engine.prepare (48000.0, defaultBlockSize);
 
     float previousLoaded = 0.0f;
     float previousBreathing = 0.0f;
@@ -576,8 +614,8 @@ void testSampleRateConsistency()
 
     // Hostile rates must be clamped rather than allowed to break the tuning.
     taikor::TaikoEngine engine;
-    engine.prepare (1.0, 64);
     engine.setParameters (parameters);
+    engine.prepare (1.0, 64);
     engine.trigger (taikor::Articulation::Don, 0, 0.9f);
     const auto rendered = render (engine, 512, 64);
     expect (rendered.finite, "an absurd sample rate must not produce non-finite audio");
@@ -589,8 +627,8 @@ void testVelocitySensitivity()
 {
     const auto parameters = defaultParameters();
     taikor::TaikoEngine engine;
-    engine.prepare (48000.0, defaultBlockSize);
     engine.setParameters (parameters);
+    engine.prepare (48000.0, defaultBlockSize);
 
     float previousContact = 0.0f;
     for (const float velocity : { 0.1f, 0.3f, 0.5f, 0.7f, 0.9f, 1.0f })
@@ -607,6 +645,8 @@ void testVelocitySensitivity()
 
     double previousPeak = 0.0;
     double previousBrightness = 0.0;
+    double softestBrightness = 0.0;
+    double hardestBrightness = 0.0;
 
     for (const float velocity : { 0.15f, 0.45f, 0.75f, 1.0f })
     {
@@ -614,23 +654,46 @@ void testVelocitySensitivity()
                                       48000.0, 24000);
         const auto mono = rendered.mono();
 
-        // Ratio of high-band to low-band energy over the attack.
-        const double low = binMagnitude (mono, 95.0, 48000.0, 0, 4800)
-                         + binMagnitude (mono, 134.0, 48000.0, 0, 4800);
+        // Ratio of high-band to low-band energy over the attack. The low pair
+        // is the drum the engine reports rather than two frequencies written
+        // for one particular default, so retuning the instrument cannot move
+        // the measurement off the partials it is watching.
+        const auto reported = taikor::TaikoEngine::measure (parameters, 0);
+        const double low =
+            binMagnitude (mono, reported.loadedFundamentalHz, 48000.0, 0, 4800)
+            + binMagnitude (mono, reported.breathingModeHz, 48000.0, 0, 4800);
+        // Integrated across the band rather than sampled at a few frequencies.
+        // Most of the drum's high-frequency energy is the head's modal
+        // continuum, which is stochastic by construction - it stands for
+        // hundreds of modes nobody can resolve - so any single bin of it is
+        // noisy enough to reverse a real trend. The band as a whole is not.
         double high = 0.0;
-        for (const double frequency : { 900.0, 1400.0, 2100.0, 3000.0 })
+        for (double frequency = 700.0; frequency < 6000.0; frequency *= 1.06)
             high += binMagnitude (mono, frequency, 48000.0, 0, 4800);
         const double brightness = high / std::max (low, 1.0e-9);
 
         expect (rendered.peak > previousPeak,
                 "a harder stroke must be louder");
-        expect (brightness > previousBrightness * 0.98,
+        // A large reversal would mean the contact law had stopped working; a
+        // small one is the continuum being what it is. The overall span is
+        // checked after the loop, which is the claim that actually matters.
+        expect (brightness > previousBrightness * 0.75,
                 "a harder stroke must not lose high partial content");
+        if (velocity <= 0.15f)
+            softestBrightness = brightness;
+        hardestBrightness = brightness;
         previousPeak = rendered.peak;
         previousBrightness = brightness;
     }
 
     expect (previousBrightness > 0.0, "brightness measurement failed to run");
+    // The claim the contact law actually makes: a full-arm stroke is markedly
+    // brighter than a ghost note. Stated across the whole range rather than
+    // step by step, because most of the drum's high-frequency energy is the
+    // head's modal continuum, which is stochastic and will not march in a
+    // straight line from one velocity to the next.
+    expect (hardestBrightness > softestBrightness * 1.40,
+            "a full-velocity stroke must be clearly brighter than a ghost note");
 
     // A softer bachi must be darker than a hard one at the same velocity.
     auto soft = parameters;
@@ -669,10 +732,14 @@ void testPhysicalParameterInfluence()
     expect (measure (looser).idealFundamentalHz < reference.idealFundamentalHz * 0.85f,
             "lowering the tension must lower the pitch");
 
+    // Stated against the drum this suite actually uses rather than as an
+    // absolute size, so it keeps testing the 1/a law if the default moves.
     auto bigger = base;
-    bigger.headDiameter = 1.10f;
-    expect (measure (bigger).idealFundamentalHz < reference.idealFundamentalHz * 0.6f,
-            "a bigger drum must be lower");
+    bigger.headDiameter = base.headDiameter * 1.5f;
+    const auto biggerRatio =
+        measure (bigger).idealFundamentalHz / reference.idealFundamentalHz;
+    expect (std::abs (biggerRatio - 1.0f / 1.5f) < 0.02f,
+            "a bigger drum must be lower in proportion to its radius");
 
     auto smaller = base;
     smaller.headDiameter = 0.20f;
@@ -761,8 +828,8 @@ void testStrikePositionShapesTheSpectrum()
                               48000.0, 36000);
 
     taikor::TaikoEngine engine;
-    engine.prepare (48000.0, defaultBlockSize);
     engine.setParameters (parameters);
+    engine.prepare (48000.0, defaultBlockSize);
     const auto measurements = engine.measureDrum (0);
 
     const auto centreMono = centre.mono();
@@ -786,7 +853,16 @@ void testStrikePositionShapesTheSpectrum()
 
     expect (edgeRatio > centreRatio * 2.0,
             "an edge stroke must carry far more upper partial energy than a centre one");
-    expect (decayTime (edgeMono, 48000.0, -40.0) < decayTime (centreMono, 48000.0, -40.0),
+    // Measured from after the attack rather than from the peak. The peak is the
+    // contact and the head's continuum answering it, which is loudest on
+    // exactly the edge strokes this is comparing - so a decay time referred to
+    // it is partly a measure of the transient rather than of the ring.
+    const auto sustainRatio = [] (const std::vector<float>& samples)
+    {
+        return windowedRms (samples, 24000u, 48000u)
+             / std::max (windowedRms (samples, 1440u, 4800u), 1.0e-12);
+    };
+    expect (sustainRatio (edgeMono) < sustainRatio (centreMono) * 0.6,
             "an edge stroke must die away sooner than a centre stroke");
 
     // The muted strokes must leave much less ringing behind them.
@@ -943,8 +1019,8 @@ void testTailsTerminateAndVoicesRetire()
 {
     auto parameters = defaultParameters();
     taikor::TaikoEngine engine;
-    engine.prepare (48000.0, defaultBlockSize);
     engine.setParameters (parameters);
+    engine.prepare (48000.0, defaultBlockSize);
 
     for (std::size_t index = 0; index < taikor::articulationCount; ++index)
         engine.trigger (static_cast<taikor::Articulation> (index), 0, 1.0f);
@@ -976,8 +1052,8 @@ void testVoiceStealingStaysBounded()
 {
     auto parameters = defaultParameters();
     taikor::TaikoEngine engine;
-    engine.prepare (48000.0, defaultBlockSize);
     engine.setParameters (parameters);
+    engine.prepare (48000.0, defaultBlockSize);
 
     // Far more simultaneous strokes than the voice pool holds.
     for (int index = 0; index < 200; ++index)
@@ -989,6 +1065,200 @@ void testVoiceStealingStaysBounded()
     expect (rendered.peak <= 1.0001, "voice stealing exceeded full scale");
     expect (engine.getActiveVoiceCount() <= 16,
             "the engine must not exceed its declared voice pool");
+}
+
+// What the instrument is supposed to sound like, stated as measurements.
+//
+// The complaint that produced these numbers was that the drum was "very tonal"
+// and should be "heavy, large, epic". Both halves of that are measurable, and
+// both had the same root: the reference drum was small, so its fundamental sat
+// near 94 Hz where the ear hears a pitch rather than a weight, and the
+// frequency-proportional loss in the hide let that one mode outlive every other
+// by nearly four to one. What is left after half a second of that is a sine.
+void testTheDrumSoundsLikeADrumAndNotLikeATone()
+{
+    const auto parameters = defaultParameters();
+    const auto measurements = taikor::TaikoEngine::measure (parameters, 0);
+
+    // Large. A taiko that reads as epic has its fundamental down where it is
+    // felt; a 90-odd hertz drum is a floor tom.
+    expect (measurements.loadedFundamentalHz > 40.0f
+                && measurements.loadedFundamentalHz < 65.0f,
+            "the reference drum's fundamental must sit in the register a large "
+            "taiko occupies, not an octave above it");
+
+    const auto rendered = strike (parameters, taikor::Articulation::Don, 0, 1.0f,
+                                  48000.0, 144384);
+    const auto mono = rendered.mono();
+
+    // Heavy, and with a body. Both halves matter and they pull against each
+    // other: a drum that is only weight is a sine, and one that is only body is
+    // a snare. The proportions here are what third-octave analysis of recorded
+    // taiko shows - a real one carries serious low end and is still nearly flat
+    // from a couple of hundred hertz up to a kilohertz.
+    double low = 0.0;
+    double body = 0.0;
+    double total = 0.0;
+    for (double frequency = 25.0; frequency < 8000.0;
+         frequency *= std::pow (2.0, 1.0 / 24.0))
+    {
+        const auto magnitude = binMagnitude (mono, frequency, 48000.0, 0u, 24000u);
+        total += magnitude;
+        if (frequency < 80.0)
+            low += magnitude;
+        // The region the resolved modal bank cannot reach on a large drum: its
+        // highest Bessel zero lands a couple of hundred hertz up, and without
+        // the head's continuum above that there is almost nothing here - four
+        // per cent of the stroke against the forty a real one carries.
+        if (frequency >= 250.0 && frequency < 4000.0)
+            body += magnitude;
+    }
+    expect (total > 0.0 && low > total * 0.22,
+            "a centre stroke must put real weight below eighty hertz");
+    expect (total > 0.0 && body > total * 0.25,
+            "a centre stroke must have a body between two hundred and fifty "
+            "hertz and four kilohertz, not just a fundamental");
+
+    // Not tonal. Count the twenty-fourth-octave bands that are within twenty
+    // decibels of the strongest one over the body of the stroke. A drum whose
+    // tail has collapsed onto a single partial scores in the low teens; a dense
+    // one scores twice that.
+    std::vector<double> bands;
+    for (double frequency = 40.0; frequency < 4000.0;
+         frequency *= std::pow (2.0, 1.0 / 24.0))
+        bands.push_back (binMagnitude (mono, frequency, 48000.0, 4800u, 19200u));
+
+    const auto strongest = *std::max_element (bands.begin(), bands.end());
+    int within20dB = 0;
+    for (const auto magnitude : bands)
+        if (magnitude > strongest * 0.1)
+            ++within20dB;
+
+    expect (within20dB >= 18,
+            "the body of a stroke must be a cluster of partials rather than one "
+            "surviving mode");
+
+    // And the mechanism behind that: no membrane mode may outlive the one above
+    // it by more than about three to one. This is the frequency-proportional
+    // loss in the hide being held in check by the rim, and it is what stops the
+    // stroke decaying into its own fundamental.
+    taikor::TaikoEngine engine;
+    engine.setParameters (parameters);
+    engine.prepare (48000.0, defaultBlockSize);
+    engine.trigger (taikor::Articulation::Don, 0, 1.0f);
+
+    const auto bank = taikor::TaikoEngineTestAccess::membraneT60s (engine);
+    expect (bank.size() >= 2, "a centre stroke must build more than one mode");
+    if (bank.size() >= 2)
+        expect (bank[0] < bank[1] * 3.0f,
+                "the lowest mode must not outlive the one above it so far that "
+                "the stroke ends as a sine");
+}
+
+// The head's continuum belongs to the head, so everything that happens to the
+// head has to reach it. Three things did not, and all three were invisible in
+// the resolved bank because that is not where most of the drum's high-frequency
+// energy lives any more.
+void testTheContinuumFollowsTheHead()
+{
+    const auto highBand = [] (const std::vector<float>& samples, std::size_t first,
+                              std::size_t last)
+    {
+        double total = 0.0;
+        for (double frequency = 700.0; frequency < 6000.0; frequency *= 1.06)
+            total += binMagnitude (samples, frequency, 48000.0, first, last);
+        return total;
+    };
+
+    auto parameters = defaultParameters();
+    parameters.humanise = 0.0f;
+
+    // A flam is two strikes. The second is the loud one and it lands 32 ms
+    // after the first, so it has to bring its own brightness rather than
+    // inheriting whatever is left of the grace note's.
+    {
+        const auto flam = strike (parameters, taikor::Articulation::Flam, 0, 1.0f,
+                                  48000.0, 96256).mono();
+        const auto grace = highBand (flam, 0u, 1200u);
+        const auto main = highBand (flam, 1536u, 2736u);
+        expect (grace > 0.0, "the flam's grace note made no high-frequency sound");
+        expect (main > grace * 1.5,
+                "a flam's main stroke must be brighter than its grace note, which "
+                "means every scheduled contact has to light the continuum");
+    }
+
+    // A press roll is seven, and each bounce is a real blow on the head.
+    {
+        const auto buzz = strike (parameters, taikor::Articulation::Buzz, 0, 1.0f,
+                                  48000.0, 96256).mono();
+        const auto first = highBand (buzz, 0u, 1200u);
+        const auto second = highBand (buzz, 1440u, 2640u);
+        expect (first > 0.0, "the press roll made no high-frequency sound");
+        expect (second > first * 0.2,
+                "each bounce of a press roll must relight the continuum rather "
+                "than living off the first contact's residue");
+    }
+
+    // Pitch and the wheel are head tension, and the continuum is the head, so a
+    // stroke that is already ringing has to be carried with the resolved bank
+    // rather than left standing under it.
+    //
+    // Checked on the filters rather than on the audio. The bands are wide and
+    // overlapping and the whole region is gone inside a couple of hundred
+    // milliseconds, so moving their centres by an octave changes the summed
+    // spectrum by less than the measurement noise - the effect is real and
+    // worth having for coherence, but it is not one a spectral test can resolve
+    // honestly, and an assertion that cannot fail is worse than none.
+    {
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.trigger (taikor::Articulation::Don, 0, 1.0f);
+        render (engine, 480);
+
+        const auto before = taikor::TaikoEngineTestAccess::continuumCoefficients (engine);
+        expect (! before.empty(), "the stroke built no continuum to retune");
+
+        auto raised = parameters;
+        raised.pitch = 12.0f;
+        engine.setParameters (raised);
+        render (engine, 480);
+
+        const auto after = taikor::TaikoEngineTestAccess::continuumCoefficients (engine);
+        expect (after.size() == before.size(),
+                "retuning must not change how many continuum bands there are");
+
+        bool everyBandRose = ! before.empty();
+        for (std::size_t index = 0; index < before.size() && index < after.size(); ++index)
+            everyBandRose = everyBandRose && after[index] > before[index] * 1.2f;
+
+        expect (everyBandRose,
+                "automating Pitch up must carry the ringing head's continuum up "
+                "with its modes");
+    }
+
+    // And the articulation's head gain must reach it exactly once. It is
+    // already inside the drive the continuum is measured against, so applying
+    // it again squared it and left the quiet strokes far darker than their
+    // profile asks for.
+    {
+        const auto brightnessOf = [&] (taikor::Articulation articulation)
+        {
+            const auto mono = strike (parameters, articulation, 0, 1.0f, 48000.0,
+                                      48128).mono();
+            const auto measurements = taikor::TaikoEngine::measure (parameters, 0);
+            const auto low =
+                binMagnitude (mono, measurements.loadedFundamentalHz, 48000.0, 0u, 4800u);
+            return highBand (mono, 0u, 4800u) / std::max (low, 1.0e-9);
+        };
+
+        // Su is a ghost stroke: much quieter than a Don, but struck the same way
+        // and so not fundamentally darker in proportion to itself.
+        expect (brightnessOf (taikor::Articulation::Su)
+                    > brightnessOf (taikor::Articulation::Don) * 1.5,
+                "a quiet articulation must not lose its continuum to a squared "
+                "head gain");
+    }
 }
 
 // Caching must be invisible. The engine keeps a resolved drum and a resolved
@@ -1054,16 +1324,16 @@ void testEveryParameterSurvivesTheCache()
 
             // A fresh engine that has only ever seen the new value.
             taikor::TaikoEngine fresh;
-            fresh.prepare (48000.0, defaultBlockSize);
             fresh.setParameters (after);
+            fresh.prepare (48000.0, defaultBlockSize);
             fresh.trigger (articulation, 0, 0.85f);
             const auto expected = taikor::TaikoEngineTestAccess::newestVoiceBank (fresh);
 
             // One that was used at the old value first, exactly as a player
             // would: strike, turn the control, strike again.
             taikor::TaikoEngine reused;
-            reused.prepare (48000.0, defaultBlockSize);
             reused.setParameters (before);
+            reused.prepare (48000.0, defaultBlockSize);
             reused.trigger (articulation, 0, 0.85f);
             render (reused, 2400);
             reused.setParameters (after);
@@ -1144,8 +1414,8 @@ void testRadiationEfficiencyStaysFinite()
         parameters.headDiameter = 0.20f;
 
         taikor::TaikoEngine engine;
-        engine.prepare (rate, defaultBlockSize);
         engine.setParameters (parameters);
+        engine.prepare (rate, defaultBlockSize);
 
         for (std::size_t index = 0; index < taikor::articulationCount; ++index)
             engine.trigger (static_cast<taikor::Articulation> (index),
@@ -1265,8 +1535,8 @@ void testStickStrokeIsIndependentOfTheDrum()
     const auto bankFor = [] (const taikor::EngineParameters& parameters, int octave)
     {
         taikor::TaikoEngine engine;
-        engine.prepare (48000.0, defaultBlockSize);
         engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
         engine.trigger (taikor::Articulation::Bachi, octave, 0.85f);
         return std::pair { taikor::TaikoEngineTestAccess::woodFrequencies (engine),
                            taikor::TaikoEngineTestAccess::woodDecays (engine) };
@@ -1335,16 +1605,16 @@ void testStickStrokeIsIndependentOfTheDrum()
     const auto drumReference = [&]
     {
         taikor::TaikoEngine engine;
-        engine.prepare (48000.0, defaultBlockSize);
         engine.setParameters (defaultParameters());
+        engine.prepare (48000.0, defaultBlockSize);
         engine.trigger (taikor::Articulation::Katsu, 0, 0.85f);
         return taikor::TaikoEngineTestAccess::woodFrequencies (engine);
     }();
     auto shifted = defaultParameters();
     shifted.shellMaterial = 0.0f;
     taikor::TaikoEngine drumEngine;
-    drumEngine.prepare (48000.0, defaultBlockSize);
     drumEngine.setParameters (shifted);
+    drumEngine.prepare (48000.0, defaultBlockSize);
     drumEngine.trigger (taikor::Articulation::Katsu, 0, 0.85f);
     const auto drumShifted = taikor::TaikoEngineTestAccess::woodFrequencies (drumEngine);
     expect (! drumReference.empty() && ! drumShifted.empty()
@@ -1377,8 +1647,8 @@ void testStickStrokeIsIndependentOfTheDrum()
 void testSimultaneousStrokesDoNotShareOneVoice()
 {
     taikor::TaikoEngine engine;
-    engine.prepare (48000.0, defaultBlockSize);
     engine.setParameters (defaultParameters());
+    engine.prepare (48000.0, defaultBlockSize);
 
     // Fill the pool and let it render, so every voice has a real level.
     for (int index = 0; index < 16; ++index)
@@ -1436,8 +1706,8 @@ void testDeterminismAndBlockPartitioning()
     humanised.humanise = 1.0f;
 
     taikor::TaikoEngine engine;
-    engine.prepare (48000.0, defaultBlockSize);
     engine.setParameters (humanised);
+    engine.prepare (48000.0, defaultBlockSize);
     engine.trigger (taikor::Articulation::Don, 0, 0.8f);
     const auto strokeA = render (engine, 12000);
     engine.allSoundsOff();
@@ -1449,8 +1719,8 @@ void testDeterminismAndBlockPartitioning()
     auto machine = parameters;
     machine.humanise = 0.0f;
     taikor::TaikoEngine tight;
-    tight.prepare (48000.0, defaultBlockSize);
     tight.setParameters (machine);
+    tight.prepare (48000.0, defaultBlockSize);
     tight.trigger (taikor::Articulation::Don, 0, 0.8f);
     const auto tightA = render (tight, 12000);
     tight.allSoundsOff();
@@ -1470,14 +1740,14 @@ void testPerformanceControls()
     // damped one that does not - which would pass whether the damping worked
     // or not.
     taikor::TaikoEngine open;
-    open.prepare (48000.0, defaultBlockSize);
     open.setParameters (parameters);
+    open.prepare (48000.0, defaultBlockSize);
     open.trigger (taikor::Articulation::Don, 0, 0.95f);
     const auto openTail = render (open, 48000 * 3).mono();
 
     taikor::TaikoEngine damped;
-    damped.prepare (48000.0, defaultBlockSize);
     damped.setParameters (parameters);
+    damped.prepare (48000.0, defaultBlockSize);
     damped.trigger (taikor::Articulation::Don, 0, 0.95f);
     render (damped, 4800);
     damped.setHandDamping (1.0f);
@@ -1493,15 +1763,15 @@ void testPerformanceControls()
     // glides rather than jumping, so the engine has to be run for the strings
     // of the smoother to arrive.
     taikor::TaikoEngine bent;
-    bent.prepare (48000.0, defaultBlockSize);
     bent.setParameters (parameters);
+    bent.prepare (48000.0, defaultBlockSize);
     bent.setPitchBend (1.0f);
     render (bent, 24000);
     const auto bentMeasurements = bent.measureDrum (0);
 
     taikor::TaikoEngine plain;
-    plain.prepare (48000.0, defaultBlockSize);
     plain.setParameters (parameters);
+    plain.prepare (48000.0, defaultBlockSize);
     const auto plainMeasurements = plain.measureDrum (0);
 
     expect (bentMeasurements.idealFundamentalHz > plainMeasurements.idealFundamentalHz,
@@ -1526,8 +1796,10 @@ void testPerformanceControls()
             "the drive stage must stay bounded");
 
     // Output gain must scale the result predictably.
+    // Half the default rather than an absolute figure, so the check stays a
+    // statement about the control and not about what the default happens to be.
     auto quiet = parameters;
-    quiet.outputGain = 0.25f;
+    quiet.outputGain = parameters.outputGain * 0.5f;
     const auto quietRendered = strike (quiet, taikor::Articulation::Don, 0, 0.95f,
                                        48000.0, 12000);
     const auto ratio = quietRendered.peak / std::max (cleanRendered.peak, 1.0e-9);
@@ -1679,8 +1951,8 @@ void testUiPresentationMath()
 void testIdleCostAndStressPerformance()
 {
     taikor::TaikoEngine engine;
-    engine.prepare (48000.0, defaultBlockSize);
     engine.setParameters (defaultParameters());
+    engine.prepare (48000.0, defaultBlockSize);
 
     // An idle drum must cost almost nothing: a track is silent most of the time.
     const auto idleStart = std::chrono::steady_clock::now();
@@ -1768,19 +2040,26 @@ void testControlEndpointsAndGestures()
         tuned.tensionModulation = 0.0f;
 
         taikor::TaikoEngine engine;
-        engine.prepare (48000.0, defaultBlockSize);
         engine.setParameters (tuned);
+        engine.prepare (48000.0, defaultBlockSize);
         engine.trigger (taikor::Articulation::Don, 0, 0.95f);
 
         const auto before = render (engine, 24000).mono();
         engine.setPitchBend (1.0f);
         const auto after = render (engine, 72000).mono();
 
+        // The search band follows the drum the engine reports rather than a
+        // range written for one particular default, so retuning the instrument
+        // cannot silently move the measurement off the partial it is watching.
+        const auto resting = engine.measureDrum (0).loadedFundamentalHz;
+        const auto low = static_cast<double> (resting) * 0.8;
+        const auto high = static_cast<double> (resting) * 1.6;
+
         const auto restingPitch =
-            dominantFrequency (before, 48000.0, 60.0, 200.0, 0.25, 2400u);
+            dominantFrequency (before, 48000.0, low, high, 0.05, 2400u);
         // Skip the glide itself and measure where the drum settled.
         const auto bentPitch =
-            dominantFrequency (after, 48000.0, 60.0, 200.0, 0.25, 16000u);
+            dominantFrequency (after, 48000.0, low, high, 0.05, 16000u);
         const auto semitones = 12.0 * std::log2 (bentPitch / restingPitch);
 
         expect (semitones > 1.5 && semitones < 2.5,
@@ -1840,8 +2119,8 @@ void testControlEndpointsAndGestures()
             constexpr int slamBlock = 3;
 
             taikor::TaikoEngine engine;
-            engine.prepare (48000.0, block);
             engine.setParameters (tuned);
+            engine.prepare (48000.0, block);
             engine.trigger (taikor::Articulation::Ka, 0, 0.95f);
 
             std::vector<float> left (static_cast<std::size_t> (block));
@@ -1891,8 +2170,8 @@ void testControlEndpointsAndGestures()
 
         constexpr double highRate = 384000.0;
         taikor::TaikoEngine engine;
-        engine.prepare (highRate, 512);
         engine.setParameters (tuned);
+        engine.prepare (highRate, 512);
 
         engine.setPitchBend (1.0f);
         render (engine, static_cast<int> (highRate * 1.5), 512);
@@ -1924,8 +2203,8 @@ void testControlEndpointsAndGestures()
         ringing.octaveBody = 1.0f;
 
         taikor::TaikoEngine engine;
-        engine.prepare (48000.0, defaultBlockSize);
         engine.setParameters (ringing);
+        engine.prepare (48000.0, defaultBlockSize);
 
         // The configuration has to actually outlast the cap, or this proves
         // nothing about what happens when a voice reaches it.
@@ -1948,7 +2227,11 @@ void testControlEndpointsAndGestures()
              ++index)
             amplitudeAtCap = std::max (amplitudeAtCap,
                                        std::abs (static_cast<double> (mono[index])));
-        expect (amplitudeAtCap > 1.0e-3,
+        // An absolute level, because that is what a cut here would put into the
+        // buffer as a step - and this configuration is loud enough to reach the
+        // limiter, so its peak is pinned at one and a ratio against it would be
+        // measuring the limiter rather than the drum.
+        expect (amplitudeAtCap > 1.0e-4,
                 "this drum is no longer audible at the cap, so the check is vacuous");
 
         double largestStep = 0.0;
@@ -2023,9 +2306,15 @@ void testControlEndpointsAndGestures()
         tuned.tensionModulation = 0.0f;
 
         taikor::TaikoEngine engine;
-        engine.prepare (48000.0, defaultBlockSize);
         engine.setParameters (tuned);
+        engine.prepare (48000.0, defaultBlockSize);
         engine.trigger (taikor::Articulation::Don, 0, 0.95f);
+
+        // Read before the automation moves, or the band is centred on where
+        // the drum ends up and cannot see where it started.
+        const auto resting = engine.measureDrum (0).loadedFundamentalHz;
+        const auto low = static_cast<double> (resting) * 0.8;
+        const auto high = static_cast<double> (resting) * 1.9;
 
         const auto before = render (engine, 24000).mono();
 
@@ -2035,9 +2324,9 @@ void testControlEndpointsAndGestures()
         const auto after = render (engine, 72000).mono();
 
         const auto restingPitch =
-            dominantFrequency (before, 48000.0, 60.0, 260.0, 0.25, 2400u);
+            dominantFrequency (before, 48000.0, low, high, 0.05, 2400u);
         const auto raisedPitch =
-            dominantFrequency (after, 48000.0, 60.0, 260.0, 0.25, 16000u);
+            dominantFrequency (after, 48000.0, low, high, 0.05, 16000u);
         const auto semitones = 12.0 * std::log2 (raisedPitch / restingPitch);
 
         expect (semitones > 6.0 && semitones < 8.0,
@@ -2057,28 +2346,63 @@ void testControlEndpointsAndGestures()
         // different lengths: the drum rings for seconds and a stick click is
         // gone in a tenth of a second. Measuring the click over the drum's
         // window compares silence with silence and proves nothing.
-        const auto tailEnergy = [&tuned] (taikor::Articulation articulation,
-                                          bool handDown, std::size_t first,
-                                          std::size_t last)
+        const auto tail = [&tuned] (taikor::Articulation articulation, bool handDown)
         {
             taikor::TaikoEngine engine;
-            engine.prepare (48000.0, defaultBlockSize);
             engine.setParameters (tuned);
+            engine.prepare (48000.0, defaultBlockSize);
             if (handDown)
                 engine.setHandDamping (1.0f);
             engine.trigger (articulation, 0, 0.95f);
-            const auto rendered = render (engine, 48000 * 2);
-            return windowedRms (rendered.mono(), first, last);
+            return render (engine, 48000 * 2).mono();
         };
 
-        const auto openHead =
-            tailEnergy (taikor::Articulation::Don, false, 24000u, 72000u);
-        const auto dampedHead =
-            tailEnergy (taikor::Articulation::Don, true, 24000u, 72000u);
-        expect (openHead > 1.0e-5,
+        const auto tailEnergy = [&tail] (taikor::Articulation articulation,
+                                         bool handDown, std::size_t first,
+                                         std::size_t last)
+        {
+            return windowedRms (tail (articulation, handDown), first, last);
+        };
+
+        // Measured at the head's own two modes rather than broadband. A hand
+        // damps the head; it does not touch the wooden body, and it cannot
+        // reach the airborne click of the stick landing. Those two set a floor
+        // on the total that has nothing to do with how well the hand works, and
+        // a broadband ratio is really measuring that floor - it moved the
+        // moment the shell's ring changed, which is exactly the wrong
+        // sensitivity for a test of the hand.
+        const auto measurements = taikor::TaikoEngine::measure (tuned, 0);
+        const auto headModes = [&measurements] (const std::vector<float>& samples)
+        {
+            return binMagnitude (samples, measurements.loadedFundamentalHz, 48000.0,
+                                 24000u, 72000u)
+                 + binMagnitude (samples, measurements.breathingModeHz, 48000.0,
+                                 24000u, 72000u);
+        };
+
+        const auto openHead = headModes (tail (taikor::Articulation::Don, false));
+        const auto dampedHead = headModes (tail (taikor::Articulation::Don, true));
+        expect (openHead > 1.0e-3,
                 "the head's tail measurement window caught no signal");
-        expect (dampedHead < openHead * 0.10,
+        expect (dampedHead < openHead * 0.05,
                 "a hand on the head must damp the head");
+
+        // Broadband as well as at the modes. Measuring the modes alone is
+        // sharper about what the hand reaches, but it is blind to everything
+        // the head does above them - and when the continuum was first added it
+        // was not damped at all, which this check would have caught and the
+        // modal one did not.
+        // Early enough to still contain the continuum, which empties from the
+        // top down and is largely gone by a quarter of a second.
+        const auto openBroad =
+            tailEnergy (taikor::Articulation::Don, false, 2400u, 12000u);
+        const auto dampedBroad =
+            tailEnergy (taikor::Articulation::Don, true, 2400u, 12000u);
+        expect (openBroad > 1.0e-5,
+                "the broadband tail measurement window caught no signal");
+        expect (dampedBroad < openBroad * 0.68,
+                "a hand on the head must damp everything the head is doing, "
+                "not only its resolved modes");
 
         // The wooden shell is not what the hand is resting on, and two sticks
         // clicked together above the drum have nothing to do with it at all.
@@ -2132,8 +2456,8 @@ void testControlEndpointsAndGestures()
                 tuned.headDamping = damping;
 
                 taikor::TaikoEngine engine;
-                engine.prepare (48000.0, 64);
                 engine.setParameters (tuned);
+                engine.prepare (48000.0, 64);
                 engine.trigger (articulation, 0, 0.95f);
 
                 using Access = taikor::TaikoEngineTestAccess;
@@ -2173,8 +2497,8 @@ void testControlEndpointsAndGestures()
             tuned.strikePosition = position;
 
             taikor::TaikoEngine engine;
-            engine.prepare (384000.0, 256);
             engine.setParameters (tuned);
+            engine.prepare (384000.0, 256);
             engine.trigger (taikor::Articulation::Ka, taikor::lowestOctaveOffset,
                             0.95f);
             taikor::TaikoEngineTestAccess::directDelays (engine, left, right);
@@ -2266,6 +2590,8 @@ int main()
     testCloseMicrophonePair();
     testTailsTerminateAndVoicesRetire();
     testVoiceStealingStaysBounded();
+    testTheDrumSoundsLikeADrumAndNotLikeATone();
+    testTheContinuumFollowsTheHead();
     testEveryParameterSurvivesTheCache();
     testRadiationEfficiencyStaysFinite();
     testReportedModesAreActuallySounded();
