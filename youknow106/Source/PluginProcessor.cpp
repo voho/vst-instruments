@@ -599,13 +599,22 @@ void YouKnow106AudioProcessor::dispatchUiMidiEvents() noexcept
 
     uiReadIndex.store (read, std::memory_order_release);
 
-    // Keys whose release was dropped by a full queue. A key already touched in
-    // this drain waits for the next one, so the press it just received is not
-    // cancelled before anything is rendered.
+    // Keys whose release was dropped by a full queue. Two kinds of key have to
+    // wait: one already touched in this drain, whose press would otherwise be
+    // cancelled before anything is rendered, and one whose press is still
+    // sitting further down the queue, which the release must not overtake.
+    std::array<std::uint64_t, 2> deferred = touched;
+    for (auto scan = read; scan != write; ++scan)
+    {
+        const auto queued = uiMidiQueue[scan % uiQueueCapacity];
+        const auto note = static_cast<unsigned> (juce::jlimit (0, 127, queued.note));
+        deferred[static_cast<std::size_t> (note >> 6)] |= 1ull << (note & 63u);
+    }
+
     for (std::size_t word = 0; word < uiPendingNoteOff.size(); ++word)
     {
         const auto pending = uiPendingNoteOff[word].load (std::memory_order_acquire)
-                           & ~touched[word];
+                           & ~deferred[word];
         if (pending == 0)
             continue;
 

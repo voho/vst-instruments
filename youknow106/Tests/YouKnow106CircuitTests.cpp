@@ -507,6 +507,98 @@ void testPanelLawsInvert()
                "a rate above the range does not clamp to the top");
 }
 
+void testComparatorEdgesSitOnOneThreshold()
+{
+    // The comparator is one threshold on the ramp, so its two edges per cycle
+    // have to sit at the same ramp voltage. The falling edge therefore belongs
+    // partway into the reset, where the descending segment passes back through
+    // that voltage -- not at the start of the reset, where the ramp is still at
+    // its positive rail. This solves the ramp's own geometry independently of
+    // the model rather than re-deriving the model's formula.
+    const auto rampAt = [](double phase, double reset) {
+        const double rise = std::max(1.0 - reset, 1.0e-4);
+        if (phase < rise)
+            return static_cast<double>(YouKnow106Engine::rampSegmentVoltage(
+                static_cast<float>(phase / rise)));
+        return 1.0 - 2.0 * (phase - rise) / reset;
+    };
+
+    for (double reset : { 0.0001, 0.01, 0.055, 0.25 })
+    {
+        for (float duty : { 0.05f, 0.25f, 0.5f, 0.75f, 0.95f })
+        {
+            const double riseEdge = YouKnow106Engine::pulseRisePhase(
+                duty, static_cast<float>(reset));
+            const double fallEdge = YouKnow106Engine::pulseFallPhase(
+                duty, static_cast<float>(reset));
+
+            expectNear(rampAt(fallEdge, reset), rampAt(riseEdge, reset), 2.0e-3,
+                       "the comparator's two edges are not at the same ramp "
+                       "voltage");
+            expect(fallEdge > riseEdge,
+                   "the comparator falls before it rises");
+            expect(fallEdge <= 1.0 + 1.0e-6,
+                   "the comparator's falling edge left the cycle");
+            // And it is inside the reset segment, not at its start: that is the
+            // whole point.
+            expect(fallEdge >= 1.0 - reset - 1.0e-6,
+                   "the falling edge is not inside the reset segment");
+        }
+    }
+
+    // With a negligible reset the high interval is the requested duty, so the
+    // correction cannot have moved the ordinary case.
+    for (float duty : { 0.05f, 0.5f, 0.95f })
+    {
+        const double high = YouKnow106Engine::pulseFallPhase(duty, 1.0e-6f)
+                          - YouKnow106Engine::pulseRisePhase(duty, 1.0e-6f);
+        expectNear(high, duty, 1.0e-4,
+                   "a vanishing reset does not give the requested duty");
+    }
+}
+
+void testChorusIsAtItsSettingFromTheFirstSample()
+{
+    // A patch loaded with the effect switched on is not a player reaching for
+    // the button: there is nothing to glide from. Measured on the wet path
+    // alone -- the line adds its output to the input, so subtracting the input
+    // back off leaves exactly what the effect contributed, with no note onset
+    // or modulation depth mixed into the reading.
+    constexpr double sampleRate = 192000.0;
+    Chorus chorus;
+    chorus.prepare(sampleRate);
+
+    const int length = static_cast<int>(sampleRate * 0.5);
+    std::vector<float> wet(static_cast<std::size_t>(length));
+    for (int index = 0; index < length; ++index)
+    {
+        const float input = std::sin(2.0f * static_cast<float>(pi) * 220.0f
+                                     * static_cast<float>(index)
+                                     / static_cast<float>(sampleRate));
+        float left = 0.0f;
+        float right = 0.0f;
+        chorus.process(input, ChorusMode::Two, 0.0f, left, right);
+        wet[static_cast<std::size_t>(index)] = left - input;
+    }
+
+    const auto rms = [&](double fromSeconds, double toSeconds) {
+        const auto from = static_cast<std::size_t>(sampleRate * fromSeconds);
+        const auto to = std::min(static_cast<std::size_t>(sampleRate * toSeconds),
+                                 wet.size());
+        double sum = 0.0;
+        for (std::size_t index = from; index < to; ++index)
+            sum += static_cast<double>(wet[index]) * wet[index];
+        return to > from ? std::sqrt(sum / static_cast<double>(to - from)) : 0.0;
+    };
+
+    // From the moment the longest delay has filled, against the settled level.
+    const double early = rms(0.006, 0.016);
+    const double settled = rms(0.4, 0.5);
+    expect(settled > 0.1, "the wet path never reached its level at all");
+    expectNear(early, settled, settled * 0.1,
+               "the effect glided up to its setting instead of starting there");
+}
+
 void testBucketBrigadeLine()
 {
     // The part is 256 stages clocked in two phases, so its delay is
@@ -698,6 +790,8 @@ int main()
     testPulseWidthAndHighPassLaws();
     testModulationAndGlideLaws();
     testPanelLawsInvert();
+    testComparatorEdgesSitOnOneThreshold();
+    testChorusIsAtItsSettingFromTheFirstSample();
     testBucketBrigadeLine();
     testSupportFilterCornersLandWhereAsked();
     testCorrectionResidualsVanishAtTheEdges();

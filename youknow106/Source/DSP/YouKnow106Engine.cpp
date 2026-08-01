@@ -288,6 +288,37 @@ float YouKnow106Engine::pwmControlVolts(float depth) noexcept
     return 6.0f - 5.4f * clamp01(depth);
 }
 
+// Where the comparator's two edges sit within one cycle, as fractions of the
+// period. The threshold is the ramp voltage the rise crosses on the way up, and
+// the comparator holds until the descending reset passes back through the same
+// voltage -- not until the reset begins, where the ramp is still at its
+// positive rail. At a high note the reset is a noticeable part of the period,
+// so dropping at its start would shorten the high interval by about
+// duty * reset: a 95% pulse asked for at the top of the 4' range would come out
+// nearer 90%.
+float YouKnow106Engine::rampSegmentVoltage(float risePosition) noexcept
+{
+    return 2.0f * rampVoltage(risePosition, rampBow) - 1.0f;
+}
+
+float YouKnow106Engine::pulseRisePhase(float duty, float resetFraction) noexcept
+{
+    const float reset = std::clamp(resetFraction, 0.0f, 0.25f);
+    const float rise = std::max(1.0f - reset, 1.0e-4f);
+    return rise * (1.0f - std::clamp(duty, 0.0f, 1.0f));
+}
+
+float YouKnow106Engine::pulseFallPhase(float duty, float resetFraction) noexcept
+{
+    const float reset = std::clamp(resetFraction, 0.0f, 0.25f);
+    const float rise = std::max(1.0f - reset, 1.0e-4f);
+    // The ramp runs 0..1 over the rise and falls linearly back over the reset,
+    // both mapped to -1..+1. Solving the falling segment for the rise's
+    // threshold gives the fraction of the reset spent still above it.
+    const float threshold = rampVoltage(1.0f - std::clamp(duty, 0.0f, 1.0f), rampBow);
+    return rise + reset * std::clamp(1.0f - threshold, 0.0f, 1.0f);
+}
+
 float YouKnow106Engine::pwmDutyCycle(float controlVolts) noexcept
 {
     // The ramp spans 12 V peak to peak; the fraction of the period spent above
@@ -1756,8 +1787,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // --- Pulse ------------------------------------------------------------
     // The comparator flips when the ramp crosses the threshold on the way up
     // and again when the reset drags it back down past it.
-    const double duty = std::clamp(static_cast<double>(voice.pulseWidth), 0.05, 0.95);
-    const double riseEdge = rise * (1.0 - duty);
+    const float duty = std::clamp(voice.pulseWidth, 0.05f, 0.95f);
+    const double riseEdge =
+        static_cast<double>(pulseRisePhase(duty, static_cast<float>(reset)));
+    const double fallEdge =
+        static_cast<double>(pulseFallPhase(duty, static_cast<float>(reset)));
 
     // The comparator's two edges per cycle, taken in the order they occur:
     // threshold crossing on the way up, then the reset dragging the ramp back
@@ -1769,9 +1803,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
             addStep(dco.pulse, 2.0f, samplesAgo(base + riseEdge));
             dco.pulseState = 1.0f;
         }
-        if (insideThisSample(base + rise) && dco.pulseState > 0.0f)
+        if (insideThisSample(base + fallEdge) && dco.pulseState > 0.0f)
         {
-            addStep(dco.pulse, -2.0f, samplesAgo(base + rise));
+            addStep(dco.pulse, -2.0f, samplesAgo(base + fallEdge));
             dco.pulseState = -1.0f;
         }
     }

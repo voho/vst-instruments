@@ -176,12 +176,26 @@ void Chorus::reset() noexcept
     rateHz_ = 0.513f;
     sweep_ = 0.0f;
     centreDelay_ = settingsFor(ChorusMode::Off).centreDelaySeconds;
+    // A patch loaded with the effect switched on is not a player reaching for
+    // the button: there is nothing to glide from. The first sample after a
+    // reset takes the mode as it stands, and only changes made afterwards
+    // glide.
+    primed_ = false;
 }
 
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float& left, float& right) noexcept
 {
     const auto target = settingsFor(mode);
+
+    if (!primed_)
+    {
+        rateHz_ = target.rateHz;
+        sweep_ = target.sweepSeconds;
+        centreDelay_ = target.centreDelaySeconds;
+        wetGain_ = target.wetGain;
+        primed_ = true;
+    }
 
     // Glide the switch settings rather than stepping them. A latching button on
     // the hardware changes an RC network whose voltage cannot jump either, and

@@ -114,6 +114,8 @@ private:
     float rateHz_ { 0.0f };
     float centreDelay_ { 0.0032f };
     float sweep_ { 0.0f };
+    // Whether the glided settings have a starting point yet.
+    bool primed_ { false };
 };
 
 } // namespace youknow106

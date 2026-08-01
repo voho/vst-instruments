@@ -189,6 +189,15 @@ public:
     // duty cycle it produces. The hardware cannot reach 0% or 100%.
     [[nodiscard]] static float pwmControlVolts(float depth) noexcept;
     [[nodiscard]] static float pwmDutyCycle(float controlVolts) noexcept;
+    // The ramp's rising segment: 0..1 across the rise, -1..+1 out, at the
+    // modelled curvature. The reset that follows it is a straight fall back to
+    // the negative rail over the remainder of the cycle.
+    [[nodiscard]] static float rampSegmentVoltage(float risePosition) noexcept;
+    // Comparator edge positions within a cycle, as fractions of the period.
+    [[nodiscard]] static float pulseRisePhase(float duty,
+                                              float resetFraction) noexcept;
+    [[nodiscard]] static float pulseFallPhase(float duty,
+                                              float resetFraction) noexcept;
     // Output amplifier control law.
     [[nodiscard]] static float vcaGain(float control) noexcept;
     // Single-pole high-pass corner for a panel position, and the shelf gain the
