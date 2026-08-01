@@ -487,8 +487,11 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                   - 8192.0f) / 8192.0f);
         else if (message.isController())
         {
-            // The modelled instrument answers to modulation and hold, and to
-            // nothing else: it has no continuous controllers for its panel.
+            // The hardware's MIDI receives hold and nothing else among the
+            // control changes -- not even modulation. Mapping CC 1 onto the
+            // bender lever's push-away axis is a plug-in extension, inert at
+            // its default depth; the panel has no continuous controllers at
+            // all.
             if (message.getControllerNumber() == 1)
                 engine.setModWheel (static_cast<float> (message.getControllerValue())
                                     / 127.0f);
