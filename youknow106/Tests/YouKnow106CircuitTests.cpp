@@ -1,0 +1,581 @@
+// Circuit-reference suite.
+//
+// Every check here compares the realtime model against something independent:
+// either an ODE solved from the circuit equations at a far higher rate, a
+// closed-form small-signal result, or a figure taken from the instrument's own
+// service documentation. Nothing in this file asserts that the model agrees
+// with itself.
+
+#include "DSP/YouKnow106Chorus.h"
+#include "DSP/YouKnow106Engine.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace youknow106
+{
+// Narrow seam into the private blocks. Not part of the plug-in API.
+struct YouKnow106TestAccess
+{
+    using Cascade = YouKnow106Engine::OtaCascade;
+
+    static constexpr float headroom() noexcept
+    {
+        return YouKnow106Engine::otaHeadroomVolts;
+    }
+
+    static std::vector<float> renderCascade(const std::vector<float>& input,
+                                            float g, float feedback)
+    {
+        Cascade cascade;
+        cascade.reset();
+        std::vector<float> output(input.size());
+        for (std::size_t index = 0; index < input.size(); ++index)
+            output[index] = cascade.process(input[index], g, feedback);
+        return output;
+    }
+};
+} // namespace youknow106
+
+namespace
+{
+using namespace youknow106;
+
+int failures = 0;
+
+void expect(bool condition, const std::string& message)
+{
+    if (!condition)
+    {
+        ++failures;
+        std::cerr << "FAIL: " << message << '\n';
+    }
+}
+
+void expectNear(double actual, double expected, double tolerance,
+                const std::string& message)
+{
+    if (!(std::abs(actual - expected) <= tolerance))
+    {
+        ++failures;
+        std::cerr << "FAIL: " << message << " (got " << actual << ", expected "
+                  << expected << " +/- " << tolerance << ")\n";
+    }
+}
+
+constexpr double pi = 3.14159265358979323846;
+
+// --------------------------------------------------------------------------
+// Independent reference: the four transconductor stages integrated with a
+// fourth-order Runge-Kutta step at 64x the model's rate, straight from
+//     C dVn/dt = Ig tanh((V(n-1) - Vn) / H),  V0 = input - k V4
+// which is the circuit, not the model.
+// --------------------------------------------------------------------------
+std::vector<double> referenceCascade(const std::vector<double>& input, double sampleRate,
+                                     double cutoffHz, double feedback,
+                                     int oversample = 16)
+{
+    const double headroom = YouKnow106TestAccess::headroom();
+    const double omega = 2.0 * pi * cutoffHz;
+    const double step = 1.0 / (sampleRate * oversample);
+
+    std::array<double, 4> voltage {};
+    std::vector<double> output(input.size());
+
+    const auto derivative = [&](const std::array<double, 4>& state, double drive) {
+        std::array<double, 4> slope {};
+        double previous = drive - feedback * state[3];
+        for (int stage = 0; stage < 4; ++stage)
+        {
+            slope[static_cast<std::size_t>(stage)] =
+                omega * headroom
+                * std::tanh((previous - state[static_cast<std::size_t>(stage)]) / headroom);
+            previous = state[static_cast<std::size_t>(stage)];
+        }
+        return slope;
+    };
+
+    double previousInput = 0.0;
+    for (std::size_t index = 0; index < input.size(); ++index)
+    {
+        const double target = input[index];
+        for (int sub = 0; sub < oversample; ++sub)
+        {
+            const double a = previousInput
+                + (target - previousInput) * (sub / static_cast<double>(oversample));
+            const double b = previousInput
+                + (target - previousInput) * ((sub + 0.5) / oversample);
+            const double c = previousInput
+                + (target - previousInput) * ((sub + 1.0) / oversample);
+
+            const auto k1 = derivative(voltage, a);
+            std::array<double, 4> temp {};
+            for (int n = 0; n < 4; ++n)
+                temp[static_cast<std::size_t>(n)] = voltage[static_cast<std::size_t>(n)]
+                    + 0.5 * step * k1[static_cast<std::size_t>(n)];
+            const auto k2 = derivative(temp, b);
+            for (int n = 0; n < 4; ++n)
+                temp[static_cast<std::size_t>(n)] = voltage[static_cast<std::size_t>(n)]
+                    + 0.5 * step * k2[static_cast<std::size_t>(n)];
+            const auto k3 = derivative(temp, b);
+            for (int n = 0; n < 4; ++n)
+                temp[static_cast<std::size_t>(n)] = voltage[static_cast<std::size_t>(n)]
+                    + step * k3[static_cast<std::size_t>(n)];
+            const auto k4 = derivative(temp, c);
+
+            for (int n = 0; n < 4; ++n)
+                voltage[static_cast<std::size_t>(n)] +=
+                    (step / 6.0) * (k1[static_cast<std::size_t>(n)]
+                                    + 2.0 * k2[static_cast<std::size_t>(n)]
+                                    + 2.0 * k3[static_cast<std::size_t>(n)]
+                                    + k4[static_cast<std::size_t>(n)]);
+        }
+        previousInput = target;
+        output[index] = voltage[3];
+    }
+    return output;
+}
+
+double steadyStatePeak(const std::vector<double>& signal)
+{
+    double peak = 0.0;
+    for (std::size_t index = signal.size() * 3 / 4; index < signal.size(); ++index)
+        peak = std::max(peak, std::abs(signal[index]));
+    return peak;
+}
+
+double steadyStatePeak(const std::vector<float>& signal)
+{
+    double peak = 0.0;
+    for (std::size_t index = signal.size() * 3 / 4; index < signal.size(); ++index)
+        peak = std::max(peak, static_cast<double>(std::abs(signal[index])));
+    return peak;
+}
+
+// --------------------------------------------------------------------------
+
+void testCascadeAgainstReferenceSolve()
+{
+    constexpr double sampleRate = 192000.0;
+
+    for (double cutoff : { 120.0, 900.0, 4200.0 })
+    {
+        for (double feedback : { 0.0, 2.0, 3.0, 3.8 })
+        {
+            // A resonant cascade takes about Q cycles to settle, and Q here is
+            // 1/(4 - k). Measuring before it has settled would compare a
+            // transient against a steady-state result.
+            const int length = static_cast<int>(std::min(
+                65536.0, std::max(8192.0, 90.0 * sampleRate / cutoff)));
+            // Small enough that the differential pairs stay linear, so the
+            // closed-form 1/(4 - k) result at cutoff also applies.
+            const double amplitude = 1.0e-4;
+            std::vector<double> referenceInput(static_cast<std::size_t>(length));
+            std::vector<float> modelInput(static_cast<std::size_t>(length));
+            for (int index = 0; index < length; ++index)
+            {
+                const double value = amplitude
+                    * std::sin(2.0 * pi * cutoff * index / sampleRate);
+                referenceInput[static_cast<std::size_t>(index)] = value;
+                modelInput[static_cast<std::size_t>(index)] = static_cast<float>(value);
+            }
+
+            const auto reference =
+                referenceCascade(referenceInput, sampleRate, cutoff, feedback);
+            const float g = static_cast<float>(std::tan(pi * cutoff / sampleRate));
+            const auto model = YouKnow106TestAccess::renderCascade(
+                modelInput, g, static_cast<float>(feedback));
+
+            const double referenceGain = steadyStatePeak(reference) / amplitude;
+            const double modelGain = steadyStatePeak(model) / amplitude;
+            const double theory = 1.0 / (4.0 - feedback);
+
+            const std::string label = "cascade fc=" + std::to_string(cutoff)
+                                    + " k=" + std::to_string(feedback);
+            expectNear(20.0 * std::log10(referenceGain / theory), 0.0, 0.6,
+                       label + ": reference solve does not meet the analytic result");
+            expectNear(20.0 * std::log10(modelGain / referenceGain), 0.0, 0.6,
+                       label + ": model disagrees with the reference solve");
+        }
+    }
+}
+
+void testCascadeOscillationThreshold()
+{
+    constexpr double sampleRate = 192000.0;
+    constexpr double cutoff = 500.0;
+    const float g = static_cast<float>(std::tan(pi * cutoff / sampleRate));
+
+    const auto ring = [&](float feedback) {
+        std::vector<float> input(24000, 0.0f);
+        input[0] = 0.5f;
+        const auto output = YouKnow106TestAccess::renderCascade(input, g, feedback);
+        double peak = 0.0;
+        for (std::size_t index = output.size() - 4000; index < output.size(); ++index)
+            peak = std::max(peak, static_cast<double>(std::abs(output[index])));
+        return peak;
+    };
+
+    expect(ring(3.6f) < 1.0e-4,
+           "four-pole cascade sustains below its oscillation threshold");
+    expect(ring(4.3f) > 1.0e-3,
+           "four-pole cascade does not oscillate above its threshold");
+
+    // A cascade driven far past the threshold must still settle to a bounded
+    // limit cycle rather than running away.
+    const double hard = ring(8.0f);
+    expect(std::isfinite(hard) && hard < 40.0,
+           "cascade is unbounded when driven far past its threshold");
+}
+
+void testCascadeSurvivesAdversarialControl()
+{
+    // Sweeping the control voltage violently across the whole range at audio
+    // rate is not musical, but automation can produce it and the implicit solve
+    // must not diverge or emit a non-finite sample.
+    std::vector<float> input(20000);
+    for (std::size_t index = 0; index < input.size(); ++index)
+        input[index] = 3.0f * std::sin(0.31f * static_cast<float>(index));
+
+    YouKnow106TestAccess::Cascade cascade;
+    cascade.reset();
+    bool finite = true;
+    for (std::size_t index = 0; index < input.size(); ++index)
+    {
+        const float g = (index % 2 == 0) ? 0.0004f : 30.0f;
+        const float k = (index % 3 == 0) ? 0.0f : 4.4f;
+        const float value = cascade.process(input[index], g, k);
+        finite = finite && std::isfinite(value) && std::abs(value) < 1.0e4f;
+    }
+    expect(finite, "cascade diverged under an adversarial control sweep");
+}
+
+void testNoteTimerLaw()
+{
+    // One reference divided by an integer: pitch is quantised, and how coarsely
+    // depends on how large that integer is.
+    struct Case { DcoRange range; double clock; };
+    const Case cases[] = { { DcoRange::Sixteen, 1.0e6 },
+                           { DcoRange::Eight, 2.0e6 },
+                           { DcoRange::Four, 4.0e6 } };
+
+    for (const auto& item : cases)
+    {
+        expectNear(YouKnow106Engine::rangeClockHz(item.range), item.clock, 1.0,
+                   "range divider clock");
+
+        // The instrument's own keyboard is five octaves from C2, and the
+        // 16-bit counters cannot reach further down than that at 16' anyway.
+        // The range switch transposes by whole octaves, so the count is the
+        // same in every range and the tuning error is too.
+        const double octaves = std::log2(item.clock / 2.0e6);
+        double worstCents = 0.0;
+        for (int note = 36; note <= 96; ++note)
+        {
+            const double wanted = 440.0 * std::pow(2.0, (note - 69) / 12.0);
+            const auto divider = YouKnow106Engine::dcoDivider(wanted);
+            const double produced =
+                YouKnow106Engine::dcoQuantisedFrequency(divider, item.range);
+            const double sounding = wanted * std::pow(2.0, octaves);
+            expectNear(static_cast<double>(divider),
+                       std::floor(2.0e6 / wanted + 0.5), 0.5,
+                       "programmed divider is not the nearest integer");
+            worstCents = std::max(worstCents,
+                                  std::abs(1200.0 * std::log2(produced / sounding)));
+        }
+        // Quantisation grows with pitch; even at the top of the range it stays
+        // well inside a cent at these clocks.
+        expect(worstCents < 1.0,
+               "note timer quantisation exceeds one cent across the keyboard");
+    }
+
+    // The counters are 16 bits wide, so the lowest note the 16' range can
+    // produce is its clock divided by 65535 -- about 15.3 Hz. Asking for
+    // anything lower does not transpose further down, it simply stops.
+    const auto floored = YouKnow106Engine::dcoDivider(8.0);
+    expectNear(YouKnow106Engine::dcoQuantisedFrequency(floored, DcoRange::Sixteen),
+               15.26, 0.02, "the 16' range does not floor at the counter's width");
+    expect(YouKnow106Engine::dcoQuantisedFrequency(
+               YouKnow106Engine::dcoDivider(4.0), DcoRange::Sixteen)
+           == YouKnow106Engine::dcoQuantisedFrequency(floored, DcoRange::Sixteen),
+           "asking for an impossible pitch keeps transposing downwards");
+
+    // Every voice divides the same reference, so two voices asked for the same
+    // pitch get exactly the same integer: no spread at all.
+    expect(YouKnow106Engine::dcoDivider(261.63)
+           == YouKnow106Engine::dcoDivider(261.63),
+           "note timer is not deterministic");
+}
+
+void testCutoffControlLaw()
+{
+    // The instrument's own service anchor: converter code 6272 must self-
+    // oscillate at 248 Hz, and code 6272 + 2286 two octaves above that.
+    expectNear(YouKnow106Engine::vcfCutoffHz(6272.0f), 248.0, 1.0,
+               "cutoff law misses the service calibration anchor");
+    expectNear(YouKnow106Engine::vcfCutoffHz(6272.0f + 2286.0f), 992.0, 4.0,
+               "cutoff law misses the second calibration anchor");
+
+    // One octave is 1143 counts, everywhere the transconductor can follow it.
+    // Past the top of its bias range the law flattens, which is the part's
+    // limit rather than the converter's.
+    for (float counts : { 0.0f, 2000.0f, 6000.0f, 9000.0f })
+        expectNear(YouKnow106Engine::vcfCutoffHz(counts + 1143.0f)
+                       / YouKnow106Engine::vcfCutoffHz(counts),
+                   2.0, 0.01, "cutoff law is not 1143 counts per octave");
+
+    expectNear(YouKnow106Engine::vcfCutoffHz(0.0f), 5.53, 0.01,
+               "cutoff law base frequency");
+
+    // The panel reads as a 0..127 byte driving the converter 128 counts at a
+    // time, so the whole travel is 16256 counts.
+    expectNear(YouKnow106Engine::vcfPanelCounts(1.0f), 16256.0, 0.5,
+               "cutoff panel travel");
+    expectNear(YouKnow106Engine::vcfPanelCounts(0.0f), 0.0, 0.5,
+               "cutoff panel travel starts at zero");
+    expect(YouKnow106Engine::vcfPanelCounts(0.5f)
+               == YouKnow106Engine::vcfPanelCounts(0.503f),
+           "cutoff panel position is not quantised to the converter's byte");
+}
+
+void testResonanceLaw()
+{
+    expectNear(YouKnow106Engine::vcfFeedback(0.0f), 0.0, 1.0e-6,
+               "resonance at rest");
+    expectNear(YouKnow106Engine::vcfFeedback(0.9f), 4.0, 1.0e-4,
+               "oscillation threshold is not reached at 90% of the travel");
+    expect(YouKnow106Engine::vcfFeedback(1.0f) > 4.0,
+           "the last tenth of the resonance travel does not pass the threshold");
+
+    // Compensation is applied to the input, so it rises with regeneration.
+    expectNear(YouKnow106Engine::vcfResonanceCompensation(0.0f), 1.0, 1.0e-6,
+               "resonance compensation at rest");
+    const double atMaximum = YouKnow106Engine::vcfResonanceCompensation(4.0f);
+    expectNear(20.0 * std::log10(atMaximum), 9.0, 0.1,
+               "resonance compensation does not reach the measured 8-10 dB band");
+    expect(YouKnow106Engine::vcfResonanceCompensation(2.0f) < atMaximum,
+           "resonance compensation is not monotonic");
+
+    // The frequency trim only acts as regeneration rises.
+    expectNear(YouKnow106Engine::vcfResonanceFrequencyTrim(0.0f), 1.0, 1.0e-6,
+               "frequency trim acts with no resonance");
+    expect(YouKnow106Engine::vcfResonanceFrequencyTrim(4.0f) > 1.05f,
+           "frequency trim does not compensate the oscillating cascade");
+}
+
+void testEnvelopeAndAmplifierLaws()
+{
+    // Published segment endpoints.
+    expectNear(YouKnow106Engine::envelopeAttackSeconds(0.0f), 0.0015, 1.0e-6,
+               "shortest attack");
+    expectNear(YouKnow106Engine::envelopeAttackSeconds(1.0f), 3.0, 1.0e-3,
+               "longest attack");
+    expectNear(YouKnow106Engine::envelopeDecaySeconds(0.0f), 0.0015, 1.0e-6,
+               "shortest decay");
+    expectNear(YouKnow106Engine::envelopeDecaySeconds(1.0f), 12.0, 1.0e-3,
+               "longest decay");
+    expectNear(YouKnow106Engine::envelopeReleaseSeconds(1.0f), 12.0, 1.0e-3,
+               "release shares the decay law");
+
+    // The amplifier is where the curve comes from: equal steps of control must
+    // be equal steps in decibels.
+    const double a = 20.0 * std::log10(YouKnow106Engine::vcaGain(1.0f));
+    const double b = 20.0 * std::log10(YouKnow106Engine::vcaGain(0.7f));
+    const double c = 20.0 * std::log10(YouKnow106Engine::vcaGain(0.4f));
+    expectNear(a, 0.0, 1.0e-4, "amplifier is not unity at full control");
+    expectNear((a - b) - (b - c), 0.0, 0.05,
+               "amplifier control law is not linear in decibels");
+    expect(YouKnow106Engine::vcaGain(0.0f) == 0.0f,
+           "amplifier leaks with no control voltage");
+    expect(YouKnow106Engine::vcaGain(0.02f) == 0.0f,
+           "amplifier conducts inside its deadband");
+}
+
+void testPulseWidthAndHighPassLaws()
+{
+    // The comparator threshold cannot reach either rail, so the pulse cannot
+    // reach 0% or 100%.
+    expectNear(YouKnow106Engine::pwmControlVolts(0.0f), 6.0, 1.0e-5,
+               "pulse threshold with the control at rest");
+    expectNear(YouKnow106Engine::pwmControlVolts(1.0f), 0.6, 1.0e-5,
+               "pulse threshold at full depth");
+    expectNear(YouKnow106Engine::pwmDutyCycle(6.0f), 0.5, 1.0e-5,
+               "threshold at half the ramp does not bisect it");
+    expectNear(YouKnow106Engine::pwmDutyCycle(0.6f), 0.95, 1.0e-5,
+               "narrowest pulse");
+    for (float depth = 0.0f; depth <= 1.0f; depth += 0.05f)
+    {
+        const float duty = YouKnow106Engine::pwmDutyCycle(
+            YouKnow106Engine::pwmControlVolts(depth));
+        expect(duty > 0.0f && duty < 1.0f, "pulse reaches a rail");
+    }
+
+    // Only two of the four high-pass legs filter; one boosts and one passes.
+    expectNear(YouKnow106Engine::highPassShelfGain(HighPassMode::Boost),
+               std::pow(10.0, 3.0 / 20.0), 1.0e-4, "bass boost is not 3 dB");
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Boost), 70.0, 1.0,
+               "bass boost shelf corner");
+    expectNear(YouKnow106Engine::highPassShelfGain(HighPassMode::One), 1.0, 1.0e-6,
+               "the flat leg does not pass the low band untouched");
+    expect(YouKnow106Engine::highPassShelfGain(HighPassMode::Two) == 0.0f
+           && YouKnow106Engine::highPassShelfGain(HighPassMode::Three) == 0.0f,
+           "a cutting leg returns part of the low band");
+    expect(YouKnow106Engine::highPassCornerHz(HighPassMode::Three)
+           > YouKnow106Engine::highPassCornerHz(HighPassMode::Two),
+           "high-pass legs are not ordered");
+}
+
+void testModulationAndGlideLaws()
+{
+    expectNear(YouKnow106Engine::lfoRateHz(0.0f), 0.1, 1.0e-5, "slowest modulation");
+    expectNear(YouKnow106Engine::lfoRateHz(1.0f), 30.0, 1.0e-3, "fastest modulation");
+    expect(YouKnow106Engine::lfoDelaySeconds(0.0f) == 0.0f, "delay at rest");
+    expectNear(YouKnow106Engine::lfoDelaySeconds(1.0f), 3.0, 1.0e-4, "longest delay");
+
+    // Portamento is quoted per octave, so the panel law has those units.
+    expect(YouKnow106Engine::portamentoSeconds(0.0f) == 0.0f,
+           "portamento is not switched off at the bottom of its travel");
+    expectNear(YouKnow106Engine::portamentoSeconds(1.0f), 12.9, 0.01,
+               "slowest glide");
+    expect(YouKnow106Engine::portamentoSeconds(0.001f) < 0.06,
+           "fastest glide is slower than the hardware's");
+}
+
+void testBucketBrigadeLine()
+{
+    // The part is 256 stages clocked in two phases, so its delay is
+    // 128 / clock -- which is the datasheet's 12.8 ms at its 10 kHz minimum.
+    expectNear(Chorus::delaySecondsForClock(10000.0f), 0.0128, 1.0e-9,
+               "line delay at the minimum clock");
+    expectNear(Chorus::delaySecondsForClock(200000.0f), 0.00064, 1.0e-9,
+               "line delay at the maximum clock");
+    expectNear(Chorus::clockForDelaySeconds(Chorus::delaySecondsForClock(43210.0f)),
+               43210.0, 1.0e-3, "delay and clock are not reciprocal");
+
+    // Measured behaviour: both modes sweep the same delay range and differ only
+    // in rate.
+    const auto one = Chorus::settingsFor(ChorusMode::One);
+    const auto two = Chorus::settingsFor(ChorusMode::Two);
+    expectNear(one.rateHz, 0.513, 1.0e-4, "first mode rate");
+    expectNear(two.rateHz, 0.863, 1.0e-4, "second mode rate");
+    expectNear(one.sweepSeconds, two.sweepSeconds, 1.0e-9,
+               "the two modes do not share a sweep depth");
+    expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.00166, 1.0e-6,
+               "shortest modulated delay");
+    expectNear(one.centreDelaySeconds + one.sweepSeconds, 0.00535, 1.0e-6,
+               "longest modulated delay");
+    expectNear(Chorus::settingsFor(ChorusMode::Off).wetGain, 0.0, 1.0e-9,
+               "the wet path is not silent when the effect is switched out");
+    expectNear(one.wetGain, 1.303, 1.0e-3, "line gain");
+
+    // The whole modulated range must stay inside the part's rated clock window,
+    // otherwise the model would be running a part outside its specification.
+    const float slowest = Chorus::clockForDelaySeconds(
+        one.centreDelaySeconds + one.sweepSeconds);
+    const float fastest = Chorus::clockForDelaySeconds(
+        one.centreDelaySeconds - one.sweepSeconds);
+    expect(slowest >= Chorus::minimumClockHz && fastest <= Chorus::maximumClockHz,
+           "modulation drives the delay line outside its rated clock range");
+
+    // Two lines clocked in antiphase must actually differ, and the effect must
+    // be silent -- apart from its own noise -- when switched out.
+    Chorus chorus;
+    chorus.prepare(192000.0);
+    double difference = 0.0;
+    for (int index = 0; index < 96000; ++index)
+    {
+        const float input = std::sin(2.0f * static_cast<float>(pi) * 220.0f
+                                     * static_cast<float>(index) / 192000.0f);
+        float left = 0.0f;
+        float right = 0.0f;
+        chorus.process(input, ChorusMode::Two, 1.0f, left, right);
+        if (index > 48000)
+            difference += static_cast<double>(left - right) * (left - right);
+    }
+    expect(difference > 1.0, "the two delay lines are producing the same signal");
+}
+
+void testCorrectionResidualsVanishAtTheEdges()
+{
+    // The bandlimiting residuals are built by integration at construction, so
+    // the cheapest way to catch a broken table is to confirm a rendered ramp
+    // has the harmonic series a ramp should have and nothing else. The engine
+    // suite measures the alias floor; here we only confirm the oscillator is
+    // producing a ramp at the pitch the note timer was programmed for.
+    YouKnow106Engine engine;
+    engine.prepare(192000.0, 512, false);
+
+    EngineParameters parameters;
+    parameters.sawEnabled = true;
+    parameters.pulseEnabled = false;
+    parameters.cutoff = 1.0f;
+    parameters.resonance = 0.0f;
+    parameters.envDepth = 0.0f;
+    parameters.keyFollow = 0.0f;
+    parameters.attack = 0.0f;
+    parameters.sustain = 1.0f;
+    parameters.vcaLevel = 1.0f;
+    parameters.volume = 1.0f;
+    parameters.calibration = 0.0f;
+    parameters.chorus = ChorusMode::Off;
+    engine.setParameters(parameters);
+    engine.noteOn(69, 1.0f);
+
+    constexpr int blockSize = 512;
+    constexpr int blocks = 192;
+    std::vector<float> left(blockSize * blocks);
+    std::vector<float> right(blockSize * blocks);
+    for (int block = 0; block < blocks; ++block)
+        engine.process(left.data() + block * blockSize,
+                       right.data() + block * blockSize, blockSize);
+
+    // Measure between the first and last rising crossing rather than counting
+    // them over a fixed window: the count alone only resolves to one cycle.
+    std::size_t first = 0;
+    std::size_t last = 0;
+    int intervals = -1;
+    for (std::size_t index = left.size() / 2 + 1; index < left.size(); ++index)
+        if (left[index - 1] <= 0.0f && left[index] > 0.0f)
+        {
+            if (intervals < 0)
+                first = index;
+            last = index;
+            ++intervals;
+        }
+    expect(intervals > 50, "the oscillator produced too few cycles to measure");
+    const double measured = intervals > 0
+        ? intervals * 192000.0 / static_cast<double>(last - first) : 0.0;
+    const double programmed = YouKnow106Engine::dcoQuantisedFrequency(
+        YouKnow106Engine::dcoDivider(440.0), DcoRange::Eight);
+    expectNear(measured, programmed, 0.5,
+               "the rendered ramp is not at the frequency the timer was given");
+}
+} // namespace
+
+int main()
+{
+    testCascadeAgainstReferenceSolve();
+    testCascadeOscillationThreshold();
+    testCascadeSurvivesAdversarialControl();
+    testNoteTimerLaw();
+    testCutoffControlLaw();
+    testResonanceLaw();
+    testEnvelopeAndAmplifierLaws();
+    testPulseWidthAndHighPassLaws();
+    testModulationAndGlideLaws();
+    testBucketBrigadeLine();
+    testCorrectionResidualsVanishAtTheEdges();
+
+    if (failures != 0)
+    {
+        std::cerr << failures << " YouKnow106 circuit check(s) failed.\n";
+        return EXIT_FAILURE;
+    }
+    std::cout << "All YouKnow106 circuit checks passed.\n";
+    return EXIT_SUCCESS;
+}

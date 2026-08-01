@@ -1,0 +1,567 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+namespace
+{
+using namespace youknow106;
+
+juce::String percentText (float value, int)
+{
+    return juce::String (juce::roundToInt (value * 100.0f)) + "%";
+}
+
+float percentValue (const juce::String& text)
+{
+    return text.retainCharacters ("0123456789.-").getFloatValue() / 100.0f;
+}
+
+juce::AudioParameterFloatAttributes percentAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withLabel ("%")
+        .withStringFromValueFunction (percentText)
+        .withValueFromStringFunction (percentValue);
+}
+
+juce::String secondsText (float value, int)
+{
+    if (value < 1.0f)
+        return juce::String (juce::roundToInt (value * 1000.0f)) + " ms";
+    return juce::String (value, value < 10.0f ? 2 : 1) + " s";
+}
+
+// A panel position that stands for a time is shown as the time the modelled
+// circuit produces, not as a percentage of travel.
+juce::AudioParameterFloatAttributes attackAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withStringFromValueFunction ([] (float value, int)
+        {
+            return secondsText (YouKnow106Engine::envelopeAttackSeconds (value), 0);
+        });
+}
+
+juce::AudioParameterFloatAttributes decayAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withStringFromValueFunction ([] (float value, int)
+        {
+            return secondsText (YouKnow106Engine::envelopeDecaySeconds (value), 0);
+        });
+}
+
+juce::AudioParameterFloatAttributes lfoRateAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withStringFromValueFunction ([] (float value, int)
+        {
+            const auto hz = YouKnow106Engine::lfoRateHz (value);
+            return juce::String (hz, hz < 10.0f ? 2 : 1) + " Hz";
+        });
+}
+
+juce::AudioParameterFloatAttributes lfoDelayAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withStringFromValueFunction ([] (float value, int)
+        {
+            return secondsText (YouKnow106Engine::lfoDelaySeconds (value), 0);
+        });
+}
+
+juce::AudioParameterFloatAttributes cutoffAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withStringFromValueFunction ([] (float value, int)
+        {
+            const auto hz = YouKnow106Engine::vcfCutoffHz (
+                YouKnow106Engine::vcfPanelCounts (value));
+            if (hz >= 1000.0f)
+                return juce::String (hz / 1000.0f, 2) + " kHz";
+            return juce::String (hz, hz < 100.0f ? 1 : 0) + " Hz";
+        });
+}
+
+juce::AudioParameterFloatAttributes portamentoAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withStringFromValueFunction ([] (float value, int)
+        {
+            const auto seconds = YouKnow106Engine::portamentoSeconds (value);
+            if (seconds <= 0.0f)
+                return juce::String ("OFF");
+            return secondsText (seconds, 0) + "/oct";
+        });
+}
+
+bool containsParameterState (const juce::ValueTree& state, const char* parameterId)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+
+    for (const auto& child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId)
+            return true;
+
+    return false;
+}
+
+void addDefaultParameterStateIfMissing (juce::ValueTree& state,
+                                        juce::AudioProcessorValueTreeState& parameters,
+                                        const char* parameterId)
+{
+    if (containsParameterState (state, parameterId))
+        return;
+
+    if (const auto* parameter = parameters.getParameter (parameterId))
+    {
+        static const juce::Identifier parameterType { "PARAM" };
+        static const juce::Identifier idProperty { "id" };
+        static const juce::Identifier valueProperty { "value" };
+        juce::ValueTree parameterState { parameterType };
+        parameterState.setProperty (idProperty, parameterId, nullptr);
+        parameterState.setProperty (
+            valueProperty, parameter->convertFrom0to1 (parameter->getDefaultValue()),
+            nullptr);
+        state.appendChild (parameterState, nullptr);
+    }
+}
+} // namespace
+
+juce::AudioProcessorValueTreeState::ParameterLayout
+YouKnow106AudioProcessor::createParameterLayout()
+{
+    using namespace youknow106::parameters;
+    juce::AudioProcessorValueTreeState::ParameterLayout layout;
+
+    const auto travel = [] (const char* id, const char* name, float defaultValue,
+                            juce::AudioParameterFloatAttributes attributes)
+    {
+        return std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { id, 1 }, name,
+            juce::NormalisableRange<float> { 0.0f, 1.0f, 0.0f }, defaultValue,
+            std::move (attributes));
+    };
+
+    // --- Front panel, in panel order --------------------------------------
+    layout.add (travel (volume, "Volume", 0.80f, percentAttributes()));
+    layout.add (travel (benderDco, "Bender DCO", 0.30f, percentAttributes()));
+    layout.add (travel (benderVcf, "Bender VCF", 0.0f, percentAttributes()));
+    layout.add (travel (benderLfo, "Bender LFO", 0.0f, percentAttributes()));
+    layout.add (travel (portamento, "Portamento", 0.0f, portamentoAttributes()));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { keyMode, 1 }, "Key Mode",
+        juce::StringArray { "Poly 1", "Poly 2", "Unison" }, 0));
+
+    layout.add (travel (lfoRate, "LFO Rate", 0.42f, lfoRateAttributes()));
+    layout.add (travel (lfoDelay, "LFO Delay", 0.0f, lfoDelayAttributes()));
+
+    layout.add (travel (dcoLfo, "DCO LFO", 0.0f, percentAttributes()));
+    layout.add (travel (pwm, "PWM", 0.30f, percentAttributes()));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { pwmMode, 1 }, "PWM Mode",
+        juce::StringArray { "LFO", "Manual" }, 1));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { range, 1 }, "Range",
+        juce::StringArray { "16'", "8'", "4'" }, 1));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { saw, 1 }, "Saw", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { pulse, 1 }, "Pulse", false));
+    layout.add (travel (sub, "Sub", 0.0f, percentAttributes()));
+    layout.add (travel (noise, "Noise", 0.0f, percentAttributes()));
+
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { highPass, 1 }, "HPF",
+        juce::StringArray { "0", "1", "2", "3" }, 1));
+
+    layout.add (travel (cutoff, "VCF Freq", 0.62f, cutoffAttributes()));
+    layout.add (travel (resonance, "VCF Res", 0.10f, percentAttributes()));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { envPolarity, 1 }, "VCF Env Polarity",
+        juce::StringArray { "Normal", "Inverted" }, 0));
+    layout.add (travel (vcfEnv, "VCF Env", 0.35f, percentAttributes()));
+    layout.add (travel (vcfLfo, "VCF LFO", 0.0f, percentAttributes()));
+    layout.add (travel (keyFollow, "VCF Kybd", 0.50f, percentAttributes()));
+
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { vcaMode, 1 }, "VCA Mode",
+        juce::StringArray { "Env", "Gate" }, 0));
+    layout.add (travel (vcaLevel, "VCA Level", 0.80f, percentAttributes()));
+
+    layout.add (travel (attack, "Attack", 0.04f, attackAttributes()));
+    layout.add (travel (decay, "Decay", 0.45f, decayAttributes()));
+    layout.add (travel (sustain, "Sustain", 0.70f, percentAttributes()));
+    layout.add (travel (release, "Release", 0.30f, decayAttributes()));
+
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { chorus, 1 }, "Chorus",
+        juce::StringArray { "Off", "I", "II" }, 0));
+
+    // --- Controls the modelled instrument does not have -------------------
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { transpose, 1 }, "Transpose", -12, 12, 0));
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { masterTune, 1 }, "Master Tune",
+        juce::NormalisableRange<float> { -50.0f, 50.0f, 0.0f }, 0.0f,
+        juce::AudioParameterFloatAttributes().withLabel ("ct")));
+    layout.add (travel (velocity, "Velocity", 0.0f, percentAttributes()));
+    layout.add (travel (calibration, "Calibration", 0.35f, percentAttributes()));
+    layout.add (travel (chorusNoise, "Chorus Noise", 1.0f, percentAttributes()));
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { polyphony, 1 }, "Polyphony", 1, 16, 6));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { hq, 1 }, "HQ", true));
+
+    return layout;
+}
+
+YouKnow106AudioProcessor::YouKnow106AudioProcessor()
+    : AudioProcessor (BusesProperties()
+                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      parameters (*this, nullptr, "YOUKNOW106_STATE", createParameterLayout())
+{
+    using namespace youknow106::parameters;
+    const std::array<const char*, 37> ids {
+        volume, benderDco, benderVcf, benderLfo, portamento, keyMode,
+        lfoRate, lfoDelay, dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
+        highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
+        vcaMode, vcaLevel, attack, decay, sustain, release, chorus,
+        transpose, masterTune, velocity, calibration, chorusNoise, polyphony, hq
+    };
+
+    for (std::size_t index = 0; index < ids.size(); ++index)
+        parameterPointers[index] = { ids[index],
+                                     parameters.getRawParameterValue (ids[index]) };
+
+    keyboardState.addListener (this);
+}
+
+YouKnow106AudioProcessor::~YouKnow106AudioProcessor()
+{
+    keyboardState.removeListener (this);
+}
+
+float YouKnow106AudioProcessor::valueOf (const char* parameterId) const noexcept
+{
+    for (const auto& pointer : parameterPointers)
+        if (pointer.id != nullptr && std::strcmp (pointer.id, parameterId) == 0
+            && pointer.value != nullptr)
+            return pointer.value->load (std::memory_order_relaxed);
+    return 0.0f;
+}
+
+int YouKnow106AudioProcessor::choiceOf (const char* parameterId, int maximum) const noexcept
+{
+    return juce::jlimit (0, maximum, juce::roundToInt (valueOf (parameterId)));
+}
+
+void YouKnow106AudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+{
+    engineReady.store (false, std::memory_order_release);
+    engine.prepare (sampleRate, samplesPerBlock,
+                    valueOf (youknow106::parameters::hq) > 0.5f);
+    updateEngineParameters();
+    discardUiMidiEvents();
+    keyboardState.reset();
+
+    displaySampleRate.store (sampleRate, std::memory_order_relaxed);
+    displayOversamplingFactor.store (engine.getOversamplingFactor(),
+                                     std::memory_order_relaxed);
+    setLatencySamples (engine.getProcessingLatencySamples());
+    engineReady.store (true, std::memory_order_release);
+}
+
+void YouKnow106AudioProcessor::releaseResources()
+{
+    engineReady.store (false, std::memory_order_release);
+    engine.allNotesOff();
+    engine.reset();
+    discardUiMidiEvents();
+    keyboardState.reset();
+}
+
+bool YouKnow106AudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+{
+    if (layouts.getMainInputChannels() != 0)
+        return false;
+    const auto output = layouts.getMainOutputChannelSet();
+    return output == juce::AudioChannelSet::stereo();
+}
+
+void YouKnow106AudioProcessor::updateEngineParameters() noexcept
+{
+    using namespace youknow106;
+    using namespace youknow106::parameters;
+
+    EngineParameters engineParameters;
+    engineParameters.volume = valueOf (volume);
+    engineParameters.benderDcoDepth = valueOf (benderDco);
+    engineParameters.benderVcfDepth = valueOf (benderVcf);
+    engineParameters.benderLfoDepth = valueOf (benderLfo);
+    engineParameters.portamento = valueOf (portamento);
+    engineParameters.keyMode = static_cast<KeyMode> (choiceOf (keyMode, 2));
+
+    engineParameters.lfoRate = valueOf (lfoRate);
+    engineParameters.lfoDelay = valueOf (lfoDelay);
+
+    engineParameters.dcoLfoDepth = valueOf (dcoLfo);
+    engineParameters.pwmDepth = valueOf (pwm);
+    engineParameters.pwmSource = static_cast<PwmSource> (choiceOf (pwmMode, 1));
+    engineParameters.range = static_cast<DcoRange> (choiceOf (range, 2));
+    engineParameters.sawEnabled = valueOf (saw) > 0.5f;
+    engineParameters.pulseEnabled = valueOf (pulse) > 0.5f;
+    engineParameters.subLevel = valueOf (sub);
+    engineParameters.noiseLevel = valueOf (noise);
+
+    engineParameters.highPass = static_cast<HighPassMode> (choiceOf (highPass, 3));
+
+    engineParameters.cutoff = valueOf (cutoff);
+    engineParameters.resonance = valueOf (resonance);
+    engineParameters.envPolarity = static_cast<EnvPolarity> (choiceOf (envPolarity, 1));
+    engineParameters.envDepth = valueOf (vcfEnv);
+    engineParameters.vcfLfoDepth = valueOf (vcfLfo);
+    engineParameters.keyFollow = valueOf (keyFollow);
+
+    engineParameters.vcaMode = static_cast<VcaMode> (choiceOf (vcaMode, 1));
+    engineParameters.vcaLevel = valueOf (vcaLevel);
+
+    engineParameters.attack = valueOf (attack);
+    engineParameters.decay = valueOf (decay);
+    engineParameters.sustain = valueOf (sustain);
+    engineParameters.release = valueOf (release);
+
+    engineParameters.chorus = static_cast<ChorusMode> (choiceOf (chorus, 2));
+
+    engineParameters.keyTranspose = juce::roundToInt (valueOf (transpose));
+    engineParameters.masterTuneCents = valueOf (masterTune);
+    engineParameters.velocityDepth = valueOf (velocity);
+    engineParameters.calibration = valueOf (calibration);
+    engineParameters.chorusNoise = valueOf (chorusNoise);
+    engineParameters.polyphony = juce::roundToInt (valueOf (polyphony));
+
+    engine.setParameters (engineParameters);
+}
+
+void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
+                                             juce::MidiBuffer& midiMessages)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    const int numSamples = buffer.getNumSamples();
+    for (int channel = getTotalNumInputChannels(); channel < buffer.getNumChannels();
+         ++channel)
+        buffer.clear (channel, 0, numSamples);
+
+    if (! engineReady.load (std::memory_order_acquire) || numSamples <= 0)
+    {
+        buffer.clear();
+        midiMessages.clear();
+        return;
+    }
+
+    if (panicRequested.exchange (false, std::memory_order_acq_rel))
+    {
+        engine.allNotesOff();
+        discardUiMidiEvents();
+    }
+
+    if (engine.setOversamplingEnabled (valueOf (youknow106::parameters::hq) > 0.5f))
+    {
+        const int latency = engine.getProcessingLatencySamples();
+        if (latency != getLatencySamples())
+            setLatencySamples (latency);
+    }
+    displayOversamplingFactor.store (engine.getOversamplingFactor(),
+                                     std::memory_order_relaxed);
+
+    updateEngineParameters();
+    dispatchUiMidiEvents();
+
+    for (const auto metadata : midiMessages)
+    {
+        const auto message = metadata.getMessage();
+        if (message.isNoteOn())
+            engine.noteOn (message.getNoteNumber(), message.getFloatVelocity());
+        else if (message.isNoteOff())
+            engine.noteOff (message.getNoteNumber());
+        else if (message.isAllNotesOff() || message.isAllSoundOff())
+            engine.allNotesOff();
+        else if (message.isPitchWheel())
+            engine.setPitchBend ((static_cast<float> (message.getPitchWheelValue())
+                                  - 8192.0f) / 8192.0f);
+        else if (message.isController())
+        {
+            // The modelled instrument answers to modulation and hold, and to
+            // nothing else: it has no continuous controllers for its panel.
+            if (message.getControllerNumber() == 1)
+                engine.setModWheel (static_cast<float> (message.getControllerValue())
+                                    / 127.0f);
+            else if (message.getControllerNumber() == 64)
+                engine.setSustainPedal (message.getControllerValue() >= 64);
+        }
+    }
+    midiMessages.clear();
+
+    engine.process (buffer.getWritePointer (0), buffer.getWritePointer (1), numSamples);
+
+    activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
+    displayVoiceMask.store (engine.getDisplayVoiceMask(), std::memory_order_relaxed);
+    displayEnvelope.store (engine.getDisplayEnvelope(), std::memory_order_relaxed);
+    displayLfo.store (engine.getDisplayLfo(), std::memory_order_relaxed);
+}
+
+void YouKnow106AudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int,
+                                             int midiNoteNumber, float velocity)
+{
+    enqueueUiMidiEvent (midiNoteNumber, velocity, true);
+}
+
+void YouKnow106AudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int,
+                                              int midiNoteNumber, float)
+{
+    enqueueUiMidiEvent (midiNoteNumber, 0.0f, false);
+}
+
+void YouKnow106AudioProcessor::enqueueUiMidiEvent (int note, float velocity,
+                                                   bool isNoteOn) noexcept
+{
+    const auto write = uiWriteIndex.load (std::memory_order_relaxed);
+    const auto read = uiReadIndex.load (std::memory_order_acquire);
+    if (write - read >= uiQueueCapacity)
+        return;
+
+    uiMidiQueue[write % uiQueueCapacity] = { note, velocity, isNoteOn };
+    uiWriteIndex.store (write + 1, std::memory_order_release);
+}
+
+void YouKnow106AudioProcessor::discardUiMidiEvents() noexcept
+{
+    uiReadIndex.store (uiWriteIndex.load (std::memory_order_acquire),
+                       std::memory_order_release);
+}
+
+void YouKnow106AudioProcessor::dispatchUiMidiEvents() noexcept
+{
+    auto read = uiReadIndex.load (std::memory_order_relaxed);
+    const auto write = uiWriteIndex.load (std::memory_order_acquire);
+
+    while (read != write)
+    {
+        const auto event = uiMidiQueue[read % uiQueueCapacity];
+        if (event.noteOn)
+            engine.noteOn (event.note, event.velocity);
+        else
+            engine.noteOff (event.note);
+        ++read;
+    }
+
+    uiReadIndex.store (read, std::memory_order_release);
+}
+
+void YouKnow106AudioProcessor::randomizeParameters (float amount)
+{
+    if (const auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
+        messageManager != nullptr && ! messageManager->isThisTheMessageThread())
+    {
+        // Host gesture callbacks belong to the message thread. Refuse an
+        // accidental call from anywhere else rather than racing the host's own
+        // listeners.
+        jassertfalse;
+        return;
+    }
+
+    if (! std::isfinite (amount))
+        return;
+    amount = juce::jlimit (0.0f, 1.0f, amount);
+    if (amount <= 0.0f)
+        return;
+
+    using namespace youknow106::parameters;
+    // Deliberately sound-design controls only. Output level, voice count,
+    // oversampling, and the two controls that describe the *instrument* rather
+    // than the patch — Calibration and Chorus Noise — are excluded, so a
+    // randomisation cannot mute the patch, jump its gain, change its running
+    // cost, or quietly re-specify the hardware being modelled.
+    static constexpr std::array<const char*, 29> soundParameterIds {{
+        benderDco, benderVcf, benderLfo, portamento, keyMode,
+        lfoRate, lfoDelay,
+        dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
+        highPass,
+        cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
+        vcaMode, vcaLevel,
+        attack, decay, sustain, release,
+        chorus
+    }};
+
+    juce::Random random;
+    for (const auto* parameterId : soundParameterIds)
+    {
+        auto* parameter = parameters.getParameter (parameterId);
+        jassert (parameter != nullptr);
+        if (parameter == nullptr)
+            continue;
+
+        const float current = parameter->getValue();
+        const float destination = random.nextFloat();
+        const float requested = juce::jlimit (
+            0.0f, 1.0f, current + amount * (destination - current));
+        // Round through the parameter's own range before notifying the host, so
+        // a switch cannot report a value between two of its positions.
+        const float legal = parameter->convertTo0to1 (
+            parameter->convertFrom0to1 (requested));
+        // A switch's step can be wider than a subtle strength. Where it is,
+        // leaving the control alone is more honest than letting quantisation
+        // move it further than the button advertises.
+        const float movement = std::abs (legal - current);
+        if (movement <= 1.0e-7f || movement > amount + 1.0e-7f)
+            continue;
+
+        parameter->beginChangeGesture();
+        parameter->setValueNotifyingHost (legal);
+        parameter->endChangeGesture();
+    }
+}
+
+void YouKnow106AudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)
+{
+    if (auto state = parameters.copyState(); state.isValid())
+        if (const auto xml = state.createXml())
+            copyXmlToBinary (*xml, destinationData);
+}
+
+void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    const auto xml = getXmlFromBinary (data, sizeInBytes);
+    if (xml == nullptr || ! xml->hasTagName (parameters.state.getType()))
+        return;
+
+    auto state = juce::ValueTree::fromXml (*xml);
+    if (! state.isValid())
+        return;
+
+    // A state written by an earlier build will not carry parameters added
+    // since. Filling them with their defaults keeps the rest of the patch
+    // rather than discarding the whole thing.
+    for (const auto& pointer : parameterPointers)
+        if (pointer.id != nullptr)
+            addDefaultParameterStateIfMissing (state, parameters, pointer.id);
+
+    parameters.replaceState (state);
+    updateEngineParameters();
+}
+
+juce::AudioProcessorEditor* YouKnow106AudioProcessor::createEditor()
+{
+    return new YouKnow106AudioProcessorEditor (*this);
+}
+
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new YouKnow106AudioProcessor();
+}
