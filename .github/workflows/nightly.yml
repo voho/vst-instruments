@@ -15,14 +15,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The committed Electry demonstration WAVs are rendered by the JUCE-free
-  # renderer, so any model change shows up as changed bytes. Re-rendering and
-  # committing them nightly keeps the audible record in lockstep with the
-  # code; the nightly Linux toolchain is the canonical renderer, and a run on
-  # an unchanged model commits nothing because the render is deterministic.
+  # The committed demonstration WAVs of every instrument are rendered by their
+  # JUCE-free renderers, so any model change shows up as changed bytes.
+  # Re-rendering and committing them nightly keeps the audible record in
+  # lockstep with the code; the nightly Linux toolchain is the canonical
+  # renderer, and a run on an unchanged model commits nothing because every
+  # render is deterministic.
   refresh-audio-demos:
     if: github.ref == 'refs/heads/main'
-    name: Re-render committed Electry and Taikor demo audio
+    name: Re-render the committed demo audio of every instrument
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,25 +34,38 @@ jobs:
 
       - name: Build the JUCE-free demo renderers
         run: |
-          cmake -S electry -B electry/build-dsp -DCMAKE_BUILD_TYPE=Release \
-            -DELECTRY_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
-          cmake --build electry/build-dsp --parallel \
-            --target ElectryRenderDemos
-          cmake -S taikor -B taikor/build-dsp -DCMAKE_BUILD_TYPE=Release \
-            -DTAIKOR_BUILD_PLUGIN=OFF -DBUILD_TESTING=OFF
-          cmake --build taikor/build-dsp --parallel \
-            --target TaikorRenderDemos
+          for instrument in vocalor drumalor neuramar electry taikor youknow106; do
+            upper=$(echo "$instrument" | tr '[:lower:]' '[:upper:]')
+            case "$instrument" in
+              vocalor)    target=VocalorRenderDemos ;;
+              drumalor)   target=DrumalorRenderDemos ;;
+              neuramar)   target=NeuramarRenderDemos ;;
+              electry)    target=ElectryRenderDemos ;;
+              taikor)     target=TaikorRenderDemos ;;
+              youknow106) target=YouKnow106RenderDemos ;;
+            esac
+            cmake -S "$instrument" -B "$instrument/build-dsp" \
+              -DCMAKE_BUILD_TYPE=Release \
+              "-D${upper}_BUILD_PLUGIN=OFF" -DBUILD_TESTING=OFF
+            cmake --build "$instrument/build-dsp" --parallel --target "$target"
+          done
 
       - name: Render and commit the demo audio if it changed
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          ./vocalor/build-dsp/VocalorRenderDemos vocalor/Docs/audio
+          ./drumalor/build-dsp/DrumalorRenderDemos drumalor/Docs/audio
+          ./neuramar/build-dsp/NeuramarRenderDemos neuramar/Docs/audio
           ./electry/build-dsp/ElectryRenderDemos electry/Docs/audio
           ./taikor/build-dsp/TaikorRenderDemos taikor/Docs/audio
+          ./youknow106/build-dsp/YouKnow106RenderDemos youknow106/Docs/audio
           # Stage before checking: a newly added demo is an untracked file,
           # which git diff alone would not see.
-          git add -A electry/Docs/audio taikor/Docs/audio
+          git add -A vocalor/Docs/audio drumalor/Docs/audio \
+            neuramar/Docs/audio electry/Docs/audio taikor/Docs/audio \
+            youknow106/Docs/audio
           if git diff --cached --quiet; then
             echo "Demo audio is unchanged; nothing to commit."
             exit 0
@@ -62,11 +76,14 @@ jobs:
           REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           for attempt in 1 2 3; do
             git pull --rebase -X theirs "$REMOTE" main
-            # If render-relevant Electry code landed on main while this job
+            # If render-relevant instrument code landed on main while this job
             # ran, these WAVs describe the older model; publishing them would
             # be wrong, and the next nightly will render the newer tree.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                electry taikor ':(exclude)electry/Docs' ':(exclude)taikor/Docs'; then
+                vocalor drumalor neuramar electry taikor youknow106 \
+                ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
+                ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
+                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs'; then
               echo "An instrument changed upstream during the render; deferring to the next nightly."
               exit 0
             fi
@@ -94,6 +111,8 @@ jobs:
       # editors; the commit step below pushes any that changed.
       - name: Build Vocalor and run tests
         working-directory: vocalor
+        env:
+          VOCALOR_EDITOR_SNAPSHOT: ${{ github.workspace }}/vocalor/Docs/screenshots/vocalor-standalone.png
         run: ./scripts/build-macos.sh
 
       - name: Package Vocalor (ad-hoc-signed bundles)
@@ -150,15 +169,17 @@ jobs:
         working-directory: youknow106
         run: ./scripts/sign-and-package-macos.sh
 
-      # Vocalor's suite has no snapshot hook yet, so its screenshot is not
-      # regenerated here. The rebase-and-retry loop absorbs the audio-demos
-      # job (or anything else) having pushed to main while this job built.
+      # Every suite renders its committed editor screenshot while it runs, so
+      # the images in the READMEs track the real editors. The rebase-and-retry
+      # loop absorbs the audio-demos job (or anything else) having pushed to
+      # main while this job built.
       - name: Commit regenerated screenshots if they changed
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           paths=(
+            vocalor/Docs/screenshots
             drumalor/Docs/screenshots
             neuramar/Docs/screenshots
             electry/Docs/screenshots
@@ -185,10 +206,10 @@ jobs:
             # Docs-only churn (including the audio job's own commit) does not
             # invalidate a render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                drumalor neuramar electry taikor youknow106 \
-                ':(exclude)drumalor/Docs' ':(exclude)neuramar/Docs' \
-                ':(exclude)electry/Docs' ':(exclude)taikor/Docs' \
-                ':(exclude)youknow106/Docs'; then
+                vocalor drumalor neuramar electry taikor youknow106 \
+                ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
+                ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
+                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
             fi

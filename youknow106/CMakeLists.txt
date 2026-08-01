@@ -129,6 +129,25 @@ if(YOUKNOW106_BUILD_PLUGIN)
             JUCE_VST3_CAN_REPLACE_VST2=0)
 endif()
 
+# The committed demonstration WAVs under Docs/audio are rendered by this tool
+# from the same JUCE-free engine the plug-in uses, so they cannot drift away
+# from what YouKnow106 actually produces. It is built by default, including on
+# Linux CI, so it cannot rot unnoticed.
+option(YOUKNOW106_BUILD_TOOLS "Build the demo WAV renderer" ON)
+
+if(YOUKNOW106_BUILD_TOOLS)
+    add_executable(YouKnow106RenderDemos Tools/RenderDemos.cpp)
+    target_link_libraries(YouKnow106RenderDemos PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106RenderDemos PRIVATE cxx_std_20)
+
+    if(MSVC)
+        target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(YouKnow106RenderDemos PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
 if(BUILD_TESTING)
     add_executable(YouKnow106EngineTests Tests/YouKnow106EngineTests.cpp)
     target_link_libraries(YouKnow106EngineTests PRIVATE YouKnow106DSP)
@@ -148,6 +167,16 @@ if(BUILD_TESTING)
 
     add_test(NAME YouKnow106.Engine COMMAND YouKnow106EngineTests)
     add_test(NAME YouKnow106.Circuit COMMAND YouKnow106CircuitTests)
+
+    if(YOUKNOW106_BUILD_TOOLS)
+        # Guards the renderer that produces the committed demonstration WAVs:
+        # it renders a short take to a temporary directory and checks that the
+        # audio is finite, audible and written as a readable WAV.
+        add_test(NAME YouKnow106.RenderDemos
+                 COMMAND YouKnow106RenderDemos --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
+        set_tests_properties(YouKnow106.RenderDemos PROPERTIES TIMEOUT 60)
+    endif()
     # The circuit suite re-solves the reference ODE models at high internal
     # rates, so it is the slower of the two. Address/undefined sanitizers make
     # both roughly an order of magnitude slower; keep the normal runaway guard

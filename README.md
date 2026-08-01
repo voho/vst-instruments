@@ -17,27 +17,31 @@ libraries.
 
 | [Vocalor](vocalor/) | [Drumalor](drumalor/) | [Neuramar](neuramar/) | [Electry](electry/) | [Taikor](taikor/) | [YouKnow106](youknow106/) |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| [![Vocalor standalone interface](vocalor/Docs/screenshots/vocalor-standalone.png)](vocalor/README.md) | [![Drumalor standalone interface](drumalor/Docs/screenshots/drumalor-standalone.png)](drumalor/README.md) | [![Neuramar standalone interface](neuramar/Docs/screenshots/neuramar-standalone.png)](neuramar/README.md) | [![Electry standalone interface](electry/Docs/screenshots/electry-standalone.png)](electry/README.md) | [**Taikor** — screenshot lands with the first Nightly](taikor/README.md)<br>[23 rendered demos](taikor/Docs/audio/README.md) | [**YouKnow106** — screenshot lands with the first Nightly](youknow106/README.md) |
+| [![Vocalor standalone interface](vocalor/Docs/screenshots/vocalor-standalone.png)](vocalor/README.md)<br>[9 rendered demos](vocalor/Docs/audio/README.md) | [![Drumalor standalone interface](drumalor/Docs/screenshots/drumalor-standalone.png)](drumalor/README.md)<br>[7 rendered demos](drumalor/Docs/audio/README.md) | [![Neuramar standalone interface](neuramar/Docs/screenshots/neuramar-standalone.png)](neuramar/README.md)<br>[8 rendered demos](neuramar/Docs/audio/README.md) | [![Electry standalone interface](electry/Docs/screenshots/electry-standalone.png)](electry/README.md) | [**Taikor** — screenshot lands with the first Nightly](taikor/README.md)<br>[23 rendered demos](taikor/Docs/audio/README.md) | [**YouKnow106** — screenshot lands with the first Nightly](youknow106/README.md)<br>[10 rendered demos](youknow106/Docs/audio/README.md) |
 
 Each screenshot above is rendered by its instrument's own regression suite
 during the Nightly workflow's macOS build and committed automatically when the
-editor has changed, so the images track the real editors. Three exceptions:
-Vocalor's suite does not render one yet, so its screenshot still dates from its
-previous release, and Taikor and YouKnow106 are new — their suites do render
-one, but rendering it needs a macOS build, so their cells above stay text links
-until the first Nightly commits the images. The Nightly also re-renders and
-commits Electry's and Taikor's [demonstration audio](taikor/Docs/audio/README.md)
-the same way.
+editor has changed, so the images track the real editors — all six suites now
+render one. Taikor and YouKnow106 are new: their cells above stay text links
+until the first Nightly commits their images. The Nightly also re-renders and
+commits every instrument's demonstration audio the same way, from the same
+JUCE-free engines the plug-ins run:
+[Vocalor](vocalor/Docs/audio/README.md),
+[Drumalor](drumalor/Docs/audio/README.md),
+[Neuramar](neuramar/Docs/audio/README.md),
+[Electry](electry/Docs/audio/README.md),
+[Taikor](taikor/Docs/audio/README.md), and
+[YouKnow106](youknow106/Docs/audio/README.md).
 
 ## Instruments
 
 | Instrument | Description | Formats | Platform | Docs |
 | --- | --- | --- | --- | --- |
-| [Vocalor](vocalor/) | Source-filter vocal and choir synthesizer with an LF-style glottal source, a continuous morphable vowel space, formant shifting independent of pitch, and legato phrasing across solo, ensemble, and chord modes. | VST3 · AU · Standalone | macOS 11+ | [README](vocalor/README.md) |
-| [Drumalor](drumalor/) | Thirteen-voice procedural drum synthesizer with struck-membrane modal models, velocity-dependent timbre, per-voice level/pan/choke mixing, humanised organic variation, a shared drive and compression bus, and GM-oriented MIDI mapping. | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
-| [Neuramar](neuramar/) | Drop in a mostly monophonic sound, infer its root, and fit a compact local DDSP-inspired neural synthesis model — with fitted stiff-string inharmonicity, formant shifting, and velocity-driven timbre — whose harmonic Core, noisy Air, and resonant Bone remain playable across pitches. | VST3 · AU · Standalone | macOS 11+ | [README](neuramar/README.md) |
+| [Vocalor](vocalor/) | Source-filter vocal and choir synthesizer with an LF-style glottal source, a continuous morphable vowel space, formant shifting independent of pitch, and legato phrasing across solo, ensemble, and chord modes. [Rendered demos.](vocalor/Docs/audio/README.md) | VST3 · AU · Standalone | macOS 11+ | [README](vocalor/README.md) |
+| [Drumalor](drumalor/) | Thirteen-voice procedural drum synthesizer with struck-membrane modal models, velocity-dependent timbre, per-voice level/pan/choke mixing, humanised organic variation, a shared drive and compression bus, and GM-oriented MIDI mapping. [Rendered demos.](drumalor/Docs/audio/README.md) | VST3 · AU · Standalone | macOS 11+ | [README](drumalor/README.md) |
+| [Neuramar](neuramar/) | Drop in a mostly monophonic sound, infer its root, and fit a compact local DDSP-inspired neural synthesis model — with fitted stiff-string inharmonicity, formant shifting, and velocity-driven timbre — whose harmonic Core, noisy Air, and resonant Bone remain playable across pitches. [Rendered demos.](neuramar/Docs/audio/README.md) | VST3 · AU · Standalone | macOS 11+ | [README](neuramar/README.md) |
 | [Taikor](taikor/) | Physically modeled taiko: a struck circular membrane solved from Bessel-zero modes with air loading, two heads coupled through the enclosed body, a thin-cylinder wooden shell, and a Hertz stick contact whose duration follows impact speed. Twelve kumi-daiko strokes per octave, the octave selecting the drum from odaiko to shime-daiko, and a stereo close pair whose image comes from evanescent near-field decay rather than a widener. [Rendered demos.](taikor/Docs/audio/README.md) | VST3 · AU · Standalone | macOS 11+ | [README](taikor/README.md) |
-| [YouKnow106](youknow106/) | Circuit-modelled six-voice DCO polysynth: integer-divided note timers with their real pitch quantisation, a scanned control converter walking the voices with per-hold slew and 7-bit patch digitisation, firmware envelopes with exponential falling segments into a measured quasi-linear amplifier, a four-pole transconductor filter with its divider-limited resonance loop solved implicitly and checked against a Runge-Kutta solve of the same circuit, input-side resonance compensation, a key assigner that drops notes rather than stealing them, and an uncompanded two-line bucket-brigade chorus with the line's own saturation. [Claims boundary.](youknow106/Docs/circuit-modelling-research.md) | VST3 · AU · Standalone | macOS 11+ | [README](youknow106/README.md) |
+| [YouKnow106](youknow106/) | Circuit-modelled six-voice DCO polysynth: integer-divided note timers with their real pitch quantisation, a scanned control converter walking the voices with per-hold slew and 7-bit patch digitisation, firmware envelopes with exponential falling segments into a measured quasi-linear amplifier, a four-pole transconductor filter with its divider-limited resonance loop solved implicitly and checked against a Runge-Kutta solve of the same circuit, input-side resonance compensation, a key assigner that drops notes rather than stealing them, and an uncompanded two-line bucket-brigade chorus with the line's own saturation. [Claims boundary.](youknow106/Docs/circuit-modelling-research.md) [Rendered demos.](youknow106/Docs/audio/README.md) | VST3 · AU · Standalone | macOS 11+ | [README](youknow106/README.md) |
 | [Electry](electry/) | Oversampled physically modeled Drop-E eight-string guitar: eight dual-polarisation waveguides, fitted stiff-string dispersion, bridge-coupled sympathetic strings, a continuous palm mute, strum travel, induced-EMF pickups, modal body loss, Mono/divided-pickup Stereo, two independent keyswitch banks (three pick strokes against four play styles), a pitch wheel that bends every string like a vibrato bar, a resonance wheel that pushes a distorted tone into self-sustaining amplifier feedback, and a 4x-oversampled amplifier and modelled cabinet. [Rendered demos.](electry/Docs/audio/README.md) | VST3 · AU · Standalone | macOS 11+ | [README](electry/README.md) |
 
 ## Download (nightly)
@@ -158,10 +162,10 @@ The two GitHub Actions workflows cover every instrument explicitly:
   artifact for 14 days, and preserves the prior complete rolling-release set
   until all twelve uniquely named replacement assets have uploaded. It also
   keeps the committed documentation media honest: a Linux job re-renders
-  Electry's and Taikor's demonstration audio through their JUCE-free renderers,
-  the macOS build renders each supporting instrument's editor screenshot through
-  its test suite, and either is committed back to `main` only when the bytes
-  actually changed.
+  every instrument's demonstration audio through its JUCE-free renderer, the
+  macOS build renders every instrument's editor screenshot through its test
+  suite, and either is committed back to `main` only when the bytes actually
+  changed.
 
 The JUCE source dependency is pinned to an immutable 8.0.14 archive and SHA-256
 checksum in every project. Runner images and Xcode are supplied by GitHub Actions,

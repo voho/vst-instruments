@@ -19,6 +19,12 @@ Clap, Closed and Open Hats, Ride, Crash, Low/Mid/High Toms, Shaker, and two
 percussion voices. Each has its own MIDI mapping, synthesis character, pitch,
 and decay controls.
 
+> **Listen first.** Seven [rendered demonstrations](Docs/audio/README.md) cover
+> the full thirteen-voice kit one hit at a time, programmed grooves with
+> ghost notes, snare velocity dynamics, toms and cymbals, the Humanise control
+> and the kit bus. They are rendered by the shipping engine, so they cannot
+> drift from what the plug-in does.
+
 The project builds three products from one JUCE codebase:
 
 - VST3 instrument for hosts such as Ableton Live, REAPER, Cubase, and Bitwig

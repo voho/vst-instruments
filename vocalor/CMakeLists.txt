@@ -127,6 +127,24 @@ if(VOCALOR_BUILD_PLUGIN)
             JUCE_VST3_CAN_REPLACE_VST2=0)
 endif()
 
+# The committed demonstration WAVs under Docs/audio are rendered by this tool
+# from the same JUCE-free engine the plug-in uses, so they cannot drift away
+# from what Vocalor actually produces. It is built by default, including on
+# Linux CI, so it cannot rot unnoticed.
+option(VOCALOR_BUILD_TOOLS "Build the demo WAV renderer" ON)
+
+if(VOCALOR_BUILD_TOOLS)
+    add_executable(VocalorRenderDemos Tools/RenderDemos.cpp)
+    target_link_libraries(VocalorRenderDemos PRIVATE VocalorDSP)
+    target_compile_features(VocalorRenderDemos PRIVATE cxx_std_20)
+
+    if(MSVC)
+        target_compile_options(VocalorRenderDemos PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(VocalorRenderDemos PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
 if(BUILD_TESTING)
     add_executable(VocalorVoiceEngineTests Tests/VoiceEngineTests.cpp)
     target_link_libraries(VocalorVoiceEngineTests PRIVATE VocalorDSP)
@@ -141,6 +159,16 @@ if(BUILD_TESTING)
 
     add_test(NAME Vocalor.VoiceEngine COMMAND VocalorVoiceEngineTests)
     set_tests_properties(Vocalor.VoiceEngine PROPERTIES TIMEOUT 30)
+
+    if(VOCALOR_BUILD_TOOLS)
+        # Guards the renderer that produces the committed demonstration WAVs:
+        # it renders a short take to a temporary directory and checks that the
+        # audio is finite, audible and written as a readable WAV.
+        add_test(NAME Vocalor.RenderDemos
+                 COMMAND VocalorRenderDemos --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
+        set_tests_properties(Vocalor.RenderDemos PROPERTIES TIMEOUT 60)
+    endif()
 
     if(VOCALOR_BUILD_PLUGIN)
         add_executable(VocalorPluginProcessorTests Tests/PluginProcessorTests.cpp)
