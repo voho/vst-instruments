@@ -110,16 +110,6 @@ jobs:
         working-directory: drumalor
         run: ./scripts/sign-and-package-macos.sh
 
-      - name: Build Mars and run tests
-        working-directory: mars
-        env:
-          MARS_EDITOR_SNAPSHOT: ${{ github.workspace }}/mars/Docs/screenshots/mars-standalone.png
-        run: ./scripts/build-macos.sh
-
-      - name: Package Mars (ad-hoc-signed bundles)
-        working-directory: mars
-        run: ./scripts/sign-and-package-macos.sh
-
       - name: Build Neuramar and run tests
         working-directory: neuramar
         env:
@@ -170,7 +160,6 @@ jobs:
           set -euo pipefail
           paths=(
             drumalor/Docs/screenshots
-            mars/Docs/screenshots
             neuramar/Docs/screenshots
             electry/Docs/screenshots
             taikor/Docs/screenshots
@@ -196,10 +185,10 @@ jobs:
             # Docs-only churn (including the audio job's own commit) does not
             # invalidate a render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
-                drumalor mars neuramar electry taikor youknow106 \
-                ':(exclude)drumalor/Docs' ':(exclude)mars/Docs' \
-                ':(exclude)neuramar/Docs' ':(exclude)electry/Docs' \
-                ':(exclude)taikor/Docs' ':(exclude)youknow106/Docs'; then
+                drumalor neuramar electry taikor youknow106 \
+                ':(exclude)drumalor/Docs' ':(exclude)neuramar/Docs' \
+                ':(exclude)electry/Docs' ':(exclude)taikor/Docs' \
+                ':(exclude)youknow106/Docs'; then
               echo "Instrument code changed upstream during the build; deferring the screenshot refresh to the next nightly."
               exit 0
             fi
@@ -223,8 +212,6 @@ jobs:
             vocalor/build-macos/dist/Vocalor-*-macOS-universal.pkg
             drumalor/build-macos/dist/Drumalor-*-macOS-universal.zip
             drumalor/build-macos/dist/Drumalor-*-macOS-universal.pkg
-            mars/build-macos/dist/Mars-*-macOS-universal.zip
-            mars/build-macos/dist/Mars-*-macOS-universal.pkg
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.zip
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.pkg
             electry/build-macos/dist/Electry-*-macOS-universal.zip
@@ -236,7 +223,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Publish a single rolling "nightly" release so all five instruments share a
+      # Publish a single rolling "nightly" release so all six instruments share a
       # stable public download URL.
       - name: Publish rolling "nightly" release
         env:
@@ -251,8 +238,6 @@ jobs:
             vocalor/build-macos/dist/Vocalor-*-macOS-universal.pkg
             drumalor/build-macos/dist/Drumalor-*-macOS-universal.zip
             drumalor/build-macos/dist/Drumalor-*-macOS-universal.pkg
-            mars/build-macos/dist/Mars-*-macOS-universal.zip
-            mars/build-macos/dist/Mars-*-macOS-universal.pkg
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.zip
             neuramar/build-macos/dist/Neuramar-*-macOS-universal.pkg
             electry/build-macos/dist/Electry-*-macOS-universal.zip
@@ -262,8 +247,8 @@ jobs:
             youknow106/build-macos/dist/YouKnow106-*-macOS-universal.zip
             youknow106/build-macos/dist/YouKnow106-*-macOS-universal.pkg
           )
-          if (( ${#assets[@]} != 14 )); then
-            echo "error: expected exactly fourteen release assets, found ${#assets[@]}" >&2
+          if (( ${#assets[@]} != 12 )); then
+            echo "error: expected exactly twelve release assets, found ${#assets[@]}" >&2
             printf '  %s\n' "${assets[@]}" >&2
             exit 1
           fi
@@ -295,14 +280,13 @@ jobs:
           done
 
           TITLE="VST instruments nightly ($DATE)"
-          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, Mars, Neuramar, Electry, Taikor, and YouKnow106 from \`main\` ($SHORT_SHA).
+          NOTES="Automated universal (arm64 + x86_64) macOS builds of Vocalor, Drumalor, Neuramar, Electry, Taikor, and YouKnow106 from \`main\` ($SHORT_SHA).
 
           **These bundles are ad-hoc signed and not notarized**, so Gatekeeper will warn. To run a nightly locally, clear the quarantine flag after unzipping, e.g.:
 
           \`\`\`bash
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Vocalor.vst3 Library/Audio/Plug-Ins/Components/Vocalor.component Applications/Vocalor.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Drumalor.vst3 Library/Audio/Plug-Ins/Components/Drumalor.component Applications/Drumalor.app
-          xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Mars.vst3 Library/Audio/Plug-Ins/Components/Mars.component Applications/Mars.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Neuramar.vst3 Library/Audio/Plug-Ins/Components/Neuramar.component Applications/Neuramar.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Electry.vst3 Library/Audio/Plug-Ins/Components/Electry.component Applications/Electry.app
           xattr -dr com.apple.quarantine Library/Audio/Plug-Ins/VST3/Taikor.vst3 Library/Audio/Plug-Ins/Components/Taikor.component Applications/Taikor.app
