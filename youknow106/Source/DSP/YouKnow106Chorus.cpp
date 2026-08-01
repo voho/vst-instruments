@@ -105,10 +105,12 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         static_cast<double>(clockHz) / static_cast<double>(sampleRate);
     clockPhase += increment;
     // A clock above the host rate needs more than one shift per sample, which
-    // is exactly what happens at 44.1 or 48 kHz with oversampling switched off;
-    // bound the work rather than letting the loop run away.
+    // is exactly what happens at 44.1 or 48 kHz with oversampling switched off.
+    // The bound is the worst ratio the model supports -- the fastest clock
+    // against the lowest host rate -- so every elapsed edge is consumed and no
+    // backlog can build up and drag the delay off its setting.
     int shifts = 0;
-    while (clockPhase >= 1.0 && shifts < 8)
+    while (clockPhase >= 1.0 && shifts < maximumShiftsPerSample)
     {
         clockPhase -= 1.0;
         ++shifts;
@@ -131,6 +133,11 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         held = transferState
              + noiseFromState(noiseState) * lineNoiseAmplitude * noiseScale;
     }
+    // If the ratio somehow exceeded even that bound, drop the remainder rather
+    // than carrying it: a backlog would make the line run slower than the clock
+    // it was asked for and drift further out every sample.
+    if (clockPhase >= 1.0)
+        clockPhase -= std::floor(clockPhase);
     previousInput = limited;
 
     // Reconstruct the held staircase.

@@ -227,6 +227,59 @@ float YouKnow106Engine::portamentoSeconds(float panelPosition) noexcept
                     / portamentoFastestSecondsPerOctave, position);
 }
 
+namespace
+{
+// Inverse of a law of the form value = low * (high / low) ^ position.
+float exponentialPosition(float value, float low, float high) noexcept
+{
+    if (!(value > 0.0f) || !std::isfinite(value))
+        return 0.0f;
+    const float span = std::log(high / low);
+    return std::clamp(std::log(std::max(value, low) / low) / span, 0.0f, 1.0f);
+}
+} // namespace
+
+float YouKnow106Engine::panelPositionForAttack(float seconds) noexcept
+{
+    return exponentialPosition(seconds, envelopeMinimumSeconds, attackMaximumSeconds);
+}
+
+float YouKnow106Engine::panelPositionForDecay(float seconds) noexcept
+{
+    return exponentialPosition(seconds, envelopeMinimumSeconds, decayMaximumSeconds);
+}
+
+float YouKnow106Engine::panelPositionForLfoRate(float hertz) noexcept
+{
+    return exponentialPosition(hertz, lfoMinimumHz, lfoMaximumHz);
+}
+
+float YouKnow106Engine::panelPositionForLfoDelay(float seconds) noexcept
+{
+    if (!(seconds > 0.0f) || !std::isfinite(seconds))
+        return 0.0f;
+    return std::clamp(std::sqrt(seconds / lfoDelayMaximumSeconds), 0.0f, 1.0f);
+}
+
+float YouKnow106Engine::panelPositionForPortamento(float secondsPerOctave) noexcept
+{
+    if (!(secondsPerOctave > 0.0f) || !std::isfinite(secondsPerOctave))
+        return 0.0f;
+    return exponentialPosition(secondsPerOctave, portamentoFastestSecondsPerOctave,
+                               portamentoSlowestSecondsPerOctave);
+}
+
+float YouKnow106Engine::panelPositionForCutoff(float hertz) noexcept
+{
+    if (!(hertz > 0.0f) || !std::isfinite(hertz))
+        return 0.0f;
+    const float counts = vcfCountsPerOctave
+                       * std::log2(std::max(hertz, vcfBaseFrequencyHz) / vcfBaseFrequencyHz);
+    // The travel is read as a 0..127 byte driving the converter 128 counts at
+    // a time, so this is the inverse of that quantisation, not of a continuum.
+    return std::clamp(counts / (127.0f * 128.0f), 0.0f, 1.0f);
+}
+
 float YouKnow106Engine::pwmControlVolts(float depth) noexcept
 {
     // The comparator threshold runs from +6 V, where the ramp is bisected and
@@ -876,6 +929,10 @@ void YouKnow106Engine::reset()
     sustainPedalDown_ = false;
     generation_ = 0;
     roundRobinCursor_ = 0;
+    // The glide origin is performance state: keeping it across a stop would
+    // make the first note of the next run slide from the last note of the last.
+    lastPlayedMidi_ = 60.0f;
+    hasLastPlayedMidi_ = false;
     activeVoiceCount_ = 0;
     anyVoiceActive_ = false;
     displayEnvelope_ = 0.0f;
@@ -997,9 +1054,11 @@ int YouKnow106Engine::newestHeldNote() const noexcept
 // stack back to whichever key is still down rather than silencing everything.
 void YouKnow106Engine::retargetUnison(int midiNote) noexcept
 {
-    const int limit = voiceLimit();
+    // Every sounding slot, not just the ones inside the current voice count:
+    // lowering that count leaves earlier voices playing, and they have to be
+    // handed on with the rest or they stay keyed to a note nobody is holding.
     const float velocity = heldNoteVelocities_[static_cast<std::size_t>(midiNote)];
-    for (int slot = 0; slot < limit; ++slot)
+    for (int slot = 0; slot < maxVoices; ++slot)
     {
         auto& voice = voices_[static_cast<std::size_t>(slot)];
         if (!voice.active)
@@ -1710,7 +1769,12 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
             if (--driftControlCountdown_ <= 0)
             {
-                driftControlCountdown_ = controlPeriod * 64;
+                // A fixed wall-clock rate. Counting internal samples instead
+                // would make the modelled component wander four times faster
+                // with oversampling on, so the same patch would drift
+                // differently depending on a quality setting.
+                driftControlCountdown_ = std::max(
+                    1, static_cast<int>(oversampledRate_ / driftUpdateHz));
                 for (auto& card : cards_)
                     updateVoiceCardDrift(card);
             }

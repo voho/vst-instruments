@@ -34,6 +34,21 @@ juce::String secondsText (float value, int)
     return juce::String (value, value < 10.0f ? 2 : 1) + " s";
 }
 
+// A control whose *display* is a time or a frequency needs a way back from the
+// text a host may let someone type. Without it, "1.00 kHz" would be read as a
+// panel position of 1.0 and drive the control to its top.
+float secondsFromText (const juce::String& text)
+{
+    const auto number = text.retainCharacters ("0123456789.-").getFloatValue();
+    return text.containsIgnoreCase ("ms") ? number / 1000.0f : number;
+}
+
+float hertzFromText (const juce::String& text)
+{
+    const auto number = text.retainCharacters ("0123456789.-").getFloatValue();
+    return text.containsIgnoreCase ("k") ? number * 1000.0f : number;
+}
+
 // A panel position that stands for a time is shown as the time the modelled
 // circuit produces, not as a percentage of travel.
 juce::AudioParameterFloatAttributes attackAttributes()
@@ -42,6 +57,10 @@ juce::AudioParameterFloatAttributes attackAttributes()
         .withStringFromValueFunction ([] (float value, int)
         {
             return secondsText (YouKnow106Engine::envelopeAttackSeconds (value), 0);
+        })
+        .withValueFromStringFunction ([] (const juce::String& text)
+        {
+            return YouKnow106Engine::panelPositionForAttack (secondsFromText (text));
         });
 }
 
@@ -51,6 +70,10 @@ juce::AudioParameterFloatAttributes decayAttributes()
         .withStringFromValueFunction ([] (float value, int)
         {
             return secondsText (YouKnow106Engine::envelopeDecaySeconds (value), 0);
+        })
+        .withValueFromStringFunction ([] (const juce::String& text)
+        {
+            return YouKnow106Engine::panelPositionForDecay (secondsFromText (text));
         });
 }
 
@@ -61,6 +84,10 @@ juce::AudioParameterFloatAttributes lfoRateAttributes()
         {
             const auto hz = YouKnow106Engine::lfoRateHz (value);
             return juce::String (hz, hz < 10.0f ? 2 : 1) + " Hz";
+        })
+        .withValueFromStringFunction ([] (const juce::String& text)
+        {
+            return YouKnow106Engine::panelPositionForLfoRate (hertzFromText (text));
         });
 }
 
@@ -70,6 +97,10 @@ juce::AudioParameterFloatAttributes lfoDelayAttributes()
         .withStringFromValueFunction ([] (float value, int)
         {
             return secondsText (YouKnow106Engine::lfoDelaySeconds (value), 0);
+        })
+        .withValueFromStringFunction ([] (const juce::String& text)
+        {
+            return YouKnow106Engine::panelPositionForLfoDelay (secondsFromText (text));
         });
 }
 
@@ -83,6 +114,10 @@ juce::AudioParameterFloatAttributes cutoffAttributes()
             if (hz >= 1000.0f)
                 return juce::String (hz / 1000.0f, 2) + " kHz";
             return juce::String (hz, hz < 100.0f ? 1 : 0) + " Hz";
+        })
+        .withValueFromStringFunction ([] (const juce::String& text)
+        {
+            return YouKnow106Engine::panelPositionForCutoff (hertzFromText (text));
         });
 }
 
@@ -95,6 +130,13 @@ juce::AudioParameterFloatAttributes portamentoAttributes()
             if (seconds <= 0.0f)
                 return juce::String ("OFF");
             return secondsText (seconds, 0) + "/oct";
+        })
+        .withValueFromStringFunction ([] (const juce::String& text)
+        {
+            if (text.trim().equalsIgnoreCase ("off"))
+                return 0.0f;
+            return YouKnow106Engine::panelPositionForPortamento (
+                secondsFromText (text));
         });
 }
 

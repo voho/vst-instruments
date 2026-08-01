@@ -33,6 +33,11 @@ public:
     // outside the part's rated window.
     static constexpr float minimumClockHz = 10000.0f;
     static constexpr float maximumClockHz = 200000.0f;
+    // Lowest host rate the engine accepts. The fastest clock against it is the
+    // most edges a single sample can ever have to consume.
+    static constexpr float minimumSampleRate = 8000.0f;
+    static constexpr int maximumShiftsPerSample =
+        static_cast<int>(maximumClockHz / minimumSampleRate) + 2;
 
     void prepare(double sampleRate) noexcept;
     void reset() noexcept;

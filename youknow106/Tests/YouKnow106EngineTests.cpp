@@ -528,6 +528,102 @@ void testVoicesRetireWithComponentToleranceApplied()
            "a quality change stayed deferred with no voice sounding");
 }
 
+void testVoiceCountAboveTheHardwareSixWorks()
+{
+    // The voice count is one of the controls the hardware does not have, and it
+    // genuinely reaches past six -- this asserts the extra voices sound rather
+    // than being an inert range on the parameter.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.polyphony = 12;
+    engine.setParameters(parameters);
+
+    for (int note = 48; note < 60; ++note)
+        engine.noteOn(note, 1.0f);
+    const auto rendered = render(engine, 8192);
+    expect(engine.getActiveVoiceCount() == 12,
+           "a voice count above six did not allocate the extra voices");
+    expect(peakOf(rendered.left, 0) > 0.0, "the extra voices produced no sound");
+
+    // And the thirteenth key is still dropped, because the count is the limit.
+    engine.noteOn(60, 1.0f);
+    render(engine, 1024);
+    expect(engine.getActiveVoiceCount() == 12,
+           "the key assigner exceeded the voice count it was given");
+}
+
+void testUnisonSurvivesAReducedVoiceCount()
+{
+    // Lowering the count leaves earlier voices sounding, and a unison retarget
+    // has to reach them too or they stay keyed to a note nobody is holding.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Unison;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    render(engine, 4096);
+    expect(engine.getActiveVoiceCount() == 6, "unison did not take every voice");
+
+    parameters.polyphony = 1;
+    engine.setParameters(parameters);
+    engine.noteOn(64, 1.0f);
+    render(engine, 4096);
+    engine.noteOff(60);
+    render(engine, 4096);
+    engine.noteOff(64);
+    render(engine, static_cast<int>(48000.0 * 2.0));
+
+    expect(engine.getActiveVoiceCount() == 0,
+           "reducing the voice count left unison voices stuck on a released key");
+}
+
+void testComponentDriftRateIsIndependentOfOversampling()
+{
+    // The modelled component wander has to advance in seconds, not in internal
+    // samples, or the same patch would drift four times faster with the quality
+    // setting on.
+    const auto wander = [](bool oversampled) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, oversampled);
+        auto parameters = plainPatch();
+        parameters.calibration = 1.0f;
+        parameters.cutoff = 0.45f;
+        parameters.resonance = 0.5f;
+        engine.setParameters(parameters);
+        engine.noteOn(57, 1.0f);
+        const auto rendered = render(engine, static_cast<int>(48000.0 * 3.0));
+
+        // Energy below a few hertz in the envelope of the output is what the
+        // wander shows up as; compare its scale between the two settings.
+        double previous = 0.0;
+        double movement = 0.0;
+        for (std::size_t index = rendered.left.size() / 3;
+             index < rendered.left.size(); index += 480)
+        {
+            double peak = 0.0;
+            for (std::size_t inner = index;
+                 inner < std::min(index + 480, rendered.left.size()); ++inner)
+                peak = std::max(peak, static_cast<double>(std::abs(rendered.left[inner])));
+            if (previous > 0.0)
+                movement += std::abs(peak - previous);
+            previous = peak;
+        }
+        return movement;
+    };
+
+    const double deep = wander(true);
+    const double shallow = wander(false);
+    expect(deep > 0.0 && shallow > 0.0, "no component wander was measurable");
+    const double ratio = deep / shallow;
+    expect(ratio > 0.4 && ratio < 2.5,
+           "component wander advances at a different rate with oversampling on ("
+               + std::to_string(ratio) + "x)");
+}
+
 void testEnvelopeAndGateModes()
 {
     constexpr double sampleRate = 48000.0;
@@ -918,6 +1014,9 @@ int main()
     testKeyAssignerDropsRatherThanSteals();
     testPolyModesDifferInAllocation();
     testUnisonUsesEveryVoiceWithoutDetuning();
+    testVoiceCountAboveTheHardwareSixWorks();
+    testUnisonSurvivesAReducedVoiceCount();
+    testComponentDriftRateIsIndependentOfOversampling();
     testTransposeReachesSoundingVoices();
     testFirstGlidedNoteStartsAtItsOwnPitch();
     testVoicesRetireWithComponentToleranceApplied();

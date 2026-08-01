@@ -174,6 +174,17 @@ public:
     [[nodiscard]] static float lfoRateHz(float panelPosition) noexcept;
     [[nodiscard]] static float lfoDelaySeconds(float panelPosition) noexcept;
     [[nodiscard]] static float portamentoSeconds(float panelPosition) noexcept;
+
+    // Inverses of the laws above. The panel travel is what the plug-in stores,
+    // but what it *displays* is the value the circuit produces, so a host
+    // letting someone type "1.00 kHz" needs a way back to the travel that
+    // produces it. Without these the typed number would be read as travel.
+    [[nodiscard]] static float panelPositionForAttack(float seconds) noexcept;
+    [[nodiscard]] static float panelPositionForDecay(float seconds) noexcept;
+    [[nodiscard]] static float panelPositionForLfoRate(float hertz) noexcept;
+    [[nodiscard]] static float panelPositionForLfoDelay(float seconds) noexcept;
+    [[nodiscard]] static float panelPositionForPortamento(float secondsPerOctave) noexcept;
+    [[nodiscard]] static float panelPositionForCutoff(float hertz) noexcept;
     // Comparator threshold in volts against the modelled 12 Vpp ramp, and the
     // duty cycle it produces. The hardware cannot reach 0% or 100%.
     [[nodiscard]] static float pwmControlVolts(float depth) noexcept;
@@ -214,6 +225,9 @@ private:
     // control points, and the scan repeats every 4.2 ms. Pitch, cutoff and
     // level therefore move on this grid rather than continuously.
     static constexpr double controlScanHz = 1000.0 / 4.2;
+    // Rate at which the modelled component wander advances. Fixed in seconds,
+    // not in samples, so it does not change with the quality setting.
+    static constexpr double driftUpdateHz = 375.0;
 
     // Ramp generator. The control voltage charges the integrating capacitor
     // through a plain resistor rather than a current source, so the ramp is the

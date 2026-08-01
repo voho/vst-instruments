@@ -446,6 +446,66 @@ void testModulationAndGlideLaws()
            "fastest glide is slower than the hardware's");
 }
 
+void testPanelLawsInvert()
+{
+    // What a control displays is the value the circuit produces, so a host
+    // letting someone type that value needs a way back to the travel. Round
+    // tripping is the only thing that makes the typed number mean anything.
+    const auto roundTrip = [](float position, auto forward, auto inverse,
+                              const std::string& name) {
+        const float value = forward(position);
+        const float back = inverse(value);
+        expectNear(back, position, 0.01,
+                   name + " does not round trip through its displayed value");
+    };
+
+    for (float position = 0.0f; position <= 1.0f; position += 0.125f)
+    {
+        roundTrip(position, YouKnow106Engine::envelopeAttackSeconds,
+                  YouKnow106Engine::panelPositionForAttack, "attack");
+        roundTrip(position, YouKnow106Engine::envelopeDecaySeconds,
+                  YouKnow106Engine::panelPositionForDecay, "decay");
+        roundTrip(position, YouKnow106Engine::lfoRateHz,
+                  YouKnow106Engine::panelPositionForLfoRate, "modulation rate");
+        roundTrip(position, YouKnow106Engine::lfoDelaySeconds,
+                  YouKnow106Engine::panelPositionForLfoDelay, "modulation delay");
+    }
+
+    // Cutoff round trips only while the transconductor can still follow the
+    // converter. Above that its bias range runs out, the law flattens at the
+    // published ceiling, and several positions all read the same frequency --
+    // so the inverse cannot pick one, and should not pretend to.
+    for (float position = 0.0f; position <= 0.80f; position += 0.1f)
+        roundTrip(position, [](float p) {
+                      return YouKnow106Engine::vcfCutoffHz(
+                          YouKnow106Engine::vcfPanelCounts(p));
+                  },
+                  YouKnow106Engine::panelPositionForCutoff, "cutoff");
+
+    const float ceilingHz = YouKnow106Engine::vcfCutoffHz(
+        YouKnow106Engine::vcfPanelCounts(1.0f));
+    expectNear(ceilingHz, 24000.0, 1.0,
+               "the cutoff ceiling is not the published figure");
+    expectNear(YouKnow106Engine::vcfCutoffHz(YouKnow106Engine::vcfPanelCounts(0.92f)),
+               ceilingHz, 1.0,
+               "the top of the cutoff travel is not a plateau");
+
+    // Portamento's bottom detent is "off" rather than a time, so it round trips
+    // from just above it.
+    for (float position = 0.1f; position <= 1.0f; position += 0.15f)
+        roundTrip(position, YouKnow106Engine::portamentoSeconds,
+                  YouKnow106Engine::panelPositionForPortamento, "portamento");
+    expectNear(YouKnow106Engine::panelPositionForPortamento(0.0f), 0.0, 1.0e-6,
+               "a glide time of zero does not read as switched off");
+
+    // A typed value outside the control's range must land on its nearest end
+    // rather than anywhere else.
+    expectNear(YouKnow106Engine::panelPositionForCutoff(1.0f), 0.0, 1.0e-6,
+               "a cutoff below the range does not clamp to the bottom");
+    expectNear(YouKnow106Engine::panelPositionForLfoRate(1000.0f), 1.0, 1.0e-6,
+               "a rate above the range does not clamp to the top");
+}
+
 void testBucketBrigadeLine()
 {
     // The part is 256 stages clocked in two phases, so its delay is
@@ -568,6 +628,7 @@ int main()
     testEnvelopeAndAmplifierLaws();
     testPulseWidthAndHighPassLaws();
     testModulationAndGlideLaws();
+    testPanelLawsInvert();
     testBucketBrigadeLine();
     testCorrectionResidualsVanishAtTheEdges();
 
