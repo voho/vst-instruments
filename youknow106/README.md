@@ -14,6 +14,8 @@ layout *is* its control set; its palette, typography and name are its own.
 What is modelled from documentation and what remains a voiced choice is set out
 control by control in the
 [circuit-modelling research and implementation contract](Docs/circuit-modelling-research.md).
+Every constant still voiced is listed as a standing research question, with the
+sources already exhausted, in [open questions](Docs/open-questions.md).
 
 > **Listen first.** Ten [rendered demonstrations](Docs/audio/README.md) cover
 > the classic pad and PWM strings, the 16' bass, the self-oscillating filter,
@@ -199,7 +201,7 @@ CMakeLists.txt   Self-contained project; the DSP target builds without JUCE
 Source/DSP/      Engine, chorus and the JUCE-free panel description
 Source/          Plug-in processor and editor
 Tests/           Circuit, engine and plug-in suites
-Docs/            Circuit-modelling research and the committed editor screenshot
+Docs/            Circuit-modelling research, open questions, editor screenshot
 Presets/         Sound-design recipes
 scripts/         macOS build and packaging helpers
 ```
