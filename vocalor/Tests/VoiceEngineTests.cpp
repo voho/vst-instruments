@@ -1634,23 +1634,172 @@ void testRoughPerformance()
             "12-singer render exceeded the 20x-real-time regression guardrail");
 }
 
-void testSingerFormantAndLipZero()
+/** Reference settings for the level and articulation measurements below: the
+    factory defaults with everything that randomises a take switched off, so the
+    render is deterministic and the output gain is out of the way. */
+vocalor::EngineParameters makeReferenceParameters()
+{
+    vocalor::EngineParameters parameters;
+    parameters.humanize = 0.0f;
+    parameters.vibrato = 0.0f;
+    parameters.spread = 0.0f;
+    parameters.room = 0.0f;
+    parameters.outputGain = 1.0f;
+    return parameters;
+}
+
+/** Tension models a narrowing epilarynx tube, which lifts the singer's-formant
+    cluster at F3 and F4. It must lift only that cluster: the formants that
+    carry the vowel identity belong to the vowel, not to the phonation mode. */
+void testEpilarynxLiftTracksTension()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    const auto gainsAtTension = [](float tension)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+
+        auto parameters = makeReferenceParameters();
+        parameters.tension = tension;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.85f);
+        render (engine, static_cast<int> (sampleRate * 0.5));
+        return engine.getDisplayState().formantGain;
+    };
+
+    const auto lax = gainsAtTension (0.05f);
+    const auto pressed = gainsAtTension (0.95f);
+
+    // 0.12 and 0.06 of lift per unit tension, over a 0.90 span of it.
+    expect (pressed[2] > lax[2] * 1.07f,
+            "F3 did not gain with tension, so the singer's formant is not being pressed");
+    expect (pressed[3] > lax[3] * 1.03f,
+            "F4 did not gain with tension, so the singer's formant is only one resonance wide");
+
+    for (const int formant : { 0, 1, 4 })
+    {
+        const auto index = static_cast<std::size_t> (formant);
+        expect (std::abs (pressed[index] - lax[index]) <= 1.0e-4f * lax[index],
+                "tension moved F" + std::to_string (formant + 1)
+                    + ", which carries the vowel rather than the singer's formant");
+    }
+}
+
+/** Formants reach a new vowel target on per-articulator time constants. The jaw
+    that sets F1 is a heavier articulator than the tongue tip and larynx that set
+    the formants above it, so a step in the vowel target has to arrive at F1
+    distinctly later than at F5. Collapsing them back onto one shared glide is
+    the regression this guards. */
+void testArticulatorGlideOrdering()
 {
     constexpr auto sampleRate = 48000.0;
     vocalor::VoiceEngine engine;
-    engine.prepare(sampleRate, blockSize);
+    engine.prepare (sampleRate, blockSize);
     engine.reset();
 
-    auto parameters = makeParameters(0, 0, 0, 0);
-    parameters.tension = 0.90f;
-    engine.setParameters(parameters);
-    engine.noteOn(60, 0.85f);
+    auto parameters = makeReferenceParameters();
+    parameters.vowelMorph = 1.0f;
+    parameters.vowelX = 0.05f;   // a back vowel
+    parameters.vowelY = 0.5f;
+    engine.setParameters (parameters);
+    engine.noteOn (60, 0.85f);
+    render (engine, static_cast<int> (sampleRate * 0.6));
 
-    const auto metrics = render(engine, static_cast<int>(sampleRate * 0.4));
-    expect(metrics.finite && metrics.rms() > 1.0e-6,
-           "Singer's Formant tension render produced no usable audio");
-    expect(metrics.peak < 16.0,
-           "Singer's Formant tension render exceeded amplitude guardrail");
+    const auto before = engine.getDisplayState().formantHz;
+
+    parameters.vowelX = 0.95f;   // step to a front vowel
+    engine.setParameters (parameters);
+
+    // Trace the trajectory in 1 ms steps, then let it settle for the endpoint.
+    constexpr int traceSteps = 40;
+    const auto stepSamples = static_cast<int> (sampleRate * 0.001);
+    std::vector<std::array<float, vocalor::kFormantCount>> trace;
+    trace.reserve (traceSteps);
+    for (int step = 0; step < traceSteps; ++step)
+    {
+        render (engine, stepSamples);
+        trace.push_back (engine.getDisplayState().formantHz);
+    }
+    render (engine, static_cast<int> (sampleRate * 1.0));
+    const auto settled = engine.getDisplayState().formantHz;
+
+    std::array<double, vocalor::kFormantCount> riseMs {};
+    for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t> (formant);
+        const double start = before[index];
+        const double end = settled[index];
+        expect (std::abs (end - start) > 1.0,
+                "F" + std::to_string (formant + 1)
+                    + " did not move at all, so its glide cannot be timed");
+
+        const double threshold = start + 0.632 * (end - start);
+        riseMs[index] = -1.0;
+        for (std::size_t step = 0; step < trace.size(); ++step)
+        {
+            const double value = trace[step][index];
+            if (end > start ? value >= threshold : value <= threshold)
+            {
+                riseMs[index] = 1000.0 * static_cast<double> (step + 1)
+                              * stepSamples / sampleRate;
+                break;
+            }
+        }
+        expect (riseMs[index] > 0.0,
+                "F" + std::to_string (formant + 1)
+                    + " had not covered 63% of its vowel step within 40 ms");
+    }
+
+    for (int formant = 0; formant + 1 < vocalor::kFormantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t> (formant);
+        expect (riseMs[index] > riseMs[index + 1],
+                "F" + std::to_string (formant + 1) + " did not glide slower than F"
+                    + std::to_string (formant + 2)
+                    + ", so the formants are not tracking articulator inertia");
+    }
+    expect (riseMs[0] >= 3.0 * riseMs[vocalor::kFormantCount - 1],
+            "the jaw and the larynx are gliding at nearly the same speed");
+}
+
+/** The tract level is calibrated so a solo AAH at the default settings lands at
+    a known level, and the whole voice is expressed in time constants and corner
+    frequencies so that level does not depend on the sample rate.
+
+    A broadband gain quietly inserted into the excitation path shows up here as
+    an equal shift at every rate. That is what a lip-radiation zero would be:
+    the wavetable is already a glottal flow *derivative*, so radiation is
+    modelled once, and applying it again costs level without changing timbre. */
+void testSourceLevelCalibration()
+{
+    // Measured from the calibrated engine. The window is loose enough for
+    // platform floating-point differences and far tighter than the ~1.9 dB a
+    // second radiation stage across the excitation path costs.
+    constexpr double referenceRmsDb = -15.53;
+    constexpr double toleranceDb = 0.9;
+
+    for (const auto sampleRate : { 44100.0, 48000.0, 96000.0 })
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (makeReferenceParameters());
+        engine.noteOn (60, 0.85f);
+
+        render (engine, static_cast<int> (sampleRate * 0.6));   // past the onset
+        const auto held = render (engine, static_cast<int> (sampleRate * 1.0));
+        const auto levelDb = 20.0 * std::log10 (held.rms() + 1.0e-30);
+
+        const auto label = std::to_string (static_cast<int> (sampleRate)) + " Hz";
+        expect (held.finite, "reference AAH at " + label + " produced a NaN or infinity");
+        expect (std::abs (levelDb - referenceRmsDb) < toleranceDb,
+                "reference AAH at " + label + " rendered at "
+                    + std::to_string (levelDb) + " dB, outside the calibrated "
+                    + std::to_string (referenceRmsDb) + " +/- "
+                    + std::to_string (toleranceDb) + " dB");
+    }
 }
 } // namespace
 
@@ -1671,7 +1820,9 @@ int main()
     testParallelFormantBank();
     testEnsembleSizeIsExact();
     testTractCoefficientSmoothing();
-    testSingerFormantAndLipZero();
+    testEpilarynxLiftTracksTension();
+    testArticulatorGlideOrdering();
+    testSourceLevelCalibration();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();
