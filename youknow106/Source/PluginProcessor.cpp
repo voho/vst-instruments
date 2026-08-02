@@ -631,24 +631,28 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     }
 
-    // A requested patch dump leaves here, on the plug-in's MIDI output. Nothing
-    // else this instrument produces goes out, so the buffer is cleared first:
-    // echoing the incoming notes back would make it a MIDI thru.
+    // Claimed before the render so the request cannot be lost, but emitted
+    // after the clear below -- that clear is what stops the instrument echoing
+    // its input, and anything added before it would simply be wiped.
     const bool sendDump = sysExDumpRequested.exchange (false, std::memory_order_acquire);
-    midiMessages.clear();
-    if (sendDump)
-    {
-        const auto dump = currentPatchAsSysEx (0);
-        if (dump.getRawDataSize() > 0)
-            midiMessages.addEvent (dump, 0);
-    }
 
     if (renderedTo < numSamples)
         engine.process (buffer.getWritePointer (0, renderedTo),
                         buffer.getWritePointer (1, renderedTo),
                         numSamples - renderedTo);
 
+    // Nothing this instrument plays goes back out, so the incoming events stop
+    // here rather than passing through.
     midiMessages.clear();
+
+    // A requested patch dump is the one thing that does leave, on the plug-in's
+    // own MIDI output -- the only route a host actually exposes to a cable.
+    if (sendDump)
+    {
+        const auto dump = currentPatchAsSysEx (0);
+        if (dump.getRawDataSize() > 0)
+            midiMessages.addEvent (dump, 0);
+    }
 
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
     displayVoiceMask.store (engine.getDisplayVoiceMask(), std::memory_order_relaxed);
