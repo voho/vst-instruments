@@ -197,9 +197,13 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (travel (benderVcf, "Bender VCF", 0.0f, percentAttributes()));
     layout.add (travel (benderLfo, "Bender LFO", 0.0f, percentAttributes()));
     layout.add (travel (portamento, "Portamento", 0.0f, portamentoAttributes()));
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { keyMode, 1 }, "Key Mode",
-        juce::StringArray { "Poly 1", "Poly 2", "Unison" }, 0));
+    // Two independent latching buttons rather than one three-way choice: the
+    // panel has no unison button, and holding both POLY buttons down is how the
+    // instrument is put into unison.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { poly1, 1 }, "Poly 1", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { poly2, 1 }, "Poly 2", false));
 
     layout.add (travel (lfoRate, "LFO Rate", 0.42f, lfoRateAttributes()));
     layout.add (travel (lfoDelay, "LFO Delay", 0.0f, lfoDelayAttributes()));
@@ -242,9 +246,12 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (travel (sustain, "Sustain", 0.70f, percentAttributes()));
     layout.add (travel (release, "Release", 0.30f, decayAttributes()));
 
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { chorus, 1 }, "Chorus",
-        juce::StringArray { "Off", "I", "II" }, 0));
+    // Likewise two independent buttons. Neither down is off; both down is the
+    // faster I+II setting, which the hardware reaches the same way.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { chorusI, 1 }, "Chorus I", false));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { chorusII, 1 }, "Chorus II", false));
 
     // --- Controls the modelled instrument does not have -------------------
     layout.add (std::make_unique<juce::AudioParameterInt> (
@@ -293,10 +300,10 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
 {
     using namespace youknow106::parameters;
     const std::array<const char*, 37> ids {
-        volume, benderDco, benderVcf, benderLfo, portamento, keyMode,
+        volume, benderDco, benderVcf, benderLfo, portamento, poly1, poly2,
         lfoRate, lfoDelay, dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
-        vcaMode, vcaLevel, attack, decay, sustain, release, chorus,
+        vcaMode, vcaLevel, attack, decay, sustain, release, chorusI, chorusII,
         transpose, masterTune, velocity, calibration, chorusNoise, polyphony, hq
     };
 
@@ -370,7 +377,7 @@ void YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.benderVcfDepth = valueOf (benderVcf);
     engineParameters.benderLfoDepth = valueOf (benderLfo);
     engineParameters.portamento = valueOf (portamento);
-    engineParameters.keyMode = static_cast<KeyMode> (choiceOf (keyMode, 2));
+    engineParameters.keyMode = keyModeFor (valueOf (poly1) > 0.5f, valueOf (poly2) > 0.5f);
 
     engineParameters.lfoRate = valueOf (lfoRate);
     engineParameters.lfoDelay = valueOf (lfoDelay);
@@ -401,7 +408,7 @@ void YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.sustain = valueOf (sustain);
     engineParameters.release = valueOf (release);
 
-    engineParameters.chorus = static_cast<ChorusMode> (choiceOf (chorus, 2));
+    engineParameters.chorus = chorusModeFor (valueOf (chorusI) > 0.5f, valueOf (chorusII) > 0.5f);
 
     engineParameters.keyTranspose = juce::roundToInt (valueOf (transpose));
     engineParameters.masterTuneCents = valueOf (masterTune);
@@ -654,14 +661,14 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
     // randomisation cannot mute the patch, jump its gain, change its running
     // cost, or quietly re-specify the hardware being modelled.
     static constexpr std::array<const char*, 29> soundParameterIds {{
-        benderDco, benderVcf, benderLfo, portamento, keyMode,
+        benderDco, benderVcf, benderLfo, portamento, poly1, poly2,
         lfoRate, lfoDelay,
         dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
         highPass,
         cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
         vcaMode, vcaLevel,
         attack, decay, sustain, release,
-        chorus
+        chorusI, chorusII
     }};
 
     juce::Random random;

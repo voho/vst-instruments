@@ -21,6 +21,33 @@ enum class EnvPolarity { Normal, Inverted };
 enum class VcaMode { Envelope, Gate };
 enum class KeyMode { Poly1, Poly2, Unison };
 
+// The assign mode the two latching POLY buttons select. They are independent
+// switches, not a three-way selector, and holding both down is how the
+// instrument is put into unison -- there is no third button for it.
+//
+// With neither down the key assigner still has to put a note somewhere, so it
+// falls back to rotation. That combination is not reachable on the hardware,
+// whose buttons are interlocked so one is always lit; it is reachable here
+// because the panel exposes the two switches independently.
+[[nodiscard]] constexpr KeyMode keyModeFor(bool poly1, bool poly2) noexcept
+{
+    if (poly1 && poly2)
+        return KeyMode::Unison;
+    if (poly2)
+        return KeyMode::Poly2;
+    return KeyMode::Poly1;
+}
+
+[[nodiscard]] constexpr bool poly1Engaged(KeyMode mode) noexcept
+{
+    return mode == KeyMode::Poly1 || mode == KeyMode::Unison;
+}
+
+[[nodiscard]] constexpr bool poly2Engaged(KeyMode mode) noexcept
+{
+    return mode == KeyMode::Poly2 || mode == KeyMode::Unison;
+}
+
 struct EngineParameters
 {
     // Panel travel is 0..1 throughout: the engine maps each slider through the

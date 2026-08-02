@@ -1,5 +1,6 @@
 #include "YouKnow106Panel.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace youknow106::panel
@@ -20,6 +21,11 @@ struct Placement
     int stackCount;   // 1 for a slider
     int group;
     int groupValue;
+    // How many slots the control is drawn across. A slider is always one; a
+    // button stack takes as many as its longest legend needs, which is why the
+    // sections holding wide legends are wider than the one control in them
+    // would otherwise justify.
+    int slotSpan { 1 };
 };
 
 constexpr Placement placements[controlCount] = {
@@ -32,10 +38,10 @@ constexpr Placement placements[controlCount] = {
     { parameters::benderLfo,   "LFO",      ControlKind::Slider, 1, 2, 0, 1, -1, 0 },
     { parameters::portamento,  "PORTA",    ControlKind::Slider, 1, 3, 0, 1, -1, 0 },
 
-    // KEY MODE
-    { parameters::keyMode,     "POLY 1",   ControlKind::Radio,  2, 0, 0, 3,  0, 0 },
-    { parameters::keyMode,     "POLY 2",   ControlKind::Radio,  2, 0, 1, 3,  0, 1 },
-    { parameters::keyMode,     "UNISON",   ControlKind::Radio,  2, 0, 2, 3,  0, 2 },
+    // KEY MODE. Two independent latching buttons, exactly as on the panel being
+    // modelled: both down is unison, and there is no third button.
+    { parameters::poly1,       "POLY 1",   ControlKind::Toggle, 2, 0, 0, 2, -1, 0, 2 },
+    { parameters::poly2,       "POLY 2",   ControlKind::Toggle, 2, 0, 1, 2, -1, 0, 2 },
 
     // LFO
     { parameters::lfoRate,     "RATE",     ControlKind::Slider, 3, 0, 0, 1, -1, 0 },
@@ -49,10 +55,10 @@ constexpr Placement placements[controlCount] = {
     { parameters::range,       "16'",      ControlKind::Radio,  4, 3, 0, 3,  2, 0 },
     { parameters::range,       "8'",       ControlKind::Radio,  4, 3, 1, 3,  2, 1 },
     { parameters::range,       "4'",       ControlKind::Radio,  4, 3, 2, 3,  2, 2 },
-    { parameters::saw,         "SAW",      ControlKind::Toggle, 4, 4, 0, 2, -1, 0 },
-    { parameters::pulse,       "PULSE",    ControlKind::Toggle, 4, 4, 1, 2, -1, 0 },
-    { parameters::sub,         "SUB",      ControlKind::Slider, 4, 5, 0, 1, -1, 0 },
-    { parameters::noise,       "NOISE",    ControlKind::Slider, 4, 6, 0, 1, -1, 0 },
+    { parameters::saw,         "SAW",      ControlKind::Toggle, 4, 4, 0, 2, -1, 0, 2 },
+    { parameters::pulse,       "PULSE",    ControlKind::Toggle, 4, 4, 1, 2, -1, 0, 2 },
+    { parameters::sub,         "SUB",      ControlKind::Slider, 4, 6, 0, 1, -1, 0 },
+    { parameters::noise,       "NOISE",    ControlKind::Slider, 4, 7, 0, 1, -1, 0 },
 
     // HPF
     { parameters::highPass,    "HPF",      ControlKind::Steps,  5, 0, 0, 1, -1, 0 },
@@ -67,9 +73,9 @@ constexpr Placement placements[controlCount] = {
     { parameters::keyFollow,   "KYBD",     ControlKind::Slider, 6, 5, 0, 1, -1, 0 },
 
     // VCA
-    { parameters::vcaMode,     "ENV",      ControlKind::Radio,  7, 0, 0, 2,  4, 0 },
-    { parameters::vcaMode,     "GATE",     ControlKind::Radio,  7, 0, 1, 2,  4, 1 },
-    { parameters::vcaLevel,    "LEVEL",    ControlKind::Slider, 7, 1, 0, 1, -1, 0 },
+    { parameters::vcaMode,     "ENV",      ControlKind::Radio,  7, 0, 0, 2,  4, 0, 2 },
+    { parameters::vcaMode,     "GATE",     ControlKind::Radio,  7, 0, 1, 2,  4, 1, 2 },
+    { parameters::vcaLevel,    "LEVEL",    ControlKind::Slider, 7, 2, 0, 1, -1, 0 },
 
     // ENV
     { parameters::attack,      "A",        ControlKind::Slider, 8, 0, 0, 1, -1, 0 },
@@ -77,10 +83,10 @@ constexpr Placement placements[controlCount] = {
     { parameters::sustain,     "S",        ControlKind::Slider, 8, 2, 0, 1, -1, 0 },
     { parameters::release,     "R",        ControlKind::Slider, 8, 3, 0, 1, -1, 0 },
 
-    // CHORUS
-    { parameters::chorus,      "OFF",      ControlKind::Radio,  9, 0, 0, 3,  5, 0 },
-    { parameters::chorus,      "I",        ControlKind::Radio,  9, 0, 1, 3,  5, 1 },
-    { parameters::chorus,      "II",       ControlKind::Radio,  9, 0, 2, 3,  5, 2 },
+    // CHORUS. Two independent latching buttons. Neither down is off, and both
+    // down is the faster I+II setting rather than a duplicate of II.
+    { parameters::chorusI,     "I",        ControlKind::Toggle, 9, 0, 0, 2, -1, 0 },
+    { parameters::chorusII,    "II",       ControlKind::Toggle, 9, 0, 1, 2, -1, 0 },
 };
 
 struct Layout
@@ -95,17 +101,20 @@ Layout buildLayout() noexcept
     Layout layout {};
 
     struct SectionSpec { const char* name; Accent accent; int slots; };
+    // Slot counts follow the widest legend each section has to print, not the
+    // number of controls in it: KEY MODE holds two buttons but needs the width
+    // of "POLY 1", and its header needs the width of "KEY MODE".
     constexpr SectionSpec specs[sectionCount] = {
-        { "VOLUME",   Accent::Cyan,    1 },
+        { "VOLUME",   Accent::Cyan,    2 },
         { "BENDER",   Accent::Magenta, 4 },
-        { "KEY MODE", Accent::Cyan,    1 },
+        { "KEY MODE", Accent::Cyan,    2 },
         { "LFO",      Accent::Magenta, 2 },
-        { "DCO",      Accent::Cyan,    7 },
+        { "DCO",      Accent::Cyan,    8 },
         { "HPF",      Accent::Magenta, 1 },
         { "VCF",      Accent::Cyan,    6 },
-        { "VCA",      Accent::Magenta, 2 },
+        { "VCA",      Accent::Magenta, 3 },
         { "ENV",      Accent::Cyan,    4 },
-        { "CHORUS",   Accent::Magenta, 1 },
+        { "CHORUS",   Accent::Magenta, 2 },
     };
 
     float cursor = panelMargin;
@@ -138,9 +147,11 @@ Layout buildLayout() noexcept
             y = controlTop + static_cast<float>(placement.stackIndex) * (height + stackGap);
         }
 
+        const float span = static_cast<float>(placement.slotSpan) * slotWidth;
         layout.controls[static_cast<std::size_t>(index)] = {
             placement.parameterId, placement.label, placement.kind, placement.section,
-            x + controlInset, y, slotWidth - 2.0f * controlInset, height,
+            x + controlInset, y, span - 2.0f * controlInset, height,
+            x - labelOverhang, span + 2.0f * labelOverhang,
             placement.group, placement.groupValue
         };
     }
@@ -168,6 +179,135 @@ const std::array<Control, controlCount>& controls() noexcept
 float panelWidth() noexcept
 {
     return layout().width;
+}
+
+float textWidth(const char* text, float pointSize, bool bold) noexcept
+{
+    if (text == nullptr)
+        return 0.0f;
+
+    // Advance widths as a fraction of the point size, rounded up from what a
+    // bold grotesque actually uses. Only the characters the panel prints are
+    // listed; anything else falls through to the widest of them, so adding a
+    // legend with a new character cannot silently under-estimate.
+    const auto advance = [](char c) noexcept -> float {
+        switch (c)
+        {
+            case 'I': case 'i': case 'l': case '\'': case '.': return 0.34f;
+            case 'J': case 'j': case 't': case '(': case ')':  return 0.44f;
+            case '1': case '+': case '-':                      return 0.56f;
+            case ' ':                                          return 0.36f;
+            case 'M': case 'W':                                return 0.92f;
+            case 'm': case 'w':                                return 0.86f;
+            case 'A': case 'B': case 'C': case 'D': case 'E':
+            case 'F': case 'G': case 'H': case 'K': case 'L':
+            case 'N': case 'O': case 'P': case 'Q': case 'R':
+            case 'S': case 'T': case 'U': case 'V': case 'X':
+            case 'Y': case 'Z':                                return 0.72f;
+            case '0': case '2': case '3': case '4': case '5':
+            case '6': case '7': case '8': case '9':            return 0.64f;
+            default:                                           return 0.72f;
+        }
+    };
+
+    float total = 0.0f;
+    for (const char* c = text; *c != '\0'; ++c)
+        total += advance(*c);
+    return total * pointSize;
+}
+
+float buttonPointSizeFor(const char* label, float width, float height) noexcept
+{
+    // Size from the height first, then shrink until the legend fits the width.
+    // The editor calls this too, so the size the check reasons about is the
+    // size that actually gets drawn -- a check that only looked at the height
+    // would pass a legend the editor then clipped.
+    float size = height * 0.34f;
+    if (size > buttonPointSizeMax)
+        size = buttonPointSizeMax;
+
+    // Leave a little air either side so the glyphs are not flush to the edge.
+    const float available = width - 6.0f;
+    if (available <= 0.0f)
+        return 0.0f;
+
+    const float natural = textWidth(label, size, true);
+    if (natural > available && natural > 0.0f)
+        size *= available / natural;
+    return size;
+}
+
+float buttonPointSizeFor(const Control& control) noexcept
+{
+    return buttonPointSizeFor(control.label, control.width, control.height);
+}
+
+namespace
+{
+const char* overflowingLabel() noexcept
+{
+    for (const auto& section : sections())
+    {
+        // The header bar is the section box inset by the same padding the
+        // editor draws it with.
+        const float available = section.width - sectionPadding;
+        if (textWidth(section.name, headerPointSize, true) > available)
+            return section.name;
+    }
+
+    for (const auto& control : controls())
+    {
+        if (control.kind == ControlKind::Slider || control.kind == ControlKind::Steps)
+        {
+            if (textWidth(control.label, labelPointSize, true) > control.labelWidth)
+                return control.label;
+        }
+        else if (buttonPointSizeFor(control) < buttonPointSizeMin)
+        {
+            return control.label;
+        }
+    }
+
+    // Legend boxes overhang their slots, so neighbouring boxes overlap by
+    // design. What must not overlap is the ink: each legend is centred in its
+    // box, so two adjacent ones collide when half of each, plus a hair of
+    // separation, exceeds the distance between their centres.
+    const auto& controlList = controls();
+    for (std::size_t a = 0; a < controlList.size(); ++a)
+    {
+        const auto& first = controlList[a];
+        if (first.kind != ControlKind::Slider && first.kind != ControlKind::Steps)
+            continue;
+        const float firstHalf = 0.5f * textWidth(first.label, labelPointSize, true);
+        const float firstCentre = first.labelX + 0.5f * first.labelWidth;
+
+        for (std::size_t b = a + 1; b < controlList.size(); ++b)
+        {
+            const auto& second = controlList[b];
+            if (second.kind != ControlKind::Slider && second.kind != ControlKind::Steps)
+                continue;
+            const float secondHalf =
+                0.5f * textWidth(second.label, labelPointSize, true);
+            const float secondCentre = second.labelX + 0.5f * second.labelWidth;
+            const float gap = std::fabs(firstCentre - secondCentre)
+                            - (firstHalf + secondHalf);
+            if (gap < 2.0f)
+                return first.label;
+        }
+    }
+
+    return nullptr;
+}
+} // namespace
+
+bool labelsFitTheirControls() noexcept
+{
+    return overflowingLabel() == nullptr;
+}
+
+const char* firstOverflowingLabel() noexcept
+{
+    return overflowingLabel();
 }
 
 bool layoutIsConsistent() noexcept

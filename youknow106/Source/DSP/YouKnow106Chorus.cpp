@@ -65,12 +65,22 @@ Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
     // more agitated rather than wider.
     constexpr float centre = 0.5f * (0.00166f + 0.00535f);
     constexpr float sweep = 0.5f * (0.00535f - 0.00166f);
+    constexpr float rateOne = 0.513f;
+    constexpr float rateTwo = 0.863f;
     switch (mode)
     {
-        case ChorusMode::One:  return { 0.513f, centre, sweep, lineGain };
-        case ChorusMode::Two:  return { 0.863f, centre, sweep, lineGain };
+        case ChorusMode::One:  return { rateOne, centre, sweep, lineGain };
+        case ChorusMode::Two:  return { rateTwo, centre, sweep, lineGain };
+        // Both buttons down. Each switch shunts its own resistor into the
+        // modulation oscillator's timing network, so closing both puts the two
+        // in parallel: the conductances add, and with them the rate. That makes
+        // I+II faster than either alone rather than a repeat of II, which is
+        // what the setting is known for. The depth is untouched -- nothing in
+        // the delay path changes, only how quickly it is swept.
+        case ChorusMode::OneTwo:
+            return { rateOne + rateTwo, centre, sweep, lineGain };
         case ChorusMode::Off:
-        default:               return { 0.513f, centre, 0.0f, 0.0f };
+        default:               return { rateOne, centre, 0.0f, 0.0f };
     }
 }
 

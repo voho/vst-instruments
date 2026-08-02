@@ -43,7 +43,8 @@ constexpr std::array<ParameterExpectation, 37> expectedParameters {{
     { parameters::benderVcf,   0.0f,   1.0e-5f },
     { parameters::benderLfo,   0.0f,   1.0e-5f },
     { parameters::portamento,  0.0f,   1.0e-5f },
-    { parameters::keyMode,     0.0f,   1.0e-5f },
+    { parameters::poly1,       1.0f,   1.0e-5f },
+    { parameters::poly2,       0.0f,   1.0e-5f },
     { parameters::lfoRate,     0.42f,  1.0e-5f },
     { parameters::lfoDelay,    0.0f,   1.0e-5f },
     { parameters::dcoLfo,      0.0f,   1.0e-5f },
@@ -67,7 +68,8 @@ constexpr std::array<ParameterExpectation, 37> expectedParameters {{
     { parameters::decay,       0.45f,  1.0e-5f },
     { parameters::sustain,     0.70f,  1.0e-5f },
     { parameters::release,     0.30f,  1.0e-5f },
-    { parameters::chorus,      0.0f,   1.0e-5f },
+    { parameters::chorusI,     0.0f,   1.0e-5f },
+    { parameters::chorusII,    0.0f,   1.0e-5f },
     { parameters::transpose,   0.0f,   1.0e-5f },
     { parameters::masterTune,  0.0f,   1.0e-5f },
     { parameters::velocity,    0.0f,   1.0e-5f },
@@ -420,7 +422,7 @@ void testStateRoundTripAndMigration()
     YouKnow106AudioProcessor source;
     setParameterValue (source, parameters::cutoff, 0.31f);
     setParameterValue (source, parameters::resonance, 0.77f);
-    setParameterValue (source, parameters::chorus, 2.0f);
+    setParameterValue (source, parameters::chorusII, 1.0f);
     setParameterValue (source, parameters::range, 0.0f);
 
     juce::MemoryBlock state;
@@ -432,7 +434,7 @@ void testStateRoundTripAndMigration()
             "cutoff did not survive a state round trip");
     expect (std::abs (parameterValue (destination, parameters::resonance) - 0.77f) < 1.0e-4f,
             "resonance did not survive a state round trip");
-    expect (std::abs (parameterValue (destination, parameters::chorus) - 2.0f) < 1.0e-4f,
+    expect (std::abs (parameterValue (destination, parameters::chorusII) - 1.0f) < 1.0e-4f,
             "the effect switch did not survive a state round trip");
 
     // A state written before a parameter existed must load, keeping what it
@@ -485,6 +487,63 @@ void testBusLayoutsAndTail()
             "the reported tail is shorter than the longest release");
     expect (processor.acceptsMidi() && ! processor.producesMidi(),
             "the plug-in does not advertise itself as an instrument");
+}
+
+// The JUCE-free suite checks legends fit using a deliberately conservative
+// width model, because it has to run on a machine with no fonts. This is the
+// check that makes relying on that model safe: it asks the real typeface, at
+// the real size, whether each legend actually draws inside its box. If the
+// model ever drifts optimistic, this fails on the macOS runner.
+void testEveryPanelLegendFitsInTheRealFont()
+{
+    const auto boldFont = [] (float height) {
+        return juce::Font (juce::FontOptions (height, juce::Font::bold));
+    };
+
+    for (const auto& section : panel::sections())
+    {
+        const float available = section.width - panel::sectionPadding;
+        const float drawn = juce::GlyphArrangement::getStringWidth (
+            boldFont (panel::headerPointSize), section.name);
+        expect (drawn <= available,
+                juce::String ("section header is truncated: ") + section.name
+                    + " needs " + juce::String (drawn, 1) + " in "
+                    + juce::String (available, 1));
+        // The approximation must also be an over-estimate, not merely close:
+        // that is the property the JUCE-free check depends on.
+        expect (panel::textWidth (section.name, panel::headerPointSize, true) >= drawn,
+                juce::String ("the width model under-estimates ") + section.name);
+    }
+
+    for (const auto& control : panel::controls())
+    {
+        if (control.kind == panel::ControlKind::Slider
+            || control.kind == panel::ControlKind::Steps)
+        {
+            const float drawn = juce::GlyphArrangement::getStringWidth (
+                boldFont (panel::labelPointSize), control.label);
+            expect (drawn <= control.labelWidth,
+                    juce::String ("slider legend is truncated: ") + control.label
+                        + " needs " + juce::String (drawn, 1) + " in "
+                        + juce::String (control.labelWidth, 1));
+            expect (panel::textWidth (control.label, panel::labelPointSize, true)
+                        >= drawn,
+                    juce::String ("the width model under-estimates ") + control.label);
+        }
+        else
+        {
+            const float size = panel::buttonPointSizeFor (control);
+            expect (size >= panel::buttonPointSizeMin,
+                    juce::String ("button legend is set too small to read: ")
+                        + control.label);
+            const float drawn =
+                juce::GlyphArrangement::getStringWidth (boldFont (size), control.label);
+            expect (drawn <= control.width,
+                    juce::String ("button legend is truncated: ") + control.label
+                        + " needs " + juce::String (drawn, 1) + " in "
+                        + juce::String (control.width, 1));
+        }
+    }
 }
 
 void testEditorBuildsAndRenders()
@@ -559,6 +618,7 @@ int main()
     testStateRoundTripAndMigration();
     testRandomizerPreservesQualityAndLevel();
     testBusLayoutsAndTail();
+    testEveryPanelLegendFitsInTheRealFont();
     testEditorBuildsAndRenders();
 
     if (failureCount != 0)
