@@ -373,7 +373,7 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
         vcaMode, vcaLevel, attack, decay, sustain, release, chorusI, chorusII,
         transpose, masterTune, velocity, calibration, chorusNoise, polyphony, hq
-    }});
+    });
 
     // The pointer table has to be able to hold every id. Growing the list above
     // without growing the table would otherwise write past its end.
@@ -779,7 +779,7 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
         vcaMode, vcaLevel,
         attack, decay, sustain, release,
         chorusI, chorusII
-    }});
+    });
 
     juce::Random random;
     for (const auto* parameterId : soundParameterIds)
