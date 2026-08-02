@@ -4415,6 +4415,21 @@ int main()
     testParameterSanitisation();
     testCpuGuardrail();
 
+    // Test attack tension modulation and palm-mute bridge impact physics
+    {
+        constexpr auto sampleRate = 48000.0;
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+
+        electry::EngineParameters parameters {};
+        parameters.muteDamping = 0.8f;
+        engine.setParameters(parameters);
+
+        const auto muted = renderNote(engine, sampleRate, 28, 0.95f, PlayStyle::PalmMute, 0.5, 0.1);
+        expect(peakAbs(muted.left) > 1.0e-5f, "palm mute stroke was silent");
+        expect(peakAbs(muted.left) < 16.0f, "palm mute stroke exceeded peak guardrail");
+    }
+
     if (failures != 0)
     {
         std::cerr << failures << " Electry DSP check(s) failed.\n";

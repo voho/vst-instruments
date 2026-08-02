@@ -600,6 +600,8 @@ private:
         // Tension-modulation state (attack pitch glide).
         float energyEnvelope { 0.0f };
         float tensionDepth { 0.0f };
+        float palmImpactState { 0.0f };
+        float palmImpactVel { 0.0f };
 
         // Cached physical descriptors used by the dispersion and structural
         // admittance solves. They are useful for control-rate refreshes and

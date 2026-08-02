@@ -2412,6 +2412,19 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.tensionDepth = 0.042f * lerp(1.45f, 0.70f, parameters.stringGauge)
                        * voice.velocityProfile.tension;
 
+    if (playStyle == PlayStyle::PalmMute || palmMuteBlend_ > 0.1f)
+    {
+        const float muteIntensity = (playStyle == PlayStyle::PalmMute)
+            ? (0.55f + 0.45f * parameters.muteDamping) : palmMuteBlend_;
+        voice.palmImpactVel = 0.16f * voice.velocityProfile.amplitude * muteIntensity;
+        voice.palmImpactState = 0.0f;
+    }
+    else
+    {
+        voice.palmImpactVel = 0.0f;
+        voice.palmImpactState = 0.0f;
+    }
+
     // A fingered hammer-on lands cleanly; every picked attack can graze a
     // fret on the way.
     const bool incidentalContact = playStyle != PlayStyle::Hammer;
@@ -3198,6 +3211,13 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     const float bridgeForce = 0.5f * (verticalTotal + horizontalTotal);
     sympatheticBus_ += bridgeForce;
     sums.body += bridgeForce + 1.6f * noiseSample;
+    if (voice.palmImpactVel > 0.0001f)
+    {
+        const float thudCoeff = 1.0f - std::exp(-twoPi * 85.0f * inverseSampleRate_);
+        voice.palmImpactState += thudCoeff * (voice.palmImpactVel - voice.palmImpactState);
+        voice.palmImpactVel *= 0.992f;
+        sums.body += 0.45f * voice.palmImpactState;
+    }
     if (artifactsActive_)
         sums.body += 0.9f * artifactContactSignal
                    + 0.09f * artifactBuzzAmount_ * saddleRattle;
