@@ -288,13 +288,25 @@ void testNoteMappingAndRendering()
     TaikorAudioProcessor processor;
     processor.prepareToPlay (sampleRate, blockSize);
 
-    // Within an octave, every note is a different stroke.
+    // Within an octave, every pitch class that carries a stroke is a different
+    // stroke, and the ones past the last stroke carry nothing. The octave stays
+    // twelve semitones because that is what chooses the drum and it has to line
+    // up with the keyboard, so the vocabulary being eight strokes long leaves
+    // the top four keys empty on purpose - and empty has to mean silent, not a
+    // pitch class cast into an enum that does not have it.
     for (int pitchClass = 0; pitchClass < 12; ++pitchClass)
     {
         const auto note = taikor::referenceNote + pitchClass;
+        const bool carriesStroke =
+            pitchClass < static_cast<int> (taikor::articulationCount);
         const auto peak = renderNote (processor, note, 0.9f, 6);
-        expect (peak > 1.0e-4f,
-                "note " + std::to_string (note) + " produced no audio");
+        if (carriesStroke)
+            expect (peak > 1.0e-4f,
+                    "note " + std::to_string (note) + " produced no audio");
+        else
+            expect (peak < 1.0e-6f,
+                    "note " + std::to_string (note)
+                        + " carries no stroke but sounded anyway");
         processor.requestPanic();
         renderNote (processor, taikor::referenceNote, 0.0f, 1);
     }
@@ -342,14 +354,25 @@ void testOctavesRaisePitchThroughThePlugin()
         previous = measurements.loadedFundamentalHz;
     }
 
-    // And every playable note must actually sound.
+    // Every note that carries a stroke must sound, and every note that does not
+    // must stay silent. The octave is twelve semitones because that is what
+    // picks the drum, and there are eight strokes in it, so the top four keys of
+    // each octave are deliberately empty - a gap is only a design if nothing
+    // creeps into it, and casting a pitch class straight to the enum would have
+    // let all four play a Don.
     for (int note = taikor::lowestPlayableNote; note <= taikor::highestPlayableNote;
-         note += 7)
+         ++note)
     {
+        const auto mapped = taikor::articulationForMidiNote (note);
         processor.requestPanic();
         const auto peak = renderNote (processor, note, 0.85f, 6);
-        expect (peak > 1.0e-4f,
-                "playable note " + std::to_string (note) + " produced no audio");
+        if (mapped.has_value())
+            expect (peak > 1.0e-4f,
+                    "playable note " + std::to_string (note) + " produced no audio");
+        else
+            expect (peak < 1.0e-6f,
+                    "note " + std::to_string (note)
+                        + " carries no stroke but sounded anyway");
     }
 
     processor.releaseResources();
@@ -359,6 +382,14 @@ void testControllersAndPitchBend()
 {
     TaikorAudioProcessor processor;
     processor.prepareToPlay (sampleRate, blockSize);
+
+    // Every check here compares the energy of one stroke against the energy of
+    // the same stroke played again with a controller moved, so the one thing
+    // that must not vary between them is the stroke. Humanise exists to make
+    // repeated strokes differ, and on a drum whose tail runs for seconds that
+    // difference compounds across a four-hundred-millisecond measurement window
+    // until it swamps the gesture being tested.
+    setParameterValue (processor, taikor::parameters::humanise, 0.0f);
 
     const auto renderTail = [&processor] (const juce::MidiBuffer& controls)
     {

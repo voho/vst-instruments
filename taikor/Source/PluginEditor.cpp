@@ -1028,8 +1028,8 @@ void TaikorAudioProcessorEditor::resized()
     statusDisplay.setBounds (header.removeFromRight (juce::jmin (190, header.getWidth()))
                                  .reduced (0, 8));
 
-    // Twelve stroke pads in one row: the vocabulary is an octave, so it reads
-    // as one.
+    // The stroke pads in one row: the vocabulary reads left to right from the
+    // middle of the head out to the sticks alone.
     const auto padArea = areas.pads;
     const auto padLayout = taikor::ui::rowLayout (
         padArea.getWidth(), static_cast<int> (taikor::articulationCount), 6,

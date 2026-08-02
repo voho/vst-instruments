@@ -154,23 +154,61 @@ to bypass produced about 80 ms of full-scale clipped noise - peak 1.0, jump 2.0
 
 ## Sound engine
 
-The JUCE-free C++20 DSP core combines short pitch envelopes and tuned bodies for
-kick and toms, noise and resonant energy for snare and clap, inharmonic metallic
-partials for hats and cymbals, and compact stochastic or resonant models for the
-shaker and percussion voices. Voice-specific controls move several related
-synthesis values together so each voice remains useful across the full range.
+The JUCE-free C++20 DSP core builds each voice from the mechanism that makes the
+real instrument: two heads and the air between them for the struck drums, thin
+bronze plates for the hats and cymbals, a free bar over a cupped hand for the
+claves, a travelling mass of grains for the shaker. Voice-specific controls move
+several related synthesis values together so each voice remains useful across
+the full range.
 
-Toms and Snare are struck-membrane models rather than pitch-enveloped sines. The
-stick contact excites a bank of circular-membrane modes at the ideal Bessel
-ratios (1.000, 1.593, 2.135, 2.295, 2.653, 2.917), raised to an air-loading
-exponent because the air column inside a shell pulls a real head's upper modes
-down towards its fundamental. **Skin** moves that exponent, running each tom
-from a tight, nearly harmonic head to a looser and clearly inharmonic one. The
-modes ring down faster than the body, so they colour the attack and early
-sustain without leaving an inharmonic tail behind. The toms also model tension
-modulation: a displaced head is a stiffer head, so the pitch is highest while
-the strike energy is still stored and settles as the drum rings out, on top of
-the fast contact sweep.
+### Two heads, and the air between them
+
+Kick, Snare and the three Toms are not one resonator each. A real drum of any of
+those kinds is two heads enclosing a volume of air, and that air is a spring
+across both of them, so every mode that changes the enclosed volume is split
+into a pair:
+
+- The heads moving **together** squeeze the air, so that branch is stiffened up
+  to wherever the spring puts it. Both faces push outward at once, which makes
+  it a monopole — the most efficient radiator there is — so it is the loudest
+  thing the drum does and it is over in a tenth of a second. This is the punch.
+- The heads moving **oppositely** leave the volume alone, so that branch sits
+  where an unloaded head would. It moves air from one side to the other and
+  radiates as a dipole, which at these sizes is barely at all: quiet for the
+  energy it holds, and long. This is the weight.
+
+A drum with one resonator has neither of those. It has an average of them, which
+is a tone. The split follows from the geometry — `rho c^2` over the head's mass
+per unit area and the depth it encloses — so a shallow snare, whose air column
+is a third of a tom's, is pushed to well over twice its batter head's note, and
+that branch is the crack that lets a snare cut through a band.
+
+The rest of the head is a twelve-mode bank at the zeros of `J_m`, each carrying
+its circumferential order, because that order decides both whether the trapped
+air couples to it and how badly it radiates. Air loading is added mass, heaviest
+on the mode that moves the most air, so it pushes the series **apart** rather
+than scaling it; **Skin** sets how much of it the head has to carry, running each
+tom from a tighter, more pitched drum to a looser and clearly inharmonic one.
+
+### Damping follows radiation
+
+A mode's loss is edge and mounting damping, plus hysteresis in the film rising
+as `omega`, plus its viscous term rising as `omega^2`, plus the sound that
+actually leaves — and that last term goes as `(ka)^(2m+2)`, so a monopole loses
+energy hundreds of times faster than a quadrupole. On a drum, the loudest thing
+and the longest thing are opposite questions, and the answer to both is the
+multipole order. A bank whose modes all decay together is a bell.
+
+### There is a beater, and there is a stick
+
+Contact time follows Hertz: it shortens with impact speed, and with how hard the
+tip is. The transform of that contact is what decides how far up the head a
+strike can reach, so a hard hit is not a loud copy of a soft one — **Punch** is
+the beater on the kick and the tip on the toms, and moving it moves the contact,
+which moves everything else. Above the frequency where a head's modes stop being
+separable there is no series to model, only a band of noise decaying at that
+region's own rate, raised by the contact while the two surfaces are actually
+touching.
 
 The Snare adds a nonlinear wire model. Real snare wires only rattle while the
 resonant head lifts them off their resting contact and damp it below that
@@ -185,9 +223,26 @@ real drum, so velocity scales the struck-timbre filters, the modal brightness
 and the stick/contact content of Kick, Snare, Clap, both hi-hats, all three
 Toms, Shaker and Perc 2. The curve is unity at full velocity, so the loud end of
 the established voice design is preserved and quiet hits gain the extra realism.
-Ride, Crash and Perc 1 are driven by free-running relaxation circuits rather
-than by struck filters, so for them velocity keeps shaping contact and
-excitation energy as before instead of moving a cutoff.
+Ride, Crash and Perc 1 are driven by free-running relaxation circuits as well as
+by struck banks, so for them velocity keeps shaping contact and excitation
+energy alongside the modal tilt.
+
+### Plates
+
+The hi-hats are two thin bronze discs. Each hit strikes a twelve-mode plate bank
+and leaves it, over the free-running circuit that carries the hiss. Closing the
+pedal clamps the pair together, which both stiffens them and damps them by
+friction between two faces rather than by anything inside the metal — so a
+closed hat is not a short open hat: friction takes every partial at much the
+same rate, where an open plate loses its top first and darkens as it rings.
+
+Ride and Crash darken as they ring for the same reason a real cymbal does. Their
+high partials radiate best and the plate's own nonlinear coupling drains them
+downward, so the shimmer goes first and the low-mid roar is what is still there
+seconds later. **Bell** takes the wash out from under the ping, which is what
+striking a cup instead of a bow does: the cup is stiff, curved and small, so it
+rings its own few modes and couples badly into the diffuse field spread across
+the rest of the plate.
 
 Each virtual channel has fixed per-unit component tolerances. Its metallic
 Schmitt/RC oscillators keep running behind the VCA, so a strike samples the

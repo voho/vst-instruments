@@ -145,12 +145,23 @@ private:
     struct Resonator
     {
         float inputGain { 0.0f };
+        // sin(omega)/radius: what a unit strike has to put into the state for
+        // the mode to answer with an amplitude of exactly one.
+        float strikeGain { 0.0f };
         float a1 { 0.0f };
         float a2 { 0.0f };
         float y1 { 0.0f };
         float y2 { 0.0f };
 
         [[nodiscard]] float tick (float input) noexcept;
+        // Set a mode in motion rather than pushing a sample through it. A
+        // struck mode starts at rest and answers A r^n sin(n omega): zero at the
+        // instant of contact, rising to A a quarter period later. Driving the
+        // same impulse through inputGain instead lands A times the input gain on
+        // the very first sample, and that gain is proportional to sin(omega) -
+        // six times larger at 8 kHz than at 48 for the same mode, which a bank
+        // of twelve modes struck together turns into an audible difference.
+        void strike (float amplitude) noexcept;
         void clear() noexcept;
     };
 
@@ -220,8 +231,14 @@ private:
         float kickStateX { 0.0f };
         float kickStateY { 0.0f };
         float kickCharge { 0.0f };
-        float kickChargeMultiplier { 0.0f };
         float kickBaseRadius { 0.0f };
+        // How long the beater or the stick stays on the head. Hertzian: it
+        // shortens as the strike gets harder, and everything the strike can
+        // reach follows from it. The phase runs from 0 to 1 across the contact
+        // and then stops; the increment is one sample's worth of it.
+        float contactSeconds { 0.001f };
+        float contactPhase { 1.0f };
+        float contactIncrement { 1.0f };
         float chokeGain { 1.0f };
         float chokeMultiplier { 1.0f };
         float recentPeak { 0.0f };
@@ -238,6 +255,10 @@ private:
         std::array<float, oscillatorCount> phases {};
         std::array<float, oscillatorCount> phaseIncrements {};
         std::array<float, oscillatorCount> oscillatorAsymmetries {};
+        // How many of the bank's slots this voice actually filled. The render
+        // loops used to carry the count as a literal, which is how the toms
+        // ended up ringing five modes out of twelve.
+        int modeCount { 0 };
         std::array<float, resonatorCount> modeGains {};
         std::array<std::uint64_t, 4> burstStarts {};
         std::array<Resonator, resonatorCount> resonators {};
@@ -273,6 +294,28 @@ private:
         std::uint64_t frozenSamples { 0 };
     };
 
+    // How a struck object's damping rises with frequency. Every real material
+    // loses more per cycle as the mode goes up, but by laws that differ enough
+    // to be the difference between materials: a stretched film loses to
+    // hysteresis in the plastic and to the air it pushes, so its damping climbs
+    // steeply; cast bronze has almost no internal loss at all, which is why a
+    // cymbal rings for seconds where a drumhead is gone in one.
+    //
+    // The three shares are normalised to sum to one at the fundamental, so
+    // asking for a decay time always gets exactly that decay time and only the
+    // modes above it are shortened.
+    struct ModalLoss
+    {
+        float fixed { 1.0f };       // frequency-independent
+        float hysteretic { 0.0f };  // rises as omega: a constant loss angle
+        float viscous { 0.0f };     // rises as omega squared: rate-of-strain
+        // Sound that actually leaves. Only the head bank uses it, because only
+        // there does the engine know each mode's multipole order - and it is
+        // the term that decides which modes are loud and which ones last, since
+        // for a drum those are opposite questions.
+        float radiation { 0.0f };
+    };
+
     [[nodiscard]] static bool validInstrument (Instrument instrument) noexcept;
     [[nodiscard]] static std::size_t indexFor (Instrument instrument) noexcept;
     [[nodiscard]] InstrumentParameters snapshotParameters (Instrument instrument) const noexcept;
@@ -283,7 +326,29 @@ private:
                           const HitVariation& variation) noexcept;
     void initialiseModalVoice (Voice& voice, const float* ratios, int modeCount,
                                float baseFrequency, float decaySeconds,
-                               float spread, float brightness) noexcept;
+                               float spread, float brightness,
+                               ModalLoss loss,
+                               const float* excitation = nullptr) noexcept;
+
+    // Everything a two-headed drum is, above its fundamental. Geometry that
+    // belongs to the instrument rather than to the hit.
+    struct HeadGeometry
+    {
+        // How much of the air the head drags reaches it. The load itself
+        // follows from the drum: a wide head against a light film carries far
+        // more air than a small one, and it falls off for the finer modes,
+        // which move less air per unit area. That is what pushes a real head's
+        // overtones above the ideal Bessel ratios rather than below them.
+        float airLoadScale { 1.0f };
+        float radius { 0.20f };       // m, the head itself
+        float strikeRadius { 0.22f }; // where the stick lands, as a fraction of a
+        float headDensity { 0.35f };  // kg/m^2 of the film
+        float shellDepth { 0.40f };   // m between the two heads
+        float contactSeconds { 0.001f }; // how long the strike is on the head
+    };
+
+    int buildHeadBank (Voice& voice, float fundamental, const HeadGeometry& head,
+                       float decaySeconds, float brightness, ModalLoss loss) noexcept;
     void chokeGroup (int group) noexcept;
     void beginChoke (Voice& voice, float seconds) noexcept;
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
@@ -296,6 +361,7 @@ private:
                         float compressionAmount) noexcept;
     void resetBusStage() noexcept;
 
+    [[nodiscard]] float advanceContact (Voice& voice) noexcept;
     [[nodiscard]] float renderVoice (Voice& voice) noexcept;
     [[nodiscard]] float renderKick (Voice& voice) noexcept;
     [[nodiscard]] float renderSnare (Voice& voice) noexcept;

@@ -10,23 +10,27 @@
 namespace taikor
 {
 
-// The twelve strokes of the kumi-daiko vocabulary, one per pitch class. An
+// The strokes of the kumi-daiko vocabulary, one per pitch class. An
 // octave of the keyboard is therefore a complete stick technique, and the
 // octave number alone chooses the drum's pitch: higher octave, higher drum.
+// Eight strokes, and each of them is a different thing done to the drum rather
+// than a different amount of the same thing. There were twelve, and four of
+// them were duplicates: measured as band levels normalised to their own loudest
+// band, Do sat 1.3 dB from Don, Kara 1.3 dB from Don Rim, Flam 1.8 dB from Do
+// and Ko 3.0 dB from Buzz - differences no listener can name, on keys a player
+// has to remember. What is left is one stroke per mechanism: the middle of the
+// head, the middle with a hand on it, a light touch further out, the edge, the
+// hoop, the shell, a roll, and the sticks alone.
 enum class Articulation : std::uint8_t
 {
     Don,     // C  - full open stroke, a hand's width in from the middle
-    Do,      // C# - open stroke a little off centre
-    Tsu,     // D  - damped centre, the free hand resting on the head
-    Su,      // D# - ghost stroke, barely sounded
-    DonRim,  // E  - head and rim struck together
-    Ka,      // F  - on the edge of the head, near the tacks
-    Kara,    // F# - extreme edge, thin and cutting
-    Ko,      // G  - light tap at mid radius
-    Katsu,   // G# - bachi on the wooden shell
-    Buzz,    // A  - press roll
-    Flam,    // A# - grace note into a full stroke
-    Bachi,   // B  - stick against stick, no drum at all
+    Tsu,     // C# - damped centre, the free hand resting on the head
+    Su,      // D  - ghost stroke, light and well out from the middle
+    DonRim,  // D# - head and hoop struck together
+    Ka,      // E  - out on the head near the tacks, thin and cutting
+    Katsu,   // F  - bachi on the wooden shell
+    Buzz,    // F# - press roll
+    Bachi,   // G  - stick against stick, no drum at all
     Count
 };
 

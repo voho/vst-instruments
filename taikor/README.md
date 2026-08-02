@@ -31,28 +31,44 @@ The project builds three products from one JUCE codebase:
 
 ## How it is played
 
-**Within an octave, the twelve notes are twelve different strokes. Between
-octaves, the drum itself changes: higher octave, higher drum.**
+**Within an octave, eight notes are eight different strokes, one per way of
+hitting the drum. Between octaves, the drum itself changes: higher octave,
+higher drum.**
 
 That is the whole mapping. There are no keyswitches and no articulation menu —
-the stroke is the pitch class and the drum is the octave.
+the stroke is the pitch class and the drum is the octave. The octave stays
+twelve semitones, because that is what has to line up with the keyboard, so the
+four keys above the last stroke carry nothing and do not sound.
 
-| Note | Stroke | Spoken as | What it is |
-| --- | --- | --- | --- |
-| C | Don | *don* | Full open stroke, a hand's width in from the middle |
-| C♯ | Do | *do* | Open stroke a little off centre, quicker than a Don |
-| D | Tsu | *tsu* | Damped centre, the free hand resting on the head |
-| D♯ | Su | *su* | Ghost stroke, barely sounded |
-| E | Don Rim | *don* | Head and rim struck together for a rim shot |
-| F | Ka | *ka* | On the edge of the head, near the tacks |
-| F♯ | Kara | *kara* | Extreme edge, thin and cutting |
-| G | Ko | *ko* | Light tap at mid radius |
-| G♯ | Katsu | *katsu* | Bachi on the wooden shell |
-| A | Buzz | *zu* | Press roll: the stick stays on the head |
-| A♯ | Flam | *doko* | Grace note into a full stroke |
-| B | Bachi | *kata* | Stick against stick, with no drum at all |
+| Note | Stroke | Spoken as | Where the stick lands | What it is |
+| --- | --- | --- | ---: | --- |
+| C | Don | *don* | 0.15 | Full open stroke, a hand's width in from the middle |
+| C♯ | Tsu | *tsu* | 0.20 | Damped centre, the free hand resting on the head |
+| D | Su | *su* | 0.46 | Ghost stroke, light and well out from the middle |
+| D♯ | Don Rim | *don* | 0.97 | Head and hoop struck together for a rim shot |
+| E | Ka | *ka* | 0.91 | Out on the head near the tacks, thin and cutting |
+| F | Katsu | *katsu* | 0.99 | Bachi on the wooden shell |
+| F♯ | Buzz | *zu* | 0.32 | Press roll: the stick stays on the head |
+| G | Bachi | *kata* | — | Stick against stick, with no drum at all |
 
-These are not twelve presets. Each one is a strike position, a contact stiffness
+Eight, and each of them is a different thing done to the drum rather than a
+different amount of the same thing. There were twelve, and four were duplicates:
+measured as band levels normalised to each stroke's own loudest band, Do sat
+1.3 dB from Don, Kara 1.3 dB from Don Rim, Flam 1.8 dB from Do and Ko 3.0 dB
+from Buzz — differences no listener can name, on keys a player has to remember.
+The closest pair now is Don and Tsu at 2.9 dB, and those are the same strike
+with and without a hand on the head, so they part company in time instead:
+Tsu's sustain is a fifth of Don's.
+
+Where the stick lands is why. It decides which modes the strike can reach at
+all, so two strokes a few centimetres apart are the same stroke however
+differently they are labelled — and the old set had three pairs inside four
+centimetres of each other. Ka and Don Rim are the exception that proves it: they
+sit close together out by the tacks and are still nothing like one another,
+because one is on the head and the other is on the head and the hoop at once.
+A difference of mechanism beats any amount of distance.
+
+These are not eight presets. Each one is a strike position, a contact stiffness
 and a mute state fed into the same model. A Ka is bright because striking the
 head at 0.78 of its radius drives the modes that have a circumferential order and
 barely moves the axisymmetric ones — which is exactly why it is bright on a real
@@ -298,11 +314,24 @@ circumferential order pays more of it, because those shapes are pressed against
 the boundary rather than spread across the head.
 
 **The mounting** takes what is left, and only at the very bottom. The lowest
-modes of a large drum do not stay in the head: they move the shell, the hoops
-and whatever the drum is stood on. The term is steeply low-pass, because a mode
-has to be long enough to move the whole instrument before any of this applies —
-and that steepness is measured, not chosen. A gentler skirt reaches far enough
-up to cost the body most of what makes it a body.
+modes of a drum do not stay in the head: they move the shell, the hoops and
+whatever the drum is stood on. The term is steeply low-pass, because a mode has
+to be long enough to move the whole instrument before any of this applies — and
+that steepness is measured, not chosen. A gentler skirt reaches far enough up to
+cost the body most of what makes it a body.
+
+Where that shelf begins is a property of the drum, not an absolute pitch: a mode
+moves the shell when its wavelength is on the order of the instrument's own
+size, which is a comparison and therefore scale-invariant. The corner tracks the
+radius, as every other frequency in the model already does. Pinned at a fixed
+55 Hz it did the opposite of what it describes — a bigger drum slid its whole
+modal set down through a shelf that did not move, so the stand ate more of the
+instrument the larger the instrument got, and the o-daiko end of the keyboard
+came out both the quietest and the shortest thing on it. Measured on the factory
+drum, from an octave above the reference down two octaves below it: 108 / 51 /
+23 / 10 Hz of loaded fundamental against 2.4 / 3.3 / 4.4 / 5.5 s of tail and
+−14 / +5 / +10 / +15 dB in the 20–63 Hz band. The drum gets bigger in every way
+that matters, rather than only in name.
 
 ### The stick
 
@@ -374,7 +403,7 @@ those modes hardest — come out of phase.
 
 Up to and including the default 50 % width — everything the microphones actually
 captured — no stroke ever inverts, anywhere in the microphone range: the worst
-case across all twelve strokes, both microphone controls fully swept, is a
+case across all eight strokes, both microphone controls fully swept, is a
 correlation of about +0.08, which is a decorrelated pair rather than an
 out-of-phase one. The regression suite sweeps that whole space. Past 50 % the
 width control exaggerates the side signal beyond the measurement, and with the
@@ -403,7 +432,7 @@ material and stroke is computed.
 
 ## Interface
 
-A resizable editor built around a drawing of the head itself. The twelve stroke
+A resizable editor built around a drawing of the head itself. The eight stroke
 pads sit across the top with the note each one currently answers to; the octave
 strip below selects the drum. The head display shows where the last stroke
 landed, where the close pair is standing, and what the model says the drum is —
@@ -452,7 +481,7 @@ ctest --test-dir build-dsp --output-on-failure
 ```
 
 The JUCE-free suite covers the stroke vocabulary and MIDI mapping, the octave
-contract at every Octave Body setting, all twelve strokes at five sample rates,
+contract at every Octave Body setting, all eight strokes at five sample rates,
 sample-rate and block-size invariance, bit-exact determinism, the velocity and
 contact-time laws, every physical control's effect on the solved drum *and* on
 the rendered audio, the close pair's decorrelation and mono compatibility, tail

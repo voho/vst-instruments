@@ -55,7 +55,14 @@ constexpr float radiusCeiling = 3.75f;
 constexpr float bachiMass = 0.19f;
 constexpr float referenceRadius = 0.275f;
 constexpr float minimumBachiScale = 0.30f;
-constexpr float maximumBachiScale = 2.20f;
+// The ceiling has to clear the widest head at the bottom of the keyboard, or it
+// stops being a scaling law and becomes a wall. At 2.2 it bound for every radius
+// above 0.605 m - the whole battle-drum end of the instrument - so the two
+// lowest octaves were handed the same stick as each other, and the largest drum
+// in the family came out the quietest thing on it. The value now clears
+// radiusCeiling over referenceRadius, the same reasoning radiusCeiling itself
+// is written from.
+constexpr float maximumBachiScale = 13.7f;
 constexpr float minimumContactStiffness = 2.0e6f;
 constexpr float maximumContactStiffness = 6.0e8f;
 constexpr float restitution = 0.42f;
@@ -151,6 +158,10 @@ constexpr float radiationCalibration = 0.020f;
 // mode is long enough to move them at all.
 constexpr float mountLossScale = 20.0f;
 constexpr float mountLossCorner = 55.0f;
+// The radius the corner above was calibrated at - the default head at octave 0 -
+// so a reference drum comes out exactly where it always did and only the drums
+// either side of it move.
+constexpr float mountReferenceRadius = 0.475f;
 
 // The viscous share of the hide's loss, as a damping rate per radian squared.
 // This is what separates the head's body from its crack: it is worth about a
@@ -196,28 +207,20 @@ constexpr float directCalibration = 0.00478f;
 const std::array<ArticulationMetadata, articulationCount> articulationTable {{
     { Articulation::Don, "Don", "don", "don",
       "Full open stroke, a hand's width in from the middle", 0 },
-    { Articulation::Do, "Do", "do", "do",
-      "Open stroke a little off centre, quicker than a Don", 1 },
     { Articulation::Tsu, "Tsu", "tsu", "tsu",
-      "Damped centre, the free hand resting on the head", 2 },
+      "Damped centre, the free hand resting on the head", 1 },
     { Articulation::Su, "Su", "su", "su",
-      "Ghost stroke, barely sounded", 3 },
+      "Ghost stroke, light and well out from the middle", 2 },
     { Articulation::DonRim, "Don Rim", "donrim", "don",
-      "Head and rim struck together for a rim shot", 4 },
+      "Head and hoop struck together for a rim shot", 3 },
     { Articulation::Ka, "Ka", "ka", "ka",
-      "On the edge of the head, near the tacks", 5 },
-    { Articulation::Kara, "Kara", "kara", "kara",
-      "Extreme edge, thin and cutting", 6 },
-    { Articulation::Ko, "Ko", "ko", "ko",
-      "Light tap at mid radius", 7 },
+      "Out on the head near the tacks, thin and cutting", 4 },
     { Articulation::Katsu, "Katsu", "katsu", "katsu",
-      "Bachi on the wooden shell", 8 },
+      "Bachi on the wooden shell", 5 },
     { Articulation::Buzz, "Buzz", "buzz", "zu",
-      "Press roll: the stick stays on the head", 9 },
-    { Articulation::Flam, "Flam", "flam", "doko",
-      "Grace note into a full stroke", 10 },
+      "Press roll: the stick stays on the head", 6 },
     { Articulation::Bachi, "Bachi", "bachi", "kata",
-      "Stick against stick, with no drum at all", 11 },
+      "Stick against stick, with no drum at all", 7 },
 }};
 } // namespace
 
@@ -241,7 +244,15 @@ std::optional<Articulation> articulationForMidiNote (int midiNote) noexcept
 {
     if (midiNote < lowestPlayableNote || midiNote > highestPlayableNote)
         return std::nullopt;
-    return static_cast<Articulation> (midiNote % 12);
+    // The octave is still twelve semitones, because the octave is what chooses
+    // the drum and that has to line up with the keyboard. There are eight
+    // strokes in it, so the top four keys of each octave are not strokes and do
+    // not sound. Better a gap a player learns once than four more keys that
+    // sound like ones they already have.
+    const auto pitchClass = midiNote % 12;
+    if (pitchClass >= static_cast<int> (articulationCount))
+        return std::nullopt;
+    return static_cast<Articulation> (pitchClass);
 }
 
 std::optional<int> octaveOffsetForMidiNote (int midiNote) noexcept
@@ -314,20 +325,29 @@ const TaikoEngine::StrikeProfile& TaikoEngine::strikeProfile (
     // hit its exact centre, and why players do not: a full Don lands a hand's
     // width in from the middle, close enough to keep the fundamental and far
     // enough out to wake the rest of the head.
+    //
+    // Eight strokes, spread deliberately. Where the stick lands decides which
+    // modes it can reach, so two strokes a few centimetres apart are the same
+    // stroke however differently they are labelled or levelled - and the set
+    // this replaced had three pairs sitting inside four centimetres of each
+    // other. The six that land on the drum now run 0.15, 0.20, 0.46, 0.84, 0.97
+    // and 0.99 of the radius.
+    //
+    // Ka and Don Rim are the exception that proves it: they sit close together
+    // out by the tacks and are still nothing like each other, because one is on
+    // the head and the other is on the head and the hoop at once. That is a
+    // difference of mechanism rather than of position, and it is worth more than
+    // any amount of radius.
     static const std::array<StrikeProfile, articulationCount> table {{
         // radius, hardness, membrane, shell, noise, level, mute,
         //   contacts, rim, shellFreq, shellDecay
         { 0.15f, 1.00f, 1.00f, 0.18f, 1.00f, 1.00f, 0.00f, 1, 0.00f, 1.0f, 1.0f },  // Don
-        { 0.24f, 0.94f, 0.96f, 0.16f, 0.95f, 0.90f, 0.00f, 1, 0.00f, 1.0f, 1.0f },  // Do
-        { 0.30f, 1.00f, 0.82f, 0.14f, 1.05f, 0.68f, 0.85f, 1, 0.00f, 1.0f, 1.0f },  // Tsu
-        { 0.34f, 0.86f, 0.55f, 0.10f, 1.30f, 0.30f, 0.35f, 1, 0.00f, 1.0f, 1.0f },  // Su
-        { 0.86f, 1.15f, 0.92f, 0.72f, 1.55f, 0.90f, 0.00f, 1, 0.80f, 1.0f, 0.85f }, // Don Rim
-        { 0.78f, 1.15f, 0.88f, 0.34f, 1.20f, 0.86f, 0.00f, 1, 0.18f, 1.0f, 1.0f },  // Ka
-        { 0.93f, 1.28f, 0.72f, 0.46f, 1.35f, 0.74f, 0.10f, 1, 0.34f, 1.0f, 1.0f },  // Kara
-        { 0.55f, 0.90f, 0.70f, 0.16f, 1.05f, 0.52f, 0.20f, 1, 0.00f, 1.0f, 1.0f },  // Ko
+        { 0.20f, 0.98f, 0.88f, 0.12f, 0.95f, 0.72f, 0.95f, 1, 0.00f, 1.0f, 1.0f },  // Tsu
+        { 0.46f, 0.78f, 0.46f, 0.08f, 1.50f, 0.24f, 0.18f, 1, 0.00f, 1.0f, 1.0f },  // Su
+        { 0.97f, 1.32f, 0.90f, 0.82f, 1.70f, 0.94f, 0.00f, 1, 0.95f, 1.0f, 0.78f }, // Don Rim
+        { 0.91f, 1.28f, 0.74f, 0.42f, 1.35f, 0.82f, 0.12f, 1, 0.30f, 1.0f, 1.0f },  // Ka
         { 0.99f, 1.30f, 0.06f, 0.86f, 1.45f, 0.70f, 0.00f, 1, 0.45f, 1.0f, 0.55f }, // Katsu
-        { 0.62f, 0.80f, 0.74f, 0.20f, 1.60f, 0.62f, 0.55f, 7, 0.00f, 1.0f, 1.0f },  // Buzz
-        { 0.17f, 1.00f, 1.00f, 0.20f, 1.05f, 1.00f, 0.00f, 2, 0.00f, 1.0f, 1.0f },  // Flam
+        { 0.32f, 0.68f, 0.90f, 0.14f, 1.55f, 0.58f, 0.78f, 11, 0.00f, 1.0f, 1.0f }, // Buzz
         // Bachi: two sticks, not the drum. usesDrumBody switches its resonant
         // bank over to the stick model, so the shell retune columns do not
         // apply to it and are left at unity.
@@ -691,6 +711,25 @@ void TaikoEngine::allSoundsOff() noexcept
     silentSamples_ = idleFreezeSamples;
     idleFrozen_ = true;
 
+    // The two performance gestures are smoothed over twenty milliseconds, which
+    // is right while the drum is sounding and wrong the instant it stops: a
+    // panic leaves nothing for a gesture in transit to be continuous with, and
+    // whatever it had reached would go on pressing into the next stroke. A hand
+    // lifted a block ago is still 40 percent down after one buffer, so the first
+    // note after a panic came out damped by a gesture the player had already
+    // released. They snap to wherever the controls are actually being held -
+    // which removes the lag, not the gesture: a hand held down stays down.
+    handDamping_ = handDampingTarget_;
+    pitchBend_ = pitchBendTarget_;
+    // The wheel is geometry, so moving it here has to invalidate the drum that
+    // geometry was solved for. The render loop notices a bend that has drifted
+    // from the cache and rebuilds, but a panic moves it between blocks - and a
+    // note arriving in the same block as the panic would otherwise be built on
+    // the drum as it stood at whatever intermediate value the smoother had
+    // reached, with tuningAtStrike recording the snapped target, so nothing
+    // afterwards would ever correct it.
+    drumCacheValid_ = false;
+
     visualLevel_ = 0.0f;
     visualStrikeLevel_.store (0.0f, std::memory_order_relaxed);
 }
@@ -786,9 +825,17 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
 
     drum.radius = clampFloat (0.5f * applied.headDiameter * radiusFactor,
                               radiusFloor, radiusCeiling);
+    // The ceiling has to clear the geometry the controls can actually ask for,
+    // exactly as radiusCeiling does: the widest head at the deepest body, taken
+    // two octaves down with the octave bought by size, is 1.80 * 1.30 * 4. At
+    // 2.0 m the factory drum was already sitting on the clamp at its lowest
+    // octave, so Body Depth did nothing over the top half of its travel and the
+    // cavity was reported as a shorter, stiffer spring than it is - which
+    // pushes the one mode that radiates upward, and is most of why going down
+    // the keyboard stopped making the drum lower.
     drum.depth = clampFloat (applied.headDiameter * radiusFactor
                                  * (0.40f + 0.90f * applied.bodyDepth),
-                             0.04f, 2.0f);
+                             0.04f, 9.5f);
 
     const float baseTension =
         geometricLerp (minimumTension, maximumTension, applied.tension);
@@ -879,8 +926,18 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
     // a head modelled on its own damping alone rings longest exactly where it
     // should ring shortest. The term is steep, because a mode has to be low
     // enough to move the whole instrument before any of this applies at all.
+    //
+    // Where that begins is a comparison between the mode and the instrument, not
+    // an absolute pitch: a mode moves the shell when its wavelength is on the
+    // order of the drum's own size, so the corner scales with the drum the way
+    // every other frequency in this function already does. Leaving it at a fixed
+    // 55 Hz meant a larger drum slid its whole modal set down through a shelf
+    // that did not move, and the stand ate more of the instrument the bigger the
+    // instrument got - which is backwards, and it is why the o-daiko end of the
+    // keyboard was both the quietest and the shortest.
     drum.mountLoss = mountLossScale * (0.55f + 0.90f * applied.headDamping);
-    drum.mountCorner = mountLossCorner;
+    drum.mountCorner = mountLossCorner * mountReferenceRadius
+                     / std::max (drum.radius, radiusFloor);
 
     // The wooden shell's ring modes. This is the standard thin-cylinder result
     // f_n = n(n^2-1)/sqrt(n^2+1) * h/(2 pi R^2) * sqrt(E/(12 rho (1-nu^2))),
@@ -1472,7 +1529,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         }
     }
 
-    // The wooden bank. For eleven of the twelve strokes this is the drum's own
+    // The wooden bank. For seven of the eight strokes this is the drum's own
     // shell: struck directly by a Katsu or a rim shot and picked up faintly the
     // rest of the time, because a head cannot move without the body it is
     // stretched over moving too. The Shell Resonance control scales how much of
@@ -1577,7 +1634,16 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                                             mode.omega / (2.0f * piFloat));
         }
 
-        const float first = std::max (highestResolved * 1.25f, 120.0f);
+        // Where the resolved bank hands over to the continuum is the modal
+        // overlap frequency, and that falls with the drum: a bigger head has
+        // more modes in the same span, so they stop being separable sooner. A
+        // fixed 120 Hz floor stopped it tracking exactly where it mattered - the
+        // largest drum's top resolved mode is 77 Hz, so its crossover was pinned
+        // an octave above where the head puts it, and because the band tilt is
+        // normalised against this number every band on that drum came out
+        // roughly two decibels loud as well. The remaining guard only catches an
+        // empty bank.
+        const float first = std::max (highestResolved * 1.25f, 20.0f);
 
         // Short wavelengths live at the edge. The high-order mode shapes pile
         // up against the rim, so a stroke out there couples into the continuum
@@ -1809,21 +1875,6 @@ void TaikoEngine::scheduleContacts (Voice& voice, const StrikeProfile& profile,
     {
         voice.contacts[0] = { 0u, lengthSamples, peakForce, peakForce * noiseLevel };
         voice.contactCount = 1;
-        return;
-    }
-
-    if (profile.contactCount == 2)
-    {
-        // A flam: a lighter grace note about 32 ms ahead of the full stroke.
-        const float graceOffset =
-            0.032f * (1.0f + 0.25f * signedUnitFromHash (seed) * applied_.humanise);
-        voice.contacts[0] = { 0u,
-                              std::max<std::uint32_t> (2u,
-                                  static_cast<std::uint32_t> (lengthSamples * 1.15f)),
-                              peakForce * 0.42f, peakForce * 0.42f * noiseLevel };
-        voice.contacts[1] = { static_cast<std::uint32_t> (graceOffset * rate),
-                              lengthSamples, peakForce, peakForce * noiseLevel };
-        voice.contactCount = 2;
         return;
     }
 

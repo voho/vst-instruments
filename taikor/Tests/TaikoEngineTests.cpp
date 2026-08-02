@@ -422,14 +422,22 @@ void testArticulationMetadataAndMidiMapping()
     expect (slugs.size() == taikor::articulationCount,
             "articulation slugs are not unique");
 
-    // The vocabulary is one octave: every pitch class is a different stroke,
-    // and the octave chooses the drum rather than the stroke.
+    // The vocabulary sits inside one octave: each pitch class up to the last
+    // stroke is a different stroke, the octave chooses the drum rather than the
+    // stroke, and the pitch classes past the last stroke carry nothing. The
+    // octave stays twelve semitones because that is what has to line up with
+    // the keyboard, so the gap is real and has to be empty - casting a pitch
+    // class straight to the enum would have let the top four keys of every
+    // octave play a Don.
     for (int note = taikor::lowestPlayableNote; note <= taikor::highestPlayableNote;
          ++note)
     {
         const auto articulation = taikor::articulationForMidiNote (note);
         const auto octave = taikor::octaveOffsetForMidiNote (note);
-        expect (articulation.has_value(), "playable note produced no articulation");
+        const bool carriesStroke =
+            note % 12 < static_cast<int> (taikor::articulationCount);
+        expect (articulation.has_value() == carriesStroke,
+                "a pitch class carries a stroke exactly when one is defined for it");
         expect (octave.has_value(), "playable note produced no octave");
         if (! articulation.has_value() || ! octave.has_value())
             continue;
@@ -464,8 +472,8 @@ void testArticulationMetadataAndMidiMapping()
             "the reference note must be playable");
 }
 
-// The instrument's central promise: within an octave the twelve notes are
-// twelve strokes, and between octaves the drum's pitch rises.
+// The instrument's central promise: within an octave the notes that carry a
+// stroke are every stroke there is, and between octaves the drum's pitch rises.
 void testOctavesRaisePitch()
 {
     const auto parameters = defaultParameters();
@@ -858,7 +866,7 @@ void testStrikePositionShapesTheSpectrum()
 
     const auto centre = strike (parameters, taikor::Articulation::Don, 0, 0.9f,
                                 48000.0, 36000);
-    const auto edge = strike (parameters, taikor::Articulation::Kara, 0, 0.9f,
+    const auto edge = strike (parameters, taikor::Articulation::Ka, 0, 0.9f,
                               48000.0, 36000);
 
     taikor::TaikoEngine engine;
@@ -920,9 +928,9 @@ void testStrikePositionShapesTheSpectrum()
     towardsCentre.strikePosition = -1.0f;
     towardsCentre.humanise = 0.0f;
 
-    const auto rimward = strike (towardsRim, taikor::Articulation::Ko, 0, 0.9f,
+    const auto rimward = strike (towardsRim, taikor::Articulation::Su, 0, 0.9f,
                                  48000.0, 24000);
-    const auto centreward = strike (towardsCentre, taikor::Articulation::Ko, 0, 0.9f,
+    const auto centreward = strike (towardsCentre, taikor::Articulation::Su, 0, 0.9f,
                                     48000.0, 24000);
     expect (upperIn (rimward.mono()) / std::max (fundamentalIn (rimward.mono()), 1.0e-9)
                 > upperIn (centreward.mono())
@@ -1218,21 +1226,7 @@ void testTheContinuumFollowsTheHead()
     auto parameters = defaultParameters();
     parameters.humanise = 0.0f;
 
-    // A flam is two strikes. The second is the loud one and it lands 32 ms
-    // after the first, so it has to bring its own brightness rather than
-    // inheriting whatever is left of the grace note's.
-    {
-        const auto flam = strike (parameters, taikor::Articulation::Flam, 0, 1.0f,
-                                  48000.0, 96256).mono();
-        const auto grace = highBand (flam, 0u, 1200u);
-        const auto main = highBand (flam, 1536u, 2736u);
-        expect (grace > 0.0, "the flam's grace note made no high-frequency sound");
-        expect (main > grace * 1.5,
-                "a flam's main stroke must be brighter than its grace note, which "
-                "means every scheduled contact has to light the continuum");
-    }
-
-    // A press roll is seven, and each bounce is a real blow on the head.
+    // A press roll is eleven blows, and each bounce is a real one on the head.
     {
         const auto buzz = strike (parameters, taikor::Articulation::Buzz, 0, 1.0f,
                                   48000.0, 96256).mono();
@@ -2120,14 +2114,8 @@ void testControlEndpointsAndGestures()
         auto tuned = parameters;
         tuned.humanise = 0.0f;
         tuned.tensionModulation = 0.0f;
-        // A small head, so there is still a stroke ringing by the time the
-        // glide has settled and the second reading can be taken. The default
-        // drum is nearly a metre across and puts its fundamental at fifty
-        // hertz, right in the middle of what the stand and the hoops take, so
-        // it is down sixty decibels before the bend has finished moving - and
-        // measuring the pitch of something that is no longer sounding measures
-        // whatever is left in the band instead. Thirty centimetres puts the
-        // fundamental at three hundred hertz, clear of the mounting entirely.
+        // A small head, so the fifty-millisecond first reading has several
+        // cycles of the fundamental to work with rather than two.
         tuned.headDiameter = 0.30f;
 
         taikor::TaikoEngine engine;
@@ -2142,19 +2130,72 @@ void testControlEndpointsAndGestures()
         // The search band follows the drum the engine reports rather than a
         // range written for one particular default, so retuning the instrument
         // cannot silently move the measurement off the partial it is watching.
+        // It is also narrow enough to hold one partial: the two branches of the
+        // axisymmetric pair are damped differently, so which of them is loudest
+        // changes over a stroke, and a band wide enough for both measures the
+        // fundamental at one end and the breathing branch at the other - which
+        // reports a bend that never happened, or hides one that did.
         const auto resting = engine.measureDrum (0).loadedFundamentalHz;
-        const auto low = static_cast<double> (resting) * 0.8;
-        const auto high = static_cast<double> (resting) * 1.6;
-
-        const auto restingPitch =
-            dominantFrequency (before, 48000.0, low, high, 0.05, 2400u);
-        // Skip the glide itself and measure where the drum settled.
-        const auto bentPitch =
-            dominantFrequency (after, 48000.0, low, high, 0.05, 16000u);
+        const auto restingPitch = dominantFrequency (
+            before, 48000.0, static_cast<double> (resting) * 0.90,
+            static_cast<double> (resting) * 1.15, 0.05, 2400u);
+        // Skip the glide itself and measure where the drum settled. The band
+        // starts at the resting pitch, so a wheel that did nothing reads as no
+        // bend rather than as some other partial.
+        const auto bentPitch = dominantFrequency (
+            after, 48000.0, restingPitch * 0.99, restingPitch * 1.32, 0.05, 16000u);
         const auto semitones = 12.0 * std::log2 (bentPitch / restingPitch);
 
         expect (semitones > 1.5 && semitones < 2.5,
                 "a fully raised wheel must bend a ringing stroke by about two semitones");
+    }
+
+    // A panic snaps the wheel to wherever it is actually being held, because
+    // there is nothing left for a gesture in transit to be continuous with. The
+    // wheel is geometry, so that snap has to take the solved drum with it: if a
+    // note arrives in the same block - which is exactly what a host doing an
+    // all-notes-off and then playing looks like - it would otherwise be built
+    // on the drum as it stood before the wheel moved, and nothing afterwards
+    // corrects it, because the voice records the tuning it was told it had.
+    {
+        auto tuned = parameters;
+        tuned.humanise = 0.0f;
+        tuned.tensionModulation = 0.0f;
+        tuned.headDiameter = 0.30f;
+
+        const auto pitchOf = [&tuned] (bool bendBeforePanic)
+        {
+            taikor::TaikoEngine engine;
+            engine.setParameters (tuned);
+            engine.prepare (48000.0, defaultBlockSize);
+
+            if (bendBeforePanic)
+            {
+                // Settle at centre first, so the cache is valid and solved for
+                // no bend at all when the wheel moves.
+                render (engine, 5120);
+                engine.setPitchBend (1.0f);
+                engine.allSoundsOff();
+            }
+            else
+            {
+                engine.setPitchBend (1.0f);
+                render (engine, 51200);
+                engine.allSoundsOff();
+            }
+
+            engine.trigger (taikor::Articulation::Don, 0, 0.95f);
+            const auto mono = render (engine, 51200).mono();
+            return dominantFrequency (mono, 48000.0, 180.0, 320.0, 0.05, 24000u);
+        };
+
+        const auto settled = pitchOf (false);
+        const auto snapped = pitchOf (true);
+        expect (settled > 0.0 && snapped > 0.0,
+                "the panic-then-play probe produced no pitch to measure");
+        expect (std::abs (12.0 * std::log2 (snapped / std::max (1.0, settled))) < 0.1,
+                "a stroke played straight after a panic must be built on the drum "
+                "the wheel is asking for, not the one it was asking for before");
     }
 
     // The attack glide stretches the head. It must not stretch the wooden body
@@ -2302,17 +2343,18 @@ void testControlEndpointsAndGestures()
     // out, not cut. A cut at an audible level is a click, and it rings the
     // shared DC blocker on the way out.
     {
-        // A small, tight, undamped head - not a large one. The longest-ringing
-        // drum this instrument can be asked for is no longer the biggest: what
-        // the shell and the stand take is steeply low-pass, so on a drum getting
-        // on for four metres across it lands squarely on the fundamental and
-        // holds the whole tail to half a second however little else is damping
-        // it. A thirty-centimetre head an octave up puts its fundamental at
-        // three hundred hertz, clear of that entirely, and rings for eighteen
-        // seconds.
+        // A large, tight, undamped head. The longest-ringing drum this
+        // instrument can be asked for is the biggest one, which is what a drum
+        // family sounds like: bigger drums put their modes lower, where they
+        // radiate less and the head's own hysteresis takes less per cycle, so
+        // they ring longer. This check used to have to reach for a thirty
+        // centimetre head instead, because the mounting shelf was pinned at an
+        // absolute fifty-five hertz and swallowed the fundamental of anything
+        // large. A 1.3 m head rings for thirty seconds; a 30 cm one for under
+        // five.
         auto ringing = parameters;
         ringing.humanise = 0.0f;
-        ringing.headDiameter = 0.30f;
+        ringing.headDiameter = 1.30f;
         ringing.headMaterial = 0.0f;
         ringing.headDamping = 0.0f;
         ringing.shellMaterial = 1.0f;
@@ -2421,8 +2463,7 @@ void testControlEndpointsAndGestures()
         tuned.humanise = 0.0f;
         tuned.tensionModulation = 0.0f;
         // Small, for the same reason the wheel's own check uses a small head:
-        // the reading after the glide has to land on a stroke that is still
-        // sounding.
+        // the first reading is fifty milliseconds long and needs cycles in it.
         tuned.headDiameter = 0.30f;
 
         taikor::TaikoEngine engine;
@@ -2433,8 +2474,6 @@ void testControlEndpointsAndGestures()
         // Read before the automation moves, or the band is centred on where
         // the drum ends up and cannot see where it started.
         const auto resting = engine.measureDrum (0).loadedFundamentalHz;
-        const auto low = static_cast<double> (resting) * 0.8;
-        const auto high = static_cast<double> (resting) * 1.9;
 
         const auto before = render (engine, 24000).mono();
 
@@ -2443,10 +2482,14 @@ void testControlEndpointsAndGestures()
         engine.setParameters (raised);
         const auto after = render (engine, 72000).mono();
 
-        const auto restingPitch =
-            dominantFrequency (before, 48000.0, low, high, 0.05, 2400u);
-        const auto raisedPitch =
-            dominantFrequency (after, 48000.0, low, high, 0.05, 16000u);
+        // One partial per band, and the second band anchored on where the first
+        // one actually landed - see the wheel's own check for why a band wide
+        // enough to hold both branches measures a different partial at each end.
+        const auto restingPitch = dominantFrequency (
+            before, 48000.0, static_cast<double> (resting) * 0.90,
+            static_cast<double> (resting) * 1.15, 0.05, 2400u);
+        const auto raisedPitch = dominantFrequency (
+            after, 48000.0, restingPitch * 0.99, restingPitch * 1.68, 0.05, 16000u);
         const auto semitones = 12.0 * std::log2 (raisedPitch / restingPitch);
 
         expect (semitones > 6.0 && semitones < 8.0,
@@ -2561,13 +2604,11 @@ void testControlEndpointsAndGestures()
     }
 
     // Later scheduled contacts must still find the bank they are meant to
-    // drive. A flam's main stroke lands 32 ms after its grace note and a press
-    // roll bounces for a tenth of a second; measuring mode lifetimes from the
-    // voice's start retired the bank out from under them, and a press roll at
-    // high damping reached its last bounce with nine of its thirty modes left.
+    // drive. A press roll bounces for a tenth of a second, and measuring mode
+    // lifetimes from the voice's start retired the bank out from under it: at
+    // high damping it reached its last bounce with nine of its thirty modes.
     {
-        for (const auto articulation : { taikor::Articulation::Flam,
-                                         taikor::Articulation::Buzz })
+        for (const auto articulation : { taikor::Articulation::Buzz })
         {
             for (const float damping : { 0.35f, 1.0f })
             {

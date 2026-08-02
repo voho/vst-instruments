@@ -256,7 +256,7 @@ Take renderFamilyPhrase (int octave, double beat, double tail)
     const std::array<std::pair<Articulation, float>, 16> figure {{
         { Articulation::Don, 1.00f },  { Articulation::Ka, 0.55f },
         { Articulation::Don, 0.80f },  { Articulation::Ka, 0.50f },
-        { Articulation::Don, 0.95f },  { Articulation::Ko, 0.45f },
+        { Articulation::Don, 0.95f },  { Articulation::Su, 0.45f },
         { Articulation::Ka, 0.60f },   { Articulation::Ka, 0.55f },
         { Articulation::Don, 1.00f },  { Articulation::Su, 0.35f },
         { Articulation::Don, 0.75f },  { Articulation::Ka, 0.55f },
@@ -354,21 +354,26 @@ Take renderPitchBend()
 
 // Rolls, flams and ghost strokes: the parts of the vocabulary that are about
 // what the sticks do rather than where they land.
-Take renderRollsAndFlams()
+Take renderRollsAndPresses()
 {
     Take take (nagadoVoicing());
     take.rest (0.08);
 
     take.hit (Articulation::Buzz, 0, 0.80f, 0.75);
     take.hit (Articulation::Buzz, 0, 0.95f, 0.75);
-    take.hit (Articulation::Flam, 0, 0.90f, 0.70);
-    take.hit (Articulation::Flam, 0, 0.75f, 0.70);
+    // A flam, played rather than provided: a grace note a thirty-second ahead
+    // of the stroke it leans into. Two notes on a grid is all one is, which is
+    // why the instrument no longer spends a key on it.
+    take.hit (Articulation::Su, 0, 0.42f, 0.032);
+    take.hit (Articulation::Don, 0, 0.90f, 0.67);
+    take.hit (Articulation::Su, 0, 0.38f, 0.032);
+    take.hit (Articulation::Don, 0, 0.75f, 0.67);
 
     // A hand-played roll: alternating strokes accelerating into a Don.
     double gap = 0.155;
     for (int stroke = 0; stroke < 14; ++stroke)
     {
-        take.hit (stroke % 2 == 0 ? Articulation::Ko : Articulation::Su, 0,
+        take.hit (stroke % 2 == 0 ? Articulation::Ka : Articulation::Su, 0,
                   0.38f + 0.035f * static_cast<float> (stroke), gap);
         gap *= 0.90;
     }
@@ -396,7 +401,7 @@ Take renderEnsemblePiece()
         take.hit (Articulation::Ka, octave + 1, 0.55f, unit * 0.5);
         take.hit (Articulation::Ka, octave + 1, 0.50f, unit * 0.5);
         take.hit (Articulation::Don, octave, 0.85f, unit);
-        take.hit (Articulation::Ko, octave + 1, 0.45f, unit * 0.5);
+        take.hit (Articulation::Su, octave + 1, 0.45f, unit * 0.5);
         take.hit (Articulation::Ka, octave + 1, 0.55f, unit * 0.5);
     };
 
@@ -456,7 +461,7 @@ Take renderStrikePositionSweep()
 {
     return renderParameterSweep (&EngineParameters::strikePosition,
                                  { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f },
-                                 Articulation::Ko, 0, 0.60, 1.5);
+                                 Articulation::Su, 0, 0.60, 1.5);
 }
 
 Take renderTensionSweep()
@@ -539,7 +544,7 @@ const std::array<Demo, 23>& demos()
 {
     static const std::array<Demo, 23> table {{
         { "01-stroke-vocabulary.wav",
-          "All twelve strokes on the reference drum, in keyboard order",
+          "All eight strokes on the reference drum, in keyboard order",
           renderVocabulary },
         { "02-octaves-don.wav",
           "A Don on each of the six octaves: the pitch ladder", renderOctavesDon },
@@ -581,8 +586,8 @@ const std::array<Demo, 23>& demos()
           renderHandDamping },
         { "21-pitch-wheel.wav", "The wheel pressing the head sharp and flat",
           renderPitchBend },
-        { "22-rolls-and-flams.wav", "Buzz rolls, flams, stick clicks and a shell hit",
-          renderRollsAndFlams },
+        { "22-rolls-and-presses.wav", "Press rolls, a played flam, stick clicks and a shell hit",
+          renderRollsAndPresses },
         { "23-ensemble-piece.wav",
           "A longer piece moving between three drums of the family",
           renderEnsemblePiece },
