@@ -508,17 +508,21 @@ float YouKnow106Engine::vcaGain(float control) noexcept
 
 float YouKnow106Engine::highPassCornerHz(HighPassMode mode) noexcept
 {
-    // Four legs of a switched RC network, selected by a CMOS multiplexer: a
+    // Four legs of a switched network, selected by a CMOS multiplexer: a
     // shelving boost, a straight-through leg, and two progressively higher
-    // corners. Each cut leg puts its own series capacitor against the *same*
-    // 15 kOhm shunt to ground -- 47 nF and 15 nF -- which is why one resistor
-    // value serves both corners.
+    // corners. Each cut leg is its own series capacitor -- C10 15 nF, C11
+    // 4.7 nF -- against the same 47 kOhm feed into the summing amplifier's
+    // virtual earth, with a 1 MOhm bleed to ground. The 47 kOhm is the timing
+    // resistance; the 1 MOhm is far too high to be.
     //
-    // An earlier revision had an effective 44.9 kOhm against 15 nF and 4.7 nF,
-    // giving 236 and 754 Hz. Two independent transcriptions now agree on the
-    // values below, and the shift is explained: the same three E6 capacitors
-    // read one switch position out of step. The boost's corner is unchanged,
-    // being the measured shelf's own pole rather than a part value.
+    // Two earlier revisions got this wrong in different ways, and the second
+    // was wrong in a way that concealed itself: 15 kOhm against 47 nF has the
+    // same product as 47 kOhm against 15 nF, so position 2 came out right by
+    // coincidence while position 3 stayed 13 Hz off. Reading the schematic's
+    // own designators is what separated them. The boost's corner is unchanged,
+    // being the measured shelf's own pole rather than a part value -- and the
+    // boost is a summed two-zero/two-pole shelf, not one RC, which is why it
+    // has never been described by a corner alone here.
     switch (mode)
     {
         case HighPassMode::Boost: return 59.4f;
@@ -2006,11 +2010,14 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // The regeneration control voltage is shared -- one converter output for
     // all six loops -- but each voice's loop amplifier has its own gain
     // spread.
-    // 5% carbon film in the feedback path, so the loop gain disperses by that
-    // much -- the figure the factory alignment leaves behind after setting each
-    // voice's self-oscillation peak. An earlier revision voiced 2%.
+    // Voiced, and back to being voiced. The service procedure trims each loop
+    // to a 4.8 Vpp self-oscillation peak but states no tolerance on the result,
+    // so what spread survives the adjustment is documented nowhere located. A
+    // revision briefly anchored 5% to a source describing the *untrimmed*
+    // component class, which is a different question: a trimmed mechanism's
+    // residual is not its parts' tolerance.
     const float resonancePanel = clamp01(resonanceCv_
-        + card.resonanceError * 0.05f * tolerance);
+        + card.resonanceError * 0.02f * tolerance);
     voice.feedback = vcfFeedback(resonancePanel);
     voice.inputCompensation = vcfResonanceCompensation(voice.feedback);
 
@@ -2048,10 +2055,17 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
                           + card.comparatorOffset * 0.24f * tolerance;
     voice.pulseDuty = pwmDutyCycle(threshold / amplitudeScale);
 
-    // Each voice's high-pass leg is its own pair of parts, so its corner
-    // disperses a little.
-    const float corner = highPassCornerHz(parameters.highPass)
-                       * (1.0f + card.highPassError * 0.03f * tolerance);
+    // No per-voice draw here, and there cannot be one: the schematic carries a
+    // single set of high-pass parts on the jack board, not six, so every voice
+    // passes through the same network and sees the same corner. An earlier
+    // revision dispersed this by 3% on the assumption that each voice had its
+    // own leg.
+    //
+    // Applying one shared corner per voice is arithmetically the same as
+    // filtering the sum, the stage being linear, so nothing needs to move for
+    // this to be right. Where the stage sits relative to the voice filter is a
+    // separate question and is recorded as an open one.
+    const float corner = highPassCornerHz(parameters.highPass);
     voice.highPassG =
         std::tan(pi * std::min(corner, static_cast<float>(oversampledRate_) * 0.45f)
                  * inverseOversampledRate_);
@@ -2115,11 +2129,13 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // one the current pitch calls for *is* that error.
     const float amplitudeScale = std::clamp(
         voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
-    // The ramp integrator's capacitor is a 5% polyester film part and has no
-    // per-voice trimmer, so its tolerance reaches the ramp undiminished. An
-    // earlier revision voiced 2%.
+    // From the parts' own tolerance classes, which is legitimate here because
+    // the ramp has no per-voice trimmer, so nothing removes their spread: the
+    // charging resistors are marked FX on the board -- metal-oxide film, 1% --
+    // and the 1 nF timing capacitors carry code G, 2%. Worst case that is
+    // -2.93% to +3.07% of slope, which is the 3% used here.
     const float amplitude = sawMixVolts * amplitudeScale
-        * (1.0f + card.rampCurrentError * 0.05f * parameters.calibration);
+        * (1.0f + card.rampCurrentError * 0.03f * parameters.calibration);
 
     const float sawNaive = phase < rise
         ? 2.0f * rampVoltage(static_cast<float>(phase / rise), rampBow) - 1.0f

@@ -104,6 +104,44 @@ public:
     [[nodiscard]] static float onePoleG(float cutoffHz, float sampleRate) noexcept;
     static float supportFilterStep(float& state, float input, float g) noexcept;
 
+    // One of the emitter-follower two-pole sections either side of the line.
+    // Each is an equal-resistor Sallen-Key, so its Q is fixed by the ratio of
+    // its two capacitors alone: Q = 0.5 * sqrt(C_feedback / C_shunt).
+    struct BiquadCoefficients
+    {
+        float g { 0.1f };   // tan(pi * fc / fs)
+        float k { 2.0f };   // 1 / Q
+    };
+    [[nodiscard]] static BiquadCoefficients sallenKeyCoefficients(
+        float cutoffHz, float q, float sampleRate) noexcept;
+    [[nodiscard]] static float sallenKeyQ(float feedbackFarads,
+                                          float shuntFarads) noexcept;
+
+    // Topology-preserving state-variable section, taken at its lowpass output.
+    // Two states, advanced together, so it stays stable while the delay either
+    // side of it is being swept.
+    struct BiquadState
+    {
+        float s1 { 0.0f };
+        float s2 { 0.0f };
+        void reset() noexcept { s1 = 0.0f; s2 = 0.0f; }
+    };
+    static float biquadStep(BiquadState&, float input,
+                            const BiquadCoefficients&) noexcept;
+
+    // Every coefficient the two chains need, built once per prepare(). The
+    // sections are fixed networks -- nothing on the panel reaches them -- so
+    // there is nothing to recompute per sample.
+    struct SupportChain
+    {
+        float passiveG { 0.1f };            // R122 / C52, ahead of the line
+        BiquadCoefficients antiAliasFirst {};
+        BiquadCoefficients antiAliasSecond {};
+        BiquadCoefficients reconstructionFirst {};
+        BiquadCoefficients reconstructionSecond {};
+    };
+    [[nodiscard]] static SupportChain supportChainFor(float sampleRate) noexcept;
+
     [[nodiscard]] float getLfoPhase() const noexcept { return lfoPhase_; }
 
 private:
@@ -117,21 +155,27 @@ private:
         double clockPhase { 0.0 };
         float held { 0.0f };
         float previousInput { 0.0f };
+        // Five poles in, four out, matching the board: two Sallen-Key sections
+        // plus one passive pole ahead of the line, two Sallen-Key sections
+        // after it.
+        //
+        // When the engine oversamples, the line's zero-order-hold images at the
+        // clock rate land above the host band and the decimators remove them;
+        // with oversampling off the clock exceeds the host Nyquist and the
+        // images fold, with only the output chain to soften them. That is a
+        // documented cost of the low-quality setting, not of the model -- and
+        // four poles soften it considerably better than the one this replaced.
         float antiAliasState { 0.0f };
-        // One pole each side. When the engine oversamples, the line's
-        // zero-order-hold images at the clock rate land above the host band
-        // and the decimators remove them; with oversampling off the clock
-        // exceeds the host Nyquist and the images fold, with only the
-        // reconstruction pole to soften them. That is a documented cost of
-        // the low-quality setting, not of the model.
-        float reconstructionState { 0.0f };
+        BiquadState antiAliasFirst {};
+        BiquadState antiAliasSecond {};
+        BiquadState reconstructionFirst {};
+        BiquadState reconstructionSecond {};
         float transferState { 0.0f };
         std::uint32_t noiseState { 0x9e3779b9u };
 
         void reset(std::uint32_t seed) noexcept;
         float process(float input, float clockHz, float sampleRate,
-                      float antiAliasG, float reconstructionG,
-                      float noiseScale) noexcept;
+                      const SupportChain& support, float noiseScale) noexcept;
     };
 
     Line lineA_ {};
@@ -139,8 +183,7 @@ private:
     float sampleRate_ { 48000.0f };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     float lfoPhase_ { 0.0f };
-    float antiAliasG_ { 0.1f };
-    float reconstructionG_ { 0.1f };
+    SupportChain support_ {};
     float wetGain_ { 0.0f };
     float rateHz_ { 0.0f };
     float centreDelay_ { 0.0032f };

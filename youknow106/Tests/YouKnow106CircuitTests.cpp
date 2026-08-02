@@ -733,9 +733,11 @@ void testBucketBrigadeLine()
     expectNear(two.rateHz, 0.863, 1.0e-4, "second mode rate");
     expectNear(one.sweepSeconds, two.sweepSeconds, 1.0e-9,
                "the two modes do not share a sweep depth");
-    expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.00154, 1.0e-6,
+    // A Juno-60's measured sweep, standing in and labelled as such: no
+    // qualifying capture of a Juno-106's own chorus has been located.
+    expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.00166, 1.0e-6,
                "shortest modulated delay");
-    expectNear(one.centreDelaySeconds + one.sweepSeconds, 0.00515, 1.0e-6,
+    expectNear(one.centreDelaySeconds + one.sweepSeconds, 0.00535, 1.0e-6,
                "longest modulated delay");
     // Both ends have to land inside the part's own clock window, which is what
     // says the capture describes this circuit rather than some other one: 256
@@ -887,7 +889,70 @@ void testSupportFilterCornersLandWhereAsked()
     expectNear(measureCorner(9500.0f, 192000.0f), 9500.0, 60.0,
                "reconstruction corner at the internal rate");
     expectNear(measureCorner(9900.0f, 48000.0f), 9900.0, 60.0,
-               "anti-alias corner without oversampling");
+               "one-pole corner without oversampling");
+
+    // The two-pole sections either side of the line. Their Q comes from the
+    // capacitor ratio alone, so it is asserted from the parts rather than
+    // written down -- and the corner is measured the same way the one-pole's
+    // is, by bisecting the realised half-power point, because a coefficient
+    // that agrees with its own recursion is the only thing worth checking.
+    expectNear(Chorus::sallenKeyQ(820.0e-12f, 680.0e-12f), 0.5494, 1.0e-3,
+               "the first section's Q is not its capacitor ratio");
+    expectNear(Chorus::sallenKeyQ(1.8e-9f, 270.0e-12f), 1.2910, 1.0e-3,
+               "the second section's Q is not its capacitor ratio");
+
+    const auto biquadGainAt = [](double frequency, const Chorus::BiquadCoefficients& c,
+                                 float sampleRate) {
+        constexpr int cycles = 64;
+        constexpr int settle = 4096;
+        const int window = static_cast<int>(
+            std::llround(cycles * static_cast<double>(sampleRate) / frequency));
+        Chorus::BiquadState state {};
+        std::complex<double> accumulator {};
+        for (int index = 0; index < settle + window; ++index)
+        {
+            const double phase = 2.0 * pi * frequency * index / sampleRate;
+            const float output = Chorus::biquadStep(
+                state, static_cast<float>(std::sin(phase)), c);
+            if (index >= settle)
+                accumulator += static_cast<double>(output)
+                             * std::exp(std::complex<double>(0.0, -phase));
+        }
+        return 2.0 * std::abs(accumulator) / window;
+    };
+
+    // A two-pole lowpass has one property that pins both of its coefficients at
+    // once: its gain *at* the corner is exactly Q. Asserting that is sharper
+    // than bisecting for a half-power point, because the half-power point moves
+    // with Q and so would pass for a section whose damping was wrong in a way
+    // that happened to shift the -3 dB frequency back.
+    //
+    // A section running at half its intended Q -- which is what an extra factor
+    // of two in the damping term produces -- fails this by a factor of two.
+    for (const float rate : { 192000.0f, 48000.0f })
+    {
+        struct Section { float hz; float q; const char* name; };
+        for (const auto& section : { Section { 9688.0f, 0.5494f, "first" },
+                                     Section { 10377.0f, 1.2910f, "second" } })
+        {
+            const auto c = Chorus::sallenKeyCoefficients(section.hz, section.q, rate);
+            const double reference = biquadGainAt(20.0, c, rate);
+            const double atCorner = biquadGainAt(section.hz, c, rate);
+            expectNear(atCorner / reference, section.q, 0.02,
+                       std::string("the ") + section.name
+                           + " two-pole section's gain at its corner is not its Q");
+        }
+    }
+
+    // And a two-pole section passes DC like any other lowpass.
+    {
+        const auto c = Chorus::sallenKeyCoefficients(9688.0f, 0.5494f, 192000.0f);
+        Chorus::BiquadState state {};
+        float settled = 0.0f;
+        for (int index = 0; index < 8192; ++index)
+            settled = Chorus::biquadStep(state, 1.0f, c);
+        expectNear(settled, 1.0, 1.0e-5, "a two-pole section does not pass DC");
+    }
 }
 
 void testCorrectionResidualsVanishAtTheEdges()

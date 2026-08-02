@@ -41,41 +41,60 @@ constexpr float transferSmear =
 // instrument.
 constexpr float bbdSaturationLevel = 1.1f; // ~2.9 V at the node
 
-// The voice bus is stepped down before the line and brought back up after it.
-// The divider is 33 kOhm in series against 12 kOhm to ground, so the line sees
-// 12/45 of the bus -- 11.5 dB down -- which is what keeps a nominal bus inside
-// the part's rated 0.78 Vrms instead of sitting on its overload point.
+// There is no divider ahead of the line. A previous revision put one here --
+// 33 kOhm against 12 kOhm -- on a reading of the schematic that the schematic
+// does not support: the 100 kOhm at each line's input injects adjustable DC
+// bias from VR1/VR2 and is not the lower leg of anything, and the 10 kOhm
+// against 2.2 nF beside it is a low-pass pole, not an attenuator. Roland sets
+// the drive by calibration instead, trimming VR1/VR2 for symmetrical clipping
+// with 10 Vpp at 1 kHz on the module board's TP2.
 //
-// Applying it explicitly rather than folding it into the saturation threshold
-// is what makes the two things it governs come out right at once. The line now
-// needs 11.5 dB more drive before it grits, so the chorus stays clean at
-// ordinary levels and dirties only when pushed, as the hardware does. And the
-// line's own noise is attenuated relative to nothing while the restoring gain
-// lifts it with the signal -- which is precisely why an uncompanded delay
-// hisses, and is the mechanism this circuit is known for rather than a floor
-// bolted on afterwards.
-constexpr float bbdInputDivider = 12.0f / 45.0f;   // -11.48 dB
-constexpr float bbdOutputRestore = 1.0f / bbdInputDivider;
+// The voice summer ahead of the whole effect does attenuate, but it attenuates
+// dry and wet alike, so it is not a chorus divider either and cannot change the
+// balance the summing resistors set.
 
-// Modelled noise floor of one line, referred to the line's own input. The
-// circuit measures 60 dB signal to noise unweighted over 20 Hz to 20 kHz
-// referred to 0 dBu, against the part's own 88 dB datasheet figure -- the gap
-// being clock feedthrough, op-amp noise and the absence of any compander.
+// Modelled noise floor of one line, referred to its own input. Uncompanded,
+// this circuit is reported between 55 and 65 dB signal to noise against the
+// part's own 88 dB datasheet figure, and **that band still has no citation**:
+// the closest located capture gives noise level alone, with no reference tone,
+// calibrated level, weighting or stated bandwidth, so it cannot be turned into
+// a signal-to-noise figure. Modelling the floor is the point regardless -- the
+// missing compander is what the effect is known for.
+constexpr float lineNoiseAmplitude = 1.0e-3f;
+
+// Support filters, from the schematic rather than from an estimate of it. Each
+// side of the line carries two emitter-follower Sallen-Key sections built on
+// equal 22 kOhm pairs, so each section's corner comes from its capacitors and
+// its Q from their ratio alone:
 //
-// Stated at the line's input, so the restoring gain above is what carries it to
-// the output: the constant is the 60 dB output figure divided back down through
-// the divider, which leaves the audible floor exactly where it was measured.
-constexpr float lineNoiseAmplitude = 1.0e-3f * bbdInputDivider;
+//   Tr13 / Tr15   820 pF feedback, 680 pF shunt  ->  9.69 kHz, Q 0.549
+//   Tr14 / Tr16   1.8 nF feedback, 270 pF shunt  -> 10.38 kHz, Q 1.291
+//
+// and the input adds one passive pole, R122 10 kOhm against C52 2.2 nF, at
+// 7.23 kHz. Five poles in, four modelled out.
+//
+// This replaces a single pole at 9.9 kHz in and 9.5 kHz out, which was a guess
+// at a fifth-order response rather than the response itself, and was therefore
+// far too bright: four poles near 10 kHz reach -12 dB at 15 kHz where one
+// reaches -4. It also settles the standing disagreement in the right
+// direction. A sibling's wet path had been fitted with a *single* pole at
+// 14 kHz, which cannot describe this circuit; the schematic shows why a
+// single-pole fit was never going to.
+constexpr float antiAliasFirstHz = 9688.0f;
+constexpr float antiAliasFirstFeedbackF = 820.0e-12f;
+constexpr float antiAliasFirstShuntF = 680.0e-12f;
+constexpr float antiAliasSecondHz = 10377.0f;
+constexpr float antiAliasSecondFeedbackF = 1.8e-9f;
+constexpr float antiAliasSecondShuntF = 270.0e-12f;
+constexpr float antiAliasPassiveHz = 7234.0f;   // R122 10 kOhm x C52 2.2 nF
 
-// Support-filter corners. The published fifth-order model of this circuit puts
-// them at 9.9 kHz in and 9.5 kHz out, while a direct measurement of the wet
-// path in a sibling instrument fits a single pole at 14 kHz across the whole
-// audio band -- a fifth-order pair at 9.5 kHz would be some 20 dB darker at
-// 15 kHz than that measurement. The model takes the published corners at first
-// order each, which lands between the two, and the research document records
-// the disagreement rather than hiding it.
-constexpr float antiAliasCornerHz = 9900.0f;
-constexpr float reconstructionCornerHz = 9500.0f;
+// The output's own fifth pole is the tap-summing node, and its corner is not
+// set by the passive parts alone -- the part's output impedance is in series
+// with them and is not specified. On the schematic's values against a summing
+// node's low source impedance it lands well above the audio band, so it is left
+// out rather than voiced at a number that would be doing no work.
+constexpr float reconstructionFirstHz = 9688.0f;
+constexpr float reconstructionSecondHz = 10377.0f;
 
 // Line gain, from the summing stage's own parts rather than from a sibling's
 // measurement. Dry and wet meet at an inverting op-amp through 47 kOhm and
@@ -110,17 +129,25 @@ float triangle(float phase) noexcept
 
 Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
 {
-    // Anchored to a calibrated capture of this instrument, which replaces the
-    // sibling's numbers an earlier revision stood in with: delay 1.54 ms to
-    // 5.15 ms, the same in every mode, rates 0.513 Hz and 0.863 Hz. Those
-    // bounds imply an MN3009 clock of 83.1 kHz and 24.9 kHz -- 256 stages at
-    // 128/f_clock -- both comfortably inside the part's 10-200 kHz window,
-    // which is the check that the capture describes this circuit at all.
+    // These are a *Juno-60's* measured figures, and they are labelled as such
+    // deliberately: delay 1.66 ms to 5.35 ms, rates 0.513 Hz and 0.863 Hz, read
+    // from a calibrated capture of that instrument. No qualifying capture of a
+    // Juno-106's own chorus has been located -- a revision briefly adopted
+    // 1.54-5.15 ms as one, which turned out not to exist -- and the figures
+    // published for this instrument are only "about 0.5 Hz" and "about 0.8 Hz".
+    //
+    // The schematic does anchor the *ratio*. Mode II leaves a 2.2 MOhm resistor
+    // in series that Mode I bypasses, giving effective timing resistances of
+    // 6.435 and 3.964 MOhm and so a rate ratio of 1.623. The sibling's measured
+    // pair gives 1.682, which agrees to about 3.6% -- close enough to say the
+    // two instruments share this circuit, not close enough to claim the
+    // decimals are this one's. The timing capacitor is illegible in the
+    // schematic, so no absolute rate can be computed from it.
     //
     // Modes I and II differ in speed alone, not in depth, which is why II
     // reads as more agitated rather than wider.
-    constexpr float centre = 0.5f * (0.00154f + 0.00515f);
-    constexpr float sweep = 0.5f * (0.00515f - 0.00154f);
+    constexpr float centre = 0.5f * (0.00166f + 0.00535f);
+    constexpr float sweep = 0.5f * (0.00535f - 0.00166f);
     constexpr float rateOne = 0.513f;
     constexpr float rateTwo = 0.863f;
     switch (mode)
@@ -160,6 +187,66 @@ float Chorus::supportFilterStep(float& state, float input, float g) noexcept
     return output;
 }
 
+// An equal-resistor Sallen-Key's damping comes entirely from its capacitor
+// ratio. Both sections here are built that way -- 22 kOhm twice -- so this is
+// the whole of their Q.
+float Chorus::sallenKeyQ(float feedbackFarads, float shuntFarads) noexcept
+{
+    if (shuntFarads <= 0.0f)
+        return 0.5f;
+    return 0.5f * std::sqrt(feedbackFarads / shuntFarads);
+}
+
+Chorus::BiquadCoefficients Chorus::sallenKeyCoefficients(float cutoffHz, float q,
+                                                         float sampleRate) noexcept
+{
+    const float limited = std::clamp(cutoffHz, 20.0f, sampleRate * 0.45f);
+    BiquadCoefficients coefficients;
+    coefficients.g = std::tan(3.14159265358979324f * limited / sampleRate);
+    coefficients.k = 1.0f / std::max(q, 0.05f);
+    return coefficients;
+}
+
+// Zavalishin's topology-preserving state-variable form, lowpass output. The
+// prewarped `g` puts the corner where it was asked for at any host rate, which
+// a direct-form biquad with bilinear coefficients would not do as cleanly at
+// the engine's 192 kHz internal rate.
+float Chorus::biquadStep(BiquadState& state, float input,
+                         const BiquadCoefficients& coefficients) noexcept
+{
+    const float g = coefficients.g;
+    const float k = coefficients.k;
+    // `k` is the form's own damping term, which is already 1/Q -- doubling it
+    // here would halve every section's Q and darken the whole chain.
+    const float highPass = (input - (k + g) * state.s1 - state.s2)
+                         / (1.0f + g * (g + k));
+    const float bandPass = g * highPass + state.s1;
+    state.s1 = g * highPass + bandPass;
+    const float lowPass = g * bandPass + state.s2;
+    state.s2 = g * bandPass + lowPass;
+    return lowPass;
+}
+
+Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
+{
+    SupportChain chain;
+    chain.passiveG = onePoleG(antiAliasPassiveHz, sampleRate);
+    chain.antiAliasFirst = sallenKeyCoefficients(
+        antiAliasFirstHz,
+        sallenKeyQ(antiAliasFirstFeedbackF, antiAliasFirstShuntF), sampleRate);
+    chain.antiAliasSecond = sallenKeyCoefficients(
+        antiAliasSecondHz,
+        sallenKeyQ(antiAliasSecondFeedbackF, antiAliasSecondShuntF), sampleRate);
+    // The output sections are the same two networks again, part for part.
+    chain.reconstructionFirst = sallenKeyCoefficients(
+        reconstructionFirstHz,
+        sallenKeyQ(antiAliasFirstFeedbackF, antiAliasFirstShuntF), sampleRate);
+    chain.reconstructionSecond = sallenKeyCoefficients(
+        reconstructionSecondHz,
+        sallenKeyQ(antiAliasSecondFeedbackF, antiAliasSecondShuntF), sampleRate);
+    return chain;
+}
+
 void Chorus::Line::reset(std::uint32_t seed) noexcept
 {
     cells.fill(0.0f);
@@ -168,18 +255,23 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
     held = 0.0f;
     previousInput = 0.0f;
     antiAliasState = 0.0f;
-    reconstructionState = 0.0f;
+    antiAliasFirst.reset();
+    antiAliasSecond.reset();
+    reconstructionFirst.reset();
+    reconstructionSecond.reset();
     transferState = 0.0f;
     noiseState = seed | 1u;
 }
 
 float Chorus::Line::process(float input, float clockHz, float sampleRate,
-                            float antiAliasG, float reconstructionG,
-                            float noiseScale) noexcept
+                            const SupportChain& support, float noiseScale) noexcept
 {
     // Band-limit ahead of the line. Everything above half the clock would fold,
-    // exactly as it does in the part.
-    const float limited = Chorus::supportFilterStep(antiAliasState, input, antiAliasG);
+    // exactly as it does in the part. Five poles: the board's two Sallen-Key
+    // sections, then its passive one.
+    float limited = Chorus::biquadStep(antiAliasFirst, input, support.antiAliasFirst);
+    limited = Chorus::biquadStep(antiAliasSecond, limited, support.antiAliasSecond);
+    limited = Chorus::supportFilterStep(antiAliasState, limited, support.passiveG);
 
     const double increment =
         static_cast<double>(clockHz) / static_cast<double>(sampleRate);
@@ -202,8 +294,7 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         const float fraction = increment > 0.0
             ? static_cast<float>(std::clamp(clockPhase / increment, 0.0, 1.0))
             : 0.0f;
-        const float atEdge =
-            (limited + (previousInput - limited) * fraction) * bbdInputDivider;
+        const float atEdge = limited + (previousInput - limited) * fraction;
         // The line's own overload. The charge a cell can hold is bounded by
         // its bias window, so the wet path saturates before anything around
         // it does; driving the chorus hot grits the delayed signal only.
@@ -226,19 +317,18 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         clockPhase -= std::floor(clockPhase);
     previousInput = limited;
 
-    // Reconstruct the held staircase, and undo the input divider. The line's
-    // noise rides up with the signal here, which is the whole reason an
-    // uncompanded delay is audible at rest.
-    return bbdOutputRestore
-         * Chorus::supportFilterStep(reconstructionState, held, reconstructionG);
+    // Reconstruct the held staircase through the board's two output sections.
+    const float first =
+        Chorus::biquadStep(reconstructionFirst, held, support.reconstructionFirst);
+    return Chorus::biquadStep(reconstructionSecond, first,
+                              support.reconstructionSecond);
 }
 
 void Chorus::prepare(double sampleRate) noexcept
 {
     sampleRate_ = static_cast<float>(std::clamp(sampleRate, 8000.0, 768000.0));
     inverseSampleRate_ = 1.0f / sampleRate_;
-    antiAliasG_ = onePoleG(antiAliasCornerHz, sampleRate_);
-    reconstructionG_ = onePoleG(reconstructionCornerHz, sampleRate_);
+    support_ = supportChainFor(sampleRate_);
     reset();
 }
 
@@ -305,10 +395,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const float clockB = std::clamp(clockForDelaySeconds(delayB),
                                     minimumClockHz, maximumClockHz);
 
-    const float wetA = lineA_.process(input, clockA, sampleRate_, antiAliasG_,
-                                      reconstructionG_, noiseScale);
-    const float wetB = lineB_.process(input, clockB, sampleRate_, antiAliasG_,
-                                      reconstructionG_, noiseScale);
+    const float wetA = lineA_.process(input, clockA, sampleRate_, support_, noiseScale);
+    const float wetB = lineB_.process(input, clockB, sampleRate_, support_, noiseScale);
 
     // Both channels carry dry plus wet. The width comes from the two lines
     // being clocked in antiphase, not from inverting one side, so summing to
