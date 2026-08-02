@@ -1464,6 +1464,74 @@ void testSustainPedalHoldsAndReleases()
            "the note did not release when the pedal was lifted");
 }
 
+// The two POLY buttons and the two CHORUS buttons are independent switches,
+// not three-way selectors. All four combinations of each pair have to be
+// reachable and distinct, and both-down has to mean the thing the hardware
+// means by it rather than a duplicate of one of the singles.
+void testPairedSwitchesAreIndependent()
+{
+    expect(keyModeFor(true, false) == KeyMode::Poly1, "POLY 1 alone is not Poly 1");
+    expect(keyModeFor(false, true) == KeyMode::Poly2, "POLY 2 alone is not Poly 2");
+    expect(keyModeFor(true, true) == KeyMode::Unison,
+           "both POLY buttons down is not unison");
+    // Not reachable on the hardware, whose buttons interlock, but reachable
+    // here -- and the assigner still has to put a note somewhere.
+    expect(keyModeFor(false, false) == KeyMode::Poly1,
+           "neither POLY button leaves the assigner undefined");
+
+    expect(chorusModeFor(false, false) == ChorusMode::Off,
+           "neither chorus button is not off");
+    expect(chorusModeFor(true, false) == ChorusMode::One, "I alone is not mode I");
+    expect(chorusModeFor(false, true) == ChorusMode::Two, "II alone is not mode II");
+    expect(chorusModeFor(true, true) == ChorusMode::OneTwo,
+           "both chorus buttons down is not I+II");
+
+    // Round-trip: the engaged-state helpers the editor and the SysEx writer use
+    // have to agree with the mode they came from.
+    for (int one = 0; one <= 1; ++one)
+        for (int two = 0; two <= 1; ++two)
+        {
+            const auto mode = chorusModeFor(one != 0, two != 0);
+            expect(chorusOneEngaged(mode) == (one != 0), "chorus I round trip");
+            expect(chorusTwoEngaged(mode) == (two != 0), "chorus II round trip");
+        }
+    for (int one = 0; one <= 1; ++one)
+        for (int two = 0; two <= 1; ++two)
+        {
+            // Poly1-off/Poly2-off collapses onto Poly 1, so only the three
+            // reachable-on-hardware combinations round-trip.
+            if (!one && !two)
+                continue;
+            const auto mode = keyModeFor(one != 0, two != 0);
+            expect(poly1Engaged(mode) == (one != 0), "poly 1 round trip");
+            expect(poly2Engaged(mode) == (two != 0), "poly 2 round trip");
+        }
+}
+
+// Every legend on the panel has to be drawn in full. This is the check that
+// caught "VOLUME" being ellipsized into a slider cut-out narrower than the
+// word, and the stacked buttons whose legends were set at a size that did not
+// fit their width.
+void testNoLabelIsTruncated()
+{
+    const auto* overflow = panel::firstOverflowingLabel();
+    expect(overflow == nullptr,
+           std::string("a panel legend does not fit its control: ")
+               + (overflow != nullptr ? overflow : ""));
+
+    // Guard the guard: a legend far too long for its slot must be rejected, or
+    // the check above would pass by being blind rather than by the panel
+    // fitting. "PORTAMENTO" is what this section would print if it had room.
+    const auto& controls = panel::controls();
+    const auto& narrow = controls[1];
+    expect(panel::textWidth("PORTAMENTO", panel::labelPointSize, true)
+               > narrow.labelWidth,
+           "the width model thinks a ten-character legend fits a one-slot label");
+    expect(panel::buttonPointSizeFor("PORTAMENTO", narrow.width, 40.0f)
+               < panel::buttonPointSizeMin,
+           "the width model thinks a ten-character legend fits a narrow button");
+}
+
 void testPanelLayout()
 {
     expect(panel::layoutIsConsistent(),
@@ -1483,10 +1551,11 @@ void testPanelLayout()
                "a panel control carries no legend");
     }
 
-    const std::array<const char*, 8> mustAppear {
+    const std::array<const char*, 11> mustAppear {
         parameters::cutoff, parameters::resonance, parameters::attack,
-        parameters::release, parameters::chorus, parameters::range,
-        parameters::highPass, parameters::vcaLevel
+        parameters::release, parameters::chorusI, parameters::chorusII,
+        parameters::range, parameters::highPass, parameters::vcaLevel,
+        parameters::poly1, parameters::poly2
     };
     for (const auto* wanted : mustAppear)
     {
@@ -1579,6 +1648,8 @@ int main()
     testExtremeAutomationStaysFinite();
     testParameterSanitisation();
     testSustainPedalHoldsAndReleases();
+    testPairedSwitchesAreIndependent();
+    testNoLabelIsTruncated();
     testPanelLayout();
     testCpuBudget();
 

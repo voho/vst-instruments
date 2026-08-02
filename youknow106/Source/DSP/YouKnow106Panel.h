@@ -18,7 +18,10 @@ inline constexpr auto benderDco    = "benderDco";
 inline constexpr auto benderVcf    = "benderVcf";
 inline constexpr auto benderLfo    = "benderLfo";
 inline constexpr auto portamento   = "portamento";
-inline constexpr auto keyMode      = "keyMode";
+// The two assign-mode buttons. Both down selects unison; there is no third
+// button, and no single "key mode" parameter, because the panel has neither.
+inline constexpr auto poly1        = "poly1";
+inline constexpr auto poly2        = "poly2";
 inline constexpr auto lfoRate      = "lfoRate";
 inline constexpr auto lfoDelay     = "lfoDelay";
 inline constexpr auto dcoLfo       = "dcoLfo";
@@ -42,7 +45,9 @@ inline constexpr auto attack       = "attack";
 inline constexpr auto decay        = "decay";
 inline constexpr auto sustain      = "sustain";
 inline constexpr auto release      = "release";
-inline constexpr auto chorus       = "chorus";
+// The two chorus buttons. Neither down is off; both down is the I+II setting.
+inline constexpr auto chorusI      = "chorusI";
+inline constexpr auto chorusII     = "chorusII";
 
 // Controls the modelled instrument does not have. They sit in their own strip
 // below the panel so the panel itself stays honest, and each defaults to the
@@ -134,6 +139,12 @@ struct Control
     float y;
     float width;
     float height;
+    // Where the legend is drawn. It follows the slot rather than the control,
+    // because a slider's cut-out is deliberately narrower than the space its
+    // name is allowed to use; taking the control's width instead is what
+    // truncated "VOLUME" to "VOLU...".
+    float labelX;
+    float labelWidth;
     // Index of the mutually exclusive group this button belongs to, or -1, and
     // which value of the group's parameter it selects.
     int group;
@@ -141,16 +152,58 @@ struct Control
 };
 
 inline constexpr int sectionCount = 10;
-inline constexpr int controlCount = 39;
+inline constexpr int controlCount = 37;
+
+// Type sizes the editor draws with, in panel units. They live here rather than
+// in the editor so the fit checks below and the drawing code cannot disagree.
+inline constexpr float headerPointSize = 11.0f;
+inline constexpr float labelPointSize = 10.0f;
+inline constexpr float buttonPointSizeMax = 12.0f;
+// Below this a legend stops being readable, so a layout that would need a
+// smaller size to fit is a layout that has to change instead.
+inline constexpr float buttonPointSizeMin = 8.0f;
+// A slider's legend is drawn in a box overhanging its control by this much on
+// each side, because the legend belongs to the slot rather than to the narrow
+// slider cut-out.
+inline constexpr float labelOverhang = 6.0f;
 
 [[nodiscard]] const std::array<Section, sectionCount>& sections() noexcept;
 [[nodiscard]] const std::array<Control, controlCount>& controls() noexcept;
 [[nodiscard]] float panelWidth() noexcept;
 
+// Width of a string set in the panel typeface, in panel units.
+//
+// This is deliberately an *over*-estimate: the suites have to run on a machine
+// with no JUCE and no fonts, so the check they perform cannot ask the real
+// typeface how wide it draws. Every advance below is at or above what a bold
+// grotesque of this size actually uses, so a legend this says fits is a legend
+// that fits in the metal. The macOS suite repeats the check against the real
+// font, which is what makes the approximation safe to rely on.
+[[nodiscard]] float textWidth(const char* text, float pointSize,
+                              bool bold) noexcept;
+
+// The size the editor sets a button's legend in: the largest that fits the
+// button both ways, never above `buttonPointSizeMax`. Returns a value below
+// `buttonPointSizeMin` when even the floor does not fit, which is what
+// `labelsFitTheirControls` refuses.
+[[nodiscard]] float buttonPointSizeFor(const char* label, float width,
+                                       float height) noexcept;
+[[nodiscard]] float buttonPointSizeFor(const Control& control) noexcept;
+
 // True when every control lies inside its own section, no two controls overlap,
 // and every radio group is contiguous and complete. The suite asserts this
 // rather than trusting the table by eye.
 [[nodiscard]] bool layoutIsConsistent() noexcept;
+
+// True when every legend on the panel is drawn in full: each section header
+// inside its header bar, each slider legend inside its label box, and each
+// button legend inside the button at a readable size. A layout that would
+// ellipsize or clip any of them fails here rather than shipping.
+[[nodiscard]] bool labelsFitTheirControls() noexcept;
+
+// The first legend that does not fit, or nullptr when they all do. Only for
+// the failure message -- the check above is the assertion.
+[[nodiscard]] const char* firstOverflowingLabel() noexcept;
 
 } // namespace panel
 } // namespace youknow106

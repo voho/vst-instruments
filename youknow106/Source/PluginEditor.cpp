@@ -163,11 +163,20 @@ void YouKnow106LookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton&
     const auto bounds = button.getLocalBounds().toFloat();
     g.setColour (fromPalette (button.getToggleState() ? panel::colour::text
                                                       : panel::colour::textDim));
-    g.setFont (panelFont (juce::jlimit (8.0f, 12.0f, bounds.getHeight() * 0.34f), true));
+    // The size comes from the panel description rather than from a local
+    // formula, so the legend drawn here is the legend the layout check measured.
+    // Bounds are in pixels and the sizing is linear in them, so this yields the
+    // panel-unit size already multiplied by the editor's scale.
+    g.setFont (panelFont (panel::buttonPointSizeFor (
+                              button.getButtonText().toRawUTF8(),
+                              bounds.getWidth(), bounds.getHeight()), true));
+    // One line, and no horizontal squashing: the size above already guarantees
+    // the fit, so anything that did not fit should be visible as a layout bug
+    // rather than quietly condensed into place.
     g.drawFittedText (button.getButtonText(),
                       button.getLocalBounds().withTrimmedTop (
                           juce::roundToInt (bounds.getHeight() * 0.40f)),
-                      juce::Justification::centredTop, 1);
+                      juce::Justification::centredTop, 1, 1.0f);
 }
 
 void YouKnow106LookAndFeel::drawLabel (juce::Graphics& g, juce::Label& label)
@@ -392,7 +401,8 @@ YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioP
 
     setResizable (true, true);
     setResizeLimits (900, 380, 2200, 940);
-    setSize (1276, 470);
+    setSize (juce::roundToInt (panel::panelWidth()),
+             juce::roundToInt (panel::panelHeight + panel::keyboardHeight + 14.0f));
     startTimerHz (24);
 }
 
@@ -441,7 +451,7 @@ void YouKnow106AudioProcessorEditor::buildPanelControls()
 
         entry.label = std::make_unique<juce::Label>();
         entry.label->setText (description.label, juce::dontSendNotification);
-        entry.label->setFont (panelFont (10.0f, true));
+        entry.label->setFont (panelFont (panel::labelPointSize, true));
         entry.label->setColour (juce::Label::textColourId,
                                 fromPalette (panel::colour::text));
         entry.label->setJustificationType (juce::Justification::centredTop);
@@ -501,6 +511,10 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     randomize10Button.setTooltip ("Nudge the patch");
     randomize10Button.onClick = [this] { processor.randomizeParameters (0.10f); };
     addAndMakeVisible (randomize10Button);
+
+    sendSysExButton.setTooltip ("Send the current panel to hardware as a patch dump");
+    sendSysExButton.onClick = [this] { processor.requestSysExDump(); };
+    addAndMakeVisible (sendSysExButton);
 
     randomize100Button.setTooltip ("Draw a completely new patch");
     randomize100Button.onClick = [this] { processor.randomizeParameters (1.0f); };
@@ -583,8 +597,8 @@ void YouKnow106AudioProcessorEditor::resized()
 
         if (entry.label != nullptr)
             entry.label->setBounds (
-                scaled (description.x - 6.0f, panel::labelTop,
-                        description.width + 12.0f, panel::labelHeight).toNearestInt());
+                scaled (description.labelX, panel::labelTop,
+                        description.labelWidth, panel::labelHeight).toNearestInt());
     }
 
     logoLabel.setBounds (scaled (panel::panelMargin, panel::utilityTop + 4.0f,
@@ -619,14 +633,20 @@ void YouKnow106AudioProcessorEditor::resized()
     }
 
     const float buttonX = stripLeft + 3.0f * cellWidth + 8.0f;
-    const float buttonWidth = juce::jmax (34.0f, (stripWidth - 3.0f * cellWidth - 16.0f) / 2.0f - 4.0f);
+    // Three columns, not two: SEND joined the grid and a third column laid
+    // out at the old width ran straight over the status display.
+    const float buttonWidth =
+        juce::jmax (30.0f, (stripWidth - 3.0f * cellWidth - 16.0f) / 3.0f - 5.0f);
     hqButton.setBounds (scaled (buttonX, panel::utilityTop + 2.0f,
                                 buttonWidth, 18.0f).toNearestInt());
-    panicButton.setBounds (scaled (buttonX + buttonWidth + 6.0f, panel::utilityTop + 2.0f,
+    panicButton.setBounds (scaled (buttonX + buttonWidth + 5.0f, panel::utilityTop + 2.0f,
                                    buttonWidth, 18.0f).toNearestInt());
     randomize10Button.setBounds (scaled (buttonX, panel::utilityTop + 24.0f,
                                          buttonWidth, 18.0f).toNearestInt());
-    randomize100Button.setBounds (scaled (buttonX + buttonWidth + 6.0f,
+    sendSysExButton.setBounds (scaled (buttonX + 2.0f * (buttonWidth + 5.0f),
+                                      panel::utilityTop + 2.0f,
+                                      buttonWidth, 18.0f).toNearestInt());
+    randomize100Button.setBounds (scaled (buttonX + buttonWidth + 5.0f,
                                           panel::utilityTop + 24.0f,
                                           buttonWidth, 18.0f).toNearestInt());
 
@@ -663,7 +683,7 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                     2.0f * scale);
 
         g.setColour (tint);
-        g.setFont (panelFont (juce::jmax (8.0f, 11.0f * scale), true));
+        g.setFont (panelFont (juce::jmax (8.0f, panel::headerPointSize * scale), true));
         g.drawText (section.name, header.toNearestInt(),
                     juce::Justification::centred);
     }

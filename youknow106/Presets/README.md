@@ -44,7 +44,7 @@ and LFO sliders are octaves, not hertz.
 
 ## Vibrato Lead
 
-- `UNISON`; portamento 22%; bender DCO 30%, bender LFO 65%.
+- `POLY 1` + `POLY 2` together, which is how the panel selects unison; portamento 22%; bender DCO 30%, bender LFO 65%.
 - LFO rate 46%, delay 40%; DCO LFO 0% (the lever supplies it).
 - HPF 1; VCF freq 38%, res 28%, ENV `+` 48%, KYBD 70%.
 - ENV 6% / 40% / 55% / 30%.

@@ -6,11 +6,39 @@
 namespace youknow106
 {
 
-// Panel switch. Two latching buttons that select between them rather than
-// combining: the instrument's patch memory stores chorus as one on/off bit and
-// one mode bit, so there is no both-at-once setting. The earlier instrument in
-// the same family had one, and it is deliberately absent here.
-enum class ChorusMode { Off, One, Two };
+// Panel state of the two latching chorus buttons.
+//
+// The buttons are independent, not a three-way selector: I alone, II alone,
+// both together and neither are all reachable from the front panel, and both
+// together is an audibly distinct setting rather than a synonym for II.
+//
+// The patch memory cannot hold all four. It stores the effect as one on/off bit
+// and one mode bit, so a saved patch can only say off, I or II -- which is why
+// I+II is a thing you switch to by hand and not a thing you can recall. The
+// SysEx writer records that limitation rather than pretending otherwise.
+enum class ChorusMode { Off, One, Two, OneTwo };
+
+// The mode the two buttons select. Neither button is the only "off" state.
+[[nodiscard]] constexpr ChorusMode chorusModeFor(bool one, bool two) noexcept
+{
+    if (one && two)
+        return ChorusMode::OneTwo;
+    if (two)
+        return ChorusMode::Two;
+    if (one)
+        return ChorusMode::One;
+    return ChorusMode::Off;
+}
+
+[[nodiscard]] constexpr bool chorusOneEngaged(ChorusMode mode) noexcept
+{
+    return mode == ChorusMode::One || mode == ChorusMode::OneTwo;
+}
+
+[[nodiscard]] constexpr bool chorusTwoEngaged(ChorusMode mode) noexcept
+{
+    return mode == ChorusMode::Two || mode == ChorusMode::OneTwo;
+}
 
 // Two 256-stage bucket-brigade delay lines with anti-phase clock modulation,
 // as used by the modelled instrument's stereo chorus. There is deliberately no

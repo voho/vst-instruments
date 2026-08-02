@@ -23,7 +23,7 @@ endif()
 # C is required in addition to C++: JUCE's macOS plug-in wrappers (AU, Standalone)
 # compile C/Objective-C sources. Restricting this to CXX breaks non-Xcode
 # generators (Ninja/Makefiles) with a missing CMAKE_C_COMPILE_OBJECT error.
-project(YouKnow106 VERSION 1.0.0 LANGUAGES C CXX)
+project(YouKnow106 VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,7 +39,9 @@ include(CTest)
 set(YOUKNOW106_DSP_SOURCES
     Source/DSP/YouKnow106Engine.cpp
     Source/DSP/YouKnow106Chorus.cpp
-    Source/DSP/YouKnow106Panel.cpp)
+    Source/DSP/YouKnow106Panel.cpp
+    Source/DSP/YouKnow106Presets.cpp
+    Source/DSP/YouKnow106SysEx.cpp)
 set(YOUKNOW106_DSP_HEADERS
     Source/DSP/YouKnow106Engine.h
     Source/DSP/YouKnow106Chorus.h
@@ -98,7 +100,9 @@ if(YOUKNOW106_BUILD_PLUGIN)
         AU_MAIN_TYPE kAudioUnitType_MusicDevice
         IS_SYNTH TRUE
         NEEDS_MIDI_INPUT TRUE
-        NEEDS_MIDI_OUTPUT FALSE
+        # The instrument can send its panel to hardware as a patch dump, so it
+        # needs somewhere to send it.
+        NEEDS_MIDI_OUTPUT TRUE
         IS_MIDI_EFFECT FALSE
         EDITOR_WANTS_KEYBOARD_FOCUS TRUE
         AU_SANDBOX_SAFE TRUE
@@ -157,7 +161,11 @@ if(BUILD_TESTING)
     target_link_libraries(YouKnow106CircuitTests PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106CircuitTests PRIVATE cxx_std_20)
 
-    foreach(target YouKnow106EngineTests YouKnow106CircuitTests)
+    add_executable(YouKnow106SysExTests Tests/YouKnow106SysExTests.cpp)
+    target_link_libraries(YouKnow106SysExTests PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106SysExTests PRIVATE cxx_std_20)
+
+    foreach(target YouKnow106EngineTests YouKnow106CircuitTests YouKnow106SysExTests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /W4 /permissive-)
         else()
@@ -167,6 +175,7 @@ if(BUILD_TESTING)
 
     add_test(NAME YouKnow106.Engine COMMAND YouKnow106EngineTests)
     add_test(NAME YouKnow106.Circuit COMMAND YouKnow106CircuitTests)
+    add_test(NAME YouKnow106.SysEx COMMAND YouKnow106SysExTests)
 
     if(YOUKNOW106_BUILD_TOOLS)
         # Guards the renderer that produces the committed demonstration WAVs:
@@ -191,7 +200,7 @@ if(BUILD_TESTING)
         # only -fsanitize=undefined defines nothing a test can see -- so the
         # build system tells them directly and the two decisions cannot drift
         # apart.
-        foreach(target YouKnow106EngineTests YouKnow106CircuitTests)
+        foreach(target YouKnow106EngineTests YouKnow106CircuitTests YouKnow106SysExTests)
             target_compile_definitions(${target} PRIVATE YOUKNOW106_SANITIZER_BUILD=1)
         endforeach()
     else()

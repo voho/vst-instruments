@@ -710,6 +710,46 @@ void testBucketBrigadeLine()
                "the wet path is not silent when the effect is switched out");
     expectNear(one.wetGain, 1.303, 1.0e-3, "line gain");
 
+    // Both buttons down. Each switch shunts its own resistor into the
+    // modulation oscillator's timing network, so closing both puts them in
+    // parallel and the conductances -- and with them the rate -- add. What this
+    // must not be is a synonym for II, which is what a three-way selector would
+    // have made it.
+    const auto both = Chorus::settingsFor(ChorusMode::OneTwo);
+    expectNear(both.rateHz, static_cast<double>(one.rateHz) + two.rateHz, 1.0e-4,
+               "I+II is not the two rates in parallel");
+    expect(both.rateHz > two.rateHz + 0.1f, "I+II is no faster than II alone");
+    // Depth is untouched: nothing in the delay path changes, only the speed it
+    // is swept at.
+    expectNear(both.sweepSeconds, one.sweepSeconds, 1.0e-9,
+               "I+II changed the sweep depth as well as the rate");
+    expectNear(both.centreDelaySeconds, one.centreDelaySeconds, 1.0e-9,
+               "I+II moved the centre delay");
+    expectNear(both.wetGain, one.wetGain, 1.0e-6, "I+II changed the line gain");
+
+    // And it has to be observable, not just tabulated: run the effect in each
+    // mode and count how far the modulation oscillator actually travels.
+    const auto phaseTravel = [](ChorusMode mode) {
+        Chorus chorus;
+        chorus.prepare(48000.0);
+        float left = 0.0f, right = 0.0f;
+        float previous = chorus.getLfoPhase();
+        double travel = 0.0;
+        for (int n = 0; n < 48000; ++n)
+        {
+            chorus.process(0.0f, mode, 0.0f, left, right);
+            const float now = chorus.getLfoPhase();
+            travel += now >= previous ? now - previous : now + 1.0f - previous;
+            previous = now;
+        }
+        return travel;
+    };
+    const double travelTwo = phaseTravel(ChorusMode::Two);
+    const double travelBoth = phaseTravel(ChorusMode::OneTwo);
+    expect(travelBoth > travelTwo * 1.4,
+           "the rendered I+II modulation is not measurably faster than II: "
+               + std::to_string(travelBoth) + " against " + std::to_string(travelTwo));
+
     // The whole modulated range must stay inside the part's rated clock window,
     // otherwise the model would be running a part outside its specification.
     const float slowest = Chorus::clockForDelaySeconds(

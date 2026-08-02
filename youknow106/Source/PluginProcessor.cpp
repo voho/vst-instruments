@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -174,7 +175,72 @@ void addDefaultParameterStateIfMissing (juce::ValueTree& state,
         state.appendChild (parameterState, nullptr);
     }
 }
+
+// Reads a parameter's stored value out of a saved state, or returns `fallback`.
+float storedParameterValue (const juce::ValueTree& state, const char* parameterId,
+                            float fallback)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+
+    for (const auto& child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId)
+            return static_cast<float> (child.getProperty (valueProperty, fallback));
+    return fallback;
+}
+
+void setStoredParameterValue (juce::ValueTree& state, const char* parameterId,
+                              float value)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+
+    for (auto child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId)
+        {
+            child.setProperty (valueProperty, value, nullptr);
+            return;
+        }
+
+    juce::ValueTree added { parameterType };
+    added.setProperty (idProperty, parameterId, nullptr);
+    added.setProperty (valueProperty, value, nullptr);
+    state.appendChild (added, nullptr);
+}
 } // namespace
+
+// Sessions saved before the paired switches were split carry a three-way
+// `keyMode` (0 Poly 1, 1 Poly 2, 2 Unison) and a three-way `chorus` (0 off,
+// 1 mode I, 2 mode II). Translate them into the button pairs that replaced
+// them, but only when the new parameters are absent -- a state already written
+// by this build must not be overwritten by a stale legacy entry.
+void YouKnow106AudioProcessor::migrateSplitModeParameters (juce::ValueTree& state)
+{
+    using namespace youknow106::parameters;
+
+    if (containsParameterState (state, "keyMode")
+        && ! containsParameterState (state, poly1)
+        && ! containsParameterState (state, poly2))
+    {
+        const auto legacy = juce::roundToInt (storedParameterValue (state, "keyMode", 0.0f));
+        const bool unison = legacy == 2;
+        setStoredParameterValue (state, poly1, (legacy == 0 || unison) ? 1.0f : 0.0f);
+        setStoredParameterValue (state, poly2, (legacy == 1 || unison) ? 1.0f : 0.0f);
+    }
+
+    if (containsParameterState (state, "chorus")
+        && ! containsParameterState (state, chorusI)
+        && ! containsParameterState (state, chorusII))
+    {
+        const auto legacy = juce::roundToInt (storedParameterValue (state, "chorus", 0.0f));
+        setStoredParameterValue (state, chorusI, legacy == 1 ? 1.0f : 0.0f);
+        setStoredParameterValue (state, chorusII, legacy == 2 ? 1.0f : 0.0f);
+    }
+}
 
 juce::AudioProcessorValueTreeState::ParameterLayout
 YouKnow106AudioProcessor::createParameterLayout()
@@ -197,9 +263,13 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (travel (benderVcf, "Bender VCF", 0.0f, percentAttributes()));
     layout.add (travel (benderLfo, "Bender LFO", 0.0f, percentAttributes()));
     layout.add (travel (portamento, "Portamento", 0.0f, portamentoAttributes()));
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { keyMode, 1 }, "Key Mode",
-        juce::StringArray { "Poly 1", "Poly 2", "Unison" }, 0));
+    // Two independent latching buttons rather than one three-way choice: the
+    // panel has no unison button, and holding both POLY buttons down is how the
+    // instrument is put into unison.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { poly1, 1 }, "Poly 1", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { poly2, 1 }, "Poly 2", false));
 
     layout.add (travel (lfoRate, "LFO Rate", 0.42f, lfoRateAttributes()));
     layout.add (travel (lfoDelay, "LFO Delay", 0.0f, lfoDelayAttributes()));
@@ -242,9 +312,12 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (travel (sustain, "Sustain", 0.70f, percentAttributes()));
     layout.add (travel (release, "Release", 0.30f, decayAttributes()));
 
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { chorus, 1 }, "Chorus",
-        juce::StringArray { "Off", "I", "II" }, 0));
+    // Likewise two independent buttons. Neither down is off; both down is the
+    // faster I+II setting, which the hardware reaches the same way.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { chorusI, 1 }, "Chorus I", false));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { chorusII, 1 }, "Chorus II", false));
 
     // --- Controls the modelled instrument does not have -------------------
     layout.add (std::make_unique<juce::AudioParameterInt> (
@@ -292,23 +365,34 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
       parameters (*this, nullptr, "YOUKNOW106_STATE", createParameterLayout())
 {
     using namespace youknow106::parameters;
-    const std::array<const char*, 37> ids {
-        volume, benderDco, benderVcf, benderLfo, portamento, keyMode,
+    // Size deduced, not restated: hard-coding it is what silently broke when
+    // the paired switches each turned into two parameters.
+    const auto ids = std::to_array<const char*> ({
+        volume, benderDco, benderVcf, benderLfo, portamento, poly1, poly2,
         lfoRate, lfoDelay, dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
-        vcaMode, vcaLevel, attack, decay, sustain, release, chorus,
+        vcaMode, vcaLevel, attack, decay, sustain, release, chorusI, chorusII,
         transpose, masterTune, velocity, calibration, chorusNoise, polyphony, hq
-    };
+    });
 
-    for (std::size_t index = 0; index < ids.size(); ++index)
+    // The pointer table has to be able to hold every id. Growing the list above
+    // without growing the table would otherwise write past its end.
+    jassert (ids.size() == parameterPointers.size());
+    const auto count = std::min (ids.size(), parameterPointers.size());
+    for (std::size_t index = 0; index < count; ++index)
         parameterPointers[index] = { ids[index],
                                      parameters.getRawParameterValue (ids[index]) };
 
     keyboardState.addListener (this);
+
+    // Poll the system-exclusive handoff. The audio thread must not signal the
+    // message thread directly, so nothing wakes this; it simply looks.
+    startTimer (20);
 }
 
 YouKnow106AudioProcessor::~YouKnow106AudioProcessor()
 {
+    stopTimer();
     keyboardState.removeListener (this);
 }
 
@@ -370,7 +454,7 @@ void YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.benderVcfDepth = valueOf (benderVcf);
     engineParameters.benderLfoDepth = valueOf (benderLfo);
     engineParameters.portamento = valueOf (portamento);
-    engineParameters.keyMode = static_cast<KeyMode> (choiceOf (keyMode, 2));
+    engineParameters.keyMode = keyModeFor (valueOf (poly1) > 0.5f, valueOf (poly2) > 0.5f);
 
     engineParameters.lfoRate = valueOf (lfoRate);
     engineParameters.lfoDelay = valueOf (lfoDelay);
@@ -401,7 +485,7 @@ void YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.sustain = valueOf (sustain);
     engineParameters.release = valueOf (release);
 
-    engineParameters.chorus = static_cast<ChorusMode> (choiceOf (chorus, 2));
+    engineParameters.chorus = chorusModeFor (valueOf (chorusI) > 0.5f, valueOf (chorusII) > 0.5f);
 
     engineParameters.keyTranspose = juce::roundToInt (valueOf (transpose));
     engineParameters.masterTuneCents = valueOf (masterTune);
@@ -485,6 +569,46 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         else if (message.isPitchWheel())
             engine.setPitchBend ((static_cast<float> (message.getPitchWheelValue())
                                   - 8192.0f) / 8192.0f);
+        else if (message.isSysEx())
+        {
+            // A patch dump from the hardware, or from a librarian speaking to
+            // it. The parameters cannot be written from here, so the tone bytes
+            // are staged and applied on the message thread. Only the newest
+            // dump in a block survives, which is what a bank transfer wants
+            // anyway: the last one is the one that was asked for.
+            const auto* raw = message.getRawData();
+            const auto length = static_cast<std::size_t> (message.getRawDataSize());
+
+            sysex::Patch incoming {};
+            int channel = 0;
+            int parameter = 0;
+            int value = 0;
+
+            if (sysex::readPatchMessage (raw, length, incoming, channel))
+            {
+                sysExChannel.store (channel, std::memory_order_relaxed);
+                // A whole patch. The tone bytes are the message's own
+                // representation, so they are handed over as they arrived.
+                SysExEvent event;
+                event.kind = SysExEventKind::FullPatch;
+                sysex::toneBytesFromPatch (incoming, event.bytes.data());
+                stageSysExEvent (event);
+            }
+            else if (sysex::readParameterMessage (raw, length, parameter, value,
+                                                  channel))
+            {
+                sysExChannel.store (channel, std::memory_order_relaxed);
+                // One control moved on the hardware. Only its number and value
+                // cross over: the panel it applies to is read on the message
+                // thread, so nothing else is quantised and no stale mirror of
+                // the panel can revert an edit made in between.
+                SysExEvent event;
+                event.kind = SysExEventKind::SingleParameter;
+                event.parameter = parameter;
+                event.value = value;
+                stageSysExEvent (event);
+            }
+        }
         else if (message.isController())
         {
             // The hardware's MIDI receives hold and nothing else among the
@@ -509,12 +633,28 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     }
 
+    // Claimed before the render so the request cannot be lost, but emitted
+    // after the clear below -- that clear is what stops the instrument echoing
+    // its input, and anything added before it would simply be wiped.
+    const bool sendDump = sysExDumpRequested.exchange (false, std::memory_order_acquire);
+
     if (renderedTo < numSamples)
         engine.process (buffer.getWritePointer (0, renderedTo),
                         buffer.getWritePointer (1, renderedTo),
                         numSamples - renderedTo);
 
+    // Nothing this instrument plays goes back out, so the incoming events stop
+    // here rather than passing through.
     midiMessages.clear();
+
+    // A requested patch dump is the one thing that does leave, on the plug-in's
+    // own MIDI output -- the only route a host actually exposes to a cable.
+    if (sendDump)
+    {
+        const auto size = sysExDumpSize.load (std::memory_order_acquire);
+        if (size > 0)
+            midiMessages.addEvent (sysExDumpBytes.data(), size, 0);
+    }
 
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
     displayVoiceMask.store (engine.getDisplayVoiceMask(), std::memory_order_relaxed);
@@ -656,16 +796,16 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
     // than the patch — Calibration and Chorus Noise — are excluded, so a
     // randomisation cannot mute the patch, jump its gain, change its running
     // cost, or quietly re-specify the hardware being modelled.
-    static constexpr std::array<const char*, 29> soundParameterIds {{
-        benderDco, benderVcf, benderLfo, portamento, keyMode,
+    static constexpr auto soundParameterIds = std::to_array<const char*> ({
+        benderDco, benderVcf, benderLfo, portamento, poly1, poly2,
         lfoRate, lfoDelay,
         dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
         highPass,
         cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
         vcaMode, vcaLevel,
         attack, decay, sustain, release,
-        chorus
-    }};
+        chorusI, chorusII
+    });
 
     juce::Random random;
     for (const auto* parameterId : soundParameterIds)
@@ -699,8 +839,14 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
 void YouKnow106AudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)
 {
     if (auto state = parameters.copyState(); state.isValid())
+    {
+        // The program index is not a parameter, so it would not survive a save
+        // on its own: the sound would come back and the host's program selector
+        // would still read INIT.
+        state.setProperty ("program", currentProgram, nullptr);
         if (const auto xml = state.createXml())
             copyXmlToBinary (*xml, destinationData);
+    }
 }
 
 void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -712,6 +858,18 @@ void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeIn
     auto state = juce::ValueTree::fromXml (*xml);
     if (! state.isValid())
         return;
+
+    // Sessions written before the paired switches were split still carry the
+    // old three-way `keyMode` and `chorus` choices. Filling in defaults alone
+    // would silently reopen a saved Unison as Poly 1 and a saved chorus as off,
+    // so the old values are translated first.
+    // Restore the selected program before the parameters, so the index the
+    // host shows matches the sound the state carries.
+    if (state.hasProperty ("program"))
+        currentProgram = juce::jlimit (0, getNumPrograms() - 1,
+                                       static_cast<int> (state.getProperty ("program")));
+
+    migrateSplitModeParameters (state);
 
     // A state written by an earlier build will not carry parameters added
     // since. Filling them with their defaults keeps the rest of the patch
@@ -735,4 +893,262 @@ juce::AudioProcessorEditor* YouKnow106AudioProcessor::createEditor()
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new YouKnow106AudioProcessor();
+}
+
+// ---------------------------------------------------------------------------
+// Patches and the factory bank
+// ---------------------------------------------------------------------------
+
+// Program 0 is the init patch -- the layout's own defaults, which is what a
+// freshly constructed processor actually holds. Without it, a new instance
+// would report "A11 Hollow Strings" while sounding like nothing of the sort.
+// The factory bank follows from index 1.
+int YouKnow106AudioProcessor::getNumPrograms()
+{
+    return youknow106::presets::presetCount + 1;
+}
+
+int YouKnow106AudioProcessor::getCurrentProgram()
+{
+    return currentProgram;
+}
+
+void YouKnow106AudioProcessor::setCurrentProgram (int index)
+{
+    if (index < 0 || index >= getNumPrograms())
+        return;
+    currentProgram = index;
+    if (index == 0)
+    {
+        // A default patch, applied the same way a factory one is. Resetting
+        // every parameter instead would make INIT the only selection that also
+        // threw away volume, transpose, tuning, the assign mode, polyphony,
+        // calibration and the quality setting -- none of which a patch carries.
+        applyPatch (youknow106::sysex::Patch {});
+        return;
+    }
+    const auto& bank = youknow106::presets::factoryBank();
+    applyPatch (bank[static_cast<std::size_t> (index - 1)].patch);
+}
+
+const juce::String YouKnow106AudioProcessor::getProgramName (int index)
+{
+    if (index < 0 || index >= getNumPrograms())
+        return {};
+    if (index == 0)
+        return "INIT";
+    const auto& preset =
+        youknow106::presets::factoryBank()[static_cast<std::size_t> (index - 1)];
+    juce::String name = juce::String (preset.number) + " " + preset.name;
+    // A patch the hardware cannot store is still perfectly playable here, but
+    // someone about to send a bank should be able to see which ones will not
+    // survive the trip.
+    if (! preset.exportsLosslessly())
+        name += " (I+II)";
+    return name;
+}
+
+void YouKnow106AudioProcessor::applyPatch (const youknow106::sysex::Patch& patch)
+{
+    using namespace youknow106::parameters;
+
+    const auto set = [this] (const char* id, float value)
+    {
+        if (auto* parameter = parameters.getParameter (id))
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    };
+
+    set (lfoRate, patch.lfoRate);
+    set (lfoDelay, patch.lfoDelay);
+    set (dcoLfo, patch.dcoLfo);
+    set (pwm, patch.pwm);
+    set (noise, patch.noise);
+    set (cutoff, patch.cutoff);
+    set (resonance, patch.resonance);
+    set (vcfEnv, patch.vcfEnv);
+    set (vcfLfo, patch.vcfLfo);
+    set (keyFollow, patch.keyFollow);
+    set (vcaLevel, patch.vcaLevel);
+    set (attack, patch.attack);
+    set (decay, patch.decay);
+    set (sustain, patch.sustain);
+    set (release, patch.release);
+    set (sub, patch.sub);
+
+    set (range, static_cast<float> (patch.range));
+    set (saw, patch.saw ? 1.0f : 0.0f);
+    set (pulse, patch.pulse ? 1.0f : 0.0f);
+    set (pwmMode, static_cast<float> (patch.pwmSource));
+    set (vcaMode, static_cast<float> (patch.vcaMode));
+    set (envPolarity, static_cast<float> (patch.envPolarity));
+    set (highPass, static_cast<float> (patch.highPass));
+    set (chorusI, youknow106::chorusOneEngaged (patch.chorus) ? 1.0f : 0.0f);
+    set (chorusII, youknow106::chorusTwoEngaged (patch.chorus) ? 1.0f : 0.0f);
+
+    // Volume, the bender depths, portamento and the assign mode are performance
+    // controls. The instrument does not store them in a patch, so loading one
+    // deliberately leaves them where the player set them.
+}
+
+youknow106::sysex::Patch YouKnow106AudioProcessor::currentPatch() const
+{
+    using namespace youknow106::parameters;
+
+    youknow106::sysex::Patch patch {};
+    patch.lfoRate = valueOf (lfoRate);
+    patch.lfoDelay = valueOf (lfoDelay);
+    patch.dcoLfo = valueOf (dcoLfo);
+    patch.pwm = valueOf (pwm);
+    patch.noise = valueOf (noise);
+    patch.cutoff = valueOf (cutoff);
+    patch.resonance = valueOf (resonance);
+    patch.vcfEnv = valueOf (vcfEnv);
+    patch.vcfLfo = valueOf (vcfLfo);
+    patch.keyFollow = valueOf (keyFollow);
+    patch.vcaLevel = valueOf (vcaLevel);
+    patch.attack = valueOf (attack);
+    patch.decay = valueOf (decay);
+    patch.sustain = valueOf (sustain);
+    patch.release = valueOf (release);
+    patch.sub = valueOf (sub);
+
+    patch.range = static_cast<youknow106::DcoRange> (choiceOf (range, 2));
+    patch.saw = valueOf (saw) > 0.5f;
+    patch.pulse = valueOf (pulse) > 0.5f;
+    patch.pwmSource = static_cast<youknow106::PwmSource> (choiceOf (pwmMode, 1));
+    patch.vcaMode = static_cast<youknow106::VcaMode> (choiceOf (vcaMode, 1));
+    patch.envPolarity =
+        static_cast<youknow106::EnvPolarity> (choiceOf (envPolarity, 1));
+    patch.highPass = static_cast<youknow106::HighPassMode> (choiceOf (highPass, 3));
+    patch.chorus = youknow106::chorusModeFor (valueOf (chorusI) > 0.5f,
+                                              valueOf (chorusII) > 0.5f);
+    return patch;
+}
+
+juce::MidiMessage YouKnow106AudioProcessor::currentPatchAsSysEx (int channel) const
+{
+    std::array<std::uint8_t, youknow106::sysex::patchMessageBytes> raw {};
+    const auto written = youknow106::sysex::writePatchMessage (
+        currentPatch(), channel, raw.data(), raw.size());
+    if (written == 0)
+        return {};
+    // JUCE wants the body without the leading F0 and trailing F7.
+    return juce::MidiMessage::createSysExMessage (raw.data() + 1,
+                                                  static_cast<int> (written) - 2);
+}
+
+// Audio thread. Claims the next slot, fills it, then publishes it. A slot is
+// only written while its `ready` flag is clear, so the message thread is never
+// reading the event this is writing.
+void YouKnow106AudioProcessor::stageSysExEvent (const SysExEvent& event) noexcept
+{
+    const int index = sysExWriteIndex.load (std::memory_order_relaxed);
+    auto& slot = sysExQueue[static_cast<std::size_t> (index)];
+    if (slot.ready.load (std::memory_order_acquire))
+    {
+        // The message thread has not caught up. Dropping is the only safe move
+        // -- overwriting a published slot would race a reader that may be
+        // partway through it. Reaching here needs the message thread stalled
+        // for most of a second at MIDI's own rate, and it is counted rather
+        // than silent so a test can assert a whole bank transfer never does.
+        sysExDropped.fetch_add (1, std::memory_order_relaxed);
+        return;
+    }
+
+    slot.event = event;
+    slot.ready.store (true, std::memory_order_release);
+    sysExWriteIndex.store ((index + 1) % sysExQueueSlots, std::memory_order_relaxed);
+    // Deliberately no wake-up call from here: the consumer polls. Anything that
+    // signals the message thread takes a lock, and this is the audio callback.
+}
+
+// Message thread. The bytes are assembled here so the audio callback only has
+// to copy them: building a juce::MidiMessage allocates owned storage, which is
+// not something a real-time callback should be doing.
+void YouKnow106AudioProcessor::requestSysExDump()
+{
+    const auto written = youknow106::sysex::writePatchMessage (
+        currentPatch(), sysExChannel.load (std::memory_order_relaxed),
+        sysExDumpBytes.data(), sysExDumpBytes.size());
+    sysExDumpSize.store (static_cast<int> (written), std::memory_order_release);
+    sysExDumpRequested.store (written > 0, std::memory_order_release);
+}
+
+void YouKnow106AudioProcessor::timerCallback()
+{
+    drainSysExQueue();
+}
+
+void YouKnow106AudioProcessor::drainSysExQueue()
+{
+    // Drain everything published so far. Single-parameter edits are cumulative,
+    // so applying only the newest would lose the rest.
+    for (int drained = 0; drained < sysExQueueSlots; ++drained)
+    {
+        auto& slot = sysExQueue[static_cast<std::size_t> (sysExReadIndex)];
+        if (! slot.ready.load (std::memory_order_acquire))
+            return;
+
+        const auto event = slot.event;
+        // Release the slot only after the event has been copied out of it.
+        slot.ready.store (false, std::memory_order_release);
+        sysExReadIndex = (sysExReadIndex + 1) % sysExQueueSlots;
+
+        if (event.kind == SysExEventKind::FullPatch)
+            applyPatch (youknow106::sysex::patchFromToneBytes (event.bytes.data()));
+        else
+            applyToneParameter (event.parameter, event.value);
+    }
+}
+
+// One tone parameter, applied to the controls it names and to nothing else.
+//
+// Writing the whole patch back would notify the host about parameters the
+// message never mentioned, and would race automation: a lane moving another
+// control between the read and the write would be reverted by the stale value
+// that came back with it.
+void YouKnow106AudioProcessor::applyToneParameter (int parameter, int value)
+{
+    using namespace youknow106::parameters;
+
+    const auto set = [this] (const char* id, float newValue)
+    {
+        if (auto* target = parameters.getParameter (id))
+            target->setValueNotifyingHost (target->convertTo0to1 (newValue));
+    };
+
+    if (parameter < 0 || parameter >= youknow106::sysex::toneByteCount)
+        return;
+
+    // The sixteen continuous controls, in the order the message carries them.
+    static constexpr const char* continuous[] = {
+        lfoRate, lfoDelay, dcoLfo, pwm, noise, cutoff, resonance, vcfEnv,
+        vcfLfo, keyFollow, vcaLevel, attack, decay, sustain, release, sub
+    };
+    if (parameter < 16)
+    {
+        set (continuous[parameter], static_cast<float> (value & 0x7f) / 127.0f);
+        return;
+    }
+
+    // A switch byte. Decode it against the patch it belongs to, then write out
+    // only the switches that byte encodes.
+    auto patch = currentPatch();
+    if (! youknow106::sysex::applyParameter (patch, parameter, value))
+        return;
+
+    if (parameter == static_cast<int> (youknow106::sysex::ToneParameter::SwitchesOne))
+    {
+        set (range, static_cast<float> (patch.range));
+        set (saw, patch.saw ? 1.0f : 0.0f);
+        set (pulse, patch.pulse ? 1.0f : 0.0f);
+        set (chorusI, youknow106::chorusOneEngaged (patch.chorus) ? 1.0f : 0.0f);
+        set (chorusII, youknow106::chorusTwoEngaged (patch.chorus) ? 1.0f : 0.0f);
+        return;
+    }
+
+    set (pwmMode, static_cast<float> (patch.pwmSource));
+    set (vcaMode, static_cast<float> (patch.vcaMode));
+    set (envPolarity, static_cast<float> (patch.envPolarity));
+    set (highPass, static_cast<float> (patch.highPass));
 }

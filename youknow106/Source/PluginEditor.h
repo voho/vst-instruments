@@ -105,6 +105,8 @@ private:
     juce::TextButton hqButton { "HQ" };
     juce::TextButton randomize10Button { "10%" };
     juce::TextButton randomize100Button { "100%" };
+    // Sends the current panel out as a patch dump the hardware accepts.
+    juce::TextButton sendSysExButton { "SEND" };
     juce::Slider transposeSlider;
     juce::Slider tuneSlider;
     juce::Slider velocitySlider;
