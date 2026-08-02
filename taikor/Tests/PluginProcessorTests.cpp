@@ -360,6 +360,14 @@ void testControllersAndPitchBend()
     TaikorAudioProcessor processor;
     processor.prepareToPlay (sampleRate, blockSize);
 
+    // Every check here compares the energy of one stroke against the energy of
+    // the same stroke played again with a controller moved, so the one thing
+    // that must not vary between them is the stroke. Humanise exists to make
+    // repeated strokes differ, and on a drum whose tail runs for seconds that
+    // difference compounds across a four-hundred-millisecond measurement window
+    // until it swamps the gesture being tested.
+    setParameterValue (processor, taikor::parameters::humanise, 0.0f);
+
     const auto renderTail = [&processor] (const juce::MidiBuffer& controls)
     {
         juce::AudioBuffer<float> buffer { 2, blockSize };

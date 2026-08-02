@@ -702,6 +702,17 @@ void TaikoEngine::allSoundsOff() noexcept
     silentSamples_ = idleFreezeSamples;
     idleFrozen_ = true;
 
+    // The two performance gestures are smoothed over twenty milliseconds, which
+    // is right while the drum is sounding and wrong the instant it stops: a
+    // panic leaves nothing for a gesture in transit to be continuous with, and
+    // whatever it had reached would go on pressing into the next stroke. A hand
+    // lifted a block ago is still 40 percent down after one buffer, so the first
+    // note after a panic came out damped by a gesture the player had already
+    // released. They snap to wherever the controls are actually being held -
+    // which removes the lag, not the gesture: a hand held down stays down.
+    handDamping_ = handDampingTarget_;
+    pitchBend_ = pitchBendTarget_;
+
     visualLevel_ = 0.0f;
     visualStrikeLevel_.store (0.0f, std::memory_order_relaxed);
 }
