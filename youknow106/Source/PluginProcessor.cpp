@@ -174,7 +174,72 @@ void addDefaultParameterStateIfMissing (juce::ValueTree& state,
         state.appendChild (parameterState, nullptr);
     }
 }
+
+// Reads a parameter's stored value out of a saved state, or returns `fallback`.
+float storedParameterValue (const juce::ValueTree& state, const char* parameterId,
+                            float fallback)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+
+    for (const auto& child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId)
+            return static_cast<float> (child.getProperty (valueProperty, fallback));
+    return fallback;
+}
+
+void setStoredParameterValue (juce::ValueTree& state, const char* parameterId,
+                              float value)
+{
+    static const juce::Identifier parameterType { "PARAM" };
+    static const juce::Identifier idProperty { "id" };
+    static const juce::Identifier valueProperty { "value" };
+
+    for (auto child : state)
+        if (child.hasType (parameterType)
+            && child.getProperty (idProperty).toString() == parameterId)
+        {
+            child.setProperty (valueProperty, value, nullptr);
+            return;
+        }
+
+    juce::ValueTree added { parameterType };
+    added.setProperty (idProperty, parameterId, nullptr);
+    added.setProperty (valueProperty, value, nullptr);
+    state.appendChild (added, nullptr);
+}
 } // namespace
+
+// Sessions saved before the paired switches were split carry a three-way
+// `keyMode` (0 Poly 1, 1 Poly 2, 2 Unison) and a three-way `chorus` (0 off,
+// 1 mode I, 2 mode II). Translate them into the button pairs that replaced
+// them, but only when the new parameters are absent -- a state already written
+// by this build must not be overwritten by a stale legacy entry.
+void YouKnow106AudioProcessor::migrateSplitModeParameters (juce::ValueTree& state)
+{
+    using namespace youknow106::parameters;
+
+    if (containsParameterState (state, "keyMode")
+        && ! containsParameterState (state, poly1)
+        && ! containsParameterState (state, poly2))
+    {
+        const auto legacy = juce::roundToInt (storedParameterValue (state, "keyMode", 0.0f));
+        const bool unison = legacy == 2;
+        setStoredParameterValue (state, poly1, (legacy == 0 || unison) ? 1.0f : 0.0f);
+        setStoredParameterValue (state, poly2, (legacy == 1 || unison) ? 1.0f : 0.0f);
+    }
+
+    if (containsParameterState (state, "chorus")
+        && ! containsParameterState (state, chorusI)
+        && ! containsParameterState (state, chorusII))
+    {
+        const auto legacy = juce::roundToInt (storedParameterValue (state, "chorus", 0.0f));
+        setStoredParameterValue (state, chorusI, legacy == 1 ? 1.0f : 0.0f);
+        setStoredParameterValue (state, chorusII, legacy == 2 ? 1.0f : 0.0f);
+    }
+}
 
 juce::AudioProcessorValueTreeState::ParameterLayout
 YouKnow106AudioProcessor::createParameterLayout()
@@ -499,16 +564,43 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             // are staged and applied on the message thread. Only the newest
             // dump in a block survives, which is what a bank transfer wants
             // anyway: the last one is the one that was asked for.
-            sysex::Patch incoming {};
-            int channel = 0;
             const auto* raw = message.getRawData();
             const auto length = static_cast<std::size_t> (message.getRawDataSize());
+
+            sysex::Patch incoming {};
+            int channel = 0;
+            int parameter = 0;
+            int value = 0;
+            bool havePatch = false;
+
             if (sysex::readPatchMessage (raw, length, incoming, channel))
             {
-                sysex::toneBytesFromPatch (incoming, pendingPatchBytes.data());
-                pendingPatchWaiting.store (true, std::memory_order_release);
-                triggerAsyncUpdate();
+                // A whole patch. It also becomes the base the hardware's
+                // single-parameter messages accumulate onto, so a dump followed
+                // by a knob move does the right thing.
+                liveSysExPatch = incoming;
+                liveSysExPatchValid = true;
+                havePatch = true;
             }
+            else if (sysex::readParameterMessage (raw, length, parameter, value,
+                                                  channel))
+            {
+                // One control moved on the hardware. Applied to the panel as it
+                // stands, so a live edit changes that control and nothing else.
+                if (! liveSysExPatchValid)
+                {
+                    liveSysExPatch = currentPatch();
+                    liveSysExPatchValid = true;
+                }
+                if (sysex::applyParameter (liveSysExPatch, parameter, value))
+                {
+                    incoming = liveSysExPatch;
+                    havePatch = true;
+                }
+            }
+
+            if (havePatch)
+                stagePatchForMessageThread (incoming);
         }
         else if (message.isController())
         {
@@ -735,6 +827,12 @@ void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeIn
     if (! state.isValid())
         return;
 
+    // Sessions written before the paired switches were split still carry the
+    // old three-way `keyMode` and `chorus` choices. Filling in defaults alone
+    // would silently reopen a saved Unison as Poly 1 and a saved chorus as off,
+    // so the old values are translated first.
+    migrateSplitModeParameters (state);
+
     // A state written by an earlier build will not carry parameters added
     // since. Filling them with their defaults keeps the rest of the patch
     // rather than discarding the whole thing.
@@ -763,9 +861,13 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 // Patches and the factory bank
 // ---------------------------------------------------------------------------
 
+// Program 0 is the init patch -- the layout's own defaults, which is what a
+// freshly constructed processor actually holds. Without it, a new instance
+// would report "A11 Hollow Strings" while sounding like nothing of the sort.
+// The factory bank follows from index 1.
 int YouKnow106AudioProcessor::getNumPrograms()
 {
-    return youknow106::presets::presetCount;
+    return youknow106::presets::presetCount + 1;
 }
 
 int YouKnow106AudioProcessor::getCurrentProgram()
@@ -775,20 +877,37 @@ int YouKnow106AudioProcessor::getCurrentProgram()
 
 void YouKnow106AudioProcessor::setCurrentProgram (int index)
 {
-    const auto& bank = youknow106::presets::factoryBank();
-    if (index < 0 || index >= static_cast<int> (bank.size()))
+    if (index < 0 || index >= getNumPrograms())
         return;
     currentProgram = index;
-    applyPatch (bank[static_cast<std::size_t> (index)].patch);
+    if (index == 0)
+    {
+        // Back to the init patch: every parameter to its own default.
+        for (const auto& pointer : parameterPointers)
+            if (pointer.id != nullptr)
+                if (auto* parameter = parameters.getParameter (pointer.id))
+                    parameter->setValueNotifyingHost (parameter->getDefaultValue());
+        return;
+    }
+    const auto& bank = youknow106::presets::factoryBank();
+    applyPatch (bank[static_cast<std::size_t> (index - 1)].patch);
 }
 
 const juce::String YouKnow106AudioProcessor::getProgramName (int index)
 {
-    const auto& bank = youknow106::presets::factoryBank();
-    if (index < 0 || index >= static_cast<int> (bank.size()))
+    if (index < 0 || index >= getNumPrograms())
         return {};
-    const auto& preset = bank[static_cast<std::size_t> (index)];
-    return juce::String (preset.number) + " " + preset.name;
+    if (index == 0)
+        return "INIT";
+    const auto& preset =
+        youknow106::presets::factoryBank()[static_cast<std::size_t> (index - 1)];
+    juce::String name = juce::String (preset.number) + " " + preset.name;
+    // A patch the hardware cannot store is still perfectly playable here, but
+    // someone about to send a bank should be able to see which ones will not
+    // survive the trip.
+    if (! preset.exportsLosslessly())
+        name += " (I+II)";
+    return name;
 }
 
 void YouKnow106AudioProcessor::applyPatch (const youknow106::sysex::Patch& patch)
@@ -880,9 +999,39 @@ juce::MidiMessage YouKnow106AudioProcessor::currentPatchAsSysEx (int channel) co
                                                   static_cast<int> (written) - 2);
 }
 
+// Audio thread. Claims the next slot, fills it, then publishes it. A slot is
+// only written while its `ready` flag is clear, so the message thread is never
+// reading the bytes this is writing.
+void YouKnow106AudioProcessor::stagePatchForMessageThread (
+    const youknow106::sysex::Patch& patch) noexcept
+{
+    const int index = pendingWriteIndex.load (std::memory_order_relaxed);
+    auto& slot = pendingPatches[static_cast<std::size_t> (index)];
+    if (slot.ready.load (std::memory_order_acquire))
+        return;  // The queue is full; the message thread has not caught up.
+
+    youknow106::sysex::toneBytesFromPatch (patch, slot.bytes.data());
+    slot.ready.store (true, std::memory_order_release);
+    pendingWriteIndex.store ((index + 1) % pendingPatchSlots,
+                             std::memory_order_relaxed);
+    triggerAsyncUpdate();
+}
+
 void YouKnow106AudioProcessor::handleAsyncUpdate()
 {
-    if (! pendingPatchWaiting.exchange (false, std::memory_order_acquire))
-        return;
-    applyPatch (youknow106::sysex::patchFromToneBytes (pendingPatchBytes.data()));
+    // Drain everything that has been published. A bank transfer arrives as a
+    // run of dumps, and applying only the newest would drop the rest.
+    for (int drained = 0; drained < pendingPatchSlots; ++drained)
+    {
+        auto& slot = pendingPatches[static_cast<std::size_t> (pendingReadIndex)];
+        if (! slot.ready.load (std::memory_order_acquire))
+            return;
+
+        const auto patch =
+            youknow106::sysex::patchFromToneBytes (slot.bytes.data());
+        // Release the slot only after the bytes have been read out of it.
+        slot.ready.store (false, std::memory_order_release);
+        pendingReadIndex = (pendingReadIndex + 1) % pendingPatchSlots;
+        applyPatch (patch);
+    }
 }

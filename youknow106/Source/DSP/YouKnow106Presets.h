@@ -27,6 +27,20 @@ struct Preset
     const char* number;
     const char* name;
     sysex::Patch patch;
+
+    // Whether this patch survives the hardware's own patch message unchanged.
+    //
+    // A few of these use the chorus I+II setting, which the panel can select
+    // and the patch memory cannot store -- the format has one on/off bit and
+    // one mode bit. Those entries are still valid patches and still play
+    // correctly here; what they cannot do is make the trip to hardware without
+    // the chorus degrading to II. Saying so is the point: the bank promises
+    // exportability, so the entries that cannot keep that promise are marked
+    // rather than quietly downgraded.
+    [[nodiscard]] bool exportsLosslessly() const noexcept
+    {
+        return sysex::survivesPatchMemory(patch);
+    }
 };
 
 inline constexpr int presetCount = 32;

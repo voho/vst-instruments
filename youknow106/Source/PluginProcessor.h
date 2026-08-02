@@ -141,12 +141,33 @@ private:
     std::array<ParameterPointer, 37> parameterPointers {};
 
     youknow106::YouKnow106Engine engine;
-    // A patch that arrived over system exclusive. Parameters cannot be written
-    // from the audio callback -- that path notifies the host and may allocate --
-    // so the message is staged here and applied on the message thread.
+    // Patches arriving over system exclusive. Parameters cannot be written from
+    // the audio callback -- that path notifies the host and may allocate -- so
+    // the tone bytes are handed to the message thread instead.
+    //
+    // A single staging buffer plus a flag is not enough: a bank transfer sends
+    // dumps back to back, and the audio thread would overwrite the buffer while
+    // the message thread was still reading it, producing a patch assembled from
+    // two different dumps. The handoff is a small ring, and each slot is only
+    // written when the writer owns it.
     void handleAsyncUpdate() override;
-    std::array<std::uint8_t, sysex::toneByteCount> pendingPatchBytes {};
-    std::atomic<bool> pendingPatchWaiting { false };
+    void stagePatchForMessageThread (const sysex::Patch& patch) noexcept;
+    // Translates the pre-split `keyMode` and `chorus` choices in a saved
+    // session into the independent button pairs that replaced them.
+    static void migrateSplitModeParameters (juce::ValueTree& state);
+    static constexpr int pendingPatchSlots = 8;
+    struct PendingPatch
+    {
+        std::array<std::uint8_t, sysex::toneByteCount> bytes {};
+        std::atomic<bool> ready { false };
+    };
+    std::array<PendingPatch, pendingPatchSlots> pendingPatches {};
+    std::atomic<int> pendingWriteIndex { 0 };
+    int pendingReadIndex { 0 };
+    // The panel state the hardware's own single-parameter messages accumulate
+    // into. Only the audio thread touches it.
+    sysex::Patch liveSysExPatch {};
+    bool liveSysExPatchValid { false };
 
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> engineReady { false };

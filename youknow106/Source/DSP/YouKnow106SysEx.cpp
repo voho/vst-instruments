@@ -278,13 +278,31 @@ bool applyParameter(Patch& patch, int parameter, int value) noexcept
         return false;
     }
 
-    // A switch byte arriving as a single parameter carries the whole byte, so
-    // it is decoded by round-tripping the patch through the tone bytes with
-    // that one byte replaced.
-    std::uint8_t bytes[toneByteCount] {};
-    toneBytesFromPatch(patch, bytes);
-    bytes[parameter] = clamped;
-    patch = patchFromToneBytes(bytes);
+    // A switch byte arriving on its own carries the whole byte, but only the
+    // fields that byte actually encodes may move. Round-tripping the patch
+    // through the tone bytes would quantise all sixteen continuous controls to
+    // 7 bits as a side effect, and would also drop an unstorable I+II chorus
+    // setting while applying a byte that has no chorus bits in it at all.
+    if (parameter == static_cast<int>(ToneParameter::SwitchesOne))
+    {
+        patch.range = rangeFromBits(clamped);
+        patch.pulse = isBitSet(clamped, bitPulse);
+        patch.saw = isBitSet(clamped, bitSaw);
+        patch.chorus = isBitSet(clamped, bitChorusOff)
+                           ? ChorusMode::Off
+                           : (isBitSet(clamped, bitChorusModeOne) ? ChorusMode::One
+                                                                  : ChorusMode::Two);
+        return true;
+    }
+
+    patch.pwmSource = isBitSet(clamped, bitPwmManual) ? PwmSource::Manual
+                                                      : PwmSource::Lfo;
+    patch.vcaMode = isBitSet(clamped, bitVcaGate) ? VcaMode::Gate
+                                                  : VcaMode::Envelope;
+    patch.envPolarity = isBitSet(clamped, bitEnvInverted) ? EnvPolarity::Inverted
+                                                          : EnvPolarity::Normal;
+    patch.highPass =
+        static_cast<HighPassMode>(3 - ((clamped >> bitHighPassLow) & 0x3));
     return true;
 }
 

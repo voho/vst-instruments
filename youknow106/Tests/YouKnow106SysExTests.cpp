@@ -358,7 +358,8 @@ void testParameterMessages()
     expectNear(patch.resonance, before.resonance, 1.0e-9,
                "applying one parameter moved another");
 
-    // A switch byte arriving on its own has to work the same way.
+    // A switch byte arriving on its own has to work the same way. What it must
+    // not disturb is covered by testASwitchByteLeavesEverythingElseAlone.
     Patch switched {};
     expect(applyParameter(switched, static_cast<int>(ToneParameter::SwitchesTwo), 0x02),
            "a switch byte was refused");
@@ -375,6 +376,46 @@ void testParameterMessages()
         expect(parameterValue(patch, index) == bytes[static_cast<std::size_t>(index)],
                "a parameter read back disagrees with the tone bytes at index "
                    + std::to_string(index));
+}
+
+// A single switch byte must move only the fields that byte encodes. Decoding it
+// by round-tripping the whole patch would quantise all sixteen continuous
+// controls to seven bits as a side effect, and would drop an unstorable I+II
+// chorus while applying a byte that carries no chorus bits at all.
+void testASwitchByteLeavesEverythingElseAlone()
+{
+    Patch patch {};
+    // A value that is deliberately not on a 7-bit step, so any quantisation
+    // shows up immediately.
+    patch.cutoff = 0.5001f;
+    patch.resonance = 0.3337f;
+    patch.chorus = ChorusMode::OneTwo;
+    const auto before = patch;
+
+    // Byte 17 encodes the PWM source, the VCA mode, the polarity and the
+    // high-pass. It says nothing about the chorus or any continuous control.
+    expect(applyParameter(patch, static_cast<int>(ToneParameter::SwitchesTwo), 0x02),
+           "a switch byte was refused");
+    expect(patch.vcaMode == VcaMode::Gate, "the switch byte did not take effect");
+    expectNear(patch.cutoff, before.cutoff, 1.0e-9,
+               "applying a switch byte quantised a continuous control");
+    expectNear(patch.resonance, before.resonance, 1.0e-9,
+               "applying a switch byte quantised another continuous control");
+    expect(patch.chorus == ChorusMode::OneTwo,
+           "applying a byte with no chorus bits changed the chorus setting");
+
+    // Byte 16 does carry the chorus, so there it may change -- but the
+    // continuous controls still may not.
+    Patch second {};
+    second.attack = 0.4444f;
+    const auto attackBefore = second.attack;
+    expect(applyParameter(second, static_cast<int>(ToneParameter::SwitchesOne), 0x12),
+           "the first switch byte was refused");
+    expect(second.saw, "the first switch byte did not set the saw waveform");
+    expect(second.chorus == ChorusMode::Two,
+           "the first switch byte did not carry the chorus");
+    expectNear(second.attack, attackBefore, 1.0e-9,
+               "applying the first switch byte quantised a continuous control");
 }
 
 // The factory bank is written in the same units a patch is, so every entry has
@@ -460,6 +501,7 @@ int main()
     testTheUnstorableChorusSettingIsReportedRatherThanHidden();
     testPatchMessageFraming();
     testParameterMessages();
+    testASwitchByteLeavesEverythingElseAlone();
     testFactoryBankIsWellFormed();
 
     if (failures > 0)

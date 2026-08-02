@@ -588,8 +588,15 @@ void testForeignSysExLeavesThePatchAlone()
 void testFactoryProgramsLoad()
 {
     YouKnow106AudioProcessor processor;
-    expect (processor.getNumPrograms() == presets::presetCount,
+    // Program 0 is the init patch, so the bank sits at 1..N.
+    expect (processor.getNumPrograms() == presets::presetCount + 1,
             "the host does not see the whole factory bank");
+    expect (processor.getProgramName (0) == "INIT",
+            "program 0 is not the init patch");
+    // A freshly constructed processor holds the layout defaults, so the program
+    // it reports has to be the one that actually describes them.
+    expect (processor.getCurrentProgram() == 0,
+            "a new processor claims a factory program it has not loaded");
 
     for (int index = 0; index < processor.getNumPrograms(); ++index)
         expect (processor.getProgramName (index).isNotEmpty(),
@@ -603,8 +610,8 @@ void testFactoryProgramsLoad()
     // performance controls alone, because the instrument does not store them.
     setParameterValue (processor, parameters::volume, 0.42f);
     setParameterValue (processor, parameters::portamento, 0.33f);
-    processor.setCurrentProgram (1);
-    expect (processor.getCurrentProgram() == 1, "the selected program was not kept");
+    processor.setCurrentProgram (2);
+    expect (processor.getCurrentProgram() == 2, "the selected program was not kept");
 
     const auto& expected = presets::factoryBank()[1].patch;
     expect (std::abs (parameterValue (processor, parameters::cutoff) - expected.cutoff)
@@ -617,8 +624,24 @@ void testFactoryProgramsLoad()
             "loading a patch moved portamento, which is not part of a patch");
 
     processor.setCurrentProgram (-1);
-    expect (processor.getCurrentProgram() == 1,
+    expect (processor.getCurrentProgram() == 2,
             "an out-of-range program index changed the selection");
+    processor.setCurrentProgram (processor.getNumPrograms());
+    expect (processor.getCurrentProgram() == 2,
+            "a program index past the end changed the selection");
+
+    // An entry the patch memory cannot hold has to say so in its name, so a
+    // bank about to be sent to hardware does not surprise anyone.
+    bool sawMarked = false;
+    for (int index = 1; index < processor.getNumPrograms(); ++index)
+        if (! presets::factoryBank()[static_cast<std::size_t> (index - 1)]
+                  .exportsLosslessly())
+        {
+            sawMarked = true;
+            expect (processor.getProgramName (index).contains ("I+II"),
+                    "a preset that cannot be exported is not marked as such");
+        }
+    expect (sawMarked, "no preset exercises the unstorable chorus setting");
 }
 
 void testEveryPanelLegendFitsInTheRealFont()
@@ -684,7 +707,11 @@ void testEditorBuildsAndRenders()
     if (editor == nullptr)
         return;
 
-    expect (editor->getWidth() == 1276 && editor->getHeight() == 470,
+    // The default size follows the panel description, so widening a section to
+    // fit a legend moves it. Hard-coding the number here is what made this test
+    // fail the moment the layout legitimately changed.
+    const int expectedWidth = juce::roundToInt (panel::panelWidth());
+    expect (editor->getWidth() == expectedWidth && editor->getHeight() == 470,
             "the editor did not open at its default size");
     expect (editor->isOpaque(), "the editor does not advertise an opaque surface");
 
@@ -700,7 +727,7 @@ void testEditorBuildsAndRenders()
                     + juce::String (size.x).toStdString() + " wide");
     }
 
-    editor->setSize (1276, 470);
+    editor->setSize (expectedWidth, 470);
     editor->resized();
     const auto snapshot = renderEditorSnapshot (*editor);
     expect (snapshotHasDetail (snapshot),
