@@ -17,15 +17,15 @@ libraries.
 
 | [Vocalor](vocalor/) | [Drumalor](drumalor/) | [Neuramar](neuramar/) | [Electry](electry/) | [Taikor](taikor/) | [YouKnow106](youknow106/) |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| [![Vocalor standalone interface](vocalor/Docs/screenshots/vocalor-standalone.png)](vocalor/README.md)<br>[9 rendered demos](vocalor/Docs/audio/README.md) | [![Drumalor standalone interface](drumalor/Docs/screenshots/drumalor-standalone.png)](drumalor/README.md)<br>[7 rendered demos](drumalor/Docs/audio/README.md) | [![Neuramar standalone interface](neuramar/Docs/screenshots/neuramar-standalone.png)](neuramar/README.md)<br>[8 rendered demos](neuramar/Docs/audio/README.md) | [![Electry standalone interface](electry/Docs/screenshots/electry-standalone.png)](electry/README.md) | [**Taikor** — screenshot lands with the first Nightly](taikor/README.md)<br>[23 rendered demos](taikor/Docs/audio/README.md) | [**YouKnow106** — screenshot lands with the first Nightly](youknow106/README.md)<br>[10 rendered demos](youknow106/Docs/audio/README.md) |
+| [![Vocalor standalone interface](vocalor/Docs/screenshots/vocalor-standalone.png)](vocalor/README.md)<br>[9 rendered demos](vocalor/Docs/audio/README.md) | [![Drumalor standalone interface](drumalor/Docs/screenshots/drumalor-standalone.png)](drumalor/README.md)<br>[7 rendered demos](drumalor/Docs/audio/README.md) | [![Neuramar standalone interface](neuramar/Docs/screenshots/neuramar-standalone.png)](neuramar/README.md)<br>[8 rendered demos](neuramar/Docs/audio/README.md) | [![Electry standalone interface](electry/Docs/screenshots/electry-standalone.png)](electry/README.md)<br>[14 rendered demos](electry/Docs/audio/README.md) | [![Taikor standalone interface](taikor/Docs/screenshots/taikor-standalone.png)](taikor/README.md)<br>[23 rendered demos](taikor/Docs/audio/README.md) | [![YouKnow106 standalone interface](youknow106/Docs/screenshots/youknow106-standalone.png)](youknow106/README.md)<br>[10 rendered demos](youknow106/Docs/audio/README.md) |
 
 Each screenshot above is rendered by its instrument's own regression suite
 during the Nightly workflow's macOS build and committed automatically when the
-editor has changed, so the images track the real editors — all six suites now
-render one. Taikor and YouKnow106 are new: their cells above stay text links
-until the first Nightly commits their images. The Nightly also re-renders and
-commits every instrument's demonstration audio the same way, from the same
-JUCE-free engines the plug-ins run:
+editor has changed, so the images track the real editors. A build that does not
+produce its screenshot fails rather than republishing the committed one, so a
+suite that quietly stopped rendering cannot go unnoticed. The Nightly also
+re-renders and commits every instrument's demonstration audio the same way,
+from the same JUCE-free engines the plug-ins run:
 [Vocalor](vocalor/Docs/audio/README.md),
 [Drumalor](drumalor/Docs/audio/README.md),
 [Neuramar](neuramar/Docs/audio/README.md),
@@ -157,15 +157,20 @@ The two GitHub Actions workflows cover every instrument explicitly:
 
 - **CI** runs the JUCE-free DSP build and tests on Linux, plus a native-architecture
   macOS plug-in build and CTest run, for every pull request and push to `main`.
-- **Nightly** runs the same macOS helpers in universal mode, packages ZIP and
-  PKG artifacts containing ad-hoc-signed bundles, retains a combined workflow
-  artifact for 14 days, and preserves the prior complete rolling-release set
-  until all twelve uniquely named replacement assets have uploaded. It also
-  keeps the committed documentation media honest: a Linux job re-renders
-  every instrument's demonstration audio through its JUCE-free renderer, the
-  macOS build renders every instrument's editor screenshot through its test
-  suite, and either is committed back to `main` only when the bytes actually
-  changed.
+- **Nightly** runs the same macOS helpers in universal mode, one job per
+  instrument, packages ZIP and PKG artifacts containing ad-hoc-signed bundles,
+  retains a combined workflow artifact for 14 days, and preserves the prior
+  complete rolling-release set until all twelve uniquely named replacement
+  assets have uploaded. A release is published only when all six instruments
+  built, so it is always a complete set; one instrument failing costs only its
+  own packages rather than everything queued behind it. The Nightly also keeps
+  the committed documentation media honest: a Linux job re-renders every
+  instrument's demonstration audio through its JUCE-free renderer, each macOS
+  build renders that instrument's editor screenshot through its test suite, and
+  either is committed back to `main` only when the bytes actually changed. Both
+  media jobs check the full set — seventy-one demonstration WAVs and six editor
+  screenshots — and fail when anything is missing, after committing whatever was
+  regenerated successfully.
 
 The JUCE source dependency is pinned to an immutable 8.0.14 archive and SHA-256
 checksum in every project. Runner images and Xcode are supplied by GitHub Actions,

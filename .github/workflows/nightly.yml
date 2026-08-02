@@ -32,35 +32,79 @@ jobs:
           # below supplies the token explicitly instead.
           persist-credentials: false
 
-      - name: Build the JUCE-free demo renderers
+      # Every instrument is built and rendered independently, and a failure is
+      # recorded rather than thrown: one broken renderer must not cost the
+      # other five their refreshed audio. The job still fails at the end, so a
+      # broken renderer is never silently tolerated.
+      - name: Render every instrument's demo audio
         run: |
-          for instrument in vocalor drumalor neuramar electry taikor youknow106; do
-            upper=$(echo "$instrument" | tr '[:lower:]' '[:upper:]')
-            case "$instrument" in
-              vocalor)    target=VocalorRenderDemos ;;
-              drumalor)   target=DrumalorRenderDemos ;;
-              neuramar)   target=NeuramarRenderDemos ;;
-              electry)    target=ElectryRenderDemos ;;
-              taikor)     target=TaikorRenderDemos ;;
-              youknow106) target=YouKnow106RenderDemos ;;
-            esac
-            cmake -S "$instrument" -B "$instrument/build-dsp" \
-              -DCMAKE_BUILD_TYPE=Release \
-              "-D${upper}_BUILD_PLUGIN=OFF" -DBUILD_TESTING=OFF
-            cmake --build "$instrument/build-dsp" --parallel --target "$target"
+          set -uo pipefail
+
+          # directory:renderer target:number of WAVs the renderer must produce.
+          # The count is the point of the check: it is what turns "the renderer
+          # ran" into "the renderer rendered the whole set", so a take that
+          # silently stopped being written fails the nightly instead of leaving
+          # a stale WAV committed forever. Adding or removing a take means
+          # updating the number here in the same change.
+          instruments=(
+            "vocalor:VocalorRenderDemos:9"
+            "drumalor:DrumalorRenderDemos:7"
+            "neuramar:NeuramarRenderDemos:8"
+            "electry:ElectryRenderDemos:14"
+            "taikor:TaikorRenderDemos:23"
+            "youknow106:YouKnow106RenderDemos:10"
+          )
+
+          failed=()
+          for entry in "${instruments[@]}"; do
+            IFS=: read -r directory target expected <<<"$entry"
+            option="$(printf '%s' "$directory" | tr '[:lower:]' '[:upper:]')_BUILD_PLUGIN"
+
+            echo "::group::$directory"
+            if ! cmake -S "$directory" -B "$directory/build-dsp" \
+                -DCMAKE_BUILD_TYPE=Release "-D${option}=OFF" -DBUILD_TESTING=OFF; then
+              failed+=("$directory: could not configure the demo renderer")
+              echo "::endgroup::"
+              continue
+            fi
+            if ! cmake --build "$directory/build-dsp" --parallel --target "$target"; then
+              failed+=("$directory: could not build $target")
+              echo "::endgroup::"
+              continue
+            fi
+            if ! "./$directory/build-dsp/$target" "$directory/Docs/audio"; then
+              failed+=("$directory: $target exited non-zero")
+              echo "::endgroup::"
+              continue
+            fi
+
+            rendered=$(find "$directory/Docs/audio" -maxdepth 1 -name '*.wav' | wc -l)
+            if (( rendered != expected )); then
+              failed+=("$directory: rendered $rendered demo WAVs, expected $expected")
+            else
+              echo "$directory: rendered all $rendered demo WAVs"
+            fi
+            echo "::endgroup::"
           done
 
-      - name: Render and commit the demo audio if it changed
+          # Truncate first: printf with an empty array would write a blank line,
+          # which the reporting step below would read as a failure.
+          : > "${RUNNER_TEMP}/failed-renderers.txt"
+          if (( ${#failed[@]} > 0 )); then
+            printf '%s\n' "${failed[@]}" > "${RUNNER_TEMP}/failed-renderers.txt"
+            echo "Renderers that did not produce their full set:"
+            printf '  %s\n' "${failed[@]}"
+          fi
+
+      # Committing runs even when a renderer failed above: the instruments that
+      # did render deserve their refreshed audio, and the failure is reported by
+      # the final step of this job.
+      - name: Commit the demo audio if it changed
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ./vocalor/build-dsp/VocalorRenderDemos vocalor/Docs/audio
-          ./drumalor/build-dsp/DrumalorRenderDemos drumalor/Docs/audio
-          ./neuramar/build-dsp/NeuramarRenderDemos neuramar/Docs/audio
-          ./electry/build-dsp/ElectryRenderDemos electry/Docs/audio
-          ./taikor/build-dsp/TaikorRenderDemos taikor/Docs/audio
-          ./youknow106/build-dsp/YouKnow106RenderDemos youknow106/Docs/audio
           # Stage before checking: a newly added demo is an untracked file,
           # which git diff alone would not see.
           git add -A vocalor/Docs/audio drumalor/Docs/audio \
@@ -95,99 +139,200 @@ jobs:
           echo "error: could not push the re-rendered demo audio" >&2
           exit 1
 
+      - name: Fail if any instrument did not render its full set
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          # A missing file means the render step died before it could report,
+          # which is a failure rather than a clean sheet.
+          if [[ ! -f "${RUNNER_TEMP}/failed-renderers.txt" ]]; then
+            echo "error: the render step did not report its result" >&2
+            exit 1
+          fi
+          if [[ -s "${RUNNER_TEMP}/failed-renderers.txt" ]]; then
+            echo "error: the demo audio is incomplete:" >&2
+            sed 's/^/  /' "${RUNNER_TEMP}/failed-renderers.txt" >&2
+            exit 1
+          fi
+          echo "Every instrument rendered its full set of demo audio."
+
+  # One job per instrument. Building all six in sequence meant a single flaky
+  # test cost every instrument after it its screenshot, its package and the
+  # release; now a failure is contained to its own instrument, and the six
+  # builds run concurrently instead of end to end.
   build-macos:
     if: github.ref == 'refs/heads/main'
-    name: Universal builds, packages, and rolling release
+    name: Universal build and package (${{ matrix.name }})
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Vocalor
+            directory: vocalor
+            snapshot_variable: VOCALOR_EDITOR_SNAPSHOT
+          - name: Drumalor
+            directory: drumalor
+            snapshot_variable: DRUMALOR_EDITOR_SNAPSHOT
+          - name: Neuramar
+            directory: neuramar
+            snapshot_variable: NEURAMAR_EDITOR_SNAPSHOT
+          - name: Electry
+            directory: electry
+            snapshot_variable: ELECTRY_EDITOR_SNAPSHOT
+          - name: Taikor
+            directory: taikor
+            snapshot_variable: TAIKOR_EDITOR_SNAPSHOT
+          - name: YouKnow106
+            directory: youknow106
+            snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
     steps:
       - uses: actions/checkout@v4
         with:
           # Build-time FetchContent code must not inherit the write credential.
           persist-credentials: false
 
-      # Full arm64 + x86_64 universal builds (script default) plus project
-      # tests. Each suite that supports it renders its committed editor
-      # screenshot while it runs, so the images in the READMEs track the real
-      # editors; the commit step below pushes any that changed.
-      - name: Build Vocalor and run tests
-        working-directory: vocalor
-        env:
-          VOCALOR_EDITOR_SNAPSHOT: ${{ github.workspace }}/vocalor/Docs/screenshots/vocalor-standalone.png
-        run: ./scripts/build-macos.sh
+      # Removing the committed image first is what makes the check after the
+      # build meaningful: the file can only be there afterwards because this
+      # run's suite rendered it, so a suite that quietly stopped writing its
+      # snapshot fails the nightly instead of republishing a stale editor.
+      - name: Clear the committed screenshot before rendering
+        run: rm -f "${{ matrix.directory }}/Docs/screenshots/${{ matrix.directory }}-standalone.png"
 
-      - name: Package Vocalor (ad-hoc-signed bundles)
-        working-directory: vocalor
+      # Full arm64 + x86_64 universal build (script default) plus the project's
+      # tests. The suite renders the committed editor screenshot while it runs,
+      # so the images in the READMEs track the real editors.
+      - name: Build ${{ matrix.name }} and run tests
+        working-directory: ${{ matrix.directory }}
+        run: |
+          set -euo pipefail
+          export "${{ matrix.snapshot_variable }}=${GITHUB_WORKSPACE}/${{ matrix.directory }}/Docs/screenshots/${{ matrix.directory }}-standalone.png"
+          ./scripts/build-macos.sh
+
+      - name: Check that the editor screenshot was rendered
+        run: |
+          set -euo pipefail
+          screenshot="${{ matrix.directory }}/Docs/screenshots/${{ matrix.directory }}-standalone.png"
+          if [[ ! -s "$screenshot" ]]; then
+            echo "error: ${{ matrix.name }}'s suite did not render $screenshot" >&2
+            echo "The suite must honour ${{ matrix.snapshot_variable }}." >&2
+            exit 1
+          fi
+          # An empty or truncated write would otherwise be committed as a
+          # corrupt image; the magic number proves a real PNG landed.
+          if [[ "$(head -c 8 "$screenshot" | od -An -tx1 | tr -d ' \n')" != "89504e470d0a1a0a" ]]; then
+            echo "error: $screenshot is not a PNG" >&2
+            exit 1
+          fi
+          echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
+
+      - name: Package ${{ matrix.name }} (ad-hoc-signed bundles)
+        working-directory: ${{ matrix.directory }}
         run: ./scripts/sign-and-package-macos.sh
 
-      - name: Build Drumalor and run tests
-        working-directory: drumalor
-        env:
-          DRUMALOR_EDITOR_SNAPSHOT: ${{ github.workspace }}/drumalor/Docs/screenshots/drumalor-standalone.png
-        run: ./scripts/build-macos.sh
+      - name: Check that both distributable packages were produced
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(
+            ${{ matrix.directory }}/build-macos/dist/${{ matrix.name }}-*-macOS-universal.zip
+            ${{ matrix.directory }}/build-macos/dist/${{ matrix.name }}-*-macOS-universal.pkg
+          )
+          if (( ${#packages[@]} != 2 )); then
+            echo "error: expected one zip and one pkg for ${{ matrix.name }}, found ${#packages[@]}" >&2
+            printf '  %s\n' "${packages[@]:-(none)}" >&2
+            exit 1
+          fi
+          printf 'Packaged %s\n' "${packages[@]}"
 
-      - name: Package Drumalor (ad-hoc-signed bundles)
-        working-directory: drumalor
-        run: ./scripts/sign-and-package-macos.sh
+      # Handed to the jobs below rather than committed here: the screenshots are
+      # committed in one commit, and the release is published as one complete
+      # twelve-asset set.
+      - name: Upload the rendered screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-screenshot-${{ matrix.directory }}
+          path: ${{ matrix.directory }}/Docs/screenshots/${{ matrix.directory }}-standalone.png
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Build Neuramar and run tests
-        working-directory: neuramar
-        env:
-          NEURAMAR_EDITOR_SNAPSHOT: ${{ github.workspace }}/neuramar/Docs/screenshots/neuramar-standalone.png
-        run: ./scripts/build-macos.sh
+      - name: Upload the distributable packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-packages-${{ matrix.directory }}
+          path: |
+            ${{ matrix.directory }}/build-macos/dist/${{ matrix.name }}-*-macOS-universal.zip
+            ${{ matrix.directory }}/build-macos/dist/${{ matrix.name }}-*-macOS-universal.pkg
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Package Neuramar (ad-hoc-signed bundles)
-        working-directory: neuramar
-        run: ./scripts/sign-and-package-macos.sh
+  # Every suite renders its committed editor screenshot while it runs, so the
+  # images in the READMEs track the real editors. This runs even when an
+  # instrument failed to build: the screenshots that were rendered are still
+  # worth committing, and the missing ones are reported at the end.
+  commit-screenshots:
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    name: Commit the regenerated editor screenshots
+    needs: build-macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The push step below supplies the write credential explicitly.
+          persist-credentials: false
 
-      - name: Build Electry and run tests
-        working-directory: electry
-        env:
-          ELECTRY_EDITOR_SNAPSHOT: ${{ github.workspace }}/electry/Docs/screenshots/electry-standalone.png
-        run: ./scripts/build-macos.sh
+      # Nothing to download if every instrument failed, which is a reportable
+      # state rather than an error in this step.
+      - name: Download the rendered screenshots
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: nightly-screenshot-*
+          merge-multiple: true
+          path: rendered-screenshots
 
-      - name: Package Electry (ad-hoc-signed bundles)
-        working-directory: electry
-        run: ./scripts/sign-and-package-macos.sh
+      - name: Place the rendered screenshots in the tree
+        run: |
+          set -euo pipefail
+          missing=()
+          for directory in vocalor drumalor neuramar electry taikor youknow106; do
+            rendered="rendered-screenshots/${directory}-standalone.png"
+            if [[ -s "$rendered" ]]; then
+              mkdir -p "${directory}/Docs/screenshots"
+              cp "$rendered" "${directory}/Docs/screenshots/${directory}-standalone.png"
+              echo "$directory: took the freshly rendered screenshot"
+            else
+              missing+=("$directory")
+              echo "$directory: no screenshot was rendered by this run"
+            fi
+          done
+          # Truncate first: printf with an empty array would write a blank line,
+          # which the reporting step below would read as a missing screenshot.
+          : > "${RUNNER_TEMP}/missing-screenshots.txt"
+          if (( ${#missing[@]} > 0 )); then
+            printf '%s\n' "${missing[@]}" > "${RUNNER_TEMP}/missing-screenshots.txt"
+          fi
 
-      - name: Build Taikor and run tests
-        working-directory: taikor
-        env:
-          TAIKOR_EDITOR_SNAPSHOT: ${{ github.workspace }}/taikor/Docs/screenshots/taikor-standalone.png
-        run: ./scripts/build-macos.sh
-
-      - name: Package Taikor (ad-hoc-signed bundles)
-        working-directory: taikor
-        run: ./scripts/sign-and-package-macos.sh
-
-      - name: Build YouKnow106 and run tests
-        working-directory: youknow106
-        env:
-          YOUKNOW106_EDITOR_SNAPSHOT: ${{ github.workspace }}/youknow106/Docs/screenshots/youknow106-standalone.png
-        run: ./scripts/build-macos.sh
-
-      - name: Package YouKnow106 (ad-hoc-signed bundles)
-        working-directory: youknow106
-        run: ./scripts/sign-and-package-macos.sh
-
-      # Every suite renders its committed editor screenshot while it runs, so
-      # the images in the READMEs track the real editors. The rebase-and-retry
-      # loop absorbs the audio-demos job (or anything else) having pushed to
-      # main while this job built.
-      - name: Commit regenerated screenshots if they changed
+      - name: Commit the screenshots if they changed
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          paths=(
-            vocalor/Docs/screenshots
-            drumalor/Docs/screenshots
-            neuramar/Docs/screenshots
-            electry/Docs/screenshots
-            taikor/Docs/screenshots
-            youknow106/Docs/screenshots
-          )
           # Stage before checking: a screenshot rendered for the first time is
-          # an untracked file, which git diff alone would not see.
+          # an untracked file, which git diff alone would not see. A directory
+          # that does not exist is skipped rather than aborting the add, so a
+          # brand-new instrument whose build failed cannot cost the others
+          # their commit.
+          paths=()
+          for directory in vocalor drumalor neuramar electry taikor youknow106; do
+            if [[ -d "${directory}/Docs/screenshots" ]]; then
+              paths+=("${directory}/Docs/screenshots")
+            fi
+          done
+          if (( ${#paths[@]} == 0 )); then
+            echo "No screenshot directories exist; nothing to commit."
+            exit 0
+          fi
           git add -A "${paths[@]}"
           if git diff --cached --quiet; then
             echo "Screenshots are unchanged; nothing to commit."
@@ -199,12 +344,12 @@ jobs:
           REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           for attempt in 1 2 3; do
             git pull --rebase -X theirs "$REMOTE" main
-            # If an instrument's code moved on main while this long build ran,
-            # these PNGs were rendered from the older tree and replaying them
-            # onto the newer one would publish stale editors. Skip: the next
-            # nightly builds the newer tree and refreshes them correctly.
-            # Docs-only churn (including the audio job's own commit) does not
-            # invalidate a render, so it does not defer the push.
+            # If an instrument's code moved on main while this build ran, these
+            # PNGs were rendered from the older tree and replaying them onto the
+            # newer one would publish stale editors. Skip: the next nightly
+            # builds the newer tree and refreshes them correctly. Docs-only
+            # churn (including the audio job's own commit) does not invalidate a
+            # render, so it does not defer the push.
             if ! git diff --quiet "$GITHUB_SHA" FETCH_HEAD -- \
                 vocalor drumalor neuramar electry taikor youknow106 \
                 ':(exclude)vocalor/Docs' ':(exclude)drumalor/Docs' \
@@ -221,64 +366,82 @@ jobs:
           echo "error: could not push the regenerated screenshots" >&2
           exit 1
 
+      - name: Fail if any instrument did not render its screenshot
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          # A missing file means the step that placed the screenshots died
+          # before it could report, which is a failure rather than a clean sheet.
+          if [[ ! -f "${RUNNER_TEMP}/missing-screenshots.txt" ]]; then
+            echo "error: the screenshot placement step did not report its result" >&2
+            exit 1
+          fi
+          if [[ -s "${RUNNER_TEMP}/missing-screenshots.txt" ]]; then
+            echo "error: no screenshot was rendered for:" >&2
+            sed 's/^/  /' "${RUNNER_TEMP}/missing-screenshots.txt" >&2
+            echo "See that instrument's build job for the cause." >&2
+            exit 1
+          fi
+          echo "Every instrument rendered its editor screenshot."
+
+  # Publish a single rolling "nightly" release so all six instruments share a
+  # stable public download URL. It needs every instrument, so it runs only when
+  # all six built: a release is a complete set or it is not published at all.
+  publish-release:
+    if: github.ref == 'refs/heads/main'
+    name: Publish the rolling nightly release
+    needs: build-macos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download every instrument's packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-packages-*
+          merge-multiple: true
+          path: dist
+
+      - name: Check the twelve-file manifest
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for product in Vocalor Drumalor Neuramar Electry Taikor YouKnow106; do
+            for extension in zip pkg; do
+              matches=(dist/${product}-*-macOS-universal.${extension})
+              if (( ${#matches[@]} != 1 )); then
+                echo "error: expected exactly one ${product} ${extension}, found ${#matches[@]}" >&2
+                printf '  %s\n' "${matches[@]:-(none)}" >&2
+                exit 1
+              fi
+            done
+          done
+          assets=(dist/*)
+          if (( ${#assets[@]} != 12 )); then
+            echo "error: expected exactly twelve release assets, found ${#assets[@]}" >&2
+            printf '  %s\n' "${assets[@]:-(none)}" >&2
+            exit 1
+          fi
+          printf 'Release asset: %s\n' "${assets[@]}"
+
       # Retained on the workflow run itself (downloadable by anyone with repo
-      # access). Instrument-specific patterns prevent one output from
-      # accidentally satisfying the other instrument's artifact check.
+      # access), as one complete set rather than six per-instrument artifacts.
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: vst-instruments-nightly-macOS-universal
-          path: |
-            vocalor/build-macos/dist/Vocalor-*-macOS-universal.zip
-            vocalor/build-macos/dist/Vocalor-*-macOS-universal.pkg
-            drumalor/build-macos/dist/Drumalor-*-macOS-universal.zip
-            drumalor/build-macos/dist/Drumalor-*-macOS-universal.pkg
-            neuramar/build-macos/dist/Neuramar-*-macOS-universal.zip
-            neuramar/build-macos/dist/Neuramar-*-macOS-universal.pkg
-            electry/build-macos/dist/Electry-*-macOS-universal.zip
-            electry/build-macos/dist/Electry-*-macOS-universal.pkg
-            taikor/build-macos/dist/Taikor-*-macOS-universal.zip
-            taikor/build-macos/dist/Taikor-*-macOS-universal.pkg
-            youknow106/build-macos/dist/YouKnow106-*-macOS-universal.zip
-            youknow106/build-macos/dist/YouKnow106-*-macOS-universal.pkg
+          path: dist
           if-no-files-found: error
           retention-days: 14
 
-      # Publish a single rolling "nightly" release so all six instruments share a
-      # stable public download URL.
       - name: Publish rolling "nightly" release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           DATE="$(date -u +%Y-%m-%d)"
           SHORT_SHA="${GITHUB_SHA:0:7}"
 
-          assets=(
-            vocalor/build-macos/dist/Vocalor-*-macOS-universal.zip
-            vocalor/build-macos/dist/Vocalor-*-macOS-universal.pkg
-            drumalor/build-macos/dist/Drumalor-*-macOS-universal.zip
-            drumalor/build-macos/dist/Drumalor-*-macOS-universal.pkg
-            neuramar/build-macos/dist/Neuramar-*-macOS-universal.zip
-            neuramar/build-macos/dist/Neuramar-*-macOS-universal.pkg
-            electry/build-macos/dist/Electry-*-macOS-universal.zip
-            electry/build-macos/dist/Electry-*-macOS-universal.pkg
-            taikor/build-macos/dist/Taikor-*-macOS-universal.zip
-            taikor/build-macos/dist/Taikor-*-macOS-universal.pkg
-            youknow106/build-macos/dist/YouKnow106-*-macOS-universal.zip
-            youknow106/build-macos/dist/YouKnow106-*-macOS-universal.pkg
-          )
-          if (( ${#assets[@]} != 12 )); then
-            echo "error: expected exactly twelve release assets, found ${#assets[@]}" >&2
-            printf '  %s\n' "${assets[@]}" >&2
-            exit 1
-          fi
-          for asset in "${assets[@]}"; do
-            if [[ ! -f "$asset" ]]; then
-              echo "error: missing release asset: $asset" >&2
-              exit 1
-            fi
-          done
+          assets=(dist/*)
 
           # Unique names let the previous complete release remain downloadable
           # throughout this upload. A rerun for the same commit may safely
