@@ -149,7 +149,11 @@ a calibrated capture were available:
    exists but no located source states its target.
 2. The chorus support filters' real order and corners, the in-circuit
    signal-to-noise band, the wet gain, and this instrument's own sweep and
-   rate decimals (the sibling's are used).
+   rate decimals (the sibling's are used). Searched again for 1.2 without
+   result: the located material describes the board's three circuits and the
+   parts fitted, but no source gives the filter component values, so the
+   published 9.9/9.5 kHz corners and the conflicting single-pole 14 kHz
+   measurement still bracket this rather than fixing it.
 3. The exact pre-line divider ahead of the delay lines' saturation.
 4. The hold time constants of the pulse, sub, noise and resonance points
    (the filter family's 522 µs is assumed), and whether the resonance hold

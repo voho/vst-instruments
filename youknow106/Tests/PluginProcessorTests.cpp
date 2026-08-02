@@ -43,6 +43,8 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::benderVcf,   0.0f,   1.0e-5f },
     { parameters::benderLfo,   0.0f,   1.0e-5f },
     { parameters::portamento,  0.0f,   1.0e-5f },
+    { parameters::legacyKeyMode, 0.0f, 1.0e-5f },
+    { parameters::legacyChorus,  0.0f, 1.0e-5f },
     { parameters::poly1,       1.0f,   1.0e-5f },
     { parameters::poly2,       0.0f,   1.0e-5f },
     { parameters::lfoRate,     0.42f,  1.0e-5f },
@@ -756,6 +758,42 @@ void testForeignSysExLeavesThePatchAlone()
     processor.releaseResources();
 }
 
+// A lane automating one of the previous release's ids still has to control
+// the sound. The bridge forwards a change to the pair that replaced it.
+void testLegacyAutomationIdsStillReachTheSwitches()
+{
+    YouKnow106AudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    const auto pump = [&processor] {
+        for (int attempt = 0; attempt < 40; ++attempt)
+            juce::Thread::sleep (5);
+    };
+    juce::ignoreUnused (pump);
+
+    // Unison through the old three-way id.
+    setParameterValue (processor, parameters::legacyKeyMode, 2.0f);
+    processor.forwardLegacyModeParametersForTest();
+    expect (parameterValue (processor, parameters::poly1) > 0.5f
+                && parameterValue (processor, parameters::poly2) > 0.5f,
+            "the legacy key mode did not reach both POLY buttons");
+
+    setParameterValue (processor, parameters::legacyChorus, 2.0f);
+    processor.forwardLegacyModeParametersForTest();
+    expect (parameterValue (processor, parameters::chorusII) > 0.5f
+                && parameterValue (processor, parameters::chorusI) < 0.5f,
+            "the legacy chorus id did not reach the chorus buttons");
+
+    // The bridge must not fight the panel: a direct change to a switch stands
+    // until the legacy id itself moves again.
+    setParameterValue (processor, parameters::chorusI, 1.0f);
+    processor.forwardLegacyModeParametersForTest();
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f,
+            "the legacy bridge overwrote a switch the player had just moved");
+
+    processor.releaseResources();
+}
+
 void testFactoryProgramsLoad()
 {
     YouKnow106AudioProcessor processor;
@@ -967,6 +1005,7 @@ int main()
     testRequestedDumpLeavesThroughTheMidiOutput();
     testSelectedProgramSurvivesAStateRoundTrip();
     testForeignSysExLeavesThePatchAlone();
+    testLegacyAutomationIdsStillReachTheSwitches();
     testFactoryProgramsLoad();
     testEveryPanelLegendFitsInTheRealFont();
     testEditorBuildsAndRenders();

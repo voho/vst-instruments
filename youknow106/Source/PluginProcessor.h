@@ -58,6 +58,8 @@ public:
     // now, on the calling thread. The queue is normally drained by the async
     // callback; a test has no message loop to run and needs it deterministic.
     void flushPendingSysEx() { drainSysExQueue(); }
+    // Runs the legacy-id bridge now, for tests with no timer.
+    void forwardLegacyModeParametersForTest() { forwardLegacyModeParameters(); }
 
     // Events dropped because the handoff queue was full. Only for tests.
     int getSysExDroppedCount() const noexcept
@@ -155,7 +157,7 @@ private:
         const char* id = nullptr;
         std::atomic<float>* value = nullptr;
     };
-    std::array<ParameterPointer, 39> parameterPointers {};
+    std::array<ParameterPointer, 41> parameterPointers {};
 
     youknow106::YouKnow106Engine engine;
     // Events arriving over system exclusive. Parameters cannot be written from
@@ -175,6 +177,9 @@ private:
     // callback behind the message thread. Polling costs nothing when the queue
     // is empty, which is almost always.
     void timerCallback() override;
+    void forwardLegacyModeParameters();
+    int lastLegacyKeyMode { 0 };
+    int lastLegacyChorus { 0 };
     void drainSysExQueue();
     // Applies one tone parameter to the parameters it actually names, and to
     // no others.

@@ -266,6 +266,17 @@ YouKnow106AudioProcessor::createParameterLayout()
     // Two independent latching buttons rather than one three-way choice: the
     // panel has no unison button, and holding both POLY buttons down is how the
     // instrument is put into unison.
+    // Bridges for the ids the previous release published. A host's automation
+    // lane addresses an id, so dropping them would silently stop controlling
+    // the sound; the migration covers stored values only. Moving one forwards
+    // to the pair that replaced it.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { legacyKeyMode, 1 }, "Key Mode (legacy)",
+        juce::StringArray { "Poly 1", "Poly 2", "Unison" }, 0));
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { legacyChorus, 1 }, "Chorus (legacy)",
+        juce::StringArray { "Off", "I", "II" }, 0));
+
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { poly1, 1 }, "Poly 1", true));
     layout.add (std::make_unique<juce::AudioParameterBool> (
@@ -368,7 +379,8 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
     // Size deduced, not restated: hard-coding it is what silently broke when
     // the paired switches each turned into two parameters.
     const auto ids = std::to_array<const char*> ({
-        volume, benderDco, benderVcf, benderLfo, portamento, poly1, poly2,
+        volume, benderDco, benderVcf, benderLfo, portamento,
+        legacyKeyMode, legacyChorus, poly1, poly2,
         lfoRate, lfoDelay, dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
         vcaMode, vcaLevel, attack, decay, sustain, release, chorusI, chorusII,
@@ -1077,6 +1089,43 @@ void YouKnow106AudioProcessor::requestSysExDump()
 void YouKnow106AudioProcessor::timerCallback()
 {
     drainSysExQueue();
+    forwardLegacyModeParameters();
+}
+
+// A lane automating one of the previous release's ids moves the pair that
+// replaced it. Only a *change* forwards, so the bridge never fights the panel:
+// touching POLY 2 directly does not get overwritten on the next tick.
+void YouKnow106AudioProcessor::forwardLegacyModeParameters()
+{
+    using namespace youknow106::parameters;
+
+    const auto set = [this] (const char* id, bool on)
+    {
+        if (auto* target = parameters.getParameter (id))
+        {
+            const float wanted = on ? 1.0f : 0.0f;
+            if (std::abs (target->convertFrom0to1 (target->getValue()) - wanted) > 0.5f)
+                target->setValueNotifyingHost (target->convertTo0to1 (wanted));
+        }
+    };
+
+    const int keyMode = choiceOf (legacyKeyMode, 2);
+    if (keyMode != lastLegacyKeyMode)
+    {
+        lastLegacyKeyMode = keyMode;
+        const auto mode = static_cast<youknow106::KeyMode> (keyMode);
+        set (poly1, youknow106::poly1Engaged (mode));
+        set (poly2, youknow106::poly2Engaged (mode));
+    }
+
+    const int chorusMode = choiceOf (legacyChorus, 2);
+    if (chorusMode != lastLegacyChorus)
+    {
+        lastLegacyChorus = chorusMode;
+        const auto mode = static_cast<youknow106::ChorusMode> (chorusMode);
+        set (chorusI, youknow106::chorusOneEngaged (mode));
+        set (chorusII, youknow106::chorusTwoEngaged (mode));
+    }
 }
 
 void YouKnow106AudioProcessor::drainSysExQueue()

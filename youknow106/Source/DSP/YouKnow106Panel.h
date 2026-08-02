@@ -18,6 +18,13 @@ inline constexpr auto benderDco    = "benderDco";
 inline constexpr auto benderVcf    = "benderVcf";
 inline constexpr auto benderLfo    = "benderLfo";
 inline constexpr auto portamento   = "portamento";
+// Retained from the release before the paired switches were split. A host
+// stores automation against a parameter *id*, so removing these would orphan
+// any lane written for them -- the state migration only translates stored
+// values. They forward to the pairs and are deliberately not on the panel.
+inline constexpr auto legacyKeyMode = "keyMode";
+inline constexpr auto legacyChorus  = "chorus";
+
 // The two assign-mode buttons. Both down selects unison; there is no third
 // button, and no single "key mode" parameter, because the panel has neither.
 inline constexpr auto poly1        = "poly1";
