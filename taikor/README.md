@@ -39,7 +39,7 @@ the stroke is the pitch class and the drum is the octave.
 
 | Note | Stroke | Spoken as | What it is |
 | --- | --- | --- | --- |
-| C | Don | *don* | Full centre strike: the open voice of the drum |
+| C | Don | *don* | Full open stroke, a hand's width in from the middle |
 | C♯ | Do | *do* | Open stroke a little off centre, quicker than a Don |
 | D | Tsu | *tsu* | Damped centre, the free hand resting on the head |
 | D♯ | Su | *su* | Ghost stroke, barely sounded |

@@ -195,7 +195,7 @@ constexpr float directCalibration = 0.00478f;
 
 const std::array<ArticulationMetadata, articulationCount> articulationTable {{
     { Articulation::Don, "Don", "don", "don",
-      "Full centre strike: the open voice of the drum", 0 },
+      "Full open stroke, a hand's width in from the middle", 0 },
     { Articulation::Do, "Do", "do", "do",
       "Open stroke a little off centre, quicker than a Don", 1 },
     { Articulation::Tsu, "Tsu", "tsu", "tsu",
@@ -2268,14 +2268,19 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
     // hold it there until the later one arrived. The arming test runs before
     // the glide does, so a bend that lands inside the last sixty milliseconds
     // of a voice is exactly the case this happens in.
+    //
+    // Only while the fade has not actually moved the gain yet. Once it has,
+    // the voice is already some way down and putting it back to unity would be
+    // a step up rather than a rescue - a click, and a louder one the longer the
+    // fade has run. A fade that has started is left to finish; what this
+    // catches is the far commoner case of one armed a moment ago and not yet
+    // acted on.
     const auto fadeSamples =
         static_cast<std::uint64_t> (forcedFadeSeconds * sampleRate_);
     if (voice.retireStep > 0.0f
+        && voice.retireGain >= 1.0f
         && voice.ageSamples + fadeSamples < voice.maximumSamples)
-    {
         voice.retireStep = 0.0f;
-        voice.retireGain = 1.0f;
-    }
 
     voice.appliedTensionShift = shift;
 }

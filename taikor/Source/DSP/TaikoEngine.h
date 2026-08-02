@@ -15,7 +15,7 @@ namespace taikor
 // octave number alone chooses the drum's pitch: higher octave, higher drum.
 enum class Articulation : std::uint8_t
 {
-    Don,     // C  - full centre strike, the open voice of the drum
+    Don,     // C  - full open stroke, a hand's width in from the middle
     Do,      // C# - open stroke a little off centre
     Tsu,     // D  - damped centre, the free hand resting on the head
     Su,      // D# - ghost stroke, barely sounded
