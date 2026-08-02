@@ -710,6 +710,14 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.peakLevel = 0.0f;
     voice.tensionEnvelope = 0.0f;
     voice.appliedTensionShift = 1.0f;
+    // Belongs to the stroke, not to the slot. The attack glide runs before the
+    // new contact schedule is known - Tension Mod is on by default, so that is
+    // every ordinary stroke - and it rebuilds the lifetimes; leaving the last
+    // stroke's schedule here meant a voice reused after a flam or a press roll
+    // was handed that stroke's offset, and then given its own on top. It kept
+    // its modes alive past their floor and its slot alive past its deadline,
+    // which costs resonators and invites voice stealing.
+    voice.retirementOffset = 0;
     voice.noiseBandState = 0.0f;
     voice.contactReference = 0.0f;
     for (auto& band : voice.continuum)
@@ -2253,6 +2261,21 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
             std::max (voice.maximumSamples,
                       longest + static_cast<std::uint64_t> (rate * 0.02f)),
             static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_));
+
+    // And a fade already armed against the old deadline has to be called off,
+    // or extending the deadline achieves nothing: the render loop is
+    // multiplying the voice down to zero on the old schedule and would simply
+    // hold it there until the later one arrived. The arming test runs before
+    // the glide does, so a bend that lands inside the last sixty milliseconds
+    // of a voice is exactly the case this happens in.
+    const auto fadeSamples =
+        static_cast<std::uint64_t> (forcedFadeSeconds * sampleRate_);
+    if (voice.retireStep > 0.0f
+        && voice.ageSamples + fadeSamples < voice.maximumSamples)
+    {
+        voice.retireStep = 0.0f;
+        voice.retireGain = 1.0f;
+    }
 
     voice.appliedTensionShift = shift;
 }
