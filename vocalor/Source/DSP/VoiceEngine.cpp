@@ -166,6 +166,15 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     aspirationScale_ = std::sqrt(static_cast<float>(sampleRate_) / referenceSampleRate);
     controlGlide_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
                                     * inverseSampleRate_ / 0.0032f);
+    const auto glideFor = [this](float seconds) noexcept {
+        return 1.0f - std::exp(-static_cast<float>(controlPeriod) * inverseSampleRate_ / seconds);
+    };
+    formantGlide_[0] = glideFor(0.016f);
+    formantGlide_[1] = glideFor(0.009f);
+    formantGlide_[2] = glideFor(0.005f);
+    formantGlide_[3] = glideFor(0.004f);
+    formantGlide_[4] = glideFor(0.003f);
+    lipZeroCoefficient_ = std::exp(-twoPi * 120.0f * inverseSampleRate_);
     jitterSlowCoefficient_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
                                              * inverseSampleRate_ / 0.0095f);
 
@@ -858,9 +867,9 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     for (int formant = 0; formant < formantCount; ++formant)
     {
         const auto index = static_cast<std::size_t>(formant);
-        // Tension presses the singer's-formant region a little harder.
-        const float shaped = chunkAmplitude_[index]
-            * (1.0f + (formant == 2 ? 0.10f * smoothedTension_ : 0.0f));
+        // Tension presses the singer's-formant region (F3 & F4) a little harder.
+        const float epilarynxBoost = (formant == 2 ? 0.12f * smoothedTension_ : (formant == 3 ? 0.06f * smoothedTension_ : 0.0f));
+        const float shaped = chunkAmplitude_[index] * (1.0f + epilarynxBoost);
         if (!chunkStateValid_)
             chunkFormantGain_[index] = shaped;
         else if (advanceSmoothers)
@@ -1026,7 +1035,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         if (voice.formantHz[index] <= 1.0f)
             voice.formantHz[index] = targetHz;
         else
-            voice.formantHz[index] += controlGlide_ * (targetHz - voice.formantHz[index]);
+            voice.formantHz[index] += formantGlide_[index] * (targetHz - voice.formantHz[index]);
 
         const float bounded = std::clamp(voice.formantHz[index], 25.0f, upperLimit);
         const auto trig = sineCosineFromCycles(bounded * inverseSampleRate_);
@@ -1259,11 +1268,9 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         const float airDrive = breath * airShape * airEnvelope;
         const float voicedDrive = envelope * voicedScaleAt_[static_cast<std::size_t>(i)]
             * (1.0f + shimmerDepth_ * shimmer);
-        // The vanishingly small bias parks the recursive tract states on a
-        // normal-range fixed point. That keeps the filters out of denormal
-        // territory on hosts that do not set flush-to-zero for us, without the
-        // per-tick compare-and-select that costs a third of the voice budget.
-        const float source = sourceTilt * voicedDrive + highNoise * airDrive + denormalBias;
+        const float rawSource = sourceTilt * voicedDrive + highNoise * airDrive + denormalBias;
+        const float source = rawSource - 0.20f * lipZeroCoefficient_ * voice.lastLipSource;
+        voice.lastLipSource = rawSource;
 
         float tract = 0.0f;
         onsetMix += onsetMixStep;

@@ -218,6 +218,7 @@ private:
         float panTargetRight { 0.7071f };
         float onsetMix { 0.0f };
         float onsetMixStep { 1.0f };
+        float lastLipSource { 0.0f };
         std::array<float, formantCount> formantHz {};
         std::array<Resonator, formantCount> tract {};
         std::array<Resonator, 2> early {};
@@ -293,6 +294,8 @@ private:
     float aspirationPreEmphasis_ { 0.0f };
     float aspirationScale_ { 1.0f };
     float controlGlide_ { 0.0f };
+    std::array<float, formantCount> formantGlide_ {};
+    float lipZeroCoefficient_ { 0.0f };
     float jitterCoefficient_ { 0.0f };
     float jitterSlowCoefficient_ { 0.0f };
     // A noise-driven one-pole's output variance is c / (2 - c), so once c comes

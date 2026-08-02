@@ -1633,6 +1633,25 @@ void testRoughPerformance()
     expect (realTimeRatio < 20.0,
             "12-singer render exceeded the 20x-real-time regression guardrail");
 }
+
+void testSingerFormantAndLipZero()
+{
+    constexpr auto sampleRate = 48000.0;
+    vocalor::VoiceEngine engine;
+    engine.prepare(sampleRate, blockSize);
+    engine.reset();
+
+    auto parameters = makeParameters(0, 0, 0, 0);
+    parameters.tension = 0.90f;
+    engine.setParameters(parameters);
+    engine.noteOn(60, 0.85f);
+
+    const auto metrics = render(engine, static_cast<int>(sampleRate * 0.4));
+    expect(metrics.finite && metrics.rms() > 1.0e-6,
+           "Singer's Formant tension render produced no usable audio");
+    expect(metrics.peak < 16.0,
+           "Singer's Formant tension render exceeded amplitude guardrail");
+}
 } // namespace
 
 int main()
@@ -1652,6 +1671,7 @@ int main()
     testParallelFormantBank();
     testEnsembleSizeIsExact();
     testTractCoefficientSmoothing();
+    testSingerFormantAndLipZero();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();
