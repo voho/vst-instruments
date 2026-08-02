@@ -38,8 +38,9 @@ constexpr Placement placements[controlCount] = {
     { parameters::benderLfo,   "LFO",      ControlKind::Slider, 1, 2, 0, 1, -1, 0 },
     { parameters::portamento,  "PORTA",    ControlKind::Slider, 1, 3, 0, 1, -1, 0 },
 
-    // KEY MODE. Two independent latching buttons, exactly as on the panel being
-    // modelled: both down is unison, and there is no third button.
+    // MODE. Two independent latching buttons, exactly as on the panel being
+    // modelled: both down is unison, and there is no third button. Each button
+    // prints its own legend -- POLY 1 and POLY 2 -- inside itself.
     { parameters::poly1,       "POLY 1",   ControlKind::Toggle, 2, 0, 0, 2, -1, 0, 2 },
     { parameters::poly2,       "POLY 2",   ControlKind::Toggle, 2, 0, 1, 2, -1, 0, 2 },
 
@@ -50,15 +51,18 @@ constexpr Placement placements[controlCount] = {
     // DCO
     { parameters::dcoLfo,      "LFO",      ControlKind::Slider, 4, 0, 0, 1, -1, 0 },
     { parameters::pwm,         "PWM",      ControlKind::Slider, 4, 1, 0, 1, -1, 0 },
-    { parameters::pwmMode,     "LFO",      ControlKind::Radio,  4, 2, 0, 2,  1, 0 },
-    { parameters::pwmMode,     "MAN",      ControlKind::Radio,  4, 2, 1, 2,  1, 1 },
-    { parameters::range,       "16'",      ControlKind::Radio,  4, 3, 0, 3,  2, 0 },
-    { parameters::range,       "8'",       ControlKind::Radio,  4, 3, 1, 3,  2, 1 },
-    { parameters::range,       "4'",       ControlKind::Radio,  4, 3, 2, 3,  2, 2 },
-    { parameters::saw,         "SAW",      ControlKind::Toggle, 4, 4, 0, 2, -1, 0, 2 },
-    { parameters::pulse,       "PULSE",    ControlKind::Toggle, 4, 4, 1, 2, -1, 0, 2 },
-    { parameters::sub,         "SUB",      ControlKind::Slider, 4, 6, 0, 1, -1, 0 },
-    { parameters::noise,       "NOISE",    ControlKind::Slider, 4, 7, 0, 1, -1, 0 },
+    // The PWM source pair spans two slots like the other stacks: at one slot
+    // its legends had to shrink to 8.5pt beside neighbours at 12, which reads
+    // as a defect even though it is legible.
+    { parameters::pwmMode,     "LFO",      ControlKind::Radio,  4, 2, 0, 2,  1, 0, 2 },
+    { parameters::pwmMode,     "MAN",      ControlKind::Radio,  4, 2, 1, 2,  1, 1, 2 },
+    { parameters::range,       "16'",      ControlKind::Radio,  4, 4, 0, 3,  2, 0 },
+    { parameters::range,       "8'",       ControlKind::Radio,  4, 4, 1, 3,  2, 1 },
+    { parameters::range,       "4'",       ControlKind::Radio,  4, 4, 2, 3,  2, 2 },
+    { parameters::saw,         "SAW",      ControlKind::Toggle, 4, 5, 0, 2, -1, 0, 2 },
+    { parameters::pulse,       "PULSE",    ControlKind::Toggle, 4, 5, 1, 2, -1, 0, 2 },
+    { parameters::sub,         "SUB",      ControlKind::Slider, 4, 7, 0, 1, -1, 0 },
+    { parameters::noise,       "NOISE",    ControlKind::Slider, 4, 8, 0, 1, -1, 0 },
 
     // HPF
     { parameters::highPass,    "HPF",      ControlKind::Steps,  5, 0, 0, 1, -1, 0 },
@@ -102,14 +106,15 @@ Layout buildLayout() noexcept
 
     struct SectionSpec { const char* name; Accent accent; int slots; };
     // Slot counts follow the widest legend each section has to print, not the
-    // number of controls in it: KEY MODE holds two buttons but needs the width
-    // of "POLY 1", and its header needs the width of "KEY MODE".
+    // number of controls in it: MODE holds two buttons but needs the width of
+    // "POLY 1". The header is "MODE" rather than "KEY MODE" because the longer
+    // form did not fit the section its two buttons justify.
     constexpr SectionSpec specs[sectionCount] = {
         { "VOLUME",   Accent::Cyan,    2 },
         { "BENDER",   Accent::Magenta, 4 },
-        { "KEY MODE", Accent::Cyan,    2 },
+        { "MODE",     Accent::Cyan,    2 },
         { "LFO",      Accent::Magenta, 2 },
-        { "DCO",      Accent::Cyan,    8 },
+        { "DCO",      Accent::Cyan,    9 },
         { "HPF",      Accent::Magenta, 1 },
         { "VCF",      Accent::Cyan,    6 },
         { "VCA",      Accent::Magenta, 3 },

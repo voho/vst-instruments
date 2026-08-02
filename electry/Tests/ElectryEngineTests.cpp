@@ -4313,18 +4313,34 @@ void testCpuGuardrail()
 #endif
     expect(worstCase < ceiling,
            "eight-string render exceeded the portable CPU ceiling");
-    // The default configuration skips the unselected pickup chain and runs one
-    // shared output chain instead of two, which must show up as real work
-    // removed rather than as a claim in the documentation. What that work
-    // measures on a shared runner is only a few per cent of the render -- CI
-    // has recorded the genuine saving as low as 4.8% -- so the threshold
-    // asserts the difference is real and the right way round rather than
-    // asserting its size: a regression that made the default as expensive as
-    // the worst case still fails it.
-    expect(defaultCase < worstCase * 0.97,
-           "the default configuration is not measurably cheaper than the "
-           "worst case (" + std::to_string(defaultCase) + "x vs "
-               + std::to_string(worstCase) + "x)");
+    expect(defaultCase < ceiling,
+           "default-configuration render exceeded the portable CPU ceiling");
+
+    // The default configuration is cheaper than the worst case, and it is
+    // deliberately not asserted here. It used to be, as `defaultCase <
+    // worstCase * 0.97`, and that assertion was flaky: the saving it looks for
+    // is a few per cent of the render, CI has measured it as low as 1.3%, and
+    // that is smaller than the run-to-run spread of a wall clock on a shared
+    // runner. Interleaving the two configurations and keeping each one's
+    // fastest sample -- which is what the loop above does, and is the right
+    // thing to do -- narrows that spread but cannot get underneath it. No
+    // threshold makes a timing comparison both sensitive to a 1% difference
+    // and reliable on hardware this project does not control.
+    //
+    // Nothing is lost by dropping it, because the claim underneath it is
+    // structural rather than statistical: the default skips the unselected
+    // pickup chain and runs one shared output chain instead of two.
+    // testPickupCullingAndChannelLinking asserts exactly that, directly and
+    // deterministically, by reading the engine's own culling and link flags for
+    // every selector position. A regression that made the default do the worst
+    // case's work fails there, on the first run, on any machine.
+    //
+    // What is left here is what a CPU guardrail is actually for: a runaway
+    // ceiling. That is a threshold a wall clock can carry, because it is orders
+    // of magnitude away from the noise rather than inside it.
+    std::cout << "  (the default/worst-case ratio is reported, not asserted; "
+              << "the culling it reflects is asserted structurally in "
+              << "testPickupCullingAndChannelLinking)\n";
 
     // A full-throw wheel glide on the same chord must not be a hidden second
     // worst case. Re-fitting the dispersion grid on every control tick of the

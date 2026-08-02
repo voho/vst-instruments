@@ -18,6 +18,13 @@ inline constexpr auto benderDco    = "benderDco";
 inline constexpr auto benderVcf    = "benderVcf";
 inline constexpr auto benderLfo    = "benderLfo";
 inline constexpr auto portamento   = "portamento";
+// Retained from the release before the paired switches were split. A host
+// stores automation against a parameter *id*, so removing these would orphan
+// any lane written for them -- the state migration only translates stored
+// values. They forward to the pairs and are deliberately not on the panel.
+inline constexpr auto legacyKeyMode = "keyMode";
+inline constexpr auto legacyChorus  = "chorus";
+
 // The two assign-mode buttons. Both down selects unison; there is no third
 // button, and no single "key mode" parameter, because the panel has neither.
 inline constexpr auto poly1        = "poly1";
@@ -103,7 +110,12 @@ inline constexpr float labelHeight = 22.0f;
 inline constexpr float sectionBottom = 300.0f;
 inline constexpr float utilityTop = 310.0f;
 inline constexpr float utilityHeight = 46.0f;
-inline constexpr float panelHeight = 364.0f;
+// The patch bar. The hardware picks patches from a numeric keypad that has no
+// equivalent here, so the bank gets a row of its own rather than being squeezed
+// into the utility strip.
+inline constexpr float presetTop = 358.0f;
+inline constexpr float presetHeight = 24.0f;
+inline constexpr float panelHeight = 392.0f;
 inline constexpr float keyboardHeight = 92.0f;
 inline constexpr float controlInset = 5.0f;
 inline constexpr float stackGap = 6.0f;

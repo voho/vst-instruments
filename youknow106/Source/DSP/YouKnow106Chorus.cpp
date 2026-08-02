@@ -16,16 +16,18 @@ namespace
 // corner frequency, so it belongs in the plain recursion and not in the
 // prewarped one.
 //
-// The retention is set so the aggregate droop at the clock's own Nyquist is
-// 2 dB, the middle of the 1-4 dB the per-stage-loss literature implies for a
-// 256-stage low-noise line (droop = e^(-2 * stages * epsilon) with epsilon in
-// the 1e-4..1e-3 band). For a one-pole advanced once per clock edge the
-// Nyquist gain is a / (2 - a), so a = 2 d / (1 + d) with d = 10^(-2/20).
-// A retention far below this -- an earlier revision used 0.34 -- parks a
-// lowpass at ~0.07 of the clock rate, i.e. a 1.6-5.2 kHz corner *swept by the
-// chorus modulation*, several times darker than either published account of
-// this circuit's wet path allows.
-constexpr float transferNyquistDroop = 0.794328f; // -2 dB
+// The retention is set from the part's own datasheet rather than from the
+// per-stage-loss literature: the MN3009 is specified at -3 dB at 12 kHz with a
+// 40 kHz clock, 256 stages. For a one-pole advanced once per clock edge the
+// Nyquist gain is a / (2 - a), and the retention that puts the half-power point
+// at 0.3 of the clock rate is 0.7725, which is a Nyquist droop of -4.0 dB.
+//
+// That is the dark end of the 1-4 dB band the literature implies, and it
+// supersedes the -2 dB an earlier revision took from the middle of that band:
+// a measured figure for this part beats a range inferred for the class. It is
+// still far brighter than the 0.34 retention used before either -- that parked
+// the corner near 2.7 kHz and swept it with the modulation.
+constexpr float transferNyquistDroop = 0.629328f; // -4.0 dB, from -3 dB at 12 kHz
 constexpr float transferSmear =
     2.0f * transferNyquistDroop / (1.0f + transferNyquistDroop);
 

@@ -77,6 +77,14 @@ private:
     void timerCallback() override;
     void buildPanelControls();
     void buildUtilityStrip();
+    void buildPresetBar();
+    // Loads a program and brings the bar's own display back in step with it.
+    void selectProgram (int index);
+    // Steps by one, stopping at the ends rather than wrapping: a bank has a
+    // first and a last patch and arriving back at INIT from the end is not what
+    // a nudge of the button means.
+    void stepProgram (int delta);
+    void refreshPresetBar();
     void attachSlider (juce::Slider&, const char* parameterId);
     void attachButton (juce::Button&, const char* parameterId);
     void attachRadio (juce::Button&, const char* parameterId, int value);
@@ -103,8 +111,8 @@ private:
 
     juce::TextButton panicButton { "PANIC" };
     juce::TextButton hqButton { "HQ" };
-    juce::TextButton randomize10Button { "10%" };
-    juce::TextButton randomize100Button { "100%" };
+    juce::TextButton randomize10Button { "RANDOMIZE 10%" };
+    juce::TextButton randomize100Button { "RANDOMIZE 100%" };
     // Sends the current panel out as a patch dump the hardware accepts.
     juce::TextButton sendSysExButton { "SEND" };
     juce::Slider transposeSlider;
@@ -114,6 +122,18 @@ private:
     juce::Slider chorusNoiseSlider;
     juce::Slider polyphonySlider;
     std::array<juce::Label, 6> utilityLabels {};
+
+    // The patch bar. The programs live on the processor -- the host addresses
+    // them too -- so this only names them and asks it to switch.
+    juce::Label presetLabel;
+    juce::ComboBox presetBox;
+    juce::TextButton presetPrevButton { "<" };
+    juce::TextButton presetNextButton { ">" };
+    // Lit while the panel no longer matches the patch that was loaded, which is
+    // the only way to tell a recalled patch from an edited one.
+    juce::Label presetEditedLabel;
+    int shownProgram = -1;
+    bool shownEdited = false;
 
     juce::MidiKeyboardComponent keyboard;
 
