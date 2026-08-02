@@ -633,17 +633,20 @@ void YouKnow106AudioProcessorEditor::resized()
     }
 
     const float buttonX = stripLeft + 3.0f * cellWidth + 8.0f;
-    const float buttonWidth = juce::jmax (34.0f, (stripWidth - 3.0f * cellWidth - 16.0f) / 2.0f - 4.0f);
+    // Three columns, not two: SEND joined the grid and a third column laid
+    // out at the old width ran straight over the status display.
+    const float buttonWidth =
+        juce::jmax (30.0f, (stripWidth - 3.0f * cellWidth - 16.0f) / 3.0f - 5.0f);
     hqButton.setBounds (scaled (buttonX, panel::utilityTop + 2.0f,
                                 buttonWidth, 18.0f).toNearestInt());
-    panicButton.setBounds (scaled (buttonX + buttonWidth + 6.0f, panel::utilityTop + 2.0f,
+    panicButton.setBounds (scaled (buttonX + buttonWidth + 5.0f, panel::utilityTop + 2.0f,
                                    buttonWidth, 18.0f).toNearestInt());
     randomize10Button.setBounds (scaled (buttonX, panel::utilityTop + 24.0f,
                                          buttonWidth, 18.0f).toNearestInt());
-    sendSysExButton.setBounds (scaled (buttonX + 2.0f * (buttonWidth + 6.0f),
+    sendSysExButton.setBounds (scaled (buttonX + 2.0f * (buttonWidth + 5.0f),
                                       panel::utilityTop + 2.0f,
                                       buttonWidth, 18.0f).toNearestInt());
-    randomize100Button.setBounds (scaled (buttonX + buttonWidth + 6.0f,
+    randomize100Button.setBounds (scaled (buttonX + buttonWidth + 5.0f,
                                           panel::utilityTop + 24.0f,
                                           buttonWidth, 18.0f).toNearestInt());
 

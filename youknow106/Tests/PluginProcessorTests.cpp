@@ -485,7 +485,7 @@ void testBusLayoutsAndTail()
     YouKnow106AudioProcessor processor;
     expect (processor.getTailLengthSeconds() >= 12.0,
             "the reported tail is shorter than the longest release");
-    expect (processor.acceptsMidi() && ! processor.producesMidi(),
+    expect (processor.acceptsMidi() && processor.producesMidi(),
             "the plug-in does not advertise itself as an instrument");
 }
 
@@ -709,6 +709,8 @@ void testRequestedDumpLeavesThroughTheMidiOutput()
             "the emitted dump does not carry the current panel");
     expect (sent.chorus == ChorusMode::Two, "the emitted dump lost the chorus mode");
 
+    expect (channel == 0, "a dump with no device seen did not default to channel 1");
+
     // The request is one-shot: it must not keep sending every block.
     midi.clear();
     buffer.clear();
@@ -791,6 +793,20 @@ void testFactoryProgramsLoad()
     expect (std::abs (parameterValue (processor, parameters::portamento) - 0.33f)
                 < 1.0e-4f,
             "loading a patch moved portamento, which is not part of a patch");
+
+    // INIT restores the patch, not the instrument: the controls a patch does
+    // not carry stay where the player put them, as they do for every other
+    // program selection.
+    setParameterValue (processor, parameters::volume, 0.42f);
+    setParameterValue (processor, parameters::transpose, 5.0f);
+    processor.setCurrentProgram (0);
+    expect (std::abs (parameterValue (processor, parameters::volume) - 0.42f) < 1.0e-4f,
+            "selecting INIT reset the volume, which is not part of a patch");
+    expect (std::abs (parameterValue (processor, parameters::transpose) - 5.0f) < 1.0e-4f,
+            "selecting INIT reset the transpose, which is not part of a patch");
+    expect (std::abs (parameterValue (processor, parameters::cutoff) - 0.62f) < 0.01f,
+            "selecting INIT did not restore the default patch");
+    processor.setCurrentProgram (2);
 
     processor.setCurrentProgram (-1);
     expect (processor.getCurrentProgram() == 2,

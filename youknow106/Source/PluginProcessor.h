@@ -31,7 +31,10 @@ public:
 
     const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return true; }
-    bool producesMidi() const override { return false; }
+    // The instrument sends nothing of its own, but a requested patch dump
+    // leaves on the MIDI output, and a host that asks the processor rather
+    // than the wrapper metadata has to be told so or it may not route it.
+    bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }
     // The longest release the panel can ask for is 12 s, the voice tolerance
     // can stretch that by a few per cent, and the delay lines and the output
@@ -76,10 +79,7 @@ public:
     // Asks for the current panel to be sent out as a patch dump on the next
     // block. The message leaves through the plug-in's MIDI output, which is
     // the only route a host actually exposes to a cable.
-    void requestSysExDump() noexcept
-    {
-        sysExDumpRequested.store (true, std::memory_order_release);
-    }
+    void requestSysExDump();
 
     int getActiveVoiceCount() const noexcept
     {
@@ -217,6 +217,13 @@ private:
 
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> sysExDumpRequested { false };
+    // The dump is assembled here, on the message thread, so the audio callback
+    // only has to copy fixed bytes: building a juce::MidiMessage allocates.
+    std::array<std::uint8_t, youknow106::sysex::patchMessageBytes> sysExDumpBytes {};
+    std::atomic<int> sysExDumpSize { 0 };
+    // The channel the connected instrument last spoke on. A dump addressed to
+    // channel 1 is ignored by hardware set to anything else.
+    std::atomic<int> sysExChannel { 0 };
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<int> displayVoiceMask { 0 };

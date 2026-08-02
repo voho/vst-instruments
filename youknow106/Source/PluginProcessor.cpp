@@ -586,6 +586,7 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
             if (sysex::readPatchMessage (raw, length, incoming, channel))
             {
+                sysExChannel.store (channel, std::memory_order_relaxed);
                 // A whole patch. The tone bytes are the message's own
                 // representation, so they are handed over as they arrived.
                 SysExEvent event;
@@ -596,6 +597,7 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             else if (sysex::readParameterMessage (raw, length, parameter, value,
                                                   channel))
             {
+                sysExChannel.store (channel, std::memory_order_relaxed);
                 // One control moved on the hardware. Only its number and value
                 // cross over: the panel it applies to is read on the message
                 // thread, so nothing else is quantised and no stale mirror of
@@ -649,9 +651,9 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // own MIDI output -- the only route a host actually exposes to a cable.
     if (sendDump)
     {
-        const auto dump = currentPatchAsSysEx (0);
-        if (dump.getRawDataSize() > 0)
-            midiMessages.addEvent (dump, 0);
+        const auto size = sysExDumpSize.load (std::memory_order_acquire);
+        if (size > 0)
+            midiMessages.addEvent (sysExDumpBytes.data(), size, 0);
     }
 
     activeVoiceCount.store (engine.getActiveVoiceCount(), std::memory_order_relaxed);
@@ -918,11 +920,11 @@ void YouKnow106AudioProcessor::setCurrentProgram (int index)
     currentProgram = index;
     if (index == 0)
     {
-        // Back to the init patch: every parameter to its own default.
-        for (const auto& pointer : parameterPointers)
-            if (pointer.id != nullptr)
-                if (auto* parameter = parameters.getParameter (pointer.id))
-                    parameter->setValueNotifyingHost (parameter->getDefaultValue());
+        // A default patch, applied the same way a factory one is. Resetting
+        // every parameter instead would make INIT the only selection that also
+        // threw away volume, transpose, tuning, the assign mode, polyphony,
+        // calibration and the quality setting -- none of which a patch carries.
+        applyPatch (youknow106::sysex::Patch {});
         return;
     }
     const auto& bank = youknow106::presets::factoryBank();
@@ -1058,6 +1060,18 @@ void YouKnow106AudioProcessor::stageSysExEvent (const SysExEvent& event) noexcep
     sysExWriteIndex.store ((index + 1) % sysExQueueSlots, std::memory_order_relaxed);
     // Deliberately no wake-up call from here: the consumer polls. Anything that
     // signals the message thread takes a lock, and this is the audio callback.
+}
+
+// Message thread. The bytes are assembled here so the audio callback only has
+// to copy them: building a juce::MidiMessage allocates owned storage, which is
+// not something a real-time callback should be doing.
+void YouKnow106AudioProcessor::requestSysExDump()
+{
+    const auto written = youknow106::sysex::writePatchMessage (
+        currentPatch(), sysExChannel.load (std::memory_order_relaxed),
+        sysExDumpBytes.data(), sysExDumpBytes.size());
+    sysExDumpSize.store (static_cast<int> (written), std::memory_order_release);
+    sysExDumpRequested.store (written > 0, std::memory_order_release);
 }
 
 void YouKnow106AudioProcessor::timerCallback()
