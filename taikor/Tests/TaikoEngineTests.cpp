@@ -2150,6 +2150,54 @@ void testControlEndpointsAndGestures()
                 "a fully raised wheel must bend a ringing stroke by about two semitones");
     }
 
+    // A panic snaps the wheel to wherever it is actually being held, because
+    // there is nothing left for a gesture in transit to be continuous with. The
+    // wheel is geometry, so that snap has to take the solved drum with it: if a
+    // note arrives in the same block - which is exactly what a host doing an
+    // all-notes-off and then playing looks like - it would otherwise be built
+    // on the drum as it stood before the wheel moved, and nothing afterwards
+    // corrects it, because the voice records the tuning it was told it had.
+    {
+        auto tuned = parameters;
+        tuned.humanise = 0.0f;
+        tuned.tensionModulation = 0.0f;
+        tuned.headDiameter = 0.30f;
+
+        const auto pitchOf = [&tuned] (bool bendBeforePanic)
+        {
+            taikor::TaikoEngine engine;
+            engine.setParameters (tuned);
+            engine.prepare (48000.0, defaultBlockSize);
+
+            if (bendBeforePanic)
+            {
+                // Settle at centre first, so the cache is valid and solved for
+                // no bend at all when the wheel moves.
+                render (engine, 5120);
+                engine.setPitchBend (1.0f);
+                engine.allSoundsOff();
+            }
+            else
+            {
+                engine.setPitchBend (1.0f);
+                render (engine, 51200);
+                engine.allSoundsOff();
+            }
+
+            engine.trigger (taikor::Articulation::Don, 0, 0.95f);
+            const auto mono = render (engine, 51200).mono();
+            return dominantFrequency (mono, 48000.0, 180.0, 320.0, 0.05, 24000u);
+        };
+
+        const auto settled = pitchOf (false);
+        const auto snapped = pitchOf (true);
+        expect (settled > 0.0 && snapped > 0.0,
+                "the panic-then-play probe produced no pitch to measure");
+        expect (std::abs (12.0 * std::log2 (snapped / std::max (1.0, settled))) < 0.1,
+                "a stroke played straight after a panic must be built on the drum "
+                "the wheel is asking for, not the one it was asking for before");
+    }
+
     // The attack glide stretches the head. It must not stretch the wooden body
     // the head is nailed to: a stick-on-stick stroke drives no membrane mode at
     // all, so Tension Mod has nothing it could legitimately change there.

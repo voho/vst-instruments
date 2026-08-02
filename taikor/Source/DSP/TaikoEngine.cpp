@@ -721,6 +721,14 @@ void TaikoEngine::allSoundsOff() noexcept
     // which removes the lag, not the gesture: a hand held down stays down.
     handDamping_ = handDampingTarget_;
     pitchBend_ = pitchBendTarget_;
+    // The wheel is geometry, so moving it here has to invalidate the drum that
+    // geometry was solved for. The render loop notices a bend that has drifted
+    // from the cache and rebuilds, but a panic moves it between blocks - and a
+    // note arriving in the same block as the panic would otherwise be built on
+    // the drum as it stood at whatever intermediate value the smoother had
+    // reached, with tuningAtStrike recording the snapped target, so nothing
+    // afterwards would ever correct it.
+    drumCacheValid_ = false;
 
     visualLevel_ = 0.0f;
     visualStrikeLevel_.store (0.0f, std::memory_order_relaxed);

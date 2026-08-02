@@ -31,11 +31,14 @@ The project builds three products from one JUCE codebase:
 
 ## How it is played
 
-**Within an octave, the twelve notes are twelve different strokes. Between
-octaves, the drum itself changes: higher octave, higher drum.**
+**Within an octave, eight notes are eight different strokes, one per way of
+hitting the drum. Between octaves, the drum itself changes: higher octave,
+higher drum.**
 
 That is the whole mapping. There are no keyswitches and no articulation menu —
-the stroke is the pitch class and the drum is the octave.
+the stroke is the pitch class and the drum is the octave. The octave stays
+twelve semitones, because that is what has to line up with the keyboard, so the
+four keys above the last stroke carry nothing and do not sound.
 
 | Note | Stroke | Spoken as | Where the stick lands | What it is |
 | --- | --- | --- | ---: | --- |
@@ -429,7 +432,7 @@ material and stroke is computed.
 
 ## Interface
 
-A resizable editor built around a drawing of the head itself. The twelve stroke
+A resizable editor built around a drawing of the head itself. The eight stroke
 pads sit across the top with the note each one currently answers to; the octave
 strip below selects the drum. The head display shows where the last stroke
 landed, where the close pair is standing, and what the model says the drum is —
