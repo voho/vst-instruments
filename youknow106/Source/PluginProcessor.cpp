@@ -266,21 +266,14 @@ YouKnow106AudioProcessor::createParameterLayout()
     // Two independent latching buttons rather than one three-way choice: the
     // panel has no unison button, and holding both POLY buttons down is how the
     // instrument is put into unison.
-    // Bridges for the ids the previous release published. A host's automation
-    // lane addresses an id, so dropping them would silently stop controlling
-    // the sound; the migration covers stored values only. Moving one forwards
-    // to the pair that replaced it.
+    // The previous release's key-mode id, in the slot it occupied then. An
+    // Audio Unit binds automation by parameter *index*, so putting a restored
+    // id anywhere else would bind an old lane to the wrong control -- worse
+    // than leaving it dead. Everything that existed before keeps its position
+    // and version hint; the switches that replaced it are appended at the end.
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { legacyKeyMode, 1 }, "Key Mode (legacy)",
         juce::StringArray { "Poly 1", "Poly 2", "Unison" }, 0));
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { legacyChorus, 1 }, "Chorus (legacy)",
-        juce::StringArray { "Off", "I", "II" }, 0));
-
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { poly1, 1 }, "Poly 1", true));
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { poly2, 1 }, "Poly 2", false));
 
     layout.add (travel (lfoRate, "LFO Rate", 0.42f, lfoRateAttributes()));
     layout.add (travel (lfoDelay, "LFO Delay", 0.0f, lfoDelayAttributes()));
@@ -323,12 +316,10 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (travel (sustain, "Sustain", 0.70f, percentAttributes()));
     layout.add (travel (release, "Release", 0.30f, decayAttributes()));
 
-    // Likewise two independent buttons. Neither down is off; both down is the
-    // faster I+II setting, which the hardware reaches the same way.
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { chorusI, 1 }, "Chorus I", false));
-    layout.add (std::make_unique<juce::AudioParameterBool> (
-        juce::ParameterID { chorusII, 1 }, "Chorus II", false));
+    // Likewise in its historical slot, after the envelope.
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { legacyChorus, 1 }, "Chorus (legacy)",
+        juce::StringArray { "Off", "I", "II" }, 0));
 
     // --- Controls the modelled instrument does not have -------------------
     layout.add (std::make_unique<juce::AudioParameterInt> (
@@ -352,6 +343,17 @@ YouKnow106AudioProcessor::createParameterLayout()
     // change until it has been quiet long enough for that to be inaudible. An
     // automation point would therefore not take effect where it was written --
     // or at all, if it were automated back before the engine went idle.
+    // Appended after every pre-existing parameter, with a later version hint,
+    // so no historical Audio Unit index moves.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { poly1, 2 }, "Poly 1", true));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { poly2, 2 }, "Poly 2", false));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { chorusI, 2 }, "Chorus I", false));
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { chorusII, 2 }, "Chorus II", false));
+
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { hq, 1 }, "HQ", true,
         juce::AudioParameterBoolAttributes()
@@ -379,12 +381,12 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
     // Size deduced, not restated: hard-coding it is what silently broke when
     // the paired switches each turned into two parameters.
     const auto ids = std::to_array<const char*> ({
-        volume, benderDco, benderVcf, benderLfo, portamento,
-        legacyKeyMode, legacyChorus, poly1, poly2,
+        volume, benderDco, benderVcf, benderLfo, portamento, legacyKeyMode,
         lfoRate, lfoDelay, dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
-        vcaMode, vcaLevel, attack, decay, sustain, release, chorusI, chorusII,
-        transpose, masterTune, velocity, calibration, chorusNoise, polyphony, hq
+        vcaMode, vcaLevel, attack, decay, sustain, release, legacyChorus,
+        transpose, masterTune, velocity, calibration, chorusNoise, polyphony,
+        poly1, poly2, chorusI, chorusII, hq
     });
 
     // The pointer table has to be able to hold every id. Growing the list above
