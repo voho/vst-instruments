@@ -37,22 +37,35 @@ octaves, the drum itself changes: higher octave, higher drum.**
 That is the whole mapping. There are no keyswitches and no articulation menu —
 the stroke is the pitch class and the drum is the octave.
 
-| Note | Stroke | Spoken as | What it is |
-| --- | --- | --- | --- |
-| C | Don | *don* | Full open stroke, a hand's width in from the middle |
-| C♯ | Do | *do* | Open stroke a little off centre, quicker than a Don |
-| D | Tsu | *tsu* | Damped centre, the free hand resting on the head |
-| D♯ | Su | *su* | Ghost stroke, barely sounded |
-| E | Don Rim | *don* | Head and rim struck together for a rim shot |
-| F | Ka | *ka* | On the edge of the head, near the tacks |
-| F♯ | Kara | *kara* | Extreme edge, thin and cutting |
-| G | Ko | *ko* | Light tap at mid radius |
-| G♯ | Katsu | *katsu* | Bachi on the wooden shell |
-| A | Buzz | *zu* | Press roll: the stick stays on the head |
-| A♯ | Flam | *doko* | Grace note into a full stroke |
-| B | Bachi | *kata* | Stick against stick, with no drum at all |
+| Note | Stroke | Spoken as | Where the stick lands | What it is |
+| --- | --- | --- | ---: | --- |
+| C | Don | *don* | 0.15 | Full open stroke, a hand's width in from the middle |
+| C♯ | Tsu | *tsu* | 0.20 | Damped centre, the free hand resting on the head |
+| D | Su | *su* | 0.46 | Ghost stroke, light and well out from the middle |
+| D♯ | Don Rim | *don* | 0.97 | Head and hoop struck together for a rim shot |
+| E | Ka | *ka* | 0.91 | Out on the head near the tacks, thin and cutting |
+| F | Katsu | *katsu* | 0.99 | Bachi on the wooden shell |
+| F♯ | Buzz | *zu* | 0.32 | Press roll: the stick stays on the head |
+| G | Bachi | *kata* | — | Stick against stick, with no drum at all |
 
-These are not twelve presets. Each one is a strike position, a contact stiffness
+Eight, and each of them is a different thing done to the drum rather than a
+different amount of the same thing. There were twelve, and four were duplicates:
+measured as band levels normalised to each stroke's own loudest band, Do sat
+1.3 dB from Don, Kara 1.3 dB from Don Rim, Flam 1.8 dB from Do and Ko 3.0 dB
+from Buzz — differences no listener can name, on keys a player has to remember.
+The closest pair now is Don and Tsu at 2.9 dB, and those are the same strike
+with and without a hand on the head, so they part company in time instead:
+Tsu's sustain is a fifth of Don's.
+
+Where the stick lands is why. It decides which modes the strike can reach at
+all, so two strokes a few centimetres apart are the same stroke however
+differently they are labelled — and the old set had three pairs inside four
+centimetres of each other. Ka and Don Rim are the exception that proves it: they
+sit close together out by the tacks and are still nothing like one another,
+because one is on the head and the other is on the head and the hoop at once.
+A difference of mechanism beats any amount of distance.
+
+These are not eight presets. Each one is a strike position, a contact stiffness
 and a mute state fed into the same model. A Ka is bright because striking the
 head at 0.78 of its radius drives the modes that have a circumferential order and
 barely moves the axisymmetric ones — which is exactly why it is bright on a real
@@ -387,7 +400,7 @@ those modes hardest — come out of phase.
 
 Up to and including the default 50 % width — everything the microphones actually
 captured — no stroke ever inverts, anywhere in the microphone range: the worst
-case across all twelve strokes, both microphone controls fully swept, is a
+case across all eight strokes, both microphone controls fully swept, is a
 correlation of about +0.08, which is a decorrelated pair rather than an
 out-of-phase one. The regression suite sweeps that whole space. Past 50 % the
 width control exaggerates the side signal beyond the measurement, and with the
@@ -465,7 +478,7 @@ ctest --test-dir build-dsp --output-on-failure
 ```
 
 The JUCE-free suite covers the stroke vocabulary and MIDI mapping, the octave
-contract at every Octave Body setting, all twelve strokes at five sample rates,
+contract at every Octave Body setting, all eight strokes at five sample rates,
 sample-rate and block-size invariance, bit-exact determinism, the velocity and
 contact-time laws, every physical control's effect on the solved drum *and* on
 the rendered audio, the close pair's decorrelation and mono compatibility, tail

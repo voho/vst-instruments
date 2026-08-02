@@ -207,28 +207,20 @@ constexpr float directCalibration = 0.00478f;
 const std::array<ArticulationMetadata, articulationCount> articulationTable {{
     { Articulation::Don, "Don", "don", "don",
       "Full open stroke, a hand's width in from the middle", 0 },
-    { Articulation::Do, "Do", "do", "do",
-      "Open stroke a little off centre, quicker than a Don", 1 },
     { Articulation::Tsu, "Tsu", "tsu", "tsu",
-      "Damped centre, the free hand resting on the head", 2 },
+      "Damped centre, the free hand resting on the head", 1 },
     { Articulation::Su, "Su", "su", "su",
-      "Ghost stroke, barely sounded", 3 },
+      "Ghost stroke, light and well out from the middle", 2 },
     { Articulation::DonRim, "Don Rim", "donrim", "don",
-      "Head and rim struck together for a rim shot", 4 },
+      "Head and hoop struck together for a rim shot", 3 },
     { Articulation::Ka, "Ka", "ka", "ka",
-      "On the edge of the head, near the tacks", 5 },
-    { Articulation::Kara, "Kara", "kara", "kara",
-      "Extreme edge, thin and cutting", 6 },
-    { Articulation::Ko, "Ko", "ko", "ko",
-      "Light tap at mid radius", 7 },
+      "Out on the head near the tacks, thin and cutting", 4 },
     { Articulation::Katsu, "Katsu", "katsu", "katsu",
-      "Bachi on the wooden shell", 8 },
+      "Bachi on the wooden shell", 5 },
     { Articulation::Buzz, "Buzz", "buzz", "zu",
-      "Press roll: the stick stays on the head", 9 },
-    { Articulation::Flam, "Flam", "flam", "doko",
-      "Grace note into a full stroke", 10 },
+      "Press roll: the stick stays on the head", 6 },
     { Articulation::Bachi, "Bachi", "bachi", "kata",
-      "Stick against stick, with no drum at all", 11 },
+      "Stick against stick, with no drum at all", 7 },
 }};
 } // namespace
 
@@ -252,7 +244,15 @@ std::optional<Articulation> articulationForMidiNote (int midiNote) noexcept
 {
     if (midiNote < lowestPlayableNote || midiNote > highestPlayableNote)
         return std::nullopt;
-    return static_cast<Articulation> (midiNote % 12);
+    // The octave is still twelve semitones, because the octave is what chooses
+    // the drum and that has to line up with the keyboard. There are eight
+    // strokes in it, so the top four keys of each octave are not strokes and do
+    // not sound. Better a gap a player learns once than four more keys that
+    // sound like ones they already have.
+    const auto pitchClass = midiNote % 12;
+    if (pitchClass >= static_cast<int> (articulationCount))
+        return std::nullopt;
+    return static_cast<Articulation> (pitchClass);
 }
 
 std::optional<int> octaveOffsetForMidiNote (int midiNote) noexcept
@@ -325,20 +325,29 @@ const TaikoEngine::StrikeProfile& TaikoEngine::strikeProfile (
     // hit its exact centre, and why players do not: a full Don lands a hand's
     // width in from the middle, close enough to keep the fundamental and far
     // enough out to wake the rest of the head.
+    //
+    // Eight strokes, spread deliberately. Where the stick lands decides which
+    // modes it can reach, so two strokes a few centimetres apart are the same
+    // stroke however differently they are labelled or levelled - and the set
+    // this replaced had three pairs sitting inside four centimetres of each
+    // other. The six that land on the drum now run 0.15, 0.20, 0.46, 0.84, 0.97
+    // and 0.99 of the radius.
+    //
+    // Ka and Don Rim are the exception that proves it: they sit close together
+    // out by the tacks and are still nothing like each other, because one is on
+    // the head and the other is on the head and the hoop at once. That is a
+    // difference of mechanism rather than of position, and it is worth more than
+    // any amount of radius.
     static const std::array<StrikeProfile, articulationCount> table {{
         // radius, hardness, membrane, shell, noise, level, mute,
         //   contacts, rim, shellFreq, shellDecay
         { 0.15f, 1.00f, 1.00f, 0.18f, 1.00f, 1.00f, 0.00f, 1, 0.00f, 1.0f, 1.0f },  // Don
-        { 0.24f, 0.94f, 0.96f, 0.16f, 0.95f, 0.90f, 0.00f, 1, 0.00f, 1.0f, 1.0f },  // Do
-        { 0.30f, 1.00f, 0.82f, 0.14f, 1.05f, 0.68f, 0.85f, 1, 0.00f, 1.0f, 1.0f },  // Tsu
-        { 0.34f, 0.86f, 0.55f, 0.10f, 1.30f, 0.30f, 0.35f, 1, 0.00f, 1.0f, 1.0f },  // Su
-        { 0.86f, 1.15f, 0.92f, 0.72f, 1.55f, 0.90f, 0.00f, 1, 0.80f, 1.0f, 0.85f }, // Don Rim
-        { 0.78f, 1.15f, 0.88f, 0.34f, 1.20f, 0.86f, 0.00f, 1, 0.18f, 1.0f, 1.0f },  // Ka
-        { 0.93f, 1.28f, 0.72f, 0.46f, 1.35f, 0.74f, 0.10f, 1, 0.34f, 1.0f, 1.0f },  // Kara
-        { 0.55f, 0.90f, 0.70f, 0.16f, 1.05f, 0.52f, 0.20f, 1, 0.00f, 1.0f, 1.0f },  // Ko
+        { 0.20f, 0.98f, 0.88f, 0.12f, 0.95f, 0.72f, 0.95f, 1, 0.00f, 1.0f, 1.0f },  // Tsu
+        { 0.46f, 0.78f, 0.46f, 0.08f, 1.50f, 0.24f, 0.18f, 1, 0.00f, 1.0f, 1.0f },  // Su
+        { 0.97f, 1.32f, 0.90f, 0.82f, 1.70f, 0.94f, 0.00f, 1, 0.95f, 1.0f, 0.78f }, // Don Rim
+        { 0.91f, 1.28f, 0.74f, 0.42f, 1.35f, 0.82f, 0.12f, 1, 0.30f, 1.0f, 1.0f },  // Ka
         { 0.99f, 1.30f, 0.06f, 0.86f, 1.45f, 0.70f, 0.00f, 1, 0.45f, 1.0f, 0.55f }, // Katsu
-        { 0.62f, 0.80f, 0.74f, 0.20f, 1.60f, 0.62f, 0.55f, 7, 0.00f, 1.0f, 1.0f },  // Buzz
-        { 0.17f, 1.00f, 1.00f, 0.20f, 1.05f, 1.00f, 0.00f, 2, 0.00f, 1.0f, 1.0f },  // Flam
+        { 0.32f, 0.68f, 0.90f, 0.14f, 1.55f, 0.58f, 0.78f, 11, 0.00f, 1.0f, 1.0f }, // Buzz
         // Bachi: two sticks, not the drum. usesDrumBody switches its resonant
         // bank over to the stick model, so the shell retune columns do not
         // apply to it and are left at unity.
@@ -1512,7 +1521,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         }
     }
 
-    // The wooden bank. For eleven of the twelve strokes this is the drum's own
+    // The wooden bank. For seven of the eight strokes this is the drum's own
     // shell: struck directly by a Katsu or a rim shot and picked up faintly the
     // rest of the time, because a head cannot move without the body it is
     // stretched over moving too. The Shell Resonance control scales how much of
@@ -1858,21 +1867,6 @@ void TaikoEngine::scheduleContacts (Voice& voice, const StrikeProfile& profile,
     {
         voice.contacts[0] = { 0u, lengthSamples, peakForce, peakForce * noiseLevel };
         voice.contactCount = 1;
-        return;
-    }
-
-    if (profile.contactCount == 2)
-    {
-        // A flam: a lighter grace note about 32 ms ahead of the full stroke.
-        const float graceOffset =
-            0.032f * (1.0f + 0.25f * signedUnitFromHash (seed) * applied_.humanise);
-        voice.contacts[0] = { 0u,
-                              std::max<std::uint32_t> (2u,
-                                  static_cast<std::uint32_t> (lengthSamples * 1.15f)),
-                              peakForce * 0.42f, peakForce * 0.42f * noiseLevel };
-        voice.contacts[1] = { static_cast<std::uint32_t> (graceOffset * rate),
-                              lengthSamples, peakForce, peakForce * noiseLevel };
-        voice.contactCount = 2;
         return;
     }
 

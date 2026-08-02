@@ -422,14 +422,22 @@ void testArticulationMetadataAndMidiMapping()
     expect (slugs.size() == taikor::articulationCount,
             "articulation slugs are not unique");
 
-    // The vocabulary is one octave: every pitch class is a different stroke,
-    // and the octave chooses the drum rather than the stroke.
+    // The vocabulary sits inside one octave: each pitch class up to the last
+    // stroke is a different stroke, the octave chooses the drum rather than the
+    // stroke, and the pitch classes past the last stroke carry nothing. The
+    // octave stays twelve semitones because that is what has to line up with
+    // the keyboard, so the gap is real and has to be empty - casting a pitch
+    // class straight to the enum would have let the top four keys of every
+    // octave play a Don.
     for (int note = taikor::lowestPlayableNote; note <= taikor::highestPlayableNote;
          ++note)
     {
         const auto articulation = taikor::articulationForMidiNote (note);
         const auto octave = taikor::octaveOffsetForMidiNote (note);
-        expect (articulation.has_value(), "playable note produced no articulation");
+        const bool carriesStroke =
+            note % 12 < static_cast<int> (taikor::articulationCount);
+        expect (articulation.has_value() == carriesStroke,
+                "a pitch class carries a stroke exactly when one is defined for it");
         expect (octave.has_value(), "playable note produced no octave");
         if (! articulation.has_value() || ! octave.has_value())
             continue;
@@ -465,7 +473,7 @@ void testArticulationMetadataAndMidiMapping()
 }
 
 // The instrument's central promise: within an octave the twelve notes are
-// twelve strokes, and between octaves the drum's pitch rises.
+// every stroke, and between octaves the drum's pitch rises.
 void testOctavesRaisePitch()
 {
     const auto parameters = defaultParameters();
@@ -858,7 +866,7 @@ void testStrikePositionShapesTheSpectrum()
 
     const auto centre = strike (parameters, taikor::Articulation::Don, 0, 0.9f,
                                 48000.0, 36000);
-    const auto edge = strike (parameters, taikor::Articulation::Kara, 0, 0.9f,
+    const auto edge = strike (parameters, taikor::Articulation::Ka, 0, 0.9f,
                               48000.0, 36000);
 
     taikor::TaikoEngine engine;
@@ -920,9 +928,9 @@ void testStrikePositionShapesTheSpectrum()
     towardsCentre.strikePosition = -1.0f;
     towardsCentre.humanise = 0.0f;
 
-    const auto rimward = strike (towardsRim, taikor::Articulation::Ko, 0, 0.9f,
+    const auto rimward = strike (towardsRim, taikor::Articulation::Su, 0, 0.9f,
                                  48000.0, 24000);
-    const auto centreward = strike (towardsCentre, taikor::Articulation::Ko, 0, 0.9f,
+    const auto centreward = strike (towardsCentre, taikor::Articulation::Su, 0, 0.9f,
                                     48000.0, 24000);
     expect (upperIn (rimward.mono()) / std::max (fundamentalIn (rimward.mono()), 1.0e-9)
                 > upperIn (centreward.mono())
@@ -1218,21 +1226,7 @@ void testTheContinuumFollowsTheHead()
     auto parameters = defaultParameters();
     parameters.humanise = 0.0f;
 
-    // A flam is two strikes. The second is the loud one and it lands 32 ms
-    // after the first, so it has to bring its own brightness rather than
-    // inheriting whatever is left of the grace note's.
-    {
-        const auto flam = strike (parameters, taikor::Articulation::Flam, 0, 1.0f,
-                                  48000.0, 96256).mono();
-        const auto grace = highBand (flam, 0u, 1200u);
-        const auto main = highBand (flam, 1536u, 2736u);
-        expect (grace > 0.0, "the flam's grace note made no high-frequency sound");
-        expect (main > grace * 1.5,
-                "a flam's main stroke must be brighter than its grace note, which "
-                "means every scheduled contact has to light the continuum");
-    }
-
-    // A press roll is seven, and each bounce is a real blow on the head.
+    // A press roll is eleven blows, and each bounce is a real one on the head.
     {
         const auto buzz = strike (parameters, taikor::Articulation::Buzz, 0, 1.0f,
                                   48000.0, 96256).mono();
@@ -2562,13 +2556,11 @@ void testControlEndpointsAndGestures()
     }
 
     // Later scheduled contacts must still find the bank they are meant to
-    // drive. A flam's main stroke lands 32 ms after its grace note and a press
-    // roll bounces for a tenth of a second; measuring mode lifetimes from the
-    // voice's start retired the bank out from under them, and a press roll at
-    // high damping reached its last bounce with nine of its thirty modes left.
+    // drive. A press roll bounces for a tenth of a second, and measuring mode
+    // lifetimes from the voice's start retired the bank out from under it: at
+    // high damping it reached its last bounce with nine of its thirty modes.
     {
-        for (const auto articulation : { taikor::Articulation::Flam,
-                                         taikor::Articulation::Buzz })
+        for (const auto articulation : { taikor::Articulation::Buzz })
         {
             for (const float damping : { 0.35f, 1.0f })
             {

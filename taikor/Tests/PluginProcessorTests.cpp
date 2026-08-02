@@ -342,14 +342,25 @@ void testOctavesRaisePitchThroughThePlugin()
         previous = measurements.loadedFundamentalHz;
     }
 
-    // And every playable note must actually sound.
+    // Every note that carries a stroke must sound, and every note that does not
+    // must stay silent. The octave is twelve semitones because that is what
+    // picks the drum, and there are eight strokes in it, so the top four keys of
+    // each octave are deliberately empty - a gap is only a design if nothing
+    // creeps into it, and casting a pitch class straight to the enum would have
+    // let all four play a Don.
     for (int note = taikor::lowestPlayableNote; note <= taikor::highestPlayableNote;
-         note += 7)
+         ++note)
     {
+        const auto mapped = taikor::articulationForMidiNote (note);
         processor.requestPanic();
         const auto peak = renderNote (processor, note, 0.85f, 6);
-        expect (peak > 1.0e-4f,
-                "playable note " + std::to_string (note) + " produced no audio");
+        if (mapped.has_value())
+            expect (peak > 1.0e-4f,
+                    "playable note " + std::to_string (note) + " produced no audio");
+        else
+            expect (peak < 1.0e-6f,
+                    "note " + std::to_string (note)
+                        + " carries no stroke but sounded anyway");
     }
 
     processor.releaseResources();

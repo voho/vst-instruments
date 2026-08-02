@@ -1609,6 +1609,11 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
         const auto emit = [&] (float ratio, int multipole, float weight)
         {
             const float frequency = fundamental * ratio;
+            // A mode the rate cannot render is not a mode. See
+            // initialiseModalVoice: clamping it onto the top of the band would
+            // stack it in phase on whatever else landed there.
+            if (frequency >= 0.44f * static_cast<float> (sampleRate_))
+                return;
             const float modeLoss = std::max (1.0e-3f,
                                              lossPerSecond (frequency, multipole));
             const float omega = twoPi * std::max (1.0f, frequency);
@@ -1696,13 +1701,26 @@ void DrumEngine::initialiseModalVoice (Voice& voice, const float* ratios, int mo
                                        const float* excitation) noexcept
 {
     modeCount = std::clamp (modeCount, 0, resonatorCount);
-    voice.modeCount = modeCount;
+    // configureResonator clamps a frequency it cannot render onto the top of
+    // the band rather than refusing it, which is right for one stray mode and
+    // very wrong for a bank: a twelve-mode plate at an 8 kHz host rate had its
+    // top five modes land on exactly the same frequency and, being struck
+    // together, pile up in phase there as a resonance that followed the sample
+    // rate instead of the instrument. A mode the rate cannot carry is not a
+    // mode, so it is dropped before the gains are normalised and the rest of
+    // the bank simply keeps its energy.
+    const float renderable = 0.44f * static_cast<float> (sampleRate_);
+    const float tilt = -1.30f + 1.05f * brightness;
+    int kept = 0;
     float gainSum = 0.0f;
     for (int mode = 0; mode < modeCount; ++mode)
     {
         const auto hash = hash32 (voice.noiseState + static_cast<std::uint32_t> (mode * 0x9e37));
         const float random = static_cast<float> (hash & 0xffffu) / 32767.5f - 1.0f;
         const float ratio = ratios[mode] * (1.0f + 0.035f * spread * random);
+        if (baseFrequency * ratio >= renderable)
+            continue;
+
         // Damping is a property of the frequency, not of the mode's position in
         // an array. The old taper ran on the index, so a bank's twelfth mode
         // decayed 1.25x faster than its first whether that mode sat one octave
@@ -1712,19 +1730,20 @@ void DrumEngine::initialiseModalVoice (Voice& voice, const float* ratios, int mo
         const float lossFactor = std::max (
             0.05f, loss.fixed + loss.hysteretic * relative
                        + loss.viscous * relative * relative);
-        const float modeDecay = decaySeconds / lossFactor;
-        configureResonator (voice.resonators[static_cast<std::size_t> (mode)],
-                            baseFrequency * ratio, modeDecay);
-        const float tilt = -1.30f + 1.05f * brightness;
+        const auto slot = static_cast<std::size_t> (kept);
+        configureResonator (voice.resonators[slot], baseFrequency * ratio,
+                            decaySeconds / lossFactor);
         const float gain = std::pow (std::max (1.0f, ratio), tilt)
             * (excitation != nullptr
                    ? std::abs (excitation[static_cast<std::size_t> (mode)])
                    : 1.0f);
-        voice.modeGains[static_cast<std::size_t> (mode)] = gain;
+        voice.modeGains[slot] = gain;
         gainSum += gain;
+        ++kept;
     }
+    voice.modeCount = kept;
     const float scale = gainSum > 0.0f ? 1.35f / gainSum : 1.0f;
-    for (int mode = 0; mode < modeCount; ++mode)
+    for (int mode = 0; mode < kept; ++mode)
         voice.modeGains[static_cast<std::size_t> (mode)] *= scale;
 
     // Every configured mode reaches -60 dB within decaySeconds, so after 2.6
@@ -2233,6 +2252,12 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // 1 : 2.76 : 5.40 : 8.93, spreading fast rather than crowding
             // together the way a membrane's do. Hollow drills the bar out
             // toward a tube, which softens that spread.
+            // Hollow is the hand, not the bar. A clave's overtone ratios are
+            // fixed by its boundary conditions and no player can move them;
+            // what a player does move is how tightly the fingers close under it,
+            // which retunes the cavity that does the radiating. The control used
+            // to detune all four modes instead, which is a thing a bar cannot
+            // do and which made every setting of it a different instrument.
             const float hollow = voice.characterA;
             // Wood's internal friction is close to a constant loss angle across
             // the audio range, so a struck bar's damping climbs roughly with
