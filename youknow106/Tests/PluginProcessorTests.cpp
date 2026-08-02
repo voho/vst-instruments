@@ -1057,10 +1057,15 @@ void testEditorBuildsAndRenders()
         return;
 
     // The default size follows the panel description, so widening a section to
-    // fit a legend moves it. Hard-coding the number here is what made this test
-    // fail the moment the layout legitimately changed.
+    // fit a legend or adding a row moves it. Both dimensions are therefore
+    // derived here rather than written down: the height was still a literal and
+    // failed the moment the panel legitimately grew a patch bar, which is the
+    // exact trap the width had already been rescued from.
     const int expectedWidth = juce::roundToInt (panel::panelWidth());
-    expect (editor->getWidth() == expectedWidth && editor->getHeight() == 470,
+    const int expectedHeight =
+        juce::roundToInt (panel::panelHeight + panel::keyboardHeight + 14.0f);
+    expect (editor->getWidth() == expectedWidth
+                && editor->getHeight() == expectedHeight,
             "the editor did not open at its default size");
     expect (editor->isOpaque(), "the editor does not advertise an opaque surface");
 
@@ -1076,7 +1081,9 @@ void testEditorBuildsAndRenders()
                     + juce::String (size.x).toStdString() + " wide");
     }
 
-    editor->setSize (expectedWidth, 470);
+    // Back to the default size, which is also the size the committed
+    // documentation image is captured at below.
+    editor->setSize (expectedWidth, expectedHeight);
     editor->resized();
     const auto snapshot = renderEditorSnapshot (*editor);
     expect (snapshotHasDetail (snapshot),
