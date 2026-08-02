@@ -121,7 +121,7 @@ constexpr float edgeOrderFactor = 0.12f;
 // climbs as the stroke walks out towards the rim.
 constexpr float edgeBoostBase = 0.30f;
 constexpr float edgeBoostSlope = 1.80f;
-constexpr float continuumCalibration = 20.0f;
+constexpr float continuumCalibration = 26.0f;
 
 // Impact speed in m/s at the softest and hardest MIDI velocity.
 constexpr float minimumImpactSpeed = 0.45f;
@@ -138,18 +138,18 @@ constexpr float maximumImpactSpeed = 6.0f;
 // directCalibration moves with it in both directions, because the airborne
 // click is the one path that does not pass through this scalar and would
 // otherwise drift against everything else.
-constexpr float modelScale = 317.0f;
+constexpr float modelScale = 292.0f;
 
 // Radiation damping is the one loss term whose absolute size depends on how
 // the drum is mounted and how much of the body is free to move, none of which
 // this model represents. Its shape - which modes lose energy and how that
 // changes with size and material - is physical; this scalar sets the overall
 // depth so the default drum's fundamental lands where a nagado-daiko's does.
-constexpr float radiationCalibration = 0.054f;
+constexpr float radiationCalibration = 0.020f;
 
 // Loss into the shell, the hoops and the stand, and the corner below which a
 // mode is long enough to move them at all.
-constexpr float mountLossScale = 24.0f;
+constexpr float mountLossScale = 20.0f;
 constexpr float mountLossCorner = 55.0f;
 
 // The viscous share of the hide's loss, as a damping rate per radian squared.
@@ -172,7 +172,7 @@ constexpr float shellCalibration = 4200.0f;
 // stands in for the contact patch's radiating area and directivity, neither of
 // which this model describes; everything about how that path varies with
 // stroke, position and distance is geometry and is computed, not chosen.
-constexpr float directCalibration = 0.00519f;
+constexpr float directCalibration = 0.00478f;
 
 [[nodiscard]] float clampFloat (float value, float low, float high) noexcept
 {

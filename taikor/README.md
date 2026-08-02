@@ -187,7 +187,7 @@ membrane fundamental.
 
 Because the breathing mode is the one that radiates, it is also the one that
 empties first — on the default drum it is gone in about half a second while the
-radial orders above it are still sounding after two. The tail figure the editor
+radial orders above it are still sounding after three. The tail figure the editor
 shows is therefore not the fundamental's decay but the longest-lived branch any
 stroke can drive, swept across the whole axisymmetric family; reporting the
 fundamental's own decay understated a sealed drum by a factor of four.
@@ -375,7 +375,7 @@ those modes hardest — come out of phase.
 Up to and including the default 50 % width — everything the microphones actually
 captured — no stroke ever inverts, anywhere in the microphone range: the worst
 case across all twelve strokes, both microphone controls fully swept, is a
-correlation of about +0.01, which is a decorrelated pair rather than an
+correlation of about +0.08, which is a decorrelated pair rather than an
 out-of-phase one. The regression suite sweeps that whole space. Past 50 % the
 width control exaggerates the side signal beyond the measurement, and with the
 pair close in and fully opened that can push strokes out of phase — the same

@@ -562,9 +562,18 @@ void testOctavesRaisePitch()
         // fundamental is the one mode that radiates properly and so the one
         // that goes first, and past a third of a second what is left in this
         // band is the shell rather than the head.
+        // Twelve per cent either side of the fundamental, which holds the
+        // lower branch and nothing else at any octave. Sweeping all the way up
+        // to the breathing mode does not measure a pitch: the two branches are
+        // driven differently and damped differently - the breathing one is the
+        // radiator, so it is the one the mounting and the air take first - and
+        // which of them is loudest changes with the drum. At the reference
+        // octave the sweep found the lower branch and an octave up it found the
+        // upper one, and reported the two as a fifth apart rather than an
+        // octave.
         const auto dominant = dominantFrequency (
-            mono, 48000.0, measurements.loadedFundamentalHz * 0.80,
-            measurements.breathingModeHz * 1.20, 0.25, 480u, 14400u);
+            mono, 48000.0, measurements.loadedFundamentalHz * 0.88,
+            measurements.loadedFundamentalHz * 1.12, 0.25, 480u, 14400u);
 
         const auto nearFundamental =
             std::abs (dominant - measurements.loadedFundamentalHz)
