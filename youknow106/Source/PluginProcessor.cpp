@@ -631,6 +631,18 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         }
     }
 
+    // A requested patch dump leaves here, on the plug-in's MIDI output. Nothing
+    // else this instrument produces goes out, so the buffer is cleared first:
+    // echoing the incoming notes back would make it a MIDI thru.
+    const bool sendDump = sysExDumpRequested.exchange (false, std::memory_order_acquire);
+    midiMessages.clear();
+    if (sendDump)
+    {
+        const auto dump = currentPatchAsSysEx (0);
+        if (dump.getRawDataSize() > 0)
+            midiMessages.addEvent (dump, 0);
+    }
+
     if (renderedTo < numSamples)
         engine.process (buffer.getWritePointer (0, renderedTo),
                         buffer.getWritePointer (1, renderedTo),
@@ -821,8 +833,14 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
 void YouKnow106AudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)
 {
     if (auto state = parameters.copyState(); state.isValid())
+    {
+        // The program index is not a parameter, so it would not survive a save
+        // on its own: the sound would come back and the host's program selector
+        // would still read INIT.
+        state.setProperty ("program", currentProgram, nullptr);
         if (const auto xml = state.createXml())
             copyXmlToBinary (*xml, destinationData);
+    }
 }
 
 void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -839,6 +857,12 @@ void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeIn
     // old three-way `keyMode` and `chorus` choices. Filling in defaults alone
     // would silently reopen a saved Unison as Poly 1 and a saved chorus as off,
     // so the old values are translated first.
+    // Restore the selected program before the parameters, so the index the
+    // host shows matches the sound the state carries.
+    if (state.hasProperty ("program"))
+        currentProgram = juce::jlimit (0, getNumPrograms() - 1,
+                                       static_cast<int> (state.getProperty ("program")));
+
     migrateSplitModeParameters (state);
 
     // A state written by an earlier build will not carry parameters added

@@ -73,6 +73,13 @@ public:
     // control's normalised legal range.
     void randomizeParameters (float amount);
     void requestPanic() noexcept { panicRequested.store (true, std::memory_order_release); }
+    // Asks for the current panel to be sent out as a patch dump on the next
+    // block. The message leaves through the plug-in's MIDI output, which is
+    // the only route a host actually exposes to a cable.
+    void requestSysExDump() noexcept
+    {
+        sysExDumpRequested.store (true, std::memory_order_release);
+    }
 
     int getActiveVoiceCount() const noexcept
     {
@@ -209,6 +216,7 @@ private:
     std::atomic<int> sysExDropped { 0 };
 
     std::atomic<bool> panicRequested { false };
+    std::atomic<bool> sysExDumpRequested { false };
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<int> displayVoiceMask { 0 };

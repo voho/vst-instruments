@@ -665,6 +665,74 @@ void testAWholeBankTransferIsNotDropped()
     processor.releaseResources();
 }
 
+// The write half of the compatibility claim. A dump that only a subclass
+// method could produce is not reachable by a DAW, so it has to leave through
+// the plug-in's MIDI output.
+void testRequestedDumpLeavesThroughTheMidiOutput()
+{
+    YouKnow106AudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    setParameterValue (processor, parameters::cutoff, 0.3125f);
+    setParameterValue (processor, parameters::chorusII, 1.0f);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+
+    // Nothing asked for, nothing sent: this is a synth, not a MIDI thru.
+    midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+    buffer.clear();
+    processor.processBlock (buffer, midi);
+    expect (midi.isEmpty(), "the processor echoed its input to the MIDI output");
+
+    processor.requestSysExDump();
+    midi.clear();
+    buffer.clear();
+    processor.processBlock (buffer, midi);
+
+    juce::MidiMessage found;
+    int count = 0;
+    for (const auto metadata : midi)
+        if (metadata.getMessage().isSysEx())
+        {
+            found = metadata.getMessage();
+            ++count;
+        }
+    expect (count == 1, "a requested dump did not appear exactly once on the output");
+
+    sysex::Patch sent {};
+    int channel = -1;
+    expect (sysex::readPatchMessage (found.getRawData(),
+                                     static_cast<std::size_t> (found.getRawDataSize()),
+                                     sent, channel),
+            "the emitted dump is not a readable patch message");
+    expect (std::abs (sent.cutoff - 0.3125f) < 0.01f,
+            "the emitted dump does not carry the current panel");
+    expect (sent.chorus == ChorusMode::Two, "the emitted dump lost the chorus mode");
+
+    // The request is one-shot: it must not keep sending every block.
+    midi.clear();
+    buffer.clear();
+    processor.processBlock (buffer, midi);
+    expect (midi.isEmpty(), "the dump request repeated on the following block");
+
+    processor.releaseResources();
+}
+
+// A saved program index has to come back, or the host's selector and the sound
+// disagree after a reload.
+void testSelectedProgramSurvivesAStateRoundTrip()
+{
+    YouKnow106AudioProcessor source;
+    source.setCurrentProgram (3);
+    juce::MemoryBlock state;
+    source.getStateInformation (state);
+
+    YouKnow106AudioProcessor destination;
+    destination.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+    expect (destination.getCurrentProgram() == 3,
+            "the selected program did not survive a state round trip");
+}
+
 void testForeignSysExLeavesThePatchAlone()
 {
     YouKnow106AudioProcessor processor;
@@ -880,6 +948,8 @@ int main()
     testSysExPatchRoundTripsThroughTheParameters();
     testSingleParameterSysExDoesNotDisturbAnythingElse();
     testAWholeBankTransferIsNotDropped();
+    testRequestedDumpLeavesThroughTheMidiOutput();
+    testSelectedProgramSurvivesAStateRoundTrip();
     testForeignSysExLeavesThePatchAlone();
     testFactoryProgramsLoad();
     testEveryPanelLegendFitsInTheRealFont();

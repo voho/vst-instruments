@@ -512,6 +512,10 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     randomize10Button.onClick = [this] { processor.randomizeParameters (0.10f); };
     addAndMakeVisible (randomize10Button);
 
+    sendSysExButton.setTooltip ("Send the current panel to hardware as a patch dump");
+    sendSysExButton.onClick = [this] { processor.requestSysExDump(); };
+    addAndMakeVisible (sendSysExButton);
+
     randomize100Button.setTooltip ("Draw a completely new patch");
     randomize100Button.onClick = [this] { processor.randomizeParameters (1.0f); };
     addAndMakeVisible (randomize100Button);
@@ -636,6 +640,9 @@ void YouKnow106AudioProcessorEditor::resized()
                                    buttonWidth, 18.0f).toNearestInt());
     randomize10Button.setBounds (scaled (buttonX, panel::utilityTop + 24.0f,
                                          buttonWidth, 18.0f).toNearestInt());
+    sendSysExButton.setBounds (scaled (buttonX + 2.0f * (buttonWidth + 6.0f),
+                                      panel::utilityTop + 2.0f,
+                                      buttonWidth, 18.0f).toNearestInt());
     randomize100Button.setBounds (scaled (buttonX + buttonWidth + 6.0f,
                                           panel::utilityTop + 24.0f,
                                           buttonWidth, 18.0f).toNearestInt());
