@@ -2387,8 +2387,25 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
 
     // The attack glide and the wheel are one thing: both press the head, both
     // raise its tension, and both therefore scale the membrane's frequencies.
-    // Applying them together also means a stroke that is already ringing bends
-    // with the wheel, rather than the wheel only reaching the next stroke.
+    // Berger-style modal energy tension coupling: large displacement stores
+    // kinetic and potential energy across the membrane modes, increasing the
+    // instantaneous wave speed on hard attacks.
+    float modalEnergySum = 0.0f;
+    if (voice.tensionEnvelope > 0.01f)
+    {
+        for (int index = 0; index < voice.activeModeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (mode.membrane)
+            {
+                const float y1 = static_cast<float> (mode.resonator.y1);
+                modalEnergySum += y1 * y1;
+            }
+        }
+    }
+    const float energyTensionBoost = voice.tensionEnvelope > 0.01f
+        ? applied_.tensionModulation * 0.005f * std::sqrt(modalEnergySum) : 0.0f;
+
     if (voice.tensionEnvelope > 1.0e-4f)
         voice.tensionEnvelope *= voice.tensionDecay;
     else
@@ -2400,7 +2417,8 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
     // tail retunes it for the same reason the wheel does - so they are carried
     // together as one offset in semitones.
     const float tuningNow = applied_.pitch + 2.0f * pitchBend_;
-    const float shift = (1.0f + voice.tensionDepth * voice.tensionEnvelope)
+    const float effectiveTensionDepth = voice.tensionDepth + energyTensionBoost;
+    const float shift = (1.0f + effectiveTensionDepth * voice.tensionEnvelope)
                       * std::exp2 ((tuningNow - voice.tuningAtStrike) / 12.0f);
 
     if (std::abs (shift - voice.appliedTensionShift) > 1.0e-5f)
@@ -2467,6 +2485,13 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
               * contactEnvelope;
     }
 
+    // Iron tack (byo) micro-chatter physics on rim and shell strikes
+    if (contactEnvelope > 0.0f && (voice.articulation == Articulation::DonRim || voice.articulation == Articulation::Katsu))
+    {
+        const float tackNoise = nextNoise (voice.noiseState) * contactEnvelope * 0.08f;
+        noise += tackNoise;
+    }
+
     const float excitation = force + noise;
 
     float left = 0.0f;
@@ -2512,7 +2537,14 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
     for (int index = 0; index < voice.activeModeCount; ++index)
     {
         auto& mode = voice.modes[static_cast<std::size_t> (index)];
-        const float value = mode.resonator.tick (excitation * mode.drive);
+        float modeDriveInput = excitation * mode.drive;
+        if (! mode.membrane && voice.articulation != Articulation::Bachi && applied_.shellResonance > 0.01f)
+        {
+            // Soft odd-harmonic Zelkova wood shell saturation for rich low-mid body warmth
+            const float x = clampFloat (modeDriveInput * 1.5f, -1.2f, 1.2f);
+            modeDriveInput = (x - 0.04f * x * x * x) * 0.8f;
+        }
+        float value = mode.resonator.tick (modeDriveInput);
         if (mode.membrane)
         {
             membraneLeft += value * mode.micLeft;

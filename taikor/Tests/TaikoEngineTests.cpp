@@ -2737,6 +2737,29 @@ void testControlEndpointsAndGestures()
                 "the inter-microphone delay is longer than the drum is wide");
     }
 }
+
+void testNonlinearPhysicsAndTensionModulation()
+{
+    const auto parameters = defaultParameters();
+
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0 })
+    {
+        taikor::TaikoEngine engine;
+        auto config = parameters;
+        config.tensionModulation = 1.0f;
+        config.shellResonance = 0.8f;
+        config.cavityCoupling = 0.9f;
+
+        engine.setParameters (config);
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.trigger (taikor::Articulation::Don, 0, 0.95f);
+
+        const auto rendered = render (engine, static_cast<int> (sampleRate * 0.5));
+        expect (rendered.finite, "non-linear physics render produced non-finite values");
+        expect (rendered.peak > 1.0e-5f, "non-linear physics stroke was silent");
+        expect (rendered.peak < 16.0f, "non-linear physics stroke exceeded amplitude guardrail");
+    }
+}
 } // namespace
 
 int main()
@@ -2760,6 +2783,7 @@ int main()
     testSimultaneousStrokesDoNotShareOneVoice();
     testDeterminismAndBlockPartitioning();
     testPerformanceControls();
+    testNonlinearPhysicsAndTensionModulation();
     testInvalidInputSafety();
     testUiPresentationMath();
     testControlEndpointsAndGestures();
