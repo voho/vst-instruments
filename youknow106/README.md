@@ -15,6 +15,12 @@ What is modelled from documentation and what remains a voiced choice is set out
 control by control in the
 [circuit-modelling research and implementation contract](Docs/circuit-modelling-research.md).
 
+> **Listen first.** Ten [rendered demonstrations](Docs/audio/README.md) cover
+> the classic pad and PWM strings, the 16' bass, the self-oscillating filter,
+> the chorus modes, unison glide, the delayed vibrato, the high-pass ladder
+> and the instrument's own dispersion. They are rendered by the shipping
+> engine, so they cannot drift from what the plug-in does.
+
 ## What makes it a circuit model rather than a lookalike
 
 - **The oscillator is a divider, not a phase accumulator.** Pitch is one
@@ -23,14 +29,19 @@ control by control in the
   RANGE switch changes the clock reaching the counter, not the count, so it
   transposes by whole octaves and the tuning error is the same in all three.
 - **The control path is a scanned converter.** One converter serves 36 control
-  points and repeats every 4.2 ms; each voice's pitch, envelope and cutoff are
-  rewritten on that scan and then slewed by the hold capacitor's 522 µs time
-  constant. Slow bends and deep vibrato audibly step, and the shortest attack
-  the instrument can actually produce is one scan pass — not the published
-  1.5 ms.
-- **The envelope is linear and the amplifier is exponential**, which is the way
-  round the hardware does it. The curve you hear comes from the amplifier's
-  control law, not from a charging capacitor.
+  points — six per voice, including the pulse threshold, sub and noise levels
+  and the oscillator's amplitude compensation — walking the voices in turn
+  across a 4.2 ms pass and slewing each hold on its own time constant. Every
+  continuous panel control is digitised to seven bits, which is what makes it
+  patch-storable. Slow bends and deep vibrato audibly step, six voices step
+  out of phase with one another, and the shortest attack the instrument can
+  actually produce is one scan pass — not the published 1.5 ms.
+- **The envelope attacks in a straight line and falls exponentially, into a
+  quasi-linear amplifier** — a 14-bit firmware accumulator whose falling
+  segments multiply their way down and end by integer truncation, driving an
+  amplifier that tracks its control voltage linearly with an exponential knee
+  confined to the bottom tenth. That factorisation, measured on the hardware,
+  is what the dB-linear decay tails actually come from.
 - **Cutoff modulation is summed in converter counts before the antilog stage**,
   at 1143 counts per octave, so every modulation source is exponential in hertz.
   The law is anchored on the instrument's own service calibration: converter

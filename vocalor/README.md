@@ -8,6 +8,13 @@ lengthened or shortened independently of pitch. The engine is procedural and
 runs locally: it does not clone a named singer, load recordings, or contact a
 service while rendering audio.
 
+> **Listen first.** Nine [rendered demonstrations](Docs/audio/README.md) cover
+> a solo legato phrase, the preset vowels on both voice profiles, the vowel
+> space and formant shift on held notes, the twelve-singer ensemble, chord
+> mode, choir dynamics, tension and breath, and the room at both sizes. They
+> are rendered by the shipping engine, so they cannot drift from what the
+> plug-in does.
+
 ![Vocalor Standalone instrument interface](Docs/screenshots/vocalor-standalone.png)
 
 The screenshot above was captured from the 1.0 Standalone application and shows
@@ -335,7 +342,20 @@ into, despite running wider bandwidths; the bank must not cancel between F1 and
 F2 at any of three vowel corners; an ensemble of *n* must render *n* singers; and
 a resonance or formant-shift jump must glide the pole radii rather than step
 them. This catches regressions; it is not a substitute for listening tests, host
-automation tests, or profiling on the oldest supported Mac.
+automation tests, or profiling on the oldest supported Mac. The suite also
+smoke-tests the demonstration renderer.
+
+## Regenerate the demonstration audio
+
+```bash
+cmake --build build-dsp --parallel --target VocalorRenderDemos
+./build-dsp/VocalorRenderDemos Docs/audio
+```
+
+The render is deterministic and the tool rewrites the level table in
+[`Docs/audio/README.md`](Docs/audio/README.md) in place, so the committed audio
+and its documented levels stay in lockstep with the code. See that file for the
+full manifest.
 
 ## Install locally
 
@@ -445,7 +465,8 @@ recall the correct plug-in.
 Source/DSP/              JUCE-free synthesis engine
 Source/PluginProcessor.* MIDI, parameters, state, and audio bridge
 Source/PluginEditor.*    Keyboard and editor UI
-Docs/                    Real interface screenshots and supporting documentation
+Tools/RenderDemos.cpp    Renders the committed demonstration WAVs
+Docs/                    Rendered demonstrations, screenshots, documentation
 Tests/                   JUCE-free DSP regression tests
 Presets/                 Preset guidance and future factory presets
 scripts/                 macOS build and release helpers

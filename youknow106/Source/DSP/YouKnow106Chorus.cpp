@@ -9,12 +9,35 @@ namespace
 {
 // Aggregate charge-transfer inefficiency of the whole line. A bucket-brigade
 // stage hands on all but a small fraction of its charge, and the residue smears
-// forward; over 128 cell pairs the aggregate is well approximated by one pole
-// running at the clock rate. This is the standard first-order condensation, not
-// a per-stage solve. Unlike the support filters below it is specified directly
-// as the per-edge retention coefficient rather than as a corner frequency, so
-// it belongs in the plain recursion and not in the prewarped one.
-constexpr float transferSmear = 0.34f;
+// forward; over the line's stages the aggregate is well approximated by one
+// pole running at the clock rate. This is the standard first-order
+// condensation, not a per-stage solve. Unlike the support filters below it is
+// specified directly as the per-edge retention coefficient rather than as a
+// corner frequency, so it belongs in the plain recursion and not in the
+// prewarped one.
+//
+// The retention is set so the aggregate droop at the clock's own Nyquist is
+// 2 dB, the middle of the 1-4 dB the per-stage-loss literature implies for a
+// 256-stage low-noise line (droop = e^(-2 * stages * epsilon) with epsilon in
+// the 1e-4..1e-3 band). For a one-pole advanced once per clock edge the
+// Nyquist gain is a / (2 - a), so a = 2 d / (1 + d) with d = 10^(-2/20).
+// A retention far below this -- an earlier revision used 0.34 -- parks a
+// lowpass at ~0.07 of the clock rate, i.e. a 1.6-5.2 kHz corner *swept by the
+// chorus modulation*, several times darker than either published account of
+// this circuit's wet path allows.
+constexpr float transferNyquistDroop = 0.794328f; // -2 dB
+constexpr float transferSmear =
+    2.0f * transferNyquistDroop / (1.0f + transferNyquistDroop);
+
+// Where the line itself starts to compress, referred to the model's signal
+// scale (1.0 = 2.6 V at the node). The part is rated 0.3% distortion at
+// 0.78 Vrms and overloads a few decibels above; its bias window at a 15 V
+// supply gives roughly +/-2.9 V of swing. The line is the first nonlinear
+// element in the wet path -- the surrounding op-amps run on +/-15 V rails and
+// stay linear at synth bus levels -- which is why a driven chorus grits the
+// wet signal while the dry stays clean, a documented signature of this
+// instrument.
+constexpr float bbdSaturationLevel = 1.1f; // ~2.9 V at the node
 
 // Modelled noise floor of one line, referred to its own input. Uncompanded,
 // the part measures 55 to 65 dB signal to noise in this circuit against its own
@@ -32,8 +55,10 @@ constexpr float lineNoiseAmplitude = 1.0e-3f;
 constexpr float antiAliasCornerHz = 9900.0f;
 constexpr float reconstructionCornerHz = 9500.0f;
 
-// Line gain. The wet path measures a few decibels above the dry; 2.3 dB is the
-// published reference figure.
+// Line gain. The wet path measures a few decibels above the dry; 2.3 dB is
+// the figure the sibling-instrument measurement reports, and no capture of
+// this instrument's own wet gain has been located, so the value is voiced on
+// that measurement.
 constexpr float lineGain = 1.303f;
 
 std::uint32_t nextNoiseState(std::uint32_t state) noexcept
@@ -59,10 +84,14 @@ float triangle(float phase) noexcept
 
 Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
 {
-    // Measured on the hardware: the delay range is 1.66 ms to 5.35 ms in both
-    // modes and only the modulation rate changes between them. Modes I and II
-    // therefore differ in speed alone, not in depth, which is why II reads as
-    // more agitated rather than wider.
+    // Anchored to the published measurement of the sibling instrument's
+    // chorus, the closest calibrated capture located: delay 1.66 ms to
+    // 5.35 ms in both modes, rates 0.513 Hz and 0.863 Hz. The figures
+    // reported for this instrument itself -- approximately 0.5 Hz and 0.8 Hz,
+    // modes differing in rate alone -- agree to the reported precision, so
+    // the sibling's numbers stand in for the unmeasured decimals. Modes I and
+    // II differ in speed alone, not in depth, which is why II reads as more
+    // agitated rather than wider.
     constexpr float centre = 0.5f * (0.00166f + 0.00535f);
     constexpr float sweep = 0.5f * (0.00535f - 0.00166f);
     constexpr float rateOne = 0.513f;
@@ -147,10 +176,15 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
             ? static_cast<float>(std::clamp(clockPhase / increment, 0.0, 1.0))
             : 0.0f;
         const float atEdge = limited + (previousInput - limited) * fraction;
+        // The line's own overload. The charge a cell can hold is bounded by
+        // its bias window, so the wet path saturates before anything around
+        // it does; driving the chorus hot grits the delayed signal only.
+        const float bounded = bbdSaturationLevel
+                            * std::tanh(atEdge / bbdSaturationLevel);
 
         writeIndex = writeIndex + 1 < cellPairs ? writeIndex + 1 : 0;
         const float emerging = cells[static_cast<std::size_t>(writeIndex)];
-        cells[static_cast<std::size_t>(writeIndex)] = atEdge;
+        cells[static_cast<std::size_t>(writeIndex)] = bounded;
 
         transferState += transferSmear * (emerging - transferState);
         noiseState = nextNoiseState(noiseState);
@@ -207,14 +241,23 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         primed_ = true;
     }
 
-    // Glide the switch settings rather than stepping them. A latching button on
-    // the hardware changes an RC network whose voltage cannot jump either, and
-    // an instant rate change here would click the delay line.
-    const float glide = 1.0f - std::exp(-inverseSampleRate_ * 12.0f);
-    rateHz_ += (target.rateHz - rateHz_) * glide;
-    sweep_ += (target.sweepSeconds - sweep_) * glide;
-    centreDelay_ += (target.centreDelaySeconds - centreDelay_) * glide;
-    wetGain_ += (target.wetGain - wetGain_) * glide;
+    // The mode buttons do not reach the delay lines through any slow network:
+    // the lines keep clocking, fully modulated, even with the effect off, and
+    // the switch merely un-mutes the wet through a transistor pair. So the
+    // clock programme steps to its new setting at once -- the delay itself
+    // cannot jump, because the cells hold their contents and only the shift
+    // rate changes -- and only the wet mute carries a short declick, on the
+    // scale of the switching transistors' own settling. Switching *off*
+    // changes nothing but the mute, so the lines go on sweeping underneath
+    // and re-engaging the effect finds them mid-sweep, as the hardware's are.
+    if (mode != ChorusMode::Off)
+    {
+        rateHz_ = target.rateHz;
+        sweep_ = target.sweepSeconds;
+        centreDelay_ = target.centreDelaySeconds;
+    }
+    const float muteGlide = 1.0f - std::exp(-inverseSampleRate_ / 0.005f);
+    wetGain_ += (target.wetGain - wetGain_) * muteGlide;
 
     lfoPhase_ += rateHz_ * inverseSampleRate_;
     if (lfoPhase_ >= 1.0f)

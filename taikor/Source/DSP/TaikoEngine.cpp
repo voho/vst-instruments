@@ -36,7 +36,12 @@ constexpr float maximumTension = 22000.0f;
 constexpr float tensionFloor = 3.0f;
 constexpr float tensionCeiling = 3.0e7f;
 constexpr float radiusFloor = 0.008f;
-constexpr float radiusCeiling = 2.50f;
+// The largest radius the geometry may resolve to. It has to clear the widest
+// head the control offers, taken to the bottom of the keyboard with the octave
+// bought entirely by size: 1.80 m across, halved to a radius, times four for two
+// octaves down, is 3.6 m. Clamping below that would stop the bottom octaves
+// being octaves - they would come out 1.39x apart rather than 2x.
+constexpr float radiusCeiling = 3.75f;
 
 // The bachi. A taiko stick is a heavy piece of hardwood; the hardness control
 // moves the Hertz contact stiffness across three orders of magnitude, from a
@@ -92,6 +97,32 @@ constexpr float maximumStickScale = 2.00f;
 // mass, but not the directivity of a small cylinder held over a drum.
 constexpr float stickCalibration = 150.0f;
 
+// The head's high-frequency continuum. The first band sits just above the
+// highest resolved mode and each one after it is an octave up; the bandwidth is
+// wide enough that neighbouring bands overlap into a continuous region rather
+// than reading as five separate whistles. The tilt is how fast the region falls
+// away with frequency, and the calibration is its overall weight against the
+// resolved bank - the one number here set against recordings of real drums
+// rather than derived.
+constexpr float continuumBandRatio = 2.0f;
+constexpr float continuumBandwidth = 1.35f;
+constexpr float continuumTilt = 1.0f;
+// How much the rim takes from the continuum, per unit of a mode's dimensionless
+// wavenumber. The resolved bank uses 0.12 per circumferential order; up here the
+// orders are in the tens and hundreds, which is the whole reason this region
+// empties long before the body does.
+constexpr float continuumEdgeOrder = 0.08f;
+
+// How much more the rim takes from a mode with a circumferential order. Those
+// modes are pressed against the boundary rather than spread across the head.
+constexpr float edgeOrderFactor = 0.12f;
+
+// How hard a stroke couples into the continuum: a flat term, and the part that
+// climbs as the stroke walks out towards the rim.
+constexpr float edgeBoostBase = 0.30f;
+constexpr float edgeBoostSlope = 1.80f;
+constexpr float continuumCalibration = 26.0f;
+
 // Impact speed in m/s at the softest and hardest MIDI velocity.
 constexpr float minimumImpactSpeed = 0.45f;
 constexpr float maximumImpactSpeed = 6.0f;
@@ -100,14 +131,36 @@ constexpr float maximumImpactSpeed = 6.0f;
 // which are on the order of tens of microns; this is the only place a number
 // is chosen for how it sounds rather than for what it means, and it is a
 // single scalar so it cannot distort any relationship inside the model.
-constexpr float modelScale = 128.0f;
+//
+// It came down by ten decibels when the head gained its high-frequency
+// continuum, which added a great deal to every stroke, and back up by seventeen
+// when that continuum was cut to the share it should always have had.
+// directCalibration moves with it in both directions, because the airborne
+// click is the one path that does not pass through this scalar and would
+// otherwise drift against everything else.
+constexpr float modelScale = 292.0f;
 
 // Radiation damping is the one loss term whose absolute size depends on how
 // the drum is mounted and how much of the body is free to move, none of which
 // this model represents. Its shape - which modes lose energy and how that
 // changes with size and material - is physical; this scalar sets the overall
 // depth so the default drum's fundamental lands where a nagado-daiko's does.
-constexpr float radiationCalibration = 0.11f;
+constexpr float radiationCalibration = 0.020f;
+
+// Loss into the shell, the hoops and the stand, and the corner below which a
+// mode is long enough to move them at all.
+constexpr float mountLossScale = 20.0f;
+constexpr float mountLossCorner = 55.0f;
+
+// The viscous share of the hide's loss, as a damping rate per radian squared.
+// This is what separates the head's body from its crack: it is worth about a
+// twentieth of an inverse second at the fundamental and several hundred at six
+// kilohertz.
+constexpr float viscousScale = 1.5e-7f;
+
+// The hysteretic share, as a loss angle. Hide is a lossy material and this is
+// most of what stops a mode that cannot radiate.
+constexpr float hysteresisScale = 0.00048f;
 
 // How efficiently the shell's ring modes reach the microphones compared with
 // the head's. The body radiates from a curved surface the pair is beside
@@ -119,7 +172,7 @@ constexpr float shellCalibration = 4200.0f;
 // stands in for the contact patch's radiating area and directivity, neither of
 // which this model describes; everything about how that path varies with
 // stroke, position and distance is geometry and is computed, not chosen.
-constexpr float directCalibration = 0.0021f;
+constexpr float directCalibration = 0.00478f;
 
 [[nodiscard]] float clampFloat (float value, float low, float high) noexcept
 {
@@ -142,7 +195,7 @@ constexpr float directCalibration = 0.0021f;
 
 const std::array<ArticulationMetadata, articulationCount> articulationTable {{
     { Articulation::Don, "Don", "don", "don",
-      "Full centre strike: the open voice of the drum", 0 },
+      "Full open stroke, a hand's width in from the middle", 0 },
     { Articulation::Do, "Do", "do", "do",
       "Open stroke a little off centre, quicker than a Don", 1 },
     { Articulation::Tsu, "Tsu", "tsu", "tsu",
@@ -252,10 +305,19 @@ const TaikoEngine::StrikeProfile& TaikoEngine::strikeProfile (
     // hitting the head at 0.78 of its radius drives the modes with a
     // circumferential order and barely moves the axisymmetric ones, which is
     // exactly why it is bright on a real taiko too.
+    //
+    // For the same reason no stroke here lands on the geometric centre. Every
+    // mode with a circumferential order has J_m(0) = 0, so a strike at radius
+    // zero drives the axisymmetric modes and nothing else, and those are two
+    // modes on a drum that has forty. The result is a note with an attack and
+    // no body behind it - which is also what a real taiko does if you manage to
+    // hit its exact centre, and why players do not: a full Don lands a hand's
+    // width in from the middle, close enough to keep the fundamental and far
+    // enough out to wake the rest of the head.
     static const std::array<StrikeProfile, articulationCount> table {{
         // radius, hardness, membrane, shell, noise, level, mute,
         //   contacts, rim, shellFreq, shellDecay
-        { 0.00f, 1.00f, 1.00f, 0.18f, 1.00f, 1.00f, 0.00f, 1, 0.00f, 1.0f, 1.0f },  // Don
+        { 0.15f, 1.00f, 1.00f, 0.18f, 1.00f, 1.00f, 0.00f, 1, 0.00f, 1.0f, 1.0f },  // Don
         { 0.24f, 0.94f, 0.96f, 0.16f, 0.95f, 0.90f, 0.00f, 1, 0.00f, 1.0f, 1.0f },  // Do
         { 0.30f, 1.00f, 0.82f, 0.14f, 1.05f, 0.68f, 0.85f, 1, 0.00f, 1.0f, 1.0f },  // Tsu
         { 0.34f, 0.86f, 0.55f, 0.10f, 1.30f, 0.30f, 0.35f, 1, 0.00f, 1.0f, 1.0f },  // Su
@@ -265,7 +327,7 @@ const TaikoEngine::StrikeProfile& TaikoEngine::strikeProfile (
         { 0.55f, 0.90f, 0.70f, 0.16f, 1.05f, 0.52f, 0.20f, 1, 0.00f, 1.0f, 1.0f },  // Ko
         { 0.99f, 1.30f, 0.06f, 0.86f, 1.45f, 0.70f, 0.00f, 1, 0.45f, 1.0f, 0.55f }, // Katsu
         { 0.62f, 0.80f, 0.74f, 0.20f, 1.60f, 0.62f, 0.55f, 7, 0.00f, 1.0f, 1.0f },  // Buzz
-        { 0.10f, 1.00f, 1.00f, 0.20f, 1.05f, 1.00f, 0.00f, 2, 0.00f, 1.0f, 1.0f },  // Flam
+        { 0.17f, 1.00f, 1.00f, 0.20f, 1.05f, 1.00f, 0.00f, 2, 0.00f, 1.0f, 1.0f },  // Flam
         // Bachi: two sticks, not the drum. usesDrumBody switches its resonant
         // bank over to the stick model, so the shell retune columns do not
         // apply to it and are left at unity.
@@ -309,6 +371,54 @@ double TaikoEngine::besselJ (int order, double x) noexcept
     }
 
     return sum;
+}
+
+// Loss into the shell, the hoops and the stand. Steeply low-pass in frequency:
+// only a mode long enough to move the whole instrument loses anything this way.
+float TaikoEngine::mountingLoss (const DrumState& drum, float frequency) noexcept
+{
+    return mountingLossAt (drum.mountLoss, drum.mountCorner, frequency);
+}
+
+float TaikoEngine::mountingLossAt (float mountLoss, float mountCorner,
+                                   float frequency) noexcept
+{
+    // Fourth order. A gentler skirt was tried and measures worse against real
+    // recordings by a wide margin: reaching only a little way above the corner
+    // costs the body most of what makes it a body. Whatever the shell and the
+    // stand take, they take it from the very bottom of the drum and from almost
+    // nothing else.
+    const float ratio = frequency / std::max (mountCorner, 1.0f);
+    const float squared = ratio * ratio;
+    return mountLoss / (1.0f + squared * squared);
+}
+
+// The same sum the modes are built with, re-evaluated at a new frequency. The
+// two halves of the hide's loss are stored as coefficients rather than as a
+// total precisely so this can be done.
+float TaikoEngine::membraneDecayAt (const Voice& voice, const Mode& mode,
+                                    float omega) noexcept
+{
+    const float ka = omega * voice.radiusMetres / soundSpeed;
+    const float efficiency =
+        radiationEfficiency (static_cast<int> (mode.circumferentialOrder), ka);
+
+    return mode.decayFixed + mode.lossOmega * omega
+         + mode.lossOmegaSquared * omega * omega
+         + mode.radiationPrefactor * efficiency
+         + mountingLossAt (voice.mountLoss, voice.mountCorner,
+                           omega / (2.0f * piFloat));
+}
+
+// The hide's own loss: a hysteretic part that damps as omega and a viscous part
+// that damps as omega squared. Extra damping is the hand on the head, which
+// bears on both.
+float TaikoEngine::materialDamping (const DrumState& drum, float omega,
+                                    float extraDamping) noexcept
+{
+    const float hysteretic = 0.5f * drum.headLossFactor * omega;
+    const float viscous = drum.headViscousFactor * omega * omega;
+    return (hysteretic + viscous) * (1.0f + 2.4f * extraDamping);
 }
 
 float TaikoEngine::radiationEfficiency (int order, float ka) noexcept
@@ -447,7 +557,7 @@ TaikoEngine::TaikoEngine() noexcept
 EngineParameters TaikoEngine::sanitise (const EngineParameters& parameters) noexcept
 {
     EngineParameters result;
-    result.headDiameter = clampFloat (parameters.headDiameter, 0.15f, 1.20f);
+    result.headDiameter = clampFloat (parameters.headDiameter, 0.15f, 1.80f);
     result.bodyDepth = clampFloat (parameters.bodyDepth, 0.0f, 1.0f);
     result.tension = clampFloat (parameters.tension, 0.0f, 1.0f);
     result.headMaterial = clampFloat (parameters.headMaterial, 0.0f, 1.0f);
@@ -600,7 +710,29 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.peakLevel = 0.0f;
     voice.tensionEnvelope = 0.0f;
     voice.appliedTensionShift = 1.0f;
+    // Belongs to the stroke, not to the slot. The attack glide runs before the
+    // new contact schedule is known - Tension Mod is on by default, so that is
+    // every ordinary stroke - and it rebuilds the lifetimes; leaving the last
+    // stroke's schedule here meant a voice reused after a flam or a press roll
+    // was handed that stroke's offset, and then given its own on top. It kept
+    // its modes alive past their floor and its slot alive past its deadline,
+    // which costs resonators and invites voice stealing.
+    voice.retirementOffset = 0;
     voice.noiseBandState = 0.0f;
+    voice.contactReference = 0.0f;
+    for (auto& band : voice.continuum)
+    {
+        band.envelope = 0.0f;
+        band.level = 0.0f;
+        band.lowStateLeft = 0.0f;
+        band.lowStateLeft2 = 0.0f;
+        band.highStateLeft = 0.0f;
+        band.highStateLeft2 = 0.0f;
+        band.lowStateRight = 0.0f;
+        band.lowStateRight2 = 0.0f;
+        band.highStateRight = 0.0f;
+        band.highStateRight2 = 0.0f;
+    }
     for (auto& mode : voice.modes)
     {
         mode.resonator.clear();
@@ -684,15 +816,54 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
     // about a third - far less than laying a cloth over a real head does. The
     // curve leaves the lower two thirds of the control roughly linear and lets
     // the top of it genuinely deaden the drum.
-    const float materialLoss = 0.0040f + 0.0120f * applied.headMaterial;
+    // Hysteretic loss in the hide, which goes as omega and therefore gives a
+    // T60 proportional to 1/f. A hide is viscoelastic, though, and that is only
+    // half of its loss: alongside the hysteretic part, whose loss angle is
+    // frequency-independent, there is a viscous part whose stress follows the
+    // rate of strain and which therefore damps as omega squared. The two
+    // together are what make a struck head behave the way recordings of real
+    // taiko do - a low body that rings for the better part of a second, and a
+    // bright top that is gone in a tenth of one.
+    //
+    // Splitting them matters here more than it would on a smaller drum, because
+    // this model resolves the low modes individually and treats everything
+    // above the modal overlap as a continuum. One loss law had to serve both,
+    // and no single power of omega can: set it for the body and the continuum
+    // rings for the best part of a second as a bed of noise behind the drum,
+    // set it for the continuum and the body is gone before it is heard. With
+    // the viscous term carrying the top, the hysteretic term is free to be as
+    // small as the low modes need.
     const float damping = applied.headDamping;
-    drum.headLossFactor =
-        materialLoss * (0.55f + 1.30f * damping + 6.0f * damping * damping * damping);
+    const float dampingShape =
+        0.55f + 1.30f * damping + 6.0f * damping * damping * damping;
+
+    const float materialLoss = hysteresisScale * (0.33f + 1.00f * applied.headMaterial);
+    drum.headLossFactor = materialLoss * dampingShape;
+
+    // The viscous share. It is negligible at the fundamental - a few hundredths
+    // of an inverse second at fifty hertz - and dominant by a kilohertz, which
+    // is exactly the division of labour a hide has.
+    const float viscousLoss = viscousScale * (0.55f + 0.90f * applied.headMaterial);
+    drum.headViscousFactor = viscousLoss * dampingShape;
 
     // Loss into the hoop and the tacks. A soft laminated shell absorbs far
     // more of what reaches the rim than a dense carved log does.
-    drum.edgeLoss = (0.40f + 1.80f * (1.0f - applied.shellMaterial))
-                  * (0.60f + 1.40f * applied.headDamping);
+    //
+    // This is the only loss here that does not scale with frequency, which
+    // makes it the ceiling on how long anything can ring: a mode cannot outlast
+    // 6.9 / edgeLoss however little else takes from it. Measured against
+    // recordings, a real head wants a second and a half in its body, so this
+    // has to stay under about two inverse seconds - seven times smaller than it
+    // once was here, when it was standing in for the mode-to-mode spread that
+    // the radiation term now accounts for properly. Rim loss is a real
+    // mechanism and a small one; it was carrying work that belonged elsewhere.
+    //
+    // Head Damping scales it from almost nothing to a great deal, rather than
+    // from a little to a lot: a drum mounted so that the hoop is free really
+    // can ring for several seconds, and collapsing that end of the control
+    // would take the long ō-daiko boom off the instrument altogether.
+    drum.edgeLoss = (0.34f + 1.50f * (1.0f - applied.shellMaterial))
+                  * (0.15f + 1.85f * applied.headDamping);
 
     // Cavity stiffness per unit area. The per-mode 4/lambda^2 volume weighting
     // is applied where the modes are built, since it belongs to the mode.
@@ -700,6 +871,16 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
                          * soundSpeed / drum.depth;
 
     drum.radiationScale = radiationCalibration;
+
+    // What the mounting takes. The lowest modes of a large drum do not stay in
+    // the head: they move the shell, the hoops and whatever the drum is stood
+    // on, and that energy is gone. It is why a real o-daiko's fundamental dies
+    // away faster than its body does - measured at a third of the time - while
+    // a head modelled on its own damping alone rings longest exactly where it
+    // should ring shortest. The term is steep, because a mode has to be low
+    // enough to move the whole instrument before any of this applies at all.
+    drum.mountLoss = mountLossScale * (0.55f + 0.90f * applied.headDamping);
+    drum.mountCorner = mountLossCorner;
 
     // The wooden shell's ring modes. This is the standard thin-cylinder result
     // f_n = n(n^2-1)/sqrt(n^2+1) * h/(2 pi R^2) * sqrt(E/(12 rho (1-nu^2))),
@@ -712,7 +893,13 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
     const float wallThickness = 2.0f * drum.radius
                               * (0.035f + 0.045f * applied.shellMaterial);
     const float geometry = wallThickness / (2.0f * piFloat * drum.radius * drum.radius);
-    const float shellQ = 18.0f + 70.0f * applied.shellMaterial;
+    // A drum shell is a thick, short, heavily loaded piece of wood clamped at
+    // both ends by the hoops, not a free bar, so it does not ring for long. It
+    // used to, and on a large drum its ring outlasted the head's - which put a
+    // wooden pitch on top of the drum where the body should only be adding
+    // weight, and left a hand laid on the head unable to damp what anyone could
+    // still hear, because a hand on the head does not touch the body.
+    const float shellQ = 12.0f + 40.0f * applied.shellMaterial;
 
     for (int index = 0; index < shellResonatorCount; ++index)
     {
@@ -734,11 +921,21 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
 
     // The close pair. At zero spread both microphones sit over the centre of
     // the head and the instrument is exactly mono; opening it walks them out
-    // towards opposite sides of the rim, where every mode with a
-    // circumferential order reaches them with a different sign.
+    // towards the rim, where every mode with a circumferential order reaches
+    // them with a different sign.
+    //
+    // Fully open is about fifty degrees of arc between the two, which is what a
+    // close pair over one head actually is. It used to be a hundred and
+    // twenty-six, and that is not a close pair, it is one microphone either
+    // side of the drum: at that angle the two capsules sit on opposite sides of
+    // the nodal diameter of every mode of order one, and the edge strokes -
+    // which are the ones that drive those modes hardest - came out of phase.
+    // The head's continuum used to bury that under enough uncorrelated noise to
+    // keep the sum positive, which is not the same as the drum being mono-safe;
+    // cutting the continuum to its proper share simply stopped hiding it.
     drum.micRadius = drum.radius * (0.10f + 0.68f * applied.micSpread);
     constexpr float micReference = 0.60f;      // radians, off the mode axis
-    const float separation = 2.2f * applied.micSpread;
+    const float separation = 0.9f * applied.micSpread;
     drum.micAngleLeft = micReference + 0.5f * separation;
     drum.micAngleRight = micReference - 0.5f * separation;
 
@@ -938,20 +1135,25 @@ void TaikoEngine::configureResonator (Resonator& resonator, float frequencyHz,
 
     if (! (frequencyHz > 0.0f) || frequencyHz >= nyquist * 0.98f)
     {
-        resonator.a1 = 0.0f;
-        resonator.a2 = 0.0f;
-        resonator.b0 = 0.0f;
+        resonator.a1 = 0.0;
+        resonator.a2 = 0.0;
+        resonator.b0 = 0.0;
         return;
     }
 
-    const float omega = 2.0f * piFloat * frequencyHz / rate;
-    const float radius = std::exp (-decayRate / rate);
-    resonator.a1 = -2.0f * radius * std::cos (omega);
+    // Solved in double for the same reason the resonator runs in double: at
+    // fifty hertz against a high sample rate, cos(omega) differs from one by
+    // less than a float mantissa can hold, and rounding the coefficient is
+    // itself enough to mistune the drum audibly.
+    const auto omega = 2.0 * static_cast<double> (piFloat)
+                     * static_cast<double> (frequencyHz) / sampleRate_;
+    const auto radius = std::exp (-static_cast<double> (decayRate) / sampleRate_);
+    resonator.a1 = -2.0 * radius * std::cos (omega);
     resonator.a2 = radius * radius;
     // Impulse-invariant scaling: with this numerator the resonator's impulse
     // response is exactly the sampled r^n sin(omega n), so the drive gain the
     // caller computes carries its physical meaning through unchanged.
-    resonator.b0 = gain * std::sin (omega);
+    resonator.b0 = static_cast<double> (gain) * std::sin (omega);
 }
 
 void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
@@ -979,11 +1181,22 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     // the head, and that is what separates the pair.
     const float propagatingSpread = 1.0f / (1.0f + micDistance / 0.12f);
 
-    const float lossFactor = drum.headLossFactor * (1.0f + 2.4f * extraDamping);
     const float edgeLoss = drum.edgeLoss * (1.0f + 3.0f * extraDamping);
+    // The hide's own loss, kept as the two coefficients materialDamping sums
+    // rather than as that sum, so a retuned mode can be re-damped at its new
+    // frequency. The hand bears on both, exactly as it does there.
+    const float handShare = 1.0f + 2.4f * extraDamping;
+    const float lossOmega = 0.5f * drum.headLossFactor * handShare;
+    const float lossOmegaSquared = drum.headViscousFactor * handShare;
+    voice.mountLoss = drum.mountLoss;
+    voice.mountCorner = drum.mountCorner;
+    voice.radiusMetres = drum.radius;
 
     int count = 0;
     float peakMagnitude = 1.0e-12f;
+    // The head's own share of that, which is what the high-frequency continuum
+    // is measured against.
+    float membranePeak = 1.0e-12f;
 
     // A real head is never quite uniform, so each degenerate pair sits a
     // fraction of a percent apart and beats. That asymmetry is a property of
@@ -1073,10 +1286,36 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
                 const float ka = omega * radius / soundSpeed;
                 const float efficiency = radiationEfficiency (0, ka);
-                const float radiationLoss =
-                    drum.radiationScale * airDensity * soundSpeed * efficiency
-                    * std::abs (volumeShare) / (2.0f * sigmaB);
-                const float decay = 0.5f * lossFactor * omega + radiationLoss + edgeLoss;
+
+                // Radiation damping is set by how much air the mode actually
+                // moves, and a mode with nodal circles moves very little: its
+                // annuli alternate in sign and cancel each other out before the
+                // sound has left the head. Integrating J0(lambda r/a) over the
+                // disc gives a net volume of 2 J1(lambda)/lambda, and the same
+                // J1(lambda)^2 appears in the modal mass, so the two cancel and
+                // what is left is a bare 4/lambda^2 - the identical weighting
+                // the cavity coupling carries, for the identical reason. Both
+                // are net-volume couplings.
+                //
+                // Leaving it out cost the drum its body. Every axisymmetric
+                // mode radiated as though it were a piston, which put fifteen
+                // to nineteen inverse seconds of loss on the whole two hundred
+                // to six hundred hertz region and emptied it in a third of a
+                // second, while the microphone path - which does carry the
+                // J1 factor - never received the energy the model was throwing
+                // away. The head was being damped by sound it did not make.
+                const float netVolume = 2.0f / lambda;
+                const float volumeCoupling = netVolume * volumeShare;
+                // Power goes as the square of the volume velocity and the
+                // eigenvectors are unit length, so the share enters squared.
+                const float radiationPrefactor =
+                    drum.radiationScale * airDensity * soundSpeed
+                    * volumeCoupling * volumeCoupling;
+                const float radiationLoss = radiationPrefactor * efficiency;
+                const float decayFixed = edgeLoss;
+                const float decay = decayFixed + radiationLoss
+                                  + materialDamping (drum, omega, extraDamping)
+                                  + mountingLoss (drum, frequency);
 
                 const float drive = shapeStrike * batterShare
                                   / (geometricMass * omega * rate);
@@ -1110,6 +1349,11 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 auto& mode = voice.modes[static_cast<std::size_t> (count)];
                 mode.omega = omega;
                 mode.decayRate = decay;
+                mode.decayFixed = decayFixed;
+                mode.lossOmega = lossOmega;
+                mode.lossOmegaSquared = lossOmegaSquared;
+                mode.radiationPrefactor = radiationPrefactor;
+                mode.circumferentialOrder = 0;
                 mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 // Axisymmetric modes look identical from both sides of the
@@ -1121,6 +1365,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
                 peakMagnitude = std::max (peakMagnitude,
                                           std::abs (mode.drive * mode.micLeft));
+                membranePeak = std::max (membranePeak,
+                                         std::abs (mode.drive * mode.micLeft));
             }
         }
         else
@@ -1160,12 +1406,14 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
                 const float ka = omega * radius / soundSpeed;
                 const float efficiency = radiationEfficiency (order, ka);
-                const float radiationLoss =
-                    drum.radiationScale * airDensity * soundSpeed * efficiency
-                    / (2.0f * sigmaB);
-                const float decay = 0.5f * lossFactor * omega
-                                  + radiationLoss
-                                  + edgeLoss * (1.0f + 0.12f * orderFloat);
+                const float radiationPrefactor =
+                    drum.radiationScale * airDensity * soundSpeed / (2.0f * sigmaB);
+                const float radiationLoss = radiationPrefactor * efficiency;
+                const float decayFixed =
+                    edgeLoss * (1.0f + edgeOrderFactor * orderFloat);
+                const float decay = decayFixed + radiationLoss
+                                  + materialDamping (drum, omega, extraDamping)
+                                  + mountingLoss (drum, frequency);
 
                 const float drive = shapeStrike * strikeAngular
                                   / (geometricMass * omega * rate);
@@ -1200,6 +1448,11 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 auto& mode = voice.modes[static_cast<std::size_t> (count)];
                 mode.omega = omega;
                 mode.decayRate = decay;
+                mode.decayFixed = decayFixed;
+                mode.lossOmega = lossOmega;
+                mode.lossOmegaSquared = lossOmegaSquared;
+                mode.radiationPrefactor = radiationPrefactor;
+                mode.circumferentialOrder = static_cast<std::uint8_t> (order);
                 mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 mode.micLeft = observedL;
@@ -1209,6 +1462,10 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
                 peakMagnitude = std::max (
                     peakMagnitude,
+                    std::max (std::abs (mode.drive * mode.micLeft),
+                              std::abs (mode.drive * mode.micRight)));
+                membranePeak = std::max (
+                    membranePeak,
                     std::max (std::abs (mode.drive * mode.micLeft),
                               std::abs (mode.drive * mode.micRight)));
             }
@@ -1297,6 +1554,185 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
     voice.modeCount = count;
 
+    // The head's high-frequency continuum. The resolved bank stops at the
+    // highest Bessel zero in the table, which on a large drum is only a few
+    // hundred hertz; a real head goes on having modes for another five octaves
+    // above that, packed far closer together than their own bandwidths. Nobody
+    // hears those individually - what reaches the ear is a shaped burst that
+    // empties from the top down - so they are modelled as bands of noise rather
+    // than as several hundred more resonators.
+    //
+    // The bands start above the resolved bank and climb by octaves. Each one
+    // carries the head's own loss law, so the top of the drum goes first
+    // exactly as it does in the resolved region, and each is lit by the same
+    // contact the modes are, so a harder and therefore shorter stroke reaches
+    // further up - the v^(-1/5) contact law arriving by a third route.
+    {
+        float highestResolved = 0.0f;
+        for (int index = 0; index < count; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (mode.membrane)
+                highestResolved = std::max (highestResolved,
+                                            mode.omega / (2.0f * piFloat));
+        }
+
+        const float first = std::max (highestResolved * 1.25f, 120.0f);
+
+        // Short wavelengths live at the edge. The high-order mode shapes pile
+        // up against the rim, so a stroke out there couples into the continuum
+        // far harder than one over the middle - which is the same reason a Ka
+        // is bright and a Don is not, carried into the region the resolved bank
+        // cannot represent. A shot that catches the hoop is brighter still.
+        //
+        // Quadratic, because a straight line badly understates it: J_m(lambda
+        // rho) for the orders up here is not merely smaller near the middle of
+        // the head, it is vanishing, and the coupling climbs steeply as the
+        // stroke walks out. With a linear law the far edge came out no brighter
+        // than a Don once the continuum was cut back to its proper share - and
+        // an edge stroke that is not brighter than a centre one is not an edge
+        // stroke.
+        const float edgeBoost = edgeBoostBase
+                              + edgeBoostSlope * rho * (1.0f + rho)
+                              + 0.85f * profile.rimGain;
+        for (int band = 0; band < continuumBandCount; ++band)
+        {
+            auto& entry = voice.continuum[static_cast<std::size_t> (band)];
+            const float centre =
+                first * std::pow (continuumBandRatio, static_cast<float> (band));
+
+            if (centre >= nyquist * 0.9f || profile.membraneGain <= 0.0f)
+            {
+                entry.level = 0.0f;
+                entry.envelope = 0.0f;
+                continue;
+            }
+
+            // A one-pole pair either side of the centre. Wide on purpose: this
+            // is a region of the spectrum, not a partial.
+            const float low = centre / continuumBandwidth;
+            const float high = centre * continuumBandwidth;
+            entry.lowCoefficient =
+                1.0f - std::exp (-2.0f * piFloat * std::min (low, nyquist * 0.9f) / rate);
+            entry.highCoefficient =
+                1.0f - std::exp (-2.0f * piFloat * std::min (high, nyquist * 0.9f) / rate);
+            entry.centre = centre;
+            entry.lowStateLeft = 0.0f;
+            entry.lowStateLeft2 = 0.0f;
+            entry.highStateLeft = 0.0f;
+            entry.highStateLeft2 = 0.0f;
+            entry.lowStateRight = 0.0f;
+            entry.lowStateRight2 = 0.0f;
+            entry.highStateRight = 0.0f;
+            entry.highStateRight2 = 0.0f;
+
+            // Two microphones a fixed distance apart hear a long wavelength in
+            // common and a short one independently. The crossover is where the
+            // wavelength matches the spacing, so the bottom of the continuum
+            // arrives as one signal and the top as two - which is also why
+            // opening the pair widens the drum's air rather than just its
+            // partials.
+            const float separation =
+                2.0f * drum.micRadius
+                * std::abs (std::sin (0.5f * (micAngleL - micAngleR)));
+            const float correlation =
+                std::exp (-2.0f * separation * centre / soundSpeed);
+            entry.common = std::sqrt (clampFloat (correlation, 0.0f, 1.0f));
+            entry.independent = std::sqrt (1.0f - entry.common * entry.common);
+
+            const float omega = 2.0f * piFloat * centre;
+
+            // The head's own loss law, the same one the resolved modes sit on -
+            // the continuum is the same piece of hide carrying on above where
+            // its modes can be told apart.
+            //
+            // The rim is where they part company, and they have to. A band here
+            // does not hold the axisymmetric modes that happen to land at its
+            // centre frequency; almost everything at these frequencies is
+            // high circumferential order, and a mode of high order hugs the
+            // boundary - J_m(lambda r/a) is pressed against the rim and nearly
+            // flat across the middle of the head. Those modes therefore lose at
+            // the hoop many times over what a centre-weighted mode loses, by
+            // the same per-order law the resolved bank already applies. The
+            // highest order a membrane carries at a given frequency is its own
+            // dimensionless wavenumber, omega a / c, so the factor climbs with
+            // the band.
+            //
+            // Without it one edge loss had to serve both regions, and no single
+            // value works: set it for the resolved bank and the continuum hangs
+            // behind the drum as a half-second bed of noise that buries the body
+            // it is supposed to sit above, and set it for the continuum and the
+            // body goes with it.
+            // Kept as coefficients rather than as the sum, so that retuning
+            // the head can re-damp the band wherever it lands - and split by
+            // what actually moves. The rim's share does not: it is set by the
+            // band's dimensionless wavenumber, and stretching a head raises the
+            // frequency and the wave speed by the same factor, so omega a / c
+            // is exactly where it was. Only the hide's two terms follow a bend.
+            const float wavenumber = omega * radius / std::max (drum.waveSpeed, 1.0f);
+            voice.continuumLossOmega = lossOmega;
+            voice.continuumLossOmegaSquared = lossOmegaSquared;
+            entry.lossFixed =
+                drum.edgeLoss * (1.0f + continuumEdgeOrder * wavenumber);
+
+            const float decay = entry.lossFixed
+                              + voice.continuumLossOmega * omega
+                              + voice.continuumLossOmegaSquared * omega * omega;
+            entry.envelopeDecay = std::exp (-decay / rate);
+            // Left dark. Every band is lit by the contacts themselves, each in
+            // proportion to how hard it lands, so a flam's grace note gets its
+            // share and its main stroke gets the whole of it. Starting them
+            // alight handed the first contact everything regardless of how
+            // gently it touched the head.
+            entry.envelope = 0.0f;
+
+            // Falling with frequency, so the region joins onto the top of the
+            // resolved bank rather than sitting on it as a shelf.
+            const float tilt = std::pow (first / centre, continuumTilt);
+            // Differencing the two cascades makes the band-pass, and most of the
+            // noise's energy is thrown away doing it - how much depends on where
+            // the band sits against the sample rate. Normalising by the filter's
+            // own output variance means the calibration below sets a level
+            // rather than an accident of the geometry.
+            //
+            // A doubled pole p with gain c has the impulse response
+            // c^2 (n+1) p^n, and sum (n+1)^2 t^n = (1+t)/(1-t)^3, so one
+            // expression gives both cascades' variance and their covariance.
+            const float poleLow = 1.0f - entry.lowCoefficient;
+            const float poleHigh = 1.0f - entry.highCoefficient;
+            const auto overlap = [] (float gainA, float gainB, float poleA, float poleB)
+            {
+                const float product = poleA * poleB;
+                const float denominator = std::max (1.0f - product, 1.0e-6f);
+                return gainA * gainA * gainB * gainB * (1.0f + product)
+                     / (denominator * denominator * denominator);
+            };
+            const float varianceLow = overlap (entry.lowCoefficient,
+                                               entry.lowCoefficient, poleLow, poleLow);
+            const float varianceHigh = overlap (entry.highCoefficient,
+                                                entry.highCoefficient, poleHigh, poleHigh);
+            const float covariance = overlap (entry.lowCoefficient,
+                                              entry.highCoefficient, poleLow, poleHigh);
+            const float variance =
+                std::max (varianceLow + varianceHigh - 2.0f * covariance, 1.0e-9f);
+
+            // Relative to the resolved bank; trigger() scales the whole set by
+            // the force of the stroke, exactly as the modes are scaled by the
+            // excitation they are driven with.
+            // Against the head's own drive, not the whole bank's. The
+            // continuum is the head going on above where its modes can be told
+            // apart, so a stroke that is loud because it caught the hoop and
+            // rang the body must not drag it up with them.
+            // No membraneGain here: membranePeak is measured from mode.drive,
+            // which already carries it. Applying it twice made the continuum
+            // scale as the square of the articulation's head gain, so the
+            // quieter strokes came out far darker than their profile asks for -
+            // Katsu's 0.06 became 0.0036 and lost its continuum altogether.
+            entry.level = continuumCalibration * edgeBoost * tilt * membranePeak
+                        / std::sqrt (variance);
+        }
+    }
+
     // How long each mode stays above the retirement floor, so the render loop
     // can drop them as they go. A drum starts with everything ringing and ends
     // on two or three modes; paying for forty the whole way is pure waste.
@@ -1310,12 +1746,13 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
         if (mode.decayRate <= 0.0f || relative <= modeRetirementFloor)
         {
+            mode.retirementLog = 0.0f;
             mode.audibleSamples = 0;
             continue;
         }
 
-        const float seconds =
-            std::log (relative / modeRetirementFloor) / mode.decayRate;
+        mode.retirementLog = std::log (relative / modeRetirementFloor);
+        const float seconds = mode.retirementLog / mode.decayRate;
         const float bounded = clampFloat (seconds, 0.0f,
                                           static_cast<float> (maximumTailSeconds));
         mode.audibleSamples = static_cast<std::uint64_t> (bounded * rate);
@@ -1558,8 +1995,33 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     buildVoiceModes (voice, drum, stick, profile, extraDamping);
 
     const float noiseLevel = applied_.strikeNoise * profile.noiseGain * 0.35f;
-    scheduleContacts (voice, profile, contactSeconds, peakForce * profile.levelScale,
-                      noiseLevel);
+    const float excitationScale = peakForce * profile.levelScale;
+    scheduleContacts (voice, profile, contactSeconds, excitationScale, noiseLevel);
+
+    // The continuum was built against the resolved bank's drive; the modes are
+    // then driven by the contact, so the continuum has to be scaled by the same
+    // force to sit where it belongs against them.
+    //
+    // And shaded by how long that contact lasted. A force pulse of duration tau
+    // has no useful content much above 1/tau, so a soft stroke - which rests on
+    // the head nearly twice as long - simply cannot reach the top of the
+    // continuum, while a hard one lights all of it. This is the same v^(-1/5)
+    // contact law that shortens the pulse and brightens the resolved modes,
+    // finally reaching the region where most of the brightness actually lives.
+    voice.contactReference = excitationScale;
+
+    const float corner = 1.0f / std::max (contactSeconds, 1.0e-5f);
+    for (auto& band : voice.continuum)
+    {
+        const float ratio = band.centre / corner;
+        band.level *= excitationScale / (1.0f + ratio * ratio);
+    }
+
+    // What a contact's amplitude is measured against when it relights the
+    // continuum: the force the continuum was scaled by, not the first contact's
+    // amplitude. A flam's first contact is its quiet grace note, so measuring
+    // against that gave the main stroke well over twice the continuum it should
+    // have had - and put the loudest articulation on the limiter.
 
     // Contact noise is stick and hide texture, so it sits an octave or so
     // above the drum and follows how sharp the contact was.
@@ -1572,12 +2034,12 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // Stretching the head raises its tension, so a hard stroke starts sharp
     // and settles as it decays. The depth follows the impact speed because
     // that is what sets how far the head is pushed.
-    const float glideDepth = applied_.tensionModulation * 0.055f
+    const float glideDepth = applied_.tensionModulation * 0.115f
                            * clampFloat (impactSpeed / maximumImpactSpeed, 0.0f, 1.0f)
                            * profile.membraneGain;
     voice.tensionDepth = glideDepth;
     voice.tensionEnvelope = glideDepth > 0.0f ? 1.0f : 0.0f;
-    voice.tensionDecay = std::exp (-1.0f / (0.055f * static_cast<float> (sampleRate_))
+    voice.tensionDecay = std::exp (-1.0f / (0.115f * static_cast<float> (sampleRate_))
                                    * static_cast<float> (controlPeriod));
     voice.appliedTensionShift = 1.0f;
     if (glideDepth > 0.0f)
@@ -1641,6 +2103,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
 
         // Adding a constant preserves the descending sort, and leaves the modes
         // that were never audible at zero so the trailing trim still finds them.
+        voice.retirementOffset = scheduleEnd;
         for (int index = 0; index < voice.modeCount; ++index)
         {
             auto& mode = voice.modes[static_cast<std::size_t> (index)];
@@ -1703,18 +2166,121 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         const float frequency = mode.omega * shift / (2.0f * piFloat);
         if (frequency >= nyquist * 0.98f || ! (frequency > 0.0f))
         {
-            mode.resonator.a1 = 0.0f;
-            mode.resonator.a2 = 0.0f;
-            mode.resonator.b0 = 0.0f;
+            mode.resonator.a1 = 0.0;
+            mode.resonator.a2 = 0.0;
+            mode.resonator.b0 = 0.0;
             continue;
         }
 
-        const float omega = 2.0f * piFloat * frequency / rate;
-        const float poleRadius = std::exp (-mode.decayRate / rate);
-        mode.resonator.a1 = -2.0f * poleRadius * std::cos (omega);
+        // Re-damped, not merely retuned. Most of what damps a mode depends on
+        // where the mode is: the hide's loss goes as omega and as omega
+        // squared, and the mounting is steeply low-pass, so on a large drum a
+        // mode sitting under that corner is losing most of its energy to the
+        // stand. Carrying the old rate to the new frequency meant a note
+        // automated upward kept the mounting loss of the note it started on and
+        // emptied far too fast, and a note automated down kept too little and
+        // rang past where it should have stopped.
+        mode.decayRate = membraneDecayAt (voice, mode, 2.0f * piFloat * frequency);
+
+        // In double, exactly as configureResonator does it. This path runs on
+        // every stroke that has any Tension Mod at all - which is the default -
+        // and again on every wheel move and Pitch automation step, so rounding
+        // the coefficients here would put the mistuning straight back after the
+        // careful build.
+        const auto omega = 2.0 * static_cast<double> (piFloat)
+                         * static_cast<double> (frequency) / sampleRate_;
+        const auto poleRadius = std::exp (-static_cast<double> (mode.decayRate)
+                                          / sampleRate_);
+        mode.resonator.a1 = -2.0 * poleRadius * std::cos (omega);
         mode.resonator.a2 = poleRadius * poleRadius;
         mode.resonator.b0 = std::sin (omega);
     }
+
+    // The continuum is the same head above where its modes can be told apart,
+    // so it moves with them. Leaving it fixed let a two-octave Pitch move carry
+    // the resolved bank away while the region that now dominates the upper
+    // spectrum stood still, and put a smaller version of the same mismatch into
+    // the attack glide of every hard stroke.
+    for (auto& band : voice.continuum)
+    {
+        if (! (band.centre > 0.0f))
+            continue;
+
+        const float centre = band.centre * shift;
+        const float low = std::min (centre / continuumBandwidth, nyquist * 0.9f);
+        const float high = std::min (centre * continuumBandwidth, nyquist * 0.9f);
+        band.lowCoefficient = 1.0f - std::exp (-2.0f * piFloat * low / rate);
+        band.highCoefficient = 1.0f - std::exp (-2.0f * piFloat * high / rate);
+
+        // And its decay with it, for the same reason the modes' does: the loss
+        // that empties this region is the head's own, and that is a function of
+        // where the band now sits rather than of where it was built.
+        const float bandOmega = 2.0f * piFloat * centre;
+        const float bandDecay = band.lossFixed
+                              + voice.continuumLossOmega * bandOmega
+                              + voice.continuumLossOmegaSquared * bandOmega * bandOmega;
+        band.envelopeDecay = std::exp (-bandDecay / rate);
+    }
+
+    // The lifetimes were worked out from the rates the modes were built with,
+    // and those rates have just moved. A mode that has been slowed has to be
+    // allowed to finish, or it is cut off mid-ring - a step in the output
+    // rather than a mode quietly ending.
+    //
+    // Lengthened only, never shortened. The retirement walk drops modes from
+    // the end of a bank sorted by lifetime, and once the rates move apart that
+    // sort no longer strictly holds; extending an entry can only leave a mode
+    // active past its floor, which costs a resonator, while shortening one
+    // could drop a mode the walk has not reached yet while it is still
+    // sounding, which costs a click. The wooden bank is not touched at all -
+    // stretching the head does not stretch the body it is nailed to.
+    std::uint64_t longest = 0;
+    for (int index = 0; index < voice.modeCount; ++index)
+    {
+        auto& mode = voice.modes[static_cast<std::size_t> (index)];
+        if (! mode.membrane || mode.retirementLog <= 0.0f || mode.decayRate <= 0.0f)
+            continue;
+
+        const float seconds = mode.retirementLog / mode.decayRate;
+        const float bounded = clampFloat (seconds, 0.0f,
+                                          static_cast<float> (maximumTailSeconds));
+        const auto samples = static_cast<std::uint64_t> (bounded * rate)
+                           + voice.retirementOffset;
+        mode.audibleSamples = std::max (mode.audibleSamples, samples);
+        longest = std::max (longest, mode.audibleSamples);
+    }
+
+    // And the voice's own deadline with them. It is the longest mode plus a
+    // little, and the render loop silences everything at it: extending the
+    // modes without extending this would move where a retuned drum is cut off
+    // from the mode to the voice and change nothing else. The cap on the whole
+    // tail still stands - that one is a promise to the host about latency, not
+    // a statement about the drum.
+    if (longest > 0)
+        voice.maximumSamples = std::min (
+            std::max (voice.maximumSamples,
+                      longest + static_cast<std::uint64_t> (rate * 0.02f)),
+            static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_));
+
+    // And a fade already armed against the old deadline has to be called off,
+    // or extending the deadline achieves nothing: the render loop is
+    // multiplying the voice down to zero on the old schedule and would simply
+    // hold it there until the later one arrived. The arming test runs before
+    // the glide does, so a bend that lands inside the last sixty milliseconds
+    // of a voice is exactly the case this happens in.
+    //
+    // Only while the fade has not actually moved the gain yet. Once it has,
+    // the voice is already some way down and putting it back to unity would be
+    // a step up rather than a rescue - a click, and a louder one the longer the
+    // fade has run. A fade that has started is left to finish; what this
+    // catches is the far commoner case of one armed a moment ago and not yet
+    // acted on.
+    const auto fadeSamples =
+        static_cast<std::uint64_t> (forcedFadeSeconds * sampleRate_);
+    if (voice.retireStep > 0.0f
+        && voice.retireGain >= 1.0f
+        && voice.ageSamples + fadeSamples < voice.maximumSamples)
+        voice.retireStep = 0.0f;
 
     voice.appliedTensionShift = shift;
 }
@@ -1757,6 +2323,14 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
             mode.resonator.y1 *= voice.handGain;
             mode.resonator.y2 *= voice.handGain;
         }
+
+        // And the continuum with them. It is the head above where its modes can
+        // be told apart, so a hand laid on the head damps it for exactly the
+        // same reason - and by the time it was left out, it was most of what
+        // there was to damp.
+        for (auto& band : voice.continuum)
+            band.envelope *= voice.handGain;
+
         voice.handGain = 1.0f;
     }
 
@@ -1796,6 +2370,22 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
             voice.contactAmplitude = contact.amplitude;
             voice.contactNoiseAmplitude = contact.noiseAmplitude;
             ++voice.nextContact;
+
+            // Every impact lights the head's continuum, not just the first. A
+            // flam is two strikes and a press roll is seven, and the later ones
+            // are real blows on the head - leaving them out gave the grace note
+            // the whole stroke's brightness and the main hit thirty-two
+            // milliseconds later nothing but the residue.
+            //
+            // In proportion to how hard this particular contact lands, and
+            // taken as the louder of what is already ringing and what the new
+            // blow brings, so a bounce cannot cut the tail of the one before.
+            if (voice.contactReference > 0.0f)
+            {
+                const float share = contact.amplitude / voice.contactReference;
+                for (auto& band : voice.continuum)
+                    band.envelope = std::max (band.envelope, share);
+            }
         }
     }
 
@@ -1835,6 +2425,38 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
     // damp what it is actually touching.
     float membraneLeft = 0.0f;
     float membraneRight = 0.0f;
+
+    // The head's high-frequency continuum: everything above the resolved bank,
+    // as bands of noise gated by the strike and decaying from the top down. It
+    // is part of the head, so it is summed with the head and damped with it.
+    for (auto& band : voice.continuum)
+    {
+        if (band.envelope <= 1.0e-5f || band.level <= 0.0f)
+            continue;
+
+        const float shared = nextNoise (voice.noiseState);
+        const float sideLeft = nextNoise (voice.noiseState);
+        const float sideRight = nextNoise (voice.noiseState);
+        const float inLeft = band.common * shared + band.independent * sideLeft;
+        const float inRight = band.common * shared + band.independent * sideRight;
+
+        // Each edge is a pair of one-poles in series. Differencing the two
+        // second-stage outputs leaves a band-pass with twelve-decibel skirts,
+        // which is the least that lets a band own its own octave.
+        band.lowStateLeft += band.lowCoefficient * (inLeft - band.lowStateLeft);
+        band.lowStateLeft2 += band.lowCoefficient * (band.lowStateLeft - band.lowStateLeft2);
+        band.highStateLeft += band.highCoefficient * (inLeft - band.highStateLeft);
+        band.highStateLeft2 += band.highCoefficient * (band.highStateLeft - band.highStateLeft2);
+        band.lowStateRight += band.lowCoefficient * (inRight - band.lowStateRight);
+        band.lowStateRight2 += band.lowCoefficient * (band.lowStateRight - band.lowStateRight2);
+        band.highStateRight += band.highCoefficient * (inRight - band.highStateRight);
+        band.highStateRight2 += band.highCoefficient * (band.highStateRight - band.highStateRight2);
+
+        const float gain = band.level * band.envelope;
+        band.envelope *= band.envelopeDecay;
+        membraneLeft += (band.highStateLeft2 - band.lowStateLeft2) * gain;
+        membraneRight += (band.highStateRight2 - band.lowStateRight2) * gain;
+    }
 
     for (int index = 0; index < voice.activeModeCount; ++index)
     {
@@ -2231,12 +2853,12 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
         result.loadedFundamentalHz = audible / (2.0f * piFloat);
     }
 
-    // How long each branch rings, each with its own radiation share. The two
-    // differ a great deal on a sealed drum, because only the branch that
+    // How long a branch rings, with its own radiation share. Two branches of the
+    // same mode differ a great deal on a sealed drum, because only the one that
     // changes the body's volume radiates - so reporting one branch's decay
-    // beside the other branch's frequency described neither. What the editor
-    // labels a tail is how long the drum rings, which is the longer of them.
-    const auto branchTail = [&drum] (float omega, float vectorB, float vectorR)
+    // beside the other branch's frequency described neither.
+    const auto branchTail = [&drum] (float branchLambda, float omega,
+                                     float vectorB, float vectorR)
     {
         if (! (omega > 0.0f))
             return 0.0f;
@@ -2245,18 +2867,124 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
                                 + vectorR / std::sqrt (drum.resonantDensity);
         const float efficiency =
             radiationEfficiency (0, omega * drum.radius / soundSpeed);
-        const float decay = 0.5f * drum.headLossFactor * omega
+        // The same net-volume weighting the sounded modes carry, so the
+        // readout describes the drum the listener actually hears.
+        const float volumeCoupling = (2.0f / branchLambda) * volumeShare;
+        const float decay = materialDamping (drum, omega, 0.0f)
                           + drum.radiationScale * airDensity * soundSpeed * efficiency
-                                * std::abs (volumeShare) / (2.0f * drum.batterDensity)
-                          + drum.edgeLoss;
+                                * volumeCoupling * volumeCoupling
+                          + drum.edgeLoss
+                          + mountingLoss (drum, omega / (2.0f * piFloat));
         return decay > 0.0f ? 6.9078f / decay : 0.0f;
     };
 
-    // Same restriction: a branch the stroke never drives cannot be how long the
-    // drum rings, however long it would ring if something did drive it.
-    result.tailSeconds = std::max (
-        upperAudible ? branchTail (upper, upperB, upperR) : 0.0f,
-        lowerAudible ? branchTail (lower, lowerB, lowerR) : 0.0f);
+    // What the editor labels a tail is how long the drum rings, and that is not
+    // a question about the fundamental. The fundamental is the one mode of a
+    // head that moves enough air to radiate properly, which makes it the one
+    // that empties first; the radial orders above it push their air in and out
+    // of their own nodal rings and can barely get a sound out at all, so they
+    // outlast it several times over. Reporting the fundamental's decay as the
+    // drum's tail understated a sealed drum by a factor of four.
+    //
+    // So the whole bank is swept and the longest-lived mode any stroke can
+    // drive is the answer - including the modes with a circumferential order.
+    // Those used to be left out on the grounds that they are silent under the
+    // centre of the head, which was true when a Don was struck there and is not
+    // now that no stroke is: they are driven by every articulation the
+    // instrument has, they radiate as multipoles and so barely at all, and on a
+    // lightly damped drum with a dense shell they outlast the axisymmetric
+    // family that used to be the whole of this figure.
+    result.tailSeconds = 0.0f;
+
+    for (const auto& radial : membraneModes())
+    {
+        const auto radialLambda = static_cast<float> (radial.besselZero);
+
+        if (radial.circumferentialOrder != 0)
+        {
+            // No cavity to couple to: a mode with a circumferential order moves
+            // the same air in and out of the body and leaves its volume alone,
+            // so there is no eigenproblem here and no pair of branches - just
+            // the batter head's own mode, air-loaded and damped.
+            const auto order = static_cast<float> (radial.circumferentialOrder);
+            const float ideal =
+                drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
+            const float shape =
+                (2.4048f / radialLambda) / (1.0f + 0.6f * order);
+            const float load = 1.0f / std::sqrt (
+                1.0f + 0.85f * shape * airDensity * drum.radius / drum.batterDensity);
+
+            const float omega = 2.0f * piFloat * ideal * load;
+            const float frequency = omega / (2.0f * piFloat);
+            if (! (frequency > 0.0f) || frequency >= 20000.0f)
+                continue;
+
+            const float efficiency = radiationEfficiency (
+                radial.circumferentialOrder, omega * drum.radius / soundSpeed);
+            const float decay =
+                materialDamping (drum, omega, 0.0f)
+                + drum.radiationScale * airDensity * soundSpeed * efficiency
+                      / (2.0f * drum.batterDensity)
+                + drum.edgeLoss * (1.0f + edgeOrderFactor * order)
+                + mountingLoss (drum, frequency);
+
+            if (decay > 0.0f)
+                result.tailSeconds = std::max (result.tailSeconds, 6.9078f / decay);
+
+            continue;
+        }
+
+        const float radialBatter =
+            drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
+        const float radialResonant =
+            drum.resonantWaveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
+
+        // The air load falls off with the mode's own order exactly as it does
+        // where the modes are built: a mode with nodal rings shifts far less
+        // air per unit of displacement than the fundamental does.
+        const float radialShape = 2.4048f / radialLambda;
+        const float radialLoadB = 1.0f / std::sqrt (
+            1.0f + 0.85f * radialShape * airDensity * drum.radius / drum.batterDensity);
+        const float radialLoadR = 1.0f / std::sqrt (
+            1.0f + 0.85f * radialShape * airDensity * drum.radius / drum.resonantDensity);
+
+        const float radialOmegaB = 2.0f * piFloat * radialBatter * radialLoadB;
+        const float radialOmegaR = 2.0f * piFloat * radialResonant * radialLoadR;
+
+        const float radialCavity =
+            drum.cavityStiffness * 4.0f / (radialLambda * radialLambda);
+        const float radialDiagB =
+            radialOmegaB * radialOmegaB + radialCavity / drum.batterDensity;
+        const float radialDiagR =
+            radialOmegaR * radialOmegaR + radialCavity / drum.resonantDensity;
+        const float radialOff =
+            radialCavity / std::sqrt (drum.batterDensity * drum.resonantDensity);
+
+        for (int branch = 0; branch < 2; ++branch)
+        {
+            float eigenvalue = 0.0f;
+            float vectorB = 0.0f;
+            float vectorR = 0.0f;
+            solveAxisymmetricBranch (radialDiagB, radialDiagR, radialOff, branch,
+                                     eigenvalue, vectorB, vectorR);
+            if (! (eigenvalue > 0.0f))
+                continue;
+
+            const float omega = std::sqrt (eigenvalue);
+            if (omega / (2.0f * piFloat) >= 20000.0f)
+                continue;
+
+            // Same restriction as the frequencies above: a branch the batter
+            // head does not move cannot be how long the drum rings, however
+            // long it would ring if something did drive it.
+            if (std::abs (vectorB) <= audibleShare)
+                continue;
+
+            result.tailSeconds = std::max (
+                result.tailSeconds,
+                branchTail (radialLambda, omega, vectorB, vectorR));
+        }
+    }
 
     return result;
 }

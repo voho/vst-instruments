@@ -7,6 +7,12 @@ the **Randomize** controls. Its **Core**, **Air**, and **Bone** layers preserve
 or invent different parts of a sound's identity while the front panel invites
 the memory to stay faithful, drift, breathe, or become something new.
 
+> **Listen first.** Eight [rendered demos](Docs/audio/README.md) cover the
+> whole learning loop: a procedurally synthesized training tone, the fitted
+> model replaying it, pitch and velocity generalisation, the Core/Air/Bone
+> anatomy, formant and stretch control, and a polyphonic pad. Even the
+> training input is code — no recording is involved anywhere.
+
 Neuramar is not a conventional sampler. The imported recording is analysed in
 the background but is not repitched or played back when notes sound. Completed
 learning produces a small neural controller plus explicit harmonic, stochastic,
@@ -375,7 +381,9 @@ A host project or exported preset can therefore contain source-derived model
 coefficients even though it contains no sample playback data. Treat that state
 as derived user content and confirm that you have the necessary rights before
 sharing it. No factory samples, pretrained weights, or third-party preset
-library are included; see [`Presets/README.md`](Presets/README.md).
+library are included; see [`Presets/README.md`](Presets/README.md). The
+demonstration audio in `Docs/audio/` is generated entirely by this
+repository's own code, training input included.
 
 ## Requirements and formats
 
@@ -461,6 +469,20 @@ processor, parameter, MIDI, editor, and host-state contracts. These regression
 checks complement rather than replace listening, validator, multi-host, and CPU
 profiling passes.
 
+## Regenerate the demonstration audio
+
+```bash
+cmake --build build-dsp --parallel --target NeuramarRenderDemos
+./build-dsp/NeuramarRenderDemos Docs/audio
+```
+
+The renderer synthesizes its own training tone, fits the model from it exactly
+as the plug-in fits a dropped file, and renders the demos from that fit. The
+whole chain is deterministic, and the tool rewrites the level table in
+[`Docs/audio/README.md`](Docs/audio/README.md) in place, so the committed audio
+and its documented levels stay in lockstep with the code. See that file for the
+full manifest.
+
 ## Install and validate locally
 
 Copy only the formats you need:
@@ -526,7 +548,9 @@ shipping because hosts use them for recall.
 Source/DSP/              JUCE-free analysis, model, and polyphonic engine
 Source/PluginProcessor.* MIDI, parameters, learning worker, and host state
 Source/PluginEditor.*    Drag-and-drop neural-pool interface and keyboard
+Tools/RenderDemos.cpp    Renders the committed demonstration WAVs
 Docs/                    Neural-synthesis research and claims boundary
+Docs/audio/              Eight rendered demonstrations and their manifest
 Tests/                   Engine and JUCE processor regression tests
 Presets/                 Preset and learned-model provenance guidance
 scripts/                 macOS build, signing, packaging, and notarization helpers

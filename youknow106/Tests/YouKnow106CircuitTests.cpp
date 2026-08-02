@@ -30,6 +30,11 @@ struct YouKnow106TestAccess
         return YouKnow106Engine::otaHeadroomVolts;
     }
 
+    static constexpr float feedbackHeadroom() noexcept
+    {
+        return YouKnow106Engine::vcfFeedbackHeadroomVolts;
+    }
+
     static std::vector<float> renderCascade(const std::vector<float>& input,
                                             float g, float feedback)
     {
@@ -74,14 +79,16 @@ constexpr double pi = 3.14159265358979323846;
 // --------------------------------------------------------------------------
 // Independent reference: the four transconductor stages integrated with a
 // fourth-order Runge-Kutta step at 64x the model's rate, straight from
-//     C dVn/dt = Ig tanh((V(n-1) - Vn) / H),  V0 = input - k V4
-// which is the circuit, not the model.
+//     C dVn/dt = Ig tanh((V(n-1) - Vn) / H),  V0 = input - k fb(V4)
+// with fb the loop pair's own tanh behind its divider -- which is the
+// circuit, not the model.
 // --------------------------------------------------------------------------
 std::vector<double> referenceCascade(const std::vector<double>& input, double sampleRate,
                                      double cutoffHz, double feedback,
                                      int oversample = 16)
 {
     const double headroom = YouKnow106TestAccess::headroom();
+    const double loopHeadroom = YouKnow106TestAccess::feedbackHeadroom();
     const double omega = 2.0 * pi * cutoffHz;
     const double step = 1.0 / (sampleRate * oversample);
 
@@ -90,7 +97,8 @@ std::vector<double> referenceCascade(const std::vector<double>& input, double sa
 
     const auto derivative = [&](const std::array<double, 4>& state, double drive) {
         std::array<double, 4> slope {};
-        double previous = drive - feedback * state[3];
+        double previous = drive
+            - feedback * loopHeadroom * std::tanh(state[3] / loopHeadroom);
         for (int stage = 0; stage < 4; ++stage)
         {
             slope[static_cast<std::size_t>(stage)] =
@@ -353,47 +361,85 @@ void testResonanceLaw()
     expect(YouKnow106Engine::vcfFeedback(1.0f) > 4.0,
            "the last tenth of the resonance travel does not pass the threshold");
 
-    // Compensation is applied to the input, so it rises with regeneration.
+    // The curve below the threshold is the fitted hardware measurement, not a
+    // straight line: 30% of the travel reaches a loop gain near 0.91, and the
+    // far end of the travel lands on the fitted 4.19.
+    expectNear(YouKnow106Engine::vcfFeedback(0.3f), 0.91, 0.01,
+               "resonance curve misses the fitted 30%-travel measurement");
+    expectNear(YouKnow106Engine::vcfFeedback(1.0f), 4.19, 0.01,
+               "resonance travel does not end at the fitted maximum");
+
+    // Compensation is applied to the input, so it rises with regeneration --
+    // linearly in the loop gain, as the fitted measurement has it, reaching
+    // just under six decibels at the fitted maximum.
     expectNear(YouKnow106Engine::vcfResonanceCompensation(0.0f), 1.0, 1.0e-6,
                "resonance compensation at rest");
-    const double atMaximum = YouKnow106Engine::vcfResonanceCompensation(4.0f);
-    expectNear(20.0 * std::log10(atMaximum), 9.0, 0.1,
-               "resonance compensation does not reach the measured 8-10 dB band");
+    const double atMaximum = YouKnow106Engine::vcfResonanceCompensation(4.19f);
+    expectNear(20.0 * std::log10(atMaximum), 5.85, 0.1,
+               "resonance compensation misses the fitted level");
     expect(YouKnow106Engine::vcfResonanceCompensation(2.0f) < atMaximum,
            "resonance compensation is not monotonic");
 
-    // The frequency trim only acts as regeneration rises.
+    // The frequency trim only acts as regeneration rises, and with the loop
+    // limited in its own divider it is small: the oscillation sits close to
+    // the small-signal law on its own.
     expectNear(YouKnow106Engine::vcfResonanceFrequencyTrim(0.0f), 1.0, 1.0e-6,
                "frequency trim acts with no resonance");
-    expect(YouKnow106Engine::vcfResonanceFrequencyTrim(4.0f) > 1.05f,
-           "frequency trim does not compensate the oscillating cascade");
+    const float trimAtThreshold = YouKnow106Engine::vcfResonanceFrequencyTrim(4.0f);
+    expect(trimAtThreshold > 1.0f && trimAtThreshold < 1.1f,
+           "frequency trim is outside the residual band the loop limiter leaves");
 }
 
 void testEnvelopeAndAmplifierLaws()
 {
-    // Published segment endpoints.
-    expectNear(YouKnow106Engine::envelopeAttackSeconds(0.0f), 0.0015, 1.0e-6,
-               "shortest attack");
-    expectNear(YouKnow106Engine::envelopeAttackSeconds(1.0f), 3.0, 1.0e-3,
-               "longest attack");
-    expectNear(YouKnow106Engine::envelopeDecaySeconds(0.0f), 0.0015, 1.0e-6,
-               "shortest decay");
-    expectNear(YouKnow106Engine::envelopeDecaySeconds(1.0f), 12.0, 1.0e-3,
-               "longest decay");
-    expectNear(YouKnow106Engine::envelopeReleaseSeconds(1.0f), 12.0, 1.0e-3,
+    // The generator advances once per 4.2 ms scan pass, so the shortest
+    // attack the instrument can produce is one pass -- the published 1.5 ms
+    // figure is shorter than the generator's own tick. The mid-travel
+    // anchors are the firmware's, not an endpoint interpolation: attack time
+    // is linear in the slider across the lower half.
+    expectNear(YouKnow106Engine::envelopeAttackSeconds(0.0f), 0.0042, 1.0e-4,
+               "shortest attack is not a single scan pass");
+    expectNear(YouKnow106Engine::envelopeAttackSeconds(0.25f), 0.269, 0.008,
+               "attack at quarter travel misses the firmware anchor");
+    expectNear(YouKnow106Engine::envelopeAttackSeconds(0.5f), 0.533, 0.008,
+               "attack at mid travel misses the firmware anchor");
+    expectNear(YouKnow106Engine::envelopeAttackSeconds(1.0f), 3.276, 0.01,
+               "longest attack misses the firmware anchor");
+
+    // Falling segments are exponential and displayed as the time to fall to
+    // a tenth of the span. The firmware anchors: about a third of a second
+    // at quarter travel, 2.2 s at half, 4.5 s at three quarters, and 9.6 s
+    // to *half* level at the top.
+    expectNear(YouKnow106Engine::envelopeDecaySeconds(0.25f), 0.33, 0.02,
+               "decay at quarter travel misses the firmware anchor");
+    expectNear(YouKnow106Engine::envelopeDecaySeconds(0.5f), 2.2, 0.1,
+               "decay at mid travel misses the firmware anchor");
+    expectNear(YouKnow106Engine::envelopeDecaySeconds(0.75f), 4.5, 0.2,
+               "decay at three-quarter travel misses the firmware anchor");
+    const double lambdaTop = 2.302585 / (YouKnow106Engine::envelopeDecaySeconds(1.0f)
+                                         * (1000.0 / 4.2));
+    expectNear(0.693147 / lambdaTop * 0.0042, 9.6, 0.15,
+               "slowest decay does not take 9.6 s to half level");
+    expectNear(YouKnow106Engine::envelopeReleaseSeconds(0.5f),
+               YouKnow106Engine::envelopeDecaySeconds(0.5f), 1.0e-6,
                "release shares the decay law");
 
-    // The amplifier is where the curve comes from: equal steps of control must
-    // be equal steps in decibels.
-    const double a = 20.0 * std::log10(YouKnow106Engine::vcaGain(1.0f));
-    const double b = 20.0 * std::log10(YouKnow106Engine::vcaGain(0.7f));
-    const double c = 20.0 * std::log10(YouKnow106Engine::vcaGain(0.4f));
-    expectNear(a, 0.0, 1.0e-4, "amplifier is not unity at full control");
-    expectNear((a - b) - (b - c), 0.0, 0.05,
-               "amplifier control law is not linear in decibels");
+    // The amplifier is quasi-linear: gain tracks the control voltage over
+    // most of the range -- half control is six decibels down, not thirty --
+    // with the exponential knee confined to the bottom tenth.
+    expectNear(YouKnow106Engine::vcaGain(1.0f), 1.0, 1.0e-4,
+               "amplifier is not unity at full control");
+    expectNear(YouKnow106Engine::vcaGain(0.5f), 0.5, 5.0e-3,
+               "amplifier is not linear at half control");
+    expectNear(YouKnow106Engine::vcaGain(0.25f), 0.25, 5.0e-3,
+               "amplifier is not linear at quarter control");
+    // Below the knee the gain falls away exponentially, roughly 26 dB per
+    // tenth of the control range.
+    const double knee = 20.0 * std::log10(YouKnow106Engine::vcaGain(0.06f) / 0.06);
+    expectNear(knee, -15.6, 0.5, "amplifier knee misses the measured slope");
     expect(YouKnow106Engine::vcaGain(0.0f) == 0.0f,
            "amplifier leaks with no control voltage");
-    expect(YouKnow106Engine::vcaGain(0.02f) == 0.0f,
+    expect(YouKnow106Engine::vcaGain(0.004f) == 0.0f,
            "amplifier conducts inside its deadband");
 }
 
@@ -417,26 +463,51 @@ void testPulseWidthAndHighPassLaws()
     }
 
     // Only two of the four high-pass legs filter; one boosts and one passes.
-    expectNear(YouKnow106Engine::highPassShelfGain(HighPassMode::Boost),
-               std::pow(10.0, 3.0 / 20.0), 1.0e-4, "bass boost is not 3 dB");
-    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Boost), 70.0, 1.0,
+    // The boost is the measured shelf: +10.5 dB at DC, +1.41 dB in the high
+    // band, corner near 59 Hz. The cut corners follow from the network's own
+    // part values.
+    expectNear(20.0 * std::log10(
+                   YouKnow106Engine::highPassShelfGain(HighPassMode::Boost)),
+               10.5, 0.05, "bass boost does not lift the low band 10.5 dB");
+    expectNear(20.0 * std::log10(
+                   YouKnow106Engine::highPassHighGain(HighPassMode::Boost)),
+               1.41, 0.05, "bass boost does not lift the high band 1.41 dB");
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Boost), 59.4, 0.5,
                "bass boost shelf corner");
     expectNear(YouKnow106Engine::highPassShelfGain(HighPassMode::One), 1.0, 1.0e-6,
                "the flat leg does not pass the low band untouched");
+    expectNear(YouKnow106Engine::highPassHighGain(HighPassMode::One), 1.0, 1.0e-6,
+               "the flat leg does not pass the high band untouched");
     expect(YouKnow106Engine::highPassShelfGain(HighPassMode::Two) == 0.0f
            && YouKnow106Engine::highPassShelfGain(HighPassMode::Three) == 0.0f,
            "a cutting leg returns part of the low band");
-    expect(YouKnow106Engine::highPassCornerHz(HighPassMode::Three)
-           > YouKnow106Engine::highPassCornerHz(HighPassMode::Two),
-           "high-pass legs are not ordered");
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Two), 236.0, 0.5,
+               "middle high-pass corner is not the network's own");
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Three), 754.0, 0.5,
+               "top high-pass corner is not the network's own");
 }
 
 void testModulationAndGlideLaws()
 {
-    expectNear(YouKnow106Engine::lfoRateHz(0.0f), 0.1, 1.0e-5, "slowest modulation");
-    expectNear(YouKnow106Engine::lfoRateHz(1.0f), 30.0, 1.0e-3, "fastest modulation");
+    // The modulator's measured range is 0.04 to 29.8 Hz -- the firmware's
+    // own table, not the 0.1-30 the specification sheet rounds to. At the
+    // top the clamp quantises the period onto whole passes, so the last few
+    // per cent of the travel all read the same rate.
+    expectNear(YouKnow106Engine::lfoRateHz(0.0f), 0.0363, 1.0e-3,
+               "slowest modulation");
+    expectNear(YouKnow106Engine::lfoRateHz(1.0f), 29.76, 0.05,
+               "fastest modulation");
+    expect(YouKnow106Engine::lfoRateHz(0.99f) == YouKnow106Engine::lfoRateHz(1.0f),
+           "the fast end of the modulation travel is not rate-quantised");
     expect(YouKnow106Engine::lfoDelaySeconds(0.0f) == 0.0f, "delay at rest");
-    expectNear(YouKnow106Engine::lfoDelaySeconds(1.0f), 3.0, 1.0e-4, "longest delay");
+    // The delay's hold advances at the attack table's own rate and the fade
+    // is a fixed second-long ramp across the upper half, so the longest
+    // setting reaches about 4.4 s.
+    expectNear(YouKnow106Engine::lfoDelaySeconds(1.0f), 4.366, 0.02,
+               "longest delay");
+    expectNear(YouKnow106Engine::lfoDelaySeconds(0.1f),
+               YouKnow106Engine::envelopeAttackSeconds(0.1f), 1.0e-4,
+               "the bottom eighth of the delay travel is not hold-only");
 
     // Portamento is quoted per octave, so the panel law has those units.
     expect(YouKnow106Engine::portamentoSeconds(0.0f) == 0.0f,
@@ -466,16 +537,24 @@ void testPanelLawsInvert()
                   YouKnow106Engine::panelPositionForAttack, "attack");
         roundTrip(position, YouKnow106Engine::envelopeDecaySeconds,
                   YouKnow106Engine::panelPositionForDecay, "decay");
-        roundTrip(position, YouKnow106Engine::lfoRateHz,
-                  YouKnow106Engine::panelPositionForLfoRate, "modulation rate");
         roundTrip(position, YouKnow106Engine::lfoDelaySeconds,
                   YouKnow106Engine::panelPositionForLfoDelay, "modulation delay");
+
+        // The modulator's rate is quantised onto whole passes, so many
+        // positions read the same frequency and a typed value can only land
+        // on a canonical one. What must hold is that the position it lands
+        // on *produces* the typed frequency.
+        const float rate = YouKnow106Engine::lfoRateHz(position);
+        expectNear(YouKnow106Engine::lfoRateHz(
+                       YouKnow106Engine::panelPositionForLfoRate(rate)),
+                   rate, 1.0e-4,
+                   "modulation rate does not round trip through its displayed value");
     }
 
-    // Cutoff round trips only while the transconductor can still follow the
-    // converter. Above that its bias range runs out, the law flattens at the
-    // published ceiling, and several positions all read the same frequency --
-    // so the inverse cannot pick one, and should not pretend to.
+    // Cutoff round trips only while the converter is still on its
+    // exponential law. Above the knee the converter saturates towards its
+    // measured ceiling, several counts crowd into each hertz, and the
+    // inverse stays on the law rather than pretending to invert the knee.
     for (float position = 0.0f; position <= 0.80f; position += 0.1f)
         roundTrip(position, [](float p) {
                       return YouKnow106Engine::vcfCutoffHz(
@@ -483,13 +562,18 @@ void testPanelLawsInvert()
                   },
                   YouKnow106Engine::panelPositionForCutoff, "cutoff");
 
+    // The measured converter: still on the law at 22.6 kHz around 84% of the
+    // panel's count span, then saturating to a ceiling just above 50 kHz --
+    // the published specification's own figure, not the 24 kHz an earlier
+    // revision clamped at.
+    expectNear(YouKnow106Engine::vcfCutoffHz(13716.0f), 22600.0, 700.0,
+               "the cutoff knee point misses the measured converter");
     const float ceilingHz = YouKnow106Engine::vcfCutoffHz(
         YouKnow106Engine::vcfPanelCounts(1.0f));
-    expectNear(ceilingHz, 24000.0, 1.0,
-               "the cutoff ceiling is not the published figure");
-    expectNear(YouKnow106Engine::vcfCutoffHz(YouKnow106Engine::vcfPanelCounts(0.92f)),
-               ceilingHz, 1.0,
-               "the top of the cutoff travel is not a plateau");
+    expect(ceilingHz > 50000.0f && ceilingHz < 52200.0f,
+           "the cutoff ceiling is not the measured converter top");
+    expect(YouKnow106Engine::vcfCutoffHz(16383.0f) >= ceilingHz,
+           "the accumulator ceiling reads below the panel's own top");
 
     // Portamento's bottom detent is "off" rather than a time, so it round trips
     // from just above it.

@@ -210,10 +210,15 @@ float textWidth(const char* text, float pointSize, bool bold) noexcept
         }
     };
 
+    // The advances above are bold metrics. A regular weight is narrower, but
+    // only slightly, and this is deliberately shaded towards the bold figure so
+    // the result stays the over-estimate the checks rely on either way.
+    const float weight = bold ? 1.0f : 0.97f;
+
     float total = 0.0f;
     for (const char* c = text; *c != '\0'; ++c)
         total += advance(*c);
-    return total * pointSize;
+    return total * pointSize * weight;
 }
 
 float buttonPointSizeFor(const char* label, float width, float height) noexcept

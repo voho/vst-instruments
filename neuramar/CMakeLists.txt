@@ -132,6 +132,24 @@ if(NEURAMAR_BUILD_PLUGIN)
             JUCE_VST3_CAN_REPLACE_VST2=0)
 endif()
 
+# The committed demonstration WAVs under Docs/audio are rendered by this tool
+# from the same JUCE-free learning and synthesis path the plug-in uses, so they
+# cannot drift away from what Neuramar actually produces. It is built by
+# default, including on Linux CI, so it cannot rot unnoticed.
+option(NEURAMAR_BUILD_TOOLS "Build the demo WAV renderer" ON)
+
+if(NEURAMAR_BUILD_TOOLS)
+    add_executable(NeuramarRenderDemos Tools/RenderDemos.cpp)
+    target_link_libraries(NeuramarRenderDemos PRIVATE NeuramarDSP)
+    target_compile_features(NeuramarRenderDemos PRIVATE cxx_std_20)
+
+    if(MSVC)
+        target_compile_options(NeuramarRenderDemos PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(NeuramarRenderDemos PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
 if(BUILD_TESTING)
     # A measurement tool rather than a pass/fail test, so it is built with the
     # suite but deliberately not registered with CTest.
@@ -183,6 +201,17 @@ if(BUILD_TESTING)
     add_test(NAME Neuramar.ResynthesisQuality
         COMMAND NeuramarResynthesisQualityTests)
     set_tests_properties(Neuramar.ResynthesisQuality PROPERTIES TIMEOUT 60)
+
+    if(NEURAMAR_BUILD_TOOLS)
+        # Guards the renderer that produces the committed demonstration WAVs:
+        # it fits a shortened training tone, renders a short take to a
+        # temporary directory and checks that the audio is finite, audible and
+        # written as a readable WAV.
+        add_test(NAME Neuramar.RenderDemos
+                 COMMAND NeuramarRenderDemos --smoke
+                         "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
+        set_tests_properties(Neuramar.RenderDemos PROPERTIES TIMEOUT 60)
+    endif()
 
     if(NEURAMAR_BUILD_PLUGIN)
         add_executable(NeuramarPluginProcessorTests Tests/PluginProcessorTests.cpp)

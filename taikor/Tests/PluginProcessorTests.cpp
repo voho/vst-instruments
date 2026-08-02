@@ -92,9 +92,29 @@ float renderNote (TaikorAudioProcessor& processor, int midiNote, float velocity,
 }
 
 // Renders a stroke and returns the frequency of its strongest low partial, by
-// the Goertzel recurrence over a window that starts after the attack. Used to
-// see where the head is actually tuned, which is the only way to observe the
-// pitch wheel from outside the processor.
+// the Goertzel recurrence over a window that starts after the attack and stops
+// before the head has emptied. Used to see where the head is actually tuned,
+// which is the only way to observe the pitch wheel from outside the processor.
+//
+// Both bounds matter. The fundamental is the one mode of a head that moves
+// enough air to radiate properly, so it is also the one that goes first, and
+// past a third of a second the partials still sounding in this band are the
+// ones that could not get a sound out - which is not where the drum is tuned.
+// The caller is expected to have stilled the strike as well; see the wheel
+// check below for why.
+//
+// The search band is deliberately narrow. Forty to seventy-five hertz is where
+// the default drum's lower axisymmetric branch sits, and it is the only thing
+// in there whether the wheel is up or down - the branch above it is at eighty
+// eight and does not reach seventy-five even bent two semitones. A wide band
+// does not measure a pitch at all: it finds whichever partial is loudest, and
+// which one that is changes with the tuning, because bending the head moves its
+// modes out of the mounting loss while the shell's do not move at all. Sweeping
+// thirty-five to three hundred and twenty put the unbent drum on one partial
+// and the bent drum on another, and reported the wheel as having lowered it.
+constexpr double lowestSounded = 40.0;
+constexpr double highestSounded = 75.0;
+
 double dominantLowPartial (TaikorAudioProcessor& processor, int midiNote,
                            const juce::MidiBuffer& before)
 {
@@ -104,6 +124,18 @@ double dominantLowPartial (TaikorAudioProcessor& processor, int midiNote,
         auto controls = before;
         buffer.clear();
         processor.processBlock (buffer, controls);
+    }
+
+    // The wheel presses the head rather than transposing it, so the tension
+    // glides to where it was sent. A stroke played in the same block as the
+    // message is played during that glide and smears across it; these let it
+    // arrive first, which is what "the pitch of a stroke played afterwards"
+    // means.
+    for (int block = 0; block < 8; ++block)
+    {
+        juce::MidiBuffer settling;
+        buffer.clear();
+        processor.processBlock (buffer, settling);
     }
 
     juce::MidiBuffer midi;
@@ -121,18 +153,20 @@ double dominantLowPartial (TaikorAudioProcessor& processor, int midiNote,
     }
 
     // Past the attack, so the measurement is the ringing head rather than the
-    // broadband contact.
-    const std::size_t first = std::min<std::size_t> (samples.size(), 4800);
+    // broadband contact, and stopping while the head is still sounding.
+    const std::size_t first = std::min<std::size_t> (samples.size(), 2400);
+    const std::size_t last = std::min<std::size_t> (samples.size(), 26400);
 
     double best = -1.0;
     double bestFrequency = 0.0;
-    for (double frequency = 50.0; frequency < 320.0; frequency += 0.05)
+    for (double frequency = lowestSounded; frequency < highestSounded;
+         frequency += 0.05)
     {
         const double omega = 2.0 * 3.14159265358979 * frequency / sampleRate;
         const double coefficient = 2.0 * std::cos (omega);
         double s1 = 0.0;
         double s2 = 0.0;
-        for (std::size_t index = first; index < samples.size(); ++index)
+        for (std::size_t index = first; index < last; ++index)
         {
             const double s0 = samples[index] + coefficient * s1 - s2;
             s2 = s1;
@@ -185,17 +219,17 @@ void testParameterLayoutAndDefaults()
 
     namespace pids = taikor::parameters;
     const std::array<std::pair<const char*, float>, 22> expectedDefaults {{
-        { pids::headDiameter, 55.0f },   { pids::bodyDepth, 0.5f },
+        { pids::headDiameter, 95.0f },   { pids::bodyDepth, 0.5f },
         { pids::tension, 0.55f },        { pids::headMaterial, 0.75f },
         { pids::shellMaterial, 0.8f },   { pids::resonantTension, 0.5f },
-        { pids::cavityCoupling, 0.85f }, { pids::headDamping, 0.35f },
+        { pids::cavityCoupling, 0.85f }, { pids::headDamping, 0.50f },
         { pids::shellResonance, 0.4f },  { pids::pitch, 0.0f },
         { pids::bachiHardness, 0.7f },   { pids::strikePosition, 0.0f },
         { pids::velocityDepth, 0.75f },  { pids::tensionModulation, 0.4f },
         { pids::strikeNoise, 0.35f },    { pids::humanise, 0.4f },
         { pids::octaveBody, 0.7f },      { pids::micDistance, 16.0f },
         { pids::micSpread, 0.55f },      { pids::stereoWidth, 0.5f },
-        { pids::drive, 0.0f },           { pids::output, -10.0f },
+        { pids::drive, 0.0f },           { pids::output, -20.0f },
     }};
 
     for (const auto& [id, expected] : expectedDefaults)
@@ -205,20 +239,23 @@ void testParameterLayoutAndDefaults()
     // The engine block the processor hands the DSP must reflect the parameters,
     // including the two that are presented in centimetres.
     const auto engineParameters = processor.snapshotEngineParameters();
-    expect (std::abs (engineParameters.headDiameter - 0.55f) < 1.0e-4f,
+    expect (std::abs (engineParameters.headDiameter - 0.95f) < 1.0e-4f,
             "head diameter must reach the engine in metres");
     expect (std::abs (engineParameters.micDistance - (16.0f - 3.0f) / (40.0f - 3.0f))
                 < 1.0e-3f,
             "mic distance must reach the engine normalised");
     expect (std::abs (engineParameters.outputGain
-                      - juce::Decibels::decibelsToGain (-10.0f)) < 1.0e-4f,
+                      - juce::Decibels::decibelsToGain (-20.0f)) < 1.0e-4f,
             "output must reach the engine as a linear gain");
 
-    // The default drum must be the nagado-daiko the documentation describes.
+    // The default drum must be the o-daiko the documentation describes. This
+    // is the plug-in layer's half of the same statement the DSP suite makes:
+    // the instrument opens on its heaviest voice rather than an octave above
+    // it, because that is what a taiko is for.
     const auto measurements = processor.measureDrum (0);
-    expect (measurements.loadedFundamentalHz > 70.0f
-                && measurements.loadedFundamentalHz < 120.0f,
-            "the default drum is not in the nagado-daiko range");
+    expect (measurements.loadedFundamentalHz > 40.0f
+                && measurements.loadedFundamentalHz < 65.0f,
+            "the default drum is not in the o-daiko range");
     expect (measurements.breathingModeHz > measurements.loadedFundamentalHz,
             "the cavity must lift the breathing mode above the fundamental");
 }
@@ -431,6 +468,29 @@ void testControllersAndPitchBend()
     {
         const auto note = taikor::midiNoteFor (taikor::Articulation::Don, 0);
 
+        // Three readings taken from one processor, so all three have to be
+        // readings of the same drum. Two of the shipping defaults stop them
+        // being that.
+        //
+        // Humanising walks the strike around the head, and it walks it a
+        // different way on every stroke - which is the point of it, and which
+        // means consecutive readings differ by whatever that stroke happened to
+        // wake. And a full Don lands a hand's width in from the middle, where
+        // it drives the modes with a circumferential order; the first of those
+        // sits within a hertz of the breathing branch, so the strongest partial
+        // in this band becomes whichever member of that cluster won this time.
+        // Between them the third reading came back thirty-nine hertz from the
+        // first with nothing having changed but the stroke.
+        //
+        // Struck dead centre with the hand still, every mode of circumferential
+        // order m has J_m(0) = 0 and the axisymmetric family is the whole of the
+        // drum, so the strongest partial is a property of the tuning and the
+        // wheel is the only thing that can move it.
+        const auto restoreHumanise = parameterValue (processor, taikor::parameters::humanise);
+        const auto restorePosition = parameterValue (processor, taikor::parameters::strikePosition);
+        setParameterValue (processor, taikor::parameters::humanise, 0.0f);
+        setParameterValue (processor, taikor::parameters::strikePosition, -1.0f);
+
         juce::MidiBuffer nothingAtAll;
         processor.requestPanic();
         const auto centred = dominantLowPartial (processor, note, nothingAtAll);
@@ -445,6 +505,9 @@ void testControllersAndPitchBend()
         wheelUpThenReset.addEvent (juce::MidiMessage::controllerEvent (1, 121, 0), 1);
         processor.requestPanic();
         const auto reset = dominantLowPartial (processor, note, wheelUpThenReset);
+
+        setParameterValue (processor, taikor::parameters::humanise, restoreHumanise);
+        setParameterValue (processor, taikor::parameters::strikePosition, restorePosition);
 
         expect (bent > centred * 1.02,
                 "the wheel must raise the pitch, or the reset check is vacuous");
@@ -494,10 +557,10 @@ void testParametersReachTheEngine()
             "the tension control must reach the engine");
     setParameterValue (processor, pids::tension, 0.55f);
 
-    setParameterValue (processor, pids::headDiameter, 100.0f);
+    setParameterValue (processor, pids::headDiameter, 160.0f);
     expect (fundamentalNow() < reference * 0.75f,
             "the head diameter control must reach the engine");
-    setParameterValue (processor, pids::headDiameter, 55.0f);
+    setParameterValue (processor, pids::headDiameter, 95.0f);
 
     setParameterValue (processor, pids::pitch, 12.0f);
     expect (std::abs (fundamentalNow() / reference - 2.0f) < 0.10f,
@@ -526,8 +589,13 @@ void testParametersReachTheEngine()
         return renderNote (processor, taikor::referenceNote, 0.9f, 8);
     };
 
-    const auto loud = peakAtOutput (0.0f);
-    const auto quiet = peakAtOutput (-12.0f);
+    // Both settings inside the control's linear region. A taiko has an enormous
+    // crest factor and this one models all of it, so the top of the Output
+    // range is deliberately far into the safety limiter - comparing a point up
+    // there against one below it would be measuring the limiter.
+    const auto loud = peakAtOutput (-12.0f);
+    const auto quiet = peakAtOutput (-24.0f);
+    expect (loud < 0.95f, "the louder of the two output checks must not limit");
     expect (quiet < loud * 0.6f, "the output control must scale the rendered audio");
     expect (loud > 1.0e-4f, "the output check rendered no audio to compare");
 
