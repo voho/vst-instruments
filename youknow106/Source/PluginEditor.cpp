@@ -40,6 +40,21 @@ YouKnow106LookAndFeel::YouKnow106LookAndFeel()
                fromPalette (panel::colour::faceplateLow));
     setColour (juce::TooltipWindow::textColourId, fromPalette (panel::colour::text));
 
+    // The patch list. Without these the menu falls back to the base class's own
+    // dark scheme, which is readable but is not this panel's palette -- and the
+    // list is the main way to get at thirty-three patches, so it is not a corner
+    // of the interface. The highlight is the section cyan, which is bright
+    // enough that the text on it has to go dark rather than stay light.
+    setColour (juce::PopupMenu::backgroundColourId,
+               fromPalette (panel::colour::faceplateLow));
+    setColour (juce::PopupMenu::textColourId, fromPalette (panel::colour::text));
+    setColour (juce::PopupMenu::highlightedBackgroundColourId,
+               fromPalette (panel::colour::cyan).withAlpha (0.85f));
+    setColour (juce::PopupMenu::highlightedTextColourId,
+               fromPalette (panel::colour::faceplate));
+    setColour (juce::PopupMenu::headerTextColourId,
+               fromPalette (panel::colour::textDim));
+
     setColour (juce::MidiKeyboardComponent::whiteNoteColourId,
                fromPalette (panel::colour::control));
     setColour (juce::MidiKeyboardComponent::blackNoteColourId,
