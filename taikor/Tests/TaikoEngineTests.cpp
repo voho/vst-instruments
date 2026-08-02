@@ -472,8 +472,8 @@ void testArticulationMetadataAndMidiMapping()
             "the reference note must be playable");
 }
 
-// The instrument's central promise: within an octave the twelve notes are
-// every stroke, and between octaves the drum's pitch rises.
+// The instrument's central promise: within an octave the notes that carry a
+// stroke are every stroke there is, and between octaves the drum's pitch rises.
 void testOctavesRaisePitch()
 {
     const auto parameters = defaultParameters();

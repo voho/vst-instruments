@@ -288,13 +288,25 @@ void testNoteMappingAndRendering()
     TaikorAudioProcessor processor;
     processor.prepareToPlay (sampleRate, blockSize);
 
-    // Within an octave, every note is a different stroke.
+    // Within an octave, every pitch class that carries a stroke is a different
+    // stroke, and the ones past the last stroke carry nothing. The octave stays
+    // twelve semitones because that is what chooses the drum and it has to line
+    // up with the keyboard, so the vocabulary being eight strokes long leaves
+    // the top four keys empty on purpose - and empty has to mean silent, not a
+    // pitch class cast into an enum that does not have it.
     for (int pitchClass = 0; pitchClass < 12; ++pitchClass)
     {
         const auto note = taikor::referenceNote + pitchClass;
+        const bool carriesStroke =
+            pitchClass < static_cast<int> (taikor::articulationCount);
         const auto peak = renderNote (processor, note, 0.9f, 6);
-        expect (peak > 1.0e-4f,
-                "note " + std::to_string (note) + " produced no audio");
+        if (carriesStroke)
+            expect (peak > 1.0e-4f,
+                    "note " + std::to_string (note) + " produced no audio");
+        else
+            expect (peak < 1.0e-6f,
+                    "note " + std::to_string (note)
+                        + " carries no stroke but sounded anyway");
         processor.requestPanic();
         renderNote (processor, taikor::referenceNote, 0.0f, 1);
     }
