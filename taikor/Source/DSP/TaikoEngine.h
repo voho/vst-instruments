@@ -15,7 +15,7 @@ namespace taikor
 // octave number alone chooses the drum's pitch: higher octave, higher drum.
 enum class Articulation : std::uint8_t
 {
-    Don,     // C  - full centre strike, the open voice of the drum
+    Don,     // C  - full open stroke, a hand's width in from the middle
     Do,      // C# - open stroke a little off centre
     Tsu,     // D  - damped centre, the free hand resting on the head
     Su,      // D# - ghost stroke, barely sounded
@@ -365,6 +365,29 @@ private:
         // can retune the resonator without redoing the whole physical solve.
         float omega { 0.0f };
         float decayRate { 0.0f };
+        // The decay split into what moves with the head and what does not, so a
+        // mode retuned while it is still sounding can be re-damped rather than
+        // keeping the rate it was built with. The hide's loss goes as omega and
+        // as omega squared, and the mounting is steeply low-pass in frequency,
+        // so a stroke automated an octave up would otherwise carry the mounting
+        // loss of the note it started on - which on a large drum is most of its
+        // damping - and empty in a fraction of the time it should. decayFixed
+        // is the rest: what the mode radiates and what the rim takes.
+        float decayFixed { 0.0f };
+        float lossOmega { 0.0f };
+        float lossOmegaSquared { 0.0f };
+        // Radiation moves with the mode as well, through its efficiency: ka
+        // climbs with frequency and the efficiency climbs with it until the
+        // mode is large against the sound it makes. Everything in front of that
+        // - the calibration, the air, and how much volume the mode shifts - is
+        // fixed, so it is kept here and the efficiency re-evaluated at whatever
+        // frequency the head has been stretched to.
+        float radiationPrefactor { 0.0f };
+        std::uint8_t circumferentialOrder { 0 };
+        // log(level / retirement floor), so the lifetime below can be redone
+        // from a new decay rate without the whole bank's levels to hand. Zero
+        // for a mode that was never audible.
+        float retirementLog { 0.0f };
         // True for the membrane, false for the shell. The attack glide and the
         // wheel stretch the head; neither of them touches the wooden body, and
         // the bank is sorted by lifetime so the two kinds interleave.
@@ -418,12 +441,31 @@ private:
         // it along with the resolved modes.
         struct ContinuumBand
         {
+            // Two one-poles per side, cascaded, so each edge falls at twelve
+            // decibels an octave rather than six. A single pole is not enough
+            // to make a band: its skirt falls so slowly that the lowest band,
+            // which is also the loudest, was louder four octaves up than the
+            // band that belongs there, and the whole continuum above the first
+            // octave was inaudible under it. Nothing that shaped the upper
+            // bands - their tilt, their contact-duration cut - could be heard
+            // at all, because none of them were what the ear was hearing.
             float lowStateLeft { 0.0f };
+            float lowStateLeft2 { 0.0f };
             float highStateLeft { 0.0f };
+            float highStateLeft2 { 0.0f };
             float lowStateRight { 0.0f };
+            float lowStateRight2 { 0.0f };
             float highStateRight { 0.0f };
+            float highStateRight2 { 0.0f };
             float lowCoefficient { 0.5f };
             float highCoefficient { 0.5f };
+            // What the rim takes from this band, which is a constant of the
+            // band and not of the tuning. The share is set by how many
+            // circumferential orders the head carries at this frequency - its
+            // dimensionless wavenumber, omega a / c - and stretching a head
+            // raises omega and c together, so that number does not move. Only
+            // the hide's share follows the bend.
+            float lossFixed { 0.0f };
             float level { 0.0f };
             float envelope { 0.0f };
             float envelopeDecay { 0.99f };
@@ -445,6 +487,24 @@ private:
         float tensionDecay { 0.999f };
         float tensionDepth { 0.0f };
         float appliedTensionShift { 1.0f };
+        // The mounting loss this stroke was built with, kept so retuning can
+        // re-evaluate it at the mode's new frequency.
+        float mountLoss { 0.0f };
+        float mountCorner { 80.0f };
+        // The head's radius, for the ka that radiation efficiency is a function
+        // of. Stretching a head does not change its size.
+        float radiusMetres { 0.275f };
+        // The hide's share of the continuum's decay: a term in omega from its
+        // hysteresis and one in omega squared from its viscosity. Stored rather
+        // than summed so a retuned band can be re-damped exactly, instead of by
+        // scaling what it had - which compounds, and drifts with every block
+        // the glide runs. The rim's share is per band and does not move at all;
+        // it lives on the band, in lossFixed.
+        float continuumLossOmega { 0.0f };
+        float continuumLossOmegaSquared { 0.0f };
+        // Added to every audible lifetime once the contact schedule is known,
+        // and kept so a recomputed lifetime can have it put back.
+        std::uint64_t retirementOffset { 0 };
 
         // Accumulated hand damping, folded into the resonator states at the
         // control tick so the envelope never runs away.
@@ -532,6 +592,9 @@ private:
         float waveSpeed { 70.0f };
         float resonantWaveSpeed { 70.0f };
         float headLossFactor { 0.012f };
+        // The viscous half of the hide's loss, damping as omega squared where
+        // headLossFactor damps as omega. See resolveDrumFor.
+        float headViscousFactor { 0.0f };
         float edgeLoss { 0.6f };
         // Cavity stiffness per unit area, before the per-mode 4/lambda^2
         // volume-efficiency weighting. Zero on an uncoupled (open) body.
@@ -551,6 +614,10 @@ private:
         // through a bare level constant.
         float shellModalMass { 12.0f };
         float shellLevel { 0.4f };
+        // Loss into the shell, hoops and stand, and the frequency below which
+        // a mode is long enough to move them.
+        float mountLoss { 0.0f };
+        float mountCorner { 80.0f };
     };
 
     // A pair of bachi, for the stroke that claps them together and never
@@ -591,6 +658,22 @@ private:
     // strike is heard as a boom and an edge strike as a slap: modes with a
     // circumferential order move the same air in and out and barely radiate.
     [[nodiscard]] static float radiationEfficiency (int order, float ka) noexcept;
+    // Loss into the mounting, which only the lowest modes suffer.
+    [[nodiscard]] static float mountingLoss (const DrumState& drum,
+                                             float frequency) noexcept;
+    [[nodiscard]] static float mountingLossAt (float mountLoss, float mountCorner,
+                                               float frequency) noexcept;
+    // What a membrane mode's decay is once the head has been stretched to put
+    // it at this frequency. Used by the attack glide, the wheel and Pitch
+    // automation, all of which move a mode after it has been built.
+    [[nodiscard]] static float membraneDecayAt (const Voice& voice, const Mode& mode,
+                                                float omega) noexcept;
+    // The hide's own loss at a given frequency: hysteretic plus viscous. Shared
+    // by the resolved modes and by the continuum above them, which is the whole
+    // point of it - the two have to sit on one curve or they do not sound like
+    // one head.
+    [[nodiscard]] static float materialDamping (const DrumState& drum, float omega,
+                                                float extraDamping) noexcept;
     // Fractional read of the airborne-path delay line. Extracted from the
     // render loop so the trickiest index arithmetic in this file can be tested
     // against a known ramp rather than inferred from the stereo image.

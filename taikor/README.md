@@ -39,7 +39,7 @@ the stroke is the pitch class and the drum is the octave.
 
 | Note | Stroke | Spoken as | What it is |
 | --- | --- | --- | --- |
-| C | Don | *don* | Full centre strike: the open voice of the drum |
+| C | Don | *don* | Full open stroke, a hand's width in from the middle |
 | C♯ | Do | *do* | Open stroke a little off centre, quicker than a Don |
 | D | Tsu | *tsu* | Damped centre, the free hand resting on the head |
 | D♯ | Su | *su* | Ghost stroke, barely sounded |
@@ -149,6 +149,13 @@ axisymmetric and sixteen with a circumferential order — and the ratios between
 them are fixed constants of the geometry, which is why size and tension move the
 whole drum together and only the air changes its shape.
 
+No stroke lands on the geometric centre, because every mode with a
+circumferential order has *J(m)(0) = 0* and a strike at radius zero drives the
+four axisymmetric modes and nothing else — a note with an attack and no body
+behind it. A real taiko does the same thing if you manage to hit its exact
+middle, which is why players do not: a full Don lands a hand's width in, close
+enough to keep the fundamental and far enough out to wake the rest of the head.
+
 Modes with a circumferential order come in degenerate pairs, the same shape
 rotated by a quarter of its own period. A real head is never quite uniform, so
 the pair sits a fraction of a percent apart and beats. That asymmetry belongs to
@@ -177,6 +184,13 @@ where it was. On the default drum the pair lands at about 51 Hz and 88 Hz. The
 breathing mode is also the one that radiates, because it is the one that changes
 the drum's volume — which is why a sealed taiko is heard higher than its
 membrane fundamental.
+
+Because the breathing mode is the one that radiates, it is also the one that
+empties first — on the default drum it is gone in about half a second while the
+radial orders above it are still sounding after three. The tail figure the editor
+shows is therefore not the fundamental's decay but the longest-lived branch any
+stroke can drive, swept across the whole axisymmetric family; reporting the
+fundamental's own decay understated a sealed drum by a factor of four.
 
 Turn Air Coupling all the way down and there is no split at all: the two heads
 are independent, and a stroke on the batter head cannot reach the far one. The
@@ -211,6 +225,13 @@ from the top down, so that is what Taikor models: five overlapping bands of
 noise, each carrying the head's own loss law and each lit by the same contact
 that drives the modes.
 
+Each band edge is a pair of one-poles in series, falling at twelve decibels an
+octave rather than six. That is not a detail. A single pole's skirt falls so
+slowly that the lowest band — which is also the loudest — was louder four
+octaves up than the band that belonged there, so the whole continuum above its
+first octave was inaudible underneath it and nothing that shaped the upper
+bands could be heard at all.
+
 It is not a decoration. Third-octave analysis of recorded taiko shows the attack
 is nearly flat from sixty hertz to a kilohertz and still within twenty-five
 decibels at ten; a bank that stops at three hundred hertz is short of that by
@@ -218,6 +239,13 @@ twenty to thirty-five decibels across the entire upper half of the spectrum, and
 what is missing is exactly what a listener calls body. With the continuum in
 place the model tracks those measurements to within a few decibels from two
 hundred hertz upward.
+
+It has to stay in its place, though, and its place is much smaller than it
+looks. Left too loud it does not sit above the resolved bank, it buries it: the
+sustain becomes a bed of noise with the drum's pitched ring somewhere
+underneath, which measures as a body and does not sound like one. In the region
+that matters most — the sustained low-mid both reference recordings put their
+weight in — the continuum is a component and the modes are the instrument.
 
 Three things fall out of modelling it as the head rather than as an effect. It
 follows the contact: a force pulse of duration *τ* has nothing much above *1/τ*,
@@ -230,22 +258,51 @@ long against their spacing arrives at both alike and a short one does not —
 which is why opening the pair now widens the drum's air and not merely its
 partials.
 
-### Why a stroke does not end as a sine
+### Where the body comes from
 
-Hysteretic loss in the hide goes as *ω*, which means a T60 proportional to
-*1/f*. On a large drum that alone leaves the fundamental ringing nearly four
-times longer than the mode above it, and a drum whose lowest mode outlives
-everything else is heard as a tone rather than as a drum: after half a second
-there is nothing left but a sine.
+Four things take energy out of a struck head, and which of them dominates
+decides whether the drum has a body at all.
 
-What holds that in check on a real instrument is the rim. A hide laced over a
-heavy wooden hoop loses a great deal there, and unlike the loss inside the hide
-it does not scale with frequency — so it shortens the long low modes far more
-than the short high ones. With it, the spread across the bank is about two to
-one instead of four, the modes decay together, and the tail reads as a dense
-roar with the weight still in it. Head Damping scales that term from almost
-nothing to a great deal, so the long ō-daiko boom is still there at the bottom
-of the control.
+**Radiation** is the largest, and it is the one that separates the modes. How
+fast a mode loses energy to the air goes as the square of the air it actually
+moves, and a mode with nodal circles moves very little: its annuli alternate in
+sign and cancel before the sound has left the head. Integrating *J(0)(λr/a)*
+over the disc gives a net volume of *2·J(1)(λ)/λ*, and the same *J(1)(λ)²*
+appears in the modal mass, so the two cancel and what is left is a bare
+*4/λ²* — the identical weighting the cavity coupling carries, for the identical
+reason. Both are net-volume couplings.
+
+That single factor is most of what a listener calls body. The fundamental is the
+one mode of a head that behaves like a piston, so it radiates properly and is
+also the first to go; everything above it is a poor radiator and rings two to
+five times longer. Recordings of real taiko show exactly that ordering — the
+band below eighty hertz drops twenty-three decibels from strike to body while
+the band above it drops eleven.
+
+**The hide's own loss** is viscoelastic, and that is two terms rather than one.
+The hysteretic part has a frequency-independent loss angle and damps as *ω*; the
+viscous part follows the rate of strain and damps as *ω²*. Only the pair works
+here, because this model resolves the low modes individually and treats
+everything above the modal overlap as a continuum, and no single power of *ω*
+serves both: set for the body, the continuum rings for the best part of a second
+as a bed of noise behind the drum; set for the continuum, the body is gone
+before it is heard.
+
+**The rim** takes the rest. It is the only term that does not scale with
+frequency, which makes it the ceiling on how long anything can ring — a mode
+cannot outlast *6.9/edgeLoss* however little else touches it — and measured
+against recordings a real head wants a second and a half in its body, so it has
+to stay small. Head Damping scales it from almost nothing to a great deal, so
+the long ō-daiko boom is still there at the bottom of the control. A mode with a
+circumferential order pays more of it, because those shapes are pressed against
+the boundary rather than spread across the head.
+
+**The mounting** takes what is left, and only at the very bottom. The lowest
+modes of a large drum do not stay in the head: they move the shell, the hoops
+and whatever the drum is stood on. The term is steeply low-pass, because a mode
+has to be long enough to move the whole instrument before any of this applies —
+and that steepness is measured, not chosen. A gentler skirt reaches far enough
+up to cost the body most of what makes it a body.
 
 ### The stick
 
@@ -309,10 +366,16 @@ own arrival time. That is what places a stroke somewhere on the drum rather than
 in the middle of it, and it is what keeps a spaced pair in phase on an edge
 strike that the membrane modes alone would cancel.
 
+Fully opened, the two sit about fifty degrees of arc apart, which is what a
+close pair over one head actually is. It is worth being strict about that: at a
+hundred and twenty-six degrees the capsules sit either side of the nodal
+diameter of every mode of order one, and the edge strokes — the ones that drive
+those modes hardest — come out of phase.
+
 Up to and including the default 50 % width — everything the microphones actually
 captured — no stroke ever inverts, anywhere in the microphone range: the worst
 case across all twelve strokes, both microphone controls fully swept, is a
-correlation of about −0.03, which is a decorrelated pair rather than an
+correlation of about +0.08, which is a decorrelated pair rather than an
 out-of-phase one. The regression suite sweeps that whole space. Past 50 % the
 width control exaggerates the side signal beyond the measurement, and with the
 pair close in and fully opened that can push strokes out of phase — the same
