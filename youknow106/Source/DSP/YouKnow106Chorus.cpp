@@ -154,12 +154,15 @@ Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
     {
         case ChorusMode::One:  return { rateOne, centre, sweep, lineGain };
         case ChorusMode::Two:  return { rateTwo, centre, sweep, lineGain };
-        // Both buttons down. Each switch shunts its own resistor into the
-        // modulation oscillator's timing network, so closing both puts the two
-        // in parallel: the conductances add, and with them the rate. That makes
-        // I+II faster than either alone rather than a repeat of II, which is
-        // what the setting is known for. The depth is untouched -- nothing in
-        // the delay path changes, only how quickly it is swept.
+        // Both buttons down -- this plug-in's addition, not the instrument's
+        // behaviour. A Juno-106 interlocks the two and its manual says so
+        // outright; the mode is what owners fit a board modification to get.
+        //
+        // How it behaves is still taken from the circuit rather than invented:
+        // each switch shunts its own resistor into the modulation oscillator's
+        // timing network, so closing both puts the two in parallel and the
+        // conductances add, and with them the rate. The depth is untouched --
+        // nothing in the delay path changes, only how quickly it is swept.
         case ChorusMode::OneTwo:
             return { rateOne + rateTwo, centre, sweep, lineGain };
         case ChorusMode::Off:

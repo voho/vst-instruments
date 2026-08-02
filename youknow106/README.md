@@ -123,8 +123,15 @@ packed switch bytes. `Source/DSP/YouKnow106SysEx.h` is JUCE-free, so the suite
 asserts the byte layout directly.
 
 One setting cannot make the trip. The patch memory holds chorus as an on/off
-bit plus a mode bit, so it can say off, I or II but not I+II — that is a limit
-of the format, not of this writer, and the hardware cannot store it either.
+bit plus a mode bit, so it can say off, I or II but not I+II. That is not a
+limit of this writer: **I+II is an addition this plug-in makes**, and the
+reference instrument has no such mode — its manual says outright that I and II
+cannot be used together, and its board carries one enable bit plus one binary
+I/II bit rather than two independent switches. The mode is kept here because it
+is useful and is what owners fit a board modification to obtain, and how it
+behaves is still taken from the circuit (both timing resistors in parallel, so
+the rates add). There is simply nowhere in the format to store a state the
+format was never designed to hold.
 Such a patch is written out as II, the nearer of the two in rate, and the patch
 bar marks it `(I+II)` so a bank about to be sent can be checked first.
 

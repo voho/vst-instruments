@@ -127,9 +127,10 @@ corner and the order.
 - **Ramp generator curvature.** The ramp is straight — a constant-current
   integrator charge, not a resistive one. This is also the only shape consistent
   with the comparator's 6 V / 50% duty anchor.
-- **Chorus I+II exists as a distinct setting.** The two buttons are independent
-  latching switches. That the patch memory can only *store* three states is a
-  limit of the memory, not of the panel.
+- **Chorus I+II does not exist on the instrument.** The manual states that I and
+  II cannot be used together, and the board carries one enable bit plus one
+  binary I/II bit. The plug-in keeps the mode as a deliberate addition, clearly
+  labelled as one; there is nothing further to research here.
 - The cutoff control law, the resonance loop topology, the firmware envelope
   shape, and the output amplifier's quasi-linear response.
 - The note timer, counter width, control scan period and hold slew, pulse duty
@@ -145,13 +146,15 @@ before adoption:
 - **Wet/dry balance.** 47 kΩ and 39 kΩ into a shared 100 kΩ feedback, so the wet
   path sits 1.62 dB above the dry. The feedback value cancels; only the
   imbalance reaches the model.
-- **Chorus input divider.** 33 kΩ series against 12 kΩ to ground, 11.5 dB.
 - **Chorus delay sweep.** 1.54 ms to 5.15 ms, the same in every mode. Both ends
   imply an MN3009 clock (83.1 kHz and 24.9 kHz) inside the part's rated
   10–200 kHz window, which is the check that the capture describes this circuit.
 - **Chorus noise floor.** 60 dB unweighted, 20 Hz–20 kHz, referred to 0 dBu.
-- **Chorus I+II rate.** 1.376 Hz, corroborated independently — parallel
-  conductance into the modulation integrator, so the two rates add.
+- **Chorus rate ratio.** 1.623, from the timing network: mode II leaves a
+  2.2 MΩ resistor in series that mode I bypasses. The absolute rates are *not*
+  anchored — the timing capacitor is illegible in the schematic — so the model
+  still stands in a Juno-60's measured 0.513/0.863 Hz, whose ratio of 1.682
+  agrees to 3.6%.
 - **Per-voice tolerances.** Resonance ±5%, ramp integrator capacitor ±5% (a 5%
   polyester film part with no per-voice trimmer), comparator ±2 duty points from
   the 48–52% alignment window.

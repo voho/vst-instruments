@@ -829,6 +829,63 @@ void testBucketBrigadeLine()
 // corner of the pairing the line actually runs ends up, at the two rates the
 // engine uses. The mismatched pairing this catches put the 9.9 kHz corner at
 // 4.6 kHz -- inaudible as a bug report, obvious as a dull chorus.
+// The high-pass as the signal actually meets it, not as a table of laws.
+//
+// This exists because the stage was moved from inside each voice to the summed
+// bus and every other check in the suite passed either way: the laws are pure
+// functions and stayed true, so nothing was guarding that the filter was still
+// reached at all. A stage wired to nothing would have gone unnoticed.
+void testHighPassReachesTheSummedSignal()
+{
+    const auto rmsFor = [](HighPassMode mode, int note) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, 512, false);
+        EngineParameters parameters;
+        parameters.highPass = mode;
+        parameters.cutoff = 1.0f;      // filter wide open, so the high-pass is
+        parameters.resonance = 0.0f;   // the only thing shaping the band
+        parameters.attack = 0.0f;
+        parameters.sustain = 1.0f;
+        parameters.calibration = 0.0f; // no dispersion, so this is repeatable
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(note, 0.9f);
+
+        std::vector<float> left(24000), right(24000);
+        engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+        double sum = 0.0;
+        const std::size_t half = left.size() / 2;
+        for (std::size_t index = half; index < left.size(); ++index)
+            sum += static_cast<double>(left[index]) * left[index];
+        return std::sqrt(sum / static_cast<double>(left.size() - half));
+    };
+
+    // A low note, where every leg of the network has something to act on.
+    const double flatLow = rmsFor(HighPassMode::One, 28);
+    expect(flatLow > 1.0e-3, "the flat leg rendered nothing to measure");
+
+    const double boostLow = rmsFor(HighPassMode::Boost, 28);
+    const double cutTwoLow = rmsFor(HighPassMode::Two, 28);
+    const double cutThreeLow = rmsFor(HighPassMode::Three, 28);
+
+    expect(boostLow > flatLow * 1.2,
+           "the boost leg did not lift a low note above the flat leg");
+    expect(cutTwoLow < flatLow * 0.8,
+           "the middle cut leg did not attenuate a low note");
+    expect(cutThreeLow < cutTwoLow,
+           "the top cut leg is not darker than the middle one on a low note");
+
+    // And the ordering has to come from the corner rather than from a gain
+    // trim, so it must fade as the note rises above the corners.
+    const double flatHigh = rmsFor(HighPassMode::One, 76);
+    const double cutThreeHigh = rmsFor(HighPassMode::Three, 76);
+    expect(flatHigh > 1.0e-3, "the flat leg rendered nothing at the top");
+    expect(cutThreeHigh > flatHigh * 0.6,
+           "the top cut leg attenuates a high note as if it were a level control");
+    expect(cutThreeLow / flatLow < cutThreeHigh / flatHigh,
+           "the high-pass cuts a high note as hard as a low one");
+}
+
 void testSupportFilterCornersLandWhereAsked()
 {
     const auto gainAt = [](double frequency, float g, float sampleRate) {
@@ -1028,6 +1085,7 @@ int main()
     testChorusIsAtItsSettingFromTheFirstSample();
     testBucketBrigadeLine();
     testSupportFilterCornersLandWhereAsked();
+    testHighPassReachesTheSummedSignal();
     testCorrectionResidualsVanishAtTheEdges();
 
     if (failures != 0)

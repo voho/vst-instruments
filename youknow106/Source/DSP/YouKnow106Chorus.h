@@ -8,13 +8,23 @@ namespace youknow106
 
 // Panel state of the two latching chorus buttons.
 //
-// The buttons are independent, not a three-way selector: I alone, II alone,
-// both together and neither are all reachable from the front panel, and both
-// together is an audibly distinct setting rather than a synonym for II.
+// **I+II is an addition this plug-in makes, not modelled hardware.** The
+// instrument's own manual is explicit -- "It is not possible to use I and II at
+// the same time" -- and the board agrees: it carries one chorus enable bit and
+// one binary I/II bit, not two independent switches. Owners who want the mode
+// fit a board modification to get it.
 //
-// The patch memory cannot hold all four. It stores the effect as one on/off bit
-// and one mode bit, so a saved patch can only say off, I or II -- which is why
-// I+II is a thing you switch to by hand and not a thing you can recall. The
+// It is kept here deliberately, as a feature rather than as a claim, because it
+// is useful and because turning both buttons off and on independently is what
+// this panel offers. Everything about how it *behaves* is still derived from
+// the circuit: each button's timing resistor in parallel, so the conductances
+// and with them the rates add. What is not claimed is that a Juno-106 can do
+// it. (The 1.376 Hz that follows is likewise not the 9.75 Hz a Juno-60 reaches
+// with both buttons down; that instrument's chorus is a different circuit.)
+//
+// The patch memory cannot hold all four states in any case. It stores the
+// effect as one on/off bit and one mode bit, so a saved patch can only say off,
+// I or II -- which is consistent with there being no fourth state to store. The
 // SysEx writer records that limitation rather than pretending otherwise.
 enum class ChorusMode { Off, One, Two, OneTwo };
 
