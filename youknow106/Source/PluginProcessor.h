@@ -50,14 +50,14 @@ public:
     // Applies a stored patch to the parameters. The controls a patch does not
     // carry -- volume, the bender depths, portamento and the assign mode --
     // are left where the player put them, exactly as on the hardware.
-    void applyPatch (const sysex::Patch& patch);
+    void applyPatch (const youknow106::sysex::Patch& patch);
     // Events dropped because the handoff queue was full. Only for tests.
     int getSysExDroppedCount() const noexcept
     {
         return sysExDropped.load (std::memory_order_relaxed);
     }
     // The current panel settings as a patch.
-    sysex::Patch currentPatch() const;
+    youknow106::sysex::Patch currentPatch() const;
     // The current patch as a system-exclusive message the hardware would accept.
     juce::MidiMessage currentPatchAsSysEx (int channel) const;
 
@@ -143,7 +143,7 @@ private:
         const char* id = nullptr;
         std::atomic<float>* value = nullptr;
     };
-    std::array<ParameterPointer, 37> parameterPointers {};
+    std::array<ParameterPointer, 39> parameterPointers {};
 
     youknow106::YouKnow106Engine engine;
     // Events arriving over system exclusive. Parameters cannot be written from
@@ -165,13 +165,17 @@ private:
         SysExEventKind kind { SysExEventKind::FullPatch };
         // FullPatch: the eighteen tone bytes as they arrived, which are already
         // the message's own representation and so lose nothing in transit.
-        std::array<std::uint8_t, sysex::toneByteCount> bytes {};
+        std::array<std::uint8_t, youknow106::sysex::toneByteCount> bytes {};
         // SingleParameter: the number and value, and nothing else.
         int parameter { 0 };
         int value { 0 };
     };
 
     void stageSysExEvent (const SysExEvent& event) noexcept;
+
+    // Translates the pre-split `keyMode` and `chorus` choices in a saved
+    // session into the independent button pairs that replaced them.
+    static void migrateSplitModeParameters (juce::ValueTree& state);
 
     // A slot is only written while it is empty and only read while it is full,
     // so the audio thread is never writing bytes the message thread is reading.

@@ -2,6 +2,7 @@
 #include "PluginEditor.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -364,15 +365,21 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
       parameters (*this, nullptr, "YOUKNOW106_STATE", createParameterLayout())
 {
     using namespace youknow106::parameters;
-    const std::array<const char*, 37> ids {
+    // Size deduced, not restated: hard-coding it is what silently broke when
+    // the paired switches each turned into two parameters.
+    const auto ids = std::to_array<const char*> ({
         volume, benderDco, benderVcf, benderLfo, portamento, poly1, poly2,
         lfoRate, lfoDelay, dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
         vcaMode, vcaLevel, attack, decay, sustain, release, chorusI, chorusII,
         transpose, masterTune, velocity, calibration, chorusNoise, polyphony, hq
-    };
+    }});
 
-    for (std::size_t index = 0; index < ids.size(); ++index)
+    // The pointer table has to be able to hold every id. Growing the list above
+    // without growing the table would otherwise write past its end.
+    jassert (ids.size() == parameterPointers.size());
+    const auto count = std::min (ids.size(), parameterPointers.size());
+    for (std::size_t index = 0; index < count; ++index)
         parameterPointers[index] = { ids[index],
                                      parameters.getRawParameterValue (ids[index]) };
 
@@ -763,7 +770,7 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
     // than the patch — Calibration and Chorus Noise — are excluded, so a
     // randomisation cannot mute the patch, jump its gain, change its running
     // cost, or quietly re-specify the hardware being modelled.
-    static constexpr std::array<const char*, 29> soundParameterIds {{
+    static constexpr auto soundParameterIds = std::to_array<const char*> ({
         benderDco, benderVcf, benderLfo, portamento, poly1, poly2,
         lfoRate, lfoDelay,
         dcoLfo, pwm, pwmMode, range, saw, pulse, sub, noise,
@@ -772,7 +779,7 @@ void YouKnow106AudioProcessor::randomizeParameters (float amount)
         vcaMode, vcaLevel,
         attack, decay, sustain, release,
         chorusI, chorusII
-    }};
+    }});
 
     juce::Random random;
     for (const auto* parameterId : soundParameterIds)
