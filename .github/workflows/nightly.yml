@@ -234,10 +234,16 @@ jobs:
             echo "The suite must honour ${{ matrix.snapshot_variable }}." >&2
             exit 1
           fi
-          # An empty or truncated write would otherwise be committed as a
-          # corrupt image; the magic number proves a real PNG landed.
           if [[ "$(head -c 8 "$screenshot" | od -An -tx1 | tr -d ' \n')" != "89504e470d0a1a0a" ]]; then
-            echo "error: $screenshot is not a PNG" >&2
+            echo "error: $screenshot does not carry the PNG signature" >&2
+            exit 1
+          fi
+          # The signature alone only proves the write started: a PNG truncated
+          # part way through still carries it. Every PNG ends with a
+          # zero-length IEND chunk and its constant CRC, so the trailer is what
+          # proves the encoder ran to completion and a whole image landed.
+          if [[ "$(tail -c 8 "$screenshot" | od -An -tx1 | tr -d ' \n')" != "49454e44ae426082" ]]; then
+            echo "error: $screenshot has no terminating IEND chunk, so the write did not finish" >&2
             exit 1
           fi
           echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
@@ -247,6 +253,15 @@ jobs:
       # failure cannot cost an instrument the screenshot it has already
       # rendered: the two are independent, and the commit job preserves
       # whatever was produced.
+      #
+      # It stays gated on the suite passing, though, and deliberately so. The
+      # processor suites count their failures rather than stopping at the first
+      # one, so a run whose editor assertions failed -- a blank render, buttons
+      # that overlap, a control strip that lost its buttons -- still writes the
+      # PNG before reporting the failure. Publishing that image is the one
+      # outcome worse than leaving yesterday's in place, and the committed
+      # screenshot is only worth what its passing suite says about it. An
+      # instrument whose suite failed keeps its previous image for a night.
       - name: Upload the rendered screenshot
         uses: actions/upload-artifact@v4
         with:
@@ -323,7 +338,7 @@ jobs:
               echo "$directory: took the freshly rendered screenshot"
             else
               missing+=("$directory")
-              echo "$directory: no screenshot was rendered by this run"
+              echo "$directory: no screenshot was accepted from this run"
             fi
           done
           # Truncate first: printf with an empty array would write a blank line,
@@ -397,9 +412,11 @@ jobs:
             exit 1
           fi
           if [[ -s "${RUNNER_TEMP}/missing-screenshots.txt" ]]; then
-            echo "error: no screenshot was rendered for:" >&2
+            echo "error: no screenshot was accepted from:" >&2
             sed 's/^/  /' "${RUNNER_TEMP}/missing-screenshots.txt" >&2
-            echo "See that instrument's build job for the cause." >&2
+            echo "Each of those either failed to build, failed its suite, or" >&2
+            echo "did not render a complete PNG; see that instrument's build" >&2
+            echo "job. Their previously committed screenshots are unchanged." >&2
             exit 1
           fi
           echo "Every instrument rendered its editor screenshot."
