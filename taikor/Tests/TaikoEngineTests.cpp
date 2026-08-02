@@ -2177,8 +2177,25 @@ void testControlEndpointsAndGestures()
             strike (with, taikor::Articulation::Katsu, 0, 0.95f, 48000.0, 24000);
         const auto shellChange =
             maximumAbsoluteDifference (shellQuiet.left, shellGlided.left);
-        expect (shellChange < 1.0e-3,
+        // Against the stroke's own level, because that is what the claim is
+        // about. A Katsu is mostly wood but not entirely: it puts a little into
+        // the head, and the head's continuum is part of the head, so it glides
+        // with the rest of it. That share used to be frozen - the glide moved
+        // where the continuum's bands sat but not how fast they emptied, which
+        // was a bug rather than a guarantee - and freezing it is what kept this
+        // difference under a thousandth in absolute terms. What has to be true
+        // is that the wooden bank is not being retuned, and forty decibels
+        // under the stroke it is not.
+        expect (shellChange < shellQuiet.peak * 0.02,
                 "the tension glide must not retune the wooden shell");
+        // Exactly, on the one stroke that is wood and nothing else: the stick
+        // bank never sees the head's tension at all.
+        const auto sticksQuiet =
+            strike (without, taikor::Articulation::Bachi, 0, 0.95f, 48000.0, 24000);
+        const auto sticksGlided =
+            strike (with, taikor::Articulation::Bachi, 0, 0.95f, 48000.0, 24000);
+        expect (maximumAbsoluteDifference (sticksQuiet.left, sticksGlided.left) == 0.0,
+                "the tension glide must not reach the stick bank at all");
 
         // And it must still do its job on the head, which is many times larger
         // than anything the shell stroke is allowed to move by.

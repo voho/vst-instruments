@@ -365,6 +365,21 @@ private:
         // can retune the resonator without redoing the whole physical solve.
         float omega { 0.0f };
         float decayRate { 0.0f };
+        // The decay split into what moves with the head and what does not, so a
+        // mode retuned while it is still sounding can be re-damped rather than
+        // keeping the rate it was built with. The hide's loss goes as omega and
+        // as omega squared, and the mounting is steeply low-pass in frequency,
+        // so a stroke automated an octave up would otherwise carry the mounting
+        // loss of the note it started on - which on a large drum is most of its
+        // damping - and empty in a fraction of the time it should. decayFixed
+        // is the rest: what the mode radiates and what the rim takes.
+        float decayFixed { 0.0f };
+        float lossOmega { 0.0f };
+        float lossOmegaSquared { 0.0f };
+        // log(level / retirement floor), so the lifetime below can be redone
+        // from a new decay rate without the whole bank's levels to hand. Zero
+        // for a mode that was never audible.
+        float retirementLog { 0.0f };
         // True for the membrane, false for the shell. The attack glide and the
         // wheel stretch the head; neither of them touches the wooden body, and
         // the bank is sorted by lifetime so the two kinds interleave.
@@ -457,6 +472,22 @@ private:
         float tensionDecay { 0.999f };
         float tensionDepth { 0.0f };
         float appliedTensionShift { 1.0f };
+        // The mounting loss this stroke was built with, kept so retuning can
+        // re-evaluate it at the mode's new frequency.
+        float mountLoss { 0.0f };
+        float mountCorner { 80.0f };
+        // The continuum's decay as a function of where a band sits: a constant
+        // from the rim, a term in omega from the hide's hysteresis and the
+        // rim's per-order share, and one in omega squared from the hide's
+        // viscosity. Stored rather than summed so a retuned band can be
+        // re-damped exactly, instead of by scaling what it had - which
+        // compounds, and drifts with every block the glide runs.
+        float continuumLossFixed { 0.0f };
+        float continuumLossOmega { 0.0f };
+        float continuumLossOmegaSquared { 0.0f };
+        // Added to every audible lifetime once the contact schedule is known,
+        // and kept so a recomputed lifetime can have it put back.
+        std::uint64_t retirementOffset { 0 };
 
         // Accumulated hand damping, folded into the resonator states at the
         // control tick so the envelope never runs away.
@@ -613,6 +644,13 @@ private:
     // Loss into the mounting, which only the lowest modes suffer.
     [[nodiscard]] static float mountingLoss (const DrumState& drum,
                                              float frequency) noexcept;
+    [[nodiscard]] static float mountingLossAt (float mountLoss, float mountCorner,
+                                               float frequency) noexcept;
+    // What a membrane mode's decay is once the head has been stretched to put
+    // it at this frequency. Used by the attack glide, the wheel and Pitch
+    // automation, all of which move a mode after it has been built.
+    [[nodiscard]] static float membraneDecayAt (const Voice& voice, const Mode& mode,
+                                                float omega) noexcept;
     // The hide's own loss at a given frequency: hysteretic plus viscous. Shared
     // by the resolved modes and by the continuum above them, which is the whole
     // point of it - the two have to sit on one curve or they do not sound like

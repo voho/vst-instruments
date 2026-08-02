@@ -377,14 +377,32 @@ double TaikoEngine::besselJ (int order, double x) noexcept
 // only a mode long enough to move the whole instrument loses anything this way.
 float TaikoEngine::mountingLoss (const DrumState& drum, float frequency) noexcept
 {
+    return mountingLossAt (drum.mountLoss, drum.mountCorner, frequency);
+}
+
+float TaikoEngine::mountingLossAt (float mountLoss, float mountCorner,
+                                   float frequency) noexcept
+{
     // Fourth order. A gentler skirt was tried and measures worse against real
     // recordings by a wide margin: reaching only a little way above the corner
     // costs the body most of what makes it a body. Whatever the shell and the
     // stand take, they take it from the very bottom of the drum and from almost
     // nothing else.
-    const float ratio = frequency / std::max (drum.mountCorner, 1.0f);
+    const float ratio = frequency / std::max (mountCorner, 1.0f);
     const float squared = ratio * ratio;
-    return drum.mountLoss / (1.0f + squared * squared);
+    return mountLoss / (1.0f + squared * squared);
+}
+
+// The same sum the modes are built with, re-evaluated at a new frequency. The
+// two halves of the hide's loss are stored as coefficients rather than as a
+// total precisely so this can be done.
+float TaikoEngine::membraneDecayAt (const Voice& voice, const Mode& mode,
+                                    float omega) noexcept
+{
+    return mode.decayFixed + mode.lossOmega * omega
+         + mode.lossOmegaSquared * omega * omega
+         + mountingLossAt (voice.mountLoss, voice.mountCorner,
+                           omega / (2.0f * piFloat));
 }
 
 // The hide's own loss: a hysteretic part that damps as omega and a viscous part
@@ -1151,6 +1169,14 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     const float propagatingSpread = 1.0f / (1.0f + micDistance / 0.12f);
 
     const float edgeLoss = drum.edgeLoss * (1.0f + 3.0f * extraDamping);
+    // The hide's own loss, kept as the two coefficients materialDamping sums
+    // rather than as that sum, so a retuned mode can be re-damped at its new
+    // frequency. The hand bears on both, exactly as it does there.
+    const float handShare = 1.0f + 2.4f * extraDamping;
+    const float lossOmega = 0.5f * drum.headLossFactor * handShare;
+    const float lossOmegaSquared = drum.headViscousFactor * handShare;
+    voice.mountLoss = drum.mountLoss;
+    voice.mountCorner = drum.mountCorner;
 
     int count = 0;
     float peakMagnitude = 1.0e-12f;
@@ -1271,9 +1297,10 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 const float radiationLoss =
                     drum.radiationScale * airDensity * soundSpeed * efficiency
                     * volumeCoupling * volumeCoupling;
-                const float decay = materialDamping (drum, omega, extraDamping)
-                                  + radiationLoss
-                                  + edgeLoss + mountingLoss (drum, frequency);
+                const float decayFixed = radiationLoss + edgeLoss;
+                const float decay = decayFixed
+                                  + materialDamping (drum, omega, extraDamping)
+                                  + mountingLoss (drum, frequency);
 
                 const float drive = shapeStrike * batterShare
                                   / (geometricMass * omega * rate);
@@ -1307,6 +1334,9 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 auto& mode = voice.modes[static_cast<std::size_t> (count)];
                 mode.omega = omega;
                 mode.decayRate = decay;
+                mode.decayFixed = decayFixed;
+                mode.lossOmega = lossOmega;
+                mode.lossOmegaSquared = lossOmegaSquared;
                 mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 // Axisymmetric modes look identical from both sides of the
@@ -1362,9 +1392,10 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 const float radiationLoss =
                     drum.radiationScale * airDensity * soundSpeed * efficiency
                     / (2.0f * sigmaB);
-                const float decay = materialDamping (drum, omega, extraDamping)
-                                  + radiationLoss
-                                  + edgeLoss * (1.0f + edgeOrderFactor * orderFloat)
+                const float decayFixed =
+                    radiationLoss + edgeLoss * (1.0f + edgeOrderFactor * orderFloat);
+                const float decay = decayFixed
+                                  + materialDamping (drum, omega, extraDamping)
                                   + mountingLoss (drum, frequency);
 
                 const float drive = shapeStrike * strikeAngular
@@ -1400,6 +1431,9 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 auto& mode = voice.modes[static_cast<std::size_t> (count)];
                 mode.omega = omega;
                 mode.decayRate = decay;
+                mode.decayFixed = decayFixed;
+                mode.lossOmega = lossOmega;
+                mode.lossOmegaSquared = lossOmegaSquared;
                 mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 mode.micLeft = observedL;
@@ -1610,10 +1644,17 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
             // behind the drum as a half-second bed of noise that buries the body
             // it is supposed to sit above, and set it for the continuum and the
             // body goes with it.
-            const float wavenumber = omega * radius / std::max (drum.waveSpeed, 1.0f);
-            const float decay = materialDamping (drum, omega, extraDamping)
-                              + drum.edgeLoss
-                                    * (1.0f + continuumEdgeOrder * wavenumber);
+            // Kept as its three coefficients rather than as the sum, so that
+            // retuning the head can re-damp the band at wherever it lands.
+            voice.continuumLossFixed = drum.edgeLoss;
+            voice.continuumLossOmega =
+                lossOmega + drum.edgeLoss * continuumEdgeOrder * radius
+                                / std::max (drum.waveSpeed, 1.0f);
+            voice.continuumLossOmegaSquared = lossOmegaSquared;
+
+            const float decay = voice.continuumLossFixed
+                              + voice.continuumLossOmega * omega
+                              + voice.continuumLossOmegaSquared * omega * omega;
             entry.envelopeDecay = std::exp (-decay / rate);
             // Left dark. Every band is lit by the contacts themselves, each in
             // proportion to how hard it lands, so a flam's grace note gets its
@@ -1682,12 +1723,13 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
         if (mode.decayRate <= 0.0f || relative <= modeRetirementFloor)
         {
+            mode.retirementLog = 0.0f;
             mode.audibleSamples = 0;
             continue;
         }
 
-        const float seconds =
-            std::log (relative / modeRetirementFloor) / mode.decayRate;
+        mode.retirementLog = std::log (relative / modeRetirementFloor);
+        const float seconds = mode.retirementLog / mode.decayRate;
         const float bounded = clampFloat (seconds, 0.0f,
                                           static_cast<float> (maximumTailSeconds));
         mode.audibleSamples = static_cast<std::uint64_t> (bounded * rate);
@@ -2038,6 +2080,7 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
 
         // Adding a constant preserves the descending sort, and leaves the modes
         // that were never audible at zero so the trailing trim still finds them.
+        voice.retirementOffset = scheduleEnd;
         for (int index = 0; index < voice.modeCount; ++index)
         {
             auto& mode = voice.modes[static_cast<std::size_t> (index)];
@@ -2106,6 +2149,16 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
             continue;
         }
 
+        // Re-damped, not merely retuned. Most of what damps a mode depends on
+        // where the mode is: the hide's loss goes as omega and as omega
+        // squared, and the mounting is steeply low-pass, so on a large drum a
+        // mode sitting under that corner is losing most of its energy to the
+        // stand. Carrying the old rate to the new frequency meant a note
+        // automated upward kept the mounting loss of the note it started on and
+        // emptied far too fast, and a note automated down kept too little and
+        // rang past where it should have stopped.
+        mode.decayRate = membraneDecayAt (voice, mode, 2.0f * piFloat * frequency);
+
         // In double, exactly as configureResonator does it. This path runs on
         // every stroke that has any Tension Mod at all - which is the default -
         // and again on every wheel move and Pitch automation step, so rounding
@@ -2135,6 +2188,41 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         const float high = std::min (centre * continuumBandwidth, nyquist * 0.9f);
         band.lowCoefficient = 1.0f - std::exp (-2.0f * piFloat * low / rate);
         band.highCoefficient = 1.0f - std::exp (-2.0f * piFloat * high / rate);
+
+        // And its decay with it, for the same reason the modes' does: the loss
+        // that empties this region is the head's own, and that is a function of
+        // where the band now sits rather than of where it was built.
+        const float bandOmega = 2.0f * piFloat * centre;
+        const float bandDecay = voice.continuumLossFixed
+                              + voice.continuumLossOmega * bandOmega
+                              + voice.continuumLossOmegaSquared * bandOmega * bandOmega;
+        band.envelopeDecay = std::exp (-bandDecay / rate);
+    }
+
+    // The lifetimes were worked out from the rates the modes were built with,
+    // and those rates have just moved. A mode that has been slowed has to be
+    // allowed to finish, or it is cut off mid-ring - a step in the output
+    // rather than a mode quietly ending.
+    //
+    // Lengthened only, never shortened. The retirement walk drops modes from
+    // the end of a bank sorted by lifetime, and once the rates move apart that
+    // sort no longer strictly holds; extending an entry can only leave a mode
+    // active past its floor, which costs a resonator, while shortening one
+    // could drop a mode the walk has not reached yet while it is still
+    // sounding, which costs a click. The wooden bank is not touched at all -
+    // stretching the head does not stretch the body it is nailed to.
+    for (int index = 0; index < voice.modeCount; ++index)
+    {
+        auto& mode = voice.modes[static_cast<std::size_t> (index)];
+        if (! mode.membrane || mode.retirementLog <= 0.0f || mode.decayRate <= 0.0f)
+            continue;
+
+        const float seconds = mode.retirementLog / mode.decayRate;
+        const float bounded = clampFloat (seconds, 0.0f,
+                                          static_cast<float> (maximumTailSeconds));
+        const auto samples = static_cast<std::uint64_t> (bounded * rate)
+                           + voice.retirementOffset;
+        mode.audibleSamples = std::max (mode.audibleSamples, samples);
     }
 
     voice.appliedTensionShift = shift;
