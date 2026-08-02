@@ -110,7 +110,12 @@ inline constexpr float labelHeight = 22.0f;
 inline constexpr float sectionBottom = 300.0f;
 inline constexpr float utilityTop = 310.0f;
 inline constexpr float utilityHeight = 46.0f;
-inline constexpr float panelHeight = 364.0f;
+// The patch bar. The hardware picks patches from a numeric keypad that has no
+// equivalent here, so the bank gets a row of its own rather than being squeezed
+// into the utility strip.
+inline constexpr float presetTop = 358.0f;
+inline constexpr float presetHeight = 24.0f;
+inline constexpr float panelHeight = 392.0f;
 inline constexpr float keyboardHeight = 92.0f;
 inline constexpr float controlInset = 5.0f;
 inline constexpr float stackGap = 6.0f;

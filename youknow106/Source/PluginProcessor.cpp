@@ -468,7 +468,23 @@ void YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.benderVcfDepth = valueOf (benderVcf);
     engineParameters.benderLfoDepth = valueOf (benderLfo);
     engineParameters.portamento = valueOf (portamento);
-    engineParameters.keyMode = keyModeFor (valueOf (poly1) > 0.5f, valueOf (poly2) > 0.5f);
+
+    // A restore replaces both the legacy ids and the pairs at once, so whatever
+    // the bridges were holding is stale. Adopting the restored legacy values as
+    // the new baseline is what stops the session's own saved pair -- a Unison
+    // saved as POLY 1 + POLY 2, say -- from being overwritten by a legacy id
+    // that has not actually moved.
+    const int forwards = legacyForwardCount.load (std::memory_order_acquire);
+    if (reseedLegacyBridges.exchange (false, std::memory_order_acquire))
+    {
+        keyModeBridge = { choiceOf (legacyKeyMode, 2), 0, false, forwards };
+        chorusBridge = { choiceOf (legacyChorus, 2), 0, false, forwards };
+    }
+
+    engineParameters.keyMode = static_cast<KeyMode> (resolveLegacyMode (
+        choiceOf (legacyKeyMode, 2),
+        static_cast<int> (keyModeFor (valueOf (poly1) > 0.5f, valueOf (poly2) > 0.5f)),
+        forwards, keyModeBridge));
 
     engineParameters.lfoRate = valueOf (lfoRate);
     engineParameters.lfoDelay = valueOf (lfoDelay);
@@ -499,7 +515,10 @@ void YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.sustain = valueOf (sustain);
     engineParameters.release = valueOf (release);
 
-    engineParameters.chorus = chorusModeFor (valueOf (chorusI) > 0.5f, valueOf (chorusII) > 0.5f);
+    engineParameters.chorus = static_cast<ChorusMode> (resolveLegacyMode (
+        choiceOf (legacyChorus, 2),
+        static_cast<int> (chorusModeFor (valueOf (chorusI) > 0.5f, valueOf (chorusII) > 0.5f)),
+        forwards, chorusBridge));
 
     engineParameters.keyTranspose = juce::roundToInt (valueOf (transpose));
     engineParameters.masterTuneCents = valueOf (masterTune);
@@ -897,6 +916,13 @@ void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeIn
     // structs are plain values it reads without synchronisation. The next
     // processBlock picks the restored patch up on the thread that owns them.
     parameters.replaceState (state);
+
+    // The restored legacy values are the new baseline on both sides of the
+    // bridge. Without this the first tick after a restore reads them as a fresh
+    // edit and forwards them over the pair the session actually saved.
+    lastLegacyKeyMode = choiceOf (youknow106::parameters::legacyKeyMode, 2);
+    lastLegacyChorus = choiceOf (youknow106::parameters::legacyChorus, 2);
+    reseedLegacyBridges.store (true, std::memory_order_release);
 }
 
 juce::AudioProcessorEditor* YouKnow106AudioProcessor::createEditor()
@@ -943,6 +969,21 @@ void YouKnow106AudioProcessor::setCurrentProgram (int index)
     }
     const auto& bank = youknow106::presets::factoryBank();
     applyPatch (bank[static_cast<std::size_t> (index - 1)].patch);
+}
+
+youknow106::sysex::Patch YouKnow106AudioProcessor::programPatch (int index) const
+{
+    if (index <= 0 || index >= youknow106::presets::presetCount + 1)
+        return {};
+    return youknow106::presets::factoryBank()[static_cast<std::size_t> (index - 1)].patch;
+}
+
+bool YouKnow106AudioProcessor::currentProgramIsEdited() const
+{
+    std::array<std::uint8_t, youknow106::sysex::toneByteCount> panel {}, program {};
+    youknow106::sysex::toneBytesFromPatch (currentPatch(), panel.data());
+    youknow106::sysex::toneBytesFromPatch (programPatch (currentProgram), program.data());
+    return panel != program;
 }
 
 const juce::String YouKnow106AudioProcessor::getProgramName (int index)
@@ -1094,6 +1135,36 @@ void YouKnow106AudioProcessor::timerCallback()
     forwardLegacyModeParameters();
 }
 
+// Which mode the audio should render this block, given the legacy id, the pair
+// that replaced it, and what this thread has seen before.
+//
+// Only a *change* in the legacy id takes control, and it gives control back the
+// moment the pair reads the same -- so a lane that never touches the legacy id
+// costs nothing, and one that does is heard in the very next block instead of
+// after the message thread's next tick.
+int YouKnow106AudioProcessor::resolveLegacyMode (int legacyValue, int fromPair,
+                                                 int forwardCount,
+                                                 LegacyBridge& bridge) noexcept
+{
+    if (legacyValue != bridge.seen)
+    {
+        bridge.seen = legacyValue;
+        bridge.held = legacyValue;
+        bridge.holding = true;
+        bridge.releaseSeen = forwardCount;
+    }
+
+    if (bridge.holding)
+    {
+        if (fromPair == bridge.held || forwardCount != bridge.releaseSeen)
+            bridge.holding = false;
+        else
+            return bridge.held;
+    }
+
+    return fromPair;
+}
+
 // A lane automating one of the previous release's ids moves the pair that
 // replaced it. Only a *change* forwards, so the bridge never fights the panel:
 // touching POLY 2 directly does not get overwritten on the next tick.
@@ -1111,6 +1182,8 @@ void YouKnow106AudioProcessor::forwardLegacyModeParameters()
         }
     };
 
+    bool forwarded = false;
+
     const int keyMode = choiceOf (legacyKeyMode, 2);
     if (keyMode != lastLegacyKeyMode)
     {
@@ -1118,6 +1191,7 @@ void YouKnow106AudioProcessor::forwardLegacyModeParameters()
         const auto mode = static_cast<youknow106::KeyMode> (keyMode);
         set (poly1, youknow106::poly1Engaged (mode));
         set (poly2, youknow106::poly2Engaged (mode));
+        forwarded = true;
     }
 
     const int chorusMode = choiceOf (legacyChorus, 2);
@@ -1127,7 +1201,13 @@ void YouKnow106AudioProcessor::forwardLegacyModeParameters()
         const auto mode = static_cast<youknow106::ChorusMode> (chorusMode);
         set (chorusI, youknow106::chorusOneEngaged (mode));
         set (chorusII, youknow106::chorusTwoEngaged (mode));
+        forwarded = true;
     }
+
+    // Published last, so an audio thread that sees the bump also sees the pair
+    // the bump is announcing.
+    if (forwarded)
+        legacyForwardCount.fetch_add (1, std::memory_order_release);
 }
 
 void YouKnow106AudioProcessor::drainSysExQueue()

@@ -62,7 +62,7 @@ control by control in the
 The panel keeps the reference instrument's section order and control set:
 
 ```
-VOLUME · BENDER · KEY MODE · LFO · DCO · HPF · VCF · VCA · ENV · CHORUS
+VOLUME · BENDER · MODE · LFO · DCO · HPF · VCF · VCA · ENV · CHORUS
 ```
 
 Sliders, switches and buttons are placed by the JUCE-free layout description in
@@ -80,12 +80,51 @@ reproduces hardware behaviour, so the default patch is a hardware-faithful patch
 velocity does nothing, six voices, and the delay lines at their modelled noise
 floor.
 
+Under those, the patch bar recalls the factory bank: a stepper, a name list and
+an EDITED lamp that lights as soon as the panel stops matching the patch that
+was recalled. It shows the same programs the host's own program menu does, and
+the two stay in step whichever one is used. Re-picking the patch already showing
+reloads it, which is how edits are discarded. A patch that cannot be written to
+the hardware's format without loss is marked in the list — see MIDI, below.
+Volume, the bender depths, portamento and the assign mode are performance
+controls rather than patch contents, so recalling a patch leaves them alone,
+exactly as the hardware does.
+
 ## MIDI
 
 The reference instrument answers to modulation (CC 1), hold (CC 64), all-notes-off
 and pitch bend, and to nothing else — it has no continuous controllers for its
 panel and its keyboard sends no velocity. YouKnow106 does the same. Host
 automation reaches every parameter through the plug-in's own parameter list.
+
+### System exclusive
+
+Patches interchange with the hardware in the hardware's own format, both ways:
+
+| Message | Bytes | Direction |
+| --- | --- | --- |
+| Patch data | `F0 41 30 0n <18 tone bytes> F7` | in and out |
+| Parameter change | `F0 41 32 0n <parameter> <value> F7` | in and out |
+
+An incoming patch dump moves the whole panel; an incoming parameter change
+moves only the controls that one byte names and leaves the rest of the patch
+alone, so a librarian editing one control does not overwrite the others. The
+SEND button emits the current panel as a patch dump on the plug-in's MIDI
+output, addressed to the basic channel of the last message that arrived — so a
+unit that has already sent anything gets its reply back on its own channel,
+without a setting to keep in step. Messages from other manufacturers, other
+opcodes, and bodies of the wrong length are ignored rather than partially
+applied.
+
+The layout is the instrument's: sixteen continuous controls at 0..127, then two
+packed switch bytes. `Source/DSP/YouKnow106SysEx.h` is JUCE-free, so the suite
+asserts the byte layout directly.
+
+One setting cannot make the trip. The patch memory holds chorus as an on/off
+bit plus a mode bit, so it can say off, I or II but not I+II — that is a limit
+of the format, not of this writer, and the hardware cannot store it either.
+Such a patch is written out as II, the nearer of the two in rate, and the patch
+bar marks it `(I+II)` so a bank about to be sent can be checked first.
 
 ## Build on macOS
 

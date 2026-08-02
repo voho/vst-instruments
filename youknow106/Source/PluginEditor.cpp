@@ -387,6 +387,7 @@ YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioP
 
     buildPanelControls();
     buildUtilityStrip();
+    buildPresetBar();
 
     keyboard.setAvailableRange (0, 127);
     keyboard.setLowestVisibleKey (36);
@@ -521,6 +522,94 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     addAndMakeVisible (randomize100Button);
 }
 
+void YouKnow106AudioProcessorEditor::buildPresetBar()
+{
+    presetLabel.setText ("PATCH", juce::dontSendNotification);
+    presetLabel.setFont (panelFont (9.0f, true));
+    presetLabel.setColour (juce::Label::textColourId, fromPalette (panel::colour::textDim));
+    presetLabel.setJustificationType (juce::Justification::centredLeft);
+    presetLabel.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (presetLabel);
+
+    // A ComboBox reserves id 0 for "nothing selected", so an item id is the
+    // program index plus one. Only the three places that touch the box know
+    // that; everything else in the bar works in program indices.
+    for (int index = 0; index < processor.getNumPrograms(); ++index)
+        presetBox.addItem (processor.getProgramName (index), index + 1);
+
+    presetBox.setTooltip ("Recall a factory patch");
+    presetBox.setColour (juce::ComboBox::backgroundColourId,
+                         fromPalette (panel::colour::slot));
+    presetBox.setColour (juce::ComboBox::textColourId, fromPalette (panel::colour::text));
+    presetBox.setColour (juce::ComboBox::outlineColourId,
+                         fromPalette (panel::colour::textDim).withAlpha (0.35f));
+    presetBox.setColour (juce::ComboBox::arrowColourId, fromPalette (panel::colour::cyan));
+    presetBox.onChange = [this] { selectProgram (presetBox.getSelectedId() - 1); };
+    addAndMakeVisible (presetBox);
+
+    presetPrevButton.setTooltip ("Previous patch");
+    presetPrevButton.onClick = [this] { stepProgram (-1); };
+    addAndMakeVisible (presetPrevButton);
+
+    presetNextButton.setTooltip ("Next patch");
+    presetNextButton.onClick = [this] { stepProgram (1); };
+    addAndMakeVisible (presetNextButton);
+
+    presetEditedLabel.setText ("EDITED", juce::dontSendNotification);
+    presetEditedLabel.setFont (panelFont (9.0f, true));
+    presetEditedLabel.setColour (juce::Label::textColourId,
+                                 fromPalette (panel::colour::magenta));
+    presetEditedLabel.setJustificationType (juce::Justification::centredLeft);
+    presetEditedLabel.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (presetEditedLabel);
+
+    refreshPresetBar();
+}
+
+void YouKnow106AudioProcessorEditor::selectProgram (int index)
+{
+    if (index < 0 || index >= processor.getNumPrograms())
+        return;
+    // Re-picking the patch already showing reloads it, which is how edits are
+    // thrown away. Doing that when nothing has been edited would only write
+    // every parameter back to the value it already holds, so it is skipped.
+    if (index == processor.getCurrentProgram() && ! processor.currentProgramIsEdited())
+        return;
+
+    processor.setCurrentProgram (index);
+    // The host owns the program index in its own UI too, so tell it the change
+    // came from here rather than letting the two drift apart.
+    processor.updateHostDisplay();
+    refreshPresetBar();
+}
+
+void YouKnow106AudioProcessorEditor::stepProgram (int delta)
+{
+    const int wanted = juce::jlimit (0, processor.getNumPrograms() - 1,
+                                     processor.getCurrentProgram() + delta);
+    if (wanted == processor.getCurrentProgram())
+        return;
+
+    processor.setCurrentProgram (wanted);
+    processor.updateHostDisplay();
+    refreshPresetBar();
+}
+
+void YouKnow106AudioProcessorEditor::refreshPresetBar()
+{
+    const int program = processor.getCurrentProgram();
+    const bool edited = processor.currentProgramIsEdited();
+    if (program == shownProgram && edited == shownEdited)
+        return;
+
+    shownProgram = program;
+    shownEdited = edited;
+    presetBox.setSelectedId (program + 1, juce::dontSendNotification);
+    presetEditedLabel.setVisible (edited);
+    presetPrevButton.setEnabled (program > 0);
+    presetNextButton.setEnabled (program < processor.getNumPrograms() - 1);
+}
+
 void YouKnow106AudioProcessorEditor::attachSlider (juce::Slider& slider,
                                                    const char* parameterId)
 {
@@ -650,6 +739,25 @@ void YouKnow106AudioProcessorEditor::resized()
                                           panel::utilityTop + 24.0f,
                                           buttonWidth, 18.0f).toNearestInt());
 
+    // Patch bar, its own row under the utility strip: caption, stepper, name box
+    // and the edited lamp, left to right.
+    const float presetLeft = panel::panelMargin;
+    const float stepWidth = 22.0f;
+    presetLabel.setBounds (
+        scaled (presetLeft, panel::presetTop + 3.0f, 44.0f, 18.0f).toNearestInt());
+    presetPrevButton.setBounds (
+        scaled (presetLeft + 46.0f, panel::presetTop + 2.0f, stepWidth,
+                panel::presetHeight - 4.0f).toNearestInt());
+    presetNextButton.setBounds (
+        scaled (presetLeft + 46.0f + stepWidth + 3.0f, panel::presetTop + 2.0f,
+                stepWidth, panel::presetHeight - 4.0f).toNearestInt());
+    presetBox.setBounds (
+        scaled (presetLeft + 46.0f + 2.0f * (stepWidth + 3.0f), panel::presetTop + 2.0f,
+                300.0f, panel::presetHeight - 4.0f).toNearestInt());
+    presetEditedLabel.setBounds (
+        scaled (presetLeft + 56.0f + 2.0f * (stepWidth + 3.0f) + 300.0f,
+                panel::presetTop + 3.0f, 60.0f, 18.0f).toNearestInt());
+
     keyboard.setBounds (scaled (0.0f, panel::panelHeight, panel::panelWidth(),
                                 panel::keyboardHeight).toNearestInt());
 }
@@ -698,4 +806,8 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
 void YouKnow106AudioProcessorEditor::timerCallback()
 {
     display.refresh (processor);
+    // The program can also move from the host's own menu, and the panel from an
+    // incoming patch dump or a randomise. Polling is what keeps the bar honest
+    // about both without the processor having to know an editor exists.
+    refreshPresetBar();
 }

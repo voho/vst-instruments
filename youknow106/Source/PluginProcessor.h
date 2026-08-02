@@ -49,6 +49,14 @@ public:
     void setCurrentProgram (int index) override;
     const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
+    // The patch a program holds, INIT included. Out-of-range gives a default
+    // patch, which is what INIT is anyway.
+    youknow106::sysex::Patch programPatch (int index) const;
+    // Whether the panel has moved away from the program that was last selected.
+    // Compared as tone bytes, so it asks the question the hardware would ask:
+    // has anything changed that a stored patch actually records? Volume and the
+    // bender depths are not part of a patch, so moving them is not an edit.
+    bool currentProgramIsEdited() const;
 
     // Applies a stored patch to the parameters. The controls a patch does not
     // carry -- volume, the bender depths, portamento and the assign mode --
@@ -180,6 +188,40 @@ private:
     void forwardLegacyModeParameters();
     int lastLegacyKeyMode { 0 };
     int lastLegacyChorus { 0 };
+
+    // The audio thread's own half of the legacy bridge.
+    //
+    // Moving the host-visible pair is the message thread's job -- it is the only
+    // thread allowed to notify the host -- but the audio may not wait for it.
+    // An offline render can complete without the message loop running at all,
+    // and even live the pair lags by up to a tick. So the audio thread watches
+    // the legacy id itself and renders the mode it names until the pair is back
+    // in charge.
+    //
+    // The hold ends on either of two signals, and it needs both. Agreement --
+    // the pair now reads what is being held -- covers a forward that happened
+    // before this thread ever saw the change. The forward counter covers the
+    // opposite order, where the player moves a switch in the gap between the
+    // forward and the next block: the pair then never agrees with what is held,
+    // and waiting for it would hold unison down until the legacy id moved again.
+    struct LegacyBridge
+    {
+        int seen { 0 };   // the legacy value this thread last observed
+        int held { 0 };   // the mode being rendered until the pair takes over
+        bool holding { false };
+        int releaseSeen { 0 };  // forwardCount at the moment the hold began
+    };
+    LegacyBridge keyModeBridge, chorusBridge;
+    static int resolveLegacyMode (int legacyValue, int fromPair, int forwardCount,
+                                  LegacyBridge& bridge) noexcept;
+    // Bumped by the message thread once it has moved a pair, and read by the
+    // audio thread as "the pair is authoritative again". Written after the
+    // parameter writes and read with matching ordering, so a release always
+    // sees at least the pair the forward left behind.
+    std::atomic<int> legacyForwardCount { 0 };
+    // setStateInformation runs on the message thread, so it cannot touch the
+    // bridges directly; it asks the audio thread to reseed them instead.
+    std::atomic<bool> reseedLegacyBridges { false };
     void drainSysExQueue();
     // Applies one tone parameter to the parameters it actually names, and to
     // no others.

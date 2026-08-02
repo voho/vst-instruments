@@ -794,6 +794,128 @@ void testLegacyAutomationIdsStillReachTheSwitches()
     processor.releaseResources();
 }
 
+// The bridge's other half. Forwarding to the host-visible pair is the message
+// thread's job, but an offline render can finish without the message loop ever
+// running, so the audio thread has to resolve the legacy id itself.
+void testLegacyAutomationIsHeardWithoutTheMessageThread()
+{
+    YouKnow106AudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+
+    // How many voices one note lights. Unison stacks the whole card set on it;
+    // any poly mode uses one.
+    const auto voicesForOneNote = [&processor, &buffer]
+    {
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+        buffer.clear();
+        processor.processBlock (buffer, midi);
+        renderBlocks (processor, buffer, 3);
+        const int voices = processor.getActiveVoiceCount();
+
+        juce::MidiBuffer off;
+        off.addEvent (juce::MidiMessage::allSoundOff (1), 0);
+        buffer.clear();
+        processor.processBlock (buffer, off);
+        renderBlocks (processor, buffer, 3);
+        return voices;
+    };
+
+    expect (voicesForOneNote() == 1, "a poly patch stacked more than one voice on a note");
+    expect (processor.getActiveVoiceCount() == 0, "all sound off left a voice running");
+
+    // Deliberately no forwardLegacyModeParametersForTest() here: the point is
+    // that the sound changes without it.
+    setParameterValue (processor, parameters::legacyKeyMode, 2.0f);
+    expect (voicesForOneNote() == processor.getVoiceLimitForDisplay(),
+            "a legacy unison never reached the audio without the message thread");
+
+    // And control goes back to the pair once it has caught up, so a direct edit
+    // is not held off by a legacy id that is no longer moving.
+    processor.forwardLegacyModeParametersForTest();
+    setParameterValue (processor, parameters::poly2, 0.0f);
+    expect (voicesForOneNote() == 1,
+            "the audio bridge kept holding unison after the switches moved off it");
+
+    processor.releaseResources();
+}
+
+// A restore rewrites the legacy ids and the pairs together. Reading the
+// restored legacy value as a fresh edit would forward it over the pair the
+// session actually saved -- and the old three-way ids cannot even say what the
+// pairs can, so the settings it destroys are exactly the new ones.
+void testRestoringASessionDoesNotOverwriteItsOwnModeSwitches()
+{
+    YouKnow106AudioProcessor source;
+    // Reach Unison and Chorus II through the legacy ids, then move the switches
+    // by hand to a pair neither id can express: Unison stands, chorus I joins II.
+    setParameterValue (source, parameters::legacyKeyMode, 2.0f);
+    setParameterValue (source, parameters::legacyChorus, 2.0f);
+    source.forwardLegacyModeParametersForTest();
+    setParameterValue (source, parameters::chorusI, 1.0f);
+
+    juce::MemoryBlock state;
+    source.getStateInformation (state);
+
+    YouKnow106AudioProcessor restored;
+    restored.prepareToPlay (sampleRate, blockSize);
+    restored.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+    restored.forwardLegacyModeParametersForTest();
+
+    expect (parameterValue (restored, parameters::chorusI) > 0.5f
+                && parameterValue (restored, parameters::chorusII) > 0.5f,
+            "the first tick after a restore put the chorus back to the legacy id");
+    expect (parameterValue (restored, parameters::poly1) > 0.5f
+                && parameterValue (restored, parameters::poly2) > 0.5f,
+            "the first tick after a restore put the assign mode back to the legacy id");
+
+    // The audio thread keeps its own baseline, so it needs reseeding too.
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+    buffer.clear();
+    restored.processBlock (buffer, midi);
+    renderBlocks (restored, buffer, 3);
+    expect (restored.getActiveVoiceCount() == restored.getVoiceLimitForDisplay(),
+            "the restored session rendered the legacy assign mode, not its own");
+
+    restored.releaseResources();
+}
+
+// The patch bar tells a recalled patch from an edited one, and it has to ask
+// the question a stored patch answers: volume is not part of one, cutoff is.
+void testEditedFlagFollowsThePatchAndNotThePanel()
+{
+    YouKnow106AudioProcessor processor;
+    processor.setCurrentProgram (3);
+    expect (! processor.currentProgramIsEdited(),
+            "a freshly recalled patch already claims to be edited");
+
+    setParameterValue (processor, parameters::volume, 0.42f);
+    expect (! processor.currentProgramIsEdited(),
+            "moving a control the patch does not store counted as an edit");
+
+    setParameterValue (processor, parameters::cutoff, 0.137f);
+    expect (processor.currentProgramIsEdited(),
+            "moving the cutoff away from the recalled patch went unnoticed");
+
+    // Recalling the same program again is how the edits are thrown away.
+    processor.setCurrentProgram (3);
+    expect (! processor.currentProgramIsEdited(),
+            "reloading the program did not restore it");
+
+    // INIT is a program like any other, and every factory patch has to be
+    // reachable without the bar reporting an edit that was never made.
+    for (int index = 0; index < processor.getNumPrograms(); ++index)
+    {
+        processor.setCurrentProgram (index);
+        expect (! processor.currentProgramIsEdited(),
+                std::string ("program ") + std::to_string (index)
+                    + " does not survive being recalled");
+    }
+}
+
 void testFactoryProgramsLoad()
 {
     YouKnow106AudioProcessor processor;
@@ -1006,6 +1128,9 @@ int main()
     testSelectedProgramSurvivesAStateRoundTrip();
     testForeignSysExLeavesThePatchAlone();
     testLegacyAutomationIdsStillReachTheSwitches();
+    testLegacyAutomationIsHeardWithoutTheMessageThread();
+    testRestoringASessionDoesNotOverwriteItsOwnModeSwitches();
+    testEditedFlagFollowsThePatchAndNotThePanel();
     testFactoryProgramsLoad();
     testEveryPanelLegendFitsInTheRealFont();
     testEditorBuildsAndRenders();
