@@ -37,7 +37,7 @@ struct ParameterExpectation
 
 // The default patch is deliberately the hardware-faithful one: no velocity
 // response, six voices, and the delay lines' own noise at its modelled level.
-constexpr std::array<ParameterExpectation, 37> expectedParameters {{
+constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::volume,      0.80f,  1.0e-5f },
     { parameters::benderDco,   0.30f,  1.0e-5f },
     { parameters::benderVcf,   0.0f,   1.0e-5f },
@@ -77,7 +77,7 @@ constexpr std::array<ParameterExpectation, 37> expectedParameters {{
     { parameters::chorusNoise, 1.0f,   1.0e-5f },
     { parameters::polyphony,   6.0f,   1.0e-5f },
     { parameters::hq,          1.0f,   1.0e-5f },
-}};
+});
 
 float parameterValue (const YouKnow106AudioProcessor& processor, const char* id)
 {
@@ -525,13 +525,9 @@ void testSysExPatchRoundTripsThroughTheParameters()
     buffer.clear();
     processor.processBlock (buffer, midi);
 
-    // The patch is applied on the message thread, so let it run.
-    for (int attempt = 0; attempt < 50; ++attempt)
-    {
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
-        if (std::abs (parameterValue (processor, parameters::cutoff) - 0.25f) < 0.01f)
-            break;
-    }
+    // The patch is staged for the message thread; drain it here so the test is
+    // deterministic rather than dependent on a message loop it does not run.
+    processor.flushPendingSysEx();
 
     expect (std::abs (parameterValue (processor, parameters::cutoff) - 0.25f) < 0.01f,
             "a patch dump did not reach the cutoff parameter");
@@ -579,7 +575,7 @@ void testSingleParameterSysExDoesNotDisturbAnythingElse()
     {
         buffer.clear();
         processor.processBlock (buffer, midi);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (40);
+        processor.flushPendingSysEx();
     };
 
     // Deliberately off a 7-bit step, so any round trip through the tone format
@@ -655,7 +651,7 @@ void testAWholeBankTransferIsNotDropped()
     juce::AudioBuffer<float> buffer (2, blockSize);
     buffer.clear();
     processor.processBlock (buffer, midi);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+    processor.flushPendingSysEx();
 
     expect (processor.getSysExDroppedCount() == 0,
             "a whole bank delivered in one buffer overflowed the handoff queue");
@@ -683,7 +679,7 @@ void testForeignSysExLeavesThePatchAlone()
     juce::AudioBuffer<float> buffer (2, blockSize);
     buffer.clear();
     processor.processBlock (buffer, midi);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (30);
+    processor.flushPendingSysEx();
 
     expect (std::abs (parameterValue (processor, parameters::cutoff) - before) < 1.0e-6f,
             "a foreign sysex message moved the patch");
@@ -754,6 +750,9 @@ void testEveryPanelLegendFitsInTheRealFont()
     const auto boldFont = [] (float height) {
         return juce::Font (juce::FontOptions (height, juce::Font::bold));
     };
+    // expect() takes a std::string; every message here is built as a
+    // juce::String, so it is converted at the point of use.
+    const auto say = [] (const juce::String& text) { return text.toStdString(); };
 
     for (const auto& section : panel::sections())
     {
@@ -761,13 +760,13 @@ void testEveryPanelLegendFitsInTheRealFont()
         const float drawn = juce::GlyphArrangement::getStringWidth (
             boldFont (panel::headerPointSize), section.name);
         expect (drawn <= available,
-                juce::String ("section header is truncated: ") + section.name
-                    + " needs " + juce::String (drawn, 1) + " in "
-                    + juce::String (available, 1));
+                say (juce::String ("section header is truncated: ") + section.name
+                     + " needs " + juce::String (drawn, 1) + " in "
+                     + juce::String (available, 1)));
         // The approximation must also be an over-estimate, not merely close:
         // that is the property the JUCE-free check depends on.
         expect (panel::textWidth (section.name, panel::headerPointSize, true) >= drawn,
-                juce::String ("the width model under-estimates ") + section.name);
+                say (juce::String ("the width model under-estimates ") + section.name));
     }
 
     for (const auto& control : panel::controls())
@@ -778,25 +777,26 @@ void testEveryPanelLegendFitsInTheRealFont()
             const float drawn = juce::GlyphArrangement::getStringWidth (
                 boldFont (panel::labelPointSize), control.label);
             expect (drawn <= control.labelWidth,
-                    juce::String ("slider legend is truncated: ") + control.label
-                        + " needs " + juce::String (drawn, 1) + " in "
-                        + juce::String (control.labelWidth, 1));
+                    say (juce::String ("slider legend is truncated: ") + control.label
+                         + " needs " + juce::String (drawn, 1) + " in "
+                         + juce::String (control.labelWidth, 1)));
             expect (panel::textWidth (control.label, panel::labelPointSize, true)
                         >= drawn,
-                    juce::String ("the width model under-estimates ") + control.label);
+                    say (juce::String ("the width model under-estimates ")
+                         + control.label));
         }
         else
         {
             const float size = panel::buttonPointSizeFor (control);
             expect (size >= panel::buttonPointSizeMin,
-                    juce::String ("button legend is set too small to read: ")
-                        + control.label);
+                    say (juce::String ("button legend is set too small to read: ")
+                         + control.label));
             const float drawn =
                 juce::GlyphArrangement::getStringWidth (boldFont (size), control.label);
             expect (drawn <= control.width,
-                    juce::String ("button legend is truncated: ") + control.label
-                        + " needs " + juce::String (drawn, 1) + " in "
-                        + juce::String (control.width, 1));
+                    say (juce::String ("button legend is truncated: ") + control.label
+                         + " needs " + juce::String (drawn, 1) + " in "
+                         + juce::String (control.width, 1)));
         }
     }
 }

@@ -51,6 +51,11 @@ public:
     // carry -- volume, the bender depths, portamento and the assign mode --
     // are left where the player put them, exactly as on the hardware.
     void applyPatch (const youknow106::sysex::Patch& patch);
+    // Applies any system-exclusive event still waiting for the message thread,
+    // now, on the calling thread. The queue is normally drained by the async
+    // callback; a test has no message loop to run and needs it deterministic.
+    void flushPendingSysEx() { handleUpdateNowIfNeeded(); }
+
     // Events dropped because the handoff queue was full. Only for tests.
     int getSysExDroppedCount() const noexcept
     {
