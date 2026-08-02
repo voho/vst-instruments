@@ -462,6 +462,26 @@ void testPulseWidthAndHighPassLaws()
         expect(duty > 0.0f && duty < 1.0f, "pulse reaches a rail");
     }
 
+    // The per-card comparator offset is calibrated to leave a 48% to 52% duty
+    // window across the six voices, so the voltage the engine draws against has
+    // to be the one that produces exactly two points either way. Asserting the
+    // duty rather than the voltage is the point: the voltage is a means, and a
+    // change to the duty law that quietly rescaled it would pass otherwise.
+    {
+        const float offsetVolts = 0.24f;
+        const float mid = 3.0f;   // away from the law's 50% floor, so it moves both ways
+        const double wide = YouKnow106Engine::pwmDutyCycle(mid - offsetVolts);
+        const double narrow = YouKnow106Engine::pwmDutyCycle(mid + offsetVolts);
+        expectNear(0.5 * (wide - narrow), 0.02, 5.0e-4,
+                   "the per-card comparator offset is not +/-2 points of duty");
+        // And at the panel's own 50% end the law floors, so the same offset can
+        // only widen the pulse -- 50% is the narrowest the control can ask for.
+        expectNear(YouKnow106Engine::pwmDutyCycle(6.0f + offsetVolts), 0.5, 1.0e-5,
+                   "an offset pushed the pulse below the panel's 50% floor");
+        expectNear(YouKnow106Engine::pwmDutyCycle(6.0f - offsetVolts), 0.52, 5.0e-4,
+                   "an offset at the 50% floor does not widen by two points");
+    }
+
     // Only two of the four high-pass legs filter; one boosts and one passes.
     // The boost is the measured shelf: +10.5 dB at DC, +1.41 dB in the high
     // band, corner near 59 Hz. The cut corners follow from the network's own
@@ -481,10 +501,21 @@ void testPulseWidthAndHighPassLaws()
     expect(YouKnow106Engine::highPassShelfGain(HighPassMode::Two) == 0.0f
            && YouKnow106Engine::highPassShelfGain(HighPassMode::Three) == 0.0f,
            "a cutting leg returns part of the low band");
-    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Two), 236.0, 0.5,
-               "middle high-pass corner is not the network's own");
-    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Three), 754.0, 0.5,
-               "top high-pass corner is not the network's own");
+    // Computed from the parts rather than written down, so the assertion says
+    // where the number comes from: both cutting legs share one 15 kOhm shunt to
+    // ground and differ only in their series capacitor. Writing 225.8 and 707.4
+    // here would assert the same thing while hiding the fact that a single
+    // resistor value has to serve both.
+    const double shuntOhms = 15.0e3;
+    const auto corner = [shuntOhms] (double farads) {
+        return 1.0 / (2.0 * M_PI * shuntOhms * farads);
+    };
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Two),
+               corner(47.0e-9), 0.5,
+               "middle high-pass corner is not 15 kOhm against 47 nF");
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Three),
+               corner(15.0e-9), 0.5,
+               "top high-pass corner is not 15 kOhm against 15 nF");
 }
 
 void testModulationAndGlideLaws()
@@ -702,13 +733,27 @@ void testBucketBrigadeLine()
     expectNear(two.rateHz, 0.863, 1.0e-4, "second mode rate");
     expectNear(one.sweepSeconds, two.sweepSeconds, 1.0e-9,
                "the two modes do not share a sweep depth");
-    expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.00166, 1.0e-6,
+    expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.00154, 1.0e-6,
                "shortest modulated delay");
-    expectNear(one.centreDelaySeconds + one.sweepSeconds, 0.00535, 1.0e-6,
+    expectNear(one.centreDelaySeconds + one.sweepSeconds, 0.00515, 1.0e-6,
                "longest modulated delay");
+    // Both ends have to land inside the part's own clock window, which is what
+    // says the capture describes this circuit rather than some other one: 256
+    // stages give a delay of 128 / f_clock, and the MN3009 is rated 10-200 kHz.
+    for (const double delay : { one.centreDelaySeconds - one.sweepSeconds,
+                                one.centreDelaySeconds + one.sweepSeconds })
+    {
+        const double clockHz = 128.0 / delay;
+        expect(clockHz > 10.0e3 && clockHz < 200.0e3,
+               "a sweep endpoint needs a clock outside the part's rated window");
+    }
     expectNear(Chorus::settingsFor(ChorusMode::Off).wetGain, 0.0, 1.0e-9,
                "the wet path is not silent when the effect is switched out");
-    expectNear(one.wetGain, 1.303, 1.0e-3, "line gain");
+    // Wet over dry is the ratio of the two summing resistors into the shared
+    // feedback, so the feedback value cancels and only 47/39 reaches the model.
+    expectNear(one.wetGain, 47.0 / 39.0, 1.0e-3, "line gain");
+    expectNear(20.0 * std::log10(one.wetGain), 1.62, 0.01,
+               "the wet path does not sit 1.62 dB above the dry");
 
     // Both buttons down. Each switch shunts its own resistor into the
     // modulation oscillator's timing network, so closing both puts them in

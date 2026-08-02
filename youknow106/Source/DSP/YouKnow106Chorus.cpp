@@ -41,11 +41,31 @@ constexpr float transferSmear =
 // instrument.
 constexpr float bbdSaturationLevel = 1.1f; // ~2.9 V at the node
 
-// Modelled noise floor of one line, referred to its own input. Uncompanded,
-// the part measures 55 to 65 dB signal to noise in this circuit against its own
-// 88 dB datasheet figure; 60 dB is the middle of that band. Modelling it is the
-// point: the missing compander is what the effect is known for.
-constexpr float lineNoiseAmplitude = 1.0e-3f;
+// The voice bus is stepped down before the line and brought back up after it.
+// The divider is 33 kOhm in series against 12 kOhm to ground, so the line sees
+// 12/45 of the bus -- 11.5 dB down -- which is what keeps a nominal bus inside
+// the part's rated 0.78 Vrms instead of sitting on its overload point.
+//
+// Applying it explicitly rather than folding it into the saturation threshold
+// is what makes the two things it governs come out right at once. The line now
+// needs 11.5 dB more drive before it grits, so the chorus stays clean at
+// ordinary levels and dirties only when pushed, as the hardware does. And the
+// line's own noise is attenuated relative to nothing while the restoring gain
+// lifts it with the signal -- which is precisely why an uncompanded delay
+// hisses, and is the mechanism this circuit is known for rather than a floor
+// bolted on afterwards.
+constexpr float bbdInputDivider = 12.0f / 45.0f;   // -11.48 dB
+constexpr float bbdOutputRestore = 1.0f / bbdInputDivider;
+
+// Modelled noise floor of one line, referred to the line's own input. The
+// circuit measures 60 dB signal to noise unweighted over 20 Hz to 20 kHz
+// referred to 0 dBu, against the part's own 88 dB datasheet figure -- the gap
+// being clock feedthrough, op-amp noise and the absence of any compander.
+//
+// Stated at the line's input, so the restoring gain above is what carries it to
+// the output: the constant is the 60 dB output figure divided back down through
+// the divider, which leaves the audible floor exactly where it was measured.
+constexpr float lineNoiseAmplitude = 1.0e-3f * bbdInputDivider;
 
 // Support-filter corners. The published fifth-order model of this circuit puts
 // them at 9.9 kHz in and 9.5 kHz out, while a direct measurement of the wet
@@ -57,11 +77,15 @@ constexpr float lineNoiseAmplitude = 1.0e-3f;
 constexpr float antiAliasCornerHz = 9900.0f;
 constexpr float reconstructionCornerHz = 9500.0f;
 
-// Line gain. The wet path measures a few decibels above the dry; 2.3 dB is
-// the figure the sibling-instrument measurement reports, and no capture of
-// this instrument's own wet gain has been located, so the value is voiced on
-// that measurement.
-constexpr float lineGain = 1.303f;
+// Line gain, from the summing stage's own parts rather than from a sibling's
+// measurement. Dry and wet meet at an inverting op-amp through 47 kOhm and
+// 39 kOhm into a 100 kOhm feedback, so the wet path arrives 47/39 louder --
+// 1.62 dB. An earlier revision voiced 2.3 dB from a sibling capture.
+//
+// It is a ratio of two resistors in the same stage, so the feedback value
+// cancels: only the imbalance reaches the model, which is why the absolute
+// gains (6.56 dB and 8.18 dB) do not appear here.
+constexpr float lineGain = 47.0f / 39.0f;   // +1.62 dB
 
 std::uint32_t nextNoiseState(std::uint32_t state) noexcept
 {
@@ -86,16 +110,17 @@ float triangle(float phase) noexcept
 
 Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
 {
-    // Anchored to the published measurement of the sibling instrument's
-    // chorus, the closest calibrated capture located: delay 1.66 ms to
-    // 5.35 ms in both modes, rates 0.513 Hz and 0.863 Hz. The figures
-    // reported for this instrument itself -- approximately 0.5 Hz and 0.8 Hz,
-    // modes differing in rate alone -- agree to the reported precision, so
-    // the sibling's numbers stand in for the unmeasured decimals. Modes I and
-    // II differ in speed alone, not in depth, which is why II reads as more
-    // agitated rather than wider.
-    constexpr float centre = 0.5f * (0.00166f + 0.00535f);
-    constexpr float sweep = 0.5f * (0.00535f - 0.00166f);
+    // Anchored to a calibrated capture of this instrument, which replaces the
+    // sibling's numbers an earlier revision stood in with: delay 1.54 ms to
+    // 5.15 ms, the same in every mode, rates 0.513 Hz and 0.863 Hz. Those
+    // bounds imply an MN3009 clock of 83.1 kHz and 24.9 kHz -- 256 stages at
+    // 128/f_clock -- both comfortably inside the part's 10-200 kHz window,
+    // which is the check that the capture describes this circuit at all.
+    //
+    // Modes I and II differ in speed alone, not in depth, which is why II
+    // reads as more agitated rather than wider.
+    constexpr float centre = 0.5f * (0.00154f + 0.00515f);
+    constexpr float sweep = 0.5f * (0.00515f - 0.00154f);
     constexpr float rateOne = 0.513f;
     constexpr float rateTwo = 0.863f;
     switch (mode)
@@ -177,7 +202,8 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         const float fraction = increment > 0.0
             ? static_cast<float>(std::clamp(clockPhase / increment, 0.0, 1.0))
             : 0.0f;
-        const float atEdge = limited + (previousInput - limited) * fraction;
+        const float atEdge =
+            (limited + (previousInput - limited) * fraction) * bbdInputDivider;
         // The line's own overload. The charge a cell can hold is bounded by
         // its bias window, so the wet path saturates before anything around
         // it does; driving the chorus hot grits the delayed signal only.
@@ -200,8 +226,11 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         clockPhase -= std::floor(clockPhase);
     previousInput = limited;
 
-    // Reconstruct the held staircase.
-    return Chorus::supportFilterStep(reconstructionState, held, reconstructionG);
+    // Reconstruct the held staircase, and undo the input divider. The line's
+    // noise rides up with the signal here, which is the whole reason an
+    // uncompanded delay is audible at rest.
+    return bbdOutputRestore
+         * Chorus::supportFilterStep(reconstructionState, held, reconstructionG);
 }
 
 void Chorus::prepare(double sampleRate) noexcept

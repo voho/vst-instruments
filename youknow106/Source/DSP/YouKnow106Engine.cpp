@@ -508,16 +508,22 @@ float YouKnow106Engine::vcaGain(float control) noexcept
 
 float YouKnow106Engine::highPassCornerHz(HighPassMode mode) noexcept
 {
-    // Four legs of a switched RC network: a shelving boost, a
-    // straight-through leg, and two progressively higher corners. The cut
-    // corners follow from the network's own part values -- an effective
-    // 44.9 kOhm against 15 nF and 4.7 nF -- and the boost's corner is the
-    // measured shelf's pole near 59 Hz.
+    // Four legs of a switched RC network, selected by a CMOS multiplexer: a
+    // shelving boost, a straight-through leg, and two progressively higher
+    // corners. Each cut leg puts its own series capacitor against the *same*
+    // 15 kOhm shunt to ground -- 47 nF and 15 nF -- which is why one resistor
+    // value serves both corners.
+    //
+    // An earlier revision had an effective 44.9 kOhm against 15 nF and 4.7 nF,
+    // giving 236 and 754 Hz. Two independent transcriptions now agree on the
+    // values below, and the shift is explained: the same three E6 capacitors
+    // read one switch position out of step. The boost's corner is unchanged,
+    // being the measured shelf's own pole rather than a part value.
     switch (mode)
     {
         case HighPassMode::Boost: return 59.4f;
-        case HighPassMode::Two:   return 236.0f;
-        case HighPassMode::Three: return 754.0f;
+        case HighPassMode::Two:   return 225.8f;   // 15 kOhm x 47 nF
+        case HighPassMode::Three: return 707.4f;   // 15 kOhm x 15 nF
         case HighPassMode::One:
         default:                  return 59.4f;
     }
@@ -2000,8 +2006,11 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // The regeneration control voltage is shared -- one converter output for
     // all six loops -- but each voice's loop amplifier has its own gain
     // spread.
+    // 5% carbon film in the feedback path, so the loop gain disperses by that
+    // much -- the figure the factory alignment leaves behind after setting each
+    // voice's self-oscillation peak. An earlier revision voiced 2%.
     const float resonancePanel = clamp01(resonanceCv_
-        + card.resonanceError * 0.02f * tolerance);
+        + card.resonanceError * 0.05f * tolerance);
     voice.feedback = vcfFeedback(resonancePanel);
     voice.inputCompensation = vcfResonanceCompensation(voice.feedback);
 
@@ -2027,8 +2036,16 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // ramp itself.
     const float amplitudeScale = std::clamp(
         voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+    // The alignment window is 48% to 52% duty across the six cards, so the
+    // offset is the voltage that produces exactly that: the duty law runs
+    // 8.33 points per volt, and +/-0.24 V is +/-2 points. An earlier revision
+    // voiced half of it.
+    //
+    // The spread is one-sided at the panel's 50% end, where the law floors --
+    // 50% is the narrowest pulse the control can ask for, so an offset there
+    // can only widen. Away from that end it moves both ways.
     const float threshold = voice.pwmVolts
-                          + card.comparatorOffset * 0.12f * tolerance;
+                          + card.comparatorOffset * 0.24f * tolerance;
     voice.pulseDuty = pwmDutyCycle(threshold / amplitudeScale);
 
     // Each voice's high-pass leg is its own pair of parts, so its corner
@@ -2098,8 +2115,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // one the current pitch calls for *is* that error.
     const float amplitudeScale = std::clamp(
         voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+    // The ramp integrator's capacitor is a 5% polyester film part and has no
+    // per-voice trimmer, so its tolerance reaches the ramp undiminished. An
+    // earlier revision voiced 2%.
     const float amplitude = sawMixVolts * amplitudeScale
-        * (1.0f + card.rampCurrentError * 0.02f * parameters.calibration);
+        * (1.0f + card.rampCurrentError * 0.05f * parameters.calibration);
 
     const float sawNaive = phase < rise
         ? 2.0f * rampVoltage(static_cast<float>(phase / rise), rampBow) - 1.0f
