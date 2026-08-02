@@ -55,7 +55,14 @@ constexpr float radiusCeiling = 3.75f;
 constexpr float bachiMass = 0.19f;
 constexpr float referenceRadius = 0.275f;
 constexpr float minimumBachiScale = 0.30f;
-constexpr float maximumBachiScale = 2.20f;
+// The ceiling has to clear the widest head at the bottom of the keyboard, or it
+// stops being a scaling law and becomes a wall. At 2.2 it bound for every radius
+// above 0.605 m - the whole battle-drum end of the instrument - so the two
+// lowest octaves were handed the same stick as each other, and the largest drum
+// in the family came out the quietest thing on it. The value now clears
+// radiusCeiling over referenceRadius, the same reasoning radiusCeiling itself
+// is written from.
+constexpr float maximumBachiScale = 13.7f;
 constexpr float minimumContactStiffness = 2.0e6f;
 constexpr float maximumContactStiffness = 6.0e8f;
 constexpr float restitution = 0.42f;
@@ -151,6 +158,10 @@ constexpr float radiationCalibration = 0.020f;
 // mode is long enough to move them at all.
 constexpr float mountLossScale = 20.0f;
 constexpr float mountLossCorner = 55.0f;
+// The radius the corner above was calibrated at - the default head at octave 0 -
+// so a reference drum comes out exactly where it always did and only the drums
+// either side of it move.
+constexpr float mountReferenceRadius = 0.475f;
 
 // The viscous share of the hide's loss, as a damping rate per radian squared.
 // This is what separates the head's body from its crack: it is worth about a
@@ -786,9 +797,17 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
 
     drum.radius = clampFloat (0.5f * applied.headDiameter * radiusFactor,
                               radiusFloor, radiusCeiling);
+    // The ceiling has to clear the geometry the controls can actually ask for,
+    // exactly as radiusCeiling does: the widest head at the deepest body, taken
+    // two octaves down with the octave bought by size, is 1.80 * 1.30 * 4. At
+    // 2.0 m the factory drum was already sitting on the clamp at its lowest
+    // octave, so Body Depth did nothing over the top half of its travel and the
+    // cavity was reported as a shorter, stiffer spring than it is - which
+    // pushes the one mode that radiates upward, and is most of why going down
+    // the keyboard stopped making the drum lower.
     drum.depth = clampFloat (applied.headDiameter * radiusFactor
                                  * (0.40f + 0.90f * applied.bodyDepth),
-                             0.04f, 2.0f);
+                             0.04f, 9.5f);
 
     const float baseTension =
         geometricLerp (minimumTension, maximumTension, applied.tension);
@@ -879,8 +898,18 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
     // a head modelled on its own damping alone rings longest exactly where it
     // should ring shortest. The term is steep, because a mode has to be low
     // enough to move the whole instrument before any of this applies at all.
+    //
+    // Where that begins is a comparison between the mode and the instrument, not
+    // an absolute pitch: a mode moves the shell when its wavelength is on the
+    // order of the drum's own size, so the corner scales with the drum the way
+    // every other frequency in this function already does. Leaving it at a fixed
+    // 55 Hz meant a larger drum slid its whole modal set down through a shelf
+    // that did not move, and the stand ate more of the instrument the bigger the
+    // instrument got - which is backwards, and it is why the o-daiko end of the
+    // keyboard was both the quietest and the shortest.
     drum.mountLoss = mountLossScale * (0.55f + 0.90f * applied.headDamping);
-    drum.mountCorner = mountLossCorner;
+    drum.mountCorner = mountLossCorner * mountReferenceRadius
+                     / std::max (drum.radius, radiusFloor);
 
     // The wooden shell's ring modes. This is the standard thin-cylinder result
     // f_n = n(n^2-1)/sqrt(n^2+1) * h/(2 pi R^2) * sqrt(E/(12 rho (1-nu^2))),
@@ -1577,7 +1606,16 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                                             mode.omega / (2.0f * piFloat));
         }
 
-        const float first = std::max (highestResolved * 1.25f, 120.0f);
+        // Where the resolved bank hands over to the continuum is the modal
+        // overlap frequency, and that falls with the drum: a bigger head has
+        // more modes in the same span, so they stop being separable sooner. A
+        // fixed 120 Hz floor stopped it tracking exactly where it mattered - the
+        // largest drum's top resolved mode is 77 Hz, so its crossover was pinned
+        // an octave above where the head puts it, and because the band tilt is
+        // normalised against this number every band on that drum came out
+        // roughly two decibels loud as well. The remaining guard only catches an
+        // empty bank.
+        const float first = std::max (highestResolved * 1.25f, 20.0f);
 
         // Short wavelengths live at the edge. The high-order mode shapes pile
         // up against the rim, so a stroke out there couples into the continuum

@@ -298,11 +298,24 @@ circumferential order pays more of it, because those shapes are pressed against
 the boundary rather than spread across the head.
 
 **The mounting** takes what is left, and only at the very bottom. The lowest
-modes of a large drum do not stay in the head: they move the shell, the hoops
-and whatever the drum is stood on. The term is steeply low-pass, because a mode
-has to be long enough to move the whole instrument before any of this applies —
-and that steepness is measured, not chosen. A gentler skirt reaches far enough
-up to cost the body most of what makes it a body.
+modes of a drum do not stay in the head: they move the shell, the hoops and
+whatever the drum is stood on. The term is steeply low-pass, because a mode has
+to be long enough to move the whole instrument before any of this applies — and
+that steepness is measured, not chosen. A gentler skirt reaches far enough up to
+cost the body most of what makes it a body.
+
+Where that shelf begins is a property of the drum, not an absolute pitch: a mode
+moves the shell when its wavelength is on the order of the instrument's own
+size, which is a comparison and therefore scale-invariant. The corner tracks the
+radius, as every other frequency in the model already does. Pinned at a fixed
+55 Hz it did the opposite of what it describes — a bigger drum slid its whole
+modal set down through a shelf that did not move, so the stand ate more of the
+instrument the larger the instrument got, and the o-daiko end of the keyboard
+came out both the quietest and the shortest thing on it. Measured on the factory
+drum, from an octave above the reference down two octaves below it: 108 / 51 /
+23 / 10 Hz of loaded fundamental against 2.4 / 3.3 / 4.4 / 5.5 s of tail and
+−14 / +5 / +10 / +15 dB in the 20–63 Hz band. The drum gets bigger in every way
+that matters, rather than only in name.
 
 ### The stick
 

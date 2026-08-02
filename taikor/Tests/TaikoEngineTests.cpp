@@ -2120,14 +2120,8 @@ void testControlEndpointsAndGestures()
         auto tuned = parameters;
         tuned.humanise = 0.0f;
         tuned.tensionModulation = 0.0f;
-        // A small head, so there is still a stroke ringing by the time the
-        // glide has settled and the second reading can be taken. The default
-        // drum is nearly a metre across and puts its fundamental at fifty
-        // hertz, right in the middle of what the stand and the hoops take, so
-        // it is down sixty decibels before the bend has finished moving - and
-        // measuring the pitch of something that is no longer sounding measures
-        // whatever is left in the band instead. Thirty centimetres puts the
-        // fundamental at three hundred hertz, clear of the mounting entirely.
+        // A small head, so the fifty-millisecond first reading has several
+        // cycles of the fundamental to work with rather than two.
         tuned.headDiameter = 0.30f;
 
         taikor::TaikoEngine engine;
@@ -2142,15 +2136,20 @@ void testControlEndpointsAndGestures()
         // The search band follows the drum the engine reports rather than a
         // range written for one particular default, so retuning the instrument
         // cannot silently move the measurement off the partial it is watching.
+        // It is also narrow enough to hold one partial: the two branches of the
+        // axisymmetric pair are damped differently, so which of them is loudest
+        // changes over a stroke, and a band wide enough for both measures the
+        // fundamental at one end and the breathing branch at the other - which
+        // reports a bend that never happened, or hides one that did.
         const auto resting = engine.measureDrum (0).loadedFundamentalHz;
-        const auto low = static_cast<double> (resting) * 0.8;
-        const auto high = static_cast<double> (resting) * 1.6;
-
-        const auto restingPitch =
-            dominantFrequency (before, 48000.0, low, high, 0.05, 2400u);
-        // Skip the glide itself and measure where the drum settled.
-        const auto bentPitch =
-            dominantFrequency (after, 48000.0, low, high, 0.05, 16000u);
+        const auto restingPitch = dominantFrequency (
+            before, 48000.0, static_cast<double> (resting) * 0.90,
+            static_cast<double> (resting) * 1.15, 0.05, 2400u);
+        // Skip the glide itself and measure where the drum settled. The band
+        // starts at the resting pitch, so a wheel that did nothing reads as no
+        // bend rather than as some other partial.
+        const auto bentPitch = dominantFrequency (
+            after, 48000.0, restingPitch * 0.99, restingPitch * 1.32, 0.05, 16000u);
         const auto semitones = 12.0 * std::log2 (bentPitch / restingPitch);
 
         expect (semitones > 1.5 && semitones < 2.5,
@@ -2302,17 +2301,18 @@ void testControlEndpointsAndGestures()
     // out, not cut. A cut at an audible level is a click, and it rings the
     // shared DC blocker on the way out.
     {
-        // A small, tight, undamped head - not a large one. The longest-ringing
-        // drum this instrument can be asked for is no longer the biggest: what
-        // the shell and the stand take is steeply low-pass, so on a drum getting
-        // on for four metres across it lands squarely on the fundamental and
-        // holds the whole tail to half a second however little else is damping
-        // it. A thirty-centimetre head an octave up puts its fundamental at
-        // three hundred hertz, clear of that entirely, and rings for eighteen
-        // seconds.
+        // A large, tight, undamped head. The longest-ringing drum this
+        // instrument can be asked for is the biggest one, which is what a drum
+        // family sounds like: bigger drums put their modes lower, where they
+        // radiate less and the head's own hysteresis takes less per cycle, so
+        // they ring longer. This check used to have to reach for a thirty
+        // centimetre head instead, because the mounting shelf was pinned at an
+        // absolute fifty-five hertz and swallowed the fundamental of anything
+        // large. A 1.3 m head rings for thirty seconds; a 30 cm one for under
+        // five.
         auto ringing = parameters;
         ringing.humanise = 0.0f;
-        ringing.headDiameter = 0.30f;
+        ringing.headDiameter = 1.30f;
         ringing.headMaterial = 0.0f;
         ringing.headDamping = 0.0f;
         ringing.shellMaterial = 1.0f;
@@ -2421,8 +2421,7 @@ void testControlEndpointsAndGestures()
         tuned.humanise = 0.0f;
         tuned.tensionModulation = 0.0f;
         // Small, for the same reason the wheel's own check uses a small head:
-        // the reading after the glide has to land on a stroke that is still
-        // sounding.
+        // the first reading is fifty milliseconds long and needs cycles in it.
         tuned.headDiameter = 0.30f;
 
         taikor::TaikoEngine engine;
@@ -2433,8 +2432,6 @@ void testControlEndpointsAndGestures()
         // Read before the automation moves, or the band is centred on where
         // the drum ends up and cannot see where it started.
         const auto resting = engine.measureDrum (0).loadedFundamentalHz;
-        const auto low = static_cast<double> (resting) * 0.8;
-        const auto high = static_cast<double> (resting) * 1.9;
 
         const auto before = render (engine, 24000).mono();
 
@@ -2443,10 +2440,14 @@ void testControlEndpointsAndGestures()
         engine.setParameters (raised);
         const auto after = render (engine, 72000).mono();
 
-        const auto restingPitch =
-            dominantFrequency (before, 48000.0, low, high, 0.05, 2400u);
-        const auto raisedPitch =
-            dominantFrequency (after, 48000.0, low, high, 0.05, 16000u);
+        // One partial per band, and the second band anchored on where the first
+        // one actually landed - see the wheel's own check for why a band wide
+        // enough to hold both branches measures a different partial at each end.
+        const auto restingPitch = dominantFrequency (
+            before, 48000.0, static_cast<double> (resting) * 0.90,
+            static_cast<double> (resting) * 1.15, 0.05, 2400u);
+        const auto raisedPitch = dominantFrequency (
+            after, 48000.0, restingPitch * 0.99, restingPitch * 1.68, 0.05, 16000u);
         const auto semitones = 12.0 * std::log2 (raisedPitch / restingPitch);
 
         expect (semitones > 6.0 && semitones < 8.0,

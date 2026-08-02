@@ -51,10 +51,10 @@ strokes in the velocity take.
 | File | What it is | Length | Rendered peak | Normalisation |
 | --- | --- | ---: | ---: | ---: |
 | `01-stroke-vocabulary.wav` | All twelve strokes on the reference drum, in keyboard order | 9.1 s | −12.7 dBFS | +9.7 dB |
-| `02-octaves-don.wav` | A Don on each of the six octaves: the pitch ladder | 8.2 s | −16.0 dBFS | +13.0 dB |
-| `03-octaves-ka.wav` | An edge Ka on each of the six octaves | 5.1 s | −10.8 dBFS | +7.8 dB |
-| `04-octaves-rim-shot.wav` | A rim shot on each of the six octaves | 6.7 s | −8.7 dBFS | +5.7 dB |
-| `05-odaiko-phrase.wav` | A phrase on the largest drum | 10.0 s | −8.0 dBFS | +5.0 dB |
+| `02-octaves-don.wav` | A Don on each of the six octaves: the pitch ladder | 8.2 s | −11.5 dBFS | +8.5 dB |
+| `03-octaves-ka.wav` | An edge Ka on each of the six octaves | 5.1 s | −7.9 dBFS | +4.9 dB |
+| `04-octaves-rim-shot.wav` | A rim shot on each of the six octaves | 6.7 s | −5.5 dBFS | +2.5 dB |
+| `05-odaiko-phrase.wav` | A phrase on the largest drum | 10.0 s | −2.9 dBFS | −0.1 dB |
 | `06-nagado-phrase.wav` | The same phrase on the reference drum | 6.7 s | −11.9 dBFS | +8.9 dB |
 | `07-shime-phrase.wav` | The same phrase on a small tight drum | 4.2 s | −16.5 dBFS | +13.5 dB |
 | `08-velocity-dynamics.wav` | One stroke from a ghost note to a full-arm hit | 5.9 s | −13.0 dBFS | +10.0 dB |
@@ -66,13 +66,13 @@ strokes in the velocity take.
 | `14-air-coupling.wav` | Open body through to a fully sealed one | 5.5 s | −13.9 dBFS | +10.9 dB |
 | `15-body-depth.wav` | Shallow body through to deep | 5.5 s | −15.5 dBFS | +12.5 dB |
 | `16-head-damping.wav` | Open head through to heavily damped | 6.3 s | −15.2 dBFS | +12.2 dB |
-| `17-octave-body.wav` | Four octaves as a tuned drum, then the same four as smaller drums | 7.8 s | −14.8 dBFS | +11.8 dB |
+| `17-octave-body.wav` | Four octaves as a tuned drum, then the same four as smaller drums | 7.8 s | −12.7 dBFS | +9.7 dB |
 | `18-mic-distance.wav` | The close pair from 3 cm out to 40 cm | 4.5 s | −4.0 dBFS | +1.0 dB |
 | `19-mic-spread.wav` | The close pair from coincident to fully opened | 4.5 s | −15.3 dBFS | +12.3 dB |
-| `20-hand-damping.wav` | A hand laid on a ringing head, from MIDI CC1 | 6.0 s | −14.4 dBFS | +11.4 dB |
+| `20-hand-damping.wav` | A hand laid on a ringing head, from MIDI CC1 | 6.0 s | −10.9 dBFS | +7.9 dB |
 | `21-pitch-wheel.wav` | The wheel pressing the head sharp and flat | 4.3 s | −15.3 dBFS | +12.3 dB |
 | `22-rolls-and-flams.wav` | Buzz rolls, flams, stick clicks and a shell hit | 7.6 s | −13.8 dBFS | +10.8 dB |
-| `23-ensemble-piece.wav` | A longer piece moving between three drums of the family | 10.4 s | −8.4 dBFS | +5.4 dB |
+| `23-ensemble-piece.wav` | A longer piece moving between three drums of the family | 10.4 s | −4.6 dBFS | +1.6 dB |
 <!-- peaks-table-end -->
 
 ## Regenerating them
