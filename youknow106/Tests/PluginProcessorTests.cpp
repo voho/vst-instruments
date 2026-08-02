@@ -638,14 +638,14 @@ void testAWholeBankTransferIsNotDropped()
 
     juce::MidiBuffer midi;
     const auto& bank = presets::factoryBank();
-    for (int index = 0; index < 64; ++index)
+    for (std::size_t index = 0; index < 64; ++index)
     {
-        const auto& patch = bank[static_cast<std::size_t> (index % bank.size())].patch;
+        const auto& patch = bank[index % bank.size()].patch;
         std::array<std::uint8_t, sysex::patchMessageBytes> raw {};
         const auto written = sysex::writePatchMessage (patch, 0, raw.data(), raw.size());
         midi.addEvent (juce::MidiMessage::createSysExMessage (
                            raw.data() + 1, static_cast<int> (written) - 2),
-                       index % blockSize);
+                       static_cast<int> (index) % blockSize);
     }
 
     juce::AudioBuffer<float> buffer (2, blockSize);
@@ -657,7 +657,7 @@ void testAWholeBankTransferIsNotDropped()
             "a whole bank delivered in one buffer overflowed the handoff queue");
 
     // And the panel has to end on the last dump, not on an intermediate one.
-    const auto& last = bank[static_cast<std::size_t> (63 % bank.size())].patch;
+    const auto& last = bank[63 % bank.size()].patch;
     expect (std::abs (parameterValue (processor, parameters::cutoff) - last.cutoff)
                 < 0.02f,
             "the panel did not end on the final dump of the transfer");
