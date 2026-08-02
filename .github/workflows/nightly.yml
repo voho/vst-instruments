@@ -55,6 +55,18 @@ jobs:
             "youknow106:YouKnow106RenderDemos:10"
           )
 
+          # A failed instrument contributes nothing to the commit below. The
+          # renderers write their takes one after another and return on the
+          # first bad one, so a renderer that dies half way through leaves the
+          # earlier takes freshly written and the rest as they were: a demo set
+          # no single version of the engine ever produced, and worse to publish
+          # than the untouched one. Restoring the tracked files and removing any
+          # new ones puts the directory back exactly as it was checked out.
+          discard() {
+            git checkout -- "$1/Docs/audio" || true
+            git clean -fdq "$1/Docs/audio" || true
+          }
+
           failed=()
           for entry in "${instruments[@]}"; do
             IFS=: read -r directory target expected <<<"$entry"
@@ -64,16 +76,19 @@ jobs:
             if ! cmake -S "$directory" -B "$directory/build-dsp" \
                 -DCMAKE_BUILD_TYPE=Release "-D${option}=OFF" -DBUILD_TESTING=OFF; then
               failed+=("$directory: could not configure the demo renderer")
+              discard "$directory"
               echo "::endgroup::"
               continue
             fi
             if ! cmake --build "$directory/build-dsp" --parallel --target "$target"; then
               failed+=("$directory: could not build $target")
+              discard "$directory"
               echo "::endgroup::"
               continue
             fi
             if ! "./$directory/build-dsp/$target" "$directory/Docs/audio"; then
-              failed+=("$directory: $target exited non-zero")
+              failed+=("$directory: $target exited non-zero, so its demo audio was left untouched")
+              discard "$directory"
               echo "::endgroup::"
               continue
             fi
@@ -81,6 +96,7 @@ jobs:
             rendered=$(find "$directory/Docs/audio" -maxdepth 1 -name '*.wav' | wc -l)
             if (( rendered != expected )); then
               failed+=("$directory: rendered $rendered demo WAVs, expected $expected")
+              discard "$directory"
             else
               echo "$directory: rendered all $rendered demo WAVs"
             fi
@@ -226,6 +242,19 @@ jobs:
           fi
           echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."
 
+      # Handed to the commit job rather than committed here, so that all six
+      # land in one commit. It is uploaded before packaging so that a packaging
+      # failure cannot cost an instrument the screenshot it has already
+      # rendered: the two are independent, and the commit job preserves
+      # whatever was produced.
+      - name: Upload the rendered screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-screenshot-${{ matrix.directory }}
+          path: ${{ matrix.directory }}/Docs/screenshots/${{ matrix.directory }}-standalone.png
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Package ${{ matrix.name }} (ad-hoc-signed bundles)
         working-directory: ${{ matrix.directory }}
         run: ./scripts/sign-and-package-macos.sh
@@ -245,17 +274,8 @@ jobs:
           fi
           printf 'Packaged %s\n' "${packages[@]}"
 
-      # Handed to the jobs below rather than committed here: the screenshots are
-      # committed in one commit, and the release is published as one complete
-      # twelve-asset set.
-      - name: Upload the rendered screenshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: nightly-screenshot-${{ matrix.directory }}
-          path: ${{ matrix.directory }}/Docs/screenshots/${{ matrix.directory }}-standalone.png
-          if-no-files-found: error
-          retention-days: 1
-
+      # Handed to the release job rather than published here, so the rolling
+      # release is switched once, as one complete twelve-asset set.
       - name: Upload the distributable packages
         uses: actions/upload-artifact@v4
         with:
