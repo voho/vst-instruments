@@ -571,36 +571,29 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             int channel = 0;
             int parameter = 0;
             int value = 0;
-            bool havePatch = false;
 
             if (sysex::readPatchMessage (raw, length, incoming, channel))
             {
-                // A whole patch. It also becomes the base the hardware's
-                // single-parameter messages accumulate onto, so a dump followed
-                // by a knob move does the right thing.
-                liveSysExPatch = incoming;
-                liveSysExPatchValid = true;
-                havePatch = true;
+                // A whole patch. The tone bytes are the message's own
+                // representation, so they are handed over as they arrived.
+                SysExEvent event;
+                event.kind = SysExEventKind::FullPatch;
+                sysex::toneBytesFromPatch (incoming, event.bytes.data());
+                stageSysExEvent (event);
             }
             else if (sysex::readParameterMessage (raw, length, parameter, value,
                                                   channel))
             {
-                // One control moved on the hardware. Applied to the panel as it
-                // stands, so a live edit changes that control and nothing else.
-                if (! liveSysExPatchValid)
-                {
-                    liveSysExPatch = currentPatch();
-                    liveSysExPatchValid = true;
-                }
-                if (sysex::applyParameter (liveSysExPatch, parameter, value))
-                {
-                    incoming = liveSysExPatch;
-                    havePatch = true;
-                }
+                // One control moved on the hardware. Only its number and value
+                // cross over: the panel it applies to is read on the message
+                // thread, so nothing else is quantised and no stale mirror of
+                // the panel can revert an edit made in between.
+                SysExEvent event;
+                event.kind = SysExEventKind::SingleParameter;
+                event.parameter = parameter;
+                event.value = value;
+                stageSysExEvent (event);
             }
-
-            if (havePatch)
-                stagePatchForMessageThread (incoming);
         }
         else if (message.isController())
         {
@@ -1001,37 +994,55 @@ juce::MidiMessage YouKnow106AudioProcessor::currentPatchAsSysEx (int channel) co
 
 // Audio thread. Claims the next slot, fills it, then publishes it. A slot is
 // only written while its `ready` flag is clear, so the message thread is never
-// reading the bytes this is writing.
-void YouKnow106AudioProcessor::stagePatchForMessageThread (
-    const youknow106::sysex::Patch& patch) noexcept
+// reading the event this is writing.
+void YouKnow106AudioProcessor::stageSysExEvent (const SysExEvent& event) noexcept
 {
-    const int index = pendingWriteIndex.load (std::memory_order_relaxed);
-    auto& slot = pendingPatches[static_cast<std::size_t> (index)];
+    const int index = sysExWriteIndex.load (std::memory_order_relaxed);
+    auto& slot = sysExQueue[static_cast<std::size_t> (index)];
     if (slot.ready.load (std::memory_order_acquire))
-        return;  // The queue is full; the message thread has not caught up.
+    {
+        // The message thread has not caught up. Dropping is the only safe move
+        // -- overwriting a published slot would race a reader that may be
+        // partway through it. Reaching here needs the message thread stalled
+        // for most of a second at MIDI's own rate, and it is counted rather
+        // than silent so a test can assert a whole bank transfer never does.
+        sysExDropped.fetch_add (1, std::memory_order_relaxed);
+        return;
+    }
 
-    youknow106::sysex::toneBytesFromPatch (patch, slot.bytes.data());
+    slot.event = event;
     slot.ready.store (true, std::memory_order_release);
-    pendingWriteIndex.store ((index + 1) % pendingPatchSlots,
-                             std::memory_order_relaxed);
+    sysExWriteIndex.store ((index + 1) % sysExQueueSlots, std::memory_order_relaxed);
     triggerAsyncUpdate();
 }
 
 void YouKnow106AudioProcessor::handleAsyncUpdate()
 {
-    // Drain everything that has been published. A bank transfer arrives as a
-    // run of dumps, and applying only the newest would drop the rest.
-    for (int drained = 0; drained < pendingPatchSlots; ++drained)
+    // Drain everything published so far. Single-parameter edits are cumulative,
+    // so applying only the newest would lose the rest.
+    for (int drained = 0; drained < sysExQueueSlots; ++drained)
     {
-        auto& slot = pendingPatches[static_cast<std::size_t> (pendingReadIndex)];
+        auto& slot = sysExQueue[static_cast<std::size_t> (sysExReadIndex)];
         if (! slot.ready.load (std::memory_order_acquire))
             return;
 
-        const auto patch =
-            youknow106::sysex::patchFromToneBytes (slot.bytes.data());
-        // Release the slot only after the bytes have been read out of it.
+        const auto event = slot.event;
+        // Release the slot only after the event has been copied out of it.
         slot.ready.store (false, std::memory_order_release);
-        pendingReadIndex = (pendingReadIndex + 1) % pendingPatchSlots;
-        applyPatch (patch);
+        sysExReadIndex = (sysExReadIndex + 1) % sysExQueueSlots;
+
+        if (event.kind == SysExEventKind::FullPatch)
+        {
+            applyPatch (youknow106::sysex::patchFromToneBytes (event.bytes.data()));
+        }
+        else
+        {
+            // The base is read here rather than carried across, so it reflects
+            // every panel, preset, state and automation change made since --
+            // and no control the message did not name is touched.
+            auto patch = currentPatch();
+            if (youknow106::sysex::applyParameter (patch, event.parameter, event.value))
+                applyPatch (patch);
+        }
     }
 }

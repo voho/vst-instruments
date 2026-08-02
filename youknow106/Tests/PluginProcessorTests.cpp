@@ -564,6 +564,111 @@ void testSysExPatchRoundTripsThroughTheParameters()
 }
 
 // A malformed or foreign message must be ignored rather than half-applied.
+// A single-parameter message from the hardware moves that control and nothing
+// else -- including after an edit made from somewhere else in between. An
+// earlier version cached the panel on the audio thread and staged the whole
+// snapshot, which quantised every untouched control to seven bits and reverted
+// anything moved since the cache was taken.
+void testSingleParameterSysExDoesNotDisturbAnythingElse()
+{
+    YouKnow106AudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    const auto pump = [&] (juce::MidiBuffer& midi)
+    {
+        buffer.clear();
+        processor.processBlock (buffer, midi);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (40);
+    };
+
+    // Deliberately off a 7-bit step, so any round trip through the tone format
+    // shows up as a changed value.
+    constexpr float awkward = 0.5001f;
+    setParameterValue (processor, parameters::decay, awkward);
+    setParameterValue (processor, parameters::chorusI, 1.0f);
+    setParameterValue (processor, parameters::chorusII, 1.0f);
+
+    // One control moves on the hardware.
+    std::array<std::uint8_t, sysex::parameterMessageBytes> first {};
+    auto written = sysex::writeParameterMessage (
+        static_cast<int> (sysex::ToneParameter::VcfFreq), 100, 0, first.data(),
+        first.size());
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::createSysExMessage (
+                       first.data() + 1, static_cast<int> (written) - 2), 0);
+    pump (midi);
+
+    expect (std::abs (parameterValue (processor, parameters::cutoff) - 100.0f / 127.0f)
+                < 0.01f,
+            "a single-parameter message did not reach its control");
+    expect (std::abs (parameterValue (processor, parameters::decay) - awkward) < 1.0e-4f,
+            "a single-parameter message quantised an untouched control");
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f
+                && parameterValue (processor, parameters::chorusII) > 0.5f,
+            "a single-parameter message collapsed the I+II chorus setting");
+
+    // Now edit something else from the UI side, then send another hardware
+    // update. The second message must not resurrect the panel as it stood when
+    // the first one arrived.
+    setParameterValue (processor, parameters::release, 0.8123f);
+    std::array<std::uint8_t, sysex::parameterMessageBytes> second {};
+    written = sysex::writeParameterMessage (
+        static_cast<int> (sysex::ToneParameter::VcfRes), 20, 0, second.data(),
+        second.size());
+    juce::MidiBuffer later;
+    later.addEvent (juce::MidiMessage::createSysExMessage (
+                        second.data() + 1, static_cast<int> (written) - 2), 0);
+    pump (later);
+
+    expect (std::abs (parameterValue (processor, parameters::resonance) - 20.0f / 127.0f)
+                < 0.01f,
+            "the second single-parameter message did not reach its control");
+    expect (std::abs (parameterValue (processor, parameters::release) - 0.8123f) < 1.0e-4f,
+            "a single-parameter message reverted an edit made after the previous one");
+    expect (std::abs (parameterValue (processor, parameters::cutoff) - 100.0f / 127.0f)
+                < 0.01f,
+            "the second message undid the first");
+
+    processor.releaseResources();
+}
+
+// A whole bank arriving in one buffer must land intact rather than overflowing
+// the handoff queue.
+void testAWholeBankTransferIsNotDropped()
+{
+    YouKnow106AudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    juce::MidiBuffer midi;
+    const auto& bank = presets::factoryBank();
+    for (int index = 0; index < 64; ++index)
+    {
+        const auto& patch = bank[static_cast<std::size_t> (index % bank.size())].patch;
+        std::array<std::uint8_t, sysex::patchMessageBytes> raw {};
+        const auto written = sysex::writePatchMessage (patch, 0, raw.data(), raw.size());
+        midi.addEvent (juce::MidiMessage::createSysExMessage (
+                           raw.data() + 1, static_cast<int> (written) - 2),
+                       index % blockSize);
+    }
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    buffer.clear();
+    processor.processBlock (buffer, midi);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+
+    expect (processor.getSysExDroppedCount() == 0,
+            "a whole bank delivered in one buffer overflowed the handoff queue");
+
+    // And the panel has to end on the last dump, not on an intermediate one.
+    const auto& last = bank[static_cast<std::size_t> (63 % bank.size())].patch;
+    expect (std::abs (parameterValue (processor, parameters::cutoff) - last.cutoff)
+                < 0.02f,
+            "the panel did not end on the final dump of the transfer");
+
+    processor.releaseResources();
+}
+
 void testForeignSysExLeavesThePatchAlone()
 {
     YouKnow106AudioProcessor processor;
@@ -773,6 +878,8 @@ int main()
     testRandomizerPreservesQualityAndLevel();
     testBusLayoutsAndTail();
     testSysExPatchRoundTripsThroughTheParameters();
+    testSingleParameterSysExDoesNotDisturbAnythingElse();
+    testAWholeBankTransferIsNotDropped();
     testForeignSysExLeavesThePatchAlone();
     testFactoryProgramsLoad();
     testEveryPanelLegendFitsInTheRealFont();

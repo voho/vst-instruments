@@ -51,6 +51,11 @@ public:
     // carry -- volume, the bender depths, portamento and the assign mode --
     // are left where the player put them, exactly as on the hardware.
     void applyPatch (const sysex::Patch& patch);
+    // Events dropped because the handoff queue was full. Only for tests.
+    int getSysExDroppedCount() const noexcept
+    {
+        return sysExDropped.load (std::memory_order_relaxed);
+    }
     // The current panel settings as a patch.
     sysex::Patch currentPatch() const;
     // The current patch as a system-exclusive message the hardware would accept.
@@ -141,33 +146,49 @@ private:
     std::array<ParameterPointer, 37> parameterPointers {};
 
     youknow106::YouKnow106Engine engine;
-    // Patches arriving over system exclusive. Parameters cannot be written from
+    // Events arriving over system exclusive. Parameters cannot be written from
     // the audio callback -- that path notifies the host and may allocate -- so
-    // the tone bytes are handed to the message thread instead.
+    // the event is handed to the message thread.
     //
-    // A single staging buffer plus a flag is not enough: a bank transfer sends
-    // dumps back to back, and the audio thread would overwrite the buffer while
-    // the message thread was still reading it, producing a patch assembled from
-    // two different dumps. The handoff is a small ring, and each slot is only
-    // written when the writer owns it.
+    // What is handed over is the *change*, never a snapshot of the panel. An
+    // earlier version staged a whole Patch, which meant serialising every
+    // untouched control through the hardware's 7-bit format on the way past and
+    // keeping an audio-thread mirror of the panel that went stale the moment
+    // anything else moved a parameter. A single-parameter message now carries
+    // just its number and value, and the message thread reads the base it
+    // applies to from the parameters themselves, where it is always current.
     void handleAsyncUpdate() override;
-    void stagePatchForMessageThread (const sysex::Patch& patch) noexcept;
-    // Translates the pre-split `keyMode` and `chorus` choices in a saved
-    // session into the independent button pairs that replaced them.
-    static void migrateSplitModeParameters (juce::ValueTree& state);
-    static constexpr int pendingPatchSlots = 8;
-    struct PendingPatch
+
+    enum class SysExEventKind { FullPatch, SingleParameter };
+    struct SysExEvent
     {
+        SysExEventKind kind { SysExEventKind::FullPatch };
+        // FullPatch: the eighteen tone bytes as they arrived, which are already
+        // the message's own representation and so lose nothing in transit.
         std::array<std::uint8_t, sysex::toneByteCount> bytes {};
+        // SingleParameter: the number and value, and nothing else.
+        int parameter { 0 };
+        int value { 0 };
+    };
+
+    void stageSysExEvent (const SysExEvent& event) noexcept;
+
+    // A slot is only written while it is empty and only read while it is full,
+    // so the audio thread is never writing bytes the message thread is reading.
+    // Sized for a whole bank arriving before the message thread next runs; at
+    // MIDI's own rate that is most of a second of stall.
+    static constexpr int sysExQueueSlots = 64;
+    struct SysExSlot
+    {
+        SysExEvent event {};
         std::atomic<bool> ready { false };
     };
-    std::array<PendingPatch, pendingPatchSlots> pendingPatches {};
-    std::atomic<int> pendingWriteIndex { 0 };
-    int pendingReadIndex { 0 };
-    // The panel state the hardware's own single-parameter messages accumulate
-    // into. Only the audio thread touches it.
-    sysex::Patch liveSysExPatch {};
-    bool liveSysExPatchValid { false };
+    std::array<SysExSlot, sysExQueueSlots> sysExQueue {};
+    std::atomic<int> sysExWriteIndex { 0 };
+    int sysExReadIndex { 0 };
+    // Counts events dropped because the queue was full. Zero in any normal
+    // session; a test asserts a full bank transfer does not raise it.
+    std::atomic<int> sysExDropped { 0 };
 
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> engineReady { false };
