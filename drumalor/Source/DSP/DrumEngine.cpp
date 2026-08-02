@@ -158,6 +158,11 @@ float besselJ (int order, float value) noexcept
 // about 141 kPa.
 constexpr float airBulkModulus = 141200.0f;
 constexpr float soundSpeed = 343.0f;
+
+// A free bar's bending modes go as the square of 3.011, 5, 7, 9 - so
+// 1 : 2.76 : 5.40 : 8.93, spreading fast where a membrane's crowd together.
+// These are the boundary conditions, not something a maker or a knob can move.
+constexpr std::array<float, 4> percBarRatios {{ 1.0f, 2.756f, 5.404f, 8.933f }};
 constexpr float airDensity = 1.2f;
 
 // See buildHeadBank: the resonators are normalised for noise, and a head that
@@ -718,32 +723,52 @@ float DrumEngine::nextBandLimitedNoise (Voice& voice) const noexcept
         voice.bandLimitedNoiseReady = true;
     }
 
-    float sum = voice.bandLimitedNoiseCurrent
-        + voice.bandLimitedNoisePhase
-              * (voice.bandLimitedNoiseNext - voice.bandLimitedNoiseCurrent);
-    int taken = 1;
-    voice.bandLimitedNoisePhase += bandLimitedNoiseIncrement_;
-    while (voice.bandLimitedNoisePhase >= 1.0f)
+    // At or above the reference rate the grid runs no faster than the output
+    // and one interpolated read is the whole answer.
+    if (bandLimitedNoiseIncrement_ <= 1.0f)
     {
-        voice.bandLimitedNoisePhase -= 1.0f;
-        voice.bandLimitedNoiseCurrent = voice.bandLimitedNoiseNext;
-        voice.bandLimitedNoiseNext = nextNoise (voice);
-        // Below the reference rate the grid runs faster than the output and
-        // values would otherwise be thrown away. Averaging what the output
-        // sample spans instead of taking the last of them is what decimation
-        // means, and it does two things at once: it puts the same noise density
-        // per hertz at every rate - white noise of unchanged per-sample size
-        // crammed into a narrower band is a denser noise, by the ratio of the
-        // rates, which was 7.8 dB of surplus hiss at 8 kHz - and it leaves the
-        // low-rate noise a low-passed copy of the same sequence rather than an
-        // unrelated one, so a filtered noise layer sounds like itself there.
-        if (bandLimitedNoiseIncrement_ > 1.0f)
+        const float output = voice.bandLimitedNoiseCurrent
+            + voice.bandLimitedNoisePhase
+                  * (voice.bandLimitedNoiseNext - voice.bandLimitedNoiseCurrent);
+        voice.bandLimitedNoisePhase += bandLimitedNoiseIncrement_;
+        while (voice.bandLimitedNoisePhase >= 1.0f)
         {
-            sum += voice.bandLimitedNoiseCurrent;
-            ++taken;
+            voice.bandLimitedNoisePhase -= 1.0f;
+            voice.bandLimitedNoiseCurrent = voice.bandLimitedNoiseNext;
+            voice.bandLimitedNoiseNext = nextNoise (voice);
+        }
+        return output;
+    }
+
+    // Below it the grid runs faster, and values would otherwise be thrown away.
+    // Averaging what the output sample actually spans is what decimation means,
+    // and it does two things at once: it puts the same noise density per hertz
+    // at every rate - white noise of unchanged per-sample size crammed into a
+    // narrower band is a denser noise, by the ratio of the rates, which was
+    // 7.8 dB of surplus hiss at 8 kHz - and it leaves the low-rate noise a
+    // low-passed copy of the same sequence rather than an unrelated one, so a
+    // filtered noise layer sounds like itself there.
+    //
+    // Each value is weighted by how much of the interval it covers rather than
+    // by having been crossed. At 47999 Hz the interval crosses one boundary but
+    // barely enters the value beyond it; counting both equally would halve the
+    // noise the moment the host dropped under 48 kHz.
+    float remaining = bandLimitedNoiseIncrement_;
+    float integral = 0.0f;
+    while (remaining > 0.0f)
+    {
+        const float span = std::min (remaining, 1.0f - voice.bandLimitedNoisePhase);
+        integral += span * voice.bandLimitedNoiseCurrent;
+        remaining -= span;
+        voice.bandLimitedNoisePhase += span;
+        if (voice.bandLimitedNoisePhase >= 1.0f)
+        {
+            voice.bandLimitedNoisePhase = 0.0f;
+            voice.bandLimitedNoiseCurrent = voice.bandLimitedNoiseNext;
+            voice.bandLimitedNoiseNext = nextNoise (voice);
         }
     }
-    return sum / static_cast<float> (taken);
+    return integral / bandLimitedNoiseIncrement_;
 }
 
 float DrumEngine::applyAnalogOutputStage (Voice& voice, float input) const noexcept
@@ -2007,10 +2032,16 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // the gross duration that reaches the top of the series. Carrying it
             // as a tilt on the bank keeps that honest without pretending the
             // force history has the nulls a raised cosine would.
+            // How far up the plate the strike gets is the contact, so the tilt
+            // is read from it rather than from velocity directly: a shorter
+            // touch reaches higher, whether it got shorter because the stick
+            // arrived faster or because the tip is harder.
+            const float reach = std::clamp (
+                0.00042f / std::max (1.0e-5f, voice.contactSeconds), 0.30f, 1.60f);
             initialiseModalVoice (
                 voice, hatRatios, 12, voice.baseFrequency,
                 voice.decaySeconds * (closed ? 0.85f : 0.70f),
-                0.10f, 0.72f + 0.14f * voice.characterB + 0.28f * velocity,
+                0.10f, 0.60f + 0.14f * voice.characterB + 0.34f * reach,
                 closed ? ModalLoss { 0.86f, 0.10f, 0.04f }
                        : ModalLoss { 0.55f, 0.30f, 0.15f });
             break;
@@ -2203,15 +2234,11 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // together the way a membrane's do. Hollow drills the bar out
             // toward a tube, which softens that spread.
             const float hollow = voice.characterA;
-            // A free bar's bending modes go as the square of 3.011, 5, 7, 9 -
-            // 1 : 2.76 : 5.40 : 8.93 - and those numbers are the boundary
-            // conditions, not something a maker or a knob can move. What Hollow
-            // moves is the cupped hand underneath, below.
-            const float ratios[4] { 1.0f, 2.756f, 5.404f, 8.933f };
             // Wood's internal friction is close to a constant loss angle across
             // the audio range, so a struck bar's damping climbs roughly with
             // frequency and its bending overtones fade well before the note.
-            initialiseModalVoice (voice, ratios, 4, 930.0f * voice.pitchRatio,
+            voice.baseFrequency = 930.0f * voice.pitchRatio;
+            initialiseModalVoice (voice, percBarRatios.data(), 4, voice.baseFrequency,
                                   voice.decaySeconds, 0.055f,
                                   (0.35f + 0.35f * hollow) * voice.velocityTimbre,
                                   { 0.45f, 0.55f, 0.0f });
@@ -2447,7 +2474,11 @@ float DrumEngine::renderKick (Voice& voice) noexcept
     {
         if (voice.ageSamples == 0u)
         {
-            const float impulse = voice.kickCharge * voice.excitationScale;
+            // The stored charge is already the strike's energy - it was scaled
+            // by excitationScale when the voice was built - so scaling it again
+            // here would square it for the head while the body got it once, and
+            // quietly bury the head under the body on every soft hit.
+            const float impulse = voice.kickCharge;
             for (int mode = 0; mode < voice.modeCount; ++mode)
                 voice.resonators[static_cast<std::size_t> (mode)].strike (
                     impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
@@ -2763,8 +2794,18 @@ float DrumEngine::renderPerc2 (Voice& voice) noexcept
             const float impulse = struckHeadScale * voice.transientScale
                 * voice.excitationScale;
             for (int mode = 0; mode < voice.modeCount; ++mode)
+            {
+                // A bar's overtones climb steeply - the fourth is nine times the
+                // note - so the contact decides how many of them a blow can
+                // reach at all. It is what separates a clave struck with a hard
+                // stick from the same bar tapped with a finger.
+                const float reach = contactSpectrum (
+                    voice.baseFrequency * percBarRatios[static_cast<std::size_t> (mode)],
+                    voice.contactSeconds);
                 voice.resonators[static_cast<std::size_t> (mode)].strike (
-                    impulse * voice.modeGains[static_cast<std::size_t> (mode)]);
+                    impulse * reach
+                        * voice.modeGains[static_cast<std::size_t> (mode)]);
+            }
         }
         const float rub = 0.10f * modalNoiseScale_ * voice.characterB
             * voice.transientEnvelope * voice.transientScale * noise
@@ -2774,7 +2815,9 @@ float DrumEngine::renderPerc2 (Voice& voice) noexcept
     }
     // Stick content scales with velocity as well as level: a light tap on a
     // wooden or metallic body puts far less energy into the contact click.
-    const float click = voice.filterA.tick (noise) * voice.transientEnvelope
+    // The stick is only on the bar while it is on the bar.
+    const float click = voice.filterA.tick (noise)
+        * std::max (voice.transientEnvelope, advanceContact (voice))
         * voice.velocityTimbre;
     const float cavity = voice.filterC.tick (body);
     return 0.62f * voice.filterB.tick (body + 0.20f * voice.characterB * click)
