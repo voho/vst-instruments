@@ -15,7 +15,7 @@ class YouKnow106AudioProcessorEditor;
 
 class YouKnow106AudioProcessor final : public juce::AudioProcessor,
                                        private juce::MidiKeyboardState::Listener,
-                                       private juce::AsyncUpdater
+                                       private juce::Timer
 {
 public:
     YouKnow106AudioProcessor();
@@ -54,7 +54,7 @@ public:
     // Applies any system-exclusive event still waiting for the message thread,
     // now, on the calling thread. The queue is normally drained by the async
     // callback; a test has no message loop to run and needs it deterministic.
-    void flushPendingSysEx() { handleUpdateNowIfNeeded(); }
+    void flushPendingSysEx() { drainSysExQueue(); }
 
     // Events dropped because the handoff queue was full. Only for tests.
     int getSysExDroppedCount() const noexcept
@@ -162,7 +162,16 @@ private:
     // anything else moved a parameter. A single-parameter message now carries
     // just its number and value, and the message thread reads the base it
     // applies to from the parameters themselves, where it is always current.
-    void handleAsyncUpdate() override;
+    // The queue is drained from a timer rather than an async callback.
+    // triggerAsyncUpdate() takes a lock, which is not something the audio
+    // callback may do: a librarian transfer would then be able to stall the
+    // callback behind the message thread. Polling costs nothing when the queue
+    // is empty, which is almost always.
+    void timerCallback() override;
+    void drainSysExQueue();
+    // Applies one tone parameter to the parameters it actually names, and to
+    // no others.
+    void applyToneParameter (int parameter, int value);
 
     enum class SysExEventKind { FullPatch, SingleParameter };
     struct SysExEvent

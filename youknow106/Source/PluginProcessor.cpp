@@ -384,10 +384,15 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
                                      parameters.getRawParameterValue (ids[index]) };
 
     keyboardState.addListener (this);
+
+    // Poll the system-exclusive handoff. The audio thread must not signal the
+    // message thread directly, so nothing wakes this; it simply looks.
+    startTimer (20);
 }
 
 YouKnow106AudioProcessor::~YouKnow106AudioProcessor()
 {
+    stopTimer();
     keyboardState.removeListener (this);
 }
 
@@ -1020,10 +1025,16 @@ void YouKnow106AudioProcessor::stageSysExEvent (const SysExEvent& event) noexcep
     slot.event = event;
     slot.ready.store (true, std::memory_order_release);
     sysExWriteIndex.store ((index + 1) % sysExQueueSlots, std::memory_order_relaxed);
-    triggerAsyncUpdate();
+    // Deliberately no wake-up call from here: the consumer polls. Anything that
+    // signals the message thread takes a lock, and this is the audio callback.
 }
 
-void YouKnow106AudioProcessor::handleAsyncUpdate()
+void YouKnow106AudioProcessor::timerCallback()
+{
+    drainSysExQueue();
+}
+
+void YouKnow106AudioProcessor::drainSysExQueue()
 {
     // Drain everything published so far. Single-parameter edits are cumulative,
     // so applying only the newest would lose the rest.
@@ -1039,17 +1050,60 @@ void YouKnow106AudioProcessor::handleAsyncUpdate()
         sysExReadIndex = (sysExReadIndex + 1) % sysExQueueSlots;
 
         if (event.kind == SysExEventKind::FullPatch)
-        {
             applyPatch (youknow106::sysex::patchFromToneBytes (event.bytes.data()));
-        }
         else
-        {
-            // The base is read here rather than carried across, so it reflects
-            // every panel, preset, state and automation change made since --
-            // and no control the message did not name is touched.
-            auto patch = currentPatch();
-            if (youknow106::sysex::applyParameter (patch, event.parameter, event.value))
-                applyPatch (patch);
-        }
+            applyToneParameter (event.parameter, event.value);
     }
+}
+
+// One tone parameter, applied to the controls it names and to nothing else.
+//
+// Writing the whole patch back would notify the host about parameters the
+// message never mentioned, and would race automation: a lane moving another
+// control between the read and the write would be reverted by the stale value
+// that came back with it.
+void YouKnow106AudioProcessor::applyToneParameter (int parameter, int value)
+{
+    using namespace youknow106::parameters;
+
+    const auto set = [this] (const char* id, float newValue)
+    {
+        if (auto* target = parameters.getParameter (id))
+            target->setValueNotifyingHost (target->convertTo0to1 (newValue));
+    };
+
+    if (parameter < 0 || parameter >= youknow106::sysex::toneByteCount)
+        return;
+
+    // The sixteen continuous controls, in the order the message carries them.
+    static constexpr const char* continuous[] = {
+        lfoRate, lfoDelay, dcoLfo, pwm, noise, cutoff, resonance, vcfEnv,
+        vcfLfo, keyFollow, vcaLevel, attack, decay, sustain, release, sub
+    };
+    if (parameter < 16)
+    {
+        set (continuous[parameter], static_cast<float> (value & 0x7f) / 127.0f);
+        return;
+    }
+
+    // A switch byte. Decode it against the patch it belongs to, then write out
+    // only the switches that byte encodes.
+    auto patch = currentPatch();
+    if (! youknow106::sysex::applyParameter (patch, parameter, value))
+        return;
+
+    if (parameter == static_cast<int> (youknow106::sysex::ToneParameter::SwitchesOne))
+    {
+        set (range, static_cast<float> (patch.range));
+        set (saw, patch.saw ? 1.0f : 0.0f);
+        set (pulse, patch.pulse ? 1.0f : 0.0f);
+        set (chorusI, youknow106::chorusOneEngaged (patch.chorus) ? 1.0f : 0.0f);
+        set (chorusII, youknow106::chorusTwoEngaged (patch.chorus) ? 1.0f : 0.0f);
+        return;
+    }
+
+    set (pwmMode, static_cast<float> (patch.pwmSource));
+    set (vcaMode, static_cast<float> (patch.vcaMode));
+    set (envPolarity, static_cast<float> (patch.envPolarity));
+    set (highPass, static_cast<float> (patch.highPass));
 }
