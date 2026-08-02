@@ -462,6 +462,26 @@ void testPulseWidthAndHighPassLaws()
         expect(duty > 0.0f && duty < 1.0f, "pulse reaches a rail");
     }
 
+    // The per-card comparator offset is calibrated to leave a 48% to 52% duty
+    // window across the six voices, so the voltage the engine draws against has
+    // to be the one that produces exactly two points either way. Asserting the
+    // duty rather than the voltage is the point: the voltage is a means, and a
+    // change to the duty law that quietly rescaled it would pass otherwise.
+    {
+        const float offsetVolts = 0.24f;
+        const float mid = 3.0f;   // away from the law's 50% floor, so it moves both ways
+        const double wide = YouKnow106Engine::pwmDutyCycle(mid - offsetVolts);
+        const double narrow = YouKnow106Engine::pwmDutyCycle(mid + offsetVolts);
+        expectNear(0.5 * (wide - narrow), 0.02, 5.0e-4,
+                   "the per-card comparator offset is not +/-2 points of duty");
+        // And at the panel's own 50% end the law floors, so the same offset can
+        // only widen the pulse -- 50% is the narrowest the control can ask for.
+        expectNear(YouKnow106Engine::pwmDutyCycle(6.0f + offsetVolts), 0.5, 1.0e-5,
+                   "an offset pushed the pulse below the panel's 50% floor");
+        expectNear(YouKnow106Engine::pwmDutyCycle(6.0f - offsetVolts), 0.52, 5.0e-4,
+                   "an offset at the 50% floor does not widen by two points");
+    }
+
     // Only two of the four high-pass legs filter; one boosts and one passes.
     // The boost is the measured shelf: +10.5 dB at DC, +1.41 dB in the high
     // band, corner near 59 Hz. The cut corners follow from the network's own
@@ -481,10 +501,21 @@ void testPulseWidthAndHighPassLaws()
     expect(YouKnow106Engine::highPassShelfGain(HighPassMode::Two) == 0.0f
            && YouKnow106Engine::highPassShelfGain(HighPassMode::Three) == 0.0f,
            "a cutting leg returns part of the low band");
-    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Two), 236.0, 0.5,
-               "middle high-pass corner is not the network's own");
-    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Three), 754.0, 0.5,
-               "top high-pass corner is not the network's own");
+    // Computed from the parts rather than written down, so the assertion says
+    // where the number comes from: both cutting legs share one 15 kOhm shunt to
+    // ground and differ only in their series capacitor. Writing 225.8 and 707.4
+    // here would assert the same thing while hiding the fact that a single
+    // resistor value has to serve both.
+    const double shuntOhms = 15.0e3;
+    const auto corner = [shuntOhms] (double farads) {
+        return 1.0 / (2.0 * M_PI * shuntOhms * farads);
+    };
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Two),
+               corner(47.0e-9), 0.5,
+               "middle high-pass corner is not 15 kOhm against 47 nF");
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Three),
+               corner(15.0e-9), 0.5,
+               "top high-pass corner is not 15 kOhm against 15 nF");
 }
 
 void testModulationAndGlideLaws()
@@ -702,13 +733,29 @@ void testBucketBrigadeLine()
     expectNear(two.rateHz, 0.863, 1.0e-4, "second mode rate");
     expectNear(one.sweepSeconds, two.sweepSeconds, 1.0e-9,
                "the two modes do not share a sweep depth");
+    // A Juno-60's measured sweep, standing in and labelled as such: no
+    // qualifying capture of a Juno-106's own chorus has been located.
     expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.00166, 1.0e-6,
                "shortest modulated delay");
     expectNear(one.centreDelaySeconds + one.sweepSeconds, 0.00535, 1.0e-6,
                "longest modulated delay");
+    // Both ends have to land inside the part's own clock window, which is what
+    // says the capture describes this circuit rather than some other one: 256
+    // stages give a delay of 128 / f_clock, and the MN3009 is rated 10-200 kHz.
+    for (const double delay : { one.centreDelaySeconds - one.sweepSeconds,
+                                one.centreDelaySeconds + one.sweepSeconds })
+    {
+        const double clockHz = 128.0 / delay;
+        expect(clockHz > 10.0e3 && clockHz < 200.0e3,
+               "a sweep endpoint needs a clock outside the part's rated window");
+    }
     expectNear(Chorus::settingsFor(ChorusMode::Off).wetGain, 0.0, 1.0e-9,
                "the wet path is not silent when the effect is switched out");
-    expectNear(one.wetGain, 1.303, 1.0e-3, "line gain");
+    // Wet over dry is the ratio of the two summing resistors into the shared
+    // feedback, so the feedback value cancels and only 47/39 reaches the model.
+    expectNear(one.wetGain, 47.0 / 39.0, 1.0e-3, "line gain");
+    expectNear(20.0 * std::log10(one.wetGain), 1.62, 0.01,
+               "the wet path does not sit 1.62 dB above the dry");
 
     // Both buttons down. Each switch shunts its own resistor into the
     // modulation oscillator's timing network, so closing both puts them in
@@ -782,6 +829,63 @@ void testBucketBrigadeLine()
 // corner of the pairing the line actually runs ends up, at the two rates the
 // engine uses. The mismatched pairing this catches put the 9.9 kHz corner at
 // 4.6 kHz -- inaudible as a bug report, obvious as a dull chorus.
+// The high-pass as the signal actually meets it, not as a table of laws.
+//
+// This exists because the stage was moved from inside each voice to the summed
+// bus and every other check in the suite passed either way: the laws are pure
+// functions and stayed true, so nothing was guarding that the filter was still
+// reached at all. A stage wired to nothing would have gone unnoticed.
+void testHighPassReachesTheSummedSignal()
+{
+    const auto rmsFor = [](HighPassMode mode, int note) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, 512, false);
+        EngineParameters parameters;
+        parameters.highPass = mode;
+        parameters.cutoff = 1.0f;      // filter wide open, so the high-pass is
+        parameters.resonance = 0.0f;   // the only thing shaping the band
+        parameters.attack = 0.0f;
+        parameters.sustain = 1.0f;
+        parameters.calibration = 0.0f; // no dispersion, so this is repeatable
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(note, 0.9f);
+
+        std::vector<float> left(24000), right(24000);
+        engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+        double sum = 0.0;
+        const std::size_t half = left.size() / 2;
+        for (std::size_t index = half; index < left.size(); ++index)
+            sum += static_cast<double>(left[index]) * left[index];
+        return std::sqrt(sum / static_cast<double>(left.size() - half));
+    };
+
+    // A low note, where every leg of the network has something to act on.
+    const double flatLow = rmsFor(HighPassMode::One, 28);
+    expect(flatLow > 1.0e-3, "the flat leg rendered nothing to measure");
+
+    const double boostLow = rmsFor(HighPassMode::Boost, 28);
+    const double cutTwoLow = rmsFor(HighPassMode::Two, 28);
+    const double cutThreeLow = rmsFor(HighPassMode::Three, 28);
+
+    expect(boostLow > flatLow * 1.2,
+           "the boost leg did not lift a low note above the flat leg");
+    expect(cutTwoLow < flatLow * 0.8,
+           "the middle cut leg did not attenuate a low note");
+    expect(cutThreeLow < cutTwoLow,
+           "the top cut leg is not darker than the middle one on a low note");
+
+    // And the ordering has to come from the corner rather than from a gain
+    // trim, so it must fade as the note rises above the corners.
+    const double flatHigh = rmsFor(HighPassMode::One, 76);
+    const double cutThreeHigh = rmsFor(HighPassMode::Three, 76);
+    expect(flatHigh > 1.0e-3, "the flat leg rendered nothing at the top");
+    expect(cutThreeHigh > flatHigh * 0.6,
+           "the top cut leg attenuates a high note as if it were a level control");
+    expect(cutThreeLow / flatLow < cutThreeHigh / flatHigh,
+           "the high-pass cuts a high note as hard as a low one");
+}
+
 void testSupportFilterCornersLandWhereAsked()
 {
     const auto gainAt = [](double frequency, float g, float sampleRate) {
@@ -842,7 +946,70 @@ void testSupportFilterCornersLandWhereAsked()
     expectNear(measureCorner(9500.0f, 192000.0f), 9500.0, 60.0,
                "reconstruction corner at the internal rate");
     expectNear(measureCorner(9900.0f, 48000.0f), 9900.0, 60.0,
-               "anti-alias corner without oversampling");
+               "one-pole corner without oversampling");
+
+    // The two-pole sections either side of the line. Their Q comes from the
+    // capacitor ratio alone, so it is asserted from the parts rather than
+    // written down -- and the corner is measured the same way the one-pole's
+    // is, by bisecting the realised half-power point, because a coefficient
+    // that agrees with its own recursion is the only thing worth checking.
+    expectNear(Chorus::sallenKeyQ(820.0e-12f, 680.0e-12f), 0.5494, 1.0e-3,
+               "the first section's Q is not its capacitor ratio");
+    expectNear(Chorus::sallenKeyQ(1.8e-9f, 270.0e-12f), 1.2910, 1.0e-3,
+               "the second section's Q is not its capacitor ratio");
+
+    const auto biquadGainAt = [](double frequency, const Chorus::BiquadCoefficients& c,
+                                 float sampleRate) {
+        constexpr int cycles = 64;
+        constexpr int settle = 4096;
+        const int window = static_cast<int>(
+            std::llround(cycles * static_cast<double>(sampleRate) / frequency));
+        Chorus::BiquadState state {};
+        std::complex<double> accumulator {};
+        for (int index = 0; index < settle + window; ++index)
+        {
+            const double phase = 2.0 * pi * frequency * index / sampleRate;
+            const float output = Chorus::biquadStep(
+                state, static_cast<float>(std::sin(phase)), c);
+            if (index >= settle)
+                accumulator += static_cast<double>(output)
+                             * std::exp(std::complex<double>(0.0, -phase));
+        }
+        return 2.0 * std::abs(accumulator) / window;
+    };
+
+    // A two-pole lowpass has one property that pins both of its coefficients at
+    // once: its gain *at* the corner is exactly Q. Asserting that is sharper
+    // than bisecting for a half-power point, because the half-power point moves
+    // with Q and so would pass for a section whose damping was wrong in a way
+    // that happened to shift the -3 dB frequency back.
+    //
+    // A section running at half its intended Q -- which is what an extra factor
+    // of two in the damping term produces -- fails this by a factor of two.
+    for (const float rate : { 192000.0f, 48000.0f })
+    {
+        struct Section { float hz; float q; const char* name; };
+        for (const auto& section : { Section { 9688.0f, 0.5494f, "first" },
+                                     Section { 10377.0f, 1.2910f, "second" } })
+        {
+            const auto c = Chorus::sallenKeyCoefficients(section.hz, section.q, rate);
+            const double reference = biquadGainAt(20.0, c, rate);
+            const double atCorner = biquadGainAt(section.hz, c, rate);
+            expectNear(atCorner / reference, section.q, 0.02,
+                       std::string("the ") + section.name
+                           + " two-pole section's gain at its corner is not its Q");
+        }
+    }
+
+    // And a two-pole section passes DC like any other lowpass.
+    {
+        const auto c = Chorus::sallenKeyCoefficients(9688.0f, 0.5494f, 192000.0f);
+        Chorus::BiquadState state {};
+        float settled = 0.0f;
+        for (int index = 0; index < 8192; ++index)
+            settled = Chorus::biquadStep(state, 1.0f, c);
+        expectNear(settled, 1.0, 1.0e-5, "a two-pole section does not pass DC");
+    }
 }
 
 void testCorrectionResidualsVanishAtTheEdges()
@@ -918,6 +1085,7 @@ int main()
     testChorusIsAtItsSettingFromTheFirstSample();
     testBucketBrigadeLine();
     testSupportFilterCornersLandWhereAsked();
+    testHighPassReachesTheSummedSignal();
     testCorrectionResidualsVanishAtTheEdges();
 
     if (failures != 0)

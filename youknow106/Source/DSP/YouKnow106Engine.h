@@ -475,7 +475,6 @@ private:
         float vcaGainError { 0.0f };
         float subLevelError { 0.0f };
         float noiseLevelError { 0.0f };
-        float highPassError { 0.0f };
         float driftPhase { 0.0f };
         float driftValue { 0.0f };
         std::uint32_t driftState { 1u };
@@ -546,14 +545,11 @@ private:
         float inputCompensation { 1.0f };
         float vca { 0.0f };
         float pulseDuty { 0.5f };
-        float highPassG { 0.01f };
-        float highPassShelf { 1.0f };
-        float highPassHigh { 1.0f };
+
         float energy { 0.0f };
         std::uint32_t noiseState { 1u };
         Envelope envelope {};
         Dco dco {};
-        HighPass highPass {};
         OtaCascade filter {};
     };
 
@@ -615,6 +611,7 @@ private:
     // Called on the audio control grid: turns the slewed control voltages into
     // filter and amplifier coefficients.
     void updateVoiceAudio(Voice& voice, const EngineParameters& parameters) noexcept;
+    void updateSharedHighPass(const EngineParameters& parameters) noexcept;
     float renderVoice(Voice& voice, const EngineParameters& parameters,
                       float noiseSample) noexcept;
     void advanceLfo(const EngineParameters& parameters) noexcept;
@@ -737,6 +734,14 @@ private:
     int driftControlCountdown_ { 0 };
 
     Chorus chorus_ {};
+
+    // The high-pass, once, on the summed voices. There is one set of parts for
+    // it on the jack board rather than one per voice, which is why it lives
+    // here and not in Voice -- and why it carries no per-voice dispersion.
+    HighPass highPass_ {};
+    float highPassG_ { 0.01f };
+    float highPassShelf_ { 1.0f };
+    float highPassHigh_ { 1.0f };
 
     float dcInput_ { 0.0f };
     float dcOutput_ { 0.0f };

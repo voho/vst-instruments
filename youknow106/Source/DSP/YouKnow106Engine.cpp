@@ -508,16 +508,26 @@ float YouKnow106Engine::vcaGain(float control) noexcept
 
 float YouKnow106Engine::highPassCornerHz(HighPassMode mode) noexcept
 {
-    // Four legs of a switched RC network: a shelving boost, a
-    // straight-through leg, and two progressively higher corners. The cut
-    // corners follow from the network's own part values -- an effective
-    // 44.9 kOhm against 15 nF and 4.7 nF -- and the boost's corner is the
-    // measured shelf's pole near 59 Hz.
+    // Four legs of a switched network, selected by a CMOS multiplexer: a
+    // shelving boost, a straight-through leg, and two progressively higher
+    // corners. Each cut leg is its own series capacitor -- C10 15 nF, C11
+    // 4.7 nF -- against the same 47 kOhm feed into the summing amplifier's
+    // virtual earth, with a 1 MOhm bleed to ground. The 47 kOhm is the timing
+    // resistance; the 1 MOhm is far too high to be.
+    //
+    // Two earlier revisions got this wrong in different ways, and the second
+    // was wrong in a way that concealed itself: 15 kOhm against 47 nF has the
+    // same product as 47 kOhm against 15 nF, so position 2 came out right by
+    // coincidence while position 3 stayed 13 Hz off. Reading the schematic's
+    // own designators is what separated them. The boost's corner is unchanged,
+    // being the measured shelf's own pole rather than a part value -- and the
+    // boost is a summed two-zero/two-pole shelf, not one RC, which is why it
+    // has never been described by a corner alone here.
     switch (mode)
     {
         case HighPassMode::Boost: return 59.4f;
-        case HighPassMode::Two:   return 236.0f;
-        case HighPassMode::Three: return 754.0f;
+        case HighPassMode::Two:   return 225.8f;   // 15 kOhm x 47 nF
+        case HighPassMode::Three: return 707.4f;   // 15 kOhm x 15 nF
         case HighPassMode::One:
         default:                  return 59.4f;
     }
@@ -1041,7 +1051,6 @@ void YouKnow106Engine::buildVoiceCards() noexcept
         card.driftPhase = 0.5f * (hashBipolar(seed + 7u) + 1.0f);
         card.vcaGainError = hashBipolar(seed + 8u);
         card.noiseLevelError = hashBipolar(seed + 9u);
-        card.highPassError = hashBipolar(seed + 10u);
         card.driftValue = 0.0f;
         card.driftState = seed | 1u;
     }
@@ -1131,6 +1140,7 @@ void YouKnow106Engine::clearOutputPath() noexcept
     firstDecimator_.reset();
     secondDecimator_.reset();
     chorus_.reset();
+    highPass_.reset();
     dcInput_ = 0.0f;
     dcOutput_ = 0.0f;
     latencyPadLeft_.fill(0.0f);
@@ -1188,7 +1198,6 @@ void YouKnow106Engine::reset()
         voice = Voice {};
         voice.dco.reset();
         voice.filter.reset();
-        voice.highPass.reset();
         voice.envelope.reset();
     }
     for (int index = 0; index < maxVoices; ++index)
@@ -1285,6 +1294,19 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     result.keyTranspose = std::clamp(result.keyTranspose, -12, 12);
     result.polyphony = std::clamp(result.polyphony, 1, maxVoices);
     return result;
+}
+
+// The shared high-pass, whose parts are one network rather than six. Recomputed
+// where the switch is read rather than per voice, which is also what stops six
+// voices each writing the same three values.
+void YouKnow106Engine::updateSharedHighPass(const EngineParameters& parameters) noexcept
+{
+    const float corner = highPassCornerHz(parameters.highPass);
+    highPassG_ =
+        std::tan(pi * std::min(corner, static_cast<float>(oversampledRate_) * 0.45f)
+                 * inverseOversampledRate_);
+    highPassShelf_ = highPassShelfGain(parameters.highPass);
+    highPassHigh_ = highPassHighGain(parameters.highPass);
 }
 
 void YouKnow106Engine::setParameters(const EngineParameters& parameters)
@@ -1557,7 +1579,6 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
         if (!wasSounding)
         {
             voice.filter.reset();
-            voice.highPass.reset();
             voice.vca = 0.0f;
         }
         voice.noiseState = hash32(static_cast<std::uint32_t>(slot) * 2246822519u
@@ -1580,7 +1601,6 @@ void YouKnow106Engine::silenceVoice(Voice& voice) noexcept
     voice.energy = 0.0f;
     voice.envelope.reset();
     voice.filter.reset();
-    voice.highPass.reset();
     voice.dco.reset();
     // Deliberately kept: lastMidi, currentMidi and releaseStamp. A retired
     // voice still remembers what it played -- that memory is what the
@@ -2000,6 +2020,12 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // The regeneration control voltage is shared -- one converter output for
     // all six loops -- but each voice's loop amplifier has its own gain
     // spread.
+    // Voiced, and back to being voiced. The service procedure trims each loop
+    // to a 4.8 Vpp self-oscillation peak but states no tolerance on the result,
+    // so what spread survives the adjustment is documented nowhere located. A
+    // revision briefly anchored 5% to a source describing the *untrimmed*
+    // component class, which is a different question: a trimmed mechanism's
+    // residual is not its parts' tolerance.
     const float resonancePanel = clamp01(resonanceCv_
         + card.resonanceError * 0.02f * tolerance);
     voice.feedback = vcfFeedback(resonancePanel);
@@ -2027,19 +2053,17 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // ramp itself.
     const float amplitudeScale = std::clamp(
         voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+    // The alignment window is 48% to 52% duty across the six cards, so the
+    // offset is the voltage that produces exactly that: the duty law runs
+    // 8.33 points per volt, and +/-0.24 V is +/-2 points. An earlier revision
+    // voiced half of it.
+    //
+    // The spread is one-sided at the panel's 50% end, where the law floors --
+    // 50% is the narrowest pulse the control can ask for, so an offset there
+    // can only widen. Away from that end it moves both ways.
     const float threshold = voice.pwmVolts
-                          + card.comparatorOffset * 0.12f * tolerance;
+                          + card.comparatorOffset * 0.24f * tolerance;
     voice.pulseDuty = pwmDutyCycle(threshold / amplitudeScale);
-
-    // Each voice's high-pass leg is its own pair of parts, so its corner
-    // disperses a little.
-    const float corner = highPassCornerHz(parameters.highPass)
-                       * (1.0f + card.highPassError * 0.03f * tolerance);
-    voice.highPassG =
-        std::tan(pi * std::min(corner, static_cast<float>(oversampledRate_) * 0.45f)
-                 * inverseOversampledRate_);
-    voice.highPassShelf = highPassShelfGain(parameters.highPass);
-    voice.highPassHigh = highPassHighGain(parameters.highPass);
 
     voice.vca = vcaGain(voice.vcaControl)
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
@@ -2098,8 +2122,13 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // one the current pitch calls for *is* that error.
     const float amplitudeScale = std::clamp(
         voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+    // From the parts' own tolerance classes, which is legitimate here because
+    // the ramp has no per-voice trimmer, so nothing removes their spread: the
+    // charging resistors are marked FX on the board -- metal-oxide film, 1% --
+    // and the 1 nF timing capacitors carry code G, 2%. Worst case that is
+    // -2.93% to +3.07% of slope, which is the 3% used here.
     const float amplitude = sawMixVolts * amplitudeScale
-        * (1.0f + card.rampCurrentError * 0.02f * parameters.calibration);
+        * (1.0f + card.rampCurrentError * 0.03f * parameters.calibration);
 
     const float sawNaive = phase < rise
         ? 2.0f * rampVoltage(static_cast<float>(phase / rise), rampBow) - 1.0f
@@ -2200,12 +2229,12 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     mixed += (static_cast<float>(voice.noiseState & 0xffffffu) * (2.0f / 16777215.0f)
               - 1.0f) * filterNoiseVolts;
 
-    // --- High-pass, filter, amplifier --------------------------------------
-    const float shaped = voice.highPass.process(mixed, voice.highPassG,
-                                                voice.highPassShelf,
-                                                voice.highPassHigh);
+    // --- Filter, amplifier -------------------------------------------------
+    // No high-pass here. The schematic puts it on the jack board, downstream of
+    // the summing amplifier, so it is one shared stage after all six voices
+    // rather than a leg inside each -- see the mix.
     const float filtered = voice.filter.process(
-        shaped * filterInputAttenuation * voice.inputCompensation,
+        mixed * filterInputAttenuation * voice.inputCompensation,
         voice.filterG, voice.feedback);
 
     const float output = filtered * voice.vca * voltsToSample;
@@ -2267,6 +2296,12 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     applyPendingOversamplingIfIdle();
 
     const auto& parameters = activeParameters_;
+
+    // One shared network, so its coefficients are settled once here rather than
+    // six times inside the voice loop. It has to come after the pending
+    // oversampling switch, which is what moves the rate they are prewarped
+    // against.
+    updateSharedHighPass(parameters);
 
     if (!panelGlidePrimed_)
     {
@@ -2409,17 +2444,28 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             displayEnvelope_ = loudestEnvelope;
             ++scanCountdown_;
 
+            // One high-pass, on the summed voices. The schematic carries a
+            // single set of parts for it -- on the jack board, downstream of
+            // the summing amplifier -- not one set per voice, so this is where
+            // it belongs. An earlier revision ran it inside each voice ahead of
+            // that voice's own filter, which is a different circuit: a
+            // high-pass feeding a resonant lowpass is not the same as one
+            // following it, because what the high-pass removes is what the
+            // resonance would otherwise have had to work on.
+            const float shaped = highPass_.process(mono, highPassG_,
+                                                   highPassShelf_, highPassHigh_);
+
             // Series coupling before the delay lines, since a bucket-brigade
             // line integrates any offset into its own noise floor. The output
             // amplifier's rails come *after* the effect: the instrument's
-            // signal order is voice sum, chorus, volume, output amplifier, so
-            // dry plus wet meet the rails together. Bounding the signal ahead
-            // of the chorus instead would leave the summed dry-plus-wet free
-            // to leave the plug-in several decibels above full scale -- and
-            // would saturate the dry path in a circuit whose first overload
-            // is the delay line itself.
-            const float blocked = mono - dcInput_ + dcCoefficient_ * dcOutput_;
-            dcInput_ = mono;
+            // signal order is voice sum, high-pass, chorus, volume, output
+            // amplifier, so dry plus wet meet the rails together. Bounding the
+            // signal ahead of the chorus instead would leave the summed
+            // dry-plus-wet free to leave the plug-in several decibels above
+            // full scale -- and would saturate the dry path in a circuit whose
+            // first overload is the delay line itself.
+            const float blocked = shaped - dcInput_ + dcCoefficient_ * dcOutput_;
+            dcInput_ = shaped;
             dcOutput_ = blocked;
 
             float wetLeft = blocked;
