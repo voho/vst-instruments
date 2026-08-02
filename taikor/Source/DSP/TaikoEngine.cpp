@@ -399,8 +399,13 @@ float TaikoEngine::mountingLossAt (float mountLoss, float mountCorner,
 float TaikoEngine::membraneDecayAt (const Voice& voice, const Mode& mode,
                                     float omega) noexcept
 {
+    const float ka = omega * voice.radiusMetres / soundSpeed;
+    const float efficiency =
+        radiationEfficiency (static_cast<int> (mode.circumferentialOrder), ka);
+
     return mode.decayFixed + mode.lossOmega * omega
          + mode.lossOmegaSquared * omega * omega
+         + mode.radiationPrefactor * efficiency
          + mountingLossAt (voice.mountLoss, voice.mountCorner,
                            omega / (2.0f * piFloat));
 }
@@ -1177,6 +1182,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     const float lossOmegaSquared = drum.headViscousFactor * handShare;
     voice.mountLoss = drum.mountLoss;
     voice.mountCorner = drum.mountCorner;
+    voice.radiusMetres = drum.radius;
 
     int count = 0;
     float peakMagnitude = 1.0e-12f;
@@ -1294,11 +1300,12 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 const float volumeCoupling = netVolume * volumeShare;
                 // Power goes as the square of the volume velocity and the
                 // eigenvectors are unit length, so the share enters squared.
-                const float radiationLoss =
-                    drum.radiationScale * airDensity * soundSpeed * efficiency
+                const float radiationPrefactor =
+                    drum.radiationScale * airDensity * soundSpeed
                     * volumeCoupling * volumeCoupling;
-                const float decayFixed = radiationLoss + edgeLoss;
-                const float decay = decayFixed
+                const float radiationLoss = radiationPrefactor * efficiency;
+                const float decayFixed = edgeLoss;
+                const float decay = decayFixed + radiationLoss
                                   + materialDamping (drum, omega, extraDamping)
                                   + mountingLoss (drum, frequency);
 
@@ -1337,6 +1344,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.decayFixed = decayFixed;
                 mode.lossOmega = lossOmega;
                 mode.lossOmegaSquared = lossOmegaSquared;
+                mode.radiationPrefactor = radiationPrefactor;
+                mode.circumferentialOrder = 0;
                 mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 // Axisymmetric modes look identical from both sides of the
@@ -1389,12 +1398,12 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
                 const float ka = omega * radius / soundSpeed;
                 const float efficiency = radiationEfficiency (order, ka);
-                const float radiationLoss =
-                    drum.radiationScale * airDensity * soundSpeed * efficiency
-                    / (2.0f * sigmaB);
+                const float radiationPrefactor =
+                    drum.radiationScale * airDensity * soundSpeed / (2.0f * sigmaB);
+                const float radiationLoss = radiationPrefactor * efficiency;
                 const float decayFixed =
-                    radiationLoss + edgeLoss * (1.0f + edgeOrderFactor * orderFloat);
-                const float decay = decayFixed
+                    edgeLoss * (1.0f + edgeOrderFactor * orderFloat);
+                const float decay = decayFixed + radiationLoss
                                   + materialDamping (drum, omega, extraDamping)
                                   + mountingLoss (drum, frequency);
 
@@ -1434,6 +1443,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.decayFixed = decayFixed;
                 mode.lossOmega = lossOmega;
                 mode.lossOmegaSquared = lossOmegaSquared;
+                mode.radiationPrefactor = radiationPrefactor;
+                mode.circumferentialOrder = static_cast<std::uint8_t> (order);
                 mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 mode.micLeft = observedL;
@@ -1644,15 +1655,19 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
             // behind the drum as a half-second bed of noise that buries the body
             // it is supposed to sit above, and set it for the continuum and the
             // body goes with it.
-            // Kept as its three coefficients rather than as the sum, so that
-            // retuning the head can re-damp the band at wherever it lands.
-            voice.continuumLossFixed = drum.edgeLoss;
-            voice.continuumLossOmega =
-                lossOmega + drum.edgeLoss * continuumEdgeOrder * radius
-                                / std::max (drum.waveSpeed, 1.0f);
+            // Kept as coefficients rather than as the sum, so that retuning
+            // the head can re-damp the band wherever it lands - and split by
+            // what actually moves. The rim's share does not: it is set by the
+            // band's dimensionless wavenumber, and stretching a head raises the
+            // frequency and the wave speed by the same factor, so omega a / c
+            // is exactly where it was. Only the hide's two terms follow a bend.
+            const float wavenumber = omega * radius / std::max (drum.waveSpeed, 1.0f);
+            voice.continuumLossOmega = lossOmega;
             voice.continuumLossOmegaSquared = lossOmegaSquared;
+            entry.lossFixed =
+                drum.edgeLoss * (1.0f + continuumEdgeOrder * wavenumber);
 
-            const float decay = voice.continuumLossFixed
+            const float decay = entry.lossFixed
                               + voice.continuumLossOmega * omega
                               + voice.continuumLossOmegaSquared * omega * omega;
             entry.envelopeDecay = std::exp (-decay / rate);
@@ -2193,7 +2208,7 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         // that empties this region is the head's own, and that is a function of
         // where the band now sits rather than of where it was built.
         const float bandOmega = 2.0f * piFloat * centre;
-        const float bandDecay = voice.continuumLossFixed
+        const float bandDecay = band.lossFixed
                               + voice.continuumLossOmega * bandOmega
                               + voice.continuumLossOmegaSquared * bandOmega * bandOmega;
         band.envelopeDecay = std::exp (-bandDecay / rate);
@@ -2211,6 +2226,7 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
     // could drop a mode the walk has not reached yet while it is still
     // sounding, which costs a click. The wooden bank is not touched at all -
     // stretching the head does not stretch the body it is nailed to.
+    std::uint64_t longest = 0;
     for (int index = 0; index < voice.modeCount; ++index)
     {
         auto& mode = voice.modes[static_cast<std::size_t> (index)];
@@ -2223,7 +2239,20 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         const auto samples = static_cast<std::uint64_t> (bounded * rate)
                            + voice.retirementOffset;
         mode.audibleSamples = std::max (mode.audibleSamples, samples);
+        longest = std::max (longest, mode.audibleSamples);
     }
+
+    // And the voice's own deadline with them. It is the longest mode plus a
+    // little, and the render loop silences everything at it: extending the
+    // modes without extending this would move where a retuned drum is cut off
+    // from the mode to the voice and change nothing else. The cap on the whole
+    // tail still stands - that one is a promise to the host about latency, not
+    // a statement about the drum.
+    if (longest > 0)
+        voice.maximumSamples = std::min (
+            std::max (voice.maximumSamples,
+                      longest + static_cast<std::uint64_t> (rate * 0.02f)),
+            static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_));
 
     voice.appliedTensionShift = shift;
 }
@@ -2829,18 +2858,54 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     // outlast it several times over. Reporting the fundamental's decay as the
     // drum's tail understated a sealed drum by a factor of four.
     //
-    // So the whole axisymmetric family is swept and the longest-lived branch
-    // any stroke can drive is the answer. Only that family: everything with a
-    // circumferential order is silent under the centre of the head, and what
-    // this figure has to describe is the drum rather than one stroke on it.
+    // So the whole bank is swept and the longest-lived mode any stroke can
+    // drive is the answer - including the modes with a circumferential order.
+    // Those used to be left out on the grounds that they are silent under the
+    // centre of the head, which was true when a Don was struck there and is not
+    // now that no stroke is: they are driven by every articulation the
+    // instrument has, they radiate as multipoles and so barely at all, and on a
+    // lightly damped drum with a dense shell they outlast the axisymmetric
+    // family that used to be the whole of this figure.
     result.tailSeconds = 0.0f;
 
     for (const auto& radial : membraneModes())
     {
-        if (radial.circumferentialOrder != 0)
-            continue;
-
         const auto radialLambda = static_cast<float> (radial.besselZero);
+
+        if (radial.circumferentialOrder != 0)
+        {
+            // No cavity to couple to: a mode with a circumferential order moves
+            // the same air in and out of the body and leaves its volume alone,
+            // so there is no eigenproblem here and no pair of branches - just
+            // the batter head's own mode, air-loaded and damped.
+            const auto order = static_cast<float> (radial.circumferentialOrder);
+            const float ideal =
+                drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
+            const float shape =
+                (2.4048f / radialLambda) / (1.0f + 0.6f * order);
+            const float load = 1.0f / std::sqrt (
+                1.0f + 0.85f * shape * airDensity * drum.radius / drum.batterDensity);
+
+            const float omega = 2.0f * piFloat * ideal * load;
+            const float frequency = omega / (2.0f * piFloat);
+            if (! (frequency > 0.0f) || frequency >= 20000.0f)
+                continue;
+
+            const float efficiency = radiationEfficiency (
+                radial.circumferentialOrder, omega * drum.radius / soundSpeed);
+            const float decay =
+                materialDamping (drum, omega, 0.0f)
+                + drum.radiationScale * airDensity * soundSpeed * efficiency
+                      / (2.0f * drum.batterDensity)
+                + drum.edgeLoss * (1.0f + edgeOrderFactor * order)
+                + mountingLoss (drum, frequency);
+
+            if (decay > 0.0f)
+                result.tailSeconds = std::max (result.tailSeconds, 6.9078f / decay);
+
+            continue;
+        }
+
         const float radialBatter =
             drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
         const float radialResonant =

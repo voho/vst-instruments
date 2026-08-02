@@ -376,6 +376,14 @@ private:
         float decayFixed { 0.0f };
         float lossOmega { 0.0f };
         float lossOmegaSquared { 0.0f };
+        // Radiation moves with the mode as well, through its efficiency: ka
+        // climbs with frequency and the efficiency climbs with it until the
+        // mode is large against the sound it makes. Everything in front of that
+        // - the calibration, the air, and how much volume the mode shifts - is
+        // fixed, so it is kept here and the efficiency re-evaluated at whatever
+        // frequency the head has been stretched to.
+        float radiationPrefactor { 0.0f };
+        std::uint8_t circumferentialOrder { 0 };
         // log(level / retirement floor), so the lifetime below can be redone
         // from a new decay rate without the whole bank's levels to hand. Zero
         // for a mode that was never audible.
@@ -451,6 +459,13 @@ private:
             float highStateRight2 { 0.0f };
             float lowCoefficient { 0.5f };
             float highCoefficient { 0.5f };
+            // What the rim takes from this band, which is a constant of the
+            // band and not of the tuning. The share is set by how many
+            // circumferential orders the head carries at this frequency - its
+            // dimensionless wavenumber, omega a / c - and stretching a head
+            // raises omega and c together, so that number does not move. Only
+            // the hide's share follows the bend.
+            float lossFixed { 0.0f };
             float level { 0.0f };
             float envelope { 0.0f };
             float envelopeDecay { 0.99f };
@@ -476,13 +491,15 @@ private:
         // re-evaluate it at the mode's new frequency.
         float mountLoss { 0.0f };
         float mountCorner { 80.0f };
-        // The continuum's decay as a function of where a band sits: a constant
-        // from the rim, a term in omega from the hide's hysteresis and the
-        // rim's per-order share, and one in omega squared from the hide's
-        // viscosity. Stored rather than summed so a retuned band can be
-        // re-damped exactly, instead of by scaling what it had - which
-        // compounds, and drifts with every block the glide runs.
-        float continuumLossFixed { 0.0f };
+        // The head's radius, for the ka that radiation efficiency is a function
+        // of. Stretching a head does not change its size.
+        float radiusMetres { 0.275f };
+        // The hide's share of the continuum's decay: a term in omega from its
+        // hysteresis and one in omega squared from its viscosity. Stored rather
+        // than summed so a retuned band can be re-damped exactly, instead of by
+        // scaling what it had - which compounds, and drifts with every block
+        // the glide runs. The rim's share is per band and does not move at all;
+        // it lives on the band, in lossFixed.
         float continuumLossOmega { 0.0f };
         float continuumLossOmegaSquared { 0.0f };
         // Added to every audible lifetime once the contact schedule is known,
