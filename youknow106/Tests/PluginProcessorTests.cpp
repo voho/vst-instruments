@@ -494,6 +494,133 @@ void testBusLayoutsAndTail()
 // check that makes relying on that model safe: it asks the real typeface, at
 // the real size, whether each legend actually draws inside its box. If the
 // model ever drifts optimistic, this fails on the macOS runner.
+// A patch dump has to reach the parameters, and the parameters have to come
+// back out as a message the hardware would accept. The DSP suite proves the
+// byte layout; this proves the plug-in is actually wired to it.
+void testSysExPatchRoundTripsThroughTheParameters()
+{
+    YouKnow106AudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    sysex::Patch sent {};
+    sent.cutoff = 0.25f;
+    sent.resonance = 0.75f;
+    sent.attack = 0.5f;
+    sent.range = DcoRange::Four;
+    sent.saw = false;
+    sent.pulse = true;
+    sent.vcaMode = VcaMode::Gate;
+    sent.highPass = HighPassMode::Boost;
+    sent.chorus = ChorusMode::One;
+
+    std::array<std::uint8_t, sysex::patchMessageBytes> raw {};
+    const auto written = sysex::writePatchMessage (sent, 0, raw.data(), raw.size());
+    expect (written > 0, "could not build a patch message");
+
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::createSysExMessage (
+                       raw.data() + 1, static_cast<int> (written) - 2),
+                   0);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    buffer.clear();
+    processor.processBlock (buffer, midi);
+
+    // The patch is applied on the message thread, so let it run.
+    for (int attempt = 0; attempt < 50; ++attempt)
+    {
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+        if (std::abs (parameterValue (processor, parameters::cutoff) - 0.25f) < 0.01f)
+            break;
+    }
+
+    expect (std::abs (parameterValue (processor, parameters::cutoff) - 0.25f) < 0.01f,
+            "a patch dump did not reach the cutoff parameter");
+    expect (std::abs (parameterValue (processor, parameters::resonance) - 0.75f) < 0.01f,
+            "a patch dump did not reach the resonance parameter");
+    expect (parameterValue (processor, parameters::saw) < 0.5f,
+            "a patch dump did not clear the saw switch");
+    expect (parameterValue (processor, parameters::pulse) > 0.5f,
+            "a patch dump did not set the pulse switch");
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f,
+            "a patch dump did not engage chorus I");
+    expect (parameterValue (processor, parameters::chorusII) < 0.5f,
+            "a patch dump engaged chorus II as well as I");
+
+    // Straight back out again.
+    const auto emitted = processor.currentPatchAsSysEx (0);
+    expect (emitted.isSysEx(), "the current patch did not come back out as sysex");
+    sysex::Patch returned {};
+    int channel = -1;
+    expect (sysex::readPatchMessage (emitted.getRawData(),
+                                     static_cast<std::size_t> (emitted.getRawDataSize()),
+                                     returned, channel),
+            "the emitted message was not readable");
+    expect (returned.range == DcoRange::Four, "the range did not survive the trip out");
+    expect (returned.vcaMode == VcaMode::Gate, "the VCA mode did not survive");
+    expect (returned.highPass == HighPassMode::Boost, "the high-pass did not survive");
+    expect (returned.chorus == ChorusMode::One, "the chorus mode did not survive");
+
+    processor.releaseResources();
+}
+
+// A malformed or foreign message must be ignored rather than half-applied.
+void testForeignSysExLeavesThePatchAlone()
+{
+    YouKnow106AudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+    const auto before = parameterValue (processor, parameters::cutoff);
+
+    const std::array<std::uint8_t, 6> body { 0x43, 0x30, 0x00, 0x01, 0x02, 0x03 };
+    juce::MidiBuffer midi;
+    midi.addEvent (juce::MidiMessage::createSysExMessage (body.data(),
+                                                          static_cast<int> (body.size())),
+                   0);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    buffer.clear();
+    processor.processBlock (buffer, midi);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (30);
+
+    expect (std::abs (parameterValue (processor, parameters::cutoff) - before) < 1.0e-6f,
+            "a foreign sysex message moved the patch");
+    processor.releaseResources();
+}
+
+void testFactoryProgramsLoad()
+{
+    YouKnow106AudioProcessor processor;
+    expect (processor.getNumPrograms() == presets::presetCount,
+            "the host does not see the whole factory bank");
+
+    for (int index = 0; index < processor.getNumPrograms(); ++index)
+        expect (processor.getProgramName (index).isNotEmpty(),
+                "a factory program has no name");
+    expect (processor.getProgramName (-1).isEmpty(),
+            "a negative program index returned a name");
+    expect (processor.getProgramName (processor.getNumPrograms()).isEmpty(),
+            "a program index past the end returned a name");
+
+    // Selecting a program has to move the patch controls and leave the
+    // performance controls alone, because the instrument does not store them.
+    setParameterValue (processor, parameters::volume, 0.42f);
+    setParameterValue (processor, parameters::portamento, 0.33f);
+    processor.setCurrentProgram (1);
+    expect (processor.getCurrentProgram() == 1, "the selected program was not kept");
+
+    const auto& expected = presets::factoryBank()[1].patch;
+    expect (std::abs (parameterValue (processor, parameters::cutoff) - expected.cutoff)
+                < 0.01f,
+            "selecting a program did not load its cutoff");
+    expect (std::abs (parameterValue (processor, parameters::volume) - 0.42f) < 1.0e-4f,
+            "loading a patch moved the volume, which is not part of a patch");
+    expect (std::abs (parameterValue (processor, parameters::portamento) - 0.33f)
+                < 1.0e-4f,
+            "loading a patch moved portamento, which is not part of a patch");
+
+    processor.setCurrentProgram (-1);
+    expect (processor.getCurrentProgram() == 1,
+            "an out-of-range program index changed the selection");
+}
+
 void testEveryPanelLegendFitsInTheRealFont()
 {
     const auto boldFont = [] (float height) {
@@ -618,6 +745,9 @@ int main()
     testStateRoundTripAndMigration();
     testRandomizerPreservesQualityAndLevel();
     testBusLayoutsAndTail();
+    testSysExPatchRoundTripsThroughTheParameters();
+    testForeignSysExLeavesThePatchAlone();
+    testFactoryProgramsLoad();
     testEveryPanelLegendFitsInTheRealFont();
     testEditorBuildsAndRenders();
 

@@ -3,6 +3,8 @@
 #include <JuceHeader.h>
 
 #include "DSP/YouKnow106Engine.h"
+#include "DSP/YouKnow106Presets.h"
+#include "DSP/YouKnow106SysEx.h"
 #include "DSP/YouKnow106Panel.h"
 
 #include <array>
@@ -12,7 +14,8 @@
 class YouKnow106AudioProcessorEditor;
 
 class YouKnow106AudioProcessor final : public juce::AudioProcessor,
-                                       private juce::MidiKeyboardState::Listener
+                                       private juce::MidiKeyboardState::Listener,
+                                       private juce::AsyncUpdater
 {
 public:
     YouKnow106AudioProcessor();
@@ -36,11 +39,22 @@ public:
     static constexpr double maximumTailLengthSeconds = 15.0;
     double getTailLengthSeconds() const override { return maximumTailLengthSeconds; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
+    // The factory bank is exposed as host programs, numbered the way the
+    // modelled instrument numbers its patches.
+    int getNumPrograms() override;
+    int getCurrentProgram() override;
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
+
+    // Applies a stored patch to the parameters. The controls a patch does not
+    // carry -- volume, the bender depths, portamento and the assign mode --
+    // are left where the player put them, exactly as on the hardware.
+    void applyPatch (const sysex::Patch& patch);
+    // The current panel settings as a patch.
+    sysex::Patch currentPatch() const;
+    // The current patch as a system-exclusive message the hardware would accept.
+    juce::MidiMessage currentPatchAsSysEx (int channel) const;
 
     void getStateInformation (juce::MemoryBlock& destinationData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
@@ -112,6 +126,10 @@ private:
     void discardUiMidiEvents() noexcept;
     void dispatchUiMidiEvents() noexcept;
     void updateEngineParameters() noexcept;
+    // Which factory program was last selected. Only a display value: the
+    // patch itself lives in the parameters once it is applied.
+    int currentProgram { 0 };
+
     float valueOf (const char* parameterId) const noexcept;
     int choiceOf (const char* parameterId, int maximum) const noexcept;
 
@@ -123,6 +141,13 @@ private:
     std::array<ParameterPointer, 37> parameterPointers {};
 
     youknow106::YouKnow106Engine engine;
+    // A patch that arrived over system exclusive. Parameters cannot be written
+    // from the audio callback -- that path notifies the host and may allocate --
+    // so the message is staged here and applied on the message thread.
+    void handleAsyncUpdate() override;
+    std::array<std::uint8_t, sysex::toneByteCount> pendingPatchBytes {};
+    std::atomic<bool> pendingPatchWaiting { false };
+
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };

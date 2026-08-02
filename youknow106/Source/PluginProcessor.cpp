@@ -492,6 +492,24 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         else if (message.isPitchWheel())
             engine.setPitchBend ((static_cast<float> (message.getPitchWheelValue())
                                   - 8192.0f) / 8192.0f);
+        else if (message.isSysEx())
+        {
+            // A patch dump from the hardware, or from a librarian speaking to
+            // it. The parameters cannot be written from here, so the tone bytes
+            // are staged and applied on the message thread. Only the newest
+            // dump in a block survives, which is what a bank transfer wants
+            // anyway: the last one is the one that was asked for.
+            sysex::Patch incoming {};
+            int channel = 0;
+            const auto* raw = message.getRawData();
+            const auto length = static_cast<std::size_t> (message.getRawDataSize());
+            if (sysex::readPatchMessage (raw, length, incoming, channel))
+            {
+                sysex::toneBytesFromPatch (incoming, pendingPatchBytes.data());
+                pendingPatchWaiting.store (true, std::memory_order_release);
+                triggerAsyncUpdate();
+            }
+        }
         else if (message.isController())
         {
             // The modelled instrument answers to modulation and hold, and to
@@ -739,4 +757,132 @@ juce::AudioProcessorEditor* YouKnow106AudioProcessor::createEditor()
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new YouKnow106AudioProcessor();
+}
+
+// ---------------------------------------------------------------------------
+// Patches and the factory bank
+// ---------------------------------------------------------------------------
+
+int YouKnow106AudioProcessor::getNumPrograms()
+{
+    return youknow106::presets::presetCount;
+}
+
+int YouKnow106AudioProcessor::getCurrentProgram()
+{
+    return currentProgram;
+}
+
+void YouKnow106AudioProcessor::setCurrentProgram (int index)
+{
+    const auto& bank = youknow106::presets::factoryBank();
+    if (index < 0 || index >= static_cast<int> (bank.size()))
+        return;
+    currentProgram = index;
+    applyPatch (bank[static_cast<std::size_t> (index)].patch);
+}
+
+const juce::String YouKnow106AudioProcessor::getProgramName (int index)
+{
+    const auto& bank = youknow106::presets::factoryBank();
+    if (index < 0 || index >= static_cast<int> (bank.size()))
+        return {};
+    const auto& preset = bank[static_cast<std::size_t> (index)];
+    return juce::String (preset.number) + " " + preset.name;
+}
+
+void YouKnow106AudioProcessor::applyPatch (const youknow106::sysex::Patch& patch)
+{
+    using namespace youknow106::parameters;
+
+    const auto set = [this] (const char* id, float value)
+    {
+        if (auto* parameter = parameters.getParameter (id))
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    };
+
+    set (lfoRate, patch.lfoRate);
+    set (lfoDelay, patch.lfoDelay);
+    set (dcoLfo, patch.dcoLfo);
+    set (pwm, patch.pwm);
+    set (noise, patch.noise);
+    set (cutoff, patch.cutoff);
+    set (resonance, patch.resonance);
+    set (vcfEnv, patch.vcfEnv);
+    set (vcfLfo, patch.vcfLfo);
+    set (keyFollow, patch.keyFollow);
+    set (vcaLevel, patch.vcaLevel);
+    set (attack, patch.attack);
+    set (decay, patch.decay);
+    set (sustain, patch.sustain);
+    set (release, patch.release);
+    set (sub, patch.sub);
+
+    set (range, static_cast<float> (patch.range));
+    set (saw, patch.saw ? 1.0f : 0.0f);
+    set (pulse, patch.pulse ? 1.0f : 0.0f);
+    set (pwmMode, static_cast<float> (patch.pwmSource));
+    set (vcaMode, static_cast<float> (patch.vcaMode));
+    set (envPolarity, static_cast<float> (patch.envPolarity));
+    set (highPass, static_cast<float> (patch.highPass));
+    set (chorusI, youknow106::chorusOneEngaged (patch.chorus) ? 1.0f : 0.0f);
+    set (chorusII, youknow106::chorusTwoEngaged (patch.chorus) ? 1.0f : 0.0f);
+
+    // Volume, the bender depths, portamento and the assign mode are performance
+    // controls. The instrument does not store them in a patch, so loading one
+    // deliberately leaves them where the player set them.
+}
+
+youknow106::sysex::Patch YouKnow106AudioProcessor::currentPatch() const
+{
+    using namespace youknow106::parameters;
+
+    youknow106::sysex::Patch patch {};
+    patch.lfoRate = valueOf (lfoRate);
+    patch.lfoDelay = valueOf (lfoDelay);
+    patch.dcoLfo = valueOf (dcoLfo);
+    patch.pwm = valueOf (pwm);
+    patch.noise = valueOf (noise);
+    patch.cutoff = valueOf (cutoff);
+    patch.resonance = valueOf (resonance);
+    patch.vcfEnv = valueOf (vcfEnv);
+    patch.vcfLfo = valueOf (vcfLfo);
+    patch.keyFollow = valueOf (keyFollow);
+    patch.vcaLevel = valueOf (vcaLevel);
+    patch.attack = valueOf (attack);
+    patch.decay = valueOf (decay);
+    patch.sustain = valueOf (sustain);
+    patch.release = valueOf (release);
+    patch.sub = valueOf (sub);
+
+    patch.range = static_cast<youknow106::DcoRange> (choiceOf (range, 2));
+    patch.saw = valueOf (saw) > 0.5f;
+    patch.pulse = valueOf (pulse) > 0.5f;
+    patch.pwmSource = static_cast<youknow106::PwmSource> (choiceOf (pwmMode, 1));
+    patch.vcaMode = static_cast<youknow106::VcaMode> (choiceOf (vcaMode, 1));
+    patch.envPolarity =
+        static_cast<youknow106::EnvPolarity> (choiceOf (envPolarity, 1));
+    patch.highPass = static_cast<youknow106::HighPassMode> (choiceOf (highPass, 3));
+    patch.chorus = youknow106::chorusModeFor (valueOf (chorusI) > 0.5f,
+                                              valueOf (chorusII) > 0.5f);
+    return patch;
+}
+
+juce::MidiMessage YouKnow106AudioProcessor::currentPatchAsSysEx (int channel) const
+{
+    std::array<std::uint8_t, youknow106::sysex::patchMessageBytes> raw {};
+    const auto written = youknow106::sysex::writePatchMessage (
+        currentPatch(), channel, raw.data(), raw.size());
+    if (written == 0)
+        return {};
+    // JUCE wants the body without the leading F0 and trailing F7.
+    return juce::MidiMessage::createSysExMessage (raw.data() + 1,
+                                                  static_cast<int> (written) - 2);
+}
+
+void YouKnow106AudioProcessor::handleAsyncUpdate()
+{
+    if (! pendingPatchWaiting.exchange (false, std::memory_order_acquire))
+        return;
+    applyPatch (youknow106::sysex::patchFromToneBytes (pendingPatchBytes.data()));
 }
