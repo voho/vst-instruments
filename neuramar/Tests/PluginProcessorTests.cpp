@@ -913,7 +913,9 @@ void testContractsAndLearning()
                 snapshotVariable, {});
             if (snapshotPath.isNotEmpty())
             {
-                juce::FileOutputStream output { juce::File (snapshotPath) };
+                const juce::File snapshotFile { snapshotPath };
+                snapshotFile.getParentDirectory().createDirectory();
+                juce::FileOutputStream output { snapshotFile };
                 juce::PNGImageFormat png;
                 const auto prepared = output.openedOk()
                                    && output.setPosition (0)

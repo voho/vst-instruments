@@ -876,7 +876,9 @@ void testEditorRendering()
         "DRUMALOR_EDITOR_SNAPSHOT", {});
     if (snapshotPath.isNotEmpty())
     {
-        juce::FileOutputStream output { juce::File (snapshotPath) };
+        const juce::File snapshotFile { snapshotPath };
+        snapshotFile.getParentDirectory().createDirectory();
+        juce::FileOutputStream output { snapshotFile };
         juce::PNGImageFormat png;
         const bool preparedOutput = output.openedOk()
             && output.setPosition (0)

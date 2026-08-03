@@ -86,12 +86,12 @@ namespace colour
 inline constexpr std::uint32_t faceplate     = 0x22252au; // matte slate charcoal
 inline constexpr std::uint32_t faceplateHigh = 0x2c3037u; // raised plastic
 inline constexpr std::uint32_t faceplateLow  = 0x191b1fu; // recessed plastic
-inline constexpr std::uint32_t magenta       = 0xff2a7au; // section highlight
-inline constexpr std::uint32_t cyan          = 0x00e5ffu; // section highlight
+inline constexpr std::uint32_t magenta       = 0xd0d5ddu; // neutral silver section accent line
+inline constexpr std::uint32_t cyan          = 0x8b929cu; // neutral cool grey section accent line
 inline constexpr std::uint32_t control       = 0xd0d5ddu; // cool silver-grey caps
 inline constexpr std::uint32_t controlShadow = 0x8b929cu;
-inline constexpr std::uint32_t led           = 0x39ff14u; // bright neon green
-inline constexpr std::uint32_t ledDim        = 0x163d0cu;
+inline constexpr std::uint32_t led           = 0xef233cu; // classic red hardware LED indicator
+inline constexpr std::uint32_t ledDim        = 0x3d0c11u; // dim red LED off state
 inline constexpr std::uint32_t text          = 0xe8ecf1u;
 inline constexpr std::uint32_t textDim       = 0x8b929cu;
 inline constexpr std::uint32_t slot          = 0x121417u; // slider cut-out

@@ -22,21 +22,33 @@ jobs:
           - name: Vocalor
             directory: vocalor
             build_plugin_option: VOCALOR_BUILD_PLUGIN
+            target_demo: VocalorRenderDemos
+            expected_demos: 9
           - name: Drumalor
             directory: drumalor
             build_plugin_option: DRUMALOR_BUILD_PLUGIN
+            target_demo: DrumalorRenderDemos
+            expected_demos: 7
           - name: Neuramar
             directory: neuramar
             build_plugin_option: NEURAMAR_BUILD_PLUGIN
+            target_demo: NeuramarRenderDemos
+            expected_demos: 8
           - name: Electry
             directory: electry
             build_plugin_option: ELECTRY_BUILD_PLUGIN
+            target_demo: ElectryRenderDemos
+            expected_demos: 14
           - name: Taikor
             directory: taikor
             build_plugin_option: TAIKOR_BUILD_PLUGIN
+            target_demo: TaikorRenderDemos
+            expected_demos: 23
           - name: YouKnow106
             directory: youknow106
             build_plugin_option: YOUKNOW106_BUILD_PLUGIN
+            target_demo: YouKnow106RenderDemos
+            expected_demos: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -49,11 +61,22 @@ jobs:
             "-D${{ matrix.build_plugin_option }}=OFF" \
             -DBUILD_TESTING=ON
 
-      - name: Build
-        run: cmake --build "${{ matrix.directory }}/build-dsp" --parallel
+      - name: Build and test DSP engine
+        run: |
+          cmake --build "${{ matrix.directory }}/build-dsp" --parallel
+          ctest --test-dir "${{ matrix.directory }}/build-dsp" --output-on-failure
 
-      - name: Test
-        run: ctest --test-dir "${{ matrix.directory }}/build-dsp" --output-on-failure
+      - name: Render and verify demo audio
+        run: |
+          set -euo pipefail
+          cmake --build "${{ matrix.directory }}/build-dsp" --target "${{ matrix.target_demo }}" --parallel
+          "./${{ matrix.directory }}/build-dsp/${{ matrix.target_demo }}" "${{ matrix.directory }}/Docs/audio"
+          rendered=$(find "${{ matrix.directory }}/Docs/audio" -maxdepth 1 -name '*.wav' | wc -l)
+          if (( rendered != ${{ matrix.expected_demos }} )); then
+            echo "error: rendered $rendered demo WAVs, expected ${{ matrix.expected_demos }}" >&2
+            exit 1
+          fi
+          echo "${{ matrix.name }}: rendered all $rendered demo WAVs"
 
   plugin-macos:
     name: Plug-in build (${{ matrix.name }}, macOS native arch)
@@ -64,18 +87,28 @@ jobs:
         include:
           - name: Vocalor
             directory: vocalor
+            snapshot_variable: VOCALOR_EDITOR_SNAPSHOT
           - name: Drumalor
             directory: drumalor
+            snapshot_variable: DRUMALOR_EDITOR_SNAPSHOT
           - name: Neuramar
             directory: neuramar
+            snapshot_variable: NEURAMAR_EDITOR_SNAPSHOT
           - name: Electry
             directory: electry
+            snapshot_variable: ELECTRY_EDITOR_SNAPSHOT
           - name: Taikor
             directory: taikor
+            snapshot_variable: TAIKOR_EDITOR_SNAPSHOT
           - name: YouKnow106
             directory: youknow106
+            snapshot_variable: YOUKNOW106_EDITOR_SNAPSHOT
     steps:
       - uses: actions/checkout@v4
+
+      # Clear any committed screenshot before rendering to ensure this build produces it
+      - name: Clear screenshot before rendering
+        run: rm -f "${{ matrix.directory }}/Docs/screenshots/${{ matrix.directory }}-standalone.png"
 
       # Native-arch only keeps per-push CI fast; the nightly workflow builds
       # the full arm64 + x86_64 universal binaries. Uses the same Xcode-based
@@ -84,4 +117,24 @@ jobs:
         working-directory: ${{ matrix.directory }}
         env:
           BUILD_UNIVERSAL: "OFF"
+          ${{ matrix.snapshot_variable }}: "${{ github.workspace }}/${{ matrix.directory }}/Docs/screenshots/${{ matrix.directory }}-standalone.png"
         run: ./scripts/build-macos.sh
+
+      - name: Check that the editor screenshot was rendered
+        run: |
+          set -euo pipefail
+          screenshot="${{ matrix.directory }}/Docs/screenshots/${{ matrix.directory }}-standalone.png"
+          if [[ ! -s "$screenshot" ]]; then
+            echo "error: ${{ matrix.name }}'s suite did not render $screenshot" >&2
+            echo "The suite must honour ${{ matrix.snapshot_variable }}." >&2
+            exit 1
+          fi
+          if [[ "$(head -c 8 "$screenshot" | od -An -tx1 | tr -d ' \n')" != "89504e470d0a1a0a" ]]; then
+            echo "error: $screenshot does not carry the PNG signature" >&2
+            exit 1
+          fi
+          if [[ "$(tail -c 8 "$screenshot" | od -An -tx1 | tr -d ' \n')" != "49454e44ae426082" ]]; then
+            echo "error: $screenshot has no terminating IEND chunk, so the write did not finish" >&2
+            exit 1
+          fi
+          echo "Rendered $screenshot ($(wc -c < "$screenshot") bytes)."

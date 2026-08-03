@@ -22,7 +22,7 @@ jobs:
   # renderer, and a run on an unchanged model commits nothing because every
   # render is deterministic.
   refresh-audio-demos:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     name: Re-render the committed demo audio of every instrument
     runs-on: ubuntu-latest
     steps:
@@ -177,7 +177,7 @@ jobs:
   # release; now a failure is contained to its own instrument, and the six
   # builds run concurrently instead of end to end.
   build-macos:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     name: Universal build and package (${{ matrix.name }})
     runs-on: macos-latest
     strategy:
@@ -306,7 +306,7 @@ jobs:
   # instrument failed to build: the screenshots that were rendered are still
   # worth committing, and the missing ones are reported at the end.
   commit-screenshots:
-    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') }}
     name: Commit the regenerated editor screenshots
     needs: build-macos
     runs-on: ubuntu-latest
@@ -425,7 +425,7 @@ jobs:
   # stable public download URL. It needs every instrument, so it runs only when
   # all six built: a release is a complete set or it is not published at all.
   publish-release:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     name: Publish the rolling nightly release
     needs: build-macos
     runs-on: ubuntu-latest
