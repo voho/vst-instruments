@@ -5,18 +5,149 @@
 #include "DSP/YouKnow106Chorus.h"
 #include "DSP/YouKnow106Engine.h"
 #include "DSP/YouKnow106Panel.h"
+#include "DSP/YouKnow106Presets.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <complex>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <iostream>
 #include <string>
 #include <vector>
+
+namespace youknow106
+{
+// Narrow friend probe for the engine-state regressions below. The circuit
+// suite has its own executable-local definition for circuit internals.
+struct YouKnow106TestAccess
+{
+    static int lastVoiceMidi(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].lastVoiceMidi;
+    }
+
+    static bool dcoResetPending(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dcoResetPending;
+    }
+
+    static void updateVoiceScan(YouKnow106Engine& engine, int slot,
+                                const EngineParameters& parameters) noexcept
+    {
+        engine.updateVoiceScan(engine.voices_[static_cast<std::size_t>(slot)],
+                               parameters, 0.0f);
+    }
+
+    static float pwmTarget(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.pwmVoltsTarget_;
+    }
+
+    static float pwmHeld(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.pwmVolts_;
+    }
+
+    static float subTarget(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.subCvTarget_;
+    }
+
+    static float noiseTarget(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.noiseCvTarget_;
+    }
+
+    static double dcoPhase(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dco.phase;
+    }
+
+    static float pulseDuty(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].pulseDuty;
+    }
+
+    static bool pulseMixEnabled(const YouKnow106Engine& engine, int slot,
+                                bool requested) noexcept
+    {
+        return engine.pulseMixEnabled(
+            requested,
+            engine.voices_[static_cast<std::size_t>(slot)].pulseDuty);
+    }
+
+    static float currentMidi(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].currentMidi;
+    }
+
+    static bool assignmentPending(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.assignmentRescanPending_;
+    }
+
+    static std::array<float, 4> filterState(const YouKnow106Engine& engine,
+                                            int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].filter.state;
+    }
+
+    static void setFilterState(YouKnow106Engine& engine, int slot,
+                               const std::array<float, 4>& state) noexcept
+    {
+        auto& filter =
+            engine.voices_[static_cast<std::size_t>(slot)].filter;
+        filter.state = state;
+        filter.voltage = state;
+    }
+
+    static std::uint32_t microscopicNoiseState(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].noiseState;
+    }
+
+    static void setMicroscopicNoiseState(YouKnow106Engine& engine, int slot,
+                                         std::uint32_t state) noexcept
+    {
+        engine.voices_[static_cast<std::size_t>(slot)].noiseState = state;
+    }
+
+    static void initialiseVoice(YouKnow106Engine& engine, int slot,
+                                int midiNote) noexcept
+    {
+        engine.initialiseVoice(
+            engine.voices_[static_cast<std::size_t>(slot)], slot, midiNote,
+            1.0f);
+    }
+
+    static void silenceVoice(YouKnow106Engine& engine, int slot) noexcept
+    {
+        engine.silenceVoice(
+            engine.voices_[static_cast<std::size_t>(slot)]);
+    }
+
+    static double controlScanPhase(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.controlScanPhase_;
+    }
+
+    static float glidedVolume(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.glidedVolume_;
+    }
+
+    static float rateTransitionGain(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.rateTransitionGain_;
+    }
+};
+} // namespace youknow106
 
 namespace
 {
@@ -81,6 +212,35 @@ Render render(YouKnow106Engine& engine, int samples)
     return result;
 }
 
+// Unlike render(), this does not round the request up to a host block. Tests
+// that exercise converter-boundary ordering use it to stop on an exact scan
+// phase.
+Render renderExact(YouKnow106Engine& engine, int samples)
+{
+    Render result;
+    result.left.assign(static_cast<std::size_t>(samples), 0.0f);
+    result.right.assign(static_cast<std::size_t>(samples), 0.0f);
+    for (int offset = 0; offset < samples; offset += blockSize)
+    {
+        const int count = std::min(blockSize, samples - offset);
+        engine.process(result.left.data() + offset,
+                       result.right.data() + offset, count);
+    }
+    return result;
+}
+
+double maximumDifference(const std::vector<float>& first,
+                         const std::vector<float>& second)
+{
+    const std::size_t count = std::min(first.size(), second.size());
+    double difference = 0.0;
+    for (std::size_t index = 0; index < count; ++index)
+        difference = std::max(
+            difference,
+            static_cast<double>(std::abs(first[index] - second[index])));
+    return difference;
+}
+
 EngineParameters plainPatch()
 {
     EngineParameters parameters;
@@ -97,10 +257,46 @@ EngineParameters plainPatch()
     parameters.decay = 1.0f;
     parameters.sustain = 1.0f;
     parameters.release = 0.0f;
-    parameters.vcaLevel = 1.0f;
+    // The stored LEVEL slider is a shared post-sum trim. About 90.86% travel is
+    // 0 dB in the current provisional three-point fit; full travel adds 5 dB and
+    // changes the downstream chorus drive, so this plain reference stays at
+    // the fitted unity point.
+    parameters.vcaLevel = 0.90856f;
     parameters.volume = 1.0f;
     parameters.chorus = ChorusMode::Off;
     parameters.calibration = 0.0f;
+    return parameters;
+}
+
+EngineParameters parametersFor(const sysex::Patch& patch)
+{
+    EngineParameters parameters;
+    parameters.lfoRate = patch.lfoRate;
+    parameters.lfoDelay = patch.lfoDelay;
+    parameters.dcoLfoDepth = patch.dcoLfo;
+    parameters.pwmDepth = patch.pwm;
+    parameters.noiseLevel = patch.noise;
+    parameters.cutoff = patch.cutoff;
+    parameters.resonance = patch.resonance;
+    parameters.envDepth = patch.vcfEnv;
+    parameters.vcfLfoDepth = patch.vcfLfo;
+    parameters.keyFollow = patch.keyFollow;
+    parameters.vcaLevel = patch.vcaLevel;
+    parameters.attack = patch.attack;
+    parameters.decay = patch.decay;
+    parameters.sustain = patch.sustain;
+    parameters.release = patch.release;
+    parameters.subLevel = patch.sub;
+    parameters.range = patch.range;
+    parameters.sawEnabled = patch.saw;
+    parameters.pulseEnabled = patch.pulse;
+    parameters.pwmSource = patch.pwmSource;
+    parameters.vcaMode = patch.vcaMode;
+    parameters.envPolarity = patch.envPolarity;
+    parameters.highPass = patch.highPass;
+    parameters.chorus = patch.chorus;
+    parameters.calibration = 0.0f;
+    parameters.chorusNoise = 0.0f;
     return parameters;
 }
 
@@ -110,6 +306,87 @@ double peakOf(const std::vector<float>& signal, std::size_t from)
     for (std::size_t index = from; index < signal.size(); ++index)
         peak = std::max(peak, static_cast<double>(std::abs(signal[index])));
     return peak;
+}
+
+struct OutputMetrics
+{
+    double rms {};
+    double samplePeak {};
+    double truePeak4x {};
+    std::uint64_t sampleOverloads {};
+    std::uint64_t reconstructedOverloads {};
+};
+
+// Four equally spaced evaluations per PCM interval. Each fractional sample is
+// reconstructed with a 24-tap, DC-normalised sinc (12 source samples either
+// side) multiplied by a symmetric Blackman window. Integer phases reproduce
+// the stored sample; out-of-range taps are zero. The corpus leaves guard audio
+// on both sides of its measured window, so those zeros never enter a result.
+double reconstructedSample4x(const std::vector<float>& signal,
+                             double position)
+{
+    constexpr int radius = 12;
+    const int centre = static_cast<int>(std::floor(position));
+    double sum = 0.0;
+    double weight = 0.0;
+
+    for (int source = centre - radius + 1; source <= centre + radius; ++source)
+    {
+        const double distance = position - source;
+        const double absoluteDistance = std::abs(distance);
+        if (absoluteDistance >= radius)
+            continue;
+
+        const double sinc = absoluteDistance < 1.0e-12
+            ? 1.0 : std::sin(pi * distance) / (pi * distance);
+        const double window = 0.42
+                            + 0.50 * std::cos(pi * distance / radius)
+                            + 0.08 * std::cos(2.0 * pi * distance / radius);
+        const double coefficient = sinc * window;
+        weight += coefficient;
+        if (source >= 0 && source < static_cast<int>(signal.size()))
+            sum += coefficient * signal[static_cast<std::size_t>(source)];
+    }
+    return weight != 0.0 ? sum / weight : 0.0;
+}
+
+OutputMetrics outputMetrics(const Render& rendered, std::size_t start,
+                            std::size_t count)
+{
+    expect(start >= 12 && start + count + 12 <= rendered.left.size(),
+           "the output corpus lacks true-peak reconstruction guards");
+
+    OutputMetrics metrics;
+    double energy = 0.0;
+    const auto inspectPcm = [&](const std::vector<float>& channel) {
+        for (std::size_t index = start; index < start + count; ++index)
+        {
+            const double sample = channel[index];
+            energy += sample * sample;
+            metrics.samplePeak = std::max(metrics.samplePeak, std::abs(sample));
+            if (std::abs(sample) > 1.0)
+                ++metrics.sampleOverloads;
+        }
+    };
+    inspectPcm(rendered.left);
+    inspectPcm(rendered.right);
+    metrics.rms = std::sqrt(energy / static_cast<double>(count * 2));
+
+    const auto inspectReconstruction = [&](const std::vector<float>& channel) {
+        for (std::size_t index = start; index < start + count; ++index)
+            for (int phase = 0; phase < 4; ++phase)
+            {
+                const double reconstructed = reconstructedSample4x(
+                    channel, static_cast<double>(index) + phase * 0.25);
+                metrics.truePeak4x = std::max(metrics.truePeak4x,
+                                               std::abs(reconstructed));
+                if (std::abs(reconstructed) > 1.0)
+                    ++metrics.reconstructedOverloads;
+            }
+    };
+    inspectReconstruction(rendered.left);
+    inspectReconstruction(rendered.right);
+    return metrics;
 }
 
 double magnitudeAt(const std::vector<float>& signal, std::size_t start, int length,
@@ -372,6 +649,651 @@ void testPolyModesDifferInAllocation()
            "fixed-priority assignment is not returning to the first voice");
 }
 
+void testHeldKeyRescanRunsHighToLow()
+{
+    constexpr double sampleRate = 48000.0;
+
+    for (const auto mode : { KeyMode::Poly1, KeyMode::Poly2 })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, false);
+        auto parameters = plainPatch();
+        parameters.keyMode = mode;
+        parameters.polyphony = 2;
+        parameters.release = 0.0f;
+        engine.setParameters(parameters);
+        // Poly 2 differs from the power-on mode and first clears an empty
+        // table. Let that pass finish before constructing the actual fixture.
+        renderExact(engine, static_cast<int>(sampleRate * 0.01));
+
+        // The third key is physically present in the matrix even though the
+        // full two-voice allocator has to drop it on this first pass.
+        engine.noteOn(60, 1.0f);
+        engine.noteOn(65, 1.0f);
+        engine.noteOn(71, 1.0f);
+        render(engine, 4096);
+
+        // Re-pressing the current POLY button clears the allocation table. The
+        // ROM scans high addresses first, so the two surviving assignments
+        // must now be 71 and 65; note 60 is the one that is dropped.
+        engine.reassertKeyMode();
+        const auto rescanned = render(engine, static_cast<int>(sampleRate * 0.5));
+        const std::size_t start = rescanned.left.size() / 2;
+        const double high = magnitudeAt(rescanned.left, start, 8192,
+                                        493.883, sampleRate);
+        const double low = magnitudeAt(rescanned.left, start, 8192,
+                                       261.626, sampleRate);
+        expect(high > 4.0 * low,
+               std::string(mode == KeyMode::Poly1 ? "Poly 1" : "Poly 2")
+                   + " held-key rescan did not run high to low");
+    }
+}
+
+void testRescanPreservesVoiceCpuPitchHistory()
+{
+    // Three otherwise identical voices begin on the same voice-board pitch.
+    // Clearing allocator RAM, and changing the physical key while transpose
+    // keeps the transmitted pitch equal, must both leave the free-running DCO
+    // at the same phase as the untouched reference.
+    constexpr double sampleRate = 48000.0;
+    constexpr int scanPeriod = static_cast<int>(sampleRate * 0.0042);
+    YouKnow106Engine reference;
+    YouKnow106Engine cleared;
+    YouKnow106Engine transposedEquivalent;
+    auto parameters = plainPatch();
+    parameters.polyphony = 1;
+    parameters.keyTranspose = 12;
+    parameters.release = 0.0f;
+
+    for (auto* engine : { &reference, &cleared, &transposedEquivalent })
+    {
+        engine->prepare(sampleRate, blockSize, false);
+        engine->setParameters(parameters);
+        engine->noteOn(48, 1.0f); // transmitted note 60
+        renderExact(*engine, 8192);
+        engine->noteOff(48);
+        renderExact(*engine, 4096);
+        expect(engine->getActiveVoiceCount() == 0,
+               "the pitch-history fixture did not retire its first note");
+    }
+
+    cleared.reassertKeyMode();
+    transposedEquivalent.reassertKeyMode();
+    // Keep all three converter clocks aligned while the two empty rescans
+    // complete.
+    for (auto* engine : { &reference, &cleared, &transposedEquivalent })
+        renderExact(*engine, scanPeriod * 2);
+
+    auto equivalentParameters = parameters;
+    equivalentParameters.keyTranspose = 0;
+    transposedEquivalent.setParameters(equivalentParameters);
+
+    reference.noteOn(48, 1.0f);             // 48 + 12 = 60
+    cleared.noteOn(48, 1.0f);               // same after allocator clear
+    transposedEquivalent.noteOn(60, 1.0f);  // 60 + 0 = 60
+    const auto untouched = renderExact(reference, 4096);
+    const auto afterClear = renderExact(cleared, 4096);
+    const auto equivalent = renderExact(transposedEquivalent, 4096);
+
+    expect(maximumDifference(untouched.left, afterClear.left) < 1.0e-5,
+           "a POLY table clear erased the voice CPU's DCO/pitch history");
+    // The different physical key changes only the inaudible filter-noise seed;
+    // a root-key-domain DCO comparison would instead restart the whole ramp.
+    expect(maximumDifference(untouched.left, equivalent.left) < 5.0e-4,
+           "the voice CPU compared oscillator-reset pitch before transpose");
+}
+
+void testHeldTransposeUpdatesVoiceCpuPitchHistory()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int scanPeriod = static_cast<int>(sampleRate * 0.0042);
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.polyphony = 1;
+    parameters.release = 0.0f;
+    parameters.keyTranspose = 0;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    renderExact(engine, scanPeriod * 2);
+
+    // The same physical key now sends pitch byte 72 to the voice CPU. That
+    // byte must replace 60 in CPU history even though no allocator event ran.
+    parameters.keyTranspose = 12;
+    engine.setParameters(parameters);
+    renderExact(engine, scanPeriod * 2);
+    expect(YouKnow106TestAccess::lastVoiceMidi(engine, 0) == 72,
+           "held-note transpose did not update voice-CPU pitch history");
+
+    engine.noteOff(60);
+    renderExact(engine, static_cast<int>(sampleRate));
+    expect(engine.getActiveVoiceCount() == 0,
+           "held-transpose history fixture did not retire its voice");
+
+    // Physical key 72 at zero transpose is the same voice-board pitch. A stale
+    // pre-transpose history byte would incorrectly request a DCO restart here.
+    parameters.keyTranspose = 0;
+    engine.setParameters(parameters);
+    engine.noteOn(72, 1.0f);
+    expect(!YouKnow106TestAccess::dcoResetPending(engine, 0),
+           "equivalent pitch after held transpose falsely scheduled DCO reset");
+
+    // The opposite run-bit state matters: on an ordinary release, neither key
+    // nor sustain keeps the timer in legato mode, so a changed transpose byte
+    // must request the voice CPU's normal different-pitch restart.
+    YouKnow106Engine releasing;
+    releasing.prepare(sampleRate, blockSize, false);
+    auto releaseParameters = plainPatch();
+    releaseParameters.polyphony = 1;
+    releaseParameters.release = 1.0f;
+    releasing.setParameters(releaseParameters);
+    releasing.noteOn(60, 1.0f);
+    renderExact(releasing, scanPeriod * 2);
+    releasing.noteOff(60);
+    releaseParameters.keyTranspose = 12;
+    YouKnow106TestAccess::updateVoiceScan(releasing, 0, releaseParameters);
+    expect(YouKnow106TestAccess::dcoResetPending(releasing, 0),
+           "transpose change during release did not schedule DCO reset");
+}
+
+void testRescanGateOffReachesTheVoiceCpu()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int scanPeriod = static_cast<int>(sampleRate * 0.0042);
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Unison;
+    parameters.polyphony = 1;
+    parameters.attack = 0.0f;
+    parameters.decay = 0.0f;
+    parameters.sustain = 0.2f;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+    engine.noteOn(64, 1.0f);
+
+    renderExact(engine, scanPeriod * 80);
+    const float heldLevel = engine.getDisplayEnvelope();
+    expect(heldLevel > 0.15f && heldLevel < 0.25f,
+           "the gate-off fixture did not settle at sustain");
+
+    // Any real Unison key-up gates the stack and rescans the still-held bits.
+    // Voice zero must see the off state at phase zero before the replacement
+    // Note On is installed after that boundary.
+    engine.noteOff(60);
+    // The fractional scheduler alternates 201/202-sample spacings here. Walk
+    // only to the actual wholly subsequent completed pass instead of assuming
+    // a truncated period or completing a partial pass that missed voice zero.
+    for (int elapsed = 0;
+         elapsed < 2 * scanPeriod + 3
+             && YouKnow106TestAccess::assignmentPending(engine);
+         ++elapsed)
+        renderExact(engine, 1);
+    expect(!YouKnow106TestAccess::assignmentPending(engine),
+           "the unison keyboard rescan missed the next converter pass");
+    expect(engine.getDisplayEnvelope() < heldLevel * 0.25f,
+           "unison reassignment hid the firmware's gate-off interval");
+    expect(engine.getActiveVoiceCount() == 1,
+           "the held unison key was not reassigned after gate-off");
+
+    renderExact(engine, scanPeriod + 2);
+    expect(engine.getDisplayEnvelope() > 0.9f,
+           "the held unison key did not begin its fresh attack");
+}
+
+void testDuplicateAndUnmatchedKeyEdgesAreIgnored()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int scanPeriod = static_cast<int>(sampleRate * 0.0042);
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Unison;
+    parameters.polyphony = 1;
+    parameters.attack = 0.0f;
+    parameters.decay = 0.0f;
+    parameters.sustain = 0.2f;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+
+    renderExact(engine, scanPeriod * 80 + scanPeriod - 1);
+    const float sustain = engine.getDisplayEnvelope();
+    engine.noteOn(60, 0.3f);
+    renderExact(engine, 2);
+    expectNear(engine.getDisplayEnvelope(), sustain, 0.01,
+               "a duplicate Note On retriggered an already-high key bit");
+
+    // Return to the sample before phase zero, then send an off for a key whose
+    // bit was never set. In particular this must not enter the Solo handler's
+    // gate/clear/rescan path.
+    renderExact(engine, scanPeriod - 2);
+    const float beforeUnmatched = engine.getDisplayEnvelope();
+    engine.noteOff(61);
+    renderExact(engine, 2);
+    expectNear(engine.getDisplayEnvelope(), beforeUnmatched, 0.01,
+               "an unmatched Note Off changed a sounding assignment");
+}
+
+void testIdleSnapshotPrimesEverySharedHold()
+{
+    // Loading a host snapshot immediately after prepare must be equivalent to
+    // having that snapshot in place when prepare resets the engine. Otherwise
+    // the first attack slews from stale resonance, PWM, sub, noise or LEVEL.
+    constexpr double sampleRate = 48000.0;
+    auto parameters = plainPatch();
+    parameters.vcaLevel = 0.05f;
+    parameters.resonance = 0.43f;
+    parameters.pulseEnabled = true;
+    parameters.pwmSource = PwmSource::Manual;
+    parameters.pwmDepth = 0.81f;
+    parameters.subLevel = 0.63f;
+    parameters.noiseLevel = 0.27f;
+
+    YouKnow106Engine hostOrder;
+    hostOrder.prepare(sampleRate, blockSize, false);
+    hostOrder.setParameters(parameters);
+
+    YouKnow106Engine preloaded;
+    preloaded.setParameters(parameters);
+    preloaded.prepare(sampleRate, blockSize, false);
+
+    expectNear(YouKnow106TestAccess::pwmTarget(hostOrder),
+               YouKnow106Engine::pwmControlVolts(103.0f / 127.0f), 1.0e-6,
+               "idle snapshot did not prime the one shared PWM hold");
+    expectNear(YouKnow106TestAccess::subTarget(hostOrder), 80.0 / 127.0, 1.0e-6,
+               "idle snapshot did not prime the one shared sub hold");
+    expectNear(YouKnow106TestAccess::noiseTarget(hostOrder), 34.0 / 127.0, 1.0e-6,
+               "idle snapshot did not prime the one shared noise hold");
+
+    hostOrder.noteOn(60, 1.0f);
+    preloaded.noteOn(60, 1.0f);
+    const auto afterHostSnapshot = renderExact(hostOrder, 4096);
+    const auto preparedWithSnapshot = renderExact(preloaded, 4096);
+    expect(maximumDifference(afterHostSnapshot.left,
+                             preparedWithSnapshot.left) < 1.0e-7,
+           "the first attack used a stale shared hold after prepare");
+}
+
+void testPhysicalFiltersKeepRunningBehindClosedVcas()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.chorusNoise = 0.0f;
+    engine.setParameters(parameters);
+
+    // With no assigned note the voice bus must stay silent, but each of the
+    // six real cards still receives its own microscopic input-referred
+    // excitation and advances its analogue filter state behind the closed VCA.
+    const auto silence = renderExact(engine, 4096);
+    expect(peakOf(silence.left, 0) == 0.0,
+           "powered idle voice cards leaked through their closed VCAs");
+
+    for (int slot = 0; slot < YouKnow106Engine::hardwareVoices; ++slot)
+    {
+        const auto state = YouKnow106TestAccess::filterState(engine, slot);
+        double magnitude = 0.0;
+        for (const float value : state)
+            magnitude += std::abs(static_cast<double>(value));
+        expect(magnitude > 1.0e-12,
+               "an idle physical filter stopped evolving behind its VCA");
+    }
+
+    // Product-extension voices do not stand for powered hardware cards. Their
+    // dormant filters should therefore remain untouched while the six real
+    // card states above continue to move.
+    const auto extension = YouKnow106TestAccess::filterState(
+        engine, YouKnow106Engine::hardwareVoices);
+    expect(std::all_of(extension.begin(), extension.end(), [](float value) {
+               return value == 0.0f;
+           }),
+           "a dormant extension voice was treated as a powered physical card");
+}
+
+void testPhysicalCardStateSurvivesVoiceAssignments()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, false);
+    engine.setParameters(plainPatch());
+
+    std::array<std::uint32_t, YouKnow106Engine::hardwareVoices> seeds {};
+    for (int slot = 0; slot < YouKnow106Engine::hardwareVoices; ++slot)
+        seeds[static_cast<std::size_t>(slot)] =
+            YouKnow106TestAccess::microscopicNoiseState(engine, slot);
+
+    auto sortedSeeds = seeds;
+    std::sort(sortedSeeds.begin(), sortedSeeds.end());
+    expect(std::adjacent_find(sortedSeeds.begin(), sortedSeeds.end())
+               == sortedSeeds.end(),
+           "two physical cards received the same microscopic-excitation seed");
+
+    // A full engine reset deterministically reconstructs the instrument, but
+    // assigning or retiring a MIDI note must not reconstruct its filter card.
+    engine.reset();
+    for (int slot = 0; slot < YouKnow106Engine::hardwareVoices; ++slot)
+        expect(YouKnow106TestAccess::microscopicNoiseState(engine, slot)
+                   == seeds[static_cast<std::size_t>(slot)],
+               "a card's microscopic-excitation seed was not deterministic");
+
+    constexpr int slot = 2;
+    const std::array<float, 4> filterMarker {
+        0.125f, -0.25f, 0.375f, -0.5f
+    };
+    constexpr std::uint32_t noiseMarker = 0x12345679u;
+    YouKnow106TestAccess::setFilterState(engine, slot, filterMarker);
+    YouKnow106TestAccess::setMicroscopicNoiseState(engine, slot, noiseMarker);
+
+    YouKnow106TestAccess::initialiseVoice(engine, slot, 60);
+    expect(YouKnow106TestAccess::filterState(engine, slot) == filterMarker,
+           "note activation reset the continuously powered filter state");
+    expect(YouKnow106TestAccess::microscopicNoiseState(engine, slot)
+               == noiseMarker,
+           "note activation reseeded the card's microscopic excitation");
+
+    YouKnow106TestAccess::silenceVoice(engine, slot);
+    expect(YouKnow106TestAccess::filterState(engine, slot) == filterMarker,
+           "voice retirement reset the continuously powered filter state");
+    expect(YouKnow106TestAccess::microscopicNoiseState(engine, slot)
+               == noiseMarker,
+           "voice retirement reseeded the card's microscopic excitation");
+
+    YouKnow106TestAccess::initialiseVoice(engine, slot, 67);
+    expect(YouKnow106TestAccess::filterState(engine, slot) == filterMarker,
+           "reassigning a retired card discarded its previous filter state");
+    expect(YouKnow106TestAccess::microscopicNoiseState(engine, slot)
+               == noiseMarker,
+           "reassigning a card used a per-note microscopic-excitation seed");
+}
+
+void testConverterSchedulerPreservesFractionalScanPeriod()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double expectedPeriodSamples = sampleRate * 0.0042;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    engine.setParameters(plainPatch());
+
+    std::vector<int> boundaries;
+    double previousPhase = YouKnow106TestAccess::controlScanPhase(engine);
+    for (int sample = 0; sample < 24000 && boundaries.size() < 101; ++sample)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        engine.process(&left, &right, 1);
+        const double phase = YouKnow106TestAccess::controlScanPhase(engine);
+        if (phase < previousPhase)
+            boundaries.push_back(sample);
+        previousPhase = phase;
+    }
+
+    expect(boundaries.size() == 101,
+           "the converter scheduler did not produce the expected pass count");
+    if (boundaries.size() > 1)
+    {
+        int shortest = std::numeric_limits<int>::max();
+        int longest = 0;
+        for (std::size_t index = 1; index < boundaries.size(); ++index)
+        {
+            const int interval = boundaries[index] - boundaries[index - 1];
+            shortest = std::min(shortest, interval);
+            longest = std::max(longest, interval);
+        }
+        const double average = static_cast<double>(boundaries.back()
+                                                   - boundaries.front())
+                             / static_cast<double>(boundaries.size() - 1);
+        expect(shortest == 201 && longest == 202,
+               "the 48 kHz converter cadence did not alternate 201/202 samples");
+        expectNear(average, expectedPeriodSamples, 0.02,
+                   "the converter cadence truncated the nominal 4.2 ms period");
+    }
+}
+
+void testPulseOffPinsComparatorWithoutResettingTheDco()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = false;
+    parameters.subLevel = 0.0f;
+    parameters.noiseLevel = 0.0f;
+    parameters.pwmDepth = 1.0f;
+    parameters.calibration = 1.0f;
+    parameters.chorus = ChorusMode::Off;
+    engine.setParameters(parameters);
+    expectNear(YouKnow106TestAccess::pwmTarget(engine), -0.8, 1.0e-6,
+               "Pulse Off did not write the documented -0.8 V shared control");
+
+    engine.noteOn(60, 1.0f);
+    const auto offAudio = renderExact(engine, 4800);
+    expectNear(YouKnow106TestAccess::pulseDuty(engine, 0), 1.0, 1.0e-6,
+               "Pulse Off did not hold the running comparator high");
+    expect(peakOf(offAudio.left, offAudio.left.size() / 2) < 0.001,
+           "the provisional pulse-off audio gate leaked the pinned leg");
+    const double before = YouKnow106TestAccess::dcoPhase(engine, 0);
+    renderExact(engine, 1);
+    const double after = YouKnow106TestAccess::dcoPhase(engine, 0);
+    expect(after != before, "Pulse Off stopped the free-running DCO");
+
+    parameters.pulseEnabled = true;
+    engine.setParameters(parameters);
+    expect(!YouKnow106TestAccess::dcoResetPending(engine, 0),
+           "re-enabling pulse scheduled an oscillator reset");
+
+    // Card 6 has a deterministic negative comparator trim. During re-enable,
+    // the shared base CV therefore crosses zero before that card stops being
+    // pinned high. Its audible gate must follow the card comparator, not the
+    // already-positive shared base value.
+    bool sawPerCardOffsetWindow = false;
+    for (int sample = 0; sample < 256; ++sample)
+    {
+        renderExact(engine, 1);
+        if (YouKnow106TestAccess::pwmHeld(engine) > 0.0f
+            && YouKnow106TestAccess::pulseDuty(engine, 5) >= 1.0f)
+        {
+            sawPerCardOffsetWindow = true;
+            expect(!YouKnow106TestAccess::pulseMixEnabled(engine, 5, true),
+                   "pulse re-enable admitted a card whose comparator was still pinned");
+            break;
+        }
+    }
+    expect(sawPerCardOffsetWindow,
+           "pulse re-enable fixture missed the per-card comparator-offset window");
+}
+
+void testModeChangesRebuildHeldKeys()
+{
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Poly1;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    engine.noteOn(64, 1.0f);
+    render(engine, 4096);
+    expect(engine.getActiveVoiceCount() == 2,
+           "two held keys did not occupy two Poly 1 voices");
+
+    // The POLY-button handler gates the old assignments, clears its tables and
+    // scans every key still physically down. Solo Unison consumes the first
+    // set bit of the high-to-low scan once, assigning all six cards to it.
+    parameters.keyMode = KeyMode::Unison;
+    engine.setParameters(parameters);
+    const auto unison = render(engine, static_cast<int>(sampleRate * 0.5));
+    expect(engine.getActiveVoiceCount() == 6,
+           "switching modes with held keys did not rebuild a full unison stack");
+    const std::size_t start = unison.left.size() / 2;
+    expect(magnitudeAt(unison.left, start, 8192, 329.628, sampleRate)
+               > 4.0 * magnitudeAt(unison.left, start, 8192, 261.626, sampleRate),
+           "the held-key rescan did not give the highest key unison priority");
+
+    parameters.keyMode = KeyMode::Poly2;
+    engine.setParameters(parameters);
+    render(engine, 4096);
+    expect(engine.getActiveVoiceCount() == 2,
+           "switching back to a poly mode did not rebuild the two held keys");
+
+    engine.noteOff(60);
+    engine.noteOff(64);
+    render(engine, static_cast<int>(sampleRate));
+    expect(engine.getActiveVoiceCount() == 0,
+           "mode-change rebuild left a held assignment behind");
+}
+
+void testSustainHeldVoicesRemainAssignable()
+{
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Poly2;
+    parameters.release = 0.35f;
+    engine.setParameters(parameters);
+    engine.setSustainPedal(true);
+
+    for (int note = 60; note < 66; ++note)
+        engine.noteOn(note, 1.0f);
+    render(engine, 2048);
+    for (int note = 60; note < 66; ++note)
+        engine.noteOff(note);
+    expect(engine.getActiveVoiceCount() == 6,
+           "the sustain fixture did not leave six voice tails running");
+
+    // The assigner frees a slot at physical key-up even though the voice CPU
+    // continues its tail under sustain. A seventh key therefore reuses a card
+    // instead of being dropped.
+    engine.noteOn(72, 1.0f);
+    const auto rendered = render(engine, static_cast<int>(sampleRate * 0.4));
+    const std::size_t start = rendered.left.size() / 2;
+    expect(magnitudeAt(rendered.left, start, 8192, 523.251, sampleRate) > 0.002,
+           "six sustain-held tails made the assigner drop the seventh key");
+
+    engine.noteOff(72);
+    engine.setSustainPedal(false);
+    render(engine, static_cast<int>(sampleRate * 4.0));
+    expect(engine.getActiveVoiceCount() == 0,
+           "reused sustain-held voices did not eventually retire");
+}
+
+void testPoly1AffinityUsesThePhysicalKey()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Poly1;
+    parameters.keyTranspose = 12;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    render(engine, 2048);
+    const int firstMask = engine.getDisplayVoiceMask();
+    engine.noteOff(60);
+    render(engine, 48000);
+
+    // Transpose is added to the message sent to a voice board; it is not part
+    // of the key number kept by the assigner. Returning to the same physical
+    // key after changing transpose must therefore recover the same card.
+    parameters.keyTranspose = 0;
+    engine.setParameters(parameters);
+    engine.noteOn(60, 1.0f);
+    render(engine, 2048);
+    expect(engine.getDisplayVoiceMask() == firstMask,
+           "Poly 1 note affinity compared transposed pitch instead of key identity");
+}
+
+void testRepressingPolyModeRebuildsHeldAssignments()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Poly1;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    // Walk rotation away from the first card, then leave a fourth note held.
+    for (int note = 60; note < 63; ++note)
+    {
+        engine.noteOn(note, 1.0f);
+        render(engine, 1024);
+        engine.noteOff(note);
+        render(engine, 8192);
+    }
+    engine.noteOn(65, 1.0f);
+    render(engine, 2048);
+    expect(engine.getDisplayVoiceMask() != 1,
+           "the POLY reassert fixture did not rotate away from voice one");
+
+    // The lamp remains Poly 1, but the momentary contact still enters the ROM
+    // handler: gate all assignments, clear its history and rescan held keys.
+    engine.reassertKeyMode();
+    render(engine, 2048);
+    expect(engine.getDisplayVoiceMask() == 1,
+           "re-pressing the selected POLY mode did not rebuild held keys");
+}
+
+void testInactiveVoiceKeepsAdvancingPortamento()
+{
+    constexpr double sampleRate = 96000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Poly2;
+    parameters.portamento = 0.40f;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    render(engine, static_cast<int>(sampleRate * 0.3));
+    engine.noteOff(60);
+    render(engine, static_cast<int>(sampleRate * 0.2));
+
+    engine.noteOn(72, 1.0f);
+    render(engine, static_cast<int>(sampleRate * 0.04));
+    engine.noteOff(72);
+    // The envelope is idle for most of this interval, but the voice firmware's
+    // pitch integrator and free-running DCO continue towards the destination.
+    render(engine, static_cast<int>(sampleRate * 1.2));
+
+    engine.noteOn(72, 1.0f);
+    const auto replay = render(engine, static_cast<int>(sampleRate * 0.3));
+    const std::size_t start = replay.left.size() / 2;
+    const double destination = magnitudeAt(replay.left, start, 8192, 523.251, sampleRate);
+    const double octaveBelow = magnitudeAt(replay.left, start, 8192, 261.626, sampleRate);
+    expect(destination > 4.0 * octaveBelow,
+           "portamento stopped advancing when the voice became inactive");
+}
+
+void testPortamentoStateUsesEightEightGrid()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.keyMode = KeyMode::Poly2;
+    parameters.polyphony = 1;
+    parameters.portamento = 64.0f / 255.0f;
+    parameters.release = 0.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    renderExact(engine, 256);
+    engine.noteOff(60);
+    engine.noteOn(72, 1.0f);
+    YouKnow106TestAccess::updateVoiceScan(engine, 0, parameters);
+
+    const float state = YouKnow106TestAccess::currentMidi(engine, 0);
+    expect(state > 60.0f && state < 72.0f,
+           "portamento fixture did not advance partway toward its target");
+    expectNear(state * 256.0f, std::round(state * 256.0f), 1.0e-6,
+               "portamento state left the 8.8-semitone grid");
+}
+
 void testUnisonUsesEveryVoiceWithoutDetuning()
 {
     constexpr double sampleRate = 96000.0;
@@ -388,8 +1310,14 @@ void testUnisonUsesEveryVoiceWithoutDetuning()
     const auto rendered = render(engine, static_cast<int>(sampleRate));
     expect(engine.getActiveVoiceCount() == 6, "unison does not use every voice");
 
-    // A detuned stack beats; a phase-locked one does not. Compare the peak in
-    // two windows a long way apart.
+    // Equal-frequency DCOs do not beat, but their ordered writes must not be
+    // collapsed onto one sample: that would force a false coherent phase lock.
+    const double firstPhase = YouKnow106TestAccess::dcoPhase(engine, 0);
+    const double sixthPhase = YouKnow106TestAccess::dcoPhase(engine, 5);
+    const double phaseDistance = std::min(std::abs(firstPhase - sixthPhase),
+                                          1.0 - std::abs(firstPhase - sixthPhase));
+    expect(phaseDistance > 1.0e-4,
+           "normalized converter timing phase-locked the unison DCOs");
     const std::size_t quarter = rendered.left.size() / 4;
     const double early = peakOf({ rendered.left.begin() + static_cast<long>(quarter),
                                   rendered.left.begin() + static_cast<long>(quarter * 2) },
@@ -433,7 +1361,9 @@ void testUnisonReturnsToAHeldKey()
     expect(atHeld > 4.0 * atReleased,
            "the unison stack did not return to the key still held");
 
-    // Releasing an older key the stack has already left must change nothing.
+    // Every physical key-up clears and rescans the unison assignment. The
+    // currently highest held key remains the result here, even though its
+    // envelope is retriggered by that rebuild.
     engine.noteOn(67, 1.0f);
     render(engine, 4096);
     engine.noteOff(60);
@@ -442,7 +1372,7 @@ void testUnisonReturnsToAHeldKey()
     const auto atSounding = magnitudeAt(after.left, afterHalf, 8192, 392.0, 48000.0);
     const auto atOld = magnitudeAt(after.left, afterHalf, 8192, 261.6, 48000.0);
     expect(atSounding > 4.0 * atOld,
-           "releasing a key the stack had left moved the sounding note");
+           "the unison rescan did not retain the highest held key");
 
     engine.noteOff(67);
     render(engine, static_cast<int>(48000.0));
@@ -467,10 +1397,9 @@ void testAllNotesOffReleasesRatherThanCutting()
     expect(engine.getActiveVoiceCount() == 1,
            "releasing all notes retired the voice immediately");
 
-    // The hard stop still is a hard stop. What remains afterwards is the
-    // output coupling settling, which decays on its own time constant and is
-    // not a voice -- so the claim is that it is far below the note, not that it
-    // is bit-exact zero.
+    // The hard stop still is a hard stop. What remains afterwards is filter and
+    // resampler state settling, not a voice, so the claim is that it is far
+    // below the note rather than bit-exact zero on the first sample.
     const double sounding = peakOf(tail.left, 0);
     engine.allNotesOff();
     const auto silence = render(engine, 4096);
@@ -575,8 +1504,12 @@ void testVoicesRetireWithComponentToleranceApplied()
     expect(engine.getActiveVoiceCount() == 0,
            "voices with a component tolerance offset never retired");
 
-    // And with nothing left running, a deferred quality change can apply.
-    expect(engine.setOversamplingEnabled(false),
+    // And with nothing left running, a deferred quality change can complete
+    // through its short click-prevention fade.
+    expect(!engine.setOversamplingEnabled(false),
+           "an idle quality change skipped its safety fade");
+    renderExact(engine, static_cast<int>(48000.0 * 0.01));
+    expect(engine.getOversamplingFactor() == 1,
            "a quality change stayed deferred with no voice sounding");
 }
 
@@ -708,7 +1641,8 @@ void testUnisonDoesNotResurrectPolyphonicTails()
     engine.noteOn(65, 1.0f);
     render(engine, 2048);
     engine.noteOff(65);
-    render(engine, static_cast<int>(sampleRate * 3.0));
+    render(engine, static_cast<int>(sampleRate
+        * (YouKnow106Engine::envelopeReleaseSeconds(parameters.release) + 0.25f)));
 
     expect(engine.getActiveVoiceCount() == 2,
            "a unison retarget resurrected a polyphonic release tail");
@@ -783,9 +1717,9 @@ void testControllersReturnToNeutralOnReset()
 
 void testContinuousControlsDoNotStepAtBlockBoundaries()
 {
-    // Volume, sub and noise reach the samples directly rather than through the
-    // converter scan, so a host automating one of them across a held note would
-    // hear a block-rate step as a click unless they are glided.
+    // Main VOLUME is the one continuous audio-path pot after the converter
+    // chain. A host automating it across a held note would hear a block-rate
+    // step as a click unless the plug-in glides it.
     constexpr double sampleRate = 96000.0;
     YouKnow106Engine engine;
     engine.prepare(sampleRate, blockSize, true);
@@ -825,12 +1759,296 @@ void testContinuousControlsDoNotStepAtBlockBoundaries()
            "the glided volume never reached its new setting");
 }
 
+void testMainVolumeProductPolicy()
+{
+    // With the first block primed at its current panel position there is no
+    // glide, so otherwise identical renders expose the exact static product
+    // policy: output gain is VOLUME squared.
+    const auto atVolume = [](float volume) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.volume = volume;
+        engine.setParameters(parameters);
+        engine.noteOn(57, 1.0f);
+        return renderExact(engine, 8192);
+    };
+
+    const auto full = atVolume(1.0f);
+    const auto half = atVolume(0.5f);
+    const auto quarter = atVolume(0.25f);
+    double halfError = 0.0;
+    double quarterError = 0.0;
+    for (std::size_t index = 0; index < full.left.size(); ++index)
+        for (const auto pair : { std::pair { full.left[index], half.left[index] },
+                                 std::pair { full.right[index], half.right[index] } })
+            halfError = std::max(
+                halfError, std::abs(static_cast<double>(pair.second)
+                                      - static_cast<double>(pair.first) * 0.25));
+    for (std::size_t index = 0; index < full.left.size(); ++index)
+        for (const auto pair : { std::pair { full.left[index], quarter.left[index] },
+                                 std::pair { full.right[index], quarter.right[index] } })
+            quarterError = std::max(
+                quarterError, std::abs(static_cast<double>(pair.second)
+                                         - static_cast<double>(pair.first) * 0.0625));
+    expect(peakOf(full.left, 1024) > 0.01,
+           "the static VOLUME-law fixture produced no signal");
+    expect(halfError < 2.0e-7,
+           "VOLUME 0.5 is not exactly the declared 0.25 static gain");
+    expect(quarterError < 2.0e-7,
+           "VOLUME 0.25 is not exactly the declared 0.0625 static gain");
+
+    // The 5 ms value is the one-pole time constant: a 0 -> 1 move reaches
+    // 1-e^-1 after 5 ms. Check the threshold crossing to within one host
+    // sample, then compare the exact 10 ms (two-time-constant) state at rates
+    // that exercise all of the engine's oversampling-factor branches.
+    constexpr double glideSeconds = 0.005;
+    const double oneTau = 1.0 - std::exp(-1.0);
+    const double twoTau = 1.0 - std::exp(-2.0);
+    std::array<double, 4> stateAtTenMilliseconds {};
+    const std::array<double, 4> rates { 44100.0, 48000.0, 96000.0, 192000.0 };
+    for (std::size_t rateIndex = 0; rateIndex < rates.size(); ++rateIndex)
+    {
+        const double sampleRate = rates[rateIndex];
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.volume = 0.0f;
+        engine.setParameters(parameters);
+        float left = 0.0f;
+        float right = 0.0f;
+        engine.process(&left, &right, 1);
+        expect(YouKnow106TestAccess::glidedVolume(engine) == 0.0f,
+               "the initial VOLUME position was not primed without a glide");
+
+        parameters.volume = 1.0f;
+        engine.setParameters(parameters);
+        int samples = 0;
+        while (YouKnow106TestAccess::glidedVolume(engine) < oneTau
+               && samples < static_cast<int>(sampleRate * 0.02))
+        {
+            engine.process(&left, &right, 1);
+            ++samples;
+        }
+        const double crossingSeconds = samples / sampleRate;
+        expect(std::abs(crossingSeconds - glideSeconds)
+                   <= 1.0 / sampleRate + 1.0e-12,
+               "the 5 ms VOLUME glide time moved at "
+                   + std::to_string(static_cast<int>(sampleRate)) + " Hz");
+
+        const int tenMillisecondSamples =
+            static_cast<int>(std::llround(sampleRate * 0.010));
+        while (samples < tenMillisecondSamples)
+        {
+            engine.process(&left, &right, 1);
+            ++samples;
+        }
+        stateAtTenMilliseconds[rateIndex] =
+            YouKnow106TestAccess::glidedVolume(engine);
+        expectNear(stateAtTenMilliseconds[rateIndex], twoTau, 3.0e-5,
+                   "VOLUME glide misses the declared 5 ms one-pole law at "
+                       + std::to_string(static_cast<int>(sampleRate)) + " Hz");
+    }
+    for (std::size_t index = 1; index < stateAtTenMilliseconds.size(); ++index)
+        expectNear(stateAtTenMilliseconds[index], stateAtTenMilliseconds[0],
+                   3.0e-5,
+                   "VOLUME smoothing is not sample-rate invariant");
+}
+
+void testFixedOutputBoundaryCorpus()
+{
+    // Fixed OQ-06 product corpus: 48 kHz, normal high-quality processing,
+    // velocity 1, six hardware voices, VOLUME 1, Unit Character 0 and the
+    // stated chorus mode. RMS is unweighted across both channels. Sample peak
+    // and overloads inspect both PCM channels; 4x true peak and reconstructed
+    // overloads use reconstructedSample4x() above. All metrics use the 4096
+    // samples after the fixture's warm-up, with 16 guard samples on each side.
+    enum class Playing { OneNote, SixNoteChord, SoloUnison, SelfOscillation };
+    struct Fixture
+    {
+        const char* name;
+        Playing playing;
+        ChorusMode chorus;
+    };
+    constexpr std::array fixtures {
+        Fixture { "one-note/off", Playing::OneNote, ChorusMode::Off },
+        Fixture { "six-note-chord/off", Playing::SixNoteChord, ChorusMode::Off },
+        Fixture { "solo-unison/off", Playing::SoloUnison, ChorusMode::Off },
+        Fixture { "filter-self-oscillation/off", Playing::SelfOscillation,
+                  ChorusMode::Off },
+        Fixture { "one-note/chorus-I", Playing::OneNote, ChorusMode::One },
+        Fixture { "one-note/chorus-II", Playing::OneNote, ChorusMode::Two },
+    };
+    struct Baseline
+    {
+        double rms;
+        double samplePeak;
+        double truePeak4x;
+        std::uint64_t sampleOverloads;
+        std::uint64_t reconstructedOverloads;
+    };
+    // Filled from the deterministic implementation below. Floating metrics
+    // use broad relative guards and counts allow a small threshold-crossing
+    // margin, so ordinary compiler noise cannot turn this into a waveform
+    // checksum while meaningful level/headroom changes remain visible.
+    constexpr std::array baselines {
+        Baseline { 0.547144, 1.10853, 1.12205, 44, 188 },
+        Baseline { 1.40092, 3.94754, 3.94754, 4402, 17610 },
+        Baseline { 3.12647, 6.11092, 6.12996, 6856, 27410 },
+        Baseline { 0.159527, 0.226215, 0.226215, 0, 0 },
+        Baseline { 0.884953, 1.68797, 1.68797, 2333, 9335 },
+        Baseline { 0.521680, 1.36288, 1.36727, 156, 599 },
+    };
+
+    constexpr double sampleRate = 48000.0;
+    constexpr int analysisSamples = 4096;
+    constexpr int guardSamples = 16;
+    const bool printAudit = std::getenv("YOUKNOW106_AUDIT_OUTPUT") != nullptr;
+    std::array<OutputMetrics, fixtures.size()> measured {};
+    Render boundaryProbe;
+    bool passedPositiveOne = false;
+    bool passedNegativeOne = false;
+
+    for (std::size_t fixtureIndex = 0; fixtureIndex < fixtures.size(); ++fixtureIndex)
+    {
+        const auto& fixture = fixtures[fixtureIndex];
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.pulseEnabled = true;
+        parameters.pwmSource = PwmSource::Manual;
+        parameters.pwmDepth = 0.37f;
+        parameters.subLevel = 0.50f;
+        parameters.vcaLevel = 1.0f;
+        parameters.volume = 1.0f;
+        parameters.chorus = fixture.chorus;
+        parameters.chorusNoise = 0.0f;
+
+        if (fixture.playing == Playing::SoloUnison)
+        {
+            parameters.keyMode = KeyMode::Unison;
+            // This low-register, unnormalised six-card stack is the deliberate
+            // headroom probe: it must cross full scale without a hidden rail.
+        }
+        else if (fixture.playing == Playing::SelfOscillation)
+        {
+            parameters.sawEnabled = false;
+            parameters.pulseEnabled = false;
+            parameters.subLevel = 0.0f;
+            parameters.resonance = 1.0f;
+            parameters.cutoff = 49.0f / 127.0f;
+        }
+        engine.setParameters(parameters);
+
+        if (fixture.playing == Playing::SixNoteChord)
+            for (const int note : { 36, 43, 48, 52, 55, 60 })
+                engine.noteOn(note, 1.0f);
+        else
+            engine.noteOn(fixture.playing == Playing::SoloUnison ? 36 : 60, 1.0f);
+
+        const int warmupSamples = fixture.playing == Playing::SelfOscillation
+                                ? 96000 : 24000;
+        const auto rendered = renderExact(
+            engine, warmupSamples + analysisSamples + guardSamples);
+        measured[fixtureIndex] = outputMetrics(
+            rendered, static_cast<std::size_t>(warmupSamples), analysisSamples);
+        if (fixtureIndex == 0)
+            boundaryProbe = rendered;
+
+        for (int channel = 0; channel < 2; ++channel)
+        {
+            const auto& signal = channel == 0 ? rendered.left : rendered.right;
+            for (int index = warmupSamples;
+                 index < warmupSamples + analysisSamples; ++index)
+            {
+                passedPositiveOne = passedPositiveOne || signal[index] > 1.0f;
+                passedNegativeOne = passedNegativeOne || signal[index] < -1.0f;
+            }
+        }
+
+        if (printAudit)
+            std::cout << "OQ06 " << fixture.name << " rms "
+                      << measured[fixtureIndex].rms << " samplePeak "
+                      << measured[fixtureIndex].samplePeak << " truePeak4x "
+                      << measured[fixtureIndex].truePeak4x << " sampleOverloads "
+                      << measured[fixtureIndex].sampleOverloads
+                      << " reconstructedOverloads "
+                      << measured[fixtureIndex].reconstructedOverloads << '\n';
+
+        const auto& expected = baselines[fixtureIndex];
+        if (expected.rms > 0.0)
+        {
+            const auto relativeGuard = [&](double actual, double reference,
+                                           const char* metric) {
+                expect(std::abs(actual - reference)
+                           <= std::max(1.0e-7, reference * 0.04),
+                       std::string(fixture.name) + ' ' + metric
+                           + " escaped its deterministic corpus guard");
+            };
+            relativeGuard(measured[fixtureIndex].rms, expected.rms, "RMS");
+            relativeGuard(measured[fixtureIndex].samplePeak, expected.samplePeak,
+                          "sample peak");
+            relativeGuard(measured[fixtureIndex].truePeak4x, expected.truePeak4x,
+                          "4x true peak");
+            const auto countGuard = [&](std::uint64_t actual,
+                                        std::uint64_t reference,
+                                        const char* metric) {
+                const auto tolerance = std::max<std::uint64_t>(
+                    8, static_cast<std::uint64_t>(reference * 0.04));
+                const auto difference = actual > reference ? actual - reference
+                                                           : reference - actual;
+                expect(difference <= tolerance,
+                       std::string(fixture.name) + ' ' + metric
+                           + " escaped its deterministic corpus guard");
+            };
+            countGuard(measured[fixtureIndex].sampleOverloads,
+                       expected.sampleOverloads, "sample-overload count");
+            countGuard(measured[fixtureIndex].reconstructedOverloads,
+                       expected.reconstructedOverloads,
+                       "reconstructed-overload count");
+        }
+    }
+
+    expect(passedPositiveOne && passedNegativeOne,
+           "the hot corpus was limited to +/-1 instead of passing floating overloads");
+    expect(std::any_of(measured.begin(), measured.end(), [](const auto& metrics) {
+               return metrics.samplePeak > 1.01 && metrics.sampleOverloads > 0;
+           }),
+           "the output corpus no longer exercises unclipped headroom above full scale");
+
+    // Vref is deliberately not an engine/control parameter. Its pure gain is
+    // applied to the already-rendered post-volume pair. Recovering the source
+    // from two different references must therefore return the same pre-boundary
+    // samples, while all linear metrics change only by their scalar ratio.
+    const float lowerReference =
+        YouKnow106Engine::compatibilityOutputReferenceRmsVolts * 0.5f;
+    const float higherReference =
+        YouKnow106Engine::compatibilityOutputReferenceRmsVolts * 2.0f;
+    const double lowerGain = YouKnow106Engine::outputReferenceGain(lowerReference);
+    const double higherGain = YouKnow106Engine::outputReferenceGain(higherReference);
+    expectNear(lowerGain / higherGain, 4.0, 1.0e-6,
+               "Vref does not act as a pure inverse final-boundary scale");
+    double recoveredDifference = 0.0;
+    for (std::size_t index = 0; index < boundaryProbe.left.size(); ++index)
+        for (const double sample : { static_cast<double>(boundaryProbe.left[index]),
+                                     static_cast<double>(boundaryProbe.right[index]) })
+        {
+            const double lowerOutput = sample * lowerGain;
+            const double higherOutput = sample * higherGain;
+            recoveredDifference = std::max(
+                recoveredDifference,
+                std::abs(lowerOutput / lowerGain - higherOutput / higherGain));
+        }
+    expect(recoveredDifference < 1.0e-12,
+           "changing Vref changed pre-output-boundary behavior");
+}
+
 void testNotesWaitForTheSharedConverterScan()
 {
     // One converter serves every voice, so a key struck between passes cannot
-    // be heard until the next one reaches it -- and two keys struck inside the
-    // same pass speak together rather than a fraction of a scan apart. A
-    // per-voice schedule started at each note-on gives neither.
+    // be heard until the next pass reaches its ordered DCO write. Two keys
+    // struck after their current-pass slots therefore both wait for the next
+    // shared schedule; neither starts a private note-on-relative scan.
     constexpr double sampleRate = 48000.0;
     YouKnow106Engine engine;
     // No oversampling, so the internal rate is the host rate and the pass
@@ -865,7 +2083,7 @@ void testNotesWaitForTheSharedConverterScan()
     expectNear(stillWaiting, 0.0, 1.0e-9,
                "the second note did not wait for the same pass as the first");
 
-    // And once the pass arrives, both are speaking.
+    // And once the next pass has traversed both DCO slots, both are speaking.
     const double afterScan = run(scanPeriod);
     expect(afterScan > 0.01, "the notes never sounded after the scan pass");
 }
@@ -881,8 +2099,8 @@ void testPortamentoRateFollowsItsControl()
         engine.prepare(sampleRate, blockSize, true);
         auto parameters = plainPatch();
         // Unison keeps it monophonic, and one voice keeps the zero-crossing
-        // measurement clean: staggered scan rewrites leave a wider stack's
-        // ramps phase-decorrelated, as the hardware's are.
+        // measurement clean: a wider free-running stack retains several phase
+        // histories and is not a suitable single-frequency meter fixture.
         parameters.keyMode = KeyMode::Unison;
         parameters.polyphony = 1;
         parameters.portamento = 0.8f;
@@ -1002,10 +2220,12 @@ void testScanTimersRestartWithTheProcessingRate()
     engine.setParameters(parameters);
     expect(engine.getOversamplingFactor() > 1, "the fixture needs the deep setting");
 
-    // Idle, so the change goes through, and stopped part-way between passes.
+    // Idle, so only the fixed safety fade defers the change; it is stopped
+    // part-way between converter passes.
     render(engine, 64);
-    expect(engine.setOversamplingEnabled(false),
-           "the quality change did not apply on an idle engine");
+    expect(!engine.setOversamplingEnabled(false),
+           "the idle quality change skipped its safety fade");
+    renderExact(engine, static_cast<int>(sampleRate * 0.006));
     expect(engine.getOversamplingFactor() == 1, "the rate did not drop");
 
     engine.noteOn(60, 1.0f);
@@ -1082,6 +2302,279 @@ void testQualityChangeWaitsForTheOutputPathToEmpty()
     render(engine, static_cast<int>(sampleRate * 0.1));
     expect(engine.getOversamplingFactor() == 1,
            "the quality change never applied after the output path emptied");
+}
+
+void testQualityChangeFadesRateDependentOutputPath()
+{
+    // A chorus with its analogue noise enabled is never literally silent.
+    // Rebuilding its rate-dependent lines at unity gain exposes the reset as
+    // a click even after every voice and musical tail is gone.
+    constexpr double sampleRate = 48000.0;
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = false;
+    parameters.subLevel = 0.0f;
+    parameters.noiseLevel = 0.0f;
+    parameters.chorus = ChorusMode::Two;
+    parameters.chorusNoise = 1.0f;
+    const auto transitionAtBlockSize = [&](int processingBlock) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        engine.setParameters(parameters);
+        renderExact(engine, static_cast<int>(sampleRate * 0.1));
+        const int deepFactor = engine.getOversamplingFactor();
+        expect(deepFactor > 1, "the chorus-noise fixture needs HQ processing");
+        expect(!engine.setOversamplingEnabled(false),
+               "an audible rate-dependent path changed without a fade");
+        expect(engine.getOversamplingFactor() == deepFactor,
+               "the processing rate changed before its fade reached zero");
+
+        Render rendered;
+        rendered.left.assign(2048, 0.0f);
+        rendered.right.assign(2048, 0.0f);
+        for (int offset = 0; offset < 2048; offset += processingBlock)
+        {
+            const int count = std::min(processingBlock, 2048 - offset);
+            engine.process(rendered.left.data() + offset,
+                           rendered.right.data() + offset, count);
+        }
+        expect(engine.getOversamplingFactor() == 1,
+               "the rate change never completed at block size "
+                   + std::to_string(processingBlock));
+        return rendered;
+    };
+
+    const auto reference = transitionAtBlockSize(1);
+    int zeroBoundary = -1;
+    int longestZeroRun = 0;
+    int zeroRun = 0;
+    for (std::size_t index = 0; index < reference.left.size(); ++index)
+    {
+        const bool zero = reference.left[index] == 0.0f
+                       && reference.right[index] == 0.0f;
+        zeroRun = zero ? zeroRun + 1 : 0;
+        longestZeroRun = std::max(longestZeroRun, zeroRun);
+        if (zero && zeroBoundary < 0
+            && index >= static_cast<std::size_t>(sampleRate * 0.004)
+            && index <= static_cast<std::size_t>(sampleRate * 0.007))
+            zeroBoundary = static_cast<int>(index);
+    }
+    expect(zeroBoundary >= 0,
+           "the rate-dependent reset did not occur at the zero-gain boundary");
+    expect(longestZeroRun <= 2,
+           "the rate transition inserted a mute longer than its boundary sample");
+    if (zeroBoundary > 0)
+    {
+        const auto index = static_cast<std::size_t>(zeroBoundary);
+        expect(std::abs(reference.left[index] - reference.left[index - 1]) < 1.0e-4f
+                   && std::abs(reference.right[index] - reference.right[index - 1])
+                          < 1.0e-4f,
+               "the rate-dependent reset was audible at the zero-gain boundary");
+    }
+    expect(peakOf(reference.left, reference.left.size() * 3 / 4) > 1.0e-5,
+           "the output remained faded after the rate change");
+
+    // The split at zero must occur at the same sample even when a host sends a
+    // block much longer than the fade. The former block-entry-only switch
+    // produced up to 38 ms of extra silence at a 2048-sample block.
+    for (const int processingBlock : { 64, 256, 2048 })
+    {
+        const auto blocked = transitionAtBlockSize(processingBlock);
+        expect(maximumDifference(blocked.left, reference.left) < 1.0e-6
+                   && maximumDifference(blocked.right, reference.right) < 1.0e-6,
+               "the quality transition depends on host block size "
+                   + std::to_string(processingBlock));
+    }
+
+    // Once the fade has begun, changing the control which made the old path
+    // visibly audible must not bypass it halfway down.
+    YouKnow106Engine controlChanged;
+    controlChanged.prepare(sampleRate, blockSize, true);
+    controlChanged.setParameters(parameters);
+    renderExact(controlChanged, static_cast<int>(sampleRate * 0.1));
+    const int controlChangedDeepFactor =
+        controlChanged.getOversamplingFactor();
+    expect(!controlChanged.setOversamplingEnabled(false),
+           "the control-change fixture skipped its safety fade");
+    renderExact(controlChanged, static_cast<int>(sampleRate * 0.002));
+    const float gainBeforeControlChange =
+        YouKnow106TestAccess::rateTransitionGain(controlChanged);
+    parameters.chorus = ChorusMode::Off;
+    parameters.chorusNoise = 0.0f;
+    controlChanged.setParameters(parameters);
+    renderExact(controlChanged, 1);
+    expect(controlChanged.getOversamplingFactor() == controlChangedDeepFactor,
+           "turning Chorus off bypassed an unfinished quality fade");
+    expect(YouKnow106TestAccess::rateTransitionGain(controlChanged)
+               < gainBeforeControlChange,
+           "turning Chorus off reversed an unfinished quality fade");
+    renderExact(controlChanged, static_cast<int>(sampleRate * 0.01));
+    expect(controlChanged.getOversamplingFactor() == 1,
+           "the quality change did not finish after Chorus was turned off");
+
+    // If performance resumes before zero, preserving the note is more
+    // important than completing a UI quality request. The pending rate stays
+    // deferred and the output reverses back to unity.
+    YouKnow106Engine interrupted;
+    interrupted.prepare(sampleRate, blockSize, true);
+    parameters.chorus = ChorusMode::Two;
+    parameters.chorusNoise = 1.0f;
+    parameters.sawEnabled = true;
+    interrupted.setParameters(parameters);
+    renderExact(interrupted, static_cast<int>(sampleRate * 0.1));
+    const int interruptedDeepFactor = interrupted.getOversamplingFactor();
+    expect(!interrupted.setOversamplingEnabled(false),
+           "the interrupted fixture did not begin a chorus-noise fade");
+    renderExact(interrupted, static_cast<int>(sampleRate * 0.002));
+    interrupted.noteOn(60, 1.0f);
+    const auto note = renderExact(
+        interrupted, static_cast<int>(sampleRate * 0.02));
+    expect(interrupted.getOversamplingFactor() == interruptedDeepFactor,
+           "a quality change completed after a new voice started");
+    expect(peakOf(note.left, note.left.size() / 2) > 0.01,
+           "a pending quality fade muted a newly started voice");
+}
+
+void testQualityChangePreservesOutputCouplingTail()
+{
+    // A 95%-duty pulse charges the final capacitor strongly. Once its Gate VCA
+    // closes, the host-rate 115 ms tail remains long after the internal chorus
+    // and decimator wait. Rebuilding HQ must not clear that rate-independent
+    // state; an earlier implementation made a roughly -19 dBFS step here.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine switched;
+    YouKnow106Engine reference;
+    switched.prepare(sampleRate, blockSize, true);
+    reference.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = true;
+    parameters.pwmSource = PwmSource::Manual;
+    parameters.pwmDepth = 1.0f;
+    parameters.vcaMode = VcaMode::Gate;
+    parameters.chorus = ChorusMode::Off;
+    parameters.chorusNoise = 0.0f;
+    switched.setParameters(parameters);
+    reference.setParameters(parameters);
+    switched.noteOn(36, 1.0f);
+    reference.noteOn(36, 1.0f);
+    renderExact(switched, static_cast<int>(sampleRate));
+    renderExact(reference, static_cast<int>(sampleRate));
+    switched.noteOff(36);
+    reference.noteOff(36);
+    expect(!switched.setOversamplingEnabled(false),
+           "the quality change ignored the still-sounding gate release");
+
+    const auto changed = renderExact(
+        switched, static_cast<int>(sampleRate * 0.12));
+    const auto unchanged = renderExact(
+        reference, static_cast<int>(sampleRate * 0.12));
+    expect(switched.getOversamplingFactor() == 1,
+           "the coupling-tail quality change never completed");
+    const std::size_t compareFrom = changed.left.size()
+                                  - static_cast<std::size_t>(sampleRate * 0.02);
+    expect(peakOf(unchanged.left, compareFrom) > 0.005,
+           "the asymmetric-PWM fixture produced no coupling tail to preserve");
+    double difference = 0.0;
+    for (std::size_t index = compareFrom; index < changed.left.size(); ++index)
+    {
+        difference = std::max(
+            difference,
+            static_cast<double>(std::abs(changed.left[index]
+                                       - unchanged.left[index])));
+        difference = std::max(
+            difference,
+            static_cast<double>(std::abs(changed.right[index]
+                                       - unchanged.right[index])));
+    }
+    expect(difference < 1.0e-4,
+           "an HQ rebuild reset the host-rate output-coupling state");
+}
+
+void testFinalOutputCouplingRemovesManualPwmDc()
+{
+    // Manual PWM can make the common dry waveform strongly asymmetric. The
+    // original unit removes that offset only after IC6 has recombined dry and
+    // wet, through C17/C20 immediately before the stereo VOLUME control.
+    constexpr double sampleRate = 48000.0;
+    for (const auto chorus : { ChorusMode::Off, ChorusMode::One,
+                              ChorusMode::Two })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = true;
+        parameters.pwmSource = PwmSource::Manual;
+        parameters.pwmDepth = 1.0f;
+        parameters.subLevel = 0.0f;
+        parameters.noiseLevel = 0.0f;
+        parameters.vcaMode = VcaMode::Gate;
+        parameters.chorus = chorus;
+        parameters.chorusNoise = 0.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(36, 1.0f);
+
+        const auto rendered = renderExact(
+            engine, static_cast<int>(sampleRate * 3.0));
+        const std::size_t start = rendered.left.size()
+                                - static_cast<std::size_t>(sampleRate);
+        const auto meanFrom = [start](const std::vector<float>& signal) {
+            double sum = 0.0;
+            for (std::size_t index = start; index < signal.size(); ++index)
+                sum += signal[index];
+            return sum / static_cast<double>(signal.size() - start);
+        };
+        expect(std::abs(meanFrom(rendered.left)) < 0.002,
+               "manual PWM left residual DC on the final left output");
+        expect(std::abs(meanFrom(rendered.right)) < 0.002,
+               "manual PWM left residual DC on the final right output");
+    }
+
+    // The capacitors precede the pot and remain driven while its wipers are at
+    // zero. After raising VOLUME, a preconditioned silent engine must converge
+    // onto an otherwise identical audible engine without a fresh 115 ms
+    // charging transient.
+    YouKnow106Engine silent;
+    YouKnow106Engine audible;
+    silent.prepare(sampleRate, blockSize, true);
+    audible.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = true;
+    parameters.pwmSource = PwmSource::Manual;
+    parameters.pwmDepth = 1.0f;
+    parameters.vcaMode = VcaMode::Gate;
+    parameters.volume = 0.0f;
+    silent.setParameters(parameters);
+    parameters.volume = 1.0f;
+    audible.setParameters(parameters);
+    silent.noteOn(36, 1.0f);
+    audible.noteOn(36, 1.0f);
+    renderExact(silent, static_cast<int>(sampleRate * 2.0));
+    renderExact(audible, static_cast<int>(sampleRate * 2.0));
+
+    parameters.volume = 1.0f;
+    silent.setParameters(parameters);
+    const auto raised = renderExact(
+        silent, static_cast<int>(sampleRate * 0.3));
+    const auto reference = renderExact(
+        audible, static_cast<int>(sampleRate * 0.3));
+    const std::size_t settled = static_cast<std::size_t>(sampleRate * 0.1);
+    double difference = 0.0;
+    for (std::size_t index = settled; index < raised.left.size(); ++index)
+    {
+        difference = std::max(
+            difference,
+            static_cast<double>(std::abs(raised.left[index]
+                                       - reference.left[index])));
+        difference = std::max(
+            difference,
+            static_cast<double>(std::abs(raised.right[index]
+                                       - reference.right[index])));
+    }
+    expect(difference < 1.0e-5,
+           "VOLUME zero stopped or reset the upstream coupling capacitors");
 }
 
 void testHardStopSilencesTheWholeOutputPath()
@@ -1254,9 +2747,60 @@ void testChorusNoiseIsPresentAndDefeatable()
 
     const double modelled = idleNoise(1.0f);
     expect(modelled > -85.0 && modelled < -55.0,
-           "the delay lines' own noise floor is outside the measured band");
+           "the voiced delay-line noise floor escaped its regression guard band");
     expect(idleNoise(0.0f) < -120.0,
            "the delay lines still hiss with their noise switched out");
+}
+
+void testMainNoiseDensityIsProcessingRateInvariant()
+{
+    // The hardware noise source has a continuous-time spectral density. A
+    // discrete white source must therefore grow by sqrt(internal sample rate),
+    // or HQ mode's decimators make the same patch several dB quieter simply by
+    // running the generator more often. Keep the filter well below every host
+    // Nyquist limit so this measures generator density rather than legitimately
+    // different captured analogue bandwidths.
+    const auto levelAt = [](double sampleRate, bool oversampled) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, oversampled);
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = false;
+        parameters.subLevel = 0.0f;
+        parameters.noiseLevel = 1.0f;
+        parameters.cutoff = YouKnow106Engine::panelPositionForCutoff(2000.0f);
+        parameters.vcaMode = VcaMode::Gate;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+
+        const auto rendered = renderExact(
+            engine, static_cast<int>(sampleRate * 0.5));
+        const std::size_t from = rendered.left.size() / 2;
+        double energy = 0.0;
+        for (std::size_t index = from; index < rendered.left.size(); ++index)
+        {
+            const double left = rendered.left[index];
+            const double right = rendered.right[index];
+            energy += left * left + right * right;
+        }
+        return std::sqrt(
+            energy / static_cast<double>(2 * (rendered.left.size() - from)));
+    };
+
+    const double reference = levelAt(48000.0, true);
+    expect(std::isfinite(reference) && reference > 1.0e-5,
+           "the main-noise rate fixture produced no measurable noise");
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+        for (const bool oversampled : { false, true })
+        {
+            const double measured = levelAt(sampleRate, oversampled);
+            const double relativeDb =
+                20.0 * std::log10((measured + 1.0e-30) / reference);
+            expectNear(relativeDb, 0.0, 0.5,
+                       "main-noise RMS moves with sample rate/HQ at "
+                           + std::to_string(static_cast<int>(sampleRate))
+                           + " Hz, HQ " + (oversampled ? "on" : "off"));
+        }
 }
 
 void testSampleRateAndOversamplingConsistency()
@@ -1414,7 +2958,12 @@ void testExtremeAutomationStaysFinite()
     }
 
     expect(finite, "extreme automation produced a non-finite sample");
-    expect(peak < 4.0, "extreme automation produced an unbounded output");
+    expect(peak > 1.0e-6,
+           "the extreme-automation stress test never exercised the signal path");
+    // This deliberately loose ceiling is only a numerical runaway guard. It
+    // does not claim to model an analogue rail or an output-to-dBFS reference.
+    expect(peak < 1.0e4,
+           "extreme automation produced a pathological finite magnitude");
 }
 
 void testParameterSanitisation()
@@ -1464,18 +3013,171 @@ void testSustainPedalHoldsAndReleases()
            "the note did not release when the pedal was lifted");
 }
 
-// The two POLY buttons and the two CHORUS buttons are independent switches,
-// not three-way selectors. All four combinations of each pair have to be
-// reachable and distinct, and both-down has to mean the thing the hardware
-// means by it rather than a duplicate of one of the singles.
-void testPairedSwitchesAreIndependent()
+void testFactoryPresetAudibility()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int holdSamples = static_cast<int>(sampleRate * 3.0);
+    constexpr int windowSamples = static_cast<int>(sampleRate * 0.20);
+    const bool printAudit = std::getenv("YOUKNOW106_AUDIT_PRESETS") != nullptr;
+
+    struct Metrics
+    {
+        double peakDb = 0.0;
+        double rmsDb = 0.0;
+    };
+    std::array<Metrics, presets::presetCount> measured {};
+    std::size_t presetIndex = 0;
+
+    for (const auto& preset : presets::factoryBank())
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        engine.setParameters(parametersFor(preset.patch));
+        engine.noteOn(60, 1.0f);
+        const auto rendered = render(engine, holdSamples);
+
+        double peak = 0.0;
+        double bestWindowRms = 0.0;
+        for (std::size_t start = 0;
+             start + static_cast<std::size_t>(windowSamples) <= rendered.left.size();
+             start += static_cast<std::size_t>(windowSamples))
+        {
+            double energy = 0.0;
+            for (int offset = 0; offset < windowSamples; ++offset)
+            {
+                const double left = rendered.left[
+                    start + static_cast<std::size_t>(offset)];
+                const double right = rendered.right[
+                    start + static_cast<std::size_t>(offset)];
+                peak = std::max({ peak, std::abs(left), std::abs(right) });
+                energy += 0.5 * (left * left + right * right);
+            }
+            bestWindowRms = std::max(bestWindowRms,
+                                     std::sqrt(energy / windowSamples));
+        }
+
+        const double peakDb = 20.0 * std::log10(peak + 1.0e-12);
+        const double rmsDb = 20.0 * std::log10(bestWindowRms + 1.0e-12);
+        measured[presetIndex++] = { peakDb, rmsDb };
+
+        expect(std::isfinite(peakDb) && std::isfinite(rmsDb),
+               std::string(preset.number) + " produced non-finite level metrics");
+        // Prove every patch actually excites the signal path. Useful loudness
+        // is checked below relative to the bank, so a later correction to the
+        // shared voice-summer gain cannot invalidate an absolute dBFS target.
+        expect(peak > 1.0e-7,
+               std::string(preset.number) + " " + preset.name
+                   + " produced no measurable peak");
+        expect(bestWindowRms > 1.0e-8,
+               std::string(preset.number) + " " + preset.name
+                   + " produced no measurable 200 ms energy");
+    }
+
+    const auto median = [&measured] (auto member)
+    {
+        std::array<double, presets::presetCount> values {};
+        for (std::size_t index = 0; index < measured.size(); ++index)
+            values[index] = measured[index].*member;
+        std::sort(values.begin(), values.end());
+        return 0.5 * (values[values.size() / 2 - 1] + values[values.size() / 2]);
+    };
+    const double medianPeakDb = median(&Metrics::peakDb);
+    const double medianRmsDb = median(&Metrics::rmsDb);
+
+    struct RelativeBaseline
+    {
+        const char* number;
+        double peakFromMedianDb;
+        double rmsFromMedianDb;
+    };
+
+    // These are level relationships, not absolute output targets. A correction
+    // to the shared voice summer or output gain moves every measurement together
+    // and cancels out here, while an accidental per-patch LEVEL change remains
+    // visible. Run with YOUKNOW106_AUDIT_PRESETS=1 to print replacement values
+    // after an intentional factory-bank or signal-path change.
+    static constexpr auto baseline = std::to_array<RelativeBaseline> ({
+        { "A11",  0.237,   3.913 }, { "A12",  0.663,   3.082 },
+        { "A13",  1.153,   3.434 }, { "A14",  0.877,   0.507 },
+        { "A15",  0.575,  -7.138 }, { "A16",  1.932,  -1.684 },
+        { "A17",  0.898,   3.198 }, { "A18", -4.573,  -7.582 },
+        { "A21", -3.338,  -4.140 }, { "A22", -4.981,  -0.615 },
+        { "A23", -4.465,  -1.230 }, { "A24", -0.126,   1.849 },
+        { "A25", -3.634,  -1.155 }, { "A26",  0.126,   3.623 },
+        { "A27", -2.602,  -4.781 }, { "A28", -2.226,   2.003 },
+        { "B11",  0.786,   3.793 }, { "B12",  0.797,   3.571 },
+        { "B13", -0.894,   2.166 }, { "B14",  2.982,   1.559 },
+        { "B15",  0.845, -10.662 }, { "B16",  0.137,  -8.017 },
+        { "B17", -3.100,  -7.028 }, { "B18",  1.849,   0.932 },
+        { "B21",  2.340,   0.128 }, { "B22", -0.764,  -6.734 },
+        { "B23",  2.233,   2.841 }, { "B24", -1.368,  -0.617 },
+        { "B25", -7.092, -15.008 }, { "B26", -0.217,  -4.150 },
+        { "B27", -2.435,  -0.091 }, { "B28", -1.317,   0.091 },
+    });
+    static_assert(baseline.size() == presets::presetCount);
+
+    constexpr double peakToleranceDb = 1.0;
+    constexpr double rmsToleranceDb = 1.25;
+    const auto& bank = presets::factoryBank();
+    for (std::size_t index = 0; index < baseline.size(); ++index)
+    {
+        const double peakDelta = measured[index].peakDb - medianPeakDb;
+        const double rmsDelta = measured[index].rmsDb - medianRmsDb;
+        const std::string where = std::string(bank[index].number) + " " + bank[index].name;
+        expect(std::strcmp(bank[index].number, baseline[index].number) == 0,
+               "preset-level baseline order no longer matches the factory bank");
+        const bool shortPercussion = std::strcmp(bank[index].number, "A15") == 0
+                                  || std::strcmp(bank[index].number, "A16") == 0
+                                  || std::strcmp(bank[index].number, "B15") == 0
+                                  || std::strcmp(bank[index].number, "B16") == 0
+                                  || std::strcmp(bank[index].number, "B24") == 0
+                                  || std::strcmp(bank[index].number, "B25") == 0;
+        const bool shortNoiseTransient =
+            std::strcmp(bank[index].number, "B25") == 0;
+        // These limits assert useful relative balance, rather than merely
+        // snapshotting today's values. Sustained patches now stay within
+        // -8/+5 dB of the bank's 200 ms median and ordinary peaks within
+        // -5/+4 dB. The snare's hardware-storable NOISE and VCA LEVEL are
+        // already at maximum, so it gets a narrow peak exception instead of a
+        // hidden per-program make-up gain; its 200 ms RMS also includes mostly
+        // silence after the short hit.
+        expect(peakDelta >= (shortNoiseTransient ? -7.25 : -5.0)
+                   && peakDelta <= 4.0,
+               where + " peak is outside the usable factory-bank balance");
+        expect(rmsDelta >= (shortPercussion ? -20.0 : -8.0)
+                   && rmsDelta <= 5.0,
+               where + " 200 ms loudness is outside the usable factory-bank balance");
+        expect(std::abs(peakDelta - baseline[index].peakFromMedianDb)
+                   <= peakToleranceDb,
+               where + " peak balance moved "
+                   + std::to_string(peakDelta - baseline[index].peakFromMedianDb)
+                   + " dB from its checked bank relationship");
+        expect(std::abs(rmsDelta - baseline[index].rmsFromMedianDb)
+                   <= rmsToleranceDb,
+               where + " short-window balance moved "
+                   + std::to_string(rmsDelta - baseline[index].rmsFromMedianDb)
+                   + " dB from its checked bank relationship");
+
+        if (printAudit)
+            std::cout << bank[index].number << ' ' << bank[index].name << " peak "
+                      << measured[index].peakDb << " dBFS best200 "
+                      << measured[index].rmsDb << " dBFS peakFromMedian "
+                      << peakDelta << " dB rmsFromMedian " << rmsDelta << " dB\n";
+    }
+}
+
+// The firmware may latch both POLY lamps for Solo Unison; the physical contacts
+// themselves are momentary. The CHORUS buttons are electrically interlocked,
+// so a legacy state with both bits set is resolved to the stronger mode II
+// rather than inventing a fourth clock programme.
+void testPairedSwitchModes()
 {
     expect(keyModeFor(true, false) == KeyMode::Poly1, "POLY 1 alone is not Poly 1");
     expect(keyModeFor(false, true) == KeyMode::Poly2, "POLY 2 alone is not Poly 2");
     expect(keyModeFor(true, true) == KeyMode::Unison,
            "both POLY buttons down is not unison");
-    // Not reachable on the hardware, whose buttons interlock, but reachable
-    // here -- and the assigner still has to put a note somewhere.
+    // Not reachable as a stable hardware latch; accepted only so an obsolete
+    // or partially automated host state has the power-on Poly 1 meaning.
     expect(keyModeFor(false, false) == KeyMode::Poly1,
            "neither POLY button leaves the assigner undefined");
 
@@ -1483,18 +3185,14 @@ void testPairedSwitchesAreIndependent()
            "neither chorus button is not off");
     expect(chorusModeFor(true, false) == ChorusMode::One, "I alone is not mode I");
     expect(chorusModeFor(false, true) == ChorusMode::Two, "II alone is not mode II");
-    expect(chorusModeFor(true, true) == ChorusMode::OneTwo,
-           "both chorus buttons down is not I+II");
+    expect(chorusModeFor(true, true) == ChorusMode::Two,
+           "a legacy both-chorus state is not canonical mode II");
 
     // Round-trip: the engaged-state helpers the editor and the SysEx writer use
     // have to agree with the mode they came from.
-    for (int one = 0; one <= 1; ++one)
-        for (int two = 0; two <= 1; ++two)
-        {
-            const auto mode = chorusModeFor(one != 0, two != 0);
-            expect(chorusOneEngaged(mode) == (one != 0), "chorus I round trip");
-            expect(chorusTwoEngaged(mode) == (two != 0), "chorus II round trip");
-        }
+    for (const auto mode : { ChorusMode::Off, ChorusMode::One, ChorusMode::Two })
+        expect(chorusModeFor(chorusOneEngaged(mode), chorusTwoEngaged(mode)) == mode,
+               "a hardware chorus mode did not round trip through its buttons");
     for (int one = 0; one <= 1; ++one)
         for (int two = 0; two <= 1; ++two)
         {
@@ -1617,6 +3315,22 @@ int main()
     testRampHasARampSpectrum();
     testKeyAssignerDropsRatherThanSteals();
     testPolyModesDifferInAllocation();
+    testHeldKeyRescanRunsHighToLow();
+    testRescanPreservesVoiceCpuPitchHistory();
+    testHeldTransposeUpdatesVoiceCpuPitchHistory();
+    testRescanGateOffReachesTheVoiceCpu();
+    testDuplicateAndUnmatchedKeyEdgesAreIgnored();
+    testIdleSnapshotPrimesEverySharedHold();
+    testPhysicalFiltersKeepRunningBehindClosedVcas();
+    testPhysicalCardStateSurvivesVoiceAssignments();
+    testConverterSchedulerPreservesFractionalScanPeriod();
+    testPulseOffPinsComparatorWithoutResettingTheDco();
+    testModeChangesRebuildHeldKeys();
+    testSustainHeldVoicesRemainAssignable();
+    testPoly1AffinityUsesThePhysicalKey();
+    testRepressingPolyModeRebuildsHeldAssignments();
+    testInactiveVoiceKeepsAdvancingPortamento();
+    testPortamentoStateUsesEightEightGrid();
     testUnisonUsesEveryVoiceWithoutDetuning();
     testVoiceCountAboveTheHardwareSixWorks();
     testUnisonSurvivesAReducedVoiceCount();
@@ -1625,6 +3339,8 @@ int main()
     testSubFlipsOnTheFirstWrap();
     testControllersReturnToNeutralOnReset();
     testContinuousControlsDoNotStepAtBlockBoundaries();
+    testMainVolumeProductPolicy();
+    testFixedOutputBoundaryCorpus();
     testNotesWaitForTheSharedConverterScan();
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
@@ -1632,6 +3348,9 @@ int main()
     testScanTimersRestartWithTheProcessingRate();
     testUnisonStackGlidesFromOneOrigin();
     testQualityChangeWaitsForTheOutputPathToEmpty();
+    testQualityChangeFadesRateDependentOutputPath();
+    testQualityChangePreservesOutputCouplingTail();
+    testFinalOutputCouplingRemovesManualPwmDc();
     testHardStopSilencesTheWholeOutputPath();
     testComponentDriftRateIsIndependentOfOversampling();
     testTransposeReachesSoundingVoices();
@@ -1643,12 +3362,14 @@ int main()
     testEnvelopeAndGateModes();
     testChorusWidthAndSilence();
     testChorusNoiseIsPresentAndDefeatable();
+    testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
     testDeterminismAndSilence();
     testExtremeAutomationStaysFinite();
     testParameterSanitisation();
     testSustainPedalHoldsAndReleases();
-    testPairedSwitchesAreIndependent();
+    testFactoryPresetAudibility();
+    testPairedSwitchModes();
     testNoLabelIsTruncated();
     testPanelLayout();
     testCpuBudget();

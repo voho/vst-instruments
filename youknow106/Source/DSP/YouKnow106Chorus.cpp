@@ -7,60 +7,49 @@ namespace youknow106
 {
 namespace
 {
-// Aggregate charge-transfer inefficiency of the whole line. A bucket-brigade
-// stage hands on all but a small fraction of its charge, and the residue smears
-// forward; over the line's stages the aggregate is well approximated by one
-// pole running at the clock rate. This is the standard first-order
-// condensation, not a per-stage solve. Unlike the support filters below it is
-// specified directly as the per-edge retention coefficient rather than as a
-// corner frequency, so it belongs in the plain recursion and not in the
-// prewarped one.
-//
-// The retention is set from the part's own datasheet rather than from the
-// per-stage-loss literature: the MN3009 is specified at -3 dB at 12 kHz with a
-// 40 kHz clock, 256 stages. For a one-pole advanced once per clock edge the
-// Nyquist gain is a / (2 - a), and the retention that puts the half-power point
-// at 0.3 of the clock rate is 0.7725, which is a Nyquist droop of -4.0 dB.
-//
-// That is the dark end of the 1-4 dB band the literature implies, and it
-// supersedes the -2 dB an earlier revision took from the middle of that band:
-// a measured figure for this part beats a range inferred for the class. It is
-// still far brighter than the 0.34 retention used before either -- that parked
-// the corner near 2.7 kHz and swept it with the modulation.
-constexpr float transferNyquistDroop = 0.629328f; // -4.0 dB, from -3 dB at 12 kHz
-constexpr float transferSmear =
-    2.0f * transferNyquistDroop / (1.0f + transferNyquistDroop);
+// Aggregate charge-transfer inefficiency of the whole line, condensed to one
+// pole advanced at the BBD clock rate. The MN3009's -3 dB at 12 kHz with a
+// 40 kHz clock is the response of the complete part, including the rectangular
+// sample-and-hold pulse at its output. That pulse already contributes
+// sinc(12/40) = -1.326 dB in this model. The residual pole must therefore
+// contribute -1.674 dB, not another -3 dB. Solving the discrete one-pole at
+// 0.3 cycles/sample gives this update coefficient.
+constexpr float transferSmear = 0.8654743f;
 
-// Where the line itself starts to compress, referred to the model's signal
-// scale (1.0 = 2.6 V at the node). The part is rated 0.3% distortion at
-// 0.78 Vrms and overloads a few decibels above; its bias window at a 15 V
-// supply gives roughly +/-2.9 V of swing. The line is the first nonlinear
-// element in the wet path -- the surrounding op-amps run on +/-15 V rails and
-// stay linear at synth bus levels -- which is why a driven chorus grits the
-// wet signal while the dry stays clean, a documented signature of this
-// instrument.
-constexpr float bbdSaturationLevel = 1.1f; // ~2.9 V at the node
+// Static transfer of the delay line, referred to the model's signal scale
+// (1.0 = 2.6 V at the node). A plain tanh with a 2.9 V asymptote already bends
+// too far below the rails: it gives about 1.2% THD at the part's 0.78 Vrms
+// test point instead of the specified typical 0.3%. This generalized algebraic
+// soft clip has the same approximately 2.9 V asymptote, while its exponent is
+// fitted jointly to 0.3% at 0.78 Vrms and 2.5% at the 1.5 Vrms input-swing
+// point. It stays linear through ordinary wet levels and bends rapidly near
+// the measured window rather than colouring every signal like a tanh.
+constexpr float bbdSaturationLevel = 1.1246614f; // 2.924 V at the node
+constexpr float bbdSaturationExponent = 3.4541951f;
 
 // There is no divider ahead of the line. A previous revision put one here --
 // 33 kOhm against 12 kOhm -- on a reading of the schematic that the schematic
 // does not support: the 100 kOhm at each line's input injects adjustable DC
 // bias from VR1/VR2 and is not the lower leg of anything, and the 10 kOhm
-// against 2.2 nF beside it is a low-pass pole, not an attenuator. Roland sets
-// the drive by calibration instead, trimming VR1/VR2 for symmetrical clipping
-// with 10 Vpp at 1 kHz on the module board's TP2.
+// against 2.2 nF beside it is a low-pass pole, not an attenuator. VR1/VR2 trim
+// each line's DC bias so the positive and negative clipping points are
+// symmetrical during the service procedure's 10 Vpp, 1 kHz TP2 test; they do
+// not set a signal gain.
 //
 // The voice summer ahead of the whole effect does attenuate, but it attenuates
 // dry and wet alike, so it is not a chorus divider either and cannot change the
 // balance the summing resistors set.
 
-// Modelled noise floor of one line, referred to its own input. Uncompanded,
-// this circuit is reported between 55 and 65 dB signal to noise against the
-// part's own 88 dB datasheet figure, and **that band still has no citation**:
-// the closest located capture gives noise level alone, with no reference tone,
-// calibrated level, weighting or stated bandwidth, so it cannot be turned into
-// a signal-to-noise figure. Modelling the floor is the point regardless -- the
-// missing compander is what the effect is known for.
-constexpr float lineNoiseAmplitude = 1.0e-3f;
+// Voiced noise floor of one line, referred to its own input. The closest
+// located capture gives noise level alone, with no reference tone, calibrated
+// level, weighting or stated bandwidth, so it cannot establish an SNR or an
+// exact amplitude here. Modelling some floor still matters because this chorus
+// has no compander; the value below remains provisional pending a calibrated
+// capture.
+// Independent random noise generated by each wet line at its own clock edges.
+// This is the pre-OQ-03 compatibility level, preserved bit for bit.  It is a
+// voiced/unknown value, not a calibrated hardware measurement.
+constexpr float independentLineRandomAmplitude = 1.0e-3f;
 
 // Support filters, from the schematic rather than from an estimate of it. Each
 // side of the line carries two emitter-follower Sallen-Key sections built on
@@ -71,7 +60,8 @@ constexpr float lineNoiseAmplitude = 1.0e-3f;
 //   Tr14 / Tr16   1.8 nF feedback, 270 pF shunt  -> 10.38 kHz, Q 1.291
 //
 // and the input adds one passive pole, R122 10 kOhm against C52 2.2 nF, at
-// 7.23 kHz. Five poles in, four modelled out.
+// 7.23 kHz. The coupling capacitor C44/C47 adds a wet-only high-pass against
+// R120/R114 100 kOhm at 15.9 Hz.
 //
 // This replaces a single pole at 9.9 kHz in and 9.5 kHz out, which was a guess
 // at a fifth-order response rather than the response itself, and was therefore
@@ -87,24 +77,23 @@ constexpr float antiAliasSecondHz = 10377.0f;
 constexpr float antiAliasSecondFeedbackF = 1.8e-9f;
 constexpr float antiAliasSecondShuntF = 270.0e-12f;
 constexpr float antiAliasPassiveHz = 7234.0f;   // R122 10 kOhm x C52 2.2 nF
+constexpr float inputCouplingHz = 15.9155f;     // C44 0.1 uF x R120 100 kOhm
 
-// The output's own fifth pole is the tap-summing node, and its corner is not
-// set by the passive parts alone -- the part's output impedance is in series
-// with them and is not specified. On the schematic's values against a summing
-// node's low source impedance it lands well above the audio band, so it is left
-// out rather than voiced at a number that would be doing no work.
+// The output's fifth pole is the BBD tap-summing node: either active output
+// reaches C45/C48 2.2 nF through 3.3 kOhm, and R117/R110 47 kOhm returns the
+// node to ground. Treating the active BBD output as an ideal source gives
+// (3.3 kOhm || 47 kOhm) against 2.2 nF, or 23.46138 kHz. The MN3009 datasheet does
+// not specify output impedance, so this is deliberately a first-order nominal
+// model, not a claim that a real unit's pole lands to the hertz. A full MNA or
+// wet-only sweep should replace it when one is available.
+constexpr float idealSourceTapPoleHz = 23461.38f;
 constexpr float reconstructionFirstHz = 9688.0f;
 constexpr float reconstructionSecondHz = 10377.0f;
 
-// Line gain, from the summing stage's own parts rather than from a sibling's
-// measurement. Dry and wet meet at an inverting op-amp through 47 kOhm and
-// 39 kOhm into a 100 kOhm feedback, so the wet path arrives 47/39 louder --
-// 1.62 dB. An earlier revision voiced 2.3 dB from a sibling capture.
-//
-// It is a ratio of two resistors in the same stage, so the feedback value
-// cancels: only the imbalance reaches the model, which is why the absolute
-// gains (6.56 dB and 8.18 dB) do not appear here.
-constexpr float lineGain = 47.0f / 39.0f;   // +1.62 dB
+// The wet-mute glide is expressed relative to dry. The final IC6 summer's
+// absolute 100/39 dry gain is applied after the BBDs in process(); putting it
+// before them would drive their fitted nonlinearity 8.18 dB too hard.
+constexpr float lineGain = Chorus::wetToDryGain;   // 39/47, -1.62 dB
 
 std::uint32_t nextNoiseState(std::uint32_t state) noexcept
 {
@@ -126,6 +115,34 @@ float triangle(float phase) noexcept
     return folded * 4.0f - 1.0f;
 }
 } // namespace
+
+Chorus::StereoNoiseSample Chorus::correlatedRandomStep(
+    std::uint32_t& commonState, std::uint32_t& orthogonalState,
+    float correlation) noexcept
+{
+    commonState = nextNoiseState(commonState);
+    orthogonalState = nextNoiseState(orthogonalState);
+
+    const float common = noiseFromState(commonState);
+    const float orthogonal = noiseFromState(orthogonalState);
+    const float rho = std::isfinite(correlation)
+        ? std::clamp(correlation, -1.0f, 1.0f) : 0.0f;
+    const float orthogonalGain = std::sqrt(std::max(0.0f, 1.0f - rho * rho));
+    return { common, rho * common + orthogonalGain * orthogonal };
+}
+
+float Chorus::deterministicToneStep(double& phase, float frequencyHz,
+                                    float sampleRate) noexcept
+{
+    if (!std::isfinite(frequencyHz) || !std::isfinite(sampleRate)
+        || sampleRate <= 0.0f)
+        return 0.0f;
+
+    phase += static_cast<double>(std::max(frequencyHz, 0.0f))
+           / static_cast<double>(sampleRate);
+    phase -= std::floor(phase);
+    return static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * phase));
+}
 
 Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
 {
@@ -154,25 +171,50 @@ Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
     {
         case ChorusMode::One:  return { rateOne, centre, sweep, lineGain };
         case ChorusMode::Two:  return { rateTwo, centre, sweep, lineGain };
-        // Both buttons down -- this plug-in's addition, not the instrument's
-        // behaviour. A Juno-106 interlocks the two and its manual says so
-        // outright; the mode is what owners fit a board modification to get.
-        //
-        // How it behaves is still taken from the circuit rather than invented:
-        // each switch shunts its own resistor into the modulation oscillator's
-        // timing network, so closing both puts the two in parallel and the
-        // conductances add, and with them the rate. The depth is untouched --
-        // nothing in the delay path changes, only how quickly it is swept.
+        // Compatibility with states written while the plug-in exposed both
+        // buttons at once. The 106 has no fourth control line or fourth clock
+        // programme, so the stronger/faster hardware mode II is the canonical
+        // result.
         case ChorusMode::OneTwo:
-            return { rateOne + rateTwo, centre, sweep, lineGain };
+            return { rateTwo, centre, sweep, lineGain };
         case ChorusMode::Off:
-        default:               return { rateOne, centre, 0.0f, 0.0f };
+        default:
+            // Bypass only mutes the wet return. The oscillator and both BBDs
+            // continue to run behind the mute, so an effect prepared while
+            // off still needs a real clock programme and sweep depth.
+            return { rateOne, centre, sweep, 0.0f };
     }
+}
+
+float Chorus::bbdTransfer(float input) noexcept
+{
+    if (!std::isfinite(input))
+        return 0.0f;
+
+    // Evaluate the fractional powers in double precision. Apart from keeping
+    // the fit stable at its two calibration points, this lets even an extreme
+    // finite float approach the rail instead of overflowing an intermediate
+    // power and folding back to zero.
+    const double normalised = std::abs(static_cast<double>(input))
+                            / static_cast<double>(bbdSaturationLevel);
+    const double denominator = std::pow(
+        1.0 + std::pow(normalised, static_cast<double>(bbdSaturationExponent)),
+        1.0 / static_cast<double>(bbdSaturationExponent));
+    return static_cast<float>(static_cast<double>(input) / denominator);
+}
+
+float Chorus::transferLossStep(float& state, float input) noexcept
+{
+    state += transferSmear * (input - state);
+    return state;
 }
 
 float Chorus::onePoleG(float cutoffHz, float sampleRate) noexcept
 {
-    const float limited = std::clamp(cutoffHz, 20.0f, sampleRate * 0.45f);
+    // The wet coupling pole is at 15.9 Hz, so the old 20 Hz defensive floor
+    // silently moved a real component value. A small positive floor still
+    // protects tan() from invalid callers without voicing the circuit.
+    const float limited = std::clamp(cutoffHz, 0.1f, sampleRate * 0.45f);
     const float g = std::tan(3.14159265358979324f * limited / sampleRate);
     return g / (1.0f + g);
 }
@@ -233,7 +275,9 @@ float Chorus::biquadStep(BiquadState& state, float input,
 Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
 {
     SupportChain chain;
+    chain.inputCouplingG = onePoleG(inputCouplingHz, sampleRate);
     chain.passiveG = onePoleG(antiAliasPassiveHz, sampleRate);
+    chain.idealSourceTapPoleG = onePoleG(idealSourceTapPoleHz, sampleRate);
     chain.antiAliasFirst = sallenKeyCoefficients(
         antiAliasFirstHz,
         sallenKeyQ(antiAliasFirstFeedbackF, antiAliasFirstShuntF), sampleRate);
@@ -257,9 +301,11 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
     clockPhase = 0.0;
     held = 0.0f;
     previousInput = 0.0f;
+    inputCouplingState = 0.0f;
     antiAliasState = 0.0f;
     antiAliasFirst.reset();
     antiAliasSecond.reset();
+    tapSumState = 0.0f;
     reconstructionFirst.reset();
     reconstructionSecond.reset();
     transferState = 0.0f;
@@ -270,10 +316,14 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
                             const SupportChain& support, float noiseScale) noexcept
 {
     // Band-limit ahead of the line. Everything above half the clock would fold,
-    // exactly as it does in the part. Five poles: the board's two Sallen-Key
-    // sections, then its passive one.
+    // exactly as it does in the part. The two Sallen-Key sections precede the
+    // wet-only C44/C47 coupling high-pass; the passive 10 kOhm / 2.2 nF pole is
+    // last, immediately beside the MN3009 input.
     float limited = Chorus::biquadStep(antiAliasFirst, input, support.antiAliasFirst);
     limited = Chorus::biquadStep(antiAliasSecond, limited, support.antiAliasSecond);
+    const float couplingLow = Chorus::supportFilterStep(
+        inputCouplingState, limited, support.inputCouplingG);
+    limited -= couplingLow;
     limited = Chorus::supportFilterStep(antiAliasState, limited, support.passiveG);
 
     const double increment =
@@ -301,17 +351,17 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         // The line's own overload. The charge a cell can hold is bounded by
         // its bias window, so the wet path saturates before anything around
         // it does; driving the chorus hot grits the delayed signal only.
-        const float bounded = bbdSaturationLevel
-                            * std::tanh(atEdge / bbdSaturationLevel);
+        const float bounded = Chorus::bbdTransfer(atEdge);
 
         writeIndex = writeIndex + 1 < cellPairs ? writeIndex + 1 : 0;
         const float emerging = cells[static_cast<std::size_t>(writeIndex)];
         cells[static_cast<std::size_t>(writeIndex)] = bounded;
 
-        transferState += transferSmear * (emerging - transferState);
+        Chorus::transferLossStep(transferState, emerging);
         noiseState = nextNoiseState(noiseState);
         held = transferState
-             + noiseFromState(noiseState) * lineNoiseAmplitude * noiseScale;
+             + noiseFromState(noiseState) * independentLineRandomAmplitude
+               * noiseScale;
     }
     // If the ratio somehow exceeded even that bound, drop the remainder rather
     // than carrying it: a backlog would make the line run slower than the clock
@@ -320,9 +370,13 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         clockPhase -= std::floor(clockPhase);
     previousInput = limited;
 
-    // Reconstruct the held staircase through the board's two output sections.
+    // Sum the complementary BBD output taps through their 3.3 kOhm resistors,
+    // then reconstruct the held staircase through the two output sections.
+    const float tapSum = Chorus::supportFilterStep(
+        tapSumState, held, support.idealSourceTapPoleG);
     const float first =
-        Chorus::biquadStep(reconstructionFirst, held, support.reconstructionFirst);
+        Chorus::biquadStep(reconstructionFirst, tapSum,
+                           support.reconstructionFirst);
     return Chorus::biquadStep(reconstructionSecond, first,
                               support.reconstructionSecond);
 }
@@ -340,10 +394,16 @@ void Chorus::reset() noexcept
     lineA_.reset(0x9e3779b9u);
     lineB_.reset(0x85ebca6bu);
     lfoPhase_ = 0.0f;
-    wetGain_ = 0.0f;
-    rateHz_ = 0.513f;
-    sweep_ = 0.0f;
-    centreDelay_ = settingsFor(ChorusMode::Off).centreDelaySeconds;
+    const auto runningWhileMuted = settingsFor(ChorusMode::Off);
+    wetGain_ = runningWhileMuted.wetGain;
+    rateHz_ = runningWhileMuted.rateHz;
+    sweep_ = runningWhileMuted.sweepSeconds;
+    centreDelay_ = runningWhileMuted.centreDelaySeconds;
+    commonNoiseState_ = 0xd1b54a35u;
+    orthogonalNoiseState_ = 0x94d049bbu;
+    humPhase_ = 0.0;
+    clockSpurPhaseA_ = 0.0;
+    clockSpurPhaseB_ = 0.0;
     // A patch loaded with the effect switched on is not a player reaching for
     // the button: there is nothing to glide from. The first sample after a
     // reset takes the mode as it stands, and only changes made afterwards
@@ -370,8 +430,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // the switch merely un-mutes the wet through a transistor pair. So the
     // clock programme steps to its new setting at once -- the delay itself
     // cannot jump, because the cells hold their contents and only the shift
-    // rate changes -- and only the wet mute carries a short declick, on the
-    // scale of the switching transistors' own settling. Switching *off*
+    // rate changes -- and only the wet mute carries a short product-level
+    // declick. Its 5 ms time constant is not presented as transistor settling.
+    // Switching *off*
     // changes nothing but the mute, so the lines go on sweeping underneath
     // and re-engaging the effect finds them mid-sweep, as the hardware's are.
     if (mode != ChorusMode::Off)
@@ -380,7 +441,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         sweep_ = target.sweepSeconds;
         centreDelay_ = target.centreDelaySeconds;
     }
-    const float muteGlide = 1.0f - std::exp(-inverseSampleRate_ / 0.005f);
+    const float muteGlide = 1.0f - std::exp(
+        -inverseSampleRate_ / wetMuteTimeConstantSeconds);
     wetGain_ += (target.wetGain - wetGain_) * muteGlide;
 
     lfoPhase_ += rateHz_ * inverseSampleRate_;
@@ -398,14 +460,66 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const float clockB = std::clamp(clockForDelaySeconds(delayB),
                                     minimumClockHz, maximumClockHz);
 
-    const float wetA = lineA_.process(input, clockA, sampleRate_, support_, noiseScale);
-    const float wetB = lineB_.process(input, clockB, sampleRate_, support_, noiseScale);
+    float wetA = lineA_.process(input, clockA, sampleRate_, support_, noiseScale);
+    float wetB = lineB_.process(input, clockB, sampleRate_, support_, noiseScale);
+
+    // These mechanisms are deliberately separate from the compatibility hiss
+    // above.  Their insertion point, spectra, levels and stereo correlation
+    // are all voiced/unknown pending the calibrated OQ-03 capture.  Zero is
+    // therefore the production default, and this branch leaves the old render
+    // bit-identical when no optional component has been configured.
+    const bool hasOptionalNoise = optionalNoise_.commonRandomAmplitude != 0.0f
+        || optionalNoise_.humAmplitude != 0.0f
+        || optionalNoise_.clockSpurAmplitude != 0.0f;
+    if (hasOptionalNoise)
+    {
+        float optionalA = 0.0f;
+        float optionalB = 0.0f;
+
+        if (optionalNoise_.commonRandomAmplitude != 0.0f)
+        {
+            const auto common = correlatedRandomStep(
+                commonNoiseState_, orthogonalNoiseState_,
+                optionalNoise_.commonRandomCorrelation);
+            optionalA += optionalNoise_.commonRandomAmplitude * common.lineA;
+            optionalB += optionalNoise_.commonRandomAmplitude * common.lineB;
+        }
+
+        if (optionalNoise_.humAmplitude != 0.0f)
+        {
+            // A common deterministic term is the smallest useful hypothesis;
+            // polarity and channel imbalance remain unknown.
+            const float hum = optionalNoise_.humAmplitude
+                * deterministicToneStep(humPhase_, optionalNoise_.humFrequencyHz,
+                                        sampleRate_);
+            optionalA += hum;
+            optionalB += hum;
+        }
+
+        if (optionalNoise_.clockSpurAmplitude != 0.0f)
+        {
+            // Each candidate spur follows its own modulated BBD clock.  The
+            // harmonic and post-line insertion level are disabled hypotheses,
+            // not claims about a measured unit.
+            optionalA += optionalNoise_.clockSpurAmplitude
+                * deterministicToneStep(
+                    clockSpurPhaseA_, clockA * optionalNoise_.clockSpurHarmonic,
+                    sampleRate_);
+            optionalB += optionalNoise_.clockSpurAmplitude
+                * deterministicToneStep(
+                    clockSpurPhaseB_, clockB * optionalNoise_.clockSpurHarmonic,
+                    sampleRate_);
+        }
+
+        wetA += optionalA * noiseScale;
+        wetB += optionalB * noiseScale;
+    }
 
     // Both channels carry dry plus wet. The width comes from the two lines
     // being clocked in antiphase, not from inverting one side, so summing to
     // mono thins the effect rather than cancelling it.
-    left = input + wetA * wetGain_;
-    right = input + wetB * wetGain_;
+    left = dryMixGain * (input + wetA * wetGain_);
+    right = dryMixGain * (input + wetB * wetGain_);
 }
 
 } // namespace youknow106

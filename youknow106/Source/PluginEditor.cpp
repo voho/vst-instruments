@@ -280,7 +280,8 @@ void YouKnow106Display::refresh (const YouKnow106AudioProcessor& source)
     if (mask == voiceMask && count == voices && limit == voiceLimit
         && std::abs (env - envelope) < 0.004f
         && std::abs (modulation - lfo) < 0.004f
-        && rate == sampleRate && factor == oversampling && isReady == ready)
+        && std::abs (rate - sampleRate) < 1.0e-6
+        && factor == oversampling && isReady == ready)
         return;
 
     voiceMask = mask;
@@ -378,7 +379,7 @@ void YouKnow106Display::paint (juce::Graphics& g)
 // ---------------------------------------------------------------------------
 
 YouKnow106AudioProcessorEditor::YouKnow106AudioProcessorEditor (YouKnow106AudioProcessor& p)
-    : AudioProcessorEditor (&p), processor (p),
+    : AudioProcessorEditor (&p), audioProcessor (p),
       keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
 {
     setLookAndFeel (&lookAndFeel);
@@ -445,7 +446,7 @@ void YouKnow106AudioProcessorEditor::buildPanelControls()
             entry.slider->setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
             entry.slider->setName (description.label);
             entry.slider->setTitle (description.label);
-            if (auto* parameter = processor.parameters.getParameter (description.parameterId))
+            if (auto* parameter = audioProcessor.parameters.getParameter (description.parameterId))
                 entry.slider->setTooltip (parameter->getName (64));
             addAndMakeVisible (*entry.slider);
             attachSlider (*entry.slider, description.parameterId);
@@ -453,13 +454,59 @@ void YouKnow106AudioProcessorEditor::buildPanelControls()
         else
         {
             entry.button = std::make_unique<juce::TextButton> (description.label);
-            entry.button->setClickingTogglesState (true);
+            // Radio lamps are owned by their shared parameter attachment. If
+            // they self-toggle, clicking the already-selected value can turn
+            // its lamp off while the unchanged parameter suppresses a callback.
+            const bool isPoly = std::strcmp (description.parameterId,
+                                             parameters::poly1) == 0
+                             || std::strcmp (description.parameterId,
+                                             parameters::poly2) == 0;
+            entry.button->setClickingTogglesState (
+                description.kind != panel::ControlKind::Radio && ! isPoly);
             entry.button->setName (description.label);
             entry.button->setTitle (description.label);
             addAndMakeVisible (*entry.button);
 
             if (description.kind == panel::ControlKind::Toggle)
-                attachButton (*entry.button, description.parameterId);
+            {
+                if (std::strcmp (description.parameterId, parameters::poly1) == 0)
+                {
+                    entry.button->setTooltip (
+                        "Click to select POLY 1; Shift-click either POLY button for "
+                        "Solo Unison; re-click the selected mode to reassign held keys");
+                    attachPolyButton (*entry.button, parameters::poly1,
+                                      parameters::poly2);
+                }
+                else if (std::strcmp (description.parameterId,
+                                      parameters::poly2) == 0)
+                {
+                    entry.button->setTooltip (
+                        "Click to select POLY 2; Shift-click either POLY button for "
+                        "Solo Unison; re-click the selected mode to reassign held keys");
+                    attachPolyButton (*entry.button, parameters::poly2,
+                                      parameters::poly1);
+                }
+                else if (std::strcmp (description.parameterId,
+                                      parameters::chorusI) == 0)
+                {
+                    entry.button->setTooltip (
+                        "Chorus I — provisional JUNO-60 timing fallback; "
+                        "absolute JUNO-106 timing is not yet measured");
+                    attachExclusiveButton (*entry.button, parameters::chorusI,
+                                           parameters::chorusII);
+                }
+                else if (std::strcmp (description.parameterId,
+                                      parameters::chorusII) == 0)
+                {
+                    entry.button->setTooltip (
+                        "Chorus II — provisional JUNO-60 timing fallback; "
+                        "absolute JUNO-106 timing is not yet measured");
+                    attachExclusiveButton (*entry.button, parameters::chorusII,
+                                           parameters::chorusI);
+                }
+                else
+                    attachButton (*entry.button, description.parameterId);
+            }
             else
                 attachRadio (*entry.button, description.parameterId,
                              description.groupValue);
@@ -498,12 +545,12 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     configure (transposeSlider, transpose, "Transpose");
     configure (tuneSlider, masterTune, "Master tune");
     configure (velocitySlider, velocity, "Velocity");
-    configure (calibrationSlider, calibration, "Calibration");
+    configure (calibrationSlider, calibration, "Unit Character");
     configure (chorusNoiseSlider, chorusNoise, "Chorus noise");
     configure (polyphonySlider, polyphony, "Polyphony");
 
     const char* captions[] = { "TRANSPOSE", "TUNE", "VELOCITY",
-                               "CALIBRATION", "CHORUS NOISE", "VOICES" };
+                               "UNIT CHARACTER", "CHORUS NOISE", "VOICES" };
     for (std::size_t index = 0; index < utilityLabels.size(); ++index)
     {
         auto& label = utilityLabels[index];
@@ -521,19 +568,19 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     attachButton (hqButton, hq);
 
     panicButton.setTooltip ("Silence every voice immediately");
-    panicButton.onClick = [this] { processor.requestPanic(); };
+    panicButton.onClick = [this] { audioProcessor.requestPanic(); };
     addAndMakeVisible (panicButton);
 
     randomize10Button.setTooltip ("Nudge the patch");
-    randomize10Button.onClick = [this] { processor.randomizeParameters (0.10f); };
+    randomize10Button.onClick = [this] { audioProcessor.randomizeParameters (0.10f); };
     addAndMakeVisible (randomize10Button);
 
     sendSysExButton.setTooltip ("Send the current panel to hardware as a patch dump");
-    sendSysExButton.onClick = [this] { processor.requestSysExDump(); };
+    sendSysExButton.onClick = [this] { audioProcessor.requestSysExDump(); };
     addAndMakeVisible (sendSysExButton);
 
     randomize100Button.setTooltip ("Draw a completely new patch");
-    randomize100Button.onClick = [this] { processor.randomizeParameters (1.0f); };
+    randomize100Button.onClick = [this] { audioProcessor.randomizeParameters (1.0f); };
     addAndMakeVisible (randomize100Button);
 }
 
@@ -549,8 +596,8 @@ void YouKnow106AudioProcessorEditor::buildPresetBar()
     // A ComboBox reserves id 0 for "nothing selected", so an item id is the
     // program index plus one. Only the three places that touch the box know
     // that; everything else in the bar works in program indices.
-    for (int index = 0; index < processor.getNumPrograms(); ++index)
-        presetBox.addItem (processor.getProgramName (index), index + 1);
+    for (int index = 0; index < audioProcessor.getNumPrograms(); ++index)
+        presetBox.addItem (audioProcessor.getProgramName (index), index + 1);
 
     presetBox.setTooltip ("Recall a factory patch");
     presetBox.setColour (juce::ComboBox::backgroundColourId,
@@ -570,6 +617,17 @@ void YouKnow106AudioProcessorEditor::buildPresetBar()
     presetNextButton.onClick = [this] { stepProgram (1); };
     addAndMakeVisible (presetNextButton);
 
+    // JUCE does not emit ComboBox::onChange when the user picks the already
+    // selected item, so an explicit reload is the only reliable way to discard
+    // edits without stepping to another sound and back.
+    presetReloadButton.setName ("Reload patch");
+    presetReloadButton.setTooltip ("Reload the selected patch and discard edits");
+    presetReloadButton.onClick = [this]
+    {
+        selectProgram (audioProcessor.getCurrentProgram());
+    };
+    addAndMakeVisible (presetReloadButton);
+
     presetEditedLabel.setText ("EDITED", juce::dontSendNotification);
     presetEditedLabel.setFont (panelFont (9.0f, true));
     presetEditedLabel.setColour (juce::Label::textColourId,
@@ -583,37 +641,38 @@ void YouKnow106AudioProcessorEditor::buildPresetBar()
 
 void YouKnow106AudioProcessorEditor::selectProgram (int index)
 {
-    if (index < 0 || index >= processor.getNumPrograms())
-        return;
-    // Re-picking the patch already showing reloads it, which is how edits are
-    // thrown away. Doing that when nothing has been edited would only write
-    // every parameter back to the value it already holds, so it is skipped.
-    if (index == processor.getCurrentProgram() && ! processor.currentProgramIsEdited())
+    if (index < 0 || index >= audioProcessor.getNumPrograms())
         return;
 
-    processor.setCurrentProgram (index);
+    // Deliberately apply even when this is already the selected program. The
+    // RELOAD button promises an exact panel restore; a sub-7-bit slider move is
+    // audibly equivalent and need not light EDITED, but its cap must still move
+    // back to the stored position when the player asks to discard it.
+    audioProcessor.setCurrentProgram (index);
     // The host owns the program index in its own UI too, so tell it the change
     // came from here rather than letting the two drift apart.
-    processor.updateHostDisplay();
+    audioProcessor.updateHostDisplay (
+        juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
     refreshPresetBar();
 }
 
 void YouKnow106AudioProcessorEditor::stepProgram (int delta)
 {
-    const int wanted = juce::jlimit (0, processor.getNumPrograms() - 1,
-                                     processor.getCurrentProgram() + delta);
-    if (wanted == processor.getCurrentProgram())
+    const int wanted = juce::jlimit (0, audioProcessor.getNumPrograms() - 1,
+                                     audioProcessor.getCurrentProgram() + delta);
+    if (wanted == audioProcessor.getCurrentProgram())
         return;
 
-    processor.setCurrentProgram (wanted);
-    processor.updateHostDisplay();
+    audioProcessor.setCurrentProgram (wanted);
+    audioProcessor.updateHostDisplay (
+        juce::AudioProcessorListener::ChangeDetails().withProgramChanged (true));
     refreshPresetBar();
 }
 
 void YouKnow106AudioProcessorEditor::refreshPresetBar()
 {
-    const int program = processor.getCurrentProgram();
-    const bool edited = processor.currentProgramIsEdited();
+    const int program = audioProcessor.getCurrentProgram();
+    const bool edited = audioProcessor.currentProgramIsEdited();
     if (program == shownProgram && edited == shownEdited)
         return;
 
@@ -622,34 +681,141 @@ void YouKnow106AudioProcessorEditor::refreshPresetBar()
     presetBox.setSelectedId (program + 1, juce::dontSendNotification);
     presetEditedLabel.setVisible (edited);
     presetPrevButton.setEnabled (program > 0);
-    presetNextButton.setEnabled (program < processor.getNumPrograms() - 1);
+    presetNextButton.setEnabled (program < audioProcessor.getNumPrograms() - 1);
 }
 
 void YouKnow106AudioProcessorEditor::attachSlider (juce::Slider& slider,
                                                    const char* parameterId)
 {
-    if (const auto* parameter = processor.parameters.getParameter (parameterId))
+    if (const auto* parameter = audioProcessor.parameters.getParameter (parameterId))
         slider.setDoubleClickReturnValue (
             true, parameter->convertFrom0to1 (parameter->getDefaultValue()));
     else
         jassertfalse;
 
     sliderAttachments.push_back (std::make_unique<SliderAttachment> (
-        processor.parameters, parameterId, slider));
+        audioProcessor.parameters, parameterId, slider));
 }
 
 void YouKnow106AudioProcessorEditor::attachButton (juce::Button& button,
                                                    const char* parameterId)
 {
-    jassert (processor.parameters.getParameter (parameterId) != nullptr);
+    jassert (audioProcessor.parameters.getParameter (parameterId) != nullptr);
     buttonAttachments.push_back (std::make_unique<ButtonAttachment> (
-        processor.parameters, parameterId, button));
+        audioProcessor.parameters, parameterId, button));
+}
+
+void YouKnow106AudioProcessorEditor::attachExclusiveButton (
+    juce::Button& button, const char* parameterId, const char* otherParameterId)
+{
+    attachButton (button, parameterId);
+    button.onClick = [this, &button, otherParameterId]
+    {
+        if (! button.getToggleState())
+            return; // Pressing the lit hardware button switches chorus off.
+
+        if (auto* other = audioProcessor.parameters.getParameter (otherParameterId))
+        {
+            other->beginChangeGesture();
+            other->setValueNotifyingHost (other->convertTo0to1 (0.0f));
+            other->endChangeGesture();
+        }
+    };
+}
+
+void YouKnow106AudioProcessorEditor::attachPolyButton (
+    juce::Button& button, const char* parameterId, const char* otherParameterId)
+{
+    // The contacts are momentary and the assigner firmware owns their lamps.
+    // Use a ParameterAttachment with notification suppressed on the lamp: a
+    // ButtonAttachment reports parameter-driven lamp changes as clicks, which
+    // would recursively run the transition below.
+    auto* attachedParameter = audioProcessor.parameters.getParameter (parameterId);
+    jassert (attachedParameter != nullptr);
+    if (attachedParameter == nullptr)
+        return;
+    auto attachment = std::make_unique<juce::ParameterAttachment> (
+        *attachedParameter,
+        [&button] (float current)
+        {
+            button.setToggleState (current > 0.5f, juce::dontSendNotification);
+        },
+        nullptr);
+
+    button.onClick = [this, parameterId, otherParameterId]
+    {
+        // Both decisions come from the parameter atomics. The lamp update is
+        // asynchronous, so using its presentation state here can take the
+        // wrong branch when host automation and a mouse click coincide.
+        const auto isOn = [this] (const char* id)
+        {
+            if (const auto* value = audioProcessor.parameters.getRawParameterValue (id))
+                return value->load (std::memory_order_relaxed) > 0.5f;
+            return false;
+        };
+        const bool ownWasOn = isOn (parameterId);
+        const bool otherWasOn = isOn (otherParameterId);
+
+        const auto set = [this] (const char* id, bool on)
+        {
+            if (auto* target = audioProcessor.parameters.getParameter (id))
+            {
+                const float wanted = on ? 1.0f : 0.0f;
+                target->beginChangeGesture();
+                target->setValueNotifyingHost (target->convertTo0to1 (wanted));
+                target->endChangeGesture();
+            }
+        };
+
+        // A mouse cannot hold both panel contacts at once. Shift-click is the
+        // explicit virtual equivalent of the hardware's simultaneous press;
+        // an ordinary click retains the real single-button meaning.
+        if (juce::ModifierKeys::currentModifiers.isShiftDown())
+        {
+            if (ownWasOn && otherWasOn)
+            {
+                // Both lamps already show Solo Unison, but the contacts are
+                // momentary. Holding them again still enters the firmware
+                // handler and rebuilds every held assignment.
+                audioProcessor.requestKeyModeReassert();
+                return;
+            }
+            set (parameterId, true);
+            set (otherParameterId, true);
+            return;
+        }
+
+        if (ownWasOn && ! otherWasOn)
+        {
+            // The visible latch does not move, but the real assigner still
+            // gates, clears and rescans held keys on this repeated press.
+            audioProcessor.requestKeyModeReassert();
+            return;
+        }
+
+        if (ownWasOn && otherWasOn)
+        {
+            // From Solo Unison, pressing one contact alone selects that mode.
+            set (otherParameterId, false);
+            return;
+        }
+
+        // A normal press selects this single mode. Clear the other parameter
+        // first: the transient both-off pair canonicalises to the previous/
+        // target Poly 1 behavior, whereas setting this one first would render
+        // an unintended block of Unison during a Poly 1 -> Poly 2 change.
+        set (otherParameterId, false);
+        set (parameterId, true);
+    };
+    auto* pointer = attachment.get();
+    parameterAttachments.push_back (std::move (attachment));
+    pointer->sendInitialUpdate();
 }
 
 void YouKnow106AudioProcessorEditor::attachRadio (juce::Button& button,
                                                   const char* parameterId, int value)
 {
-    auto* parameter = processor.parameters.getParameter (parameterId);
+    auto* parameter = audioProcessor.parameters.getParameter (parameterId);
     jassert (parameter != nullptr);
     if (parameter == nullptr)
         return;
@@ -664,11 +830,14 @@ void YouKnow106AudioProcessorEditor::attachRadio (juce::Button& button,
         nullptr);
 
     auto* pointer = attachment.get();
-    button.onClick = [pointer, value]
+    button.onClick = [pointer, &button, value]
     {
         pointer->setValueAsCompleteGesture (static_cast<float> (value));
+        // A complete gesture to the already-selected value is intentionally a
+        // no-op at the parameter. Keep the lamp canonical in that case too.
+        button.setToggleState (true, juce::dontSendNotification);
     };
-    radioAttachments.push_back (std::move (attachment));
+    parameterAttachments.push_back (std::move (attachment));
     pointer->sendInitialUpdate();
 }
 
@@ -754,8 +923,8 @@ void YouKnow106AudioProcessorEditor::resized()
                                           panel::utilityTop + 24.0f,
                                           buttonWidth, 18.0f).toNearestInt());
 
-    // Patch bar, its own row under the utility strip: caption, stepper, name box
-    // and the edited lamp, left to right.
+    // Patch bar, its own row under the utility strip: caption, stepper, reload,
+    // name box and the edited lamp, left to right.
     const float presetLeft = panel::panelMargin;
     const float stepWidth = 22.0f;
     presetLabel.setBounds (
@@ -766,11 +935,17 @@ void YouKnow106AudioProcessorEditor::resized()
     presetNextButton.setBounds (
         scaled (presetLeft + 46.0f + stepWidth + 3.0f, panel::presetTop + 2.0f,
                 stepWidth, panel::presetHeight - 4.0f).toNearestInt());
+    constexpr float reloadWidth = 58.0f;
+    const float reloadLeft = presetLeft + 46.0f + 2.0f * (stepWidth + 3.0f);
+    presetReloadButton.setBounds (
+        scaled (reloadLeft, panel::presetTop + 2.0f, reloadWidth,
+                panel::presetHeight - 4.0f).toNearestInt());
+    const float boxLeft = reloadLeft + reloadWidth + 4.0f;
     presetBox.setBounds (
-        scaled (presetLeft + 46.0f + 2.0f * (stepWidth + 3.0f), panel::presetTop + 2.0f,
+        scaled (boxLeft, panel::presetTop + 2.0f,
                 300.0f, panel::presetHeight - 4.0f).toNearestInt());
     presetEditedLabel.setBounds (
-        scaled (presetLeft + 56.0f + 2.0f * (stepWidth + 3.0f) + 300.0f,
+        scaled (boxLeft + 310.0f,
                 panel::presetTop + 3.0f, 60.0f, 18.0f).toNearestInt());
 
     keyboard.setBounds (scaled (0.0f, panel::panelHeight, panel::panelWidth(),
@@ -820,7 +995,7 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
 
 void YouKnow106AudioProcessorEditor::timerCallback()
 {
-    display.refresh (processor);
+    display.refresh (audioProcessor);
     // The program can also move from the host's own menu, and the panel from an
     // incoming patch dump or a randomise. Polling is what keeps the bar honest
     // about both without the processor having to know an editor exists.

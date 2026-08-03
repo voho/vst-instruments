@@ -186,11 +186,11 @@ if(BUILD_TESTING)
                          "${CMAKE_CURRENT_BINARY_DIR}/demo-smoke")
         set_tests_properties(YouKnow106.RenderDemos PROPERTIES TIMEOUT 60)
     endif()
-    # The circuit suite re-solves the reference ODE models at high internal
-    # rates, so it is the slower of the two. Address/undefined sanitizers make
-    # both roughly an order of magnitude slower; keep the normal runaway guard
-    # tight while allowing the same coverage under instrumentation instead of
-    # silently dropping expensive fixtures.
+    # The engine suite renders the complete factory-balance corpus, while the
+    # circuit suite re-solves reference ODE models at high internal rates.
+    # Address/undefined sanitizers make both substantially slower; retain
+    # runaway guards with enough margin for universal macOS builds and loaded
+    # CI workers instead of intermittently timing out valid coverage.
     if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
         set(YOUKNOW106_ENGINE_TEST_TIMEOUT 600)
         set(YOUKNOW106_CIRCUIT_TEST_TIMEOUT 900)
@@ -204,7 +204,7 @@ if(BUILD_TESTING)
             target_compile_definitions(${target} PRIVATE YOUKNOW106_SANITIZER_BUILD=1)
         endforeach()
     else()
-        set(YOUKNOW106_ENGINE_TEST_TIMEOUT 60)
+        set(YOUKNOW106_ENGINE_TEST_TIMEOUT 120)
         set(YOUKNOW106_CIRCUIT_TEST_TIMEOUT 90)
     endif()
     set_tests_properties(YouKnow106.Engine PROPERTIES

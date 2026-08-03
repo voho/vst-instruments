@@ -81,13 +81,15 @@ struct Patch
 // Writes a patch back out as eighteen tone bytes.
 void toneBytesFromPatch(const Patch& patch, std::uint8_t* bytes) noexcept;
 
-// Whether the patch survives a trip through the tone bytes unchanged.
+// Whether the patch has an exact state in the hardware's eighteen tone bytes.
 //
-// One setting does not: the patch memory holds chorus as an on/off bit and a
-// mode bit, so it can say off, I or II but not I+II. That is a property of the
-// format, not of this writer -- I+II is a thing you switch to by hand on the
-// hardware and cannot store either. `toneBytesFromPatch` writes it as II, the
-// nearer of the two in rate.
+// Continuous panel travel is effective at the hardware's own 7-bit resolution:
+// for example 0.36 and 46/127 name the same stored control step, so that normal
+// quantisation is not a loss. The current panel exposes exactly the memory's
+// Off/I/II chorus states, but one obsolete compatibility value does not have an
+// effective equivalent: early YouKnow106 sessions could store both chorus
+// buttons on. `toneBytesFromPatch` canonicalises that value to II and this
+// predicate reports the categorical conversion.
 [[nodiscard]] bool survivesPatchMemory(const Patch& patch) noexcept;
 
 // --- Messages ------------------------------------------------------------

@@ -38,8 +38,8 @@ constexpr Placement placements[controlCount] = {
     { parameters::benderLfo,   "LFO",      ControlKind::Slider, 1, 2, 0, 1, -1, 0 },
     { parameters::portamento,  "PORTA",    ControlKind::Slider, 1, 3, 0, 1, -1, 0 },
 
-    // MODE. Two independent latching buttons, exactly as on the panel being
-    // modelled: both down is unison, and there is no third button. Each button
+    // MODE. Two momentary selection buttons whose lamps are firmware-latched:
+    // one is always selected, and pressing both is Solo Unison. Each button
     // prints its own legend -- POLY 1 and POLY 2 -- inside itself.
     { parameters::poly1,       "POLY 1",   ControlKind::Toggle, 2, 0, 0, 2, -1, 0, 2 },
     { parameters::poly2,       "POLY 2",   ControlKind::Toggle, 2, 0, 1, 2, -1, 0, 2 },
@@ -87,8 +87,8 @@ constexpr Placement placements[controlCount] = {
     { parameters::sustain,     "S",        ControlKind::Slider, 8, 2, 0, 1, -1, 0 },
     { parameters::release,     "R",        ControlKind::Slider, 8, 3, 0, 1, -1, 0 },
 
-    // CHORUS. Two independent latching buttons. Neither down is off, and both
-    // down is the faster I+II setting rather than a duplicate of II.
+    // CHORUS. Two interlocked latching buttons. Neither down is off; selecting
+    // one releases the other, so the hardware exposes only Off, I and II.
     { parameters::chorusI,     "I",        ControlKind::Toggle, 9, 0, 0, 2, -1, 0 },
     { parameters::chorusII,    "II",       ControlKind::Toggle, 9, 0, 1, 2, -1, 0 },
 };

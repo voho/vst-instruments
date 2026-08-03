@@ -1,178 +1,894 @@
-# YouKnow106 — open circuit questions
+# YouKnow106 — open questions as LLM tasks
 
-Every constant in the model is one of three things:
+This is the canonical queue for every material hardware, firmware or
+model-calibration fact that the current implementation does not yet fix. Each
+item is written as a standalone task
+that can be handed to an LLM with browsing access, a researcher with a
+JUNO-106, or an LLM analysing supplied measurements.
 
-- **anchored** — read from service documentation, a datasheet or a measurement;
-- **derived** — computed from anchored values;
-- **voiced** — chosen inside a range the located sources bound but do not fix.
+Every current model value is classified as:
 
-This file lists every constant still in the third category, one per section,
-each written as a self-contained prompt.
+- **anchored** — supported by JUNO-106 service documentation, a component
+  datasheet, provenance-safe firmware analysis, or a calibrated measurement;
+- **ROM-resolved** — exact for one explicitly hash-identified supplied firmware
+  image, without implying that every firmware revision is identical;
+- **derived** — calculated from anchored values by a stated equation;
+- **product policy** — an explicit plug-in decision rather than a claim about
+  the analogue instrument; or
+- **voiced** — provisional because the available evidence does not fix it.
 
-**One question remains.** Two research rounds have settled the rest; what they
-answered is listed at the end so nobody spends time re-finding it. The one left
-is the one both rounds got wrong, and it is also the most valuable.
+JUNO-60 evidence is useful for comparison only. It must always remain labelled
+JUNO-60 and cannot resolve a JUNO-106 task.
 
-## How to use this file
+## LLM execution contract
 
-Each section has a **Query** — paste it whole into a research model; it carries
-its own context and needs nothing from this repository — and a **Required
-output**, which is the shape an answer has to arrive in to be usable.
+For every task below:
 
-Three rules apply to every question here:
+1. Declare the work mode: **evidence search**, **measurement-protocol design**,
+   or **analysis of supplied evidence**. Do not imply that a hardware
+   measurement was performed when no raw capture was supplied.
+2. Prefer an identified, healthy, warmed-up and service-calibrated JUNO-106.
+   Record serial number, board/revision, mains variant, repairs or substitutions,
+   calibration state, warm-up time, test equipment and loading where known.
+3. Cite exact manual pages, schematic designators, test points, datasheet
+   conditions, firmware-analysis locations, or capture filenames. Separate
+   direct evidence from calculations and inference.
+4. Preserve raw evidence: CSV for sweeps, WAV or FLAC for audio, scope exports or
+   photographs for waveforms, and a netlist plus component values for circuit
+   analysis. State units, bandwidth, weighting, probe/loading, sample rate,
+   uncertainty and calculation steps.
+5. Report contradictions instead of silently reconciling them. **Not found** or
+   **measurement required** is a valid result; an unsupported estimate is not.
+6. End with: status (**resolved**, **partially resolved**, **not found**, or
+   **protocol only**), confidence, remaining gaps, the current assumption being
+   tested, the proposed replacement if justified, and deterministic regression
+   fixtures. Do not change source code unless separately requested.
+7. Do not reproduce or embed ROM images or proprietary table dumps. Report
+   observable 0–127 behaviour, equations, rounding and boundary semantics, with
+   provenance-safe test vectors.
 
-1. **A source, or nothing.** Every number needs its provenance: a service manual
-   page, a schematic reference designator, a datasheet, a named measurement, a
-   specific forum post. "Typical for this kind of circuit" answers nothing.
-2. **"Not found" is a real answer** and is better than an estimate. A voiced
-   constant is at least labelled as uncertain; a wrong one presented as anchored
-   is not. Several of these have survived multiple search passes, and confirming
-   a dead end saves the next attempt.
-3. **Component values beat corner frequencies.** Send `R47 = 15 kΩ, C12 = 1 nF`
-   rather than `about 10 kHz`. The arithmetic is done here, and doing it here is
-   how transcription errors get caught — see the note at the end, which is not
-   hypothetical.
+A measurement from one instrument establishes that unit under the stated
+conditions, not an exact population value. Promote it to a nominal model
+constant only with an explicit unit/population scope and tolerance rationale.
 
-The Juno-6, Juno-60, MKS-7, MKS-30, HS-60 and the Alpha Junos share parts and
-whole circuit blocks with the Juno-106 but are not the same instrument. A figure
-from a sibling is still useful; it just has to say which sibling. And much of
-the online material is repair discussion: a degraded voice chip or a leaking
-capacitor is not the instrument's design.
+The priorities describe likely audible impact, not permission to weaken the
+evidence standard.
 
----
+## Final evidence compilation applied 2026-08-03
 
-## 1. Chorus support filters — highest value
+The supplied evidence-search reports and final compilation have been reconciled
+with the project, the primary schematics and hash-identified firmware. They were
+not imported verbatim: several page, test-point, DAC-width and mute-transistor
+identifications were incorrect. The primary hardware sources for this pass are
+the [Roland JUNO-106 Service
+Notes](https://www.vintagesynthparts.com/wp-content/uploads/2017/03/JUNO-106_SERVICE_NOTES.pdf),
+the [Roland owner's
+manual](https://cdn.roland.com/assets/media/pdf/JUNO-106_OM.pdf), and the
+[Panasonic MN3009
+datasheet](https://www.experimentalistsanonymous.com/diy/Datasheets/MN3009.pdf).
+The supplied B-2 image's effective first 4 KiB has SHA-256
+`b75d27d181dee58a7e969aa5119e6ac96f624066a8d84b22eb7f2523988e4527`;
+the supplied A-5 assigner image's effective first 4 KiB has SHA-256
+`72132b8803bd02d2640612aa0055a05fb2f478b03103a6031ddae642fd96a8f5`.
+The second half of each 8 KiB container is `0xff` padding. The supplied 2 KiB
+`Juno-6.bin` has SHA-256
+`9373f259aa20e4e1ef146d2c2bef1fd16aa7ef78f4cbd2bf82849416a4dafe34`
+and remains comparison evidence only; it cannot establish a JUNO-106 value.
+OQ-12 through OQ-14 record only equations, hashes and behavioural vectors
+verified against the B-2 image, not ROM contents. Addresses taken only from the
+[unofficial, explicitly partial and inaccurate IC29
+disassembly](https://github.com/ErroneousBosh/j106roms) remain
+provenance-pending unless a hash-identified supplied image, the official timing
+chart or a hardware observation independently corroborates them.
 
-**Why it matters:** this sets how bright the wet path is, and it is the last
-voiced constant in the chorus.
+“Partial” below means the settled portion has been removed from the research
+target while the task remains open for its stated boundary. A negative search
+result does not downgrade stronger evidence already recorded by this project.
 
-**Two rounds have now answered this wrongly, in the same way.** Both returned
-component values that do not produce the corners they were returned with:
+| OQ | Pass result | Applied boundary |
+|---|---|---|
+| 01 | Protocol only | Topology is known; JUNO-106 mode timing and delay endpoints remain unmeasured. |
+| 02 | Partial | Internal aligned word `b<<7`, physical 12-bit DAC code `b<<5`, and one shared VCA LEVEL hold are leads/anchors; the analogue voltage/current/gain law remains open. |
+| 03 | Protocol only | No calibrated same-path chorus SNR/correlation capture was found. |
+| 04 | Partial | 23.461 kHz is retained only as the ideal-active-output RC calculation; loaded/time-varying behaviour remains open. |
+| 05 | Protocol only | Rails and resistor gains do not establish loaded clipping swing. |
+| 06 | Adopted product policy | A declared reference sine maps to -18 dBFS RMS at the final boundary while the migration default preserves current gain; absolute `Vref_rms` calibration remains open. |
+| 07 | Partial | Primary documentation settles 18 per-card and five shared holds; acquisition, droop, loading and destination-specific time constants remain open. |
+| 08 | Partial | Primary documentation settles ordinal write order; exact offsets, jitter and branches remain open. |
+| 09 | Partial | Resonance uses one shared hold and linear digital code mapping; control voltage to loop gain remains open. |
+| 10 | Adopted product policy | Calibrated nominal is zero spread/drift; deterministic seeded variation is optional Unit Character pending real post-calibration distributions. |
+| 11 | Partial | Pulse Off writes about -0.8 V and pins the comparator high; the local comparator-to-voice-mixer coupling, bleed and switching transient remain open. The resolved final C17/C20 output coupling is a different downstream stage. |
+| 12 | ROM-resolved boundary | The exact integer recurrence, coefficient regions, sustain `128b`, rounding and retrigger semantics are resolved for the hash-identified B-2; hardware wall-clock transfer and revision scope remain open. |
+| 13 | ROM-resolved boundary | Rate coefficients, clamp/state mechanics, attack-derived hold and all eight fade bins are resolved for that B-2; physical pass timing/jitter and revision scope remain open. |
+| 14 | ROM-resolved boundary | The 8-bit ADC read, raw 0/1 immediate behavior, `raw>>1` selection, 128 8-bit coefficients and six 8.8-semitone states are resolved for that B-2; pot/ADC electrical behavior remains open. |
+| 15 | Partial | Saw/pulse about 12 Vpp, noise 4 Vpp at TP8 and sub collector-supply control are node-specific anchors; loaded end-to-end drive remains open. |
+| 16 | Partial | One shared main-noise source is anchored; PSD, distribution and filter-startup noise remain open. |
+| 17 | Partial | C17/C20 10 µF and R54/R57 1.5 kΩ into the dual 10KB VOLUME tracks establish the current-scope pre-volume coupling transfer; nominal output levels L -30 dBm, M -15 dBm and H 0 dBm are published. Downstream loading, reference/load, real taper, jack normaling/summing, stereo/headphone transfer, impedance and tolerance remain open. |
+| 18 | Adopted product policy | The published 5 Hz-50 kHz range remains only an anchor; the default uses an explicit 50 kHz numerical safety cap while the real high-code saturation law remains open. |
+| 19 | Not found in pass | The current central VCA fit remains voiced; a qualifying dense sweep is still required. |
+| 20 | Partial | Wet mutes are TR11/TR12 (2SK30A/K381), not output mutes TR7/TR8; switching leakage/transient remains open. |
 
-| Round | Stated parts | Stated corner | What the parts give |
-| --- | --- | --- | --- |
-| 1 | post-BBD 15k/15k/1n/2.2n | ~5,000 Hz | 7,153 Hz |
-| 2 | pre-BBD 33k/12k/2.2n/1.0n | 10,220 Hz | 5,392 Hz |
-| 2 | post-BBD 39k/12k/47n/82n | 9,480 Hz | **118 Hz** |
+## OQ-01 — Absolute JUNO-106 chorus timing
 
-The second round also gave `R115 = 33 kΩ` and `R113 = 12 kΩ` two incompatible
-roles in the same document — as the two series resistors of a Sallen-Key stage,
-and as a series/shunt divider to ground. Only the divider reading computes, and
-that part *was* adopted.
+**Priority:** P0
 
-So the corner is now better supported than it was — two independent accounts put
-it near 9.5–10 kHz, and the second explains the conflicting 14 kHz measurement
-as test-gear loading — but no source has yet produced values that compute.
+### Task definition
 
-> **Query**
->
-> I need the filter topology and component values on the Roland Juno-106's
-> chorus board — the board carrying two MN3009 bucket-brigade delay lines and an
-> MN3101 clock driver. There is a filter before each delay line and another
-> after it.
->
-> **Please verify your own arithmetic before answering.** For a Sallen-Key
-> low-pass, f = 1 / (2π·√(R1·R2·C1·C2)); for a single RC pole, f = 1 / (2π·R·C).
-> Compute the corner from the values you are about to send, and if it does not
-> match the corner your source states, say so explicitly rather than sending
-> both. Two previous answers failed exactly this check — one by a factor of 80 —
-> and were therefore unusable. An answer of "I found values but they do not
-> produce the stated corner, here are both" is genuinely useful. An answer that
-> silently reconciles them is not.
->
-> I want: how many poles before the line, how many after, the topology of each
-> (Sallen-Key, multiple-feedback, passive RC, …), and the resistor and capacitor
-> values with reference designators.
->
-> Context for cross-checking: the surrounding op-amps are M5218 dual low-noise
-> parts; the input divider ahead of the line is 33 kΩ series against 12 kΩ to
-> ground; the published corner estimates are 9.9 kHz in and 9.5 kHz out.
-> Reference designators near R113–R121 and C50–C69 appear to be in the right
-> region of the board.
->
-> Best sources: the Roland Juno-106 Service Notes chorus board schematic and its
-> parts list; Juno-chorus clone or Eurorack-adaptation projects publishing a full
-> bill of materials with values. Already tried without success: general searches
-> for "Juno-106 chorus schematic filter values", MN3009 application notes, and
-> clone build documentation that reproduces the board without stating values.
+Measure the absolute modulation rates and delay-sweep endpoints of both chorus
+modes on identified, healthy, calibrated JUNO-106 unit(s), and estimate nominal
+values only to the extent the sample and uncertainty support. The schematic
+anchors the topology and a mode-rate ratio near 1.623, but no qualifying
+JUNO-106 capture has been located. The implementation temporarily uses measured
+**JUNO-60** values: a 1.66–5.35 ms sweep at 0.513 Hz for I and 0.863 Hz for II.
+The formerly claimed 1.54–5.15 ms JUNO-106 sweep had no valid measurement and
+must not be reintroduced.
 
-**Required output**
+### Needed output (for LLM)
 
-```
-Q1 CHORUS SUPPORT FILTERS — FOUND / NOT FOUND
-Source:        <document, page, revision>
-Pre-BBD:       <topology>, R___ = ___, R___ = ___, C___ = ___, C___ = ___
-  computed fc: ___ Hz          source states: ___ Hz     agree? YES / NO
-Post-BBD:      <topology>, R___ = ___, R___ = ___, C___ = ___, C___ = ___
-  computed fc: ___ Hz          source states: ___ Hz     agree? YES / NO
-Confidence:    high / medium / low — and why
-Caveat:        <revision differences, illegible values, sibling instrument, …>
-```
+- Raw, multi-cycle TP3 and TP4 low-frequency modulation captures in Chorus I
+  and Chorus II, with both lines recorded even if they appear identical. TP3
+  and TP4 are not BBD phase-clock nodes: do not derive `128/f` delay from their
+  edge intervals.
+- Minimum and maximum clock frequency at each MN3101/MN3009 clock connection
+  over a complete modulation cycle, plus mode periods and frequencies.
+- A table containing mode, line, clock minimum/maximum, derived delay
+  maximum/minimum, modulation rate and uncertainty. Use
+  `delay_seconds = 128 / clock_hz` for the two-phase 256-stage line, where
+  `clock_hz` is the repetition rate of either individual MN3009 CP1/CP2
+  phase—not the upstream oscillator frequency or a count of both phases'
+  transitions.
+- Instrument and measurement metadata required by the common execution
+  contract, and an explicit comparison with the provisional JUNO-60 values.
+- A complete proposed per-mode set of rate, minimum/maximum delay (or
+  centre/sweep) and tolerances only if the evidence genuinely supports a
+  JUNO-106 nominal.
 
-**Failing that**, this can be settled without a schematic at all: a swept
-frequency measurement of one unit's wet path with the chorus engaged, dry muted
-if possible. Magnitude in dB from 100 Hz to 20 kHz is enough to fit both the
-corner and the order.
+## OQ-02 — Stored VCA LEVEL byte-to-gain law
 
----
+**Priority:** P0
 
-## Already settled — please do not spend time here
+### Task definition
 
-- **Whether the chorus carries a dry path.** It does. Dry reaches the final
-  op-amp through a series resistor and is always present; losing it is a
-  documented *fault* of the mute transistors.
-- **Bucket-brigade charge transfer.** Settled from the MN3009 datasheet: −3 dB
-  at 12 kHz on a 40 kHz clock, which puts the half-power point at 0.3 of the
-  clock rate.
-- **Ramp generator curvature.** The ramp is straight — a constant-current
-  integrator charge, not a resistive one. This is also the only shape consistent
-  with the comparator's 6 V / 50% duty anchor.
-- **Chorus I+II does not exist on the instrument.** The manual states that I and
-  II cannot be used together, and the board carries one enable bit plus one
-  binary I/II bit. The plug-in keeps the mode as a deliberate addition, clearly
-  labelled as one; there is nothing further to research here.
-- The cutoff control law, the resonance loop topology, the firmware envelope
-  shape, and the output amplifier's quasi-linear response.
-- The note timer, counter width, control scan period and hold slew, pulse duty
-  anchors, sub-oscillator division, voice assignment and unison behaviour.
+Recover the complete stored VCA LEVEL mapping for the common uPC1252H2 on the
+jack board. Its location after the six-voice sum and shared high-pass, before
+the chorus, and its one-shared-hold ownership are settled. Its analogue gain
+mechanism is not: no qualifying manufacturer or in-circuit transfer was found.
+Service Notes pp. 5, 8 and 13 show IC23 channel 6 feeding that hold. The
+provisional firmware trace forms an aligned internal word `b<<7`; the DAC
+routine drops its bottom two bits, producing physical 12-bit code `b<<5`. The unknown is the
+code-to-control-voltage/current-to-gain law. The current model is a provisional
+fit to reported points near −15 dB at −5, −12.5 dB at 0 and +5 dB at +5 in the
+project's recentered coordinate. That notation is not the original panel's byte
+scale and must be mapped explicitly. This task directly affects preset
+loudness and chorus drive. The YouKnow106 factory bank is now balanced under a
+fixed product corpus using only patch-storable controls, but that is not a
+substitute for the original unit's byte-to-gain transfer and may need revisiting
+when this task is resolved.
 
-Settled by the second research round, all of it arithmetically verified here
-before adoption:
+### Needed output (for LLM)
 
-- **High-pass network.** Each cutting leg's own series capacitor — 47 nF and
-  15 nF — against one shared 15 kΩ shunt, switched by a CMOS multiplexer, giving
-  225.8 Hz and 707.4 Hz. This corrected an earlier 44.9 kΩ / 15 nF / 4.7 nF
-  reading: the same three E6 capacitors, read one switch position out of step.
-- **Wet/dry balance.** 47 kΩ and 39 kΩ into a shared 100 kΩ feedback, so the wet
-  path sits 1.62 dB above the dry. The feedback value cancels; only the
-  imbalance reaches the model.
-- **Chorus delay sweep.** 1.54 ms to 5.15 ms, the same in every mode. Both ends
-  imply an MN3009 clock (83.1 kHz and 24.9 kHz) inside the part's rated
-  10–200 kHz window, which is the check that the capture describes this circuit.
-- **Chorus noise floor.** 60 dB unweighted, 20 Hz–20 kHz, referred to 0 dBu.
-- **Chorus rate ratio.** 1.623, from the timing network: mode II leaves a
-  2.2 MΩ resistor in series that mode I bypasses. The absolute rates are *not*
-  anchored — the timing capacitor is illegible in the schematic — so the model
-  still stands in a Juno-60's measured 0.513/0.863 Hz, whose ratio of 1.682
-  agrees to 3.6%.
-- **Per-voice tolerances.** Resonance ±5%, ramp integrator capacitor ±5% (a 5%
-  polyester film part with no per-voice trimmer), comparator ±2 duty points from
-  the 48–52% alignment window.
-- **Noise generator level.** 4.0 Vpp at TP8 via VR32 — which confirmed the value
-  that had been voiced.
+- A 128-row CSV containing commanded byte, corresponding physical/nominal panel
+  position, uPC1252H2 control-pin voltage and—if the circuit/datasheet makes it
+  controlling—control current, simultaneous settled VCA input/output amplitude,
+  `Vout/Vin`, and relative dB.
+- Exact input/output probe points, tone frequency and level, VOLUME setting,
+  load, supply rails, calibration state and gain-reference setting.
+- The byte-to-panel mapping and all analogue endpoint/saturation behaviour;
+  verify the `b<<7` aligned-word and `b<<5` physical-DAC-code lead independently
+  rather than returning it as a new gain law.
+- A fitted equation or lookup table with residuals and uncertainty, compared
+  explicitly with the current three-point fit.
+- Regression fixtures for representative endpoints, intermediate values and
+  monotonicity. If a full sweep cannot be found or measured, return a protocol
+  and identify which conclusions the three existing points cannot support.
 
----
+## OQ-03 — Chorus noise and SNR under calibrated conditions
 
-## Why component values, not corner frequencies
+**Priority:** P0
 
-Every number in this project is recomputed from its parts before it is adopted.
-That check has now caught three bad answers across two rounds, one of them off
-by a factor of eighty — and it also *confirmed* six good ones, which is why the
-rejected findings did not poison the rest.
+### Task definition
 
-Had any of those answers arrived as a corner frequency alone, the error would
-have been invisible and would now be in the model. Had they arrived as parts
-with no stated corner, they would have been adopted silently and wrongly.
+Characterise the in-circuit noise of a healthy JUNO-106 chorus in Off, I and II.
+No compander exists in this circuit, so a noise model is structurally required,
+but the current per-line floor is voiced. A noise voltage without a same-path
+reference tone, bandwidth and weighting does not establish SNR.
 
-Send both: the parts, and the corner the source claims for them. Disagreement
-between the two is information, not a problem to tidy up before answering.
+### Needed output (for LLM)
+
+- Raw tone and noise captures from the same stated probe point for Off, I and
+  II, on both output channels, without moving gain controls between captures.
+- Input termination, patch/control settings, dry-path inclusion, VOLUME,
+  output selector, load, bandwidth, weighting, detector type and RMS
+  integration method; also state reference-tone frequency, injection point,
+  source distortion and the exact tone-removal/excluded-bin method, including
+  treatment of chorus-modulation sidebands.
+- Tone level, broadband noise level, SNR, spectrum and uncertainty for each
+  state/channel; identify hum and discrete clock spurs separately from random
+  noise. Use analogue/acquisition bandwidth sufficient for the stated clock-
+  feedthrough scope; a 96 kHz file alone cannot characterise spurs extending
+  toward the BBD clock range.
+- If possible, a wet-only or de-embedded estimate for each BBD line without
+  confusing a fault-induced wet-only output with normal operation.
+- A simultaneous stereo capture plus channel cross-spectrum, coherence and
+  correlation if the evidence will be used to choose independent versus
+  correlated per-line noise sources.
+- A proposed stochastic model and level relative to the modelled BBD input
+  only when the captures support that conversion.
+
+## OQ-04 — Loaded post-BBD tap-summing pole
+
+**Priority:** P0
+
+### Task definition
+
+Resolve the effective post-BBD tap-summing pole. The present nominal
+first-order model uses `(3.3 kΩ || 47 kΩ) × 2.2 nF`, or 23.46 kHz, while
+treating the active MN3009 output as ideal. The MN3009 datasheet does not
+specify the needed output impedance. Service Notes p. 15 identifies the two
+branches as IC8 with R118/R119, R117 and C45, and IC10 with R111/R112, R110 and
+C48; alternating active taps make the loaded circuit time-varying. Use one
+declared route: measured
+MN3009 output impedance followed by full modified-nodal analysis, or a
+calibrated de-embedded wet-only sweep.
+
+### Needed output (for LLM)
+
+- The selected route and why its evidence is sufficient.
+- For the circuit route: measured complex output impedance versus frequency,
+  clock, bias and signal conditions, component/designator table, complete
+  small-signal netlist, transfer equation and uncertainty.
+- For the sweep route: raw input/output data from 100 Hz to beyond the candidate
+  −3 dB point where feasible; exact probes, level, loading and fixture response.
+  Hold each BBD clock at a documented fixed rate or use a validated
+  linear-periodically-time-varying method, because a normally sweeping chorus
+  is not LTI. Include both output taps and stereo lines or state the narrower
+  scope. Do not force a through-BBD sweep beyond the line's usable
+  clock-dependent band where the paired-node ratio becomes noise-dominated;
+  prefer local output-impedance injection there.
+- Explicit de-embedding of the pre/post support filters, BBD zero-order hold,
+  charge-transfer response, fixture and load. Removing only the dry path is not
+  sufficient.
+- Fitted pole(s), magnitude/phase residuals and a direct comparison with the
+  current ideal-source 23.46 kHz pole.
+- Replacement coefficients and response fixtures at supported sample/clock
+  rates, or a precise statement of why the result remains unresolved. A sweep
+  ending at 20 kHz cannot resolve a candidate pole above its measured band.
+
+## OQ-05 — Loaded IC6 and High-output clipping swing
+
+**Priority:** P0
+
+### Task definition
+
+Measure the actual loaded clipping swing of final summer IC6 and the High
+output. The schematic fixes the linear resistor gains and ±15 V supply, but
+does not fix real loaded headroom. This is a hardware question; do not mix it
+with the separate plug-in dBFS policy in OQ-06.
+
+### Needed output (for LLM)
+
+- Simultaneous IC6-input, IC6-output and High-jack waveforms on both channels
+  while a low-distortion source injected at a documented point is raised in
+  known steps. An internal programmed tone is acceptable only if the captures
+  prove every IC6 input remains linear.
+- Chorus state, VCA LEVEL, VOLUME, output selector, load impedance, tone
+  frequency, rails, probe attenuation and instrument calibration state.
+- A declared objective clipping criterion, such as a specified THD threshold
+  or measured departure from linear gain, plus the first-clip Vpk, Vpp and
+  Vrms. Keep service-standard nominal level separate from clipping level.
+- Positive/negative asymmetry and a declared frequency/load matrix. If only one
+  condition is measured, scope the conclusion to that condition rather than
+  calling it the general loaded swing.
+- An analogue headroom table and uncertainty suitable for validating the
+  output-stage model. Do not invent a rail fraction when no measurement exists.
+
+## OQ-06 — Analogue-voltage-to-dBFS product convention
+
+**Priority:** P0; adopted product policy, with absolute calibration dependent on
+OQ-05/OQ-17
+
+### Task definition
+
+The product convention is settled: for a declared reference sine of
+`Vref_rms`, apply
+
+`digital_sample = analogue_output_volts * 10^(-18/20) / Vref_rms`
+
+once at the final output boundary, after the modeled VOLUME/output path. This
+places that reference sine at -18 dBFS RMS without changing drive inside the
+VCF, BBD or IC6 model. Floating output beyond +/-1 is allowed and this mapping
+must not add a clipper or limiter. Preserve the previous effective output gain
+as the migration default for `Vref_rms`; its absolute voltage meaning remains
+calibration metadata until OQ-05/OQ-17 establish the corresponding hardware
+condition. The engine's 2.6 V internal coordinate is not that calibration.
+
+### Needed output (for LLM)
+
+- Establish the physical `Vref_rms` condition from the output-stage and
+  selector measurements in OQ-05/OQ-17, including load, selector, VOLUME,
+  frequency, calibration state and uncertainty. Do not change the adopted
+  -18 dBFS RMS boundary convention merely because that value is still open.
+- A fixed evaluation corpus and metric definitions: patch, note, velocity,
+  voice count, VCA LEVEL, VOLUME, chorus, sample rate/quality, RMS
+  window/weighting and true-peak reconstruction algorithm.
+- For the fixed corpus, report RMS, peak, 4x true peak and overload counts for
+  a single note, six-note chord, Solo Unison, filter self-oscillation and
+  Off/I/II chorus. State expected headroom under the adopted convention.
+- Verify that doubling analogue voltage adds 6.0206 dB, changing `Vref_rms`
+  leaves every pre-output sample bit-identical, samples beyond +/-1 pass
+  unchanged, and no undocumented limiter is present.
+- Validate the migration default against old sessions and presets, then report
+  any necessary versioning for output gain, meters and rendered examples.
+
+## OQ-07 — Converter hold topology and time constants
+
+**Priority:** P1
+
+### Task definition
+
+Recover the acquisition, droop, loading and destination-specific time constants
+of the converter holds. Ownership is no longer open: Service Notes pp. 5, 8 and
+13 show three 8-way muxes containing 18 per-card holds—DCO, VCF and ENV/GATE
+VCA for six cards—plus five shared holds—SUB, stored VCA LEVEL, PWM, RESONANCE
+and NOISE—and one unused channel. The pass is 4.2 ms. Approximately 522 µs for
+the filter family and 687 µs for the amplifier divider are existing
+component-derived anchors; extending 522 µs to every other destination remains
+provisional.
+
+### Needed output (for LLM)
+
+- A schematic/measurement table for every destination: confirmed converter
+  channel, switch/multiplexer path, node/designators, source impedance, R, C,
+  loading, calculated time constant, droop and expected 10–90% settling.
+- Step-response captures at the actual nodes where practical, including raw
+  waveforms and the fitted exponential/multi-pole response.
+- A reconciliation of component-derived and measured constants with tolerances
+  and loading included.
+- An implementation-delta table and scan/settling regression fixtures, with
+  unresolved nodes explicitly marked and separately parameterized even where a
+  compatibility default currently happens to equal 522 µs.
+
+## OQ-08 — Exact intra-pass converter scan and write order
+
+**Priority:** P1
+
+### Task definition
+
+Recover the exact physical timing of one complete converter scan. Ordinal order
+is settled by the Service Notes p. 8 timing chart: RESONANCE, common VCA LEVEL,
+SUB, DCO 1–6, PWM, then VCF1/VCA1 through VCF6/VCA6, then NOISE over the 4.2 ms
+pass. The model now executes that exact 23-write logical queue with a fractional
+4.2 ms scheduler. Its default normalized compatibility profile spreads the
+ordered events monotonically across the pass, preserving the chart's qualitative
+non-simultaneity without claiming exact timestamps; a phase-zero diagnostic
+profile is retained for comparison. The reported
+approximately 125 µs VCF-before-VCA offset and every other time distance remain
+provisional; do not invent them by distributing ordinal events evenly.
+
+### Needed output (for LLM)
+
+- A timestamped scan timeline covering a complete pass: LFO/envelope
+  computation, converter selection, sample instant, destination write, hold
+  acquisition, divider programming, DCO-reset consumption, gate/assignment
+  events, common resonance/VCA writes and voice number.
+- Primary firmware/schematic evidence and, if available, simultaneous logic or
+  analogue captures from converter selects and two or more hold nodes.
+- Exact nominal offsets and jitter; determine whether timing is invariant or
+  data-dependent, and enumerate every conditional path involving key,
+  envelope, bender or panel activity.
+- A comparison against both current normalized and phase-zero profiles, including
+  the maximum control error and an audible/null-test assessment.
+- A sample-accurate replacement schedule and deterministic tests, or a protocol
+  if the approximately 125 µs ordering cannot yet be independently verified.
+
+## OQ-09 — Resonance byte-to-loop-gain law
+
+**Priority:** P1
+
+### Task definition
+
+Recover the resonance curve between its located anchors. The current law is a
+quadratic through loop gain about 0.91 at 30% travel and the self-oscillation
+threshold near 90%, followed by a linear segment to a fitted maximum near 4.19.
+Those anchors and topology do not prove the interpolation. Service Notes
+pp. 5, 8 and 13 settle one shared IC26-channel-6 hold; provisional firmware
+analysis gives aligned word `b<<7` and physical DAC code `b<<5`. Hold settling
+belongs to OQ-07; this task owns the still-open DAC-voltage-to-loop-gain law.
+
+### Needed output (for LLM)
+
+- Preferably a 128-value sweep, on all six voice cards, containing byte/panel
+  position, control voltage, explicitly open-loop or de-embedded loop gain,
+  self-oscillation state/frequency and steady oscillation amplitude. Output
+  amplitude alone cannot identify loop gain because compensation, saturation
+  and oscillation trim also affect it.
+- Exact probe/injection method, filter cutoff, input level, calibration,
+  temperature, threshold criterion and any hysteresis.
+- A table or equation for the central law with residuals, confidence intervals
+  and monotonicity, compared with the present piecewise quadratic/linear law.
+- Separate common control-law behaviour from card-specific residual spread,
+  and identify whether each residual acts as a CV offset, amplifier-gain scale
+  or another domain. OQ-10 owns the distribution of those residuals.
+- Replacement fixtures for the 30% anchor, threshold, maximum and representative
+  intermediate bytes.
+
+## OQ-10 — Post-calibration voice dispersion and thermal wander
+
+**Priority:** P1
+
+### Task definition
+
+The calibrated nominal product model is settled as zero inter-voice spread and
+zero temporal drift because no qualifying post-calibration population data
+supports nonzero distributions. Existing deterministic seeded variation,
+including the 375 Hz/0.9992/0.004/up-to-40-cutoff-count drift process, belongs
+only to an optional `Unit Character` compatibility/sound-design profile. It is
+not a measured JUNO-106 nominal law. Quantify the actual residual differences
+among six calibrated cards and their warm-up/time behavior so that evidence can
+eventually replace the zero nominal or parameterize the optional profile.
+Untrimmed component tolerance must not be treated as residual tolerance after
+trimming, and analogue card variation must never be added to the one shared
+digital envelope generator.
+
+### Needed output (for LLM)
+
+- A mechanism matrix with circuit designators, raw component tolerance,
+  trimmer/calibration status, expected post-calibration residual and current
+  model assumption, explicitly comparing the zero nominal and optional
+  `Unit Character` profile.
+- Repeated measurements for all six cards after calibration, at stable
+  temperature and through warm-up, with enough repetitions to separate
+  measurement noise, static card identity and time variation.
+- Per-mechanism within-unit distributions, correlations, outliers, temperature
+  dependence, drift bandwidth and variance. Determine which mechanisms
+  genuinely wander and separate common-mode from card-specific drift. Do not
+  add envelope-rate dispersion: one digital generator serves all voices.
+- A proposed deterministic six-card fixture and separate temporal process only
+  for variation actually supported by the captures. Measurements of all six
+  cards in one instrument establish within-unit spread only; require multiple
+  instruments before fitting a population model.
+- Regression fixtures proving Character amount zero collapses all voices to
+  the nominal model, a fixed seed reproduces exactly, and traits remain attached
+  to physical voice slots through reassignment rather than being regenerated.
+- Clear **not found** entries and a six-card lab protocol for every mechanism
+  that cannot be sourced.
+
+## OQ-11 — Pulse-off pinned-leg mixer behaviour
+
+**Priority:** P1
+
+### Task definition
+
+Determine what the oscillator mixer actually receives when pulse is switched
+off. Service Notes p. 9 directly states that about −0.8 V holds the MC5534A
+comparator output high; the model now represents that control/comparator state
+while retaining a provisional hard-zero audio-path gate. Trace whether the
+pinned output, coupling network and mixer impedances introduce DC shift,
+residual pulse bleed, loading or a switching transient before replacing that
+hard gate.
+
+### Needed output (for LLM)
+
+- A designator-level trace from the −0.8 V control through the comparator,
+  coupling components and oscillator/filter mixer.
+- A small-signal/large-signal equation or simulation netlist for pulse enabled,
+  pulse disabled and the switching transition.
+- Raw measurements of the mixer/filter input in both states, including DC,
+  transient waveform and spectrum under otherwise identical settings. Capture
+  both disable and re-enable transitions at multiple oscillator phases,
+  frequencies and PWM duties, including the coupling-capacitor initial state.
+- Quantified bleed/loading/transient level relative to a normal pulse and an
+  assessment of audibility across cutoff/resonance settings.
+- A recommended model topology and regression specification comparing hard
+  gating with the measured pinned-leg behaviour.
+
+## OQ-12 — Exact 0–127 envelope control laws
+
+**Priority:** P2
+
+### Task definition
+
+The exact digital law is resolved for the hash-identified B-2 image. Sustain is
+`S = 128*b` (`0..0x3F80`). Attack uses a 16-bit selected increment and
+`E' = min(0x3FFF, E + A[b])`; key-on selects attack without clearing `E`.
+The physical DAC receives `E >> 2`, while the 14-bit recurrence retains the low
+two bits. Define `v_hi=v>>8`, `v_lo=v&255`, `c_hi=c>>8` and `c_lo=c&255`:
+
+`Q(v,c) = c_hi*v_hi + floor(c_lo*v_hi/256) + floor(c_hi*v_lo/256)`
+
+The low-byte-times-low-byte term is intentionally omitted. Decay is
+`S + Q(E-S,c)` when `E>S`, otherwise `S`; release is `Q(E,c)`. Decay and
+release share the same coefficient region. The attack region
+`0x0B60-0x0C5F` hashes to
+`faef5ad5666a501bfe373f0af4cb345cae8ec6c569821873bb15f69f71ec3eea`;
+the decay/release region `0x0D60-0x0E5F` hashes to
+`0de73bedf11904538056eec3622b09470461f13ad016103ab9992be73e467754`.
+What remains open is physical pass duration/jitter, downstream hold behavior,
+audible timing thresholds and whether other firmware revisions differ.
+
+### Needed output (for LLM)
+
+- Independently generated behavioral confirmation of the equations, widths,
+  saturation, truncation, shared decay/release selection, retrigger and
+  mid-note sustain semantics, stating the exact firmware revision/hash scope.
+  Do not reproduce coefficient-table or ROM contents.
+- Raw envelope-DAC and audible-output captures with a measured pass period,
+  jitter, node, load and timing thresholds. De-embed the OQ-07/OQ-08 hold/write
+  schedule and distinguish digital zero from an audible/noise-floor endpoint.
+- Compare other identified firmware revisions and report every behavioral or
+  region-hash difference rather than generalizing from B-2.
+- Legal regression vectors including sustain bytes `0/64/127 ->
+  0/0x2000/0x3F80`; attack increments `16384/127/21` and peak pass counts
+  `1/129/781`; and release coefficients `4096/65276/65524` with digital-zero
+  pass counts `4/984/6083`. Seconds may be reported only with the measured or
+  explicitly nominal pass duration.
+
+## OQ-13 — Exact 0–127 LFO rate and delay laws
+
+**Priority:** P2
+
+### Task definition
+
+The exact digital law is resolved for the hash-identified B-2 image. Its LFO
+magnitude accumulator spans `0..0x1FFF`; each pass adds/subtracts selected
+coefficient `c`, clamps at an endpoint and advances direction/polarity state.
+One signed cycle contains four magnitude ramps, so
+`N_ramp=ceil(8192/c)` and `f=1/(4*N_ramp*T)`. The rate region
+`0x0C60-0x0D5F` hashes to
+`4e3d87f7f12202e846d4010b08799dabd4d70d3cb5cffa0566933587538ff1d0`.
+
+Delay has a silent hold of `ceil(16384/A[b])` passes using the exact OQ-12
+attack increment, followed by a fade of `ceil(65536/F[b>>4])` passes. This
+creates eight bins (`0-15` through `112-127`); the fade region
+`0x0B30-0x0B3F` hashes to
+`e145e0e5de512ef77ae0ffb91cefea40263b8200e78ed2a9a81befc13cf8ac99`.
+The fade output uses the accumulator's high byte, so its audible depth is
+8-bit quantized. Byte 0 is not delay bypass: it has one attack-derived hold
+pass plus a two-pass fade, about 12.6 ms total at nominal `T=4.2 ms`. Physical
+pass timing/jitter, output polarity/scale, analogue smoothing and firmware
+revision scope remain open.
+
+### Needed output (for LLM)
+
+- Independently generated behavioral confirmation of accumulator width,
+  update/clamp ordering, direction/polarity state, delay phases and high-byte
+  fade output, with exact firmware revision/hash scope and no ROM/table dump.
+- Raw multi-cycle rate, delay-depth and relevant control-node captures with the
+  measured pass period/jitter and the method used to separate LFO phase from
+  delay-envelope amplitude and analogue smoothing.
+- Revision comparison plus regression vectors: rate codes `0/64/127` use
+  `c=5/666/4096`, take `1639/13/2` passes per ramp and yield
+  `0.036317/4.578755/29.761905 Hz` at nominal 4.2 ms; every bin boundary
+  `15/16` through `111/112` is explicit; byte 0 is a three-pass total delay.
+- Confirm or replace the nominal eight fade durations
+  `8.4/264.6/529.2/789.6/1075.2/1075.2/1075.2/1075.2 ms` using measured `T`,
+  without treating those conditional times as independent hardware evidence.
+
+## OQ-14 — Exact portamento control law and quantisation
+
+**Priority:** P2
+
+### Task definition
+
+The exact digital law is resolved for the hash-identified B-2 image. It reads
+an 8-bit raw ADC value: raw zero stores coefficient zero directly; every
+nonzero value selects an 8-bit coefficient with `index=raw>>1`. Index zero is
+also zero, so raw 0 and 1 are both immediate/no glide and codes `2n`/`2n+1`
+share a coefficient. The 128-byte region `0x0A00-0x0A7F` hashes to
+`06d1c862622b5aaa2b7e42d561dbdf2cd424620a8e46cfa0c2c9deb5c484984e`.
+Each of six voice slots keeps an 8.8-semitone state; every pass adds or
+subtracts constant `c` toward its target and clamps on crossing, including for
+currently inactive slots. Thus `octave_passes=ceil(12*256/c)` and
+`octave_seconds=octave_passes*T`. The physical potentiometer/ADC voltage law,
+sampling cadence, hysteresis and firmware revision scope remain open.
+
+### Needed output (for LLM)
+
+- Independently confirm the ADC width, raw-zero path, `raw>>1` pairing,
+  coefficient application, 8.8 state, inactive-slot advance and endpoint clamp
+  for the stated firmware hash without reproducing its coefficient table.
+- Measure the physical pot voltage, ADC transfer, noise/hysteresis and sampling
+  cadence, including the Off/raw-0/raw-1 transition and endpoint behavior.
+- Raw glide traces for several interval sizes and both directions, proving
+  constant rate and exposing rounding, asymmetry, endpoint and off-threshold
+  behaviour.
+- Compare identified firmware revisions and provide legal behavioral fixtures:
+  raw `0 -> immediate`, `1 -> immediate`, `2/3 -> c=255 -> 13 passes/octave`,
+  `127/128 -> c=13 -> 237 passes/octave`, and
+  `254/255 -> c=1 -> 3072 passes/octave`. At nominal 4.2 ms these are
+  `54.6 ms`, `995.4 ms` and `12.9024 s` per octave respectively.
+- Treatment of reassigned and previously idle voice slots, clearly separating
+  the ROM-resolved state semantics from the open physical control mapping.
+
+## OQ-15 — Oscillator-mixer levels and filter-drive calibration
+
+**Priority:** P1
+
+### Task definition
+
+Build a traceable signal-level budget from each oscillator source into the
+filter core. Service Notes p. 9 documents saw and pulse near 12 Vpp and the sub
+collector-supply amplitude mechanism; p. 19 adjusts shared noise to 4.0 Vpp at
+TP8. These are node-specific Vpp anchors, not RMS values or an end-to-end gain
+budget. The implementation currently uses peaks of 6.0 V saw, 6.0 V pulse,
+5.0 V sub and 2.0 V noise, then a `0.40` filter-input scale. The sub amplitude
+and complete node-to-node transfer are not explicitly anchored. A centered
+`+/-6 V` source is compatible with a 12 Vpp reading only at the same stated
+node; it does not prove the later numerical coordinate. TP8 is downstream, so
+its 4.0 Vpp noise adjustment cannot directly establish a `+/-2 V` pre-filter
+noise amplitude or distribution. Treat `+/-5 V` sub, `+/-2 V` noise and `0.40`
+as voiced compatibility values. This task must not compare voltages from
+different nodes as though they were interchangeable.
+
+### Needed output (for LLM)
+
+- A designator-level signal path and impedance/gain budget for saw, pulse, sub
+  and noise from their source test points through level control and mixer to
+  the filter core.
+- Calibrated Vpp, Vrms, DC offset and source impedance at each common node, at
+  every byte or a sufficiently dense sweep to validate the sub/noise level
+  laws. Zero, midpoint and maximum alone are insufficient.
+- Saw and pulse amplitude across representative pitch/range settings and during
+  compensation-voltage transients.
+- Single-source and representative multi-source captures, including loading
+  and the actual filter-input differential voltage.
+- A table mapping those measurements to `sawMixVolts`, `pulseMixVolts`,
+  `subMixVolts`, `noiseMixVolts` and `filterInputAttenuation`, identifying
+  which are physical gains and which are numerical normalisation.
+- A replacement level budget, clipping/drive predictions and regression
+  fixtures. If the existing 0.40 scale is a derived coordinate conversion,
+  show the derivation explicitly.
+- Preserve the anchored 68 kΩ/560 Ω (approximately 122×) filter-stage
+  attenuator. The open 0.40 value is the preceding source/node coordinate
+  mapping, not permission to refit that circuit attenuation.
+- Keep scope to normal enabled-pulse and static noise transfer. Pulse-off is
+  OQ-11, noise spectrum is OQ-16, and downstream output/dBFS is OQ-02/OQ-05/OQ-06.
+
+## OQ-16 — Main noise spectrum and filter self-oscillation startup
+
+**Priority:** P2
+
+### Task definition
+
+Characterise two distinct noise mechanisms that must not be conflated:
+(a) the one shared audible noise generator mixed into all voices and calibrated
+to 4.0 Vpp at TP8 (Service Notes pp. 5, 13 and 19), and (b) the much smaller
+voice-module/input-referred noise
+that lets a real resonant filter start oscillating from silence. The model uses
+bounded uniform white xorshift noise for the shared source and an unexplained
+20 µV per-card white excitation at the filter input, after the open 0.40 source
+coordinate scale. Each of the six physical card filters now runs continuously
+behind its closed VCA, preserving filter history and its deterministic per-card
+noise stream across note assignment and retirement; only a full engine reset
+reconstructs those states. Dormant plug-in extension slots have no physical
+card and may stop processing. Both discrete sources are normalized by
+`sqrt(internal_rate / 192 kHz)` to preserve wall-clock spectral density across
+host rates and HQ modes; that is a numerical policy and does not settle their
+unknown hardware amplitudes or spectra. This task is separate from BBD chorus
+hiss in OQ-03.
+
+### Needed output (for LLM)
+
+- A circuit trace for the hardware noise generator and any shaping/filtering,
+  plus raw TP8 captures with calibration setting, bandwidth and load.
+- PSD, autocorrelation, amplitude distribution, crest factor, bandwidth and
+  discrete spurs for the shared generator; state whether flat bounded white
+  noise is adequate over the audible band.
+- An input-referred noise estimate for the voice filter/OTA path from component
+  data or measurement, with bandwidth, temperature and the physical injection
+  location; reconcile that node with where the model injects its nominal
+  20 µV.
+- Repeated no-input self-oscillation startup captures for all six cards at
+  several resonance margins, yielding onset-time distributions and steady
+  noise/oscillation levels.
+- Evidence on whether self-oscillation persists behind a closed VCA and retains
+  inter-note phase/history, compared with the model's continuously running
+  six-card policy.
+- Separate proposed models and regression tests for shared audible noise and
+  microscopic startup excitation, with uncertainty or **protocol only** where
+  hardware evidence is unavailable.
+
+## OQ-17 — Main VOLUME taper and output-selector transfer
+
+**Priority:** P3
+
+### Task definition
+
+Recover the static transfer of the one physical dual VOLUME potentiometer, the
+dual-gang High/Mid/Low attenuator network feeding the Mono/Stereo output-jack
+paths, their jack normaling/summing behaviour, and the separate IC7 PHONES
+path. Service Notes p. 1 publishes nominal output levels L -30 dBm, M -15 dBm
+and H 0 dBm;
+the schematic and parts list identify a dual 10KB VOLUME potentiometer. Those
+markings do not establish the reference/load, real shaft transfer, tracking,
+output impedance or tolerance for any path.
+The schematic does establish one narrower transfer before the wipers: IC6 pin
+1 crosses C17 10 µF then R54 1.5 kΩ into one 10 kΩ track, and IC6 pin 7 crosses
+C20/R57 into the other identical track. With a high-impedance downstream load,
+each channel is therefore an independent high-pass with a 115 ms time constant,
+1.383956 Hz corner and `10/11.5 = 0.869565` (−1.213957 dB) high-frequency
+gain. The implementation models that current-scope network once after the full
+dry+wet sum and before VOLUME. The selector and headphone inputs load the
+wipers, so this does not settle the fully loaded transfer.
+The implementation currently applies `volume²` as an audio-taper approximation,
+adds a 5 ms anti-zipper glide, and does not expose the hardware selector. Its
+declared fixed product-policy position is the High/0 dB selector-equivalent;
+the physical selector attenuation, output impedance and loading are not
+modelled. This remains distinct from stored VCA LEVEL (OQ-02), IC6 clipping
+(OQ-05) and dBFS policy (OQ-06).
+
+### Needed output (for LLM)
+
+- A schematic/designator account that verifies the dual 10KB marking and the
+  published H/M/L dBm levels, and establishes their reference/load conditions,
+  attenuator values and source impedance. Begin from the now-established
+  C17/C20, R54/R57 and VR1 network; do not rediscover or remove that stage.
+- A loaded small-signal analysis of the two VOLUME wipers including the output
+  selector ladder, IC7/headphone input, Mono/Stereo jack normaling and declared
+  external loads. Report how those paths move the current-scope 1.383956 Hz
+  corner and −1.213957 dB high-frequency gain at several shaft positions.
+- A calibrated sweep from IC6/pre-volume level to the loaded Mono/Stereo output
+  jacks at fine shaft/scale intervals for High, Mid and Low, with load, tone
+  and frequency stated. Measure both one-plug and two-plug configurations and
+  capture PHONES separately with its own declared load.
+- A CSV of physical position, measured linear gain and dB for each selector
+  state and output configuration, plus a separate headphone-path table, fitted
+  law, residuals, channel tracking and loading dependence.
+  Report a true zero endpoint as zero linear gain and −infinity dB, or censor it
+  at a stated measurement noise floor; do not invent a finite dB value.
+- A comparison with the current squared curve. Treat the 5 ms automation glide
+  as a separate plug-in policy: report automation-step zipper spectrum,
+  response latency and sample-rate invariance, then recommend it independently
+  of the static hardware taper.
+- A recommendation on whether the selector belongs in the plug-in or only in
+  calibration documentation, with constants and regression fixtures. If it is
+  exposed, specify default position, parameter/automation semantics,
+  saved-session migration and backwards compatibility.
+
+## OQ-18 — Upper cutoff-converter saturation law
+
+**Priority:** P2
+
+### Task definition
+
+Recover the upper-range relationship between converter code, control voltage
+and filter cutoff. The exponential count law is anchored through the audio
+range, and Service Notes p. 1 publishes an approximate 5 Hz-50 kHz range. A
+range endpoint is not an exact hard limit or a saturation curve. The fallback
+project describes a 4096-code table made from 93 points on one card plus
+log-domain interpolation, but the complete raw capture, metadata and
+multi-card scope are unavailable. Neither source establishes the former
+24 kHz knee, tanh shape or 52.2 kHz asymptote. The adopted default product
+policy is the validated exponential law followed by a transparent numerical
+`min(..., 50000 Hz)` safety cap; this is not claimed as analogue saturation.
+The former 24 kHz/tanh/52.2 kHz curve may exist only as a named legacy
+compatibility profile. The hardware high-code law remains the research target.
+
+### Needed output (for LLM)
+
+- A dense sweep of top-range converter codes, converter/control voltage and
+  resulting cutoff or self-oscillation frequency, with exact probe/method,
+  temperature, card, trim and uncertainty.
+- A method capable of identifying above-audio cutoff without mistaking
+  analyser bandwidth, aliasing or the self-oscillation frequency trim for
+  converter saturation.
+- Multiple cards/units where feasible, keeping nominal central law separate
+  from calibrated card residuals.
+- Candidate knee/ceiling equations or a lookup table with residuals, compared
+  separately with the transparent 50 kHz product cap, the uncapped exponential
+  law and any named legacy 24 kHz/tanh/52.2 kHz profile.
+- Explicit **not found** gaps, supported replacement constants and
+  deterministic high-code fixtures.
+- Regression evidence that changing only the high-code profile leaves the
+  established low/mid-code law invariant and that the default never exceeds
+  its explicitly labelled 50 kHz numerical boundary.
+
+## OQ-19 — Central voice-module VCA gain, knee and deadband
+
+**Priority:** P1
+
+### Task definition
+
+Characterise the static ENV/GATE-controlled VCA inside a voice module. Its
+placement and broadly quasi-linear response are supported, but the exact
+central law currently uses a knee at 0.12, a 260 dB-per-unit low-level slope
+and a hard deadband at 0.005 as a voiced compatibility curve attributed to an
+unavailable, only coarsely described sweep. No qualifying raw original-module
+sweep establishes those constants, and a measurement noise floor can masquerade
+as a hard deadband. This is not the common stored VCA LEVEL in OQ-02, and
+card-to-card residual spread belongs to OQ-10.
+
+### Needed output (for LLM)
+
+- A dense simultaneous sweep of control-node value/current, VCA input and VCA
+  output on a calibrated voice card, with a low-distortion tone, fixed load,
+  settled holds and stated noise floor.
+- Linear gain and dB versus physical control voltage and corresponding digital
+  envelope/GATE value, with special density around conduction onset and the
+  lower 15% of travel.
+- Objective definitions and confidence bounds for deadband, knee location,
+  knee slope, central linearity and maximum gain; distinguish true cutoff from
+  the measurement noise floor or a defective/leaky module.
+- Measurements on additional cards sufficient to separate a nominal curve from
+  OQ-10 dispersion.
+- A fitted law/table with residuals against the current voiced
+  0.12/260/0.005 compatibility profile and deterministic boundary/interior
+  fixtures. Keep this analogue transfer replaceable without changing OQ-12
+  envelope states or patch bytes.
+
+## OQ-20 — Chorus wet-mute switching transient and leakage
+
+**Priority:** P2
+
+### Task definition
+
+Recover the analogue enable/disable behaviour of the chorus wet-return mute
+transistors. It is settled that Off mutes only wet and leaves the oscillator and
+BBDs running. Service Notes p. 15 identifies the wet-return devices as
+TR11/TR12 (2SK30A/K381) immediately before R71/R73, not the full-output shunts
+TR7/TR8. The implementation's 5 ms value is an exponential time constant
+(`10–90%` about 10.99 ms), an undocumented anti-click choice rather than a
+hardware transition time. Measure the real switching envelope, leakage and
+click while preserving continuous BBD phase/state. Any account assigning the
+wet-return mute to TR7/TR8 conflicts with the printed p. 15 schematic and must
+be rejected unless it identifies a documented board revision: TR7/TR8 are the
+later full-output shunts.
+
+### Needed output (for LLM)
+
+- A designator-level TR11/TR12, D4/D5 and control-network path with
+  component-derived turn-on/turn-off constants, logic levels and expected
+  leakage; explicitly distinguish the later TR7/TR8 output mutes.
+- Simultaneous control-node, wet-return and final-output captures for Off→I/II
+  and I/II→Off at several signal levels, BBD phases and waveform polarities on
+  both channels.
+- Separate turn-on and turn-off gain envelopes, delay, asymmetry, feedthrough,
+  residual wet attenuation and click spectrum with uncertainty.
+- A comparison with an instantaneous switch and the current 5 ms glide,
+  including audibility and worst-case transient tests.
+- Either measured replacement laws/tests or an explicit decision to retain
+  5 ms as a labelled plug-in anti-click policy rather than a hardware claim.
+
+## Settled guardrails — do not reopen without contradictory primary evidence
+
+- **Chorus modes:** the JUNO-106 has Off, I and II. Its owner's manual says I
+  and II cannot be used simultaneously, and the board has one enable line plus
+  one binary mode line. Obsolete both-buttons session states canonicalise to II.
+- **Chorus balance:** dry enters IC6 through 39 kΩ, wet through 47 kΩ, with
+  100 kΩ feedback. Thus dry gain is `100/39`, wet gain is `100/47`, and
+  wet/dry is `39/47`, or −1.62 dB.
+- **Voice-summer gain and signal order:** each voice contributes `3.3/33 = 0.1`
+  before the shared high-pass and common VCA LEVEL; chorus and IC6 follow, then
+  main VOLUME.
+- **Converter ownership and ordinal order:** the 23 used holds are 18 per-card
+  DCO/VCF/ENV-VCA destinations plus shared SUB, VCA LEVEL, PWM, RESONANCE and
+  NOISE. The service timing chart orders shared RES/VCA/SUB, DCO 1–6, PWM,
+  interleaved VCF/VCA 1–6, then NOISE. Exact time offsets remain OQ-07/OQ-08.
+- **Pulse-off control state:** about -0.8 V pins the comparator output high;
+  OQ-11 concerns only what the local DCO-to-voice-mixer coupling does with that
+  state, not the now-modelled final C17/C20 output capacitors.
+- **POLY 1 + POLY 2:** this is Solo Unison: all six equal-frequency,
+  unnormalised, free-running voices. There is no programmed detune or
+  normalisation. Highest remaining held key wins the rescan.
+- **POLY switches:** they are momentary firmware inputs whose lamps show the
+  latched state. Neither-off is not stable, and re-pressing a selected mode
+  still clears and rebuilds held-key allocation.
+- **Normal chorus output:** dry plus wet. Wet-only output is a documented
+  mute-transistor fault.
+- **Support filters and BBD loss:** the implemented pre/post-BBD topology,
+  wet-only 15.9 Hz coupling high-pass, datasheet-fitted nonlinearity, and split
+  zero-order-hold/residual charge-transfer loss are settled. Only OQ-04's loaded
+  tap-summing pole remains open.
+- **Chorus bypass:** Off mutes the wet return only; the oscillator and BBDs
+  continue running.
+- **Noise amplitude calibration:** the service procedure specifies 4.0 Vpp at
+  TP8 via VR32. OQ-16 asks about spectrum and context, not whether that
+  calibration point exists.
+- **Published nominal output-selector levels:** L -30 dBm, M -15 dBm and H
+  0 dBm. OQ-17 owns their reference/load, physical jack normaling/summing,
+  one-versus-two-plug transfer and separate headphone characterization—not the
+  existence or ordering of these service specifications.
+
+Resolving a task requires updating this file, the matching claim in
+`Docs/circuit-modelling-research.md`, source comments/constants and deterministic
+tests in the same change.

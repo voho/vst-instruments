@@ -38,6 +38,11 @@ constexpr int renderBlockSize = 256;
 // -3 dBFS: loud enough to audition without a gain change between files, with
 // headroom left so no 16-bit sample sits against full scale.
 constexpr double normalisedPeak = 0.7079457843841379;
+// These are file-delivery guards rather than synthesizer transfer values. A
+// demo with more DC can waste headroom or thump downstream equipment, while a
+// large non-zero endpoint can click when a player starts or stops the file.
+constexpr double maximumAbsoluteDcMean = 0.005;
+constexpr double maximumEdgeMagnitude = 0.01;
 
 // ---------------------------------------------------------------------------
 // WAV output
@@ -120,8 +125,7 @@ public:
     // The engine is held indirectly because it is large; a take, on the other
     // hand, is returned by value from every score below.
     explicit Take (EngineParameters parameters)
-        : engine_ (std::make_unique<YouKnow106Engine>()),
-          volume_ (parameters.volume)
+        : engine_ (std::make_unique<YouKnow106Engine>())
     {
         engine_->prepare (demoSampleRate, renderBlockSize, true);
         engine_->setParameters (parameters);
@@ -129,18 +133,7 @@ public:
 
     void setParameters (const EngineParameters& parameters)
     {
-        volume_ = parameters.volume;
         engine_->setParameters (parameters);
-    }
-
-    // The output stage's rails sit *before* the volume control, exactly as on
-    // the hardware, so the region of the output that is provably linear is
-    // bounded by the rails' linear ceiling times the volume law. A take whose
-    // peak lands above that has folded the rails, and the demo would be
-    // documenting the rails rather than the circuit behind them.
-    [[nodiscard]] double linearCeiling() const noexcept
-    {
-        return 0.8 * static_cast<double> (volume_) * static_cast<double> (volume_);
     }
 
     void on (int note, float velocity = 1.0f) { engine_->noteOn (note, velocity); }
@@ -192,6 +185,39 @@ public:
         return result;
     }
 
+    [[nodiscard]] double absoluteDcMean() const noexcept
+    {
+        if (left_.empty())
+            return 0.0;
+
+        double leftSum = 0.0;
+        double rightSum = 0.0;
+        for (std::size_t index = 0; index < left_.size(); ++index)
+        {
+            leftSum += static_cast<double> (left_[index]);
+            rightSum += static_cast<double> (right_[index]);
+        }
+        const auto frames = static_cast<double> (left_.size());
+        return std::max (std::abs (leftSum / frames),
+                         std::abs (rightSum / frames));
+    }
+
+    [[nodiscard]] double firstEdgeMagnitude() const noexcept
+    {
+        if (left_.empty())
+            return 0.0;
+        return std::max (std::abs (static_cast<double> (left_.front())),
+                         std::abs (static_cast<double> (right_.front())));
+    }
+
+    [[nodiscard]] double lastEdgeMagnitude() const noexcept
+    {
+        if (left_.empty())
+            return 0.0;
+        return std::max (std::abs (static_cast<double> (left_.back())),
+                         std::abs (static_cast<double> (right_.back())));
+    }
+
     // Brings the take to a common listening level. The returned value is the
     // gain applied, so the manifest can record what each file needed.
     double normalise()
@@ -227,19 +253,17 @@ private:
     }
 
     std::unique_ptr<YouKnow106Engine> engine_;
-    float volume_ { 0.8f };
     std::vector<float> left_;
     std::vector<float> right_;
 };
 
 // The panel every score starts from: a plain saw voice with the filter well
-// open and no effects. The output stage's rails come *before* the volume
-// control, exactly as on the hardware, so keeping a demo clean means keeping
-// the voice bus itself out of the rails -- the VCA LEVEL slider is the
-// control that does that, and a six-voice chord needs it well down. Every
-// take is normalised to a common level afterwards, so rendering quietly
-// costs nothing; a take that needs the rails' colour on purpose would raise
-// this deliberately and say so.
+// open and no effects. VCA LEVEL sets the shared pre-chorus drive while main
+// VOLUME follows the IC6 output summers. Every take is normalised to a common
+// file level afterward; the unnormalised peak is retained in the table so a
+// signal-path gain change remains visible during review. About 0.84 LEVEL is
+// a useful multi-note working point with the exact 0.1 voice summer and IC6
+// gain; the old unity voice sum needed misleading near-minimum settings.
 EngineParameters plainPanel()
 {
     EngineParameters parameters;
@@ -256,7 +280,7 @@ EngineParameters plainPanel()
     parameters.decay = 0.45f;
     parameters.sustain = 0.70f;
     parameters.release = 0.30f;
-    parameters.vcaLevel = 0.30f;
+    parameters.vcaLevel = 0.84f;
     parameters.chorus = ChorusMode::Off;
     parameters.volume = 0.45f;
     return parameters;
@@ -272,7 +296,7 @@ Take renderChorusPad()
 {
     auto parameters = plainPanel();
     parameters.subLevel = 0.7f;
-    parameters.vcaLevel = 0.115f;
+    parameters.vcaLevel = 0.84f;
     parameters.cutoff = 0.48f;
     parameters.envDepth = 0.25f;
     parameters.attack = 0.35f;
@@ -289,8 +313,9 @@ Take renderChorusPad()
     return take;
 }
 
-// Pulse-width-modulated strings in chorus II: the LFO works the comparator
-// raw, with no onset delay, exactly as the firmware drives it.
+// Pulse-width-modulated strings in chorus II. The current compatibility model
+// sends the LFO to PWM without the pitch/filter delay envelope; that firmware
+// lead remains provenance-pending rather than an original-unit claim.
 Take renderPwmStrings()
 {
     auto parameters = plainPanel();
@@ -298,7 +323,7 @@ Take renderPwmStrings()
     parameters.pulseEnabled = true;
     parameters.pwmSource = PwmSource::Lfo;
     parameters.pwmDepth = 0.75f;
-    parameters.vcaLevel = 0.115f;
+    parameters.vcaLevel = 0.84f;
     parameters.lfoRate = 0.35f;
     parameters.cutoff = 0.55f;
     parameters.attack = 0.25f;
@@ -321,7 +346,7 @@ Take renderBassline()
 {
     auto parameters = plainPanel();
     parameters.range = DcoRange::Sixteen;
-    parameters.vcaLevel = 0.16f;
+    parameters.vcaLevel = 0.84f;
     parameters.subLevel = 0.85f;
     parameters.cutoff = 0.34f;
     parameters.resonance = 0.30f;
@@ -352,7 +377,7 @@ Take renderFilterBrass()
 {
     auto parameters = plainPanel();
     parameters.subLevel = 0.4f;
-    parameters.vcaLevel = 0.14f;
+    parameters.vcaLevel = 0.84f;
     parameters.cutoff = 0.30f;
     parameters.resonance = 0.42f;
     parameters.envDepth = 0.55f;
@@ -392,7 +417,7 @@ Take renderSelfOscillation()
 {
     auto parameters = plainPanel();
     parameters.sawEnabled = false;
-    parameters.vcaLevel = 0.8f;
+    parameters.vcaLevel = 1.0f;
     parameters.cutoff = 0.34f;
     parameters.resonance = 1.0f;
     parameters.envDepth = 0.0f;
@@ -423,7 +448,7 @@ Take renderChorusModes()
 {
     auto parameters = plainPanel();
     parameters.subLevel = 0.6f;
-    parameters.vcaLevel = 0.115f;
+    parameters.vcaLevel = 0.84f;
     parameters.cutoff = 0.52f;
     parameters.attack = 0.12f;
     parameters.sustain = 0.9f;
@@ -450,7 +475,7 @@ Take renderUnisonLead()
 {
     auto parameters = plainPanel();
     parameters.keyMode = KeyMode::Unison;
-    parameters.vcaLevel = 0.10f;
+    parameters.vcaLevel = 0.84f;
     parameters.subLevel = 0.5f;
     parameters.cutoff = 0.45f;
     parameters.envDepth = 0.4f;
@@ -479,7 +504,7 @@ Take renderUnisonLead()
 Take renderDelayedVibrato()
 {
     auto parameters = plainPanel();
-    parameters.vcaLevel = 0.13f;
+    parameters.vcaLevel = 0.84f;
     parameters.subLevel = 0.5f;
     parameters.cutoff = 0.5f;
     parameters.dcoLfoDepth = 0.45f;
@@ -501,7 +526,7 @@ Take renderHighPassLadder()
 {
     auto parameters = plainPanel();
     parameters.subLevel = 0.8f;
-    parameters.vcaLevel = 0.105f;
+    parameters.vcaLevel = 0.84f;
     parameters.cutoff = 0.66f;
     parameters.attack = 0.02f;
     parameters.sustain = 0.9f;
@@ -521,14 +546,14 @@ Take renderHighPassLadder()
     return take;
 }
 
-// One chord at a perfectly matched calibration, then on a well-worn unit:
-// the per-voice trims, offsets and thermal wander that separate six otherwise
-// identical voices.
-Take renderCalibrationDrift()
+// One chord at the nominal zero-character baseline, then with the optional
+// voiced Unit Character profile at full amount. The latter is a repeatable
+// sound-design policy, not a measured worn-unit population.
+Take renderUnitCharacter()
 {
     auto parameters = plainPanel();
     parameters.subLevel = 0.55f;
-    parameters.vcaLevel = 0.11f;
+    parameters.vcaLevel = 0.84f;
     parameters.cutoff = 0.42f;
     parameters.resonance = 0.55f;
     parameters.envDepth = 0.3f;
@@ -589,9 +614,9 @@ const std::array<Demo, 10>& demos()
         { "09-high-pass-ladder.wav",
           "One bright chord through all four high-pass switch positions",
           renderHighPassLadder },
-        { "10-calibration-drift.wav",
-          "A six-voice chord on a perfectly matched unit, then on a worn one",
-          renderCalibrationDrift },
+        { "10-unit-character.wav",
+          "A six-voice chord at nominal zero Unit Character, then at full amount",
+          renderUnitCharacter },
     }};
     return table;
 }
@@ -838,22 +863,28 @@ int main (int argc, char** argv)
                           renderedPeak);
             return 1;
         }
-        // The rails' linear ceiling, referred through the volume law, bounds
-        // what a clean take can measure; anything above it has folded the
-        // rails and would document them rather than the circuit. The small
-        // margin covers the decimation filter's ripple on a legitimately
-        // bounded signal. The fix is always to lower the take's bus level,
-        // never to ship it.
-        if (renderedPeak > take.linearCeiling() * 1.05)
+        const auto gain = take.normalise();
+        const auto absoluteDcMean = take.absoluteDcMean();
+        const auto firstEdge = take.firstEdgeMagnitude();
+        const auto lastEdge = take.lastEdgeMagnitude();
+        if (absoluteDcMean > maximumAbsoluteDcMean)
         {
             std::fprintf (stderr,
-                          "%s drove the output rails (peak %.3f against a "
-                          "linear ceiling of %.3f); lower its VCA level\n",
-                          demo.fileName, renderedPeak, take.linearCeiling());
+                          "%s rejected: normalised absolute DC mean %.6f FS "
+                          "exceeds %.6f FS\n",
+                          demo.fileName, absoluteDcMean, maximumAbsoluteDcMean);
+            return 1;
+        }
+        if (firstEdge > maximumEdgeMagnitude || lastEdge > maximumEdgeMagnitude)
+        {
+            std::fprintf (stderr,
+                          "%s rejected: normalised first/last edge "
+                          "%.6f/%.6f FS exceeds %.6f FS\n",
+                          demo.fileName, firstEdge, lastEdge,
+                          maximumEdgeMagnitude);
             return 1;
         }
 
-        const auto gain = take.normalise();
         const auto path = directory / demo.fileName;
         if (! writeWav (path, take.left(), take.right()))
         {

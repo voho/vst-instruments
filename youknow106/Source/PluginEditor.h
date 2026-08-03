@@ -87,11 +87,15 @@ private:
     void refreshPresetBar();
     void attachSlider (juce::Slider&, const char* parameterId);
     void attachButton (juce::Button&, const char* parameterId);
+    void attachPolyButton (juce::Button&, const char* parameterId,
+                           const char* otherParameterId);
+    void attachExclusiveButton (juce::Button&, const char* parameterId,
+                                const char* otherParameterId);
     void attachRadio (juce::Button&, const char* parameterId, int value);
     [[nodiscard]] juce::Rectangle<float> scaled (float x, float y, float width,
                                                  float height) const;
 
-    YouKnow106AudioProcessor& processor;
+    YouKnow106AudioProcessor& audioProcessor;
     YouKnow106LookAndFeel lookAndFeel;
     PlasticTexture texture;
     juce::TooltipWindow tooltipWindow { this, 600 };
@@ -129,6 +133,7 @@ private:
     juce::ComboBox presetBox;
     juce::TextButton presetPrevButton { "<" };
     juce::TextButton presetNextButton { ">" };
+    juce::TextButton presetReloadButton { "RELOAD" };
     // Lit while the panel no longer matches the patch that was loaded, which is
     // the only way to tell a recalled patch from an edited one.
     juce::Label presetEditedLabel;
@@ -139,7 +144,7 @@ private:
 
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;
-    std::vector<std::unique_ptr<juce::ParameterAttachment>> radioAttachments;
+    std::vector<std::unique_ptr<juce::ParameterAttachment>> parameterAttachments;
 
     float scale = 1.0f;
 

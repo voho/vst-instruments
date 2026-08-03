@@ -11,110 +11,36 @@ namespace
 constexpr float pi = 3.14159265358979323846f;
 constexpr float twoPi = 6.28318530717958647692f;
 
-// Signal levels are volts at the modelled node throughout the voice, so the
-// transconductor nonlinearity engages at the level the real circuit engages it.
-// The summing node runs at the oscillator's own 12 Vpp; the filter module's
-// output is specified at +/-2.4 V, so the attenuator between them is what sets
-// the working level, and 2.4 V is what maps to full scale.
+// Signal levels use the established 2.6 V-per-unit model coordinate so the
+// transconductor and BBD nonlinearities retain their existing drive. The
+// service notes' 12 Vpp oscillator adjustment and 4 Vpp TP8 noise adjustment
+// do not by themselves establish the complete loaded source-to-filter transfer;
+// the 0.40 mixer coordinate remains a voiced compatibility value (OQ-15).
 constexpr float filterInputAttenuation = 0.40f;
-constexpr float voltsToSample = 1.0f / 2.6f;
+constexpr float voltsToSample = 1.0f / YouKnow106Engine::internalVoltsPerUnit;
 
-// The output amplifier is linear to this fraction of full scale and folds
-// smoothly above it. Running every source at maximum overdrives the real
-// instrument's output stage too; what this rules out is a plug-in that answers
-// with +9 dBFS instead.
-constexpr float outputLinearCeiling = 0.80f;
-
-// Deviation of the ramp from a straight line. The service notes describe an
-// integrator, and the located reverse-engineering account of this oscillator
-// agrees: the control voltage feeds a resistor into a virtual-ground
-// integrator, which is a constant-current charge and therefore straight. An
-// earlier revision kept a bow on the strength of a misreading of that
-// account; the straight ramp is also the only shape consistent with the
-// comparator's published 6 V / 50% duty anchor, since a bowed ramp puts 50%
-// duty at a different voltage.
-constexpr float rampBow = 0.0f;
-
-// Mixer weights at the summing node ahead of the high-pass, referred to the
-// ramp's own amplitude. The service notes hold both the sawtooth and the
-// pulse at approximately 12 Vpp, so the two carry the same weight. The noise
-// weight is voiced: the service procedure has a noise-level adjustment on the
-// module board, but no located source states its target, so 4 Vpp against the
-// ramp's 12 Vpp stands until a capture fixes it.
+// Voiced source-coordinate values constrained by the service anchors: saw and
+// pulse are adjusted near 12 Vpp, while shared noise is adjusted to 4.0 Vpp at
+// TP8. Intervening loading is still open, and the sub value has no equivalent
+// end-to-end anchor, so these must not be presented as measured mixer voltages.
 constexpr float sawMixVolts = 6.0f;
 constexpr float pulseMixVolts = 6.0f;
 constexpr float subMixVolts = 5.0f;
 constexpr float noiseMixVolts = 2.0f;
 
-// Input-referred noise of the transconductor stages. It is inaudible under any
-// signal, and it is also the only reason a filter pushed past its oscillation
-// threshold with no oscillator running has anything to start from -- a silent
-// model would sit at exactly zero forever, which no analogue filter does.
+// Stereo post-IC6 coupling, identically C17/R54/VR1 and C20/R57/VR1.
+// The load here is the complete 10 kOhm pot track. Downstream selector, jack
+// and headphone loading is deliberately outside the current fixed-boundary
+// product scope and remains OQ-17.
+constexpr float outputCouplingCapacitanceF = 10.0e-6f;
+constexpr float outputCouplingSeriesOhms = 1500.0f;
+constexpr float outputCouplingPotOhms = 10000.0f;
+
+// Voiced microscopic excitation at the filter input. It is distinct from the
+// shared audible TP8 noise and gives an otherwise perfectly silent numerical
+// filter a deterministic self-oscillation seed. No healthy-card capture fixes
+// its 20 uV compatibility value yet.
 constexpr float filterNoiseVolts = 2.0e-5f;
-
-// Envelope segment behavioural anchors, from timing analysis of the
-// generator firmware and its tables. The attack's duration is linear in the
-// slider across the lower half -- about 8.4 ms per step, reaching roughly
-// 0.54 s at mid-travel -- then accelerates through the knots below to about
-// 3.3 s at the top. The published 1.5 ms minimum is the single-pass floor.
-constexpr float envelopeMinimumSeconds = 0.0015f;
-constexpr float attackMidTravelTicks = 254.0f; // ticks per unit travel below 0.5
-// (travel, scan ticks) knots above mid-travel, log-linear between.
-constexpr float attackKnotTravel[] = { 0.5f, 0.685f, 0.85f, 0.96f, 1.0f };
-constexpr float attackKnotTicks[]  = { 127.0f, 255.0f, 493.0f, 628.0f, 780.0f };
-
-// Falling-segment behavioural anchors: the per-pass retention coefficient's
-// decay rate lambda = -ln(coefficient), log-linear in the slider between the
-// knots below. They reproduce the firmware's measured times -- roughly
-// 0.33 s, 2.2 s and 4.5 s to -20 dB at quarter, half and three-quarter
-// travel, one pass at the bottom, and 9.6 s to half level at the top. The
-// audible tail ends earlier than the arithmetic suggests because the
-// envelope is truncated to its integer grid and the amplifier's knee
-// swallows the last few percent.
-constexpr float decayKnotTravel[]  = { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f };
-constexpr float decayKnotLambda[]  = { 2.77f, 0.0293f, 0.0044f, 0.00215f,
-                                       0.000303f };
-
-// The modulator's rate coefficient, normalised to the accumulator span: the
-// fraction of a full half-sweep one scan pass adds. The firmware table has a
-// fine-resolution bottom, two straight segments, and an accelerating top;
-// the knots below reproduce its measured rates -- 0.04 Hz at the bottom,
-// about 4.8 Hz at mid-travel, and 29.8 Hz at the top, where the clamp
-// quantises the period to two passes per half-sweep.
-constexpr float lfoKnotTravel[] = { 0.0f, 0.063f, 0.5f, 0.748f, 1.0f };
-constexpr float lfoKnotCoefficient[] = { 5.0f / 8192.0f, 90.0f / 8192.0f,
-                                         650.0f / 8192.0f, 1162.0f / 8192.0f,
-                                         5113.0f / 8192.0f };
-// The delay's fade stage: a per-pass increment selected by the top three
-// bits of the pot, so the fade time is a staircase over the travel --
-// instant across the bottom eighth, three short steps, then a fixed fade
-// just over a second long for the whole upper half.
-constexpr float lfoFadeStepSeconds[] = { 0.0f, 0.06f, 0.125f, 0.19f,
-                                         1.09f, 1.09f, 1.09f, 1.09f };
-
-// Portamento runs at a constant rate in pitch, not on a time constant: the
-// panel sets seconds per octave, so a wide leap takes proportionally longer.
-constexpr float portamentoFastestSecondsPerOctave = 0.05f;
-constexpr float portamentoSlowestSecondsPerOctave = 12.9f;
-
-// Amplifier control law. The converter ahead of the amplifier is a
-// transistor with strong emitter degeneration, and a measured sweep of a
-// real unit shows what that circuit predicts: gain tracks the control
-// voltage *linearly* over most of the range -- half control is half
-// amplitude, six decibels down, not thirty -- with an exponential knee
-// confined to the bottom tenth where the transistor barely conducts,
-// falling away at roughly 26 dB per tenth of the control range. The
-// instrument's dB-linear decay tails come from the *generator's*
-// exponential falling segments through this quasi-linear amplifier -- the
-// opposite factorisation from the pure-exponential converter an earlier
-// revision modelled, which sat mid-level sustains tens of decibels too
-// quiet.
-constexpr float vcaKnee = 0.12f;
-constexpr float vcaKneeDbPerUnit = 260.0f;
-// Below this the converter genuinely does not conduct: the amplifier shuts
-// fully rather than leaking. A residual leak is what a failed voice module
-// does, not what a working one does.
-constexpr float vcaDeadband = 0.005f;
 
 float clamp01(float value) noexcept
 {
@@ -126,18 +52,23 @@ float sanitised(float value, float fallback) noexcept
     return std::isfinite(value) ? value : fallback;
 }
 
-// Exactly linear below the ceiling, smoothly bounded to unity above it, with a
-// continuous first derivative at the join.
-float outputStage(float value) noexcept
+std::uint8_t storedControlByte(float value) noexcept
 {
-    const float magnitude = std::abs(value);
-    if (magnitude <= outputLinearCeiling)
-        return value;
-    const float span = 1.0f - outputLinearCeiling;
-    const float excess = (magnitude - outputLinearCeiling) / span;
-    const float folded = outputLinearCeiling + span * std::tanh(excess);
-    return value < 0.0f ? -folded : folded;
+    return static_cast<std::uint8_t>(
+        std::floor(clamp01(sanitised(value, 0.0f)) * 127.0f + 0.5f));
 }
+
+float storedControlFraction(float value) noexcept
+{
+    return static_cast<float>(storedControlByte(value)) / 127.0f;
+}
+
+std::uint8_t portamentoAdcByte(float value) noexcept
+{
+    return static_cast<std::uint8_t>(
+        std::floor(clamp01(sanitised(value, 0.0f)) * 255.0f + 0.5f));
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -180,17 +111,13 @@ double YouKnow106Engine::dcoQuantisedFrequency(std::uint32_t divider,
 
 float YouKnow106Engine::vcfCutoffHz(float counts) noexcept
 {
-    // The count law is exact through the audio band; above the knee the
-    // exponential converter saturates, bending smoothly onto the measured
-    // ceiling. The digital sum upstream is already clamped to the 14-bit
-    // accumulator; the margin here only covers the analogue trim and drift
-    // that ride on top of it.
+    // The digital sum upstream is already clamped to the 14-bit accumulator;
+    // the margin here only covers analogue trim and drift. No dense capture
+    // establishes a high-code knee, so retain the validated exponential law
+    // and identify the published 50 kHz endpoint as a transparent product cap.
     const float safe = std::clamp(sanitised(counts, 0.0f), -2000.0f, 20000.0f);
     const float hz = vcfBaseFrequencyHz * std::exp2(safe / vcfCountsPerOctave);
-    if (hz <= vcfKneeStartHz)
-        return std::max(hz, 1.0f);
-    const float span = vcfConverterCeilingHz - vcfKneeStartHz;
-    return vcfKneeStartHz + span * std::tanh((hz - vcfKneeStartHz) / span);
+    return std::clamp(hz, 1.0f, vcfSafetyCapHz);
 }
 
 float YouKnow106Engine::vcfPanelCounts(float panelPosition) noexcept
@@ -201,147 +128,274 @@ float YouKnow106Engine::vcfPanelCounts(float panelPosition) noexcept
     return byte * 128.0f;
 }
 
-float YouKnow106Engine::vcfFeedback(float panelPosition) noexcept
+float YouKnow106Engine::VoicedResonanceCompatibilityProfile::loopGain(
+    float panelPosition) noexcept
 {
-    // Regeneration reaches the four-pole cascade's oscillation threshold at
-    // 90% of the travel, and the last tenth pushes past it to the
-    // hardware-fitted maximum of 4.19. Below the threshold the curve is not
-    // linear: a fitted measurement of this filter puts the loop gain near
-    // 0.91 at 30% travel, well under a straight line's 1.33, so the model
-    // takes the quadratic through that point and the threshold.
+    // This piecewise curve is retained solely for YouKnow106 preset/sound
+    // compatibility. No qualifying original-unit sweep establishes its
+    // intermediate points, threshold position or maximum as hardware facts.
     const float position = clamp01(panelPosition);
-    if (position <= vcfSelfOscillationTravel)
+    if (position <= nominalOscillationTravel)
         return 2.3277778f * position + 2.3518519f * position * position;
-    const float past = (position - vcfSelfOscillationTravel)
-                     / (1.0f - vcfSelfOscillationTravel);
-    return vcfSelfOscillationFeedback
-         + (vcfMaximumFeedback - vcfSelfOscillationFeedback) * past;
+    const float past = (position - nominalOscillationTravel)
+                     / (1.0f - nominalOscillationTravel);
+    return nominalOscillationFeedback
+         + (maximumFeedback - nominalOscillationFeedback) * past;
 }
 
-float YouKnow106Engine::vcfResonanceCompensation(float feedback) noexcept
+float YouKnow106Engine::VoicedResonanceCompatibilityProfile::inputCompensation(
+    float feedback) noexcept
 {
-    // The instrument compensates the resonant passband loss on the *input*
-    // side: it drives more signal in as regeneration rises. That is why a
-    // high-resonance patch here grows dirtier rather than thinner, and it is
-    // the opposite of an output-side make-up gain. The fitted hardware figure
-    // is linear in the loop gain -- about 23% more drive per unit of it,
-    // reaching just under six decibels at the top, not the nine an earlier
-    // revision used.
+    // The direction and coefficient are part of the same voiced profile as
+    // loopGain(). They preserve the existing high-Q drive character without
+    // asserting a measured JUNO-106 compensation transfer.
     const float k = std::clamp(sanitised(feedback, 0.0f), 0.0f, 8.0f);
-    return 1.0f + 0.2296f * k;
+    return 1.0f + inputCompensationPerFeedback * k;
 }
 
-float YouKnow106Engine::vcfResonanceFrequencyTrim(float feedback) noexcept
+float YouKnow106Engine::VoicedResonanceCompatibilityProfile::frequencyTrim(
+    float feedback) noexcept
 {
-    // With the loop limited in its own divider, as in the hardware, the
-    // oscillation sits close to the small-signal law on its own; what is
-    // left is the forward stages' slight compression at the limit-cycle
-    // amplitude, absorbed by the service procedure's per-voice trimmer. The
-    // trim is calibrated so the rendered oscillation lands on the control
-    // law's pitch -- the service note's 248 Hz check at converter code 6272.
+    // This correction is a compatibility calibration of the model itself.
+    // The service procedure motivates allowing a per-card adjustment, but it
+    // does not establish this feedback-dependent coefficient or curve.
     const float k = std::clamp(sanitised(feedback, 0.0f), 0.0f, 8.0f);
-    const float fraction = std::min(k / vcfSelfOscillationFeedback, 1.2f);
-    return 1.0f + vcfOscillationTrim * fraction * fraction;
+    const float fraction = std::min(k / nominalOscillationFeedback, 1.2f);
+    return 1.0f + frequencyTrimAmount * fraction * fraction;
+}
+
+float YouKnow106Engine::vcfEffectiveCutoffHz(float counts,
+                                             float feedback) noexcept
+{
+    return std::min(vcfSafetyCapHz,
+                    vcfCutoffHz(counts)
+                        * VoicedResonanceCompatibilityProfile::frequencyTrim(
+                            feedback));
 }
 
 namespace
 {
-// Log-linear interpolation through behavioural knots: y moves geometrically
-// between knots as x moves linearly. The laws built on this are fits through
-// measured firmware behaviour, not through table data.
-template <std::size_t N>
-float knotInterpolate(float x, const float (&knotX)[N],
-                      const float (&knotY)[N]) noexcept
+// Compact laws independently derived from the hash-matched B-2 regions. They
+// reproduce all observable coefficients while avoiding a ROM/table dump.
+std::uint16_t attackIncrementForByte(std::uint8_t byte) noexcept
 {
-    if (x <= knotX[0])
-        return knotY[0];
-    for (std::size_t i = 1; i < N; ++i)
-        if (x <= knotX[i])
-        {
-            const float span = knotX[i] - knotX[i - 1];
-            const float t = span > 0.0f ? (x - knotX[i - 1]) / span : 1.0f;
-            return knotY[i - 1]
-                 * std::pow(knotY[i] / knotY[i - 1], t);
-        }
-    return knotY[N - 1];
+    const int index = byte;
+    if (index == 0)
+        return 0x4000u;
+    if (index <= 63)
+    {
+        int value = (8192 + index / 2) / index;
+        // Three values in the otherwise rounded harmonic region are one count
+        // lower in the verified image.
+        if (index == 3 || index == 20 || index == 28)
+            --value;
+        return static_cast<std::uint16_t>(value);
+    }
+    if (index <= 80)
+        return static_cast<std::uint16_t>(127 - 11 * (index - 64) / 4);
+    if (index <= 86)
+        return static_cast<std::uint16_t>(83 - (17 * (index - 80) + 1) / 6);
+    if (index <= 107)
+        return static_cast<std::uint16_t>(64 - 3 * (index - 87) / 2);
+    if (index <= 121)
+    {
+        const int numerator = 429 - 6 * (index - 108);
+        return static_cast<std::uint16_t>((2 * numerator + 13) / 26);
+    }
+    return static_cast<std::uint16_t>(26 - (index - 122));
 }
 
-template <std::size_t N>
-float knotInvert(float y, const float (&knotX)[N],
-                 const float (&knotY)[N]) noexcept
+std::uint16_t decayReleaseMultiplierForByte(std::uint8_t byte) noexcept
 {
-    const bool ascending = knotY[N - 1] > knotY[0];
-    if (ascending ? y <= knotY[0] : y >= knotY[0])
-        return knotX[0];
-    for (std::size_t i = 1; i < N; ++i)
-        if (ascending ? y <= knotY[i] : y >= knotY[i])
-        {
-            const float t = std::log(y / knotY[i - 1])
-                          / std::log(knotY[i] / knotY[i - 1]);
-            return knotX[i - 1] + (knotX[i] - knotX[i - 1]) * t;
-        }
-    return knotX[N - 1];
+    std::uint32_t value = 0x1000u;
+    for (int index = 1; index <= byte; ++index)
+    {
+        if (index <= 4)       value += 0x2000u;
+        else if (index == 5)  value += 0x1000u;
+        else if (index <= 15) value += 0x0800u;
+        else if (index <= 43) value += 0x0080u;
+        else if (index <= 65) value += 0x000cu;
+        else if (index <= 123)value += 0x0004u;
+        else                  value += 0x0001u;
+    }
+    return static_cast<std::uint16_t>(value);
 }
 
-// Scan passes an attack takes at a panel position: linear in the travel
-// across the lower half, then log-linear through the firmware's knots.
-float attackScanTicks(float position) noexcept
+std::uint16_t lfoRateIncrementForByte(std::uint8_t byte) noexcept
 {
-    const float p = std::clamp(position, 0.0f, 1.0f);
-    if (p <= 0.5f)
-        return std::max(1.0f, std::floor(attackMidTravelTicks * p + 0.5f));
-    return knotInterpolate(p, attackKnotTravel, attackKnotTicks);
+    int value = 5;
+    for (int index = 1; index <= byte; ++index)
+    {
+        if (index <= 2)        value += 10;
+        else if (index <= 5)   value += 15;
+        else if (index <= 63)  value += 10;
+        else if (index <= 95)  value += 16;
+        else if (index <= 102) value += 52;
+        else if (index == 103) value += 54;
+        else if (index <= 105) value += 70;
+        else if (index <= 109) value += 80;
+        else if (index <= 119) value += 100;
+        else if (index <= 122) value += 120;
+        else if (index <= 126) value += 150;
+        else                   value += 96;
+    }
+    return static_cast<std::uint16_t>(value);
 }
 
-// Per-pass decay rate lambda; the retention coefficient is exp(-lambda).
-float decayLambdaPerTick(float position) noexcept
+std::uint16_t lfoDelayFadeIncrementForByte(std::uint8_t byte) noexcept
 {
-    return knotInterpolate(std::clamp(position, 0.0f, 1.0f),
-                           decayKnotTravel, decayKnotLambda);
+    switch (byte >> 4u)
+    {
+        case 0: return 0xffffu;
+        case 1: return 1049u;
+        case 2: return 524u;
+        case 3: return 350u;
+        default: return 256u;
+    }
 }
 
-// The modulator's per-pass accumulator step, as a fraction of a half-sweep.
-float lfoCoefficient(float position) noexcept
+std::uint8_t portamentoIncrementForIndex(std::uint8_t index) noexcept
 {
-    return knotInterpolate(std::clamp(position, 0.0f, 1.0f),
-                           lfoKnotTravel, lfoKnotCoefficient);
+    if (index == 0u)
+        return 0u;
+    if (index <= 25u)
+        return static_cast<std::uint8_t>(263 - 8 * index);
+    if (index <= 47u)
+        return static_cast<std::uint8_t>(113 - 2 * index);
+    if (index == 48u)
+        return 18u;
+    if (index == 49u)
+        return 17u;
+    if (index <= 61u)
+        return static_cast<std::uint8_t>(29 - (index + 2) / 4);
+    return static_cast<std::uint8_t>(
+        std::max(1, 26 - (static_cast<int>(index) + 3) / 5));
 }
 
-float lfoFadeSeconds(float position) noexcept
+std::uint16_t truncatedDecayProduct(std::uint16_t value,
+                                    std::uint16_t coefficient) noexcept
 {
-    const int index = std::clamp(
-        static_cast<int>(std::clamp(position, 0.0f, 1.0f) * 8.0f), 0, 7);
-    return lfoFadeStepSeconds[index];
+    const std::uint16_t valueHigh = value >> 8u;
+    const std::uint16_t valueLow = value & 0xffu;
+    const std::uint16_t coefficientHigh = coefficient >> 8u;
+    const std::uint16_t coefficientLow = coefficient & 0xffu;
+    return static_cast<std::uint16_t>(
+        coefficientHigh * valueHigh
+        + ((coefficientLow * valueHigh) >> 8u)
+        + ((coefficientHigh * valueLow) >> 8u));
 }
 } // namespace
 
+std::uint16_t YouKnow106Engine::storedControlAlignedWord(float panelPosition) noexcept
+{
+    return static_cast<std::uint16_t>(storedControlByte(panelPosition)) << 7u;
+}
+
+std::uint16_t YouKnow106Engine::storedControlDacCode(float panelPosition) noexcept
+{
+    return static_cast<std::uint16_t>(storedControlByte(panelPosition)) << 5u;
+}
+
+std::uint16_t YouKnow106Engine::envelopeAttackIncrement(
+    float panelPosition) noexcept
+{
+    return attackIncrementForByte(storedControlByte(panelPosition));
+}
+
+std::uint16_t YouKnow106Engine::envelopeDecayReleaseMultiplier(
+    float panelPosition) noexcept
+{
+    return decayReleaseMultiplierForByte(storedControlByte(panelPosition));
+}
+
+std::uint16_t YouKnow106Engine::lfoRateIncrement(float panelPosition) noexcept
+{
+    return lfoRateIncrementForByte(storedControlByte(panelPosition));
+}
+
+std::uint16_t YouKnow106Engine::lfoDelayFadeIncrement(
+    float panelPosition) noexcept
+{
+    return lfoDelayFadeIncrementForByte(storedControlByte(panelPosition));
+}
+
+std::uint8_t YouKnow106Engine::portamentoIncrement(float panelPosition) noexcept
+{
+    const auto raw = portamentoAdcByte(panelPosition);
+    return raw == 0u ? 0u : portamentoIncrementForIndex(raw >> 1u);
+}
+
+std::uint16_t YouKnow106Engine::envelopeAttackLevel(
+    std::uint16_t level, std::uint16_t increment) noexcept
+{
+    const std::uint32_t next = static_cast<std::uint32_t>(level) + increment;
+    return static_cast<std::uint16_t>(
+        std::min<std::uint32_t>(next, envelopePeak));
+}
+
+std::uint16_t YouKnow106Engine::envelopeDecayLevel(
+    std::uint16_t level, std::uint16_t sustain,
+    std::uint16_t multiplier) noexcept
+{
+    const auto target = std::min(sustain, envelopePeak);
+    const auto current = std::min(level, envelopePeak);
+    if (current <= target)
+        return target;
+    const auto distance = static_cast<std::uint16_t>(current - target);
+    return static_cast<std::uint16_t>(
+        target + truncatedDecayProduct(distance, multiplier));
+}
+
+std::uint16_t YouKnow106Engine::envelopeReleaseLevel(
+    std::uint16_t level, std::uint16_t multiplier) noexcept
+{
+    const auto current = static_cast<std::uint16_t>(std::min(level, envelopePeak));
+    return truncatedDecayProduct(current, multiplier);
+}
+
 float YouKnow106Engine::envelopeAttackSeconds(float panelPosition) noexcept
 {
-    return attackScanTicks(clamp01(panelPosition))
-         * static_cast<float>(1.0 / controlScanHz);
+    const int increment = envelopeAttackIncrement(panelPosition);
+    const int passes = (envelopePeak + increment - 1) / increment;
+    return static_cast<float>(passes / controlScanHz);
 }
 
 float YouKnow106Engine::envelopeDecaySeconds(float panelPosition) noexcept
 {
-    // Displayed as the time the segment takes to fall to a tenth of its
-    // span -- the measure the hardware anchors were taken in. The full tail
-    // runs longer, exactly as the instrument's does.
-    const float lambda = decayLambdaPerTick(clamp01(panelPosition));
-    return 2.302585f / lambda * static_cast<float>(1.0 / controlScanHz);
+    // Keep the conventional -20 dB display point, but reach it through the
+    // exact integer helper rather than a continuous exponential estimate.
+    const auto multiplier = envelopeDecayReleaseMultiplier(panelPosition);
+    std::uint16_t level = envelopePeak;
+    const std::uint16_t threshold = envelopePeak / 10u;
+    int passes = 0;
+    while (level > threshold && passes < 100000)
+    {
+        level = envelopeReleaseLevel(level, multiplier);
+        ++passes;
+    }
+    return static_cast<float>(passes / controlScanHz);
 }
 
 float YouKnow106Engine::envelopeReleaseSeconds(float panelPosition) noexcept
 {
-    return envelopeDecaySeconds(panelPosition);
+    const auto multiplier = envelopeDecayReleaseMultiplier(panelPosition);
+    std::uint16_t level = envelopePeak;
+    int passes = 0;
+    while (level != 0u && passes < 100000)
+    {
+        level = envelopeReleaseLevel(level, multiplier);
+        ++passes;
+    }
+    return static_cast<float>(passes / controlScanHz);
 }
 
 float YouKnow106Engine::lfoRateHz(float panelPosition) noexcept
 {
     // The rate the accumulator mechanism actually produces: whole passes per
-    // half-sweep, so fast settings land on a quantised grid exactly as the
-    // hardware's do.
-    const float coefficient = lfoCoefficient(clamp01(panelPosition));
-    const float passes = std::ceil(1.0f / std::max(coefficient, 1.0e-6f));
+    // half-sweep, so fast settings land on the B-2 state machine's quantised
+    // grid.
+    const int coefficient = lfoRateIncrement(panelPosition);
+    const int passes = (8192 + coefficient - 1) / coefficient;
     return static_cast<float>(controlScanHz) / (4.0f * passes);
 }
 
@@ -350,89 +404,228 @@ float YouKnow106Engine::lfoDelaySeconds(float panelPosition) noexcept
     // Total time from the note to full modulation depth: a silent hold that
     // grows across the whole travel at the attack table's own rate, plus the
     // stepped fade.
-    const float position = clamp01(panelPosition);
-    if (position <= 1.0e-4f)
-        return 0.0f;
-    return envelopeAttackSeconds(position) + lfoFadeSeconds(position);
+    const int holdIncrement = envelopeAttackIncrement(panelPosition);
+    const int fadeIncrement = lfoDelayFadeIncrement(panelPosition);
+    const int holdPasses = (16384 + holdIncrement - 1) / holdIncrement;
+    const int fadePasses = (65536 + fadeIncrement - 1) / fadeIncrement;
+    return static_cast<float>((holdPasses + fadePasses) / controlScanHz);
 }
 
 float YouKnow106Engine::portamentoSeconds(float panelPosition) noexcept
 {
-    // Seconds per octave, not seconds per glide. Zero travel switches it off.
-    const float position = clamp01(panelPosition);
-    if (position <= 1.0e-4f)
+    // The performance pot is read as an eight-bit ADC value. Raw zero is the
+    // explicit Off path and raw one selects the observed zero/immediate entry;
+    // the active raw pairs select indices 1..127 through raw>>1.
+    const int stepUnits = portamentoIncrement(panelPosition);
+    if (stepUnits == 0)
         return 0.0f;
-    return portamentoFastestSecondsPerOctave
-         * std::pow(portamentoSlowestSecondsPerOctave
-                    / portamentoFastestSecondsPerOctave, position);
+    const int passes = (3072 + stepUnits - 1) / stepUnits;
+    return static_cast<float>(passes / controlScanHz);
 }
 
-namespace
+float YouKnow106Engine::outputReferenceGain(float referenceRmsVolts) noexcept
 {
-// Inverse of a law of the form value = low * (high / low) ^ position.
-float exponentialPosition(float value, float low, float high) noexcept
-{
-    if (!(value > 0.0f) || !std::isfinite(value))
-        return 0.0f;
-    const float span = std::log(high / low);
-    return std::clamp(std::log(std::max(value, low) / low) / span, 0.0f, 1.0f);
+    if (!(referenceRmsVolts > 0.0f) || !std::isfinite(referenceRmsVolts))
+        return 1.0f;
+    return internalVoltsPerUnit * minus18DbfsAmplitude / referenceRmsVolts;
 }
-} // namespace
+
+const std::array<YouKnow106Engine::ConverterWrite,
+                 YouKnow106Engine::converterWritesPerPass>&
+YouKnow106Engine::converterWriteOrder() noexcept
+{
+    static constexpr std::array<ConverterWrite, converterWritesPerPass> order {{
+        { ConverterDestination::Resonance, -1 },
+        { ConverterDestination::CommonVca, -1 },
+        { ConverterDestination::Sub, -1 },
+        { ConverterDestination::Pitch, 0 },
+        { ConverterDestination::Pitch, 1 },
+        { ConverterDestination::Pitch, 2 },
+        { ConverterDestination::Pitch, 3 },
+        { ConverterDestination::Pitch, 4 },
+        { ConverterDestination::Pitch, 5 },
+        { ConverterDestination::Pwm, -1 },
+        { ConverterDestination::Vcf, 0 },
+        { ConverterDestination::VoiceVca, 0 },
+        { ConverterDestination::Vcf, 1 },
+        { ConverterDestination::VoiceVca, 1 },
+        { ConverterDestination::Vcf, 2 },
+        { ConverterDestination::VoiceVca, 2 },
+        { ConverterDestination::Vcf, 3 },
+        { ConverterDestination::VoiceVca, 3 },
+        { ConverterDestination::Vcf, 4 },
+        { ConverterDestination::VoiceVca, 4 },
+        { ConverterDestination::Vcf, 5 },
+        { ConverterDestination::VoiceVca, 5 },
+        { ConverterDestination::Noise, -1 }
+    }};
+    return order;
+}
+
+std::array<double, YouKnow106Engine::converterWritesPerPass>
+YouKnow106Engine::converterEventPhases(ConverterTimingProfile profile) noexcept
+{
+    std::array<double, converterWritesPerPass> phases {};
+    if (profile == ConverterTimingProfile::PhaseZeroDiagnostic)
+        return phases;
+
+    // The service chart establishes sequential activity spread across the
+    // pass, but its drawing is not a calibrated timing capture. A normalized
+    // ordinal grid is therefore an explicit compatibility profile: enough to
+    // preserve non-simultaneous DCO programming without promoting made-up
+    // microseconds to JUNO-106 facts.
+    for (std::size_t ordinal = 0; ordinal < phases.size(); ++ordinal)
+        phases[ordinal] = static_cast<double>(ordinal)
+                        / static_cast<double>(phases.size());
+    return phases;
+}
 
 float YouKnow106Engine::panelPositionForAttack(float seconds) noexcept
 {
     if (!(seconds > 0.0f) || !std::isfinite(seconds))
         return 0.0f;
-    const float ticks = seconds * static_cast<float>(controlScanHz);
-    if (ticks <= attackKnotTicks[0])
-        return std::clamp(ticks / attackMidTravelTicks, 0.0f, 0.5f);
-    return knotInvert(ticks, attackKnotTravel, attackKnotTicks);
+    if (seconds <= envelopeAttackSeconds(0.0f))
+        return 0.0f;
+    if (seconds >= envelopeAttackSeconds(1.0f))
+        return 1.0f;
+
+    int bestByte = 0;
+    float bestError = std::numeric_limits<float>::infinity();
+    for (int byte = 0; byte <= 127; ++byte)
+    {
+        const float realised = envelopeAttackSeconds(
+            static_cast<float>(byte) / 127.0f);
+        const float error = std::abs(std::log(realised / seconds));
+        if (error < bestError)
+        {
+            bestError = error;
+            bestByte = byte;
+        }
+    }
+    return static_cast<float>(bestByte) / 127.0f;
 }
 
 float YouKnow106Engine::panelPositionForDecay(float seconds) noexcept
 {
     if (!(seconds > 0.0f) || !std::isfinite(seconds))
         return 0.0f;
-    const float lambda = 2.302585f
-                       / (seconds * static_cast<float>(controlScanHz));
-    return knotInvert(lambda, decayKnotTravel, decayKnotLambda);
+    if (seconds <= envelopeDecaySeconds(0.0f))
+        return 0.0f;
+    if (seconds >= envelopeDecaySeconds(1.0f))
+        return 1.0f;
+
+    int bestByte = 0;
+    float bestError = std::numeric_limits<float>::infinity();
+    for (int byte = 0; byte <= 127; ++byte)
+    {
+        const float realised = envelopeDecaySeconds(
+            static_cast<float>(byte) / 127.0f);
+        const float error = std::abs(std::log(realised / seconds));
+        if (error < bestError)
+        {
+            bestError = error;
+            bestByte = byte;
+        }
+    }
+    return static_cast<float>(bestByte) / 127.0f;
+}
+
+float YouKnow106Engine::panelPositionForRelease(float seconds) noexcept
+{
+    if (!(seconds > 0.0f) || !std::isfinite(seconds))
+        return 0.0f;
+    if (seconds <= envelopeReleaseSeconds(0.0f))
+        return 0.0f;
+    if (seconds >= envelopeReleaseSeconds(1.0f))
+        return 1.0f;
+
+    int bestByte = 0;
+    float bestError = std::numeric_limits<float>::infinity();
+    for (int byte = 0; byte <= 127; ++byte)
+    {
+        const float realised = envelopeReleaseSeconds(
+            static_cast<float>(byte) / 127.0f);
+        const float error = std::abs(std::log(realised / seconds));
+        if (error < bestError)
+        {
+            bestError = error;
+            bestByte = byte;
+        }
+    }
+    return static_cast<float>(bestByte) / 127.0f;
 }
 
 float YouKnow106Engine::panelPositionForLfoRate(float hertz) noexcept
 {
     if (!(hertz > 0.0f) || !std::isfinite(hertz))
         return 0.0f;
-    const float passes = std::max(
-        1.0f, std::floor(static_cast<float>(controlScanHz) / (4.0f * hertz)
-                         + 0.5f));
-    return knotInvert(1.0f / passes, lfoKnotTravel, lfoKnotCoefficient);
+    if (hertz <= lfoRateHz(0.0f))
+        return 0.0f;
+    if (hertz >= lfoRateHz(1.0f))
+        return 1.0f;
+
+    int bestByte = 0;
+    float bestError = std::numeric_limits<float>::infinity();
+    for (int byte = 0; byte <= 127; ++byte)
+    {
+        const float realised = lfoRateHz(static_cast<float>(byte) / 127.0f);
+        const float error = std::abs(std::log(realised / hertz));
+        if (error < bestError)
+        {
+            bestError = error;
+            bestByte = byte;
+        }
+    }
+    return static_cast<float>(bestByte) / 127.0f;
 }
 
 float YouKnow106Engine::panelPositionForLfoDelay(float seconds) noexcept
 {
     if (!(seconds > 0.0f) || !std::isfinite(seconds))
         return 0.0f;
-    // The hold-plus-fade total is monotone in the travel but has no closed
-    // inverse; a short bisection is exact enough for a typed value.
-    float low = 0.0f;
-    float high = 1.0f;
-    for (int i = 0; i < 24; ++i)
+    if (seconds >= lfoDelaySeconds(1.0f))
+        return 1.0f;
+
+    int bestByte = 0;
+    float bestError = std::numeric_limits<float>::infinity();
+    for (int byte = 0; byte <= 127; ++byte)
     {
-        const float mid = 0.5f * (low + high);
-        if (lfoDelaySeconds(mid) < seconds)
-            low = mid;
-        else
-            high = mid;
+        const float realised = lfoDelaySeconds(static_cast<float>(byte) / 127.0f);
+        const float error = std::abs(realised - seconds);
+        if (error < bestError)
+        {
+            bestError = error;
+            bestByte = byte;
+        }
     }
-    return 0.5f * (low + high);
+    return static_cast<float>(bestByte) / 127.0f;
 }
 
 float YouKnow106Engine::panelPositionForPortamento(float secondsPerOctave) noexcept
 {
     if (!(secondsPerOctave > 0.0f) || !std::isfinite(secondsPerOctave))
         return 0.0f;
-    return exponentialPosition(secondsPerOctave, portamentoFastestSecondsPerOctave,
-                               portamentoSlowestSecondsPerOctave);
+    if (secondsPerOctave >= portamentoSeconds(1.0f))
+        return 1.0f;
+    if (secondsPerOctave <= portamentoSeconds(2.0f / 255.0f))
+        return 2.0f / 255.0f;
+
+    // The realised law has repeated values: raw pairs address one coefficient.
+    // Return the first canonical
+    // ADC code producing the closest displayed seconds-per-octave value.
+    int bestRaw = 2;
+    float bestError = std::numeric_limits<float>::infinity();
+    for (int raw = 2; raw <= 255; ++raw)
+    {
+        const float realised = portamentoSeconds(static_cast<float>(raw) / 255.0f);
+        const float error = std::abs(std::log(realised / secondsPerOctave));
+        if (error < bestError)
+        {
+            bestError = error;
+            bestRaw = raw;
+        }
+    }
+    return static_cast<float>(bestRaw) / 255.0f;
 }
 
 float YouKnow106Engine::panelPositionForCutoff(float hertz) noexcept
@@ -464,7 +657,7 @@ float YouKnow106Engine::pwmControlVolts(float depth) noexcept
 // nearer 90%.
 float YouKnow106Engine::rampSegmentVoltage(float risePosition) noexcept
 {
-    return 2.0f * rampVoltage(risePosition, rampBow) - 1.0f;
+    return 2.0f * clamp01(risePosition) - 1.0f;
 }
 
 float YouKnow106Engine::pulseRisePhase(float duty, float resetFraction) noexcept
@@ -481,29 +674,51 @@ float YouKnow106Engine::pulseFallPhase(float duty, float resetFraction) noexcept
     // The ramp runs 0..1 over the rise and falls linearly back over the reset,
     // both mapped to -1..+1. Solving the falling segment for the rise's
     // threshold gives the fraction of the reset spent still above it.
-    const float threshold = rampVoltage(1.0f - std::clamp(duty, 0.0f, 1.0f), rampBow);
+    const float threshold = 1.0f - std::clamp(duty, 0.0f, 1.0f);
     return rise + reset * std::clamp(1.0f - threshold, 0.0f, 1.0f);
 }
 
 float YouKnow106Engine::pwmDutyCycle(float controlVolts) noexcept
 {
+    // Pulse Off writes -0.8 V. That sits below the ramp and leaves the
+    // comparator permanently high while the oscillator itself keeps running.
+    if (std::isfinite(controlVolts) && controlVolts < 0.0f)
+        return 1.0f;
+
     // The ramp spans 12 V peak to peak; the fraction of the period spent above
     // the threshold is the duty cycle.
     const float volts = std::clamp(sanitised(controlVolts, 6.0f), 0.6f, 6.0f);
     return std::clamp(1.0f - volts / 12.0f, 0.05f, 0.95f);
 }
 
-float YouKnow106Engine::vcaGain(float control) noexcept
+float YouKnow106Engine::VoicedVoiceVcaCompatibilityProfile::gain(
+    float control) noexcept
 {
-    // Quasi-linear: gain tracks the control voltage over most of the range,
-    // as the degenerated converter makes it, with the exponential knee
-    // confined to the bottom tenth. Below the conduction threshold the
-    // amplifier is simply shut.
+    // Preserve YouKnow106's established quasi-linear response, exponential
+    // low-control knee and hard-zero policy. OQ-19 keeps all three numerical
+    // choices voiced; a measurement floor alone would not prove this deadband.
     const float level = clamp01(sanitised(control, 0.0f));
-    if (level <= vcaDeadband)
+    if (level <= deadband)
         return 0.0f;
-    const float kneeDb = vcaKneeDbPerUnit * std::max(0.0f, vcaKnee - level);
+    const float kneeDb = kneeDbPerControlUnit * std::max(0.0f, knee - level);
     return level * std::pow(10.0f, -kneeDb / 20.0f);
+}
+
+float YouKnow106Engine::patchLevelGain(float dacFraction) noexcept
+{
+    // The common jack-board VCA's placement is documented, but no qualifying
+    // manufacturer or in-circuit transfer establishes its control law here.
+    // The exact converter layer supplies p=b/127=DAC12/4064. The compatibility
+    // display coordinate is explicitly x=-5+10p; its three x=-5/0/+5 anchors
+    // motivate -15/-12.5/+5 dB respectively. The cubic below is the declared
+    // product mapping in p, not an analogue or firmware-derived law.
+    //
+    // This is intentionally identified as a three-point fit, not an exact
+    // potentiometer model: a full panel-byte/control-voltage sweep from a
+    // calibrated unit would be needed to determine the intermediate curve.
+    const float position = clamp01(dacFraction);
+    const float decibels = -15.0f + 20.0f * position * position * position;
+    return std::pow(10.0f, decibels / 20.0f);
 }
 
 float YouKnow106Engine::highPassCornerHz(HighPassMode mode) noexcept
@@ -526,8 +741,8 @@ float YouKnow106Engine::highPassCornerHz(HighPassMode mode) noexcept
     switch (mode)
     {
         case HighPassMode::Boost: return 59.4f;
-        case HighPassMode::Two:   return 225.8f;   // 15 kOhm x 47 nF
-        case HighPassMode::Three: return 707.4f;   // 15 kOhm x 15 nF
+        case HighPassMode::Two:   return 225.8f;   // 47 kOhm x 15 nF
+        case HighPassMode::Three: return 720.5f;   // 47 kOhm x 4.7 nF
         case HighPassMode::One:
         default:                  return 59.4f;
     }
@@ -565,6 +780,18 @@ float YouKnow106Engine::highPassHighGain(HighPassMode mode) noexcept
     }
 }
 
+float YouKnow106Engine::outputCouplingCornerHz() noexcept
+{
+    return 1.0f / (twoPi * outputCouplingCapacitanceF
+                   * (outputCouplingSeriesOhms + outputCouplingPotOhms));
+}
+
+float YouKnow106Engine::outputCouplingHighGain() noexcept
+{
+    return outputCouplingPotOhms
+         / (outputCouplingSeriesOhms + outputCouplingPotOhms);
+}
+
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
@@ -587,15 +814,6 @@ std::uint32_t YouKnow106Engine::hash32(std::uint32_t value) noexcept
 float YouKnow106Engine::hashBipolar(std::uint32_t value) noexcept
 {
     return static_cast<float>(hash32(value) & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
-}
-
-float YouKnow106Engine::rampVoltage(float phase, float bow) noexcept
-{
-    const float p = clamp01(phase);
-    if (bow <= 1.0e-4f)
-        return p;
-    const float denominator = 1.0f - std::exp(-bow);
-    return (1.0f - std::exp(-bow * p)) / denominator;
 }
 
 float YouKnow106Engine::resetFraction(double periodSeconds) noexcept
@@ -752,6 +970,7 @@ void YouKnow106Engine::addSlope(BandlimitedTrack& track, float slopeStep,
 void YouKnow106Engine::Envelope::reset() noexcept
 {
     stage = EnvelopeStage::Idle;
+    level = 0u;
     value = 0.0f;
 }
 
@@ -766,24 +985,18 @@ void YouKnow106Engine::Envelope::noteOff() noexcept
         stage = EnvelopeStage::Release;
 }
 
-float YouKnow106Engine::Envelope::tick(float attackStep, float decayCoefficient,
-                                       float sustain,
-                                       float releaseCoefficient) noexcept
+float YouKnow106Engine::Envelope::tick(std::uint16_t attackIncrement,
+                                       std::uint16_t decayMultiplier,
+                                       std::uint16_t sustain,
+                                       std::uint16_t releaseMultiplier) noexcept
 {
-    // Truncate a level to the generator's 14-bit grid, rounding towards the
-    // target so a falling segment reaches it in finite time -- exactly what
-    // the integer arithmetic does.
-    const auto truncated = [](float level) {
-        return std::floor(level / envelopeQuantum) * envelopeQuantum;
-    };
-
     switch (stage)
     {
         case EnvelopeStage::Attack:
-            value += attackStep;
-            if (value >= 1.0f)
+            level = envelopeAttackLevel(level, attackIncrement);
+            if (level >= envelopePeak)
             {
-                value = 1.0f;
+                level = envelopePeak;
                 stage = EnvelopeStage::Decay;
             }
             break;
@@ -794,38 +1007,37 @@ float YouKnow106Engine::Envelope::tick(float attackStep, float decayCoefficient,
             // distance decays multiplicatively; at or below it the level
             // snaps to the target, which is also what happens when the
             // slider is pushed *up* mid-note.
-            if (value > sustain)
+            if (level > sustain)
             {
-                value = sustain
-                      + truncated((value - sustain) * decayCoefficient);
-                if (value <= sustain)
+                level = envelopeDecayLevel(level, sustain, decayMultiplier);
+                if (level <= sustain)
                 {
-                    value = sustain;
+                    level = sustain;
                     stage = EnvelopeStage::Sustain;
                 }
             }
             else
             {
-                value = sustain;
+                level = sustain;
                 stage = EnvelopeStage::Sustain;
             }
             break;
 
         case EnvelopeStage::Release:
-            value = truncated(value * releaseCoefficient);
-            if (value <= 0.0f)
+            level = envelopeReleaseLevel(level, releaseMultiplier);
+            if (level == 0u)
             {
-                value = 0.0f;
                 stage = EnvelopeStage::Idle;
             }
             break;
 
         case EnvelopeStage::Idle:
         default:
-            value = 0.0f;
+            level = 0u;
             break;
     }
 
+    value = static_cast<float>(level) * envelopeQuantum;
     return value;
 }
 
@@ -857,18 +1069,17 @@ void YouKnow106Engine::OtaCascade::reset() noexcept
 //
 // Stage equation: Vn = s_n + g * H * tanh((V_{n-1} - V_n) / H), with
 // H = 2 Vt / attenuation, the differential pair's linear span referred to the
-// stage input, and V_0 = input - k * fb(V_4). The return path is itself a
-// transconductor behind a 100k/1.5k divider, so fb is a tanh with its own,
-// much larger span: fb(V) = Hfb * tanh(V / Hfb). That pair is what limits
-// the self-oscillation amplitude in the hardware -- the loop compresses
-// while the forward stages are still nearly linear, which is why the
-// oscillation is close to sinusoidal and sits near the small-signal pitch.
+// stage input, and V_0 = input - k * fb(V_4). The compatibility profile uses
+// a circuit-shaped nonlinear return, fb(V) = Hfb * tanh(V / Hfb), so its loop
+// remains bounded. The selected divider and headroom are part of that voiced
+// profile, not a measured code-to-loop transfer.
 float YouKnow106Engine::OtaCascade::process(float input, float g,
                                             float feedback) noexcept
 {
     constexpr float headroom = otaHeadroomVolts;
     constexpr float inverseHeadroom = 1.0f / headroom;
-    constexpr float feedbackHeadroom = vcfFeedbackHeadroomVolts;
+    constexpr float feedbackHeadroom =
+        VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
     constexpr int maximumIterations = 8;
 
     const float gLimited = std::clamp(g, 0.0f, 64.0f);
@@ -955,7 +1166,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
 
 void YouKnow106Engine::HighPass::reset() noexcept
 {
-    state = 0.0f;
+    state = 0.0;
 }
 
 float YouKnow106Engine::HighPass::process(float input, float g,
@@ -966,13 +1177,16 @@ float YouKnow106Engine::HighPass::process(float input, float g,
     // unity and discard the low band; the boost leg is a real shelf, lifting
     // the low band strongly and the high band slightly, as the measured
     // network does.
-    const float v = (input - state) * g / (1.0f + g);
-    const float low = v + state;
+    const double v = (static_cast<double>(input) - state)
+                   * static_cast<double>(g)
+                   / (1.0 + static_cast<double>(g));
+    const double low = v + state;
     state = low + v;
     if (!std::isfinite(state))
-        state = 0.0f;
-    const float high = input - low;
-    return highGain * high + shelfGain * low;
+        state = 0.0;
+    const double high = static_cast<double>(input) - low;
+    return static_cast<float>(static_cast<double>(highGain) * high
+                            + static_cast<double>(shelfGain) * low);
 }
 
 void YouKnow106Engine::HalfbandDecimator::reset() noexcept
@@ -1079,6 +1293,10 @@ void YouKnow106Engine::updateProcessingRate() noexcept
 
     oversampledRate_ = sampleRate_ * oversampling_;
     inverseOversampledRate_ = static_cast<float>(1.0 / oversampledRate_);
+    noiseRateScale_ = static_cast<float>(
+        std::sqrt(oversampledRate_ / noiseReferenceRateHz));
+    outputCouplingG_ = std::tan(
+        pi * outputCouplingCornerHz() * inverseSampleRate_);
     const double deepest = totalLatencySamples(maximumOversampleFactor);
     const double running = totalLatencySamples(oversampling_);
     latencyPadSamples_ = std::clamp(
@@ -1089,23 +1307,17 @@ void YouKnow106Engine::updateProcessingRate() noexcept
     latencyPadWriteIndex_ = 0;
     oversamplingQuietSamples_ =
         std::max(1, static_cast<int>(sampleRate_ * outputPathQuietSeconds));
-    // Every countdown here is measured in internal samples, so one left over
-    // from the previous rate would mean something else entirely at the new one:
-    // a scan pass still 806 samples away at 192 kHz is 4.2 ms, and 16.8 ms once
-    // the rate drops to 48 kHz. They start again rather than being carried.
-    scanCountdown_ = 0;
-    lfoScanCountdown_ = 0;
+    rateTransitionStep_ = 1.0f / std::max(
+        1.0f, static_cast<float>(sampleRate_ * rateTransitionSeconds));
+    // Start with one pass due immediately. Subsequent boundaries are scheduled
+    // with fractional phase, so 4.2 ms remains 4.2 ms at every host rate.
+    controlScanPhase_ = 1.0;
+    converterEventPhases_ = converterEventPhases(
+        ConverterTimingProfile::NormalizedServiceChart);
+    nextConverterWrite_ = 0;
+    converterPassLfoGated_ = 0.0f;
     driftControlCountdown_ = 0;
-    // The per-voice scan phases are sample counts too, so they are re-derived
-    // for the new rate.
-    const int scanPeriodSamples =
-        std::max(1, static_cast<int>(oversampledRate_ / controlScanHz));
-    for (int index = 0; index < maxVoices; ++index)
-        voices_[static_cast<std::size_t>(index)].scanOffset =
-            (index % hardwareVoices) * scanPeriodSamples / hardwareVoices;
     chorus_.prepare(oversampledRate_);
-    dcCoefficient_ = static_cast<float>(
-        std::exp(-2.0 * 3.14159265358979323846 * 12.0 / oversampledRate_));
 }
 
 bool YouKnow106Engine::setOversamplingEnabled(bool enabled) noexcept
@@ -1117,35 +1329,69 @@ bool YouKnow106Engine::setOversamplingEnabled(bool enabled) noexcept
 bool YouKnow106Engine::applyPendingOversamplingIfIdle() noexcept
 {
     if (oversamplingRequested_ == oversamplingEnabled_)
+    {
+        // A request can be withdrawn while the old path is fading. Bring it
+        // back without touching any rate-dependent state.
+        if (rateTransition_ == RateTransition::FadingOut)
+            rateTransition_ = RateTransition::FadingIn;
         return true;
+    }
     // The last voice retiring is not the same as the instrument being quiet.
-    // The delay lines still hold up to their longest setting, the decimators
-    // their own group delay, and the output coupling decays with a time
-    // constant of its own -- and changing the rate empties all of them. So the
-    // change waits until what is left in them has left.
-    if (anyVoiceActive_ || oversamplingIdleSamples_ < oversamplingQuietSamples_)
+    // The delay lines still hold up to their longest setting and the
+    // decimators have their own group delay, so changing the rate waits until
+    // what is left in them has gone.
+    if (anyVoiceActive_)
+    {
+        if (rateTransition_ == RateTransition::FadingOut)
+            rateTransition_ = RateTransition::FadingIn;
+        return false;
+    }
+    if (oversamplingIdleSamples_ < oversamplingQuietSamples_)
+        return false;
+
+    // Once a safety fade begins, finish it even if Chorus or its optional
+    // noise control changes meanwhile. Re-evaluating the source here could
+    // turn the gain back to one halfway down and expose the very state reset
+    // the fade protects. Applying this to every idle quality change also
+    // covers a wet-mute or filter tail whose current control already reads
+    // silent, at a fixed and negligible five-millisecond cost.
+    if (rateTransition_ != RateTransition::FadingOut)
+    {
+        rateTransition_ = RateTransition::FadingOut;
+        return false;
+    }
+    if (rateTransitionGain_ > 0.0f)
         return false;
 
     oversamplingEnabled_ = oversamplingRequested_;
     updateProcessingRate();
-    clearOutputPath();
+    clearRateDependentOutputPath();
+    rateTransitionGain_ = 0.0f;
+    rateTransition_ = RateTransition::FadingIn;
     return true;
 }
 
-// Everything downstream of the voices: the delay lines, the decimation stages,
-// the output coupling and the latency pad. Emptied together, because emptying
-// one and not the others leaves a discontinuity where they meet.
-void YouKnow106Engine::clearOutputPath() noexcept
+// Everything downstream of the voices whose state depends on the internal
+// rate: the delay lines, shared HPF, decimation stages and latency pad. The
+// final coupling capacitors run at the host rate and must survive an HQ
+// rebuild; clearing their 115 ms state after the shorter musical-tail wait
+// would create a large discontinuity on asymmetric PWM.
+void YouKnow106Engine::clearRateDependentOutputPath() noexcept
 {
     firstDecimator_.reset();
     secondDecimator_.reset();
     chorus_.reset();
     highPass_.reset();
-    dcInput_ = 0.0f;
-    dcOutput_ = 0.0f;
     latencyPadLeft_.fill(0.0f);
     latencyPadRight_.fill(0.0f);
     latencyPadWriteIndex_ = 0;
+}
+
+void YouKnow106Engine::clearOutputPath() noexcept
+{
+    clearRateDependentOutputPath();
+    outputCouplingLeft_.reset();
+    outputCouplingRight_.reset();
 }
 
 double YouKnow106Engine::totalLatencySamples(int factor) noexcept
@@ -1191,8 +1437,6 @@ void YouKnow106Engine::applyLatencyPad(float& left, float& right) noexcept
 
 void YouKnow106Engine::reset()
 {
-    const int scanPeriodSamples =
-        std::max(1, static_cast<int>(oversampledRate_ / controlScanHz));
     for (auto& voice : voices_)
     {
         voice = Voice {};
@@ -1204,29 +1448,43 @@ void YouKnow106Engine::reset()
     {
         auto& voice = voices_[static_cast<std::size_t>(index)];
         voice.cardIndex = index;
-        // The multiplexer reaches the six voices in turn across the pass, so
-        // each slot's rewrite lands a sixth of the pass after its
-        // neighbour's. Slots beyond the hardware six share the six phases.
-        voice.scanOffset = (index % hardwareVoices) * scanPeriodSamples
-                         / hardwareVoices;
+        // Microscopic filter excitation belongs to the continuously powered
+        // card, so seed it once per slot rather than once per MIDI assignment.
+        voice.noiseState = hash32(static_cast<std::uint32_t>(index)
+                                  * 2246822519u + 1u) | 1u;
     }
 
     clearOutputPath();
     clearHeldNotes();
+    rateTransition_ = RateTransition::Idle;
+    rateTransitionGain_ = 1.0f;
 
-    lfoAccumulator_ = 0.0f;
+    lfoAccumulator_ = 0u;
     lfoRising_ = true;
     lfoPolarity_ = 1.0f;
     lfoValue_ = 0.0f;
     lfoDelayLevel_ = 0.0f;
-    resonanceCvTarget_ = 0.0f;
-    resonanceCv_ = 0.0f;
+    updateSharedScan(activeParameters_, lfoValue_);
+    resonanceCv_ = resonanceCvTarget_;
+    sharedVca_ = sharedVcaTarget_;
+    pwmVolts_ = pwmVoltsTarget_;
+    subCv_ = subCvTarget_;
+    noiseCv_ = noiseCvTarget_;
     // The hold has to go with the level: a note arriving at the very first
     // sample of a new run gives the scan no idle pass in which to clear it, so
     // a hold left over from the previous run would be skipped.
-    lfoDelayHoldoff_ = 0.0f;
-    lfoScanCountdown_ = 0;
-    scanCountdown_ = 0;
+    lfoDelayHoldoff_ = 0u;
+    lfoDelayFade_ = 0u;
+    controlScanPhase_ = 1.0;
+    converterEventPhases_ = converterEventPhases(
+        ConverterTimingProfile::NormalizedServiceChart);
+    nextConverterWrite_ = 0;
+    converterPassLfoGated_ = 0.0f;
+    assignmentRescanPending_ = false;
+    assignmentRescanPassArmed_ = false;
+    rescanPreviousUnisonMembers_.fill(false);
+    rescanUnisonMidiValid_ = false;
+    rescanUnisonMidi_ = 60.0f;
     anyKeyDown_ = false;
     noiseState_ = 0x6d2b79f5u;
     // Both the live value and the target, or a run that stopped with the bender
@@ -1285,7 +1543,7 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     fix01(result.benderLfoDepth, 0.0f);
     fix01(result.volume, 0.80f);
     fix01(result.velocityDepth, 0.0f);
-    fix01(result.calibration, 0.35f);
+    fix01(result.calibration, 0.0f);
     fix01(result.chorusNoise, 1.0f);
 
     result.masterTuneCents = std::isfinite(result.masterTuneCents)
@@ -1311,11 +1569,43 @@ void YouKnow106Engine::updateSharedHighPass(const EngineParameters& parameters) 
 
 void YouKnow106Engine::setParameters(const EngineParameters& parameters)
 {
-    targetParameters_ = sanitise(parameters);
-    // Switch positions land immediately. The three continuous controls that
-    // are applied straight to the samples glide towards their new positions in
-    // the render loop instead, so nothing here steps them at a block boundary.
+    const auto next = sanitise(parameters);
+    const bool assignModeChanged = next.keyMode != activeParameters_.keyMode;
+    const bool unisonVoiceCountChanged = next.polyphony != activeParameters_.polyphony
+                                      && (next.keyMode == KeyMode::Unison
+                                          || activeParameters_.keyMode
+                                                 == KeyMode::Unison);
+    const bool outputPathIdle = !prepared_
+        || (!anyVoiceActive_
+            && oversamplingIdleSamples_ >= oversamplingQuietSamples_);
+    targetParameters_ = next;
+    // Switch positions land immediately. Main VOLUME is the only continuous
+    // panel control applied outside the scanned converter path; it glides in
+    // the render loop so host automation cannot make a block-boundary step.
     activeParameters_ = targetParameters_;
+
+    // A host normally delivers its saved snapshot after prepare(). If the
+    // output path is empty, prime every shared hold from that snapshot instead
+    // of letting the first attack hear the constructor's stale patch. This is
+    // especially important now that PWM, sub and noise correctly have one hold
+    // for all cards rather than six incidental opportunities to catch up.
+    if (outputPathIdle)
+    {
+        updateSharedScan(next, lfoValue_);
+        resonanceCv_ = resonanceCvTarget_;
+        sharedVca_ = sharedVcaTarget_;
+        pwmVolts_ = pwmVoltsTarget_;
+        subCv_ = subCvTarget_;
+        noiseCv_ = noiseCvTarget_;
+    }
+
+    // The original assigner handles either POLY-button transition by gating
+    // the six assignments, clearing its tables, and rescanning held keys. A
+    // mutable plug-in voice-count has no hardware counterpart, but rebuilding
+    // a live Unison stack is the only coherent equivalent when that count
+    // changes.
+    if (prepared_ && (assignModeChanged || unisonVoiceCountChanged))
+        beginVoiceAssignmentRescan();
 }
 
 // Constant rate in pitch: a wider leap takes proportionally longer, rather than
@@ -1323,11 +1613,10 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
 // note steps straight to its pitch.
 float YouKnow106Engine::glideStepPerScan(float portamento) noexcept
 {
-    const float secondsPerOctave = portamentoSeconds(portamento);
-    if (!(secondsPerOctave > 0.0f))
+    const int stepUnits = portamentoIncrement(portamento);
+    if (stepUnits == 0)
         return 0.0f;
-    return static_cast<float>(
-        12.0 / (static_cast<double>(secondsPerOctave) * controlScanHz));
+    return static_cast<float>(stepUnits) / 256.0f;
 }
 
 int YouKnow106Engine::voiceLimit() const noexcept
@@ -1339,51 +1628,42 @@ int YouKnow106Engine::voiceLimit() const noexcept
 // Note handling
 // ---------------------------------------------------------------------------
 
-void YouKnow106Engine::rememberHeldNote(int midiNote, float velocity) noexcept
+bool YouKnow106Engine::rememberHeldNote(int midiNote, float velocity) noexcept
 {
     if (midiNote < 0 || midiNote > 127)
-        return;
+        return false;
     const auto index = static_cast<std::size_t>(midiNote);
-    if (heldNoteCounts_[index] == 0)
-    {
-        heldNoteOrder_[index] = ++heldNoteCount_;
+    const bool firstPress = heldNoteCounts_[index] == 0;
+    if (firstPress)
         heldNoteVelocities_[index] = velocity;
-    }
     if (heldNoteCounts_[index] < std::numeric_limits<std::uint16_t>::max())
         ++heldNoteCounts_[index];
+    return firstPress;
 }
 
-void YouKnow106Engine::forgetHeldNote(int midiNote) noexcept
+bool YouKnow106Engine::forgetHeldNote(int midiNote) noexcept
 {
     if (midiNote < 0 || midiNote > 127)
-        return;
+        return false;
     const auto index = static_cast<std::size_t>(midiNote);
-    if (heldNoteCounts_[index] > 0)
-        --heldNoteCounts_[index];
     if (heldNoteCounts_[index] == 0)
-        heldNoteOrder_[index] = 0;
+        return false;
+    --heldNoteCounts_[index];
+    return heldNoteCounts_[index] == 0;
 }
 
 void YouKnow106Engine::clearHeldNotes() noexcept
 {
-    heldNoteOrder_.fill(0);
     heldNoteVelocities_.fill(0.0f);
     heldNoteCounts_.fill(0);
-    heldNoteCount_ = 0;
 }
 
-int YouKnow106Engine::newestHeldNote() const noexcept
+int YouKnow106Engine::highestHeldNote() const noexcept
 {
-    int best = -1;
-    int newest = 0;
-    for (int note = 0; note < 128; ++note)
-        if (heldNoteCounts_[static_cast<std::size_t>(note)] > 0
-            && heldNoteOrder_[static_cast<std::size_t>(note)] > newest)
-        {
-            newest = heldNoteOrder_[static_cast<std::size_t>(note)];
-            best = note;
-        }
-    return best;
+    for (int note = 127; note >= 0; --note)
+        if (heldNoteCounts_[static_cast<std::size_t>(note)] > 0)
+            return note;
+    return -1;
 }
 
 void YouKnow106Engine::releaseVoiceKey(Voice& voice) noexcept
@@ -1408,43 +1688,6 @@ void YouKnow106Engine::dropFromUnison(Voice& voice) noexcept
         releaseVoiceKey(voice);
 }
 
-// Unison is monophonic, so releasing the key that is sounding has to hand the
-// stack back to whichever key is still down rather than silencing everything.
-void YouKnow106Engine::retargetUnison(int midiNote) noexcept
-{
-    // Every slot in the stack, not just the ones inside the current voice
-    // count: lowering that count leaves earlier voices playing, and they have
-    // to be dealt with or they stay keyed to a note nobody is holding. Slots
-    // that have fallen outside the count leave the stack instead of following
-    // it, so the count stays the number of voices a key can sound.
-    const int limit = voiceLimit();
-    const float velocity = heldNoteVelocities_[static_cast<std::size_t>(midiNote)];
-    for (int slot = 0; slot < maxVoices; ++slot)
-    {
-        auto& voice = voices_[static_cast<std::size_t>(slot)];
-        if (!voice.active || !voice.unisonMember)
-            continue;
-        if (slot >= limit)
-        {
-            dropFromUnison(voice);
-            continue;
-        }
-        voice.rootMidi = midiNote;
-        voice.keyDown = true;
-        voice.sustained = false;
-        voice.releasing = false;
-        voice.velocity = velocity;
-        voice.targetMidi = static_cast<float>(midiNote + activeParameters_.keyTranspose);
-        voice.lastMidi = voice.targetMidi;
-        // Returning to a key that was never let go is a legato move: the
-        // envelope keeps running rather than starting again.
-        if (voice.envelope.stage == EnvelopeStage::Release)
-            voice.envelope.stage = EnvelopeStage::Sustain;
-        if (voice.glideSemitonesPerScan <= 0.0f)
-            voice.currentMidi = voice.targetMidi;
-    }
-}
-
 bool YouKnow106Engine::anyVoiceSounding() const noexcept
 {
     for (const auto& voice : voices_)
@@ -1453,12 +1696,87 @@ bool YouKnow106Engine::anyVoiceSounding() const noexcept
     return false;
 }
 
+void YouKnow106Engine::beginVoiceAssignmentRescan() noexcept
+{
+    // The POLY-button handler gates every current assignment and clears the
+    // assigner's note/voice tables. Its keyboard pass is separate, so do not
+    // collapse the gate-off and the replacement Note On into one host event.
+    if (!assignmentRescanPending_)
+    {
+        rescanPreviousUnisonMembers_.fill(false);
+        rescanUnisonMidiValid_ = false;
+        for (int slot = 0; slot < maxVoices; ++slot)
+        {
+            const auto& voice = voices_[static_cast<std::size_t>(slot)];
+            if (!voice.active || !voice.unisonMember)
+                continue;
+            rescanPreviousUnisonMembers_[static_cast<std::size_t>(slot)] = true;
+            if (!rescanUnisonMidiValid_)
+            {
+                rescanUnisonMidi_ = voice.currentMidi;
+                rescanUnisonMidiValid_ = true;
+            }
+        }
+    }
+
+    assignmentRescanPending_ = true;
+    // A handler may arrive after some voice writes in the current pass. Only a
+    // wholly subsequent pass can guarantee that all six CPUs observed gate-off.
+    assignmentRescanPassArmed_ = false;
+    for (auto& voice : voices_)
+    {
+        voice.unisonMember = false;
+        if (voice.active && voice.keyDown)
+            releaseVoiceKey(voice);
+        // Only the assigner loses this. The voice CPU's last pitch byte, DCO
+        // phase and portamento accumulator all survive the table clear.
+        voice.hasAllocatorHistory = false;
+        voice.lastRootMidi = -1;
+        voice.releaseStamp = 0;
+    }
+    generation_ = 0;
+    updateActiveVoiceCount();
+}
+
+void YouKnow106Engine::completeVoiceAssignmentRescan() noexcept
+{
+    if (!assignmentRescanPending_)
+        return;
+
+    // The physical matrix is scanned from its high address down. Solo Unison
+    // consumes the first set bit once; the poly modes continue descending and
+    // therefore give a limited pool to the highest held keys.
+    anyKeyDown_ = highestHeldNote() >= 0;
+    if (activeParameters_.keyMode == KeyMode::Unison)
+    {
+        const int note = highestHeldNote();
+        if (note >= 0)
+            assignHeldNote(note,
+                           heldNoteVelocities_[static_cast<std::size_t>(note)]);
+    }
+    else
+    {
+        for (int note = 127; note >= 0; --note)
+        {
+            const auto index = static_cast<std::size_t>(note);
+            if (heldNoteCounts_[index] != 0)
+                assignHeldNote(note, heldNoteVelocities_[index]);
+        }
+    }
+
+    assignmentRescanPending_ = false;
+    assignmentRescanPassArmed_ = false;
+    rescanPreviousUnisonMembers_.fill(false);
+    rescanUnisonMidiValid_ = false;
+    updateActiveVoiceCount();
+}
+
 // The delay is a hold followed by a fade. Both start again for a new phrase.
 void YouKnow106Engine::rearmLfoDelay() noexcept
 {
-    lfoDelayHoldoff_ = 0.0f;
-    lfoDelayLevel_ =
-        lfoDelaySeconds(activeParameters_.lfoDelay) > 1.0e-4f ? 0.0f : 1.0f;
+    lfoDelayHoldoff_ = 0u;
+    lfoDelayFade_ = 0u;
+    lfoDelayLevel_ = 0.0f;
 }
 
 int YouKnow106Engine::findVoiceForNote(int midiNote) const noexcept
@@ -1482,7 +1800,10 @@ int YouKnow106Engine::allocateVoice(int midiNote) noexcept
     const int limit = voiceLimit();
     const auto available = [this](int slot) {
         const auto& voice = voices_[static_cast<std::size_t>(slot)];
-        return !voice.active || (!voice.keyDown && !voice.sustained);
+        // Sustain belongs to the voice CPU, not the key assigner. A key-up
+        // frees the slot immediately even while the pedal keeps its old tail
+        // audible; the next assignment is allowed to retrigger that slot.
+        return !voice.active || !voice.keyDown;
     };
 
     if (activeParameters_.keyMode == KeyMode::Poly2)
@@ -1503,12 +1824,11 @@ int YouKnow106Engine::allocateVoice(int midiNote) noexcept
     // filter state. Otherwise the free voice that has been released longest
     // is taken, which is what preserves the freshest tails when keys come up
     // out of order.
-    const float wanted = static_cast<float>(
-        midiNote + activeParameters_.keyTranspose);
     for (int slot = 0; slot < limit; ++slot)
     {
         const auto& voice = voices_[static_cast<std::size_t>(slot)];
-        if (available(slot) && voice.hasEverPlayed && voice.lastMidi == wanted)
+        if (available(slot) && voice.hasAllocatorHistory
+            && voice.lastRootMidi == midiNote)
             return slot;
     }
 
@@ -1521,7 +1841,8 @@ int YouKnow106Engine::allocateVoice(int midiNote) noexcept
             continue;
         // A slot that has never played counts as released at the dawn of
         // time, so an empty instrument fills from the first voice up.
-        const std::uint64_t stamp = voice.hasEverPlayed ? voice.releaseStamp : 0;
+        const std::uint64_t stamp = voice.hasAllocatorHistory
+                                  ? voice.releaseStamp : 0;
         if (stamp < oldest || best < 0)
         {
             oldest = stamp;
@@ -1532,10 +1853,14 @@ int YouKnow106Engine::allocateVoice(int midiNote) noexcept
 }
 
 void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
-                                       float velocity, bool retrigger) noexcept
+                                       float velocity) noexcept
 {
     const auto& parameters = activeParameters_;
     const bool wasSounding = voice.active;
+    const bool voiceWasRunning = voice.keyDown || voice.sustained;
+    const int voiceMidi = midiNote + parameters.keyTranspose;
+    const bool pitchChanged = !voice.hasVoicePitchHistory
+                           || voice.lastVoiceMidi != voiceMidi;
 
     voice.cardIndex = slot;
     voice.active = true;
@@ -1548,42 +1873,38 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     voice.controlCountdown = 0;
     voice.energy = 0.0f;
 
-    const float target = static_cast<float>(midiNote + parameters.keyTranspose);
+    const float target = static_cast<float>(voiceMidi);
     voice.targetMidi = target;
 
     voice.glideSemitonesPerScan = glideStepPerScan(parameters.portamento);
     if (voice.glideSemitonesPerScan > 0.0f)
     {
         // The glide integrator is per voice and survives retirement, so a
-        // reassigned voice slides from whatever *it* last played -- notes
-        // several assignments back, exactly the instrument's own poly-glide
-        // behaviour. A slot that has never sounded this run has no history
-        // and starts where it is asked to.
+        // reassigned voice slides from whatever *its CPU* last played -- notes
+        // several allocator assignments back, exactly the instrument's own
+        // poly-glide behaviour. Only a CPU that has never received a note in
+        // this run starts where it is asked to.
         if (!wasSounding)
-            voice.currentMidi = voice.hasEverPlayed ? voice.currentMidi : target;
+            voice.currentMidi = voice.hasVoicePitchHistory
+                              ? voice.currentMidi : target;
     }
     else
     {
         voice.currentMidi = target;
     }
-    voice.lastMidi = target;
-    voice.hasEverPlayed = true;
+    voice.lastRootMidi = midiNote;
+    voice.hasAllocatorHistory = true;
+    voice.lastVoiceMidi = voiceMidi;
+    voice.hasVoicePitchHistory = true;
 
-    if (!wasSounding || retrigger)
-    {
-        // The oscillator restarts; the envelope does not. The generator's
-        // accumulator is never cleared by a key press, so a retriggered
-        // voice attacks from the level its release had reached -- the
-        // instrument's own soft legato restrike.
-        voice.dco.reset();
-        if (!wasSounding)
-        {
-            voice.filter.reset();
-            voice.vca = 0.0f;
-        }
-        voice.noiseState = hash32(static_cast<std::uint32_t>(slot) * 2246822519u
-                                  + static_cast<std::uint32_t>(midiNote) + 1u) | 1u;
-    }
+    // A running note timer is not restarted by a legato pitch message. A
+    // different pitch on a free/releasing voice requests a restart, but the
+    // voice CPU consumes it only on that voice's next scan update.
+    if (pitchChanged && !voiceWasRunning)
+        voice.dcoResetPending = true;
+
+    if (!wasSounding)
+        voice.vca = 0.0f;
     voice.envelope.noteOn();
 }
 
@@ -1600,11 +1921,9 @@ void YouKnow106Engine::silenceVoice(Voice& voice) noexcept
     voice.vcaControl = 0.0f;
     voice.energy = 0.0f;
     voice.envelope.reset();
-    voice.filter.reset();
-    voice.dco.reset();
-    // Deliberately kept: lastMidi, currentMidi and releaseStamp. A retired
-    // voice still remembers what it played -- that memory is what the
-    // assigner's note affinity and the per-voice glide start from.
+    // Deliberately kept: the free-running DCO and filter, card-noise state,
+    // both note memories, currentMidi and releaseStamp. A powered voice card
+    // does not reset its analogue state when its VCA closes.
 }
 
 void YouKnow106Engine::noteOn(int midiNote, float velocity)
@@ -1616,6 +1935,12 @@ void YouKnow106Engine::noteOn(int midiNote, float velocity)
 
 void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
 {
+    // The assigner consumes changes in the keyboard bitfield, not repeated
+    // writes of a bit that is already high. Keep the count balanced for MIDI
+    // streams that overlap equal notes, but do not retrigger on that repeat.
+    if (!rememberHeldNote(midiNote, velocity))
+        return;
+
     // A phrase starts when no key was down -- release tails still ringing do
     // not count, because the firmware's retrigger latch watches the key-gate
     // mask, not envelope activity. A note played over ringing releases
@@ -1624,9 +1949,16 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
     if (!anyKeyDown_)
         rearmLfoDelay();
 
-    rememberHeldNote(midiNote, velocity);
     anyKeyDown_ = true;
+    // A POLY handler has cleared the allocator and is waiting for the keyboard
+    // scan. This new bit will be discovered by that same descending pass.
+    if (assignmentRescanPending_)
+        return;
+    assignHeldNote(midiNote, velocity);
+}
 
+void YouKnow106Engine::assignHeldNote(int midiNote, float velocity) noexcept
+{
     if (activeParameters_.keyMode == KeyMode::Unison)
     {
         // Every voice takes the same note, and every note timer divides the
@@ -1650,13 +1982,21 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
                 haveStackMidi = true;
             }
         }
+        if (!haveStackMidi && assignmentRescanPending_
+            && rescanUnisonMidiValid_)
+        {
+            stackMidi = rescanUnisonMidi_;
+            haveStackMidi = true;
+        }
         for (int slot = 0; slot < limit; ++slot)
         {
             auto& voice = voices_[static_cast<std::size_t>(slot)];
-            const bool retrigger = !voice.active || voice.rootMidi != midiNote;
-            const bool fresh = !voice.hasEverPlayed;
-            initialiseVoice(voice, slot, midiNote, velocity, retrigger);
-            if (fresh && haveStackMidi && voice.glideSemitonesPerScan > 0.0f)
+            const bool joiningWidenedStack = assignmentRescanPending_
+                && !rescanPreviousUnisonMembers_[static_cast<std::size_t>(slot)];
+            const bool freshVoiceCpu = !voice.hasVoicePitchHistory;
+            initialiseVoice(voice, slot, midiNote, velocity);
+            if ((freshVoiceCpu || joiningWidenedStack) && haveStackMidi
+                && voice.glideSemitonesPerScan > 0.0f)
                 voice.currentMidi = stackMidi;
             voice.unisonMember = true;
         }
@@ -1680,7 +2020,7 @@ void YouKnow106Engine::noteOnInternal(int midiNote, float velocity) noexcept
         return; // Every key is held: the note is dropped, as on the hardware.
 
     auto& voice = voices_[static_cast<std::size_t>(slot)];
-    initialiseVoice(voice, slot, midiNote, velocity, true);
+    initialiseVoice(voice, slot, midiNote, velocity);
     voice.unisonMember = false;
     updateActiveVoiceCount();
 }
@@ -1692,30 +2032,43 @@ void YouKnow106Engine::noteOff(int midiNote)
     noteOffInternal(midiNote);
 }
 
+void YouKnow106Engine::reassertKeyMode() noexcept
+{
+    if (prepared_)
+        beginVoiceAssignmentRescan();
+}
+
 void YouKnow106Engine::noteOffInternal(int midiNote) noexcept
 {
-    forgetHeldNote(midiNote);
-    if (heldNoteCounts_[static_cast<std::size_t>(midiNote)] > 0)
+    // No high-to-low bit transition means no firmware handler. In particular,
+    // an unmatched Note Off must not make Solo Unison gate and rescan.
+    if (!forgetHeldNote(midiNote))
         return;
 
-    const int remaining = newestHeldNote();
+    const int remaining = highestHeldNote();
     anyKeyDown_ = remaining >= 0;
 
-    if (activeParameters_.keyMode == KeyMode::Unison && remaining >= 0)
+    // The old assignments have already been gated. Only the held-key table
+    // needs changing before the pending descending scan reaches it.
+    if (assignmentRescanPending_)
+        return;
+
+    if (activeParameters_.keyMode == KeyMode::Unison)
     {
-        // Only the key that is actually sounding hands the stack on; releasing
-        // an older one that the stack has already left changes nothing. A
-        // polyphonic tail on the same note is not the stack, so it does not
-        // count as sounding it either.
-        bool sounding = false;
-        for (const auto& voice : voices_)
-            sounding = sounding
-                || (voice.active && voice.unisonMember && voice.rootMidi == midiNote);
-        if (sounding)
+        // Any physical key-up makes the Solo Unison handler gate the stack,
+        // clear its note table and rescan the keyboard. The highest remaining
+        // key therefore wins, and every surviving note is a fresh envelope
+        // attack rather than a legato hand-off.
+        if (remaining >= 0)
         {
-            retargetUnison(remaining);
+            beginVoiceAssignmentRescan();
             return;
         }
+
+        for (auto& voice : voices_)
+            if (voice.active && voice.unisonMember && voice.keyDown)
+                releaseVoiceKey(voice);
+        return;
     }
 
     for (auto& voice : voices_)
@@ -1730,6 +2083,10 @@ void YouKnow106Engine::releaseAllNotes()
 {
     clearHeldNotes();
     anyKeyDown_ = false;
+    assignmentRescanPending_ = false;
+    assignmentRescanPassArmed_ = false;
+    rescanPreviousUnisonMembers_.fill(false);
+    rescanUnisonMidiValid_ = false;
     for (auto& voice : voices_)
     {
         if (!voice.active || !voice.keyDown)
@@ -1742,6 +2099,10 @@ void YouKnow106Engine::allNotesOff()
 {
     clearHeldNotes();
     anyKeyDown_ = false;
+    assignmentRescanPending_ = false;
+    assignmentRescanPassArmed_ = false;
+    rescanPreviousUnisonMembers_.fill(false);
+    rescanUnisonMidiValid_ = false;
     sustainPedalDown_ = false;
     for (auto& voice : voices_)
         silenceVoice(voice);
@@ -1805,65 +2166,64 @@ void YouKnow106Engine::advanceLfo(const EngineParameters& parameters) noexcept
     // The modulator is firmware: it advances once per converter scan and holds
     // its value in between. That staircase is audible as a faint roughness on
     // deep, slow vibrato, and smoothing it away would be modelling a different
-    // instrument.
-    if (--lfoScanCountdown_ > 0)
-        return;
-    lfoScanCountdown_ = std::max(1, static_cast<int>(oversampledRate_ / controlScanHz));
+    // instrument. The caller invokes this exactly once per pass.
 
     // A clamped accumulator, not a phase: the rate coefficient is added until
     // the span clamps, the direction flips there, and a polarity flip at the
     // bottom folds the two sweeps into a bipolar triangle. The clamp discards
     // whatever the last step overshot by, so fast settings quantise onto
-    // whole passes per sweep -- a measured behaviour of the instrument, not
-    // an artefact.
-    const float sliderByte =
-        std::floor(clamp01(parameters.lfoRate) * 127.0f + 0.5f) / 127.0f;
-    const float coefficient = lfoCoefficient(sliderByte);
+    // whole passes per sweep.
+    const std::uint16_t coefficient = lfoRateIncrement(parameters.lfoRate);
     if (lfoRising_)
     {
-        lfoAccumulator_ += coefficient;
-        if (lfoAccumulator_ >= 1.0f)
+        const std::uint32_t next =
+            static_cast<std::uint32_t>(lfoAccumulator_) + coefficient;
+        if (next >= 0x2000u)
         {
-            lfoAccumulator_ = 1.0f;
+            lfoAccumulator_ = 0x1fffu;
             lfoRising_ = false;
         }
+        else
+            lfoAccumulator_ = static_cast<std::uint16_t>(next);
     }
     else
     {
-        lfoAccumulator_ -= coefficient;
-        if (lfoAccumulator_ <= 0.0f)
+        if (coefficient > lfoAccumulator_)
         {
-            lfoAccumulator_ = 0.0f;
+            lfoAccumulator_ = 0u;
             lfoRising_ = true;
             lfoPolarity_ = -lfoPolarity_;
         }
+        else
+            lfoAccumulator_ = static_cast<std::uint16_t>(
+                lfoAccumulator_ - coefficient);
     }
-    lfoValue_ = lfoPolarity_ * lfoAccumulator_;
+    lfoValue_ = lfoPolarity_
+              * static_cast<float>(lfoAccumulator_) / 8191.0f;
 
     // Delay: a silent hold that advances at the attack table's own rate, then
     // the stepped fade. The pair is re-armed the moment a note starts with no
     // key down -- release tails still ringing keep their vibrato, because the
     // firmware's retrigger latch watches the keys, not the envelopes.
-    const float delayByte =
-        std::floor(clamp01(parameters.lfoDelay) * 127.0f + 0.5f) / 127.0f;
-    const float total = lfoDelaySeconds(delayByte);
-    const float holdoff = envelopeAttackSeconds(delayByte);
-    const float fade = lfoFadeSeconds(delayByte);
-    const float scanPeriod = static_cast<float>(1.0 / controlScanHz);
-
-    if (total <= 1.0e-4f)
+    if (lfoDelayHoldoff_ < 0x4000u)
     {
-        lfoDelayLevel_ = 1.0f;
+        lfoDelayHoldoff_ = std::min<std::uint32_t>(
+            0x4000u,
+            lfoDelayHoldoff_ + envelopeAttackIncrement(parameters.lfoDelay));
+        lfoDelayLevel_ = 0.0f;
+    }
+    else if (lfoDelayFade_ < 0x10000u)
+    {
+        lfoDelayFade_ = std::min<std::uint32_t>(
+            0x10000u,
+            lfoDelayFade_ + lfoDelayFadeIncrement(parameters.lfoDelay));
+        if (lfoDelayFade_ >= 0x10000u)
+            lfoDelayLevel_ = 1.0f;
+        else
+            lfoDelayLevel_ = static_cast<float>(lfoDelayFade_ >> 8u) / 255.0f;
     }
     else
-    {
-        if (lfoDelayHoldoff_ < holdoff)
-            lfoDelayHoldoff_ += scanPeriod;
-        else if (fade > 1.0e-4f)
-            lfoDelayLevel_ = std::min(1.0f, lfoDelayLevel_ + scanPeriod / fade);
-        else
-            lfoDelayLevel_ = 1.0f;
-    }
+        lfoDelayLevel_ = 1.0f;
 
     displayLfo_ = lfoValue_ * lfoDelayLevel_;
 }
@@ -1883,17 +2243,21 @@ void YouKnow106Engine::updateVoiceCardDrift(VoiceCard& card) noexcept
 
 void YouKnow106Engine::updateVoiceScan(Voice& voice,
                                        const EngineParameters& parameters,
-                                       float lfoGated, float lfoRaw) noexcept
+                                       float lfoGated) noexcept
 {
-    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
-    const float tolerance = parameters.calibration;
+    updateVoiceEnvelopeAndPitch(voice, parameters, lfoGated);
+    updateVoiceVcfTarget(voice, parameters, lfoGated);
+    updateVoiceVcaTarget(voice, parameters);
+}
 
-    // Every continuous panel control is digitised to the converter's seven
-    // bits before the firmware sees it -- that is what makes it storable in
-    // patch memory -- so every law below consumes the byte, not the slider.
-    const auto byte7 = [](float value) {
-        return std::floor(clamp01(value) * 127.0f + 0.5f) / 127.0f;
-    };
+void YouKnow106Engine::updateVoiceEnvelopeAndPitch(
+    Voice& voice, const EngineParameters& parameters, float lfoGated) noexcept
+{
+
+    // Stored tone controls and the relevant sensitivity controls are consumed
+    // on their seven-bit grid. Portamento is deliberately absent here: that
+    // non-stored performance pot uses an eight-bit ADC code and raw>>1 selector.
+    const auto byte7 = [](float value) { return storedControlFraction(value); };
 
     // --- Envelope ---------------------------------------------------------
     // A linear attack and multiplicative falling segments, advanced once per
@@ -1902,21 +2266,38 @@ void YouKnow106Engine::updateVoiceScan(Voice& voice,
     // long. There is no per-voice rate error here: the generator is the
     // shared processor, so six voices' envelopes are digitally identical and
     // only the analogue chain after them disperses.
-    voice.attackStep = 1.0f / attackScanTicks(byte7(parameters.attack));
-    voice.decayCoefficient =
-        std::exp(-decayLambdaPerTick(byte7(parameters.decay)));
-    voice.releaseCoefficient =
-        std::exp(-decayLambdaPerTick(byte7(parameters.release)));
+    // Recurrence, widths and coefficient laws are resolved for the supplied,
+    // hash-matched B-2 image.
+    voice.attackIncrement = envelopeAttackIncrement(parameters.attack);
+    voice.decayMultiplier = envelopeDecayReleaseMultiplier(parameters.decay);
+    voice.releaseMultiplier = envelopeDecayReleaseMultiplier(parameters.release);
 
-    voice.envelope.tick(voice.attackStep, voice.decayCoefficient,
-                        byte7(parameters.sustain), voice.releaseCoefficient);
-    const float envelope = voice.envelope.value;
+    voice.envelope.tick(voice.attackIncrement, voice.decayMultiplier,
+                        storedControlAlignedWord(parameters.sustain),
+                        voice.releaseMultiplier);
 
     // --- Pitch ------------------------------------------------------------
     // Recomputed from the key rather than cached at note-on, so moving the
     // transpose control takes a held note with it.
     if (voice.rootMidi >= 0)
-        voice.targetMidi = static_cast<float>(voice.rootMidi + parameters.keyTranspose);
+    {
+        const int voiceMidi = voice.rootMidi + parameters.keyTranspose;
+        voice.targetMidi = static_cast<float>(voiceMidi);
+        // Transpose is part of the pitch byte delivered to the voice CPU, not
+        // of the assigner's physical-key memory. A held-note transpose change
+        // therefore becomes the CPU's new reset-comparison history too. If
+        // this stayed at the note-on value, replaying the same resulting board
+        // pitch after release would falsely restart the free-running DCO.
+        const bool pitchChanged = !voice.hasVoicePitchHistory
+                               || voice.lastVoiceMidi != voiceMidi;
+        // With either run bit set this is a legato pitch message and the DCO
+        // stays free-running. During an ordinary release both bits are clear,
+        // so the voice CPU applies its normal different-pitch reset rule.
+        if (pitchChanged && !voice.keyDown && !voice.sustained)
+            voice.dcoResetPending = true;
+        voice.lastVoiceMidi = voiceMidi;
+        voice.hasVoicePitchHistory = true;
+    }
 
     // Taken from the control as it stands, not from what it read when the key
     // went down. The glide rate is a resistance in the pitch integrator's path,
@@ -1957,6 +2338,13 @@ void YouKnow106Engine::updateVoiceScan(Voice& voice,
     // integrator through the hold capacitor's slew, and the ratio of the two
     // is the momentary amplitude error every pitch step leaves behind.
     voice.dcoCvTarget = frequency > 0.0 ? static_cast<float>(frequency) : 1.0f;
+}
+
+void YouKnow106Engine::updateVoiceVcfTarget(
+    Voice& voice, const EngineParameters& parameters, float lfoGated) noexcept
+{
+    const auto byte7 = [](float value) { return storedControlFraction(value); };
+    const float envelope = voice.envelope.value;
 
     // --- Filter cutoff, summed in converter counts ------------------------
     float counts = vcfPanelCounts(parameters.cutoff);
@@ -1977,28 +2365,14 @@ void YouKnow106Engine::updateVoiceScan(Voice& voice,
     counts = std::clamp(counts, 0.0f, vcfCountsCeiling);
     voice.cutoffCountsTarget =
         vcfDacCountStep * std::floor(counts / vcfDacCountStep);
+}
 
-    // --- Pulse width ------------------------------------------------------
-    // The threshold is one of this voice's held control voltages; the raw
-    // modulator drives it, because the firmware's onset envelope gates pitch
-    // and cutoff but not the pulse width.
-    float pwmAmount = byte7(parameters.pwmDepth);
-    switch (parameters.pwmSource)
-    {
-        case PwmSource::Lfo:
-            pwmAmount = pwmAmount * 0.5f * (1.0f + lfoRaw);
-            break;
-        case PwmSource::Manual:
-        default:
-            break;
-    }
-    voice.pwmVoltsTarget = pwmControlVolts(clamp01(pwmAmount));
-
-    // --- Sub and noise levels ---------------------------------------------
-    // Two more of the voice's held control voltages: both are patch bytes
-    // delivered through the scan, not pots in the audio path.
-    voice.subCvTarget = byte7(parameters.subLevel);
-    voice.noiseCvTarget = byte7(parameters.noiseLevel);
+void YouKnow106Engine::updateVoiceVcaTarget(
+    Voice& voice, const EngineParameters& parameters) noexcept
+{
+    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+    const float tolerance = parameters.calibration;
+    const float envelope = voice.envelope.value;
 
     // --- Amplifier control ------------------------------------------------
     const float velocityGain = 1.0f
@@ -2006,9 +2380,98 @@ void YouKnow106Engine::updateVoiceScan(Voice& voice,
     const float control = parameters.vcaMode == VcaMode::Envelope
                         ? envelope
                         : (voice.keyDown || voice.sustained ? 1.0f : 0.0f);
-    voice.vcaControlTarget = clamp01(control * byte7(parameters.vcaLevel)
-                                     * velocityGain
+    voice.vcaControlTarget = clamp01(control * velocityGain
                                      + card.vcaOffset * 0.004f * tolerance);
+}
+
+void YouKnow106Engine::updateSharedScan(const EngineParameters& parameters,
+                                        float lfoRaw) noexcept
+{
+    const auto converterFraction = [](float value) {
+        return static_cast<float>(storedControlDacCode(value)) / 4064.0f;
+    };
+    resonanceCvTarget_ = converterFraction(parameters.resonance);
+    sharedVcaTarget_ = converterFraction(parameters.vcaLevel);
+    subCvTarget_ = converterFraction(parameters.subLevel);
+    noiseCvTarget_ = converterFraction(parameters.noiseLevel);
+
+    if (!parameters.pulseEnabled)
+    {
+        // The service notes specify this control state directly. What the
+        // pinned leg contributes through the downstream mixer remains open,
+        // so renderVoice retains the existing audio-path gate for now.
+        pwmVoltsTarget_ = -0.8f;
+        return;
+    }
+
+    float pwmAmount = converterFraction(parameters.pwmDepth);
+    if (parameters.pwmSource == PwmSource::Lfo)
+        pwmAmount *= 0.5f * (1.0f + lfoRaw);
+    pwmVoltsTarget_ = pwmControlVolts(clamp01(pwmAmount));
+}
+
+void YouKnow106Engine::performConverterWrite(
+    const ConverterWrite& write, const EngineParameters& parameters,
+    float lfoGated) noexcept
+{
+    const auto converterFraction = [](float value) {
+        return static_cast<float>(storedControlDacCode(value)) / 4064.0f;
+    };
+    const auto validPhysicalVoice = [&write] {
+        return write.voice >= 0 && write.voice < hardwareVoices;
+    };
+
+    switch (write.destination)
+    {
+        case ConverterDestination::Resonance:
+            resonanceCvTarget_ = converterFraction(parameters.resonance);
+            break;
+        case ConverterDestination::CommonVca:
+            sharedVcaTarget_ = converterFraction(parameters.vcaLevel);
+            break;
+        case ConverterDestination::Sub:
+            subCvTarget_ = converterFraction(parameters.subLevel);
+            break;
+        case ConverterDestination::Pitch:
+            if (validPhysicalVoice())
+            {
+                auto& voice = voices_[static_cast<std::size_t>(write.voice)];
+                updateVoiceEnvelopeAndPitch(voice, parameters, lfoGated);
+                if (voice.dcoResetPending)
+                {
+                    voice.dco.reset();
+                    voice.dcoResetPending = false;
+                }
+            }
+            break;
+        case ConverterDestination::Pwm:
+            if (!parameters.pulseEnabled)
+            {
+                pwmVoltsTarget_ = -0.8f;
+                break;
+            }
+            {
+                float amount = converterFraction(parameters.pwmDepth);
+                if (parameters.pwmSource == PwmSource::Lfo)
+                    amount *= 0.5f * (1.0f + lfoValue_);
+                pwmVoltsTarget_ = pwmControlVolts(clamp01(amount));
+            }
+            break;
+        case ConverterDestination::Vcf:
+            if (validPhysicalVoice())
+                updateVoiceVcfTarget(
+                    voices_[static_cast<std::size_t>(write.voice)],
+                    parameters, lfoGated);
+            break;
+        case ConverterDestination::VoiceVca:
+            if (validPhysicalVoice())
+                updateVoiceVcaTarget(
+                    voices_[static_cast<std::size_t>(write.voice)], parameters);
+            break;
+        case ConverterDestination::Noise:
+            noiseCvTarget_ = converterFraction(parameters.noiseLevel);
+            break;
+    }
 }
 
 void YouKnow106Engine::updateVoiceAudio(Voice& voice,
@@ -2028,45 +2491,48 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // residual is not its parts' tolerance.
     const float resonancePanel = clamp01(resonanceCv_
         + card.resonanceError * 0.02f * tolerance);
-    voice.feedback = vcfFeedback(resonancePanel);
-    voice.inputCompensation = vcfResonanceCompensation(voice.feedback);
+    voice.feedback =
+        VoicedResonanceCompatibilityProfile::loopGain(resonancePanel);
+    voice.inputCompensation =
+        VoicedResonanceCompatibilityProfile::inputCompensation(voice.feedback);
 
     // The analogue side of the cutoff chain: the two per-voice trimmers --
     // one scales the control voltage, one offsets it -- imperfectly set, and
     // the slow thermal wander, all riding below the converter's own
-    // resolution on the slewed digital value. The scale spread is the
-    // hardware-fitted five-per-cent figure for this module; the offset is a
-    // tenth of an octave of residual miscalibration at full Calibration.
+    // resolution on the slewed digital value. The five-per-cent scale and
+    // tenth-octave offset spans are voiced Unit Character policies, not
+    // measured post-calibration residual distributions.
     const float analogCounts = voice.cutoffCounts
         * (1.0f + card.cutoffScaleError * 0.05f * tolerance)
         + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * tolerance
         + card.driftValue * 40.0f * tolerance;
-    const float cutoffHz = vcfCutoffHz(analogCounts)
-                         * vcfResonanceFrequencyTrim(voice.feedback);
+    const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
     const float limited =
         std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
     voice.filterG = std::tan(pi * limited * inverseOversampledRate_);
 
-    // The comparator sees the slewed threshold against the momentarily
-    // mis-scaled ramp, so a pitch step nudges the duty for a millisecond or
-    // two -- the same transient the amplitude compensation leaves on the
-    // ramp itself.
+    voice.vca = VoicedVoiceVcaCompatibilityProfile::gain(voice.vcaControl)
+              * (1.0f + card.vcaGainError * 0.03f * tolerance);
+}
+
+void YouKnow106Engine::updatePulseComparator(
+    Voice& voice, const EngineParameters& parameters) noexcept
+{
+    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
     const float amplitudeScale = std::clamp(
         voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
-    // The alignment window is 48% to 52% duty across the six cards, so the
-    // offset is the voltage that produces exactly that: the duty law runs
-    // 8.33 points per volt, and +/-0.24 V is +/-2 points. An earlier revision
-    // voiced half of it.
-    //
-    // The spread is one-sided at the panel's 50% end, where the law floors --
-    // 50% is the narrowest pulse the control can ask for, so an offset there
-    // can only widen. Away from that end it moves both ways.
-    const float threshold = voice.pwmVolts
-                          + card.comparatorOffset * 0.24f * tolerance;
+    // The alignment window is 48% to 52% duty across cards: +/-0.24 V is
+    // +/-2 points on the 12 V ramp. Pulse Off remains separate at -0.8 V and
+    // pins the comparator high even while this card's VCA is shut.
+    const float threshold = pwmVolts_
+                          + card.comparatorOffset * 0.24f
+                                * parameters.calibration;
     voice.pulseDuty = pwmDutyCycle(threshold / amplitudeScale);
+}
 
-    voice.vca = vcaGain(voice.vcaControl)
-              * (1.0f + card.vcaGainError * 0.03f * tolerance);
+bool YouKnow106Engine::pulseMixEnabled(bool requested, float duty) noexcept
+{
+    return requested && duty < 1.0f;
 }
 
 // ---------------------------------------------------------------------------
@@ -2131,7 +2597,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         * (1.0f + card.rampCurrentError * 0.03f * parameters.calibration);
 
     const float sawNaive = phase < rise
-        ? 2.0f * rampVoltage(static_cast<float>(phase / rise), rampBow) - 1.0f
+        ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
 
     // The ramp has no value discontinuity: the reset is a steep segment, not a
@@ -2139,15 +2605,8 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // with the slope residual rather than a step residual. The charge is
     // constant-current, so the rise is straight and both rise corners carry
     // the same slope.
-    float slopeAtStart = 2.0f / static_cast<float>(rise);
-    float slopeAtEnd = slopeAtStart;
-    if (rampBow > 1.0e-4f)
-    {
-        const float denominator = 1.0f - std::exp(-rampBow);
-        slopeAtStart = 2.0f * rampBow / denominator / static_cast<float>(rise);
-        slopeAtEnd = 2.0f * rampBow * std::exp(-rampBow) / denominator
-                   / static_cast<float>(rise);
-    }
+    const float slopeAtStart = 2.0f / static_cast<float>(rise);
+    const float slopeAtEnd = slopeAtStart;
     const float fallSlope = -2.0f / static_cast<float>(reset);
     const float incrementF = static_cast<float>(increment);
 
@@ -2166,6 +2625,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // --- Pulse ------------------------------------------------------------
     // The comparator flips when the ramp crosses the threshold on the way up
     // and again when the reset drags it back down past it.
+    const bool pulsePinnedHigh = voice.pulseDuty >= 1.0f;
     const float duty = std::clamp(voice.pulseDuty, 0.05f, 0.95f);
     const double riseEdge =
         static_cast<double>(pulseRisePhase(duty, static_cast<float>(reset)));
@@ -2175,7 +2635,12 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // The comparator's two edges per cycle, taken in the order they occur:
     // threshold crossing on the way up, then the reset dragging the ramp back
     // down past it. Both are walked for every cycle inside this sample.
-    for (double base = 0.0; base <= lastCycle; base += 1.0)
+    if (pulsePinnedHigh && dco.pulseState < 1.0f)
+    {
+        addStep(dco.pulse, 1.0f - dco.pulseState, 0.0f);
+        dco.pulseState = 1.0f;
+    }
+    for (double base = 0.0; !pulsePinnedHigh && base <= lastCycle; base += 1.0)
     {
         if (insideThisSample(base + riseEdge) && dco.pulseState < 0.0f)
         {
@@ -2198,8 +2663,8 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // octave down and takes no part in pulse-width modulation. The terminal
     // pulse that fires the ramp's discharge is also what clocks the divider,
     // so the sub's edges land at the reset's *start*, not at the cycle
-    // boundary. Its level is one of the scanned control voltages; its
-    // amplitude is a logic square and takes no part in the ramp's
+    // boundary. Its level is the shared scanned SUB voltage consumed by every
+    // card; its amplitude is a logic square and takes no part in the ramp's
     // compensation.
     for (double base = 0.0; base <= lastCycle; base += 1.0)
     {
@@ -2209,7 +2674,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         addStep(dco.sub, target - dco.subState, samplesAgo(base + rise));
         dco.subState = target;
     }
-    const float subGain = subMixVolts * voice.subCv
+    const float subGain = subMixVolts * subCv_
         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
     const float subOut = dco.sub.advance(dco.subState) * subGain;
 
@@ -2217,25 +2682,44 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     float mixed = 0.0f;
     if (parameters.sawEnabled)
         mixed += sawOut;
-    if (parameters.pulseEnabled)
+    // OQ-11 has not established what the pinned-high leg contributes through
+    // the coupling/mixer. Preserve the prior hard-zero audio policy while the
+    // shared control is in that state; do not inject an invented DC transient
+    // during the scan/slew interval after re-enable.
+    // Use this card's comparator result rather than the shared base CV: its
+    // calibration offset can keep the comparator pinned after the base has
+    // crossed zero during re-enable.
+    if (pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty))
         mixed += pulseOut;
     mixed += subOut;
-    mixed += noiseSample * noiseMixVolts * voice.noiseCv
+    mixed += noiseSample * noiseMixVolts * noiseCv_
            * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration);
 
     voice.noiseState ^= voice.noiseState << 13;
     voice.noiseState ^= voice.noiseState >> 17;
     voice.noiseState ^= voice.noiseState << 5;
-    mixed += (static_cast<float>(voice.noiseState & 0xffffffu) * (2.0f / 16777215.0f)
-              - 1.0f) * filterNoiseVolts;
+    const float microscopicNoise =
+        (static_cast<float>(voice.noiseState & 0xffffffu)
+             * (2.0f / 16777215.0f) - 1.0f) * filterNoiseVolts;
+
+    // Plug-in extension slots have no continuously powered card to emulate.
+    // The six physical slots below keep their filter state evolving behind a
+    // closed VCA, but dormant extension slots can stop here.
+    if (!voice.active && voice.cardIndex >= hardwareVoices)
+        return 0.0f;
 
     // --- Filter, amplifier -------------------------------------------------
     // No high-pass here. The schematic puts it on the jack board, downstream of
     // the summing amplifier, so it is one shared stage after all six voices
     // rather than a leg inside each -- see the mix.
-    const float filtered = voice.filter.process(
-        mixed * filterInputAttenuation * voice.inputCompensation,
-        voice.filterG, voice.feedback);
+    const float filterInput = mixed * filterInputAttenuation
+                            * voice.inputCompensation
+                            + microscopicNoise * noiseRateScale_;
+    const float filtered = voice.filter.process(filterInput, voice.filterG,
+                                                voice.feedback);
+
+    if (!voice.active)
+        return 0.0f;
 
     const float output = filtered * voice.vca * voltsToSample;
 
@@ -2295,6 +2779,28 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
     applyPendingOversamplingIfIdle();
 
+    // Complete a fade and rebuild at the exact host-sample boundary even when
+    // that point lies inside a large host block. Processing the two pieces
+    // recursively is bounded to one split: the second piece begins at zero,
+    // applies the pending rate, and fades in. Besides avoiding a long mute, it
+    // lets every per-call rate-derived coefficient below be recomputed for the
+    // correct side of the boundary.
+    if (rateTransition_ == RateTransition::FadingOut
+        && oversamplingRequested_ != oversamplingEnabled_
+        && rateTransitionGain_ > 0.0f)
+    {
+        const int samplesUntilZero = std::max(
+            1, static_cast<int>(std::ceil(
+                   rateTransitionGain_ / rateTransitionStep_)));
+        if (samplesUntilZero < numSamples)
+        {
+            process(left, right, samplesUntilZero);
+            process(left + samplesUntilZero, right + samplesUntilZero,
+                    numSamples - samplesUntilZero);
+            return;
+        }
+    }
+
     const auto& parameters = activeParameters_;
 
     // One shared network, so its coefficients are settled once here rather than
@@ -2309,18 +2815,25 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
         panelGlidePrimed_ = true;
     }
 
-    // The hold capacitors' own time constants: one for the filter family of
-    // control voltages, a slower one for the amplifier's divider. These are
-    // the only smoothing the scanned controls get, exactly as on the
-    // hardware.
-    const float controlSlew =
-        1.0f - std::exp(-inverseOversampledRate_ / controlSlewSeconds);
-    const float vcaSlew =
-        1.0f - std::exp(-inverseOversampledRate_ / vcaSlewSeconds);
+    // Each converter destination owns a separately named hold network. Only
+    // the VCF and voice-VCA values are evidence-backed; the other constants
+    // remain isolated compatibility policies until their RCs are established.
+    const auto slewFor = [this](float seconds) {
+        return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
+    };
+    const float vcfSlew = slewFor(vcfHoldSlewSeconds);
+    const float voiceVcaSlew = slewFor(voiceVcaHoldSlewSeconds);
+    const float dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
+    const float resonanceSlew = slewFor(resonanceHoldSlewSecondsVoiced);
+    const float commonVcaSlew = slewFor(commonVcaHoldSlewSecondsVoiced);
+    const float pwmSlew = slewFor(pwmHoldSlewSecondsVoiced);
+    const float subSlew = slewFor(subHoldSlewSecondsVoiced);
+    const float noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
     const float outputGlide =
         1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
-    const int scanPeriodSamples =
-        std::max(1, static_cast<int>(oversampledRate_ / controlScanHz));
+    const double scanPhasePerInternalSample = controlScanHz / oversampledRate_;
+    const float outputBoundaryGain =
+        outputReferenceGain(compatibilityOutputReferenceRmsVolts);
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -2335,34 +2848,61 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
         for (int step = 0; step < oversampling_; ++step)
         {
-            advanceLfo(parameters);
-            const float lfo = lfoValue_ * lfoDelayLevel_;
-
-            // One converter serves the whole instrument, but it reaches the
-            // voices in turn: the multiplexer walks its hold capacitors
-            // sequentially across the pass, so each voice is rewritten at
-            // its own fixed phase, a sixth of the pass after its neighbour.
-            // A note struck between rewrites waits for its voice's next one
-            // -- which is why the shortest usable attack on this instrument
-            // is a scan interval and not the published figure -- and the six
-            // staircases are decorrelated by the walk, exactly as the
-            // hardware's are. The lever is sampled once per pass, quantised
-            // to the converter's byte; the resonance voltage is written once
-            // per pass too, because one converter output serves every loop.
-            if (scanCountdown_ >= scanPeriodSamples)
-                scanCountdown_ = 0;
-            if (scanCountdown_ == 0)
+            // One converter serves the whole instrument. The service chart
+            // and the hash-matched B-2 code establish the complete ordinal
+            // write order and show sequential activity across the pass. The
+            // normalized timing profile preserves that qualitative fact while
+            // leaving exact physical offsets open.
+            bool converterPassCompleted = false;
+            if (controlScanPhase_ >= 1.0)
             {
+                controlScanPhase_ -= 1.0;
+                nextConverterWrite_ = 0;
+                if (assignmentRescanPending_)
+                    assignmentRescanPassArmed_ = true;
                 const float bendMagnitude = std::floor(
                     std::abs(pitchBendTarget_) * 255.0f + 0.5f) / 255.0f;
                 pitchBend_ = pitchBendTarget_ < 0.0f ? -bendMagnitude
                                                      : bendMagnitude;
                 modWheel_ =
                     std::floor(modWheelTarget_ * 127.0f + 0.5f) / 127.0f;
-                resonanceCvTarget_ = std::floor(
-                    parameters.resonance * 127.0f + 0.5f) / 127.0f;
+
+                advanceLfo(parameters);
+                converterPassLfoGated_ = lfoValue_ * lfoDelayLevel_;
+
+                // Slots above the six physical cards are an explicit product
+                // extension. They reuse one complete logical update at the
+                // pass boundary without pretending that the B-2 scans them.
+                for (int slot = hardwareVoices; slot < maxVoices; ++slot)
+                {
+                    auto& voice = voices_[static_cast<std::size_t>(slot)];
+                    updateVoiceScan(voice, parameters, converterPassLfoGated_);
+                    if (voice.dcoResetPending)
+                    {
+                        voice.dco.reset();
+                        voice.dcoResetPending = false;
+                    }
+                }
             }
-            resonanceCv_ += (resonanceCvTarget_ - resonanceCv_) * controlSlew;
+
+            const auto& writes = converterWriteOrder();
+            while (nextConverterWrite_ < writes.size()
+                   && converterEventPhases_[nextConverterWrite_]
+                          <= controlScanPhase_ + 1.0e-12)
+            {
+                performConverterWrite(writes[nextConverterWrite_], parameters,
+                                      converterPassLfoGated_);
+                ++nextConverterWrite_;
+                if (nextConverterWrite_ == writes.size())
+                    converterPassCompleted = true;
+            }
+            resonanceCv_ +=
+                (resonanceCvTarget_ - resonanceCv_) * resonanceSlew;
+            sharedVca_ +=
+                (sharedVcaTarget_ - sharedVca_) * commonVcaSlew;
+            pwmVolts_ += (pwmVoltsTarget_ - pwmVolts_) * pwmSlew;
+            subCv_ += (subCvTarget_ - subCv_) * subSlew;
+            noiseCv_ += (noiseCvTarget_ - noiseCv_) * noiseSlew;
 
             if (--driftControlCountdown_ <= 0)
             {
@@ -2382,7 +2922,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             noiseState_ ^= noiseState_ >> 17;
             noiseState_ ^= noiseState_ << 5;
             const float noiseSample =
-                static_cast<float>(noiseState_ & 0xffffffu) * (2.0f / 16777215.0f) - 1.0f;
+                (static_cast<float>(noiseState_ & 0xffffffu)
+                     * (2.0f / 16777215.0f) - 1.0f) * noiseRateScale_;
 
             float mono = 0.0f;
             float loudestEnvelope = 0.0f;
@@ -2393,56 +2934,59 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             for (int slot = 0; slot < maxVoices; ++slot)
             {
                 auto& voice = voices_[static_cast<std::size_t>(slot)];
-                if (!voice.active)
-                    continue;
-
-                // --- Converter scan -----------------------------------------
-                // A voice's pitch, envelope and control voltages are only
-                // rewritten when the walk reaches its phase of the pass. This
-                // is why slow bends and vibrato staircase, and why the
-                // shortest usable attack is a scan pass rather than the
-                // published 1.5 ms.
-                if (scanCountdown_ == voice.scanOffset)
-                    updateVoiceScan(voice, parameters, lfo, lfoValue_);
 
                 // Each hold capacitor's own slew turns the scan's staircase
                 // back into a continuous control voltage before it reaches
                 // its converter. The amplifier's hold is the slow one.
                 voice.cutoffCounts +=
-                    (voice.cutoffCountsTarget - voice.cutoffCounts) * controlSlew;
-                voice.dcoCv += (voice.dcoCvTarget - voice.dcoCv) * controlSlew;
-                voice.pwmVolts +=
-                    (voice.pwmVoltsTarget - voice.pwmVolts) * controlSlew;
-                voice.subCv += (voice.subCvTarget - voice.subCv) * controlSlew;
-                voice.noiseCv +=
-                    (voice.noiseCvTarget - voice.noiseCv) * controlSlew;
+                    (voice.cutoffCountsTarget - voice.cutoffCounts) * vcfSlew;
+                voice.dcoCv +=
+                    (voice.dcoCvTarget - voice.dcoCv) * dcoSlew;
                 voice.vcaControl +=
-                    (voice.vcaControlTarget - voice.vcaControl) * vcaSlew;
+                    (voice.vcaControlTarget - voice.vcaControl) * voiceVcaSlew;
+                updatePulseComparator(voice, parameters);
 
-                if (--voice.controlCountdown <= 0)
+                if ((voice.active || slot < hardwareVoices)
+                    && --voice.controlCountdown <= 0)
                 {
                     voice.controlCountdown = controlPeriod;
                     updateVoiceAudio(voice, parameters);
                 }
 
+                if (!voice.active)
+                {
+                    // The six physical DCO/filter cards remain powered behind
+                    // their closed VCAs; extension slots stop inside renderVoice.
+                    renderVoice(voice, parameters, noiseSample);
+                    continue;
+                }
+
                 mono += renderVoice(voice, parameters, noiseSample);
                 loudestEnvelope = std::max(loudestEnvelope, voice.envelope.value);
 
-                // Retire on the amplifier actually being shut. A voice card's
-                // own control offset can sit above any small raw threshold yet
-                // still be inside the converter's deadband, in which case the
-                // voice is silent but would never be retired -- it would be
-                // processed forever and would block a deferred quality change.
+                // Retire on the voiced amplifier profile actually being shut.
+                // A card's optional control offset can sit above a small raw
+                // threshold yet remain inside that profile's hard-zero region;
+                // without this check a silent voice would block a deferred
+                // quality change forever.
                 if (voice.envelope.stage == EnvelopeStage::Idle
                     && !voice.keyDown && !voice.sustained
-                    && vcaGain(voice.vcaControl) <= 0.0f)
+                    && VoicedVoiceVcaCompatibilityProfile::gain(
+                           voice.vcaControl) <= 0.0f)
                     silenceVoice(voice);
                 else
                     sounding = true;
             }
 
             displayEnvelope_ = loudestEnvelope;
-            ++scanCountdown_;
+
+            // The POLY/unison handler gated and cleared at the host event.
+            // Reassign only after the complete ordered pass, so every physical
+            // voice CPU has observed gate-off before any replacement Note On.
+            if (converterPassCompleted && assignmentRescanPending_
+                && assignmentRescanPassArmed_)
+                completeVoiceAssignmentRescan();
+            controlScanPhase_ += scanPhasePerInternalSample;
 
             // One high-pass, on the summed voices. The schematic carries a
             // single set of parts for it -- on the jack board, downstream of
@@ -2452,29 +2996,27 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // high-pass feeding a resonant lowpass is not the same as one
             // following it, because what the high-pass removes is what the
             // resonance would otherwise have had to work on.
-            const float shaped = highPass_.process(mono, highPassG_,
+            const float shaped = highPass_.process(voiceBusInput(mono),
+                                                   highPassG_,
                                                    highPassShelf_, highPassHigh_);
 
-            // Series coupling before the delay lines, since a bucket-brigade
-            // line integrates any offset into its own noise floor. The output
-            // amplifier's rails come *after* the effect: the instrument's
-            // signal order is voice sum, high-pass, chorus, volume, output
-            // amplifier, so dry plus wet meet the rails together. Bounding the
-            // signal ahead of the chorus instead would leave the summed
-            // dry-plus-wet free to leave the plug-in several decibels above
-            // full scale -- and would saturate the dry path in a circuit whose
-            // first overload is the delay line itself.
-            const float blocked = shaped - dcInput_ + dcCoefficient_ * dcOutput_;
-            dcInput_ = shaped;
-            dcOutput_ = blocked;
+            // VCA LEVEL is the one common uPC1252H2 on the jack board, after
+            // the voice sum and HPF. The six voice-module VCAs above are driven
+            // only by ENV/GATE (plus the optional velocity extension).
+            const float levelled = shaped * patchLevelGain(sharedVca_);
 
-            float wetLeft = blocked;
-            float wetRight = blocked;
-            chorus_.process(blocked, parameters.chorus, parameters.chorusNoise,
+            // The chorus input coupling capacitors sit in its two wet branches;
+            // dry bypasses them. IC6 applies its component-derived dry/wet
+            // gains when they recombine. Its +/-15 V clipping point has not
+            // been measured under the output load, so no invented low-voltage
+            // rail is inserted here; the main volume control follows it.
+            float wetLeft = levelled;
+            float wetRight = levelled;
+            chorus_.process(levelled, parameters.chorus, parameters.chorusNoise,
                             wetLeft, wetRight);
 
-            stageLeft[static_cast<std::size_t>(step)] = outputStage(wetLeft);
-            stageRight[static_cast<std::size_t>(step)] = outputStage(wetRight);
+            stageLeft[static_cast<std::size_t>(step)] = wetLeft;
+            stageRight[static_cast<std::size_t>(step)] = wetRight;
         }
 
         if (oversampling_ == 4)
@@ -2503,6 +3045,15 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
         applyLatencyPad(outputLeft, outputRight);
 
+        // C17/C20 remove the final dry-path PWM offset after IC6 has combined
+        // dry and wet, while their 1.5 kOhm series resistors work into the two
+        // 10 kOhm VOLUME tracks. Run this before the pot: moving Volume cannot
+        // reset or charge a capacitor which physically sits upstream of it.
+        outputLeft = outputCouplingLeft_.process(
+            outputLeft, outputCouplingG_, 0.0f, outputCouplingHighGain());
+        outputRight = outputCouplingRight_.process(
+            outputRight, outputCouplingG_, 0.0f, outputCouplingHighGain());
+
         // How long the voices have been gone, which is what a pending quality
         // change waits on: the output path needs that long to run dry.
         if (sounding)
@@ -2512,8 +3063,26 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
         glidedVolume_ += (parameters.volume - glidedVolume_) * outputGlide;
         const float volume = glidedVolume_ * glidedVolume_;
-        left[sample] = std::isfinite(outputLeft) ? outputLeft * volume : 0.0f;
-        right[sample] = std::isfinite(outputRight) ? outputRight * volume : 0.0f;
+        const float transitionGain = rateTransitionGain_;
+        left[sample] = std::isfinite(outputLeft)
+                     ? outputLeft * volume * outputBoundaryGain * transitionGain
+                     : 0.0f;
+        right[sample] = std::isfinite(outputRight)
+                      ? outputRight * volume * outputBoundaryGain * transitionGain
+                      : 0.0f;
+
+        if (rateTransition_ == RateTransition::FadingOut)
+        {
+            rateTransitionGain_ = std::max(
+                0.0f, rateTransitionGain_ - rateTransitionStep_);
+        }
+        else if (rateTransition_ == RateTransition::FadingIn)
+        {
+            rateTransitionGain_ = std::min(
+                1.0f, rateTransitionGain_ + rateTransitionStep_);
+            if (rateTransitionGain_ >= 1.0f)
+                rateTransition_ = RateTransition::Idle;
+        }
     }
 
     updateActiveVoiceCount();

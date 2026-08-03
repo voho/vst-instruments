@@ -1,10 +1,9 @@
 // Circuit-reference suite.
 //
-// Every check here compares the realtime model against something independent:
-// either an ODE solved from the circuit equations at a far higher rate, a
-// closed-form small-signal result, or a figure taken from the instrument's own
-// service documentation. Nothing in this file asserts that the model agrees
-// with itself.
+// Evidence-backed checks compare the realtime model against an independent
+// numerical solve, closed-form result, firmware vector or service-document
+// figure. Explicitly named compatibility profiles also carry broad safety and
+// monotonicity regressions; those are product invariants, not hardware claims.
 
 #include "DSP/YouKnow106Chorus.h"
 #include "DSP/YouKnow106Engine.h"
@@ -32,7 +31,8 @@ struct YouKnow106TestAccess
 
     static constexpr float feedbackHeadroom() noexcept
     {
-        return YouKnow106Engine::vcfFeedbackHeadroomVolts;
+        return YouKnow106Engine::VoicedResonanceCompatibilityProfile::
+            loopHeadroomVolts;
     }
 
     static std::vector<float> renderCascade(const std::vector<float>& input,
@@ -44,6 +44,83 @@ struct YouKnow106TestAccess
         for (std::size_t index = 0; index < input.size(); ++index)
             output[index] = cascade.process(input[index], g, feedback);
         return output;
+    }
+
+    static float bbdTransfer(float input) noexcept
+    {
+        return Chorus::bbdTransfer(input);
+    }
+
+    static float transferLossStep(float& state, float input) noexcept
+    {
+        return Chorus::transferLossStep(state, input);
+    }
+
+    static std::array<float, 2> correlatedChorusNoiseStep(
+        std::uint32_t& commonState, std::uint32_t& orthogonalState,
+        float correlation) noexcept
+    {
+        const auto sample = Chorus::correlatedRandomStep(
+            commonState, orthogonalState, correlation);
+        return { sample.lineA, sample.lineB };
+    }
+
+    static float chorusToneStep(double& phase, float frequencyHz,
+                                float sampleRate) noexcept
+    {
+        return Chorus::deterministicToneStep(phase, frequencyHz, sampleRate);
+    }
+
+    static void configureOptionalChorusNoise(
+        Chorus& chorus, float commonAmplitude, float correlation,
+        float humAmplitude, float humFrequencyHz,
+        float clockSpurAmplitude, float clockSpurHarmonic) noexcept
+    {
+        chorus.optionalNoise_.commonRandomAmplitude = commonAmplitude;
+        chorus.optionalNoise_.commonRandomCorrelation = correlation;
+        chorus.optionalNoise_.humAmplitude = humAmplitude;
+        chorus.optionalNoise_.humFrequencyHz = humFrequencyHz;
+        chorus.optionalNoise_.clockSpurAmplitude = clockSpurAmplitude;
+        chorus.optionalNoise_.clockSpurHarmonic = clockSpurHarmonic;
+    }
+
+    static float chorusWetGain(const Chorus& chorus) noexcept
+    {
+        return chorus.wetGain_;
+    }
+
+    static std::vector<float> renderOutputCoupling(
+        const std::vector<float>& input, double sampleRate)
+    {
+        YouKnow106Engine::HighPass coupling;
+        coupling.reset();
+        const float g = std::tan(
+            static_cast<float>(3.14159265358979323846)
+            * YouKnow106Engine::outputCouplingCornerHz()
+            / static_cast<float>(sampleRate));
+        std::vector<float> output(input.size());
+        for (std::size_t index = 0; index < input.size(); ++index)
+            output[index] = coupling.process(
+                input[index], g, 0.0f,
+                YouKnow106Engine::outputCouplingHighGain());
+        return output;
+    }
+
+    static void setChorusWetGain(Chorus& chorus, float gain) noexcept
+    {
+        chorus.wetGain_ = gain;
+    }
+
+    static std::uint16_t attackLevelAfterRetrigger(std::uint16_t level,
+                                                   std::uint16_t increment) noexcept
+    {
+        YouKnow106Engine::Envelope envelope;
+        envelope.level = level;
+        envelope.value = static_cast<float>(level)
+                       / static_cast<float>(YouKnow106Engine::envelopePeak);
+        envelope.noteOn();
+        envelope.tick(increment, 0xffffu, 0u, 0xffffu);
+        return envelope.level;
     }
 };
 } // namespace youknow106
@@ -80,8 +157,9 @@ constexpr double pi = 3.14159265358979323846;
 // Independent reference: the four transconductor stages integrated with a
 // fourth-order Runge-Kutta step at 64x the model's rate, straight from
 //     C dVn/dt = Ig tanh((V(n-1) - Vn) / H),  V0 = input - k fb(V4)
-// with fb the loop pair's own tanh behind its divider -- which is the
-// circuit, not the model.
+// with fb the compatibility profile's declared nonlinear return. This is an
+// independent numerical check of the implementation's ODE, not evidence that
+// the profile constants are a measured original-unit transfer.
 // --------------------------------------------------------------------------
 std::vector<double> referenceCascade(const std::vector<double>& input, double sampleRate,
                                      double cutoffHz, double feedback,
@@ -330,9 +408,7 @@ void testCutoffControlLaw()
     expectNear(YouKnow106Engine::vcfCutoffHz(6272.0f + 2286.0f), 992.0, 4.0,
                "cutoff law misses the second calibration anchor");
 
-    // One octave is 1143 counts, everywhere the transconductor can follow it.
-    // Past the top of its bias range the law flattens, which is the part's
-    // limit rather than the converter's.
+    // One octave is 1143 counts throughout the validated, uncapped range.
     for (float counts : { 0.0f, 2000.0f, 6000.0f, 9000.0f })
         expectNear(YouKnow106Engine::vcfCutoffHz(counts + 1143.0f)
                        / YouKnow106Engine::vcfCutoffHz(counts),
@@ -350,103 +426,239 @@ void testCutoffControlLaw()
     expect(YouKnow106Engine::vcfPanelCounts(0.5f)
                == YouKnow106Engine::vcfPanelCounts(0.503f),
            "cutoff panel position is not quantised to the converter's byte");
+
+    // OQ-18 does not justify the former 24 kHz tanh knee or 52.2 kHz
+    // asymptote. The default product policy is the unchanged exponential law
+    // followed by a plainly named 50 kHz numerical safety cap.
+    for (float counts : { 0.0f, 6272.0f, 9000.0f, 12000.0f, 13716.0f })
+    {
+        const double exponential = YouKnow106Engine::vcfBaseFrequencyHz
+            * std::exp2(counts / YouKnow106Engine::vcfCountsPerOctave);
+        expectNear(YouKnow106Engine::vcfCutoffHz(counts), exponential,
+                   std::max(1.0e-4, exponential * 2.0e-6),
+                   "50 kHz policy altered the validated exponential range");
+    }
+
+    float previousCutoff = YouKnow106Engine::vcfCutoffHz(0.0f);
+    for (int counts = 1; counts <= 20000; ++counts)
+    {
+        const float cutoff = YouKnow106Engine::vcfCutoffHz(static_cast<float>(counts));
+        expect(std::isfinite(cutoff) && cutoff >= previousCutoff,
+               "default cutoff policy is not finite and monotone");
+        expect(cutoff <= 50000.0f,
+               "default cutoff policy exceeds its named 50 kHz safety cap");
+        previousCutoff = cutoff;
+    }
+    expectNear(YouKnow106Engine::vcfCutoffHz(20000.0f), 50000.0, 1.0e-3,
+               "default cutoff policy never reaches its 50 kHz safety cap");
+    expectNear(YouKnow106Engine::vcfEffectiveCutoffHz(20000.0f, 8.0f),
+               50000.0, 1.0e-3,
+               "resonance trim escaped the final 50 kHz cutoff safety cap");
+    const float midCounts = 9000.0f;
+    expectNear(YouKnow106Engine::vcfEffectiveCutoffHz(midCounts, 2.0f),
+               YouKnow106Engine::vcfCutoffHz(midCounts)
+                   * YouKnow106Engine::VoicedResonanceCompatibilityProfile::
+                       frequencyTrim(2.0f),
+               1.0e-3,
+               "post-trim cap altered a cutoff below the safety boundary");
 }
 
-void testResonanceLaw()
+void testStoredControlDigitalVectors()
 {
-    expectNear(YouKnow106Engine::vcfFeedback(0.0f), 0.0, 1.0e-6,
-               "resonance at rest");
-    expectNear(YouKnow106Engine::vcfFeedback(0.9f), 4.0, 1.0e-4,
-               "oscillation threshold is not reached at 90% of the travel");
-    expect(YouKnow106Engine::vcfFeedback(1.0f) > 4.0,
-           "the last tenth of the resonance travel does not pass the threshold");
+    // This firmware-verified byte -> work-word -> DAC path is independent of
+    // whichever replaceable analogue resonance profile consumes the voltage.
+    struct Vector
+    {
+        int byte;
+        std::uint16_t alignedWord;
+        std::uint16_t dacCode;
+    };
+    constexpr std::array<Vector, 3> vectors {{
+        { 0,   0x0000u, 0x0000u },
+        { 64,  0x2000u, 0x0800u },
+        { 127, 0x3f80u, 0x0fe0u }
+    }};
+    for (const auto& vector : vectors)
+    {
+        const float position = static_cast<float>(vector.byte) / 127.0f;
+        expect(YouKnow106Engine::storedControlAlignedWord(position)
+                   == vector.alignedWord,
+               "stored control has the wrong aligned work word at byte "
+                   + std::to_string(vector.byte));
+        expect(YouKnow106Engine::storedControlDacCode(position) == vector.dacCode,
+               "stored control has the wrong physical DAC code at byte "
+                   + std::to_string(vector.byte));
+    }
+}
 
-    // The curve below the threshold is the fitted hardware measurement, not a
-    // straight line: 30% of the travel reaches a loop gain near 0.91, and the
-    // far end of the travel lands on the fitted 4.19.
-    expectNear(YouKnow106Engine::vcfFeedback(0.3f), 0.91, 0.01,
-               "resonance curve misses the fitted 30%-travel measurement");
-    expectNear(YouKnow106Engine::vcfFeedback(1.0f), 4.19, 0.01,
-               "resonance travel does not end at the fitted maximum");
+void testVoicedResonanceCompatibilityProfile()
+{
+    using Profile = YouKnow106Engine::VoicedResonanceCompatibilityProfile;
 
-    // Compensation is applied to the input, so it rises with regeneration --
-    // linearly in the loop gain, as the fitted measurement has it, reaching
-    // just under six decibels at the fitted maximum.
-    expectNear(YouKnow106Engine::vcfResonanceCompensation(0.0f), 1.0, 1.0e-6,
-               "resonance compensation at rest");
-    const double atMaximum = YouKnow106Engine::vcfResonanceCompensation(4.19f);
-    expectNear(20.0 * std::log10(atMaximum), 5.85, 0.1,
-               "resonance compensation misses the fitted level");
-    expect(YouKnow106Engine::vcfResonanceCompensation(2.0f) < atMaximum,
-           "resonance compensation is not monotonic");
+    // These deliberately avoid treating today's voiced coefficients as
+    // hardware anchors. A measured profile may replace every analogue number
+    // while retaining this minimal realtime safety/shape contract.
+    float previousLoopGain = -1.0f;
+    float previousCompensation = -1.0f;
+    float previousTrim = -1.0f;
+    for (int byte = 0; byte <= 127; ++byte)
+    {
+        const float panel = static_cast<float>(byte) / 127.0f;
+        const float loopGain = Profile::loopGain(panel);
+        const float compensation = Profile::inputCompensation(loopGain);
+        const float trim = Profile::frequencyTrim(loopGain);
 
-    // The frequency trim only acts as regeneration rises, and with the loop
-    // limited in its own divider it is small: the oscillation sits close to
-    // the small-signal law on its own.
-    expectNear(YouKnow106Engine::vcfResonanceFrequencyTrim(0.0f), 1.0, 1.0e-6,
-               "frequency trim acts with no resonance");
-    const float trimAtThreshold = YouKnow106Engine::vcfResonanceFrequencyTrim(4.0f);
-    expect(trimAtThreshold > 1.0f && trimAtThreshold < 1.1f,
-           "frequency trim is outside the residual band the loop limiter leaves");
+        expect(std::isfinite(loopGain) && loopGain >= previousLoopGain,
+               "voiced resonance loop-gain profile is not finite and monotone");
+        expect(std::isfinite(compensation)
+                   && compensation >= previousCompensation,
+               "voiced resonance compensation is not finite and monotone");
+        expect(std::isfinite(trim) && trim >= previousTrim,
+               "voiced resonance frequency correction is not finite and monotone");
+
+        previousLoopGain = loopGain;
+        previousCompensation = compensation;
+        previousTrim = trim;
+    }
+    expect(previousLoopGain > Profile::loopGain(0.0f),
+           "voiced resonance loop-gain profile does not respond to its control");
+    expect(previousCompensation > Profile::inputCompensation(0.0f),
+           "voiced resonance compensation does not respond to loop gain");
+    expect(previousTrim > Profile::frequencyTrim(0.0f),
+           "voiced resonance frequency correction does not respond to loop gain");
 }
 
 void testEnvelopeAndAmplifierLaws()
 {
-    // The generator advances once per 4.2 ms scan pass, so the shortest
-    // attack the instrument can produce is one pass -- the published 1.5 ms
-    // figure is shorter than the generator's own tick. The mid-travel
-    // anchors are the firmware's, not an endpoint interpolation: attack time
-    // is linear in the slider across the lower half.
-    expectNear(YouKnow106Engine::envelopeAttackSeconds(0.0f), 0.0042, 1.0e-4,
-               "shortest attack is not a single scan pass");
-    expectNear(YouKnow106Engine::envelopeAttackSeconds(0.25f), 0.269, 0.008,
-               "attack at quarter travel misses the firmware anchor");
-    expectNear(YouKnow106Engine::envelopeAttackSeconds(0.5f), 0.533, 0.008,
-               "attack at mid travel misses the firmware anchor");
-    expectNear(YouKnow106Engine::envelopeAttackSeconds(1.0f), 3.276, 0.01,
-               "longest attack misses the firmware anchor");
+    // Hash-matched B-2 coefficient vectors. The compact generators in the
+    // engine must reproduce these values without embedding a proprietary table.
+    struct EnvelopeVector
+    {
+        int code;
+        std::uint16_t attack;
+        std::uint16_t fall;
+        int attackPasses;
+        int releasePasses;
+    };
+    constexpr std::array<EnvelopeVector, 3> vectors {{
+        { 0,   16384u,  4096u,   1,    4 },
+        { 64,    127u, 65276u, 129,  984 },
+        { 127,    21u, 65524u, 781, 6083 }
+    }};
+    for (const auto& vector : vectors)
+    {
+        const float position = static_cast<float>(vector.code) / 127.0f;
+        expect(YouKnow106Engine::envelopeAttackIncrement(position) == vector.attack,
+               "B-2 attack coefficient vector mismatch at code "
+                   + std::to_string(vector.code));
+        expect(YouKnow106Engine::envelopeDecayReleaseMultiplier(position) == vector.fall,
+               "B-2 decay/release coefficient vector mismatch at code "
+                   + std::to_string(vector.code));
 
-    // Falling segments are exponential and displayed as the time to fall to
-    // a tenth of the span. The firmware anchors: about a third of a second
-    // at quarter travel, 2.2 s at half, 4.5 s at three quarters, and 9.6 s
-    // to *half* level at the top.
-    expectNear(YouKnow106Engine::envelopeDecaySeconds(0.25f), 0.33, 0.02,
-               "decay at quarter travel misses the firmware anchor");
-    expectNear(YouKnow106Engine::envelopeDecaySeconds(0.5f), 2.2, 0.1,
-               "decay at mid travel misses the firmware anchor");
-    expectNear(YouKnow106Engine::envelopeDecaySeconds(0.75f), 4.5, 0.2,
-               "decay at three-quarter travel misses the firmware anchor");
-    const double lambdaTop = 2.302585 / (YouKnow106Engine::envelopeDecaySeconds(1.0f)
-                                         * (1000.0 / 4.2));
-    expectNear(0.693147 / lambdaTop * 0.0042, 9.6, 0.15,
-               "slowest decay does not take 9.6 s to half level");
-    expectNear(YouKnow106Engine::envelopeReleaseSeconds(0.5f),
-               YouKnow106Engine::envelopeDecaySeconds(0.5f), 1.0e-6,
-               "release shares the decay law");
+        std::uint16_t release = YouKnow106Engine::envelopePeak;
+        int passes = 0;
+        while (release != 0u && passes <= vector.releasePasses)
+        {
+            release = YouKnow106Engine::envelopeReleaseLevel(release, vector.fall);
+            ++passes;
+        }
+        expect(passes == vector.releasePasses && release == 0u,
+               "B-2 release-to-zero pass count mismatch at code "
+                   + std::to_string(vector.code));
+        expectNear(YouKnow106Engine::envelopeAttackSeconds(position),
+                   vector.attackPasses * 0.0042, 1.0e-5,
+                   "B-2 attack duration mismatch at code "
+                       + std::to_string(vector.code));
+        expectNear(YouKnow106Engine::envelopeReleaseSeconds(position),
+                   vector.releasePasses * 0.0042, 1.0e-4,
+                   "B-2 release duration mismatch at code "
+                       + std::to_string(vector.code));
+    }
 
-    // The amplifier is quasi-linear: gain tracks the control voltage over
-    // most of the range -- half control is six decibels down, not thirty --
-    // with the exponential knee confined to the bottom tenth.
-    expectNear(YouKnow106Engine::vcaGain(1.0f), 1.0, 1.0e-4,
-               "amplifier is not unity at full control");
-    expectNear(YouKnow106Engine::vcaGain(0.5f), 0.5, 5.0e-3,
-               "amplifier is not linear at half control");
-    expectNear(YouKnow106Engine::vcaGain(0.25f), 0.25, 5.0e-3,
-               "amplifier is not linear at quarter control");
-    // Below the knee the gain falls away exponentially, roughly 26 dB per
-    // tenth of the control range.
-    const double knee = 20.0 * std::log10(YouKnow106Engine::vcaGain(0.06f) / 0.06);
-    expectNear(knee, -15.6, 0.5, "amplifier knee misses the measured slope");
-    expect(YouKnow106Engine::vcaGain(0.0f) == 0.0f,
-           "amplifier leaks with no control voltage");
-    expect(YouKnow106Engine::vcaGain(0.004f) == 0.0f,
-           "amplifier conducts inside its deadband");
+    // The multiply helper intentionally omits the low-byte x low-byte term.
+    // For this vector the complete 16x16 product would yield 0x0626, while
+    // the B-2 helper yields 0x0625.
+    expect(YouKnow106Engine::envelopeReleaseLevel(0x1234u, 0x5678u) == 0x0625u,
+           "decay helper restored the intentionally omitted low-low product");
+    expect(YouKnow106Engine::envelopeDecayLevel(
+               0x1334u, 0x0100u, 0x5678u) == 0x0725u,
+           "decay is not sustain plus the exact truncated distance product");
+    expect(YouKnow106Engine::envelopeAttackLevel(0x3ff0u, 0x0020u) == 0x3fffu,
+           "integer attack does not saturate at 14 bits");
+    expect(YouKnow106TestAccess::attackLevelAfterRetrigger(0x1800u, 0x007fu)
+               == 0x187fu,
+           "retrigger clears the live envelope accumulator before attack");
+
+    // Sustain is the stored byte shifted by seven, including the exact midpoint.
+    expect(YouKnow106Engine::storedControlAlignedWord(0.0f) == 0u
+           && YouKnow106Engine::storedControlAlignedWord(64.0f / 127.0f) == 0x2000u
+           && YouKnow106Engine::storedControlAlignedWord(1.0f) == 0x3f80u,
+           "sustain byte does not map to 0 / 0x2000 / 0x3f80");
+
+    // Decay's UI convention remains time to -20 dB, but the reported value is
+    // now obtained by iterating the exact integer recurrence.
+    expectNear(YouKnow106Engine::envelopeDecaySeconds(0.0f), 0.0042, 1.0e-6,
+               "fastest decay-to-minus-20-dB is not one pass");
+    expectNear(YouKnow106Engine::envelopeDecaySeconds(64.0f / 127.0f),
+               527.0 * 0.0042, 1.0e-4,
+               "mid decay-to-minus-20-dB misses the integer recurrence");
+    expectNear(YouKnow106Engine::envelopeDecaySeconds(1.0f),
+               5137.0 * 0.0042, 1.0e-4,
+               "slowest decay-to-minus-20-dB misses the integer recurrence");
+
+    // OQ-19 remains measurement-open. These checks guard only the named voiced
+    // compatibility profile's broad behavior; they deliberately do not turn
+    // its provisional knee, slope or low-level deadband into hardware fixtures.
+    using VoiceVcaProfile =
+        YouKnow106Engine::VoicedVoiceVcaCompatibilityProfile;
+    float previousGain = -1.0f;
+    for (int step = 0; step <= 1000; ++step)
+    {
+        const float gain = VoiceVcaProfile::gain(step / 1000.0f);
+        expect(std::isfinite(gain) && gain >= 0.0f && gain >= previousGain,
+               "voiced voice-VCA compatibility profile is not finite and monotone");
+        previousGain = gain;
+    }
+    expect(previousGain > VoiceVcaProfile::gain(0.0f),
+           "voiced voice-VCA compatibility profile does not respond to control");
+
+    // VCA LEVEL is not this per-voice law. It drives the common jack-board VCA
+    // after the six voices are summed. These are regression guards for the
+    // current provisional three-point dB-domain fit, not a settled IC law.
+    // Its declared input is p=b/127=DAC12/4064 and the legacy display
+    // coordinate is x=-5+10p, so the midpoint below is explicitly x=0.
+    const auto patchLevelDb = [](float position) {
+        return 20.0 * std::log10(YouKnow106Engine::patchLevelGain(position));
+    };
+    expectNear(patchLevelDb(0.0f), -15.0, 1.0e-4,
+               "VCA LEVEL minimum misses the reported -5-panel anchor");
+    expectNear(patchLevelDb(0.5f), -12.5, 1.0e-4,
+               "VCA LEVEL centre misses the reported zero-panel anchor");
+    expectNear(patchLevelDb(1.0f), 5.0, 1.0e-4,
+               "VCA LEVEL maximum misses the reported +5-panel anchor");
+    expect(YouKnow106Engine::patchLevelGain(0.0f) > 0.0f,
+           "VCA LEVEL minimum incorrectly mutes the patch");
+
+    // The jack-board gain chain is fixed by resistor ratios. IC1a attenuates
+    // every voice before the shared VCA and BBDs; IC6 supplies the dry/wet
+    // output gains after the BBDs. Their net small-signal gains must therefore
+    // be 10/39 and 10/47, not the unity voice sum used by the old model.
+    expectNear(YouKnow106Engine::voiceSummerGain, 3.3 / 33.0, 1.0e-7,
+               "voice summer is not 3.3 kOhm / 33 kOhm");
+    expectNear(YouKnow106Engine::voiceBusInput(6.0f), 0.6, 1.0e-7,
+               "the six-voice bus does not enter the shared path at 0.1 per voice");
+    expectNear(YouKnow106Engine::voiceSummerGain * Chorus::dryMixGain,
+               10.0 / 39.0, 1.0e-6,
+               "net per-voice dry gain misses the jack-board ratios");
+    expectNear(YouKnow106Engine::voiceSummerGain * Chorus::wetMixGain,
+               10.0 / 47.0, 1.0e-6,
+               "net per-voice wet gain misses the jack-board ratios");
 }
 
 void testPulseWidthAndHighPassLaws()
 {
-    // The comparator threshold cannot reach either rail, so the pulse cannot
-    // reach 0% or 100%.
+    // Enabled PWM cannot reach either rail. Pulse Off is a separate documented
+    // -0.8 V state that pins the comparator high.
     expectNear(YouKnow106Engine::pwmControlVolts(0.0f), 6.0, 1.0e-5,
                "pulse threshold with the control at rest");
     expectNear(YouKnow106Engine::pwmControlVolts(1.0f), 0.6, 1.0e-5,
@@ -455,6 +667,8 @@ void testPulseWidthAndHighPassLaws()
                "threshold at half the ramp does not bisect it");
     expectNear(YouKnow106Engine::pwmDutyCycle(0.6f), 0.95, 1.0e-5,
                "narrowest pulse");
+    expectNear(YouKnow106Engine::pwmDutyCycle(-0.8f), 1.0, 1.0e-6,
+               "pulse-off control does not pin the comparator high");
     for (float depth = 0.0f; depth <= 1.0f; depth += 0.05f)
     {
         const float duty = YouKnow106Engine::pwmDutyCycle(
@@ -501,52 +715,251 @@ void testPulseWidthAndHighPassLaws()
     expect(YouKnow106Engine::highPassShelfGain(HighPassMode::Two) == 0.0f
            && YouKnow106Engine::highPassShelfGain(HighPassMode::Three) == 0.0f,
            "a cutting leg returns part of the low band");
-    // Computed from the parts rather than written down, so the assertion says
-    // where the number comes from: both cutting legs share one 15 kOhm shunt to
-    // ground and differ only in their series capacitor. Writing 225.8 and 707.4
-    // here would assert the same thing while hiding the fact that a single
-    // resistor value has to serve both.
-    const double shuntOhms = 15.0e3;
-    const auto corner = [shuntOhms] (double farads) {
-        return 1.0 / (2.0 * M_PI * shuntOhms * farads);
+    // Computed from the schematic parts rather than written down, so the
+    // assertion says where the number comes from: the two cutting legs use
+    // C10 15 nF and C11 4.7 nF through the 47 kOhm resistor pack.
+    const double feedOhms = 47.0e3;
+    const auto corner = [feedOhms] (double farads) {
+        return 1.0 / (2.0 * pi * feedOhms * farads);
     };
     expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Two),
-               corner(47.0e-9), 0.5,
-               "middle high-pass corner is not 15 kOhm against 47 nF");
-    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Three),
                corner(15.0e-9), 0.5,
-               "top high-pass corner is not 15 kOhm against 15 nF");
+               "middle high-pass corner is not 47 kOhm against 15 nF");
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Three),
+               corner(4.7e-9), 0.5,
+               "top high-pass corner is not 47 kOhm against 4.7 nF");
+
+    // The service schematic's final stereo coupling paths are identical:
+    // IC6 -> C17/C20 10 uF -> R54/R57 1.5 kOhm -> one 10 kOhm VOLUME
+    // track. This current-scope transfer deliberately excludes the
+    // selector/headphone loading still called out in OQ-17.
+    constexpr double capacitance = 10.0e-6;
+    constexpr double seriesResistance = 1500.0;
+    constexpr double potResistance = 10000.0;
+    const double expectedCorner =
+        1.0 / (2.0 * pi * capacitance
+               * (seriesResistance + potResistance));
+    const double expectedHighGain =
+        potResistance / (seriesResistance + potResistance);
+    expectNear(YouKnow106Engine::outputCouplingCornerHz(), expectedCorner,
+               1.0e-5, "final output-coupling corner");
+    expectNear(YouKnow106Engine::outputCouplingHighGain(), expectedHighGain,
+               1.0e-7, "final output-coupling high-frequency gain");
+
+    // The realised topology-preserving pole must retain the same physical
+    // time constant at every supported host-rate family. A unit step through
+    // a high-pass is highGain*exp(-t/tau), independent of block processing.
+    constexpr double timeConstant = capacitance
+                                  * (seriesResistance + potResistance);
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        const int samples = static_cast<int>(std::ceil(sampleRate * 1.2));
+        const std::vector<float> step(static_cast<std::size_t>(samples), 1.0f);
+        const auto response =
+            YouKnow106TestAccess::renderOutputCoupling(step, sampleRate);
+        const int atTau = static_cast<int>(std::llround(
+            sampleRate * timeConstant));
+        const double g = std::tan(pi * expectedCorner / sampleRate);
+        const double pole = (1.0 - g) / (1.0 + g);
+        const auto expectedStepAt = [&](int sample) {
+            return expectedHighGain * std::pow(pole, sample) / (1.0 + g);
+        };
+        expectNear(response[static_cast<std::size_t>(atTau)],
+                   expectedStepAt(atTau), 2.0e-6,
+                   "final output coupling misses its 115 ms time constant at "
+                       + std::to_string(static_cast<int>(sampleRate)) + " Hz");
+        expectNear(response.back(), expectedStepAt(samples - 1), 2.0e-7,
+                   "final output coupling has a sample-rate-dependent decay");
+    }
 }
 
 void testModulationAndGlideLaws()
 {
-    // The modulator's measured range is 0.04 to 29.8 Hz -- the firmware's
-    // own table, not the 0.1-30 the specification sheet rounds to. At the
-    // top the clamp quantises the period onto whole passes, so the last few
-    // per cent of the travel all read the same rate.
-    expectNear(YouKnow106Engine::lfoRateHz(0.0f), 0.0363, 1.0e-3,
-               "slowest modulation");
-    expectNear(YouKnow106Engine::lfoRateHz(1.0f), 29.76, 0.05,
-               "fastest modulation");
-    expect(YouKnow106Engine::lfoRateHz(0.99f) == YouKnow106Engine::lfoRateHz(1.0f),
-           "the fast end of the modulation travel is not rate-quantised");
-    expect(YouKnow106Engine::lfoDelaySeconds(0.0f) == 0.0f, "delay at rest");
-    // The delay's hold advances at the attack table's own rate and the fade
-    // is a fixed second-long ramp across the upper half, so the longest
-    // setting reaches about 4.4 s.
-    expectNear(YouKnow106Engine::lfoDelaySeconds(1.0f), 4.366, 0.02,
-               "longest delay");
-    expectNear(YouKnow106Engine::lfoDelaySeconds(0.1f),
-               YouKnow106Engine::envelopeAttackSeconds(0.1f), 1.0e-4,
-               "the bottom eighth of the delay travel is not hold-only");
+    // Exact hash-matched B-2 rate vectors. A signed cycle is four clamped
+    // 0..0x1fff ramps, each lasting ceil(8192 / coefficient) scan passes.
+    struct LfoVector { int code; std::uint16_t coefficient; int rampPasses; };
+    constexpr std::array<LfoVector, 3> lfoVectors {{
+        { 0,      5u, 1639 },
+        { 64,   666u,   13 },
+        { 127, 4096u,    2 }
+    }};
+    for (const auto& vector : lfoVectors)
+    {
+        const float position = static_cast<float>(vector.code) / 127.0f;
+        expect(YouKnow106Engine::lfoRateIncrement(position) == vector.coefficient,
+               "B-2 LFO coefficient vector mismatch at code "
+                   + std::to_string(vector.code));
+        expectNear(YouKnow106Engine::lfoRateHz(position),
+                   1.0 / (4.0 * vector.rampPasses * 0.0042), 2.0e-6,
+                   "B-2 LFO rate vector mismatch at code "
+                       + std::to_string(vector.code));
+    }
 
-    // Portamento is quoted per octave, so the panel law has those units.
+    // Delay is never an immediate jump: it is an attack-table silent hold plus
+    // one of eight exact fade bins. Verify every stored byte against that
+    // integer construction so the hold cannot drift away from attack's source.
+    for (int byte = 0; byte <= 127; ++byte)
+    {
+        const float position = static_cast<float>(byte) / 127.0f;
+        const int attack = YouKnow106Engine::envelopeAttackIncrement(position);
+        const int fade = YouKnow106Engine::lfoDelayFadeIncrement(position);
+        const int holdPasses = (16384 + attack - 1) / attack;
+        const int fadePasses = (65536 + fade - 1) / fade;
+        expectNear(YouKnow106Engine::lfoDelaySeconds(position),
+                   (holdPasses + fadePasses) * 0.0042, 1.0e-5,
+                   "LFO delay does not use exact attack-hold plus fade at byte "
+                       + std::to_string(byte));
+    }
+    expectNear(YouKnow106Engine::lfoDelaySeconds(0.0f), 0.0126, 1.0e-6,
+               "LFO delay byte zero is not one hold plus two fade passes");
+    expectNear(YouKnow106Engine::lfoDelaySeconds(1.0f), 4.3554, 1.0e-4,
+               "longest LFO delay misses the exact hold-plus-fade duration");
+
+    struct FadeBin { int first; int last; std::uint16_t coefficient; int passes; };
+    constexpr std::array<FadeBin, 8> fadeBins {{
+        {   0,  15, 65535u,   2 },
+        {  16,  31,  1049u,  63 },
+        {  32,  47,   524u, 126 },
+        {  48,  63,   350u, 188 },
+        {  64,  79,   256u, 256 },
+        {  80,  95,   256u, 256 },
+        {  96, 111,   256u, 256 },
+        { 112, 127,   256u, 256 }
+    }};
+    for (const auto& bin : fadeBins)
+    {
+        for (const int byte : { bin.first, bin.last })
+        {
+            const auto coefficient = YouKnow106Engine::lfoDelayFadeIncrement(
+                static_cast<float>(byte) / 127.0f);
+            expect(coefficient == bin.coefficient,
+                   "LFO delay fade bin coefficient mismatch at byte "
+                       + std::to_string(byte));
+            expect((65536 + coefficient - 1) / coefficient == bin.passes,
+                   "LFO delay fade pass count mismatch at byte "
+                       + std::to_string(byte));
+        }
+    }
+
+    // Portamento is an eight-bit ADC. Raw 0/1 are immediate, then 2n and 2n+1
+    // share an eight-bit coefficient selected by raw>>1.
     expect(YouKnow106Engine::portamentoSeconds(0.0f) == 0.0f,
            "portamento is not switched off at the bottom of its travel");
-    expectNear(YouKnow106Engine::portamentoSeconds(1.0f), 12.9, 0.01,
-               "slowest glide");
-    expect(YouKnow106Engine::portamentoSeconds(0.001f) < 0.06,
-           "fastest glide is slower than the hardware's");
+    expect(YouKnow106Engine::portamentoIncrement(0.0f) == 0u,
+           "raw portamento code zero is not immediate");
+    expect(YouKnow106Engine::portamentoSeconds(1.0f / 255.0f) == 0.0f,
+           "raw portamento code one does not retain the zero/immediate entry");
+    expect(YouKnow106Engine::portamentoIncrement(1.0f / 255.0f) == 0u,
+           "raw portamento code one selects a nonzero coefficient");
+    expect(YouKnow106Engine::portamentoIncrement(2.0f / 255.0f) == 255u
+           && YouKnow106Engine::portamentoIncrement(3.0f / 255.0f) == 255u,
+           "raw portamento codes 2/3 miss coefficient 255");
+    expectNear(YouKnow106Engine::portamentoSeconds(2.0f / 255.0f),
+               13.0 * 0.0042, 1.0e-6,
+               "first active portamento code does not respect the 8-bit coefficient ceiling");
+    expect(YouKnow106Engine::portamentoIncrement(127.0f / 255.0f) == 13u
+           && YouKnow106Engine::portamentoIncrement(128.0f / 255.0f) == 13u,
+           "raw portamento codes 127/128 miss coefficient 13");
+    expectNear(YouKnow106Engine::portamentoSeconds(127.0f / 255.0f),
+               237.0 * 0.0042, 1.0e-6,
+               "raw portamento code 127 misses the 995.4 ms vector");
+    expectNear(YouKnow106Engine::portamentoSeconds(128.0f / 255.0f),
+               237.0 * 0.0042, 1.0e-6,
+               "raw portamento code 128 misses the 995.4 ms vector");
+    expect(YouKnow106Engine::portamentoIncrement(254.0f / 255.0f) == 1u
+           && YouKnow106Engine::portamentoIncrement(1.0f) == 1u,
+           "raw portamento codes 254/255 miss coefficient one");
+    expectNear(YouKnow106Engine::portamentoSeconds(254.0f / 255.0f),
+               3072.0 * 0.0042, 1.0e-4,
+               "raw portamento code 254 misses the 12.9024 second vector");
+    expectNear(YouKnow106Engine::portamentoSeconds(1.0f),
+               3072.0 * 0.0042, 1.0e-4,
+               "raw portamento code 255 misses the 12.9024 second vector");
+    for (int raw = 2; raw < 255; raw += 2)
+        expect(YouKnow106Engine::portamentoIncrement(raw / 255.0f)
+                   == YouKnow106Engine::portamentoIncrement((raw + 1) / 255.0f),
+               "paired portamento ADC codes select different coefficients at raw "
+                   + std::to_string(raw));
+}
+
+void testConverterQueueAndOutputReference()
+{
+    using Destination = YouKnow106Engine::ConverterDestination;
+    using Write = YouKnow106Engine::ConverterWrite;
+    constexpr std::array<Write, YouKnow106Engine::converterWritesPerPass> expected {{
+        { Destination::Resonance, -1 },
+        { Destination::CommonVca, -1 },
+        { Destination::Sub, -1 },
+        { Destination::Pitch, 0 },
+        { Destination::Pitch, 1 },
+        { Destination::Pitch, 2 },
+        { Destination::Pitch, 3 },
+        { Destination::Pitch, 4 },
+        { Destination::Pitch, 5 },
+        { Destination::Pwm, -1 },
+        { Destination::Vcf, 0 },
+        { Destination::VoiceVca, 0 },
+        { Destination::Vcf, 1 },
+        { Destination::VoiceVca, 1 },
+        { Destination::Vcf, 2 },
+        { Destination::VoiceVca, 2 },
+        { Destination::Vcf, 3 },
+        { Destination::VoiceVca, 3 },
+        { Destination::Vcf, 4 },
+        { Destination::VoiceVca, 4 },
+        { Destination::Vcf, 5 },
+        { Destination::VoiceVca, 5 },
+        { Destination::Noise, -1 }
+    }};
+    const auto& actual = YouKnow106Engine::converterWriteOrder();
+    for (std::size_t index = 0; index < expected.size(); ++index)
+        expect(actual[index].destination == expected[index].destination
+                   && actual[index].voice == expected[index].voice,
+               "B-2 converter write-order mismatch at ordinal "
+                   + std::to_string(index));
+    const auto resonanceWrites = std::count_if(
+        actual.begin(), actual.end(), [](const Write& write) {
+            return write.destination == Destination::Resonance
+                && write.voice == -1;
+        });
+    expect(resonanceWrites == 1,
+           "a converter pass does not contain exactly one shared resonance write");
+
+    const auto normalized = YouKnow106Engine::converterEventPhases(
+        YouKnow106Engine::ConverterTimingProfile::NormalizedServiceChart);
+    expect(normalized.front() == 0.0 && normalized.back() < 1.0,
+           "normalized converter profile does not fit inside one pass");
+    for (std::size_t index = 1; index < normalized.size(); ++index)
+        expect(normalized[index] > normalized[index - 1],
+               "normalized converter profile collapsed or reordered an event");
+    expect(normalized[3] != normalized[8],
+           "normalized profile phase-locks the first and sixth DCO writes");
+
+    const auto phaseZero = YouKnow106Engine::converterEventPhases(
+        YouKnow106Engine::ConverterTimingProfile::PhaseZeroDiagnostic);
+    expect(std::all_of(phaseZero.begin(), phaseZero.end(), [](double phase) {
+               return phase == 0.0;
+           }),
+           "phase-zero diagnostic profile contains an invented timestamp");
+
+    // The compatibility reference is chosen to make the newly explicit final
+    // boundary unity, preserving existing sessions while declaring -18 dBFS
+    // RMS as a product convention rather than an analogue property.
+    expectNear(YouKnow106Engine::outputReferenceGain(
+                   YouKnow106Engine::compatibilityOutputReferenceRmsVolts),
+               1.0, 1.0e-6,
+               "compatibility output reference does not preserve unity gain");
+    expectNear(YouKnow106Engine::outputReferenceGain(1.0f),
+               YouKnow106Engine::internalVoltsPerUnit
+                   * YouKnow106Engine::minus18DbfsAmplitude,
+               1.0e-7, "one-volt RMS output reference violates the boundary law");
+    const double lower = 0.25 * YouKnow106Engine::outputReferenceGain(1.0f);
+    const double doubled = 0.50 * YouKnow106Engine::outputReferenceGain(1.0f);
+    expectNear(20.0 * std::log10(doubled / lower), 6.020599913, 1.0e-7,
+               "doubling analogue output does not add 6.0206 dB at the boundary");
+    expectNear(YouKnow106Engine::outputReferenceGain(2.0f),
+               0.5 * YouKnow106Engine::outputReferenceGain(1.0f), 1.0e-7,
+               "doubling Vref does not halve only the final-boundary gain");
 }
 
 void testPanelLawsInvert()
@@ -568,6 +981,8 @@ void testPanelLawsInvert()
                   YouKnow106Engine::panelPositionForAttack, "attack");
         roundTrip(position, YouKnow106Engine::envelopeDecaySeconds,
                   YouKnow106Engine::panelPositionForDecay, "decay");
+        roundTrip(position, YouKnow106Engine::envelopeReleaseSeconds,
+                  YouKnow106Engine::panelPositionForRelease, "release");
         roundTrip(position, YouKnow106Engine::lfoDelaySeconds,
                   YouKnow106Engine::panelPositionForLfoDelay, "modulation delay");
 
@@ -582,10 +997,8 @@ void testPanelLawsInvert()
                    "modulation rate does not round trip through its displayed value");
     }
 
-    // Cutoff round trips only while the converter is still on its
-    // exponential law. Above the knee the converter saturates towards its
-    // measured ceiling, several counts crowd into each hertz, and the
-    // inverse stays on the law rather than pretending to invert the knee.
+    // Cutoff round trips only while the exponential result remains below the
+    // explicit 50 kHz product cap; all higher codes necessarily share it.
     for (float position = 0.0f; position <= 0.80f; position += 0.1f)
         roundTrip(position, [](float p) {
                       return YouKnow106Engine::vcfCutoffHz(
@@ -593,24 +1006,30 @@ void testPanelLawsInvert()
                   },
                   YouKnow106Engine::panelPositionForCutoff, "cutoff");
 
-    // The measured converter: still on the law at 22.6 kHz around 84% of the
-    // panel's count span, then saturating to a ceiling just above 50 kHz --
-    // the published specification's own figure, not the 24 kHz an earlier
-    // revision clamped at.
-    expectNear(YouKnow106Engine::vcfCutoffHz(13716.0f), 22600.0, 700.0,
-               "the cutoff knee point misses the measured converter");
+    const double uncappedAt13716 = YouKnow106Engine::vcfBaseFrequencyHz
+        * std::exp2(13716.0 / YouKnow106Engine::vcfCountsPerOctave);
+    expectNear(YouKnow106Engine::vcfCutoffHz(13716.0f), uncappedAt13716,
+               uncappedAt13716 * 2.0e-6,
+               "the cutoff safety policy introduced a pre-cap knee");
     const float ceilingHz = YouKnow106Engine::vcfCutoffHz(
         YouKnow106Engine::vcfPanelCounts(1.0f));
-    expect(ceilingHz > 50000.0f && ceilingHz < 52200.0f,
-           "the cutoff ceiling is not the measured converter top");
-    expect(YouKnow106Engine::vcfCutoffHz(16383.0f) >= ceilingHz,
-           "the accumulator ceiling reads below the panel's own top");
+    expectNear(ceilingHz, 50000.0, 1.0e-3,
+               "the panel top does not land on the named 50 kHz product cap");
+    expectNear(YouKnow106Engine::vcfCutoffHz(16383.0f), 50000.0, 1.0e-3,
+               "the accumulator top does not retain the 50 kHz product cap");
 
-    // Portamento's bottom detent is "off" rather than a time, so it round trips
-    // from just above it.
+    // Portamento's bottom detent is Off, and both raw-code pairing and 8.8-step
+    // projection create plateaus. Its inverse therefore returns a canonical
+    // code producing the same displayed time, not necessarily the original
+    // position inside that plateau.
     for (float position = 0.1f; position <= 1.0f; position += 0.15f)
-        roundTrip(position, YouKnow106Engine::portamentoSeconds,
-                  YouKnow106Engine::panelPositionForPortamento, "portamento");
+    {
+        const float seconds = YouKnow106Engine::portamentoSeconds(position);
+        expectNear(YouKnow106Engine::portamentoSeconds(
+                       YouKnow106Engine::panelPositionForPortamento(seconds)),
+                   seconds, 1.0e-6,
+                   "portamento does not round trip through its displayed value");
+    }
     expectNear(YouKnow106Engine::panelPositionForPortamento(0.0f), 0.0, 1.0e-6,
                "a glide time of zero does not read as switched off");
 
@@ -676,9 +1095,9 @@ void testChorusIsAtItsSettingFromTheFirstSample()
 {
     // A patch loaded with the effect switched on is not a player reaching for
     // the button: there is nothing to glide from. Measured on the wet path
-    // alone -- the line adds its output to the input, so subtracting the input
-    // back off leaves exactly what the effect contributed, with no note onset
-    // or modulation depth mixed into the reading.
+    // alone -- the line adds its output to dry at IC6, so subtracting IC6's
+    // amplified dry contribution leaves exactly what the effect contributed,
+    // with no note onset or modulation depth mixed into the reading.
     constexpr double sampleRate = 192000.0;
     Chorus chorus;
     chorus.prepare(sampleRate);
@@ -693,7 +1112,8 @@ void testChorusIsAtItsSettingFromTheFirstSample()
         float left = 0.0f;
         float right = 0.0f;
         chorus.process(input, ChorusMode::Two, 0.0f, left, right);
-        wet[static_cast<std::size_t>(index)] = left - input;
+        wet[static_cast<std::size_t>(index)] =
+            left - input * Chorus::dryMixGain;
     }
 
     const auto rms = [&](double fromSeconds, double toSeconds) {
@@ -714,7 +1134,7 @@ void testChorusIsAtItsSettingFromTheFirstSample()
                "the effect glided up to its setting instead of starting there");
 }
 
-void testBucketBrigadeLine()
+void testJuno60FallbackBucketBrigadeTiming()
 {
     // The part is 256 stages clocked in two phases, so its delay is
     // 128 / clock -- which is the datasheet's 12.8 ms at its 10 kHz minimum.
@@ -725,8 +1145,9 @@ void testBucketBrigadeLine()
     expectNear(Chorus::clockForDelaySeconds(Chorus::delaySecondsForClock(43210.0f)),
                43210.0, 1.0e-3, "delay and clock are not reciprocal");
 
-    // Measured behaviour: both modes sweep the same delay range and differ only
-    // in rate.
+    // Provisional JUNO-60 fallback: both modes sweep the same delay range and
+    // differ only in rate. These numbers are regression policy, not a claimed
+    // JUNO-106 measurement.
     const auto one = Chorus::settingsFor(ChorusMode::One);
     const auto two = Chorus::settingsFor(ChorusMode::Two);
     expectNear(one.rateHz, 0.513, 1.0e-4, "first mode rate");
@@ -749,30 +1170,56 @@ void testBucketBrigadeLine()
         expect(clockHz > 10.0e3 && clockHz < 200.0e3,
                "a sweep endpoint needs a clock outside the part's rated window");
     }
-    expectNear(Chorus::settingsFor(ChorusMode::Off).wetGain, 0.0, 1.0e-9,
+    const auto off = Chorus::settingsFor(ChorusMode::Off);
+    expectNear(off.wetGain, 0.0, 1.0e-9,
                "the wet path is not silent when the effect is switched out");
-    // Wet over dry is the ratio of the two summing resistors into the shared
-    // feedback, so the feedback value cancels and only 47/39 reaches the model.
-    expectNear(one.wetGain, 47.0 / 39.0, 1.0e-3, "line gain");
-    expectNear(20.0 * std::log10(one.wetGain), 1.62, 0.01,
-               "the wet path does not sit 1.62 dB above the dry");
+    expectNear(off.sweepSeconds, one.sweepSeconds, 1.0e-9,
+               "bypass stopped the modulation behind the wet mute");
+    expectNear(off.centreDelaySeconds, one.centreDelaySeconds, 1.0e-9,
+               "bypass moved the running delay line away from mode I");
+    // Wet over dry is the ratio of the two input resistors into IC6's shared
+    // 100 kOhm feedback. Keep both absolute gains as well as their ratio: the
+    // absolute factor belongs after the nonlinear BBD and cannot be folded
+    // into its input without changing the sound.
+    expectNear(Chorus::dryMixGain, 100.0 / 39.0, 1.0e-6,
+               "IC6 dry gain");
+    expectNear(Chorus::wetMixGain, 100.0 / 47.0, 1.0e-6,
+               "IC6 wet gain");
+    expectNear(one.wetGain, 39.0 / 47.0, 1.0e-3, "line gain");
+    expectNear(20.0 * std::log10(one.wetGain), -1.62, 0.01,
+               "the wet path does not sit 1.62 dB below the dry");
+    expectNear(Chorus::wetMuteTimeConstantSeconds, 0.005, 1.0e-9,
+               "the labelled product mute time constant changed");
+    expectNear(Chorus::wetMuteTimeConstantSeconds * std::log(9.0f),
+               0.010986, 1.0e-6,
+               "the mute's 10-90% duration is not its 5 ms exponential tau");
 
-    // Both buttons down. Each switch shunts its own resistor into the
-    // modulation oscillator's timing network, so closing both puts them in
-    // parallel and the conductances -- and with them the rate -- add. What this
-    // must not be is a synonym for II, which is what a three-way selector would
-    // have made it.
+    // Observe the dry law through the actual processor too. With the effect
+    // off, the wet return is muted but both BBDs keep running behind it.
+    {
+        Chorus chorus;
+        chorus.prepare(48000.0);
+        float left = 0.0f;
+        float right = 0.0f;
+        chorus.process(0.1f, ChorusMode::Off, 0.0f, left, right);
+        expectNear(left, 0.1 * Chorus::dryMixGain, 1.0e-6,
+                   "IC6 dry gain is absent from the rendered chorus output");
+        expectNear(right, left, 1.0e-9,
+                   "chorus bypass moved the dry signal off centre");
+    }
+
+    // The hardware interlock and its one enable plus one I/II control line
+    // cannot encode a fourth mode. Old sessions may still contain OneTwo, so
+    // that compatibility value has one deterministic canonical result: II.
     const auto both = Chorus::settingsFor(ChorusMode::OneTwo);
-    expectNear(both.rateHz, static_cast<double>(one.rateHz) + two.rateHz, 1.0e-4,
-               "I+II is not the two rates in parallel");
-    expect(both.rateHz > two.rateHz + 0.1f, "I+II is no faster than II alone");
-    // Depth is untouched: nothing in the delay path changes, only the speed it
-    // is swept at.
-    expectNear(both.sweepSeconds, one.sweepSeconds, 1.0e-9,
-               "I+II changed the sweep depth as well as the rate");
-    expectNear(both.centreDelaySeconds, one.centreDelaySeconds, 1.0e-9,
-               "I+II moved the centre delay");
-    expectNear(both.wetGain, one.wetGain, 1.0e-6, "I+II changed the line gain");
+    expectNear(both.rateHz, two.rateHz, 1.0e-9,
+               "legacy I+II did not canonicalise to II's rate");
+    expectNear(both.sweepSeconds, two.sweepSeconds, 1.0e-9,
+               "legacy I+II did not canonicalise to II's depth");
+    expectNear(both.centreDelaySeconds, two.centreDelaySeconds, 1.0e-9,
+               "legacy I+II did not canonicalise to II's centre delay");
+    expectNear(both.wetGain, two.wetGain, 1.0e-9,
+               "legacy I+II did not canonicalise to II's line gain");
 
     // And it has to be observable, not just tabulated: run the effect in each
     // mode and count how far the modulation oscillator actually travels.
@@ -791,11 +1238,14 @@ void testBucketBrigadeLine()
         }
         return travel;
     };
+    const double travelOne = phaseTravel(ChorusMode::One);
     const double travelTwo = phaseTravel(ChorusMode::Two);
     const double travelBoth = phaseTravel(ChorusMode::OneTwo);
-    expect(travelBoth > travelTwo * 1.4,
-           "the rendered I+II modulation is not measurably faster than II: "
-               + std::to_string(travelBoth) + " against " + std::to_string(travelTwo));
+    const double travelOff = phaseTravel(ChorusMode::Off);
+    expectNear(travelBoth, travelTwo, 1.0e-6,
+               "legacy I+II renders a different clock programme from II");
+    expectNear(travelOff, travelOne, 1.0e-6,
+               "the chorus oscillator stopped or changed speed in bypass");
 
     // The whole modulated range must stay inside the part's rated clock window,
     // otherwise the model would be running a part outside its specification.
@@ -822,6 +1272,399 @@ void testBucketBrigadeLine()
             difference += static_cast<double>(left - right) * (left - right);
     }
     expect(difference > 1.0, "the two delay lines are producing the same signal");
+}
+
+void testChorusNoiseComponents()
+{
+    constexpr float sampleRate = 48000.0f;
+    constexpr int renderLength = 16384;
+
+    // The existing independent per-line xorshift sources retain fixed seeds.
+    // Two fresh instances must therefore render bit-identically, including the
+    // asynchronous clock-edge sequence on which that noise is generated.
+    Chorus first;
+    Chorus second;
+    first.prepare(sampleRate);
+    second.prepare(sampleRate);
+    bool identical = true;
+    double independentEnergy = 0.0;
+    for (int index = 0; index < renderLength; ++index)
+    {
+        float firstLeft = 0.0f;
+        float firstRight = 0.0f;
+        float secondLeft = 0.0f;
+        float secondRight = 0.0f;
+        first.process(0.0f, ChorusMode::Two, 1.0f, firstLeft, firstRight);
+        second.process(0.0f, ChorusMode::Two, 1.0f, secondLeft, secondRight);
+        identical = identical && firstLeft == secondLeft
+                              && firstRight == secondRight;
+        independentEnergy += static_cast<double>(firstLeft) * firstLeft
+                           + static_cast<double>(firstRight) * firstRight;
+    }
+    expect(identical, "fixed chorus-noise seeds did not reproduce exactly");
+    expect(independentEnergy > 0.0,
+           "the preserved independent wet-line component is silent");
+
+    // Explicit zeroes for every new component are the production default.
+    // Keep this as an exact comparison so merely splitting the architecture
+    // cannot alter compatibility renders through an extra add or multiply.
+    Chorus explicitZero;
+    Chorus implicitZero;
+    explicitZero.prepare(sampleRate);
+    implicitZero.prepare(sampleRate);
+    YouKnow106TestAccess::configureOptionalChorusNoise(
+        explicitZero, 0.0f, -0.75f, 0.0f, 60.0f, 0.0f, 2.0f);
+    bool zeroProfileIsTransparent = true;
+    for (int index = 0; index < 4096; ++index)
+    {
+        const float input = static_cast<float>(
+            0.1 * std::sin(2.0 * pi * 173.0 * index / sampleRate));
+        float explicitLeft = 0.0f;
+        float explicitRight = 0.0f;
+        float implicitLeft = 0.0f;
+        float implicitRight = 0.0f;
+        explicitZero.process(input, ChorusMode::One, 1.0f,
+                             explicitLeft, explicitRight);
+        implicitZero.process(input, ChorusMode::One, 1.0f,
+                             implicitLeft, implicitRight);
+        zeroProfileIsTransparent = zeroProfileIsTransparent
+            && explicitLeft == implicitLeft && explicitRight == implicitRight;
+    }
+    expect(zeroProfileIsTransparent,
+           "disabled optional chorus-noise components changed the render");
+
+    // A single master still defeats independent, common, hum and clock-spur
+    // hypotheses together.  The non-zero values below are synthetic fixtures,
+    // explicitly not hardware calibration.
+    Chorus masterMuted;
+    masterMuted.prepare(sampleRate);
+    YouKnow106TestAccess::configureOptionalChorusNoise(
+        masterMuted, 0.01f, 0.4f, 0.01f, 50.0f, 0.01f, 1.0f);
+    bool masterSilencesEverything = true;
+    for (int index = 0; index < 2048; ++index)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        masterMuted.process(0.0f, ChorusMode::Two, 0.0f, left, right);
+        masterSilencesEverything = masterSilencesEverything
+            && left == 0.0f && right == 0.0f;
+    }
+    expect(masterSilencesEverything,
+           "noiseScale no longer mutes every declared chorus-noise component");
+
+    // The common layer is built from one common and one orthogonal seeded
+    // process. rho=+1 duplicates channels exactly; rho=-1 changes only sign.
+    constexpr std::size_t syntheticLength = 2048;
+    std::vector<float> positiveA(syntheticLength);
+    std::vector<float> positiveB(syntheticLength);
+    std::uint32_t commonOne = 0xd1b54a35u;
+    std::uint32_t orthogonalOne = 0x94d049bbu;
+    std::uint32_t commonReplay = commonOne;
+    std::uint32_t orthogonalReplay = orthogonalOne;
+    bool replayedExactly = true;
+    bool duplicatedExactly = true;
+    for (std::size_t index = 0; index < syntheticLength; ++index)
+    {
+        const auto sample = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonOne, orthogonalOne, 1.0f);
+        const auto replay = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonReplay, orthogonalReplay, 1.0f);
+        positiveA[index] = sample[0];
+        positiveB[index] = sample[1];
+        replayedExactly = replayedExactly
+            && sample[0] == replay[0] && sample[1] == replay[1];
+        duplicatedExactly = duplicatedExactly && sample[0] == sample[1];
+    }
+    expect(replayedExactly,
+           "the synthetic common component did not replay from fixed seeds");
+    expect(duplicatedExactly,
+           "rho=+1 did not duplicate the synthetic common component");
+
+    std::uint32_t commonNegative = 0xd1b54a35u;
+    std::uint32_t orthogonalNegative = 0x94d049bbu;
+    bool invertedExactly = true;
+    for (std::size_t index = 0; index < syntheticLength; ++index)
+    {
+        const auto sample = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonNegative, orthogonalNegative, -1.0f);
+        invertedExactly = invertedExactly && sample[1] == -sample[0];
+    }
+    expect(invertedExactly,
+           "rho=-1 did not invert the synthetic common component");
+
+    // Coherence is averaged over independent DFT blocks, rather than using a
+    // single-block identity that would read one for any two non-zero vectors.
+    constexpr int blockLength = 256;
+    constexpr int blockCount = 8;
+    constexpr int coherenceBin = 23;
+    double autoA = 0.0;
+    double autoB = 0.0;
+    std::complex<double> cross {};
+    for (int block = 0; block < blockCount; ++block)
+    {
+        std::complex<double> spectrumA {};
+        std::complex<double> spectrumB {};
+        for (int index = 0; index < blockLength; ++index)
+        {
+            const double angle = -2.0 * pi * coherenceBin * index / blockLength;
+            const auto rotation = std::exp(std::complex<double>(0.0, angle));
+            const auto offset = static_cast<std::size_t>(block * blockLength + index);
+            spectrumA += static_cast<double>(positiveA[offset]) * rotation;
+            spectrumB += static_cast<double>(positiveB[offset]) * rotation;
+        }
+        autoA += std::norm(spectrumA);
+        autoB += std::norm(spectrumB);
+        cross += spectrumA * std::conj(spectrumB);
+    }
+    const double coherence = std::norm(cross) / (autoA * autoB);
+    expectNear(coherence, 1.0, 1.0e-12,
+               "duplicated synthetic channels do not have coherence one");
+
+    // Establish the A/B cross-spectrum convention explicitly.  Swapping the
+    // line labels exchanges their individual spectra and conjugates A*conj(B).
+    std::uint32_t commonMixed = 0x243f6a89u;
+    std::uint32_t orthogonalMixed = 0xb7e15163u;
+    std::vector<float> mixedA(4096);
+    std::vector<float> mixedB(4096);
+    for (std::size_t index = 0; index < mixedA.size(); ++index)
+    {
+        const auto sample = YouKnow106TestAccess::correlatedChorusNoiseStep(
+            commonMixed, orthogonalMixed, 0.35f);
+        mixedA[index] = sample[0];
+        mixedB[index] = sample[1];
+    }
+    for (const int bin : { 19, 113, 509 })
+    {
+        std::complex<double> spectrumA {};
+        std::complex<double> spectrumB {};
+        for (std::size_t index = 0; index < mixedA.size(); ++index)
+        {
+            const double angle = -2.0 * pi * bin * index / mixedA.size();
+            const auto rotation = std::exp(std::complex<double>(0.0, angle));
+            spectrumA += static_cast<double>(mixedA[index]) * rotation;
+            spectrumB += static_cast<double>(mixedB[index]) * rotation;
+        }
+        const auto originalCross = spectrumA * std::conj(spectrumB);
+        const auto swappedCross = spectrumB * std::conj(spectrumA);
+        const double originalPowerA = std::norm(spectrumA);
+        const double originalPowerB = std::norm(spectrumB);
+        const double swappedPowerA = std::norm(spectrumB);
+        const double swappedPowerB = std::norm(spectrumA);
+        expectNear(swappedPowerA, originalPowerB, 0.0,
+                   "line swap changed B's individual spectrum");
+        expectNear(swappedPowerB, originalPowerA, 0.0,
+                   "line swap changed A's individual spectrum");
+        expectNear(swappedCross.real(), std::conj(originalCross).real(), 1.0e-9,
+                   "line swap changed cross-spectrum magnitude");
+        expectNear(swappedCross.imag(), std::conj(originalCross).imag(), 1.0e-9,
+                   "line swap did not conjugate the cross-spectrum");
+    }
+
+    // Hum and clock feedthrough are deterministic oscillators even though
+    // their production amplitudes are zero and their frequencies are unknown.
+    double tonePhase = 0.0;
+    double replayPhase = 0.0;
+    bool toneReplayed = true;
+    double toneEnergy = 0.0;
+    for (int index = 0; index < 2048; ++index)
+    {
+        const float tone = YouKnow106TestAccess::chorusToneStep(
+            tonePhase, 997.0f, sampleRate);
+        const float replay = YouKnow106TestAccess::chorusToneStep(
+            replayPhase, 997.0f, sampleRate);
+        toneReplayed = toneReplayed && tone == replay;
+        toneEnergy += static_cast<double>(tone) * tone;
+    }
+    expect(toneReplayed && toneEnergy > 100.0,
+           "the deterministic hum/clock-spur oscillator is not reproducible");
+}
+
+void testChorusBypassStateAndWetMuteTiming()
+{
+    constexpr float sampleRate = 48000.0f;
+    constexpr int excitationLength = 6000;
+
+    Chorus alwaysOn;
+    Chorus bypassedForComparison;
+    Chorus bypassedNaturally;
+    alwaysOn.prepare(sampleRate);
+    bypassedForComparison.prepare(sampleRate);
+    bypassedNaturally.prepare(sampleRate);
+
+    // Off uses the same running mode-I clock programme behind its wet shunts.
+    // Feed all three instances identically while only one return is audible.
+    for (int index = 0; index < excitationLength; ++index)
+    {
+        const float input = static_cast<float>(
+            0.2 * std::sin(2.0 * pi * 311.0 * index / sampleRate));
+        float left = 0.0f;
+        float right = 0.0f;
+        alwaysOn.process(input, ChorusMode::One, 0.0f, left, right);
+        bypassedForComparison.process(
+            input, ChorusMode::Off, 0.0f, left, right);
+        bypassedNaturally.process(input, ChorusMode::Off, 0.0f, left, right);
+    }
+
+    // Remove only the mute-gain difference through the test seam.  Exact
+    // subsequent equality proves bypass did not reset or freeze either BBD,
+    // its support filters, or the modulation oscillator.
+    YouKnow106TestAccess::setChorusWetGain(
+        bypassedForComparison,
+        YouKnow106TestAccess::chorusWetGain(alwaysOn));
+    bool stateKeptRunning = true;
+    double resumedEnergy = 0.0;
+    for (int index = 0; index < 2048; ++index)
+    {
+        float onLeft = 0.0f;
+        float onRight = 0.0f;
+        float bypassedLeft = 0.0f;
+        float bypassedRight = 0.0f;
+        alwaysOn.process(0.0f, ChorusMode::One, 0.0f, onLeft, onRight);
+        bypassedForComparison.process(
+            0.0f, ChorusMode::One, 0.0f, bypassedLeft, bypassedRight);
+        stateKeptRunning = stateKeptRunning
+            && onLeft == bypassedLeft && onRight == bypassedRight;
+        resumedEnergy += static_cast<double>(bypassedLeft) * bypassedLeft
+                       + static_cast<double>(bypassedRight) * bypassedRight;
+    }
+    expect(stateKeptRunning,
+           "chorus Off froze or reset state behind the wet mute");
+    expect(resumedEnergy > 1.0e-8,
+           "the evolved BBD state contained no resumable signal");
+
+    // Exercise the actual unmute too: an evolved, previously bypassed line has
+    // a tail as its gain rises, while a fresh line fed silence has none.
+    Chorus fresh;
+    fresh.prepare(sampleRate);
+    double naturalEnergy = 0.0;
+    double freshEnergy = 0.0;
+    for (int index = 0; index < 2048; ++index)
+    {
+        float naturalLeft = 0.0f;
+        float naturalRight = 0.0f;
+        float freshLeft = 0.0f;
+        float freshRight = 0.0f;
+        bypassedNaturally.process(
+            0.0f, ChorusMode::One, 0.0f, naturalLeft, naturalRight);
+        fresh.process(0.0f, ChorusMode::One, 0.0f, freshLeft, freshRight);
+        naturalEnergy += static_cast<double>(naturalLeft) * naturalLeft
+                       + static_cast<double>(naturalRight) * naturalRight;
+        freshEnergy += static_cast<double>(freshLeft) * freshLeft
+                     + static_cast<double>(freshRight) * freshRight;
+    }
+    expect(naturalEnergy > freshEnergy + 1.0e-8,
+           "re-enabling chorus restarted empty BBDs instead of evolved state");
+
+    const auto tenToNinetySeconds = [](float rate) {
+        Chorus chorus;
+        chorus.prepare(rate);
+        float left = 0.0f;
+        float right = 0.0f;
+        // Prime in Off so switching on is a player action and therefore glides.
+        chorus.process(0.0f, ChorusMode::Off, 0.0f, left, right);
+        const float target = Chorus::settingsFor(ChorusMode::One).wetGain;
+        int tenPercent = -1;
+        int ninetyPercent = -1;
+        for (int index = 0; index < static_cast<int>(rate); ++index)
+        {
+            chorus.process(0.0f, ChorusMode::One, 0.0f, left, right);
+            const float fraction = YouKnow106TestAccess::chorusWetGain(chorus)
+                                 / target;
+            if (tenPercent < 0 && fraction >= 0.1f)
+                tenPercent = index;
+            if (ninetyPercent < 0 && fraction >= 0.9f)
+            {
+                ninetyPercent = index;
+                break;
+            }
+        }
+        return static_cast<double>(ninetyPercent - tenPercent) / rate;
+    };
+
+    const double at48k = tenToNinetySeconds(48000.0f);
+    const double at192k = tenToNinetySeconds(192000.0f);
+    const double expected = Chorus::wetMuteTimeConstantSeconds * std::log(9.0);
+    expectNear(at48k, expected, 2.0 / 48000.0,
+               "wet-mute 10-90% time changed at 48 kHz");
+    expectNear(at192k, expected, 2.0 / 192000.0,
+               "wet-mute 10-90% time changed at 192 kHz");
+    expectNear(at48k, at192k, 2.0 / 48000.0,
+               "wet-mute timing is not sample-rate invariant");
+}
+
+void testBucketBrigadeDatasheetAnchors()
+{
+    // Measure the static line transfer independently of the delay and support
+    // filters. The two amplitudes are the MN3009 datasheet's own distortion
+    // conditions, converted through the model's 2.6 V-per-unit node scale.
+    const auto thdAt = [](double rmsVolts) {
+        constexpr int samples = 32768;
+        constexpr int cycles = 37;
+        constexpr int lastHarmonic = 63;
+        constexpr double voltsPerUnit = 2.6;
+        const double peak = std::sqrt(2.0) * rmsVolts / voltsPerUnit;
+
+        std::vector<float> output(samples);
+        for (int index = 0; index < samples; ++index)
+        {
+            const double phase = 2.0 * pi * cycles * index / samples;
+            output[static_cast<std::size_t>(index)] =
+                YouKnow106TestAccess::bbdTransfer(
+                    static_cast<float>(peak * std::sin(phase)));
+        }
+
+        double fundamental = 0.0;
+        double distortionSquared = 0.0;
+        for (int harmonic = 1; harmonic <= lastHarmonic; ++harmonic)
+        {
+            std::complex<double> accumulator {};
+            for (int index = 0; index < samples; ++index)
+            {
+                const double phase = 2.0 * pi * cycles * harmonic * index / samples;
+                accumulator += static_cast<double>(
+                    output[static_cast<std::size_t>(index)])
+                    * std::exp(std::complex<double>(0.0, -phase));
+            }
+            const double amplitude = 2.0 * std::abs(accumulator) / samples;
+            if (harmonic == 1)
+                fundamental = amplitude;
+            else
+                distortionSquared += amplitude * amplitude;
+        }
+        return std::sqrt(distortionSquared) / fundamental;
+    };
+
+    expectNear(thdAt(0.78), 0.003, 2.0e-4,
+               "BBD distortion at the 0.78 Vrms datasheet condition");
+    expectNear(thdAt(1.5), 0.025, 1.0e-3,
+               "BBD distortion at the 1.5 Vrms input-swing condition");
+
+    // The datasheet's -3 dB response at 12 kHz / 40 kHz describes the complete
+    // held-output device. The rendered line already supplies the rectangular
+    // zero-order hold, whose aperture contributes sinc(f/f_clock), so the
+    // charge-transfer pole must supply only the residual loss. Measure that
+    // pole as it is actually stepped and combine it with the independent ZOH
+    // aperture; applying -3 dB to both mechanisms would fail at about -4.33 dB.
+    constexpr double clockRate = 40000.0;
+    constexpr double frequency = 12000.0;
+    constexpr int settle = 2048;
+    constexpr int window = 10000; // exactly 3000 cycles
+    float transferState = 0.0f;
+    std::complex<double> accumulator {};
+    for (int index = 0; index < settle + window; ++index)
+    {
+        const double phase = 2.0 * pi * frequency * index / clockRate;
+        const float output = YouKnow106TestAccess::transferLossStep(
+            transferState, static_cast<float>(std::sin(phase)));
+        if (index >= settle)
+            accumulator += static_cast<double>(output)
+                         * std::exp(std::complex<double>(0.0, -phase));
+    }
+    const double transferGain = 2.0 * std::abs(accumulator) / window;
+    const double ratio = frequency / clockRate;
+    const double heldAperture = std::abs(std::sin(pi * ratio) / (pi * ratio));
+    expectNear(20.0 * std::log10(transferGain * heldAperture), -3.0, 0.01,
+               "charge-transfer loss double-counts the held-output aperture");
 }
 
 // A filter coefficient is only right in company with the update it is used
@@ -909,6 +1752,25 @@ void testSupportFilterCornersLandWhereAsked()
         return 2.0 * std::abs(accumulator) / window;
     };
 
+    const auto highPassGainAt = [](double frequency, float g, float sampleRate) {
+        constexpr int cycles = 64;
+        constexpr int settle = 4096;
+        const int window = static_cast<int>(
+            std::llround(cycles * static_cast<double>(sampleRate) / frequency));
+        float state = 0.0f;
+        std::complex<double> accumulator {};
+        for (int index = 0; index < settle + window; ++index)
+        {
+            const double phase = 2.0 * pi * frequency * index / sampleRate;
+            const float input = static_cast<float>(std::sin(phase));
+            const float low = Chorus::supportFilterStep(state, input, g);
+            if (index >= settle)
+                accumulator += static_cast<double>(input - low)
+                             * std::exp(std::complex<double>(0.0, -phase));
+        }
+        return 2.0 * std::abs(accumulator) / window;
+    };
+
     // A lowpass passes direct current untouched, whatever its corner. Checking
     // it separately means the corner search below can be normalised against an
     // exact figure rather than another measurement.
@@ -919,6 +1781,24 @@ void testSupportFilterCornersLandWhereAsked()
         for (int index = 0; index < 8192; ++index)
             settled = Chorus::supportFilterStep(state, 1.0f, g);
         expectNear(settled, 1.0, 1.0e-5, "the support filter does not pass DC");
+    }
+
+    // The two newly explicit single-pole networks are checked through the
+    // coefficients supportChainFor() actually installs, so accidentally
+    // leaving either field at its default cannot hide behind onePoleG's own
+    // unit checks. C44/R120 is a wet-only high-pass; the BBD tap-summing node
+    // is a low-pass under the documented ideal-source approximation.
+    {
+        const auto chain = Chorus::supportChainFor(48000.0f);
+        expectNear(highPassGainAt(15.9155, chain.inputCouplingG, 48000.0f),
+                   0.70710678, 0.005,
+                   "the wet coupling high-pass is not at C44/R120's corner");
+    }
+    {
+        const auto chain = Chorus::supportChainFor(192000.0f);
+        expectNear(gainAt(23461.38, chain.idealSourceTapPoleG, 192000.0f),
+                   0.70710678, 0.005,
+                   "the BBD tap-summing pole is not at its nominal corner");
     }
 
     const auto measureCorner = [&gainAt](float requested, float sampleRate) {
@@ -1076,14 +1956,19 @@ int main()
     testCascadeSurvivesAdversarialControl();
     testNoteTimerLaw();
     testCutoffControlLaw();
-    testResonanceLaw();
+    testStoredControlDigitalVectors();
+    testVoicedResonanceCompatibilityProfile();
     testEnvelopeAndAmplifierLaws();
     testPulseWidthAndHighPassLaws();
     testModulationAndGlideLaws();
+    testConverterQueueAndOutputReference();
     testPanelLawsInvert();
     testComparatorEdgesSitOnOneThreshold();
     testChorusIsAtItsSettingFromTheFirstSample();
-    testBucketBrigadeLine();
+    testJuno60FallbackBucketBrigadeTiming();
+    testChorusNoiseComponents();
+    testChorusBypassStateAndWetMuteTiming();
+    testBucketBrigadeDatasheetAnchors();
     testSupportFilterCornersLandWhereAsked();
     testHighPassReachesTheSummedSignal();
     testCorrectionResidualsVanishAtTheEdges();

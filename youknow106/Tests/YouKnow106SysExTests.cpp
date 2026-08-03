@@ -187,8 +187,9 @@ void testMalformedRangeBitsResolveRatherThanReject()
     }
 }
 
-// Every patch the panel can hold has to survive the trip out and back, except
-// the one setting the format cannot express.
+// Every patch the panel can hold has to preserve its effective 7-bit state on
+// the trip out and back, except the one categorical setting the format cannot
+// express.
 void testPatchesRoundTripThroughTheToneBytes()
 {
     const auto same = [](const Patch& a, const Patch& b) {
@@ -456,9 +457,9 @@ void testFactoryBankIsWellFormed()
                where + " has neither a sound source nor a singing filter");
 
         // Every entry must survive a trip through a real patch message, which
-        // is what makes the bank sendable to hardware. I+II is the documented
-        // exception, and an entry using it has to say so rather than surprise
-        // someone mid-transfer.
+        // is what makes the bank sendable to hardware. Continuous decimals are
+        // compared in their effective 7-bit representation, not as off-grid
+        // source-code floats; an unencodable categorical state is still lossy.
         std::array<std::uint8_t, patchMessageBytes> message {};
         const auto written =
             writePatchMessage(patch, 0, message.data(), message.size());
@@ -469,8 +470,12 @@ void testFactoryBankIsWellFormed()
         expect(readPatchMessage(message.data(), written, decoded, channel),
                where + " produced a message its own reader refuses");
         if (survivesPatchMemory(patch))
+        {
+            expect(bytesOf(decoded) == bytesOf(patch),
+                   where + " changed its effective 18-byte patch state");
             expect(decoded.chorus == patch.chorus,
-                   where + " lost its chorus setting in a lossless transfer");
+                   where + " lost its categorical chorus setting");
+        }
         else
             expect(patch.chorus == ChorusMode::OneTwo,
                    where + " was reported lossy for a reason other than I+II");

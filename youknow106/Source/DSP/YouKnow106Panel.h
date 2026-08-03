@@ -25,8 +25,9 @@ inline constexpr auto portamento   = "portamento";
 inline constexpr auto legacyKeyMode = "keyMode";
 inline constexpr auto legacyChorus  = "chorus";
 
-// The two assign-mode buttons. Both down selects unison; there is no third
-// button, and no single "key mode" parameter, because the panel has neither.
+// The two momentary assign-mode contacts, represented by their firmware-latched
+// lamps. Both lit selects unison; neither lit is not a stable hardware state.
+// There is no third button or single "key mode" parameter on the panel.
 inline constexpr auto poly1        = "poly1";
 inline constexpr auto poly2        = "poly2";
 inline constexpr auto lfoRate      = "lfoRate";
@@ -52,13 +53,14 @@ inline constexpr auto attack       = "attack";
 inline constexpr auto decay        = "decay";
 inline constexpr auto sustain      = "sustain";
 inline constexpr auto release      = "release";
-// The two chorus buttons. Neither down is off; both down is the I+II setting.
+// The two interlocked chorus buttons. Neither down is off; only one can latch.
 inline constexpr auto chorusI      = "chorusI";
 inline constexpr auto chorusII     = "chorusII";
 
 // Controls the modelled instrument does not have. They sit in their own strip
-// below the panel so the panel itself stays honest, and each defaults to the
-// value that reproduces hardware behaviour.
+// below the panel so the panel itself stays honest. Their defaults preserve
+// the base compatibility model; only explicitly documented structural defaults
+// should be read as hardware claims.
 inline constexpr auto transpose    = "transpose";
 inline constexpr auto masterTune   = "masterTune";
 inline constexpr auto velocity     = "velocity";
@@ -123,7 +125,7 @@ inline constexpr float stackGap = 6.0f;
 enum class ControlKind
 {
     Slider,  // vertical travel
-    Toggle,  // one independent latching button
+    Toggle,  // a two-state button/lamp; pair interaction is defined by its section
     Radio,   // one button of a mutually exclusive group
     Steps    // a slider with named detents
 };

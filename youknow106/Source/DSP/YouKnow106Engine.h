@@ -21,14 +21,10 @@ enum class EnvPolarity { Normal, Inverted };
 enum class VcaMode { Envelope, Gate };
 enum class KeyMode { Poly1, Poly2, Unison };
 
-// The assign mode the two latching POLY buttons select. They are independent
-// switches, not a three-way selector, and holding both down is how the
-// instrument is put into unison -- there is no third button for it.
-//
-// With neither down the key assigner still has to put a note somewhere, so it
-// falls back to rotation. That combination is not reachable on the hardware,
-// whose buttons are interlocked so one is always lit; it is reachable here
-// because the panel exposes the two switches independently.
+// The assign mode latched by the two momentary POLY buttons. A single press
+// selects that mode; pressing both selects Solo Unison. Firmware never leaves
+// both lamps off. `false, false` is accepted only as a compatibility input and
+// canonicalises to the power-on Poly 1 state.
 [[nodiscard]] constexpr KeyMode keyModeFor(bool poly1, bool poly2) noexcept
 {
     if (poly1 && poly2)
@@ -104,10 +100,13 @@ struct EngineParameters
     float volume { 0.80f };
 
     // --- Controls the modelled hardware does not have ----------------------
-    // Each defaults to the value that reproduces hardware behaviour exactly,
-    // so the default patch is a hardware-faithful patch.
+    // Defaults preserve the base compatibility model. Velocity zero, Unit
+    // Character zero and six voices are structurally hardware-aligned; the
+    // unmeasured chorus-noise level remains a voiced compatibility value.
     float velocityDepth { 0.0f };  // The hardware ignores MIDI velocity.
-    float calibration { 0.35f };   // Per-voice analogue component tolerance.
+    // Zero is the calibrated nominal. Non-zero amounts deliberately add the
+    // project's deterministic, still-voiced component-spread profile.
+    float calibration { 0.0f };    // Exposed to the host as Unit Character.
     float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
     int polyphony { 6 };           // 6 is the hardware voice count.
 };
@@ -124,6 +123,9 @@ public:
     void setParameters(const EngineParameters& parameters);
     void noteOn(int midiNote, float velocity);
     void noteOff(int midiNote);
+    // Re-pressing the selected hardware POLY button leaves the visible mode
+    // unchanged but still gates, clears and rescans all held assignments.
+    void reassertKeyMode() noexcept;
     // Releases every sounding key through the normal envelope path, as a
     // controller asking for all notes off means. `allNotesOff` is the hard
     // stop, for all-sound-off and for panic.
@@ -185,20 +187,34 @@ public:
     static constexpr float vcfDacCountStep = 4.0f;
     [[nodiscard]] static float vcfCutoffHz(float counts) noexcept;
     [[nodiscard]] static float vcfPanelCounts(float panelPosition) noexcept;
-    // Resonance feedback factor. k = 4 is the four-pole cascade's oscillation
-    // threshold and is reached at 90% of the panel travel.
-    [[nodiscard]] static float vcfFeedback(float panelPosition) noexcept;
-    // Input gain the resonance-compensation path adds. The hardware boosts the
-    // signal entering the filter as resonance rises, which is why a high-Q
-    // patch drives the transconductor nonlinearity harder rather than thinning.
-    [[nodiscard]] static float vcfResonanceCompensation(float feedback) noexcept;
-    // Frequency trim applied as regeneration rises. A four-pole transconductor
-    // cascade oscillates below its own small-signal corner, because the large
-    // limit-cycle amplitude compresses the differential pairs and lowers their
-    // effective transconductance. The instrument's service procedure has a
-    // per-voice trimmer for exactly this, set so the oscillation lands on the
-    // published pitch; this is that trimmer.
-    [[nodiscard]] static float vcfResonanceFrequencyTrim(float feedback) noexcept;
+
+    // The firmware-verified resonance path ends at the shared 12-bit DAC
+    // code. Everything from that code to loop gain, input compensation and
+    // oscillation-frequency correction is kept together here as one named,
+    // replaceable sound-design profile. Its constants preserve YouKnow106's
+    // established sound; they are not measurements or calibrated JUNO-106
+    // transfer anchors.
+    struct VoicedResonanceCompatibilityProfile
+    {
+        static constexpr float loopDividerRatio = 100000.0f / 1500.0f;
+        static constexpr float loopHeadroomVolts =
+            2.0f * 0.026f * loopDividerRatio;
+        static constexpr float nominalOscillationFeedback = 4.0f;
+        static constexpr float nominalOscillationTravel = 0.9f;
+        static constexpr float maximumFeedback = 4.19f;
+        static constexpr float inputCompensationPerFeedback = 0.2296f;
+        static constexpr float frequencyTrimAmount = 0.045f;
+
+        [[nodiscard]] static float loopGain(float panelPosition) noexcept;
+        [[nodiscard]] static float inputCompensation(float feedback) noexcept;
+        [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
+    };
+
+    // Complete default-profile cutoff after the compatibility profile's
+    // frequency correction. The explicit product safety cap applies after
+    // every correction so no composition can exceed the declared boundary.
+    [[nodiscard]] static float vcfEffectiveCutoffHz(float counts,
+                                                    float feedback) noexcept;
 
     [[nodiscard]] static float envelopeAttackSeconds(float panelPosition) noexcept;
     [[nodiscard]] static float envelopeDecaySeconds(float panelPosition) noexcept;
@@ -207,31 +223,114 @@ public:
     [[nodiscard]] static float lfoDelaySeconds(float panelPosition) noexcept;
     [[nodiscard]] static float portamentoSeconds(float panelPosition) noexcept;
 
+    // Hash-matched B-2 coefficient laws. These functions reproduce the
+    // observable 0..127 behaviour without embedding the ROM or a coefficient
+    // table dump in the project.
+    [[nodiscard]] static std::uint16_t envelopeAttackIncrement(
+        float panelPosition) noexcept;
+    [[nodiscard]] static std::uint16_t envelopeDecayReleaseMultiplier(
+        float panelPosition) noexcept;
+    [[nodiscard]] static std::uint16_t lfoRateIncrement(
+        float panelPosition) noexcept;
+    [[nodiscard]] static std::uint16_t lfoDelayFadeIncrement(
+        float panelPosition) noexcept;
+    [[nodiscard]] static std::uint8_t portamentoIncrement(
+        float panelPosition) noexcept;
+
+    enum class ConverterDestination : std::uint8_t
+    {
+        Resonance, CommonVca, Sub, Pitch, Pwm, Vcf, VoiceVca, Noise
+    };
+    struct ConverterWrite
+    {
+        ConverterDestination destination;
+        int voice; // -1 for a shared destination, otherwise 0..5.
+    };
+    static constexpr std::size_t converterWritesPerPass = 23;
+    [[nodiscard]] static const std::array<ConverterWrite,
+                                          converterWritesPerPass>&
+        converterWriteOrder() noexcept;
+    enum class ConverterTimingProfile : std::uint8_t
+    {
+        NormalizedServiceChart,
+        PhaseZeroDiagnostic
+    };
+    // NormalizedServiceChart is an explicit compatibility/product profile: it
+    // preserves the chart's sequential writes across one pass without claiming
+    // exact physical timestamps. PhaseZeroDiagnostic is the minimal-evidence
+    // comparison in which only ordinal order remains.
+    [[nodiscard]] static std::array<double, converterWritesPerPass>
+        converterEventPhases(ConverterTimingProfile profile) noexcept;
+
+    // Output calibration is a product convention, not a JUNO-106 voltage.
+    // One internal unit is still the established 2.6 V model coordinate used
+    // to drive the chorus. Choosing this provisional reference makes the new
+    // -18 dBFS RMS boundary exactly unity and therefore preserves sessions.
+    static constexpr float internalVoltsPerUnit = 2.6f;
+    static constexpr float minus18DbfsAmplitude = 0.125892541f;
+    static constexpr float compatibilityOutputReferenceRmsVolts =
+        internalVoltsPerUnit * minus18DbfsAmplitude;
+    [[nodiscard]] static float outputReferenceGain(float referenceRmsVolts) noexcept;
+
+    // In the supplied hash-matched B-2 image, stored continuous controls are
+    // seven-bit bytes: b<<7 in the 14-bit working domain, followed by b<<5 at
+    // the physical 12-bit converter after two low bits are discarded.
+    static constexpr std::uint16_t envelopePeak = 0x3fffu;
+    [[nodiscard]] static std::uint16_t storedControlAlignedWord(
+        float panelPosition) noexcept;
+    [[nodiscard]] static std::uint16_t storedControlDacCode(
+        float panelPosition) noexcept;
+    [[nodiscard]] static std::uint16_t envelopeAttackLevel(
+        std::uint16_t level, std::uint16_t increment) noexcept;
+    [[nodiscard]] static std::uint16_t envelopeDecayLevel(
+        std::uint16_t level, std::uint16_t sustain,
+        std::uint16_t multiplier) noexcept;
+    [[nodiscard]] static std::uint16_t envelopeReleaseLevel(
+        std::uint16_t level, std::uint16_t multiplier) noexcept;
+
     // Inverses of the laws above. The panel travel is what the plug-in stores,
     // but what it *displays* is the value the circuit produces, so a host
     // letting someone type "1.00 kHz" needs a way back to the travel that
     // produces it. Without these the typed number would be read as travel.
     [[nodiscard]] static float panelPositionForAttack(float seconds) noexcept;
     [[nodiscard]] static float panelPositionForDecay(float seconds) noexcept;
+    [[nodiscard]] static float panelPositionForRelease(float seconds) noexcept;
     [[nodiscard]] static float panelPositionForLfoRate(float hertz) noexcept;
     [[nodiscard]] static float panelPositionForLfoDelay(float seconds) noexcept;
     [[nodiscard]] static float panelPositionForPortamento(float secondsPerOctave) noexcept;
     [[nodiscard]] static float panelPositionForCutoff(float hertz) noexcept;
     // Comparator threshold in volts against the modelled 12 Vpp ramp, and the
-    // duty cycle it produces. The hardware cannot reach 0% or 100%.
+    // duty cycle it produces. Enabled PWM cannot reach 0% or 100%; the pulse-
+    // off state drives the control to -0.8 V and pins the comparator high.
     [[nodiscard]] static float pwmControlVolts(float depth) noexcept;
     [[nodiscard]] static float pwmDutyCycle(float controlVolts) noexcept;
-    // The ramp's rising segment: 0..1 across the rise, -1..+1 out, at the
-    // modelled curvature. The reset that follows it is a straight fall back to
-    // the negative rail over the remainder of the cycle.
+    // The ramp's constant-current rising segment: 0..1 across the rise and
+    // -1..+1 out. The reset that follows it is a straight fall back to the
+    // negative rail over the remainder of the cycle.
     [[nodiscard]] static float rampSegmentVoltage(float risePosition) noexcept;
     // Comparator edge positions within a cycle, as fractions of the period.
     [[nodiscard]] static float pulseRisePhase(float duty,
                                               float resetFraction) noexcept;
     [[nodiscard]] static float pulseFallPhase(float duty,
                                               float resetFraction) noexcept;
-    // Output amplifier control law.
-    [[nodiscard]] static float vcaGain(float control) noexcept;
+    // The digital ENV/GATE path is resolved independently, but no qualifying
+    // dense original-module sweep establishes the following analogue control
+    // transfer. Keep its current knee/deadband and law together as one named,
+    // replaceable sound-design profile rather than free hardware constants.
+    struct VoicedVoiceVcaCompatibilityProfile
+    {
+        static constexpr float knee = 0.12f;
+        static constexpr float kneeDbPerControlUnit = 260.0f;
+        static constexpr float deadband = 0.005f;
+
+        [[nodiscard]] static float gain(float control) noexcept;
+    };
+    // The stored VCA LEVEL trim drives a second, shared uPC1252H2 after the
+    // voice sum. Its exact digital layer is p=b/127=DAC12/4064. The voiced
+    // compatibility layer interprets that as display x=-5+10p and maps the
+    // three x=-5/0/+5 points to -15/-12.5/+5 dB; this declared recentering is
+    // product policy, not a qualifying original-unit sweep.
+    [[nodiscard]] static float patchLevelGain(float dacFraction) noexcept;
     // Single-pole high-pass corner for a panel position, the gain the leg
     // returns the low band with, and the gain it returns the high band with.
     // The bass-boost position is a real shelf measured on the hardware:
@@ -241,12 +340,28 @@ public:
     [[nodiscard]] static float highPassShelfGain(HighPassMode mode) noexcept;
     [[nodiscard]] static float highPassHighGain(HighPassMode mode) noexcept;
 
+    // Each IC6 output is AC-coupled through C17/C20 (10 uF), then R54/R57
+    // (1.5 kOhm), into one 10 kOhm track of the dual main VOLUME pot. These
+    // expose the component-derived, high-impedance-downstream transfer used by
+    // the current output-boundary scope. Selector, jack and headphone loading
+    // can move it and remain an explicit measurement question.
+    [[nodiscard]] static float outputCouplingCornerHz() noexcept;
+    [[nodiscard]] static float outputCouplingHighGain() noexcept;
+
     // The instrument has six voice cards; the engine will run more of them for
     // players who want the chords the hardware drops. Public because the host
     // layer clamps its VOICES parameter to the same bound and the editor draws
     // one lamp per available voice.
     static constexpr int hardwareVoices = 6;
     static constexpr int maxVoices = 16;
+
+    // IC1a sums each voice through 33 kOhm against a 3.3 kOhm feedback
+    // resistor before the shared HPF and VCA LEVEL circuit.
+    static constexpr float voiceSummerGain = 3.3f / 33.0f;
+    [[nodiscard]] static constexpr float voiceBusInput(float summedVoices) noexcept
+    {
+        return summedVoices * voiceSummerGain;
+    }
 
 private:
     // The JUCE-free suites use this narrow friend to drive one filter step, one
@@ -271,19 +386,19 @@ private:
     static constexpr double masterClockHz = 8000000.0;
     static constexpr std::uint32_t minimumDivider = 8u;
     static constexpr std::uint32_t maximumDivider = 65535u;
-    // The whole instrument is served by one converter multiplexed over 36
-    // control points, and the scan repeats every 4.2 ms. Pitch, cutoff and
-    // level therefore move on this grid rather than continuously.
+    // The whole instrument is served by one converter and three 8-way muxes:
+    // 18 per-card holds (DCO, VCF and ENV/GATE VCA for six cards), five shared
+    // holds (sub, stored VCA LEVEL, PWM, resonance and noise), and one unused
+    // mux channel. The scan repeats every 4.2 ms.
     static constexpr double controlScanHz = 1000.0 / 4.2;
     // Rate at which the modelled component wander advances. Fixed in seconds,
     // not in samples, so it does not change with the quality setting.
     static constexpr double driftUpdateHz = 375.0;
 
-    // Ramp generator. The control voltage charges the integrating capacitor
-    // through a plain resistor rather than a current source, so the ramp is the
-    // head of an RC exponential and bows slightly; the discharge transistor
-    // gives the reset a finite slope.
-    static constexpr float rampChargeSeconds = 200.0e-6f;
+    // Ramp generator. The compensation voltage drives a resistor into the
+    // integrator's virtual ground, so capacitor current is constant and the
+    // rising ramp is straight. The discharge transistor gives only the reset
+    // its finite slope.
     static constexpr float rampResetSeconds = 2.2e-6f;
     static constexpr float rampAmplitudeVolts = 12.0f;
 
@@ -298,37 +413,11 @@ private:
     // of a full-level ramp.
     static constexpr float stageAttenuation = 560.0f / (68000.0f + 560.0f);
     static constexpr float otaHeadroomVolts = 2.0f * thermalVoltage / stageAttenuation;
-    // The resonance loop closes through its own transconductor, and the
-    // fourth pole's output is divided 100k/1.5k before that pair sees it. The
-    // divider is what limits the oscillation: referred back to the pole
-    // output, the loop pair's linear span is 2 Vt times the divide ratio,
-    // about 3.5 V, so the limit cycle compresses the *loop* long before the
-    // forward stages hear it. That is why the hardware's self-oscillation is
-    // near-sinusoidal and sits within a few cents of the small-signal law
-    // rather than sagging flat.
-    static constexpr float vcfFeedbackDividerRatio = 100000.0f / 1500.0f;
-    static constexpr float vcfFeedbackHeadroomVolts =
-        2.0f * thermalVoltage * vcfFeedbackDividerRatio;
-    static constexpr float vcfSelfOscillationFeedback = 4.0f;
-    static constexpr float vcfSelfOscillationTravel = 0.9f;
-    // Loop gain the panel's far end reaches, a hardware-fitted figure: the
-    // last tenth of the travel pushes past the threshold to about 4.19.
-    static constexpr float vcfMaximumFeedback = 4.19f;
-    // Residual oscillation-frequency trim. With the loop limited in the
-    // divider, as in the hardware, the forward stages still compress at the
-    // limit-cycle amplitude -- the first pole sees nearly three times the
-    // fourth's swing, so the residue is a few per cent, not the fifth the
-    // unlimited loop needed. This factor is the service procedure's per-voice
-    // trimmer absorbing that residue, calibrated so the rendered oscillation
-    // lands on the control law's pitch.
-    static constexpr float vcfOscillationTrim = 0.045f;
-    // The converter's top. The published specification runs to 50 kHz and a
-    // measured example of the voice chip tops out near 52 kHz: the count law
-    // holds to well past 20 kHz and the exponential converter then saturates,
-    // so the model keeps the law exact through the audio band and bends it
-    // smoothly onto the measured ceiling above the knee.
-    static constexpr float vcfKneeStartHz = 24000.0f;
-    static constexpr float vcfConverterCeilingHz = 52200.0f;
+    // Roland publishes an approximate 5 Hz--50 kHz range, but no qualifying
+    // capture fixes the high-code saturation shape. Keep the established
+    // exponential law and apply an explicit product safety cap at that stated
+    // endpoint rather than inventing a knee and asymptote.
+    static constexpr float vcfSafetyCapHz = 50000.0f;
 
     // Modulation budgets, in converter counts, taken from the instrument's own
     // control tables. 1143 counts is one octave.
@@ -340,23 +429,37 @@ private:
     // account claimed the whole cutoff range; the firmware arithmetic settles
     // it.
     static constexpr float vcfBenderCounts = 4064.0f;
-    // Hold-capacitor slew after the converter. This is what turns the scan's
-    // staircase back into a continuous control voltage. The capacitors are
-    // alike but their charge paths are not: the amplifier's divider gives its
-    // hold a slower time constant than the filter's.
-    static constexpr float controlSlewSeconds = 522.0e-6f;
-    static constexpr float vcaSlewSeconds = 687.0e-6f;
+    // Hold-capacitor slew after the converter. Only the VCF and voice-VCA
+    // families have the currently supported 522/687 us values. The remaining
+    // nodes retain compatibility values behind separate names so a measured
+    // destination can be replaced without silently changing the others.
+    static constexpr float vcfHoldSlewSeconds = 522.0e-6f;
+    static constexpr float voiceVcaHoldSlewSeconds = 687.0e-6f;
+    static constexpr float dcoHoldSlewSecondsVoiced = 522.0e-6f;
+    static constexpr float resonanceHoldSlewSecondsVoiced = 522.0e-6f;
+    static constexpr float commonVcaHoldSlewSecondsVoiced = 687.0e-6f;
+    static constexpr float pwmHoldSlewSecondsVoiced = 522.0e-6f;
+    static constexpr float subHoldSlewSecondsVoiced = 522.0e-6f;
+    static constexpr float noiseHoldSlewSecondsVoiced = 522.0e-6f;
+    // The shared white-noise generator and each card's microscopic filter
+    // excitation represent continuous-time noise densities.  Their discrete
+    // sample amplitudes therefore grow with sqrt(processing rate).  The
+    // existing 48 kHz HQ render runs at 192 kHz internally, so that rate is
+    // the compatibility reference whose sound and factory balance stay put.
+    static constexpr double noiseReferenceRateHz = 192000.0;
     static constexpr float vcfKeyFollowCentreMidi = 60.0f; // C4
     // Pitch modulation budgets in cents.
     static constexpr float lfoPitchCents = 400.0f;
     static constexpr float benderPitchCents = 1200.0f;
     // The generator is a 14-bit integer advanced once per scan, so envelope
     // levels live on this grid and a falling segment ends by truncation.
-    static constexpr float envelopeQuantum = 1.0f / 16383.0f;
+    static constexpr float envelopeQuantum = 1.0f / envelopePeak;
 
     enum class EnvelopeStage { Idle, Attack, Decay, Sustain, Release };
 
-    // The generator is firmware: a 14-bit integer advanced once per scan.
+    // Hash-matched B-2 firmware mechanics: a 14-bit integer advanced once per
+    // scan. Compact arithmetic generators reproduce the coefficient tables'
+    // observable laws without storing either the ROM or complete table dumps.
     // The attack is a straight line -- a fixed increment added per pass. The
     // falling segments are *multiplicative*: the distance to the target is
     // scaled by a per-pass coefficient, so decay and release curve
@@ -370,13 +473,16 @@ private:
     struct Envelope
     {
         EnvelopeStage stage { EnvelopeStage::Idle };
+        std::uint16_t level { 0u };
         float value { 0.0f };
 
         void reset() noexcept;
         void noteOn() noexcept;
         void noteOff() noexcept;
-        float tick(float attackStep, float decayCoefficient, float sustain,
-                   float releaseCoefficient) noexcept;
+        float tick(std::uint16_t attackIncrement,
+                   std::uint16_t decayMultiplier,
+                   std::uint16_t sustain,
+                   std::uint16_t releaseMultiplier) noexcept;
     };
 
     // Bandlimiting support. Every discontinuity the oscillator produces is
@@ -438,7 +544,10 @@ private:
 
     struct HighPass
     {
-        float state { 0.0f };
+        // Double precision matters for the 1.38 Hz final coupling pole: at
+        // high host rates a float state rounds to the input while a visible
+        // residual is still present, leaving false DC instead of converging.
+        double state { 0.0 };
 
         void reset() noexcept;
         float process(float input, float g, float shelfGain,
@@ -454,16 +563,17 @@ private:
         void reset() noexcept;
     };
 
-    // Per-voice analogue tolerance, drawn once from a deterministic seed so a
-    // given Calibration setting always produces the same instrument. Each
-    // field is a real dispersion mechanism of the modelled voice: the two
+    // Optional per-voice analogue variation, drawn once from a deterministic
+    // seed so a given Unit Character setting always produces the same
+    // instrument. Each field represents a plausible dispersion mechanism: the two
     // cutoff axes are the two per-voice trimmers -- one offsets the control
     // voltage, one scales it -- left imperfectly set; the amplifier gets both
     // an offset and a gain error because its converter and hold are analogue;
     // and there is deliberately *no* envelope-rate error, because the
     // envelopes are computed digitally in the shared processor and are
     // therefore identical across voices. What differs between voices is the
-    // analogue chain each envelope drives, not the envelope itself.
+    // analogue chain each envelope drives, not the envelope itself. The
+    // distribution magnitudes remain voiced rather than measured residuals.
     struct VoiceCard
     {
         float rampCurrentError { 0.0f };
@@ -491,16 +601,19 @@ private:
         // and still has a root note, so without this it would be swept into the
         // next unison retarget and resurrected on a key it never played.
         bool unisonMember { false };
-        // Whether this slot has ever sounded a note this run. A voice that
-        // has never played has no pitch history for the glide to start from.
-        bool hasEverPlayed { false };
+        // The voice CPU requests an oscillator restart only for a different
+        // pitch on a voice whose key/sustain run bits are both clear. The
+        // restart is consumed when this voice's turn in the converter scan
+        // arrives, never synchronously at the host MIDI event.
+        bool dcoResetPending { true };
+        // The assigner's note-memory table and the voice CPU's pitch byte are
+        // separate RAM. A POLY-button handler clears the former, but the
+        // latter -- and the portamento integrator it drives -- keep running.
+        bool hasAllocatorHistory { false };
+        bool hasVoicePitchHistory { false };
         int rootMidi { -1 };
         int cardIndex { 0 };
         int controlCountdown { 0 };
-        // One converter serves every voice, but it reaches them in turn: the
-        // multiplexer walks its hold capacitors sequentially, so each slot's
-        // rewrite lands a fixed fraction of the pass after its neighbour's.
-        int scanOffset { 0 };
         std::uint64_t generation { 0 };
         // When this slot last released its key, on the shared generation
         // counter. The assigner prefers the slot that has been free longest.
@@ -508,20 +621,22 @@ private:
         float velocity { 0.0f };
         float currentMidi { 60.0f };
         float targetMidi { 60.0f };
-        // The last note this slot sounded, surviving retirement: the assigner
-        // matches a returning pitch against it, and the glide integrator
-        // starts from it, both exactly as the hardware's per-voice state does.
-        float lastMidi { 60.0f };
+        // The last physical key this slot sounded, before transpose. The
+        // assigner stores keyboard-note identity; transpose is added only to
+        // the pitch message sent to the voice board.
+        int lastRootMidi { -1 };
+        // The last pitch byte received by the voice CPU, after transpose. Its
+        // oscillator-reset comparison lives in this domain, not in the
+        // assigner's physical-key domain above.
+        int lastVoiceMidi { -1 };
         float glideSemitonesPerScan { 0.0f };
         float filterG { 0.05f };
         // Converter counts and control voltages, before and after the sample
         // and hold's own slew. The staircase the scan writes is smoothed by a
         // real time constant on each hold capacitor, so modulation arrives
-        // rounded rather than stepped. The oscillator's compensation voltage,
-        // the pulse threshold, the sub and noise levels and the amplifier
-        // control all take this path, because on the hardware each of them is
-        // one of the multiplexed points -- none of them is a pot in the audio
-        // path.
+        // rounded rather than stepped. Only pitch, cutoff and ENV/GATE VCA are
+        // per-card holds; PWM, sub and noise are shared converter outputs kept
+        // on the engine below.
         float cutoffCountsTarget { 0.0f };
         float cutoffCounts { 0.0f };
         float vcaControlTarget { 0.0f };
@@ -532,15 +647,9 @@ private:
         // leaves on the ramp and the pulse.
         float dcoCvTarget { 261.6f };
         float dcoCv { 261.6f };
-        float pwmVoltsTarget { 6.0f };
-        float pwmVolts { 6.0f };
-        float subCvTarget { 0.0f };
-        float subCv { 0.0f };
-        float noiseCvTarget { 0.0f };
-        float noiseCv { 0.0f };
-        float attackStep { 1.0f };
-        float decayCoefficient { 0.5f };
-        float releaseCoefficient { 0.5f };
+        std::uint16_t attackIncrement { envelopePeak };
+        std::uint16_t decayMultiplier { 0x8000u };
+        std::uint16_t releaseMultiplier { 0x8000u };
         float feedback { 0.0f };
         float inputCompensation { 1.0f };
         float vca { 0.0f };
@@ -565,9 +674,6 @@ private:
                  float samplesAgo) const noexcept;
     void addSlope(BandlimitedTrack& track, float slopeStep,
                   float samplesAgo) const noexcept;
-    // Normalised ramp voltage at a phase in 0..1, including the bow the
-    // resistive charge path produces. Returns 0 at phase 0 and 1 at phase 1.
-    static float rampVoltage(float phase, float bow) noexcept;
     // Fraction of the ramp's full excursion consumed by the finite-slope reset
     // at a given period, clamped so a very high note cannot invert the ramp.
     static float resetFraction(double periodSeconds) noexcept;
@@ -576,15 +682,24 @@ private:
     void buildCorrectionTables() noexcept;
     void buildVoiceCards() noexcept;
     void noteOnInternal(int midiNote, float velocity) noexcept;
+    // Assigns a note already present in the held-key table. Kept separate from
+    // noteOnInternal so a POLY-mode rebuild does not count the physical key a
+    // second time.
+    void assignHeldNote(int midiNote, float velocity) noexcept;
     void noteOffInternal(int midiNote) noexcept;
-    void initialiseVoice(Voice& voice, int slot, int midiNote, float velocity,
-                         bool retrigger) noexcept;
+    void initialiseVoice(Voice& voice, int slot, int midiNote,
+                         float velocity) noexcept;
     void silenceVoice(Voice& voice) noexcept;
     [[nodiscard]] bool anyVoiceSounding() const noexcept;
     void rearmLfoDelay() noexcept;
-    // Empties everything downstream of the voices.
+    // Empties only the blocks whose state depends on the internal processing
+    // rate. The final host-rate coupling capacitors survive an HQ rebuild.
+    void clearRateDependentOutputPath() noexcept;
+    // Empties everything downstream of the voices, including those coupling
+    // capacitors, for reset and hard-stop semantics.
     void clearOutputPath() noexcept;
-    // Glide rate for a panel position, in semitones per converter scan.
+    // Glide rate for the eight-bit performance-control code, in 1/256-
+    // semitone units per converter scan.
     [[nodiscard]] static float glideStepPerScan(float portamento) noexcept;
     // Lift the key on one slot: sustain it if the pedal is down, release it
     // otherwise. Every path that lets go of a note goes through here.
@@ -595,22 +710,53 @@ private:
     void dropFromUnison(Voice& voice) noexcept;
     int findVoiceForNote(int midiNote) const noexcept;
     int allocateVoice(int midiNote) noexcept;
-    void rememberHeldNote(int midiNote, float velocity) noexcept;
-    // Newest key still physically held, or -1.
-    [[nodiscard]] int newestHeldNote() const noexcept;
-    void retargetUnison(int midiNote) noexcept;
-    void forgetHeldNote(int midiNote) noexcept;
+    // True only for the physical-key bit's low-to-high transition. Repeated
+    // MIDI Note Ons are counted so their matching offs remain balanced, but
+    // do not retrigger the assigner or envelope.
+    bool rememberHeldNote(int midiNote, float velocity) noexcept;
+    // Highest key still physically held, or -1. After the assigner clears and
+    // rescans its key table, scan order gives the highest held note priority in
+    // Solo Unison.
+    [[nodiscard]] int highestHeldNote() const noexcept;
+    // POLY-button changes gate current assignments and clear only allocator
+    // state immediately. The keyboard is rescanned after the next complete
+    // converter boundary, so the voice CPUs can observe gate-off first.
+    void beginVoiceAssignmentRescan() noexcept;
+    void completeVoiceAssignmentRescan() noexcept;
+    // True only for a held-key bit's final high-to-low transition. An off for
+    // a key whose bit is already clear is ignored completely.
+    bool forgetHeldNote(int midiNote) noexcept;
     void clearHeldNotes() noexcept;
-    // Called when the converter scan reaches this voice: everything the
-    // firmware recomputes once per pass. The modulator arrives twice: gated
-    // by its own delay envelope for pitch and cutoff, and raw for the pulse
-    // width, because the firmware applies the onset envelope to the first two
-    // and not to the third.
+    // One complete voice update, retained as a narrow test seam. Realtime
+    // processing calls the split destination methods through the recovered
+    // converter queue below.
     void updateVoiceScan(Voice& voice, const EngineParameters& parameters,
-                         float lfoGated, float lfoRaw) noexcept;
+                         float lfoGated) noexcept;
+    void updateVoiceEnvelopeAndPitch(Voice& voice,
+                                     const EngineParameters& parameters,
+                                     float lfoGated) noexcept;
+    void updateVoiceVcfTarget(Voice& voice,
+                              const EngineParameters& parameters,
+                              float lfoGated) noexcept;
+    void updateVoiceVcaTarget(Voice& voice,
+                              const EngineParameters& parameters) noexcept;
+    void performConverterWrite(const ConverterWrite& write,
+                               const EngineParameters& parameters,
+                               float lfoGated) noexcept;
+    // Shared converter destinations are computed once per pass. Their proven
+    // ownership is modelled; their individual RC constants and physical write
+    // offsets are not yet known.
+    void updateSharedScan(const EngineParameters& parameters,
+                          float lfoRaw) noexcept;
     // Called on the audio control grid: turns the slewed control voltages into
     // filter and amplifier coefficients.
     void updateVoiceAudio(Voice& voice, const EngineParameters& parameters) noexcept;
+    // The PWM comparator is physical and free-running even behind a shut VCA,
+    // so it follows the shared held threshold for inactive cards as well.
+    void updatePulseComparator(Voice& voice,
+                               const EngineParameters& parameters) noexcept;
+    [[nodiscard]] static bool pulseMixEnabled(bool requested,
+                                              float duty) noexcept;
     void updateSharedHighPass(const EngineParameters& parameters) noexcept;
     float renderVoice(Voice& voice, const EngineParameters& parameters,
                       float noiseSample) noexcept;
@@ -655,17 +801,45 @@ private:
     float inverseSampleRate_ { 1.0f / 48000.0f };
     double oversampledRate_ { 192000.0 };
     float inverseOversampledRate_ { 1.0f / 192000.0f };
+    float noiseRateScale_ { 1.0f };
     int oversampling_ { 4 };
     bool oversamplingEnabled_ { true };
     bool oversamplingRequested_ { true };
     // How long the voices have been silent, and how long the output path needs
-    // to run dry once they are: the delay lines' longest setting, the decimation
-    // stages' group delay and several time constants of the output coupling.
+    // to run dry once they are: the delay lines' longest setting plus the
+    // decimation and filter stages' group delay.
     static constexpr double outputPathQuietSeconds = 0.04;
     int oversamplingIdleSamples_ { 0 };
     int oversamplingQuietSamples_ { 1 };
-    // The shared converter's pass, counted in internal samples.
-    int scanCountdown_ { 0 };
+    // A processing-rate change has to rebuild rate-dependent filters and BBD
+    // lines. A short output fade brackets that reset even when the path only
+    // carries an unobservable tail; this keeps the transition independent of
+    // host block size and of a simultaneous Chorus switch. A newly sounding
+    // voice reverses a pending fade instead of being muted to finish a quality
+    // change. The host-rate output capacitors are deliberately not rebuilt.
+    enum class RateTransition { Idle, FadingOut, FadingIn };
+    static constexpr double rateTransitionSeconds = 0.005;
+    RateTransition rateTransition_ { RateTransition::Idle };
+    float rateTransitionGain_ { 1.0f };
+    float rateTransitionStep_ { 1.0f };
+    // Fractional pass scheduler. Keeping phase in passes avoids truncating
+    // 4.2 ms to a whole internal-sample count at arbitrary host rates.
+    double controlScanPhase_ { 1.0 };
+    // The B-2 and service chart establish order and that writes are sequential,
+    // not exact physical offsets. The default normalized profile prevents the
+    // six DCOs from being falsely reset on one sample; a measured profile can
+    // replace it without changing destination ownership or queue order.
+    std::array<double, converterWritesPerPass> converterEventPhases_ {};
+    std::size_t nextConverterWrite_ { 0 };
+    float converterPassLfoGated_ { 0.0f };
+    bool assignmentRescanPending_ { false };
+    bool assignmentRescanPassArmed_ { false };
+    // A mutable plug-in voice count has no hardware equivalent. If a Unison
+    // stack is widened during a rescan, newly admitted slots adopt the old
+    // stack's glide position rather than joining from unrelated CPU history.
+    std::array<bool, maxVoices> rescanPreviousUnisonMembers_ {};
+    bool rescanUnisonMidiValid_ { false };
+    float rescanUnisonMidi_ { 60.0f };
     bool prepared_ { false };
     bool anyVoiceActive_ { false };
     int activeVoiceCount_ { 0 };
@@ -673,13 +847,14 @@ private:
 
     // One shared free-running modulator, exactly as the hardware has. Because
     // it is shared, six voices vibrato together rather than smearing. It is
-    // not a phase accumulator: the firmware adds a rate coefficient to a
+    // not a phase accumulator: the supplied hash-matched B-2 code adds a
+    // rate coefficient to a
     // clamped integer accumulator and flips direction on the clamp, and a
     // polarity bit halves that into a bipolar triangle. The clamp discards
     // whatever the last step overshot by, which quantises fast settings onto
-    // a coarse grid of rates -- a real, measured behaviour of the instrument,
-    // so it is modelled rather than smoothed away.
-    float lfoAccumulator_ { 0.0f };
+    // a coarse grid of rates. The mechanism is kept separate from the still-
+    // recovered coefficient law documented in OQ-13.
+    std::uint16_t lfoAccumulator_ { 0u }; // 0..0x1fff
     bool lfoRising_ { true };
     float lfoPolarity_ { 1.0f };
     float lfoValue_ { 0.0f };
@@ -687,14 +862,24 @@ private:
     // The modulator, its delay envelope and the note generators all advance on
     // the converter scan, so the modulator's output is a staircase at that rate
     // rather than a continuous triangle.
-    int lfoScanCountdown_ { 0 };
-    float lfoDelayHoldoff_ { 0.0f };
+    std::uint32_t lfoDelayHoldoff_ { 0u }; // 0..0x4000
+    std::uint32_t lfoDelayFade_ { 0u };    // 0..0x10000
     bool anyKeyDown_ { false };
     // The resonance control voltage: one converter output shared by every
     // voice's regeneration amplifier, quantised to the panel byte and slewed
     // on its own hold capacitor like the rest of the scanned points.
     float resonanceCvTarget_ { 0.0f };
     float resonanceCv_ { 0.0f };
+
+    // The service timing chart routes exactly one hold each to PWM, sub level
+    // and noise level. Every voice card consumes these shared voltages, while
+    // its downstream comparator and level errors remain card-specific.
+    float pwmVoltsTarget_ { 6.0f };
+    float pwmVolts_ { 6.0f };
+    float subCvTarget_ { 0.0f };
+    float subCv_ { 0.0f };
+    float noiseCvTarget_ { 0.0f };
+    float noiseCv_ { 0.0f };
 
     // One noise generator serves every voice, so noise sums coherently as more
     // keys are held instead of staying at a fixed level.
@@ -714,10 +899,8 @@ private:
     float displayLfo_ { 0.0f };
     int displayVoiceMask_ { 0 };
 
-    std::array<int, 128> heldNoteOrder_ {};
     std::array<float, 128> heldNoteVelocities_ {};
     std::array<std::uint16_t, 128> heldNoteCounts_ {};
-    int heldNoteCount_ { 0 };
 
     std::array<Voice, maxVoices> voices_ {};
     std::array<VoiceCard, maxVoices> cards_ {};
@@ -743,9 +926,18 @@ private:
     float highPassShelf_ { 1.0f };
     float highPassHigh_ { 1.0f };
 
-    float dcInput_ { 0.0f };
-    float dcOutput_ { 0.0f };
-    float dcCoefficient_ { 0.9987f };
+    // One independent C17/C20 state per IC6 output. The physical capacitors
+    // precede the dual VOLUME pot, so these run at host rate before the volume
+    // law and keep charging even when Volume is at zero.
+    HighPass outputCouplingLeft_ {};
+    HighPass outputCouplingRight_ {};
+    float outputCouplingG_ { 0.0001f };
+
+    // VCA LEVEL controls the single jack-board VCA after the six voice cards
+    // and shared HPF. It is not part of each voice's envelope VCA.
+    float sharedVcaTarget_ { 0.0f };
+    float sharedVca_ { 0.0f };
+
 };
 
 } // namespace youknow106

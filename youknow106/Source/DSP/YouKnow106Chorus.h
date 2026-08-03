@@ -8,31 +8,18 @@ namespace youknow106
 
 // Panel state of the two latching chorus buttons.
 //
-// **I+II is an addition this plug-in makes, not modelled hardware.** The
-// instrument's own manual is explicit -- "It is not possible to use I and II at
-// the same time" -- and the board agrees: it carries one chorus enable bit and
-// one binary I/II bit, not two independent switches. Owners who want the mode
-// fit a board modification to get it.
-//
-// It is kept here deliberately, as a feature rather than as a claim, because it
-// is useful and because turning both buttons off and on independently is what
-// this panel offers. Everything about how it *behaves* is still derived from
-// the circuit: each button's timing resistor in parallel, so the conductances
-// and with them the rates add. What is not claimed is that a Juno-106 can do
-// it. (The 1.376 Hz that follows is likewise not the 9.75 Hz a Juno-60 reaches
-// with both buttons down; that instrument's chorus is a different circuit.)
-//
-// The patch memory cannot hold all four states in any case. It stores the
-// effect as one on/off bit and one mode bit, so a saved patch can only say off,
-// I or II -- which is consistent with there being no fourth state to store. The
-// SysEx writer records that limitation rather than pretending otherwise.
+// The instrument has three states: off, I and II. Its owner manual explicitly
+// says I and II cannot be used simultaneously, and the jack board receives one
+// enable line plus one binary I/II line. `OneTwo` remains as an input-compatibility
+// value for sessions written by the short-lived plug-in extension; the engine
+// canonicalises it to II and never synthesises an invented fourth clock mode.
 enum class ChorusMode { Off, One, Two, OneTwo };
 
-// The mode the two buttons select. Neither button is the only "off" state.
+// The mode the two buttons select. Neither button engaged is the only Off state.
 [[nodiscard]] constexpr ChorusMode chorusModeFor(bool one, bool two) noexcept
 {
     if (one && two)
-        return ChorusMode::OneTwo;
+        return ChorusMode::Two;
     if (two)
         return ChorusMode::Two;
     if (one)
@@ -77,11 +64,24 @@ public:
     static constexpr int maximumShiftsPerSample =
         static_cast<int>(maximumClockHz / minimumSampleRate) + 2;
 
+    // IC6 is the final inverting dry/wet summer on each output. Its 100 kOhm
+    // feedback resistor sees dry through 39 kOhm and wet through 47 kOhm.
+    // Polarity is intentionally omitted because both paths invert together;
+    // these magnitudes preserve the analogue drive into the following output
+    // and VOLUME stages.
+    static constexpr float dryMixGain = 100.0f / 39.0f;
+    static constexpr float wetMixGain = 100.0f / 47.0f;
+    static constexpr float wetToDryGain = wetMixGain / dryMixGain;
+    // Explicit plug-in declick policy, not a measured mute-transistor value.
+    static constexpr float wetMuteTimeConstantSeconds = 0.005f;
+
     void prepare(double sampleRate) noexcept;
     void reset() noexcept;
 
-    // Advances one sample. `noiseScale` scales the modelled BBD noise floor;
-    // 1.0 is the hardware level and 0.0 removes it entirely.
+    // Advances one sample. `noiseScale` is the single master for every
+    // declared chorus-noise component; 1.0 preserves the compatibility hiss
+    // and 0.0 removes all of them. A calibrated hardware noise reference has
+    // not yet been located, so the optional common/hum/spur amplitudes are zero.
     void process(float input, ChorusMode mode, float noiseScale,
                  float& left, float& right) noexcept;
 
@@ -144,7 +144,11 @@ public:
     // there is nothing to recompute per sample.
     struct SupportChain
     {
+        float inputCouplingG { 0.001f };    // C44 / R120, wet path only
         float passiveG { 0.1f };            // R122 / C52, ahead of the line
+        // Ideal-source approximation for R118/R119, R117 and C45.  The name
+        // keeps the still-open MN3009 output loading out of the claim.
+        float idealSourceTapPoleG { 0.1f };
         BiquadCoefficients antiAliasFirst {};
         BiquadCoefficients antiAliasSecond {};
         BiquadCoefficients reconstructionFirst {};
@@ -155,6 +159,51 @@ public:
     [[nodiscard]] float getLfoPhase() const noexcept { return lfoPhase_; }
 
 private:
+    friend struct YouKnow106TestAccess;
+
+    // OQ-03 keeps the compatibility hiss and the still-unknown mechanisms as
+    // distinct components.  Every number in this profile is voiced/unknown,
+    // not a JUNO-106 measurement.  The optional amplitudes therefore default
+    // to zero; `noiseScale` in process() remains the one master applied to all
+    // of them when future evidence supplies defensible values.
+    struct OptionalNoiseComponents
+    {
+        float commonRandomAmplitude { 0.0f };
+        // Desired stereo correlation of the synthetic common layer.  The
+        // default is a voiced placeholder and is inaudible while its amplitude
+        // is zero.
+        float commonRandomCorrelation { 1.0f };
+        float humAmplitude { 0.0f };
+        // A voiced placeholder for deterministic tests only: mains frequency
+        // is market/unit dependent and has not been measured at this node.
+        float humFrequencyHz { 50.0f };
+        float clockSpurAmplitude { 0.0f };
+        // The spur follows each modulated BBD clock.  Which harmonic dominates
+        // is unknown, so unity is only a disabled, voiced placeholder.
+        float clockSpurHarmonic { 1.0f };
+    };
+
+    struct StereoNoiseSample
+    {
+        float lineA { 0.0f };
+        float lineB { 0.0f };
+    };
+
+    // Pure deterministic component steps.  They are private implementation
+    // details, with a narrow friend seam for regression fixtures.
+    [[nodiscard]] static StereoNoiseSample correlatedRandomStep(
+        std::uint32_t& commonState, std::uint32_t& orthogonalState,
+        float correlation) noexcept;
+    [[nodiscard]] static float deterministicToneStep(
+        double& phase, float frequencyHz, float sampleRate) noexcept;
+
+    // The two parasitic mechanisms inside the BBD, kept as separate pure
+    // steps so the circuit suite can check them against the part's distortion
+    // and frequency-response figures without the support filters obscuring the
+    // result.
+    [[nodiscard]] static float bbdTransfer(float input) noexcept;
+    static float transferLossStep(float& state, float input) noexcept;
+
     // One bucket-brigade line: a shift register of cell pairs clocked
     // asynchronously to the host rate, with the input resampled onto the clock
     // grid and the output held between clock edges exactly as the part does.
@@ -165,19 +214,22 @@ private:
         double clockPhase { 0.0 };
         float held { 0.0f };
         float previousInput { 0.0f };
-        // Five poles in, four out, matching the board: two Sallen-Key sections
-        // plus one passive pole ahead of the line, two Sallen-Key sections
-        // after it.
+        // The wet input has its own coupling high-pass and five low-pass
+        // poles: two Sallen-Key sections and one passive pole. The
+        // output has the tap-summing pole followed by two Sallen-Key sections.
         //
         // When the engine oversamples, the line's zero-order-hold images at the
         // clock rate land above the host band and the decimators remove them;
         // with oversampling off the clock exceeds the host Nyquist and the
         // images fold, with only the output chain to soften them. That is a
         // documented cost of the low-quality setting, not of the model -- and
-        // four poles soften it considerably better than the one this replaced.
+        // five output poles soften it considerably better than the one this
+        // replaced.
+        float inputCouplingState { 0.0f };
         float antiAliasState { 0.0f };
         BiquadState antiAliasFirst {};
         BiquadState antiAliasSecond {};
+        float tapSumState { 0.0f };
         BiquadState reconstructionFirst {};
         BiquadState reconstructionSecond {};
         float transferState { 0.0f };
@@ -198,6 +250,12 @@ private:
     float rateHz_ { 0.0f };
     float centreDelay_ { 0.0032f };
     float sweep_ { 0.0f };
+    OptionalNoiseComponents optionalNoise_ {};
+    std::uint32_t commonNoiseState_ { 0xd1b54a35u };
+    std::uint32_t orthogonalNoiseState_ { 0x94d049bbu };
+    double humPhase_ { 0.0 };
+    double clockSpurPhaseA_ { 0.0 };
+    double clockSpurPhaseB_ { 0.0 };
     // Whether the glided settings have a starting point yet.
     bool primed_ { false };
 };
