@@ -1640,9 +1640,12 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
         const auto header = scaled (section.x, section.y, section.width,
                                     panel::headerHeight);
         const auto tint = accentColour (section.accent);
-        g.setColour (tint.withAlpha (0.16f));
+        juce::ColourGradient headerGrad (
+            tint.withAlpha (0.24f), header.getX(), header.getY(),
+            tint.withAlpha (0.07f), header.getX(), header.getBottom(), false);
+        g.setGradientFill (headerGrad);
         g.fillRoundedRectangle (header, 3.0f * scale);
-        g.setColour (tint);
+        g.setColour (tint.withAlpha (0.85f));
         g.fillRect (header.getX() + 2.0f * scale,
                     header.getBottom() - 2.0f * scale,
                     header.getWidth() - 4.0f * scale,
@@ -1677,9 +1680,12 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
         g.strokePath (card, juce::PathStrokeType (juce::jmax (1.0f, scale)));
 
         const auto header = area.removeFromTop (panel::headerHeight * scale);
-        g.setColour (tint.withAlpha (0.13f));
+        juce::ColourGradient cardHeaderGrad (
+            tint.withAlpha (0.22f), header.getX(), header.getY(),
+            tint.withAlpha (0.06f), header.getX(), header.getBottom(), false);
+        g.setGradientFill (cardHeaderGrad);
         g.fillRect (header.reduced (1.0f));
-        g.setColour (tint);
+        g.setColour (tint.withAlpha (0.85f));
         g.fillRect (header.getX() + 2.0f * scale,
                     header.getBottom() - 2.0f * scale,
                     header.getWidth() - 4.0f * scale, 2.0f * scale);
