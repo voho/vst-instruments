@@ -205,9 +205,10 @@ private:
     juce::Slider tuneSlider;
     juce::Slider velocitySlider;
     juce::Slider calibrationSlider;
+    juce::Slider vintageSlider;
     juce::Slider chorusNoiseSlider;
     juce::Slider polyphonySlider;
-    std::array<juce::Label, 6> utilityLabels {};
+    std::array<juce::Label, 7> utilityLabels {};
 
     // The patch bar. The programs live on the processor -- the host addresses
     // them too -- so this only names them and asks it to switch.

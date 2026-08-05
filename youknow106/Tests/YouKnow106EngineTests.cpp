@@ -479,7 +479,12 @@ EngineParameters plainPatch()
     parameters.vcaLevel = 0.90856f;
     parameters.volume = 1.0f;
     parameters.chorus = ChorusMode::Off;
+    // The plain reference patch carries no character at all: no component
+    // spread from Unit Character and no circuit non-linearity from Vintage.
+    // Both masters have to be cleared, or a fixture that means "nominal" would
+    // silently keep whichever of the two it forgot.
     parameters.calibration = 0.0f;
+    parameters.vintage = 0.0f;
     return parameters;
 }
 

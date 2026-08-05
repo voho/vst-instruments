@@ -499,6 +499,12 @@ YouKnow106AudioProcessor::createParameterLayout()
                         || text.containsIgnoreCase ("4");
                 })));
 
+    // Appended after every pre-existing parameter with a later version hint, so
+    // no historical Audio Unit index moves. Unit Character keeps the component
+    // tolerances; this is the master over the circuit non-linearities that were
+    // added after it, and it defaults to the same amount those shipped at.
+    layout.add (travel (vintage, "Vintage", 0.70f, percentAttributes()));
+
     return layout;
 }
 
@@ -516,7 +522,7 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
         vcaMode, vcaLevel, attack, decay, sustain, release, legacyChorus,
         transpose, masterTune, velocity, calibration, chorusNoise, polyphony,
-        poly1, poly2, chorusI, chorusII, hq
+        poly1, poly2, chorusI, chorusII, hq, vintage
     });
 
     // The pointer table has to be able to hold every id. Growing the list above
@@ -701,6 +707,7 @@ bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.masterTuneCents = valueOf (masterTune);
     engineParameters.velocityDepth = valueOf (velocity);
     engineParameters.calibration = valueOf (calibration);
+    engineParameters.vintage = valueOf (vintage);
     engineParameters.chorusNoise = valueOf (chorusNoise);
     engineParameters.polyphony = juce::roundToInt (valueOf (polyphony));
 
@@ -1501,6 +1508,7 @@ bool YouKnow106AudioProcessor::currentProgramIsEdited() const
         || differs (valueOf (masterTune), expected.masterTune)
         || differs (valueOf (velocity), expected.velocity)
         || differs (valueOf (calibration), expected.calibration)
+        || differs (valueOf (vintage), expected.vintage)
         || differs (valueOf (chorusNoise), expected.chorusNoise)
         || juce::roundToInt (valueOf (polyphony)) != expected.polyphony
         || (valueOf (hq) > 0.5f) != expected.hq;
@@ -1607,6 +1615,7 @@ void YouKnow106AudioProcessor::applyProgramValues (
     set (masterTune, controls.masterTune);
     set (velocity, controls.velocity);
     set (calibration, controls.calibration);
+    set (vintage, controls.vintage);
     set (chorusNoise, controls.chorusNoise);
     set (polyphony, static_cast<float> (controls.polyphony));
     set (hq, controls.hq ? 1.0f : 0.0f);

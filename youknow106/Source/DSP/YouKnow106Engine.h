@@ -116,6 +116,19 @@ struct EngineParameters
     // repository has always been rendered at. Set it to zero to hear the
     // nominal model.
     float calibration { 0.70f };
+    // Exposed to the host as Vintage: the master over the circuit
+    // non-linearities added after the component-tolerance set above -- ramp
+    // charging curvature, exponential reset, the chorus clock laws, the
+    // spatial thermal gradient, C14's voltage-dependent capacitance, the VCF
+    // Early effect and the converter's glitch impulse.
+    //
+    // Kept separate from Unit Character on purpose: those are tolerances, a
+    // calibrated unit has less of them, and zero is a meaningful reference.
+    // These are shapes the circuit always has, so they answer to how hard the
+    // model leans on them rather than to how well the unit was trimmed. The
+    // default matches Unit Character, which is what every rendered fixture in
+    // this repository was produced at.
+    float vintage { 0.70f };
     float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
     int polyphony { 6 };           // 6 is the hardware voice count.
 

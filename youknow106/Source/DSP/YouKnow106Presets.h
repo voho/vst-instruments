@@ -43,6 +43,7 @@ struct Preset
         float masterTune { 0.0f };
         float velocity { 0.0f };
         float calibration { 0.70f };
+        float vintage { 0.70f };
         float chorusNoise { 1.0f };
         int polyphony { 6 };
         bool hq { true };
