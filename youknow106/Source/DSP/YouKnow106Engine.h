@@ -566,7 +566,8 @@ private:
         // Re-express the trapezoidal derivative carry for a changed numerical
         // timestep while retaining every physical capacitor voltage.
         void retime(float previousG, float nextG) noexcept;
-        float process(float input, float g, float feedback) noexcept;
+        float process(float input, float g, float feedback,
+                      float headroom = otaHeadroomVolts) noexcept;
     };
 
     struct HighPass
@@ -986,6 +987,11 @@ private:
     // and shared HPF. It is not part of each voice's envelope VCA.
     float sharedVcaTarget_ { 0.0f };
     float sharedVca_ { 0.0f };
+
+    // Deterministic physical circuit state: voice card thermal warmup timer (s)
+    // and power supply rail droop (V) under heavy polyphonic loading.
+    float thermalWarmupSeconds_ { 0.0f };
+    float powerSupplyDroop_ { 0.0f };
 
 };
 

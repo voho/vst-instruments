@@ -1246,10 +1246,10 @@ void YouKnow106Engine::OtaCascade::retime(float previousG,
 // remains bounded. The selected divider and headroom are part of that voiced
 // profile, not a measured code-to-loop transfer.
 float YouKnow106Engine::OtaCascade::process(float input, float g,
-                                            float feedback) noexcept
+                                            float feedback,
+                                            float headroom) noexcept
 {
-    constexpr float headroom = otaHeadroomVolts;
-    constexpr float inverseHeadroom = 1.0f / headroom;
+    const float inverseHeadroom = 1.0f / std::max(headroom, 1.0e-5f);
     constexpr float feedbackHeadroom =
         VoicedResonanceCompatibilityProfile::loopHeadroomVolts;
     constexpr int maximumIterations = 8;
@@ -1698,6 +1698,8 @@ void YouKnow106Engine::reset()
     rateTransition_ = RateTransition::Idle;
     rateTransitionGain_ = 1.0f;
 
+    thermalWarmupSeconds_ = 0.0f;
+    powerSupplyDroop_ = 0.0f;
     lfoAccumulator_ = 0u;
     lfoRising_ = true;
     lfoPolarity_ = 1.0f;
@@ -3049,11 +3051,12 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // No high-pass here. The schematic puts it on the jack board, downstream of
     // the summing amplifier, so it is one shared stage after all six voices
     // rather than a leg inside each -- see the mix.
-    const float filterInput = mixed * filterInputAttenuation
-                            * voice.inputCompensation
-                            + microscopicNoise * noiseRateScale_;
+    // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C
+    const float tempC = 25.0f + 15.0f * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
+    const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
+    const float dynamicHeadroom = 2.0f * dynamicThermalVoltage / stageAttenuation;
     const float filtered = voice.filter.process(filterInput, voice.filterG,
-                                                voice.feedback);
+                                                voice.feedback, dynamicHeadroom);
 
     if (!voice.active)
         return 0.0f;
@@ -3241,6 +3244,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             pwmVolts_ += (pwmVoltsTarget_ - pwmVolts_) * pwmSlew;
             subCv_ += (subCvTarget_ - subCv_) * subSlew;
             noiseCv_ += (noiseCvTarget_ - noiseCv_) * noiseSlew;
+            thermalWarmupSeconds_ += static_cast<float>(inverseOversampledRate_);
 
             if (--driftControlCountdown_ <= 0)
             {
