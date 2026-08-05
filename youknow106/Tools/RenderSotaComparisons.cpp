@@ -154,6 +154,22 @@ public:
         return gain;
     }
 
+    Take(std::vector<float> left, std::vector<float> right)
+        : engine_(nullptr), left_(std::move(left)), right_(std::move(right)) {}
+
+    Take diffWith(const Take& before) const
+    {
+        const std::size_t count = std::min(left_.size(), before.left_.size());
+        std::vector<float> diffL(count);
+        std::vector<float> diffR(count);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            diffL[i] = left_[i] - before.left_[i];
+            diffR[i] = right_[i] - before.right_[i];
+        }
+        return Take(std::move(diffL), std::move(diffR));
+    }
+
 private:
     std::unique_ptr<YouKnow106Engine> engine_;
     std::vector<float> left_;
@@ -327,96 +343,120 @@ int main(int argc, char** argv)
     if (argc > 1)
         outputDir = argv[1];
 
-    std::printf("Rendering SOTA comparison WAVs into: %s\n", outputDir.string().c_str());
+    std::printf("Rendering SOTA comparison WAVs (before, after, & normalized diff) into: %s\n", outputDir.string().c_str());
 
     // Feature 1: VCF Stage Transistor Offsets
     {
         auto before = renderVcfOffsetsTake(false);
         auto after = renderVcfOffsetsTake(true);
+        auto diff = after.diffWith(before);
         before.normalise();
         after.normalise();
+        diff.normalise();
         writeWav(outputDir / "01-vcf-transistor-offsets-before.wav", before.left(), before.right());
         writeWav(outputDir / "01-vcf-transistor-offsets-after.wav", after.left(), after.right());
-        std::printf("Rendered 01-vcf-transistor-offsets (before & after)\n");
+        writeWav(outputDir / "01-vcf-transistor-offsets-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 01-vcf-transistor-offsets (before, after, diff)\n");
     }
 
     // Feature 2: Op-Amp Slew Limiting
     {
         auto before = renderOpAmpSlewTake(false);
         auto after = renderOpAmpSlewTake(true);
+        auto diff = after.diffWith(before);
         before.normalise();
         after.normalise();
+        diff.normalise();
         writeWav(outputDir / "02-opamp-slew-limiting-before.wav", before.left(), before.right());
         writeWav(outputDir / "02-opamp-slew-limiting-after.wav", after.left(), after.right());
-        std::printf("Rendered 02-opamp-slew-limiting (before & after)\n");
+        writeWav(outputDir / "02-opamp-slew-limiting-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 02-opamp-slew-limiting (before, after, diff)\n");
     }
 
     // Feature 3: BBD Capacitance Non-linearity
     {
         auto before = renderBbdCapacitanceTake(false);
         auto after = renderBbdCapacitanceTake(true);
+        auto diff = after.diffWith(before);
         before.normalise();
         after.normalise();
+        diff.normalise();
         writeWav(outputDir / "03-bbd-capacitance-nonlinearity-before.wav", before.left(), before.right());
         writeWav(outputDir / "03-bbd-capacitance-nonlinearity-after.wav", after.left(), after.right());
-        std::printf("Rendered 03-bbd-capacitance-nonlinearity (before & after)\n");
+        writeWav(outputDir / "03-bbd-capacitance-nonlinearity-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 03-bbd-capacitance-nonlinearity (before, after, diff)\n");
     }
 
     // Feature 4: Multiplexer Crosstalk
     {
         auto before = renderMuxCrosstalkTake(false);
         auto after = renderMuxCrosstalkTake(true);
+        auto diff = after.diffWith(before);
         before.normalise();
         after.normalise();
+        diff.normalise();
         writeWav(outputDir / "04-multiplexer-crosstalk-before.wav", before.left(), before.right());
         writeWav(outputDir / "04-multiplexer-crosstalk-after.wav", after.left(), after.right());
-        std::printf("Rendered 04-multiplexer-crosstalk (before & after)\n");
+        writeWav(outputDir / "04-multiplexer-crosstalk-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 04-multiplexer-crosstalk (before, after, diff)\n");
     }
 
     // Feature 5: Exponential DCO Ramp Reset
     {
         auto before = renderExponentialResetTake(false);
         auto after = renderExponentialResetTake(true);
+        auto diff = after.diffWith(before);
         before.normalise();
         after.normalise();
+        diff.normalise();
         writeWav(outputDir / "05-exponential-dco-reset-before.wav", before.left(), before.right());
         writeWav(outputDir / "05-exponential-dco-reset-after.wav", after.left(), after.right());
-        std::printf("Rendered 05-exponential-dco-reset (before & after)\n");
+        writeWav(outputDir / "05-exponential-dco-reset-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 05-exponential-dco-reset (before, after, diff)\n");
     }
 
     // Feature 6: IR3109 VCF BJT Early Effect
     {
         auto before = renderVcfEarlyEffectTake(false);
         auto after = renderVcfEarlyEffectTake(true);
+        auto diff = after.diffWith(before);
         before.normalise();
         after.normalise();
+        diff.normalise();
         writeWav(outputDir / "06-vcf-early-effect-before.wav", before.left(), before.right());
         writeWav(outputDir / "06-vcf-early-effect-after.wav", after.left(), after.right());
-        std::printf("Rendered 06-vcf-early-effect (before & after)\n");
+        writeWav(outputDir / "06-vcf-early-effect-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 06-vcf-early-effect (before, after, diff)\n");
     }
 
     // Feature 7: Spatial Chassis Thermal Gradient
     {
         auto before = renderSpatialThermalGradientTake(false);
         auto after = renderSpatialThermalGradientTake(true);
+        auto diff = after.diffWith(before);
         before.normalise();
         after.normalise();
+        diff.normalise();
         writeWav(outputDir / "07-spatial-thermal-gradient-before.wav", before.left(), before.right());
         writeWav(outputDir / "07-spatial-thermal-gradient-after.wav", after.left(), after.right());
-        std::printf("Rendered 07-spatial-thermal-gradient (before & after)\n");
+        writeWav(outputDir / "07-spatial-thermal-gradient-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 07-spatial-thermal-gradient (before, after, diff)\n");
     }
 
     // Feature 8: Chorus Thiran & Heterodyne Clock Bleed
     {
         auto before = renderChorusThiranTake(false);
         auto after = renderChorusThiranTake(true);
+        auto diff = after.diffWith(before);
         before.normalise();
         after.normalise();
+        diff.normalise();
         writeWav(outputDir / "08-chorus-thiran-clock-bleed-before.wav", before.left(), before.right());
         writeWav(outputDir / "08-chorus-thiran-clock-bleed-after.wav", after.left(), after.right());
-        std::printf("Rendered 08-chorus-thiran-clock-bleed (before & after)\n");
+        writeWav(outputDir / "08-chorus-thiran-clock-bleed-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 08-chorus-thiran-clock-bleed (before, after, diff)\n");
     }
 
-    std::printf("All SOTA comparison WAVs successfully rendered!\n");
+    std::printf("All SOTA comparison WAVs & diffs successfully rendered!\n");
     return 0;
 }
