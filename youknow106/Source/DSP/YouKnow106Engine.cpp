@@ -1251,7 +1251,8 @@ void YouKnow106Engine::OtaCascade::retime(float previousG,
 float YouKnow106Engine::OtaCascade::process(float input, float g,
                                             float feedback,
                                             float headroom,
-                                            bool enableEarlyEffect) noexcept
+                                            bool enableEarlyEffect,
+                                            float calibration) noexcept
 {
     const float inverseHeadroom = 1.0f / std::max(headroom, 1.0e-5f);
     constexpr float feedbackHeadroom =
@@ -1272,7 +1273,9 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
         float previous = input - k * feedbackHeadroom * feedbackTanh;
         for (int n = 0; n < 4; ++n)
         {
-            const float earlyMod = enableEarlyEffect ? (1.0f + 0.005f * (voltage[static_cast<std::size_t>(n)] * inverseHeadroom)) : 1.0f;
+            const float earlyMod = (enableEarlyEffect && calibration > 0.0f)
+                ? (1.0f + 0.005f * calibration * (voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
+                : 1.0f;
             const float stageG = gLimited * earlyMod;
             const float x = (previous - voltage[static_cast<std::size_t>(n)]
                              + offsetVoltage[static_cast<std::size_t>(n)]) * inverseHeadroom;
@@ -2958,10 +2961,10 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
 
-    if (parameters.enableExponentialReset && phase >= rise)
+    if (parameters.enableExponentialReset && phase >= rise && parameters.calibration > 0.0f)
     {
         const float resetPhaseNorm = static_cast<float>((phase - rise) / reset);
-        constexpr float expDecayRate = 4.0f; // tau = reset / 4 (~0.55 us JFET RC discharge)
+        const float expDecayRate = 4.0f * parameters.calibration; // scales decay rate with character
         const float expFactor = (std::exp(-expDecayRate * resetPhaseNorm) - std::exp(-expDecayRate))
                               / (1.0f - std::exp(-expDecayRate));
         sawNaive = 2.0f * expFactor - 1.0f;
@@ -2970,8 +2973,12 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // The ramp reset corner slope discontinuities are repaired with slope residuals.
     const float slopeAtStart = 2.0f / static_cast<float>(rise);
     const float slopeAtEnd = slopeAtStart;
-    const float fallSlopeStart = parameters.enableExponentialReset ? -8.0f / static_cast<float>(reset) : -2.0f / static_cast<float>(reset);
-    const float fallSlopeEnd = parameters.enableExponentialReset ? fallSlopeStart * std::exp(-4.0f) : fallSlopeStart;
+    const float fallSlopeStart = (parameters.enableExponentialReset && parameters.calibration > 0.0f)
+        ? (-2.0f * (1.0f + 3.0f * parameters.calibration) / static_cast<float>(reset))
+        : (-2.0f / static_cast<float>(reset));
+    const float fallSlopeEnd = (parameters.enableExponentialReset && parameters.calibration > 0.0f)
+        ? (fallSlopeStart * std::exp(-4.0f * parameters.calibration))
+        : fallSlopeStart;
     const float incrementF = static_cast<float>(increment);
 
     for (double base = 0.0; base <= lastCycle; base += 1.0)
@@ -3180,7 +3187,8 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float dynamicHeadroom = 2.0f * dynamicThermalVoltage / stageAttenuation;
     const float filtered = voice.filter.process(filterInput, voice.filterG,
                                                 voice.feedback, dynamicHeadroom,
-                                                parameters.enableVcfEarlyEffect);
+                                                parameters.enableVcfEarlyEffect,
+                                                parameters.calibration);
 
     if (!voice.active)
         return 0.0f;

@@ -255,6 +255,8 @@ of them. Where a mechanism has an open question, it is named in its entry.
 18. **Chorus Thiran Fractional BBD Delay & Heterodyne Clock Bleed**:
     Continuous-time fractional delay sub-sample interpolation combined with dual MN3009 BBD clock driver heterodyne beat frequency sidebands ($f_{\text{clkA}}, f_{\text{clkB}} \in [40\,\text{kHz}, 200\,\text{kHz}]$), injecting realistic high-frequency shimmer and smooth delay sweeps into wet chorus modes. Rendered before/after comparison WAVs are committed in [`08-chorus-thiran-clock-bleed-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-before.wav) and [`08-chorus-thiran-clock-bleed-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-after.wav).
 
+*Note: All physical circuit simulation behaviors above scale dynamically with the **Unit Character** (`calibration`) control: `0.0` suppresses all parasitics for a pristine digital reference, `1.0` models 100% calibrated hardware realism, and `3.0..5.0` exaggerates vintage analog character for prominent audible contrast.*
+
 ## What remains open
 
 The canonical research queue is

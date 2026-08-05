@@ -186,6 +186,7 @@ EngineParameters defaultPanel()
 Take renderVcfOffsetsTake(bool enableOffsets)
 {
     auto p = defaultPanel();
+    p.calibration = enableOffsets ? 3.0f : 0.0f;
     p.enableVcfStageOffsets = enableOffsets;
     p.cutoff = 0.35f;
     p.resonance = 0.65f;
@@ -203,6 +204,7 @@ Take renderVcfOffsetsTake(bool enableOffsets)
 Take renderOpAmpSlewTake(bool enableSlewLimiting)
 {
     auto p = defaultPanel();
+    p.calibration = enableSlewLimiting ? 3.0f : 0.0f;
     p.enableOpAmpSlewLimiting = enableSlewLimiting;
     p.cutoff = 0.75f;
     p.resonance = 0.80f;
@@ -218,6 +220,7 @@ Take renderOpAmpSlewTake(bool enableSlewLimiting)
 Take renderBbdCapacitanceTake(bool enableCapNonlinearity)
 {
     auto p = defaultPanel();
+    p.calibration = enableCapNonlinearity ? 3.0f : 0.0f;
     p.enableBbdCapacitanceNonlinearity = enableCapNonlinearity;
     p.sawEnabled = true;
     p.subLevel = 0.8f;
@@ -234,6 +237,7 @@ Take renderBbdCapacitanceTake(bool enableCapNonlinearity)
 Take renderMuxCrosstalkTake(bool enableCrosstalk)
 {
     auto p = defaultPanel();
+    p.calibration = enableCrosstalk ? 3.0f : 0.0f;
     p.enableMuxCrosstalk = enableCrosstalk;
     p.range = DcoRange::Sixteen;
     p.subLevel = 0.9f;
@@ -254,6 +258,7 @@ Take renderMuxCrosstalkTake(bool enableCrosstalk)
 Take renderExponentialResetTake(bool enableExponentialReset)
 {
     auto p = defaultPanel();
+    p.calibration = enableExponentialReset ? 3.0f : 0.0f;
     p.enableExponentialReset = enableExponentialReset;
     p.range = DcoRange::Four;
     p.sawEnabled = true;
@@ -269,6 +274,7 @@ Take renderExponentialResetTake(bool enableExponentialReset)
 Take renderVcfEarlyEffectTake(bool enableVcfEarlyEffect)
 {
     auto p = defaultPanel();
+    p.calibration = enableVcfEarlyEffect ? 3.0f : 0.0f;
     p.enableVcfEarlyEffect = enableVcfEarlyEffect;
     p.cutoff = 0.40f;
     p.resonance = 0.70f;
@@ -284,6 +290,7 @@ Take renderVcfEarlyEffectTake(bool enableVcfEarlyEffect)
 Take renderSpatialThermalGradientTake(bool enableSpatialThermalGradient)
 {
     auto p = defaultPanel();
+    p.calibration = enableSpatialThermalGradient ? 3.0f : 0.0f;
     p.enableSpatialThermalGradient = enableSpatialThermalGradient;
     p.cutoff = 0.50f;
     p.resonance = 0.60f;
@@ -300,6 +307,7 @@ Take renderSpatialThermalGradientTake(bool enableSpatialThermalGradient)
 Take renderChorusThiranTake(bool enableChorusThiranAndClockBleed)
 {
     auto p = defaultPanel();
+    p.calibration = enableChorusThiranAndClockBleed ? 3.0f : 0.0f;
     p.enableChorusThiranAndClockBleed = enableChorusThiranAndClockBleed;
     p.sawEnabled = true;
     p.subLevel = 0.5f;

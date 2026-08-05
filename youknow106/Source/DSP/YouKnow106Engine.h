@@ -612,7 +612,8 @@ private:
         void retime(float previousG, float nextG) noexcept;
         float process(float input, float g, float feedback,
                       float headroom = otaHeadroomVolts,
-                      bool enableEarlyEffect = true) noexcept;
+                      bool enableEarlyEffect = true,
+                      float calibration = 0.70f) noexcept;
     };
 
     struct HighPass
