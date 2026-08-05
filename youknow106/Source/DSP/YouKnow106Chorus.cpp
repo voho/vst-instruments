@@ -208,7 +208,7 @@ float Chorus::bbdTransfer(float input) noexcept
 
 float Chorus::transferLossStep(float& state, float input, float clockHz) noexcept
 {
-    const float dynamicSmear = std::clamp(transferSmear * (1.0f + (clockHz - 10000.0f) * 1.5e-6f), 0.1f, 0.99f);
+    const float dynamicSmear = std::clamp(transferSmear * (1.0f + (clockHz - 26000.0f) * 1.5e-6f), 0.1f, 0.99f);
     state += dynamicSmear * (input - state);
     return state;
 }
