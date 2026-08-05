@@ -28,13 +28,27 @@ constexpr float pulseMixVolts = 6.0f;
 constexpr float subMixVolts = 5.0f;
 constexpr float noiseMixVolts = 2.0f;
 
-// Stereo post-IC6 coupling, identically C17/R54/VR1 and C20/R57/VR1.
-// The load here is the complete 10 kOhm pot track. Downstream selector, jack
-// and headphone loading is deliberately outside the current fixed-boundary
-// product scope and remains OQ-17.
+// Voice-summer output coupling ahead of the four-position HPF selector:
+// IC1a -> C14 10 uF NP -> R39 33 kOhm -> IC3 common input.
+constexpr float voiceBusCouplingCapacitanceF = 10.0e-6f;
+constexpr float voiceBusCouplingResistanceOhms = 33000.0f;
+
+// Manufacturer application input for IC5/uPC1252H2, populated by Roland as
+// C12 10 uF NP followed by R36 33 kOhm.
+constexpr float commonVcaInputCapacitanceF = 10.0e-6f;
+constexpr float commonVcaInputResistanceOhms = 33000.0f;
+
+// Stereo post-IC6 coupling, identically C17/R54/VR1 and C20/R57/VR1. The fixed
+// internal load is the complete selector ladder in parallel with IC7's input;
+// external jack loads, normaling and driven headphone behavior remain OQ-17.
 constexpr float outputCouplingCapacitanceF = 10.0e-6f;
 constexpr float outputCouplingSeriesOhms = 1500.0f;
 constexpr float outputCouplingPotOhms = 10000.0f;
+constexpr float outputSelectorLadderOhms = 33000.0f + 6800.0f + 1500.0f;
+constexpr float headphoneInputOhms = 1000.0f + 100000.0f;
+constexpr float outputWiperInternalLoadOhms =
+    outputSelectorLadderOhms * headphoneInputOhms
+    / (outputSelectorLadderOhms + headphoneInputOhms);
 
 // Voiced microscopic excitation at the filter input. It is distinct from the
 // shared audible TP8 noise and gives an otherwise perfectly silent numerical
@@ -351,6 +365,14 @@ std::uint16_t YouKnow106Engine::envelopeReleaseLevel(
 {
     const auto current = static_cast<std::uint16_t>(std::min(level, envelopePeak));
     return truncatedDecayProduct(current, multiplier);
+}
+
+float YouKnow106Engine::envelopeDacFraction(std::uint16_t level) noexcept
+{
+    constexpr float inverseDacPeak = 1.0f / 4095.0f;
+    const auto limited = static_cast<std::uint16_t>(
+        std::min(level, envelopePeak));
+    return static_cast<float>(limited >> 2u) * inverseDacPeak;
 }
 
 float YouKnow106Engine::envelopeAttackSeconds(float panelPosition) noexcept
@@ -680,15 +702,24 @@ float YouKnow106Engine::pulseFallPhase(float duty, float resetFraction) noexcept
 
 float YouKnow106Engine::pwmDutyCycle(float controlVolts) noexcept
 {
+    return pwmDutyCycle(controlVolts, 1.0f);
+}
+
+float YouKnow106Engine::pwmDutyCycle(float controlVolts,
+                                     float rampAmplitudeScale) noexcept
+{
     // Pulse Off writes -0.8 V. That sits below the ramp and leaves the
     // comparator permanently high while the oscillator itself keeps running.
     if (std::isfinite(controlVolts) && controlVolts < 0.0f)
         return 1.0f;
 
-    // The ramp spans 12 V peak to peak; the fraction of the period spent above
-    // the threshold is the duty cycle.
+    // The nominal ramp spans 12 V peak to peak. Its compensation hold lags a
+    // pitch step, and the optional card-current error changes the same ramp's
+    // slope; both therefore move the comparator crossing as well as the saw.
     const float volts = std::clamp(sanitised(controlVolts, 6.0f), 0.6f, 6.0f);
-    return std::clamp(1.0f - volts / 12.0f, 0.05f, 0.95f);
+    const float scale = std::clamp(
+        sanitised(rampAmplitudeScale, 1.0f), 0.25f, 4.0f);
+    return std::clamp(1.0f - volts / (12.0f * scale), 0.0f, 1.0f);
 }
 
 float YouKnow106Engine::VoicedVoiceVcaCompatibilityProfile::gain(
@@ -706,12 +737,14 @@ float YouKnow106Engine::VoicedVoiceVcaCompatibilityProfile::gain(
 
 float YouKnow106Engine::patchLevelGain(float dacFraction) noexcept
 {
-    // The common jack-board VCA's placement is documented, but no qualifying
-    // manufacturer or in-circuit transfer establishes its control law here.
-    // The exact converter layer supplies p=b/127=DAC12/4064. The compatibility
-    // display coordinate is explicitly x=-5+10p; its three x=-5/0/+5 anchors
-    // motivate -15/-12.5/+5 dB respectively. The cubic below is the declared
-    // product mapping in p, not an analogue or firmware-derived law.
+    // NEC specifies the common jack-board uPC1252H2's GC1 device transfer as
+    // -5.9 mV/dB typical. What remains unknown is Roland's converter/hold and
+    // jack-board mapping from p=b/127=DAC12/4064 to GC1 voltage and offset. The
+    // compatibility display coordinate is explicitly x=-5+10p; its three
+    // x=-5/0/+5 anchors motivate -15/-12.5/+5 dB respectively. The cubic below
+    // is the declared provisional p-to-dB mapping, algebraically equivalent to
+    // a voiced GC1 curve under the NEC slope, not a measured byte-to-voltage
+    // law.
     //
     // This is intentionally identified as a three-point fit, not an exact
     // potentiometer model: a full panel-byte/control-voltage sweep from a
@@ -786,10 +819,62 @@ float YouKnow106Engine::outputCouplingCornerHz() noexcept
                    * (outputCouplingSeriesOhms + outputCouplingPotOhms));
 }
 
+float YouKnow106Engine::voiceBusCouplingCornerHz() noexcept
+{
+    return 1.0f / (twoPi * voiceBusCouplingCapacitanceF
+                   * voiceBusCouplingResistanceOhms);
+}
+
+float YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode mode) noexcept
+{
+    if (mode == HighPassMode::Boost || mode == HighPassMode::One)
+    {
+        constexpr float selectedInputOhms = 47000.0f;
+        constexpr float parallelOhms =
+            voiceBusCouplingResistanceOhms * selectedInputOhms
+            / (voiceBusCouplingResistanceOhms + selectedInputOhms);
+        return 1.0f / (twoPi * voiceBusCouplingCapacitanceF * parallelOhms);
+    }
+    return voiceBusCouplingCornerHz();
+}
+
+float YouKnow106Engine::commonVcaInputCouplingCornerHz() noexcept
+{
+    return 1.0f / (twoPi * commonVcaInputCapacitanceF
+                   * commonVcaInputResistanceOhms);
+}
+
 float YouKnow106Engine::outputCouplingHighGain() noexcept
 {
     return outputCouplingPotOhms
          / (outputCouplingSeriesOhms + outputCouplingPotOhms);
+}
+
+float YouKnow106Engine::outputCouplingCornerHz(float volumePosition) noexcept
+{
+    const float position = clamp01(sanitised(volumePosition, 0.0f));
+    const float lowerTrack = position * outputCouplingPotOhms;
+    const float loadedLower = lowerTrack > 0.0f
+        ? lowerTrack * outputWiperInternalLoadOhms
+            / (lowerTrack + outputWiperInternalLoadOhms)
+        : 0.0f;
+    const float upperTrack = (1.0f - position) * outputCouplingPotOhms;
+    const float resistance = outputCouplingSeriesOhms
+                           + upperTrack + loadedLower;
+    return 1.0f / (twoPi * outputCouplingCapacitanceF * resistance);
+}
+
+float YouKnow106Engine::outputCouplingHighGain(float volumePosition) noexcept
+{
+    const float position = clamp01(sanitised(volumePosition, 0.0f));
+    const float lowerTrack = position * outputCouplingPotOhms;
+    if (!(lowerTrack > 0.0f))
+        return 0.0f;
+    const float loadedLower = lowerTrack * outputWiperInternalLoadOhms
+                            / (lowerTrack + outputWiperInternalLoadOhms);
+    const float upperTrack = (1.0f - position) * outputCouplingPotOhms;
+    return loadedLower / (outputCouplingSeriesOhms
+                          + upperTrack + loadedLower);
 }
 
 // ---------------------------------------------------------------------------
@@ -1037,7 +1122,9 @@ float YouKnow106Engine::Envelope::tick(std::uint16_t attackIncrement,
             break;
     }
 
-    value = static_cast<float>(level) * envelopeQuantum;
+    // The two low recurrence bits stay in RAM and influence the next pass,
+    // but they do not reach the 12-bit converter on this pass.
+    value = envelopeDacFraction(level);
     return value;
 }
 
@@ -1055,10 +1142,90 @@ void YouKnow106Engine::Dco::reset() noexcept
     sub.reset();
 }
 
+void YouKnow106Engine::restartDcoBandlimited(
+    Voice& voice, double previousPeriodSamples) noexcept
+{
+    auto& dco = voice.dco;
+    if (!dco.saw.primed || !dco.pulse.primed || !dco.sub.primed)
+    {
+        // Nothing from this cell has reached the delayed output timeline yet,
+        // so this is a true cold start rather than an audible discontinuity.
+        dco.reset();
+        return;
+    }
+
+    const auto rampGeometry = [this](double periodSamples) {
+        const double safePeriod = std::max(periodSamples, 1.0e-9);
+        const double reset = static_cast<double>(
+            resetFraction(safePeriod * inverseOversampledRate_));
+        const double rise = std::max(1.0 - reset, 1.0e-4);
+        return std::array { safePeriod, reset, rise };
+    };
+    const auto oldGeometry = rampGeometry(previousPeriodSamples);
+    const auto newGeometry = rampGeometry(dco.periodSamples);
+    const double oldReset = oldGeometry[1];
+    const double oldRise = oldGeometry[2];
+    const double oldPhase = dco.phase;
+    const float oldSaw = oldPhase < oldRise
+        ? 2.0f * clamp01(static_cast<float>(oldPhase / oldRise)) - 1.0f
+        : 1.0f - 2.0f * static_cast<float>(
+              (oldPhase - oldRise) / oldReset);
+    constexpr float newSaw = -1.0f;
+
+    const float oldSlope = oldPhase < oldRise
+        ? 2.0f / static_cast<float>(oldRise * oldGeometry[0])
+        : -2.0f / static_cast<float>(oldReset * oldGeometry[0]);
+    const float newSlope =
+        2.0f / static_cast<float>(newGeometry[2] * newGeometry[0]);
+
+    // The write happens before the current naive sample enters the track. In
+    // this delayed-input residual convention that is offset zero: the track's
+    // own four-sample delay supplies the non-causal half of the symmetric
+    // correction. Offset one would advance the residual without advancing the
+    // delayed hard step and create a larger, double-sided discontinuity.
+    constexpr float currentNaiveTimestamp = 0.0f;
+    // renderVoice advances the normalized phase before it submits the next
+    // naive sample. Express the value discontinuity on that same event-side
+    // sample grid: both the abandoned and restarted ramps have advanced once
+    // by their respective slopes. Using only newSaw-oldSaw would leave the
+    // slope difference behind as a small hard step on wide/high retargets.
+    addStep(dco.saw, (newSaw + newSlope) - (oldSaw + oldSlope),
+            currentNaiveTimestamp);
+    addSlope(dco.saw, newSlope - oldSlope, currentNaiveTimestamp);
+    addStep(dco.pulse, -1.0f - dco.pulseState, currentNaiveTimestamp);
+    addStep(dco.sub, 1.0f - dco.subState, currentNaiveTimestamp);
+
+    dco.phase = 0.0;
+    dco.pulseState = -1.0f;
+    dco.subState = 1.0f;
+}
+
 void YouKnow106Engine::OtaCascade::reset() noexcept
 {
     state.fill(0.0f);
     voltage.fill(0.0f);
+}
+
+void YouKnow106Engine::OtaCascade::retime(float previousG,
+                                          float nextG) noexcept
+{
+    if (!(previousG > 0.0f) || !std::isfinite(previousG)
+        || !(nextG >= 0.0f) || !std::isfinite(nextG))
+    {
+        // With no usable derivative history, retaining charge is still less
+        // destructive than clearing a continuously powered voice card.
+        state = voltage;
+        return;
+    }
+
+    // After a trapezoidal step, state - voltage is g times the derivative at
+    // that physical capacitor. A live HQ change alters dt (and therefore g),
+    // not the capacitor voltage or transconductance. Preserve the derivative
+    // by scaling only that carry into the new timestep.
+    const float ratio = nextG / previousG;
+    for (std::size_t stage = 0; stage < state.size(); ++stage)
+        state[stage] = voltage[stage]
+                     + (state[stage] - voltage[stage]) * ratio;
 }
 
 // One trapezoidally integrated step of the four transconductor stages with the
@@ -1224,6 +1391,13 @@ void YouKnow106Engine::buildHalfbandKernel() noexcept
         {
             ideal = 0.5f;
         }
+        else if (((n - centre) & 1) == 0)
+        {
+            // Every other non-centre half-band tap is analytically zero.
+            // Spelling that out avoids platform-dependent sin(k*pi) crumbs
+            // and lets downsamplePair skip those multiplies exactly.
+            ideal = 0.0f;
+        }
         else
         {
             const float x = pi * offset * 0.5f;
@@ -1282,8 +1456,9 @@ void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
     reset();
 }
 
-void YouKnow106Engine::updateProcessingRate() noexcept
+void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexcept
 {
+    const double previousProcessingRate = oversampledRate_;
     if (!oversamplingEnabled_ || sampleRate_ >= minimumHqProcessingRate)
         oversampling_ = 1;
     else if (sampleRate_ >= minimumHqProcessingRate / 2.0)
@@ -1295,6 +1470,10 @@ void YouKnow106Engine::updateProcessingRate() noexcept
     inverseOversampledRate_ = static_cast<float>(1.0 / oversampledRate_);
     noiseRateScale_ = static_cast<float>(
         std::sqrt(oversampledRate_ / noiseReferenceRateHz));
+    voiceBusCouplingG_ = std::tan(
+        pi * voiceBusCouplingCornerHz() * inverseOversampledRate_);
+    commonVcaInputCouplingG_ = std::tan(
+        pi * commonVcaInputCouplingCornerHz() * inverseOversampledRate_);
     outputCouplingG_ = std::tan(
         pi * outputCouplingCornerHz() * inverseSampleRate_);
     const double deepest = totalLatencySamples(maximumOversampleFactor);
@@ -1309,15 +1488,23 @@ void YouKnow106Engine::updateProcessingRate() noexcept
         std::max(1, static_cast<int>(sampleRate_ * outputPathQuietSeconds));
     rateTransitionStep_ = 1.0f / std::max(
         1.0f, static_cast<float>(sampleRate_ * rateTransitionSeconds));
-    // Start with one pass due immediately. Subsequent boundaries are scheduled
-    // with fractional phase, so 4.2 ms remains 4.2 ms at every host rate.
-    controlScanPhase_ = 1.0;
-    converterEventPhases_ = converterEventPhases(
-        ConverterTimingProfile::NormalizedServiceChart);
-    nextConverterWrite_ = 0;
-    converterPassLfoGated_ = 0.0f;
-    driftControlCountdown_ = 0;
-    chorus_.prepare(oversampledRate_);
+    // A live quality change is a numerical implementation detail, not a power
+    // cycle of the assigner or modulator. Their phases are stored in passes or
+    // normalized cycles, so they survive unchanged. Only a first prepare/reset
+    // starts a new scan. Preserve the remaining drift interval in seconds too.
+    if (preserveFreeRunningState && driftControlCountdown_ > 0
+        && previousProcessingRate > 0.0)
+    {
+        driftControlCountdown_ = std::max(
+            1, static_cast<int>(std::llround(
+                   driftControlCountdown_ * oversampledRate_
+                   / previousProcessingRate)));
+    }
+    else if (!preserveFreeRunningState)
+    {
+        driftControlCountdown_ = 0;
+    }
+    chorus_.prepare(oversampledRate_, preserveFreeRunningState);
 }
 
 bool YouKnow106Engine::setOversamplingEnabled(bool enabled) noexcept
@@ -1364,24 +1551,36 @@ bool YouKnow106Engine::applyPendingOversamplingIfIdle() noexcept
         return false;
 
     oversamplingEnabled_ = oversamplingRequested_;
-    updateProcessingRate();
-    clearRateDependentOutputPath();
+    updateProcessingRate(true);
+    rebuildRateDependentVoiceState();
+    clearRateDependentOutputPath(true);
     rateTransitionGain_ = 0.0f;
     rateTransition_ = RateTransition::FadingIn;
     return true;
 }
 
-// Everything downstream of the voices whose state depends on the internal
-// rate: the delay lines, shared HPF, decimation stages and latency pad. The
-// final coupling capacitors run at the host rate and must survive an HQ
-// rebuild; clearing their 115 ms state after the shorter musical-tail wait
-// would create a large discontinuity on asymmetric PWM.
-void YouKnow106Engine::clearRateDependentOutputPath() noexcept
+// Sample-grid histories downstream of the voices: delay lines, decimation
+// stages and latency pad. A live HQ change preserves the physical C14, HPF and
+// C12 states while recomputing their coefficients for the new rate; a hard
+// reset clears them. The final C17/C20 capacitors run at the host rate and
+// always survive a live HQ rebuild, or asymmetric PWM would make a large step.
+void YouKnow106Engine::clearRateDependentOutputPath(
+    bool preserveFreeRunningState) noexcept
 {
     firstDecimator_.reset();
     secondDecimator_.reset();
-    chorus_.reset();
-    highPass_.reset();
+    // updateProcessingRate() has already replaced the chorus coefficients,
+    // retained its BBD buckets/free-running phases, and cleared only support-
+    // filter TPT carries that embed the old timestep. A hard reset also clears
+    // the physical/free-running effect state.
+    if (!preserveFreeRunningState)
+        chorus_.reset(false);
+    if (!preserveFreeRunningState)
+    {
+        voiceBusCoupling_.reset();
+        highPass_.reset();
+        commonVcaInputCoupling_.reset();
+    }
     latencyPadLeft_.fill(0.0f);
     latencyPadRight_.fill(0.0f);
     latencyPadWriteIndex_ = 0;
@@ -1389,9 +1588,44 @@ void YouKnow106Engine::clearRateDependentOutputPath() noexcept
 
 void YouKnow106Engine::clearOutputPath() noexcept
 {
-    clearRateDependentOutputPath();
+    clearRateDependentOutputPath(false);
     outputCouplingLeft_.reset();
     outputCouplingRight_.reset();
+}
+
+void YouKnow106Engine::rebuildRateDependentVoiceState() noexcept
+{
+    for (auto& voice : voices_)
+    {
+        const float previousFilterG = voice.filterG;
+        const double frequency = dcoQuantisedFrequency(
+            voice.dco.divider, activeParameters_.range);
+        voice.dco.periodSamples = frequency > 0.0
+                                ? oversampledRate_ / frequency : 1.0e6;
+
+        // Residual kernels are measured in internal samples. The safety fade
+        // has reached zero, so discard their old-rate tails and prime the new
+        // timeline at the oscillator's continuing physical phase.
+        const double reset = static_cast<double>(
+            resetFraction(voice.dco.periodSamples * inverseOversampledRate_));
+        const double rise = std::max(1.0 - reset, 1.0e-4);
+        const double phase = voice.dco.phase;
+        const float saw = phase < rise
+            ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
+            : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
+        voice.dco.saw.reset();
+        voice.dco.pulse.reset();
+        voice.dco.sub.reset();
+        voice.dco.saw.prime(saw);
+        voice.dco.pulse.prime(voice.dco.pulseState);
+        voice.dco.sub.prime(voice.dco.subState);
+
+        if (voice.active || voice.cardIndex < hardwareVoices)
+        {
+            updateVoiceAudio(voice, activeParameters_);
+            voice.filter.retime(previousFilterG, voice.filterG);
+        }
+    }
 }
 
 double YouKnow106Engine::totalLatencySamples(int factor) noexcept
@@ -1559,6 +1793,9 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
 // voices each writing the same three values.
 void YouKnow106Engine::updateSharedHighPass(const EngineParameters& parameters) noexcept
 {
+    voiceBusCouplingG_ = std::tan(
+        pi * voiceBusCouplingCornerHz(parameters.highPass)
+        * inverseOversampledRate_);
     const float corner = highPassCornerHz(parameters.highPass);
     highPassG_ =
         std::tan(pi * std::min(corner, static_cast<float>(oversampledRate_) * 0.45f)
@@ -1870,7 +2107,6 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     voice.rootMidi = midiNote;
     voice.velocity = velocity;
     voice.generation = ++generation_;
-    voice.controlCountdown = 0;
     voice.energy = 0.0f;
 
     const float target = static_cast<float>(voiceMidi);
@@ -1921,9 +2157,22 @@ void YouKnow106Engine::silenceVoice(Voice& voice) noexcept
     voice.vcaControl = 0.0f;
     voice.energy = 0.0f;
     voice.envelope.reset();
-    // Deliberately kept: the free-running DCO and filter, card-noise state,
-    // both note memories, currentMidi and releaseStamp. A powered voice card
-    // does not reset its analogue state when its VCA closes.
+    if (voice.cardIndex >= hardwareVoices)
+    {
+        // Product-extension slots have no powered hardware card while idle.
+        // Since renderVoice deliberately stops advancing them, retaining an
+        // old resonant filter or oscillator timeline here would freeze it in
+        // amber and resurrect it on a later assignment. Keep the intended
+        // digital note/portamento memories below, but reconstruct the virtual
+        // audio cell from silence next time it is used.
+        voice.dco.reset();
+        voice.filter.reset();
+        voice.noiseState = hash32(
+            static_cast<std::uint32_t>(voice.cardIndex) * 2246822519u + 1u) | 1u;
+    }
+    // Physical slots deliberately keep their free-running DCO, filter and
+    // card-noise state. Every slot keeps both digital note memories,
+    // currentMidi and releaseStamp for the assigner/portamento policy.
 }
 
 void YouKnow106Engine::noteOn(int midiNote, float velocity)
@@ -2436,10 +2685,11 @@ void YouKnow106Engine::performConverterWrite(
             if (validPhysicalVoice())
             {
                 auto& voice = voices_[static_cast<std::size_t>(write.voice)];
+                const double previousPeriod = voice.dco.periodSamples;
                 updateVoiceEnvelopeAndPitch(voice, parameters, lfoGated);
                 if (voice.dcoResetPending)
                 {
-                    voice.dco.reset();
+                    restartDcoBandlimited(voice, previousPeriod);
                     voice.dcoResetPending = false;
                 }
             }
@@ -2519,15 +2769,25 @@ void YouKnow106Engine::updatePulseComparator(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
-    const float amplitudeScale = std::clamp(
-        voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+    const float amplitudeScale = dcoRampAmplitudeScale(voice, parameters);
     // The alignment window is 48% to 52% duty across cards: +/-0.24 V is
     // +/-2 points on the 12 V ramp. Pulse Off remains separate at -0.8 V and
     // pins the comparator high even while this card's VCA is shut.
     const float threshold = pwmVolts_
                           + card.comparatorOffset * 0.24f
                                 * parameters.calibration;
-    voice.pulseDuty = pwmDutyCycle(threshold / amplitudeScale);
+    voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
+}
+
+float YouKnow106Engine::dcoRampAmplitudeScale(
+    const Voice& voice, const EngineParameters& parameters) const noexcept
+{
+    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+    const float heldCompensation = std::clamp(
+        voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+    const float cardCurrent =
+        1.0f + card.rampCurrentError * 0.03f * parameters.calibration;
+    return heldCompensation * cardCurrent;
 }
 
 bool YouKnow106Engine::pulseMixEnabled(bool requested, float duty) noexcept
@@ -2542,6 +2802,12 @@ bool YouKnow106Engine::pulseMixEnabled(bool requested, float duty) noexcept
 float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parameters,
                                     float noiseSample) noexcept
 {
+    // Extension slots have no continuously powered voice card behind them.
+    // Their digital portamento state still advances on the converter pass,
+    // but an unassigned slot has no DCO/filter/audio state that must run.
+    if (!voice.active && voice.cardIndex >= hardwareVoices)
+        return 0.0f;
+
     auto& dco = voice.dco;
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
 
@@ -2586,15 +2852,15 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // instantly, so every pitch step leaves a momentary amplitude error
     // until the voltage catches up. The ratio of the slewed voltage to the
     // one the current pitch calls for *is* that error.
-    const float amplitudeScale = std::clamp(
+    const float compensationScale = std::clamp(
         voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
     // From the parts' own tolerance classes, which is legitimate here because
     // the ramp has no per-voice trimmer, so nothing removes their spread: the
     // charging resistors are marked FX on the board -- metal-oxide film, 1% --
     // and the 1 nF timing capacitors carry code G, 2%. Worst case that is
     // -2.93% to +3.07% of slope, which is the 3% used here.
-    const float amplitude = sawMixVolts * amplitudeScale
-        * (1.0f + card.rampCurrentError * 0.03f * parameters.calibration);
+    const float amplitude = sawMixVolts
+                          * dcoRampAmplitudeScale(voice, parameters);
 
     const float sawNaive = phase < rise
         ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
@@ -2625,8 +2891,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // --- Pulse ------------------------------------------------------------
     // The comparator flips when the ramp crosses the threshold on the way up
     // and again when the reset drags it back down past it.
+    const bool pulsePinnedLow = voice.pulseDuty <= 0.0f;
     const bool pulsePinnedHigh = voice.pulseDuty >= 1.0f;
-    const float duty = std::clamp(voice.pulseDuty, 0.05f, 0.95f);
+    const float duty = std::clamp(voice.pulseDuty, 0.0f, 1.0f);
     const double riseEdge =
         static_cast<double>(pulseRisePhase(duty, static_cast<float>(reset)));
     const double fallEdge =
@@ -2640,7 +2907,17 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         addStep(dco.pulse, 1.0f - dco.pulseState, 0.0f);
         dco.pulseState = 1.0f;
     }
-    for (double base = 0.0; !pulsePinnedHigh && base <= lastCycle; base += 1.0)
+    else if (pulsePinnedLow && dco.pulseState > -1.0f)
+    {
+        // A temporarily under-compensated ramp can sit wholly below the
+        // positive threshold after a pitch write. That is a real pinned-low
+        // comparator state, not a minimum-width pulse.
+        addStep(dco.pulse, -1.0f - dco.pulseState, 0.0f);
+        dco.pulseState = -1.0f;
+    }
+    for (double base = 0.0;
+         !pulsePinnedHigh && !pulsePinnedLow && base <= lastCycle;
+         base += 1.0)
     {
         if (insideThisSample(base + riseEdge) && dco.pulseState < 0.0f)
         {
@@ -2656,7 +2933,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // The pulse is amplitude-compensated by the same control voltage as the
     // ramp, so it carries the same momentary scale error on pitch steps.
     const float pulseOut = dco.pulse.advance(dco.pulseState)
-                         * pulseMixVolts * amplitudeScale;
+                         * pulseMixVolts * compensationScale;
 
     // --- Sub --------------------------------------------------------------
     // A flip-flop halves the note clock, so the sub is an exact square one
@@ -2701,12 +2978,6 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float microscopicNoise =
         (static_cast<float>(voice.noiseState & 0xffffffu)
              * (2.0f / 16777215.0f) - 1.0f) * filterNoiseVolts;
-
-    // Plug-in extension slots have no continuously powered card to emulate.
-    // The six physical slots below keep their filter state evolving behind a
-    // closed VCA, but dormant extension slots can stop here.
-    if (!voice.active && voice.cardIndex >= hardwareVoices)
-        return 0.0f;
 
     // --- Filter, amplifier -------------------------------------------------
     // No high-pass here. The schematic puts it on the jack board, downstream of
@@ -2876,10 +3147,11 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 for (int slot = hardwareVoices; slot < maxVoices; ++slot)
                 {
                     auto& voice = voices_[static_cast<std::size_t>(slot)];
+                    const double previousPeriod = voice.dco.periodSamples;
                     updateVoiceScan(voice, parameters, converterPassLfoGated_);
                     if (voice.dcoResetPending)
                     {
-                        voice.dco.reset();
+                        restartDcoBandlimited(voice, previousPeriod);
                         voice.dcoResetPending = false;
                     }
                 }
@@ -2946,12 +3218,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                     (voice.vcaControlTarget - voice.vcaControl) * voiceVcaSlew;
                 updatePulseComparator(voice, parameters);
 
-                if ((voice.active || slot < hardwareVoices)
-                    && --voice.controlCountdown <= 0)
-                {
-                    voice.controlCountdown = controlPeriod;
+                if (voice.active || slot < hardwareVoices)
                     updateVoiceAudio(voice, parameters);
-                }
 
                 if (!voice.active)
                 {
@@ -2996,14 +3264,18 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // high-pass feeding a resonant lowpass is not the same as one
             // following it, because what the high-pass removes is what the
             // resonance would otherwise have had to work on.
-            const float shaped = highPass_.process(voiceBusInput(mono),
+            const float coupled = voiceBusCoupling_.process(
+                voiceBusInput(mono), voiceBusCouplingG_, 0.0f, 1.0f);
+            const float shaped = highPass_.process(coupled,
                                                    highPassG_,
                                                    highPassShelf_, highPassHigh_);
 
             // VCA LEVEL is the one common uPC1252H2 on the jack board, after
             // the voice sum and HPF. The six voice-module VCAs above are driven
             // only by ENV/GATE (plus the optional velocity extension).
-            const float levelled = shaped * patchLevelGain(sharedVca_);
+            const float vcaInput = commonVcaInputCoupling_.process(
+                shaped, commonVcaInputCouplingG_, 0.0f, 1.0f);
+            const float levelled = vcaInput * patchLevelGain(sharedVca_);
 
             // The chorus input coupling capacitors sit in its two wet branches;
             // dry bypasses them. IC6 applies its component-derived dry/wet
@@ -3045,14 +3317,21 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
 
         applyLatencyPad(outputLeft, outputRight);
 
-        // C17/C20 remove the final dry-path PWM offset after IC6 has combined
-        // dry and wet, while their 1.5 kOhm series resistors work into the two
-        // 10 kOhm VOLUME tracks. Run this before the pot: moving Volume cannot
-        // reset or charge a capacitor which physically sits upstream of it.
+        glidedVolume_ += (parameters.volume - glidedVolume_) * outputGlide;
+
+        // C17/C20, R54/R57 and VR1 are one loaded network, not a fixed pole
+        // followed by an unrelated gain. The 41.3 kOhm selector ladder and
+        // 101 kOhm headphone input load each wiper at every shaft position;
+        // moving Volume changes both the settled gain and the resistance seen
+        // by the still-continuous capacitor state.
+        outputCouplingG_ = std::tan(
+            pi * outputCouplingCornerHz(glidedVolume_) * inverseSampleRate_);
+        const float outputCouplingGain =
+            outputCouplingHighGain(glidedVolume_);
         outputLeft = outputCouplingLeft_.process(
-            outputLeft, outputCouplingG_, 0.0f, outputCouplingHighGain());
+            outputLeft, outputCouplingG_, 0.0f, outputCouplingGain);
         outputRight = outputCouplingRight_.process(
-            outputRight, outputCouplingG_, 0.0f, outputCouplingHighGain());
+            outputRight, outputCouplingG_, 0.0f, outputCouplingGain);
 
         // How long the voices have been gone, which is what a pending quality
         // change waits on: the output path needs that long to run dry.
@@ -3061,14 +3340,12 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
         else if (oversamplingIdleSamples_ < oversamplingQuietSamples_)
             ++oversamplingIdleSamples_;
 
-        glidedVolume_ += (parameters.volume - glidedVolume_) * outputGlide;
-        const float volume = glidedVolume_ * glidedVolume_;
         const float transitionGain = rateTransitionGain_;
         left[sample] = std::isfinite(outputLeft)
-                     ? outputLeft * volume * outputBoundaryGain * transitionGain
+                     ? outputLeft * outputBoundaryGain * transitionGain
                      : 0.0f;
         right[sample] = std::isfinite(outputRight)
-                      ? outputRight * volume * outputBoundaryGain * transitionGain
+                      ? outputRight * outputBoundaryGain * transitionGain
                       : 0.0f;
 
         if (rateTransition_ == RateTransition::FadingOut)

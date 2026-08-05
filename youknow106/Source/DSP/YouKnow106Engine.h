@@ -287,6 +287,11 @@ public:
         std::uint16_t multiplier) noexcept;
     [[nodiscard]] static std::uint16_t envelopeReleaseLevel(
         std::uint16_t level, std::uint16_t multiplier) noexcept;
+    // The recurrence retains all 14 state bits, but the physical 12-bit DAC
+    // receives E>>2. This is the analogue-control fraction actually presented
+    // to the VCF envelope summing path and the ENV-mode voice VCA.
+    [[nodiscard]] static float envelopeDacFraction(
+        std::uint16_t level) noexcept;
 
     // Inverses of the laws above. The panel travel is what the plug-in stores,
     // but what it *displays* is the value the circuit produces, so a host
@@ -304,6 +309,11 @@ public:
     // off state drives the control to -0.8 V and pins the comparator high.
     [[nodiscard]] static float pwmControlVolts(float depth) noexcept;
     [[nodiscard]] static float pwmDutyCycle(float controlVolts) noexcept;
+    // The optional second argument exposes pitch-slew and card-current changes
+    // of the physical ramp used by that same comparator. A scale of one is the
+    // calibrated nominal 12 Vpp ramp.
+    [[nodiscard]] static float pwmDutyCycle(float controlVolts,
+                                            float rampAmplitudeScale) noexcept;
     // The ramp's constant-current rising segment: 0..1 across the rise and
     // -1..+1 out. The reset that follows it is a straight fall back to the
     // negative rail over the remainder of the cycle.
@@ -326,10 +336,12 @@ public:
         [[nodiscard]] static float gain(float control) noexcept;
     };
     // The stored VCA LEVEL trim drives a second, shared uPC1252H2 after the
-    // voice sum. Its exact digital layer is p=b/127=DAC12/4064. The voiced
-    // compatibility layer interprets that as display x=-5+10p and maps the
-    // three x=-5/0/+5 points to -15/-12.5/+5 dB; this declared recentering is
-    // product policy, not a qualifying original-unit sweep.
+    // voice sum. NEC specifies the IC's GC1 device boundary at -5.9 mV/dB
+    // typical, but Roland's p=b/127=DAC12/4064 to GC1 voltage/offset law is
+    // still unknown. The voiced compatibility layer therefore interprets p as
+    // display x=-5+10p and maps the three x=-5/0/+5 points directly to
+    // -15/-12.5/+5 dB. That is algebraically equivalent to a provisional GC1
+    // voltage curve under the NEC slope, not a measured byte-to-voltage law.
     [[nodiscard]] static float patchLevelGain(float dacFraction) noexcept;
     // Single-pole high-pass corner for a panel position, the gain the leg
     // returns the low band with, and the gain it returns the high band with.
@@ -342,11 +354,17 @@ public:
 
     // Each IC6 output is AC-coupled through C17/C20 (10 uF), then R54/R57
     // (1.5 kOhm), into one 10 kOhm track of the dual main VOLUME pot. These
-    // expose the component-derived, high-impedance-downstream transfer used by
-    // the current output-boundary scope. Selector, jack and headphone loading
-    // can move it and remain an explicit measurement question.
+    // expose the earlier unloaded/full-track reference transfer so research
+    // fixtures can compare it with the in-circuit overloads below.
     [[nodiscard]] static float outputCouplingCornerHz() noexcept;
     [[nodiscard]] static float outputCouplingHighGain() noexcept;
+    // Loaded transfer at a shaft position. The fixed per-wiper internal load
+    // is the 41.3 kOhm selector ladder in parallel with the 101 kOhm headphone
+    // input. External jack loads and mono normaling remain outside this scope.
+    [[nodiscard]] static float outputCouplingCornerHz(
+        float volumePosition) noexcept;
+    [[nodiscard]] static float outputCouplingHighGain(
+        float volumePosition) noexcept;
 
     // The instrument has six voice cards; the engine will run more of them for
     // players who want the chords the hardware drops. Public because the host
@@ -362,6 +380,17 @@ public:
     {
         return summedVoices * voiceSummerGain;
     }
+    // The summed bus crosses C14 (10 uF bipolar) into R39 (33 kOhm) before
+    // IC3 selects one of the four HPF legs. IC1a's output impedance and the
+    // CMOS input loading are negligible against R39 at this boundary.
+    [[nodiscard]] static float voiceBusCouplingCornerHz() noexcept;
+    // Flat and Boost add a selected 47 kOhm virtual-ground input in parallel
+    // with R39 at the C14 pole. The capacitor-selected cut legs are open there.
+    [[nodiscard]] static float voiceBusCouplingCornerHz(
+        HighPassMode mode) noexcept;
+    // IC5/uPC1252H2 follows the switched HPF through the manufacturer's
+    // application input network: C12 10 uF bipolar and R36 33 kOhm.
+    [[nodiscard]] static float commonVcaInputCouplingCornerHz() noexcept;
 
 private:
     // The JUCE-free suites use this narrow friend to drive one filter step, one
@@ -372,7 +401,6 @@ private:
     static constexpr int maximumOversampleFactor = 4;
     static constexpr double minimumHqProcessingRate = 176400.0;
     static constexpr double maximumSupportedSampleRate = 768000.0;
-    static constexpr int controlPeriod = 8;
     static constexpr int halfbandTaps = 63;
     static constexpr int halfbandRingSize = 128;
     static constexpr int latencyPadRingSize = 64;
@@ -451,10 +479,6 @@ private:
     // Pitch modulation budgets in cents.
     static constexpr float lfoPitchCents = 400.0f;
     static constexpr float benderPitchCents = 1200.0f;
-    // The generator is a 14-bit integer advanced once per scan, so envelope
-    // levels live on this grid and a falling segment ends by truncation.
-    static constexpr float envelopeQuantum = 1.0f / envelopePeak;
-
     enum class EnvelopeStage { Idle, Attack, Decay, Sustain, Release };
 
     // Hash-matched B-2 firmware mechanics: a 14-bit integer advanced once per
@@ -539,6 +563,9 @@ private:
         std::array<float, 4> voltage {};
 
         void reset() noexcept;
+        // Re-express the trapezoidal derivative carry for a changed numerical
+        // timestep while retaining every physical capacitor voltage.
+        void retime(float previousG, float nextG) noexcept;
         float process(float input, float g, float feedback) noexcept;
     };
 
@@ -613,7 +640,6 @@ private:
         bool hasVoicePitchHistory { false };
         int rootMidi { -1 };
         int cardIndex { 0 };
-        int controlCountdown { 0 };
         std::uint64_t generation { 0 };
         // When this slot last released its key, on the shared generation
         // counter. The assigner prefers the slot that has been free longest.
@@ -674,6 +700,11 @@ private:
                  float samplesAgo) const noexcept;
     void addSlope(BandlimitedTrack& track, float slopeStep,
                   float samplesAgo) const noexcept;
+    // A voice-CPU pitch write restarts the timer/ramp at the beginning of the
+    // current internal interval. Unlike a hard engine reset, an audible
+    // releasing card retains its delayed naive history and residual tails.
+    void restartDcoBandlimited(Voice& voice,
+                               double previousPeriodSamples) noexcept;
     // Fraction of the ramp's full excursion consumed by the finite-slope reset
     // at a given period, clamped so a very high note cannot invert the ramp.
     static float resetFraction(double periodSeconds) noexcept;
@@ -694,7 +725,8 @@ private:
     void rearmLfoDelay() noexcept;
     // Empties only the blocks whose state depends on the internal processing
     // rate. The final host-rate coupling capacitors survive an HQ rebuild.
-    void clearRateDependentOutputPath() noexcept;
+    void clearRateDependentOutputPath(
+        bool preserveFreeRunningState = false) noexcept;
     // Empties everything downstream of the voices, including those coupling
     // capacitors, for reset and hard-stop semantics.
     void clearOutputPath() noexcept;
@@ -748,9 +780,12 @@ private:
     // offsets are not yet known.
     void updateSharedScan(const EngineParameters& parameters,
                           float lfoRaw) noexcept;
-    // Called on the audio control grid: turns the slewed control voltages into
-    // filter and amplifier coefficients.
+    // Called at the internal sample rate: turns continuously slewed analogue
+    // control voltages into filter and amplifier coefficients without making
+    // their bandwidth depend on the HQ factor.
     void updateVoiceAudio(Voice& voice, const EngineParameters& parameters) noexcept;
+    [[nodiscard]] float dcoRampAmplitudeScale(
+        const Voice& voice, const EngineParameters& parameters) const noexcept;
     // The PWM comparator is physical and free-running even behind a shut VCA,
     // so it follows the shared held threshold for inactive cards as well.
     void updatePulseComparator(Voice& voice,
@@ -762,7 +797,8 @@ private:
                       float noiseSample) noexcept;
     void advanceLfo(const EngineParameters& parameters) noexcept;
     void updateVoiceCardDrift(VoiceCard& card) noexcept;
-    void updateProcessingRate() noexcept;
+    void updateProcessingRate(bool preserveFreeRunningState = false) noexcept;
+    void rebuildRateDependentVoiceState() noexcept;
     bool applyPendingOversamplingIfIdle() noexcept;
     // Padding that keeps the reported latency constant. Reporting a different
     // figure when the quality setting changes would make the host renegotiate
@@ -918,17 +954,23 @@ private:
 
     Chorus chorus_ {};
 
-    // The high-pass, once, on the summed voices. There is one set of parts for
-    // it on the jack board rather than one per voice, which is why it lives
-    // here and not in Voice -- and why it carries no per-voice dispersion.
+    // C14/R39 AC-couple the summed voices before the switched high-pass. Both
+    // networks occur once on the jack board rather than once per voice, which
+    // is why they live here and carry no per-voice dispersion.
+    HighPass voiceBusCoupling_ {};
+    float voiceBusCouplingG_ { 0.0001f };
     HighPass highPass_ {};
     float highPassG_ { 0.01f };
     float highPassShelf_ { 1.0f };
     float highPassHigh_ { 1.0f };
 
-    // One independent C17/C20 state per IC6 output. The physical capacitors
-    // precede the dual VOLUME pot, so these run at host rate before the volume
-    // law and keep charging even when Volume is at zero.
+    // C12/R36 immediately before the shared uPC1252H2 VCA.
+    HighPass commonVcaInputCoupling_ {};
+    float commonVcaInputCouplingG_ { 0.0001f };
+
+    // One independent C17/C20 charge state per IC6 output. Its coefficient and
+    // observed gain follow the glided pot position and fixed internal wiper
+    // load, but the capacitor itself stays continuous when Volume moves.
     HighPass outputCouplingLeft_ {};
     HighPass outputCouplingRight_ {};
     float outputCouplingG_ { 0.0001f };

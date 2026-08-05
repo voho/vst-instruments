@@ -31,6 +31,9 @@ with an explicit evidence gap and required output in
   hardware's is — A4 at 8' programmes count 4545 and sounds 440.044 Hz. The
   RANGE switch changes the clock reaching the counter, not the count, so it
   transposes by whole octaves and the tuning error is the same in all three.
+  A voice-CPU timer restart still occurs at its scanned pitch write, but its
+  off-phase ramp/comparator/divider discontinuities enter the existing
+  BLEP/BLAMP timeline instead of clearing it into a broadband click.
 - **The control path is a scanned converter.** The service timing chart shows
   18 per-card holds—DCO, VCF and ENV/GATE VCA for six cards—and five shared
   holds—SUB, stored VCA LEVEL, PWM, RESONANCE and NOISE—over a 4.2 ms pass.
@@ -41,7 +44,8 @@ with an explicit evidence gap and required output in
   hold constants remain open; a phase-zero profile exists only for diagnostics.
 - **The envelope attacks in a straight line and falls exponentially, into a
   quasi-linear amplifier.** Its 14-bit recurrence, `128b` sustain mapping,
-  coefficient selection, rounding and retrigger behavior are exact for the
+  coefficient selection, rounding, physical `E>>2` 12-bit DAC truncation and
+  retrigger behavior are exact for the
   explicitly hash-identified B-2 image; no ROM or coefficient-table contents
   are shipped. Physical pass timing and other firmware revisions remain open.
   The voice-VCA knee is still a voiced compatibility fit pending the dense
@@ -81,12 +85,30 @@ with an explicit evidence gap and required output in
   dry (−1.62 dB). Those absolute gains occur after the BBDs, so they do not
   falsely overdrive the delay-line model. Its exact JUNO-106 sweep and absolute rates remain
   unmeasured; the current 1.66–5.35 ms and 0.513/0.863 Hz values are explicitly
-  a measured JUNO-60 fallback, not a JUNO-106 claim.
+  a reported JUNO-60 fallback, not a JUNO-106 claim.
 - **The final outputs are AC-coupled before VOLUME.** The two service-schematic
   paths use C17/C20 10 µF and R54/R57 1.5 kΩ into the 10 kΩ pot tracks. The
-  engine models their independent 1.383956 Hz high-pass states and
-  `10/11.5` settled gain after the complete dry+wet sum, removing the large DC
-  offset an asymmetric manual-PWM patch would otherwise send to a host.
+  unloaded full-track reference is 1.383956 Hz and `10/11.5` settled gain; the
+  engine solves the actual corner/gain against shaft position and fixed wiper
+  loads while retaining independent capacitor states. This removes the large
+  DC offset an asymmetric manual-PWM patch would otherwise send to a host.
+- **The common signal path now includes all three established coupling
+  boundaries.** C14/R39 couples the six-voice sum into the selected HPF leg;
+  C12/R36 couples that result into the common uPC1252H2 VCA; C17/C20 couple the
+  complete stereo IC6 outputs into VR1. C12/R36 is 0.482288 Hz. C14 is
+  0.820915 Hz in Boost/Flat (`33k || 47k`) and 0.482288 Hz at the sub-hertz
+  asymptote of Cut I/II, where their series cut capacitors are open.
+- **Main VOLUME follows the marked part.** Service documentation identifies
+  VR1 as `10KB×2`; Panasonic's later JIS/EIAJ table maps plain `B` to the
+  nominal-linear `1B` group (40–60% at mid-travel), so the engine uses linear
+  track resistance instead of its former squared taper guess. The table's
+  separate S-shaped volume law is `3BM`, not plain `B`. The
+  fixed 41.3 kΩ selector ladder and 101 kΩ headphone input load each wiper in
+  the model, giving 0.4763 normalized gain at half travel. Real dual-gang
+  tracking and the physical output-jack path—selected-tap loading, R64/R65,
+  C21/C22, jack normaling and external loads—remain explicit measurements.
+  Schema-1 saved states remap the former squared value to the nearest new
+  position of equal static gain; host-owned automation lanes cannot be rewritten.
 - **Noise density does not move with the HQ switch.** The shared noise source
   and microscopic voice-card excitation are normalized to elapsed time rather
   than internal sample count. A quality change still waits for voices and

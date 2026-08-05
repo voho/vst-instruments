@@ -78,6 +78,9 @@ constexpr float antiAliasSecondFeedbackF = 1.8e-9f;
 constexpr float antiAliasSecondShuntF = 270.0e-12f;
 constexpr float antiAliasPassiveHz = 7234.0f;   // R122 10 kOhm x C52 2.2 nF
 constexpr float inputCouplingHz = 15.9155f;     // C44 0.1 uF x R120 100 kOhm
+constexpr float wetOutputCouplingCapacitanceF = 1.0e-6f; // C28 / C25
+constexpr float wetOutputBleedOhms = 22000.0f;
+constexpr float wetMixerInputOhms = 47000.0f;
 
 // The output's fifth pole is the BBD tap-summing node: either active output
 // reaches C45/C48 2.2 nF through 3.3 kOhm, and R117/R110 47 kOhm returns the
@@ -109,10 +112,10 @@ float noiseFromState(std::uint32_t state) noexcept
 }
 
 // Symmetric triangle over a 0..1 phase, in -1..+1.
-float triangle(float phase) noexcept
+float triangle(double phase) noexcept
 {
-    const float folded = phase < 0.5f ? phase : 1.0f - phase;
-    return folded * 4.0f - 1.0f;
+    const double folded = phase < 0.5 ? phase : 1.0 - phase;
+    return static_cast<float>(folded * 4.0 - 1.0);
 }
 } // namespace
 
@@ -232,6 +235,16 @@ float Chorus::supportFilterStep(float& state, float input, float g) noexcept
     return output;
 }
 
+float Chorus::wetOutputCouplingCornerHz(bool wetConnected) noexcept
+{
+    const float resistance = wetConnected
+        ? wetOutputBleedOhms * wetMixerInputOhms
+            / (wetOutputBleedOhms + wetMixerInputOhms)
+        : wetOutputBleedOhms;
+    return 1.0f / (2.0f * 3.14159265358979323846f
+                   * wetOutputCouplingCapacitanceF * resistance);
+}
+
 // An equal-resistor Sallen-Key's damping comes entirely from its capacitor
 // ratio. Both sections here are built that way -- 22 kOhm twice -- so this is
 // the whole of their Q.
@@ -278,6 +291,10 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
     chain.inputCouplingG = onePoleG(inputCouplingHz, sampleRate);
     chain.passiveG = onePoleG(antiAliasPassiveHz, sampleRate);
     chain.idealSourceTapPoleG = onePoleG(idealSourceTapPoleHz, sampleRate);
+    chain.wetOutputCouplingMutedG = onePoleG(
+        wetOutputCouplingCornerHz(false), sampleRate);
+    chain.wetOutputCouplingConnectedG = onePoleG(
+        wetOutputCouplingCornerHz(true), sampleRate);
     chain.antiAliasFirst = sallenKeyCoefficients(
         antiAliasFirstHz,
         sallenKeyQ(antiAliasFirstFeedbackF, antiAliasFirstShuntF), sampleRate);
@@ -308,12 +325,31 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
     tapSumState = 0.0f;
     reconstructionFirst.reset();
     reconstructionSecond.reset();
+    outputCouplingState = 0.0f;
     transferState = 0.0f;
     noiseState = seed | 1u;
 }
 
+void Chorus::Line::resetAudioRateSupport() noexcept
+{
+    // These are trapezoidal integration carries whose representation embeds
+    // the old sample interval. The engine calls this only at zero output gain
+    // after waiting for musical tails. BBD buckets, write/clock position, the
+    // clock-rate transfer state, held output and RNG remain free-running.
+    previousInput = 0.0f;
+    inputCouplingState = 0.0f;
+    antiAliasState = 0.0f;
+    antiAliasFirst.reset();
+    antiAliasSecond.reset();
+    tapSumState = 0.0f;
+    reconstructionFirst.reset();
+    reconstructionSecond.reset();
+    outputCouplingState = 0.0f;
+}
+
 float Chorus::Line::process(float input, float clockHz, float sampleRate,
-                            const SupportChain& support, float noiseScale) noexcept
+                            const SupportChain& support,
+                            float outputCouplingG, float noiseScale) noexcept
 {
     // Band-limit ahead of the line. Everything above half the clock would fold,
     // exactly as it does in the part. The two Sallen-Key sections precede the
@@ -377,23 +413,33 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
     const float first =
         Chorus::biquadStep(reconstructionFirst, tapSum,
                            support.reconstructionFirst);
-    return Chorus::biquadStep(reconstructionSecond, first,
-                              support.reconstructionSecond);
+    const float reconstructed = Chorus::biquadStep(
+        reconstructionSecond, first, support.reconstructionSecond);
+    const float outputCouplingLow = Chorus::supportFilterStep(
+        outputCouplingState, reconstructed, outputCouplingG);
+    return reconstructed - outputCouplingLow;
 }
 
-void Chorus::prepare(double sampleRate) noexcept
+void Chorus::prepare(double sampleRate, bool preserveState) noexcept
 {
     sampleRate_ = static_cast<float>(std::clamp(sampleRate, 8000.0, 768000.0));
     inverseSampleRate_ = 1.0f / sampleRate_;
     support_ = supportChainFor(sampleRate_);
-    reset();
+    if (preserveState)
+    {
+        lineA_.resetAudioRateSupport();
+        lineB_.resetAudioRateSupport();
+    }
+    else
+        reset(false);
 }
 
-void Chorus::reset() noexcept
+void Chorus::reset(bool preserveLfoPhase) noexcept
 {
+    const double continuingPhase = lfoPhase_;
     lineA_.reset(0x9e3779b9u);
     lineB_.reset(0x85ebca6bu);
-    lfoPhase_ = 0.0f;
+    lfoPhase_ = preserveLfoPhase ? continuingPhase : 0.0;
     const auto runningWhileMuted = settingsFor(ChorusMode::Off);
     wetGain_ = runningWhileMuted.wetGain;
     rateHz_ = runningWhileMuted.rateHz;
@@ -460,8 +506,13 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const float clockB = std::clamp(clockForDelaySeconds(delayB),
                                     minimumClockHz, maximumClockHz);
 
-    float wetA = lineA_.process(input, clockA, sampleRate_, support_, noiseScale);
-    float wetB = lineB_.process(input, clockB, sampleRate_, support_, noiseScale);
+    const float wetOutputCouplingG = mode == ChorusMode::Off
+        ? support_.wetOutputCouplingMutedG
+        : support_.wetOutputCouplingConnectedG;
+    float wetA = lineA_.process(input, clockA, sampleRate_, support_,
+                                wetOutputCouplingG, noiseScale);
+    float wetB = lineB_.process(input, clockB, sampleRate_, support_,
+                                wetOutputCouplingG, noiseScale);
 
     // These mechanisms are deliberately separate from the compatibility hiss
     // above.  Their insertion point, spectra, levels and stereo correlation

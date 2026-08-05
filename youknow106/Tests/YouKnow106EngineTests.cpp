@@ -68,6 +68,23 @@ struct YouKnow106TestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].dco.phase;
     }
 
+    static void setDcoPhase(YouKnow106Engine& engine, int slot,
+                            double phase) noexcept
+    {
+        engine.voices_[static_cast<std::size_t>(slot)].dco.phase = phase;
+    }
+
+    static double dcoPeriodSamples(const YouKnow106Engine& engine,
+                                   int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dco.periodSamples;
+    }
+
+    static double chorusPhase(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.chorus_.getLfoPhase();
+    }
+
     static float pulseDuty(const YouKnow106Engine& engine, int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].pulseDuty;
@@ -145,6 +162,162 @@ struct YouKnow106TestAccess
     static float rateTransitionGain(const YouKnow106Engine& engine) noexcept
     {
         return engine.rateTransitionGain_;
+    }
+
+    static double outputCouplingState(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.outputCouplingLeft_.state;
+    }
+
+    struct BandlimitedTrackState
+    {
+        std::array<float, YouKnow106Engine::correctionRing> ring {};
+        std::array<float, YouKnow106Engine::correctionHalfWidth> delay {};
+        int base { 0 };
+        bool primed { false };
+    };
+
+    static BandlimitedTrackState pulseTrackState(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        const auto& track =
+            engine.voices_[static_cast<std::size_t>(slot)].dco.pulse;
+        return { track.ring, track.delay, track.base, track.primed };
+    }
+
+    static BandlimitedTrackState sawTrackState(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        const auto& track =
+            engine.voices_[static_cast<std::size_t>(slot)].dco.saw;
+        return { track.ring, track.delay, track.base, track.primed };
+    }
+
+    static BandlimitedTrackState subTrackState(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        const auto& track =
+            engine.voices_[static_cast<std::size_t>(slot)].dco.sub;
+        return { track.ring, track.delay, track.base, track.primed };
+    }
+
+    static void primeDcoRestartFixture(YouKnow106Engine& engine, int slot,
+                                       double phase) noexcept
+    {
+        auto& dco = engine.voices_[static_cast<std::size_t>(slot)].dco;
+        const double reset = YouKnow106Engine::resetFraction(
+            dco.periodSamples * engine.inverseOversampledRate_);
+        const double rise = std::max(1.0 - reset, 1.0e-4);
+        const float saw = phase < rise
+            ? 2.0f * std::clamp(
+                  static_cast<float>(phase / rise), 0.0f, 1.0f) - 1.0f
+            : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
+        dco.phase = phase;
+        dco.pulseState = 1.0f;
+        dco.subState = -1.0f;
+        dco.saw.reset();
+        dco.pulse.reset();
+        dco.sub.reset();
+        dco.saw.prime(saw);
+        dco.pulse.prime(dco.pulseState);
+        dco.sub.prime(dco.subState);
+    }
+
+    static void performPitchWrite(YouKnow106Engine& engine, int slot,
+                                  const EngineParameters& parameters) noexcept
+    {
+        engine.performConverterWrite(
+            { YouKnow106Engine::ConverterDestination::Pitch, slot },
+            parameters, 0.0f);
+    }
+
+    static std::array<float, 10> pulseTrackAfterRestart(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        auto track = engine.voices_[static_cast<std::size_t>(slot)].dco.pulse;
+        std::array<float, 10> output {};
+        for (auto& sample : output)
+            sample = track.advance(-1.0f);
+        return output;
+    }
+
+    static double sawRestartEventSideError(
+        const YouKnow106Engine& engine, int slot,
+        double previousPeriodSamples, double previousPhase) noexcept
+    {
+        const auto& dco =
+            engine.voices_[static_cast<std::size_t>(slot)].dco;
+        auto actual = dco.saw;
+        auto reference = actual;
+        reference.ring.fill(0.0f);
+
+        const auto geometry = [&engine](double periodSamples) {
+            const double safePeriod = std::max(periodSamples, 1.0e-9);
+            const double reset = YouKnow106Engine::resetFraction(
+                safePeriod * engine.inverseOversampledRate_);
+            const double rise = std::max(1.0 - reset, 1.0e-4);
+            return std::array { safePeriod, reset, rise };
+        };
+        const auto oldGeometry = geometry(previousPeriodSamples);
+        const auto newGeometry = geometry(dco.periodSamples);
+        const float oldSaw = previousPhase < oldGeometry[2]
+            ? 2.0f * std::clamp(
+                  static_cast<float>(previousPhase / oldGeometry[2]),
+                  0.0f, 1.0f) - 1.0f
+            : 1.0f - 2.0f * static_cast<float>(
+                  (previousPhase - oldGeometry[2]) / oldGeometry[1]);
+        constexpr float newSaw = -1.0f;
+        const float oldSlope = previousPhase < oldGeometry[2]
+            ? 2.0f / static_cast<float>(oldGeometry[2] * oldGeometry[0])
+            : -2.0f / static_cast<float>(oldGeometry[1] * oldGeometry[0]);
+        const float newSlope =
+            2.0f / static_cast<float>(newGeometry[2] * newGeometry[0]);
+
+        // Build an independent residual from the values renderVoice actually
+        // submits one interval after the converter write. Comparing advanced
+        // tracks, rather than mere ring energy, catches a phase-zero step that
+        // forgets the two ramps' different one-sample slope advances.
+        engine.addStep(reference,
+                       (newSaw + newSlope) - (oldSaw + oldSlope), 0.0f);
+        engine.addSlope(reference, newSlope - oldSlope, 0.0f);
+
+        double phase = 0.0;
+        double maximumError = 0.0;
+        for (int sample = 0; sample < 10; ++sample)
+        {
+            phase += 1.0 / newGeometry[0];
+            phase -= std::floor(phase);
+            const float naive = phase < newGeometry[2]
+                ? 2.0f * std::clamp(
+                      static_cast<float>(phase / newGeometry[2]),
+                      0.0f, 1.0f) - 1.0f
+                : 1.0f - 2.0f * static_cast<float>(
+                      (phase - newGeometry[2]) / newGeometry[1]);
+            maximumError = std::max(
+                maximumError,
+                std::abs(static_cast<double>(actual.advance(naive))
+                         - reference.advance(naive)));
+        }
+        return maximumError;
+    }
+
+    static float dcoCv(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dcoCv;
+    }
+
+    static float dcoCvTarget(const YouKnow106Engine& engine,
+                             int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dcoCvTarget;
+    }
+
+    static std::array<float, 2> dcoLogicStates(
+        const YouKnow106Engine& engine, int slot) noexcept
+    {
+        const auto& dco =
+            engine.voices_[static_cast<std::size_t>(slot)].dco;
+        return { dco.pulseState, dco.subState };
     }
 };
 } // namespace youknow106
@@ -797,6 +970,103 @@ void testHeldTransposeUpdatesVoiceCpuPitchHistory()
            "transpose change during release did not schedule DCO reset");
 }
 
+void testPhysicalPitchWriteRestartIsBandlimited()
+{
+    constexpr double sampleRate = 192000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.polyphony = 1;
+    parameters.release = 1.0f;
+    parameters.chorusNoise = 0.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(69, 1.0f);
+    renderExact(engine, 2048);
+    engine.noteOff(69);
+    // Retarget widely into the top register so forgetting the ramps' unequal
+    // one-sample advances leaves a clearly measurable hard saw step.
+    engine.noteOn(120, 1.0f);
+    expect(YouKnow106TestAccess::dcoResetPending(engine, 0),
+           "different pitch on a releasing card did not request a timer restart");
+
+    YouKnow106TestAccess::primeDcoRestartFixture(engine, 0, 0.75);
+    const auto pulseBefore = YouKnow106TestAccess::pulseTrackState(engine, 0);
+    const auto filterBefore = YouKnow106TestAccess::filterState(engine, 0);
+    const auto noiseBefore =
+        YouKnow106TestAccess::microscopicNoiseState(engine, 0);
+    const double periodBefore =
+        YouKnow106TestAccess::dcoPeriodSamples(engine, 0);
+    const float cvBefore = YouKnow106TestAccess::dcoCv(engine, 0);
+    const float cvTargetBefore = YouKnow106TestAccess::dcoCvTarget(engine, 0);
+
+    YouKnow106TestAccess::performPitchWrite(engine, 0, parameters);
+    expect(!YouKnow106TestAccess::dcoResetPending(engine, 0),
+           "the converter did not consume the pending timer restart");
+    expect(YouKnow106TestAccess::dcoPhase(engine, 0) == 0.0,
+           "the physical timer restart did not land at phase zero");
+    const auto logic = YouKnow106TestAccess::dcoLogicStates(engine, 0);
+    expect(logic[0] == -1.0f && logic[1] == 1.0f,
+           "the physical timer restart did not reset comparator/divider state");
+    expect(YouKnow106TestAccess::dcoPeriodSamples(engine, 0) != periodBefore,
+           "the pitch write restarted without programming the new period");
+    expect(YouKnow106TestAccess::dcoCv(engine, 0) == cvBefore,
+           "the timer restart bypassed the physical compensation hold");
+    expect(YouKnow106TestAccess::dcoCvTarget(engine, 0) != cvTargetBefore,
+           "the pitch write did not update the compensation target");
+    expect(YouKnow106TestAccess::filterState(engine, 0) == filterBefore,
+           "a timer restart reset the continuously powered filter");
+    expect(YouKnow106TestAccess::microscopicNoiseState(engine, 0) == noiseBefore,
+           "a timer restart reseeded the physical card");
+
+    const auto sawAfter = YouKnow106TestAccess::sawTrackState(engine, 0);
+    const auto pulseAfter = YouKnow106TestAccess::pulseTrackState(engine, 0);
+    const auto subAfter = YouKnow106TestAccess::subTrackState(engine, 0);
+    expect(sawAfter.primed && pulseAfter.primed && subAfter.primed,
+           "a physical restart cleared the bandlimited waveform histories");
+    expect(pulseAfter.base == pulseBefore.base
+               && pulseAfter.delay == pulseBefore.delay,
+           "a physical restart discarded the delayed pre-event pulse samples");
+    const auto ringEnergy = [](const auto& ring) {
+        double energy = 0.0;
+        for (const float value : ring)
+            energy += static_cast<double>(value) * value;
+        return energy;
+    };
+    expect(ringEnergy(sawAfter.ring) > 1.0e-8,
+           "the off-phase saw restart received no BLEP/BLAMP residual");
+    expect(ringEnergy(pulseAfter.ring) > 1.0e-8,
+           "the comparator restart received no BLEP residual");
+    expect(ringEnergy(subAfter.ring) > 1.0e-8,
+           "the divider restart received no BLEP residual");
+    expect(YouKnow106TestAccess::sawRestartEventSideError(
+               engine, 0, periodBefore, 0.75) < 1.0e-6,
+           "the saw restart residual ignored its rendered event-side slopes");
+
+    // A copied pulse track exposes the transition without the rest of the
+    // synth. A hard reset jumps from +1 to -1 immediately; the symmetric BLEP
+    // retains the pre-event side first, crosses in bounded increments and
+    // settles on the new side after its finite residual support.
+    const auto transition =
+        YouKnow106TestAccess::pulseTrackAfterRestart(engine, 0);
+    expectNear(transition.front(), 1.0, 0.02,
+               "bandlimited restart changed a pre-event pulse sample");
+    expectNear(transition.back(), -1.0, 0.02,
+               "bandlimited restart did not settle on its new pulse state");
+    double maximumStep = std::abs(static_cast<double>(transition.front()) - 1.0);
+    for (std::size_t sample = 1; sample < transition.size(); ++sample)
+        maximumStep = std::max(
+            maximumStep,
+            std::abs(static_cast<double>(transition[sample])
+                     - transition[sample - 1]));
+    expect(maximumStep / 2.0 < 0.65,
+           "physical restart retained a hard full-band pulse discontinuity");
+
+    engine.reset();
+    expect(!YouKnow106TestAccess::pulseTrackState(engine, 0).primed,
+           "hard engine reset no longer clears oscillator residual history");
+}
+
 void testRescanGateOffReachesTheVoiceCpu()
 {
     constexpr double sampleRate = 48000.0;
@@ -1006,6 +1276,32 @@ void testPhysicalCardStateSurvivesVoiceAssignments()
     expect(YouKnow106TestAccess::microscopicNoiseState(engine, slot)
                == noiseMarker,
            "reassigning a card used a per-note microscopic-excitation seed");
+
+    // An extension slot is deliberately unlike those six powered cards. Once
+    // idle it stops rendering, so its previous analogue/sample-grid state must
+    // be cleared rather than frozen and resurrected on a later assignment.
+    constexpr int extensionSlot = YouKnow106Engine::hardwareVoices;
+    const auto extensionSeed = YouKnow106TestAccess::microscopicNoiseState(
+        engine, extensionSlot);
+    YouKnow106TestAccess::setFilterState(
+        engine, extensionSlot, filterMarker);
+    YouKnow106TestAccess::setDcoPhase(engine, extensionSlot, 0.375);
+    YouKnow106TestAccess::setMicroscopicNoiseState(
+        engine, extensionSlot, noiseMarker);
+    YouKnow106TestAccess::initialiseVoice(engine, extensionSlot, 72);
+    YouKnow106TestAccess::silenceVoice(engine, extensionSlot);
+    const auto clearedExtension = YouKnow106TestAccess::filterState(
+        engine, extensionSlot);
+    expect(std::all_of(clearedExtension.begin(), clearedExtension.end(),
+                       [](float value) { return value == 0.0f; }),
+           "an idle extension slot retained a frozen resonant-filter state");
+    expect(YouKnow106TestAccess::dcoPhase(engine, extensionSlot) == 0.0,
+           "an idle extension slot retained a frozen oscillator phase");
+    expect(YouKnow106TestAccess::microscopicNoiseState(engine, extensionSlot)
+               == extensionSeed,
+           "an idle extension slot retained a frozen noise timeline");
+    expect(YouKnow106TestAccess::currentMidi(engine, extensionSlot) == 72.0f,
+           "clearing virtual analogue state discarded extension portamento memory");
 }
 
 void testConverterSchedulerPreservesFractionalScanPeriod()
@@ -1759,11 +2055,12 @@ void testContinuousControlsDoNotStepAtBlockBoundaries()
            "the glided volume never reached its new setting");
 }
 
-void testMainVolumeProductPolicy()
+void testMainVolumeLoadedLinearPotLaw()
 {
     // With the first block primed at its current panel position there is no
-    // glide, so otherwise identical renders expose the exact static product
-    // policy: output gain is VOLUME squared.
+    // glide. The 10KB resistance law is nominally linear, but its fixed
+    // selector/headphone load makes the in-circuit wiper transfer slightly
+    // nonlinear and also moves the output capacitor's sub-audio corner.
     const auto atVolume = [](float volume) {
         YouKnow106Engine engine;
         engine.prepare(48000.0, blockSize, true);
@@ -1771,32 +2068,39 @@ void testMainVolumeProductPolicy()
         parameters.volume = volume;
         engine.setParameters(parameters);
         engine.noteOn(57, 1.0f);
+        renderExact(engine, 48000);
         return renderExact(engine, 8192);
     };
 
     const auto full = atVolume(1.0f);
     const auto half = atVolume(0.5f);
     const auto quarter = atVolume(0.25f);
-    double halfError = 0.0;
-    double quarterError = 0.0;
-    for (std::size_t index = 0; index < full.left.size(); ++index)
-        for (const auto pair : { std::pair { full.left[index], half.left[index] },
-                                 std::pair { full.right[index], half.right[index] } })
-            halfError = std::max(
-                halfError, std::abs(static_cast<double>(pair.second)
-                                      - static_cast<double>(pair.first) * 0.25));
-    for (std::size_t index = 0; index < full.left.size(); ++index)
-        for (const auto pair : { std::pair { full.left[index], quarter.left[index] },
-                                 std::pair { full.right[index], quarter.right[index] } })
-            quarterError = std::max(
-                quarterError, std::abs(static_cast<double>(pair.second)
-                                         - static_cast<double>(pair.first) * 0.0625));
+    const auto fittedRatio = [&](const Render& reduced) {
+        double cross = 0.0;
+        double referenceEnergy = 0.0;
+        for (std::size_t index = 0; index < full.left.size(); ++index)
+        {
+            cross += static_cast<double>(full.left[index]) * reduced.left[index]
+                   + static_cast<double>(full.right[index]) * reduced.right[index];
+            referenceEnergy += static_cast<double>(full.left[index]) * full.left[index]
+                             + static_cast<double>(full.right[index]) * full.right[index];
+        }
+        return cross / referenceEnergy;
+    };
+    const double halfRatio = fittedRatio(half);
+    const double quarterRatio = fittedRatio(quarter);
+    const double expectedHalf =
+        YouKnow106Engine::outputCouplingHighGain(0.5f)
+        / YouKnow106Engine::outputCouplingHighGain(1.0f);
+    const double expectedQuarter =
+        YouKnow106Engine::outputCouplingHighGain(0.25f)
+        / YouKnow106Engine::outputCouplingHighGain(1.0f);
     expect(peakOf(full.left, 1024) > 0.01,
            "the static VOLUME-law fixture produced no signal");
-    expect(halfError < 2.0e-7,
-           "VOLUME 0.5 is not exactly the declared 0.25 static gain");
-    expect(quarterError < 2.0e-7,
-           "VOLUME 0.25 is not exactly the declared 0.0625 static gain");
+    expectNear(halfRatio, expectedHalf, 2.0e-4,
+               "VOLUME 0.5 misses the loaded nominal 10KB law");
+    expectNear(quarterRatio, expectedQuarter, 2.0e-4,
+               "VOLUME 0.25 misses the loaded nominal 10KB law");
 
     // The 5 ms value is the one-pole time constant: a 0 -> 1 move reaches
     // 1-e^-1 after 5 ms. Check the threshold crossing to within one host
@@ -1892,12 +2196,12 @@ void testFixedOutputBoundaryCorpus()
     // margin, so ordinary compiler noise cannot turn this into a waveform
     // checksum while meaningful level/headroom changes remain visible.
     constexpr std::array baselines {
-        Baseline { 0.547144, 1.10853, 1.12205, 44, 188 },
-        Baseline { 1.40092, 3.94754, 3.94754, 4402, 17610 },
-        Baseline { 3.12647, 6.11092, 6.12996, 6856, 27410 },
-        Baseline { 0.159527, 0.226215, 0.226215, 0, 0 },
-        Baseline { 0.884953, 1.68797, 1.68797, 2333, 9335 },
-        Baseline { 0.521680, 1.36288, 1.36727, 156, 599 },
+        Baseline { 0.523852, 1.07344, 1.08763, 22, 74 },
+        Baseline { 1.34140, 3.82873, 3.82873, 4242, 16952 },
+        Baseline { 2.99368, 6.04207, 6.06926, 6884, 27546 },
+        Baseline { 0.152757, 0.216624, 0.216624, 0, 0 },
+        Baseline { 0.844717, 1.64176, 1.64176, 2141, 8589 },
+        Baseline { 0.503038, 1.31776, 1.34315, 85, 320 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -2207,12 +2511,11 @@ void testModulationDelayRearmsForANewPhrase()
            "a new phrase started with the previous phrase's modulation depth");
 }
 
-void testScanTimersRestartWithTheProcessingRate()
+void testScanTimingSurvivesAProcessingRateChange()
 {
-    // Every countdown is in internal samples, so one carried across a rate
-    // change means something else at the new rate: a scan pass 806 samples away
-    // is 4.2 ms at 192 kHz and 16.8 ms at 48 kHz. A note in the block that
-    // applies the change would wait that stale interval to speak.
+    // Converter progress is stored in normalized passes, not internal samples.
+    // A rate change must preserve that progress while still keeping the next
+    // write within the same physical 4.2 ms pass.
     constexpr double sampleRate = 48000.0;
     YouKnow106Engine engine;
     engine.prepare(sampleRate, blockSize, true);
@@ -2487,8 +2790,62 @@ void testQualityChangePreservesOutputCouplingTail()
             static_cast<double>(std::abs(changed.right[index]
                                        - unchanged.right[index])));
     }
-    expect(difference < 1.0e-4,
-           "an HQ rebuild reset the host-rate output-coupling state");
+    // C14/C12 and the switched HPF continue at the new internal rate, so the
+    // complete tail need not be sample-identical to the unchanged reference.
+    // Resetting C17/C20 would move it by the reference tail itself (>0.005);
+    // this narrow bound still distinguishes preservation from a reset.
+    expect(difference < 5.0e-4,
+           "an HQ rebuild displaced the preserved analogue/output-coupling tail by "
+               + std::to_string(difference));
+}
+
+void testQualityChangePreservesFreeRunningClocks()
+{
+    // HQ is a numerical option, not a power cycle. The converter scan, DCOs
+    // and chorus oscillator all free-run in physical time while an idle rate
+    // transition rebuilds sample-domain histories behind its safety fade.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine switched;
+    YouKnow106Engine reference;
+    switched.prepare(sampleRate, blockSize, true);
+    reference.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.chorus = ChorusMode::Off;
+    parameters.chorusNoise = 0.0f;
+    switched.setParameters(parameters);
+    reference.setParameters(parameters);
+
+    renderExact(switched, static_cast<int>(sampleRate * 0.1));
+    renderExact(reference, static_cast<int>(sampleRate * 0.1));
+    const double deepPeriod =
+        YouKnow106TestAccess::dcoPeriodSamples(switched, 0);
+    expect(!switched.setOversamplingEnabled(false),
+           "the free-running-clock fixture skipped the quality fade");
+
+    renderExact(switched, static_cast<int>(sampleRate * 0.02));
+    renderExact(reference, static_cast<int>(sampleRate * 0.02));
+    expect(switched.getOversamplingFactor() == 1,
+           "the free-running-clock quality change never completed");
+
+    const auto circularError = [](double first, double second) {
+        const double distance = std::abs(first - second);
+        return std::min(distance, 1.0 - distance);
+    };
+    expect(circularError(YouKnow106TestAccess::dcoPhase(switched, 0),
+                         YouKnow106TestAccess::dcoPhase(reference, 0))
+               < 2.0e-8,
+           "an HQ rebuild restarted or displaced a free-running DCO");
+    expect(circularError(YouKnow106TestAccess::chorusPhase(switched),
+                         YouKnow106TestAccess::chorusPhase(reference))
+               < 2.0e-8,
+           "an HQ rebuild restarted the free-running chorus oscillator");
+    expect(circularError(YouKnow106TestAccess::controlScanPhase(switched),
+                         YouKnow106TestAccess::controlScanPhase(reference))
+               < 2.0e-8,
+           "an HQ rebuild restarted the firmware converter scan");
+    expectNear(YouKnow106TestAccess::dcoPeriodSamples(switched, 0),
+               deepPeriod / 4.0, 1.0e-9,
+               "a quality rebuild left the DCO period in old-rate samples");
 }
 
 void testFinalOutputCouplingRemovesManualPwmDc()
@@ -2551,11 +2908,22 @@ void testFinalOutputCouplingRemovesManualPwmDc()
     audible.setParameters(parameters);
     silent.noteOn(36, 1.0f);
     audible.noteOn(36, 1.0f);
-    renderExact(silent, static_cast<int>(sampleRate * 2.0));
-    renderExact(audible, static_cast<int>(sampleRate * 2.0));
+    // Observe the initial charge before C14 and C12 have themselves removed
+    // the deliberately asymmetric pulse train's DC. Waiting the full two
+    // seconds first would correctly leave every coupling state close to zero.
+    renderExact(silent, static_cast<int>(sampleRate * 0.05));
+    renderExact(audible, static_cast<int>(sampleRate * 0.05));
+    expect(std::abs(YouKnow106TestAccess::outputCouplingState(silent)) > 1.0e-3,
+           "VOLUME zero prevented the upstream C17 state from charging");
+    renderExact(silent, static_cast<int>(sampleRate * 1.95));
+    renderExact(audible, static_cast<int>(sampleRate * 1.95));
 
+    const double chargedAtZero =
+        YouKnow106TestAccess::outputCouplingState(silent);
     parameters.volume = 1.0f;
     silent.setParameters(parameters);
+    expect(YouKnow106TestAccess::outputCouplingState(silent) == chargedAtZero,
+           "moving VOLUME reset the upstream C17 capacitor state");
     const auto raised = renderExact(
         silent, static_cast<int>(sampleRate * 0.3));
     const auto reference = renderExact(
@@ -2573,8 +2941,13 @@ void testFinalOutputCouplingRemovesManualPwmDc()
             static_cast<double>(std::abs(raised.right[index]
                                        - reference.right[index])));
     }
-    expect(difference < 1.0e-5,
-           "VOLUME zero stopped or reset the upstream coupling capacitors");
+    // The zero and full positions legitimately present different resistances
+    // to C17/C20, so their preconditioned states are not sample-identical to an
+    // always-full reference. They must nevertheless converge without the much
+    // larger transient a cleared capacitor would create.
+    expect(difference < 5.0e-4,
+           "the loaded VOLUME network failed to preserve/converge its coupling "
+           "state (difference " + std::to_string(difference) + ")");
 }
 
 void testHardStopSilencesTheWholeOutputPath()
@@ -2864,8 +3237,13 @@ void testSampleRateAndOversamplingConsistency()
     const int deep = onsetOffset(true);
     const int shallow = onsetOffset(false);
     expect(deep >= 0 && shallow >= 0, "a configuration produced no onset at all");
-    expect(std::abs(deep - shallow) <= 2,
-           "the two configurations do not share an onset, so the padding is wrong");
+    // The host-compensated numerical paths agree within four samples. The
+    // remaining threshold crossing includes the nonlinear analogue filter's
+    // own signal-dependent onset and is not reported as plug-in latency.
+    expect(std::abs(deep - shallow) <= 4,
+           "the two configurations do not share an onset (deep "
+               + std::to_string(deep) + ", shallow "
+               + std::to_string(shallow) + "), so the padding is wrong");
 }
 
 void testDeterminismAndSilence()
@@ -3097,22 +3475,22 @@ void testFactoryPresetAudibility()
     // visible. Run with YOUKNOW106_AUDIT_PRESETS=1 to print replacement values
     // after an intentional factory-bank or signal-path change.
     static constexpr auto baseline = std::to_array<RelativeBaseline> ({
-        { "A11",  0.237,   3.913 }, { "A12",  0.663,   3.082 },
-        { "A13",  1.153,   3.434 }, { "A14",  0.877,   0.507 },
-        { "A15",  0.575,  -7.138 }, { "A16",  1.932,  -1.684 },
-        { "A17",  0.898,   3.198 }, { "A18", -4.573,  -7.582 },
-        { "A21", -3.338,  -4.140 }, { "A22", -4.981,  -0.615 },
-        { "A23", -4.465,  -1.230 }, { "A24", -0.126,   1.849 },
-        { "A25", -3.634,  -1.155 }, { "A26",  0.126,   3.623 },
-        { "A27", -2.602,  -4.781 }, { "A28", -2.226,   2.003 },
-        { "B11",  0.786,   3.793 }, { "B12",  0.797,   3.571 },
-        { "B13", -0.894,   2.166 }, { "B14",  2.982,   1.559 },
-        { "B15",  0.845, -10.662 }, { "B16",  0.137,  -8.017 },
-        { "B17", -3.100,  -7.028 }, { "B18",  1.849,   0.932 },
-        { "B21",  2.340,   0.128 }, { "B22", -0.764,  -6.734 },
-        { "B23",  2.233,   2.841 }, { "B24", -1.368,  -0.617 },
-        { "B25", -7.092, -15.008 }, { "B26", -0.217,  -4.150 },
-        { "B27", -2.435,  -0.091 }, { "B28", -1.317,   0.091 },
+        { "A11",  0.887,   3.776 }, { "A12",  0.988,   2.927 },
+        { "A13",  1.619,   3.331 }, { "A14",  1.114,   0.396 },
+        { "A15",  0.633,  -7.216 }, { "A16",  2.005,  -1.785 },
+        { "A17",  0.971,   3.057 }, { "A18", -4.506,  -7.705 },
+        { "A21", -3.116,  -4.260 }, { "A22", -4.938,  -0.725 },
+        { "A23", -4.385,  -1.340 }, { "A24", -0.288,   1.519 },
+        { "A25", -3.543,  -1.264 }, { "A26",  1.251,   3.506 },
+        { "A27", -2.523,  -4.891 }, { "A28", -2.148,   1.894 },
+        { "B11",  0.981,   3.614 }, { "B12",  1.143,   3.432 },
+        { "B13", -0.852,   2.033 }, { "B14",  3.426,   1.575 },
+        { "B15",  0.898, -10.773 }, { "B16",  0.195,  -8.125 },
+        { "B17", -3.164,  -7.141 }, { "B18",  1.914,   0.823 },
+        { "B21",  2.545,   0.018 }, { "B22", -0.669,  -6.844 },
+        { "B23",  3.408,   2.380 }, { "B24", -0.842,  -0.711 },
+        { "B25", -7.045, -15.119 }, { "B26", -0.195,  -4.260 },
+        { "B27", -2.322,   0.134 }, { "B28", -1.227,  -0.018 },
     });
     static_assert(baseline.size() == presets::presetCount);
 
@@ -3318,6 +3696,7 @@ int main()
     testHeldKeyRescanRunsHighToLow();
     testRescanPreservesVoiceCpuPitchHistory();
     testHeldTransposeUpdatesVoiceCpuPitchHistory();
+    testPhysicalPitchWriteRestartIsBandlimited();
     testRescanGateOffReachesTheVoiceCpu();
     testDuplicateAndUnmatchedKeyEdgesAreIgnored();
     testIdleSnapshotPrimesEverySharedHold();
@@ -3339,17 +3718,18 @@ int main()
     testSubFlipsOnTheFirstWrap();
     testControllersReturnToNeutralOnReset();
     testContinuousControlsDoNotStepAtBlockBoundaries();
-    testMainVolumeProductPolicy();
+    testMainVolumeLoadedLinearPotLaw();
     testFixedOutputBoundaryCorpus();
     testNotesWaitForTheSharedConverterScan();
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
     testModulationDelayRearmsForANewPhrase();
-    testScanTimersRestartWithTheProcessingRate();
+    testScanTimingSurvivesAProcessingRateChange();
     testUnisonStackGlidesFromOneOrigin();
     testQualityChangeWaitsForTheOutputPathToEmpty();
     testQualityChangeFadesRateDependentOutputPath();
     testQualityChangePreservesOutputCouplingTail();
+    testQualityChangePreservesFreeRunningClocks();
     testFinalOutputCouplingRemovesManualPwmDc();
     testHardStopSilencesTheWholeOutputPath();
     testComponentDriftRateIsIndependentOfOversampling();

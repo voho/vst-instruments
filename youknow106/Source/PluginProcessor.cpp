@@ -13,8 +13,38 @@ namespace
 using namespace youknow106;
 
 constexpr auto stateSchemaVersionProperty = "stateSchemaVersion";
-constexpr int currentStateSchemaVersion = 1;
+constexpr int currentStateSchemaVersion = 2;
+constexpr int calibrationDefaultSchemaVersion = 1;
 constexpr float legacyCalibrationDefault = 0.35f;
+
+float migrateLegacyVolumePosition (float legacyPosition) noexcept
+{
+    // Schema 1 applied x^2 after the unloaded C17/R54/VR1 boundary. Schema 2
+    // uses the nominal-linear track as part of the fixed loaded network. Map a
+    // saved shaft value to the new position with the closest former static
+    // attenuation; the small top-end excess of the unloaded law saturates at
+    // the real loaded full-travel value. Host-owned automation lanes cannot be
+    // rewritten here, but self-contained plug-in state remains level-stable.
+    const float legacy = std::clamp (legacyPosition, 0.0f, 1.0f);
+    const float target = YouKnow106Engine::outputCouplingHighGain()
+                       * legacy * legacy;
+    if (target <= 0.0f)
+        return 0.0f;
+    if (target >= YouKnow106Engine::outputCouplingHighGain (1.0f))
+        return 1.0f;
+
+    float lower = 0.0f;
+    float upper = 1.0f;
+    for (int iteration = 0; iteration < 24; ++iteration)
+    {
+        const float middle = 0.5f * (lower + upper);
+        if (YouKnow106Engine::outputCouplingHighGain (middle) < target)
+            lower = middle;
+        else
+            upper = middle;
+    }
+    return 0.5f * (lower + upper);
+}
 
 juce::String percentText (float value, int)
 {
@@ -1195,7 +1225,13 @@ void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeIn
     // A current-schema partial state instead receives the current zero default.
     const int restoredStateSchema = static_cast<int> (
         state.getProperty (stateSchemaVersionProperty, 0));
-    if (restoredStateSchema < currentStateSchemaVersion
+    if (restoredStateSchema < 2
+        && containsParameterState (state, youknow106::parameters::volume))
+        setStoredParameterValue (
+            state, youknow106::parameters::volume,
+            migrateLegacyVolumePosition (storedParameterValue (
+                state, youknow106::parameters::volume, 0.8f)));
+    if (restoredStateSchema < calibrationDefaultSchemaVersion
         && ! containsParameterState (state, youknow106::parameters::calibration))
         setStoredParameterValue (state, youknow106::parameters::calibration,
                                  legacyCalibrationDefault);

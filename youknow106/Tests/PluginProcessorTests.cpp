@@ -505,6 +505,7 @@ void testPanicSilencesEverything()
 void testStateRoundTripAndMigration()
 {
     YouKnow106AudioProcessor source;
+    setParameterValue (source, parameters::volume, 0.50f);
     setParameterValue (source, parameters::cutoff, 0.31f);
     setParameterValue (source, parameters::resonance, 0.77f);
     setParameterValue (source, parameters::chorusII, 1.0f);
@@ -544,6 +545,9 @@ void testStateRoundTripAndMigration()
     expect (std::abs (parameterValue (destination, parameters::calibration) - 0.17f)
                 < 1.0e-4f,
             "an explicit Unit Character value did not survive a state round trip");
+    expect (std::abs (parameterValue (destination, parameters::volume) - 0.50f)
+                < 1.0e-4f,
+            "a current loaded-law Volume value was incorrectly migrated");
 
     // A schema-less state with an explicit historical Calibration value must
     // retain it. The schema migration is about choosing a fallback for a missing
@@ -596,8 +600,37 @@ void testStateRoundTripAndMigration()
     {
         auto currentMissing = juce::ValueTree::fromXml (*savedXml);
         expect (static_cast<int> (currentMissing.getProperty (
-                    "stateSchemaVersion", 0)) == 1,
+                    "stateSchemaVersion", 0)) == 2,
                 "a current saved state has no Unit Character schema marker");
+
+        // Schema 1 used a squared Volume law after the old unloaded coupling
+        // boundary. A saved 50% value must move to the new loaded-linear shaft
+        // position that preserves that former static attenuation as closely as
+        // the real full-travel load permits.
+        auto legacyVolume = currentMissing.createCopy();
+        legacyVolume.setProperty ("stateSchemaVersion", 1, nullptr);
+        juce::MemoryBlock legacyVolumeBytes;
+        if (serialise (legacyVolume, legacyVolumeBytes))
+        {
+            YouKnow106AudioProcessor migrated;
+            migrated.setStateInformation (
+                legacyVolumeBytes.getData(),
+                static_cast<int> (legacyVolumeBytes.getSize()));
+            const float restored = parameterValue (migrated, parameters::volume);
+            const float formerGain =
+                YouKnow106Engine::outputCouplingHighGain() * 0.25f;
+            expect (std::abs (
+                        YouKnow106Engine::outputCouplingHighGain (restored)
+                        - formerGain) < 2.0e-5f,
+                    "schema-1 Volume did not preserve its former static gain");
+            expect (restored < 0.5f,
+                    "schema-1 squared Volume was mistaken for a linear shaft value");
+        }
+        else
+        {
+            expect (false, "could not serialise a schema-1 Volume state");
+        }
+
         removeCalibration (currentMissing);
 
         juce::MemoryBlock currentMissingBytes;
@@ -1654,7 +1687,12 @@ void testOverflowedMidiReflectionCoalescesWithoutDroppingAudioEvents()
     }
 
     expect (peak > 0.001f, "overflow-resync regression rendered silence");
-    expect (difference < 2.0e-5f,
+    // The event-driven instance changes a continuously running DCO shortly
+    // before Note On, while the reference was prepared at the final pitch.
+    // Bandlimited physical restarts correctly retain a minute pre-note phase/
+    // residual difference; this bound remains far below an audible or stale-
+    // patch mismatch while no longer demanding an artificial hard reset.
+    expect (difference < 3.0e-5f,
             "event 65+ did not reach DSP in sample order, or resync reverted it "
                 "(max difference " + std::to_string (difference) + ")");
 

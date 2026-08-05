@@ -75,8 +75,13 @@ public:
     // Explicit plug-in declick policy, not a measured mute-transistor value.
     static constexpr float wetMuteTimeConstantSeconds = 0.005f;
 
-    void prepare(double sampleRate) noexcept;
-    void reset() noexcept;
+    // A live engine-quality change alters only the numerical sample grid.
+    // `preserveState` retains the BBD buckets and all free-running phases/RNGs;
+    // audio-rate TPT carries are cleared under the engine's zero-gain fade
+    // because they contain the old timestep rather than literal voltages.
+    void prepare(double sampleRate,
+                 bool preserveState = false) noexcept;
+    void reset(bool preserveLfoPhase = false) noexcept;
 
     // Advances one sample. `noiseScale` is the single master for every
     // declared chorus-noise component; 1.0 preserves the compatibility hiss
@@ -113,6 +118,10 @@ public:
     // this coefficient belongs to this recursion and to no other.
     [[nodiscard]] static float onePoleG(float cutoffHz, float sampleRate) noexcept;
     static float supportFilterStep(float& state, float input, float g) noexcept;
+    // C28/C25 couple the two reconstructed wet lines into 22 kOhm bleeds.
+    // When the series JFET is on, IC6's 47 kOhm wet input loads that node too.
+    [[nodiscard]] static float wetOutputCouplingCornerHz(
+        bool wetConnected) noexcept;
 
     // One of the emitter-follower two-pole sections either side of the line.
     // Each is an equal-resistor Sallen-Key, so its Q is fixed by the ratio of
@@ -149,6 +158,8 @@ public:
         // Ideal-source approximation for R118/R119, R117 and C45.  The name
         // keeps the still-open MN3009 output loading out of the claim.
         float idealSourceTapPoleG { 0.1f };
+        float wetOutputCouplingMutedG { 0.001f };
+        float wetOutputCouplingConnectedG { 0.001f };
         BiquadCoefficients antiAliasFirst {};
         BiquadCoefficients antiAliasSecond {};
         BiquadCoefficients reconstructionFirst {};
@@ -156,7 +167,7 @@ public:
     };
     [[nodiscard]] static SupportChain supportChainFor(float sampleRate) noexcept;
 
-    [[nodiscard]] float getLfoPhase() const noexcept { return lfoPhase_; }
+    [[nodiscard]] double getLfoPhase() const noexcept { return lfoPhase_; }
 
 private:
     friend struct YouKnow106TestAccess;
@@ -232,19 +243,24 @@ private:
         float tapSumState { 0.0f };
         BiquadState reconstructionFirst {};
         BiquadState reconstructionSecond {};
+        float outputCouplingState { 0.0f };
         float transferState { 0.0f };
         std::uint32_t noiseState { 0x9e3779b9u };
 
         void reset(std::uint32_t seed) noexcept;
+        void resetAudioRateSupport() noexcept;
         float process(float input, float clockHz, float sampleRate,
-                      const SupportChain& support, float noiseScale) noexcept;
+                      const SupportChain& support, float outputCouplingG,
+                      float noiseScale) noexcept;
     };
 
     Line lineA_ {};
     Line lineB_ {};
     float sampleRate_ { 48000.0f };
     float inverseSampleRate_ { 1.0f / 48000.0f };
-    float lfoPhase_ { 0.0f };
+    // Double precision keeps the sub-hertz free-running phase smooth at the
+    // engine's highest internal rates and over long sessions.
+    double lfoPhase_ { 0.0 };
     SupportChain support_ {};
     float wetGain_ { 0.0f };
     float rateHz_ { 0.0f };

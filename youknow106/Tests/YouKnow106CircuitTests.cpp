@@ -46,6 +46,25 @@ struct YouKnow106TestAccess
         return output;
     }
 
+    static std::array<float, 4> cascadeDerivativeAfterRetime(
+        const std::array<float, 4>& voltage,
+        const std::array<float, 4>& derivative,
+        float previousG, float nextG) noexcept
+    {
+        Cascade cascade;
+        cascade.voltage = voltage;
+        for (std::size_t stage = 0; stage < cascade.state.size(); ++stage)
+            cascade.state[stage] = voltage[stage]
+                                 + previousG * derivative[stage];
+        cascade.retime(previousG, nextG);
+
+        std::array<float, 4> realised {};
+        for (std::size_t stage = 0; stage < realised.size(); ++stage)
+            realised[stage] = (cascade.state[stage] - cascade.voltage[stage])
+                            / nextG;
+        return realised;
+    }
+
     static float bbdTransfer(float input) noexcept
     {
         return Chorus::bbdTransfer(input);
@@ -89,6 +108,64 @@ struct YouKnow106TestAccess
         return chorus.wetGain_;
     }
 
+    struct ChorusPhysicalState
+    {
+        std::array<float, Chorus::cellPairs> cellsA {};
+        int writeIndexA { 0 };
+        double clockPhaseA { 0.0 };
+        float heldA { 0.0f };
+        float transferStateA { 0.0f };
+        std::uint32_t lineNoiseA { 0u };
+        double lfoPhase { 0.0 };
+        float wetGain { 0.0f };
+        std::uint32_t commonNoise { 0u };
+        std::uint32_t orthogonalNoise { 0u };
+        double humPhase { 0.0 };
+        double clockSpurPhaseA { 0.0 };
+        bool primed { false };
+
+        bool operator==(const ChorusPhysicalState&) const = default;
+    };
+
+    static ChorusPhysicalState chorusPhysicalState(
+        const Chorus& chorus) noexcept
+    {
+        return { chorus.lineA_.cells,
+                 chorus.lineA_.writeIndex,
+                 chorus.lineA_.clockPhase,
+                 chorus.lineA_.held,
+                 chorus.lineA_.transferState,
+                 chorus.lineA_.noiseState,
+                 chorus.lfoPhase_,
+                 chorus.wetGain_,
+                 chorus.commonNoiseState_,
+                 chorus.orthogonalNoiseState_,
+                 chorus.humPhase_,
+                 chorus.clockSpurPhaseA_,
+                 chorus.primed_ };
+    }
+
+    static bool chorusAudioRateSupportIsClear(
+        const Chorus& chorus) noexcept
+    {
+        const auto clear = [](const Chorus::Line& line) {
+            return line.previousInput == 0.0f
+                && line.inputCouplingState == 0.0f
+                && line.antiAliasState == 0.0f
+                && line.antiAliasFirst.s1 == 0.0f
+                && line.antiAliasFirst.s2 == 0.0f
+                && line.antiAliasSecond.s1 == 0.0f
+                && line.antiAliasSecond.s2 == 0.0f
+                && line.tapSumState == 0.0f
+                && line.reconstructionFirst.s1 == 0.0f
+                && line.reconstructionFirst.s2 == 0.0f
+                && line.reconstructionSecond.s1 == 0.0f
+                && line.reconstructionSecond.s2 == 0.0f
+                && line.outputCouplingState == 0.0f;
+        };
+        return clear(chorus.lineA_) && clear(chorus.lineB_);
+    }
+
     static std::vector<float> renderOutputCoupling(
         const std::vector<float>& input, double sampleRate)
     {
@@ -106,6 +183,54 @@ struct YouKnow106TestAccess
         return output;
     }
 
+    static std::vector<float> renderLoadedOutputCoupling(
+        const std::vector<float>& input, double sampleRate,
+        float volumePosition)
+    {
+        YouKnow106Engine::HighPass coupling;
+        coupling.reset();
+        const float g = std::tan(
+            static_cast<float>(3.14159265358979323846)
+            * YouKnow106Engine::outputCouplingCornerHz(volumePosition)
+            / static_cast<float>(sampleRate));
+        const float gain =
+            YouKnow106Engine::outputCouplingHighGain(volumePosition);
+        std::vector<float> output(input.size());
+        for (std::size_t index = 0; index < input.size(); ++index)
+            output[index] = coupling.process(input[index], g, 0.0f, gain);
+        return output;
+    }
+
+    static std::vector<float> renderVoiceBusCoupling(
+        const std::vector<float>& input, double sampleRate)
+    {
+        YouKnow106Engine::HighPass coupling;
+        coupling.reset();
+        const float g = std::tan(
+            static_cast<float>(3.14159265358979323846)
+            * YouKnow106Engine::voiceBusCouplingCornerHz()
+            / static_cast<float>(sampleRate));
+        std::vector<float> output(input.size());
+        for (std::size_t index = 0; index < input.size(); ++index)
+            output[index] = coupling.process(input[index], g, 0.0f, 1.0f);
+        return output;
+    }
+
+    static std::vector<float> renderCommonVcaInputCoupling(
+        const std::vector<float>& input, double sampleRate)
+    {
+        YouKnow106Engine::HighPass coupling;
+        coupling.reset();
+        const float g = std::tan(
+            static_cast<float>(3.14159265358979323846)
+            * YouKnow106Engine::commonVcaInputCouplingCornerHz()
+            / static_cast<float>(sampleRate));
+        std::vector<float> output(input.size());
+        for (std::size_t index = 0; index < input.size(); ++index)
+            output[index] = coupling.process(input[index], g, 0.0f, 1.0f);
+        return output;
+    }
+
     static void setChorusWetGain(Chorus& chorus, float gain) noexcept
     {
         chorus.wetGain_ = gain;
@@ -116,8 +241,7 @@ struct YouKnow106TestAccess
     {
         YouKnow106Engine::Envelope envelope;
         envelope.level = level;
-        envelope.value = static_cast<float>(level)
-                       / static_cast<float>(YouKnow106Engine::envelopePeak);
+        envelope.value = YouKnow106Engine::envelopeDacFraction(level);
         envelope.noteOn();
         envelope.tick(increment, 0xffffu, 0u, 0xffffu);
         return envelope.level;
@@ -290,6 +414,18 @@ void testCascadeAgainstReferenceSolve()
                        label + ": model disagrees with the reference solve");
         }
     }
+
+    // Changing HQ changes dt, not a voice card's capacitor charge or physical
+    // derivative. The trapezoidal carry must be re-expressed on the new grid
+    // rather than reused as though its old g had the new units.
+    constexpr std::array voltage { 0.25f, -0.5f, 0.75f, -1.0f };
+    constexpr std::array derivative { 0.125f, -0.25f, 0.5f, -0.75f };
+    const auto retimed = YouKnow106TestAccess::cascadeDerivativeAfterRetime(
+        voltage, derivative, 0.03125f, 0.125f);
+    for (std::size_t stage = 0; stage < derivative.size(); ++stage)
+        expectNear(retimed[stage], derivative[stage], 2.0e-6,
+                   "HQ retiming changed OTA stage derivative "
+                       + std::to_string(stage));
 }
 
 void testCascadeOscillationThreshold()
@@ -585,6 +721,12 @@ void testEnvelopeAndAmplifierLaws()
            "decay is not sustain plus the exact truncated distance product");
     expect(YouKnow106Engine::envelopeAttackLevel(0x3ff0u, 0x0020u) == 0x3fffu,
            "integer attack does not saturate at 14 bits");
+    expectNear(YouKnow106Engine::envelopeDacFraction(0x0003u), 0.0, 0.0,
+               "envelope low recurrence bits leaked into the physical DAC");
+    expectNear(YouKnow106Engine::envelopeDacFraction(0x0004u), 1.0 / 4095.0,
+               1.0e-9, "envelope DAC does not discard exactly two low bits");
+    expectNear(YouKnow106Engine::envelopeDacFraction(0x3fffu), 1.0, 0.0,
+               "envelope DAC does not reach full scale at the 14-bit peak");
     expect(YouKnow106TestAccess::attackLevelAfterRetrigger(0x1800u, 0x007fu)
                == 0x187fu,
            "retrigger clears the live envelope accumulator before attack");
@@ -624,9 +766,11 @@ void testEnvelopeAndAmplifierLaws()
 
     // VCA LEVEL is not this per-voice law. It drives the common jack-board VCA
     // after the six voices are summed. These are regression guards for the
-    // current provisional three-point dB-domain fit, not a settled IC law.
-    // Its declared input is p=b/127=DAC12/4064 and the legacy display
-    // coordinate is x=-5+10p, so the midpoint below is explicitly x=0.
+    // current provisional three-point byte-to-dB fit, not a settled Roland
+    // byte-to-GC1 law. NEC's separate -5.9 mV/dB GC1 device boundary does not
+    // supply that missing mapping. The declared input is
+    // p=b/127=DAC12/4064 and the legacy display coordinate is x=-5+10p, so the
+    // midpoint below is explicitly x=0.
     const auto patchLevelDb = [](float position) {
         return 20.0 * std::log10(YouKnow106Engine::patchLevelGain(position));
     };
@@ -647,6 +791,33 @@ void testEnvelopeAndAmplifierLaws()
                "voice summer is not 3.3 kOhm / 33 kOhm");
     expectNear(YouKnow106Engine::voiceBusInput(6.0f), 0.6, 1.0e-7,
                "the six-voice bus does not enter the shared path at 0.1 per voice");
+    constexpr double busCapacitance = 10.0e-6;
+    constexpr double busResistance = 33000.0;
+    const double expectedBusCorner =
+        1.0 / (2.0 * pi * busCapacitance * busResistance);
+    expectNear(YouKnow106Engine::voiceBusCouplingCornerHz(), expectedBusCorner,
+               1.0e-6, "voice-bus C14/R39 coupling corner");
+    constexpr double selectedInputResistance = 47000.0;
+    const double loadedBusResistance =
+        busResistance * selectedInputResistance
+        / (busResistance + selectedInputResistance);
+    const double loadedBusCorner =
+        1.0 / (2.0 * pi * busCapacitance * loadedBusResistance);
+    expectNear(YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode::One),
+               loadedBusCorner, 1.0e-6,
+               "flat HPF leg does not load C14 through its 47 kOhm input");
+    expectNear(YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode::Boost),
+               loadedBusCorner, 1.0e-6,
+               "boost HPF leg does not load C14 through R25");
+    expectNear(YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode::Two),
+               expectedBusCorner, 1.0e-6,
+               "C10 incorrectly loads C14 at sub-hertz frequencies");
+    expectNear(YouKnow106Engine::voiceBusCouplingCornerHz(HighPassMode::Three),
+               expectedBusCorner, 1.0e-6,
+               "C11 incorrectly loads C14 at sub-hertz frequencies");
+    expectNear(YouKnow106Engine::commonVcaInputCouplingCornerHz(),
+               expectedBusCorner, 1.0e-6,
+               "common-VCA C12/R36 input-coupling corner");
     expectNear(YouKnow106Engine::voiceSummerGain * Chorus::dryMixGain,
                10.0 / 39.0, 1.0e-6,
                "net per-voice dry gain misses the jack-board ratios");
@@ -669,6 +840,16 @@ void testPulseWidthAndHighPassLaws()
                "narrowest pulse");
     expectNear(YouKnow106Engine::pwmDutyCycle(-0.8f), 1.0, 1.0e-6,
                "pulse-off control does not pin the comparator high");
+    expectNear(YouKnow106Engine::pwmDutyCycle(3.0f, 1.03f),
+               1.0 - 3.0 / (12.0 * 1.03), 1.0e-6,
+               "a stronger physical ramp did not widen the comparator pulse");
+    expectNear(YouKnow106Engine::pwmDutyCycle(3.0f, 0.97f),
+               1.0 - 3.0 / (12.0 * 0.97), 1.0e-6,
+               "a weaker physical ramp did not narrow the comparator pulse");
+    expectNear(YouKnow106Engine::pwmDutyCycle(6.0f, 0.25f), 0.0, 0.0,
+               "an under-compensated ramp cannot pin the comparator low");
+    expectNear(YouKnow106Engine::pwmDutyCycle(-0.8f, 1.03f), 1.0, 1.0e-6,
+               "ramp variation defeated the pulse-off pinned state");
     for (float depth = 0.0f; depth <= 1.0f; depth += 0.05f)
     {
         const float duty = YouKnow106Engine::pwmDutyCycle(
@@ -731,8 +912,8 @@ void testPulseWidthAndHighPassLaws()
 
     // The service schematic's final stereo coupling paths are identical:
     // IC6 -> C17/C20 10 uF -> R54/R57 1.5 kOhm -> one 10 kOhm VOLUME
-    // track. This current-scope transfer deliberately excludes the
-    // selector/headphone loading still called out in OQ-17.
+    // track. These no-argument helpers retain the earlier unloaded/full-track
+    // comparison boundary; the runtime's internally loaded law follows below.
     constexpr double capacitance = 10.0e-6;
     constexpr double seriesResistance = 1500.0;
     constexpr double potResistance = 10000.0;
@@ -745,6 +926,67 @@ void testPulseWidthAndHighPassLaws()
                1.0e-5, "final output-coupling corner");
     expectNear(YouKnow106Engine::outputCouplingHighGain(), expectedHighGain,
                1.0e-7, "final output-coupling high-frequency gain");
+
+    // The selector ladder and headphone amplifier are connected to each wiper
+    // internally even with no external jack load. A nominal-linear B track is
+    // therefore slightly loaded in circuit, and that same load moves the C17/
+    // C20 pole with shaft position.
+    constexpr double selectorLadder = 33000.0 + 6800.0 + 1500.0;
+    constexpr double headphoneInput = 1000.0 + 100000.0;
+    const double internalWiperLoad =
+        selectorLadder * headphoneInput / (selectorLadder + headphoneInput);
+    const auto expectedLoadedGain = [&](double position) {
+        const double lower = position * potResistance;
+        const double loadedLower = lower > 0.0
+            ? lower * internalWiperLoad / (lower + internalWiperLoad) : 0.0;
+        const double upper = (1.0 - position) * potResistance;
+        return loadedLower / (seriesResistance + upper + loadedLower);
+    };
+    const auto expectedLoadedCorner = [&](double position) {
+        const double lower = position * potResistance;
+        const double loadedLower = lower > 0.0
+            ? lower * internalWiperLoad / (lower + internalWiperLoad) : 0.0;
+        const double upper = (1.0 - position) * potResistance;
+        return 1.0 / (2.0 * pi * capacitance
+                      * (seriesResistance + upper + loadedLower));
+    };
+    for (const float position : { 0.0f, 0.5f, 1.0f })
+    {
+        expectNear(YouKnow106Engine::outputCouplingHighGain(position),
+                   expectedLoadedGain(position), 1.0e-7,
+                   "loaded 10KB wiper gain at shaft position "
+                       + std::to_string(position));
+        expectNear(YouKnow106Engine::outputCouplingCornerHz(position),
+                   expectedLoadedCorner(position), 1.0e-5,
+                   "loaded output-coupling corner at shaft position "
+                       + std::to_string(position));
+    }
+    expectNear(YouKnow106Engine::outputCouplingHighGain(0.5f)
+                   / YouKnow106Engine::outputCouplingHighGain(1.0f),
+               0.4763, 5.0e-4,
+               "the loaded nominal-linear pot midpoint escaped its circuit law");
+
+    // Exercise the realised loaded pole too, not only its static helper. At a
+    // fixed shaft position the exact TPT step is highGain*pole^n/(1+g).
+    constexpr double loadedRate = 48000.0;
+    constexpr int loadedSamples = 48000;
+    const std::vector<float> loadedStep(loadedSamples, 1.0f);
+    for (const float position : { 0.25f, 0.5f, 1.0f })
+    {
+        const double corner =
+            YouKnow106Engine::outputCouplingCornerHz(position);
+        const double gain =
+            YouKnow106Engine::outputCouplingHighGain(position);
+        const double g = std::tan(pi * corner / loadedRate);
+        const double pole = (1.0 - g) / (1.0 + g);
+        const auto response = YouKnow106TestAccess::renderLoadedOutputCoupling(
+            loadedStep, loadedRate, position);
+        for (const int sample : { 0, 12000, loadedSamples - 1 })
+            expectNear(response[static_cast<std::size_t>(sample)],
+                       gain * std::pow(pole, sample) / (1.0 + g), 2.0e-7,
+                       "loaded output pole misses its fixed-position response at "
+                           + std::to_string(position));
+    }
 
     // The realised topology-preserving pole must retain the same physical
     // time constant at every supported host-rate family. A unit step through
@@ -770,6 +1012,45 @@ void testPulseWidthAndHighPassLaws()
                        + std::to_string(static_cast<int>(sampleRate)) + " Hz");
         expectNear(response.back(), expectedStepAt(samples - 1), 2.0e-7,
                    "final output coupling has a sample-rate-dependent decay");
+    }
+
+
+    // C14/R39 precedes the switch and therefore remains in circuit for every
+    // HPF position. Verify its 330 ms R39-only boundary at host-rate and HQ-rate
+    // families; the mode-specific 47 kOhm loading was checked separately above.
+    constexpr double busCapacitance = 10.0e-6;
+    constexpr double busResistance = 33000.0;
+    constexpr double busTimeConstant = busCapacitance * busResistance;
+    const double busCorner =
+        1.0 / (2.0 * pi * busTimeConstant);
+    for (const double sampleRate : { 44100.0, 48000.0, 192000.0 })
+    {
+        const int samples = static_cast<int>(std::ceil(sampleRate * 1.2));
+        const std::vector<float> step(static_cast<std::size_t>(samples), 1.0f);
+        const auto response =
+            YouKnow106TestAccess::renderVoiceBusCoupling(step, sampleRate);
+        const int atTau = static_cast<int>(std::llround(
+            sampleRate * busTimeConstant));
+        const double g = std::tan(pi * busCorner / sampleRate);
+        const double pole = (1.0 - g) / (1.0 + g);
+        const auto expectedStepAt = [&](int sample) {
+            return std::pow(pole, sample) / (1.0 + g);
+        };
+        expectNear(response[static_cast<std::size_t>(atTau)],
+                   expectedStepAt(atTau), 2.0e-6,
+                   "voice-bus coupling misses its 330 ms time constant at "
+                       + std::to_string(static_cast<int>(sampleRate)) + " Hz");
+        expectNear(response.back(), expectedStepAt(samples - 1), 2.0e-7,
+                   "voice-bus coupling has a sample-rate-dependent decay");
+
+        const auto vcaResponse =
+            YouKnow106TestAccess::renderCommonVcaInputCoupling(step, sampleRate);
+        expectNear(vcaResponse[static_cast<std::size_t>(atTau)],
+                   expectedStepAt(atTau), 2.0e-6,
+                   "common-VCA input coupling misses its 330 ms time constant at "
+                       + std::to_string(static_cast<int>(sampleRate)) + " Hz");
+        expectNear(vcaResponse.back(), expectedStepAt(samples - 1), 2.0e-7,
+                   "common-VCA input coupling has a sample-rate-dependent decay");
     }
 }
 
@@ -1227,13 +1508,13 @@ void testJuno60FallbackBucketBrigadeTiming()
         Chorus chorus;
         chorus.prepare(48000.0);
         float left = 0.0f, right = 0.0f;
-        float previous = chorus.getLfoPhase();
+        double previous = chorus.getLfoPhase();
         double travel = 0.0;
         for (int n = 0; n < 48000; ++n)
         {
             chorus.process(0.0f, mode, 0.0f, left, right);
-            const float now = chorus.getLfoPhase();
-            travel += now >= previous ? now - previous : now + 1.0f - previous;
+            const double now = chorus.getLfoPhase();
+            travel += now >= previous ? now - previous : now + 1.0 - previous;
             previous = now;
         }
         return travel;
@@ -1505,14 +1786,17 @@ void testChorusBypassStateAndWetMuteTiming()
         bypassedNaturally.process(input, ChorusMode::Off, 0.0f, left, right);
     }
 
-    // Remove only the mute-gain difference through the test seam.  Exact
-    // subsequent equality proves bypass did not reset or freeze either BBD,
-    // its support filters, or the modulation oscillator.
+    // Remove only the mute-gain difference through the test seam. The wet
+    // output capacitor legitimately evolved against 22 kOhm while bypassed
+    // rather than 22 kOhm || 47 kOhm while connected, so the resumed samples
+    // are no longer bit-identical. Their small error energy still proves the
+    // BBDs, main support filters and modulation oscillator kept running.
     YouKnow106TestAccess::setChorusWetGain(
         bypassedForComparison,
         YouKnow106TestAccess::chorusWetGain(alwaysOn));
-    bool stateKeptRunning = true;
     double resumedEnergy = 0.0;
+    double referenceEnergy = 0.0;
+    double differenceEnergy = 0.0;
     for (int index = 0; index < 2048; ++index)
     {
         float onLeft = 0.0f;
@@ -1522,13 +1806,18 @@ void testChorusBypassStateAndWetMuteTiming()
         alwaysOn.process(0.0f, ChorusMode::One, 0.0f, onLeft, onRight);
         bypassedForComparison.process(
             0.0f, ChorusMode::One, 0.0f, bypassedLeft, bypassedRight);
-        stateKeptRunning = stateKeptRunning
-            && onLeft == bypassedLeft && onRight == bypassedRight;
+        const double differenceLeft = bypassedLeft - onLeft;
+        const double differenceRight = bypassedRight - onRight;
+        differenceEnergy += differenceLeft * differenceLeft
+                          + differenceRight * differenceRight;
+        referenceEnergy += static_cast<double>(onLeft) * onLeft
+                         + static_cast<double>(onRight) * onRight;
         resumedEnergy += static_cast<double>(bypassedLeft) * bypassedLeft
                        + static_cast<double>(bypassedRight) * bypassedRight;
     }
-    expect(stateKeptRunning,
-           "chorus Off froze or reset state behind the wet mute");
+    expect(differenceEnergy < referenceEnergy * 0.01 + 1.0e-12,
+           "chorus Off froze/reset core state instead of changing only the "
+           "documented wet-output capacitor load");
     expect(resumedEnergy > 1.0e-8,
            "the evolved BBD state contained no resumable signal");
 
@@ -1590,6 +1879,36 @@ void testChorusBypassStateAndWetMuteTiming()
                "wet-mute 10-90% time changed at 192 kHz");
     expectNear(at48k, at192k, 2.0 / 48000.0,
                "wet-mute timing is not sample-rate invariant");
+}
+
+void testChorusRateChangePreservesPhysicalState()
+{
+    Chorus chorus;
+    chorus.prepare(192000.0);
+    YouKnow106TestAccess::configureOptionalChorusNoise(
+        chorus, 1.0e-4f, 0.3f, 1.0e-4f, 50.0f, 1.0e-4f, 1.0f);
+    float left = 0.0f;
+    float right = 0.0f;
+    for (int sample = 0; sample < 8192; ++sample)
+    {
+        const float input = 0.2f * std::sin(
+            static_cast<float>(2.0 * pi * 440.0 * sample / 192000.0));
+        chorus.process(input, ChorusMode::One, 1.0f, left, right);
+    }
+
+    const auto before = YouKnow106TestAccess::chorusPhysicalState(chorus);
+    double bucketEnergy = 0.0;
+    for (const float value : before.cellsA)
+        bucketEnergy += static_cast<double>(value) * value;
+    expect(bucketEnergy > 1.0e-6,
+           "chorus rate-change fixture never filled the physical BBD");
+
+    chorus.prepare(48000.0, true);
+    const auto after = YouKnow106TestAccess::chorusPhysicalState(chorus);
+    expect(after == before,
+           "a numerical sample-rate change power-cycled BBD/free-running state");
+    expect(YouKnow106TestAccess::chorusAudioRateSupportIsClear(chorus),
+           "a chorus rate change reused TPT carries expressed in the old timestep");
 }
 
 void testBucketBrigadeDatasheetAnchors()
@@ -1793,6 +2112,26 @@ void testSupportFilterCornersLandWhereAsked()
         expectNear(highPassGainAt(15.9155, chain.inputCouplingG, 48000.0f),
                    0.70710678, 0.005,
                    "the wet coupling high-pass is not at C44/R120's corner");
+        constexpr double capacitor = 1.0e-6;
+        constexpr double bleed = 22000.0;
+        constexpr double mixer = 47000.0;
+        const double connectedResistance = bleed * mixer / (bleed + mixer);
+        const double mutedCorner = 1.0 / (2.0 * pi * capacitor * bleed);
+        const double connectedCorner =
+            1.0 / (2.0 * pi * capacitor * connectedResistance);
+        expectNear(Chorus::wetOutputCouplingCornerHz(false), mutedCorner,
+                   1.0e-5, "muted wet-output coupling corner");
+        expectNear(Chorus::wetOutputCouplingCornerHz(true), connectedCorner,
+                   1.0e-5, "engaged wet-output coupling corner");
+        expectNear(highPassGainAt(
+                       mutedCorner, chain.wetOutputCouplingMutedG, 48000.0f),
+                   0.70710678, 0.005,
+                   "muted C28/C25 wet-output pole is misplaced");
+        expectNear(highPassGainAt(
+                       connectedCorner,
+                       chain.wetOutputCouplingConnectedG, 48000.0f),
+                   0.70710678, 0.005,
+                   "engaged C28/C25 wet-output pole is misplaced");
     }
     {
         const auto chain = Chorus::supportChainFor(192000.0f);
@@ -1968,6 +2307,7 @@ int main()
     testJuno60FallbackBucketBrigadeTiming();
     testChorusNoiseComponents();
     testChorusBypassStateAndWetMuteTiming();
+    testChorusRateChangePreservesPhysicalState();
     testBucketBrigadeDatasheetAnchors();
     testSupportFilterCornersLandWhereAsked();
     testHighPassReachesTheSummedSignal();
