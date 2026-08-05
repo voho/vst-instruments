@@ -1599,6 +1599,193 @@ void testCymbalQualityContract()
             "Crash Spread lost too much spectral coverage");
 }
 
+std::vector<float> renderCymbalMono (drumalor::Instrument instrument,
+                                     drumalor::InstrumentParameters parameters,
+                                     double seconds, float velocity,
+                                     double sampleRate)
+{
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+    engine.setInstrumentParameters (instrument, parameters);
+    engine.trigger (instrument, velocity);
+    const int count = static_cast<int> (seconds * sampleRate);
+    const auto interleaved = renderInterleaved (engine, count, defaultBlockSize);
+    std::vector<float> mono (static_cast<std::size_t> (count));
+    for (int sample = 0; sample < count; ++sample)
+    {
+        const auto index = static_cast<std::size_t> (sample) * 2u;
+        mono[static_cast<std::size_t> (sample)] = 0.5f
+            * (interleaved[index] + interleaved[index + 1u]);
+    }
+    return mono;
+}
+
+double rmsWindow (const std::vector<float>& samples, double sampleRate,
+                  double beginSeconds, double endSeconds)
+{
+    return rmsInRange (
+        samples,
+        std::min (samples.size(),
+                  static_cast<std::size_t> (beginSeconds * sampleRate)),
+        std::min (samples.size(),
+                  static_cast<std::size_t> (endSeconds * sampleRate)));
+}
+
+// Power-weighted third-octave centroid. A cymbal's is supposed to fall while it
+// rings; a fader closing on a fixed spectrum keeps it where it started.
+double spectralCentroid (const std::vector<float>& samples, double sampleRate,
+                         double beginSeconds, double endSeconds)
+{
+    double weighted = 0.0;
+    double total = 0.0;
+    for (int band = 0; band < 18; ++band)
+    {
+        const double lower = 300.0 * std::exp2 (band / 3.0);
+        const double upper = 300.0 * std::exp2 ((band + 1) / 3.0);
+        if (upper >= 0.45 * sampleRate)
+            break;
+        const double power = bandPowerInRange (
+            samples, sampleRate, lower, upper, beginSeconds, endSeconds);
+        weighted += power * std::sqrt (lower * upper);
+        total += power;
+    }
+    return total > 0.0 ? weighted / total : 0.0;
+}
+
+double largestStepInRange (const std::vector<float>& samples, double sampleRate,
+                           double beginSeconds, double endSeconds)
+{
+    const auto begin = std::min (
+        samples.size(), static_cast<std::size_t> (beginSeconds * sampleRate));
+    const auto end = std::min (
+        samples.size(), static_cast<std::size_t> (endSeconds * sampleRate));
+    double largest = 0.0;
+    for (std::size_t sample = begin + 1u; sample < end; ++sample)
+        largest = std::max (largest,
+                            std::abs (static_cast<double> (samples[sample])
+                                      - samples[sample - 1u]));
+    return largest;
+}
+
+// Contracts for the circuit behaviours the cymbal channels model, as opposed
+// to the spectral shape the quality contract above already covers. Each one
+// fails for a specific missing block rather than for a general loss of
+// realism: the attack smoother, the swing VCA's control law, the sample clock
+// driving the address envelope, the closing VCA's bandwidth, and the band
+// retirement that lets the analogue channel stop paying for shut VCAs.
+void testCymbalCircuitContract()
+{
+    constexpr double sampleRate = 48000.0;
+    for (const auto instrument : { drumalor::Instrument::Ride,
+                                   drumalor::Instrument::Crash })
+    {
+        const std::string name { drumalor::getInstrumentDisplayName (instrument) };
+        const auto defaults = drumalor::getInstrumentMetadata (
+            instrument).defaultParameters;
+        const auto rendered = renderCymbalMono (
+            instrument, defaults, 2.2, 0.9f, sampleRate);
+
+        // The trigger pulse reaches the envelope capacitors through an RC, so
+        // the channel opens over a ramp. Without the attack smoother the first
+        // sample is a step into a resonant band-pass.
+        double onsetPeak = 0.0;
+        std::size_t onsetPeakIndex = 0;
+        const auto onsetLength = static_cast<std::size_t> (0.005 * sampleRate);
+        for (std::size_t sample = 0; sample < onsetLength; ++sample)
+            if (std::abs (rendered[sample]) > onsetPeak)
+            {
+                onsetPeak = std::abs (rendered[sample]);
+                onsetPeakIndex = sample;
+            }
+        expect (onsetPeak > 1.0e-4,
+                name + " produced no measurable onset");
+        expect (std::abs (rendered[0]) <= 0.35 * onsetPeak,
+                name + " opened its VCAs as a step rather than through the "
+                       "attack smoother (first sample "
+                    + std::to_string (std::abs (rendered[0])) + " of peak "
+                    + std::to_string (onsetPeak) + ")");
+        expect (onsetPeakIndex >= static_cast<std::size_t> (0.0005 * sampleRate),
+                name + " reached its onset peak before the smoother could ramp");
+
+        // A cymbal darkens as it rings, and both channels are built to do it:
+        // the analogue one gives its top band the short envelope, and the
+        // digital one loses bandwidth as its VCA's control current falls.
+        const double early = spectralCentroid (rendered, sampleRate, 0.02, 0.10);
+        const double late = spectralCentroid (rendered, sampleRate, 0.80, 1.60);
+        expect (early > 0.0 && late > 0.0 && late <= 0.90 * early,
+                name + " did not darken as it rang (centroid "
+                    + std::to_string (early) + " Hz to "
+                    + std::to_string (late) + " Hz)");
+
+        // The address counter, not a clock of its own, steps the 909 channel's
+        // envelope, so retuning the sample clock moves pitch and tail length
+        // together. Both renders keep the same Decay setting; only the clock
+        // that walks the ROM differs.
+        auto lowClock = defaults;
+        auto highClock = defaults;
+        lowClock.pitch = -12.0f;
+        highClock.pitch = 12.0f;
+        const auto slow = renderCymbalMono (
+            instrument, lowClock, 1.7, 0.9f, sampleRate);
+        const auto fast = renderCymbalMono (
+            instrument, highClock, 1.7, 0.9f, sampleRate);
+        const double slowPersistence = rmsWindow (slow, sampleRate, 1.0, 1.6)
+            / std::max (1.0e-9, rmsWindow (slow, sampleRate, 0.05, 0.15));
+        const double fastPersistence = rmsWindow (fast, sampleRate, 1.0, 1.6)
+            / std::max (1.0e-9, rmsWindow (fast, sampleRate, 0.05, 0.15));
+        expect (slowPersistence >= 2.0 * fastPersistence,
+                name + " sample clock did not carry the address envelope with "
+                       "it (slow/fast tail persistence "
+                    + std::to_string (slowPersistence) + "/"
+                    + std::to_string (fastPersistence) + ")");
+
+        // Accent is a voltage on the trigger line and the swing VCAs are
+        // superlinear in it, so a quiet hit does not open them as far and
+        // leaves sooner. A plain output-gain VCA would leave this unchanged.
+        const auto soft = renderCymbalMono (
+            instrument, defaults, 1.7, 0.2f, sampleRate);
+        const auto hard = renderCymbalMono (
+            instrument, defaults, 1.7, 1.0f, sampleRate);
+        const double softPersistence = rmsWindow (soft, sampleRate, 1.0, 1.6)
+            / std::max (1.0e-9, rmsWindow (soft, sampleRate, 0.02, 0.10));
+        const double hardPersistence = rmsWindow (hard, sampleRate, 1.0, 1.6)
+            / std::max (1.0e-9, rmsWindow (hard, sampleRate, 0.02, 0.10));
+        expect (softPersistence <= 0.85 * hardPersistence,
+                name + " velocity behaved as a plain output gain rather than "
+                       "as accent into the swing VCAs (soft/hard tail "
+                       "persistence "
+                    + std::to_string (softPersistence) + "/"
+                    + std::to_string (hardPersistence) + ")");
+
+        // The analogue channel stops running the sections behind a shut VCA
+        // partway through the tail. That boundary has to be inaudible, so the
+        // decaying tail must not contain a larger sample-to-sample step than
+        // the loud part of the hit already did.
+        const double headStep = largestStepInRange (rendered, sampleRate, 0.02, 0.40);
+        const double tailStep = largestStepInRange (rendered, sampleRate, 0.40, 2.20);
+        expect (headStep > 0.0 && tailStep <= 0.75 * headStep,
+                name + " tail contains a step the hit itself never made, which "
+                       "is what retiring a band audibly would look like (head "
+                    + std::to_string (headStep) + ", tail "
+                    + std::to_string (tailStep) + ")");
+
+        // The sample clock is fixed in hertz and the ROM's length in seconds,
+        // so neither may follow the host rate.
+        const double referenceRms = rmsWindow (rendered, sampleRate, 0.04, 0.75);
+        for (const double rate : { 44100.0, 96000.0, 192000.0 })
+        {
+            const auto resampled = renderCymbalMono (
+                instrument, defaults, 0.85, 0.9f, rate);
+            const double rms = rmsWindow (resampled, rate, 0.04, 0.75);
+            const double decibels = 20.0 * std::log10 (
+                std::max (1.0e-12, rms) / std::max (1.0e-12, referenceRms));
+            expect (std::abs (decibels) <= 1.5,
+                    name + " level moved " + std::to_string (decibels)
+                        + " dB at " + std::to_string (rate) + " Hz");
+        }
+    }
+}
+
 std::vector<float> renderWithParameters (drumalor::Instrument instrument,
                                          drumalor::InstrumentParameters parameters,
                                          int samples = 7200)
@@ -2853,6 +3040,7 @@ int main()
     testDeepAnalogKickContract();
     testLowFrequencyTailAndVoiceStealing();
     testCymbalQualityContract();
+    testCymbalCircuitContract();
     testParameterInfluence();
     testPerc1DriveAddsDensity();
     testPerVoiceMixer();
