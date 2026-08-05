@@ -2760,10 +2760,12 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // resolution on the slewed digital value. The five-per-cent scale and
     // tenth-octave offset spans are voiced Unit Character policies, not
     // measured post-calibration residual distributions.
+    const float psuCutoffShift = -powerSupplyDroop_ * 35.0f * tolerance;
     const float analogCounts = voice.cutoffCounts
         * (1.0f + card.cutoffScaleError * 0.05f * tolerance)
         + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * tolerance
-        + card.driftValue * 40.0f * tolerance;
+        + card.driftValue * 40.0f * tolerance
+        + psuCutoffShift;
     const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
     const float limited =
         std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
@@ -3269,6 +3271,16 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             const float noiseSample =
                 (static_cast<float>(noiseState_ & 0xffffffu)
                      * (2.0f / 16777215.0f) - 1.0f) * noiseRateScale_;
+
+            // Physical power supply load tracking: compute sum of active voice energies
+            // to model regulator output droop and 100 Hz / 120 Hz mains ripple.
+            float totalVoiceEnergy = 0.0f;
+            for (const auto& v : voices_)
+            {
+                if (v.active)
+                    totalVoiceEnergy += v.energy;
+            }
+            powerSupplyDroop_ = totalVoiceEnergy * 0.0015f * activeParameters_.calibration;
 
             float mono = 0.0f;
             float loudestEnvelope = 0.0f;
