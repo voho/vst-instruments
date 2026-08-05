@@ -234,22 +234,29 @@ and therefore also yields C3), each closes the scale on its own.
   simultaneously with the TP3/TP4 modulation waveform so the clock trajectory
   can be referred to the voltage that produced it.
 
-  This is the one output that resolves the sweep law, and it is an unstated
-  assumption in the model today. `Chorus::process` makes the *delay* a linear
-  function of the modulator (`centre ± sweep·tri`) and then takes
-  `clock = 128/delay`, which is correct only if the clock oscillator's
-  **period** is linear in its control voltage. Service Notes p. 15 shows each
-  MN3101 driven by a transistor voltage-to-current converter (Tr22 with R133
-  2.2 kΩ, R134 22 kΩ and R135 1.8 kΩ, against C53 150 pF), which is the shape
-  of a *current-controlled* oscillator — that is, **frequency** linear in the
-  control voltage, which would make the delay sweep hyperbolic rather than
-  arithmetic. A period-linear, a frequency-linear and an exponential clock all
-  produce identical minimum and maximum delays and differ only in the
-  trajectory between them, so no endpoint measurement can tell them apart.
-  Confirming the MN3101's bias transfer from its datasheet would also settle
-  it. The audible difference is real: the arithmetic law gives a constant
-  detune magnitude that merely alternates sign, while a frequency-linear clock
-  makes the detune asymmetric across the sweep.
+  This is the one output that resolves the sweep law, and the model has now
+  taken a position on it that a measurement still has to confirm. Service Notes
+  p. 15 shows each MN3101 driven by a transistor voltage-to-current converter
+  (Tr22 with R133 2.2 kΩ, R134 22 kΩ and R135 1.8 kΩ, against C53 150 pF),
+  which is the shape of a *current-controlled* oscillator — **frequency**
+  linear in the control voltage rather than period. `Chorus::process`
+  accordingly bends the delay hyperbolically under
+  `enableChorusHyperbolicSweep`. A period-linear, a frequency-linear and an
+  exponential clock differ only in the trajectory between the endpoints, so no
+  endpoint measurement can tell them apart; only a time series can. Confirming
+  the MN3101's bias transfer from its datasheet would also settle it.
+
+  **Open defect, and the reason this stays P0.** The current implementation
+  scales the hyperbolic delay about the *centre*, which moves the endpoints:
+  with the measured centre 3.505 ms and sweep 1.845 ms, at Unit Character 1.0
+  the rendered range becomes about 2.30–7.40 ms instead of the measured
+  1.66–5.35 ms — a span 38% wider than the only measured figures this chorus
+  has, and the deviation scales with Unit Character even though whether the
+  oscillator is current-controlled is a topology fact, not a component
+  tolerance. A frequency-linear clock that respects the measurement sweeps the
+  *clock* linearly between `128/5.35 ms` and `128/1.66 ms`, which keeps both
+  endpoints exactly and changes only the path between them. Resolving this
+  question must fix the endpoints and the Unit Character coupling together.
 - The peak-to-peak amplitude of the modulation triangle at TP4, and the
   saturated output swing of IC1a, in the same capture. With `β = 1/48` from
   R15/R6 those give C3, and C3 gives both absolute rates.
