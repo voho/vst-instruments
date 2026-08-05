@@ -590,13 +590,16 @@ void YouKnow106Display::paint (juce::Graphics& g)
 
     auto area = bounds.reduced (8.0f, 6.0f);
 
-    // Split display into Left Section (Voices, LFO, ENV) and Right Section (Oscilloscope & Physical Telemetry)
-    const float rightWidth = area.getWidth() * 0.44f;
+    // Left column carries the three text-and-bar readouts, right column the
+    // scope. The scope gets the larger share and the full height: a trace is
+    // only legible if it has room in both axes, and the telemetry it used to
+    // sit under has been laid out horizontally in the left column instead.
+    const float rightWidth = area.getWidth() * 0.52f;
     auto rightBox = area.removeFromRight (rightWidth);
     area.removeFromRight (8.0f);
 
-    // --- Left Section: Voice Lamps & Meters ---
-    const float rowHeight = area.getHeight() / 2.0f;
+    // --- Left Section: voice lamps, meters, telemetry ---
+    const float rowHeight = area.getHeight() / 3.0f;
 
     // Voice indicators
     auto voiceRow = area.removeFromTop (rowHeight);
@@ -658,32 +661,34 @@ void YouKnow106Display::paint (juce::Graphics& g)
         }
     };
 
-    const float half = area.getHeight() / 2.0f;
-    meter (area.removeFromTop (half), lfo, true, panel::colour::magenta, "LFO");
-    meter (area, envelope, false, panel::colour::led, "ENV");
+    // LFO and ENV share one row side by side rather than stacking, which is
+    // what frees the third row for the telemetry the scope used to carry.
+    auto meterRow = area.removeFromTop (rowHeight);
+    auto lfoCell = meterRow.removeFromLeft (meterRow.getWidth() * 0.5f);
+    lfoCell.removeFromRight (6.0f);
+    meter (lfoCell, lfo, true, panel::colour::magenta, "LFO");
+    meter (meterRow, envelope, false, panel::colour::led, "ENV");
 
-    // --- Right Section: Real-time Oscilloscope & Physical Telemetry ---
+    // Telemetry: unit warmup temperature and PSU rail voltage, on one line
+    // across the full column width instead of stacked above the trace.
+    g.setFont (panelFont (9.0f, true));
+    g.setColour (fromPalette (panel::colour::cyan).withAlpha (0.90f));
+    g.drawText (juce::String (temperature, 1) + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0")) + "C",
+                area.toNearestInt(), juce::Justification::centredLeft);
+
+    g.setColour (fromPalette (panel::colour::textDim));
+    const float railV = 15.0f - railDroop;
+    g.drawText (juce::String (railV, 2) + "V RAIL", area.toNearestInt(),
+                juce::Justification::centredRight);
+
+    // --- Right Section: real-time oscilloscope, full height ---
     g.setColour (fromPalette (panel::colour::faceplateHigh));
     g.fillRoundedRectangle (rightBox, 2.5f);
     g.setColour (fromPalette (panel::colour::cyan).withAlpha (0.30f));
     g.drawRoundedRectangle (rightBox, 2.5f, 1.0f);
 
-    auto scopeInner = rightBox.reduced (3.0f, 2.0f);
-
-    // Telemetry Line (Unit Warmup Temperature & PSU Rail Voltage)
-    auto telemetryLine = scopeInner.removeFromTop (11.0f);
-    g.setFont (panelFont (8.5f, true));
-    g.setColour (fromPalette (panel::colour::cyan).withAlpha (0.90f));
-    const juce::String tempStr = juce::String (temperature, 1) + "°C";
-    g.drawText (tempStr, telemetryLine.toNearestInt(), juce::Justification::left);
-
-    g.setColour (fromPalette (panel::colour::textDim));
-    const float railV = 15.0f - railDroop;
-    const juce::String railStr = juce::String (railV, 2) + "V RAIL";
-    g.drawText (railStr, telemetryLine.toNearestInt(), juce::Justification::right);
-
     // Oscilloscope CRT Screen
-    const auto screen = scopeInner;
+    const auto screen = rightBox.reduced (3.0f, 2.0f);
     g.setColour (juce::Colour (0xff070e14));
     g.fillRoundedRectangle (screen, 2.0f);
 
@@ -932,8 +937,11 @@ void YouKnow106ContextHelp::paint (juce::Graphics& g)
 
     auto content = bounds.reduced (juce::jmax (8.0f, bounds.getHeight() * 0.28f),
                                    juce::jmax (2.0f, bounds.getHeight() * 0.10f));
-    const float titleWidth = juce::jlimit (92.0f, 128.0f,
-                                           bounds.getWidth() * 0.085f);
+    // The title column carries a control's full name, which is routinely longer
+    // than one short word. Three times the original width lets it read on one
+    // line instead of eliding.
+    const float titleWidth = juce::jlimit (276.0f, 384.0f,
+                                           bounds.getWidth() * 0.255f);
     const auto titleArea = content.removeFromLeft (titleWidth);
     const float fontHeight = juce::jlimit (10.0f, 12.0f,
                                            bounds.getHeight() * 0.34f);
@@ -1075,7 +1083,9 @@ void YouKnow106AudioProcessorEditor::buildPanelControls()
             const bool isPoly = std::strcmp (description.parameterId,
                                              parameters::poly1) == 0
                              || std::strcmp (description.parameterId,
-                                             parameters::poly2) == 0;
+                                             parameters::poly2) == 0
+                             || std::strcmp (description.parameterId,
+                                             parameters::legacyKeyMode) == 0;
             entry.button->setClickingTogglesState (
                 description.kind != panel::ControlKind::Radio && ! isPoly);
             entry.button->setName (description.label);
@@ -1095,6 +1105,11 @@ void YouKnow106AudioProcessorEditor::buildPanelControls()
                 {
                     attachPolyButton (*entry.button, parameters::poly2,
                                       parameters::poly1);
+                }
+                else if (std::strcmp (description.parameterId,
+                                      parameters::legacyKeyMode) == 0)
+                {
+                    attachUnisonButton (*entry.button);
                 }
                 else if (std::strcmp (description.parameterId,
                                       parameters::chorusI) == 0)
@@ -1414,16 +1429,30 @@ void YouKnow106AudioProcessorEditor::attachPolyButton (
     // ButtonAttachment reports parameter-driven lamp changes as clicks, which
     // would recursively run the transition below.
     auto* attachedParameter = audioProcessor.parameters.getParameter (parameterId);
-    jassert (attachedParameter != nullptr);
-    if (attachedParameter == nullptr)
+    auto* companionParameter = audioProcessor.parameters.getParameter (otherParameterId);
+    jassert (attachedParameter != nullptr && companionParameter != nullptr);
+    if (attachedParameter == nullptr || companionParameter == nullptr)
         return;
-    auto attachment = std::make_unique<juce::ParameterAttachment> (
-        *attachedParameter,
-        [&button] (float current)
+
+    // MODE shows the assigner's three stable states as three latches, so a POLY
+    // lamp lights only while its own contact is the *only* one closed. With
+    // both closed the separate UNISON latch is the lit one. That makes the lamp
+    // depend on both parameters, so both have to be able to refresh it.
+    const auto refresh = [this, &button, parameterId, otherParameterId] (float)
+    {
+        const auto isOn = [this] (const char* id)
         {
-            button.setToggleState (current > 0.5f, juce::dontSendNotification);
-        },
-        nullptr);
+            auto* parameter = audioProcessor.parameters.getParameter (id);
+            return parameter != nullptr && parameter->getValue() > 0.5f;
+        };
+        button.setToggleState (isOn (parameterId) && ! isOn (otherParameterId),
+                               juce::dontSendNotification);
+    };
+
+    auto attachment = std::make_unique<juce::ParameterAttachment> (
+        *attachedParameter, refresh, nullptr);
+    auto companion = std::make_unique<juce::ParameterAttachment> (
+        *companionParameter, refresh, nullptr);
 
     button.onClick = [this, parameterId, otherParameterId]
     {
@@ -1491,8 +1520,75 @@ void YouKnow106AudioProcessorEditor::attachPolyButton (
         set (parameterId, true);
     };
     auto* pointer = attachment.get();
+    auto* companionPointer = companion.get();
     parameterAttachments.push_back (std::move (attachment));
+    parameterAttachments.push_back (std::move (companion));
     pointer->sendInitialUpdate();
+    companionPointer->sendInitialUpdate();
+}
+
+void YouKnow106AudioProcessorEditor::attachUnisonButton (juce::Button& button)
+{
+    // Solo Unison is the state both momentary contacts closed together select.
+    // A mouse cannot hold two buttons, so this latch performs that press. The
+    // poly pair stays the authoritative state; this button neither adds a
+    // parameter nor a fourth mode.
+    auto* first = audioProcessor.parameters.getParameter (parameters::poly1);
+    auto* second = audioProcessor.parameters.getParameter (parameters::poly2);
+    jassert (first != nullptr && second != nullptr);
+    if (first == nullptr || second == nullptr)
+        return;
+
+    const auto refresh = [this, &button] (float)
+    {
+        const auto isOn = [this] (const char* id)
+        {
+            auto* parameter = audioProcessor.parameters.getParameter (id);
+            return parameter != nullptr && parameter->getValue() > 0.5f;
+        };
+        button.setToggleState (isOn (parameters::poly1) && isOn (parameters::poly2),
+                               juce::dontSendNotification);
+    };
+
+    auto firstAttachment = std::make_unique<juce::ParameterAttachment> (
+        *first, refresh, nullptr);
+    auto secondAttachment = std::make_unique<juce::ParameterAttachment> (
+        *second, refresh, nullptr);
+
+    button.onClick = [this]
+    {
+        const auto isOn = [this] (const char* id)
+        {
+            auto* parameter = audioProcessor.parameters.getParameter (id);
+            return parameter != nullptr && parameter->getValue() > 0.5f;
+        };
+
+        if (isOn (parameters::poly1) && isOn (parameters::poly2))
+        {
+            // Already Unison. The contacts are momentary, so pressing them
+            // again still re-enters the firmware handler and rebuilds every
+            // held assignment rather than doing nothing.
+            audioProcessor.requestKeyModeReassert();
+            return;
+        }
+
+        for (const char* id : { parameters::poly1, parameters::poly2 })
+        {
+            if (auto* target = audioProcessor.parameters.getParameter (id))
+            {
+                target->beginChangeGesture();
+                target->setValueNotifyingHost (target->convertTo0to1 (1.0f));
+                target->endChangeGesture();
+            }
+        }
+    };
+
+    auto* firstPointer = firstAttachment.get();
+    auto* secondPointer = secondAttachment.get();
+    parameterAttachments.push_back (std::move (firstAttachment));
+    parameterAttachments.push_back (std::move (secondAttachment));
+    firstPointer->sendInitialUpdate();
+    secondPointer->sendInitialUpdate();
 }
 
 void YouKnow106AudioProcessorEditor::attachRadio (juce::Button& button,
@@ -1614,38 +1710,43 @@ void YouKnow106AudioProcessorEditor::resized()
     chorusNoiseSlider.setBounds (scaled (832.0f, 318.0f, 36.0f, 36.0f).toNearestInt());
     hqButton.setBounds (scaled (924.0f, 308.0f, 168.0f, 42.0f).toNearestInt());
 
-    // OPERATIONS: five small service keys in one bespoke console row. SEND is
-    // intentionally not a front-panel operation; the processor can retain its
-    // hardware-dump plumbing without making this instrument editor a librarian.
-    constexpr std::array<float, 5> operationX {
-        678.0f, 762.0f, 846.0f, 930.0f, 1014.0f
-    };
-    panicButton.setBounds (scaled (operationX[0], 400.0f, 78.0f, 44.0f).toNearestInt());
-    resetButton.setBounds (scaled (operationX[1], 400.0f, 78.0f, 44.0f).toNearestInt());
-    randomize1Button.setBounds (scaled (operationX[2], 400.0f, 78.0f, 44.0f).toNearestInt());
-    randomize10Button.setBounds (scaled (operationX[3], 400.0f, 78.0f, 44.0f).toNearestInt());
-    randomize50Button.setBounds (scaled (operationX[4], 400.0f, 78.0f, 44.0f).toNearestInt());
-
-    performanceLever.setBounds (
-        scaled (panel::panelMargin, panel::performanceDeckTop,
-                116.0f, panel::performanceDeckHeight).toNearestInt());
-
-    // Keyboard-facing extensions sit beside BENDER/MODE on the live deck.
+    // KEYBOARD CONTROL: the four keyboard-facing extensions, compacted into the
+    // cell under CHARACTER. Four cells across 446 rather than 698, so the knobs
+    // shrink from 42 to 36 and the row reads as the secondary shelf it is.
     juce::Slider* deckSliders[] = { &transposeSlider, &tuneSlider,
                                      &velocitySlider, &polyphonySlider };
     const std::array<int, 4> deckLabelIndices { 0, 1, 2, 5 };
-    constexpr float deckLeft = 410.0f;
-    constexpr float deckCellWidth = 160.0f;
+    constexpr float deckLeft = 666.0f;
+    constexpr float deckCellWidth = 110.0f;
     for (int index = 0; index < 4; ++index)
     {
         const float cellLeft = deckLeft + deckCellWidth * static_cast<float> (index);
         utilityLabels[static_cast<std::size_t> (
             deckLabelIndices[static_cast<std::size_t> (index)])].setBounds (
-            scaled (cellLeft + 4.0f, 496.0f,
-                    deckCellWidth - 8.0f, 15.0f).toNearestInt());
+            scaled (cellLeft + 3.0f, 390.0f,
+                    deckCellWidth - 6.0f, 14.0f).toNearestInt());
         deckSliders[index]->setBounds (
-            scaled (cellLeft + 59.0f, 517.0f, 42.0f, 44.0f).toNearestInt());
+            scaled (cellLeft + 37.0f, 406.0f, 36.0f, 36.0f).toNearestInt());
     }
+
+    // OPERATIONS: five service keys, now on the live deck where they can be
+    // full-width targets. SEND is intentionally not a front-panel operation;
+    // the processor can retain its hardware-dump plumbing without making this
+    // instrument editor a librarian.
+    constexpr float operationLeft = 318.0f;
+    constexpr float operationPitch = 156.0f;
+    constexpr float operationWidth = 144.0f;
+    juce::Button* operationButtons[] = { &panicButton, &resetButton,
+                                         &randomize1Button, &randomize10Button,
+                                         &randomize50Button };
+    for (int index = 0; index < 5; ++index)
+        operationButtons[index]->setBounds (
+            scaled (operationLeft + operationPitch * static_cast<float> (index),
+                    508.0f, operationWidth, 48.0f).toNearestInt());
+
+    performanceLever.setBounds (
+        scaled (panel::panelMargin, panel::performanceDeckTop,
+                116.0f, panel::performanceDeckHeight).toNearestInt());
 
     keyboard.setBounds (scaled (0.0f, panel::panelHeight, panel::panelWidth(),
                                 panel::keyboardHeight).toNearestInt());
@@ -1770,13 +1871,18 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                     juce::Justification::centredRight);
     };
 
+    // The two product-only card stacks sit together in row B's right column:
+    // KEYBOARD CONTROL is directly under CHARACTER, both secondary and both
+    // clearly outside the reproduced faceplate. Shrinking it from the full
+    // performance deck to this cell is what lets OPERATIONS take the deck,
+    // where five service keys have room to spread.
     drawConsoleCard (scaled (662.0f, panel::soundRowBTop, 446.0f, 80.0f),
                      panel::colour::magenta, "CHARACTER", "EXT / 02", true);
     drawConsoleCard (scaled (662.0f, 366.0f, 446.0f, 92.0f),
-                     panel::colour::cyan, "OPERATIONS", "OPS / 05", true);
-    drawConsoleCard (scaled (398.0f, panel::performanceDeckTop,
-                             698.0f, panel::performanceDeckHeight),
-                     panel::colour::magenta, "KEYBOARD CONTROL", "LIVE / 04", false);
+                     panel::colour::magenta, "KEYBOARD CONTROL", "LIVE / 04", true);
+    drawConsoleCard (scaled (302.0f, panel::performanceDeckTop,
+                             806.0f, panel::performanceDeckHeight),
+                     panel::colour::cyan, "OPERATIONS", "OPS / 05", false);
 
     // Hard separation around the playable area protects the keybed visually
     // from the service controls above and the explanatory display below.

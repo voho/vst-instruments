@@ -169,6 +169,9 @@ private:
     void attachButton (juce::Button&, const char* parameterId);
     void attachPolyButton (juce::Button&, const char* parameterId,
                            const char* otherParameterId);
+    // The third MODE latch. It owns no parameter of its own: it closes both
+    // momentary POLY contacts, which is how the hardware selects Solo Unison.
+    void attachUnisonButton (juce::Button&);
     void attachExclusiveButton (juce::Button&, const char* parameterId,
                                 const char* otherParameterId);
     void attachRadio (juce::Button&, const char* parameterId, int value);

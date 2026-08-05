@@ -201,7 +201,7 @@ struct Control
 };
 
 inline constexpr int sectionCount = 10;
-inline constexpr int controlCount = 37;
+inline constexpr int controlCount = 38;
 
 // Type sizes the editor draws with, in panel units. They live here rather than
 // in the editor so the fit checks below and the drawing code cannot disagree.

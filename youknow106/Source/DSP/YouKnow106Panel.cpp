@@ -34,7 +34,7 @@ constexpr Placement placements[controlCount] = {
     // VOLUME
     { parameters::volume, "VOLUME",
       "Sets final stereo output level after the chorus. This performance control is not part of the hardware's 18-byte tone memory.",
-      ControlKind::Slider, 0, 0, 0, 1, -1, 0, 2 },
+      ControlKind::Slider, 0, 0, 0, 1, -1, 0, 1 },
 
     // BENDER
     { parameters::benderDco, "DCO",
@@ -54,11 +54,19 @@ constexpr Placement placements[controlCount] = {
     // one is always selected, and pressing both is Solo Unison. Each button
     // prints its own legend -- POLY 1 and POLY 2 -- inside itself.
     { parameters::poly1, "POLY 1",
-      "POLY 1 reuses a key's previous voice card when possible, otherwise the longest-free card. Re-click to rebuild held assignments; Shift-click either POLY button for Solo Unison.",
-      ControlKind::Toggle, 2, 0, 0, 2, -1, 0, 2 },
+      "POLY 1 reuses a key's previous voice card when possible, otherwise the longest-free card. Re-click to rebuild held assignments.",
+      ControlKind::Toggle, 2, 0, 0, 3, -1, 0, 2 },
     { parameters::poly2, "POLY 2",
-      "POLY 2 scans from voice 1 for each note, so new notes can cut released tails but never steal a held key. Re-click to rebuild; Shift-click either POLY button for Solo Unison.",
-      ControlKind::Toggle, 2, 0, 1, 2, -1, 0, 2 },
+      "POLY 2 scans from voice 1 for each note, so new notes can cut released tails but never steal a held key. Re-click to rebuild held assignments.",
+      ControlKind::Toggle, 2, 0, 1, 3, -1, 0, 2 },
+    // The hardware reaches this state by holding both momentary POLY contacts
+    // at once, which a mouse cannot do. Exposing the third stable state as its
+    // own latch describes the same three-state assigner without asking for a
+    // chord. The pair of poly parameters stays authoritative underneath, so
+    // existing automation is unaffected.
+    { parameters::legacyKeyMode, "UNISON",
+      "Solo Unison stacks all six voice cards on the highest held key. They are unnormalised and share one crystal, so this is a level and thickness change, not a detune. Re-click to rebuild held assignments.",
+      ControlKind::Toggle, 2, 0, 2, 3, -1, 0, 2 },
 
     // LFO
     { parameters::lfoRate, "RATE",
@@ -164,10 +172,10 @@ constexpr Placement placements[controlCount] = {
     // CHORUS. Two interlocked latching buttons. Neither down is off; selecting
     // one releases the other, so the hardware exposes only Off, I and II.
     { parameters::chorusI, "I",
-      "Toggles the slower stereo BBD Chorus I; press the lit button again for Off. Its current 0.513 Hz timing is a provisional JUNO-60 fallback.",
+      "Toggles the slower stereo BBD Chorus I; press the lit button again for Off. Its 0.522 Hz rate carries this instrument's own schematic timing ratio on a still-provisional JUNO-60 scale.",
       ControlKind::Toggle, 9, 0, 0, 2, -1, 0 },
     { parameters::chorusII, "II",
-      "Toggles the faster stereo BBD Chorus II; press the lit button again for Off. Its current 0.863 Hz timing is a provisional JUNO-60 fallback.",
+      "Toggles the faster stereo BBD Chorus II; press the lit button again for Off. Its 0.848 Hz rate carries this instrument's own schematic timing ratio on a still-provisional JUNO-60 scale.",
       ControlKind::Toggle, 9, 0, 1, 2, -1, 0 },
 };
 
@@ -200,12 +208,18 @@ Layout buildLayout() noexcept
     // product-only controls are deliberately compact editor components rather
     // than blank space disguised as synthesis surface.
     constexpr SectionSpec specs[sectionCount] = {
-        { "VOLUME", Accent::Cyan,    2, 500.0f, soundRowBTop, 138.0f,
+        // One fader needs one fader's width. VOLUME and CHORUS were sized for
+        // their headers rather than their contents, so both are trimmed back to
+        // what they hold and row B gains the difference.
+        { "VOLUME", Accent::Cyan,    1, 448.0f, soundRowBTop, 92.0f,
                                                                   soundRowBHeight },
         { "BENDER", Accent::Magenta, 4, 136.0f, performanceDeckTop, 158.0f,
                                                            performanceDeckHeight },
-        { "MODE",   Accent::Magenta, 2, 302.0f, performanceDeckTop, 88.0f,
-                                                           performanceDeckHeight },
+        // Three stable assign states, so three latches -- which needs more
+        // height than the performance deck has. MODE therefore moves up into
+        // the room VOLUME and CHORUS gave back, beside them in row B.
+        { "MODE",   Accent::Magenta, 2, 548.0f, soundRowBTop, 104.0f,
+                                                                  soundRowBHeight },
         { "LFO",    Accent::Magenta, 2,  12.0f, soundRowATop, 120.0f,
                                                                   soundRowAHeight },
         { "DCO",    Accent::Cyan,    9, 140.0f, soundRowATop, 390.0f,
@@ -218,7 +232,7 @@ Layout buildLayout() noexcept
                                                                   soundRowAHeight },
         { "ENV",    Accent::Magenta, 4,  12.0f, soundRowBTop, 308.0f,
                                                                   soundRowBHeight },
-        { "CHORUS", Accent::Cyan,    2, 328.0f, soundRowBTop, 164.0f,
+        { "CHORUS", Accent::Cyan,    2, 328.0f, soundRowBTop, 112.0f,
                                                                   soundRowBHeight },
     };
 
@@ -245,9 +259,9 @@ Layout buildLayout() noexcept
         const float controlTop = section.y + headerHeight + 6.0f;
         const float labelY = section.y + section.height
                            - controlLabelHeight - 6.0f;
-        // MODE contains only firmware-latched buttons, so reserving an empty
-        // external slider-legend row would make both buttons illegibly short
-        // on the compact performance deck.
+        // MODE contains only firmware-latched buttons that print their own
+        // legends, so reserving an empty external slider-legend row would just
+        // make all three latches shorter for nothing.
         const float controlHeight = placement.section == 2
                                   ? section.y + section.height - 6.0f - controlTop
                                   : labelY - controlTop;
