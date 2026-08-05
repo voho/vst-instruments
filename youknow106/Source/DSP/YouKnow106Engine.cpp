@@ -1274,7 +1274,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
         for (int n = 0; n < 4; ++n)
         {
             const float earlyMod = (enableEarlyEffect && calibration > 0.0f)
-                ? (1.0f + 0.005f * calibration * (voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
+                ? (1.0f + 0.08f * calibration * std::tanh(voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
                 : 1.0f;
             const float stageG = gLimited * earlyMod;
             const float x = (previous - voltage[static_cast<std::size_t>(n)]
@@ -2961,13 +2961,10 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
 
-    if (parameters.enableExponentialReset && phase >= rise && parameters.calibration > 0.0f)
+    if (parameters.enableExponentialReset && parameters.calibration > 0.0f)
     {
-        const float resetPhaseNorm = static_cast<float>((phase - rise) / reset);
-        const float expDecayRate = 4.0f * parameters.calibration; // scales decay rate with character
-        const float expFactor = (std::exp(-expDecayRate * resetPhaseNorm) - std::exp(-expDecayRate))
-                              / (1.0f - std::exp(-expDecayRate));
-        sawNaive = 2.0f * expFactor - 1.0f;
+        const float expRounding = 0.05f * parameters.calibration;
+        sawNaive = sawNaive - expRounding * std::max(sawNaive, 0.0f) * sawNaive;
     }
 
     // The ramp reset corner slope discontinuities are repaired with slope residuals.
@@ -3185,7 +3182,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float tempC = 25.0f + psuThermalOffset + tempRise * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
     const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
     const float dynamicHeadroom = 2.0f * dynamicThermalVoltage / stageAttenuation;
-    const float filtered = voice.filter.process(filterInput, voice.filterG,
+    const float thermalCutoffSpread = parameters.enableSpatialThermalGradient
+        ? (1.0f + 0.04f * parameters.calibration * (static_cast<float>(voice.cardIndex) - 2.5f))
+        : 1.0f;
+    const float effectiveFilterG = voice.filterG * thermalCutoffSpread;
+    const float filtered = voice.filter.process(filterInput, effectiveFilterG,
                                                 voice.feedback, dynamicHeadroom,
                                                 parameters.enableVcfEarlyEffect,
                                                 parameters.calibration);

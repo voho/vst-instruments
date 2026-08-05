@@ -547,8 +547,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         clockSpurPhaseB_ += static_cast<double>(clockB) * inverseSampleRate_;
         clockSpurPhaseA_ -= std::floor(clockSpurPhaseA_);
         clockSpurPhaseB_ -= std::floor(clockSpurPhaseB_);
-        const float heterodyneBleedA = 0.0006f * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseA_));
-        const float heterodyneBleedB = 0.0006f * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseB_));
+        const float bleedScale = 0.005f * std::max(noiseScale, 0.1f);
+        const float heterodyneBleedA = bleedScale * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseA_));
+        const float heterodyneBleedB = bleedScale * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseB_));
         wetA += heterodyneBleedA;
         wetB += heterodyneBleedB;
     }
