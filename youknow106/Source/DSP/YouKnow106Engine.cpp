@@ -3171,8 +3171,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
                             * voice.inputCompensation
                             + microscopicNoise * noiseRateScale_;
     // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C
+    const float psuThermalOffset = parameters.enableSpatialThermalGradient
+        ? 4.0f * std::exp(-static_cast<float>(voice.cardIndex) / 2.5f) * parameters.calibration
+        : 0.0f;
     const float tempRise = 15.0f * parameters.calibration;
-    const float tempC = 25.0f + tempRise * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
+    const float tempC = 25.0f + psuThermalOffset + tempRise * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
     const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
     const float dynamicHeadroom = 2.0f * dynamicThermalVoltage / stageAttenuation;
     const float filtered = voice.filter.process(filterInput, voice.filterG,

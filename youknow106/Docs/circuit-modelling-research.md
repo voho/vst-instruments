@@ -249,6 +249,9 @@ of them. Where a mechanism has an open question, it is named in its entry.
 16. **IR3109 VCF Transistor Early Effect Modulation ($V_A$)**:
     Models transistor Early Voltage ($V_A \approx 100\,\text{V}$) transconductance modulation $g_n = g (1 + 0.005 V_n / V_{\text{headroom}})$ inside the 4-stage OTA cascade solver, introducing dynamic odd-harmonic distortion under hot resonant filter sweeps. Rendered before/after comparison WAVs are committed in [`06-vcf-early-effect-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/06-vcf-early-effect-before.wav) and [`06-vcf-early-effect-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/06-vcf-early-effect-after.wav).
 
+17. **Voice Cards Spatial Chassis Thermal Gradient ($\Delta T_{\text{psu}}$)**:
+    Models spatial heat dissipation across physical voice cards 1–6 based on physical proximity to the internal power supply transformer ($T_{\text{card}}(i) = 25^\circ\text{C} + \Delta T_{\text{ambient}}(t) + 4^\circ\text{C} e^{-(i-1)/2.5}$), introducing realistic per-voice thermal headroom and tuning drift under polyphonic playing. Rendered before/after comparison WAVs are committed in [`07-spatial-thermal-gradient-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-before.wav) and [`07-spatial-thermal-gradient-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-after.wav).
+
 ## What remains open
 
 The canonical research queue is

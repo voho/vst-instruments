@@ -280,6 +280,22 @@ Take renderVcfEarlyEffectTake(bool enableVcfEarlyEffect)
     return take;
 }
 
+// 7. Spatial Chassis Thermal Gradient: Sustained polyphonic chord sweep
+Take renderSpatialThermalGradientTake(bool enableSpatialThermalGradient)
+{
+    auto p = defaultPanel();
+    p.enableSpatialThermalGradient = enableSpatialThermalGradient;
+    p.cutoff = 0.50f;
+    p.resonance = 0.60f;
+    p.attack = 0.30f;
+    p.decay = 0.80f;
+    p.sustain = 0.40f;
+    Take take(p);
+    take.rest(0.05);
+    take.chord({ 48, 55, 60, 64, 67, 72 }, 0.95f, 2.5, 0.5);
+    return take;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -354,6 +370,17 @@ int main(int argc, char** argv)
         writeWav(outputDir / "06-vcf-early-effect-before.wav", before.left(), before.right());
         writeWav(outputDir / "06-vcf-early-effect-after.wav", after.left(), after.right());
         std::printf("Rendered 06-vcf-early-effect (before & after)\n");
+    }
+
+    // Feature 7: Spatial Chassis Thermal Gradient
+    {
+        auto before = renderSpatialThermalGradientTake(false);
+        auto after = renderSpatialThermalGradientTake(true);
+        before.normalise();
+        after.normalise();
+        writeWav(outputDir / "07-spatial-thermal-gradient-before.wav", before.left(), before.right());
+        writeWav(outputDir / "07-spatial-thermal-gradient-after.wav", after.left(), after.right());
+        std::printf("Rendered 07-spatial-thermal-gradient (before & after)\n");
     }
 
     std::printf("All SOTA comparison WAVs successfully rendered!\n");
