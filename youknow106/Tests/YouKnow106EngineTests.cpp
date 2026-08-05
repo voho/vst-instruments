@@ -724,6 +724,70 @@ void testSelfOscillationLandsOnTheServiceAnchor()
                "the self-oscillation does not land on the service anchor");
 }
 
+void testUnisonDoesNotBeat()
+{
+    // Six voices on one key must not beat against each other at *any* Unit
+    // Character setting. Every note timer divides the same crystal-derived
+    // clock by the same integer, so the six cards are exactly in tune by
+    // construction; no component tolerance, temperature or supply term can
+    // reach that division. This is the property the whole DCO architecture
+    // exists to provide, and it is what separates the instrument from its
+    // VCO contemporaries.
+    //
+    // Beating is measured rather than inferred: the six cards start their
+    // ramps at their own converter slots, so they hold fixed phase offsets
+    // and the summed level is steady. Detune them and those offsets slide,
+    // which shows up here as the window-to-window level moving.
+    for (float calibration : { 0.0f, 1.0f })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.calibration = calibration;
+        parameters.keyMode = KeyMode::Unison;
+        // An open, unresonant filter and a flat envelope leave the summed
+        // oscillators as the only thing that can move the level.
+        parameters.cutoff = 1.0f;
+        parameters.resonance = 0.0f;
+        parameters.envDepth = 0.0f;
+        parameters.sustain = 1.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+
+        const auto rendered = render(engine, 144000); // three seconds
+
+        // Skip the attack and the hold capacitors' settling, then compare
+        // 50 ms windows across the remaining sustain.
+        const std::size_t start = 24000;
+        const int window = 2400;
+        double loudest = 0.0;
+        double quietest = std::numeric_limits<double>::infinity();
+        for (std::size_t offset = start; offset + window <= rendered.left.size();
+             offset += window)
+        {
+            double sumOfSquares = 0.0;
+            for (int index = 0; index < window; ++index)
+            {
+                const double value = rendered.left[offset + static_cast<std::size_t>(index)];
+                sumOfSquares += value * value;
+            }
+            const double rms = std::sqrt(sumOfSquares / window);
+            loudest = std::max(loudest, rms);
+            quietest = std::min(quietest, rms);
+        }
+
+        expect(quietest > 0.0, "the unison stack produced no output");
+        // A 13-cent spread across six cards beats at about 1 Hz on this note
+        // and swings the window level by tens of decibels. Anything the shared
+        // clock can legitimately produce is flat to well under a decibel.
+        const double swingDb = 20.0 * std::log10(loudest / quietest);
+        expect(swingDb < 1.0,
+               "unison voices beat by " + std::to_string(swingDb)
+                   + " dB at Unit Character " + std::to_string(calibration)
+                   + "; the six cards share one crystal and cannot detune");
+    }
+}
+
 void testAliasFloor()
 {
     // The oscillator's discontinuities are repaired with residuals built by
@@ -3967,6 +4031,7 @@ int main()
     testRangeTransposesByOctaves();
     testSubIsOneOctaveDown();
     testSelfOscillationLandsOnTheServiceAnchor();
+    testUnisonDoesNotBeat();
     testAliasFloor();
     testRampHasARampSpectrum();
     testKeyAssignerDropsRatherThanSteals();

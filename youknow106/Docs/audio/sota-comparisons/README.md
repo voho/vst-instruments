@@ -13,17 +13,17 @@ RMS.
 
 | Mechanism | Diff peak (dBc) | Diff RMS (dBc) |
 | --- | ---: | ---: |
-| `01-vcf-transistor-offsets` | -58.9 | -76.7 |
-| `02-opamp-slew-limiting` | -129.5 | -158.3 |
-| `03-bbd-capacitance-nonlinearity` | -16.3 | -41.7 |
+| `01-vcf-transistor-offsets` | -58.8 | -76.7 |
+| `02-opamp-slew-limiting` | -129.5 | -158.2 |
+| `03-bbd-capacitance-nonlinearity` | -14.9 | -41.4 |
 | `04-multiplexer-crosstalk` | -360.0 | -360.0 |
-| `05-exponential-dco-reset` | -4.8 | -26.5 |
+| `05-exponential-dco-reset` | -4.6 | -26.4 |
 | `06-vcf-early-effect` | -16.6 | -36.8 |
-| `07-spatial-thermal-gradient` | +15.9 | +3.1 |
-| `08-chorus-thiran-clock-bleed` | -29.2 | -64.2 |
-| `09-chorus-hyperbolic-sweep` | +13.6 | -2.5 |
+| `07-spatial-thermal-gradient` | -7.0 | -23.3 |
+| `08-chorus-thiran-clock-bleed` | -29.0 | -64.0 |
+| `09-chorus-hyperbolic-sweep` | +12.2 | -2.2 |
 | `10-dco-ramp-curvature` | -23.7 | -34.0 |
-| `11-electrolytic-c14-nonlinearity` | -71.5 | -87.4 |
+| `11-electrolytic-c14-nonlinearity` | -72.8 | -87.6 |
 | `12-dac-glitch-impulse` | -360.0 | -360.0 |
 
 A mechanism whose diff RMS sits below about -80 dBc is not audible on the

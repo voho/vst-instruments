@@ -256,7 +256,14 @@ open question, it is named in its entry.
     Models transistor Early Voltage ($V_A \approx 100\,\text{V}$) transconductance modulation $g_n = g (1 + 0.005 V_n / V_{\text{headroom}})$ inside the 4-stage OTA cascade solver, introducing dynamic odd-harmonic distortion under hot resonant filter sweeps. Rendered before/after comparison WAVs and isolated difference files are committed in [`06-vcf-early-effect-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/06-vcf-early-effect-before.wav), [`06-vcf-early-effect-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/06-vcf-early-effect-after.wav), and [`06-vcf-early-effect-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/06-vcf-early-effect-diff.wav).
 
 17. **Voice Cards Spatial Chassis Thermal Gradient ($\Delta T_{\text{psu}}$)**:
-    Models spatial heat dissipation across physical voice cards 1–6 based on physical proximity to the internal power supply transformer ($T_{\text{card}}(i) = 25^\circ\text{C} + \Delta T_{\text{ambient}}(t) + 4^\circ\text{C} e^{-(i-1)/2.5}$), introducing realistic per-voice thermal headroom and tuning drift under polyphonic playing. Rendered before/after comparison WAVs and isolated difference files are committed in [`07-spatial-thermal-gradient-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-before.wav), [`07-spatial-thermal-gradient-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-after.wav), and [`07-spatial-thermal-gradient-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-diff.wav).
+    Models spatial heat dissipation across physical voice cards 1–6 based on physical proximity to the internal power supply transformer ($T_{\text{card}}(i) = 25^\circ\text{C} + \Delta T_{\text{ambient}}(t) + 4^\circ\text{C} e^{-(i-1)/2.5}$), introducing per-voice thermal headroom variation under polyphonic playing.
+
+    It reaches the OTA's linear span and the cutoff reference. It does **not**
+    reach pitch. A revision multiplied each card's oscillator phase increment by
+    a per-card thermal factor, spreading the six cards over 13 cents — audible
+    as beating on every chord and, in Solo Unison, as a detune the instrument
+    has no mechanism to produce. See "Tuning stability" below for the
+    derivation. Rendered before/after comparison WAVs and isolated difference files are committed in [`07-spatial-thermal-gradient-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-before.wav), [`07-spatial-thermal-gradient-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-after.wav), and [`07-spatial-thermal-gradient-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-diff.wav).
 
 18. **Chorus Heterodyne Clock Bleed**:
     Dual MN3009 BBD clock driver heterodyne beat frequency sidebands ($f_{\text{clkA}}, f_{\text{clkB}} \in [40\,\text{kHz}, 200\,\text{kHz}]$), injecting a small high-frequency tone into wet chorus modes. Off by default: the tone's amplitude is an unvalidated placeholder pending OQ-03, and no calibrated hardware noise reference has been located. (An earlier revision of this entry additionally claimed continuous-time fractional-delay/Thiran interpolation for the BBD taps; no such filter exists in the code -- the line still uses linear interpolation. Implementing a genuine Thiran allpass for the BBD read/write taps remains open future work.) Rendered before/after comparison WAVs and isolated difference files are committed in [`08-chorus-thiran-clock-bleed-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-before.wav), [`08-chorus-thiran-clock-bleed-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-after.wav), and [`08-chorus-thiran-clock-bleed-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-diff.wav).
@@ -274,6 +281,45 @@ open question, it is named in its entry.
     Models 12-bit R-2R DAC switch-timing skew during major bit transitions ($011111111111_2 \leftrightarrow 100000000000_2$), injecting transient voltage glitch impulses into hold capacitors to provide authentic physical "zipper texture" during continuous manual filter sweeps. Rendered before/after comparison WAVs and isolated difference files are committed in [`12-dac-glitch-impulse-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/12-dac-glitch-impulse-before.wav), [`12-dac-glitch-impulse-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/12-dac-glitch-impulse-after.wav), and [`12-dac-glitch-impulse-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/12-dac-glitch-impulse-diff.wav).
 
 *Note: All physical circuit simulation behaviors above scale dynamically with **Unit Character** (`calibration`): `0.0` suppresses every one of them for a pristine digital reference, `1.0` matches real hardware, and the host parameter's own range continues to `100.0` -- skewed so 0-1 still covers half the knob's travel -- for the same exaggerated-for-contrast territory the comparison-rendering tools in this repository use.*
+
+### Tuning stability: why no thermal or long-term pitch drift is modelled
+
+This is a derived result, like the mains-ripple entry above, rather than an
+unmeasured gap.
+
+Pitch is $f = f_{\text{clock}} / N$ for an integer $N$ held in a counter, with
+one 8 MHz reference feeding all six note timers. Three consequences follow, and
+none of them is a modelling choice:
+
+- **No inter-voice detune is possible.** Whatever the reference does, it does to
+  all six cards in the same instant and in the same proportion. Temperature,
+  supply droop, ageing and component tolerance have no term in an integer
+  division. Six voices on one key are exactly in tune with each other, always.
+  `Tests/YouKnow106EngineTests.cpp::testUnisonDoesNotBeat` asserts it directly,
+  at Unit Character 0 and 1, by measuring the summed level of a six-voice unison
+  stack across three seconds.
+- **Global drift is below audibility.** The reference is a crystal. One cent is
+  578 ppm; an AT-cut crystal's entire error budget — initial tolerance, its
+  temperature curve across the operating range, and ageing — lands inside about
+  $\pm 100$ ppm, or $\pm 0.17$ cents. That is a fifth of the instrument's own
+  pitch-quantisation step at A4 and an order of magnitude below the
+  $\sim 0.9$ cent step near the top of the keyboard, so it is not merely
+  inaudible, it is smaller than the grid the pitch already sits on. Modelling
+  it would be modelling nothing.
+- **There is no analogue pitch control chain to drift.** The one analogue
+  voltage in the oscillator, the ramp compensation, sets the integrator's
+  charging current and therefore the ramp's *amplitude*. It does not set the
+  period — the timer does. Its slew after a pitch step is modelled, and it is an
+  amplitude transient, not a pitch transient.
+
+What a real unit *does* audibly do as it warms is move its **filter**, not its
+oscillators: $V_t = kT/q$ scales the transconductor's linear span with absolute
+temperature, so the cutoff reference and the onset of the OTA's compression both
+shift over the warm-up. That is where the modelled thermal behaviour lives.
+
+If tuning instability is ever wanted as a *musical* effect it has to be an
+explicitly labelled non-hardware extension, like the velocity and voice-count
+extensions, and must not be attributed to the reference instrument.
 
 ### Measured weight of each mechanism
 

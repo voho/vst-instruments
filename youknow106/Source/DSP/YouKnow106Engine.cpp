@@ -2933,11 +2933,15 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     auto& dco = voice.dco;
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
 
-    const float thermalPitchDetune = parameters.enableSpatialThermalGradient
-        ? (1.0f + 0.0015f * parameters.calibration * (static_cast<float>(voice.cardIndex) - 2.5f))
-        : 1.0f;
-    const double increment = (dco.periodSamples > 1.0e-9
-                           ? 1.0 / dco.periodSamples : 0.0) * thermalPitchDetune;
+    // Nothing thermal, and nothing per-card, reaches this increment. The note
+    // timer divides one crystal-derived clock by an integer, so a card's
+    // temperature has no term in its pitch: the count is the count. A revision
+    // did scale this by a per-card thermal factor, which spread the six cards
+    // over 13 cents and removed the one thing this architecture exists to
+    // guarantee -- see the note on tuning stability in
+    // Docs/circuit-modelling-research.md.
+    const double increment = dco.periodSamples > 1.0e-9
+                           ? 1.0 / dco.periodSamples : 0.0;
     const double reset = static_cast<double>(
         resetFraction(dco.periodSamples * inverseOversampledRate_));
     const double rise = std::max(1.0 - reset, 1.0e-4);
