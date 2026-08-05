@@ -100,12 +100,22 @@ struct EngineParameters
     float volume { 0.80f };
 
     // --- Controls the modelled hardware does not have ----------------------
-    // Defaults preserve the base compatibility model. Velocity zero, Unit
-    // Character zero and six voices are structurally hardware-aligned; the
+    // Velocity zero and six voices are structurally hardware-aligned; the
     // unmeasured chorus-noise level remains a voiced compatibility value.
     float velocityDepth { 0.0f };  // The hardware ignores MIDI velocity.
-    // 0.70 (70%) is the default Unit Character, adding authentic analogue component-spread color.
-    float calibration { 0.70f };   // Exposed to the host as Unit Character.
+    // Exposed to the host as Unit Character: one master over every modelled
+    // component tolerance, trimmer residual and thermal wander.
+    //
+    // Zero is the calibrated nominal model -- six identical cards, no spread,
+    // no drift -- which is the right *reference*, because no qualifying
+    // post-calibration residual data exists to describe a real population
+    // (OQ-10). It is not a claim that any instrument is that uniform, and no
+    // instrument is. The shipped default is therefore a declared product
+    // position rather than a measurement: 0.70 of the modelled spans, which is
+    // what every rendered demo, comparison and factory-audit fixture in this
+    // repository has always been rendered at. Set it to zero to hear the
+    // nominal model.
+    float calibration { 0.70f };
     float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
     int polyphony { 6 };           // 6 is the hardware voice count.
 
@@ -161,7 +171,9 @@ public:
     }
     [[nodiscard]] float getDisplayRailDroopVolts() const noexcept
     {
-        return powerSupplyDroop_;
+        // The stored droop is a pure load measure; Unit Character scales the
+        // sag the cards actually see. Report what they see.
+        return powerSupplyDroop_ * activeParameters_.calibration;
     }
 
     // ------------------------------------------------------------------
@@ -489,6 +501,19 @@ private:
     // existing 48 kHz HQ render runs at 192 kHz internally, so that rate is
     // the compatibility reference whose sound and factory balance stay put.
     static constexpr double noiseReferenceRateHz = 192000.0;
+    // How fast a card's current draw, and therefore the regulator loading it
+    // causes, follows the audio it is passing. This used to be a fixed
+    // per-internal-sample coefficient, which made the same patch droop four
+    // times faster with HQ on than with it off -- a quality setting is not
+    // allowed to change what the supply does. Expressed against the same
+    // 192 kHz compatibility reference as the noise densities, so the existing
+    // 48 kHz HQ render keeps the behaviour it had.
+    static constexpr float voiceEnergyFollowerSeconds =
+        static_cast<float>(1000.0 / noiseReferenceRateHz);
+    // Cutoff counts the reference moves per volt of rail deviation. Named so
+    // the droop has one transfer rather than an unlabelled number at the
+    // summing point. Voiced, like the droop coefficient it multiplies.
+    static constexpr float railToCutoffCountsPerVolt = 35.0f;
     static constexpr float vcfKeyFollowCentreMidi = 60.0f; // C4
     // Pitch modulation budgets in cents.
     static constexpr float lfoPitchCents = 400.0f;
@@ -736,6 +761,11 @@ private:
     void buildHalfbandKernel() noexcept;
     void buildCorrectionTables() noexcept;
     void buildVoiceCards() noexcept;
+    // Copies each card's IR3109 stage offsets into its voice, scaled by Unit
+    // Character. Those offsets are fixed properties of a card and the amount
+    // only moves when the panel does, so this is called where those change --
+    // not from the audio path, which used to rewrite all four every sample.
+    void refreshVoiceCardStageOffsets() noexcept;
     void noteOnInternal(int midiNote, float velocity) noexcept;
     // Assigns a note already present in the held-key table. Kept separate from
     // noteOnInternal so a POLY-mode rebuild does not count the physical key a
@@ -1012,6 +1042,10 @@ private:
     // and power supply rail droop (V) under heavy polyphonic loading.
     float thermalWarmupSeconds_ { 0.0f };
     float powerSupplyDroop_ { 0.0f };
+    // Settled once per block beside the converter hold coefficients, because
+    // it depends on the internal rate the pending quality switch may just have
+    // changed.
+    float voiceEnergyFollower_ { 0.0f };
 
 };
 

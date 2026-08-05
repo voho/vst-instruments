@@ -43,6 +43,20 @@ struct YouKnow106TestAccess
                                parameters, 0.0f);
     }
 
+    static float stageOffset(const YouKnow106Engine& engine, int slot,
+                             int stage) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .filter.offsetVoltage[static_cast<std::size_t>(stage)];
+    }
+
+    static float cardStageOffset(const YouKnow106Engine& engine, int slot,
+                                 int stage) noexcept
+    {
+        return engine.cards_[static_cast<std::size_t>(slot)]
+            .vcfStageOffsets[static_cast<std::size_t>(stage)];
+    }
+
     static float pwmTarget(const YouKnow106Engine& engine) noexcept
     {
         return engine.pwmVoltsTarget_;
@@ -2301,8 +2315,13 @@ void testFixedOutputBoundaryCorpus()
         Baseline { 1.34140, 3.82873, 3.82873, 4242, 16952 },
         Baseline { 2.99368, 6.04207, 6.06926, 6884, 27546 },
         Baseline { 0.152757, 0.216624, 0.216624, 0, 0 },
-        Baseline { 0.844717, 1.64176, 1.64176, 2141, 8589 },
-        Baseline { 0.503038, 1.31776, 1.34315, 85, 320 },
+        // The two chorus rows moved when the mode rates were re-split by this
+        // instrument's own timing-resistance ratio: mode I now runs 1.8% faster
+        // and mode II 1.8% slower, so a fixed analysis window lands on a
+        // different part of each sweep. Level and headroom are unchanged --
+        // only where in the sweep the window falls.
+        Baseline { 0.837556, 1.64361, 1.64361, 2094, 8410 },
+        Baseline { 0.506815, 1.32580, 1.34234, 95, 359 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -3124,6 +3143,55 @@ void testComponentDriftRateIsIndependentOfOversampling()
                + std::to_string(ratio) + "x)");
 }
 
+void testRailDroopTracksLoadAtOneWallClockRate()
+{
+    // The regulator loading follows how hard the cards are working, and how
+    // fast it follows is a property of the supply, not of a quality setting.
+    // A fixed per-internal-sample coefficient would make this converge four
+    // times faster with oversampling on, which is what this catches.
+    const auto settlingSeconds = [](bool oversampled) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, oversampled);
+        auto parameters = plainPatch();
+        parameters.calibration = 1.0f;
+        parameters.vcaLevel = 1.0f;
+        engine.setParameters(parameters);
+        for (const int note : { 36, 43, 48, 52, 55, 60 })
+            engine.noteOn(note, 1.0f);
+
+        // Step the load on and watch the droop rise, one block at a time.
+        double final = 0.0;
+        for (int block = 0; block < 400; ++block)
+        {
+            render(engine, blockSize);
+            final = engine.getDisplayRailDroopVolts();
+        }
+        expect(final > 0.0, "no rail droop was measurable");
+
+        YouKnow106Engine again;
+        again.prepare(48000.0, blockSize, oversampled);
+        again.setParameters(parameters);
+        for (const int note : { 36, 43, 48, 52, 55, 60 })
+            again.noteOn(note, 1.0f);
+        int blocks = 0;
+        for (; blocks < 400; ++blocks)
+        {
+            render(again, blockSize);
+            if (again.getDisplayRailDroopVolts() >= 0.632 * final)
+                break;
+        }
+        return blocks * blockSize / 48000.0;
+    };
+
+    const double deep = settlingSeconds(true);
+    const double shallow = settlingSeconds(false);
+    expect(deep > 0.0 && shallow > 0.0, "the rail droop never settled");
+    const double ratio = deep / shallow;
+    expect(ratio > 0.6 && ratio < 1.7,
+           "rail droop tracks its load at a different wall-clock rate with "
+           "oversampling on (" + std::to_string(ratio) + "x)");
+}
+
 void testEnvelopeAndGateModes()
 {
     constexpr double sampleRate = 48000.0;
@@ -3345,6 +3413,90 @@ void testSampleRateAndOversamplingConsistency()
            "the two configurations do not share an onset (deep "
                + std::to_string(deep) + ", shallow "
                + std::to_string(shallow) + "), so the padding is wrong");
+}
+
+void testVcfStageOffsetsBelongToUnitCharacter()
+{
+    // A resonant sweep is where four asymmetric stages show up most, so drive
+    // the mechanism rather than merely holding a note through it.
+    const auto run = [](float calibration, bool enabled) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.calibration = calibration;
+        parameters.enableVcfStageOffsets = enabled;
+        parameters.resonance = 0.85f;
+        parameters.cutoff = 0.45f;
+        parameters.envDepth = 0.70f;
+        engine.setParameters(parameters);
+        for (const int note : { 40, 47, 52, 55, 59, 64 })
+            engine.noteOn(note, 1.0f);
+        return render(engine, 24000);
+    };
+
+    const auto largestDifference = [](const Render& a, const Render& b) {
+        double worst = 0.0;
+        for (std::size_t n = 0; n < a.left.size(); ++n)
+            worst = std::max(worst, std::abs(static_cast<double>(a.left[n])
+                                             - static_cast<double>(b.left[n])));
+        return worst;
+    };
+
+    // The contract: Unit Character zero is the calibrated nominal model, whose
+    // inter-voice spread is zero. An optional card-spread mechanism has to be
+    // absent there, not merely small -- so this is an equality, not a bound.
+    const auto nominalOn = run(0.0f, true);
+    const auto nominalOff = run(0.0f, false);
+    expect(nominalOn.left == nominalOff.left && nominalOn.right == nominalOff.right,
+           "IR3109 stage offsets still colour the calibrated nominal model at "
+           "Unit Character zero");
+
+    // And it must still be a live mechanism above zero, or the test above
+    // would pass just as happily on a mechanism that had been deleted.
+    const auto fullOn = run(1.0f, true);
+    const auto fullOff = run(1.0f, false);
+    expect(!(fullOn.left == fullOff.left),
+           "IR3109 stage offsets do nothing at full Unit Character");
+
+    // Half the character, somewhere between none and all of the asymmetry.
+    // The cascade is nonlinear, so the bounds are deliberately loose.
+    const auto full = largestDifference(fullOn, nominalOn);
+    const auto half = largestDifference(run(0.5f, true), nominalOn);
+    expect(full > 0.0 && half > 0.2 * full && half < 0.8 * full,
+           "stage-offset spread does not scale with Unit Character");
+}
+
+void testVcfStageOffsetsAreLiveBeforeTheFirstSample()
+{
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.calibration = 0.8f;
+    engine.setParameters(parameters);
+
+    // Hoisting the write out of the audio path is only correct if every entry
+    // point leaves the offsets already in place. Check before rendering
+    // anything, and check every slot -- including the extension slots above
+    // the hardware's six, which never take a converter turn of their own.
+    const auto expectSeeded = [&](const char* when) {
+        for (int slot = 0; slot < YouKnow106Engine::maxVoices; ++slot)
+        {
+            for (int stage = 0; stage < 4; ++stage)
+            {
+                expectNear(YouKnow106TestAccess::stageOffset(engine, slot, stage),
+                           YouKnow106TestAccess::cardStageOffset(engine, slot, stage)
+                               * 0.8,
+                           1.0e-9,
+                           std::string("stage offset for slot ")
+                               + std::to_string(slot) + " is not seeded " + when);
+            }
+        }
+    };
+
+    expectSeeded("after setParameters");
+    engine.reset();
+    engine.setParameters(parameters);
+    expectSeeded("after reset");
 }
 
 void testDeterminismAndSilence()
@@ -3741,6 +3893,7 @@ int main()
     testFinalOutputCouplingRemovesManualPwmDc();
     testHardStopSilencesTheWholeOutputPath();
     testComponentDriftRateIsIndependentOfOversampling();
+    testRailDroopTracksLoadAtOneWallClockRate();
     testTransposeReachesSoundingVoices();
     testFirstGlidedNoteStartsAtItsOwnPitch();
     testVoicesRetireWithComponentToleranceApplied();
@@ -3752,6 +3905,8 @@ int main()
     testChorusNoiseIsPresentAndDefeatable();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
+    testVcfStageOffsetsBelongToUnitCharacter();
+    testVcfStageOffsetsAreLiveBeforeTheFirstSample();
     testDeterminismAndSilence();
     testExtremeAutomationStaysFinite();
     testParameterSanitisation();

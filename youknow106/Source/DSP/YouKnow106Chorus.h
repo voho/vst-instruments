@@ -101,6 +101,68 @@ public:
         return static_cast<float>(cellPairs) / seconds;
     }
 
+    // ------------------------------------------------------------------
+    // The modulation oscillator, from Service Notes p. 15 (jack board, IC1
+    // uPC062 and IC2a M5218L).
+    //
+    // IC1b integrates: C3 sits across pins 6 and 7 and pin 5 is grounded.
+    // IC1a compares: R6 47 kOhm returns its own output to pin 3 while R15
+    // 1 kOhm holds pin 3 down, so the feedback is positive, and R7 33 kOhm
+    // brings the integrator's output back to pin 2 to close the loop. That is
+    // an integrator-plus-comparator pair, whose capacitor is charged from a
+    // constant current for the whole of each half cycle. Its output is a
+    // straight, symmetric triangle -- not the exponential segments an RC
+    // relaxation oscillator would give -- and `triangle()` below is that shape.
+    // IC2a then inverts it once through R10/R9 33 kOhm, so the second line's
+    // modulation is exactly the negative of the first's rather than an
+    // independent oscillator: TP4 carries the triangle and TP3 its inverse.
+    //
+    // The CHORUS I/II line drives JFET Tr1, which *shorts R3* -- it does not
+    // insert it. R5 reaches the integrator's virtual ground through R8, and the
+    // shunt leg returns to ground, so both legs terminate at 0 V and the
+    // charging current sees
+    //
+    //     R_eff = R8 * R5 / (R_sh || R8) + R8 ,
+    //
+    // with R_sh = R4 alone while Tr1 conducts and R4 + R3 while it does not.
+    // The mode with the larger R_eff integrates more slowly, which is mode I.
+    static constexpr double lfoSeriesOhms = 1.0e6;         // R5
+    static constexpr double lfoIntegratorOhms = 2.2e6;     // R8
+    static constexpr double lfoShuntOhms = 680.0e3;        // R4
+    static constexpr double lfoModeShuntOhms = 2.2e6;      // R3, shorted in I
+    // R15 / (R15 + R6). The comparator trips when the triangle reaches this
+    // fraction of the saturated output, so the triangle spans +/- that fraction
+    // and the oscillation is f = 1 / (4 * beta * R_eff * C3). Every term of
+    // that expression is now known except C3, which the schematic does not
+    // print -- so one reading of C3, or of one period at TP4, would fix the
+    // absolute rates this model still borrows from a sibling. See OQ-01.
+    static constexpr double lfoThresholdRatio = 1.0 / 48.0;
+
+    [[nodiscard]] static constexpr double lfoTimingOhms(bool modeOne) noexcept
+    {
+        const double shunt = modeOne ? lfoShuntOhms
+                                     : lfoShuntOhms + lfoModeShuntOhms;
+        const double parallel = shunt * lfoIntegratorOhms
+                              / (shunt + lfoIntegratorOhms);
+        return lfoIntegratorOhms * lfoSeriesOhms / parallel + lfoIntegratorOhms;
+    }
+
+    // 6.4352941 MOhm over 3.9638889 MOhm. This ratio is the JUNO-106's own,
+    // derived from its own schematic; only the absolute scale below is still
+    // borrowed. The sibling's measured pair implies 1.682, which agrees to
+    // about 3.6% -- close enough to say the two instruments share this circuit,
+    // not close enough to keep using the sibling's decimals here.
+    [[nodiscard]] static constexpr double modeRateRatio() noexcept
+    {
+        return lfoTimingOhms(true) / lfoTimingOhms(false);
+    }
+
+    // The JUNO-60's measured rates. They remain this model's only source for
+    // the absolute scale, and are kept here verbatim so the re-split below can
+    // be checked against them rather than against a rounded result.
+    static constexpr double siblingMeasuredRateOneHz = 0.513;
+    static constexpr double siblingMeasuredRateTwoHz = 0.863;
+
     // Modulation constants per panel mode, exposed so the suites can assert
     // them against the documented figures rather than re-deriving them.
     struct ModeSettings

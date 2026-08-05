@@ -112,10 +112,30 @@ float noiseFromState(std::uint32_t state) noexcept
 }
 
 // Symmetric triangle over a 0..1 phase, in -1..+1.
+//
+// This is the shape the circuit makes, not a convenient stand-in for it. IC1b
+// integrates a constant current for the whole of each half cycle -- see the
+// derivation on Chorus::lfoTimingOhms -- so both flanks are straight. An RC
+// relaxation oscillator would bend them, and this one is not that.
 float triangle(double phase) noexcept
 {
     const double folded = phase < 0.5 ? phase : 1.0 - phase;
     return static_cast<float>(folded * 4.0 - 1.0);
+}
+
+// std::sqrt is not constexpr before C++26, and settingsFor() runs once per
+// sample, so the mode rates have to be folded at compile time some other way.
+// Newton on x^2 = value, from a crude seed; the inputs here are all near unity
+// so a fixed iteration count converges to the last bit.
+constexpr double constexprSqrt(double value) noexcept
+{
+    if (!(value > 0.0))
+        return 0.0;
+
+    double guess = value > 1.0 ? value : 1.0;
+    for (int iteration = 0; iteration < 32; ++iteration)
+        guess = 0.5 * (guess + value / guess);
+    return guess;
 }
 } // namespace
 
@@ -149,27 +169,35 @@ float Chorus::deterministicToneStep(double& phase, float frequencyHz,
 
 Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
 {
-    // These are a *Juno-60's* measured figures, and they are labelled as such
-    // deliberately: delay 1.66 ms to 5.35 ms, rates 0.513 Hz and 0.863 Hz, read
-    // from a calibrated capture of that instrument. No qualifying capture of a
+    // The sweep endpoints are a *Juno-60's* measured figures, and they are
+    // labelled as such deliberately: delay 1.66 ms to 5.35 ms, read from a
+    // calibrated capture of that instrument. No qualifying capture of a
     // Juno-106's own chorus has been located -- a revision briefly adopted
     // 1.54-5.15 ms as one, which turned out not to exist -- and the figures
     // published for this instrument are only "about 0.5 Hz" and "about 0.8 Hz".
     //
-    // The schematic does anchor the *ratio*. Mode II leaves a 2.2 MOhm resistor
-    // in series that Mode I bypasses, giving effective timing resistances of
-    // 6.435 and 3.964 MOhm and so a rate ratio of 1.623. The sibling's measured
-    // pair gives 1.682, which agrees to about 3.6% -- close enough to say the
-    // two instruments share this circuit, not close enough to claim the
-    // decimals are this one's. The timing capacitor is illegible in the
-    // schematic, so no absolute rate can be computed from it.
+    // The rates are split between those two facts. This instrument's own
+    // schematic fixes their *ratio* exactly: Chorus::lfoTimingOhms derives
+    // 6.4352941 MOhm for mode I and 3.9638889 MOhm for mode II from the mode
+    // switch's T-network, so mode II runs 1.6234799 times faster. What the
+    // schematic cannot give is the *scale*, because it does not print the
+    // integrator capacitor. So the sibling's pair supplies the scale and only
+    // the scale: its geometric mean is preserved exactly, and this instrument's
+    // own ratio re-splits it. Both results still round to the published
+    // about-0.5 and about-0.8. The sibling's own 1.682 ratio is superseded and
+    // must not be reintroduced.
     //
-    // Modes I and II differ in speed alone, not in depth, which is why II
-    // reads as more agitated rather than wider.
+    // Modes I and II differ in speed alone, not in depth: the mode line changes
+    // a timing resistance, while the triangle's amplitude is set by the
+    // comparator's threshold divider, which the mode line does not touch. That
+    // is why II reads as more agitated rather than wider.
     constexpr float centre = 0.5f * (0.00166f + 0.00535f);
     constexpr float sweep = 0.5f * (0.00535f - 0.00166f);
-    constexpr float rateOne = 0.513f;
-    constexpr float rateTwo = 0.863f;
+    constexpr double geometricMean = constexprSqrt(
+        siblingMeasuredRateOneHz * siblingMeasuredRateTwoHz);
+    constexpr double split = constexprSqrt(modeRateRatio());
+    constexpr float rateOne = static_cast<float>(geometricMean / split);
+    constexpr float rateTwo = static_cast<float>(geometricMean * split);
     switch (mode)
     {
         case ChorusMode::One:  return { rateOne, centre, sweep, lineGain };
@@ -497,6 +525,18 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         ? (1.0f - 0.015f * (normInput / (1.0f + normInput)))
         : 1.0f;
 
+    // The sweep is arithmetic in *seconds of delay*, and that is an assumption
+    // rather than a measurement -- named here so it is not mistaken for one.
+    // It holds only if the clock oscillator's period, not its frequency, is
+    // linear in its control voltage. Service Notes p. 15 shows each MN3101
+    // biased from a transistor voltage-to-current converter (Tr22 with R133,
+    // R134, R135 against C53 150 pF), which is the shape of a current-
+    // controlled oscillator -- frequency-linear, which would make the delay
+    // sweep hyperbolic instead. A period-linear, a frequency-linear and an
+    // exponential clock all reach the same minimum and maximum delay and
+    // differ only in the trajectory between them, so the sweep endpoints
+    // cannot distinguish them; OQ-01 now asks for the clock as a time series
+    // across a full modulation cycle, which can.
     const float delayA = std::max((centreDelay_ + sweep_ * modulation) * dynamicCapMod, 1.0e-4f);
     const float delayB = std::max((centreDelay_ - sweep_ * modulation) * dynamicCapMod, 1.0e-4f);
     const float clockA = std::clamp(clockForDelaySeconds(delayA),

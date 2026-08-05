@@ -81,7 +81,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::transpose,   0.0f,   1.0e-5f },
     { parameters::masterTune,  0.0f,   1.0e-5f },
     { parameters::velocity,    0.0f,   1.0e-5f },
-    { parameters::calibration, 0.0f,   1.0e-5f },
+    { parameters::calibration, 0.70f,  1.0e-5f },
     { parameters::chorusNoise, 1.0f,   1.0e-5f },
     { parameters::polyphony,   6.0f,   1.0e-5f },
     { parameters::hq,          1.0f,   1.0e-5f },
@@ -996,7 +996,7 @@ void testStateRoundTripAndMigration()
 
     // Current saves carry an explicit root schema. If a current-schema state is
     // partial or hand-edited and omits Unit Character, normal default filling
-    // must use today's calibrated nominal value, zero.
+    // must use today's layout default rather than the legacy 35% fallback.
     const auto savedXml = juce::AudioProcessor::getXmlFromBinary (
         state.getData(), static_cast<int> (state.getSize()));
     expect (savedXml != nullptr, "could not decode a current saved state");
@@ -1044,9 +1044,10 @@ void testStateRoundTripAndMigration()
             migrated.setStateInformation (
                 currentMissingBytes.getData(),
                 static_cast<int> (currentMissingBytes.getSize()));
-            expect (std::abs (parameterValue (migrated, parameters::calibration))
-                        < 1.0e-4f,
-                    "a current missing Unit Character did not receive zero");
+            expect (std::abs (parameterValue (migrated, parameters::calibration)
+                              - 0.70f) < 1.0e-4f,
+                    "a current missing Unit Character did not receive the "
+                    "layout default");
         }
         else
         {

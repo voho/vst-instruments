@@ -454,10 +454,12 @@ YouKnow106AudioProcessor::createParameterLayout()
         centsAttributes()));
     layout.add (travel (velocity, "Velocity", 0.0f, percentAttributes()));
     // Keep the historical id and parameter slot so existing automation remains
-    // attached. Only the presentation and new-instance default change: the old
-    // deterministic dispersion is now an optional character profile, while zero
-    // is the calibrated nominal model.
-    layout.add (travel (calibration, "Unit Character", 0.0f, percentAttributes()));
+    // attached; a stored session value still wins over this default, so only
+    // new instances move. Zero is the calibrated nominal model and stays
+    // available; the default matches EngineParameters and every rendered
+    // fixture, so what a new instance sounds like is what the repository's
+    // demos sound like.
+    layout.add (travel (calibration, "Unit Character", 0.70f, percentAttributes()));
     layout.add (travel (chorusNoise, "Chorus Noise", 1.0f, percentAttributes()));
     // Taken from the engine rather than written out, so the host can never be
     // offered a voice count the engine would clamp away. The default is the
@@ -1291,10 +1293,11 @@ void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeIn
     if (! state.isValid())
         return;
 
-    // Schema-less chunks predate Unit Character's zero-nominal default. Most
-    // such chunks explicitly carry `calibration`, which must be preserved as-is;
-    // the historical 35% fallback is needed only for an actually missing child.
-    // A current-schema partial state instead receives the current zero default.
+    // Schema-less chunks predate Unit Character entirely. Most such chunks
+    // explicitly carry `calibration`, which must be preserved as-is; the
+    // historical 35% fallback is needed only for an actually missing child, and
+    // it stays 35% because that is what those sessions sounded like. A
+    // current-schema partial state instead receives today's layout default.
     const int restoredStateSchema = static_cast<int> (
         state.getProperty (stateSchemaVersionProperty, 0));
     if (restoredStateSchema < 2

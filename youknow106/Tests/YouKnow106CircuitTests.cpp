@@ -1426,13 +1426,52 @@ void testJuno60FallbackBucketBrigadeTiming()
     expectNear(Chorus::clockForDelaySeconds(Chorus::delaySecondsForClock(43210.0f)),
                43210.0, 1.0e-3, "delay and clock are not reciprocal");
 
-    // Provisional JUNO-60 fallback: both modes sweep the same delay range and
-    // differ only in rate. These numbers are regression policy, not a claimed
-    // JUNO-106 measurement.
+    // Both modes sweep the same delay range and differ only in rate. The depth
+    // is still the JUNO-60's; the rates are its scale re-split by this
+    // instrument's own timing-resistance ratio.
     const auto one = Chorus::settingsFor(ChorusMode::One);
     const auto two = Chorus::settingsFor(ChorusMode::Two);
-    expectNear(one.rateHz, 0.513, 1.0e-4, "first mode rate");
-    expectNear(two.rateHz, 0.863, 1.0e-4, "second mode rate");
+
+    // The T-network the mode switch drives, straight off the schematic. Assert
+    // both legs, because the ratio alone would still pass if each were wrong by
+    // the same factor.
+    expectNear(Chorus::lfoTimingOhms(true), 6.4352941e6, 1.0,
+               "mode I effective timing resistance");
+    expectNear(Chorus::lfoTimingOhms(false), 3.9638889e6, 1.0,
+               "mode II effective timing resistance");
+    expectNear(Chorus::modeRateRatio(), 1.6234799, 1.0e-6,
+               "the schematic's mode-rate ratio changed");
+    expect(Chorus::lfoTimingOhms(true) > Chorus::lfoTimingOhms(false),
+           "mode I must integrate through the larger resistance, so it is the "
+           "slower mode");
+
+    // Assert the *relation* the schematic fixes, not the resulting literals: a
+    // re-derivation that split the geometric mean the wrong way round would
+    // reproduce two plausible rates and this is what catches it.
+    expectNear(two.rateHz / one.rateHz, Chorus::modeRateRatio(), 1.0e-5,
+               "the mode rates do not carry the schematic's timing ratio");
+    expect(two.rateHz > one.rateHz,
+           "mode II is not the faster leg the manual and the ratio both need");
+    // The absolute scale is still the sibling's and must stay exactly there:
+    // this is a re-split of an unmeasured scale, not a new one.
+    expectNear(std::sqrt(one.rateHz * two.rateHz),
+               std::sqrt(Chorus::siblingMeasuredRateOneHz
+                         * Chorus::siblingMeasuredRateTwoHz),
+               1.0e-5,
+               "the re-split moved the still-unmeasured absolute scale");
+    // Both still round to the owner's manual's published figures. Assert the
+    // rounding rather than a +/-0.05 band, which would leave mode II only
+    // 0.002 Hz of margin and would break on any future re-split.
+    expectNear(std::floor(one.rateHz * 10.0 + 0.5) / 10.0, 0.5, 1.0e-9,
+               "mode I no longer rounds to the published about-0.5 Hz");
+    expectNear(std::floor(two.rateHz * 10.0 + 0.5) / 10.0, 0.8, 1.0e-9,
+               "mode II no longer rounds to the published about-0.8 Hz");
+    // The sibling's own ratio is superseded. Fail loudly if it comes back.
+    expect(std::abs(two.rateHz / one.rateHz
+                    - Chorus::siblingMeasuredRateTwoHz
+                          / Chorus::siblingMeasuredRateOneHz) > 1.0e-3,
+           "the sibling's 1.682 rate ratio was reintroduced");
+
     expectNear(one.sweepSeconds, two.sweepSeconds, 1.0e-9,
                "the two modes do not share a sweep depth");
     // A Juno-60's measured sweep, standing in and labelled as such: no
@@ -1527,6 +1566,10 @@ void testJuno60FallbackBucketBrigadeTiming()
                "legacy I+II renders a different clock programme from II");
     expectNear(travelOff, travelOne, 1.0e-6,
                "the chorus oscillator stopped or changed speed in bypass");
+    // The derived ratio has to survive all the way to rendered audio, not just
+    // sit in the table the renderer reads.
+    expectNear(travelTwo / travelOne, Chorus::modeRateRatio(), 1.0e-3,
+               "the rendered mode rates do not carry the schematic ratio");
 
     // The whole modulated range must stay inside the part's rated clock window,
     // otherwise the model would be running a part outside its specification.

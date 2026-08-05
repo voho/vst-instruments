@@ -1458,6 +1458,25 @@ void YouKnow106Engine::buildVoiceCards() noexcept
     }
 }
 
+void YouKnow106Engine::refreshVoiceCardStageOffsets() noexcept
+{
+    // A differential pair's input offset has a population mean of zero: there
+    // is no nominal V_os a calibrated model could carry, and no service step
+    // trims one. The draw above is signed and unbiased, so the whole term is
+    // card-to-card spread and belongs entirely to Unit Character -- at zero,
+    // the calibrated nominal model, it must be absent rather than merely
+    // small. The card array itself stays the unscaled physical draw, as every
+    // other card field does.
+    const float amount = activeParameters_.enableVcfStageOffsets
+                       ? activeParameters_.calibration : 0.0f;
+    for (auto& voice : voices_)
+    {
+        const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
+        for (std::size_t stage = 0; stage < 4; ++stage)
+            voice.filter.offsetVoltage[stage] = card.vcfStageOffsets[stage] * amount;
+    }
+}
+
 void YouKnow106Engine::prepare(double sampleRate, int /*maxBlockSize*/,
                                bool oversamplingEnabled)
 {
@@ -1701,6 +1720,9 @@ void YouKnow106Engine::reset()
         voice.noiseState = hash32(static_cast<std::uint32_t>(index)
                                   * 2246822519u + 1u) | 1u;
     }
+    // `voice = Voice {}` above zeroed the offsets, and the cards outlive a
+    // reset, so put them back before anything can render a symmetric filter.
+    refreshVoiceCardStageOffsets();
 
     clearOutputPath();
     clearHeldNotes();
@@ -1793,7 +1815,7 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     fix01(result.benderLfoDepth, 0.0f);
     fix01(result.volume, 0.80f);
     fix01(result.velocityDepth, 0.0f);
-    fix01(result.calibration, 0.0f);
+    fix01(result.calibration, 0.70f);
     fix01(result.chorusNoise, 1.0f);
 
     result.masterTuneCents = std::isfinite(result.masterTuneCents)
@@ -1836,6 +1858,8 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
     // panel control applied outside the scanned converter path; it glides in
     // the render loop so host automation cannot make a block-boundary step.
     activeParameters_ = targetParameters_;
+    // Unit Character scales the stage offsets, so they follow the panel.
+    refreshVoiceCardStageOffsets();
 
     // A host normally delivers its saved snapshot after prepare(). If the
     // output path is empty, prime every shared hold from that snapshot instead
@@ -2116,6 +2140,9 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
                            || voice.lastVoiceMidi != voiceMidi;
 
     voice.cardIndex = slot;
+    // A no-op while slot and card index always agree, but written so a future
+    // assigner change cannot silently leave a voice on another card's offsets.
+    refreshVoiceCardStageOffsets();
     voice.active = true;
     voice.keyDown = true;
     voice.sustained = false;
@@ -2803,7 +2830,12 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     // resolution on the slewed digital value. The five-per-cent scale and
     // tenth-octave offset spans are voiced Unit Character policies, not
     // measured post-calibration residual distributions.
-    const float psuCutoffShift = -powerSupplyDroop_ * 35.0f * tolerance;
+    // A sagging rail pulls the cutoff reference down with it. `tolerance` is
+    // applied here and only here: the droop state itself is a pure load
+    // measure, so this mechanism scales linearly with Unit Character like its
+    // eighteen siblings rather than quadratically.
+    const float psuCutoffShift =
+        -powerSupplyDroop_ * railToCutoffCountsPerVolt * tolerance;
     const float analogCounts = voice.cutoffCounts
         * (1.0f + card.cutoffScaleError * 0.05f * tolerance)
         + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * tolerance
@@ -2817,15 +2849,9 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
     voice.vca = VoicedVoiceVcaCompatibilityProfile::gain(voice.vcaControl)
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
 
-    if (parameters.enableVcfStageOffsets)
-    {
-        for (std::size_t stage = 0; stage < 4; ++stage)
-            voice.filter.offsetVoltage[stage] = card.vcfStageOffsets[stage];
-    }
-    else
-    {
-        voice.filter.offsetVoltage.fill(0.0f);
-    }
+    // The IR3109 stage offsets used to be rewritten here, every audio sample,
+    // from values that never change. They now live in
+    // refreshVoiceCardStageOffsets, called where the card or the panel moves.
 }
 
 void YouKnow106Engine::updatePulseComparator(
@@ -3151,7 +3177,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float vcaCvFeedthrough = (card.vcaOffset * 0.002f + 0.0008f) * voice.vcaControl * parameters.calibration;
     const float output = (filtered + vcaCvFeedthrough) * voice.vca * voltsToSample;
 
-    voice.energy = voice.energy * 0.999f + std::abs(output) * 0.001f;
+    voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;
 }
 
@@ -3257,6 +3283,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     const float pwmSlew = slewFor(pwmHoldSlewSecondsVoiced);
     const float subSlew = slewFor(subHoldSlewSecondsVoiced);
     const float noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
+    voiceEnergyFollower_ = slewFor(voiceEnergyFollowerSeconds);
     const float outputGlide =
         1.0f - std::exp(-inverseSampleRate_ / panelGlideSeconds);
     const double scanPhasePerInternalSample = controlScanHz / oversampledRate_;
@@ -3355,15 +3382,25 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 (static_cast<float>(noiseState_ & 0xffffffu)
                      * (2.0f / 16777215.0f) - 1.0f) * noiseRateScale_;
 
-            // Physical power supply load tracking: compute sum of active voice energies
-            // to model regulator output droop and 100 Hz / 120 Hz mains ripple.
+            // Polyphonic current draw loads the +/-15 V regulators, so the
+            // rails sag as more cards work. This is the DC part only. The
+            // rectifier's own 100/120 Hz ripple is deliberately NOT modelled:
+            // Service Notes p. 16 gives a 3300 uF reservoir per rail behind a
+            // 0.25 A secondary, so the unregulated ripple is about 0.76 Vpp at
+            // 50 Hz, and the M5230L regulators after it reject roughly 60 dB of
+            // that. What reaches a card is on the order of 50 ppm of 15 V --
+            // some 0.03 cents of cutoff shift through the transfer below. It is
+            // derivably inaudible, not merely unmeasured.
+            //
+            // The sum is kept as a pure load measure. Unit Character scales the
+            // consequence once, where the droop is applied.
             float totalVoiceEnergy = 0.0f;
             for (const auto& v : voices_)
             {
                 if (v.active)
                     totalVoiceEnergy += v.energy;
             }
-            powerSupplyDroop_ = totalVoiceEnergy * 0.0015f * activeParameters_.calibration;
+            powerSupplyDroop_ = totalVoiceEnergy * 0.0015f;
 
             float mono = 0.0f;
             float loudestEnvelope = 0.0f;
