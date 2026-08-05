@@ -10,9 +10,9 @@ is an independent original implementation, not affiliated with or licensed by
 Roland Corporation, and it contains no firmware, ROM data, samples or captured
 audio. It does include the original 128 factory tone-memory states as functional
 18-byte parameter data, independently decoded and checksum-verified as described
-below; no Roland Cloud content was extracted. Its panel reproduces that
-instrument's functional layout because that
-layout *is* its control set; its palette, typography and name are its own.
+below; no Roland Cloud content was extracted. Its panel retains that
+instrument's functional control set but reorganises it as an original folded
+console; its composition, palette, typography and name are its own.
 
 What is modelled from documentation and what remains a voiced choice is set out
 control by control in the
@@ -199,51 +199,70 @@ charge transfer, bandwidth, nonlinearity and hiss.
 
 ## Interface
 
-The panel keeps the reference instrument's section order and control set:
+The interface keeps the reference instrument's control inventory, but not its
+signature one-long-row composition. It is a 1120×780 folded field console in
+which the sound-shaping controls carry most of the area and visual weight:
 
-```
-VOLUME · BENDER · MODE · LFO · DCO · HPF · VCF · VCA · ENV · CHORUS
-```
+- the two broad synthesis routes dominate the surface instead of sharing equal
+  weight with product utilities;
+- blue reads as the audio path—DCO, HPF, VCF, VCA and output;
+- green identifies LFO/envelope modulation and live performance;
+- a compact secondary shelf contains the explicitly non-hardware Character Lab
+  and operational buttons; and
+- BENDER, assign mode and four keyboard setup knobs occupy a live deck directly
+  above the keybed.
 
-Sliders, switches and buttons are placed by the JUCE-free layout description in
-`Source/DSP/YouKnow106Panel.cpp`, so the regression suite can check that nothing
-overlaps, nothing escapes its section and every group is complete without
-opening a window. The palette is deliberately not the reference instrument's: a
-matte slate charcoal faceplate with alternating green and blue section
-highlights, cool silver-grey caps and green indicators. A bundled, low-contrast
-material scan adds maintained 1980s ABS grain, polished touch wear, cleaning
-swirls and sparse hairline scuffs; controls and legends remain
-resolution-independent vectors.
+That change in proportion, grouping, card geometry, masthead, telemetry,
+signal-route traces and illuminated vector lever is intentional: the UI evokes
+the era and workflow without reproducing the reference product's overall
+faceplate design. The slate/green/blue palette, clipped service cards and
+oscilloscope-grid motifs are original to YouKnow106. Functional waveform and
+foot-register marks are redrawn as project-native vectors. This is a design
+choice, not a claim of legal clearance.
 
-Hovering any interactive element shows a plain-language explanation of what it
-changes. All 55 controls are covered: the hardware panel, six extension knobs,
-utility and patch buttons, program selector and 61-key keyboard. The help text
-also calls out non-obvious boundaries—such as VCA LEVEL being a common
-post-sum trim, LFO DELAY not affecting PWM, Unit Character adding no detune,
-and whether a behavior is hardware-like or a plug-in extension. Tooltip
-coverage and minimum explanatory length are regression-tested.
+Sliders, switches and buttons are still placed by the JUCE-free description in
+`Source/DSP/YouKnow106Panel.cpp`, so tests prove that folded rows do not overlap,
+escape their cards or shrink their legends below the readability floor. A
+bundled low-contrast material scan adds maintained ABS grain, polished touch
+wear, cleaning swirls and sparse hairline scuffs. Recessed fader channels,
+bevelled and grooved caps, and inset illuminated switches add a refined vintage
+material language while remaining project-drawn vectors. Those legacy cues sit
+inside the distinct blue/green field-console composition; they do not recreate
+the reference faceplate.
 
-Below the panel, separated by a rule, sit six small rotary controls the hardware
-does not have — Transpose, Master Tune, Velocity, Unit Character, Chorus Noise
-and Polyphony — plus HQ, Panic, hardware SysEx send, `RND1%`, `RND10%`,
-`RND50%`, and a complete INIT `RESET`. Unit
-Character is the optional deterministic voice-variation amount; zero is the
-declared calibrated nominal product baseline because real post-calibration
-distributions remain unmeasured.
-The other extension defaults are inert or hardware-aligned: velocity does
-nothing, polyphony is six voices, and the delay lines retain their modeled noise
-floor.
+Descriptions no longer float over the instrument. Hovering any interactive
+element updates the fixed full-width help display below the keys immediately.
+All 55 public controls are covered: the dominant synthesis panel, six extension
+knobs, compact operation and patch controls, program selector, 61-key keyboard
+and pitch/mod lever. The same TooltipClient strings remain accessibility
+metadata, while every no-text-box slider retains a separate numeric value bubble
+during hover or adjustment. Routing, minimum explanatory length, stable help
+geometry and value-bubble presence are regression-tested.
 
-Under those, the patch bar recalls the factory bank: a stepper, a name list and
-an EDITED lamp that lights as soon as the panel stops matching the product
-program that was recalled. It shows the same programs the host's own program
-menu does, and the two stay in step whichever one is used. The dedicated RELOAD
-button recalls the complete current program and discards all control edits;
-selecting an already-selected item is not relied on because host widgets do not
-report that as a change. Product/host programs include volume, bender depths,
-portamento, assign mode and the extension controls. Imported SysEx and incoming
-MIDI Program Changes retain the narrower hardware semantics: they recall the
-JUNO tone memory without moving those controls.
+The vector lever is live performance input rather than a saved parameter. Drag
+left/right for pitch bend and upward for modulation; both axes spring exactly
+to zero. Its latest two-axis position crosses to the audio thread through one
+coalescing lock-free mailbox, so dense drags cannot fill the keyboard event
+queue or lose the final release. It drives the same hardware-style controller
+scan as external Pitch Wheel and CC 1 and does not enter patches, automation or
+session state.
+
+Unit Character remains the optional deterministic voice-variation amount; zero
+is the calibrated nominal baseline because real post-calibration distributions
+remain unmeasured. The other extension defaults are inert or hardware-aligned:
+velocity does nothing, polyphony is six voices, and the delay lines retain their
+modeled noise floor.
+
+The masthead patch bar recalls the factory bank with a stepper, name list,
+RELOAD and EDITED lamp. It shows the same program as the host and the controls
+are synchronised to the complete selected program on the first editor frame,
+before the first audio block. Cold construction explicitly applies INIT through
+the same complete recall path used later, preventing a default change from
+leaving the preset name and panel out of step. RELOAD discards all control edits.
+Product/host programs include volume, bender depths, portamento, assign mode and
+extension controls. Imported SysEx and incoming MIDI Program Changes retain the
+narrower hardware semantics: they recall tone memory without moving those
+surrounding controls.
 
 ## Original factory bank
 
@@ -302,38 +321,39 @@ redistribution caveats.
 
 The on-screen keyboard matches the instrument's physical 61-key C2-C7 span.
 That visual limit does not discard host MIDI notes outside the keybed.
-YouKnow106 also receives pitch bend, modulation (CC 1), hold (CC 64),
-all-notes-off and the reference instrument's Patch Selection Program Changes.
-CC 1 drives the bender lever's forward/LFO axis; the panel's BENDER LFO setting
-determines its depth. The keyboard sends no velocity, and MIDI has no continuous
-controller assignments for the synthesis panel. Host automation reaches every
+The adjacent on-screen vector lever feeds the instrument internally and springs
+back when released; it does not emit MIDI. YouKnow106 also receives external
+pitch bend, modulation (CC 1), hold (CC 64), all-notes-off and the reference
+instrument's Patch Selection Program Changes. CC 1 and the vector lever's
+upward axis drive the same LFO trigger path; BENDER LFO determines its depth.
+The keyboard sends no velocity, and MIDI has no continuous controller
+assignments for the synthesis panel. Host automation reaches every stored
 parameter through the plug-in's own parameter list.
 
 The incoming Program Change map follows the owner's manual exactly: 0..63
 select A11..A88 and 64..127 select B11..B88, including every row and column in
 both 64-tone groups. Incoming Program Changes are consumed rather than echoed.
-YouKnow106 does not transmit Program Changes; that reference-keyboard transmit
-behavior is distinct from patch-selection receive, and SEND emits only the
-requested system-exclusive patch dump.
+YouKnow106 does not transmit performance data or Program Changes; that
+reference-keyboard behavior is distinct from patch-selection receive. The
+compact editor deliberately exposes no patch-dump transmit control.
 
 ### System exclusive
 
-Patches interchange with the hardware in the hardware's own format, both ways:
+The SysEx codec reads and constructs the hardware's own format in both
+directions:
 
-| Message | Bytes | Direction |
+| Message | Bytes | Codec support |
 | --- | --- | --- |
-| Patch data | `F0 41 30 0n <18 tone bytes> F7` | in and out |
-| Parameter change | `F0 41 32 0n <parameter> <value> F7` | in and out |
+| Patch data | `F0 41 30 0n <18 tone bytes> F7` | decode and encode |
+| Parameter change | `F0 41 32 0n <parameter> <value> F7` | decode and encode |
 
 An incoming patch dump moves the whole panel; an incoming parameter change
 moves only the controls that one byte names and leaves the rest of the patch
-alone, so a librarian editing one control does not overwrite the others. The
-SEND button emits the current panel as a patch dump on the plug-in's MIDI
-output, addressed to the basic channel of the last message that arrived — so a
-unit that has already sent anything gets its reply back on its own channel,
-without a setting to keep in step. Messages from other manufacturers, other
-opcodes, and bodies of the wrong length are ignored rather than partially
-applied.
+alone, so a librarian editing one control does not overwrite the others.
+Outgoing patch construction and the bounded processor handoff remain tested for
+integration use, but no transmit operation competes with the synthesis controls
+on the editor. Messages from other manufacturers, other opcodes, and bodies of
+the wrong length are ignored rather than partially applied.
 
 The layout is the instrument's: sixteen continuous controls at 0..127, then two
 packed switch bytes. `Source/DSP/YouKnow106SysEx.h` is JUCE-free, so the suite

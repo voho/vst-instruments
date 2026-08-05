@@ -101,6 +101,11 @@ public:
     // control's normalised legal range.
     void randomizeParameters (float amount);
     void requestPanic() noexcept { panicRequested.store (true, std::memory_order_release); }
+    // The on-screen performance lever is event-like controller input, not a
+    // stored parameter. A one-slot latest-value mailbox coalesces dense mouse
+    // drags without ever losing the final spring return; after consumption it
+    // stays empty, so later external MIDI is not overwritten every block.
+    void postUiLeverPosition (float normalisedBipolar, float modulation) noexcept;
     // Re-pressing the currently selected POLY mode is an event on the hardware
     // even though its latched parameter value does not change.
     void requestKeyModeReassert() noexcept
@@ -178,6 +183,9 @@ private:
     // nobody hears; dropping a release leaves one held down for good.
     std::array<std::atomic<std::uint64_t>, 2> uiPendingNoteOff { };
 
+    static constexpr std::uint32_t emptyUiLeverMailbox = 0xffffffffu;
+    std::atomic<std::uint32_t> uiLeverMailbox { emptyUiLeverMailbox };
+
     void handleNoteOn (juce::MidiKeyboardState*, int midiChannel,
                        int midiNoteNumber, float velocity) override;
     void handleNoteOff (juce::MidiKeyboardState*, int midiChannel,
@@ -187,6 +195,7 @@ private:
     void enqueueUiMidiEvent (int note, float velocity, bool isNoteOn) noexcept;
     void discardUiMidiEvents() noexcept;
     void dispatchUiMidiEvents() noexcept;
+    void dispatchUiPerformanceControls() noexcept;
     // Returns true only when one complete, stable parameter snapshot reached
     // the engine. Multi-parameter writers leave the previous snapshot in place.
     bool updateEngineParameters() noexcept;

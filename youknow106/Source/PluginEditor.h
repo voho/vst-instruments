@@ -6,6 +6,7 @@
 #include "DSP/YouKnow106Panel.h"
 
 #include <array>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -77,6 +78,65 @@ public:
     }
 };
 
+// A deliberately non-literal take on the reference lever: an illuminated
+// vector puck keeps the familiar left/right pitch and forward modulation
+// gesture without copying the original moulding. Both axes are spring-loaded
+// performance input and are never stored in a patch or session.
+class YouKnow106PerformanceLever final : public juce::Component,
+                                         public juce::SettableTooltipClient
+{
+public:
+    YouKnow106PerformanceLever();
+
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+
+    [[nodiscard]] float getPitchBend() const noexcept { return pitchBend; }
+    [[nodiscard]] float getModulation() const noexcept { return modulation; }
+
+    std::function<void (float, float)> onPositionChanged;
+
+private:
+    [[nodiscard]] juce::Rectangle<float> controlArea() const noexcept;
+    void updateFromPointer (juce::Point<float> position);
+    void setValues (float bend, float mod, bool notify);
+
+    float pitchBend = 0.0f;
+    float modulation = 0.0f;
+};
+
+// A stable home for the same explanatory strings exposed through
+// TooltipClient. Floating descriptive tips cover the panel and move under the
+// pointer; this strip leaves controls visible while JUCE's separate slider
+// value bubbles continue to report exact values.
+class YouKnow106ContextHelp final : public juce::Component
+{
+public:
+    YouKnow106ContextHelp();
+
+    void showFor (juce::Component* component);
+    void showIdle();
+    void paint (juce::Graphics&) override;
+
+    [[nodiscard]] const juce::String& getHelpTitle() const noexcept
+    {
+        return helpTitle;
+    }
+
+    [[nodiscard]] const juce::String& getHelpText() const noexcept
+    {
+        return helpText;
+    }
+
+private:
+    void setContent (juce::String title, juce::String text);
+
+    juce::String helpTitle;
+    juce::String helpText;
+};
+
 class YouKnow106AudioProcessorEditor final : public juce::AudioProcessorEditor,
                                              private juce::Timer
 {
@@ -115,7 +175,6 @@ private:
     YouKnow106AudioProcessor& audioProcessor;
     YouKnow106LookAndFeel lookAndFeel;
     PlasticTexture texture;
-    juce::TooltipWindow tooltipWindow { this, 600 };
 
     // One entry per panel table row, in the same order.
     struct PanelControl
@@ -136,8 +195,6 @@ private:
     juce::TextButton randomize10Button { "RND10%" };
     juce::TextButton randomize50Button { "RND50%" };
     juce::TextButton resetButton { "RESET" };
-    // Sends the current panel out as a patch dump the hardware accepts.
-    juce::TextButton sendSysExButton { "SEND" };
     juce::Slider transposeSlider;
     juce::Slider tuneSlider;
     juce::Slider velocitySlider;
@@ -160,6 +217,8 @@ private:
     bool shownEdited = false;
 
     YouKnow106Keyboard keyboard;
+    YouKnow106PerformanceLever performanceLever;
+    YouKnow106ContextHelp contextHelp;
 
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;

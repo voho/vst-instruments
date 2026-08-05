@@ -1,5 +1,6 @@
 #include "YouKnow106Panel.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -33,7 +34,7 @@ constexpr Placement placements[controlCount] = {
     // VOLUME
     { parameters::volume, "VOLUME",
       "Sets final stereo output level after the chorus. This performance control is not part of the hardware's 18-byte tone memory.",
-      ControlKind::Slider, 0, 0, 0, 1, -1, 0 },
+      ControlKind::Slider, 0, 0, 0, 1, -1, 0, 2 },
 
     // BENDER
     { parameters::benderDco, "DCO",
@@ -181,34 +182,54 @@ Layout buildLayout() noexcept
 {
     Layout layout {};
 
-    struct SectionSpec { const char* name; Accent accent; int slots; };
-    // Slot counts follow the widest legend each section has to print, not the
-    // number of controls in it: MODE holds two buttons but needs the width of
-    // "POLY 1". The header is "MODE" rather than "KEY MODE" because the longer
-    // form did not fit the section its two buttons justify.
+    struct SectionSpec
+    {
+        const char* name;
+        Accent accent;
+        int slots;
+        float x;
+        float y;
+        float width;
+        float height;
+    };
+    // The functional control inventory is unchanged, but its composition is
+    // deliberately folded into an audio row, a modulation row and a live
+    // performance deck. This avoids copying the reference unit's signature
+    // one-line faceplate while keeping each signal-flow relationship legible.
+    // Widths are explicit: the sound cards receive the faceplate, while the
+    // product-only controls are deliberately compact editor components rather
+    // than blank space disguised as synthesis surface.
     constexpr SectionSpec specs[sectionCount] = {
-        { "VOLUME",   Accent::Cyan,    2 },
-        { "BENDER",   Accent::Magenta, 4 },
-        { "MODE",     Accent::Cyan,    2 },
-        { "LFO",      Accent::Magenta, 2 },
-        { "DCO",      Accent::Cyan,    9 },
-        { "HPF",      Accent::Magenta, 1 },
-        { "VCF",      Accent::Cyan,    6 },
-        { "VCA",      Accent::Magenta, 3 },
-        { "ENV",      Accent::Cyan,    4 },
-        { "CHORUS",   Accent::Magenta, 2 },
+        { "VOLUME", Accent::Cyan,    2, 500.0f, soundRowBTop, 138.0f,
+                                                                  soundRowBHeight },
+        { "BENDER", Accent::Magenta, 4, 136.0f, performanceDeckTop, 158.0f,
+                                                           performanceDeckHeight },
+        { "MODE",   Accent::Magenta, 2, 302.0f, performanceDeckTop, 88.0f,
+                                                           performanceDeckHeight },
+        { "LFO",    Accent::Magenta, 2,  12.0f, soundRowATop, 120.0f,
+                                                                  soundRowAHeight },
+        { "DCO",    Accent::Cyan,    9, 140.0f, soundRowATop, 390.0f,
+                                                                  soundRowAHeight },
+        { "HPF",    Accent::Cyan,    1, 538.0f, soundRowATop, 70.0f,
+                                                                  soundRowAHeight },
+        { "VCF",    Accent::Cyan,    6, 616.0f, soundRowATop, 300.0f,
+                                                                  soundRowAHeight },
+        { "VCA",    Accent::Cyan,    3, 924.0f, soundRowATop, 184.0f,
+                                                                  soundRowAHeight },
+        { "ENV",    Accent::Magenta, 4,  12.0f, soundRowBTop, 308.0f,
+                                                                  soundRowBHeight },
+        { "CHORUS", Accent::Cyan,    2, 328.0f, soundRowBTop, 164.0f,
+                                                                  soundRowBHeight },
     };
 
-    float cursor = panelMargin;
     for (int index = 0; index < sectionCount; ++index)
     {
         const auto& spec = specs[index];
-        const float width = static_cast<float>(spec.slots) * slotWidth + sectionPadding;
         layout.sections[static_cast<std::size_t>(index)] =
-            { spec.name, spec.accent, spec.slots, cursor, width };
-        cursor += width + sectionGap;
+            { spec.name, spec.accent, spec.slots, spec.x, spec.y,
+              spec.width, spec.height };
     }
-    layout.width = cursor - sectionGap + panelMargin;
+    layout.width = editorWidth;
 
     for (int index = 0; index < controlCount; ++index)
     {
@@ -217,8 +238,19 @@ Layout buildLayout() noexcept
             layout.sections[static_cast<std::size_t>(placement.section)];
 
         const float innerX = section.x + sectionPadding * 0.5f;
-        const float x = innerX + static_cast<float>(placement.slot) * slotWidth;
+        const float cellWidth = (section.width - sectionPadding)
+                              / static_cast<float>(section.slots);
+        const float x = innerX + static_cast<float>(placement.slot) * cellWidth;
 
+        const float controlTop = section.y + headerHeight + 6.0f;
+        const float labelY = section.y + section.height
+                           - controlLabelHeight - 6.0f;
+        // MODE contains only firmware-latched buttons, so reserving an empty
+        // external slider-legend row would make both buttons illegibly short
+        // on the compact performance deck.
+        const float controlHeight = placement.section == 2
+                                  ? section.y + section.height - 6.0f - controlTop
+                                  : labelY - controlTop;
         float y = controlTop;
         float height = controlHeight;
         if (placement.stackCount > 1)
@@ -229,12 +261,20 @@ Layout buildLayout() noexcept
             y = controlTop + static_cast<float>(placement.stackIndex) * (height + stackGap);
         }
 
-        const float span = static_cast<float>(placement.slotSpan) * slotWidth;
+        const float span = static_cast<float>(placement.slotSpan) * cellWidth;
+        const bool isSlider = placement.kind == ControlKind::Slider
+                           || placement.kind == ControlKind::Steps;
+        const float controlWidth = isSlider
+                                 ? std::min (maximumSliderWidth,
+                                             span - 2.0f * controlInset)
+                                 : span - 2.0f * controlInset;
+        const float controlX = x + (span - controlWidth) * 0.5f;
         layout.controls[static_cast<std::size_t>(index)] = {
             placement.parameterId, placement.label, placement.tooltip,
             placement.kind, placement.section,
-            x + controlInset, y, span - 2.0f * controlInset, height,
-            x - labelOverhang, span + 2.0f * labelOverhang,
+            controlX, y, controlWidth, height,
+            x - labelOverhang, labelY,
+            span + 2.0f * labelOverhang, controlLabelHeight,
             placement.group, placement.groupValue
         };
     }
@@ -374,6 +414,11 @@ const char* overflowingLabel() noexcept
             const auto& second = controlList[b];
             if (second.kind != ControlKind::Slider && second.kind != ControlKind::Steps)
                 continue;
+            const bool labelRowsAreSeparate =
+                first.labelY + first.labelHeight <= second.labelY + 0.001f
+                || second.labelY + second.labelHeight <= first.labelY + 0.001f;
+            if (labelRowsAreSeparate)
+                continue;
             const float secondHalf =
                 0.5f * textWidth(second.label, labelPointSize, true);
             const float secondCentre = second.labelX + 0.5f * second.labelWidth;
@@ -413,10 +458,31 @@ bool layoutIsConsistent() noexcept
         const auto& section = sectionList[static_cast<std::size_t>(control.section)];
         if (control.x < section.x || control.x + control.width > section.x + section.width)
             return false;
-        if (control.y < controlTop
-            || control.y + control.height > controlTop + controlHeight + 0.001f)
+        if (control.y < section.y + headerHeight
+            || control.y + control.height > section.y + section.height + 0.001f)
+            return false;
+        if (control.labelX < section.x - labelOverhang - 0.001f
+            || control.labelX + control.labelWidth
+                   > section.x + section.width + labelOverhang + 0.001f
+            || control.labelY < section.y + headerHeight
+            || control.labelY + control.labelHeight
+                   > section.y + section.height + 0.001f)
             return false;
     }
+
+    for (std::size_t a = 0; a < sectionList.size(); ++a)
+        for (std::size_t b = a + 1; b < sectionList.size(); ++b)
+        {
+            const auto& first = sectionList[a];
+            const auto& second = sectionList[b];
+            const bool separated =
+                first.x + first.width <= second.x + 0.001f
+                || second.x + second.width <= first.x + 0.001f
+                || first.y + first.height <= second.y + 0.001f
+                || second.y + second.height <= first.y + 0.001f;
+            if (!separated)
+                return false;
+        }
 
     for (std::size_t a = 0; a < controlList.size(); ++a)
         for (std::size_t b = a + 1; b < controlList.size(); ++b)

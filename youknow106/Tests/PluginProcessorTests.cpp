@@ -14,6 +14,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -141,6 +142,41 @@ juce::Component* findDescendantNamed (juce::Component& parent,
             return match;
     }
     return nullptr;
+}
+
+template <typename ComponentType>
+void collectDescendantsOfType (juce::Component& parent,
+                               std::vector<ComponentType*>& result)
+{
+    for (int index = 0; index < parent.getNumChildComponents(); ++index)
+    {
+        auto* child = parent.getChildComponent (index);
+        if (auto* wanted = dynamic_cast<ComponentType*> (child))
+            result.push_back (wanted);
+        collectDescendantsOfType (*child, result);
+    }
+}
+
+bool containsTooltipWindow (juce::Component& parent)
+{
+    for (int index = 0; index < parent.getNumChildComponents(); ++index)
+    {
+        auto* child = parent.getChildComponent (index);
+        if (dynamic_cast<juce::TooltipWindow*> (child) != nullptr
+            || containsTooltipWindow (*child))
+            return true;
+    }
+    return false;
+}
+
+juce::MouseEvent mouseEventFor (juce::Component& component,
+                                juce::Point<float> position,
+                                juce::ModifierKeys modifiers)
+{
+    const auto now = juce::Time::getCurrentTime();
+    return { juce::Desktop::getInstance().getMainMouseSource(),
+             position, modifiers, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+             &component, &component, now, position, now, 1, false };
 }
 
 juce::Label* findDescendantLabelWithText (juce::Component& parent,
@@ -595,6 +631,257 @@ void testTransportOfControllers()
             "the note did not release when hold was lifted");
 
     processor.releaseResources();
+}
+
+void testUiPerformanceLeverMatchesMidiAndCoalesces()
+{
+    YouKnow106AudioProcessor uiDriven;
+    YouKnow106AudioProcessor midiDriven;
+    YouKnow106AudioProcessor neutral;
+    for (auto* processor : { &uiDriven, &midiDriven, &neutral })
+    {
+        setParameterValue (*processor, parameters::calibration, 0.0f);
+        setParameterValue (*processor, parameters::chorusNoise, 0.0f);
+        setParameterValue (*processor, parameters::chorusI, 0.0f);
+        setParameterValue (*processor, parameters::chorusII, 0.0f);
+        setParameterValue (*processor, parameters::benderDco, 0.8f);
+        setParameterValue (*processor, parameters::benderVcf, 0.65f);
+        setParameterValue (*processor, parameters::benderLfo, 1.0f);
+        setParameterValue (*processor, parameters::cutoff, 0.36f);
+        setParameterValue (*processor, parameters::dcoLfo, 0.0f);
+        processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
+        processor->prepareToPlay (sampleRate, blockSize);
+    }
+
+    uiDriven.postUiLeverPosition (1.0f, 1.0f);
+    juce::AudioBuffer<float> uiBuffer (2, blockSize);
+    juce::AudioBuffer<float> midiBuffer (2, blockSize);
+    juce::AudioBuffer<float> neutralBuffer (2, blockSize);
+    float uiToMidiDifference = 0.0f;
+    float drivenToNeutralDifference = 0.0f;
+
+    for (int block = 0; block < 24; ++block)
+    {
+        juce::MidiBuffer uiMidi, midi, neutralMidi;
+        if (block == 0)
+        {
+            midi.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 1, 127), 0);
+            for (auto* events : { &uiMidi, &midi, &neutralMidi })
+                events->addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 1);
+        }
+
+        uiBuffer.clear();
+        midiBuffer.clear();
+        neutralBuffer.clear();
+        uiDriven.processBlock (uiBuffer, uiMidi);
+        midiDriven.processBlock (midiBuffer, midi);
+        neutral.processBlock (neutralBuffer, neutralMidi);
+        uiToMidiDifference = std::max (
+            uiToMidiDifference, maximumBufferDifference (uiBuffer, midiBuffer));
+        drivenToNeutralDifference = std::max (
+            drivenToNeutralDifference,
+            maximumBufferDifference (uiBuffer, neutralBuffer));
+    }
+
+    expect (uiToMidiDifference < 1.0e-6f,
+            "the UI pitch/mod lever does not match Pitch Wheel plus CC1");
+    expect (drivenToNeutralDifference > 1.0e-3f,
+            "the UI pitch/mod lever had no audible effect");
+
+    // Thousands of mouse moves may arrive between two audio blocks. The
+    // mailbox must coalesce them and retain the final exact spring return.
+    for (int index = 0; index < 10000; ++index)
+    {
+        const float phase = static_cast<float> (index % 201) / 100.0f - 1.0f;
+        uiDriven.postUiLeverPosition (phase,
+                                      static_cast<float> (index % 128) / 127.0f);
+    }
+    uiDriven.postUiLeverPosition (0.0f, 0.0f);
+
+    float returnDifference = 0.0f;
+    for (int block = 0; block < 16; ++block)
+    {
+        juce::MidiBuffer uiMidi, midi;
+        if (block == 0)
+        {
+            midi.addEvent (juce::MidiMessage::pitchWheel (1, 8192), 0);
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 1, 0), 0);
+        }
+        uiBuffer.clear();
+        midiBuffer.clear();
+        uiDriven.processBlock (uiBuffer, uiMidi);
+        midiDriven.processBlock (midiBuffer, midi);
+        returnDifference = std::max (
+            returnDifference, maximumBufferDifference (uiBuffer, midiBuffer));
+    }
+    expect (returnDifference < 1.0e-6f,
+            "dense UI lever traffic lost the final spring return or reasserted later");
+
+    YouKnow106AudioProcessor stateProbe;
+    juce::MemoryBlock before, after;
+    stateProbe.getStateInformation (before);
+    const bool wasEdited = stateProbe.currentProgramIsEdited();
+    stateProbe.postUiLeverPosition (-0.72f, 0.63f);
+    stateProbe.getStateInformation (after);
+    const bool stateMatches = before.getSize() == after.getSize()
+        && std::memcmp (before.getData(), after.getData(), before.getSize()) == 0;
+    expect (stateMatches && stateProbe.currentProgramIsEdited() == wasEdited,
+            "spring-loaded performance input leaked into preset/session state");
+
+    uiDriven.releaseResources();
+    midiDriven.releaseResources();
+    neutral.releaseResources();
+}
+
+void testPerformanceLeverSpringsAndEditorCloseNeutralisesIt()
+{
+    YouKnow106PerformanceLever lever;
+    lever.setSize (120, 122);
+    float callbackBend = 0.0f;
+    float callbackMod = 0.0f;
+    int callbackCount = 0;
+    lever.onPositionChanged = [&] (float bend, float modulation)
+    {
+        callbackBend = bend;
+        callbackMod = modulation;
+        ++callbackCount;
+    };
+
+    lever.mouseDown (mouseEventFor (
+        lever, { 112.0f, 28.0f },
+        juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier)));
+    expect (lever.getPitchBend() > 0.9f && lever.getModulation() > 0.9f,
+            "the vector lever does not reach positive bend and full modulation");
+    lever.mouseUp (mouseEventFor (lever, { 112.0f, 28.0f }, {}));
+    expect (lever.getPitchBend() == 0.0f && lever.getModulation() == 0.0f
+                && callbackBend == 0.0f && callbackMod == 0.0f
+                && callbackCount >= 2,
+            "the vector lever did not publish its exact spring return");
+
+    lever.mouseDown (mouseEventFor (
+        lever, { 8.0f, 110.0f },
+        juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier)));
+    expect (lever.getPitchBend() < -0.9f && lever.getModulation() == 0.0f,
+            "the vector lever does not reach negative bend or clamp downward mod");
+    lever.mouseUp (mouseEventFor (lever, { 8.0f, 110.0f }, {}));
+
+    // The editor owns the live gesture. Closing it while the mouse is held is
+    // equivalent to letting go and must supersede the displaced mailbox value.
+    YouKnow106AudioProcessor closedEditor;
+    YouKnow106AudioProcessor reference;
+    for (auto* processor : { &closedEditor, &reference })
+    {
+        setParameterValue (*processor, parameters::calibration, 0.0f);
+        setParameterValue (*processor, parameters::chorusNoise, 0.0f);
+        setParameterValue (*processor, parameters::benderDco, 1.0f);
+        processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
+        processor->prepareToPlay (sampleRate, blockSize);
+    }
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (closedEditor.createEditor());
+    auto* editorLever = editor != nullptr
+        ? dynamic_cast<YouKnow106PerformanceLever*> (
+              findDescendantNamed (*editor, "Pitch and modulation lever"))
+        : nullptr;
+    expect (editorLever != nullptr, "the editor has no performance lever to close");
+    if (editorLever != nullptr)
+    {
+        const auto upperRight = juce::Point<float> {
+            static_cast<float> (editorLever->getWidth() - 2), 2.0f };
+        editorLever->mouseDown (mouseEventFor (
+            *editorLever, upperRight,
+            juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier)));
+    }
+    editor.reset();
+
+    juce::AudioBuffer<float> closedBuffer (2, blockSize);
+    juce::AudioBuffer<float> referenceBuffer (2, blockSize);
+    float difference = 0.0f;
+    for (int block = 0; block < 12; ++block)
+    {
+        juce::MidiBuffer closedMidi, referenceMidi;
+        if (block == 0)
+        {
+            closedMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 1);
+            referenceMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 1);
+        }
+        closedBuffer.clear();
+        referenceBuffer.clear();
+        closedEditor.processBlock (closedBuffer, closedMidi);
+        reference.processBlock (referenceBuffer, referenceMidi);
+        difference = std::max (
+            difference, maximumBufferDifference (closedBuffer, referenceBuffer));
+    }
+    expect (difference < 1.0e-6f,
+            "closing the editor during a lever drag left pitch/mod latched");
+
+    closedEditor.releaseResources();
+    reference.releaseResources();
+
+    // An untouched on-screen lever owns no controller state. Opening and
+    // closing the editor must therefore leave an external controller's held
+    // Pitch Wheel and CC1 positions alone; hosts are not required to resend
+    // either value when a plug-in window disappears.
+    YouKnow106AudioProcessor externalWithEditor;
+    YouKnow106AudioProcessor externalReference;
+    for (auto* processor : { &externalWithEditor, &externalReference })
+    {
+        setParameterValue (*processor, parameters::calibration, 0.0f);
+        setParameterValue (*processor, parameters::chorusNoise, 0.0f);
+        setParameterValue (*processor, parameters::chorusI, 0.0f);
+        setParameterValue (*processor, parameters::chorusII, 0.0f);
+        setParameterValue (*processor, parameters::benderDco, 0.8f);
+        setParameterValue (*processor, parameters::benderLfo, 0.7f);
+        processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
+        processor->prepareToPlay (sampleRate, blockSize);
+    }
+
+    juce::AudioBuffer<float> externalEditorBuffer (2, blockSize);
+    juce::AudioBuffer<float> externalReferenceBuffer (2, blockSize);
+    for (int block = 0; block < 8; ++block)
+    {
+        juce::MidiBuffer editorMidi, referenceMidi;
+        if (block == 0)
+        {
+            for (auto* events : { &editorMidi, &referenceMidi })
+            {
+                events->addEvent (juce::MidiMessage::pitchWheel (1, 15100), 0);
+                events->addEvent (juce::MidiMessage::controllerEvent (1, 1, 103), 0);
+                events->addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 1);
+            }
+        }
+        externalEditorBuffer.clear();
+        externalReferenceBuffer.clear();
+        externalWithEditor.processBlock (externalEditorBuffer, editorMidi);
+        externalReference.processBlock (externalReferenceBuffer, referenceMidi);
+    }
+
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> untouchedEditor (
+            externalWithEditor.createEditor());
+        expect (untouchedEditor != nullptr,
+                "the processor produced no editor for the external-controller check");
+    }
+
+    float externalDifference = 0.0f;
+    for (int block = 0; block < 16; ++block)
+    {
+        juce::MidiBuffer editorMidi, referenceMidi;
+        externalEditorBuffer.clear();
+        externalReferenceBuffer.clear();
+        externalWithEditor.processBlock (externalEditorBuffer, editorMidi);
+        externalReference.processBlock (externalReferenceBuffer, referenceMidi);
+        externalDifference = std::max (
+            externalDifference,
+            maximumBufferDifference (externalEditorBuffer,
+                                     externalReferenceBuffer));
+    }
+    expect (externalDifference < 1.0e-6f,
+            "closing an untouched editor cleared external pitch/mod state");
+
+    externalWithEditor.releaseResources();
+    externalReference.releaseResources();
 }
 
 void testPanicSilencesEverything()
@@ -1884,7 +2171,7 @@ void testRequestedDumpLeavesThroughTheMidiOutput()
     processor.processBlock (buffer, midi);
     expect (midi.isEmpty(), "the dump request repeated on the following block");
 
-    // Each click owns its bytes until the audio side has copied them. With one
+    // Each request owns its bytes until the audio side has copied them. With one
     // shared array, the second request replaced the first before it could be
     // sent (and could rewrite that array while the callback was reading it).
     // Queue two deliberately different snapshots before either is consumed;
@@ -1932,7 +2219,7 @@ void testRequestedDumpLeavesThroughTheMidiOutput()
     expectNextDump (firstExpected, "first");
     expectNextDump (secondExpected, "second");
     expect (processor.getSysExDumpDroppedCount() == 0,
-            "two queued SEND requests overflowed the fixed handoff");
+            "two queued patch-dump requests overflowed the fixed handoff");
 
     processor.releaseResources();
 }
@@ -2894,7 +3181,7 @@ void testEveryPanelLegendFitsInTheRealFont()
     const float minimumScale = juce::jmin (
         static_cast<float> (panel::minimumEditorWidth) / panel::panelWidth(),
         static_cast<float> (panel::minimumEditorHeight)
-            / (panel::panelHeight + panel::keyboardHeight));
+            / panel::editorHeight);
 
     for (const auto& section : panel::sections())
     {
@@ -2944,43 +3231,208 @@ void testEveryInteractiveEditorControlExplainsItself()
 {
     YouKnow106AudioProcessor processor;
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
-    expect (editor != nullptr, "cannot audit tooltips without an editor");
+    expect (editor != nullptr, "cannot audit contextual help without an editor");
     if (editor == nullptr)
         return;
 
     int interactiveCount = 0;
-    for (int index = 0; index < editor->getNumChildComponents(); ++index)
+    const auto audit = [&interactiveCount] (auto&& self,
+                                            juce::Component& parent) -> void
     {
-        auto* component = editor->getChildComponent (index);
-        const bool isInteractive =
-            dynamic_cast<juce::Slider*> (component) != nullptr
-            || dynamic_cast<juce::Button*> (component) != nullptr
-            || dynamic_cast<juce::ComboBox*> (component) != nullptr
-            || dynamic_cast<juce::MidiKeyboardComponent*> (component) != nullptr;
-        if (! isInteractive)
+        for (int index = 0; index < parent.getNumChildComponents(); ++index)
+        {
+            auto* component = parent.getChildComponent (index);
+            const bool isInteractive =
+                dynamic_cast<juce::Slider*> (component) != nullptr
+                || dynamic_cast<juce::Button*> (component) != nullptr
+                || dynamic_cast<juce::ComboBox*> (component) != nullptr
+                || dynamic_cast<juce::MidiKeyboardComponent*> (component) != nullptr
+                || dynamic_cast<YouKnow106PerformanceLever*> (component) != nullptr;
+            if (isInteractive)
+            {
+                ++interactiveCount;
+                const auto identity = component->getName().isNotEmpty()
+                    ? component->getName().toStdString()
+                    : std::string ("unnamed interactive control");
+                auto* tooltipClient = dynamic_cast<juce::TooltipClient*> (component);
+                expect (tooltipClient != nullptr,
+                        identity + " cannot supply contextual help");
+                if (tooltipClient != nullptr)
+                {
+                    const auto tooltip = tooltipClient->getTooltip().trim();
+                    expect (tooltip.length() >= 24,
+                            identity + " has no meaningful contextual help");
+                    expect (tooltip != component->getName(),
+                            identity + " help merely repeats the control name");
+                }
+            }
+            else
+            {
+                // A public composite control owns its private JUCE children.
+                // Recurse only through non-interactive containers, otherwise
+                // hidden keyboard scroll buttons and ComboBox labels would be
+                // mistaken for additional product controls.
+                self (self, *component);
+            }
+        }
+    };
+    audit (audit, *editor);
+
+    // Six extension knobs, six compact operation buttons, four patch-bar
+    // controls, the keybed and the vector lever. Patch dumping remains a
+    // processor/MIDI capability, but no longer takes scarce front-panel area.
+    constexpr int expectedInteractiveCount =
+        panel::controlCount + 6 + 6 + 4 + 1 + 1;
+    expect (interactiveCount == expectedInteractiveCount,
+            "the contextual-help audit did not cover every interactive control");
+    expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
+            "the removed SEND operation returned to the compact editor");
+}
+
+void testPersistentContextHelpAndValueBubbles()
+{
+    YouKnow106AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr, "cannot test the contextual-help strip");
+    if (editor == nullptr)
+        return;
+
+    auto* help = dynamic_cast<YouKnow106ContextHelp*> (
+        findDescendantNamed (*editor, "Context help"));
+    expect (help != nullptr, "the editor has no fixed contextual-help strip");
+    if (help == nullptr)
+        return;
+
+    const auto idleText = help->getHelpText();
+    const auto stableBounds = help->getBounds();
+    expect (help->getHelpTitle() == "HELP" && idleText.length() >= 24,
+            "the help strip has no useful idle prompt");
+    expect (! containsTooltipWindow (*editor),
+            "descriptive help still creates a floating TooltipWindow");
+
+    for (const auto* name : { "FREQ", "HQ", "Patch selector",
+                              "Playable keyboard", "Status display",
+                              "Pitch and modulation lever" })
+    {
+        auto* target = findDescendantNamed (*editor, name);
+        expect (target != nullptr,
+                std::string ("cannot route contextual help for ") + name);
+        if (target == nullptr)
+            continue;
+        auto* client = dynamic_cast<juce::TooltipClient*> (target);
+        expect (client != nullptr,
+                std::string (name) + " has no TooltipClient source");
+        if (client == nullptr)
             continue;
 
-        ++interactiveCount;
-        const auto identity = component->getName().isNotEmpty()
-            ? component->getName().toStdString()
-            : std::string ("unnamed interactive control");
-        auto* tooltipClient = dynamic_cast<juce::TooltipClient*> (component);
-        expect (tooltipClient != nullptr,
-                identity + " cannot display a tooltip");
-        if (tooltipClient == nullptr)
-            continue;
-
-        const auto tooltip = tooltipClient->getTooltip().trim();
-        expect (tooltip.length() >= 24,
-                identity + " has no meaningful explanatory tooltip");
-        expect (tooltip != component->getName(),
-                identity + " tooltip merely repeats the control name");
+        help->showFor (target);
+        expect (help->getHelpText() == client->getTooltip().trim(),
+                std::string ("the help strip changed the explanation for ") + name);
+        expect (help->getHelpTitle().isNotEmpty()
+                    && help->getHelpTitle() != "HELP",
+                std::string ("the help strip omitted the title for ") + name);
+        expect (help->getBounds() == stableBounds,
+                "the fixed help area moved when its content changed");
     }
 
-    constexpr int expectedInteractiveCount =
-        panel::controlCount + 6 + 7 + 4 + 1;
-    expect (interactiveCount == expectedInteractiveCount,
-            "the tooltip audit did not cover every intentional interactive control");
+    auto* patchBox = dynamic_cast<juce::ComboBox*> (
+        findDescendantNamed (*editor, "Patch selector"));
+    expect (patchBox != nullptr && patchBox->getNumChildComponents() > 0,
+            "the patch selector has no nested child to exercise help routing");
+    if (patchBox != nullptr && patchBox->getNumChildComponents() > 0)
+    {
+        help->showFor (patchBox->getChildComponent (0));
+        expect (help->getHelpText() == patchBox->getTooltip().trim(),
+                "context help did not climb from a ComboBox child");
+    }
+
+    help->showFor (editor.get());
+    expect (help->getHelpTitle() == "HELP" && help->getHelpText() == idleText,
+            "an unannotated area left stale contextual help behind");
+
+    // Numeric readouts are JUCE Slider popups, independent of the removed
+    // descriptive TooltipWindow. Exercise every no-text-box slider so the new
+    // fixed help presentation cannot silently remove exact values.
+    std::vector<juce::Slider*> sliders;
+    collectDescendantsOfType (*editor, sliders);
+    int expectedSliders = 6;
+    for (const auto& control : panel::controls())
+        if (control.kind == panel::ControlKind::Slider
+            || control.kind == panel::ControlKind::Steps)
+            ++expectedSliders;
+    expect (static_cast<int> (sliders.size()) == expectedSliders,
+            "the value-bubble audit missed a slider");
+
+    for (auto* slider : sliders)
+    {
+        const double previous = slider->getValue();
+        help->showFor (slider);
+        const auto helpBeforeValuePopup = help->getHelpText();
+        const auto centre = slider->getLocalBounds().getCentre().toFloat();
+        slider->mouseDown (mouseEventFor (
+            *slider, centre,
+            juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier)));
+        expect (slider->getCurrentPopupDisplay() != nullptr,
+                slider->getName().toStdString()
+                    + " has no numeric value bubble while being adjusted");
+        expect (help->getHelpText() == helpBeforeValuePopup,
+                slider->getName().toStdString()
+                    + " replaced its explanation with the numeric popup");
+        slider->mouseUp (mouseEventFor (*slider, centre, {}));
+        slider->setValue (previous, juce::sendNotificationSync);
+    }
+}
+
+void testColdStartProgramAndEditorAreInSync()
+{
+    YouKnow106AudioProcessor processor;
+    expect (processor.getCurrentProgram() == 0,
+            "a cold processor does not select INIT");
+    expect (! processor.currentProgramIsEdited(),
+            "a cold processor's controls do not match INIT");
+
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr, "cannot inspect cold-start editor state");
+    if (editor == nullptr)
+        return;
+
+    auto* patchBox = dynamic_cast<juce::ComboBox*> (
+        findDescendantNamed (*editor, "Patch selector"));
+    expect (patchBox != nullptr && patchBox->getSelectedId() == 1
+                && patchBox->getText() == processor.getProgramName (0),
+            "the cold preset selector does not show INIT");
+
+    auto* edited = findDescendantLabelWithText (*editor, "EDITED");
+    expect (edited != nullptr && ! edited->isVisible(),
+            "the cold editor claims its untouched INIT is edited");
+
+    struct SliderSync { const char* name; const char* parameter; };
+    constexpr auto sliders = std::to_array<SliderSync> ({
+        { "FREQ", parameters::cutoff },
+        { "A", parameters::attack },
+        { "Transpose", parameters::transpose },
+        { "Unit Character", parameters::calibration },
+    });
+    for (const auto& expected : sliders)
+    {
+        auto* slider = dynamic_cast<juce::Slider*> (
+            findDescendantNamed (*editor, expected.name));
+        expect (slider != nullptr,
+                std::string ("cold editor is missing ") + expected.name);
+        if (slider != nullptr)
+            expect (std::abs (static_cast<float> (slider->getValue())
+                             - parameterValue (processor, expected.parameter))
+                        < 1.0e-5f,
+                    std::string (expected.name)
+                        + " is out of sync with the selected INIT program");
+    }
+
+    auto* saw = dynamic_cast<juce::Button*> (
+        findDescendantNamed (*editor, "SAW"));
+    expect (saw != nullptr
+                && saw->getToggleState()
+                       == (parameterValue (processor, parameters::saw) > 0.5f),
+            "the cold waveform switch is out of sync with INIT");
 }
 
 void testEditorReloadButtonDiscardsPatchEdits()
@@ -3354,6 +3806,81 @@ void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
     }
 }
 
+template <std::size_t Size>
+double namedGroupFootprint (juce::AudioProcessorEditor& editor,
+                            const std::array<const char*, Size>& componentNames,
+                            const char* groupName)
+{
+    juce::Rectangle<int> footprint;
+    bool foundAny = false;
+    for (const auto* name : componentNames)
+    {
+        auto* component = findDescendantNamed (editor, name);
+        expect (component != nullptr,
+                std::string (groupName) + " is missing " + name);
+        if (component == nullptr)
+            continue;
+
+        const auto area = editor.getLocalArea (component,
+                                               component->getLocalBounds());
+        expect (! area.isEmpty(),
+                std::string (groupName) + " has empty geometry for " + name);
+        if (area.isEmpty())
+            continue;
+
+        footprint = foundAny ? footprint.getUnion (area) : area;
+        foundAny = true;
+    }
+
+    expect (foundAny, std::string (groupName) + " has no measurable footprint");
+    return foundAny ? static_cast<double> (footprint.getWidth())
+                            * static_cast<double> (footprint.getHeight())
+                    : 0.0;
+}
+
+void checkSynthesisSectionsDominateUtilities (
+    juce::AudioProcessorEditor& editor)
+{
+    // Measure the allocations, not individual knobs. A sparse utility card can
+    // otherwise look artificially tiny while still taking half the console.
+    // Character Lab and Operations are the two non-synthesis cards competing
+    // for control-panel space. The masthead and live performance deck serve
+    // navigation/playing rather than utility configuration, so folding those
+    // into this comparison would measure a different design decision.
+    constexpr auto characterLab = std::to_array<const char*> ({
+        "Unit Character", "Unit Character label",
+        "Chorus noise", "Chorus noise label", "HQ"
+    });
+    constexpr auto operations = std::to_array<const char*> ({
+        "PANIC", "RND1%", "RND10%", "RND50%", "RESET"
+    });
+    const double utilityAndSystemArea =
+        namedGroupFootprint (editor, characterLab, "Character Lab")
+        + namedGroupFootprint (editor, operations, "Operations");
+
+    const double scale = std::min (
+        static_cast<double> (editor.getWidth())
+            / static_cast<double> (panel::panelWidth()),
+        static_cast<double> (editor.getHeight())
+            / static_cast<double> (panel::editorHeight));
+    double synthesisArea = 0.0;
+    for (const auto& section : panel::sections())
+        synthesisArea += static_cast<double> (section.width)
+                       * static_cast<double> (section.height) * scale * scale;
+
+    expect (utilityAndSystemArea > 0.0,
+            "the utility/system footprint could not be measured");
+    // The intended folded layout is about 4.45:1. Three-to-one is visibly
+    // synthesis-first while retaining generous room for future label polish.
+    constexpr double minimumDominance = 3.0;
+    expect (synthesisArea > utilityAndSystemArea * minimumDominance,
+            "synthesis sections no longer dominate the console area (ratio "
+                + std::to_string (utilityAndSystemArea > 0.0
+                                      ? synthesisArea / utilityAndSystemArea
+                                      : 0.0)
+                + ")");
+}
+
 void testEditorBuildsAndRenders()
 {
     YouKnow106AudioProcessor processor;
@@ -3370,8 +3897,20 @@ void testEditorBuildsAndRenders()
 
     auto* playableKeyboard = dynamic_cast<juce::MidiKeyboardComponent*> (
         findDescendantNamed (*editor, "Playable keyboard"));
+    auto* performanceLever = dynamic_cast<YouKnow106PerformanceLever*> (
+        findDescendantNamed (*editor, "Pitch and modulation lever"));
+    auto* contextHelp = dynamic_cast<YouKnow106ContextHelp*> (
+        findDescendantNamed (*editor, "Context help"));
+    auto* transpose = dynamic_cast<juce::Slider*> (
+        findDescendantNamed (*editor, "Transpose"));
+    auto* character = dynamic_cast<juce::Slider*> (
+        findDescendantNamed (*editor, "Unit Character"));
     expect (playableKeyboard != nullptr,
             "the editor has no playable keyboard to range-check");
+    expect (performanceLever != nullptr,
+            "the editor has no pitch/mod performance control");
+    expect (contextHelp != nullptr,
+            "the editor has no fixed help display");
     if (playableKeyboard != nullptr)
     {
         expect (playableKeyboard->getRangeStart()
@@ -3390,13 +3929,17 @@ void testEditorBuildsAndRenders()
     // failed the moment the panel legitimately grew a patch bar, which is the
     // exact trap the width had already been rescued from.
     const int expectedWidth = juce::roundToInt (panel::panelWidth());
-    const int expectedHeight =
-        juce::roundToInt (panel::panelHeight + panel::keyboardHeight + 14.0f);
+    const int expectedHeight = juce::roundToInt (panel::editorHeight);
     expect (editor->getWidth() == expectedWidth
                 && editor->getHeight() == expectedHeight,
             "the editor did not open at its default size");
+    const float defaultAspect = static_cast<float> (expectedWidth)
+                              / static_cast<float> (expectedHeight);
+    expect (defaultAspect >= 1.25f && defaultAspect <= 1.65f,
+            "the folded console did not become materially more square");
     expect (editor->isOpaque(), "the editor does not advertise an opaque surface");
     checkUtilityKnobLayout (*editor, false);
+    checkSynthesisSectionsDominateUtilities (*editor);
 
     // Exercise the layout at both extremes as well as at its default size. Read
     // the supported minimum from the constrainer so raising the readability
@@ -3408,14 +3951,19 @@ void testEditorBuildsAndRenders()
     else
         expect (false, "the resizable editor has no bounds constrainer");
 
-    for (auto size : { supportedMinimum, juce::Point<int> { 2200, 940 } })
+    for (auto size : { supportedMinimum,
+                       juce::Point<int> { panel::maximumEditorWidth,
+                                          panel::maximumEditorHeight } })
     {
         editor->setSize (size.x, size.y);
         editor->resized();
         if (size == supportedMinimum)
             checkUtilityKnobLayout (*editor, true);
+        checkSynthesisSectionsDominateUtilities (*editor);
         if (playableKeyboard != nullptr)
         {
+            const auto keyboardArea = editor->getLocalArea (
+                playableKeyboard, playableKeyboard->getLocalBounds());
             const float fittedKeyWidth =
                 static_cast<float> (playableKeyboard->getWidth())
                 / static_cast<float> (panel::keyboardWhiteKeyCount);
@@ -3430,6 +3978,50 @@ void testEditorBuildsAndRenders()
                                 panel::keyboardHighestMidiNote).getRight()
                             - static_cast<float> (playableKeyboard->getWidth())) < 1.0f,
                     "the physical C2-C7 keybed left a blank or clipped edge");
+            expect (fittedKeyWidth >= 24.0f,
+                    "the squarer layout made the 61-key keybed impractically narrow");
+
+            if (performanceLever != nullptr)
+            {
+                const auto leverArea = editor->getLocalArea (
+                    performanceLever, performanceLever->getLocalBounds());
+                expect (! leverArea.isEmpty() && editor->getLocalBounds().contains (leverArea),
+                        "the pitch/mod lever escaped the editor");
+                expect (leverArea.getBottom() <= keyboardArea.getY()
+                            && ! leverArea.intersects (keyboardArea),
+                        "the pitch/mod lever overlaps the keybed");
+            }
+            if (contextHelp != nullptr)
+            {
+                const auto helpArea = editor->getLocalArea (
+                    contextHelp, contextHelp->getLocalBounds());
+                expect (! helpArea.isEmpty() && editor->getLocalBounds().contains (helpArea),
+                        "the fixed help display escaped the editor");
+                expect (helpArea.getY() >= keyboardArea.getBottom()
+                            && ! helpArea.intersects (keyboardArea),
+                        "the fixed help display is not below the keys");
+                expect (helpArea.getWidth()
+                            >= editor->getWidth()
+                                 - juce::roundToInt (30.0f
+                                                    * static_cast<float> (size.x)
+                                                    / panel::panelWidth()),
+                        "the help display is no longer a full-width stable area");
+            }
+            if (transpose != nullptr)
+            {
+                const auto area = editor->getLocalArea (
+                    transpose, transpose->getLocalBounds());
+                expect (area.getY() < keyboardArea.getY()
+                            && area.getBottom() <= keyboardArea.getY(),
+                        "keyboard setup controls were not moved into the lower deck");
+            }
+            if (character != nullptr)
+            {
+                const auto area = editor->getLocalArea (
+                    character, character->getLocalBounds());
+                expect (area.getBottom() < keyboardArea.getY(),
+                        "Character Lab overlaps the performance keybed");
+            }
         }
         expect (snapshotHasDetail (renderEditorSnapshot (*editor)),
                 "the editor did not render at "
@@ -3479,6 +4071,8 @@ int main()
     testDeferredQualitySwitchIsNotAutomatable();
     testAllNotesOffReleasesAndAllSoundOffCuts();
     testTransportOfControllers();
+    testUiPerformanceLeverMatchesMidiAndCoalesces();
+    testPerformanceLeverSpringsAndEditorCloseNeutralisesIt();
     testPanicSilencesEverything();
     testStateRoundTripAndMigration();
     testLegacySplitModeMigration();
@@ -3510,10 +4104,12 @@ int main()
     testPendingLegacyModesDoNotOverrideALaterStateRestore();
     testLegacyAutomationBetweenRestoreAndFirstBlockIsHonoured();
     testEditedFlagFollowsTheCompleteProgram();
+    testColdStartProgramAndEditorAreInSync();
     testFactoryProgramsLoad();
     testEveryProductProgramRestoresEveryParameter();
     testEveryPanelLegendFitsInTheRealFont();
     testEveryInteractiveEditorControlExplainsItself();
+    testPersistentContextHelpAndValueBubbles();
     testEditorReloadButtonDiscardsPatchEdits();
     testEditorRandomizeStrengthsAndReset();
     testClickingTheSelectedRadioKeepsItsLampLit();

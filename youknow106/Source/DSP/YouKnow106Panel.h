@@ -57,10 +57,11 @@ inline constexpr auto release      = "release";
 inline constexpr auto chorusI      = "chorusI";
 inline constexpr auto chorusII     = "chorusII";
 
-// Controls the modelled instrument does not have. They sit in their own strip
-// below the panel so the panel itself stays honest. Their defaults preserve
-// the base compatibility model; only explicitly documented structural defaults
-// should be read as hardware claims.
+// Controls the modelled instrument does not have. Character controls occupy an
+// explicit extension card and keyboard-facing controls the live lower deck, so
+// neither can be mistaken for stored hardware tone parameters. Their defaults
+// preserve the base compatibility model; only explicitly documented structural
+// defaults should be read as hardware claims.
 inline constexpr auto transpose    = "transpose";
 inline constexpr auto masterTune   = "masterTune";
 inline constexpr auto velocity     = "velocity";
@@ -99,26 +100,41 @@ inline constexpr std::uint32_t slot          = 0x121417u; // slider cut-out
 
 // Geometry, in abstract panel units. The editor scales the whole description to
 // whatever size the window is, so nothing here depends on a pixel density.
-inline constexpr float slotWidth = 36.0f;
 inline constexpr float sectionPadding = 14.0f;
 inline constexpr float sectionGap = 8.0f;
-inline constexpr float panelMargin = 10.0f;
-inline constexpr float headerTop = 6.0f;
-inline constexpr float headerHeight = 26.0f;
-inline constexpr float controlTop = 62.0f;
-inline constexpr float controlHeight = 200.0f;
-inline constexpr float labelTop = 268.0f;
-inline constexpr float labelHeight = 22.0f;
-inline constexpr float sectionBottom = 300.0f;
-inline constexpr float utilityTop = 310.0f;
-inline constexpr float utilityHeight = 46.0f;
-// The patch bar. The hardware picks patches from a numeric keypad that has no
-// equivalent here, so the bank gets a row of its own rather than being squeezed
-// into the utility strip.
-inline constexpr float presetTop = 358.0f;
-inline constexpr float presetHeight = 24.0f;
-inline constexpr float panelHeight = 392.0f;
-inline constexpr float keyboardHeight = 92.0f;
+inline constexpr float panelMargin = 12.0f;
+inline constexpr float headerHeight = 24.0f;
+inline constexpr float controlLabelHeight = 20.0f;
+// Expanded cards give each function more air without turning a single fader
+// cap into a paddle. The cell owns the label and tick field; the mechanical
+// fader itself stays within this convincingly physical width.
+inline constexpr float maximumSliderWidth = 42.0f;
+
+// A folded console rather than the reference unit's one long control row.
+// Blue carries the audio path across row A; green modulation and product-only
+// character controls occupy row B; live keyboard performance has its own deck.
+inline constexpr float editorWidth = 1120.0f;
+inline constexpr float mastheadTop = 8.0f;
+inline constexpr float mastheadHeight = 46.0f;
+inline constexpr float soundRowATop = 64.0f;
+inline constexpr float soundRowAHeight = 206.0f;
+inline constexpr float soundRowBTop = 278.0f;
+inline constexpr float soundRowBHeight = 180.0f;
+inline constexpr float performanceDeckTop = 466.0f;
+inline constexpr float performanceDeckHeight = 122.0f;
+inline constexpr float panelHeight = 596.0f;
+inline constexpr float keyboardHeight = 128.0f;
+
+// The patch picker lives in the masthead, while contextual explanations live
+// below the keys instead of obscuring the panel in a floating mouse tooltip.
+inline constexpr float presetTop = 16.0f;
+inline constexpr float presetHeight = 28.0f;
+inline constexpr float helpStripGap = 8.0f;
+inline constexpr float helpStripHeight = 40.0f;
+inline constexpr float editorBottomMargin = 8.0f;
+inline constexpr float editorHeight = panelHeight + keyboardHeight
+                                    + helpStripGap + helpStripHeight
+                                    + editorBottomMargin;
 // The physical keyboard is 61 notes, C2 through C7. With the display's
 // middle-C convention those are MIDI notes 36..96; the instrument's Key
 // Transpose function accounts for its wider transmitted range. External MIDI
@@ -126,10 +142,10 @@ inline constexpr float keyboardHeight = 92.0f;
 inline constexpr int keyboardLowestMidiNote = 36;
 inline constexpr int keyboardHighestMidiNote = 96;
 inline constexpr int keyboardWhiteKeyCount = 5 * 7 + 1;
-inline constexpr int minimumEditorWidth = 1200;
-inline constexpr int minimumEditorHeight = 400;
-inline constexpr int maximumEditorWidth = 2200;
-inline constexpr int maximumEditorHeight = 940;
+inline constexpr int minimumEditorWidth = 980;
+inline constexpr int minimumEditorHeight = 683;
+inline constexpr int maximumEditorWidth = 1680;
+inline constexpr int maximumEditorHeight = 1170;
 inline constexpr float controlInset = 5.0f;
 inline constexpr float stackGap = 6.0f;
 
@@ -141,8 +157,8 @@ enum class ControlKind
     Steps    // a slider with named detents
 };
 
-// Which highlight a section carries. Alternating them is what makes the panel
-// scannable at a glance in a dark room.
+// Which signal-role highlight a section carries: green for modulation/live
+// performance, blue for the audio path.
 enum class Accent { Magenta, Cyan };
 
 struct Section
@@ -151,7 +167,9 @@ struct Section
     Accent accent;
     int slots;
     float x;
+    float y;
     float width;
+    float height;
 };
 
 struct Control
@@ -173,7 +191,9 @@ struct Control
     // name is allowed to use; taking the control's width instead is what
     // truncated "VOLUME" to "VOLU...".
     float labelX;
+    float labelY;
     float labelWidth;
+    float labelHeight;
     // Index of the mutually exclusive group this button belongs to, or -1, and
     // which value of the group's parameter it selects.
     int group;

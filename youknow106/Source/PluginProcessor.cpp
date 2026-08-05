@@ -534,6 +534,13 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
 
     keyboardState.addListener (this);
 
+    // INIT is not merely the name shown for program zero: make the complete
+    // product program authoritative at cold start. This deliberately repeats
+    // the APVTS defaults through the same path every later recall uses, so a
+    // future default edit cannot leave the preset bar and visible controls
+    // describing different states on the first editor frame.
+    setCurrentProgram (0);
+
     // Poll the incoming-MIDI handoff. The audio thread must not signal the
     // message thread directly, so nothing wakes this; it simply looks.
     startTimer (20);
@@ -568,6 +575,7 @@ void YouKnow106AudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
     engine.prepare (sampleRate, samplesPerBlock,
                     valueOf (youknow106::parameters::hq) > 0.5f);
     (void) updateEngineParameters();
+    uiLeverMailbox.store (emptyUiLeverMailbox, std::memory_order_release);
     discardUiMidiEvents();
     keyboardState.reset();
 
@@ -583,6 +591,7 @@ void YouKnow106AudioProcessor::releaseResources()
     engineReady.store (false, std::memory_order_release);
     engine.allNotesOff();
     engine.reset();
+    uiLeverMailbox.store (emptyUiLeverMailbox, std::memory_order_release);
     discardUiMidiEvents();
     keyboardState.reset();
 }
@@ -810,6 +819,7 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         else
             keyModeReassertRequested.store (true, std::memory_order_release);
     }
+    dispatchUiPerformanceControls();
     dispatchUiMidiEvents();
 
     // Render up to each event before applying it. Dispatching the whole buffer's
@@ -998,6 +1008,23 @@ void YouKnow106AudioProcessor::handleNoteOff (juce::MidiKeyboardState*, int,
     enqueueUiMidiEvent (midiNoteNumber, 0.0f, false);
 }
 
+void YouKnow106AudioProcessor::postUiLeverPosition (
+    float normalisedBipolar, float modulation) noexcept
+{
+    const float bend = std::isfinite (normalisedBipolar)
+                     ? std::clamp (normalisedBipolar, -1.0f, 1.0f)
+                     : 0.0f;
+    const float mod = std::isfinite (modulation)
+                    ? std::clamp (modulation, 0.0f, 1.0f)
+                    : 0.0f;
+    const auto pitchWheel = static_cast<std::uint32_t> (juce::jlimit (
+        0, 16383, juce::roundToInt (8192.0f + bend * 8192.0f)));
+    const auto modWheel = static_cast<std::uint32_t> (juce::jlimit (
+        0, 127, juce::roundToInt (mod * 127.0f)));
+    uiLeverMailbox.store (pitchWheel | (modWheel << 14),
+                          std::memory_order_release);
+}
+
 void YouKnow106AudioProcessor::parameterChanged (const juce::String& parameterId,
                                                  float)
 {
@@ -1104,6 +1131,19 @@ void YouKnow106AudioProcessor::dispatchUiMidiEvents() noexcept
             engine.noteOff (static_cast<int> (word * 64u + bit));
         }
     }
+}
+
+void YouKnow106AudioProcessor::dispatchUiPerformanceControls() noexcept
+{
+    const auto packed = uiLeverMailbox.exchange (emptyUiLeverMailbox,
+                                                  std::memory_order_acq_rel);
+    if (packed == emptyUiLeverMailbox)
+        return;
+
+    const auto pitchWheel = static_cast<int> (packed & 0x3fffu);
+    const auto modWheel = static_cast<int> ((packed >> 14) & 0x7fu);
+    engine.setPitchBend ((static_cast<float> (pitchWheel) - 8192.0f) / 8192.0f);
+    engine.setModWheel (static_cast<float> (modWheel) / 127.0f);
 }
 
 void YouKnow106AudioProcessor::randomizeParameters (float amount)
