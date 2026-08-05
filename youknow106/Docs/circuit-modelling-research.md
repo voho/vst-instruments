@@ -225,8 +225,12 @@ open question, it is named in its entry.
 6. **VCF Cutoff Anti-Log Emitter Resistance ($R_e$) Compression**:
    Anti-log transistor parasitic emitter resistance ($R_e \approx 8\,\Omega$) causes an $I_{abc} R_e$ voltage drop at high cutoff control currents ($f_c > 8\text{ kHz}$), softly compressing extreme top-end filter sweeps ($\text{rawHz} / (1 + \text{calibration} \cdot (\text{rawHz} / 120000))$) to prevent digital harshness.
 
-7. **TA75558S IC6 Output Summer Op-Amp Soft Saturation**:
-   Output summer dual op-amp TA75558S operating on $\pm 15\text{V}$ rails ($\approx \pm 13.5\text{V}$ output headroom) enters soft saturation ($\tanh$) when driven hot under unison or dense chorus modes, preserving analogue output warmth without hard digital clipping.
+7. **TA75558S IC6 Output Summer Rail Bound**:
+   The output summer runs on $\pm 15\text{V}$ rails and cannot drive past them. Modelled with the same generalized algebraic clip as the BBD write, $y = x/(1+|x/L|^n)^{1/n}$, at $L = 13.5\text{ V}$ and $n = 8$: numerically linear through the few volts the stage actually carries, bending only as it approaches the rail.
+
+   Unlike the tolerance mechanisms, this is **not** scaled by Unit Character. A freshly calibrated instrument has exactly the same rails, so a "pristine reference" whose output stage could swing to infinity would be the less faithful model. It replaces a $\tanh$ at the same asymptote that was applied *only* when Unit Character was above zero, which had two separate problems. A $\tanh$ has no linear region — its distortion rises as $(V/L)^2$ from the first millivolt, putting roughly 0.3% third harmonic on every sample at an ordinary 2.6 V node swing, where a TA75558S is specified far below that. And because the reference model skipped it, Solo Unison rendered a 15.7 V peak out of an op-amp on 15 V rails; it now stops at 11.7 V. `Tests/YouKnow106CircuitTests.cpp::testOutputSummerIsLinearBelowItsRails` asserts both halves: third harmonic below 0.05% at the nominal coordinate, and no input of any size escaping the rail.
+
+   The *existence* of the bound is anchored by the supply rails. Its exact value remains OQ-05: 13.5 V is the rails less a typical saturation voltage, not a loaded measurement, and the downstream digital boundary still adds no limiter of its own.
 
 8. **TR11/TR12 2SK30A JFET Wet-Mute Switch Modulation & Gate Injection**:
    2SK30A JFET mute switch channel resistance $R_{DS,on}$ non-linear modulation under signal peaks ($1 - 0.015 \tanh(v^2)$) and gate charge injection transient ($Q_{gd}$) during Chorus mode switches produce realistic sub-audio switch pops and subtle wet channel harmonics.

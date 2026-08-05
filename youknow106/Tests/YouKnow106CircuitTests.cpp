@@ -2329,10 +2329,60 @@ void testCorrectionResidualsVanishAtTheEdges()
     expectNear(measured, programmed, 0.5,
                "the rendered ramp is not at the frequency the timer was given");
 }
+void testOutputSummerIsLinearBelowItsRails()
+{
+    // IC6 runs on +/-15 V and the audio it carries is a few volts, so the stage
+    // must be numerically linear there and bend only as it nears the rail. A
+    // tanh cannot do this: its distortion rises as (V/asymptote)^2 from zero,
+    // which is what put roughly 0.3% third harmonic on every sample.
+    const auto thirdHarmonicFraction = [](double peakVolts) {
+        constexpr int points = 4096;
+        const double amplitude =
+            peakVolts / static_cast<double>(YouKnow106Engine::internalVoltsPerUnit);
+        double first = 0.0;
+        double third = 0.0;
+        for (int index = 0; index < points; ++index)
+        {
+            const double angle = 2.0 * 3.14159265358979323846
+                               * static_cast<double>(index) / points;
+            const double output = YouKnow106Engine::outputSummerClip(
+                static_cast<float>(amplitude * std::cos(angle)));
+            first += output * std::cos(angle);
+            third += output * std::cos(3.0 * angle);
+        }
+        return std::abs(third) / std::max(std::abs(first), 1.0e-18);
+    };
+
+    // The declared nominal internal coordinate, and a hot passage above it.
+    expect(thirdHarmonicFraction(2.6) < 5.0e-4,
+           "the output summer distorts at its own nominal level");
+    expect(thirdHarmonicFraction(5.0) < 5.0e-3,
+           "the output summer distorts well below its rails");
+
+    // It must still be a bound: no input may drive the stage past the rail.
+    constexpr float rail = YouKnow106Engine::outputSummerRailVolts
+                         / YouKnow106Engine::internalVoltsPerUnit;
+    for (const float drive : { 10.0f, 100.0f, 1.0e6f })
+    {
+        expect(std::abs(YouKnow106Engine::outputSummerClip(drive)) <= rail,
+               "the output summer swung past its supply rail");
+        expect(std::abs(YouKnow106Engine::outputSummerClip(-drive)) <= rail,
+               "the output summer swung past its negative supply rail");
+    }
+    expect(std::isfinite(YouKnow106Engine::outputSummerClip(
+               std::numeric_limits<float>::max())),
+           "the output summer did not survive an extreme finite input");
+
+    // Odd symmetry: the summer has no offset to add.
+    expectNear(YouKnow106Engine::outputSummerClip(3.0f),
+               -YouKnow106Engine::outputSummerClip(-3.0f), 1.0e-6,
+               "the output summer is not symmetric");
+}
 } // namespace
 
 int main()
 {
+    testOutputSummerIsLinearBelowItsRails();
     testCascadeAgainstReferenceSolve();
     testCascadeOscillationThreshold();
     testCascadeSurvivesAdversarialControl();

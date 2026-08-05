@@ -315,6 +315,22 @@ public:
         internalVoltsPerUnit * minus18DbfsAmplitude;
     [[nodiscard]] static float outputReferenceGain(float referenceRmsVolts) noexcept;
 
+    // IC6 cannot drive its output past its own supply rails. That bound is a
+    // property of the part, not a tolerance, so it applies at every Unit
+    // Character setting including zero.
+    //
+    // The shape is the generalized algebraic clip already used for the BBD
+    // write, rather than a tanh. A tanh has no linear region at all: its
+    // distortion rises as (V/asymptote)^2 from the first millivolt, which put
+    // roughly 0.3% third harmonic on every sample at an ordinary 2.6 V node
+    // swing. A TA75558S on +/-15 V rails delivering a few volts is specified
+    // far below that. A high exponent keeps the stage numerically linear
+    // through the levels it actually runs at and bends it only as it
+    // approaches the rail, which is what the device does.
+    static constexpr float outputSummerRailVolts = 13.5f;
+    static constexpr float outputSummerClipExponent = 8.0f;
+    [[nodiscard]] static float outputSummerClip(float value) noexcept;
+
     // In the supplied hash-matched B-2 image, stored continuous controls are
     // seven-bit bytes: b<<7 in the 14-bit working domain, followed by b<<5 at
     // the physical 12-bit converter after two low bits are discarded.

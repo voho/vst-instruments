@@ -2380,7 +2380,12 @@ void testFixedOutputBoundaryCorpus()
     constexpr std::array baselines {
         Baseline { 0.523852, 1.07344, 1.08763, 22, 74 },
         Baseline { 1.34140, 3.82873, 3.82873, 4242, 16952 },
-        Baseline { 2.99368, 6.04207, 6.06926, 6884, 27546 },
+        // Solo Unison sums six cards into IC6 hard enough that the modelled
+        // node reached 6.042 units -- 15.7 V out of an op-amp on +/-15 V
+        // rails. The stage now stops at its rails, as the part does, so this
+        // row settles at 11.7 V peak. The remaining fixtures are unchanged:
+        // none of them was driving IC6 anywhere near its supply.
+        Baseline { 2.71601, 4.51923, 4.52454, 6728, 26916 },
         Baseline { 0.152757, 0.216624, 0.216624, 0, 0 },
         // The two chorus rows moved when the mode rates were re-split by this
         // instrument's own timing-resistance ratio: mode I now runs 1.8% faster

@@ -455,6 +455,23 @@ float YouKnow106Engine::outputReferenceGain(float referenceRmsVolts) noexcept
     return internalVoltsPerUnit * minus18DbfsAmplitude / referenceRmsVolts;
 }
 
+float YouKnow106Engine::outputSummerClip(float value) noexcept
+{
+    if (!std::isfinite(value))
+        return 0.0f;
+
+    constexpr float railUnits = outputSummerRailVolts / internalVoltsPerUnit;
+    // Evaluated in double for the same reason bbdTransfer is: the fractional
+    // powers stay stable, and an extreme finite float approaches the rail
+    // instead of overflowing an intermediate power and folding back.
+    const double normalised = std::abs(static_cast<double>(value))
+                            / static_cast<double>(railUnits);
+    const double exponent = static_cast<double>(outputSummerClipExponent);
+    const double denominator =
+        std::pow(1.0 + std::pow(normalised, exponent), 1.0 / exponent);
+    return static_cast<float>(static_cast<double>(value) / denominator);
+}
+
 const std::array<YouKnow106Engine::ConverterWrite,
                  YouKnow106Engine::converterWritesPerPass>&
 YouKnow106Engine::converterWriteOrder() noexcept
@@ -3567,16 +3584,13 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                             parameters.enableChorusHyperbolicSweep,
                             parameters.calibration);
 
-            // TA75558S IC6 output summer op-amp soft saturation on +/-15V rails (~13.5V headroom)
-            if (parameters.calibration > 0.0f)
-            {
-                constexpr float opampHeadroom = 5.19f;
-                const float cal = parameters.calibration;
-                const float satL = std::tanh(wetLeft / opampHeadroom) * opampHeadroom;
-                const float satR = std::tanh(wetRight / opampHeadroom) * opampHeadroom;
-                wetLeft = (1.0f - cal) * wetLeft + cal * satL;
-                wetRight = (1.0f - cal) * wetRight + cal * satR;
-            }
+            // TA75558S IC6 cannot swing past its own +/-15 V rails. Unlike the
+            // modelled tolerances, this is not scaled by Unit Character: a
+            // freshly calibrated instrument has exactly the same rails, and a
+            // "pristine reference" whose output stage could swing to infinity
+            // would be the less faithful model, not the more faithful one.
+            wetLeft = outputSummerClip(wetLeft);
+            wetRight = outputSummerClip(wetRight);
 
             // TA75558S IC6 output summer op-amp dynamic slew-rate limiting (SR = 1.7 V/us)
             if (parameters.enableOpAmpSlewLimiting)
