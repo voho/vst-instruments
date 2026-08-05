@@ -57,8 +57,11 @@ evidence standard.
 ## What is still open — 2026-08-05
 
 The implementation and evidence boundary were reconciled again after the
-2026-08-04 fidelity pass. The table below is the current research queue: every
-row names only the part that is still unknown. “Already settled” is a guardrail,
+2026-08-04 fidelity pass and the 2026-08-05 physical circuit modeling pass
+(incorporating thermal warmup $V_t(T)$, VCA CV feedthrough thump, power supply
+rail droop/ripple inter-voice coupling, Thévenin passive mixer node loading, and
+BBD dynamic charge loss with phase-coherent clock spurs). The table below is the
+current research queue: every row names only the part that is still unknown. “Already settled” is a guardrail,
 not work to repeat. None of these gaps can be closed by choosing a nicer-sounding
 constant or by another source-code review; they require raw hardware evidence,
 a defensible circuit analysis with missing device parameters, or comparison

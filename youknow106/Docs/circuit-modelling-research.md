@@ -179,6 +179,25 @@ The authoritative implementation is `Source/DSP/YouKnow106Engine.cpp` and
    -18 dBFS RMS/`Vref_rms` product mapping. That boundary allows floating output
    beyond `+/-1` and does not feed back into circuit drive.
 
+## Deterministic Physical Circuit Behaviors (2026-08-05)
+
+The engine incorporates five deterministic physical circuit behaviors operating without macro ad-hoc randomness:
+
+1. **VCF Thermal Warmup & OTA Transconductance ($V_t(T)$)**:
+   Models thermal dissipation warming voice cards from $25^\circ\text{C}$ to $40^\circ\text{C}$ ($T(t) = 25 + 15(1 - e^{-t/900})$). Thermal voltage $V_t(T) = \frac{k T}{q}$ scales transconductance headroom $2 V_t / \text{attenuation}$, naturally softening resonance and broadening linear differential headroom over a 15-minute warmup curve.
+
+2. **VCA Control Voltage Feedthrough (Envelope "Thump")**:
+   BA662 / uPC1252H2 differential pair transistor $V_{be}$ mismatch introduces additive control voltage leakage ($k_{cv\_leak} \cdot V_{vcaControl}$) into the audio node. Fast envelope attacks produce an authentic physical low-frequency "thump" on percussive transients.
+
+3. **Power Supply Rail Droop & Inter-Voice Coupling**:
+   Active polyphonic voice current draw loads the $\pm 15\text{V}$ linear voltage regulators, inducing DC rail droop ($\Delta V_{rail} \propto \sum I_{voice}$) and $100\text{ Hz}$ mains ripple. Rail droop modulates DCO tuning and VCF cutoff reference across all active cards, creating organic inter-voice glue under heavy polyphonic loading.
+
+4. **Thévenin Passive Voice Mixer Loading**:
+   Waveform summing (Saw 100k, Pulse 100k, Sub 100k, Noise 100k) into the IR3109 input ($68\text{ k}\Omega$) is modeled as a Thévenin admittance node ($G_{total} = G_{in} + \sum G_{leg}$). Engaging multiple waveform switches increases node admittance, loading down signal amplitudes realistically.
+
+5. **BBD Dynamic Charge Transfer Loss & Clock Feedthrough**:
+   MN3009 bucket-brigade stage-to-stage charge transfer loss ($\alpha_{loss}$) scales dynamically with BBD clock frequency $f_{clk}$, and phase-coherent clock feedthrough ($f_{clk}$) injects subtle heterodyne shimmer into the wet chorus path.
+
 ## What remains open
 
 The canonical research queue is
