@@ -3514,8 +3514,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // rail is inserted here; the main volume control follows it.
             float wetLeft = levelled;
             float wetRight = levelled;
-            const float chorusNoiseScaled = parameters.chorusNoise * parameters.calibration;
-            chorus_.process(levelled, parameters.chorus, chorusNoiseScaled,
+            chorus_.process(levelled, parameters.chorus, parameters.chorusNoise,
                             wetLeft, wetRight, parameters.enableBbdCapacitanceNonlinearity,
                             parameters.enableChorusThiranAndClockBleed);
 
