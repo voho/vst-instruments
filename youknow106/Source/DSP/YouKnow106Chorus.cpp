@@ -206,9 +206,10 @@ float Chorus::bbdTransfer(float input) noexcept
     return static_cast<float>(static_cast<double>(input) / denominator);
 }
 
-float Chorus::transferLossStep(float& state, float input) noexcept
+float Chorus::transferLossStep(float& state, float input, float clockHz) noexcept
 {
-    state += transferSmear * (input - state);
+    const float dynamicSmear = std::clamp(transferSmear * (1.0f + (clockHz - 10000.0f) * 1.5e-6f), 0.1f, 0.99f);
+    state += dynamicSmear * (input - state);
     return state;
 }
 
@@ -393,7 +394,7 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         const float emerging = cells[static_cast<std::size_t>(writeIndex)];
         cells[static_cast<std::size_t>(writeIndex)] = bounded;
 
-        Chorus::transferLossStep(transferState, emerging);
+        Chorus::transferLossStep(transferState, emerging, clockHz);
         noiseState = nextNoiseState(noiseState);
         held = transferState
              + noiseFromState(noiseState) * independentLineRandomAmplitude
