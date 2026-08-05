@@ -335,6 +335,22 @@ Take renderChorusThiranTake(bool enableChorusThiranAndClockBleed)
     return take;
 }
 
+// 9. Chorus MN3101 Current-Controlled Hyperbolic Delay Sweep: Chorus pad
+Take renderChorusHyperbolicSweepTake(bool enableChorusHyperbolicSweep)
+{
+    auto p = defaultPanel();
+    p.calibration = enableChorusHyperbolicSweep ? 100.0f : 0.0f;
+    p.enableChorusHyperbolicSweep = enableChorusHyperbolicSweep;
+    p.sawEnabled = true;
+    p.subLevel = 0.6f;
+    p.chorus = ChorusMode::Two;
+    p.cutoff = 0.60f;
+    Take take(p);
+    take.rest(0.05);
+    take.chord({ 48, 55, 60, 64, 67 }, 0.95f, 2.0, 0.5);
+    return take;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -455,6 +471,20 @@ int main(int argc, char** argv)
         writeWav(outputDir / "08-chorus-thiran-clock-bleed-after.wav", after.left(), after.right());
         writeWav(outputDir / "08-chorus-thiran-clock-bleed-diff.wav", diff.left(), diff.right());
         std::printf("Rendered 08-chorus-thiran-clock-bleed (before, after, diff)\n");
+    }
+
+    // Feature 9: Chorus MN3101 Current-Controlled Hyperbolic Delay Sweep
+    {
+        auto before = renderChorusHyperbolicSweepTake(false);
+        auto after = renderChorusHyperbolicSweepTake(true);
+        auto diff = after.diffWith(before);
+        before.normalise();
+        after.normalise();
+        diff.normalise();
+        writeWav(outputDir / "09-chorus-hyperbolic-sweep-before.wav", before.left(), before.right());
+        writeWav(outputDir / "09-chorus-hyperbolic-sweep-after.wav", after.left(), after.right());
+        writeWav(outputDir / "09-chorus-hyperbolic-sweep-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 09-chorus-hyperbolic-sweep (before, after, diff)\n");
     }
 
     std::printf("All SOTA comparison WAVs & diffs successfully rendered!\n");

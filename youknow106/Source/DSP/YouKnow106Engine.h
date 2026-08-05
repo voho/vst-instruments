@@ -128,6 +128,10 @@ struct EngineParameters
     bool enableVcfEarlyEffect { false };
     bool enableSpatialThermalGradient { false };
     bool enableChorusThiranAndClockBleed { false };
+    bool enableChorusHyperbolicSweep { true };
+    bool enableDcoRampCurvature { true };
+    bool enableElectrolyticC14Nonlinearity { true };
+    bool enableDacGlitchImpulse { true };
 };
 
 class YouKnow106Engine

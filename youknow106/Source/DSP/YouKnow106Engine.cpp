@@ -3516,7 +3516,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             float wetRight = levelled;
             chorus_.process(levelled, parameters.chorus, parameters.chorusNoise,
                             wetLeft, wetRight, parameters.enableBbdCapacitanceNonlinearity,
-                            parameters.enableChorusThiranAndClockBleed);
+                            parameters.enableChorusThiranAndClockBleed,
+                            parameters.enableChorusHyperbolicSweep,
+                            parameters.calibration);
 
             // TA75558S IC6 output summer op-amp soft saturation on +/-15V rails (~13.5V headroom)
             if (parameters.calibration > 0.0f)

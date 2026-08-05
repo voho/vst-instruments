@@ -489,7 +489,9 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float& left, float& right,
                      bool enableCapacitanceNonlinearity,
-                     bool enableThiranAndClockBleed) noexcept
+                     bool enableThiranAndClockBleed,
+                     bool enableHyperbolicSweep,
+                     float calibration) noexcept
 {
     const auto target = settingsFor(mode);
 
@@ -526,8 +528,27 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         ? (1.0f - 0.015f * (normInput / (1.0f + normInput)))
         : 1.0f;
 
-    const float delayA = std::max((centreDelay_ + sweep_ * modulation) * dynamicCapMod, 1.0e-4f);
-    const float delayB = std::max((centreDelay_ - sweep_ * modulation) * dynamicCapMod, 1.0e-4f);
+    // MN3101 current-controlled oscillator delay sweep law: T_delay = T_centre / (1 - (sweep / T_centre) * modulation).
+    // Driven by Tr22 control current (f_clk \propto I_ctrl), creating physical hyperbolic delay sweep.
+    float nominalDelayA = centreDelay_ + sweep_ * modulation;
+    float nominalDelayB = centreDelay_ - sweep_ * modulation;
+
+    if (enableHyperbolicSweep && calibration > 0.0f && centreDelay_ > 1.0e-5f)
+    {
+        const float normSweep = std::clamp(sweep_ / centreDelay_, 0.01f, 0.95f);
+        const float hypModA = 1.0f / (1.0f - std::clamp(normSweep * modulation, -0.95f, 0.95f));
+        const float hypModB = 1.0f / (1.0f + std::clamp(normSweep * modulation, -0.95f, 0.95f));
+        const float hypDelayA = centreDelay_ * hypModA;
+        const float hypDelayB = centreDelay_ * hypModB;
+        const float diffA = hypDelayA - nominalDelayA;
+        const float diffB = hypDelayB - nominalDelayB;
+
+        nominalDelayA += diffA * std::clamp(calibration, 0.0f, 100.0f);
+        nominalDelayB += diffB * std::clamp(calibration, 0.0f, 100.0f);
+    }
+
+    const float delayA = std::max(nominalDelayA * dynamicCapMod, 1.0e-4f);
+    const float delayB = std::max(nominalDelayB * dynamicCapMod, 1.0e-4f);
     const float clockA = std::clamp(clockForDelaySeconds(delayA),
                                     minimumClockHz, maximumClockHz);
     const float clockB = std::clamp(clockForDelaySeconds(delayB),
