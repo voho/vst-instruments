@@ -3075,6 +3075,9 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // No high-pass here. The schematic puts it on the jack board, downstream of
     // the summing amplifier, so it is one shared stage after all six voices
     // rather than a leg inside each -- see the mix.
+    const float filterInput = mixed * filterInputAttenuation
+                            * voice.inputCompensation
+                            + microscopicNoise * noiseRateScale_;
     // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C
     const float tempC = 25.0f + 15.0f * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
     const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
