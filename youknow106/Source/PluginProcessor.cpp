@@ -994,6 +994,19 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     displayVoiceMask.store (engine.getDisplayVoiceMask(), std::memory_order_relaxed);
     displayEnvelope.store (engine.getDisplayEnvelope(), std::memory_order_relaxed);
     displayLfo.store (engine.getDisplayLfo(), std::memory_order_relaxed);
+    displayTemperature.store (engine.getDisplayTemperatureC(), std::memory_order_relaxed);
+    displayRailDroop.store (engine.getDisplayRailDroopVolts(), std::memory_order_relaxed);
+
+    // Push output audio into oscilloscope ring buffer
+    const float* leftOut = buffer.getReadPointer (0);
+    const float* rightOut = buffer.getNumChannels() > 1 ? buffer.getReadPointer (1) : leftOut;
+    std::size_t writeIdx = scopeWriteIndex.load (std::memory_order_relaxed);
+    for (int i = 0; i < numSamples; ++i)
+    {
+        scopeBuffer[writeIdx] = 0.5f * (leftOut[i] + rightOut[i]);
+        writeIdx = (writeIdx + 1) % scopeBufferSize;
+    }
+    scopeWriteIndex.store (writeIdx, std::memory_order_relaxed);
 }
 
 void YouKnow106AudioProcessor::handleNoteOn (juce::MidiKeyboardState*, int,

@@ -155,6 +155,14 @@ public:
     [[nodiscard]] float getDisplayEnvelope() const noexcept { return displayEnvelope_; }
     [[nodiscard]] float getDisplayLfo() const noexcept { return displayLfo_; }
     [[nodiscard]] int getDisplayVoiceMask() const noexcept { return displayVoiceMask_; }
+    [[nodiscard]] float getDisplayTemperatureC() const noexcept
+    {
+        return 25.0f + 15.0f * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
+    }
+    [[nodiscard]] float getDisplayRailDroopVolts() const noexcept
+    {
+        return powerSupplyDroop_;
+    }
 
     // ------------------------------------------------------------------
     // Modelled hardware laws.

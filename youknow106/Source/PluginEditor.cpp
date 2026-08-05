@@ -562,13 +562,10 @@ void YouKnow106Display::refresh (const YouKnow106AudioProcessor& source)
     const double rate = source.getCurrentSampleRateForDisplay();
     const int factor = source.getOversamplingFactorForDisplay();
     const bool isReady = source.isEngineReady();
+    const float temp = source.getTemperatureForDisplay();
+    const float droop = source.getRailDroopForDisplay();
 
-    if (mask == voiceMask && count == voices && limit == voiceLimit
-        && std::abs (env - envelope) < 0.004f
-        && std::abs (modulation - lfo) < 0.004f
-        && std::abs (rate - sampleRate) < 1.0e-6
-        && factor == oversampling && isReady == ready)
-        return;
+    source.getOscilloscopeBuffer (scopeBuffer);
 
     voiceMask = mask;
     voices = count;
@@ -578,6 +575,8 @@ void YouKnow106Display::refresh (const YouKnow106AudioProcessor& source)
     sampleRate = rate;
     oversampling = factor;
     ready = isReady;
+    temperature = temp;
+    railDroop = droop;
     repaint();
 }
 
@@ -590,16 +589,20 @@ void YouKnow106Display::paint (juce::Graphics& g)
     g.drawRoundedRectangle (bounds, 3.0f, 1.0f);
 
     auto area = bounds.reduced (8.0f, 6.0f);
+
+    // Split display into Left Section (Voices, LFO, ENV) and Right Section (Oscilloscope & Physical Telemetry)
+    const float rightWidth = area.getWidth() * 0.44f;
+    auto rightBox = area.removeFromRight (rightWidth);
+    area.removeFromRight (8.0f);
+
+    // --- Left Section: Voice Lamps & Meters ---
     const float rowHeight = area.getHeight() / 2.0f;
 
-    // Voice indicators: one lamp per available voice, so the row follows the
-    // VOICES setting instead of always showing the default six.
+    // Voice indicators
     auto voiceRow = area.removeFromTop (rowHeight);
-    const auto readout = voiceRow.removeFromRight (voiceRow.getWidth() * 0.44f);
+    const auto readout = voiceRow.removeFromRight (voiceRow.getWidth() * 0.42f);
     const int lamps =
         juce::jlimit (1, youknow106::YouKnow106Engine::maxVoices, voiceLimit);
-    // Fixed pitch across the available width, so sixteen lamps shrink to fit
-    // rather than running off the end of the display.
     const float pitch = voiceRow.getWidth() / static_cast<float> (lamps);
     const float lampSize = juce::jmin (9.0f, voiceRow.getHeight() * 0.7f, pitch * 0.62f);
     for (int voice = 0; voice < lamps; ++voice)
@@ -619,7 +622,7 @@ void YouKnow106Display::paint (juce::Graphics& g)
     }
 
     g.setColour (fromPalette (panel::colour::textDim));
-    g.setFont (panelFont (11.0f));
+    g.setFont (panelFont (10.0f));
     g.drawText (ready ? juce::String (voices) + " / " + juce::String (lamps) + " VOICES"
                       : juce::String ("STANDBY"),
                 readout.toNearestInt(), juce::Justification::centredRight);
@@ -628,9 +631,9 @@ void YouKnow106Display::paint (juce::Graphics& g)
     const auto meter = [&g] (juce::Rectangle<float> row, float value, bool bipolar,
                              std::uint32_t tint, const char* caption)
     {
-        auto labelArea = row.removeFromLeft (34.0f);
+        auto labelArea = row.removeFromLeft (28.0f);
         g.setColour (fromPalette (panel::colour::textDim));
-        g.setFont (panelFont (10.0f, true));
+        g.setFont (panelFont (9.5f, true));
         g.drawText (caption, labelArea.toNearestInt(), juce::Justification::centredLeft);
 
         const auto track = row.reduced (0.0f, row.getHeight() * 0.33f);
@@ -658,6 +661,70 @@ void YouKnow106Display::paint (juce::Graphics& g)
     const float half = area.getHeight() / 2.0f;
     meter (area.removeFromTop (half), lfo, true, panel::colour::magenta, "LFO");
     meter (area, envelope, false, panel::colour::led, "ENV");
+
+    // --- Right Section: Real-time Oscilloscope & Physical Telemetry ---
+    g.setColour (fromPalette (panel::colour::faceplateHigh));
+    g.fillRoundedRectangle (rightBox, 2.5f);
+    g.setColour (fromPalette (panel::colour::cyan).withAlpha (0.30f));
+    g.drawRoundedRectangle (rightBox, 2.5f, 1.0f);
+
+    auto scopeInner = rightBox.reduced (3.0f, 2.0f);
+
+    // Telemetry Line (Unit Warmup Temperature & PSU Rail Voltage)
+    auto telemetryLine = scopeInner.removeFromTop (11.0f);
+    g.setFont (panelFont (8.5f, true));
+    g.setColour (fromPalette (panel::colour::cyan).withAlpha (0.90f));
+    const juce::String tempStr = juce::String (temperature, 1) + "°C";
+    g.drawText (tempStr, telemetryLine.toNearestInt(), juce::Justification::left);
+
+    g.setColour (fromPalette (panel::colour::textDim));
+    const float railV = 15.0f - railDroop;
+    const juce::String railStr = juce::String (railV, 2) + "V RAIL";
+    g.drawText (railStr, telemetryLine.toNearestInt(), juce::Justification::right);
+
+    // Oscilloscope CRT Screen
+    const auto screen = scopeInner;
+    g.setColour (juce::Colour (0xff070e14));
+    g.fillRoundedRectangle (screen, 2.0f);
+
+    // Scope grid
+    g.setColour (fromPalette (panel::colour::cyan).withAlpha (0.12f));
+    g.drawHorizontalLine (juce::roundToInt (screen.getCentreY()), screen.getX(), screen.getRight());
+    g.drawVerticalLine (juce::roundToInt (screen.getCentreX()), screen.getY(), screen.getBottom());
+
+    // Waveform Trace
+    juce::Path wavePath;
+    constexpr std::size_t numScopePoints = 128;
+    const float stepX = screen.getWidth() / static_cast<float> (numScopePoints - 1);
+    const float centreY = screen.getCentreY();
+    const float halfHeight = screen.getHeight() * 0.44f;
+
+    std::size_t triggerIdx = 0;
+    for (std::size_t i = 0; i < 64; ++i)
+    {
+        if (scopeBuffer[i] <= 0.0f && scopeBuffer[i + 1] > 0.0f)
+        {
+            triggerIdx = i;
+            break;
+        }
+    }
+
+    for (std::size_t i = 0; i < numScopePoints; ++i)
+    {
+        const float sampleVal = scopeBuffer[(triggerIdx + i) % 256];
+        const float px = screen.getX() + static_cast<float> (i) * stepX;
+        const float py = centreY - juce::jlimit (-1.0f, 1.0f, sampleVal) * halfHeight;
+        if (i == 0)
+            wavePath.startNewSubPath (px, py);
+        else
+            wavePath.lineTo (px, py);
+    }
+
+    // Oscilloscope neon glow stroke
+    g.setColour (fromPalette (panel::colour::cyan).withAlpha (0.35f));
+    g.strokePath (wavePath, juce::PathStrokeType (2.2f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
+    g.setColour (fromPalette (panel::colour::cyan));
+    g.strokePath (wavePath, juce::PathStrokeType (1.1f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
 }
 
 // ---------------------------------------------------------------------------

@@ -161,6 +161,23 @@ public:
     {
         return engineReady.load (std::memory_order_acquire);
     }
+    float getTemperatureForDisplay() const noexcept
+    {
+        return displayTemperature.load (std::memory_order_relaxed);
+    }
+    float getRailDroopForDisplay() const noexcept
+    {
+        return displayRailDroop.load (std::memory_order_relaxed);
+    }
+    void getOscilloscopeBuffer (std::array<float, 256>& destination) const noexcept
+    {
+        const std::size_t currentWrite = scopeWriteIndex.load (std::memory_order_relaxed);
+        for (std::size_t i = 0; i < 256; ++i)
+        {
+            const std::size_t srcIdx = (currentWrite + i) % 256;
+            destination[i] = scopeBuffer[srcIdx];
+        }
+    }
 
     juce::AudioProcessorValueTreeState parameters;
     juce::MidiKeyboardState keyboardState;
@@ -454,6 +471,12 @@ private:
     std::atomic<float> displayLfo { 0.0f };
     std::atomic<double> displaySampleRate { 0.0 };
     std::atomic<int> displayOversamplingFactor { 1 };
+    std::atomic<float> displayTemperature { 25.0f };
+    std::atomic<float> displayRailDroop { 0.0f };
+
+    static constexpr std::size_t scopeBufferSize = 256;
+    std::array<float, scopeBufferSize> scopeBuffer {};
+    std::atomic<std::size_t> scopeWriteIndex { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (YouKnow106AudioProcessor)
 };

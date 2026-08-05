@@ -62,6 +62,9 @@ private:
     double sampleRate = 0.0;
     int oversampling = 1;
     bool ready = false;
+    float temperature = 25.0f;
+    float railDroop = 0.0f;
+    std::array<float, 256> scopeBuffer {};
 };
 
 // JUCE's MIDI keyboard is interactive but does not implement TooltipClient.
