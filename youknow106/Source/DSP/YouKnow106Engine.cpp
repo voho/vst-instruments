@@ -3061,7 +3061,10 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     if (!voice.active)
         return 0.0f;
 
-    const float output = filtered * voice.vca * voltsToSample;
+    // Physical BA662 / uPC1252H2 control voltage feedthrough: differential pair
+    // transistor V_be mismatch causes small additive CV leakage during fast envelope transients (thump).
+    const float vcaCvFeedthrough = (card.vcaOffset * 0.002f + 0.0008f) * voice.vcaControl * parameters.calibration;
+    const float output = (filtered + vcaCvFeedthrough) * voice.vca * voltsToSample;
 
     voice.energy = voice.energy * 0.999f + std::abs(output) * 0.001f;
     return std::isfinite(output) ? output : 0.0f;
