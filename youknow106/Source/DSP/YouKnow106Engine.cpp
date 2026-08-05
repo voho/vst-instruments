@@ -2906,8 +2906,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     auto& dco = voice.dco;
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
 
-    const double increment = dco.periodSamples > 1.0e-9
-                           ? 1.0 / dco.periodSamples : 0.0;
+    const float thermalPitchDetune = parameters.enableSpatialThermalGradient
+        ? (1.0f + 0.0015f * parameters.calibration * (static_cast<float>(voice.cardIndex) - 2.5f))
+        : 1.0f;
+    const double increment = (dco.periodSamples > 1.0e-9
+                           ? 1.0 / dco.periodSamples : 0.0) * thermalPitchDetune;
     const double reset = static_cast<double>(
         resetFraction(dco.periodSamples * inverseOversampledRate_));
     const double rise = std::max(1.0 - reset, 1.0e-4);
