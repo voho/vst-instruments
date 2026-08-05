@@ -3440,6 +3440,24 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 wetRight = (1.0f - cal) * wetRight + cal * satR;
             }
 
+            // TA75558S IC6 output summer op-amp dynamic slew-rate limiting (SR = 1.7 V/us)
+            if (parameters.enableOpAmpSlewLimiting)
+            {
+                const float maxStep = static_cast<float>(653846.15 / oversampledRate_);
+                const float deltaL = wetLeft - outputSlewStateLeft_;
+                outputSlewStateLeft_ += std::clamp(deltaL, -maxStep, maxStep);
+                wetLeft = outputSlewStateLeft_;
+
+                const float deltaR = wetRight - outputSlewStateRight_;
+                outputSlewStateRight_ += std::clamp(deltaR, -maxStep, maxStep);
+                wetRight = outputSlewStateRight_;
+            }
+            else
+            {
+                outputSlewStateLeft_ = wetLeft;
+                outputSlewStateRight_ = wetRight;
+            }
+
             stageLeft[static_cast<std::size_t>(step)] = wetLeft;
             stageRight[static_cast<std::size_t>(step)] = wetRight;
         }

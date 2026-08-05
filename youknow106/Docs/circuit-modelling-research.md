@@ -216,6 +216,9 @@ The engine incorporates five deterministic physical circuit behaviors operating 
 11. **IR3109 VCF Stage-Space Transistor Input Offset Voltages ($V_{os}$)**:
     Differential pair BJT transistor input offset voltages ($V_{os} \approx 1.5\,\text{mV}$) across the 4 IR3109 transconductor stages break 4-pole differential symmetry, creating stage-dependent dynamic DC shifts and asymmetric soft distortion under high-resonance filter sweeps.
 
+12. **TA75558S IC6 Output Summer Op-Amp Dynamic Slew-Rate Limiting**:
+    Dual op-amp TA75558S finite maximum slew rate ($\text{SR} \approx 1.7\,\text{V}/\mu\text{s}$) imposes a dynamic rate-of-change limit ($\Delta V_{\text{max}} = \text{SR} \cdot \Delta t$) on output signals, naturally rounding off extreme high-frequency transients and resonant spikes to eliminate digital harshness.
+
 ## What remains open
 
 The canonical research queue is

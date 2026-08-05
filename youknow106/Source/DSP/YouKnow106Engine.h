@@ -948,6 +948,9 @@ private:
     float modWheel_ { 0.0f };
     bool sustainPedalDown_ { false };
 
+    float outputSlewStateLeft_ { 0.0f };
+    float outputSlewStateRight_ { 0.0f };
+
     float displayEnvelope_ { 0.0f };
     float displayLfo_ { 0.0f };
     int displayVoiceMask_ { 0 };

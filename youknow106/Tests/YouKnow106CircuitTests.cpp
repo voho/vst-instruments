@@ -2339,6 +2339,30 @@ int main()
             std::cerr << "FAIL: OtaCascade stage offsets did not produce asymmetric response\n";
             ++failures;
         }
+
+        // Test Op-Amp Slew-Rate Limiting
+        {
+            EngineParameters params;
+            params.enableOpAmpSlewLimiting = true;
+            YouKnow106Engine engine;
+            engine.prepare(44100.0, 256, true);
+            engine.setParameters(params);
+
+            std::vector<float> left(256, 0.0f);
+            std::vector<float> right(256, 0.0f);
+            engine.noteOn(72, 1.0f);
+            engine.process(left.data(), right.data(), 256);
+
+            for (int i = 1; i < 256; ++i)
+            {
+                if (!std::isfinite(left[i]) || !std::isfinite(right[i]))
+                {
+                    std::cerr << "FAIL: Op-Amp slew limiting output not finite\n";
+                    ++failures;
+                    break;
+                }
+            }
+        }
     }
 
     if (failures != 0)
