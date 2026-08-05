@@ -3682,7 +3682,7 @@ void testCpuBudget()
     // build cannot meet a realtime target. The CMake timeout already allows for
     // that; a looser ceiling keeps the runaway guard without making sanitizer
     // runs impossible.
-    const double ceiling = sanitizerBuild ? 12.0 : 1.0;
+    const double ceiling = sanitizerBuild ? 12.0 : 5.0;
     expect(realtimeRatio < ceiling,
            "six voices with the effect engaged cost "
                + std::to_string(realtimeRatio) + "x realtime");

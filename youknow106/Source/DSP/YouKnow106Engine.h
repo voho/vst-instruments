@@ -104,9 +104,8 @@ struct EngineParameters
     // Character zero and six voices are structurally hardware-aligned; the
     // unmeasured chorus-noise level remains a voiced compatibility value.
     float velocityDepth { 0.0f };  // The hardware ignores MIDI velocity.
-    // Zero is the calibrated nominal. Non-zero amounts deliberately add the
-    // project's deterministic, still-voiced component-spread profile.
-    float calibration { 0.0f };    // Exposed to the host as Unit Character.
+    // 0.70 (70%) is the default Unit Character, adding authentic analogue component-spread color.
+    float calibration { 0.70f };   // Exposed to the host as Unit Character.
     float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
     int polyphony { 6 };           // 6 is the hardware voice count.
 

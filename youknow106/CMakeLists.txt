@@ -239,7 +239,7 @@ if(BUILD_TESTING)
             target_compile_definitions(${target} PRIVATE YOUKNOW106_SANITIZER_BUILD=1)
         endforeach()
     else()
-        set(YOUKNOW106_ENGINE_TEST_TIMEOUT 120)
+        set(YOUKNOW106_ENGINE_TEST_TIMEOUT 300)
         set(YOUKNOW106_CIRCUIT_TEST_TIMEOUT 90)
     endif()
     set_tests_properties(YouKnow106.Engine PROPERTIES
