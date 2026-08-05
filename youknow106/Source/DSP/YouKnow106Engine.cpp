@@ -2752,6 +2752,26 @@ void YouKnow106Engine::performConverterWrite(
                 voice.vcaControlTarget += injection;
         }
     }
+
+    if (parameters.enableDacGlitchImpulse && parameters.calibration > 0.0f && validPhysicalVoice()
+        && std::abs(currentDacFraction - previousDacFraction_) > 1.0e-5f)
+    {
+        const int prevCode = static_cast<int>(std::lround(previousDacFraction_ * 4095.0f));
+        const int currCode = static_cast<int>(std::lround(currentDacFraction * 4095.0f));
+        const int codeDiff = currCode - prevCode;
+        const int bitFlip = prevCode ^ currCode;
+        if ((bitFlip & 0x800) != 0 || (bitFlip & 0x400) != 0)
+        {
+            const float sgn = codeDiff > 0 ? 1.0f : -1.0f;
+            const float glitch = sgn * 0.008f * std::clamp(parameters.calibration, 0.0f, 100.0f);
+            auto& voice = voices_[static_cast<std::size_t>(write.voice)];
+            if (write.destination == ConverterDestination::Vcf)
+                voice.cutoffCountsTarget += glitch * vcfCountsPerOctave;
+            else if (write.destination == ConverterDestination::VoiceVca)
+                voice.vcaControlTarget += glitch;
+        }
+    }
+
     previousDacFraction_ = currentDacFraction;
 
     switch (write.destination)

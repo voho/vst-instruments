@@ -383,6 +383,23 @@ Take renderElectrolyticC14Take(bool enableElectrolyticC14Nonlinearity)
     return take;
 }
 
+// 12. R-2R DAC Major Carrier Glitch Impulse: LFO filter sweep crossing MSB boundaries
+Take renderDacGlitchImpulseTake(bool enableDacGlitchImpulse)
+{
+    auto p = defaultPanel();
+    p.calibration = enableDacGlitchImpulse ? 100.0f : 0.0f;
+    p.enableDacGlitchImpulse = enableDacGlitchImpulse;
+    p.sawEnabled = true;
+    p.cutoff = 0.50f;
+    p.resonance = 0.50f;
+    p.vcfLfoDepth = 0.60f;
+    p.lfoRate = 0.70f;
+    Take take(p);
+    take.rest(0.05);
+    take.hit(48, 0.95f, 2.0, 0.5);
+    return take;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -545,6 +562,20 @@ int main(int argc, char** argv)
         writeWav(outputDir / "11-electrolytic-c14-nonlinearity-after.wav", after.left(), after.right());
         writeWav(outputDir / "11-electrolytic-c14-nonlinearity-diff.wav", diff.left(), diff.right());
         std::printf("Rendered 11-electrolytic-c14-nonlinearity (before, after, diff)\n");
+    }
+
+    // Feature 12: R-2R DAC Major Carrier Glitch Impulse
+    {
+        auto before = renderDacGlitchImpulseTake(false);
+        auto after = renderDacGlitchImpulseTake(true);
+        auto diff = after.diffWith(before);
+        before.normalise();
+        after.normalise();
+        diff.normalise();
+        writeWav(outputDir / "12-dac-glitch-impulse-before.wav", before.left(), before.right());
+        writeWav(outputDir / "12-dac-glitch-impulse-after.wav", after.left(), after.right());
+        writeWav(outputDir / "12-dac-glitch-impulse-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 12-dac-glitch-impulse (before, after, diff)\n");
     }
 
     std::printf("All SOTA comparison WAVs & diffs successfully rendered!\n");
