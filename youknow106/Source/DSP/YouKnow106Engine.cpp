@@ -1250,7 +1250,8 @@ void YouKnow106Engine::OtaCascade::retime(float previousG,
 // profile, not a measured code-to-loop transfer.
 float YouKnow106Engine::OtaCascade::process(float input, float g,
                                             float feedback,
-                                            float headroom) noexcept
+                                            float headroom,
+                                            bool enableEarlyEffect) noexcept
 {
     const float inverseHeadroom = 1.0f / std::max(headroom, 1.0e-5f);
     constexpr float feedbackHeadroom =
@@ -1271,15 +1272,17 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
         float previous = input - k * feedbackHeadroom * feedbackTanh;
         for (int n = 0; n < 4; ++n)
         {
+            const float earlyMod = enableEarlyEffect ? (1.0f + 0.005f * (voltage[static_cast<std::size_t>(n)] * inverseHeadroom)) : 1.0f;
+            const float stageG = gLimited * earlyMod;
             const float x = (previous - voltage[static_cast<std::size_t>(n)]
                              + offsetVoltage[static_cast<std::size_t>(n)]) * inverseHeadroom;
             const float t = std::tanh(x);
             const float sech2 = 1.0f - t * t;
             residual[static_cast<std::size_t>(n)] =
                 voltage[static_cast<std::size_t>(n)]
-                - state[static_cast<std::size_t>(n)] - gLimited * headroom * t;
-            selfDerivative[static_cast<std::size_t>(n)] = 1.0f + gLimited * sech2;
-            previousDerivative[static_cast<std::size_t>(n)] = -gLimited * sech2;
+                - state[static_cast<std::size_t>(n)] - stageG * headroom * t;
+            selfDerivative[static_cast<std::size_t>(n)] = 1.0f + stageG * sech2;
+            previousDerivative[static_cast<std::size_t>(n)] = -stageG * sech2;
             previous = voltage[static_cast<std::size_t>(n)];
         }
 
@@ -3173,7 +3176,8 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
     const float dynamicHeadroom = 2.0f * dynamicThermalVoltage / stageAttenuation;
     const float filtered = voice.filter.process(filterInput, voice.filterG,
-                                                voice.feedback, dynamicHeadroom);
+                                                voice.feedback, dynamicHeadroom,
+                                                parameters.enableVcfEarlyEffect);
 
     if (!voice.active)
         return 0.0f;

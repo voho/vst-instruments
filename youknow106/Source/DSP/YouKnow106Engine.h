@@ -124,10 +124,10 @@ struct EngineParameters
     bool enableOpAmpSlewLimiting { true };
     bool enableBbdCapacitanceNonlinearity { true };
     bool enableMuxCrosstalk { true };
-    bool enableExponentialReset { true };
-    bool enableVcfEarlyEffect { true };
-    bool enableSpatialThermalGradient { true };
-    bool enableChorusThiranAndClockBleed { true };
+    bool enableExponentialReset { false };
+    bool enableVcfEarlyEffect { false };
+    bool enableSpatialThermalGradient { false };
+    bool enableChorusThiranAndClockBleed { false };
 };
 
 class YouKnow106Engine
@@ -611,7 +611,8 @@ private:
         // timestep while retaining every physical capacitor voltage.
         void retime(float previousG, float nextG) noexcept;
         float process(float input, float g, float feedback,
-                      float headroom = otaHeadroomVolts) noexcept;
+                      float headroom = otaHeadroomVolts,
+                      bool enableEarlyEffect = true) noexcept;
     };
 
     struct HighPass

@@ -265,6 +265,21 @@ Take renderExponentialResetTake(bool enableExponentialReset)
     return take;
 }
 
+// 6. IR3109 VCF BJT Early Effect: Resonant filter sweep
+Take renderVcfEarlyEffectTake(bool enableVcfEarlyEffect)
+{
+    auto p = defaultPanel();
+    p.enableVcfEarlyEffect = enableVcfEarlyEffect;
+    p.cutoff = 0.40f;
+    p.resonance = 0.70f;
+    p.envDepth = 0.50f;
+    p.decay = 0.50f;
+    Take take(p);
+    take.rest(0.05);
+    take.hit(48, 0.95f, 1.2, 0.4);
+    return take;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -328,6 +343,17 @@ int main(int argc, char** argv)
         writeWav(outputDir / "05-exponential-dco-reset-before.wav", before.left(), before.right());
         writeWav(outputDir / "05-exponential-dco-reset-after.wav", after.left(), after.right());
         std::printf("Rendered 05-exponential-dco-reset (before & after)\n");
+    }
+
+    // Feature 6: IR3109 VCF BJT Early Effect
+    {
+        auto before = renderVcfEarlyEffectTake(false);
+        auto after = renderVcfEarlyEffectTake(true);
+        before.normalise();
+        after.normalise();
+        writeWav(outputDir / "06-vcf-early-effect-before.wav", before.left(), before.right());
+        writeWav(outputDir / "06-vcf-early-effect-after.wav", after.left(), after.right());
+        std::printf("Rendered 06-vcf-early-effect (before & after)\n");
     }
 
     std::printf("All SOTA comparison WAVs successfully rendered!\n");
