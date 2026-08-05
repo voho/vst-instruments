@@ -88,7 +88,8 @@ public:
     // and 0.0 removes all of them. A calibrated hardware noise reference has
     // not yet been located, so the optional common/hum/spur amplitudes are zero.
     void process(float input, ChorusMode mode, float noiseScale,
-                 float& left, float& right) noexcept;
+                 float& left, float& right,
+                 bool enableCapacitanceNonlinearity = true) noexcept;
 
     // The nominal (unmodulated) delay in seconds for a clock frequency.
     [[nodiscard]] static constexpr float delaySecondsForClock(float clockHz) noexcept

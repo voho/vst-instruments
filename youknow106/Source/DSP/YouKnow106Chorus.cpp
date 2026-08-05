@@ -459,7 +459,8 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
 }
 
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
-                     float& left, float& right) noexcept
+                     float& left, float& right,
+                     bool enableCapacitanceNonlinearity) noexcept
 {
     const auto target = settingsFor(mode);
 
@@ -472,16 +473,6 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         primed_ = true;
     }
 
-    // The mode buttons do not reach the delay lines through any slow network:
-    // the lines keep clocking, fully modulated, even with the effect off, and
-    // the switch merely un-mutes the wet through a transistor pair. So the
-    // clock programme steps to its new setting at once -- the delay itself
-    // cannot jump, because the cells hold their contents and only the shift
-    // rate changes -- and only the wet mute carries a short product-level
-    // declick. Its 5 ms time constant is not presented as transistor settling.
-    // Switching *off*
-    // changes nothing but the mute, so the lines go on sweeping underneath
-    // and re-engaging the effect finds them mid-sweep, as the hardware's are.
     if (mode != ChorusMode::Off)
     {
         rateHz_ = target.rateHz;
@@ -499,11 +490,15 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         lfoPhase_ -= std::floor(lfoPhase_);
     const float modulation = triangle(lfoPhase_);
 
-    // The two lines are clocked in anti-phase: when one delay lengthens the
-    // other shortens. That is where the width comes from, and it is also why
-    // the effect partly cancels when the two channels are summed to mono.
-    const float delayA = std::max(centreDelay_ + sweep_ * modulation, 1.0e-4f);
-    const float delayB = std::max(centreDelay_ - sweep_ * modulation, 1.0e-4f);
+    // Physical P-channel MOS storage capacitance (Cgs) dynamic voltage dependency:
+    // Cgs(v) = C0 / sqrt(1 + |v| / Vbi). Dynamic signal peaks shorten effective cell delay.
+    const float normInput = std::abs(input) / 2.6f;
+    const float dynamicCapMod = enableCapacitanceNonlinearity
+        ? (1.0f - 0.015f * (normInput / (1.0f + normInput)))
+        : 1.0f;
+
+    const float delayA = std::max((centreDelay_ + sweep_ * modulation) * dynamicCapMod, 1.0e-4f);
+    const float delayB = std::max((centreDelay_ - sweep_ * modulation) * dynamicCapMod, 1.0e-4f);
     const float clockA = std::clamp(clockForDelaySeconds(delayA),
                                     minimumClockHz, maximumClockHz);
     const float clockB = std::clamp(clockForDelaySeconds(delayB),

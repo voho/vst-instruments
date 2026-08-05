@@ -219,6 +219,9 @@ The engine incorporates five deterministic physical circuit behaviors operating 
 12. **TA75558S IC6 Output Summer Op-Amp Dynamic Slew-Rate Limiting**:
     Dual op-amp TA75558S finite maximum slew rate ($\text{SR} \approx 1.7\,\text{V}/\mu\text{s}$) imposes a dynamic rate-of-change limit ($\Delta V_{\text{max}} = \text{SR} \cdot \Delta t$) on output signals, naturally rounding off extreme high-frequency transients and resonant spikes to eliminate digital harshness.
 
+13. **MN3009 BBD P-Channel MOS Bucket Storage Capacitance ($C_{gs}(V)$) Non-linearity**:
+    MN3009 bucket-brigade P-channel MOS storage capacitors exhibit signal voltage-dependent capacitance $C_{gs}(v) = C_0 / \sqrt{1 + |v|/V_{\text{bi}}}$, causing dynamic phase dispersion and subtle harmonic distortion under loud transient audio signals entering the chorus delay line.
+
 ## What remains open
 
 The canonical research queue is
