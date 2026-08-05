@@ -2695,6 +2695,32 @@ void YouKnow106Engine::performConverterWrite(
         return write.voice >= 0 && write.voice < hardwareVoices;
     };
 
+    float currentDacFraction = 0.0f;
+    switch (write.destination)
+    {
+        case ConverterDestination::Resonance: currentDacFraction = converterFraction(parameters.resonance); break;
+        case ConverterDestination::CommonVca: currentDacFraction = converterFraction(parameters.vcaLevel); break;
+        case ConverterDestination::Sub: currentDacFraction = converterFraction(parameters.subLevel); break;
+        case ConverterDestination::Noise: currentDacFraction = converterFraction(parameters.noiseLevel); break;
+        case ConverterDestination::Pwm: currentDacFraction = converterFraction(parameters.pwmDepth); break;
+        default: break;
+    }
+
+    if (parameters.enableMuxCrosstalk && std::abs(currentDacFraction - previousDacFraction_) > 1.0e-5f)
+    {
+        const float dacStep = currentDacFraction - previousDacFraction_;
+        const float injection = dacStep * 0.0025f;
+        if (validPhysicalVoice())
+        {
+            auto& voice = voices_[static_cast<std::size_t>(write.voice)];
+            if (write.destination == ConverterDestination::Vcf)
+                voice.cutoffCountsTarget += injection * vcfCountsPerOctave;
+            else if (write.destination == ConverterDestination::VoiceVca)
+                voice.vcaControlTarget += injection;
+        }
+    }
+    previousDacFraction_ = currentDacFraction;
+
     switch (write.destination)
     {
         case ConverterDestination::Resonance:

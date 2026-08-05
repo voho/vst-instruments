@@ -950,6 +950,7 @@ private:
 
     float outputSlewStateLeft_ { 0.0f };
     float outputSlewStateRight_ { 0.0f };
+    float previousDacFraction_ { 0.0f };
 
     float displayEnvelope_ { 0.0f };
     float displayLfo_ { 0.0f };

@@ -222,6 +222,9 @@ The engine incorporates five deterministic physical circuit behaviors operating 
 13. **MN3009 BBD P-Channel MOS Bucket Storage Capacitance ($C_{gs}(V)$) Non-linearity**:
     MN3009 bucket-brigade P-channel MOS storage capacitors exhibit signal voltage-dependent capacitance $C_{gs}(v) = C_0 / \sqrt{1 + |v|/V_{\text{bi}}}$, causing dynamic phase dispersion and subtle harmonic distortion under loud transient audio signals entering the chorus delay line.
 
+14. **CMOS CD4051 Multiplexer Gate-Drain Capacitive Crosstalk ($C_{gd}$) & Charge Injection**:
+    CD4051 8-channel analog multiplexer channel switches exhibit parasitic gate-drain capacitance ($C_{gd} \approx 6\,\text{pF}$), injecting micro-charge pulses ($\Delta Q = C_{gd} \cdot \Delta V_{\text{dac}}$) into hold capacitors during multiplexer scan transitions to model organic control chatter.
+
 ## What remains open
 
 The canonical research queue is
