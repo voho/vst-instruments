@@ -128,7 +128,6 @@ struct EngineParameters
     // --- State-of-the-Art Physical Circuit Simulation Toggles ----------------
     bool enableVcfStageOffsets { true };
     bool enableOpAmpSlewLimiting { true };
-    bool enableBbdCapacitanceNonlinearity { true };
     bool enableMuxCrosstalk { true };
     bool enableExponentialReset { true };
     bool enableVcfEarlyEffect { true };

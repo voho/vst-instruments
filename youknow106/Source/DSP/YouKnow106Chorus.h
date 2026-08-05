@@ -87,9 +87,15 @@ public:
     // declared chorus-noise component; 1.0 preserves the compatibility hiss
     // and 0.0 removes all of them. A calibrated hardware noise reference has
     // not yet been located, so the optional common/hum/spur amplitudes are zero.
+    //
+    // There is deliberately no separate storage-capacitance term. The MN3009's
+    // C_gs is voltage dependent, but what that produces is distortion and a
+    // little level-dependent high-frequency loss -- both of which the
+    // datasheet's own distortion figures already measure on the complete part,
+    // and which `bbdTransfer` is fitted to. Modelling it again on top would be
+    // counting the same physics twice.
     void process(float input, ChorusMode mode, float noiseScale,
                  float& left, float& right,
-                 bool enableCapacitanceNonlinearity = true,
                  bool enableClockBleed = false,
                  bool enableHyperbolicSweep = true,
                  float calibration = 1.0f) noexcept;

@@ -2457,21 +2457,6 @@ int main()
             }
         }
 
-        // Test BBD Storage Capacitance Non-linearity
-        {
-            Chorus chorus;
-            chorus.prepare(44100.0, false);
-            float left1 = 0.0f, right1 = 0.0f;
-            float left2 = 0.0f, right2 = 0.0f;
-            chorus.process(2.5f, ChorusMode::One, 1.0f, left1, right1, false);
-            chorus.reset(false);
-            chorus.process(2.5f, ChorusMode::One, 1.0f, left2, right2, true);
-            if (!std::isfinite(left1) || !std::isfinite(left2))
-            {
-                std::cerr << "FAIL: Chorus process returned non-finite value with BBD capacitance non-linearity\n";
-                ++failures;
-            }
-        }
     }
 
     if (failures != 0)

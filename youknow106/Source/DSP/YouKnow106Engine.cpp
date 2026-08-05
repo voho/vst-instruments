@@ -3579,7 +3579,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             float wetLeft = levelled;
             float wetRight = levelled;
             chorus_.process(levelled, parameters.chorus, parameters.chorusNoise,
-                            wetLeft, wetRight, parameters.enableBbdCapacitanceNonlinearity,
+                            wetLeft, wetRight,
                             parameters.enableChorusClockBleed,
                             parameters.enableChorusHyperbolicSweep,
                             parameters.calibration);

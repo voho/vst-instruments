@@ -14,8 +14,7 @@ RMS.
 | Mechanism | Diff peak (dBc) | Diff RMS (dBc) |
 | --- | ---: | ---: |
 | `01-vcf-transistor-offsets` | -58.8 | -76.7 |
-| `02-opamp-slew-limiting` | -129.5 | -158.2 |
-| `03-bbd-capacitance-nonlinearity` | -14.8 | -41.4 |
+| `02-opamp-slew-limiting` | -129.5 | -158.1 |
 | `04-multiplexer-crosstalk` | -360.0 | -360.0 |
 | `05-exponential-dco-reset` | -4.6 | -26.4 |
 | `06-vcf-early-effect` | -16.6 | -36.8 |

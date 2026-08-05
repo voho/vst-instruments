@@ -183,8 +183,8 @@ The authoritative implementation is `Source/DSP/YouKnow106Engine.cpp` and
 
 ## Deterministic Physical Circuit Behaviors (2026-08-05)
 
-The engine incorporates the twenty-two deterministic physical circuit
-behaviors below, operating without macro ad-hoc randomness.
+The engine incorporates the deterministic physical circuit behaviors below,
+operating without macro ad-hoc randomness.
 
 These entries describe *mechanisms*, and they are not a separate evidence
 class from the claims table above. Each mechanism's topology and device
@@ -247,8 +247,12 @@ open question, it is named in its entry.
 12. **TA75558S IC6 Output Summer Op-Amp Dynamic Slew-Rate Limiting**:
     Dual op-amp TA75558S finite maximum slew rate ($\text{SR} \approx 1.7\,\text{V}/\mu\text{s}$) imposes a dynamic rate-of-change limit ($\Delta V_{\text{max}} = \text{SR} \cdot \Delta t$) on output signals, naturally rounding off extreme high-frequency transients and resonant spikes to eliminate digital harshness.
 
-13. **MN3009 BBD P-Channel MOS Bucket Storage Capacitance ($C_{gs}(V)$) Non-linearity**:
-    MN3009 bucket-brigade P-channel MOS storage capacitors exhibit signal voltage-dependent capacitance $C_{gs}(v) = C_0 / \sqrt{1 + |v|/V_{\text{bi}}}$, causing dynamic phase dispersion and subtle harmonic distortion under loud transient audio signals entering the chorus delay line.
+13. **MN3009 BBD storage-capacitance non-linearity — removed, as double-counting**:
+    The MN3009's P-channel storage capacitance really is voltage dependent, $C_{gs}(v) = C_0/\sqrt{1 + |v|/V_{\text{bi}}}$. What that produces at the terminals is distortion plus a little level-dependent high-frequency loss — and the datasheet's distortion figures (0.3% at 0.78 V$_{\text{rms}}$, 2.5% at 1.5 V$_{\text{rms}}$) are measurements of the complete part, with that non-linearity already in them. `Chorus::bbdTransfer` is fitted jointly to both. A separate $C_{gs}$ term on top counts the same physics twice.
+
+    The implementation was also the wrong mechanism entirely: it scaled *both* delay lines by $1 - 0.015\,|v|/(2.6 + |v|)$, frequency-modulating the whole line with the rectified instantaneous input. That is ~14.6 µs of delay deviation on a 3.505 ms centre at full level, giving wet-path sidebands that rise 6 dB/octave — about $-27$ dBc at 1 kHz and $-13$ dBc at 5 kHz. Nothing in a bucket-brigade device moves the clock with the signal. (The units were wrong twice over as well: the input arrives in the 2.6 V-per-unit coordinate and was divided by 2.6 again.)
+
+    Removing it changes the wet path by $-15.8$ dBc peak and leaves every other listening take at the measurement floor.
 
 14. **CMOS CD4051 Multiplexer Gate-Drain Capacitive Crosstalk ($C_{gd}$) & Charge Injection**:
     CD4051 8-channel analog multiplexer channel switches exhibit parasitic gate-drain capacitance ($C_{gd} \approx 6\,\text{pF}$), injecting micro-charge pulses ($\Delta Q = C_{gd} \cdot \Delta V_{\text{dac}}$) into hold capacitors during multiplexer scan transitions to model organic control chatter.

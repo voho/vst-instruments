@@ -488,7 +488,6 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
 
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float& left, float& right,
-                     bool enableCapacitanceNonlinearity,
                      bool enableClockBleed,
                      bool enableHyperbolicSweep,
                      float calibration) noexcept
@@ -521,13 +520,6 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         lfoPhase_ -= std::floor(lfoPhase_);
     const float modulation = triangle(lfoPhase_);
 
-    // Physical P-channel MOS storage capacitance (Cgs) dynamic voltage dependency:
-    // Cgs(v) = C0 / sqrt(1 + |v| / Vbi). Dynamic signal peaks shorten effective cell delay.
-    const float normInput = std::abs(input) / 2.6f;
-    const float dynamicCapMod = enableCapacitanceNonlinearity
-        ? (1.0f - 0.015f * (normInput / (1.0f + normInput)))
-        : 1.0f;
-
     // MN3101 current-controlled oscillator delay sweep law. Tr22's voltage-to-
     // current converter makes the *clock* linear in the control voltage, not
     // the delay, so a physically faithful sweep bends delay hyperbolically --
@@ -559,8 +551,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         nominalDelayB += (hypDelayB - nominalDelayB) * std::clamp(calibration, 0.0f, 100.0f);
     }
 
-    const float delayA = std::max(nominalDelayA * dynamicCapMod, 1.0e-4f);
-    const float delayB = std::max(nominalDelayB * dynamicCapMod, 1.0e-4f);
+    const float delayA = std::max(nominalDelayA, 1.0e-4f);
+    const float delayB = std::max(nominalDelayB, 1.0e-4f);
     const float clockA = std::clamp(clockForDelaySeconds(delayA),
                                     minimumClockHz, maximumClockHz);
     const float clockB = std::clamp(clockForDelaySeconds(delayB),

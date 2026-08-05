@@ -75,22 +75,6 @@ Take renderOpAmpSlewTake(bool enableSlewLimiting)
     return take;
 }
 
-// 3. BBD Storage Capacitance Non-linearity: Loud polyphonic chorus strings
-Take renderBbdCapacitanceTake(bool enableCapNonlinearity)
-{
-    auto p = defaultPanel();
-    p.enableBbdCapacitanceNonlinearity = enableCapNonlinearity;
-    p.sawEnabled = true;
-    p.subLevel = 0.8f;
-    p.chorus = ChorusMode::Two;
-    p.cutoff = 0.55f;
-    p.attack = 0.20f;
-    Take take(p);
-    take.rest(0.05);
-    take.chord({ 48, 55, 60, 64 }, 0.95f, 2.0, 0.5);
-    return take;
-}
-
 // 4. CD4051 Multiplexer Crosstalk: Fast staccato bassline
 Take renderMuxCrosstalkTake(bool enableCrosstalk)
 {
@@ -241,10 +225,9 @@ struct Comparison
     Take (*render)(bool);
 };
 
-const std::array<Comparison, 12> comparisons {{
+const std::array<Comparison, 11> comparisons {{
     { "01-vcf-transistor-offsets",        renderVcfOffsetsTake },
     { "02-opamp-slew-limiting",           renderOpAmpSlewTake },
-    { "03-bbd-capacitance-nonlinearity",  renderBbdCapacitanceTake },
     { "04-multiplexer-crosstalk",         renderMuxCrosstalkTake },
     { "05-exponential-dco-reset",         renderExponentialResetTake },
     { "06-vcf-early-effect",              renderVcfEarlyEffectTake },
