@@ -3026,7 +3026,10 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     }
     const float subGain = subMixVolts * subCv_
         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
-    const float subOut = dco.sub.advance(dco.subState) * subGain;
+    const float cmosAsymmetry = dco.subState > 0.0f
+        ? (1.0f + 0.003f * parameters.calibration)
+        : -(1.0f - 0.003f * parameters.calibration);
+    const float subOut = dco.sub.advance(cmosAsymmetry) * subGain;
 
     // --- Summing node (Thévenin Passive Mixer Network) -----------------------
     // Saw (100k), Pulse (100k), Sub (100k), Noise (100k) into IR3109 input (68k).

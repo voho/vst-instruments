@@ -207,6 +207,9 @@ The engine incorporates five deterministic physical circuit behaviors operating 
 8. **TR11/TR12 2SK30A JFET Wet-Mute Switch Modulation & Gate Injection**:
    2SK30A JFET mute switch channel resistance $R_{DS,on}$ non-linear modulation under signal peaks ($1 - 0.015 \tanh(v^2)$) and gate charge injection transient ($Q_{gd}$) during Chorus mode switches produce realistic sub-audio switch pops and subtle wet channel harmonics.
 
+9. **CMOS 4013 Sub-Oscillator P/N Driver Asymmetry**:
+   CMOS 4013 flip-flop P/N channel driver impedance asymmetry ($t_r \approx 25\text{ ns}$ vs $t_f \approx 15\text{ ns}$) introduces subtle duty cycle asymmetry ($\approx 49.8\% / 50.2\%$) and odd-harmonic character into the sub-oscillator square wave.
+
 ## What remains open
 
 The canonical research queue is
