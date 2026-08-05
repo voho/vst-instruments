@@ -201,6 +201,9 @@ The engine incorporates five deterministic physical circuit behaviors operating 
 6. **VCF Cutoff Anti-Log Emitter Resistance ($R_e$) Compression**:
    Anti-log transistor parasitic emitter resistance ($R_e \approx 8\,\Omega$) causes an $I_{abc} R_e$ voltage drop at high cutoff control currents ($f_c > 8\text{ kHz}$), softly compressing extreme top-end filter sweeps ($\text{rawHz} / (1 + \text{calibration} \cdot (\text{rawHz} / 120000))$) to prevent digital harshness.
 
+7. **TA75558S IC6 Output Summer Op-Amp Soft Saturation**:
+   Output summer dual op-amp TA75558S operating on $\pm 15\text{V}$ rails ($\approx \pm 13.5\text{V}$ output headroom) enters soft saturation ($\tanh$) when driven hot under unison or dense chorus modes, preserving analogue output warmth without hard digital clipping.
+
 ## What remains open
 
 The canonical research queue is

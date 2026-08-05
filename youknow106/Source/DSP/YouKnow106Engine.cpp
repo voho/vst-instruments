@@ -3402,6 +3402,17 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             chorus_.process(levelled, parameters.chorus, parameters.chorusNoise,
                             wetLeft, wetRight);
 
+            // TA75558S IC6 output summer op-amp soft saturation on +/-15V rails (~13.5V headroom)
+            if (parameters.calibration > 0.0f)
+            {
+                constexpr float opampHeadroom = 5.19f;
+                const float cal = parameters.calibration;
+                const float satL = std::tanh(wetLeft / opampHeadroom) * opampHeadroom;
+                const float satR = std::tanh(wetRight / opampHeadroom) * opampHeadroom;
+                wetLeft = (1.0f - cal) * wetLeft + cal * satL;
+                wetRight = (1.0f - cal) * wetRight + cal * satR;
+            }
+
             stageLeft[static_cast<std::size_t>(step)] = wetLeft;
             stageRight[static_cast<std::size_t>(step)] = wetRight;
         }
