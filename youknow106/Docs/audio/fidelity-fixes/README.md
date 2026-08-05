@@ -22,7 +22,7 @@ is a change nobody can hear.
 | --- | ---: | ---: |
 | `01-unison-tuning` | -87.6 | -92.5 |
 | `02-output-summer-drive` | -82.2 | -87.0 |
-| `03-chorus-wet` | -15.8 | -41.3 |
+| `03-chorus-wet` | -55.8 | -79.1 |
 | `04-resonant-sweep` | -78.8 | -83.6 |
 | `05-saw-bass` | -85.5 | -90.4 |
 | `06-unit-character-sweep` | -78.3 | -83.1 |

@@ -511,9 +511,17 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     }
     const float muteGlide = 1.0f - std::exp(
         -inverseSampleRate_ / wetMuteTimeConstantSeconds);
-    const float wetDelta = (target.wetGain - wetGain_);
-    wetGain_ += wetDelta * muteGlide;
-    const float jfetGatePop = wetDelta * 0.003f;
+    wetGain_ += (target.wetGain - wetGain_) * muteGlide;
+    // TR11/TR12 add no modelled distortion or switching artefact of their own.
+    // Conducting, a 2SK30A's few hundred ohms sit against IC6's 47 kOhm wet
+    // input, so it drops about 1% of the signal and sees some 27 mV across
+    // itself at full level. Ohmic-region channel resistance moves by roughly
+    // V_ds / 2|V_p - V_gs| -- about 0.7% -- and that reaches the output only
+    // through the same 1% divider, so the distortion is on the order of
+    // 0.007%, or -83 dBc. A revision modelled 1.1% (-39 dBc) instead, which is
+    // some 44 dB too much, applied to every wet sample. Their switching
+    // transient and leakage remain OQ-20 and are deliberately not invented;
+    // the 5 ms wet-mute glide above is declared plug-in declick policy.
 
     lfoPhase_ += rateHz_ * inverseSampleRate_;
     if (lfoPhase_ >= 1.0f)
@@ -578,12 +586,6 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         wetA += heterodyneBleedA;
         wetB += heterodyneBleedB;
     }
-
-    // TR11 / TR12 2SK30A JFET channel resistance modulation & gate charge injection
-    const float jfetModA = 1.0f - 0.015f * std::tanh(wetA * wetA);
-    const float jfetModB = 1.0f - 0.015f * std::tanh(wetB * wetB);
-    wetA = (wetA + jfetGatePop) * jfetModA;
-    wetB = (wetB + jfetGatePop) * jfetModB;
 
     // These mechanisms are deliberately separate from the compatibility hiss
     // above.  Their insertion point, spectra, levels and stereo correlation

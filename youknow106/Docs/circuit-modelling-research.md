@@ -232,8 +232,10 @@ open question, it is named in its entry.
 
    The *existence* of the bound is anchored by the supply rails. Its exact value remains OQ-05: 13.5 V is the rails less a typical saturation voltage, not a loaded measurement, and the downstream digital boundary still adds no limiter of its own.
 
-8. **TR11/TR12 2SK30A JFET Wet-Mute Switch Modulation & Gate Injection**:
-   2SK30A JFET mute switch channel resistance $R_{DS,on}$ non-linear modulation under signal peaks ($1 - 0.015 \tanh(v^2)$) and gate charge injection transient ($Q_{gd}$) during Chorus mode switches produce realistic sub-audio switch pops and subtle wet channel harmonics.
+8. **TR11/TR12 2SK30A wet-mute switches — no modelled distortion, by derivation**:
+   Conducting, a 2SK30A's few hundred ohms sit against IC6's 47 k$\Omega$ wet input, so it drops about 1% of the signal and sees some 27 mV across itself at full level. Ohmic-region channel resistance moves by roughly $V_{ds}/2|V_p - V_{gs}|$, about 0.7%, and that reaches the output only through the same 1% divider — so the distortion is on the order of 0.007%, or $-83$ dBc.
+
+   A revision modelled $1 - 0.015\tanh(v^2)$ instead: 1.1%, or $-39$ dBc, applied to every wet sample. That is some 44 dB more than the part can produce, and it was always on rather than only during switching. Both it and its companion gate-injection placeholder are removed. The switching transient and leakage remain **OQ-20** and are deliberately not invented; the 5 ms wet-mute glide is declared plug-in declick policy, not a device measurement.
 
 9. **CMOS 4013 Sub-Oscillator P/N Driver Asymmetry**:
    CMOS 4013 flip-flop P/N channel driver impedance asymmetry ($t_r \approx 25\text{ ns}$ vs $t_f \approx 15\text{ ns}$) introduces subtle duty cycle asymmetry ($\approx 49.8\% / 50.2\%$) and odd-harmonic character into the sub-oscillator square wave.
