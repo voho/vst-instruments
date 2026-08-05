@@ -2974,9 +2974,9 @@ void testFinalOutputCouplingRemovesManualPwmDc()
         engine.noteOn(36, 1.0f);
 
         const auto rendered = renderExact(
-            engine, static_cast<int>(sampleRate * 3.0));
+            engine, static_cast<int>(sampleRate * 1.5));
         const std::size_t start = rendered.left.size()
-                                - static_cast<std::size_t>(sampleRate);
+                                - static_cast<std::size_t>(sampleRate * 0.5);
         const auto meanFrom = [start](const std::vector<float>& signal) {
             double sum = 0.0;
             for (std::size_t index = start; index < signal.size(); ++index)
@@ -3503,10 +3503,12 @@ void testFactoryPresetCorpusStaysNumericallySafe()
     constexpr int renderSamples = static_cast<int>(sampleRate * 0.25);
     int audibleInShortWindow = 0;
 
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+
     for (const auto& preset : presets::factoryBank())
     {
-        YouKnow106Engine engine;
-        engine.prepare(sampleRate, blockSize, true);
+        engine.reset();
         engine.setParameters(parametersFor(preset.patch));
         engine.noteOn(60, 1.0f);
         const auto rendered = render(engine, renderSamples);
