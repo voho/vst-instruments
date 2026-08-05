@@ -1175,30 +1175,27 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
         "extension around the calibrated hardware pitch.",
         "Adds MIDI-velocity response to each voice amplifier. Zero matches the "
         "hardware's fixed velocity; 100% gives full dynamic response.",
-        "Adds deterministic per-voice component spread and slow cutoff drift. "
-        "Zero is calibrated nominal; it adds no detune and the same six cards return every launch.",
+        "Scales every modeled component tolerance, trimmer residual, thermal "
+        "wander and inherent circuit non-linearity. Zero is the calibrated "
+        "digital reference; 100% matches real hardware; values above that "
+        "exaggerate the same behaviors for audible contrast.",
         "Scales the modeled hiss of the uncompanded bucket-brigade chorus. "
         "100% is the modeled floor; zero is a clean plug-in extension.",
         "Sets the active voice limit from 1 to 16. Six matches the hardware; "
-        "values above six add digital extension voices.",
-        "Scales the modeled circuit non-linearities: ramp charging curvature, "
-        "the chorus clock laws, coupling-capacitor modulation and converter glitch. Unit Character owns tolerance; this owns shape."
+        "values above six add digital extension voices."
     };
 
     configure (transposeSlider, transpose, "Transpose", utilityTooltips[0]);
     configure (tuneSlider, masterTune, "Master tune", utilityTooltips[1]);
     configure (velocitySlider, velocity, "Velocity", utilityTooltips[2]);
     configure (calibrationSlider, calibration, "Unit Character", utilityTooltips[3]);
-    configure (vintageSlider, vintage, "Vintage", utilityTooltips[6]);
     configure (chorusNoiseSlider, chorusNoise, "Chorus noise", utilityTooltips[4]);
     configure (polyphonySlider, polyphony, "Polyphony", utilityTooltips[5]);
 
     const char* captions[] = { "TRANSPOSE", "TUNE", "VELOCITY",
-                               "UNIT CHARACTER", "CHORUS NOISE", "VOICES",
-                               "VINTAGE" };
+                               "UNIT CHARACTER", "CHORUS NOISE", "VOICES" };
     const char* controlNames[] = { "Transpose", "Master tune", "Velocity",
-                                   "Unit Character", "Chorus noise", "Polyphony",
-                                   "Vintage" };
+                                   "Unit Character", "Chorus noise", "Polyphony" };
     for (std::size_t index = 0; index < utilityLabels.size(); ++index)
     {
         auto& label = utilityLabels[index];
@@ -1709,16 +1706,11 @@ void YouKnow106AudioProcessorEditor::resized()
 
     // CHARACTER: two extension knobs and HQ occupy one shallow service shelf.
     // The compact footprint keeps them clearly secondary to the sound engine.
-    // Three character knobs now, so the shelf splits into equal cells with HQ
-    // holding the right end. Vintage sits immediately beside Unit Character:
-    // they are the two masters, and reading them as a pair is the point.
-    utilityLabels[3].setBounds (scaled (668.0f, 304.0f, 104.0f, 14.0f).toNearestInt());
-    calibrationSlider.setBounds (scaled (702.0f, 318.0f, 36.0f, 36.0f).toNearestInt());
-    utilityLabels[6].setBounds (scaled (776.0f, 304.0f, 104.0f, 14.0f).toNearestInt());
-    vintageSlider.setBounds (scaled (810.0f, 318.0f, 36.0f, 36.0f).toNearestInt());
-    utilityLabels[4].setBounds (scaled (884.0f, 304.0f, 104.0f, 14.0f).toNearestInt());
-    chorusNoiseSlider.setBounds (scaled (918.0f, 318.0f, 36.0f, 36.0f).toNearestInt());
-    hqButton.setBounds (scaled (996.0f, 308.0f, 96.0f, 42.0f).toNearestInt());
+    utilityLabels[3].setBounds (scaled (674.0f, 304.0f, 112.0f, 14.0f).toNearestInt());
+    calibrationSlider.setBounds (scaled (712.0f, 318.0f, 36.0f, 36.0f).toNearestInt());
+    utilityLabels[4].setBounds (scaled (794.0f, 304.0f, 112.0f, 14.0f).toNearestInt());
+    chorusNoiseSlider.setBounds (scaled (832.0f, 318.0f, 36.0f, 36.0f).toNearestInt());
+    hqButton.setBounds (scaled (924.0f, 308.0f, 168.0f, 42.0f).toNearestInt());
 
     // KEYBOARD CONTROL: the four keyboard-facing extensions, compacted into the
     // cell under CHARACTER. Four cells across 446 rather than 698, so the knobs

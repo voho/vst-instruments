@@ -489,7 +489,7 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float& left, float& right,
                      bool enableCapacitanceNonlinearity,
-                     bool enableThiranAndClockBleed,
+                     bool enableClockBleed,
                      bool enableHyperbolicSweep,
                      float calibration) noexcept
 {
@@ -528,23 +528,35 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         ? (1.0f - 0.015f * (normInput / (1.0f + normInput)))
         : 1.0f;
 
-    // MN3101 current-controlled oscillator delay sweep law: T_delay = T_centre / (1 - (sweep / T_centre) * modulation).
-    // Driven by Tr22 control current (f_clk \propto I_ctrl), creating physical hyperbolic delay sweep.
+    // MN3101 current-controlled oscillator delay sweep law. Tr22's voltage-to-
+    // current converter makes the *clock* linear in the control voltage, not
+    // the delay, so a physically faithful sweep bends delay hyperbolically --
+    // but only if it does so about the clock's own endpoints, not the delay's
+    // centre. Bending about the centre (an earlier revision of this code) moves
+    // the endpoints outward as Unit Character increases -- see OQ-01, which
+    // records the measured centre/sweep (3.505 ms / 1.845 ms) rendering a
+    // 38%-too-wide 2.30-7.40 ms range at Unit Character 1.0 instead of the
+    // measured 1.66-5.35 ms. Sweeping the clock linearly between the two clock
+    // frequencies that correspond to the measured delay endpoints keeps both
+    // endpoints exact at every blend amount, and differs from the linear-in-
+    // delay model only in the trajectory between them.
     float nominalDelayA = centreDelay_ + sweep_ * modulation;
     float nominalDelayB = centreDelay_ - sweep_ * modulation;
 
     if (enableHyperbolicSweep && calibration > 0.0f && centreDelay_ > 1.0e-5f)
     {
-        const float normSweep = std::clamp(sweep_ / centreDelay_, 0.01f, 0.95f);
-        const float hypModA = 1.0f / (1.0f - std::clamp(normSweep * modulation, -0.95f, 0.95f));
-        const float hypModB = 1.0f / (1.0f + std::clamp(normSweep * modulation, -0.95f, 0.95f));
-        const float hypDelayA = centreDelay_ * hypModA;
-        const float hypDelayB = centreDelay_ * hypModB;
-        const float diffA = hypDelayA - nominalDelayA;
-        const float diffB = hypDelayB - nominalDelayB;
+        const float maxDelay = centreDelay_ + sweep_;
+        const float minDelay = std::max(centreDelay_ - sweep_, 1.0e-5f);
+        const float clockAtMinDelay = clockForDelaySeconds(minDelay);
+        const float clockAtMaxDelay = clockForDelaySeconds(maxDelay);
+        const float clockMid = 0.5f * (clockAtMinDelay + clockAtMaxDelay);
+        const float clockSpread = 0.5f * (clockAtMinDelay - clockAtMaxDelay);
 
-        nominalDelayA += diffA * std::clamp(calibration, 0.0f, 100.0f);
-        nominalDelayB += diffB * std::clamp(calibration, 0.0f, 100.0f);
+        const float hypDelayA = delaySecondsForClock(clockMid - clockSpread * modulation);
+        const float hypDelayB = delaySecondsForClock(clockMid + clockSpread * modulation);
+
+        nominalDelayA += (hypDelayA - nominalDelayA) * std::clamp(calibration, 0.0f, 100.0f);
+        nominalDelayB += (hypDelayB - nominalDelayB) * std::clamp(calibration, 0.0f, 100.0f);
     }
 
     const float delayA = std::max(nominalDelayA * dynamicCapMod, 1.0e-4f);
@@ -562,7 +574,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     float wetB = lineB_.process(input, clockB, sampleRate_, support_,
                                 wetOutputCouplingG, noiseScale);
 
-    if (enableThiranAndClockBleed)
+    if (enableClockBleed)
     {
         clockSpurPhaseA_ += static_cast<double>(clockA) * inverseSampleRate_;
         clockSpurPhaseB_ += static_cast<double>(clockB) * inverseSampleRate_;

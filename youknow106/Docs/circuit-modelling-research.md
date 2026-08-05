@@ -183,17 +183,23 @@ The authoritative implementation is `Source/DSP/YouKnow106Engine.cpp` and
 
 ## Deterministic Physical Circuit Behaviors (2026-08-05)
 
-The engine incorporates the fourteen deterministic physical circuit behaviors
-below, operating without macro ad-hoc randomness.
+The engine incorporates the twenty-two deterministic physical circuit
+behaviors below, operating without macro ad-hoc randomness.
 
 These entries describe *mechanisms*, and they are not a separate evidence
 class from the claims table above. Each mechanism's topology and device
 identity are anchored or derived from the service notes and the part
 datasheets; the **magnitudes** are voiced except where a datasheet fixes them,
 because no calibrated JUNO-106 measurement of any of them has been located.
-Every one of them is scaled by Unit Character, or gated by its own named
-toggle, so the calibrated nominal model at Unit Character zero contains none
-of them. Where a mechanism has an open question, it is named in its entry.
+Each is gated by its own named toggle, and most are additionally scaled by
+the single Unit Character control -- which covers both component tolerance
+(trimmer residual, thermal wander) and the circuit's own inherent non-linear
+shapes (ramp curvature, the chorus clock laws, the Early effect and so on) --
+so the calibrated nominal model at zero contains none of them. Unit
+Character's host-facing range continues past its "matches real hardware"
+reference of 1.0, up to 100, purely to exaggerate every mechanism for audible
+contrast; see the note at the end of this section. Where a mechanism has an
+open question, it is named in its entry.
 
 1. **VCF Thermal Warmup & OTA Transconductance ($V_t(T)$)**:
    Models thermal dissipation warming voice cards from $25^\circ\text{C}$ to $40^\circ\text{C}$ ($T(t) = 25 + 15(1 - e^{-t/900})$). Thermal voltage $V_t(T) = \frac{k T}{q}$ scales transconductance headroom $2 V_t / \text{attenuation}$, naturally softening resonance and broadening linear differential headroom over a 15-minute warmup curve.
@@ -252,11 +258,11 @@ of them. Where a mechanism has an open question, it is named in its entry.
 17. **Voice Cards Spatial Chassis Thermal Gradient ($\Delta T_{\text{psu}}$)**:
     Models spatial heat dissipation across physical voice cards 1–6 based on physical proximity to the internal power supply transformer ($T_{\text{card}}(i) = 25^\circ\text{C} + \Delta T_{\text{ambient}}(t) + 4^\circ\text{C} e^{-(i-1)/2.5}$), introducing realistic per-voice thermal headroom and tuning drift under polyphonic playing. Rendered before/after comparison WAVs and isolated difference files are committed in [`07-spatial-thermal-gradient-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-before.wav), [`07-spatial-thermal-gradient-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-after.wav), and [`07-spatial-thermal-gradient-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/07-spatial-thermal-gradient-diff.wav).
 
-18. **Chorus Thiran Fractional BBD Delay & Heterodyne Clock Bleed**:
-    Continuous-time fractional delay sub-sample interpolation combined with dual MN3009 BBD clock driver heterodyne beat frequency sidebands ($f_{\text{clkA}}, f_{\text{clkB}} \in [40\,\text{kHz}, 200\,\text{kHz}]$), injecting realistic high-frequency shimmer and smooth delay sweeps into wet chorus modes. Rendered before/after comparison WAVs and isolated difference files are committed in [`08-chorus-thiran-clock-bleed-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-before.wav), [`08-chorus-thiran-clock-bleed-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-after.wav), and [`08-chorus-thiran-clock-bleed-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-diff.wav).
+18. **Chorus Heterodyne Clock Bleed**:
+    Dual MN3009 BBD clock driver heterodyne beat frequency sidebands ($f_{\text{clkA}}, f_{\text{clkB}} \in [40\,\text{kHz}, 200\,\text{kHz}]$), injecting a small high-frequency tone into wet chorus modes. Off by default: the tone's amplitude is an unvalidated placeholder pending OQ-03, and no calibrated hardware noise reference has been located. (An earlier revision of this entry additionally claimed continuous-time fractional-delay/Thiran interpolation for the BBD taps; no such filter exists in the code -- the line still uses linear interpolation. Implementing a genuine Thiran allpass for the BBD read/write taps remains open future work.) Rendered before/after comparison WAVs and isolated difference files are committed in [`08-chorus-thiran-clock-bleed-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-before.wav), [`08-chorus-thiran-clock-bleed-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-after.wav), and [`08-chorus-thiran-clock-bleed-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/08-chorus-thiran-clock-bleed-diff.wav).
 
 19. **Chorus MN3101 Current-Controlled Oscillator Hyperbolic Delay Sweep**:
-    Models Tr22 control current modulation into MN3101 clock driver ($f_{\text{clk}} \propto I_{\text{ctrl}}$), yielding physical hyperbolic delay sweep $T_{\text{delay}}(t) = T_{\text{centre}} / (1 - \frac{\text{sweep}}{T_{\text{centre}}} \text{tri}(t))$ that replaces ideal linear delay modulation with asymmetric pitch Doppler shifts. Rendered before/after comparison WAVs and isolated difference files are committed in [`09-chorus-hyperbolic-sweep-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/09-chorus-hyperbolic-sweep-before.wav), [`09-chorus-hyperbolic-sweep-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/09-chorus-hyperbolic-sweep-after.wav), and [`09-chorus-hyperbolic-sweep-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/09-chorus-hyperbolic-sweep-diff.wav).
+    Models Tr22 control current modulation into MN3101 clock driver ($f_{\text{clk}} \propto I_{\text{ctrl}}$), yielding a physical hyperbolic delay sweep that replaces ideal linear delay modulation with asymmetric pitch Doppler shifts. The clock, not the delay, is what is linear in the modulating triangle: the clock sweeps linearly between the two frequencies that correspond to the measured delay envelope's endpoints ($128 / (T_{\text{centre}} + \text{sweep})$ and $128 / (T_{\text{centre}} - \text{sweep})$), so the rendered sweep reaches exactly the measured endpoints at any amount of Unit Character rather than overshooting them (see OQ-01, which records the overshoot an earlier, centre-relative revision of this formula produced). Rendered before/after comparison WAVs and isolated difference files are committed in [`09-chorus-hyperbolic-sweep-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/09-chorus-hyperbolic-sweep-before.wav), [`09-chorus-hyperbolic-sweep-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/09-chorus-hyperbolic-sweep-after.wav), and [`09-chorus-hyperbolic-sweep-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/09-chorus-hyperbolic-sweep-diff.wav).
 
 20. **DCO Integrator Finite Source Resistance Ramp Charging Curvature**:
     Models the finite output resistance ($R_{\text{out}} \approx 500\,\text{k}\Omega$) of the constant-current source charging the $1000\,\text{pF}$ ramp capacitor, causing low-frequency ramp charging to exhibit a subtle exponential curvature ($v(u) \approx (2u-1) - \beta u(1-u)$) that adds warm 2nd-harmonic weight on low bass notes. Rendered before/after comparison WAVs and isolated difference files are committed in [`10-dco-ramp-curvature-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/10-dco-ramp-curvature-before.wav), [`10-dco-ramp-curvature-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/10-dco-ramp-curvature-after.wav), and [`10-dco-ramp-curvature-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/10-dco-ramp-curvature-diff.wav).
@@ -267,7 +273,7 @@ of them. Where a mechanism has an open question, it is named in its entry.
 22. **µPD7541 12-Bit R-2R DAC Major Carrier Glitch Impulse**:
     Models 12-bit R-2R DAC switch-timing skew during major bit transitions ($011111111111_2 \leftrightarrow 100000000000_2$), injecting transient voltage glitch impulses into hold capacitors to provide authentic physical "zipper texture" during continuous manual filter sweeps. Rendered before/after comparison WAVs and isolated difference files are committed in [`12-dac-glitch-impulse-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/12-dac-glitch-impulse-before.wav), [`12-dac-glitch-impulse-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/12-dac-glitch-impulse-after.wav), and [`12-dac-glitch-impulse-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/12-dac-glitch-impulse-diff.wav).
 
-*Note: All physical circuit simulation behaviors above scale dynamically with the **Unit Character** (`calibration`) control: `0.0` suppresses all parasitics for a pristine digital reference, `1.0` models 100% calibrated hardware realism, and up to `100.0` provides extreme vintage analog exaggeration for maximum audible contrast.*
+*Note: All physical circuit simulation behaviors above scale dynamically with **Unit Character** (`calibration`): `0.0` suppresses every one of them for a pristine digital reference, `1.0` matches real hardware, and the host parameter's own range continues to `100.0` -- skewed so 0-1 still covers half the knob's travel -- for the same exaggerated-for-contrast territory the comparison-rendering tools in this repository use.*
 
 ## What remains open
 

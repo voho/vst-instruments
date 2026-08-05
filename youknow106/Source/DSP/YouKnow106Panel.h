@@ -66,9 +66,6 @@ inline constexpr auto transpose    = "transpose";
 inline constexpr auto masterTune   = "masterTune";
 inline constexpr auto velocity     = "velocity";
 inline constexpr auto calibration  = "calibration";
-// The second character master. Unit Character owns component spread and
-// trimmer residual; Vintage owns the newer circuit non-linearities.
-inline constexpr auto vintage      = "vintage";
 inline constexpr auto chorusNoise  = "chorusNoise";
 inline constexpr auto polyphony    = "polyphony";
 inline constexpr auto hq           = "hq";

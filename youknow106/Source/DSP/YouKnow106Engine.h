@@ -104,31 +104,24 @@ struct EngineParameters
     // unmeasured chorus-noise level remains a voiced compatibility value.
     float velocityDepth { 0.0f };  // The hardware ignores MIDI velocity.
     // Exposed to the host as Unit Character: one master over every modelled
-    // component tolerance, trimmer residual and thermal wander.
+    // component tolerance, trimmer residual, thermal wander and inherent
+    // circuit non-linearity (ramp charging curvature, exponential reset, the
+    // chorus clock laws, the spatial thermal gradient, C14's voltage-dependent
+    // capacitance, the VCF Early effect, the converter's glitch impulse and
+    // more) -- every optional physical-circuit mechanism answers to this one
+    // control.
     //
-    // Zero is the calibrated nominal model -- six identical cards, no spread,
-    // no drift -- which is the right *reference*, because no qualifying
-    // post-calibration residual data exists to describe a real population
-    // (OQ-10). It is not a claim that any instrument is that uniform, and no
-    // instrument is. The shipped default is therefore a declared product
-    // position rather than a measurement: 0.70 of the modelled spans, which is
-    // what every rendered demo, comparison and factory-audit fixture in this
-    // repository has always been rendered at. Set it to zero to hear the
-    // nominal model.
-    float calibration { 0.70f };
-    // Exposed to the host as Vintage: the master over the circuit
-    // non-linearities added after the component-tolerance set above -- ramp
-    // charging curvature, exponential reset, the chorus clock laws, the
-    // spatial thermal gradient, C14's voltage-dependent capacitance, the VCF
-    // Early effect and the converter's glitch impulse.
-    //
-    // Kept separate from Unit Character on purpose: those are tolerances, a
-    // calibrated unit has less of them, and zero is a meaningful reference.
-    // These are shapes the circuit always has, so they answer to how hard the
-    // model leans on them rather than to how well the unit was trimmed. The
-    // default matches Unit Character, which is what every rendered fixture in
-    // this repository was produced at.
-    float vintage { 0.70f };
+    // The host-facing range is 0 to 1: zero is the calibrated nominal model
+    // -- no spread, no drift, none of the inherent non-linear shapes leaning
+    // in -- and one models the complete, real-hardware-accurate span. Neither
+    // end is a claim that any real instrument sits exactly there (no
+    // qualifying post-calibration residual data exists to describe a real
+    // population, OQ-10); one is simply the declared "matches real hardware"
+    // reference. Internal callers (the comparison-rendering tools in this
+    // repository) may drive this past 1, up to 100, to exaggerate every
+    // mechanism for audible contrast in a demo -- that range does not exist on
+    // the host parameter. The shipped default is 1.0.
+    float calibration { 1.0f };
     float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
     int polyphony { 6 };           // 6 is the hardware voice count.
 
@@ -137,10 +130,13 @@ struct EngineParameters
     bool enableOpAmpSlewLimiting { true };
     bool enableBbdCapacitanceNonlinearity { true };
     bool enableMuxCrosstalk { true };
-    bool enableExponentialReset { false };
-    bool enableVcfEarlyEffect { false };
-    bool enableSpatialThermalGradient { false };
-    bool enableChorusThiranAndClockBleed { false };
+    bool enableExponentialReset { true };
+    bool enableVcfEarlyEffect { true };
+    bool enableSpatialThermalGradient { true };
+    // Only the heterodyne clock-bleed tone is implemented (see
+    // Chorus::process); no Thiran fractional-delay filter exists. Off by
+    // default -- its amplitude is an unvalidated placeholder pending OQ-03.
+    bool enableChorusClockBleed { false };
     bool enableChorusHyperbolicSweep { true };
     bool enableDcoRampCurvature { true };
     bool enableElectrolyticC14Nonlinearity { true };

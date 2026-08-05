@@ -228,7 +228,7 @@ private:
         const char* id = nullptr;
         std::atomic<float>* value = nullptr;
     };
-    std::array<ParameterPointer, 42> parameterPointers {};
+    std::array<ParameterPointer, 41> parameterPointers {};
 
     youknow106::YouKnow106Engine engine;
     // The last complete APVTS/performance snapshot accepted by the audio

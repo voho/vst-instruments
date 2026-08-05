@@ -246,17 +246,21 @@ and therefore also yields C3), each closes the scale on its own.
   endpoint measurement can tell them apart; only a time series can. Confirming
   the MN3101's bias transfer from its datasheet would also settle it.
 
-  **Open defect, and the reason this stays P0.** The current implementation
-  scales the hyperbolic delay about the *centre*, which moves the endpoints:
-  with the measured centre 3.505 ms and sweep 1.845 ms, at Unit Character 1.0
-  the rendered range becomes about 2.30–7.40 ms instead of the measured
-  1.66–5.35 ms — a span 38% wider than the only measured figures this chorus
-  has, and the deviation scales with Unit Character even though whether the
-  oscillator is current-controlled is a topology fact, not a component
-  tolerance. A frequency-linear clock that respects the measurement sweeps the
-  *clock* linearly between `128/5.35 ms` and `128/1.66 ms`, which keeps both
-  endpoints exactly and changes only the path between them. Resolving this
-  question must fix the endpoints and the Unit Character coupling together.
+  **Endpoint defect fixed in code; the reason this stays P0 is the law
+  itself.** An earlier implementation scaled the hyperbolic delay about the
+  *centre*, which moved the endpoints: with the measured centre 3.505 ms and
+  sweep 1.845 ms, at Unit Character 1.0 the rendered range became about
+  2.30–7.40 ms instead of the measured 1.66–5.35 ms — a span 38% wider than
+  the only measured figures this chorus has, and the deviation scaled with
+  Unit Character even though whether the oscillator is current-controlled is
+  a topology fact, not a component tolerance. `Chorus::process` now instead
+  sweeps the *clock* linearly between `128/5.35 ms` and `128/1.66 ms` (derived
+  from the same centre/sweep numbers, no new constant), which keeps both
+  endpoints exact at any amount of Unit Character and changes only the path
+  between them. This closes the endpoint-overshoot defect but not the
+  question: the frequency-linear assumption itself is still unconfirmed
+  against hardware, so resolving OQ-01 still requires the clock time-series
+  capture described above.
 - The peak-to-peak amplitude of the modulation triangle at TP4, and the
   saturated output swing of IC1a, in the same capture. With `β = 1/48` from
   R15/R6 those give C3, and C3 gives both absolute rates.

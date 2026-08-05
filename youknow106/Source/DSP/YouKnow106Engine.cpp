@@ -1821,8 +1821,14 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     fix01(result.benderLfoDepth, 0.0f);
     fix01(result.volume, 0.80f);
     fix01(result.velocityDepth, 0.0f);
-    fix01(result.calibration, 0.70f);
-    fix01(result.vintage, 0.70f);
+    // Unlike every other 0-1 control, Unit Character's own range continues to
+    // 100: 0 is the digital reference, 1 matches real hardware, and values up
+    // to 100 exaggerate every mechanism it scales for audible contrast (used
+    // by the comparison-rendering tools; the host parameter itself is skewed
+    // but still spans 0-100). Clamping it to fix01's 0-1 would silently
+    // discard that range.
+    result.calibration = std::isfinite(result.calibration)
+        ? std::clamp(result.calibration, 0.0f, 100.0f) : 1.0f;
     fix01(result.chorusNoise, 1.0f);
 
     result.masterTuneCents = std::isfinite(result.masterTuneCents)
@@ -2754,7 +2760,7 @@ void YouKnow106Engine::performConverterWrite(
         }
     }
 
-    if (parameters.enableDacGlitchImpulse && parameters.vintage > 0.0f && validPhysicalVoice()
+    if (parameters.enableDacGlitchImpulse && parameters.calibration > 0.0f && validPhysicalVoice()
         && std::abs(currentDacFraction - previousDacFraction_) > 1.0e-5f)
     {
         const int prevCode = static_cast<int>(std::lround(previousDacFraction_ * 4095.0f));
@@ -2764,7 +2770,7 @@ void YouKnow106Engine::performConverterWrite(
         if ((bitFlip & 0x800) != 0 || (bitFlip & 0x400) != 0)
         {
             const float sgn = codeDiff > 0 ? 1.0f : -1.0f;
-            const float glitch = sgn * 0.008f * std::clamp(parameters.vintage, 0.0f, 1.0f);
+            const float glitch = sgn * 0.008f * std::clamp(parameters.calibration, 0.0f, 100.0f);
             auto& voice = voices_[static_cast<std::size_t>(write.voice)];
             if (write.destination == ConverterDestination::Vcf)
                 voice.cutoffCountsTarget += glitch * vcfCountsPerOctave;
@@ -2928,7 +2934,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
 
     const float thermalPitchDetune = parameters.enableSpatialThermalGradient
-        ? (1.0f + 0.0015f * parameters.vintage * (static_cast<float>(voice.cardIndex) - 2.5f))
+        ? (1.0f + 0.0015f * parameters.calibration * (static_cast<float>(voice.cardIndex) - 2.5f))
         : 1.0f;
     const double increment = (dco.periodSamples > 1.0e-9
                            ? 1.0 / dco.periodSamples : 0.0) * thermalPitchDetune;
@@ -2985,28 +2991,28 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
 
-    if (parameters.enableDcoRampCurvature && parameters.vintage > 0.0f && phase < rise)
+    if (parameters.enableDcoRampCurvature && parameters.calibration > 0.0f && phase < rise)
     {
         const float u = clamp01(static_cast<float>(phase / rise));
         const float frequencyHz = static_cast<float>(dcoQuantisedFrequency(dco.divider, parameters.range));
-        const float curveAmount = 0.12f * (100.0f / (frequencyHz + 50.0f)) * std::clamp(parameters.vintage, 0.0f, 1.0f);
+        const float curveAmount = 0.12f * (100.0f / (frequencyHz + 50.0f)) * std::clamp(parameters.calibration, 0.0f, 100.0f);
         sawNaive -= curveAmount * u * (1.0f - u);
     }
 
-    if (parameters.enableExponentialReset && parameters.vintage > 0.0f)
+    if (parameters.enableExponentialReset && parameters.calibration > 0.0f)
     {
-        const float expRounding = 0.05f * parameters.vintage;
+        const float expRounding = 0.05f * parameters.calibration;
         sawNaive = sawNaive - expRounding * std::max(sawNaive, 0.0f) * sawNaive;
     }
 
     // The ramp reset corner slope discontinuities are repaired with slope residuals.
     const float slopeAtStart = 2.0f / static_cast<float>(rise);
     const float slopeAtEnd = slopeAtStart;
-    const float fallSlopeStart = (parameters.enableExponentialReset && parameters.vintage > 0.0f)
-        ? (-2.0f * (1.0f + 3.0f * parameters.vintage) / static_cast<float>(reset))
+    const float fallSlopeStart = (parameters.enableExponentialReset && parameters.calibration > 0.0f)
+        ? (-2.0f * (1.0f + 3.0f * parameters.calibration) / static_cast<float>(reset))
         : (-2.0f / static_cast<float>(reset));
-    const float fallSlopeEnd = (parameters.enableExponentialReset && parameters.vintage > 0.0f)
-        ? (fallSlopeStart * std::exp(-4.0f * parameters.vintage))
+    const float fallSlopeEnd = (parameters.enableExponentialReset && parameters.calibration > 0.0f)
+        ? (fallSlopeStart * std::exp(-4.0f * parameters.calibration))
         : fallSlopeStart;
     const float incrementF = static_cast<float>(increment);
 
@@ -3208,20 +3214,20 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
                             + microscopicNoise * noiseRateScale_;
     // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C
     const float psuThermalOffset = parameters.enableSpatialThermalGradient
-        ? 4.0f * std::exp(-static_cast<float>(voice.cardIndex) / 2.5f) * parameters.vintage
+        ? 4.0f * std::exp(-static_cast<float>(voice.cardIndex) / 2.5f) * parameters.calibration
         : 0.0f;
     const float tempRise = 15.0f * parameters.calibration;
     const float tempC = 25.0f + psuThermalOffset + tempRise * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
     const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
     const float dynamicHeadroom = 2.0f * dynamicThermalVoltage / stageAttenuation;
     const float thermalCutoffSpread = parameters.enableSpatialThermalGradient
-        ? (1.0f + 0.04f * parameters.vintage * (static_cast<float>(voice.cardIndex) - 2.5f))
+        ? (1.0f + 0.04f * parameters.calibration * (static_cast<float>(voice.cardIndex) - 2.5f))
         : 1.0f;
     const float effectiveFilterG = voice.filterG * thermalCutoffSpread;
     const float filtered = voice.filter.process(filterInput, effectiveFilterG,
                                                 voice.feedback, dynamicHeadroom,
                                                 parameters.enableVcfEarlyEffect,
-                                                parameters.vintage);
+                                                parameters.calibration);
 
     if (!voice.active)
         return 0.0f;
@@ -3525,10 +3531,10 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // resonance would otherwise have had to work on.
             const float busIn = voiceBusInput(mono);
             float effectiveCouplingG = voiceBusCouplingG_;
-            if (parameters.enableElectrolyticC14Nonlinearity && parameters.vintage > 0.0f)
+            if (parameters.enableElectrolyticC14Nonlinearity && parameters.calibration > 0.0f)
             {
                 const float inputMagnitude = std::abs(busIn);
-                const float capMod = 1.0f + 0.15f * (inputMagnitude / (1.0f + inputMagnitude)) * std::clamp(parameters.vintage, 0.0f, 1.0f);
+                const float capMod = 1.0f + 0.15f * (inputMagnitude / (1.0f + inputMagnitude)) * std::clamp(parameters.calibration, 0.0f, 100.0f);
                 effectiveCouplingG *= capMod;
             }
             const float coupled = voiceBusCoupling_.process(
@@ -3553,9 +3559,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             float wetRight = levelled;
             chorus_.process(levelled, parameters.chorus, parameters.chorusNoise,
                             wetLeft, wetRight, parameters.enableBbdCapacitanceNonlinearity,
-                            parameters.enableChorusThiranAndClockBleed,
+                            parameters.enableChorusClockBleed,
                             parameters.enableChorusHyperbolicSweep,
-                            parameters.vintage);
+                            parameters.calibration);
 
             // TA75558S IC6 output summer op-amp soft saturation on +/-15V rails (~13.5V headroom)
             if (parameters.calibration > 0.0f)

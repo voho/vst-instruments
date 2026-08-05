@@ -90,9 +90,9 @@ public:
     void process(float input, ChorusMode mode, float noiseScale,
                  float& left, float& right,
                  bool enableCapacitanceNonlinearity = true,
-                 bool enableThiranAndClockBleed = false,
+                 bool enableClockBleed = false,
                  bool enableHyperbolicSweep = true,
-                 float calibration = 0.70f) noexcept;
+                 float calibration = 1.0f) noexcept;
 
     // The nominal (unmodulated) delay in seconds for a clock frequency.
     [[nodiscard]] static constexpr float delaySecondsForClock(float clockHz) noexcept

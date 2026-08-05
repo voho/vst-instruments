@@ -455,11 +455,18 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (travel (velocity, "Velocity", 0.0f, percentAttributes()));
     // Keep the historical id and parameter slot so existing automation remains
     // attached; a stored session value still wins over this default, so only
-    // new instances move. Zero is the calibrated nominal model and stays
-    // available; the default matches EngineParameters and every rendered
-    // fixture, so what a new instance sounds like is what the repository's
-    // demos sound like.
-    layout.add (travel (calibration, "Unit Character", 0.70f, percentAttributes()));
+    // new instances move. Zero is the calibrated nominal model, one is the
+    // "matches real hardware" reference every rendered fixture in this
+    // repository defaults to, and the range continues to 100 so the host
+    // control itself can reach the same exaggerated-for-contrast territory
+    // the internal comparison tools use. Skewed so the knob's own centre sits
+    // at 1.0: the practically useful 0-1 span still covers half the travel,
+    // rather than being squeezed into the first percent of a plain 0-100 knob.
+    juce::NormalisableRange<float> calibrationRange { 0.0f, 100.0f, 0.0f };
+    calibrationRange.setSkewForCentre (1.0f);
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { calibration, 1 }, "Unit Character",
+        calibrationRange, 1.0f, percentAttributes()));
     layout.add (travel (chorusNoise, "Chorus Noise", 1.0f, percentAttributes()));
     // Taken from the engine rather than written out, so the host can never be
     // offered a voice count the engine would clamp away. The default is the
@@ -499,12 +506,6 @@ YouKnow106AudioProcessor::createParameterLayout()
                         || text.containsIgnoreCase ("4");
                 })));
 
-    // Appended after every pre-existing parameter with a later version hint, so
-    // no historical Audio Unit index moves. Unit Character keeps the component
-    // tolerances; this is the master over the circuit non-linearities that were
-    // added after it, and it defaults to the same amount those shipped at.
-    layout.add (travel (vintage, "Vintage", 0.70f, percentAttributes()));
-
     return layout;
 }
 
@@ -522,7 +523,7 @@ YouKnow106AudioProcessor::YouKnow106AudioProcessor()
         highPass, cutoff, resonance, envPolarity, vcfEnv, vcfLfo, keyFollow,
         vcaMode, vcaLevel, attack, decay, sustain, release, legacyChorus,
         transpose, masterTune, velocity, calibration, chorusNoise, polyphony,
-        poly1, poly2, chorusI, chorusII, hq, vintage
+        poly1, poly2, chorusI, chorusII, hq
     });
 
     // The pointer table has to be able to hold every id. Growing the list above
@@ -707,7 +708,6 @@ bool YouKnow106AudioProcessor::updateEngineParameters() noexcept
     engineParameters.masterTuneCents = valueOf (masterTune);
     engineParameters.velocityDepth = valueOf (velocity);
     engineParameters.calibration = valueOf (calibration);
-    engineParameters.vintage = valueOf (vintage);
     engineParameters.chorusNoise = valueOf (chorusNoise);
     engineParameters.polyphony = juce::roundToInt (valueOf (polyphony));
 
@@ -1508,7 +1508,6 @@ bool YouKnow106AudioProcessor::currentProgramIsEdited() const
         || differs (valueOf (masterTune), expected.masterTune)
         || differs (valueOf (velocity), expected.velocity)
         || differs (valueOf (calibration), expected.calibration)
-        || differs (valueOf (vintage), expected.vintage)
         || differs (valueOf (chorusNoise), expected.chorusNoise)
         || juce::roundToInt (valueOf (polyphony)) != expected.polyphony
         || (valueOf (hq) > 0.5f) != expected.hq;
@@ -1615,7 +1614,6 @@ void YouKnow106AudioProcessor::applyProgramValues (
     set (masterTune, controls.masterTune);
     set (velocity, controls.velocity);
     set (calibration, controls.calibration);
-    set (vintage, controls.vintage);
     set (chorusNoise, controls.chorusNoise);
     set (polyphony, static_cast<float> (controls.polyphony));
     set (hq, controls.hq ? 1.0f : 0.0f);

@@ -81,11 +81,10 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::transpose,   0.0f,   1.0e-5f },
     { parameters::masterTune,  0.0f,   1.0e-5f },
     { parameters::velocity,    0.0f,   1.0e-5f },
-    { parameters::calibration, 0.70f,  1.0e-5f },
+    { parameters::calibration, 1.0f,   1.0e-5f },
     { parameters::chorusNoise, 1.0f,   1.0e-5f },
     { parameters::polyphony,   6.0f,   1.0e-5f },
     { parameters::hq,          1.0f,   1.0e-5f },
-    { parameters::vintage,     0.70f,  1.0e-5f },
 });
 
 float parameterValue (const YouKnow106AudioProcessor& processor, const char* id)
@@ -1046,7 +1045,7 @@ void testStateRoundTripAndMigration()
                 currentMissingBytes.getData(),
                 static_cast<int> (currentMissingBytes.getSize()));
             expect (std::abs (parameterValue (migrated, parameters::calibration)
-                              - 0.70f) < 1.0e-4f,
+                              - 1.0f) < 1.0e-4f,
                     "a current missing Unit Character did not receive the "
                     "layout default");
         }
@@ -3280,11 +3279,11 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Seven extension knobs, six compact operation buttons, four patch-bar
+    // Six extension knobs, six compact operation buttons, four patch-bar
     // controls, the keybed and the vector lever. Patch dumping remains a
     // processor/MIDI capability, but no longer takes scarce front-panel area.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 7 + 6 + 4 + 1 + 1;
+        panel::controlCount + 6 + 6 + 4 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -3357,7 +3356,7 @@ void testPersistentContextHelpAndValueBubbles()
     // fixed help presentation cannot silently remove exact values.
     std::vector<juce::Slider*> sliders;
     collectDescendantsOfType (*editor, sliders);
-    int expectedSliders = 7;
+    int expectedSliders = 6;
     for (const auto& control : panel::controls())
         if (control.kind == panel::ControlKind::Slider
             || control.kind == panel::ControlKind::Steps)

@@ -203,7 +203,6 @@ Take renderVcfOffsetsTake(bool enableOffsets)
 {
     auto p = defaultPanel();
     p.calibration = enableOffsets ? 1.0f : 0.0f;
-    p.vintage = 0.0f;
     p.enableVcfStageOffsets = enableOffsets;
     p.cutoff = 0.35f;
     p.resonance = 0.65f;
@@ -222,7 +221,6 @@ Take renderOpAmpSlewTake(bool enableSlewLimiting)
 {
     auto p = defaultPanel();
     p.calibration = enableSlewLimiting ? 1.0f : 0.0f;
-    p.vintage = 0.0f;
     p.enableOpAmpSlewLimiting = enableSlewLimiting;
     p.cutoff = 0.75f;
     p.resonance = 0.80f;
@@ -239,7 +237,6 @@ Take renderBbdCapacitanceTake(bool enableCapNonlinearity)
 {
     auto p = defaultPanel();
     p.calibration = enableCapNonlinearity ? 1.0f : 0.0f;
-    p.vintage = 0.0f;
     p.enableBbdCapacitanceNonlinearity = enableCapNonlinearity;
     p.sawEnabled = true;
     p.subLevel = 0.8f;
@@ -257,7 +254,6 @@ Take renderMuxCrosstalkTake(bool enableCrosstalk)
 {
     auto p = defaultPanel();
     p.calibration = enableCrosstalk ? 1.0f : 0.0f;
-    p.vintage = 0.0f;
     p.enableMuxCrosstalk = enableCrosstalk;
     p.range = DcoRange::Sixteen;
     p.subLevel = 0.9f;
@@ -278,9 +274,7 @@ Take renderMuxCrosstalkTake(bool enableCrosstalk)
 Take renderExponentialResetTake(bool enableExponentialReset)
 {
     auto p = defaultPanel();
-    p.calibration = 0.0f;
-    // Vintage, not Unit Character, is the master over this mechanism.
-    p.vintage = enableExponentialReset ? 1.0f : 0.0f;
+    p.calibration = enableExponentialReset ? 1.0f : 0.0f;
     p.enableExponentialReset = enableExponentialReset;
     p.range = DcoRange::Four;
     p.sawEnabled = true;
@@ -296,9 +290,7 @@ Take renderExponentialResetTake(bool enableExponentialReset)
 Take renderVcfEarlyEffectTake(bool enableVcfEarlyEffect)
 {
     auto p = defaultPanel();
-    p.calibration = 0.0f;
-    // Vintage, not Unit Character, is the master over this mechanism.
-    p.vintage = enableVcfEarlyEffect ? 1.0f : 0.0f;
+    p.calibration = enableVcfEarlyEffect ? 1.0f : 0.0f;
     p.enableVcfEarlyEffect = enableVcfEarlyEffect;
     p.cutoff = 0.40f;
     p.resonance = 0.70f;
@@ -314,9 +306,7 @@ Take renderVcfEarlyEffectTake(bool enableVcfEarlyEffect)
 Take renderSpatialThermalGradientTake(bool enableSpatialThermalGradient)
 {
     auto p = defaultPanel();
-    p.calibration = 0.0f;
-    // Vintage, not Unit Character, is the master over this mechanism.
-    p.vintage = enableSpatialThermalGradient ? 1.0f : 0.0f;
+    p.calibration = enableSpatialThermalGradient ? 1.0f : 0.0f;
     p.enableSpatialThermalGradient = enableSpatialThermalGradient;
     p.cutoff = 0.50f;
     p.resonance = 0.60f;
@@ -329,14 +319,12 @@ Take renderSpatialThermalGradientTake(bool enableSpatialThermalGradient)
     return take;
 }
 
-// 8. Chorus Thiran Fractional Delay & Heterodyne Clock Bleed: Lush chorus pad
-Take renderChorusThiranTake(bool enableChorusThiranAndClockBleed)
+// 8. Chorus Heterodyne Clock Bleed: Lush chorus pad
+Take renderChorusClockBleedTake(bool enableChorusClockBleed)
 {
     auto p = defaultPanel();
-    p.calibration = 0.0f;
-    // Vintage, not Unit Character, is the master over this mechanism.
-    p.vintage = enableChorusThiranAndClockBleed ? 1.0f : 0.0f;
-    p.enableChorusThiranAndClockBleed = enableChorusThiranAndClockBleed;
+    p.calibration = enableChorusClockBleed ? 1.0f : 0.0f;
+    p.enableChorusClockBleed = enableChorusClockBleed;
     p.sawEnabled = true;
     p.subLevel = 0.5f;
     p.chorus = ChorusMode::Two;
@@ -351,9 +339,7 @@ Take renderChorusThiranTake(bool enableChorusThiranAndClockBleed)
 Take renderChorusHyperbolicSweepTake(bool enableChorusHyperbolicSweep)
 {
     auto p = defaultPanel();
-    p.calibration = 0.0f;
-    // Vintage, not Unit Character, is the master over this mechanism.
-    p.vintage = enableChorusHyperbolicSweep ? 1.0f : 0.0f;
+    p.calibration = enableChorusHyperbolicSweep ? 1.0f : 0.0f;
     p.enableChorusHyperbolicSweep = enableChorusHyperbolicSweep;
     p.sawEnabled = true;
     p.subLevel = 0.6f;
@@ -369,9 +355,7 @@ Take renderChorusHyperbolicSweepTake(bool enableChorusHyperbolicSweep)
 Take renderDcoRampCurvatureTake(bool enableDcoRampCurvature)
 {
     auto p = defaultPanel();
-    p.calibration = 0.0f;
-    // Vintage, not Unit Character, is the master over this mechanism.
-    p.vintage = enableDcoRampCurvature ? 1.0f : 0.0f;
+    p.calibration = enableDcoRampCurvature ? 1.0f : 0.0f;
     p.enableDcoRampCurvature = enableDcoRampCurvature;
     p.range = DcoRange::Sixteen;
     p.sawEnabled = true;
@@ -387,9 +371,7 @@ Take renderDcoRampCurvatureTake(bool enableDcoRampCurvature)
 Take renderElectrolyticC14Take(bool enableElectrolyticC14Nonlinearity)
 {
     auto p = defaultPanel();
-    p.calibration = 0.0f;
-    // Vintage, not Unit Character, is the master over this mechanism.
-    p.vintage = enableElectrolyticC14Nonlinearity ? 1.0f : 0.0f;
+    p.calibration = enableElectrolyticC14Nonlinearity ? 1.0f : 0.0f;
     p.enableElectrolyticC14Nonlinearity = enableElectrolyticC14Nonlinearity;
     p.highPass = HighPassMode::Two;
     p.sawEnabled = true;
@@ -405,9 +387,7 @@ Take renderElectrolyticC14Take(bool enableElectrolyticC14Nonlinearity)
 Take renderDacGlitchImpulseTake(bool enableDacGlitchImpulse)
 {
     auto p = defaultPanel();
-    p.calibration = 0.0f;
-    // Vintage, not Unit Character, is the master over this mechanism.
-    p.vintage = enableDacGlitchImpulse ? 1.0f : 0.0f;
+    p.calibration = enableDacGlitchImpulse ? 1.0f : 0.0f;
     p.enableDacGlitchImpulse = enableDacGlitchImpulse;
     p.sawEnabled = true;
     p.cutoff = 0.50f;
@@ -528,10 +508,10 @@ int main(int argc, char** argv)
         std::printf("Rendered 07-spatial-thermal-gradient (before, after, diff)\n");
     }
 
-    // Feature 8: Chorus Thiran & Heterodyne Clock Bleed
+    // Feature 8: Chorus Heterodyne Clock Bleed
     {
-        auto before = renderChorusThiranTake(false);
-        auto after = renderChorusThiranTake(true);
+        auto before = renderChorusClockBleedTake(false);
+        auto after = renderChorusClockBleedTake(true);
         auto diff = after.diffWith(before);
         before.normalise();
         after.normalise();
