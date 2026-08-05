@@ -250,6 +250,21 @@ Take renderMuxCrosstalkTake(bool enableCrosstalk)
     return take;
 }
 
+// 5. Exponential DCO Ramp Reset Dynamics: Bright high note lead
+Take renderExponentialResetTake(bool enableExponentialReset)
+{
+    auto p = defaultPanel();
+    p.enableExponentialReset = enableExponentialReset;
+    p.range = DcoRange::Four;
+    p.sawEnabled = true;
+    p.cutoff = 0.95f;
+    p.resonance = 0.10f;
+    Take take(p);
+    take.rest(0.05);
+    take.hit(84, 0.95f, 1.0, 0.3);
+    return take;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -302,6 +317,17 @@ int main(int argc, char** argv)
         writeWav(outputDir / "04-multiplexer-crosstalk-before.wav", before.left(), before.right());
         writeWav(outputDir / "04-multiplexer-crosstalk-after.wav", after.left(), after.right());
         std::printf("Rendered 04-multiplexer-crosstalk (before & after)\n");
+    }
+
+    // Feature 5: Exponential DCO Ramp Reset
+    {
+        auto before = renderExponentialResetTake(false);
+        auto after = renderExponentialResetTake(true);
+        before.normalise();
+        after.normalise();
+        writeWav(outputDir / "05-exponential-dco-reset-before.wav", before.left(), before.right());
+        writeWav(outputDir / "05-exponential-dco-reset-after.wav", after.left(), after.right());
+        std::printf("Rendered 05-exponential-dco-reset (before & after)\n");
     }
 
     std::printf("All SOTA comparison WAVs successfully rendered!\n");

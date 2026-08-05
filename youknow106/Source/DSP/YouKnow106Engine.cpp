@@ -2951,27 +2951,33 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float amplitude = sawMixVolts
                           * dcoRampAmplitudeScale(voice, parameters);
 
-    const float sawNaive = phase < rise
+    float sawNaive = phase < rise
         ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
 
-    // The ramp has no value discontinuity: the reset is a steep segment, not a
-    // jump. Both of its corners are slope discontinuities, so both are repaired
-    // with the slope residual rather than a step residual. The charge is
-    // constant-current, so the rise is straight and both rise corners carry
-    // the same slope.
+    if (parameters.enableExponentialReset && phase >= rise)
+    {
+        const float resetPhaseNorm = static_cast<float>((phase - rise) / reset);
+        constexpr float expDecayRate = 4.0f; // tau = reset / 4 (~0.55 us JFET RC discharge)
+        const float expFactor = (std::exp(-expDecayRate * resetPhaseNorm) - std::exp(-expDecayRate))
+                              / (1.0f - std::exp(-expDecayRate));
+        sawNaive = 2.0f * expFactor - 1.0f;
+    }
+
+    // The ramp reset corner slope discontinuities are repaired with slope residuals.
     const float slopeAtStart = 2.0f / static_cast<float>(rise);
     const float slopeAtEnd = slopeAtStart;
-    const float fallSlope = -2.0f / static_cast<float>(reset);
+    const float fallSlopeStart = parameters.enableExponentialReset ? -8.0f / static_cast<float>(reset) : -2.0f / static_cast<float>(reset);
+    const float fallSlopeEnd = parameters.enableExponentialReset ? fallSlopeStart * std::exp(-4.0f) : fallSlopeStart;
     const float incrementF = static_cast<float>(increment);
 
     for (double base = 0.0; base <= lastCycle; base += 1.0)
     {
         if (insideThisSample(base + rise))
-            addSlope(dco.saw, (fallSlope - slopeAtEnd) * incrementF,
+            addSlope(dco.saw, (fallSlopeStart - slopeAtEnd) * incrementF,
                      samplesAgo(base + rise));
         if (insideThisSample(base + 1.0))
-            addSlope(dco.saw, (slopeAtStart - fallSlope) * incrementF,
+            addSlope(dco.saw, (slopeAtStart - fallSlopeEnd) * incrementF,
                      samplesAgo(base + 1.0));
     }
 

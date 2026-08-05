@@ -243,6 +243,9 @@ of them. Where a mechanism has an open question, it is named in its entry.
 14. **CMOS CD4051 Multiplexer Gate-Drain Capacitive Crosstalk ($C_{gd}$) & Charge Injection**:
     CD4051 8-channel analog multiplexer channel switches exhibit parasitic gate-drain capacitance ($C_{gd} \approx 6\,\text{pF}$), injecting micro-charge pulses ($\Delta Q = C_{gd} \cdot \Delta V_{\text{dac}}$) into hold capacitors during multiplexer scan transitions to model organic control chatter.
 
+15. **JFET DCO Ramp Reset Exponential RC Discharge ($R_{\text{DS,on}} C$)**:
+    Replaces the linear reset phase approximation with physical JFET discharge curve $V_{\text{ramp}}(t) = V_{\text{peak}} e^{-t / \tau_{\text{reset}}}$ ($\tau_{\text{reset}} \approx 0.55\,\mu\text{s}$), softening the bottom reset corner into $-1.0$ and smoothing high-frequency harmonic reset artifacts. Rendered before/after comparison WAVs are committed in [`05-exponential-dco-reset-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/05-exponential-dco-reset-before.wav) and [`05-exponential-dco-reset-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/05-exponential-dco-reset-after.wav).
+
 ## What remains open
 
 The canonical research queue is

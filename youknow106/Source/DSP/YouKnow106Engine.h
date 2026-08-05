@@ -124,6 +124,10 @@ struct EngineParameters
     bool enableOpAmpSlewLimiting { true };
     bool enableBbdCapacitanceNonlinearity { true };
     bool enableMuxCrosstalk { true };
+    bool enableExponentialReset { true };
+    bool enableVcfEarlyEffect { true };
+    bool enableSpatialThermalGradient { true };
+    bool enableChorusThiranAndClockBleed { true };
 };
 
 class YouKnow106Engine
