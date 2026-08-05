@@ -1630,29 +1630,31 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     {
         const auto box = scaled (section.x, section.y,
                                  section.width, section.height);
+        const bool isVcf = (section.name != nullptr && std::string (section.name) == "VCF");
 
         // A shallow moulded recess for each section, then its coloured header.
         g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.55f));
         g.fillRoundedRectangle (box, 4.0f * scale);
-        g.setColour (juce::Colours::white.withAlpha (0.04f));
-        g.drawRoundedRectangle (box.reduced (0.5f), 4.0f * scale, 1.0f);
+        g.setColour (isVcf ? fromPalette (panel::colour::cyan).withAlpha (0.40f)
+                           : juce::Colours::white.withAlpha (0.04f));
+        g.drawRoundedRectangle (box.reduced (0.5f), 4.0f * scale, isVcf ? 1.5f * scale : 1.0f);
 
         const auto header = scaled (section.x, section.y, section.width,
                                     panel::headerHeight);
         const auto tint = accentColour (section.accent);
         juce::ColourGradient headerGrad (
-            tint.withAlpha (0.24f), header.getX(), header.getY(),
-            tint.withAlpha (0.07f), header.getX(), header.getBottom(), false);
+            tint.withAlpha (isVcf ? 0.32f : 0.22f), header.getX(), header.getY(),
+            tint.withAlpha (isVcf ? 0.12f : 0.06f), header.getX(), header.getBottom(), false);
         g.setGradientFill (headerGrad);
         g.fillRoundedRectangle (header, 3.0f * scale);
-        g.setColour (tint.withAlpha (0.85f));
+        g.setColour (tint.withAlpha (isVcf ? 1.0f : 0.82f));
         g.fillRect (header.getX() + 2.0f * scale,
                     header.getBottom() - 2.0f * scale,
                     header.getWidth() - 4.0f * scale,
-                    2.0f * scale);
+                    isVcf ? 2.5f * scale : 2.0f * scale);
 
-        g.setColour (tint);
-        g.setFont (panelFont (juce::jmax (10.0f, panel::headerPointSize * scale), true));
+        g.setColour (isVcf ? tint.brighter (0.15f) : tint);
+        g.setFont (panelFont (juce::jmax (10.0f, (isVcf ? 13.0f : panel::headerPointSize) * scale), true));
         g.drawText (section.name, header.toNearestInt(),
                     juce::Justification::centred);
     }
@@ -1660,7 +1662,8 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     const auto drawConsoleCard = [this, &g] (juce::Rectangle<float> area,
                                               std::uint32_t tintValue,
                                               const char* title,
-                                              const char* code)
+                                              const char* code,
+                                              bool isSecondary = false)
     {
         const auto tint = fromPalette (tintValue);
         const float cut = juce::jmax (4.0f, 8.0f * scale);
@@ -1674,38 +1677,39 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
         card.lineTo (area.getX(), area.getY());
         card.closeSubPath();
 
-        g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.82f));
+        g.setColour (fromPalette (panel::colour::faceplateLow)
+                         .withAlpha (isSecondary ? 0.55f : 0.82f));
         g.fillPath (card);
-        g.setColour (tint.withAlpha (0.42f));
+        g.setColour (tint.withAlpha (isSecondary ? 0.24f : 0.42f));
         g.strokePath (card, juce::PathStrokeType (juce::jmax (1.0f, scale)));
 
         const auto header = area.removeFromTop (panel::headerHeight * scale);
         juce::ColourGradient cardHeaderGrad (
-            tint.withAlpha (0.22f), header.getX(), header.getY(),
-            tint.withAlpha (0.06f), header.getX(), header.getBottom(), false);
+            tint.withAlpha (isSecondary ? 0.14f : 0.22f), header.getX(), header.getY(),
+            tint.withAlpha (0.04f), header.getX(), header.getBottom(), false);
         g.setGradientFill (cardHeaderGrad);
         g.fillRect (header.reduced (1.0f));
-        g.setColour (tint.withAlpha (0.85f));
+        g.setColour (tint.withAlpha (isSecondary ? 0.55f : 0.85f));
         g.fillRect (header.getX() + 2.0f * scale,
                     header.getBottom() - 2.0f * scale,
                     header.getWidth() - 4.0f * scale, 2.0f * scale);
         g.setFont (panelFont (juce::jmax (10.0f,
-                                         panel::headerPointSize * scale), true));
+                                         (isSecondary ? 11.0f : panel::headerPointSize) * scale), true));
         g.drawText (title, header.reduced (8.0f * scale, 0.0f).toNearestInt(),
                     juce::Justification::centredLeft);
-        g.setColour (fromPalette (panel::colour::textDim));
+        g.setColour (fromPalette (panel::colour::textDim).withAlpha (isSecondary ? 0.60f : 1.0f));
         g.setFont (panelFont (juce::jmax (9.0f, 10.0f * scale), true));
         g.drawText (code, header.reduced (8.0f * scale, 0.0f).toNearestInt(),
                     juce::Justification::centredRight);
     };
 
     drawConsoleCard (scaled (662.0f, panel::soundRowBTop, 446.0f, 80.0f),
-                     panel::colour::magenta, "CHARACTER", "EXT / 02");
+                     panel::colour::magenta, "CHARACTER", "EXT / 02", true);
     drawConsoleCard (scaled (662.0f, 366.0f, 446.0f, 92.0f),
-                     panel::colour::cyan, "OPERATIONS", "OPS / 05");
+                     panel::colour::cyan, "OPERATIONS", "OPS / 05", true);
     drawConsoleCard (scaled (398.0f, panel::performanceDeckTop,
                              698.0f, panel::performanceDeckHeight),
-                     panel::colour::magenta, "KEYBOARD CONTROL", "LIVE / 04");
+                     panel::colour::magenta, "KEYBOARD CONTROL", "LIVE / 04", false);
 
     // Hard separation around the playable area protects the keybed visually
     // from the service controls above and the explanatory display below.
