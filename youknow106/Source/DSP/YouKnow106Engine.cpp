@@ -2742,7 +2742,7 @@ void YouKnow106Engine::performConverterWrite(
     if (parameters.enableMuxCrosstalk && std::abs(currentDacFraction - previousDacFraction_) > 1.0e-5f)
     {
         const float dacStep = currentDacFraction - previousDacFraction_;
-        const float injection = dacStep * 0.0025f;
+        const float injection = dacStep * 0.0025f * parameters.calibration;
         if (validPhysicalVoice())
         {
             auto& voice = voices_[static_cast<std::size_t>(write.voice)];
@@ -3514,7 +3514,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // rail is inserted here; the main volume control follows it.
             float wetLeft = levelled;
             float wetRight = levelled;
-            chorus_.process(levelled, parameters.chorus, parameters.chorusNoise,
+            const float chorusNoiseScaled = parameters.chorusNoise * parameters.calibration;
+            chorus_.process(levelled, parameters.chorus, chorusNoiseScaled,
                             wetLeft, wetRight, parameters.enableBbdCapacitanceNonlinearity,
                             parameters.enableChorusThiranAndClockBleed);
 
@@ -3532,7 +3533,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // TA75558S IC6 output summer op-amp dynamic slew-rate limiting (SR = 1.7 V/us)
             if (parameters.enableOpAmpSlewLimiting)
             {
-                const float maxStep = static_cast<float>(653846.15 / oversampledRate_);
+                const float slewScale = std::max(parameters.calibration, 0.1f);
+                const float maxStep = static_cast<float>(653846.15 / (oversampledRate_ * slewScale));
                 const float deltaL = wetLeft - outputSlewStateLeft_;
                 outputSlewStateLeft_ += std::clamp(deltaL, -maxStep, maxStep);
                 wetLeft = outputSlewStateLeft_;
