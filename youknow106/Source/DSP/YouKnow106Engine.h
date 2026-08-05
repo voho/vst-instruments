@@ -109,6 +109,12 @@ struct EngineParameters
     float calibration { 0.0f };    // Exposed to the host as Unit Character.
     float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
     int polyphony { 6 };           // 6 is the hardware voice count.
+
+    // --- State-of-the-Art Physical Circuit Simulation Toggles ----------------
+    bool enableVcfStageOffsets { true };
+    bool enableOpAmpSlewLimiting { true };
+    bool enableBbdCapacitanceNonlinearity { true };
+    bool enableMuxCrosstalk { true };
 };
 
 class YouKnow106Engine
@@ -562,6 +568,7 @@ private:
     {
         std::array<float, 4> state {};
         std::array<float, 4> voltage {};
+        std::array<float, 4> offsetVoltage {};
 
         void reset() noexcept;
         // Re-express the trapezoidal derivative carry for a changed numerical
@@ -617,6 +624,7 @@ private:
         float driftPhase { 0.0f };
         float driftValue { 0.0f };
         std::uint32_t driftState { 1u };
+        std::array<float, 4> vcfStageOffsets { 0.0015f, -0.0012f, 0.0018f, -0.0010f };
     };
 
     struct Voice

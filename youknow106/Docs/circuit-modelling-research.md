@@ -213,6 +213,9 @@ The engine incorporates five deterministic physical circuit behaviors operating 
 10. **Sample-and-Hold Capacitive Charge Leakage & Re-strike Key Click**:
     Re-striking an active voice card before its release envelope finishes causes residual charge leakage on hold capacitor $C_{hold}$ through switch resistance $R_{on}$, producing an authentic analog legato key-click transient.
 
+11. **IR3109 VCF Stage-Space Transistor Input Offset Voltages ($V_{os}$)**:
+    Differential pair BJT transistor input offset voltages ($V_{os} \approx 1.5\,\text{mV}$) across the 4 IR3109 transconductor stages break 4-pole differential symmetry, creating stage-dependent dynamic DC shifts and asymmetric soft distortion under high-resonance filter sweeps.
+
 ## What remains open
 
 The canonical research queue is

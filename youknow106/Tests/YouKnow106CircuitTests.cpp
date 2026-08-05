@@ -2312,6 +2312,34 @@ int main()
     testSupportFilterCornersLandWhereAsked();
     testHighPassReachesTheSummedSignal();
     testCorrectionResidualsVanishAtTheEdges();
+    
+    // SOTA physical modeling tests
+    {
+        YouKnow106TestAccess::Cascade cascade;
+        cascade.reset();
+        cascade.offsetVoltage = { 0.0020f, -0.0015f, 0.0018f, -0.0010f };
+
+        float positiveSum = 0.0f;
+        float negativeSum = 0.0f;
+        for (int i = 0; i < 1000; ++i)
+        {
+            float in = 2.0f * std::sin(2.0f * 3.141592653589793f * static_cast<float>(i) / 100.0f);
+            float out = cascade.process(in, 0.5f, 2.0f);
+            if (!std::isfinite(out))
+            {
+                std::cerr << "FAIL: OtaCascade output not finite with stage offsets\n";
+                ++failures;
+                break;
+            }
+            if (out > 0.0f) positiveSum += out;
+            else negativeSum += std::abs(out);
+        }
+        if (std::abs(positiveSum - negativeSum) <= 1.0e-4f)
+        {
+            std::cerr << "FAIL: OtaCascade stage offsets did not produce asymmetric response\n";
+            ++failures;
+        }
+    }
 
     if (failures != 0)
     {

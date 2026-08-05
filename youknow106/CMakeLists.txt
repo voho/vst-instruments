@@ -153,6 +153,10 @@ if(YOUKNOW106_BUILD_TOOLS)
     target_link_libraries(YouKnow106RenderDemos PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106RenderDemos PRIVATE cxx_std_20)
 
+    add_executable(YouKnow106RenderSota Tools/RenderSotaComparisons.cpp)
+    target_link_libraries(YouKnow106RenderSota PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106RenderSota PRIVATE cxx_std_20)
+
     add_executable(YouKnow106AuditFactoryPresets Tools/AuditFactoryPresets.cpp)
     target_link_libraries(YouKnow106AuditFactoryPresets
         PRIVATE YouKnow106DSP Threads::Threads)
@@ -162,10 +166,13 @@ if(YOUKNOW106_BUILD_TOOLS)
 
     if(MSVC)
         target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106AuditFactoryPresets PRIVATE
             /W4 /permissive-)
     else()
         target_compile_options(YouKnow106RenderDemos PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106RenderSota PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106AuditFactoryPresets PRIVATE
             -Wall -Wextra -Wpedantic)

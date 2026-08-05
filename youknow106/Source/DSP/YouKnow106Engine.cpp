@@ -1271,7 +1271,8 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
         float previous = input - k * feedbackHeadroom * feedbackTanh;
         for (int n = 0; n < 4; ++n)
         {
-            const float x = (previous - voltage[n]) * inverseHeadroom;
+            const float x = (previous - voltage[static_cast<std::size_t>(n)]
+                             + offsetVoltage[static_cast<std::size_t>(n)]) * inverseHeadroom;
             const float t = std::tanh(x);
             const float sech2 = 1.0f - t * t;
             residual[static_cast<std::size_t>(n)] =
@@ -1447,6 +1448,11 @@ void YouKnow106Engine::buildVoiceCards() noexcept
         card.driftPhase = 0.5f * (hashBipolar(seed + 7u) + 1.0f);
         card.vcaGainError = hashBipolar(seed + 8u);
         card.noiseLevelError = hashBipolar(seed + 9u);
+        for (std::size_t stage = 0; stage < 4; ++stage)
+        {
+            card.vcfStageOffsets[stage] =
+                0.0015f * hashBipolar(seed + 10u + static_cast<std::uint32_t>(stage));
+        }
         card.driftValue = 0.0f;
         card.driftState = seed | 1u;
     }
@@ -2784,6 +2790,16 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
 
     voice.vca = VoicedVoiceVcaCompatibilityProfile::gain(voice.vcaControl)
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
+
+    if (parameters.enableVcfStageOffsets)
+    {
+        for (std::size_t stage = 0; stage < 4; ++stage)
+            voice.filter.offsetVoltage[stage] = card.vcfStageOffsets[stage];
+    }
+    else
+    {
+        voice.filter.offsetVoltage.fill(0.0f);
+    }
 }
 
 void YouKnow106Engine::updatePulseComparator(
