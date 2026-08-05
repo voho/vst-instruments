@@ -198,6 +198,9 @@ The engine incorporates five deterministic physical circuit behaviors operating 
 5. **BBD Dynamic Charge Transfer Loss & Clock Feedthrough**:
    MN3009 bucket-brigade stage-to-stage charge transfer loss ($\alpha_{loss}$) scales dynamically with BBD clock frequency $f_{clk}$, and phase-coherent clock feedthrough ($f_{clk}$) injects subtle heterodyne shimmer into the wet chorus path.
 
+6. **VCF Cutoff Anti-Log Emitter Resistance ($R_e$) Compression**:
+   Anti-log transistor parasitic emitter resistance ($R_e \approx 8\,\Omega$) causes an $I_{abc} R_e$ voltage drop at high cutoff control currents ($f_c > 8\text{ kHz}$), softly compressing extreme top-end filter sweeps ($\text{rawHz} / (1 + \text{calibration} \cdot (\text{rawHz} / 120000))$) to prevent digital harshness.
+
 ## What remains open
 
 The canonical research queue is

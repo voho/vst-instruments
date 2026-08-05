@@ -179,12 +179,15 @@ float YouKnow106Engine::VoicedResonanceCompatibilityProfile::frequencyTrim(
 }
 
 float YouKnow106Engine::vcfEffectiveCutoffHz(float counts,
-                                             float feedback) noexcept
+                                             float feedback,
+                                             float calibration) noexcept
 {
-    return std::min(vcfSafetyCapHz,
-                    vcfCutoffHz(counts)
-                        * VoicedResonanceCompatibilityProfile::frequencyTrim(
-                            feedback));
+    const float rawHz = vcfCutoffHz(counts)
+                      * VoicedResonanceCompatibilityProfile::frequencyTrim(feedback);
+    // Physical anti-log transistor parasitic emitter resistance (R_e) compression
+    // at high control currents (> 8 kHz).
+    const float compressedHz = rawHz / (1.0f + calibration * (rawHz / 120000.0f));
+    return std::min(vcfSafetyCapHz, compressedHz);
 }
 
 namespace
@@ -2766,7 +2769,7 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
         + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * tolerance
         + card.driftValue * 40.0f * tolerance
         + psuCutoffShift;
-    const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
+    const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback, tolerance);
     const float limited =
         std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
     voice.filterG = std::tan(pi * limited * inverseOversampledRate_);

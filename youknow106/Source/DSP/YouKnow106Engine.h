@@ -214,7 +214,8 @@ public:
     // frequency correction. The explicit product safety cap applies after
     // every correction so no composition can exceed the declared boundary.
     [[nodiscard]] static float vcfEffectiveCutoffHz(float counts,
-                                                    float feedback) noexcept;
+                                                    float feedback,
+                                                    float calibration = 0.0f) noexcept;
 
     [[nodiscard]] static float envelopeAttackSeconds(float panelPosition) noexcept;
     [[nodiscard]] static float envelopeDecaySeconds(float panelPosition) noexcept;
