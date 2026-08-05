@@ -367,6 +367,22 @@ Take renderDcoRampCurvatureTake(bool enableDcoRampCurvature)
     return take;
 }
 
+// 11. C14 Non-Polar Electrolytic Voltage-Dependent HPF Modulation: Sub-bass + polyphonic chord
+Take renderElectrolyticC14Take(bool enableElectrolyticC14Nonlinearity)
+{
+    auto p = defaultPanel();
+    p.calibration = enableElectrolyticC14Nonlinearity ? 100.0f : 0.0f;
+    p.enableElectrolyticC14Nonlinearity = enableElectrolyticC14Nonlinearity;
+    p.highPass = HighPassMode::Two;
+    p.sawEnabled = true;
+    p.subLevel = 1.0f;
+    p.cutoff = 0.70f;
+    Take take(p);
+    take.rest(0.05);
+    take.chord({ 36, 60, 64, 67 }, 0.95f, 2.0, 0.5);
+    return take;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -515,6 +531,20 @@ int main(int argc, char** argv)
         writeWav(outputDir / "10-dco-ramp-curvature-after.wav", after.left(), after.right());
         writeWav(outputDir / "10-dco-ramp-curvature-diff.wav", diff.left(), diff.right());
         std::printf("Rendered 10-dco-ramp-curvature (before, after, diff)\n");
+    }
+
+    // Feature 11: C14 Non-Polar Electrolytic Voltage-Dependent HPF Modulation
+    {
+        auto before = renderElectrolyticC14Take(false);
+        auto after = renderElectrolyticC14Take(true);
+        auto diff = after.diffWith(before);
+        before.normalise();
+        after.normalise();
+        diff.normalise();
+        writeWav(outputDir / "11-electrolytic-c14-nonlinearity-before.wav", before.left(), before.right());
+        writeWav(outputDir / "11-electrolytic-c14-nonlinearity-after.wav", after.left(), after.right());
+        writeWav(outputDir / "11-electrolytic-c14-nonlinearity-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 11-electrolytic-c14-nonlinearity (before, after, diff)\n");
     }
 
     std::printf("All SOTA comparison WAVs & diffs successfully rendered!\n");

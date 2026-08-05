@@ -3502,8 +3502,16 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             // high-pass feeding a resonant lowpass is not the same as one
             // following it, because what the high-pass removes is what the
             // resonance would otherwise have had to work on.
+            const float busIn = voiceBusInput(mono);
+            float effectiveCouplingG = voiceBusCouplingG_;
+            if (parameters.enableElectrolyticC14Nonlinearity && parameters.calibration > 0.0f)
+            {
+                const float inputMagnitude = std::abs(busIn);
+                const float capMod = 1.0f + 0.15f * (inputMagnitude / (1.0f + inputMagnitude)) * std::clamp(parameters.calibration, 0.0f, 100.0f);
+                effectiveCouplingG *= capMod;
+            }
             const float coupled = voiceBusCoupling_.process(
-                voiceBusInput(mono), voiceBusCouplingG_, 0.0f, 1.0f);
+                busIn, effectiveCouplingG, 0.0f, 1.0f);
             const float shaped = highPass_.process(coupled,
                                                    highPassG_,
                                                    highPassShelf_, highPassHigh_);
