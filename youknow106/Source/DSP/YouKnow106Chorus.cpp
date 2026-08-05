@@ -490,7 +490,9 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     }
     const float muteGlide = 1.0f - std::exp(
         -inverseSampleRate_ / wetMuteTimeConstantSeconds);
-    wetGain_ += (target.wetGain - wetGain_) * muteGlide;
+    const float wetDelta = (target.wetGain - wetGain_);
+    wetGain_ += wetDelta * muteGlide;
+    const float jfetGatePop = wetDelta * 0.003f;
 
     lfoPhase_ += rateHz_ * inverseSampleRate_;
     if (lfoPhase_ >= 1.0f)
@@ -514,6 +516,12 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                                 wetOutputCouplingG, noiseScale);
     float wetB = lineB_.process(input, clockB, sampleRate_, support_,
                                 wetOutputCouplingG, noiseScale);
+
+    // TR11 / TR12 2SK30A JFET channel resistance modulation & gate charge injection
+    const float jfetModA = 1.0f - 0.015f * std::tanh(wetA * wetA);
+    const float jfetModB = 1.0f - 0.015f * std::tanh(wetB * wetB);
+    wetA = (wetA + jfetGatePop) * jfetModA;
+    wetB = (wetB + jfetGatePop) * jfetModB;
 
     // These mechanisms are deliberately separate from the compatibility hiss
     // above.  Their insertion point, spectra, levels and stereo correlation

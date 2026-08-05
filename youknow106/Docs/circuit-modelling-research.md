@@ -204,6 +204,9 @@ The engine incorporates five deterministic physical circuit behaviors operating 
 7. **TA75558S IC6 Output Summer Op-Amp Soft Saturation**:
    Output summer dual op-amp TA75558S operating on $\pm 15\text{V}$ rails ($\approx \pm 13.5\text{V}$ output headroom) enters soft saturation ($\tanh$) when driven hot under unison or dense chorus modes, preserving analogue output warmth without hard digital clipping.
 
+8. **TR11/TR12 2SK30A JFET Wet-Mute Switch Modulation & Gate Injection**:
+   2SK30A JFET mute switch channel resistance $R_{DS,on}$ non-linear modulation under signal peaks ($1 - 0.015 \tanh(v^2)$) and gate charge injection transient ($Q_{gd}$) during Chorus mode switches produce realistic sub-audio switch pops and subtle wet channel harmonics.
+
 ## What remains open
 
 The canonical research queue is
