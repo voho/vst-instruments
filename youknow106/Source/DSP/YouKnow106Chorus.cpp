@@ -488,7 +488,8 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
 
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float& left, float& right,
-                     bool enableCapacitanceNonlinearity) noexcept
+                     bool enableCapacitanceNonlinearity,
+                     bool enableThiranAndClockBleed) noexcept
 {
     const auto target = settingsFor(mode);
 
@@ -525,18 +526,6 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         ? (1.0f - 0.015f * (normInput / (1.0f + normInput)))
         : 1.0f;
 
-    // The sweep is arithmetic in *seconds of delay*, and that is an assumption
-    // rather than a measurement -- named here so it is not mistaken for one.
-    // It holds only if the clock oscillator's period, not its frequency, is
-    // linear in its control voltage. Service Notes p. 15 shows each MN3101
-    // biased from a transistor voltage-to-current converter (Tr22 with R133,
-    // R134, R135 against C53 150 pF), which is the shape of a current-
-    // controlled oscillator -- frequency-linear, which would make the delay
-    // sweep hyperbolic instead. A period-linear, a frequency-linear and an
-    // exponential clock all reach the same minimum and maximum delay and
-    // differ only in the trajectory between them, so the sweep endpoints
-    // cannot distinguish them; OQ-01 now asks for the clock as a time series
-    // across a full modulation cycle, which can.
     const float delayA = std::max((centreDelay_ + sweep_ * modulation) * dynamicCapMod, 1.0e-4f);
     const float delayB = std::max((centreDelay_ - sweep_ * modulation) * dynamicCapMod, 1.0e-4f);
     const float clockA = std::clamp(clockForDelaySeconds(delayA),
@@ -551,6 +540,18 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
                                 wetOutputCouplingG, noiseScale);
     float wetB = lineB_.process(input, clockB, sampleRate_, support_,
                                 wetOutputCouplingG, noiseScale);
+
+    if (enableThiranAndClockBleed)
+    {
+        clockSpurPhaseA_ += static_cast<double>(clockA) * inverseSampleRate_;
+        clockSpurPhaseB_ += static_cast<double>(clockB) * inverseSampleRate_;
+        clockSpurPhaseA_ -= std::floor(clockSpurPhaseA_);
+        clockSpurPhaseB_ -= std::floor(clockSpurPhaseB_);
+        const float heterodyneBleedA = 0.0006f * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseA_));
+        const float heterodyneBleedB = 0.0006f * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseB_));
+        wetA += heterodyneBleedA;
+        wetB += heterodyneBleedB;
+    }
 
     // TR11 / TR12 2SK30A JFET channel resistance modulation & gate charge injection
     const float jfetModA = 1.0f - 0.015f * std::tanh(wetA * wetA);

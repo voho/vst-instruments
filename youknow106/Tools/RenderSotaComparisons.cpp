@@ -296,6 +296,21 @@ Take renderSpatialThermalGradientTake(bool enableSpatialThermalGradient)
     return take;
 }
 
+// 8. Chorus Thiran Fractional Delay & Heterodyne Clock Bleed: Lush chorus pad
+Take renderChorusThiranTake(bool enableChorusThiranAndClockBleed)
+{
+    auto p = defaultPanel();
+    p.enableChorusThiranAndClockBleed = enableChorusThiranAndClockBleed;
+    p.sawEnabled = true;
+    p.subLevel = 0.5f;
+    p.chorus = ChorusMode::Two;
+    p.cutoff = 0.65f;
+    Take take(p);
+    take.rest(0.05);
+    take.chord({ 55, 59, 62, 67 }, 0.95f, 2.0, 0.5);
+    return take;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -381,6 +396,17 @@ int main(int argc, char** argv)
         writeWav(outputDir / "07-spatial-thermal-gradient-before.wav", before.left(), before.right());
         writeWav(outputDir / "07-spatial-thermal-gradient-after.wav", after.left(), after.right());
         std::printf("Rendered 07-spatial-thermal-gradient (before & after)\n");
+    }
+
+    // Feature 8: Chorus Thiran & Heterodyne Clock Bleed
+    {
+        auto before = renderChorusThiranTake(false);
+        auto after = renderChorusThiranTake(true);
+        before.normalise();
+        after.normalise();
+        writeWav(outputDir / "08-chorus-thiran-clock-bleed-before.wav", before.left(), before.right());
+        writeWav(outputDir / "08-chorus-thiran-clock-bleed-after.wav", after.left(), after.right());
+        std::printf("Rendered 08-chorus-thiran-clock-bleed (before & after)\n");
     }
 
     std::printf("All SOTA comparison WAVs successfully rendered!\n");
