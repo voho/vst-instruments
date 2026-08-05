@@ -94,9 +94,17 @@ with an explicit evidence gap and required output in
   there is a control to defeat it that the hardware does not have. The final
   mixer gains dry by `100/39` and wet by `100/47`, putting wet at `39/47` of
   dry (−1.62 dB). Those absolute gains occur after the BBDs, so they do not
-  falsely overdrive the delay-line model. Its exact JUNO-106 sweep and absolute rates remain
-  unmeasured; the current 1.66–5.35 ms and 0.513/0.863 Hz values are explicitly
-  a reported JUNO-60 fallback, not a JUNO-106 claim.
+  falsely overdrive the delay-line model.
+- **The chorus modulator is drawn from the JUNO-106's own schematic.** IC1 is an
+  integrator closed around a Schmitt comparator, so the sweep is a straight
+  symmetric triangle, and IC2a inverts it for the second line — the antiphase
+  pair is one waveform and its negative. The I/II switch shorts a 2.2 MΩ leg of
+  the integrator's T-network, which fixes the mode-rate ratio at 1.6234799
+  exactly. What the schematic cannot give is the absolute rate, because it does
+  not print the integrator capacitor: the 1.66–5.35 ms sweep and the rate
+  *scale* are still an explicitly reported JUNO-60 fallback, re-split by this
+  instrument's own ratio to 0.5222 Hz and 0.8478 Hz. Both round to the owner's
+  manual's published "about 0.5" and "about 0.8".
 - **The final outputs are AC-coupled before VOLUME.** The two service-schematic
   paths use C17/C20 10 µF and R54/R57 1.5 kΩ into the 10 kΩ pot tracks. The
   unloaded full-track reference is 1.383956 Hz and `10/11.5` settled gain; the

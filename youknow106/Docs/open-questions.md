@@ -59,8 +59,11 @@ evidence standard.
 The implementation and evidence boundary were reconciled again after the
 2026-08-04 fidelity pass and the 2026-08-05 physical circuit modeling pass
 (incorporating thermal warmup $V_t(T)$, VCA CV feedthrough thump, power supply
-rail droop/ripple inter-voice coupling, Thévenin passive mixer node loading, and
-BBD dynamic charge loss with phase-coherent clock spurs). The table below is the
+rail droop inter-voice coupling, Thévenin passive mixer node loading, and
+BBD dynamic charge loss), and again after the 2026-08-05 transcription of
+Service Notes pp. 15–16, which closed the chorus modulation oscillator's
+topology, waveform and mode-rate ratio and showed by derivation that mains
+ripple on the regulated rails is inaudible. The table below is the
 current research queue: every row names only the part that is still unknown. “Already settled” is a guardrail,
 not work to repeat. None of these gaps can be closed by choosing a nicer-sounding
 constant or by another source-code review; they require raw hardware evidence,
@@ -78,7 +81,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 
 | Priority | OQ | Question still unanswered | Already settled / do not redo |
 |---|---|---|---|
-| P0 | 01 | Exact JUNO-106 chorus-I/II rates and BBD clock/delay endpoints | Two-line topology, mode controls and provisional JUNO-60 fallback |
+| P0 | 01 | Absolute JUNO-106 chorus rate scale, BBD clock/delay endpoints, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the schematic-derived 1.6234799 mode-rate ratio, and the provisional JUNO-60 scale and sweep |
 | P0 | 02 | Roland stored-byte/DAC/hold-network to IC5 GC1 voltage, offset and in-circuit endpoints | Shared uPC1252H2 placement, `b<<5` DAC code, C12/R36 input coupling and the IC's −5.9 mV/dB typical GC1-to-gain law |
 | P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation | No-compander topology and the need for a wet-line noise model |
 | P2 | 04 | Loaded post-BBD support transfer, including MN3009 and emitter-follower output impedance | Component topology and provisional ideal-source poles |
@@ -180,12 +183,42 @@ future researcher does not spend a pass rediscovering them.
 
 Measure the absolute modulation rates and delay-sweep endpoints of both chorus
 modes on identified, healthy, calibrated JUNO-106 unit(s), and estimate nominal
-values only to the extent the sample and uncertainty support. The schematic
-anchors the topology and a mode-rate ratio near 1.623, but no qualifying
-JUNO-106 capture has been located. The implementation temporarily uses measured
-**JUNO-60** values: a 1.66–5.35 ms sweep at 0.513 Hz for I and 0.863 Hz for II.
+values only to the extent the sample and uncertainty support.
+
+A 2026-08-05 transcription of Service Notes p. 15 closed the topology and the
+mode-rate ratio, and narrowed what remains. IC1 (µPC062) is an integrator plus
+a Schmitt comparator: C3 sits across IC1b pins 6 and 7, IC1a returns its own
+output to pin 3 through R6 47 kΩ against R15 1 kΩ to ground, and R7 33 kΩ
+closes the loop from the integrator's output to IC1a pin 2. IC2a then inverts
+once through R10/R9 33 kΩ, so TP4 carries the triangle and TP3 exactly its
+negative. Two results follow with no measurement:
+
+- The modulation waveform is a **straight, symmetric triangle**, because the
+  integrator is fed a constant current for the whole of each half cycle. It is
+  not the exponential-segment waveform an RC relaxation oscillator makes.
+- The **mode-rate ratio is 1.6234799**, this instrument's own. The CHORUS I/II
+  line drives JFET Tr1, which *shorts R3 2.2 MΩ* — it does not insert it in
+  series, as an earlier note in this file wrongly described. With the
+  integrator input at virtual ground the shunt leg and R8 both return to 0 V,
+  so the charging current sees `R_eff = R8·R5/(R_sh ∥ R8) + R8`, giving
+  6.4352941 MΩ with Tr1 conducting (mode I, the slower leg) and 3.9638889 MΩ
+  without it (mode II). R5 = 1 MΩ, R8 = 2.2 MΩ, R4 = 680 kΩ, R3 = 2.2 MΩ.
+
+What is still open is the **absolute scale and the sweep endpoints**. The
+schematic does not print C3, and `f = 1/(4·β·R_eff·C3)` needs it. The
+implementation therefore keeps the measured **JUNO-60** sweep of 1.66–5.35 ms,
+and takes the JUNO-60 rate pair's geometric mean as the scale, re-split by this
+instrument's own ratio: **0.5222045 Hz for I and 0.8477886 Hz for II**. Both
+round to the owner's manual's published about-0.5 and about-0.8.
+
 The formerly claimed 1.54–5.15 ms JUNO-106 sweep had no valid measurement and
-must not be reintroduced.
+must not be reintroduced. The sibling's own rate ratio of 1.682 is likewise
+superseded by this instrument's 1.6234799 and must not be reintroduced.
+
+Note that `β = R15/(R15 + R6) = 1/48` is now known, so the absolute rates are
+one number away: reading C3, **or** measuring one period at TP4, **or**
+measuring the triangle's peak-to-peak amplitude at TP4 (which is `2·β·V_sat`
+and therefore also yields C3), each closes the scale on its own.
 
 ### Needed output (for LLM)
 
@@ -195,6 +228,31 @@ must not be reintroduced.
   edge intervals.
 - Minimum and maximum clock frequency at each MN3101/MN3009 clock connection
   over a complete modulation cycle, plus mode periods and frequencies.
+- The clock frequency as a **time series across at least one complete
+  modulation cycle** — a demodulated instantaneous-frequency trace, or
+  timestamped period measurements — not merely its extrema, captured
+  simultaneously with the TP3/TP4 modulation waveform so the clock trajectory
+  can be referred to the voltage that produced it.
+
+  This is the one output that resolves the sweep law, and it is an unstated
+  assumption in the model today. `Chorus::process` makes the *delay* a linear
+  function of the modulator (`centre ± sweep·tri`) and then takes
+  `clock = 128/delay`, which is correct only if the clock oscillator's
+  **period** is linear in its control voltage. Service Notes p. 15 shows each
+  MN3101 driven by a transistor voltage-to-current converter (Tr22 with R133
+  2.2 kΩ, R134 22 kΩ and R135 1.8 kΩ, against C53 150 pF), which is the shape
+  of a *current-controlled* oscillator — that is, **frequency** linear in the
+  control voltage, which would make the delay sweep hyperbolic rather than
+  arithmetic. A period-linear, a frequency-linear and an exponential clock all
+  produce identical minimum and maximum delays and differ only in the
+  trajectory between them, so no endpoint measurement can tell them apart.
+  Confirming the MN3101's bias transfer from its datasheet would also settle
+  it. The audible difference is real: the arithmetic law gives a constant
+  detune magnitude that merely alternates sign, while a frequency-linear clock
+  makes the detune asymmetric across the sweep.
+- The peak-to-peak amplitude of the modulation triangle at TP4, and the
+  saturated output swing of IC1a, in the same capture. With `β = 1/48` from
+  R15/R6 those give C3, and C3 gives both absolute rates.
 - A table containing mode, line, clock minimum/maximum, derived delay
   maximum/minimum, modulation rate and uncertainty. Use
   `delay_seconds = 128 / clock_hz` for the two-phase 256-stage line, where
@@ -237,7 +295,7 @@ not rebalanced and cannot substitute for the original unit's byte-to-gain
 transfer. Audible levels may therefore need revisiting when this task is
 resolved. The shipping-engine [factory gain audit](audio/factory-presets/README.md)
 is the current product baseline: every tone remains finite, its stress-score
-median is -25.70 dBFS gated RMS and 12 tones cross 0 dBFS. Those results expose
+median is -26.65 dBFS gated RMS and 9 tones cross 0 dBFS. Those results expose
 regressions and headroom pressure but do **not** close this question or establish
 the hardware's relative levels.
 
@@ -1061,6 +1119,25 @@ mode changes.
   still clears and rebuilds held-key allocation.
 - **Normal chorus output:** dry plus wet. Wet-only output is a documented
   mute-transistor fault.
+- **Chorus modulation waveform:** a straight, symmetric triangle. Service Notes
+  p. 15 shows IC1b integrating through C3 inside a loop closed by the IC1a
+  Schmitt comparator, so the capacitor charges from a constant current for the
+  whole of each half cycle. Do not replace it with an RC-relaxation or
+  otherwise exponential-segment shape; this circuit is not a relaxation
+  oscillator. IC2a inverts it once for the second line, so the antiphase pair
+  is one waveform and its negative, not two oscillators.
+- **Chorus mode-rate ratio:** 1.6234799, this instrument's own, from the mode
+  switch's T-network — JFET Tr1 *shorts* R3 2.2 MΩ, giving effective timing
+  resistances of 6.4352941 MΩ (mode I, slower) and 3.9638889 MΩ (mode II).
+  Earlier notes describing R3 as a series resistor that mode I bypasses were
+  wrong about the mechanism while right about the numbers. Do not reintroduce
+  the JUNO-60's own 1.682 ratio. Only the absolute scale remains OQ-01.
+- **Mains ripple:** not modelled, by derivation rather than for want of
+  evidence. Service Notes p. 16 gives 3300 µF per rail behind a 0.25 A
+  secondary and M5230L regulators, so what reaches a card is on the order of
+  50 ppm of 15 V — about 0.03 cents of cutoff shift. Rail *droop* is modelled
+  and is a different, much larger, DC mechanism. Neither may be routed to DCO
+  pitch, which is an integer division of a crystal-derived clock.
 - **Chorus support-chain boundaries:** the populated pre/post-BBD topology,
   wet-input 15.9 Hz coupling, nominal component-only 7.23/10.62 Hz wet-output
   coupling, datasheet-fitted nonlinearity, and split zero-order-hold/residual
