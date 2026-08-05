@@ -3025,22 +3025,44 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
     const float subOut = dco.sub.advance(dco.subState) * subGain;
 
-    // --- Summing node ------------------------------------------------------
+    // --- Summing node (Thévenin Passive Mixer Network) -----------------------
+    // Saw (100k), Pulse (100k), Sub (100k), Noise (100k) into IR3109 input (68k).
+    // Enabling multiple waveform switches increases node admittance, loading down
+    // signal levels naturally.
     float mixed = 0.0f;
+    int activeLegCount = 0;
+
     if (parameters.sawEnabled)
+    {
         mixed += sawOut;
-    // OQ-11 has not established what the pinned-high leg contributes through
-    // the coupling/mixer. Preserve the prior hard-zero audio policy while the
-    // shared control is in that state; do not inject an invented DC transient
-    // during the scan/slew interval after re-enable.
-    // Use this card's comparator result rather than the shared base CV: its
-    // calibration offset can keep the comparator pinned after the base has
-    // crossed zero during re-enable.
+        ++activeLegCount;
+    }
     if (pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty))
+    {
         mixed += pulseOut;
-    mixed += subOut;
-    mixed += noiseSample * noiseMixVolts * noiseCv_
-           * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration);
+        ++activeLegCount;
+    }
+    if (parameters.subLevel > 0.0f || subCv_ > 0.0f)
+    {
+        mixed += subOut;
+        ++activeLegCount;
+    }
+    if (parameters.noiseLevel > 0.0f || noiseCv_ > 0.0f)
+    {
+        mixed += noiseSample * noiseMixVolts * noiseCv_
+               * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration);
+        ++activeLegCount;
+    }
+
+    if (activeLegCount > 0)
+    {
+        constexpr float gIn = 1.0f / 68.0f;
+        constexpr float gLeg = 1.0f / 100.0f;
+        constexpr float gNominal1 = gIn + gLeg;
+        const float gTotal = gIn + static_cast<float>(activeLegCount) * gLeg;
+        const float nodeLoadingFactor = gNominal1 / gTotal;
+        mixed *= nodeLoadingFactor;
+    }
 
     voice.noiseState ^= voice.noiseState << 13;
     voice.noiseState ^= voice.noiseState >> 17;
