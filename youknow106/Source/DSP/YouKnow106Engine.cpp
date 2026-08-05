@@ -1291,7 +1291,8 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
         for (int n = 0; n < 4; ++n)
         {
             const float earlyMod = (enableEarlyEffect && calibration > 0.0f)
-                ? (1.0f + 0.08f * calibration * std::tanh(voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
+                ? (1.0f + otaEarlyEffectCoefficient * calibration
+                       * std::tanh(voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
                 : 1.0f;
             const float stageG = gLimited * earlyMod;
             const float x = (previous - voltage[static_cast<std::size_t>(n)]

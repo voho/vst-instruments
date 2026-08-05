@@ -499,6 +499,14 @@ private:
     // of a full-level ramp.
     static constexpr float stageAttenuation = 560.0f / (68000.0f + 560.0f);
     static constexpr float otaHeadroomVolts = 2.0f * thermalVoltage / stageAttenuation;
+    // Early-effect transconductance modulation inside the cascade. With
+    // V_A ~ 100 V and a few hundred millivolts of collector swing at the
+    // differential pair, the fractional change in g is a few parts per
+    // thousand -- the 0.005 the modelling notes state. A revision used 0.08
+    // here, sixteen times that, which is a signal-dependent cutoff shift large
+    // enough to hear as odd-harmonic grit on every resonant sweep.
+    static constexpr float otaEarlyVoltage = 100.0f;
+    static constexpr float otaEarlyEffectCoefficient = 0.005f;
     // Roland publishes an approximate 5 Hz--50 kHz range, but no qualifying
     // capture fixes the high-code saturation shape. Keep the established
     // exponential law and apply an explicit product safety cap at that stated
