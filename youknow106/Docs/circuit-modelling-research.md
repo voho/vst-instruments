@@ -210,6 +210,9 @@ The engine incorporates five deterministic physical circuit behaviors operating 
 9. **CMOS 4013 Sub-Oscillator P/N Driver Asymmetry**:
    CMOS 4013 flip-flop P/N channel driver impedance asymmetry ($t_r \approx 25\text{ ns}$ vs $t_f \approx 15\text{ ns}$) introduces subtle duty cycle asymmetry ($\approx 49.8\% / 50.2\%$) and odd-harmonic character into the sub-oscillator square wave.
 
+10. **Sample-and-Hold Capacitive Charge Leakage & Re-strike Key Click**:
+    Re-striking an active voice card before its release envelope finishes causes residual charge leakage on hold capacitor $C_{hold}$ through switch resistance $R_{on}$, producing an authentic analog legato key-click transient.
+
 ## What remains open
 
 The canonical research queue is
