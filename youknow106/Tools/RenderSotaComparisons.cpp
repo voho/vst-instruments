@@ -351,6 +351,22 @@ Take renderChorusHyperbolicSweepTake(bool enableChorusHyperbolicSweep)
     return take;
 }
 
+// 10. DCO Integrator Finite Source Resistance Ramp Charging Curvature: Deep 16' bass note
+Take renderDcoRampCurvatureTake(bool enableDcoRampCurvature)
+{
+    auto p = defaultPanel();
+    p.calibration = enableDcoRampCurvature ? 100.0f : 0.0f;
+    p.enableDcoRampCurvature = enableDcoRampCurvature;
+    p.range = DcoRange::Sixteen;
+    p.sawEnabled = true;
+    p.cutoff = 0.95f;
+    p.resonance = 0.10f;
+    Take take(p);
+    take.rest(0.05);
+    take.hit(36, 0.95f, 1.5, 0.4);
+    return take;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -375,7 +391,7 @@ int main(int argc, char** argv)
         std::printf("Rendered 01-vcf-transistor-offsets (before, after, diff)\n");
     }
 
-    // Feature 2: Op-Amp Slew Limiting
+    // Feature 2: Op-Amp Slew-Rate Limiting
     {
         auto before = renderOpAmpSlewTake(false);
         auto after = renderOpAmpSlewTake(true);
@@ -485,6 +501,20 @@ int main(int argc, char** argv)
         writeWav(outputDir / "09-chorus-hyperbolic-sweep-after.wav", after.left(), after.right());
         writeWav(outputDir / "09-chorus-hyperbolic-sweep-diff.wav", diff.left(), diff.right());
         std::printf("Rendered 09-chorus-hyperbolic-sweep (before, after, diff)\n");
+    }
+
+    // Feature 10: DCO Integrator Finite Source Resistance Ramp Charging Curvature
+    {
+        auto before = renderDcoRampCurvatureTake(false);
+        auto after = renderDcoRampCurvatureTake(true);
+        auto diff = after.diffWith(before);
+        before.normalise();
+        after.normalise();
+        diff.normalise();
+        writeWav(outputDir / "10-dco-ramp-curvature-before.wav", before.left(), before.right());
+        writeWav(outputDir / "10-dco-ramp-curvature-after.wav", after.left(), after.right());
+        writeWav(outputDir / "10-dco-ramp-curvature-diff.wav", diff.left(), diff.right());
+        std::printf("Rendered 10-dco-ramp-curvature (before, after, diff)\n");
     }
 
     std::printf("All SOTA comparison WAVs & diffs successfully rendered!\n");

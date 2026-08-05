@@ -2964,6 +2964,14 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
 
+    if (parameters.enableDcoRampCurvature && parameters.calibration > 0.0f && phase < rise)
+    {
+        const float u = clamp01(static_cast<float>(phase / rise));
+        const float frequencyHz = static_cast<float>(dcoQuantisedFrequency(dco.divider, parameters.range));
+        const float curveAmount = 0.12f * (100.0f / (frequencyHz + 50.0f)) * std::clamp(parameters.calibration, 0.0f, 100.0f);
+        sawNaive -= curveAmount * u * (1.0f - u);
+    }
+
     if (parameters.enableExponentialReset && parameters.calibration > 0.0f)
     {
         const float expRounding = 0.05f * parameters.calibration;
