@@ -20,12 +20,13 @@ modulation is summed before the antilog stage, so the ENV and LFO sliders are
 octaves, not hertz; and VCA LEVEL is a shared post-voice patch trim before the
 chorus, not a multiplier on each voice's envelope.
 
-The shipped factory bank uses only patch-storable controls for level matching;
-there is no hidden gain per program. A deterministic single-note audit keeps
-sustained sounds within -8/+5 dB of the bank's 200 ms median and ordinary peaks
-within -5/+4 dB. Very short percussion has a separate energy allowance because
-most of that 200 ms window is silence. These bounds are a product balance
-policy, not a measured JUNO-106 VCA law.
+The shipped program bank is the byte-exact historical 128 and is not
+level-matched or rebalanced. The recipes below are original YouKnow106
+sound-design examples, not extra bundled factory entries. They may use the
+plug-in's extension controls, but there is no hidden per-program gain.
+The [complete factory gain audit](../Docs/audio/factory-presets/README.md)
+publishes unnormalised metrics for all 128 tones and common-gain previews of a
+representative subset.
 
 ## Glass Pad
 

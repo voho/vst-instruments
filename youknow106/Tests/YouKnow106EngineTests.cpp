@@ -80,6 +80,14 @@ struct YouKnow106TestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].dco.periodSamples;
     }
 
+    static float dcoResetFraction(const YouKnow106Engine& engine,
+                                  int slot) noexcept
+    {
+        return engine.resetFraction(
+            engine.voices_[static_cast<std::size_t>(slot)].dco.periodSamples
+            * engine.inverseOversampledRate_);
+    }
+
     static double chorusPhase(const YouKnow106Engine& engine) noexcept
     {
         return engine.chorus_.getLfoPhase();
@@ -88,6 +96,26 @@ struct YouKnow106TestAccess
     static float pulseDuty(const YouKnow106Engine& engine, int slot) noexcept
     {
         return engine.voices_[static_cast<std::size_t>(slot)].pulseDuty;
+    }
+
+    static float pulseLogicState(const YouKnow106Engine& engine,
+                                 int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dco.pulseState;
+    }
+
+    static bool pulseDutyHistoryIsPrimed(const YouKnow106Engine& engine,
+                                         int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].pulseDutyPrimed;
+    }
+
+    static void primePulseDutyHistory(YouKnow106Engine& engine, int slot,
+                                      float duty) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t>(slot)];
+        voice.previousPulseDuty = duty;
+        voice.pulseDutyPrimed = true;
     }
 
     static bool pulseMixEnabled(const YouKnow106Engine& engine, int slot,
@@ -1288,6 +1316,7 @@ void testPhysicalCardStateSurvivesVoiceAssignments()
     YouKnow106TestAccess::setDcoPhase(engine, extensionSlot, 0.375);
     YouKnow106TestAccess::setMicroscopicNoiseState(
         engine, extensionSlot, noiseMarker);
+    YouKnow106TestAccess::primePulseDutyHistory(engine, extensionSlot, 0.9f);
     YouKnow106TestAccess::initialiseVoice(engine, extensionSlot, 72);
     YouKnow106TestAccess::silenceVoice(engine, extensionSlot);
     const auto clearedExtension = YouKnow106TestAccess::filterState(
@@ -1297,6 +1326,9 @@ void testPhysicalCardStateSurvivesVoiceAssignments()
            "an idle extension slot retained a frozen resonant-filter state");
     expect(YouKnow106TestAccess::dcoPhase(engine, extensionSlot) == 0.0,
            "an idle extension slot retained a frozen oscillator phase");
+    expect(!YouKnow106TestAccess::pulseDutyHistoryIsPrimed(
+               engine, extensionSlot),
+           "an idle extension slot retained a stale PWM comparator timeline");
     expect(YouKnow106TestAccess::microscopicNoiseState(engine, extensionSlot)
                == extensionSeed,
            "an idle extension slot retained a frozen noise timeline");
@@ -1398,6 +1430,75 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
     }
     expect(sawPerCardOffsetWindow,
            "pulse re-enable fixture missed the per-card comparator-offset window");
+}
+
+void testMovingPwmComparatorDoesNotMissThresholdCrossings()
+{
+    // The MC5534A comparator is memoryless: at every instant its output is
+    // determined by the free-running ramp and the held PWM threshold.  A
+    // moving threshold can cross the ramp between two oscillator edges, so an
+    // event scheduler which only looks for a fixed edge position can leave the
+    // logic high or low for an extra cycle.  That presents as an occasional
+    // full-scale blip unique to the pulse waveform.
+    constexpr double sampleRate = 48000.0;
+    for (const bool highQuality : { false, true })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, 1, highQuality);
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = true;
+        parameters.pwmSource = PwmSource::Lfo;
+        parameters.pwmDepth = 1.0f;
+        parameters.lfoRate = 1.0f;
+        parameters.vcaMode = VcaMode::Gate;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+
+        int mismatches = 0;
+        int samplesSinceEdge = 0;
+        int maximumEdgeGap = 0;
+        int edgeCount = 0;
+        float previousState = YouKnow106TestAccess::pulseLogicState(engine, 0);
+        for (int sample = 0; sample < static_cast<int>(sampleRate * 3.0); ++sample)
+        {
+            float left = 0.0f;
+            float right = 0.0f;
+            engine.process(&left, &right, 1);
+
+            const float duty = YouKnow106TestAccess::pulseDuty(engine, 0);
+            const double phase = YouKnow106TestAccess::dcoPhase(engine, 0);
+            const float reset =
+                YouKnow106TestAccess::dcoResetFraction(engine, 0);
+            const float rise = YouKnow106Engine::pulseRisePhase(duty, reset);
+            const float fall = YouKnow106Engine::pulseFallPhase(duty, reset);
+            const float state = YouKnow106TestAccess::pulseLogicState(engine, 0);
+            const float expected = duty >= 1.0f
+                ? 1.0f : (phase >= rise && phase < fall ? 1.0f : -1.0f);
+            if (state != expected)
+                ++mismatches;
+
+            ++samplesSinceEdge;
+            if (state != previousState)
+            {
+                maximumEdgeGap = std::max(maximumEdgeGap, samplesSinceEdge);
+                samplesSinceEdge = 0;
+                previousState = state;
+                ++edgeCount;
+            }
+        }
+
+        const std::string quality = highQuality ? "HQ" : "normal";
+        expect(mismatches == 0,
+               quality + " moving PWM left the comparator in the wrong state for "
+                   + std::to_string(mismatches) + " host samples");
+        expect(edgeCount > 100,
+               quality + " moving-PWM fixture did not exercise comparator edges");
+        const double hostPeriod = YouKnow106TestAccess::dcoPeriodSamples(engine, 0)
+                                / (highQuality ? 4.0 : 1.0);
+        expect(maximumEdgeGap <= static_cast<int>(std::ceil(hostPeriod)) + 2,
+               quality + " moving PWM skipped a comparator edge for a full cycle");
+    }
 }
 
 void testModeChangesRebuildHeldKeys()
@@ -3391,20 +3492,16 @@ void testSustainPedalHoldsAndReleases()
            "the note did not release when the pedal was lifted");
 }
 
-void testFactoryPresetAudibility()
+void testFactoryPresetCorpusStaysNumericallySafe()
 {
+    // The authentic bytes are immutable evidence, including intentionally
+    // extreme tones and several VCA LEVEL zeroes. They must not be silently
+    // rebalanced to satisfy a product loudness target. This engine-side sweep
+    // therefore checks numerical safety only; byte identity lives in the
+    // SysEx suite.
     constexpr double sampleRate = 48000.0;
-    constexpr int holdSamples = static_cast<int>(sampleRate * 3.0);
-    constexpr int windowSamples = static_cast<int>(sampleRate * 0.20);
-    const bool printAudit = std::getenv("YOUKNOW106_AUDIT_PRESETS") != nullptr;
-
-    struct Metrics
-    {
-        double peakDb = 0.0;
-        double rmsDb = 0.0;
-    };
-    std::array<Metrics, presets::presetCount> measured {};
-    std::size_t presetIndex = 0;
+    constexpr int renderSamples = static_cast<int>(sampleRate * 0.25);
+    int audibleInShortWindow = 0;
 
     for (const auto& preset : presets::factoryBank())
     {
@@ -3412,136 +3509,28 @@ void testFactoryPresetAudibility()
         engine.prepare(sampleRate, blockSize, true);
         engine.setParameters(parametersFor(preset.patch));
         engine.noteOn(60, 1.0f);
-        const auto rendered = render(engine, holdSamples);
+        const auto rendered = render(engine, renderSamples);
 
         double peak = 0.0;
-        double bestWindowRms = 0.0;
-        for (std::size_t start = 0;
-             start + static_cast<std::size_t>(windowSamples) <= rendered.left.size();
-             start += static_cast<std::size_t>(windowSamples))
+        bool finite = true;
+        for (std::size_t index = 0; index < rendered.left.size(); ++index)
         {
-            double energy = 0.0;
-            for (int offset = 0; offset < windowSamples; ++offset)
-            {
-                const double left = rendered.left[
-                    start + static_cast<std::size_t>(offset)];
-                const double right = rendered.right[
-                    start + static_cast<std::size_t>(offset)];
-                peak = std::max({ peak, std::abs(left), std::abs(right) });
-                energy += 0.5 * (left * left + right * right);
-            }
-            bestWindowRms = std::max(bestWindowRms,
-                                     std::sqrt(energy / windowSamples));
+            finite = finite && std::isfinite(rendered.left[index])
+                            && std::isfinite(rendered.right[index]);
+            peak = std::max({ peak, std::abs(static_cast<double>(rendered.left[index])),
+                              std::abs(static_cast<double>(rendered.right[index])) });
         }
-
-        const double peakDb = 20.0 * std::log10(peak + 1.0e-12);
-        const double rmsDb = 20.0 * std::log10(bestWindowRms + 1.0e-12);
-        measured[presetIndex++] = { peakDb, rmsDb };
-
-        expect(std::isfinite(peakDb) && std::isfinite(rmsDb),
-               std::string(preset.number) + " produced non-finite level metrics");
-        // Prove every patch actually excites the signal path. Useful loudness
-        // is checked below relative to the bank, so a later correction to the
-        // shared voice-summer gain cannot invalidate an absolute dBFS target.
-        expect(peak > 1.0e-7,
-               std::string(preset.number) + " " + preset.name
-                   + " produced no measurable peak");
-        expect(bestWindowRms > 1.0e-8,
-               std::string(preset.number) + " " + preset.name
-                   + " produced no measurable 200 ms energy");
+        const std::string where =
+            std::string(preset.number) + " " + preset.name;
+        expect(finite, where + " produced a non-finite sample");
+        expect(peak < 1.0e4, where + " produced a numerical runaway");
+        audibleInShortWindow += peak > 1.0e-8 ? 1 : 0;
     }
 
-    const auto median = [&measured] (auto member)
-    {
-        std::array<double, presets::presetCount> values {};
-        for (std::size_t index = 0; index < measured.size(); ++index)
-            values[index] = measured[index].*member;
-        std::sort(values.begin(), values.end());
-        return 0.5 * (values[values.size() / 2 - 1] + values[values.size() / 2]);
-    };
-    const double medianPeakDb = median(&Metrics::peakDb);
-    const double medianRmsDb = median(&Metrics::rmsDb);
-
-    struct RelativeBaseline
-    {
-        const char* number;
-        double peakFromMedianDb;
-        double rmsFromMedianDb;
-    };
-
-    // These are level relationships, not absolute output targets. A correction
-    // to the shared voice summer or output gain moves every measurement together
-    // and cancels out here, while an accidental per-patch LEVEL change remains
-    // visible. Run with YOUKNOW106_AUDIT_PRESETS=1 to print replacement values
-    // after an intentional factory-bank or signal-path change.
-    static constexpr auto baseline = std::to_array<RelativeBaseline> ({
-        { "A11",  0.887,   3.776 }, { "A12",  0.988,   2.927 },
-        { "A13",  1.619,   3.331 }, { "A14",  1.114,   0.396 },
-        { "A15",  0.633,  -7.216 }, { "A16",  2.005,  -1.785 },
-        { "A17",  0.971,   3.057 }, { "A18", -4.506,  -7.705 },
-        { "A21", -3.116,  -4.260 }, { "A22", -4.938,  -0.725 },
-        { "A23", -4.385,  -1.340 }, { "A24", -0.288,   1.519 },
-        { "A25", -3.543,  -1.264 }, { "A26",  1.251,   3.506 },
-        { "A27", -2.523,  -4.891 }, { "A28", -2.148,   1.894 },
-        { "B11",  0.981,   3.614 }, { "B12",  1.143,   3.432 },
-        { "B13", -0.852,   2.033 }, { "B14",  3.426,   1.575 },
-        { "B15",  0.898, -10.773 }, { "B16",  0.195,  -8.125 },
-        { "B17", -3.164,  -7.141 }, { "B18",  1.914,   0.823 },
-        { "B21",  2.545,   0.018 }, { "B22", -0.669,  -6.844 },
-        { "B23",  3.408,   2.380 }, { "B24", -0.842,  -0.711 },
-        { "B25", -7.045, -15.119 }, { "B26", -0.195,  -4.260 },
-        { "B27", -2.322,   0.134 }, { "B28", -1.227,  -0.018 },
-    });
-    static_assert(baseline.size() == presets::presetCount);
-
-    constexpr double peakToleranceDb = 1.0;
-    constexpr double rmsToleranceDb = 1.25;
-    const auto& bank = presets::factoryBank();
-    for (std::size_t index = 0; index < baseline.size(); ++index)
-    {
-        const double peakDelta = measured[index].peakDb - medianPeakDb;
-        const double rmsDelta = measured[index].rmsDb - medianRmsDb;
-        const std::string where = std::string(bank[index].number) + " " + bank[index].name;
-        expect(std::strcmp(bank[index].number, baseline[index].number) == 0,
-               "preset-level baseline order no longer matches the factory bank");
-        const bool shortPercussion = std::strcmp(bank[index].number, "A15") == 0
-                                  || std::strcmp(bank[index].number, "A16") == 0
-                                  || std::strcmp(bank[index].number, "B15") == 0
-                                  || std::strcmp(bank[index].number, "B16") == 0
-                                  || std::strcmp(bank[index].number, "B24") == 0
-                                  || std::strcmp(bank[index].number, "B25") == 0;
-        const bool shortNoiseTransient =
-            std::strcmp(bank[index].number, "B25") == 0;
-        // These limits assert useful relative balance, rather than merely
-        // snapshotting today's values. Sustained patches now stay within
-        // -8/+5 dB of the bank's 200 ms median and ordinary peaks within
-        // -5/+4 dB. The snare's hardware-storable NOISE and VCA LEVEL are
-        // already at maximum, so it gets a narrow peak exception instead of a
-        // hidden per-program make-up gain; its 200 ms RMS also includes mostly
-        // silence after the short hit.
-        expect(peakDelta >= (shortNoiseTransient ? -7.25 : -5.0)
-                   && peakDelta <= 4.0,
-               where + " peak is outside the usable factory-bank balance");
-        expect(rmsDelta >= (shortPercussion ? -20.0 : -8.0)
-                   && rmsDelta <= 5.0,
-               where + " 200 ms loudness is outside the usable factory-bank balance");
-        expect(std::abs(peakDelta - baseline[index].peakFromMedianDb)
-                   <= peakToleranceDb,
-               where + " peak balance moved "
-                   + std::to_string(peakDelta - baseline[index].peakFromMedianDb)
-                   + " dB from its checked bank relationship");
-        expect(std::abs(rmsDelta - baseline[index].rmsFromMedianDb)
-                   <= rmsToleranceDb,
-               where + " short-window balance moved "
-                   + std::to_string(rmsDelta - baseline[index].rmsFromMedianDb)
-                   + " dB from its checked bank relationship");
-
-        if (printAudit)
-            std::cout << bank[index].number << ' ' << bank[index].name << " peak "
-                      << measured[index].peakDb << " dBFS best200 "
-                      << measured[index].rmsDb << " dBFS peakFromMedian "
-                      << peakDelta << " dB rmsFromMedian " << rmsDelta << " dB\n";
-    }
+    expect(audibleInShortWindow >= presets::presetCount / 2,
+           "too much of the complete original factory corpus was silent in the "
+               "short integration sweep: " + std::to_string(audibleInShortWindow)
+               + "/" + std::to_string(presets::presetCount));
 }
 
 // The firmware may latch both POLY lamps for Solo Unison; the physical contacts
@@ -3625,6 +3614,9 @@ void testPanelLayout()
                "a panel control names no parameter");
         expect(control.label != nullptr && std::strlen(control.label) > 0,
                "a panel control carries no legend");
+        expect(control.tooltip != nullptr && std::strlen(control.tooltip) >= 24,
+               std::string("a panel control has no useful tooltip: ")
+                   + (control.label != nullptr ? control.label : ""));
     }
 
     const std::array<const char*, 11> mustAppear {
@@ -3704,6 +3696,7 @@ int main()
     testPhysicalCardStateSurvivesVoiceAssignments();
     testConverterSchedulerPreservesFractionalScanPeriod();
     testPulseOffPinsComparatorWithoutResettingTheDco();
+    testMovingPwmComparatorDoesNotMissThresholdCrossings();
     testModeChangesRebuildHeldKeys();
     testSustainHeldVoicesRemainAssignable();
     testPoly1AffinityUsesThePhysicalKey();
@@ -3748,7 +3741,7 @@ int main()
     testExtremeAutomationStaysFinite();
     testParameterSanitisation();
     testSustainPedalHoldsAndReleases();
-    testFactoryPresetAudibility();
+    testFactoryPresetCorpusStaysNumericallySafe();
     testPairedSwitchModes();
     testNoLabelIsTruncated();
     testPanelLayout();

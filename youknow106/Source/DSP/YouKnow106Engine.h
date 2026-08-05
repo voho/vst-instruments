@@ -79,7 +79,7 @@ struct EngineParameters
     float vcaLevel { 0.80f };
 
     // --- ENV ---------------------------------------------------------------
-    float attack { 0.04f };
+    float attack { 0.0f };
     float decay { 0.45f };
     float sustain { 0.70f };
     float release { 0.30f };
@@ -680,6 +680,13 @@ private:
         float inputCompensation { 1.0f };
         float vca { 0.0f };
         float pulseDuty { 0.5f };
+        // PWM is a moving comparator threshold, not a pulse oscillator whose
+        // edge position is frozen for one sample.  Retaining the previous
+        // threshold lets renderVoice solve crossings caused by both the ramp
+        // and the slewing hold voltage; without it, deep PWM can skip an edge
+        // and leave a full extra pulse cycle in the output.
+        float previousPulseDuty { 0.5f };
+        bool pulseDutyPrimed { false };
 
         float energy { 0.0f };
         std::uint32_t noiseState { 1u };

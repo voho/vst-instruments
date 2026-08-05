@@ -150,13 +150,14 @@ void testSwitchBitsMatchTheDocumentedLayout()
            "bit 0 clear is not PWM from the modulator");
     expect(decodeSecond(0x01).pwmSource == PwmSource::Manual,
            "bit 0 set is not manual PWM");
-    expect(decodeSecond(0x00).vcaMode == VcaMode::Envelope,
-           "bit 1 clear is not the envelope");
-    expect(decodeSecond(0x02).vcaMode == VcaMode::Gate, "bit 1 set is not the gate");
     expect(decodeSecond(0x00).envPolarity == EnvPolarity::Normal,
-           "bit 2 clear is not positive polarity");
-    expect(decodeSecond(0x04).envPolarity == EnvPolarity::Inverted,
-           "bit 2 set is not negative polarity");
+           "bit 1 clear is not positive polarity");
+    expect(decodeSecond(0x02).envPolarity == EnvPolarity::Inverted,
+           "bit 1 set is not negative polarity");
+    expect(decodeSecond(0x00).vcaMode == VcaMode::Envelope,
+           "bit 2 clear is not the envelope");
+    expect(decodeSecond(0x04).vcaMode == VcaMode::Gate,
+           "bit 2 set is not the gate");
 
     // The high-pass field counts down, which is the reverse of the panel's
     // numbering and the easiest thing in the whole format to get backwards.
@@ -362,7 +363,7 @@ void testParameterMessages()
     // A switch byte arriving on its own has to work the same way. What it must
     // not disturb is covered by testASwitchByteLeavesEverythingElseAlone.
     Patch switched {};
-    expect(applyParameter(switched, static_cast<int>(ToneParameter::SwitchesTwo), 0x02),
+    expect(applyParameter(switched, static_cast<int>(ToneParameter::SwitchesTwo), 0x04),
            "a switch byte was refused");
     expect(switched.vcaMode == VcaMode::Gate,
            "a switch byte sent as one parameter did not take effect");
@@ -395,7 +396,7 @@ void testASwitchByteLeavesEverythingElseAlone()
 
     // Byte 17 encodes the PWM source, the VCA mode, the polarity and the
     // high-pass. It says nothing about the chorus or any continuous control.
-    expect(applyParameter(patch, static_cast<int>(ToneParameter::SwitchesTwo), 0x02),
+    expect(applyParameter(patch, static_cast<int>(ToneParameter::SwitchesTwo), 0x04),
            "a switch byte was refused");
     expect(patch.vcaMode == VcaMode::Gate, "the switch byte did not take effect");
     expectNear(patch.cutoff, before.cutoff, 1.0e-9,
@@ -419,19 +420,34 @@ void testASwitchByteLeavesEverythingElseAlone()
                "applying the first switch byte quantised a continuous control");
 }
 
-// The factory bank is written in the same units a patch is, so every entry has
-// to be a patch the instrument could actually hold and send.
+// The shipped bank is a byte-for-byte hardware-memory fixture, not a set of
+// rebalanced product sounds. Every entry has to occupy the canonical slot,
+// survive the real message format, and retain the independently verified
+// 2,304-byte corpus hash.
 void testFactoryBankIsWellFormed()
 {
     const auto& bank = presets::factoryBank();
+    static_assert(presets::presetCount == 128);
     expect(bank.size() == static_cast<std::size_t>(presets::presetCount),
            "the factory bank is not the size it declares");
 
-    for (const auto& preset : bank)
+    std::uint64_t corpusHash = 0xcbf29ce484222325ull;
+    for (std::size_t presetIndex = 0; presetIndex < bank.size(); ++presetIndex)
     {
+        const auto& preset = bank[presetIndex];
         const std::string where = std::string(preset.number) + " " + preset.name;
         expect(preset.number != nullptr && preset.name != nullptr,
                "a factory preset has no number or name");
+
+        const int withinBank = static_cast<int>(presetIndex % 64);
+        const std::array<char, 4> expectedNumber {
+            static_cast<char>('A' + presetIndex / 64),
+            static_cast<char>('1' + withinBank / 8),
+            static_cast<char>('1' + withinBank % 8),
+            '\0'
+        };
+        expect(std::strcmp(preset.number, expectedNumber.data()) == 0,
+               where + " is not in canonical A11..A88/B11..B88 order");
 
         const auto& patch = preset.patch;
         const float* travel[] = {
@@ -443,18 +459,6 @@ void testFactoryBankIsWellFormed()
         for (const auto* value : travel)
             expect(*value >= 0.0f && *value <= 1.0f,
                    where + " has a control outside its travel");
-
-        // Silent by construction would be a broken preset, not a quiet one.
-        expect(patch.vcaLevel > 0.05f, where + " has its amplifier shut");
-        // A preset needs something to make sound with. Usually that is an
-        // oscillator or the noise source -- but not always: past 90% of the
-        // resonance travel the filter is over its own oscillation threshold and
-        // is the source, which is exactly what a self-oscillation patch is for.
-        const bool hasSource =
-            patch.saw || patch.pulse || patch.sub > 0.02f || patch.noise > 0.02f;
-        const bool filterSings = patch.resonance >= 0.9f;
-        expect(hasSource || filterSings,
-               where + " has neither a sound source nor a singing filter");
 
         // Every entry must survive a trip through a real patch message, which
         // is what makes the bank sendable to hardware. Continuous decimals are
@@ -475,6 +479,12 @@ void testFactoryBankIsWellFormed()
                    where + " changed its effective 18-byte patch state");
             expect(decoded.chorus == patch.chorus,
                    where + " lost its categorical chorus setting");
+
+            for (const auto byte : bytesOf(patch))
+            {
+                corpusHash ^= byte;
+                corpusHash *= 0x100000001b3ull;
+            }
         }
         else
             expect(patch.chorus == ChorusMode::OneTwo,
@@ -494,6 +504,52 @@ void testFactoryBankIsWellFormed()
            "an unknown preset number returned a preset");
     expect(presets::findByNumber(nullptr) == nullptr,
            "a null preset number was not refused");
+
+    // FNV is kept in the executable for a dependency-free regression. The
+    // corresponding SHA-256, checked from three public representations, is
+    // 394ae874da33aa63fa4833932fbf415546d2ad66b1b6b9a36315601799eeec21.
+    expect(corpusHash == 0xa78dab9d5bafb386ull,
+           "the original 128 factory tone corpus changed");
+
+    constexpr std::array<std::uint8_t, toneByteCount> a11 {
+        0x14, 0x31, 0x00, 0x66, 0x00, 0x23, 0x0d, 0x3a, 0x00,
+        0x56, 0x6c, 0x03, 0x31, 0x2d, 0x20, 0x00, 0x51, 0x11
+    };
+    constexpr std::array<std::uint8_t, toneByteCount> a88 {
+        0x00, 0x00, 0x00, 0x66, 0x7f, 0x44, 0x76, 0x00, 0x00,
+        0x45, 0x6b, 0x00, 0x0d, 0x26, 0x2f, 0x00, 0x21, 0x08
+    };
+    constexpr std::array<std::uint8_t, toneByteCount> b11 {
+        0x39, 0x2d, 0x00, 0x37, 0x00, 0x55, 0x00, 0x00, 0x00,
+        0x6c, 0x34, 0x3b, 0x20, 0x56, 0x28, 0x00, 0x1a, 0x18
+    };
+    constexpr std::array<std::uint8_t, toneByteCount> b88 {
+        0x32, 0x00, 0x00, 0x2d, 0x00, 0x26, 0x54, 0x20, 0x00,
+        0x7f, 0x65, 0x00, 0x31, 0x37, 0x00, 0x38, 0x39, 0x19
+    };
+    expect(bytesOf(bank[0].patch) == a11, "A11 source-byte fixture changed");
+    expect(bytesOf(bank[63].patch) == a88, "A88 source-byte fixture changed");
+    expect(bytesOf(bank[64].patch) == b11, "B11 source-byte fixture changed");
+    expect(bytesOf(bank[127].patch) == b88, "B88 source-byte fixture changed");
+    // These gate-mode factory tones are a behavioral tripwire for the two
+    // adjacent switch-byte fields. Swapping VCF polarity bit 1 and VCA-mode
+    // bit 2 leaves every encode/decode round trip green while making all three
+    // sounds nearly silent by inverting their filter envelope and closing the
+    // amplifier with the wrong envelope.
+    for (const std::size_t index : { std::size_t { 61 }, std::size_t { 80 },
+                                     std::size_t { 121 } })
+    {
+        expect(bank[index].patch.envPolarity == EnvPolarity::Normal,
+               std::string(bank[index].number)
+                   + " decoded the factory VCF envelope with wrong polarity");
+        expect(bank[index].patch.vcaMode == VcaMode::Gate,
+               std::string(bank[index].number)
+                   + " did not decode the factory VCA Gate bit");
+    }
+    expect(std::strcmp(bank[0].name, "Brass Set 1") == 0,
+           "A11 archival name changed");
+    expect(std::strcmp(bank[127].name, "Owgan") == 0,
+           "B88 archival name changed");
 }
 } // namespace
 

@@ -14,6 +14,7 @@ struct Placement
 {
     const char* parameterId;
     const char* label;
+    const char* tooltip;
     ControlKind kind;
     int section;
     int slot;
@@ -30,67 +31,143 @@ struct Placement
 
 constexpr Placement placements[controlCount] = {
     // VOLUME
-    { parameters::volume,      "VOLUME",   ControlKind::Slider, 0, 0, 0, 1, -1, 0 },
+    { parameters::volume, "VOLUME",
+      "Sets final stereo output level after the chorus. This performance control is not part of the hardware's 18-byte tone memory.",
+      ControlKind::Slider, 0, 0, 0, 1, -1, 0 },
 
     // BENDER
-    { parameters::benderDco,   "DCO",      ControlKind::Slider, 1, 0, 0, 1, -1, 0 },
-    { parameters::benderVcf,   "VCF",      ControlKind::Slider, 1, 1, 0, 1, -1, 0 },
-    { parameters::benderLfo,   "LFO",      ControlKind::Slider, 1, 2, 0, 1, -1, 0 },
-    { parameters::portamento,  "PORTA",    ControlKind::Slider, 1, 3, 0, 1, -1, 0 },
+    { parameters::benderDco, "DCO",
+      "Sets how far the pitch-bend lever bends oscillator pitch, from zero to plus or minus 12 semitones.",
+      ControlKind::Slider, 1, 0, 0, 1, -1, 0 },
+    { parameters::benderVcf, "VCF",
+      "Sets how strongly the pitch-bend lever moves filter cutoff, up to about plus or minus 3.6 octaves.",
+      ControlKind::Slider, 1, 1, 0, 1, -1, 0 },
+    { parameters::benderLfo, "LFO",
+      "Sets vibrato depth when the lever is pushed forward or MIDI CC 1 is received, up to plus or minus 4 semitones.",
+      ControlKind::Slider, 1, 2, 0, 1, -1, 0 },
+    { parameters::portamento, "PORTA",
+      "Sets glide time between assigned pitches; fully down disables portamento.",
+      ControlKind::Slider, 1, 3, 0, 1, -1, 0 },
 
     // MODE. Two momentary selection buttons whose lamps are firmware-latched:
     // one is always selected, and pressing both is Solo Unison. Each button
     // prints its own legend -- POLY 1 and POLY 2 -- inside itself.
-    { parameters::poly1,       "POLY 1",   ControlKind::Toggle, 2, 0, 0, 2, -1, 0, 2 },
-    { parameters::poly2,       "POLY 2",   ControlKind::Toggle, 2, 0, 1, 2, -1, 0, 2 },
+    { parameters::poly1, "POLY 1",
+      "POLY 1 reuses a key's previous voice card when possible, otherwise the longest-free card. Re-click to rebuild held assignments; Shift-click either POLY button for Solo Unison.",
+      ControlKind::Toggle, 2, 0, 0, 2, -1, 0, 2 },
+    { parameters::poly2, "POLY 2",
+      "POLY 2 scans from voice 1 for each note, so new notes can cut released tails but never steal a held key. Re-click to rebuild; Shift-click either POLY button for Solo Unison.",
+      ControlKind::Toggle, 2, 0, 1, 2, -1, 0, 2 },
 
     // LFO
-    { parameters::lfoRate,     "RATE",     ControlKind::Slider, 3, 0, 0, 1, -1, 0 },
-    { parameters::lfoDelay,    "DELAY",    ControlKind::Slider, 3, 1, 0, 1, -1, 0 },
+    { parameters::lfoRate, "RATE",
+      "Sets the speed of the one shared LFO used by vibrato, PWM and filter modulation.",
+      ControlKind::Slider, 3, 0, 0, 1, -1, 0 },
+    { parameters::lfoDelay, "DELAY",
+      "Sets how long the shared LFO is held back and faded into DCO and VCF modulation when a new phrase starts. It does not delay PWM.",
+      ControlKind::Slider, 3, 1, 0, 1, -1, 0 },
 
     // DCO
-    { parameters::dcoLfo,      "LFO",      ControlKind::Slider, 4, 0, 0, 1, -1, 0 },
-    { parameters::pwm,         "PWM",      ControlKind::Slider, 4, 1, 0, 1, -1, 0 },
+    { parameters::dcoLfo, "LFO",
+      "Sets delayed-LFO pitch modulation depth: the patch's vibrato amount, up to plus or minus 4 semitones.",
+      ControlKind::Slider, 4, 0, 0, 1, -1, 0 },
+    { parameters::pwm, "PWM",
+      "In MAN mode this sets a fixed pulse width of roughly 50-95%; in LFO mode it sets the maximum LFO sweep width.",
+      ControlKind::Slider, 4, 1, 0, 1, -1, 0 },
     // The PWM source pair spans two slots like the other stacks: at one slot
     // its legends had to shrink to 8.5pt beside neighbours at 12, which reads
     // as a defect even though it is legible.
-    { parameters::pwmMode,     "LFO",      ControlKind::Radio,  4, 2, 0, 2,  1, 0, 2 },
-    { parameters::pwmMode,     "MAN",      ControlKind::Radio,  4, 2, 1, 2,  1, 1, 2 },
-    { parameters::range,       "16'",      ControlKind::Radio,  4, 4, 0, 3,  2, 0 },
-    { parameters::range,       "8'",       ControlKind::Radio,  4, 4, 1, 3,  2, 1 },
-    { parameters::range,       "4'",       ControlKind::Radio,  4, 4, 2, 3,  2, 2 },
-    { parameters::saw,         "SAW",      ControlKind::Toggle, 4, 5, 0, 2, -1, 0, 2 },
-    { parameters::pulse,       "PULSE",    ControlKind::Toggle, 4, 5, 1, 2, -1, 0, 2 },
-    { parameters::sub,         "SUB",      ControlKind::Slider, 4, 7, 0, 1, -1, 0 },
-    { parameters::noise,       "NOISE",    ControlKind::Slider, 4, 8, 0, 1, -1, 0 },
+    { parameters::pwmMode, "LFO",
+      "Makes the raw shared LFO sweep pulse width; PWM sets the depth and LFO DELAY does not apply.",
+      ControlKind::Radio, 4, 2, 0, 2, 1, 0, 2 },
+    { parameters::pwmMode, "MAN",
+      "Makes the PWM slider set one fixed manual pulse width.",
+      ControlKind::Radio, 4, 2, 1, 2, 1, 1, 2 },
+    { parameters::range, "16'",
+      "Selects the 16-foot oscillator range, one octave below the normal 8-foot range.",
+      ControlKind::Radio, 4, 4, 0, 3, 2, 0 },
+    { parameters::range, "8'",
+      "Selects the normal 8-foot oscillator range.",
+      ControlKind::Radio, 4, 4, 1, 3, 2, 1 },
+    { parameters::range, "4'",
+      "Selects the 4-foot oscillator range, one octave above the normal 8-foot range.",
+      ControlKind::Radio, 4, 4, 2, 3, 2, 2 },
+    // The hardware prints pulse before saw. The virtual stack keeps that read
+    // order even though its narrow section arranges the pair vertically.
+    { parameters::pulse, "PULSE",
+      "Turns the variable-width pulse waveform on or off; the PWM controls determine its width.",
+      ControlKind::Toggle, 4, 5, 0, 2, -1, 0, 2 },
+    { parameters::saw, "SAW",
+      "Turns the rising sawtooth waveform on or off.",
+      ControlKind::Toggle, 4, 5, 1, 2, -1, 0, 2 },
+    { parameters::sub, "SUB",
+      "Sets the level of the square-wave sub-oscillator, one octave below the DCO and independent of PWM.",
+      ControlKind::Slider, 4, 7, 0, 1, -1, 0 },
+    { parameters::noise, "NOISE",
+      "Sets the level of the shared analogue-noise source mixed into every voice.",
+      ControlKind::Slider, 4, 8, 0, 1, -1, 0 },
 
     // HPF
-    { parameters::highPass,    "HPF",      ControlKind::Steps,  5, 0, 0, 1, -1, 0 },
+    { parameters::highPass, "HPF",
+      "Selects the shared post-sum filter: 0 boosts bass, 1 is flat, and 2 or 3 remove progressively more low end at modeled corners near 226 and 721 Hz.",
+      ControlKind::Steps, 5, 0, 0, 1, -1, 0 },
 
     // VCF
-    { parameters::cutoff,      "FREQ",     ControlKind::Slider, 6, 0, 0, 1, -1, 0 },
-    { parameters::resonance,   "RES",      ControlKind::Slider, 6, 1, 0, 1, -1, 0 },
-    { parameters::envPolarity, "+",        ControlKind::Radio,  6, 2, 0, 2,  3, 0 },
-    { parameters::envPolarity, "-",        ControlKind::Radio,  6, 2, 1, 2,  3, 1 },
-    { parameters::vcfEnv,      "ENV",      ControlKind::Slider, 6, 3, 0, 1, -1, 0 },
-    { parameters::vcfLfo,      "LFO",      ControlKind::Slider, 6, 4, 0, 1, -1, 0 },
-    { parameters::keyFollow,   "KYBD",     ControlKind::Slider, 6, 5, 0, 1, -1, 0 },
+    { parameters::cutoff, "FREQ",
+      "Sets the base cutoff frequency of every voice's four-pole low-pass filter.",
+      ControlKind::Slider, 6, 0, 0, 1, -1, 0 },
+    { parameters::resonance, "RES",
+      "Sets filter feedback and resonance; high settings make the filter self-oscillate.",
+      ControlKind::Slider, 6, 1, 0, 1, -1, 0 },
+    { parameters::envPolarity, "+",
+      "Makes the envelope raise filter cutoff by the amount set with VCF ENV.",
+      ControlKind::Radio, 6, 2, 0, 2, 3, 0 },
+    { parameters::envPolarity, "-",
+      "Makes the envelope lower filter cutoff by the amount set with VCF ENV.",
+      ControlKind::Radio, 6, 2, 1, 2, 3, 1 },
+    { parameters::vcfEnv, "ENV",
+      "Sets how strongly the envelope moves filter cutoff; the plus or minus button chooses its direction.",
+      ControlKind::Slider, 6, 3, 0, 1, -1, 0 },
+    { parameters::vcfLfo, "LFO",
+      "Sets delayed-LFO filter-cutoff modulation, up to roughly plus or minus 3.5 octaves.",
+      ControlKind::Slider, 6, 4, 0, 1, -1, 0 },
+    { parameters::keyFollow, "KYBD",
+      "Sets filter keyboard tracking; at 100%, playing one octave higher raises cutoff by one octave.",
+      ControlKind::Slider, 6, 5, 0, 1, -1, 0 },
 
     // VCA
-    { parameters::vcaMode,     "ENV",      ControlKind::Radio,  7, 0, 0, 2,  4, 0, 2 },
-    { parameters::vcaMode,     "GATE",     ControlKind::Radio,  7, 0, 1, 2,  4, 1, 2 },
-    { parameters::vcaLevel,    "LEVEL",    ControlKind::Slider, 7, 2, 0, 1, -1, 0 },
+    { parameters::vcaMode, "ENV",
+      "Makes each voice amplifier follow the ADSR envelope.",
+      ControlKind::Radio, 7, 0, 0, 2, 4, 0, 2 },
+    { parameters::vcaMode, "GATE",
+      "Keeps each voice amplifier open at a fixed level while its key or hold is active; the ADSR still runs for filter modulation.",
+      ControlKind::Radio, 7, 0, 1, 2, 4, 1, 2 },
+    { parameters::vcaLevel, "LEVEL",
+      "Stores patch loudness with the tone. It controls one common VCA after the voice sum and HPF, before chorus; it is not envelope depth.",
+      ControlKind::Slider, 7, 2, 0, 1, -1, 0 },
 
     // ENV
-    { parameters::attack,      "A",        ControlKind::Slider, 8, 0, 0, 1, -1, 0 },
-    { parameters::decay,       "D",        ControlKind::Slider, 8, 1, 0, 1, -1, 0 },
-    { parameters::sustain,     "S",        ControlKind::Slider, 8, 2, 0, 1, -1, 0 },
-    { parameters::release,     "R",        ControlKind::Slider, 8, 3, 0, 1, -1, 0 },
+    { parameters::attack, "A",
+      "Attack: sets the linear rise time from zero to the envelope peak after a note begins. Minimum is one hardware-style control scan, about 4.2 ms, not an instantaneous step.",
+      ControlKind::Slider, 8, 0, 0, 1, -1, 0 },
+    { parameters::decay, "D",
+      "Decay: sets the exponential fall time from the envelope peak to the sustain level.",
+      ControlKind::Slider, 8, 1, 0, 1, -1, 0 },
+    { parameters::sustain, "S",
+      "Sustain: sets the envelope level held while the key remains down; this is a level, not a time.",
+      ControlKind::Slider, 8, 2, 0, 1, -1, 0 },
+    { parameters::release, "R",
+      "Release: sets the exponential fall time after the key is released.",
+      ControlKind::Slider, 8, 3, 0, 1, -1, 0 },
 
     // CHORUS. Two interlocked latching buttons. Neither down is off; selecting
     // one releases the other, so the hardware exposes only Off, I and II.
-    { parameters::chorusI,     "I",        ControlKind::Toggle, 9, 0, 0, 2, -1, 0 },
-    { parameters::chorusII,    "II",       ControlKind::Toggle, 9, 0, 1, 2, -1, 0 },
+    { parameters::chorusI, "I",
+      "Toggles the slower stereo BBD Chorus I; press the lit button again for Off. Its current 0.513 Hz timing is a provisional JUNO-60 fallback.",
+      ControlKind::Toggle, 9, 0, 0, 2, -1, 0 },
+    { parameters::chorusII, "II",
+      "Toggles the faster stereo BBD Chorus II; press the lit button again for Off. Its current 0.863 Hz timing is a provisional JUNO-60 fallback.",
+      ControlKind::Toggle, 9, 0, 1, 2, -1, 0 },
 };
 
 struct Layout
@@ -154,7 +231,8 @@ Layout buildLayout() noexcept
 
         const float span = static_cast<float>(placement.slotSpan) * slotWidth;
         layout.controls[static_cast<std::size_t>(index)] = {
-            placement.parameterId, placement.label, placement.kind, placement.section,
+            placement.parameterId, placement.label, placement.tooltip,
+            placement.kind, placement.section,
             x + controlInset, y, span - 2.0f * controlInset, height,
             x - labelOverhang, span + 2.0f * labelOverhang,
             placement.group, placement.groupValue
@@ -223,7 +301,7 @@ float textWidth(const char* text, float pointSize, bool bold) noexcept
     float total = 0.0f;
     for (const char* c = text; *c != '\0'; ++c)
         total += advance(*c);
-    return total * pointSize * weight;
+    return total * pointSize * weight * typefaceHorizontalScale;
 }
 
 float buttonPointSizeFor(const char* label, float width, float height) noexcept

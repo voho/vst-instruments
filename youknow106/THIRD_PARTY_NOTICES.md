@@ -2,10 +2,10 @@
 
 YouKnow106's original source code is covered by the `LICENSE` file included with
 each source or binary distribution. YouKnow106 builds against one separately
-licensed framework, which it does not relicense. The research attribution below
-does not identify bundled third-party source code: no third-party source,
+licensed framework, which it does not relicense. No third-party source code,
 netlist, ROM image, firmware, sample or recording is included in this
-repository.
+repository. The historical functional tone-memory data described below is
+included separately from the original source code.
 
 ## Modelling references
 
@@ -41,8 +41,33 @@ independent original implementation and is not affiliated with, endorsed by,
 sponsored by or licensed by Roland Corporation. "Roland" and "Juno" are
 trademarks of Roland Corporation, used here only to identify the instrument
 whose published circuit and service documentation the model is derived from.
-No Roland firmware, ROM data, sample, impulse response, preset library or
-recording is included in this repository.
+No Roland firmware, ROM image, sample, impulse response, captured audio or
+Roland Cloud product content is included in this repository.
+
+## Factory tone-memory data
+
+The repository includes the original 128 factory tone states as 2,304 bytes of
+functional parameter data: 128 records of sixteen 7-bit control bytes plus two
+packed switch bytes. In physical memory order A11..A88/B11..B88, their SHA-256
+is `394ae874da33aa63fa4833932fbf415546d2ad66b1b6b9a36315601799eeec21`.
+
+The corpus was mechanically decoded and matched byte for byte across these
+public archives:
+
+- [Juno-106 Connection](http://www.hinzen.de/midi/juno-106/): the Bank A and
+  Bank B tape WAV files and `Factory_Patches.pat`.
+- [Jarvik7 Juno-106 Librarian](https://www.jarvik7.net/juno-106/): the
+  position-preserving factory `.106` library.
+- [KR-106](https://github.com/kayrockscreenprinting/ultramaster_kr106/tree/bc15caee5843ab238a25d0969e68d57db2b1615f/tools/preset-gen):
+  its factory PAT and decoded JSON transcription.
+
+The displayed descriptive names are archival metadata; patch-name text does not
+exist in the hardware memory records. The project's MIT license covers
+YouKnow106's original code and assets and does not assert ownership of Roland
+trademarks or the historical tone states. The cited archives do not provide an
+explicit MIT grant for this corpus, so redistributors should make their own
+rights assessment. No data was taken from the separately distributed Roland
+Cloud Original 128 product.
 
 ## JUCE 8.0.14
 

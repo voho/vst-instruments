@@ -52,10 +52,9 @@ public:
     // The patch a program holds, INIT included. Out-of-range gives a default
     // patch, which is what INIT is anyway.
     youknow106::sysex::Patch programPatch (int index) const;
-    // Whether the panel has moved away from the program that was last selected.
-    // Compared as tone bytes, so it asks the question the hardware would ask:
-    // has anything changed that a stored patch actually records? Volume and the
-    // bender depths are not part of a patch, so moving them is not an edit.
+    // Whether the panel has moved away from the complete product program that
+    // was last selected. Hardware patches remain narrower; applyPatch() below
+    // deliberately retains the JUNO's 18-byte semantics.
     bool currentProgramIsEdited() const;
 
     // Applies a stored patch to the parameters. The controls a patch does not
@@ -349,6 +348,13 @@ private:
     // different ways so the selected index and recalled controls can publish
     // as one coherent state-save generation.
     void applyPatchValues (const youknow106::sysex::Patch& patch);
+    void applyProgramValues (
+        const youknow106::sysex::Patch& patch,
+        const youknow106::presets::Preset::Controls& controls);
+    // A MIDI Program Change is the hardware patch-select operation. It updates
+    // the selected program and tone while leaving performance/product controls
+    // alone, matching the immediate audio-thread shadow used for incoming MIDI.
+    void applyMidiProgramSelection (int index);
 
     // Translates the pre-split `keyMode` and `chorus` choices in a saved
     // session into the independent button pairs that replaced them.

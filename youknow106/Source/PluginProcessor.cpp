@@ -13,8 +13,9 @@ namespace
 using namespace youknow106;
 
 constexpr auto stateSchemaVersionProperty = "stateSchemaVersion";
-constexpr int currentStateSchemaVersion = 2;
+constexpr int currentStateSchemaVersion = 3;
 constexpr int calibrationDefaultSchemaVersion = 1;
+constexpr int originalFactoryBankSchemaVersion = 3;
 constexpr float legacyCalibrationDefault = 0.35f;
 
 float migrateLegacyVolumePosition (float legacyPosition) noexcept
@@ -62,6 +63,25 @@ juce::AudioParameterFloatAttributes percentAttributes()
         .withLabel ("%")
         .withStringFromValueFunction (percentText)
         .withValueFromStringFunction (percentValue);
+}
+
+juce::String centsText (float value, int)
+{
+    const auto sign = value > 0.0f ? "+" : "";
+    return sign + juce::String (value, 1) + " ct";
+}
+
+float centsValue (const juce::String& text)
+{
+    return text.retainCharacters ("0123456789.-+").getFloatValue();
+}
+
+juce::AudioParameterFloatAttributes centsAttributes()
+{
+    return juce::AudioParameterFloatAttributes()
+        .withLabel ("ct")
+        .withStringFromValueFunction (centsText)
+        .withValueFromStringFunction (centsValue);
 }
 
 juce::String secondsText (float value, int)
@@ -415,7 +435,7 @@ YouKnow106AudioProcessor::createParameterLayout()
         juce::StringArray { "Env", "Gate" }, 0));
     layout.add (travel (vcaLevel, "VCA Level", 0.80f, percentAttributes()));
 
-    layout.add (travel (attack, "Attack", 0.04f, attackAttributes()));
+    layout.add (travel (attack, "Attack", 0.0f, attackAttributes()));
     layout.add (travel (decay, "Decay", 0.45f, decayAttributes()));
     layout.add (travel (sustain, "Sustain", 0.70f, percentAttributes()));
     layout.add (travel (release, "Release", 0.30f, releaseAttributes()));
@@ -431,7 +451,7 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { masterTune, 1 }, "Master Tune",
         juce::NormalisableRange<float> { -50.0f, 50.0f, 0.0f }, 0.0f,
-        juce::AudioParameterFloatAttributes().withLabel ("ct")));
+        centsAttributes()));
     layout.add (travel (velocity, "Velocity", 0.0f, percentAttributes()));
     // Keep the historical id and parameter slot so existing automation remains
     // attached. Only the presentation and new-instance default change: the old
@@ -891,10 +911,9 @@ void YouKnow106AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                   - 8192.0f) / 8192.0f);
         else if (message.isProgramChange())
         {
-            // The compact factory bank contains the reference unit's A11..A28
-            // and B11..B28 slots. Its MIDI numbering leaves the intervening
-            // memory groups empty here, so unsupported numbers are ignored
-            // rather than being folded onto a different sound.
+            // The full factory memory follows the owner's Patch Selection
+            // numbering directly: 0..63 address A11..A88 and 64..127 address
+            // B11..B88.
             const int programIndex = hostProgramIndexForMidiProgram (
                 message.getProgramChangeNumber());
             if (programIndex > 0)
@@ -1245,7 +1264,13 @@ void YouKnow106AudioProcessor::setStateInformation (const void* data, int sizeIn
     // retaining this instance's stale previous index. The value is published
     // only inside the same stable generation as the replacement parameter tree.
     int restoredProgram = 0;
-    if (state.hasProperty ("program"))
+    // Schema 2 and earlier numbered the former 32 original YouKnow106 sounds.
+    // The parameters remain authoritative and are restored below, but carrying
+    // one of those indices into the historical 128 would falsely identify it
+    // as an unrelated factory tone. Leave such states as an edited INIT/custom
+    // panel instead. Current-schema states retain their exact selection.
+    if (restoredStateSchema >= originalFactoryBankSchemaVersion
+        && state.hasProperty ("program"))
         restoredProgram = juce::jlimit (
             0, getNumPrograms() - 1,
             static_cast<int> (state.getProperty ("program")));
@@ -1317,19 +1342,17 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 int YouKnow106AudioProcessor::hostProgramIndexForMidiProgram (
     int midiProgram) noexcept
 {
-    // Owner-manual Patch Selection numbering is zero based. The first two
-    // groups in bank A are contiguous at 0..15; bank B begins at 64. Program
-    // zero in the plug-in is INIT, hence the one-based returned indices.
-    if (midiProgram >= 0 && midiProgram <= 15)
-        return midiProgram + 1;
-    if (midiProgram >= 64 && midiProgram <= 79)
-        return midiProgram - 64 + 17;
-    return -1;
+    // Owner-manual Patch Selection numbering is zero based and contiguous:
+    // 0..63 are bank A, 64..127 are bank B. Program zero in the plug-in is
+    // INIT, hence the one-based returned index.
+    return midiProgram >= 0 && midiProgram < youknow106::presets::presetCount
+        ? midiProgram + 1
+        : -1;
 }
 
 // Program 0 is the init patch -- the layout's own defaults, which is what a
 // freshly constructed processor actually holds. Without it, a new instance
-// would report "A11 Hollow Strings" while sounding like nothing of the sort.
+// would report "A11 Brass Set 1" while sounding like nothing of the sort.
 // The factory bank follows from index 1.
 int YouKnow106AudioProcessor::getNumPrograms()
 {
@@ -1346,23 +1369,35 @@ void YouKnow106AudioProcessor::setCurrentProgram (int index)
     if (index < 0 || index >= getNumPrograms())
         return;
 
-    // Publish the selected index and every stored-tone control as one stable
-    // generation. A host saving from another thread can then retry instead of
-    // serialising a new program number beside half of its old patch.
+    // A host program is a complete product preset. Publish its index and every
+    // visible control as one stable generation so a concurrent state save can
+    // retry instead of serialising half of each program.
     parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
     if (index == 0)
     {
-        // A default patch, applied the same way a factory one is. Resetting
-        // every parameter instead would make INIT the only selection that also
-        // threw away volume, transpose, tuning, the assign mode, polyphony,
-        // Unit Character and the quality setting -- none of which a patch carries.
-        applyPatchValues (youknow106::sysex::Patch {});
+        applyProgramValues (youknow106::sysex::Patch {},
+                            youknow106::presets::Preset::Controls {});
     }
     else
     {
         const auto& bank = youknow106::presets::factoryBank();
-        applyPatchValues (bank[static_cast<std::size_t> (index - 1)].patch);
+        const auto& preset = bank[static_cast<std::size_t> (index - 1)];
+        applyProgramValues (preset.patch, preset.controls);
     }
+    currentProgram.store (index, std::memory_order_relaxed);
+    parameterWriteGeneration.fetch_add (1, std::memory_order_release);
+}
+
+void YouKnow106AudioProcessor::applyMidiProgramSelection (int index)
+{
+    if (index <= 0 || index >= getNumPrograms())
+        return;
+
+    // Incoming Program Change models the JUNO's own patch selector. Its
+    // real-time shadow carries only tone memory, so reflection must retain the
+    // same boundary instead of changing performance controls a timer tick later.
+    parameterWriteGeneration.fetch_add (1, std::memory_order_acq_rel);
+    applyPatchValues (programPatch (index));
     currentProgram.store (index, std::memory_order_relaxed);
     parameterWriteGeneration.fetch_add (1, std::memory_order_release);
 }
@@ -1377,15 +1412,42 @@ youknow106::sysex::Patch YouKnow106AudioProcessor::programPatch (int index) cons
 bool YouKnow106AudioProcessor::currentProgramIsEdited() const
 {
     const auto panelPatch = currentPatch();
-    const auto selectedPatch = programPatch (
-        currentProgram.load (std::memory_order_relaxed));
+    const int selectedIndex = currentProgram.load (std::memory_order_relaxed);
+    const auto selectedPatch = programPatch (selectedIndex);
     std::array<std::uint8_t, youknow106::sysex::toneByteCount> panel {}, program {};
     youknow106::sysex::toneBytesFromPatch (panelPatch, panel.data());
     youknow106::sysex::toneBytesFromPatch (selectedPatch, program.data());
     // The byte representation intentionally ignores sub-step slider movement,
     // which the hardware also quantises away. Compare the categorical chorus
     // mode explicitly too so compatibility values can never hide an edit.
-    return panel != program || panelPatch.chorus != selectedPatch.chorus;
+    if (panel != program || panelPatch.chorus != selectedPatch.chorus)
+        return true;
+
+    const auto expected = selectedIndex > 0
+        ? youknow106::presets::factoryBank()[static_cast<std::size_t> (
+              selectedIndex - 1)].controls
+        : youknow106::presets::Preset::Controls {};
+    const auto differs = [] (float first, float second)
+    {
+        return std::abs (first - second) > 1.0e-5f;
+    };
+    using namespace youknow106::parameters;
+    const bool panelPoly1 = valueOf (poly1) > 0.5f;
+    const bool panelPoly2 = valueOf (poly2) > 0.5f;
+    return differs (valueOf (volume), expected.volume)
+        || differs (valueOf (benderDco), expected.benderDco)
+        || differs (valueOf (benderVcf), expected.benderVcf)
+        || differs (valueOf (benderLfo), expected.benderLfo)
+        || differs (valueOf (portamento), expected.portamento)
+        || panelPoly1 != youknow106::poly1Engaged (expected.keyMode)
+        || panelPoly2 != youknow106::poly2Engaged (expected.keyMode)
+        || juce::roundToInt (valueOf (transpose)) != expected.transpose
+        || differs (valueOf (masterTune), expected.masterTune)
+        || differs (valueOf (velocity), expected.velocity)
+        || differs (valueOf (calibration), expected.calibration)
+        || differs (valueOf (chorusNoise), expected.chorusNoise)
+        || juce::roundToInt (valueOf (polyphony)) != expected.polyphony
+        || (valueOf (hq) > 0.5f) != expected.hq;
 }
 
 const juce::String YouKnow106AudioProcessor::getProgramName (int index)
@@ -1457,6 +1519,43 @@ void YouKnow106AudioProcessor::applyPatchValues (
     // Volume, the bender depths, portamento and the assign mode are performance
     // controls. The instrument does not store them in a patch, so loading one
     // deliberately leaves them where the player set them.
+}
+
+void YouKnow106AudioProcessor::applyProgramValues (
+    const youknow106::sysex::Patch& patch,
+    const youknow106::presets::Preset::Controls& controls)
+{
+    using namespace youknow106::parameters;
+
+    const auto set = [this] (const char* id, float value)
+    {
+        if (auto* parameter = parameters.getParameter (id))
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (value));
+    };
+
+    const auto chorus = patch.chorus == youknow106::ChorusMode::OneTwo
+                          ? youknow106::ChorusMode::Two : patch.chorus;
+    set (legacyKeyMode, static_cast<float> (controls.keyMode));
+    set (legacyChorus, static_cast<float> (chorus));
+
+    set (volume, controls.volume);
+    set (benderDco, controls.benderDco);
+    set (benderVcf, controls.benderVcf);
+    set (benderLfo, controls.benderLfo);
+    set (portamento, controls.portamento);
+    set (poly1, youknow106::poly1Engaged (controls.keyMode) ? 1.0f : 0.0f);
+    set (poly2, youknow106::poly2Engaged (controls.keyMode) ? 1.0f : 0.0f);
+    publishKeyModePairAuthority();
+
+    set (transpose, static_cast<float> (controls.transpose));
+    set (masterTune, controls.masterTune);
+    set (velocity, controls.velocity);
+    set (calibration, controls.calibration);
+    set (chorusNoise, controls.chorusNoise);
+    set (polyphony, static_cast<float> (controls.polyphony));
+    set (hq, controls.hq ? 1.0f : 0.0f);
+
+    applyPatchValues (patch);
 }
 
 youknow106::sysex::Patch YouKnow106AudioProcessor::patchFromEngineParameters (
@@ -1991,7 +2090,7 @@ void YouKnow106AudioProcessor::reflectPendingMidiEvent (
         applyToneParameter (event.parameter, event.value);
     else if (event.kind == PendingMidiEventKind::ProgramChange)
     {
-        setCurrentProgram (event.programIndex);
+        applyMidiProgramSelection (event.programIndex);
         reflectedMidiProgramSequence = event.sequence;
         // This is a host/UI state change, distinct from transmitting a MIDI
         // Program Change. No MIDI output event is generated.

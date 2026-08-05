@@ -55,7 +55,7 @@ struct Patch
     float vcfLfo { 0.0f };
     float keyFollow { 0.50f };
     float vcaLevel { 0.80f };
-    float attack { 0.04f };
+    float attack { 0.0f };
     float decay { 0.45f };
     float sustain { 0.70f };
     float release { 0.30f };

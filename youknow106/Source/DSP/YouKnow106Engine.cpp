@@ -1151,6 +1151,7 @@ void YouKnow106Engine::restartDcoBandlimited(
         // Nothing from this cell has reached the delayed output timeline yet,
         // so this is a true cold start rather than an audible discontinuity.
         dco.reset();
+        voice.pulseDutyPrimed = false;
         return;
     }
 
@@ -1198,6 +1199,10 @@ void YouKnow106Engine::restartDcoBandlimited(
     dco.phase = 0.0;
     dco.pulseState = -1.0f;
     dco.subState = 1.0f;
+    // The restart correction above owns the abandoned comparator timeline.
+    // The first sample on the new ramp starts a fresh moving-threshold solve
+    // rather than interpolating from a duty that belonged to the old phase.
+    voice.pulseDutyPrimed = false;
 }
 
 void YouKnow106Engine::OtaCascade::reset() noexcept
@@ -1767,7 +1772,7 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     fix01(result.vcfLfoDepth, 0.0f);
     fix01(result.keyFollow, 0.50f);
     fix01(result.vcaLevel, 0.80f);
-    fix01(result.attack, 0.04f);
+    fix01(result.attack, 0.0f);
     fix01(result.decay, 0.45f);
     fix01(result.sustain, 0.70f);
     fix01(result.release, 0.30f);
@@ -2166,6 +2171,7 @@ void YouKnow106Engine::silenceVoice(Voice& voice) noexcept
         // digital note/portamento memories below, but reconstruct the virtual
         // audio cell from silence next time it is used.
         voice.dco.reset();
+        voice.pulseDutyPrimed = false;
         voice.filter.reset();
         voice.noiseState = hash32(
             static_cast<std::uint32_t>(voice.cardIndex) * 2246822519u + 1u) | 1u;
@@ -2890,46 +2896,106 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
 
     // --- Pulse ------------------------------------------------------------
     // The comparator flips when the ramp crosses the threshold on the way up
-    // and again when the reset drags it back down past it.
-    const bool pulsePinnedLow = voice.pulseDuty <= 0.0f;
-    const bool pulsePinnedHigh = voice.pulseDuty >= 1.0f;
+    // and again when the reset drags it back down past it.  The threshold is a
+    // slewing analogue hold, so those crossing positions move *during* this
+    // sample.  Treating the current duty as if it had been fixed for the whole
+    // interval can move an edge behind the already-advanced ramp and skip it
+    // for a complete oscillator cycle -- the periodic blip heard on deep PWM.
     const float duty = std::clamp(voice.pulseDuty, 0.0f, 1.0f);
+    const float previousDuty = voice.pulseDutyPrimed
+        ? std::clamp(voice.previousPulseDuty, 0.0f, 1.0f) : duty;
+    const double dutyDelta = static_cast<double>(duty - previousDuty);
+
+    struct ComparatorEvent
+    {
+        double time { 0.0 }; // 0..1 across this internal sample
+        float state { -1.0f };
+    };
+    std::array<ComparatorEvent, maximumWrapsPerSample * 2 + 4> events {};
+    int eventCount = 0;
+    const auto appendCrossing = [&events, &eventCount](double numerator,
+                                                       double denominator,
+                                                       float state) noexcept
+    {
+        if (std::abs(denominator) <= 1.0e-14)
+            return;
+        const double time = numerator / denominator;
+        // An event at zero belongs to the preceding interval.  Admit a tiny
+        // overrun at one for round-off, then clamp it onto this endpoint.
+        if (time > 1.0e-12 && time <= 1.0 + 1.0e-12
+            && eventCount < static_cast<int>(events.size()))
+            events[static_cast<std::size_t>(eventCount++)] = {
+                std::min(time, 1.0), state
+            };
+    };
+
+    // With d(t)=d0+t*(d1-d0), the rising boundary is
+    // base+rise*(1-d(t)) and the falling boundary is
+    // base+rise+reset*d(t).  Solve each against p(t)=p0+t*increment.
+    // The sign of the relative velocity says which side of the comparator the
+    // crossing enters; PWM can move a boundary faster than a very low DCO.
+    const double riseVelocity = increment + rise * dutyDelta;
+    const double fallVelocity = increment - reset * dutyDelta;
+    for (double base = 0.0; base <= lastCycle; base += 1.0)
+    {
+        appendCrossing(base + rise * (1.0 - previousDuty) - previousPhase,
+                       riseVelocity,
+                       riseVelocity > 0.0 ? 1.0f : -1.0f);
+        appendCrossing(base + rise + reset * previousDuty - previousPhase,
+                       fallVelocity,
+                       fallVelocity > 0.0 ? -1.0f : 1.0f);
+    }
+
+    // Usually there are zero or two events.  A fixed, allocation-free
+    // insertion sort also covers the bounded multi-cycle case at the timer's
+    // extreme divider values and preserves rise-before-fall ordering when two
+    // zero-width edges coincide.
+    for (int index = 1; index < eventCount; ++index)
+    {
+        const auto event = events[static_cast<std::size_t>(index)];
+        int insertion = index;
+        while (insertion > 0
+               && events[static_cast<std::size_t>(insertion - 1)].time
+                    > event.time)
+        {
+            events[static_cast<std::size_t>(insertion)] =
+                events[static_cast<std::size_t>(insertion - 1)];
+            --insertion;
+        }
+        events[static_cast<std::size_t>(insertion)] = event;
+    }
+
+    for (int index = 0; index < eventCount; ++index)
+    {
+        const auto& event = events[static_cast<std::size_t>(index)];
+        if (event.state == dco.pulseState)
+            continue;
+        addStep(dco.pulse, event.state - dco.pulseState,
+                static_cast<float>(1.0 - event.time));
+        dco.pulseState = event.state;
+    }
+
+    // Clamping at the 0/100% limits makes the boundary piecewise rather than
+    // perfectly linear.  Reconcile the end point to the physical comparator's
+    // memoryless truth; in the ordinary 5..95% range the solved events already
+    // land here exactly, so this is only a numerical/pinned-state guard.
     const double riseEdge =
         static_cast<double>(pulseRisePhase(duty, static_cast<float>(reset)));
     const double fallEdge =
         static_cast<double>(pulseFallPhase(duty, static_cast<float>(reset)));
+    const float comparatorAtEnd = duty >= 1.0f
+        ? 1.0f
+        : (duty <= 0.0f
+               ? -1.0f
+               : (phase >= riseEdge && phase < fallEdge ? 1.0f : -1.0f));
+    if (comparatorAtEnd != dco.pulseState)
+    {
+        addStep(dco.pulse, comparatorAtEnd - dco.pulseState, 0.0f);
+        dco.pulseState = comparatorAtEnd;
+    }
+    voice.previousPulseDuty = duty;
+    voice.pulseDutyPrimed = true;
 
-    // The comparator's two edges per cycle, taken in the order they occur:
-    // threshold crossing on the way up, then the reset dragging the ramp back
-    // down past it. Both are walked for every cycle inside this sample.
-    if (pulsePinnedHigh && dco.pulseState < 1.0f)
-    {
-        addStep(dco.pulse, 1.0f - dco.pulseState, 0.0f);
-        dco.pulseState = 1.0f;
-    }
-    else if (pulsePinnedLow && dco.pulseState > -1.0f)
-    {
-        // A temporarily under-compensated ramp can sit wholly below the
-        // positive threshold after a pitch write. That is a real pinned-low
-        // comparator state, not a minimum-width pulse.
-        addStep(dco.pulse, -1.0f - dco.pulseState, 0.0f);
-        dco.pulseState = -1.0f;
-    }
-    for (double base = 0.0;
-         !pulsePinnedHigh && !pulsePinnedLow && base <= lastCycle;
-         base += 1.0)
-    {
-        if (insideThisSample(base + riseEdge) && dco.pulseState < 0.0f)
-        {
-            addStep(dco.pulse, 2.0f, samplesAgo(base + riseEdge));
-            dco.pulseState = 1.0f;
-        }
-        if (insideThisSample(base + fallEdge) && dco.pulseState > 0.0f)
-        {
-            addStep(dco.pulse, -2.0f, samplesAgo(base + fallEdge));
-            dco.pulseState = -1.0f;
-        }
-    }
     // The pulse is amplitude-compensated by the same control voltage as the
     // ramp, so it carries the same momentary scale error on pitch steps.
     const float pulseOut = dco.pulse.advance(dco.pulseState)

@@ -8,7 +8,10 @@ Roland Juno-106 — block by block, from its integer-divided note timers through
 its four-pole transconductor filter to its uncompanded bucket-brigade chorus. It
 is an independent original implementation, not affiliated with or licensed by
 Roland Corporation, and it contains no firmware, ROM data, samples or captured
-audio. Its panel reproduces that instrument's functional layout because that
+audio. It does include the original 128 factory tone-memory states as functional
+18-byte parameter data, independently decoded and checksum-verified as described
+below; no Roland Cloud content was extracted. Its panel reproduces that
+instrument's functional layout because that
 layout *is* its control set; its palette, typography and name are its own.
 
 What is modelled from documentation and what remains a voiced choice is set out
@@ -22,7 +25,10 @@ with an explicit evidence gap and required output in
 > the classic pad and PWM strings, the 16' bass, the self-oscillating filter,
 > the chorus modes, unison glide, the delayed vibrato, the high-pass ladder
 > and the optional deterministic Unit Character profile. They are rendered by
-> the shipping engine, so they cannot drift from what the plug-in does.
+> the shipping engine, so they cannot drift from what the plug-in does. Ten
+> additional [factory-preset previews](Docs/audio/factory-presets/README.md)
+> retain their relative levels with one shared gain rather than per-file
+> normalisation.
 
 ## What makes it a circuit model rather than a lookalike
 
@@ -48,6 +54,11 @@ with an explicit evidence gap and required output in
   retrigger behavior are exact for the
   explicitly hash-identified B-2 image; no ROM or coefficient-table contents
   are shipped. Physical pass timing and other firmware revisions remain open.
+  INIT/RESET now stores the actual byte-zero attack: it reaches the digital
+  peak in one nominal 4.2 ms scan pass, rather than concealing a roughly 46 ms
+  byte-five attack at the bottom of the slider. The following VCA hold still
+  gives that minimum a short, hardware-like analogue onset rather than an
+  impossible instantaneous step.
   The voice-VCA knee is still a voiced compatibility fit pending the dense
   original-module sweep in the evidence queue.
 - **Cutoff modulation is summed in converter counts before the antilog stage**,
@@ -115,6 +126,77 @@ with an explicit evidence gap and required output in
   musical tails; a block-size-independent 5 ms fade hides the unavoidable
   rate-dependent rebuild while preserving the host-rate output-capacitor state.
 
+## Fidelity ledger: stage by stage
+
+“Exact” below has a narrow meaning: either a documented hardware topology/value,
+or behavior reproduced for the explicitly hash-identified A-5/B-2 firmware
+images. It does not mean that an arbitrary forty-year-old analogue unit will
+null against the plug-in. **Derived** means arithmetic from those anchors;
+**approximated** means the right circuit or behavior implemented by a numerical
+equivalent; **voiced/guessed** means an audible value chosen provisionally
+because the required hardware measurement does not exist; and **product policy**
+means a deliberate plug-in feature with no hardware claim. The detailed,
+controlling version of this ledger is the
+[research contract](Docs/circuit-modelling-research.md).
+
+| Stage | Same as the hardware / evidence-fixed | Approximated, guessed/voiced or product-only |
+| --- | --- | --- |
+| Patch memory and selection | All 128 locations are in hardware order A11…A88, then B11…B88. Each tone is the exact 16 continuous bytes plus two packed switch bytes used by the hardware, decoded by the SysEx path. Program Change 0…127 maps directly to those slots. | The hardware stores no names; displayed names are archival metadata. A host preset also restores plug-in/performance controls, while hardware Program Change and SysEx correctly restore tone memory only. |
+| Key assigner and POLY modes | Six-card allocation, POLY 1/POLY 2, note dropping instead of stealing, held-key rescans and Solo Unison behavior are ROM-resolved for the stated A-5 image. The physical keybed is represented as 61 keys. | Velocity, more than six voices and host notes beyond the drawn keybed are extensions. The mouse Shift-click gesture is a UI equivalent for pressing both momentary POLY contacts. |
+| Shared digital control generator | Envelope recurrence, sustain mapping, DAC truncation, LFO/delay arithmetic and portamento are ROM-resolved for the stated B-2 image. The 23 converter destinations, their ownership and the 4.2 ms pass are anchored. | Writes retain the exact logical order but use normalized sub-pass spacing; exact timestamps and jitter remain open. Only the VCF and voice-VCA hold constants are currently anchored; other sample-and-hold slews are voiced. |
+| DCO, ramp, pulse, sub and mixer | The 8 MHz master reference, integer timer division, range clocks, pitch quantization, constant-current ramp, PWM comparator and divide-by-two sub topology are anchored/derived. A changed-pitch write occurs at that card’s converter slot. The moving-threshold solver prevents a digital-only missed PWM edge and full-cycle blip. | BLEP/BLAMP repairs are transparent digital antialiasing. Exact restart electrical state, loaded saw/pulse/sub/noise levels, filter-drive budget and live waveform-switch transients remain approximated or open. Pulse currently uses a provisional instantaneous audio gate; no invented anti-click envelope is presented as hardware behavior. |
+| Per-voice VCF | Four IR3109/BA662 transconductor stages, the 68 kΩ/560 Ω attenuation, 240 pF stages, per-card cutoff trims and service calibration anchors are hardware-fixed. Cutoff modulation is summed in converter counts before the exponential law. | A topology-preserving trapezoidal/Newton solve is the numerical realization. Resonance byte-to-loop gain, input compensation, feedback saturation, frequency trim and the high-cutoff knee are voiced pending measurements. |
+| Per-voice VCA | One BA662 VCA per card, after its filter, with ENV/GATE ownership and the 6 Vpp service endpoint, is anchored. | The present knee, very-low-level slope and deadband are a replaceable voiced curve; velocity is an optional extension. |
+| Voice sum, coupling, HPF and common VCA LEVEL | Six card outputs sum through 33 kΩ into 3.3 kΩ feedback (0.1 each). C14 precedes the shared four-position HPF; C12 then feeds the one common uPC1252H2 controlled by stored VCA LEVEL. Named parts, placement and asymptotic coupling poles are anchored/derived. | The complete coupled switched-HPF network and its switching memory are approximated. Roland’s stored-byte/DAC/hold-to-GC1 transfer is not documented, so the common-VCA curve is a voiced fit. |
+| BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. BBD write nonlinearity is fitted to its datasheet test points. | Absolute sweep and mode rates use a clearly labelled JUNO-60 fallback; hiss level/correlation, loaded support impedances and the wet-mute transient are voiced. Loaded IC6 clipping remains unknown. |
+| VOLUME and output boundary | C17/C20, R54/R57, the nominal-linear 10KB×2 tracks and fixed internal wiper loading are component-derived, with independent left/right capacitor state. | Dual-gang tracking, selector/jack normaling, external loads and headphone transfer remain open. The fixed −18 dBFS RMS mapping and provisional physical reference are product policy, not an analogue circuit claim. |
+| Antialiasing, HQ and safety | These preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, half-band decimation and state-preserving rate changes. | They have no hardware counterpart. The idle-only quality change and short safety fades are product mechanisms and are kept outside the claimed signal path. |
+
+## Voices, analogue character and dispersion
+
+The first six slots are persistent physical voice-card models. Their DCO,
+filter, comparator and card noise state keep running behind a closed VCA, just
+as powered cards do; a note assignment opens a card that already has a phase
+and history. The shared converter visits the 23 destinations sequentially, so
+the six pitch writes are not simultaneous. Those two facts prevent an
+artificially phase-locked unison stack.
+
+All six DCO timers still derive from the same 8 MHz reference and receive equal
+counts for equal notes: there is **no six-oscillator detune generator**. The LFO
+is shared. Envelope rates and recurrence are also digital and identical for
+every card; analogue dispersion is applied to the circuit the envelope drives,
+not to six invented envelopes.
+
+At Unit Character = 0%, every optional multiplier is exactly zero and the
+engine is the deterministic calibrated-nominal model. At 100%, the current
+fixed-seed voiced profile enables these full-scale mechanisms:
+
+| Per-card mechanism | Full Character span/effect |
+| --- | --- |
+| DCO ramp current | up to ±3% |
+| PWM comparator threshold | up to ±0.24 V |
+| VCF cutoff scale trim | up to ±5% |
+| VCF cutoff offset trim | up to ±0.07 octave |
+| Resonance control offset | up to ±0.02 panel travel |
+| Voice-VCA control offset | up to ±0.004 normalized control |
+| Voice-VCA gain | up to ±3% |
+| Sub level | up to ±3% |
+| Main-noise level at each card | up to ±3% |
+| Slow cutoff wander | d = 0.9992d + 0.004noise at 375 Hz; contributes 40d converter counts |
+
+Every mechanism scales linearly with the knob. Seeds are fixed, so the same
+patch, settings and note sequence render identically; the instrument does not
+become a different random unit each launch. These spans are **voiced sound
+design**, not measured population statistics—OQ-10 is the evidence needed to
+replace them with real six-card and multi-unit distributions.
+
+The analogue impression does not depend on Character alone. It also comes from
+integer pitch quantization, free-running/staggered DCO phase, scanned and slewed
+control voltages, the nonlinear four-stage filter and resonance return, a shared
+noise generator plus microscopic deterministic filter excitation, the
+unnormalized six-card unison sum, component-derived coupling poles, and BBD
+charge transfer, bandwidth, nonlinearity and hiss.
+
 ## Interface
 
 The panel keeps the reference instrument's section order and control set:
@@ -127,46 +209,112 @@ Sliders, switches and buttons are placed by the JUCE-free layout description in
 `Source/DSP/YouKnow106Panel.cpp`, so the regression suite can check that nothing
 overlaps, nothing escapes its section and every group is complete without
 opening a window. The palette is deliberately not the reference instrument's: a
-matte slate charcoal faceplate with alternating magenta and cyan section
-highlights, cool silver-grey caps and neon-green indicators, over a procedurally
-generated moulded-plastic texture. There are no image assets.
+matte slate charcoal faceplate with alternating green and blue section
+highlights, cool silver-grey caps and green indicators. A bundled, low-contrast
+material scan adds maintained 1980s ABS grain, polished touch wear, cleaning
+swirls and sparse hairline scuffs; controls and legends remain
+resolution-independent vectors.
 
-Below the panel, separated by a rule, sit the six controls the hardware does not
-have — Transpose, Master Tune, Velocity, Unit Character, Chorus Noise and
-Polyphony — plus HQ, Panic and two randomisers. Unit Character is the optional
-deterministic voice-variation amount; zero is the declared calibrated nominal
-product baseline because real post-calibration distributions remain unmeasured.
+Hovering any interactive element shows a plain-language explanation of what it
+changes. All 55 controls are covered: the hardware panel, six extension knobs,
+utility and patch buttons, program selector and 61-key keyboard. The help text
+also calls out non-obvious boundaries—such as VCA LEVEL being a common
+post-sum trim, LFO DELAY not affecting PWM, Unit Character adding no detune,
+and whether a behavior is hardware-like or a plug-in extension. Tooltip
+coverage and minimum explanatory length are regression-tested.
+
+Below the panel, separated by a rule, sit six small rotary controls the hardware
+does not have — Transpose, Master Tune, Velocity, Unit Character, Chorus Noise
+and Polyphony — plus HQ, Panic, hardware SysEx send, `RND1%`, `RND10%`,
+`RND50%`, and a complete INIT `RESET`. Unit
+Character is the optional deterministic voice-variation amount; zero is the
+declared calibrated nominal product baseline because real post-calibration
+distributions remain unmeasured.
 The other extension defaults are inert or hardware-aligned: velocity does
 nothing, polyphony is six voices, and the delay lines retain their modeled noise
 floor.
 
 Under those, the patch bar recalls the factory bank: a stepper, a name list and
-an EDITED lamp that lights as soon as the panel stops matching the patch that
-was recalled. It shows the same programs the host's own program menu does, and
-the two stay in step whichever one is used. The dedicated RELOAD button recalls
-the current patch again and discards panel edits; selecting an already-selected
-item is not relied on because host widgets do not report that as a change.
-Volume, the bender depths, portamento and the assign mode are performance
-controls rather than patch contents, so recalling a patch leaves them alone,
-exactly as the hardware does.
+an EDITED lamp that lights as soon as the panel stops matching the product
+program that was recalled. It shows the same programs the host's own program
+menu does, and the two stay in step whichever one is used. The dedicated RELOAD
+button recalls the complete current program and discards all control edits;
+selecting an already-selected item is not relied on because host widgets do not
+report that as a change. Product/host programs include volume, bender depths,
+portamento, assign mode and the extension controls. Imported SysEx and incoming
+MIDI Program Changes retain the narrower hardware semantics: they recall the
+JUNO tone memory without moving those controls.
+
+## Original factory bank
+
+YouKnow106 includes all 128 original tone-memory states in the physical
+instrument's order: A11 through A88, then B11 through B88. Each entry is the
+hardware's complete 18-byte state—sixteen 7-bit control bytes and two packed
+switch bytes—with no corrective gain, hidden EQ or other per-preset
+rebalancing. The concatenated 2,304-byte payload has SHA-256
+`394ae874da33aa63fa4833932fbf415546d2ad66b1b6b9a36315601799eeec21`.
+The test suite locks the same bytes with dependency-free FNV-1a
+`0xa78dab9d5bafb386`, plus the slot order and an encode/decode round-trip
+for every tone.
+
+The packed mode byte is decoded in the hardware order: bit 1 is negative VCF
+envelope polarity and bit 2 is VCA Gate. In addition to direct bit fixtures,
+A86 Hand Claps, B31 Brass and B82 Piccolo Trumpet guard that meaning
+semantically; swapping the two bits can still round-trip perfectly while
+making those factory sounds nearly silent.
+
+The bytes were mechanically decoded and cross-checked with zero mismatches
+across the public [Hinzen tape/PAT archive](http://www.hinzen.de/midi/juno-106/),
+the [Jarvik7 librarian factory library](https://www.jarvik7.net/juno-106/), and
+the [KR-106 archival transcription](https://github.com/kayrockscreenprinting/ultramaster_kr106/tree/bc15caee5843ab238a25d0969e68d57db2b1615f/tools/preset-gen).
+Roland independently describes the historical set as 64 Bank A plus 64 Bank B
+in its [Original 128 announcement](https://www.rolandcloud.com/home/news/the-original-128-patches-for-the-juno-106-are-now).
+No Roland Cloud product content was downloaded or extracted.
+
+The complete [factory gain audit](Docs/audio/factory-presets/README.md) renders
+all 128 tones through the shipping engine at 48 kHz/HQ with no per-preset
+normalisation. Its stress score found finite output for every tone, a median
+gated RMS of -25.70 dBFS, no preset below -60 dBFS maximum 400 ms RMS, and 12
+tones whose polyphonic/transient peaks crossed 0 dBFS. Those crossings are
+reported, not silently limited or rebalanced: the model intentionally permits
+floating output, the score includes unison and six-key stress, and the absolute
+output reference plus common VCA LEVEL law remain OQ-06/OQ-02 measurement
+questions. The ten preview WAVs use one disclosed -12.86 dB common attenuation
+so their relative levels survive 16-bit delivery without clipping.
+
+The hardware stores positions, not patch-name text. Names such as “Brass Set 1”
+and “Owgan” are conventional archival descriptions shown for navigation, not
+bytes recovered from the instrument and not claimed as Roland-authored names.
+For the few labels that explicitly say unison or one octave up/down, host and
+patch-bar recall also restores that playing setup. Hardware MIDI Program Change
+and SysEx remain authentic: those operations change only the 18-byte tone and
+leave performance controls where the player set them.
+
+Saved-state schema 3 marks the change from the former 32 original YouKnow106
+programs. Loading an older state preserves every saved parameter—and therefore
+its sound—but resets the selector to an edited INIT/custom panel instead of
+attaching an unrelated historical factory name. Program-index automation owned
+by a host cannot be rewritten by the plug-in.
+See [third-party notices](THIRD_PARTY_NOTICES.md) for provenance and
+redistribution caveats.
 
 ## MIDI
 
-YouKnow106 receives notes, pitch bend, modulation (CC 1), hold (CC 64),
+The on-screen keyboard matches the instrument's physical 61-key C2-C7 span.
+That visual limit does not discard host MIDI notes outside the keybed.
+YouKnow106 also receives pitch bend, modulation (CC 1), hold (CC 64),
 all-notes-off and the reference instrument's Patch Selection Program Changes.
 CC 1 drives the bender lever's forward/LFO axis; the panel's BENDER LFO setting
 determines its depth. The keyboard sends no velocity, and MIDI has no continuous
 controller assignments for the synthesis panel. Host automation reaches every
 parameter through the plug-in's own parameter list.
 
-The incoming Program Change map follows the owner's manual exactly: A11..A18
-are 0..7, A21..A28 are 8..15, B11..B18 are 64..71 and B21..B28 are 72..79.
-Those are the 32 memory slots this compact bank ships. Program numbers for the
-unshipped groups are ignored, leaving the selected patch and panel unchanged.
-Incoming Program Changes are consumed rather than echoed. YouKnow106 does not
-transmit Program Changes; that reference-keyboard transmit behavior is distinct
-from patch selection receive, and SEND emits only the requested system-exclusive
-patch dump.
+The incoming Program Change map follows the owner's manual exactly: 0..63
+select A11..A88 and 64..127 select B11..B88, including every row and column in
+both 64-tone groups. Incoming Program Changes are consumed rather than echoed.
+YouKnow106 does not transmit Program Changes; that reference-keyboard transmit
+behavior is distinct from patch-selection receive, and SEND emits only the
+requested system-exclusive patch dump.
 
 ### System exclusive
 
@@ -217,7 +365,7 @@ Set `BUILD_UNIVERSAL=OFF` for a native-architecture-only build.
 
 ## Build and test without JUCE
 
-The DSP core, the chorus and the panel description are JUCE-free, so both
+The DSP core, chorus, panel description and render tools are JUCE-free, so the
 non-plug-in suites build and run on any C++20 toolchain — which is what Linux CI
 exercises:
 
@@ -228,7 +376,7 @@ cmake --build youknow106/build-dsp --parallel
 ctest --test-dir youknow106/build-dsp --output-on-failure
 ```
 
-There are five suites:
+There are six suites:
 
 - **`YouKnow106.Circuit`** compares the model against something independent for
   every block: the four transconductor stages against a fourth-order
@@ -245,15 +393,30 @@ There are five suites:
   of host rate and of oversampling, that final PWM DC is removed, that an HQ
   transition cannot expose a chorus-state reset, that the engine is
   deterministic and exactly silent when idle, and that hostile automation
-  cannot produce a non-finite sample.
+  cannot produce a non-finite sample. It also renders every historical factory
+  tone without per-preset normalization and rejects non-finite or runaway
+  output.
 - **`YouKnow106.PluginProcessor`** (macOS/plug-in builds only) checks the
   parameter contract, state round-tripping and migration, controller transport,
-  legacy/modern automation ordering, exact patch reload, and that the editor
-  lays out and renders at its extreme sizes.
+  legacy/modern automation ordering, exact patch reload, all 128 incoming
+  Program Change locations, complete host-control restoration, and that the
+  editor lays out and renders at its extreme sizes.
 - **`YouKnow106.SysEx`** checks the documented hardware messages byte for byte,
-  including malformed-message rejection and single-parameter switch decoding.
+  including malformed-message rejection, single-parameter switch decoding, all
+  128 factory round-trips and the canonical corpus checksum.
 - **`YouKnow106.RenderDemos`** smoke-tests the deterministic documentation-audio
   renderer against the shipping DSP path.
+- **`YouKnow106.AuditFactoryPresets`** smoke-tests the long-form, JUCE-free
+  128-tone gain auditor and common-gain factory-preview renderer. A full run
+  writes its CSV, report and previews under `Docs/audio/factory-presets`.
+
+To regenerate the full factory report and previews after a signal-path change:
+
+```bash
+cmake --build youknow106/build-dsp --parallel \
+  --target YouKnow106AuditFactoryPresets
+youknow106/build-dsp/YouKnow106AuditFactoryPresets
+```
 
 ## Sign, package and notarize
 
@@ -282,6 +445,7 @@ Source/          Plug-in processor and editor
 Tests/           Circuit, engine and plug-in suites
 Docs/            Circuit-modelling research, open questions, editor screenshot
 Presets/         Sound-design recipes
+Tools/           Deterministic demo and factory-audit audio renderers
 scripts/         macOS build and packaging helpers
 ```
 

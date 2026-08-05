@@ -9,9 +9,8 @@
 #include <memory>
 #include <vector>
 
-// Panel look. Everything is drawn rather than loaded: the faceplate texture,
-// the slider slots and caps, and the lit buttons are all procedural, so the
-// editor carries no image assets and scales cleanly to any window size.
+// Panel look. Controls and legends stay resolution-independent JUCE vectors;
+// the only bitmap is a bundled material scan composited into the faceplate.
 class YouKnow106LookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
@@ -20,6 +19,9 @@ public:
     void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
                            float sliderPos, float minSliderPos, float maxSliderPos,
                            juce::Slider::SliderStyle, juce::Slider&) override;
+    void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height,
+                           float sliderPosProportional, float rotaryStartAngle,
+                           float rotaryEndAngle, juce::Slider&) override;
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&,
                                bool isHighlighted, bool isDown) override;
     void drawButtonText (juce::Graphics&, juce::TextButton&,
@@ -28,9 +30,9 @@ public:
     juce::Label* createSliderTextBox (juce::Slider&) override;
 };
 
-// The moulded plastic of the faceplate: a tiled, seeded speckle plus a fine
-// horizontal grain. Generated once and tiled, because generating it per repaint
-// would be visible as noise crawling under the controls.
+// The moulded plastic of the faceplate: a maintained-but-used ABS material scan
+// with a deterministic procedural fallback. It is decoded once and tiled, so
+// repainting cannot make the wear crawl under the controls.
 class PlasticTexture
 {
 public:
@@ -43,7 +45,8 @@ private:
 
 // Voice indicators, modulation and envelope, drawn from the processor's
 // display atomics.
-class YouKnow106Display final : public juce::Component
+class YouKnow106Display final : public juce::Component,
+                                public juce::SettableTooltipClient
 {
 public:
     void refresh (const YouKnow106AudioProcessor&);
@@ -58,6 +61,20 @@ private:
     double sampleRate = 0.0;
     int oversampling = 1;
     bool ready = false;
+};
+
+// JUCE's MIDI keyboard is interactive but does not implement TooltipClient.
+// Add that one small behavior here so it follows the same complete help
+// contract as sliders, buttons and combo boxes.
+class YouKnow106Keyboard final : public juce::MidiKeyboardComponent,
+                                public juce::SettableTooltipClient
+{
+public:
+    explicit YouKnow106Keyboard (juce::MidiKeyboardState& state)
+        : juce::MidiKeyboardComponent (
+              state, juce::MidiKeyboardComponent::horizontalKeyboard)
+    {
+    }
 };
 
 class YouKnow106AudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -115,8 +132,10 @@ private:
 
     juce::TextButton panicButton { "PANIC" };
     juce::TextButton hqButton { "HQ" };
-    juce::TextButton randomize10Button { "RANDOMIZE 10%" };
-    juce::TextButton randomize100Button { "RANDOMIZE 100%" };
+    juce::TextButton randomize1Button { "RND1%" };
+    juce::TextButton randomize10Button { "RND10%" };
+    juce::TextButton randomize50Button { "RND50%" };
+    juce::TextButton resetButton { "RESET" };
     // Sends the current panel out as a patch dump the hardware accepts.
     juce::TextButton sendSysExButton { "SEND" };
     juce::Slider transposeSlider;
@@ -140,7 +159,7 @@ private:
     int shownProgram = -1;
     bool shownEdited = false;
 
-    juce::MidiKeyboardComponent keyboard;
+    YouKnow106Keyboard keyboard;
 
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;

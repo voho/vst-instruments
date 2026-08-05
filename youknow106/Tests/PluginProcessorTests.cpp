@@ -71,7 +71,7 @@ constexpr auto expectedParameters = std::to_array<ParameterExpectation> ({
     { parameters::keyFollow,   0.50f,  1.0e-5f },
     { parameters::vcaMode,     0.0f,   1.0e-5f },
     { parameters::vcaLevel,    0.80f,  1.0e-5f },
-    { parameters::attack,      0.04f,  1.0e-5f },
+    { parameters::attack,      0.0f,   1.0e-5f },
     { parameters::decay,       0.45f,  1.0e-5f },
     { parameters::sustain,     0.70f,  1.0e-5f },
     { parameters::release,     0.30f,  1.0e-5f },
@@ -143,6 +143,69 @@ juce::Component* findDescendantNamed (juce::Component& parent,
     return nullptr;
 }
 
+juce::Label* findDescendantLabelWithText (juce::Component& parent,
+                                          const juce::String& text)
+{
+    const auto wanted = text.removeCharacters (" \t\r\n");
+    for (int index = 0; index < parent.getNumChildComponents(); ++index)
+    {
+        auto* child = parent.getChildComponent (index);
+        if (auto* label = dynamic_cast<juce::Label*> (child);
+            label != nullptr
+                && label->getText().removeCharacters (" \t\r\n") == wanted)
+            return label;
+        if (auto* match = findDescendantLabelWithText (*child, text))
+            return match;
+    }
+    return nullptr;
+}
+
+juce::Label* findSliderTextBox (juce::Slider& slider)
+{
+    for (int index = 0; index < slider.getNumChildComponents(); ++index)
+        if (auto* label = dynamic_cast<juce::Label*> (
+                slider.getChildComponent (index)))
+            return label;
+    return nullptr;
+}
+
+float realTextWidth (const juce::Font& font, const juce::String& text)
+{
+    return juce::GlyphArrangement::getStringWidth (font, text);
+}
+
+bool labelTextFitsAtItsDeclaredSize (const juce::Label& label)
+{
+    const auto available = label.getLocalBounds().toFloat();
+    const auto& font = label.getFont();
+    if (available.getWidth() <= 0.0f || available.getHeight() < font.getHeight())
+        return false;
+
+    if (realTextWidth (font, label.getText()) <= available.getWidth())
+        return true;
+
+    // The editor's label renderer deliberately permits two lines. Long utility
+    // captions therefore still count as full-size text when each word fits a
+    // line and the component has room for both lines; relying on JUCE's final
+    // horizontal squeeze would make the nominal font-size check meaningless.
+    juce::StringArray words;
+    words.addTokens (label.getText(), " \t\r\n", "");
+    if (words.size() < 2 || available.getHeight() < font.getHeight() * 1.8f)
+        return false;
+
+    for (const auto& word : words)
+        if (realTextWidth (font, word) > available.getWidth())
+            return false;
+    return true;
+}
+
+bool isRotaryStyle (juce::Slider::SliderStyle style) noexcept
+{
+    return style == juce::Slider::Rotary
+        || style == juce::Slider::RotaryHorizontalVerticalDrag
+        || style == juce::Slider::RotaryVerticalDrag;
+}
+
 juce::Button* findDescendantButtonWithText (juce::Component& parent,
                                             const juce::String& text)
 {
@@ -153,6 +216,50 @@ juce::Button* findDescendantButtonWithText (juce::Component& parent,
             button != nullptr && button->getButtonText() == text)
             return button;
         if (auto* match = findDescendantButtonWithText (*child, text))
+            return match;
+    }
+    return nullptr;
+}
+
+int countDescendantButtonsWithText (juce::Component& parent,
+                                    const juce::String& text)
+{
+    int count = 0;
+    for (int index = 0; index < parent.getNumChildComponents(); ++index)
+    {
+        auto* child = parent.getChildComponent (index);
+        if (auto* button = dynamic_cast<juce::Button*> (child);
+            button != nullptr && button->getButtonText() == text)
+            ++count;
+        count += countDescendantButtonsWithText (*child, text);
+    }
+    return count;
+}
+
+bool hasDescendantButtonWithTextPrefix (juce::Component& parent,
+                                        const juce::String& prefix)
+{
+    for (int index = 0; index < parent.getNumChildComponents(); ++index)
+    {
+        auto* child = parent.getChildComponent (index);
+        if (auto* button = dynamic_cast<juce::Button*> (child);
+            button != nullptr
+                && button->getButtonText().startsWithIgnoreCase (prefix))
+            return true;
+        if (hasDescendantButtonWithTextPrefix (*child, prefix))
+            return true;
+    }
+    return false;
+}
+
+juce::ComboBox* findDescendantComboBox (juce::Component& parent)
+{
+    for (int index = 0; index < parent.getNumChildComponents(); ++index)
+    {
+        auto* child = parent.getChildComponent (index);
+        if (auto* combo = dynamic_cast<juce::ComboBox*> (child))
+            return combo;
+        if (auto* match = findDescendantComboBox (*child))
             return match;
     }
     return nullptr;
@@ -286,8 +393,8 @@ void testParameterTextRoundTrips()
                    : juce::String();
     };
 
-    expect (textFor (parameters::attack, 0.0f).contains ("ms"),
-            "the shortest attack is not shown in milliseconds");
+    expect (textFor (parameters::attack, 0.0f) == "4 ms",
+            "the shortest attack does not show its one-pass duration");
     expect (textFor (parameters::decay, 1.0f).contains ("s"),
             "the longest decay is not shown in seconds");
     expect (textFor (parameters::cutoff, 1.0f).contains ("kHz"),
@@ -298,6 +405,16 @@ void testParameterTextRoundTrips()
             "portamento at rest is not shown as switched off");
     expect (textFor (parameters::portamento, 1.0f).contains ("/oct"),
             "portamento is not shown per octave");
+    expect (textFor (parameters::masterTune, -50.0f) == "-50.0 ct"
+                && textFor (parameters::masterTune, 12.3f) == "+12.3 ct",
+            "Master Tune does not use the compact signed-cents display");
+    if (auto* tune = processor.parameters.getParameter (parameters::masterTune))
+    {
+        const float parsed = tune->convertFrom0to1 (
+            tune->getValueForText ("+12.3 ct"));
+        expect (std::abs (parsed - 12.3f) < 0.051f,
+                "Master Tune cannot parse the compact cents display");
+    }
 }
 
 void testProcessingProducesSound()
@@ -600,7 +717,7 @@ void testStateRoundTripAndMigration()
     {
         auto currentMissing = juce::ValueTree::fromXml (*savedXml);
         expect (static_cast<int> (currentMissing.getProperty (
-                    "stateSchemaVersion", 0)) == 2,
+                    "stateSchemaVersion", 0)) == 3,
                 "a current saved state has no Unit Character schema marker");
 
         // Schema 1 used a squared Volume law after the old unloaded coupling
@@ -943,27 +1060,13 @@ void testBusLayoutsAndTail()
             "the plug-in does not advertise itself as an instrument");
 }
 
-// The owner's Patch Selection table is zero based but splits bank A and bank B
-// by 64 program numbers. The compact product bank ships only groups 1 and 2,
-// so every supported boundary must recall the correspondingly numbered patch
-// rather than folding the gaps onto another sound.
-void testProgramChangeRecallsTheShippedHardwareSlots()
+// The owner's Patch Selection table is zero based: 0..63 are A11..A88 and
+// 64..127 are B11..B88. Exercise every address so no row/column transposition
+// or compact-bank remnant can hide between boundary fixtures.
+void testProgramChangeRecallsEveryHardwareSlot()
 {
     YouKnow106AudioProcessor processor;
     processor.prepareToPlay (sampleRate, blockSize);
-
-    struct Mapping
-    {
-        int midiProgram;
-        int hostProgram;
-        const char* patchNumber;
-    };
-    constexpr auto mappings = std::to_array<Mapping> ({
-        {  0,  1, "A11" }, {  7,  8, "A18" },
-        {  8,  9, "A21" }, { 15, 16, "A28" },
-        { 64, 17, "B11" }, { 71, 24, "B18" },
-        { 72, 25, "B21" }, { 79, 32, "B28" },
-    });
 
     constexpr float volume = 0.413f;
     constexpr float portamento = 0.271f;
@@ -971,75 +1074,47 @@ void testProgramChangeRecallsTheShippedHardwareSlots()
     setParameterValue (processor, parameters::portamento, portamento);
 
     juce::AudioBuffer<float> buffer (2, blockSize);
-    for (const auto& mapping : mappings)
+    for (int midiProgram = 0; midiProgram < presets::presetCount; ++midiProgram)
     {
+        const int hostProgram = midiProgram + 1;
+        const auto& preset =
+            presets::factoryBank()[static_cast<std::size_t> (midiProgram)];
         // Make the current panel different first, so matching the program index
         // alone cannot hide a recall which failed to move its controls.
         setParameterValue (processor, parameters::cutoff, 0.001f);
         juce::MidiBuffer midi;
-        midi.addEvent (juce::MidiMessage::programChange (16, mapping.midiProgram), 0);
+        midi.addEvent (juce::MidiMessage::programChange (16, midiProgram), 0);
         buffer.clear();
         processor.processBlock (buffer, midi);
         expect (midi.isEmpty(),
                 std::string ("incoming Program Change was echoed for ")
-                    + mapping.patchNumber);
+                    + preset.number);
 
         // Parameter and host-program writes happen only on the message side.
         processor.flushPendingMidiEvents();
-        expect (processor.getCurrentProgram() == mapping.hostProgram,
+        expect (processor.getCurrentProgram() == hostProgram,
                 std::string ("wrong host program for MIDI Program Change ")
-                    + std::to_string (mapping.midiProgram));
-        expect (processor.getProgramName (mapping.hostProgram)
-                    .startsWith (mapping.patchNumber),
+                    + std::to_string (midiProgram));
+        expect (processor.getProgramName (hostProgram)
+                    .startsWith (preset.number),
                 std::string ("wrong numbered patch for MIDI Program Change ")
-                    + std::to_string (mapping.midiProgram));
+                    + std::to_string (midiProgram));
 
         std::array<std::uint8_t, sysex::toneByteCount> recalled {}, expected {};
         sysex::toneBytesFromPatch (processor.currentPatch(), recalled.data());
-        sysex::toneBytesFromPatch (processor.programPatch (mapping.hostProgram),
+        sysex::toneBytesFromPatch (processor.programPatch (hostProgram),
                                    expected.data());
         expect (recalled == expected,
                 std::string ("Program Change did not recall the full patch ")
-                    + mapping.patchNumber);
+                    + preset.number);
         expect (std::abs (parameterValue (processor, parameters::volume) - volume)
                     < 1.0e-4f,
                 "Program Change moved non-patch volume");
         expect (std::abs (parameterValue (processor, parameters::portamento)
                          - portamento) < 1.0e-4f,
                 "Program Change moved non-patch portamento");
-    }
-
-    processor.releaseResources();
-}
-
-void testUnshippedProgramChangesAreIgnored()
-{
-    YouKnow106AudioProcessor processor;
-    processor.prepareToPlay (sampleRate, blockSize);
-    processor.setCurrentProgram (5);
-    setParameterValue (processor, parameters::cutoff, 0.137f);
-
-    std::array<std::uint8_t, sysex::toneByteCount> before {};
-    sysex::toneBytesFromPatch (processor.currentPatch(), before.data());
-
-    juce::AudioBuffer<float> buffer (2, blockSize);
-    for (const int midiProgram : { 16, 63, 80, 127 })
-    {
-        juce::MidiBuffer midi;
-        midi.addEvent (juce::MidiMessage::programChange (1, midiProgram), 0);
-        buffer.clear();
-        processor.processBlock (buffer, midi);
-        expect (midi.isEmpty(), "an unsupported Program Change was echoed");
-        processor.flushPendingMidiEvents();
-
-        std::array<std::uint8_t, sysex::toneByteCount> after {};
-        sysex::toneBytesFromPatch (processor.currentPatch(), after.data());
-        expect (processor.getCurrentProgram() == 5,
-                std::string ("unshipped MIDI program changed selection: ")
-                    + std::to_string (midiProgram));
-        expect (after == before,
-                std::string ("unshipped MIDI program changed the panel: ")
-                    + std::to_string (midiProgram));
+        expect (processor.currentProgramIsEdited(),
+                "hardware Program Change hid retained product-control edits");
     }
 
     processor.releaseResources();
@@ -1593,7 +1668,7 @@ void testOverflowedMidiReflectionCoalescesWithoutDroppingAudioEvents()
     baselinePatch.pulse = false;
 
     midiDriven.applyPatch (baselinePatch);
-    reference.applyPatch (finalPatch);
+    reference.applyPatch (baselinePatch);
     for (auto* processor : { &midiDriven, &reference })
     {
         setParameterValue (*processor, parameters::calibration, 0.0f);
@@ -1632,11 +1707,18 @@ void testOverflowedMidiReflectionCoalescesWithoutDroppingAudioEvents()
     // FIFO. A resync which called setCurrentProgram would incorrectly erase
     // them, so this covers selector and tone coalescing together.
     midi.addEvent (juce::MidiMessage::programChange (1, 2), 64);
+    referenceMidi.addEvent (juce::MidiMessage::programChange (1, 2), 64);
     for (int event = 65; event < 70; ++event)
+    {
         midi.addEvent (juce::MidiMessage::createSysExMessage (
                            finalMessage.data() + 1,
                            static_cast<int> (finalWritten) - 2),
                        event);
+        referenceMidi.addEvent (juce::MidiMessage::createSysExMessage (
+                                    finalMessage.data() + 1,
+                                    static_cast<int> (finalWritten) - 2),
+                                event);
+    }
     midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 100);
     referenceMidi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 100);
 
@@ -1868,6 +1950,39 @@ void testSelectedProgramSurvivesAStateRoundTrip()
     destination.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
     expect (destination.getCurrentProgram() == 3,
             "the selected program did not survive a state round trip");
+
+    // Schema 2's indices named the former 32 custom sounds. Reusing one as a
+    // historical-bank identity would preserve the audio parameters but attach
+    // a false name and selector. Migration keeps the sound and clears only that
+    // obsolete identity.
+    const auto schema3Xml = juce::AudioProcessor::getXmlFromBinary (
+        state.getData(), static_cast<int> (state.getSize()));
+    expect (schema3Xml != nullptr,
+            "could not decode the current program-state fixture");
+    if (schema3Xml != nullptr)
+    {
+        auto schema2State = juce::ValueTree::fromXml (*schema3Xml);
+        schema2State.setProperty ("stateSchemaVersion", 2, nullptr);
+        schema2State.setProperty ("program", 17, nullptr);
+        juce::MemoryBlock schema2Bytes;
+        if (const auto xml = schema2State.createXml())
+            juce::AudioProcessor::copyXmlToBinary (*xml, schema2Bytes);
+        else
+            expect (false, "could not serialise the schema-2 program fixture");
+
+        YouKnow106AudioProcessor migrated;
+        migrated.setStateInformation (
+            schema2Bytes.getData(), static_cast<int> (schema2Bytes.getSize()));
+        std::array<std::uint8_t, sysex::toneByteCount> before {}, after {};
+        sysex::toneBytesFromPatch (source.currentPatch(), before.data());
+        sysex::toneBytesFromPatch (migrated.currentPatch(), after.data());
+        expect (before == after,
+                "factory-bank migration changed the saved sound");
+        expect (migrated.getCurrentProgram() == 0,
+                "schema-2 custom program was mislabeled as a historical tone");
+        expect (migrated.currentProgramIsEdited(),
+                "migrated custom sound was not marked as an edited panel");
+    }
 
     // Older chunks have no program property at all. Loading one into an
     // already-used processor must not leave the previous selector attached to
@@ -2510,9 +2625,10 @@ void testLegacyAutomationBetweenRestoreAndFirstBlockIsHonoured()
     restored.releaseResources();
 }
 
-// The patch bar tells a recalled patch from an edited one, and it has to ask
-// the question a stored patch answers: volume is not part of one, cutoff is.
-void testEditedFlagFollowsThePatchAndNotThePanel()
+// The product program bar recalls a complete plug-in state. Its EDITED lamp
+// therefore follows both the JUNO tone-memory bytes and the surrounding
+// performance/model controls which a host program also restores.
+void testEditedFlagFollowsTheCompleteProgram()
 {
     YouKnow106AudioProcessor processor;
     processor.setCurrentProgram (3);
@@ -2520,8 +2636,12 @@ void testEditedFlagFollowsThePatchAndNotThePanel()
             "a freshly recalled patch already claims to be edited");
 
     setParameterValue (processor, parameters::volume, 0.42f);
+    expect (processor.currentProgramIsEdited(),
+            "moving product-program volume did not count as an edit");
+
+    processor.setCurrentProgram (3);
     expect (! processor.currentProgramIsEdited(),
-            "moving a control the patch does not store counted as an edit");
+            "reloading the program did not restore its volume");
 
     setParameterValue (processor, parameters::cutoff, 0.137f);
     expect (processor.currentProgramIsEdited(),
@@ -2541,6 +2661,27 @@ void testEditedFlagFollowsThePatchAndNotThePanel()
                 std::string ("program ") + std::to_string (index)
                     + " does not survive being recalled");
     }
+
+    // Each visible parameter must independently light EDITED. Poisoning the
+    // entire state at once would let one checked field conceal another that
+    // had accidentally been omitted from the comparison.
+    for (const auto& expected : expectedParameters)
+    {
+        if (std::strcmp (expected.id, parameters::legacyKeyMode) == 0
+            || std::strcmp (expected.id, parameters::legacyChorus) == 0)
+            continue;
+
+        processor.setCurrentProgram (0);
+        auto* parameter = processor.parameters.getParameter (expected.id);
+        expect (parameter != nullptr,
+                std::string ("cannot edit program parameter ") + expected.id);
+        if (parameter == nullptr)
+            continue;
+        const float edit = parameter->getValue() < 0.5f ? 0.87f : 0.13f;
+        parameter->setValueNotifyingHost (edit);
+        expect (processor.currentProgramIsEdited(),
+                std::string ("EDITED ignored parameter ") + expected.id);
+    }
 }
 
 void testFactoryProgramsLoad()
@@ -2555,6 +2696,9 @@ void testFactoryProgramsLoad()
     // it reports has to be the one that actually describes them.
     expect (processor.getCurrentProgram() == 0,
             "a new processor claims a factory program it has not loaded");
+    expect (processor.programPatch (0).attack == 0.0f
+                && parameterValue (processor, parameters::attack) == 0.0f,
+            "INIT still hides a non-zero attack behind the bottom slider step");
 
     for (int index = 0; index < processor.getNumPrograms(); ++index)
         expect (processor.getProgramName (index).isNotEmpty(),
@@ -2564,8 +2708,28 @@ void testFactoryProgramsLoad()
     expect (processor.getProgramName (processor.getNumPrograms()).isEmpty(),
             "a program index past the end returned a name");
 
-    // Selecting a program has to move the patch controls and leave the
-    // performance controls alone, because the instrument does not store them.
+    const auto& bank = presets::factoryBank();
+    expect (bank[13].controls.transpose == 12
+                && bank[16].controls.transpose == 12
+                && bank[58].controls.transpose == -12,
+            "archival octave-playing directions are missing");
+    expect (bank[31].controls.keyMode == KeyMode::Unison
+                && bank[43].controls.keyMode == KeyMode::Unison
+                && bank[44].controls.keyMode == KeyMode::Unison
+                && bank[45].controls.keyMode == KeyMode::Unison,
+            "archival unison-playing directions are missing");
+
+    processor.setCurrentProgram (32); // A48 Synth Bass I (unison)
+    expect (parameterValue (processor, parameters::poly1) > 0.5f
+                && parameterValue (processor, parameters::poly2) > 0.5f,
+            "a product recall did not apply the factory sound's unison direction");
+    processor.setCurrentProgram (14); // A26 Celeste, one octave up
+    expect (std::abs (parameterValue (processor, parameters::transpose) - 12.0f)
+                < 1.0e-4f,
+            "a product recall did not apply the factory sound's octave direction");
+
+    // The host/program-bar abstraction is a complete product preset, so it
+    // restores the plug-in controls around the hardware-format tone too.
     setParameterValue (processor, parameters::volume, 0.42f);
     setParameterValue (processor, parameters::portamento, 0.33f);
     processor.setCurrentProgram (2);
@@ -2575,24 +2739,31 @@ void testFactoryProgramsLoad()
     expect (std::abs (parameterValue (processor, parameters::cutoff) - expected.cutoff)
                 < 0.01f,
             "selecting a program did not load its cutoff");
-    expect (std::abs (parameterValue (processor, parameters::volume) - 0.42f) < 1.0e-4f,
-            "loading a patch moved the volume, which is not part of a patch");
-    expect (std::abs (parameterValue (processor, parameters::portamento) - 0.33f)
-                < 1.0e-4f,
-            "loading a patch moved portamento, which is not part of a patch");
+    const auto& expectedControls = presets::factoryBank()[1].controls;
+    expect (std::abs (parameterValue (processor, parameters::volume)
+                     - expectedControls.volume) < 1.0e-4f,
+            "loading a product program did not restore volume");
+    expect (std::abs (parameterValue (processor, parameters::portamento)
+                     - expectedControls.portamento) < 1.0e-4f,
+            "loading a product program did not restore portamento");
 
-    // INIT restores the patch, not the instrument: the controls a patch does
-    // not carry stay where the player put them, as they do for every other
-    // program selection.
+    // INIT is the complete default product state, not only an empty hardware
+    // tone. It must clear edits to extension and performance controls too.
     setParameterValue (processor, parameters::volume, 0.42f);
     setParameterValue (processor, parameters::transpose, 5.0f);
+    setParameterValue (processor, parameters::attack, 0.75f);
     processor.setCurrentProgram (0);
-    expect (std::abs (parameterValue (processor, parameters::volume) - 0.42f) < 1.0e-4f,
-            "selecting INIT reset the volume, which is not part of a patch");
-    expect (std::abs (parameterValue (processor, parameters::transpose) - 5.0f) < 1.0e-4f,
-            "selecting INIT reset the transpose, which is not part of a patch");
+    const presets::Preset::Controls initControls {};
+    expect (std::abs (parameterValue (processor, parameters::volume)
+                     - initControls.volume) < 1.0e-4f,
+            "selecting INIT did not restore volume");
+    expect (std::abs (parameterValue (processor, parameters::transpose)
+                     - static_cast<float> (initControls.transpose)) < 1.0e-4f,
+            "selecting INIT did not restore transpose");
     expect (std::abs (parameterValue (processor, parameters::cutoff) - 0.62f) < 0.01f,
             "selecting INIT did not restore the default patch");
+    expect (parameterValue (processor, parameters::attack) == 0.0f,
+            "selecting INIT did not restore the true minimum attack");
     processor.setCurrentProgram (2);
 
     processor.setCurrentProgram (-1);
@@ -2615,10 +2786,57 @@ void testFactoryProgramsLoad()
     }
 }
 
+void testEveryProductProgramRestoresEveryParameter()
+{
+    YouKnow106AudioProcessor processor;
+
+    for (int program = 0; program < processor.getNumPrograms(); ++program)
+    {
+        processor.setCurrentProgram (program);
+        std::array<float, expectedParameters.size()> recalledValues {};
+        for (std::size_t index = 0; index < expectedParameters.size(); ++index)
+            recalledValues[index] = parameterValue (
+                processor, expectedParameters[index].id);
+
+        // Move every APVTS value to the opposite side of its normalised range.
+        // This includes the hidden compatibility choices, so a recall cannot
+        // leave stale state behind the two physical button pairs either.
+        for (const auto& expected : expectedParameters)
+        {
+            auto* parameter = processor.parameters.getParameter (expected.id);
+            expect (parameter != nullptr,
+                    std::string ("cannot poison program parameter ") + expected.id);
+            if (parameter == nullptr)
+                continue;
+            const float poison = parameter->getValue() < 0.5f ? 0.87f : 0.13f;
+            parameter->setValueNotifyingHost (poison);
+        }
+
+        expect (processor.currentProgramIsEdited(),
+                std::string ("program ") + std::to_string (program)
+                    + " ignored edits to its complete state");
+        processor.setCurrentProgram (program);
+
+        for (std::size_t index = 0; index < expectedParameters.size(); ++index)
+        {
+            const auto& expected = expectedParameters[index];
+            expect (std::abs (parameterValue (processor, expected.id)
+                             - recalledValues[index]) <= expected.tolerance,
+                    std::string ("program ") + std::to_string (program)
+                        + " did not restore parameter " + expected.id);
+        }
+        expect (! processor.currentProgramIsEdited(),
+                std::string ("program ") + std::to_string (program)
+                    + " remains edited after complete recall");
+    }
+}
+
 void testEveryPanelLegendFitsInTheRealFont()
 {
     const auto boldFont = [] (float height) {
-        return juce::Font (juce::FontOptions (height, juce::Font::bold));
+        auto font = juce::Font (juce::FontOptions (height, juce::Font::bold));
+        font.setHorizontalScale (panel::typefaceHorizontalScale);
+        return font;
     };
     // expect() takes a std::string; every message here is built as a
     // juce::String, so it is converted at the point of use.
@@ -2669,6 +2887,100 @@ void testEveryPanelLegendFitsInTheRealFont()
                          + juce::String (control.width, 1)));
         }
     }
+
+    // The nominal layout can fit while the smallest supported editor silently
+    // turns ten-point legends into eight-point ones. Check the actual font and
+    // the actual scaled boxes at the resize floor as a separate contract.
+    const float minimumScale = juce::jmin (
+        static_cast<float> (panel::minimumEditorWidth) / panel::panelWidth(),
+        static_cast<float> (panel::minimumEditorHeight)
+            / (panel::panelHeight + panel::keyboardHeight));
+
+    for (const auto& section : panel::sections())
+    {
+        const float size = juce::jmax (10.0f,
+                                       panel::headerPointSize * minimumScale);
+        const float drawn = juce::GlyphArrangement::getStringWidth (
+            boldFont (size), section.name);
+        expect (drawn <= (section.width - panel::sectionPadding) * minimumScale,
+                say (juce::String ("minimum-size header is truncated: ")
+                     + section.name));
+    }
+
+    for (const auto& control : panel::controls())
+    {
+        if (control.kind == panel::ControlKind::Slider
+            || control.kind == panel::ControlKind::Steps)
+        {
+            const float size = juce::jmax (10.0f,
+                                           panel::labelPointSize * minimumScale);
+            const float drawn = juce::GlyphArrangement::getStringWidth (
+                boldFont (size), control.label);
+            expect (drawn <= control.labelWidth * minimumScale,
+                    say (juce::String ("minimum-size slider legend is truncated: ")
+                         + control.label));
+            continue;
+        }
+
+        // These are fixed vector marks at runtime; their accessible names do
+        // not constrain the visible icon's point size.
+        if (std::strcmp (control.label, "PULSE") == 0
+            || std::strcmp (control.label, "SAW") == 0
+            || std::strcmp (control.label, "16'") == 0
+            || std::strcmp (control.label, "8'") == 0
+            || std::strcmp (control.label, "4'") == 0)
+            continue;
+
+        const float size = panel::buttonPointSizeFor (
+            control.label, control.width * minimumScale,
+            control.height * minimumScale);
+        expect (size >= panel::buttonPointSizeMin,
+                say (juce::String ("minimum-size button legend is too small: ")
+                     + control.label));
+    }
+}
+
+void testEveryInteractiveEditorControlExplainsItself()
+{
+    YouKnow106AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr, "cannot audit tooltips without an editor");
+    if (editor == nullptr)
+        return;
+
+    int interactiveCount = 0;
+    for (int index = 0; index < editor->getNumChildComponents(); ++index)
+    {
+        auto* component = editor->getChildComponent (index);
+        const bool isInteractive =
+            dynamic_cast<juce::Slider*> (component) != nullptr
+            || dynamic_cast<juce::Button*> (component) != nullptr
+            || dynamic_cast<juce::ComboBox*> (component) != nullptr
+            || dynamic_cast<juce::MidiKeyboardComponent*> (component) != nullptr;
+        if (! isInteractive)
+            continue;
+
+        ++interactiveCount;
+        const auto identity = component->getName().isNotEmpty()
+            ? component->getName().toStdString()
+            : std::string ("unnamed interactive control");
+        auto* tooltipClient = dynamic_cast<juce::TooltipClient*> (component);
+        expect (tooltipClient != nullptr,
+                identity + " cannot display a tooltip");
+        if (tooltipClient == nullptr)
+            continue;
+
+        const auto tooltip = tooltipClient->getTooltip().trim();
+        expect (tooltip.length() >= 24,
+                identity + " has no meaningful explanatory tooltip");
+        expect (tooltip != component->getName(),
+                identity + " tooltip merely repeats the control name");
+    }
+
+    constexpr int expectedInteractiveCount =
+        panel::controlCount + 6 + 7 + 4 + 1;
+    expect (interactiveCount == expectedInteractiveCount,
+            "the tooltip audit did not cover every intentional interactive control");
 }
 
 void testEditorReloadButtonDiscardsPatchEdits()
@@ -2676,6 +2988,7 @@ void testEditorReloadButtonDiscardsPatchEdits()
     YouKnow106AudioProcessor processor;
     processor.setCurrentProgram (3);
     const float storedCutoff = processor.programPatch (3).cutoff;
+    const float storedVolume = presets::factoryBank()[2].controls.volume;
     setParameterValue (processor, parameters::volume, 0.42f);
 
     std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
@@ -2723,11 +3036,11 @@ void testEditorReloadButtonDiscardsPatchEdits()
     expect (std::abs (parameterValue (processor, parameters::cutoff) - storedCutoff)
                 < 1.0e-6f,
             "Reload patch did not restore the selected program's cutoff");
-    expect (std::abs (parameterValue (processor, parameters::volume) - 0.42f)
+    expect (std::abs (parameterValue (processor, parameters::volume) - storedVolume)
                 < 1.0e-6f,
-            "Reload patch moved the performance volume");
+            "Reload patch did not restore the product program's volume");
 
-    // The EDITED label intentionally follows the hardware's 7-bit patch
+    // The tone part of EDITED intentionally follows the hardware's 7-bit patch
     // memory. A sub-step host value can therefore sound/encode identically
     // while still differing from the exact factory float. RELOAD must restore
     // that exact source value even though the label quite correctly stays off.
@@ -2760,6 +3073,96 @@ void testEditorReloadButtonDiscardsPatchEdits()
     }
 
     processor.removeListener (&hostChanges);
+}
+
+void testEditorRandomizeStrengthsAndReset()
+{
+    YouKnow106AudioProcessor processor;
+    std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
+    expect (editor != nullptr, "cannot test utility actions without an editor");
+    if (editor == nullptr)
+        return;
+
+    struct RandomizeAction
+    {
+        const char* label;
+        float maximumMovement;
+    };
+    constexpr auto actions = std::to_array<RandomizeAction> ({
+        { "RND1%",  0.01f },
+        { "RND10%", 0.10f },
+        { "RND50%", 0.50f },
+    });
+
+    expect (! hasDescendantButtonWithTextPrefix (*editor, "RANDOMIZE"),
+            "the editor still exposes an obsolete long RANDOMIZE legend");
+
+    for (const auto& action : actions)
+    {
+        expect (countDescendantButtonsWithText (*editor, action.label) == 1,
+                std::string ("the editor does not contain exactly one ")
+                    + action.label + " button");
+        auto* button = findDescendantButtonWithText (*editor, action.label);
+        expect (button != nullptr,
+                std::string ("the editor is missing ") + action.label);
+        if (button == nullptr || ! button->onClick)
+            continue;
+
+        processor.setCurrentProgram (0);
+        const int parameterCount = processor.getParameters().size();
+        std::vector<float> before;
+        before.reserve (static_cast<std::size_t> (parameterCount));
+        for (const auto* parameter : processor.getParameters())
+            before.push_back (parameter->getValue());
+
+        button->onClick();
+        bool movedSomething = false;
+        for (int index = 0; index < parameterCount; ++index)
+        {
+            const float movement = std::abs (
+                processor.getParameters()[index]->getValue()
+                - before[static_cast<std::size_t> (index)]);
+            movedSomething = movedSomething || movement > 1.0e-7f;
+            expect (movement <= action.maximumMovement + 1.0e-6f,
+                    std::string (action.label)
+                        + " moved a parameter farther than its advertised strength");
+        }
+        expect (movedSomething,
+                std::string (action.label) + " did not move any sound control");
+    }
+
+    processor.setCurrentProgram (0);
+    const int parameterCount = processor.getParameters().size();
+    std::vector<float> initValues;
+    initValues.reserve (static_cast<std::size_t> (parameterCount));
+    for (const auto* parameter : processor.getParameters())
+        initValues.push_back (parameter->getValue());
+
+    processor.setCurrentProgram (3);
+    for (auto* parameter : processor.getParameters())
+        parameter->setValueNotifyingHost (parameter->getValue() < 0.5f ? 0.87f : 0.13f);
+
+    auto* reset = findDescendantButtonWithText (*editor, "RESET");
+    expect (reset != nullptr, "the editor is missing RESET");
+    expect (reset != nullptr && static_cast<bool> (reset->onClick),
+            "RESET has no action");
+    if (reset != nullptr && reset->onClick)
+        reset->onClick();
+
+    expect (processor.getCurrentProgram() == 0,
+            "RESET did not select the complete INIT program");
+    expect (! processor.currentProgramIsEdited(),
+            "RESET left INIT marked as edited");
+    for (int index = 0; index < parameterCount; ++index)
+        expect (std::abs (processor.getParameters()[index]->getValue()
+                         - initValues[static_cast<std::size_t> (index)]) < 1.0e-6f,
+                "RESET did not restore every INIT control");
+
+    if (auto* preset = findDescendantComboBox (*editor))
+        expect (preset->getSelectedId() == 1,
+                "RESET did not bring the patch display back to INIT");
+    else
+        expect (false, "RESET test could not find the patch display");
 }
 
 void testClickingTheSelectedRadioKeepsItsLampLit()
@@ -2860,6 +3263,97 @@ void testPolyButtonsKeepAValidFirmwareLatch()
     juce::ModifierKeys::currentModifiers = previousModifiers;
 }
 
+void checkUtilityKnobLayout (juce::AudioProcessorEditor& editor,
+                             bool atSupportedMinimum)
+{
+    struct UtilityExpectation
+    {
+        const char* sliderName;
+        const char* caption;
+    };
+    constexpr auto expected = std::to_array<UtilityExpectation> ({
+        { "Transpose",      "TRANSPOSE" },
+        { "Master tune",    "TUNE" },
+        { "Velocity",       "VELOCITY" },
+        { "Unit Character", "UNIT CHARACTER" },
+        { "Chorus noise",   "CHORUS NOISE" },
+        { "Polyphony",      "VOICES" },
+    });
+
+    std::array<juce::Rectangle<int>, expected.size()> occupiedAreas {};
+    const auto editorBounds = editor.getLocalBounds();
+
+    for (std::size_t index = 0; index < expected.size(); ++index)
+    {
+        const auto& item = expected[index];
+        auto* slider = dynamic_cast<juce::Slider*> (
+            findDescendantNamed (editor, item.sliderName));
+        auto* caption = findDescendantLabelWithText (editor, item.caption);
+        const auto context = std::string (atSupportedMinimum ? "minimum-size "
+                                                             : "default-size ")
+                           + item.sliderName;
+
+        expect (slider != nullptr, context + " utility knob is missing");
+        expect (caption != nullptr, context + " utility caption is missing");
+        if (slider == nullptr || caption == nullptr)
+            continue;
+
+        expect (isRotaryStyle (slider->getSliderStyle()),
+                context + " still uses a linear slider");
+
+        const auto sliderArea = editor.getLocalArea (
+            slider, slider->getLocalBounds());
+        const auto captionArea = editor.getLocalArea (
+            caption, caption->getLocalBounds());
+        expect (! sliderArea.isEmpty(), context + " knob has empty bounds");
+        expect (! captionArea.isEmpty(), context + " caption has empty bounds");
+        expect (editorBounds.contains (sliderArea),
+                context + " knob extends outside the editor");
+        expect (editorBounds.contains (captionArea),
+                context + " caption extends outside the editor");
+        expect (! sliderArea.intersects (captionArea),
+                context + " knob overlaps its caption");
+
+        occupiedAreas[index] = sliderArea.getUnion (captionArea);
+        for (std::size_t previous = 0; previous < index; ++previous)
+            expect (! occupiedAreas[index].intersects (occupiedAreas[previous]),
+                    context + " cell overlaps another utility control");
+
+        const float minimumFontHeight = atSupportedMinimum ? 9.0f : 11.0f;
+        expect (caption->getFont().getHeight() >= minimumFontHeight - 0.05f,
+                context + " caption is below the readable font floor");
+        expect (labelTextFitsAtItsDeclaredSize (*caption),
+                context + " caption relies on ellipsis or compressed lettering");
+
+        // Popup-only knobs have no persistent value label to truncate. When a
+        // text box is present, exercise the longest signed Master Tune value
+        // and prove the real font fits the real box instead of trusting a
+        // screenshot or JUCE's silent fitted-text compression.
+        if (std::strcmp (item.sliderName, "Master tune") == 0
+            && slider->getTextBoxPosition() != juce::Slider::NoTextBox)
+        {
+            auto* valueLabel = findSliderTextBox (*slider);
+            expect (valueLabel != nullptr,
+                    context + " declares a value box but did not create one");
+            if (valueLabel != nullptr)
+            {
+                const double previousValue = slider->getValue();
+                slider->setValue (-50.0, juce::dontSendNotification);
+                const auto expectedText = slider->getTextFromValue (-50.0);
+                expect (valueLabel->getText() == expectedText,
+                        context + " Master tune value display is incomplete");
+                expect (realTextWidth (valueLabel->getFont(), expectedText)
+                            <= static_cast<float> (valueLabel->getWidth()),
+                        context + " Master tune value is wider than its text box");
+                expect (valueLabel->getHeight()
+                            >= juce::roundToInt (valueLabel->getFont().getHeight()),
+                        context + " Master tune value is vertically clipped");
+                slider->setValue (previousValue, juce::dontSendNotification);
+            }
+        }
+    }
+}
+
 void testEditorBuildsAndRenders()
 {
     YouKnow106AudioProcessor processor;
@@ -2874,6 +3368,22 @@ void testEditorBuildsAndRenders()
     expect (findDescendantNamed (*editor, "Unit Character") != nullptr,
             "the editor still presents the compatibility profile as Calibration");
 
+    auto* playableKeyboard = dynamic_cast<juce::MidiKeyboardComponent*> (
+        findDescendantNamed (*editor, "Playable keyboard"));
+    expect (playableKeyboard != nullptr,
+            "the editor has no playable keyboard to range-check");
+    if (playableKeyboard != nullptr)
+    {
+        expect (playableKeyboard->getRangeStart()
+                    == panel::keyboardLowestMidiNote
+                    && playableKeyboard->getRangeEnd()
+                    == panel::keyboardHighestMidiNote,
+                "the on-screen keyboard is not the JUNO's 61-key C2-C7 span");
+        expect (playableKeyboard->getLowestVisibleKey()
+                    == panel::keyboardLowestMidiNote,
+                "the on-screen keyboard does not begin on the physical low C");
+    }
+
     // The default size follows the panel description, so widening a section to
     // fit a legend or adding a row moves it. Both dimensions are therefore
     // derived here rather than written down: the height was still a literal and
@@ -2886,14 +3396,41 @@ void testEditorBuildsAndRenders()
                 && editor->getHeight() == expectedHeight,
             "the editor did not open at its default size");
     expect (editor->isOpaque(), "the editor does not advertise an opaque surface");
+    checkUtilityKnobLayout (*editor, false);
 
-    // Exercise the layout at both extremes as well as at its default size: a
-    // divide-by-zero or a negative bound only shows up at one end.
-    for (auto size : { juce::Point<int> { 900, 380 },
-                       juce::Point<int> { 2200, 940 } })
+    // Exercise the layout at both extremes as well as at its default size. Read
+    // the supported minimum from the constrainer so raising the readability
+    // floor cannot leave this test checking an obsolete, unsupported window.
+    auto supportedMinimum = juce::Point<int> { 900, 380 };
+    if (auto* constrainer = editor->getConstrainer())
+        supportedMinimum = { constrainer->getMinimumWidth(),
+                             constrainer->getMinimumHeight() };
+    else
+        expect (false, "the resizable editor has no bounds constrainer");
+
+    for (auto size : { supportedMinimum, juce::Point<int> { 2200, 940 } })
     {
         editor->setSize (size.x, size.y);
         editor->resized();
+        if (size == supportedMinimum)
+            checkUtilityKnobLayout (*editor, true);
+        if (playableKeyboard != nullptr)
+        {
+            const float fittedKeyWidth =
+                static_cast<float> (playableKeyboard->getWidth())
+                / static_cast<float> (panel::keyboardWhiteKeyCount);
+            expect (std::abs (playableKeyboard->getKeyWidth() - fittedKeyWidth)
+                        < 1.0e-4f,
+                    "the 61-key keyboard did not stay fitted after resize");
+            expect (std::abs (
+                        playableKeyboard->getRectangleForKey (
+                            panel::keyboardLowestMidiNote).getX()) < 1.0f
+                        && std::abs (
+                            playableKeyboard->getRectangleForKey (
+                                panel::keyboardHighestMidiNote).getRight()
+                            - static_cast<float> (playableKeyboard->getWidth())) < 1.0f,
+                    "the physical C2-C7 keybed left a blank or clipped edge");
+        }
         expect (snapshotHasDetail (renderEditorSnapshot (*editor)),
                 "the editor did not render at "
                     + juce::String (size.x).toStdString() + " wide");
@@ -2948,8 +3485,7 @@ int main()
     testEveryStoredPatchFieldRecallsWithoutMovingPerformanceControls();
     testRandomizerPreservesQualityAndLevel();
     testBusLayoutsAndTail();
-    testProgramChangeRecallsTheShippedHardwareSlots();
-    testUnshippedProgramChangesAreIgnored();
+    testProgramChangeRecallsEveryHardwareSlot();
     testProgramChangeAffectsFollowingNoteWithoutTheMessageThread();
     testZeroSampleBlockStillHandlesProgramAndSysEx();
     testSysExPatchRoundTripsThroughTheParameters();
@@ -2973,10 +3509,13 @@ int main()
     testRestoringASessionDoesNotOverwriteItsOwnModeSwitches();
     testPendingLegacyModesDoNotOverrideALaterStateRestore();
     testLegacyAutomationBetweenRestoreAndFirstBlockIsHonoured();
-    testEditedFlagFollowsThePatchAndNotThePanel();
+    testEditedFlagFollowsTheCompleteProgram();
     testFactoryProgramsLoad();
+    testEveryProductProgramRestoresEveryParameter();
     testEveryPanelLegendFitsInTheRealFont();
+    testEveryInteractiveEditorControlExplainsItself();
     testEditorReloadButtonDiscardsPatchEdits();
+    testEditorRandomizeStrengthsAndReset();
     testClickingTheSelectedRadioKeepsItsLampLit();
     testPolyButtonsKeepAValidFirmwareLatch();
     testEditorBuildsAndRenders();

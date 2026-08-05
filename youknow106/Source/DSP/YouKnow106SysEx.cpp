@@ -84,12 +84,12 @@ constexpr int bitChorusModeOne = 6;
 
 // --- Switch byte two -----------------------------------------------------
 // bit 0  0 selects PWM from the modulator, 1 selects manual
-// bit 1  0 selects the envelope, 1 selects the gate
-// bit 2  0 selects positive envelope polarity, 1 negative
+// bit 1  0 selects positive VCF-envelope polarity, 1 negative
+// bit 2  0 selects the VCA envelope, 1 selects the gate
 // bits 3-4  high-pass position, counting down: 00 is position 3, 11 is 0
 constexpr int bitPwmManual = 0;
-constexpr int bitVcaGate = 1;
-constexpr int bitEnvInverted = 2;
+constexpr int bitEnvInverted = 1;
+constexpr int bitVcaGate = 2;
 constexpr int bitHighPassLow = 3;
 
 DcoRange rangeFromBits(std::uint8_t switches) noexcept

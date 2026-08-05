@@ -86,12 +86,12 @@ namespace colour
 inline constexpr std::uint32_t faceplate     = 0x22252au; // matte slate charcoal
 inline constexpr std::uint32_t faceplateHigh = 0x2c3037u; // raised plastic
 inline constexpr std::uint32_t faceplateLow  = 0x191b1fu; // recessed plastic
-inline constexpr std::uint32_t magenta       = 0xd0d5ddu; // neutral silver section accent line
-inline constexpr std::uint32_t cyan          = 0x8b929cu; // neutral cool grey section accent line
+inline constexpr std::uint32_t magenta       = 0x42d392u; // custom green section accent line
+inline constexpr std::uint32_t cyan          = 0x3aa7f2u; // custom blue section accent line
 inline constexpr std::uint32_t control       = 0xd0d5ddu; // cool silver-grey caps
 inline constexpr std::uint32_t controlShadow = 0x8b929cu;
-inline constexpr std::uint32_t led           = 0xef233cu; // classic red hardware LED indicator
-inline constexpr std::uint32_t ledDim        = 0x3d0c11u; // dim red LED off state
+inline constexpr std::uint32_t led           = 0x5af2a1u; // green alternative to the hardware's red LED
+inline constexpr std::uint32_t ledDim        = 0x143b2au; // dim green LED off state
 inline constexpr std::uint32_t text          = 0xe8ecf1u;
 inline constexpr std::uint32_t textDim       = 0x8b929cu;
 inline constexpr std::uint32_t slot          = 0x121417u; // slider cut-out
@@ -119,6 +119,17 @@ inline constexpr float presetTop = 358.0f;
 inline constexpr float presetHeight = 24.0f;
 inline constexpr float panelHeight = 392.0f;
 inline constexpr float keyboardHeight = 92.0f;
+// The physical keyboard is 61 notes, C2 through C7. With the display's
+// middle-C convention those are MIDI notes 36..96; the instrument's Key
+// Transpose function accounts for its wider transmitted range. External MIDI
+// is a separate input path and must not be clamped to the visible keybed.
+inline constexpr int keyboardLowestMidiNote = 36;
+inline constexpr int keyboardHighestMidiNote = 96;
+inline constexpr int keyboardWhiteKeyCount = 5 * 7 + 1;
+inline constexpr int minimumEditorWidth = 1200;
+inline constexpr int minimumEditorHeight = 400;
+inline constexpr int maximumEditorWidth = 2200;
+inline constexpr int maximumEditorHeight = 940;
 inline constexpr float controlInset = 5.0f;
 inline constexpr float stackGap = 6.0f;
 
@@ -147,6 +158,10 @@ struct Control
 {
     const char* parameterId;
     const char* label;
+    // Plain-language behavior shown by the plug-in editor. Keeping it in the
+    // JUCE-free description makes tooltip coverage part of the panel contract
+    // instead of an optional editor decoration.
+    const char* tooltip;
     ControlKind kind;
     int section;
     float x;
@@ -170,16 +185,20 @@ inline constexpr int controlCount = 37;
 
 // Type sizes the editor draws with, in panel units. They live here rather than
 // in the editor so the fit checks below and the drawing code cannot disagree.
-inline constexpr float headerPointSize = 11.0f;
-inline constexpr float labelPointSize = 10.0f;
-inline constexpr float buttonPointSizeMax = 12.0f;
+inline constexpr float headerPointSize = 12.0f;
+inline constexpr float labelPointSize = 11.0f;
+inline constexpr float buttonPointSizeMax = 13.0f;
 // Below this a legend stops being readable, so a layout that would need a
 // smaller size to fit is a layout that has to change instead.
-inline constexpr float buttonPointSizeMin = 8.0f;
+inline constexpr float buttonPointSizeMin = 10.0f;
+// The reference panel uses a moderately condensed grotesque. Applying a small
+// horizontal scale gives the platform font that character and, importantly,
+// preserves full-size legends instead of relying on ellipses.
+inline constexpr float typefaceHorizontalScale = 0.92f;
 // A slider's legend is drawn in a box overhanging its control by this much on
 // each side, because the legend belongs to the slot rather than to the narrow
 // slider cut-out.
-inline constexpr float labelOverhang = 6.0f;
+inline constexpr float labelOverhang = 7.0f;
 
 [[nodiscard]] const std::array<Section, sectionCount>& sections() noexcept;
 [[nodiscard]] const std::array<Control, controlCount>& controls() noexcept;

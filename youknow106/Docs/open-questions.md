@@ -228,10 +228,15 @@ unknown is the code-to-hold-to-jack-board-network-to-GC1 law. The current model
 is a provisional fit to reported points near −15 dB at −5, −12.5 dB at 0 and
 +5 dB at +5 in the project's recentered coordinate. That notation is not the
 original panel's byte scale and must be mapped explicitly. This task directly
-affects preset loudness and chorus drive. The YouKnow106 factory bank is now
-balanced under a fixed product corpus using only patch-storable controls, but
-that is not a substitute for the original unit's byte-to-gain transfer and may
-need revisiting when this task is resolved.
+affects preset loudness and chorus drive. The byte-exact 128-tone factory bank
+now supplies the real stored-byte corpus for regression, but it is deliberately
+not rebalanced and cannot substitute for the original unit's byte-to-gain
+transfer. Audible levels may therefore need revisiting when this task is
+resolved. The shipping-engine [factory gain audit](audio/factory-presets/README.md)
+is the current product baseline: every tone remains finite, its stress-score
+median is -25.70 dBFS gated RMS and 12 tones cross 0 dBFS. Those results expose
+regressions and headroom pressure but do **not** close this question or establish
+the hardware's relative levels.
 
 ### Needed output (for LLM)
 
@@ -342,6 +347,9 @@ fixes the linear resistor gains and ±15 V system rails. Device identity and
 rail labels can bound a protocol, but they do not fix the real in-circuit swing
 under the board's supply network and output load. This is a hardware question;
 do not mix it with the separate plug-in dBFS policy in OQ-06.
+The current factory stress audit identifies reproducible hot fixtures—most
+notably B33 Lute, B44 Contact Wah and A63 Frontier Organ—but their floating
+dBFS peaks are not evidence of the IC6 voltage at which real hardware clips.
 
 ### Needed output (for LLM)
 
@@ -567,7 +575,12 @@ comparator output high; the model now represents that control/comparator state
 while retaining a provisional hard-zero audio-path gate. Trace whether the
 pinned output, coupling network and mixer impedances introduce DC shift,
 residual pulse bleed, loading or a switching transient before replacing that
-hard gate.
+hard gate. Keep this live-switch transient distinct from an oscillator bug:
+the renderer now solves crossings of the free-running ramp and moving PWM
+threshold inside each audio sample, so deep PWM cannot miss an edge and emit a
+spurious full-cycle blip. A click coincident with changing Pulse on a held note
+is still possible under the provisional instantaneous gate and cannot be
+removed, or called authentic, until the transition below is measured.
 
 ### Needed output (for LLM)
 
@@ -579,10 +592,16 @@ hard gate.
   transient waveform and spectrum under otherwise identical settings. Capture
   both disable and re-enable transitions at multiple oscillator phases,
   frequencies and PWM duties, including the coupling-capacitor initial state.
+- Companion live Saw-switch captures at the MC5534A composite WAVE output and
+  filter input. The service schematic exposes no separate external Saw gate or
+  transition RC, so this must be measured rather than inferred from the Pulse
+  control path.
 - Quantified bleed/loading/transient level relative to a normal pulse and an
   assessment of audibility across cutoff/resonance settings.
 - A recommended model topology and regression specification comparing hard
-  gating with the measured pinned-leg behaviour.
+  gating with the measured pinned-leg behaviour. If a plug-in-only anti-click
+  envelope is retained or proposed, label it as product policy and quantify it
+  separately from the measured hardware transition.
 
 ## OQ-12 — Envelope physical timing and firmware-revision scope
 
