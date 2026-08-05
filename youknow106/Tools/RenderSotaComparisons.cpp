@@ -87,6 +87,17 @@ bool writeWav(const std::filesystem::path& path, const std::vector<float>& left,
     return written;
 }
 
+struct Level
+{
+    double peak { 0.0 };
+    double rms { 0.0 };
+};
+
+double decibels(double ratio)
+{
+    return 20.0 * std::log10(ratio + 1.0e-18);
+}
+
 class Take
 {
 public:
@@ -137,20 +148,39 @@ public:
     [[nodiscard]] const std::vector<float>& left() const noexcept { return left_; }
     [[nodiscard]] const std::vector<float>& right() const noexcept { return right_; }
 
-    double normalise()
+    // Peak and RMS across both channels, before any gain is applied.
+    [[nodiscard]] Level measure() const
     {
-        double current = 0.0;
+        Level level;
+        double sumOfSquares = 0.0;
         for (std::size_t index = 0; index < left_.size(); ++index)
-            current = std::max({ current, std::abs(static_cast<double>(left_[index])),
-                                 std::abs(static_cast<double>(right_[index])) });
-        if (current <= 1.0e-9)
-            return 1.0;
-        const auto gain = normalisedPeak / current;
+        {
+            const double l = left_[index];
+            const double r = right_[index];
+            level.peak = std::max({ level.peak, std::abs(l), std::abs(r) });
+            sumOfSquares += l * l + r * r;
+        }
+        const auto samples = static_cast<double>(left_.size()) * 2.0;
+        level.rms = samples > 0.0 ? std::sqrt(sumOfSquares / samples) : 0.0;
+        return level;
+    }
+
+    void applyGain(double gain)
+    {
         for (std::size_t index = 0; index < left_.size(); ++index)
         {
             left_[index] = static_cast<float>(left_[index] * gain);
             right_[index] = static_cast<float>(right_[index] * gain);
         }
+    }
+
+    double normalise()
+    {
+        const double current = measure().peak;
+        if (current <= 1.0e-9)
+            return 1.0;
+        const auto gain = normalisedPeak / current;
+        applyGain(gain);
         return gain;
     }
 
@@ -202,7 +232,6 @@ EngineParameters defaultPanel()
 Take renderVcfOffsetsTake(bool enableOffsets)
 {
     auto p = defaultPanel();
-    p.calibration = enableOffsets ? 1.0f : 0.0f;
     p.enableVcfStageOffsets = enableOffsets;
     p.cutoff = 0.35f;
     p.resonance = 0.65f;
@@ -220,7 +249,6 @@ Take renderVcfOffsetsTake(bool enableOffsets)
 Take renderOpAmpSlewTake(bool enableSlewLimiting)
 {
     auto p = defaultPanel();
-    p.calibration = enableSlewLimiting ? 1.0f : 0.0f;
     p.enableOpAmpSlewLimiting = enableSlewLimiting;
     p.cutoff = 0.75f;
     p.resonance = 0.80f;
@@ -236,7 +264,6 @@ Take renderOpAmpSlewTake(bool enableSlewLimiting)
 Take renderBbdCapacitanceTake(bool enableCapNonlinearity)
 {
     auto p = defaultPanel();
-    p.calibration = enableCapNonlinearity ? 1.0f : 0.0f;
     p.enableBbdCapacitanceNonlinearity = enableCapNonlinearity;
     p.sawEnabled = true;
     p.subLevel = 0.8f;
@@ -253,7 +280,6 @@ Take renderBbdCapacitanceTake(bool enableCapNonlinearity)
 Take renderMuxCrosstalkTake(bool enableCrosstalk)
 {
     auto p = defaultPanel();
-    p.calibration = enableCrosstalk ? 1.0f : 0.0f;
     p.enableMuxCrosstalk = enableCrosstalk;
     p.range = DcoRange::Sixteen;
     p.subLevel = 0.9f;
@@ -274,7 +300,6 @@ Take renderMuxCrosstalkTake(bool enableCrosstalk)
 Take renderExponentialResetTake(bool enableExponentialReset)
 {
     auto p = defaultPanel();
-    p.calibration = enableExponentialReset ? 1.0f : 0.0f;
     p.enableExponentialReset = enableExponentialReset;
     p.range = DcoRange::Four;
     p.sawEnabled = true;
@@ -290,7 +315,6 @@ Take renderExponentialResetTake(bool enableExponentialReset)
 Take renderVcfEarlyEffectTake(bool enableVcfEarlyEffect)
 {
     auto p = defaultPanel();
-    p.calibration = enableVcfEarlyEffect ? 1.0f : 0.0f;
     p.enableVcfEarlyEffect = enableVcfEarlyEffect;
     p.cutoff = 0.40f;
     p.resonance = 0.70f;
@@ -306,7 +330,6 @@ Take renderVcfEarlyEffectTake(bool enableVcfEarlyEffect)
 Take renderSpatialThermalGradientTake(bool enableSpatialThermalGradient)
 {
     auto p = defaultPanel();
-    p.calibration = enableSpatialThermalGradient ? 1.0f : 0.0f;
     p.enableSpatialThermalGradient = enableSpatialThermalGradient;
     p.cutoff = 0.50f;
     p.resonance = 0.60f;
@@ -323,7 +346,6 @@ Take renderSpatialThermalGradientTake(bool enableSpatialThermalGradient)
 Take renderChorusClockBleedTake(bool enableChorusClockBleed)
 {
     auto p = defaultPanel();
-    p.calibration = enableChorusClockBleed ? 1.0f : 0.0f;
     p.enableChorusClockBleed = enableChorusClockBleed;
     p.sawEnabled = true;
     p.subLevel = 0.5f;
@@ -339,7 +361,6 @@ Take renderChorusClockBleedTake(bool enableChorusClockBleed)
 Take renderChorusHyperbolicSweepTake(bool enableChorusHyperbolicSweep)
 {
     auto p = defaultPanel();
-    p.calibration = enableChorusHyperbolicSweep ? 1.0f : 0.0f;
     p.enableChorusHyperbolicSweep = enableChorusHyperbolicSweep;
     p.sawEnabled = true;
     p.subLevel = 0.6f;
@@ -355,7 +376,6 @@ Take renderChorusHyperbolicSweepTake(bool enableChorusHyperbolicSweep)
 Take renderDcoRampCurvatureTake(bool enableDcoRampCurvature)
 {
     auto p = defaultPanel();
-    p.calibration = enableDcoRampCurvature ? 1.0f : 0.0f;
     p.enableDcoRampCurvature = enableDcoRampCurvature;
     p.range = DcoRange::Sixteen;
     p.sawEnabled = true;
@@ -371,7 +391,6 @@ Take renderDcoRampCurvatureTake(bool enableDcoRampCurvature)
 Take renderElectrolyticC14Take(bool enableElectrolyticC14Nonlinearity)
 {
     auto p = defaultPanel();
-    p.calibration = enableElectrolyticC14Nonlinearity ? 1.0f : 0.0f;
     p.enableElectrolyticC14Nonlinearity = enableElectrolyticC14Nonlinearity;
     p.highPass = HighPassMode::Two;
     p.sawEnabled = true;
@@ -387,7 +406,6 @@ Take renderElectrolyticC14Take(bool enableElectrolyticC14Nonlinearity)
 Take renderDacGlitchImpulseTake(bool enableDacGlitchImpulse)
 {
     auto p = defaultPanel();
-    p.calibration = enableDacGlitchImpulse ? 1.0f : 0.0f;
     p.enableDacGlitchImpulse = enableDacGlitchImpulse;
     p.sawEnabled = true;
     p.cutoff = 0.50f;
@@ -400,6 +418,36 @@ Take renderDacGlitchImpulseTake(bool enableDacGlitchImpulse)
     return take;
 }
 
+// One comparison: a slug for the file names, and a take factory that toggles
+// exactly one mechanism while every other one stays at its shipped setting.
+struct Comparison
+{
+    const char* slug;
+    Take (*render)(bool);
+};
+
+const std::array<Comparison, 12> comparisons {{
+    { "01-vcf-transistor-offsets",        renderVcfOffsetsTake },
+    { "02-opamp-slew-limiting",           renderOpAmpSlewTake },
+    { "03-bbd-capacitance-nonlinearity",  renderBbdCapacitanceTake },
+    { "04-multiplexer-crosstalk",         renderMuxCrosstalkTake },
+    { "05-exponential-dco-reset",         renderExponentialResetTake },
+    { "06-vcf-early-effect",              renderVcfEarlyEffectTake },
+    { "07-spatial-thermal-gradient",      renderSpatialThermalGradientTake },
+    { "08-chorus-thiran-clock-bleed",     renderChorusClockBleedTake },
+    { "09-chorus-hyperbolic-sweep",       renderChorusHyperbolicSweepTake },
+    { "10-dco-ramp-curvature",            renderDcoRampCurvatureTake },
+    { "11-electrolytic-c14-nonlinearity", renderElectrolyticC14Take },
+    { "12-dac-glitch-impulse",            renderDacGlitchImpulseTake }
+}};
+
+struct Report
+{
+    std::string slug;
+    double diffPeakDbc { 0.0 };
+    double diffRmsDbc { 0.0 };
+};
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -408,176 +456,78 @@ int main(int argc, char** argv)
     if (argc > 1)
         outputDir = argv[1];
 
-    std::printf("Rendering SOTA comparison WAVs (before, after, & normalized diff) into: %s\n", outputDir.string().c_str());
+    std::printf("Rendering SOTA comparison WAVs into: %s\n\n", outputDir.string().c_str());
+    std::printf("%-36s %12s %12s\n", "mechanism", "diff peak", "diff RMS");
+    std::printf("%-36s %12s %12s\n", "", "(dBc)", "(dBc)");
 
-    // Feature 1: VCF Stage Transistor Offsets
+    std::vector<Report> reports;
+    reports.reserve(comparisons.size());
+
+    for (const auto& comparison : comparisons)
     {
-        auto before = renderVcfOffsetsTake(false);
-        auto after = renderVcfOffsetsTake(true);
+        auto before = comparison.render(false);
+        auto after = comparison.render(true);
         auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "01-vcf-transistor-offsets-before.wav", before.left(), before.right());
-        writeWav(outputDir / "01-vcf-transistor-offsets-after.wav", after.left(), after.right());
-        writeWav(outputDir / "01-vcf-transistor-offsets-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 01-vcf-transistor-offsets (before, after, diff)\n");
+
+        // Measure before touching the gain. Everything is reported relative to
+        // the programme the mechanism is riding on, which is the only figure
+        // that says whether anyone can hear it.
+        const auto beforeLevel = before.measure();
+        const auto diffLevel = diff.measure();
+        const double reference = std::max(beforeLevel.rms, 1.0e-12);
+        Report report;
+        report.slug = comparison.slug;
+        report.diffPeakDbc = decibels(diffLevel.peak / reference);
+        report.diffRmsDbc = decibels(diffLevel.rms / reference);
+        reports.push_back(report);
+
+        // One shared gain for all three files. The before/after pair is then
+        // level-matched for honest A/B listening, and the diff keeps its true
+        // size relative to them instead of being normalised up to look
+        // significant.
+        const double gain = before.normalise();
+        after.applyGain(gain);
+        diff.applyGain(gain);
+
+        const std::string slug = comparison.slug;
+        writeWav(outputDir / (slug + "-before.wav"), before.left(), before.right());
+        writeWav(outputDir / (slug + "-after.wav"), after.left(), after.right());
+        writeWav(outputDir / (slug + "-diff.wav"), diff.left(), diff.right());
+
+        std::printf("%-36s %+12.1f %+12.1f\n", comparison.slug,
+                    report.diffPeakDbc, report.diffRmsDbc);
     }
 
-    // Feature 2: Op-Amp Slew-Rate Limiting
+    // Keep the directory's own README in step with what was just rendered, so
+    // the measured weight of each mechanism is documented rather than implied.
+    std::string manifest =
+        "# SOTA comparison renders\n\n"
+        "Generated by `YouKnow106RenderSota`. Each row toggles **one** mechanism and\n"
+        "leaves every other one at its shipped setting; `Unit Character` stays at its\n"
+        "default in both takes, so the pair isolates the named feature rather than the\n"
+        "whole character layer.\n\n"
+        "`-before` and `-after` share one gain, so they are level-matched for A/B\n"
+        "listening. `-diff` carries that same gain, so its loudness relative to the pair\n"
+        "is its true loudness -- a diff that is inaudible in the file is inaudible in the\n"
+        "instrument. The columns below are the diff measured against the before take's\n"
+        "RMS.\n\n"
+        "| Mechanism | Diff peak (dBc) | Diff RMS (dBc) |\n"
+        "| --- | ---: | ---: |\n";
+    for (const auto& report : reports)
     {
-        auto before = renderOpAmpSlewTake(false);
-        auto after = renderOpAmpSlewTake(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "02-opamp-slew-limiting-before.wav", before.left(), before.right());
-        writeWav(outputDir / "02-opamp-slew-limiting-after.wav", after.left(), after.right());
-        writeWav(outputDir / "02-opamp-slew-limiting-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 02-opamp-slew-limiting (before, after, diff)\n");
+        std::array<char, 256> row {};
+        std::snprintf(row.data(), row.size(), "| `%s` | %+.1f | %+.1f |\n",
+                      report.slug.c_str(), report.diffPeakDbc, report.diffRmsDbc);
+        manifest += row.data();
     }
+    manifest +=
+        "\nA mechanism whose diff RMS sits below about -80 dBc is not audible on the\n"
+        "material it was given, whatever its entry in the research document claims.\n";
 
-    // Feature 3: BBD Capacitance Non-linearity
-    {
-        auto before = renderBbdCapacitanceTake(false);
-        auto after = renderBbdCapacitanceTake(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "03-bbd-capacitance-nonlinearity-before.wav", before.left(), before.right());
-        writeWav(outputDir / "03-bbd-capacitance-nonlinearity-after.wav", after.left(), after.right());
-        writeWav(outputDir / "03-bbd-capacitance-nonlinearity-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 03-bbd-capacitance-nonlinearity (before, after, diff)\n");
-    }
+    std::filesystem::create_directories(outputDir);
+    std::ofstream readme(outputDir / "README.md");
+    readme << manifest;
 
-    // Feature 4: Multiplexer Crosstalk
-    {
-        auto before = renderMuxCrosstalkTake(false);
-        auto after = renderMuxCrosstalkTake(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "04-multiplexer-crosstalk-before.wav", before.left(), before.right());
-        writeWav(outputDir / "04-multiplexer-crosstalk-after.wav", after.left(), after.right());
-        writeWav(outputDir / "04-multiplexer-crosstalk-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 04-multiplexer-crosstalk (before, after, diff)\n");
-    }
-
-    // Feature 5: Exponential DCO Ramp Reset
-    {
-        auto before = renderExponentialResetTake(false);
-        auto after = renderExponentialResetTake(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "05-exponential-dco-reset-before.wav", before.left(), before.right());
-        writeWav(outputDir / "05-exponential-dco-reset-after.wav", after.left(), after.right());
-        writeWav(outputDir / "05-exponential-dco-reset-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 05-exponential-dco-reset (before, after, diff)\n");
-    }
-
-    // Feature 6: IR3109 VCF BJT Early Effect
-    {
-        auto before = renderVcfEarlyEffectTake(false);
-        auto after = renderVcfEarlyEffectTake(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "06-vcf-early-effect-before.wav", before.left(), before.right());
-        writeWav(outputDir / "06-vcf-early-effect-after.wav", after.left(), after.right());
-        writeWav(outputDir / "06-vcf-early-effect-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 06-vcf-early-effect (before, after, diff)\n");
-    }
-
-    // Feature 7: Spatial Chassis Thermal Gradient
-    {
-        auto before = renderSpatialThermalGradientTake(false);
-        auto after = renderSpatialThermalGradientTake(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "07-spatial-thermal-gradient-before.wav", before.left(), before.right());
-        writeWav(outputDir / "07-spatial-thermal-gradient-after.wav", after.left(), after.right());
-        writeWav(outputDir / "07-spatial-thermal-gradient-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 07-spatial-thermal-gradient (before, after, diff)\n");
-    }
-
-    // Feature 8: Chorus Heterodyne Clock Bleed
-    {
-        auto before = renderChorusClockBleedTake(false);
-        auto after = renderChorusClockBleedTake(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "08-chorus-thiran-clock-bleed-before.wav", before.left(), before.right());
-        writeWav(outputDir / "08-chorus-thiran-clock-bleed-after.wav", after.left(), after.right());
-        writeWav(outputDir / "08-chorus-thiran-clock-bleed-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 08-chorus-thiran-clock-bleed (before, after, diff)\n");
-    }
-
-    // Feature 9: Chorus MN3101 Current-Controlled Hyperbolic Delay Sweep
-    {
-        auto before = renderChorusHyperbolicSweepTake(false);
-        auto after = renderChorusHyperbolicSweepTake(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "09-chorus-hyperbolic-sweep-before.wav", before.left(), before.right());
-        writeWav(outputDir / "09-chorus-hyperbolic-sweep-after.wav", after.left(), after.right());
-        writeWav(outputDir / "09-chorus-hyperbolic-sweep-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 09-chorus-hyperbolic-sweep (before, after, diff)\n");
-    }
-
-    // Feature 10: DCO Integrator Finite Source Resistance Ramp Charging Curvature
-    {
-        auto before = renderDcoRampCurvatureTake(false);
-        auto after = renderDcoRampCurvatureTake(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "10-dco-ramp-curvature-before.wav", before.left(), before.right());
-        writeWav(outputDir / "10-dco-ramp-curvature-after.wav", after.left(), after.right());
-        writeWav(outputDir / "10-dco-ramp-curvature-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 10-dco-ramp-curvature (before, after, diff)\n");
-    }
-
-    // Feature 11: C14 Non-Polar Electrolytic Voltage-Dependent HPF Modulation
-    {
-        auto before = renderElectrolyticC14Take(false);
-        auto after = renderElectrolyticC14Take(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "11-electrolytic-c14-nonlinearity-before.wav", before.left(), before.right());
-        writeWav(outputDir / "11-electrolytic-c14-nonlinearity-after.wav", after.left(), after.right());
-        writeWav(outputDir / "11-electrolytic-c14-nonlinearity-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 11-electrolytic-c14-nonlinearity (before, after, diff)\n");
-    }
-
-    // Feature 12: R-2R DAC Major Carrier Glitch Impulse
-    {
-        auto before = renderDacGlitchImpulseTake(false);
-        auto after = renderDacGlitchImpulseTake(true);
-        auto diff = after.diffWith(before);
-        before.normalise();
-        after.normalise();
-        diff.normalise();
-        writeWav(outputDir / "12-dac-glitch-impulse-before.wav", before.left(), before.right());
-        writeWav(outputDir / "12-dac-glitch-impulse-after.wav", after.left(), after.right());
-        writeWav(outputDir / "12-dac-glitch-impulse-diff.wav", diff.left(), diff.right());
-        std::printf("Rendered 12-dac-glitch-impulse (before, after, diff)\n");
-    }
-
-    std::printf("All SOTA comparison WAVs & diffs successfully rendered!\n");
+    std::printf("\nWrote %zu comparisons and README.md\n", comparisons.size());
     return 0;
 }

@@ -275,6 +275,27 @@ open question, it is named in its entry.
 
 *Note: All physical circuit simulation behaviors above scale dynamically with **Unit Character** (`calibration`): `0.0` suppresses every one of them for a pristine digital reference, `1.0` matches real hardware, and the host parameter's own range continues to `100.0` -- skewed so 0-1 still covers half the knob's travel -- for the same exaggerated-for-contrast territory the comparison-rendering tools in this repository use.*
 
+### Measured weight of each mechanism
+
+The comparison renders referenced above are produced by `Tools/RenderSotaComparisons.cpp`.
+Until 2026-08-06 every one of those takes toggled `calibration` between 0.0 and
+1.0 *in addition to* its own named flag, so each "after" take had all twelve
+mechanisms on and each "before" had all twelve off: no file isolated the feature
+it was named after, and every difference file was separately peak-normalised,
+which discarded its magnitude. Both are fixed. Each pair now toggles exactly one
+flag with `Unit Character` held at its default, the before/after pair shares one
+gain so it is level-matched for listening, and the difference file carries that
+same gain so its loudness is its true loudness.
+
+The measured result is recorded in
+[`Docs/audio/sota-comparisons/README.md`](audio/sota-comparisons/README.md) and
+regenerated on every run. It is evidence about this model, not about the
+hardware: it says how much each mechanism changes *this* renderer's output on
+*that* mechanism's own demonstration patch, which is the question of whether a
+listener could ever notice it. Two entries measure as bit-identical output, and
+one measures louder than the programme it rides on; those results are addressed
+in the rows above rather than left implied.
+
 ## What remains open
 
 The canonical research queue is
