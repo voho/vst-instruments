@@ -249,8 +249,15 @@ int main(int argc, char** argv)
         auto take = demo.render();
         const std::string slug = demo.slug;
         take.normalise();
-        writeWav(outputDir / (slug + "-" + stage + ".wav"),
-                 take.left(), take.right());
+        if (!writeWav(outputDir / (slug + "-" + stage + ".wav"),
+                      take.left(), take.right()))
+        {
+            // A stale file next to fresh metrics is an inconsistent audit;
+            // stop before the manifest can say otherwise.
+            std::printf("%s: could not write the %s take\n", slug.c_str(),
+                        stage.c_str());
+            return 1;
+        }
         std::printf("rendered %s-%s\n", slug.c_str(), stage.c_str());
 
         if (!comparing)
@@ -265,6 +272,21 @@ int main(int argc, char** argv)
             // no-op: without this, a stale manifest would present an older
             // measurement as this render's result.
             std::printf("%s: no before take found\n", slug.c_str());
+            missingBefore = true;
+            continue;
+        }
+        // A baseline of a different length is a baseline of a different
+        // take -- an older revision of this demo. diffWith would silently
+        // truncate to the common prefix and the README would present that
+        // fragment as a comparison of the whole take; refuse instead, so the
+        // stale before file gets re-rendered deliberately.
+        if (beforeLeft.size() != take.left().size()
+            || beforeRight.size() != take.right().size())
+        {
+            std::printf("%s: before take is %zu/%zu frames against this "
+                        "build's %zu/%zu -- a different take; re-render it\n",
+                        slug.c_str(), beforeLeft.size(), beforeRight.size(),
+                        take.left().size(), take.right().size());
             missingBefore = true;
             continue;
         }
@@ -288,7 +310,12 @@ int main(int argc, char** argv)
             std::printf("%s: diff written %.2f dB down to fit full scale\n",
                         slug.c_str(), -diffGainDb);
         }
-        writeWav(outputDir / (slug + "-diff.wav"), diff.left(), diff.right());
+        if (!writeWav(outputDir / (slug + "-diff.wav"), diff.left(),
+                      diff.right()))
+        {
+            std::printf("%s: could not write the diff take\n", slug.c_str());
+            return 1;
+        }
         std::printf("%-26s diff peak %+6.1f dBc   diff RMS %+6.1f dBc\n",
                     slug.c_str(), peakDbc, rmsDbc);
         metrics[slug] = { peakDbc, rmsDbc, diffGainDb };
@@ -302,7 +329,7 @@ int main(int argc, char** argv)
     if (missingBefore)
     {
         std::printf("aborting without rewriting the manifest: a requested "
-                    "comparison has no before take\n");
+                    "comparison has no usable before take\n");
         return 1;
     }
 
