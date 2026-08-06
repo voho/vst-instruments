@@ -69,8 +69,8 @@ Each voice has seven automatable controls, and the kit adds four more, for
 | Clap | 39 | Hand Clap | Spread | Tone | C |
 | Closed Hat | 42 | Closed Hi-Hat | Metal | Tone | R16 |
 | Open Hat | 46 | Open Hi-Hat | Metal | Tone | R20 |
-| Ride | 51 | Ride Cymbal 1 | Bell | Tone | R27 |
-| Crash | 49 | Crash Cymbal 1 | Spread | Brightness | L27 |
+| Ride | 51 | Ride Cymbal 1 | Machine | Tone | R27 |
+| Crash | 49 | Crash Cymbal 1 | Machine | Brightness | L27 |
 | Low Tom | 45 | Low Tom | Punch | Skin | L20 |
 | Mid Tom | 47 | Low-Mid Tom | Punch | Skin | C |
 | High Tom | 50 | High Tom | Punch | Skin | R20 |
@@ -98,8 +98,18 @@ The version 1.0 parameter block is unchanged and still occupies host parameter
 indices 0-52, so existing sessions and automation lanes keep working. Every
 control added in 1.1 is appended after it and defaults to preserving the earlier
 sound: unity channel level, the original kit pan positions, the original hi-hat
-choke pair, a bypassed bus, and the Humanise setting that reproduces the
-previous fixed variation depth sample for sample.
+choke pair and a bypassed bus.
+
+Two things in 1.1 do change how an existing session sounds, and neither is
+recoverable by leaving a control alone. The Ride's and Crash's first character
+control is now Machine rather than Bell and Spread, so those two voices will
+play differently from a saved position that meant something else; the parameter
+block is unchanged, so the session still loads and every other voice is
+untouched. And the per-hit analogue variation is wider than the depth 1.0 used
+to mean - it was sized to be measured rather than heard - so a kit at the
+default Humanise no longer reproduces the older rendering sample for sample.
+Setting Humanise to 0% removes the variation entirely if a session needs the
+tighter behaviour back.
 
 ## Kit mixer and bus
 
@@ -110,11 +120,26 @@ left alone images and balances identically.
 
 **Kit Humanise** scales how much of the modelled per-hit component tolerance
 actually reaches each voice: pitch, decay, transient energy, tone, circuit drive
-and bias. At 0% the kit is machine-tight and every strike is a deterministic
-copy of the last; at 100% the drift is twice as wide. The 50% default is
-numerically identical to the fixed depth the engine always had, and the
-underlying drift sequence is untouched by the control, so a kit remains exactly
-reproducible after reset at any setting.
+and bias. At 0% the kit is machine-tight; at 100% the drift is twice as wide.
+The underlying drift sequence is untouched by the control, so a kit remains
+exactly reproducible after reset at any setting.
+
+Two things drift, on different scales. Each voice has its own slow component
+tolerance, which is why two strikes of the same drum are never the same strike.
+Under all of them is the board: one supply and one ambient temperature, wandering
+over a few seconds and read by every voice at the moment it is triggered, so
+drums struck near each other lean the same way. That second term is what makes a
+pattern sound like one instrument having a moment rather than thirteen
+independent ones jittering. It is derived from elapsed time rather than from a
+trigger count — a machine left switched on drifts whether or not anything is
+playing — which also keeps one voice's sound from depending on another voice's
+history. It reaches frequencies, envelope times and supply-dependent drive, but
+deliberately not the panel controls: what a temperature moves is a time constant,
+not where a knob is set.
+
+The deviations are sized to be heard rather than merely measured — around a sixth
+of a semitone of pitch at the default, which is roughly where a repeated hit
+stops reading as one recording retriggered.
 
 **Bus Drive** and **Bus Compression** form a shared output stage after the mix
 and DC blocker. Drive is a gain-matched asymmetric softener with the same
@@ -452,14 +477,20 @@ Drumalor generates what the counter reads. No sample, recording or ROM image is
 embedded, and at host rates below the sample clock the clock is necessarily
 limited to the host rate.
 
-Neither machine has a modal bank; a real cymbal does, and it is where the stick
-and the cup live, so a short high-spread bank supplies that and is struck once
-rather than driven for the length of the note. **Bell** moves the Ride from the
-bow to the cup, which is a stiff, strongly curved, small piece of the same
-plate: it brings the body forward and takes the wash out from under it, on a
-curve rather than a ramp, because most of a bow behaves like a bow. **Spread**
-moves the Crash's ROM contents from the oscillator bank toward broadband hiss
-and widens the bank's own component tolerances. **Tone** and **Brightness** are
+Neither machine has a modal bank, so neither cymbal here has one. A pitched
+plate ringing on top of these two circuits is the one thing that stops either
+of them from being recognisable, and the two voices carry nothing but the
+circuits themselves.
+
+**Machine** chooses between them: fully analogue at 0, fully digital at 1, and
+an equal-power crossfade in between. It is a real choice rather than a blend
+control because the two channels share no source — the analogue one is its six
+oscillators through the band-passes, the digital one is its own ROM — so the
+ends are the two machines and not two filterings of one. The defaults put each
+voice on the machine that actually made that sound: the analogue machine had no
+ride at all, and its single cymbal was in everything but name a crash. The
+digital leg carries a measured trim so that moving the control changes
+character and not loudness. **Tone** and **Brightness** are
 the tone-control mixer; because that mixer is the last stage before the buffer
 amplifier, the digital channel passes through it too, split by a single
 first-order crossover in place of three analogue legs it does not have.
@@ -470,20 +501,23 @@ squared swing law means the envelope only has to fall 90 dB for the gain to be
 from the voice's own decay, so it lands at the same instant at every sample
 rate and under every host block partitioning, and the suite requires the
 decaying tail to contain no sample-to-sample step larger than the loud part of
-the hit already made. Measured on one Linux x86-64 machine at 48 kHz in
-128-sample blocks against the previous cymbals, that retirement more than pays
-for the extra sections:
+the hit already made.
+
+Removing the modal bank from both cymbals took more work out of the voice than
+the ROM read put back, so the pair got cheaper as well as more like the machines
+they come from. Measured on one Linux x86-64 machine at 48 kHz in 128-sample
+blocks, against the previous cymbals:
 
 | Pattern | Before | After | Change |
 | --- | ---: | ---: | ---: |
-| Ride, 16th notes at 120 BPM | 16.5% | 14.1% | −15% |
-| Ride on 8ths with kick, snare and crash | 12.7% | 10.9% | −14% |
-| All thirteen voices | 22.2% | 20.7% | −7% |
+| Ride, 16th notes at 120 BPM | 11.6% | 9.9% | −15% |
+| Ride on 8ths with kick, snare and crash | 7.6% | 7.1% | −7% |
+| All thirteen voices | 10.0% | 9.8% | −3% |
 
 Those figures are CPU time as a fraction of real time and are specific to that
-machine; only the before/after ratio is meaningful. The saving comes from the
-tail, so a pattern dense enough to keep all 64 voices young pays about 20% more
-rather than less.
+machine and harness; only the before/after ratio is meaningful. The saving comes
+from the tail, so a pattern dense enough to keep all 64 voices young sees less of
+it.
 
 These are circuit-inspired behavioral models, not a claim of
 component-for-component emulation of a TR-808, TR-909, or another specific
@@ -655,8 +689,9 @@ cover a 43–55 Hz settled body, dominant sub-100 Hz energy, controlled transien
 and crest factor, Drive harmonics without excess settled energy above 8 kHz,
 pitch tracking, DC safety, and consistency from 8 to 192 kHz. Cymbal contracts
 reject hollow midrange gaps and sparse
-ringing tails, require retained Ride wash at maximum Bell, verify directional
-Tone/Brightness response, and keep Crash Spread diffusion level-matched.
+ringing tails, require both ends of Machine to stand alone as complete cymbals,
+verify directional Tone/Brightness response, and hold the whole Machine sweep
+level so the control cannot be a volume control in disguise.
 
 A second cymbal group tests the circuit rather than the spectrum, so each check
 fails for one missing block instead of for a general loss of realism. Both
@@ -678,9 +713,12 @@ to a clean -6 dB gain law, a symmetric pan law, hard-panned channel isolation,
 the original default positions, and bit-identical output at unity. Choke groups
 are checked for the factory hi-hat pair, for arbitrary linked voices, for
 independence between groups, and for tails that keep the group they were born
-into. Humanise is verified to reproduce the historical fixed variation depth
-exactly at its default, to order hit-to-hit spread across its range, and to stay
-reproducible after reset at every setting. The kit bus is checked for exact
+into. Humanise is verified to order hit-to-hit spread across its range and to
+stay reproducible after reset at every setting. Every one of the thirteen voices
+is separately required to be same-but-different: no two consecutive strikes at
+one velocity may be identical, the difference between them must be audible rather
+than in the last bit, and the spread across the strikes must stay inside what a
+machine's tolerances would explain. The kit bus is checked for exact
 bypass at 0%, safe and level-matched saturation, real dynamic-range reduction,
 released gain reduction, and block-partition invariance. Metering is checked for
 attack, release, stereo placement and reset. Membrane contracts require audible
