@@ -23,3 +23,4 @@ below audibility.
 | `02-sweep-trajectory` | +8.7 | -1.0 | +0.00 |
 | `03-bbd-transfer-loss` | -20.4 | -47.2 | +0.00 |
 | `04-stage-offsets` | -14.9 | -29.0 | +0.00 |
+| `05-vca-feedthrough` | -53.0 | -78.1 | +0.00 |

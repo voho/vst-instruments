@@ -197,7 +197,12 @@ public:
     [[nodiscard]] int getDisplayVoiceMask() const noexcept { return displayVoiceMask_; }
     [[nodiscard]] float getDisplayTemperatureC() const noexcept
     {
-        return 25.0f + 15.0f * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
+        // Like the droop below: Unit Character scales the warmup the cards
+        // actually see, so the thermometer reports the same rise the audio
+        // model applies -- ambient, at Character zero.
+        return 25.0f
+             + 15.0f * activeParameters_.calibration
+                     * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
     }
     [[nodiscard]] float getDisplayRailDroopVolts() const noexcept
     {

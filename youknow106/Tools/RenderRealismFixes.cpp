@@ -170,11 +170,41 @@ Take stageOffsets()
     return take;
 }
 
-const std::array<Demo, 4> demos {{
+// Dark staccato notes with an abrupt gate. The voice VCA's control
+// feedthrough expresses itself as the small thump that rides each gate edge;
+// a dark filter keeps the programme quiet at exactly those instants, so the
+// click against near-silence is the figure.
+Take vcaFeedthrough()
+{
+    auto p = panel();
+    p.chorus = ChorusMode::Off;
+    p.cutoff = 0.22f;
+    p.resonance = 0.15f;
+    p.envDepth = 0.0f;
+    p.attack = 0.0f;
+    p.decay = 0.3f;
+    p.sustain = 1.0f;
+    p.release = 0.01f;
+    p.subLevel = 0.3f;
+    Take take(p);
+    take.rest(0.05);
+    for (const int note : { 43, 43, 50, 43, 46, 43, 50, 46 })
+    {
+        take.on(note, 0.9f);
+        take.rest(0.16);
+        take.off(note);
+        take.rest(0.34);
+    }
+    take.rest(0.8);
+    return take;
+}
+
+const std::array<Demo, 5> demos {{
     { "01-chorus-timing", chorusTiming },
     { "02-sweep-trajectory", sweepTrajectory },
     { "03-bbd-transfer-loss", transferLoss },
     { "04-stage-offsets", stageOffsets },
+    { "05-vca-feedthrough", vcaFeedthrough },
 }};
 
 // metrics.csv keeps one row per fix so the README can be regenerated whole

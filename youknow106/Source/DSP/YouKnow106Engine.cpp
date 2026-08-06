@@ -1974,12 +1974,13 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     fix01(result.benderLfoDepth, 0.0f);
     fix01(result.volume, 0.80f);
     fix01(result.velocityDepth, 0.0f);
-    // Unlike every other 0-1 control, Unit Character's own range continues to
-    // 100: 0 is the digital reference, 1 matches real hardware, and values up
-    // to 100 exaggerate every mechanism it scales for audible contrast (used
-    // by the comparison-rendering tools; the host parameter itself is skewed
-    // but still spans 0-100). Clamping it to fix01's 0-1 would silently
-    // discard that range.
+    // Unlike every other 0-1 control, Unit Character extends to 2: 0 is the
+    // digital reference, 1 matches real hardware, and the headroom to 2
+    // extrapolates every blended mechanism past its physical draw. The old
+    // 0-100 range this comment once described is gone -- the comparison
+    // tools stopped using it, and past 1 the affine blends walk through
+    // their nominals -- so the ceiling lives in `calibrationCeiling`.
+    // Clamping to fix01's 0-1 would still silently discard the top half.
     result.calibration = std::isfinite(result.calibration)
         ? std::clamp(result.calibration, 0.0f, EngineParameters::calibrationCeiling) : 1.0f;
     fix01(result.chorusNoise, 1.0f);
@@ -3381,10 +3382,16 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     if (!voice.active)
         return 0.0f;
 
-    // Physical BA662 / uPC1252H2 control voltage feedthrough: differential pair
-    // transistor V_be mismatch causes small additive CV leakage during fast envelope transients (thump).
+    // Physical BA662 voice-VCA control feedthrough: differential-pair V_be
+    // mismatch leaks a fraction of the control current to the *output*, so
+    // the leak follows the control alone -- an OTA's output offset rides
+    // I_ABC, not I_ABC times its own gain. A previous revision added the
+    // leak to the amplifier's input, which squared the law, halved the
+    // gate-off thump in decibels and removed it entirely from release
+    // tails -- cleaner than the mechanism this term is named for. The
+    // magnitude stays voiced under OQ-19; the placement is the mechanism's.
     const float vcaCvFeedthrough = (card.vcaOffset * 0.002f + 0.0008f) * voice.vcaControl * parameters.calibration;
-    const float output = (filtered + vcaCvFeedthrough) * voice.vca * voltsToSample;
+    const float output = (filtered * voice.vca + vcaCvFeedthrough) * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;
@@ -3722,11 +3729,15 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             wetLeft = outputSummerClip(wetLeft);
             wetRight = outputSummerClip(wetRight);
 
-            // TA75558S IC6 output summer op-amp dynamic slew-rate limiting (SR = 1.7 V/us)
+            // TA75558S IC6 output slew limit, SR = 1.7 V/us (653846 engine
+            // units per second at 2.6 V per unit). A part property, so --
+            // exactly like the rails above -- it is not scaled by Unit
+            // Character: a previous revision divided it by calibration,
+            // granting the pristine reference a 10x faster op-amp and a
+            // full-character unit one slower than the part's own datasheet.
             if (parameters.enableOpAmpSlewLimiting)
             {
-                const float slewScale = std::max(parameters.calibration, 0.1f);
-                const float maxStep = static_cast<float>(653846.15 / (oversampledRate_ * slewScale));
+                const float maxStep = static_cast<float>(653846.15 / oversampledRate_);
                 const float deltaL = wetLeft - outputSlewStateLeft_;
                 outputSlewStateLeft_ += std::clamp(deltaL, -maxStep, maxStep);
                 wetLeft = outputSlewStateLeft_;
