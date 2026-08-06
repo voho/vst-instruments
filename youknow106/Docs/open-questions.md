@@ -1615,6 +1615,47 @@ This pass acted on the evidence search above. Four items moved from *voiced* to
 recorded here in as much detail as the accepted ones, because a rejected idea
 that is not written down is an idea that gets tried again.
 
+### Acted on — the two anchors nobody had checked
+
+The ADJUSTMENT table's own numbers, taken seriously for the first time.
+
+- **OQ-09 — the self-oscillation endpoint was 4.1 dB out.** The table trims
+  every card, at BANK 3 with C4 held, to a **4.8 Vp-p self-oscillating sine at
+  248 Hz**. The suite had only ever checked the frequency. Measured against the
+  amplitude, the model produced **2.99 Vp-p**.
+
+  The two anchors are coupled and neither can be satisfied alone: the limit
+  cycle grows with loop gain, and the stage `tanh`'s compression at the larger
+  amplitude pulls the oscillation flat, so raising loop gain alone lands 4.8
+  Vp-p at 233 Hz — 108 cents under the frequency anchor. `maximumFeedback` and
+  `frequencyTrimAmount` were solved *together*, moving from a voiced 4.19 /
+  0.045 to 4.51 / 0.098, and land on **4.83 Vp-p at 248.0 Hz**. The loop
+  divider was held fixed rather than fitted, because an independent
+  reverse-engineering of the same module reports 67.7 against the model's
+  66.67 — it is the one constant in the profile with outside corroboration.
+
+  Status: **endpoint resolved, shape still voiced.** `loopGain()` is unchanged
+  below travel 0.9, so the change is confined to the top tenth of the slider
+  plus a resonance-scaled cutoff lift. The shape between the endpoints remains
+  voiced, and it carries one known wart: the trim is a function of loop gain
+  while the droop it corrects is a function of amplitude, so it lifts cutoff
+  slightly below the oscillation threshold where there is no droop to correct.
+  Closing that needs the measured frequency-response-versus-resonance family
+  this task already asks for.
+
+- **The VCF WIDTH anchor is asserted.** `BANK 3, hold C6 → 992 Hz` against
+  `hold C4 → 248 Hz` is exactly two octaves of cutoff for two octaves of
+  keyboard. The new test drives it end to end through the real converter path,
+  so full key tracking is held at 1.00 by measurement rather than by reading
+  the coefficient.
+
+- **OQ-15 — the filter-drive budget is asserted, and was already right.**
+  Working back from the same table gives ±2.4 V at the module input and
+  therefore **±19.6 mV at each differential pair** through the IR3109's own
+  560 Ω divider. The shipping `filterInputAttenuation = 0.40` — a *voiced*
+  constant — puts a full-level source at exactly that figure. Recorded as
+  corroboration, not a change, and now fenced by a test.
+
 ### Acted on
 
 - **OQ-18 — the upper cutoff knee.** The single-pole `R_e` compression is

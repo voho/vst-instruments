@@ -74,6 +74,19 @@ struct YouKnow106TestAccess
         return { engine.halfbandKernel_.begin(), engine.halfbandKernel_.end() };
     }
 
+    // The IR3109's own internal input divider and the differential pair's
+    // linear span it implies. Private on the engine because nothing outside it
+    // needs them; the suite needs them to check the drive budget.
+    static constexpr float stageAttenuation() noexcept
+    {
+        return YouKnow106Engine::stageAttenuation;
+    }
+
+    static constexpr float otaHeadroomVolts() noexcept
+    {
+        return YouKnow106Engine::otaHeadroomVolts;
+    }
+
     static float bbdTransfer(float input) noexcept
     {
         return Chorus::bbdTransfer(input);
@@ -2478,6 +2491,41 @@ void testOutputSummerIsLinearBelowItsRails()
                "the output summer is not symmetric");
 }
 
+void testFilterDriveMatchesTheDerivedBudget()
+{
+    // Working back from Roland's own ADJUSTMENT table gives a drive figure the
+    // model can be held to. The VCA GAIN step sets 4.8 Vp-p at the VCF output
+    // against 6 Vp-p at the VCA output, and the mixer node reaches pin 1 with
+    // no series attenuator, so a full-level source arrives at about +/-2.4 V.
+    // The IR3109's own internal 560 Ohm divider then refers that to the
+    // differential pair as +/-19.6 mV -- about 2.8 times the AS662D's 0.25%
+    // THD reference, which is why the pairs sit at the edge of their linear
+    // region rather than deep in saturation.
+    //
+    // This is a check on a *voiced* constant, `filterInputAttenuation`, which
+    // turns out to land on the derived budget to the digit. It is asserted so
+    // that it cannot drift away from it unnoticed.
+    constexpr double sourceVolts = 6.0;          // sawMixVolts
+    constexpr double filterInputAttenuation = 0.40;
+    const double atFilterInput = sourceVolts * filterInputAttenuation;
+    expectNear(atFilterInput, 2.4, 1.0e-9,
+               "a full-level source no longer arrives at the derived +/-2.4 V");
+
+    const double atDifferentialPair =
+        atFilterInput * YouKnow106TestAccess::stageAttenuation();
+    expectNear(atDifferentialPair, 0.0196, 5.0e-5,
+               "the transconductor pair is not driven at the derived 19.6 mV");
+
+    // And the pair's own linear span, which is what makes that a soft edge
+    // rather than a hard one: 2 kT/q referred through the same divider.
+    expectNear(YouKnow106TestAccess::otaHeadroomVolts(), 2.0 * 0.026
+                   / (560.0 / 68560.0), 1.0e-4,
+               "the transconductor headroom is no longer 2 Vt over the "
+               "IR3109's own input divider");
+    expect(atDifferentialPair < 0.5 * 2.0 * 0.026,
+           "the differential pair is driven past its own thermal span");
+}
+
 void testDecimatorProtectsTheTopOfTheBand()
 {
     // The last decimation stage runs at twice the host rate, so everything it
@@ -2537,6 +2585,7 @@ int main()
 {
     testOutputSummerIsLinearBelowItsRails();
     testDecimatorProtectsTheTopOfTheBand();
+    testFilterDriveMatchesTheDerivedBudget();
     testCascadeAgainstReferenceSolve();
     testCascadeOscillationThreshold();
     testCascadeSurvivesAdversarialControl();

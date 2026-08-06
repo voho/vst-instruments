@@ -73,11 +73,19 @@ with an explicit evidence gap and required output in
   a 64 kHz pole, rather than at an invented knee — and the converter's R-2R
   ladder carries its real integral non-linearity, so a slow sweep steps by about
   23 cents crossing mid-scale exactly as a measured card does.
-- **The voiced resonance profile compensates on the input side.** In the
-  current YouKnow106 compatibility sound, raising resonance drives *more*
-  signal into the filter, so a high-Q patch gets dirtier rather than thinner.
-  That analogue compensation law remains an explicit OQ-09 target, not an
-  original-unit measurement claim.
+- **The resonance profile compensates on the input side.** Raising resonance
+  drives *more* signal into the filter, so a high-Q patch gets dirtier rather
+  than thinner — Roland's own drawing feeds the resonance OTA from two
+  dividers, one off VCF IN and one off VCF OUT, so the direction is settled.
+  The magnitude of that compensation, and the shape of the panel-to-loop-gain
+  curve, remain OQ-09 targets.
+- **Self-oscillation is trimmed where the service manual trims it.** The
+  ADJUSTMENT table sets every card, at BANK 3 with C4 held, to a 4.8 Vp-p sine
+  at 248 Hz, and the two are coupled — a bigger limit cycle compresses the
+  transconductor and pulls the pitch flat, so loop gain and the frequency
+  correction are solved together against both. The engine renders 4.83 Vp-p at
+  248.0 Hz, and C6 oscillates at exactly four times C4, which is what makes
+  full keyboard tracking 1.00 rather than approximately so.
 - **The key assigner drops notes rather than stealing them**, because that is
   what the hardware does with seven keys held on six voices.
 - **POLY 1 + POLY 2 is Solo Unison.** All six DCOs receive the same divider

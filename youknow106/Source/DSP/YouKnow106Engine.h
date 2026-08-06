@@ -241,19 +241,41 @@ public:
     // The firmware-verified resonance path ends at the shared 12-bit DAC
     // code. Everything from that code to loop gain, input compensation and
     // oscillation-frequency correction is kept together here as one named,
-    // replaceable sound-design profile. Its constants preserve YouKnow106's
-    // established sound; they are not measurements or calibrated JUNO-106
-    // transfer anchors.
+    // replaceable sound-design profile. Most of its constants remain voiced:
+    // they preserve YouKnow106's established sound rather than asserting a
+    // measured code-to-loop transfer.
+    //
+    // The *endpoint* is no longer voiced. Roland's ADJUSTMENT section trims
+    // every card, at BANK 3 with C4 held, to a 4.8 Vp-p self-oscillating sine
+    // at 248 Hz -- two steps taken on one card in one state. The suite used to
+    // check the frequency and never the amplitude, and the model sat 4.1 dB
+    // under it at 2.99 Vp-p.
+    //
+    // The two anchors are coupled, so neither can be satisfied alone: the
+    // limit cycle grows with loop gain, and the stage tanh's compression at
+    // that larger amplitude pulls the oscillation flat. `maximumFeedback` and
+    // `frequencyTrimAmount` below are solved together against both, landing at
+    // 4.83 Vp-p and 248.0 Hz. What remains voiced is the *shape* between the
+    // ends -- the quadratic-then-linear panel curve and the quadratic trim --
+    // and one known wart of that shape: the trim is a function of loop gain,
+    // while the droop it corrects is a function of amplitude, so it lifts
+    // cutoff slightly below the oscillation threshold where there is no droop
+    // to correct. Fixing that needs the measured family OQ-09 asks for.
     struct VoicedResonanceCompatibilityProfile
     {
+        // Reported at 67.7 by an independent reverse-engineering of the same
+        // module, which is why this one is not a free parameter of the solve.
         static constexpr float loopDividerRatio = 100000.0f / 1500.0f;
         static constexpr float loopHeadroomVolts =
             2.0f * 0.026f * loopDividerRatio;
         static constexpr float nominalOscillationFeedback = 4.0f;
         static constexpr float nominalOscillationTravel = 0.9f;
-        static constexpr float maximumFeedback = 4.19f;
+        // Solved against the 4.8 Vp-p service trim; was a voiced 4.19.
+        static constexpr float maximumFeedback = 4.51f;
         static constexpr float inputCompensationPerFeedback = 0.2296f;
-        static constexpr float frequencyTrimAmount = 0.045f;
+        // Solved against the 248 Hz service trim at that loop gain, which the
+        // larger limit cycle would otherwise leave 108 cents flat; was 0.045.
+        static constexpr float frequencyTrimAmount = 0.098f;
 
         [[nodiscard]] static float loopGain(float panelPosition) noexcept;
         [[nodiscard]] static float inputCompensation(float feedback) noexcept;
