@@ -3145,10 +3145,14 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     }
     const float subGain = subMixVolts * subCv_
         * (1.0f + card.subLevelError * 0.03f * parameters.calibration);
-    const float cmosAsymmetry = dco.subState > 0.0f
-        ? (1.0f + 0.003f * parameters.calibration)
-        : -(1.0f - 0.003f * parameters.calibration);
-    const float subOut = dco.sub.advance(cmosAsymmetry) * subGain;
+    // The divider's two levels are symmetric. A revision made them 0.3%
+    // unequal in *amplitude*, which is a DC offset and even harmonics at about
+    // -50 dBc -- and it was attributed to the 4013's unequal driver rise and
+    // fall times, which are an edge-*timing* effect, not a level one. That
+    // mechanism does exist, and it is inaudible: 10 ns of skew against the sub
+    // period is 3e-7 of a cycle at the bottom of the 16' range. Modelling it
+    // would mean moving the edge, and the amount to move it by is nothing.
+    const float subOut = dco.sub.advance(dco.subState) * subGain;
 
     // --- Summing node (Thévenin passive mixer network) -----------------------
     // Saw (100k), Pulse (100k), Sub (100k) and Noise (100k) meet at the IR3109

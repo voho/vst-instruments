@@ -243,8 +243,10 @@ open question, it is named in its entry.
 
    A revision modelled $1 - 0.015\tanh(v^2)$ instead: 1.1%, or $-39$ dBc, applied to every wet sample. That is some 44 dB more than the part can produce, and it was always on rather than only during switching. Both it and its companion gate-injection placeholder are removed. The switching transient and leakage remain **OQ-20** and are deliberately not invented; the 5 ms wet-mute glide is declared plug-in declick policy, not a device measurement.
 
-9. **CMOS 4013 Sub-Oscillator P/N Driver Asymmetry**:
-   CMOS 4013 flip-flop P/N channel driver impedance asymmetry ($t_r \approx 25\text{ ns}$ vs $t_f \approx 15\text{ ns}$) introduces subtle duty cycle asymmetry ($\approx 49.8\% / 50.2\%$) and odd-harmonic character into the sub-oscillator square wave.
+9. **CMOS 4013 sub-oscillator driver asymmetry — removed, as inaudible by derivation and misapplied**:
+   The 4013's P and N channel drivers really do have unequal rise and fall times ($t_r \approx 25$ ns against $t_f \approx 15$ ns). That is an edge-*timing* asymmetry, and it is nothing: 10 ns of skew against the sub's period is $3\times10^{-7}$ of a cycle at the bottom of the 16' range, rising only to $5\times10^{-6}$ near the top.
+
+   What the model applied instead was an *amplitude* asymmetry — the two divider levels made 0.3% unequal — which is a DC offset and even harmonics at roughly $-50$ dBc. That is not the named mechanism, and it is five orders of magnitude larger than the named mechanism can produce. The divider's two levels are symmetric again. Modelling the real effect would mean moving the edge, and the distance to move it is below any sample grid the engine will ever run on.
 
 10. **Sample-and-Hold Capacitive Charge Leakage & Re-strike Key Click**:
     Re-striking an active voice card before its release envelope finishes causes residual charge leakage on hold capacitor $C_{hold}$ through switch resistance $R_{on}$, producing an authentic analog legato key-click transient.

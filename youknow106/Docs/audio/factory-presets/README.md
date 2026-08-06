@@ -31,19 +31,19 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | A15 | Moving Strings | -12.39 | 0 | -23.28 | -29.02 | 16.63 | — |
 | A16 | Brass & Strings | -5.11 | 0 | -14.45 | -21.93 | 16.82 | — |
 | A17 | Choir | 3.63 | 8430 | -6.00 | -12.70 | 16.34 | 8430 channel samples above 0 dBFS |
-| A18 | Piano I | -4.08 | 0 | -15.84 | -24.92 | 20.83 | — |
+| A18 | Piano I | -4.09 | 0 | -15.84 | -24.92 | 20.83 | — |
 | A21 | Organ I | -2.48 | 0 | -12.79 | -17.48 | 15.00 | — |
 | A22 | Organ II | -7.33 | 0 | -18.04 | -22.79 | 15.46 | — |
 | A23 | Combo Organ | -7.62 | 0 | -17.86 | -24.02 | 16.40 | — |
 | A24 | Calliope | -6.56 | 0 | -18.32 | -24.69 | 18.13 | — |
 | A25 | Donald Pluck | -10.55 | 0 | -20.32 | -27.04 | 16.49 | — |
-| A26 | Celeste* (1 oct.up) | -7.68 | 0 | -20.56 | -27.28 | 19.60 | — |
+| A26 | Celeste* (1 oct.up) | -7.67 | 0 | -20.56 | -27.28 | 19.61 | — |
 | A27 | Elect. Piano I | -5.76 | 0 | -17.57 | -26.14 | 20.38 | — |
 | A28 | Elect. Piano II | -7.50 | 0 | -17.75 | -26.62 | 19.12 | — |
-| A31 | Clock Chimes* (1 oct. up) | -10.13 | 0 | -23.06 | -29.96 | 19.83 | — |
-| A32 | Steel Drums | 6.58 | 760 | -9.95 | -15.75 | 22.33 | 760 channel samples above 0 dBFS |
-| A33 | Xylophone | 3.48 | 204 | -13.25 | -18.36 | 21.84 | 204 channel samples above 0 dBFS |
-| A34 | Brass III | 4.19 | 4743 | -6.37 | -11.69 | 15.88 | 4743 channel samples above 0 dBFS |
+| A31 | Clock Chimes* (1 oct. up) | -10.04 | 0 | -23.06 | -29.96 | 19.91 | — |
+| A32 | Steel Drums | 6.58 | 758 | -9.96 | -15.75 | 22.33 | 758 channel samples above 0 dBFS |
+| A33 | Xylophone | 3.48 | 202 | -13.25 | -18.36 | 21.85 | 202 channel samples above 0 dBFS |
+| A34 | Brass III | 4.19 | 4744 | -6.37 | -11.69 | 15.88 | 4744 channel samples above 0 dBFS |
 | A35 | Fanfare | -4.71 | 0 | -15.03 | -20.73 | 16.02 | — |
 | A36 | String III | -6.80 | 0 | -18.90 | -24.90 | 18.10 | — |
 | A37 | Pizzicato | -3.48 | 0 | -26.45 | -30.41 | 26.94 | — |
@@ -53,45 +53,45 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | A43 | Brass Ensemble | -8.28 | 0 | -19.58 | -25.68 | 17.40 | — |
 | A44 | Guitar | -6.37 | 0 | -17.65 | -27.67 | 21.30 | — |
 | A45 | Koto | -1.80 | 0 | -15.40 | -22.59 | 20.78 | — |
-| A46 | Dark Pluck | -2.60 | 0 | -15.62 | -25.35 | 22.75 | — |
-| A47 | Funky I | -2.04 | 0 | -15.01 | -19.47 | 17.43 | — |
-| A48 | Synth Bass I (unison) | 2.66 | 3258 | -8.09 | -13.31 | 15.97 | 3258 channel samples above 0 dBFS |
+| A46 | Dark Pluck | -2.61 | 0 | -15.64 | -25.35 | 22.74 | — |
+| A47 | Funky I | -2.05 | 0 | -15.01 | -19.47 | 17.42 | — |
+| A48 | Synth Bass I (unison) | 2.66 | 3252 | -8.09 | -13.31 | 15.97 | 3252 channel samples above 0 dBFS |
 | A51 | Lead I | -5.62 | 0 | -16.11 | -21.55 | 15.93 | — |
 | A52 | Lead II | -10.42 | 0 | -20.11 | -25.44 | 15.02 | — |
 | A53 | Lead III | 0.01 | 2 | -11.09 | -16.75 | 16.76 | 2 channel samples above 0 dBFS |
-| A54 | Funky II | -6.78 | 0 | -20.55 | -29.01 | 22.23 | — |
-| A55 | Synth Bass II | -11.22 | 0 | -20.13 | -25.17 | 13.95 | — |
+| A54 | Funky II | -6.78 | 0 | -20.56 | -29.01 | 22.23 | — |
+| A55 | Synth Bass II | -11.21 | 0 | -20.13 | -25.17 | 13.97 | — |
 | A56 | Funky III | -5.36 | 0 | -15.33 | -19.47 | 14.12 | — |
 | A57 | Thud Wah | -1.37 | 0 | -11.71 | -17.15 | 15.78 | — |
 | A58 | Going Up | -17.56 | 0 | -27.44 | -35.82 | 18.26 | — |
-| A61 | Piano II | -7.63 | 0 | -19.11 | -28.07 | 20.44 | — |
+| A61 | Piano II | -7.64 | 0 | -19.12 | -28.07 | 20.43 | — |
 | A62 | Clav | 2.50 | 669 | -10.06 | -18.68 | 21.17 | 669 channel samples above 0 dBFS |
-| A63 | Frontier Organ | 7.59 | 68230 | -2.59 | -8.29 | 15.88 | 68230 channel samples above 0 dBFS |
-| A64 | Snare Drum (unison) | -9.64 | 0 | -21.62 | -24.22 | 14.58 | — |
-| A65 | Tom Toms (unison) | -1.63 | 0 | -9.86 | -20.78 | 19.14 | — |
-| A66 | Timpani (unison) | -1.13 | 0 | -6.13 | -13.07 | 11.93 | — |
+| A63 | Frontier Organ | 7.59 | 68214 | -2.59 | -8.29 | 15.88 | 68214 channel samples above 0 dBFS |
+| A64 | Snare Drum (unison) | -9.63 | 0 | -21.62 | -24.22 | 14.59 | — |
+| A65 | Tom Toms (unison) | -1.62 | 0 | -9.86 | -20.78 | 19.15 | — |
+| A66 | Timpani (unison) | -1.12 | 0 | -6.13 | -13.07 | 11.94 | — |
 | A67 | Shaker | -16.48 | 0 | -35.56 | -42.26 | 25.77 | — |
-| A68 | Synth Pad | -6.87 | 0 | -17.62 | -24.31 | 17.45 | — |
-| A71 | Sweep I | -8.03 | 0 | -19.01 | -26.87 | 18.85 | — |
+| A68 | Synth Pad | -6.87 | 0 | -17.62 | -24.31 | 17.44 | — |
+| A71 | Sweep I | -8.03 | 0 | -19.01 | -26.88 | 18.85 | — |
 | A72 | Pluck Sweep | -13.56 | 0 | -26.06 | -34.71 | 21.15 | — |
-| A73 | Repeater | -6.17 | 0 | -20.34 | -25.71 | 19.54 | — |
-| A74 | Sweep II | -1.98 | 0 | -15.97 | -26.15 | 24.18 | — |
-| A75 | Pluck Bell | -7.61 | 0 | -18.70 | -26.96 | 19.35 | — |
-| A76 | Dark Synth Piano | -6.38 | 0 | -16.76 | -24.09 | 17.72 | — |
-| A77 | Sustainer | -9.06 | 0 | -18.17 | -25.60 | 16.53 | — |
+| A73 | Repeater | -6.17 | 0 | -20.35 | -25.71 | 19.54 | — |
+| A74 | Sweep II | -1.98 | 0 | -15.97 | -26.15 | 24.17 | — |
+| A75 | Pluck Bell | -7.61 | 0 | -18.70 | -26.96 | 19.34 | — |
+| A76 | Dark Synth Piano | -6.39 | 0 | -16.76 | -24.09 | 17.71 | — |
+| A77 | Sustainer | -9.06 | 0 | -18.17 | -25.60 | 16.54 | — |
 | A78 | Wah Release | -2.60 | 0 | -13.27 | -22.78 | 20.18 | — |
 | A81 | Gong (play low chords) | -9.11 | 0 | -21.25 | -26.73 | 17.62 | — |
 | A82 | Resonance Funk | -1.71 | 0 | -21.22 | -26.64 | 24.94 | — |
-| A83 | Drum Booms* (1 oct. down) | 3.86 | 982 | -8.36 | -18.25 | 22.12 | 982 channel samples above 0 dBFS |
+| A83 | Drum Booms* (1 oct. down) | 3.84 | 984 | -8.36 | -18.26 | 22.09 | 984 channel samples above 0 dBFS |
 | A84 | Dust Storm | -31.44 | 0 | -40.65 | -49.23 | 17.78 | gated RMS outside corpus median +/-18 dB |
 | A85 | Rocket Men | -11.80 | 0 | -22.11 | -27.06 | 15.26 | — |
 | A86 | Hand Claps | -26.65 | 0 | -52.75 | -58.00 | 31.35 | gated RMS outside corpus median +/-18 dB |
-| A87 | FX Sweep | -3.31 | 0 | -11.06 | -21.32 | 18.01 | — |
+| A87 | FX Sweep | -3.28 | 0 | -11.05 | -21.32 | 18.04 | — |
 | A88 | Caverns | -15.11 | 0 | -31.77 | -39.72 | 24.61 | — |
 | B11 | Strings | -7.18 | 0 | -18.60 | -23.91 | 16.73 | — |
 | B12 | Violin | -5.54 | 0 | -14.72 | -23.21 | 17.67 | — |
 | B13 | Chorus Vibes | -6.22 | 0 | -14.46 | -21.93 | 15.71 | — |
-| B14 | Organ 1 | -8.07 | 0 | -19.29 | -23.43 | 15.35 | — |
+| B14 | Organ 1 | -8.07 | 0 | -19.29 | -23.43 | 15.36 | — |
 | B15 | Harpsichord 1 | -4.76 | 0 | -17.66 | -26.38 | 21.62 | — |
 | B16 | Recorder | -2.77 | 0 | -13.10 | -18.34 | 15.58 | — |
 | B17 | Perc. Pluck | -7.73 | 0 | -22.31 | -28.95 | 21.22 | — |
@@ -100,26 +100,26 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | B22 | Nylon Guitar | -8.69 | 0 | -20.15 | -28.36 | 19.67 | — |
 | B23 | Orchestral Pad | -6.49 | 0 | -16.79 | -24.00 | 17.51 | — |
 | B24 | Bright Pluck | -5.51 | 0 | -20.14 | -29.59 | 24.09 | — |
-| B25 | Organ Bell | -5.28 | 0 | -17.44 | -22.11 | 16.83 | — |
+| B25 | Organ Bell | -5.30 | 0 | -17.45 | -22.11 | 16.81 | — |
 | B26 | Accordion | -10.48 | 0 | -24.71 | -30.54 | 20.06 | — |
 | B27 | FX Rise 1 | -14.95 | 0 | -29.45 | -34.87 | 19.92 | — |
 | B28 | FX Rise 2 | -7.48 | 0 | -16.85 | -24.53 | 17.05 | — |
 | B31 | Brass | -11.59 | 0 | -22.68 | -28.88 | 17.28 | — |
-| B32 | Helicopter | 3.56 | 321 | -16.31 | -27.41 | 30.97 | 321 channel samples above 0 dBFS |
+| B32 | Helicopter | 3.55 | 320 | -16.32 | -27.41 | 30.96 | 320 channel samples above 0 dBFS |
 | B33 | Lute | 9.77 | 5664 | -0.35 | -8.57 | 18.34 | 5664 channel samples above 0 dBFS |
-| B34 | Chorus Funk | -8.76 | 0 | -20.09 | -24.35 | 15.59 | — |
+| B34 | Chorus Funk | -8.77 | 0 | -20.10 | -24.35 | 15.58 | — |
 | B35 | Tomita | -14.47 | 0 | -24.61 | -29.62 | 15.15 | — |
 | B36 | FX Sweep 1 | -15.53 | 0 | -27.13 | -32.81 | 17.28 | — |
 | B37 | Sharp Reed | -8.56 | 0 | -18.38 | -24.02 | 15.46 | — |
 | B38 | Bass Pluck | -4.52 | 0 | -15.36 | -25.18 | 20.67 | — |
 | B41 | Resonant Rise | -8.04 | 0 | -17.87 | -26.63 | 18.59 | — |
-| B42 | Harpsichord 2 | -9.52 | 0 | -21.77 | -30.35 | 20.83 | — |
+| B42 | Harpsichord 2 | -9.52 | 0 | -21.78 | -30.35 | 20.82 | — |
 | B43 | Dark Ensemble | -8.90 | 0 | -19.92 | -23.62 | 14.73 | — |
 | B44 | Contact Wah | 4.08 | 11062 | -6.10 | -11.53 | 15.62 | 11062 channel samples above 0 dBFS |
 | B45 | Noise Sweep 2 | -18.16 | 0 | -30.83 | -38.09 | 19.93 | — |
 | B46 | Glassy Wah | -3.79 | 0 | -16.59 | -24.02 | 20.23 | — |
 | B47 | Phase Ensemble | -1.06 | 0 | -11.13 | -19.90 | 18.83 | — |
-| B48 | Chorused Bell | -6.98 | 0 | -17.79 | -26.37 | 19.39 | — |
+| B48 | Chorused Bell | -6.99 | 0 | -17.79 | -26.37 | 19.37 | — |
 | B51 | Clav | -6.96 | 0 | -19.90 | -30.20 | 23.24 | — |
 | B52 | Organ 2 | -9.43 | 0 | -20.03 | -25.31 | 15.88 | — |
 | B53 | Bassoon | -2.32 | 0 | -15.00 | -21.09 | 18.78 | — |
@@ -128,7 +128,7 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | B56 | Ethereal | -9.14 | 0 | -20.71 | -26.65 | 17.52 | — |
 | B57 | Chorus Bell 2 | -10.14 | 0 | -19.55 | -25.66 | 15.51 | — |
 | B58 | Blizzard | -22.68 | 0 | -33.36 | -41.07 | 18.39 | — |
-| B61 | E. Piano with Tremolo | -10.53 | 0 | -21.37 | -31.36 | 20.83 | — |
+| B61 | E. Piano with Tremolo | -10.53 | 0 | -21.38 | -31.41 | 20.87 | — |
 | B62 | Clarinet | -7.73 | 0 | -20.13 | -26.49 | 18.76 | — |
 | B63 | Thunder | -22.77 | 0 | -35.22 | -42.34 | 19.57 | — |
 | B64 | Reedy Organ | -7.33 | 0 | -16.69 | -22.05 | 14.71 | — |
@@ -143,14 +143,14 @@ These are review flags, not equal-loudness failures. The bank intentionally mixe
 | B75 | High Bells | -9.00 | 0 | -23.73 | -31.40 | 22.40 | — |
 | B76 | Rolling Wah | -7.69 | 0 | -15.86 | -21.73 | 14.03 | — |
 | B77 | Ping Bell | -11.43 | 0 | -26.93 | -37.07 | 25.64 | — |
-| B78 | Brassy Organ | -3.45 | 0 | -16.20 | -20.08 | 16.63 | — |
+| B78 | Brassy Organ | -3.46 | 0 | -16.20 | -20.08 | 16.62 | — |
 | B81 | Low Dark Strings | -6.37 | 0 | -16.09 | -20.70 | 14.33 | — |
 | B82 | Piccolo Trumpet | -8.83 | 0 | -18.63 | -25.71 | 16.88 | — |
 | B83 | Cello | -1.33 | 0 | -12.73 | -18.47 | 17.13 | — |
 | B84 | High Strings | -6.72 | 0 | -18.33 | -27.07 | 20.34 | — |
 | B85 | Rocket Men | -8.53 | 0 | -19.07 | -27.21 | 18.68 | — |
 | B86 | Forbidden Planet | -10.74 | 0 | -23.47 | -30.86 | 20.12 | — |
-| B87 | Froggy | -7.37 | 0 | -18.84 | -25.05 | 17.68 | — |
+| B87 | Froggy | -7.36 | 0 | -18.83 | -25.05 | 17.69 | — |
 | B88 | Owgan | -2.78 | 0 | -14.91 | -21.52 | 18.74 | — |
 
 ## Fixed previews

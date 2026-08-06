@@ -85,7 +85,7 @@ output swing is still an explicit measurement question.
 | `06-chorus-modes.wav` | The same pad with the effect off, in mode I, then in mode II | 15.8 s | −9.7 dBFS | +6.7 dB |
 | `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −5.1 dBFS | +2.1 dB |
 | `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −13.1 dBFS | +10.1 dB |
-| `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −5.7 dBFS | +2.7 dB |
+| `09-high-pass-ladder.wav` | One bright chord through all four high-pass switch positions | 10.6 s | −5.8 dBFS | +2.8 dB |
 | `10-unit-character.wav` | A six-voice chord at nominal zero Unit Character, then at full amount | 12.9 s | −13.3 dBFS | +10.3 dB |
 <!-- peaks-table-end -->
 
