@@ -84,11 +84,11 @@ unmodelled interaction and switching memory of the complete HPF network.
 |---|---|---|---|
 | P0 | 01 | Hardware confirmation of the derived 0.5533/0.8983 Hz rates (TP4 capture), a *calibrated* original-unit sweep capture, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the 1.6234799 mode-rate ratio, the summing-node β = 33/47 and C3 = 0.1 µF (netlist-corroborated), the derived rate scale, and the shipped 1.4–6.4 ms sweep — third-party-scoped on a designator-faithful p. 15 build with genuine MN3009s against a real 106 (2026-08-07), superseding the sibling JUNO-60 capture |
 | P2 | 02 | Installed-unit common-VCA endpoint, component/rail/IC variation and residual error against the nominal law | The complete nominal path: `d=b<<5`, ideal R-2R `/4096`, p. 8's +4 to −6 V span, p. 15 R30/C7/R32/R31/R165 network, NEC's −5.9 mV/dB typical law, and C7's 9.08249 ms constant |
-| P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation | No-compander topology and the need for a wet-line noise model |
-| P2 | 04 | Loaded post-BBD support transfer, real MN3009 normalized response versus clock, and emitter-follower output impedance | Component topology, provisional ideal-source poles, the fixed per-shift residual coefficient that is within 0.03 dB of the adopted 40 kHz/12 kHz row on its 1 kHz reference basis, and the input/output Sallen-Key part identity read from the sibling clone netlist |
+| P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation (a capture with a reference tone; the −47.97/−44.01 dBFS floors have a declared but uncalibrated chain) | No-compander topology, the need for a wet-line noise model, the sourced heduhl floors and the structural 3.95 dB I→II delta on both chip populations (provenance corrected 2026-08-07) |
+| P2 | 04 | Loaded post-BBD support transfer, the output-stage reading that reproduces the digitised typical Gi–fi family (two-phase tap summing candidate), and emitter-follower output impedance | Component topology with the 106's own p. 15 capacitor codes now read at designator level, provisional ideal-source poles, the fixed per-shift residual coefficient anchored to the guaranteed-minimum 40 kHz/12 kHz row, and the digitised 10/40/100 kHz typical family (which the current hold-plus-pole framework cannot reach at low clocks — recorded 2026-08-07) |
 | P0 | 05 | TA75558S IC6 and High-output clipping swing versus frequency and load | IC6 identity, linear resistor gains and ±15 V rails |
 | Dependency | 06 | Physical `Vref_rms` for a declared High-output/load condition | Final -18 dBFS RMS mapping, floating output and no-limiter policy |
-| P1 | 07 | Acquisition, droop, loading and time constant of every converter hold | Hold ownership, 4.2 ms pass, VCF 522 µs and voice-VCA 687 µs anchors |
+| P1 | 07 | Acquisition/tracking behaviour, droop and loading of every converter hold | Hold ownership, 4.2 ms pass, VCF 522 µs and voice-VCA 687 µs anchors, and the designator-complete inventory: all 23 holds are 0.01 µF (p. 13 ".01×7/.01×8"), with per-destination post-hold smoothing networks read in full (2026-08-07) |
 | P1 | 08 | Exact intra-pass timestamps/branches and the physical state forced by a changed-pitch write | Ordinal 23-write queue and normalized compatibility scheduler |
 | P1 | 09 | Resonance DAC/control voltage to loop gain, compensation and oscillation correction | BA662/IR3109 topology, 4.8 Vpp service trim, shared hold, exact B-2 byte-to-DAC mapping, and the netlist-verified compensation mechanism (lineage divider values recorded, unpromoted) |
 | P3 | 10 | Post-calibration six-card and multi-unit residual distributions and thermal drift | Zero-spread nominal policy and optional deterministic Unit Character |
@@ -100,9 +100,9 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P2 | 16 | Calibrated TP8 capture (PSD/distribution against the shaped model), and physical filter-startup excitation | Shared generator topology, TP8 4.0 Vpp adjustment, and the 33.9 Hz/4.82 kHz band-shaping derived from the p. 13 designators (C42/4.7 kΩ and C41/R79, 2026-08-07) |
 | P3 / dependency | 17 | Real VOLUME gang tracking plus selector, jack, headphone and external-load transfer | Nominal-linear `10KB×2` law and fixed 29.313 kΩ internal wiper load |
 | P2 | 18 | Hardware cutoff-converter knee and upper saturation curve | Exponential audio-range law and transparent 50 kHz product cap |
-| P1 | 19 | Voice-module BA662 control-current-to-gain curve near cutoff and residual thump after the service null | BA662 pins and separate signal/control paths, ENV/GATE ownership, 6 Vpp endpoint and the per-card minimum-thump procedure |
-| P2 | 20 | TR11/TR12 wet-mute switching envelope, leakage and click | Device identity, wet-only mute location and continuously running BBDs |
-| P2 | 21 | Coupled C14/HPF transfer, switch-state memory and mode-change transient | Parts, placement, asymptotic C14 loads and established HPF endpoints |
+| P1 | 19 | Voice-module BA662 control-current-to-gain curve near cutoff and residual thump after the service null | BA662 pins and separate signal/control paths, ENV/GATE ownership, 6 Vpp endpoint, the per-card minimum-thump procedure, and the anchored +0.25…+0.27 V TP7 control-rail standoff the shipped 150 mV onset now sits relative to (2026-08-07) |
+| P2 | 20 | TR11/TR12 wet-mute switching envelope, leakage and click | Device identity, wet-only mute location, continuously running BBDs, and the full gate-drive network designators from p. 15 |
+| P2 | 21 | Coupled C14/HPF transfer, switch-state memory, mode-change transient, and whether the Boost implementation should move to the designator-derived two-zero/three-pole branch (one LF response measurement or one photo of the C9/R22/R20 region settles it) | Parts, placement, asymptotic C14 loads, the established HPF endpoints, the adjudicated 225.8/720.5 Hz cut corners (the 1 MΩ pair biases the mux side and cannot move them — 2026-08-07), and the mode→tap map from the p. 13 truth table |
 
 The most consequential audible blockers are OQ-01, OQ-03, OQ-05, OQ-09,
 OQ-15 and OQ-19. A well-instrumented original unit can also collect OQ-02, OQ-03,
@@ -2274,6 +2274,235 @@ Juno item), so the p. 15/p. 9 original-page reads remain blocked from
 GitHub-only egress. The KR-106 analysis tree publishes no raw captures — its
 `chorus_report.txt` summarizes an out-of-repository Juno-6 WAV. Neither
 Open80017a nor the chorus clone contains any Roland page image.
+
+## Original-page evidence pass — 2026-08-07 (Service Notes obtained and read)
+
+**Work mode:** evidence search plus analysis of primary source material. **No
+hardware was measured.** This session ran with the widened egress the earlier
+passes requested, and the blocked reads landed: the **Roland JUNO-106 Service
+Notes, First Edition (every content page dated JUL. 31 1984)** were obtained
+as two independent scans — `synthfool.com/docs/Roland/Juno_Series/
+Roland_Juno_106/roland_juno106_service_manual.pdf` and
+`polynominal.com/roland-juno106/Roland-juno106-service-manual.pdf`, both
+2,773,470 bytes (byte-identical circulating copy, PDF metadata "Edy Hinzen",
+Sep 2001 scan), carrying printed pages 1, 5, 8, 9, 10, 11, 12, 13, 15, 16,
+18, 19 at ~315 dpi (pp. 2–4, 6–7, 14, 17, 20+ absent — the parts list is not
+in this copy). All reads below were made from full-resolution crops of the
+embedded 1-bit scans; page/designator corrections against earlier
+assumptions: the MODULE BOARD schematic is printed **p. 13** (p. 9 is the
+WAVE GENERATOR text page), and the C14/R39 network is the **jack board
+input** (p. 15), not the module summing bus.
+
+Also read in the same session: the Gearspace Juno-106 chorus threads
+(migrated to XenForo; guest view), ModWiggler threads t=111159 and t=158257
+in full, and the Panasonic **MN3009/MN3101 datasheets**
+(experimentalistsanonymous.com scans, digitised at 600 dpi).
+
+### Acted on in this change-set (each with its own commit)
+
+- **IC6 wet/dry (guardrail corrected):** dry = R71/R73 47 kΩ off the IC2b
+  bus, wet = R72/R74 39 kΩ from Tr11/Tr12, feedback R70/R67 100 kΩ; same
+  inverting input per channel, channels identical — no wet polarity
+  inversion. See the corrected guardrail below.
+- **Chorus sweep promotion (OQ-01):** the ModWiggler read grounded the
+  1.4–6.4 ms figure's provenance (kvitekp, 2016-11-13, FEEDBACK kit built
+  1:1 from p. 15, genuine 256-stage MN3009s, scope plots at
+  midisizer.files.wordpress.com, compared directly against his own JUNO-106
+  and called identical). Shipped; JUNO-60 pair kept as suite comparison.
+- **Noise band-shaping (OQ-16):** p. 13 noise-circuit designators read in
+  full — Tr21 2SC945 "selected", R104 470 kΩ, C42 1 µF into IC14 BA662 with
+  4.7 kΩ input bias (R80/R81), C41 100 pF against R79 330 kΩ on the OTA
+  output, Tr14 follower to the NOISE rail. Implemented as 33.9 Hz/4.82 kHz
+  shaping of the shared source.
+- **Mixer topology (OQ-15 narrowed):** saw and pulse leave the waveshaper
+  summed on one WAVE output per voice; sub joins via R101/R97 27 kΩ behind
+  D6/D5 (collector supply = SUB LEVEL rail, itself the S/H'd 0..−10 V
+  converter output re-inverted to 0..+10 V through R9/R10 100 kΩ at IC1b);
+  C56/C50 10 µF NP couple into the module. Sources mute; legs never switch.
+  Implemented as constant node loading.
+
+### OQ-21 — the 1 MΩ pair adjudicated; the cut corners stand
+
+The HPF ladder reads: Tr3 buffer → IC3 4052 Ycom pin 3; taps Y0/Y1/Y2/Y3 =
+pins 1/5/2/4; "47K×4" summing resistors R28/R26/R27/R25 into IC4a's virtual
+ground with R29 47 kΩ feedback; series caps C11 4.7 nF (Y0 leg) and C10
+15 nF (Y1 leg); **R23/R21 "1M×2" bias the mux side of the capacitor legs**,
+tying otherwise-floating deselected lines to ground. With the mode table
+(p. 13: MODE 0/1/2/3 → HPF B ① = 1,1,0,0; HPF A ② = 1,0,1,0, and the
+4052's (B,A) decoding) the map is: mode 0 = Y3 (boost: direct R25 plus the
+IC4b branch), mode 1 = Y2 (flat, direct R27), mode 2 = Y1 (C10 15 nF),
+mode 3 = Y0 (C11 4.7 nF). On the selected leg the 1 MΩ parallels the
+buffer's low output impedance and cannot move the pole; the corner remains
+the capacitor against its 47 kΩ virtual-ground leg: **225.8/720.5 Hz stand,
+and KR-106's 236/754 Hz (1 MΩ paralleling the 47 kΩ) put the bias on the
+wrong side of the capacitor.** The deselected-leg charge-memory question the
+1 MΩs actually govern remains OQ-21's transient ask.
+
+### OQ-21 — the Boost branch is designator-complete, and contradicts the fitted shelf's shape
+
+The boost branch reads: selected Y3 line → C9 47 nF → node with R22 47 kΩ
+to ground → R20 47 kΩ → IC4b's non-inverting input with C8 10 nF to ground;
+IC4b gain 1 + R18 100 kΩ/R19 10 kΩ = 11; output → C6 22 nF → R24 220 kΩ →
+IC4a's summing node (R29 47 kΩ feedback), in parallel with the dry R25 leg.
+Solved exactly, the branch is two zeros (C9, C6) and three poles — the
+coupled C9/R22/R20/C8 section gives poles at **57.3 Hz and 425.4 Hz**
+(peak transmission 47/67 = 0.702 near 156 Hz), and C6/R24 adds a 32.9 Hz
+high-pass — for a **band boost peaking ≈ +8.5 dB near 150 Hz, returning
+toward unity at DC and settling ≈ +0.7…+1.4 dB in the high band** (branch
+plateau 11 × 47/220 = 2.35 over dry). The shipped one-pole shelf
+(+10.5 dB DC / +1.41 dB HF / 59.4 Hz pole, from a third-party hardware
+noise sweep) agrees with the branch in the plateau region within ~2 dB but
+**contradicts it in shape below ~60 Hz** (the branch is capacitor-coupled
+and cannot boost DC). Recorded per contract rule 5, not reconciled: the
+sweep's raw data is unavailable, the branch read carries residual
+connectivity risk from a 1-bit scan (R22's lower node), and a one-pole
+shelf fitted to a band-boost would infer exactly the too-high DC asymptote
+observed. One clean low-frequency response measurement of position 0 — or
+one designator-level photo of the C9/R22/R20 region — settles whether the
+implementation should move to the derived two-zero/three-pole branch.
+Sequence15's commenter analysis ("two poles and two zeros … two pole bass
+boost") sides with the branch.
+
+### OQ-19 — TP7 VCA BIAS consumed as the control-path operating point
+
+Pages 18–19 (read in full, both scans agreeing): VCA BIAS adjusts **VR34
+(10KB) for +0.25…+0.27 V at TP7** with the D/A forced to 0 V, *before* the
+per-card VCA OFFSET thump nulls. Page 13 places VR34's injection through
+R126 18 kΩ/R127 470 kΩ into distribution amplifier IC27b (R135/R136 10 kΩ),
+whose output is TP7 and feeds the VCA-group demux IC26 — so the per-voice
+VCA control rail carries a **+0.26 V nominal standoff at envelope zero**.
+Read with the reconstruction's ~150 mV no-current region (measured from the
+CV input on a calibrated unit, i.e. *on top of* the trimmed standoff), the
+shipping `VoiceVcaControlLaw::turnOn = 0.015` — 150 mV of envelope travel
+above the bias point — is exactly the surviving free parameter, now
+expressed relative to an anchored operating point rather than floating.
+No constant changes; the BA662's own low-current curve remains OQ-19's
+measurement. DCO CV OFFSET (TP3 = 0 V via VR33, D/A forced to zero) is
+likewise consumed: the model's zero-offset pitch law *is* the adjusted
+state, and no static DCO CV offset term may be added to the nominal model.
+
+### OQ-07 — every converter hold is 0.01 µF, read at designator level
+
+Page 13 marks the hold capacitors "**.01×7**"/"**.01×8**": IC24 (DCO group)
+C73–C79, IC23 (VCF group) C65–C72, IC26 (VCA group) C80–C87, all 0.01 µF,
+with the per-destination post-hold smoothing drawn separately (VCA CONT:
+R105/R95 22 kΩ with C58/C49 0.1 µF at the module pin; VCF: C61/C48 0.1 µF
+in the trim network; PWM: R117 100 kΩ/C62 47 nF then R116 560 kΩ/C63
+4.7 nF around IC17a; SUB LEVEL: R11 1 kΩ + C1 10 µF then the R9/R10
+inverter; VCA LEVEL: the jack-board R30/R32/C7/R165 network already
+modelled). The mux parts are 4051s with IC26 on ±15 V behind IC25 (7407)
+level shifting, "(except TC4051)" noted as a parts restriction. This gives
+OQ-07 its designator-complete acquisition-network inventory; the in-window
+tracking behaviour and droop measurements remain open.
+
+### OQ-03/OQ-01 — Gearspace provenance corrected and the noise floors sourced
+
+The thread "Detailed values of the Juno-106 chorus" (gearspace, 1367045,
+Bonsaipanda, 2021-12-01) is a **zero-reply question post with no
+attachments** — the earlier citation of it as carrying spectra and WAV
+measurements is a misattribution, corrected here. The measured floors
+recorded against OQ-03 originate in thread 916126 ("Juno-106 chorus
+noise."), post-13930822 by **heduhl** (2019-04-17): stereo 48 kHz/24-bit,
+Volume 10, Output High, +25 dB into a Fireface 800, iZotope RX true-peak
+over noise-only selections — Panasonic MN3009s: Chorus I −47.97 dBFS TP,
+Chorus II −44.01; Xvive MN3009s: −52.19/−48.24; "both chip populations show
+the 3.95 dB I→II boost" (structural), corroborated by autoy on a second
+parts set. No reference tone accompanies the chain, so the absolute floors
+still cannot calibrate the model's hiss; the RX spectrum screenshots are
+not retrievable from guest view. Mode-depth lore recorded as assertions:
+martin@arturia (Juno-6, explicitly not measured on a 106): I+II is a
+mono-vibrato-like mode with 0° LFO offset, ~7–8 Hz, sine, low depth; two
+Juno-60 accounts of I+II contradict each other; no source states what I+II
+does on a real 106, whose owner's manual forbids it.
+
+### OQ-04 — MN3009 typical curves digitised, and they exceed the model's framework
+
+The Gi–fi family (VDD −15 V, VGG −14 V, Vi 0 dB) was digitised at 600 dpi
+with axis calibration (frequency ±4–5%, level ±0.1 dB): flat-band +0.78 dB
+for all three curves; −3 dB-relative points at **fi/fcp = 0.522 (fcp
+10 kHz), 0.403 (40 kHz), 0.355 (100 kHz)** — the normalized bandwidth
+*shrinks* as the clock rises, so the family does not scale with fcp. Two
+consequences, recorded rather than acted on: (a) the EC table's "fi min
+12 kHz at −3 dB, fcp 40 kHz" row the model anchors to is the
+guaranteed-minimum part, while the typical curve reads 16.1 kHz — the
+shipped anchor is conservative by ~0.4 of an octave of wet bandwidth; and
+(b) the typical family is **not reproducible inside the model's
+hold-plus-single-pole framework at any coefficient** — at fcp = 10 kHz the
+−3 dB point sits at fi/fcp = 0.522, where the model's own full-period hold
+alone is already −4.3 dB, so matching the typical family needs a different
+output-stage reading (the two-phase OUT1/OUT2 summing the 3.3 kΩ tap pair
+implements, whose composite response must be solved against these curves
+before anything ships). Also extracted: the full THD–Vi curve (minimum
+0.42% near 0.8 Vrms, 2.5% at ≈1.97 Vrms — the EC table's "2.5% at
+1.5 Vrms" is a minimum-swing guarantee, and its "0.3% typ" disagrees with
+the same sheet's typical curve reading 0.43%, recorded as the datasheet's
+internal contradiction); Gi/THD versus RL (Gi 0 dB crossing near 27–28 kΩ,
+THD minimum at 70–100 kΩ); and THD versus fcp across 24–200 kHz. From
+MN3101: **clock = half the oscillation frequency is stated three times**
+(the recorded measurement trap is now primary-confirmed); CP1/CP2 are
+complementary at duty 1/2 with no specified non-overlap; the oscillator has
+**no voltage-to-frequency input** — external control is only by driving
+OX1 — which bears on OQ-01's period-versus-frequency-linear question: the
+106's Tr22 network drives the MN3101's oscillator node directly, and the
+datasheet supplies no transfer for that condition.
+
+### Chorus LFO designators — prose corrected, derivation unchanged
+
+Page 15 reads: R5 1 MΩ (IC1a square out → junction), R8 2.2 MΩ (junction →
+IC1b integrator), C3 0.1 µF, **R4 680 kΩ from the junction to Tr1's drain**
+(the mode shunt), **R3 2.2 MΩ as Tr1's gate-source bleed**, D1/Tr2/R2 47 kΩ
+as the drive from the CHORUS I/II line, R11 150 kΩ gate pull to −15 V;
+Schmitt R6 47 kΩ/R7 33 kΩ; IC2a inverter R10/R9 33 kΩ with C4 220 pF. The
+earlier description "Tr1 shorts R3 2.2 MΩ" mislabelled the shunt leg — Tr1
+grounds the junction *through R4* — while the derived R_eff values and the
+0.5533/0.8983 Hz rates (independently corroborated by the clone scope
+measurements 0.537/0.879 Hz) are unchanged. The p. 13 mode table (③ I/II:
+OFF = •, I = 0, II = 1; ④ on/off: OFF = 1, I = 0, II = 0) does not label
+which logic level conducts Tr1; the rate assignment rests on the derived
+R_eff pair matching the measured rates, mode I the slower leg.
+
+### Corroborations recorded without change
+
+- Page 8's printed scan order — NOISE, RES, VCA LEVEL, SUB, DCO CH1–6,
+  PWM, then interleaved VCF/VCA per channel — is the shipped 23-write cycle
+  (rotated: the model begins its pass at RES; the cycle is identical).
+- Page 1 spec verbatim: `VCF ENV MOD ±14 octaves` (verified at high zoom),
+  `KEY FOLLOW +3/−2 octaves`, `ATTACK 1.5 ms–3 s`, `DECAY/RELEASE
+  1.5 ms–12 s`, `LFO 0.1–30 Hz`, `AUDIO OUTPUT L −30/M −15/H 0 dBm`.
+- The chorus support chain's capacitor codes are now read from the 106's own
+  p. 15 at designator level — pre-BBD C33 820 pF/C31 680 pF and C34
+  1.8 nF/C32 270 pF, per-line post-BBD C37/C35 and C38/C36, line 2 C42/C40
+  and C43/C41, all with 22 kΩ pairs; BBD input poles R122/R115 10 kΩ with
+  C52/C56 2.2 nF; taps R118/R119 and R111/R112 3.3 kΩ into R117/R110
+  47 kΩ with C45/C48 2.2 nF; wet couplings C44/C47 0.1 µF with R120/R114
+  100 kΩ biases. The family-corroborated corner set is thereby
+  **106-anchored**; OQ-04 keeps only the loaded/time-varying transfer.
+  (A partial contradiction from the ModWiggler kit's Mouser BOM — no
+  820 pF/1.8 nF positions — is outweighed by the direct page read; the kit
+  cart list was possibly incomplete, and its 270 pF×3 positions match the
+  page's three 270 pF shunts.)
+- The chorus-bias service step (feed 10 Vp-p at module TP2, trim jack VR1/
+  VR2 for symmetric clipping) confirms the BBD bias trims target
+  symmetric clipping — consistent with the fitted symmetric `bbdTransfer`.
+- Cornutt's 2008 repair/calibration log (sequence15) supplies real-unit
+  colour consistent with the model: DCO CV offset "dead on", PWM range
+  50–95% "on spec", one unit's noise measured 6 Vpp against the 4 Vpp spec
+  (out of calibration), and scope-visible ringing/tilt on pulse tops.
+  His "Intel 8350" timer identification contradicts the p. 8/p. 13
+  8253/82C53 print; the page wins.
+
+### Still blocked / unread
+
+Hosts still refusing: synfo.nl (403 on the Roland directory), the
+ia804500 archive.org node (item not on that shard), analoguerenaissance,
+hkadesign, alpesmachines, kvraudio search (login-gated), imgur/dropbox
+attachment mirrors, midisizer.files.wordpress.com (scope plot images —
+quoted figures only). Gearspace attachments are not rendered for guests
+(heduhl's RX screenshots, ccaudio's schematic, DJMaytag's photos).
+Pages 2–4, 6–7, 14, 17 and 20+ of the Service Notes (including the parts
+list) are absent from both obtained copies; a complete scan would close
+the remaining component-value ambiguities (the noise-mixer leg value, the
+33 kΩ/39 kΩ saw-rail chain, R22's node in the boost branch).
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 

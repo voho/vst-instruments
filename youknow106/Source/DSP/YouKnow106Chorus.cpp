@@ -94,13 +94,13 @@ constexpr float wetMixerInputOhms = 39000.0f;            // R72 / R74
 // wet-only sweep should replace it when one is available.
 //
 // The reconstruction corners below equal the anti-alias corners because the
-// sister board's clone netlist -- the one whose clock driver and LFO parts
-// matched Roland's p. 15 transcription -- carries exactly three complete
-// Sallen-Key chains, one before the BBDs and one per output line, every
-// section the same 22k/22k pair with 820p/680p then 1n8/270p, alongside a
-// per-BBD 10k/2.2n input pole, both 3.3k taps into 47k/2.2n, and 100n/100k
-// branch coupling. Family-corroborated at designator level, no longer only
-// an assumption; the 106's own p. 15 capacitor codes remain OQ-04's read.
+// 106's own p. 15 scan reads them so at designator level (2026-08-07):
+// pre-BBD C33 820p/C31 680p then C34 1.8n/C32 270p, and per output line
+// C37/C35 and C38/C36 (line 1), C42/C40 and C43/C41 (line 2), every section
+// the same 22k/22k pair, alongside per-BBD 10k/2.2n input poles (R122/R115,
+// C52/C56), both 3.3k tap pairs into 47k/2.2n, and 100n/100k branch
+// coupling -- agreeing with the sister board's clone netlist that first
+// corroborated the family. OQ-04 keeps only the loaded transfer.
 constexpr float idealSourceTapPoleHz = 23461.38f;
 constexpr float reconstructionFirstHz = 9688.0f;
 constexpr float reconstructionSecondHz = 10377.0f;
