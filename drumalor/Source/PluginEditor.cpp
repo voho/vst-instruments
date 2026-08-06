@@ -2,7 +2,6 @@
 
 #include <DrumalorAssets.h>
 
-#include <algorithm>
 #include <cmath>
 #include <string_view>
 #include <type_traits>
@@ -434,9 +433,14 @@ void DrumalorPad::setLevel (float linearLevel)
     ballistics.update (
         drumalor::ui::meterPositionForLinear (linearLevel, -42.0f),
         1.0f, release, peakFall, 4.0f);
-    if (std::abs (ballistics.level - levelPosition) < 0.006f)
+    // The peak-hold marker keeps falling after the fill has settled, so a
+    // repaint is due when either has visibly moved. Watching the fill alone
+    // froze the marker mid-fall on any pad left idle.
+    if (std::abs (ballistics.level - levelPosition) < 0.006f
+        && std::abs (ballistics.peak - lastPaintedPeak) < 0.006f)
         return;
     levelPosition = ballistics.level;
+    lastPaintedPeak = ballistics.peak;
     repaint();
 }
 
@@ -751,7 +755,6 @@ void DrumalorBusMeter::setLevels (float leftLinear, float rightLinear, float bus
     const auto reductionDecibels = -juce::Decibels::gainToDecibels (
         juce::jlimit (0.02f, 1.0f, busGain), -48.0f);
     const auto target = juce::jlimit (0.0f, 1.0f, reductionDecibels / 18.0f);
-    const auto previousReduction = reductionPosition;
     reductionPosition = drumalor::ui::mix (
         reductionPosition, target, target > reductionPosition ? 1.0f : 0.30f);
 
@@ -764,18 +767,23 @@ void DrumalorBusMeter::setLevels (float leftLinear, float rightLinear, float bus
                                  : juce::String ("Kit bus meter"));
     }
 
-    // A resting kit must not force a repaint thirty times a second.
+    // A resting kit must not force a repaint thirty times a second. Every
+    // term compares against the last painted value rather than the previous
+    // frame, so a bar releasing in steps too small to clear the threshold
+    // individually still repaints once they add up - comparing the reduction
+    // frame to frame used to leave its minimum-width sliver lit indefinitely.
     const bool changed = std::abs (leftBallistics.level - lastPaintedLeft) > 0.004f
                       || std::abs (rightBallistics.level - lastPaintedRight) > 0.004f
                       || std::abs (leftBallistics.peak - lastPaintedLeftPeak) > 0.004f
                       || std::abs (rightBallistics.peak - lastPaintedRightPeak) > 0.004f
-                      || std::abs (reductionPosition - previousReduction) > 0.004f;
+                      || std::abs (reductionPosition - lastPaintedReduction) > 0.004f;
     if (! changed)
         return;
     lastPaintedLeft = leftBallistics.level;
     lastPaintedRight = rightBallistics.level;
     lastPaintedLeftPeak = leftBallistics.peak;
     lastPaintedRightPeak = rightBallistics.peak;
+    lastPaintedReduction = reductionPosition;
     repaint();
 }
 

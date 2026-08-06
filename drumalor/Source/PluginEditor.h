@@ -43,6 +43,7 @@ private:
     juce::String noteText;
     float flashLevel = 0.0f;
     float levelPosition = 0.0f;
+    float lastPaintedPeak = -1.0f;
     drumalor::ui::MeterBallistics ballistics;
     bool selected = false;
 };
@@ -96,6 +97,7 @@ private:
     drumalor::ui::MeterBallistics leftBallistics;
     drumalor::ui::MeterBallistics rightBallistics;
     float reductionPosition = 0.0f;
+    float lastPaintedReduction = -1.0f;
     float lastPaintedLeft = -1.0f;
     float lastPaintedRight = -1.0f;
     float lastPaintedLeftPeak = -1.0f;

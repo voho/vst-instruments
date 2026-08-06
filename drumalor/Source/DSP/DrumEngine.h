@@ -238,7 +238,8 @@ private:
         // 909 sample clock, as a phase increment per engine sample.
         float clockPhase { 1.0f };
         float clockIncrement { 0.625f };
-        // The DAC's held output and the source it was quantized from.
+        // The DAC's held output: the current ROM word through the companded
+        // quantizer, kept until the next sample clock.
         float hold { 0.0f };
         // The address-line DAC's anti-log envelope and its per-clock ratio.
         // Because it steps with the counter rather than with time, retuning
