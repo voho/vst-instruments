@@ -275,6 +275,11 @@ public:
     {
         // Reported at 67.7 by an independent reverse-engineering of the same
         // module, which is why this one is not a free parameter of the solve.
+        // The dksynth-lineage reconstruction netlist (Open80017a) carries
+        // exactly this network -- VCF OUT through 100k against a 1.5k shunt
+        // into the resonance OTA -- whose loaded read is (100k+1.5k)/1.5k,
+        // the reported 67.7; this ratio keeps the unloaded 100/1.5 form as
+        // the established coordinate of the solve.
         static constexpr float loopDividerRatio = 100000.0f / 1500.0f;
         static constexpr float loopHeadroomVolts =
             2.0f * 0.026f * loopDividerRatio;
@@ -282,6 +287,16 @@ public:
         static constexpr float nominalOscillationTravel = 0.9f;
         // Solved against the 4.8 Vp-p service trim; was a voiced 4.19.
         static constexpr float maximumFeedback = 4.51f;
+        // Voiced, but bracketed by the same reconstruction: its resonance
+        // OTA takes VCF IN through 24k/1.5k (1/17.0) on the non-inverting
+        // input, VCF OUT through 100k/1.5k on the inverting one, and injects
+        // its output current at the first stage's 4.7k/560/68k summing node.
+        // With stage 1's own -68k/4.7k feedback gain the OTA's gm cancels
+        // and the slope in this loop-gain coordinate is resistor-only,
+        // (67.7/17.0)*(4.7/68) = 0.275 -- about 20% above the value below
+        // (which sits 17% under it), same linear-in-k form. One
+        // reconstruction lineage, so not promoted; OQ-09's measured family
+        // still owns this number.
         static constexpr float inputCompensationPerFeedback = 0.2296f;
         // Solved against the 248 Hz service trim at that loop gain, which the
         // larger limit cycle would otherwise leave 108 cents flat; was 0.045.
