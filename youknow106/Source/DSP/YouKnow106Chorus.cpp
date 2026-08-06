@@ -220,10 +220,18 @@ float Chorus::bbdTransfer(float input) noexcept
     return static_cast<float>(static_cast<double>(input) / denominator);
 }
 
-float Chorus::transferLossStep(float& state, float input, float clockHz) noexcept
+float Chorus::transferLossStep(float& state, float input) noexcept
 {
-    const float dynamicSmear = std::clamp(transferSmear * (1.0f + (clockHz - 26000.0f) * 1.5e-6f), 0.1f, 0.99f);
-    state += dynamicSmear * (input - state);
+    // One fixed per-transfer coefficient, advanced once per clock edge. The
+    // recursion runs on the clock grid, so the absolute corner already moves
+    // with the clock exactly as the physical per-stage inefficiency does; a
+    // previous revision additionally scaled the coefficient with the clock
+    // (unity at an uncited 26 kHz, slope 1.5e-6 per Hz), which un-anchored
+    // the derivation -- at the datasheet's own 40 kHz condition it rendered
+    // -2.76 dB where the part is specified -3.0 dB -- and brightened with
+    // clock where per-transfer loss physically worsens. The fixture drives
+    // this exact function, so the anchor holds at every clock again.
+    state += transferSmear * (input - state);
     return state;
 }
 
@@ -408,7 +416,7 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         const float emerging = cells[static_cast<std::size_t>(writeIndex)];
         cells[static_cast<std::size_t>(writeIndex)] = bounded;
 
-        Chorus::transferLossStep(transferState, emerging, clockHz);
+        Chorus::transferLossStep(transferState, emerging);
         noiseState = nextNoiseState(noiseState);
         held = transferState
              + noiseFromState(noiseState) * independentLineRandomAmplitude

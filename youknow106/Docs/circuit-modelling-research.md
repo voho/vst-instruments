@@ -368,6 +368,9 @@ open question, it is named in its entry.
 
     The separate zipper texture the impulse was meant to supply still has no honest source: it would come from modelling each hold capacitor as tracking only while its multiplexer window is open and holding afterwards, which follows from the anchored 23-writes-per-4.2 ms scan. That remains blocked on **OQ-07** and is not guessed at in the meantime.
 
+23. **BBD clock-scaled transfer-smear coefficient — removed as breaking its own anchor**:
+    The charge-transfer pole's coefficient (entry 5's residual $-1.674$ dB, derived at the MN3009's 40 kHz datasheet condition) was additionally scaled per edge by $1 + (f_{\text{clk}} - 26\,\text{kHz}) \cdot 1.5 \times 10^{-6}$ — two constants classified nowhere, unity at a clock the docs never mention. At the datasheet's own 40 kHz the live line therefore rendered $-2.76$ dB where the part is specified $-3.0$ dB, and the response *brightened* with clock where per-transfer inefficiency physically worsens; the fixture could not see any of it because its seam omitted the clock argument and ran at the 26 kHz default. The multiplier is deleted rather than re-centred: the recursion advances once per clock edge, so a fixed per-transfer coefficient already moves the absolute corner with the clock, which is exactly what entry 5 derives and the datasheet anchors. The seam's clock parameter is gone with it, so the fixture now drives the precise function the line runs.
+
 *Note: All physical circuit simulation behaviors above scale dynamically with **Unit Character** (`calibration`): `0.0` suppresses every one of them for a pristine digital reference and `1.0` matches real hardware.*
 
 The control is bounded at **2.0**. Every mechanism is written as

@@ -117,9 +117,38 @@ struct Demo
     Take (*render)();
 };
 
-const std::array<Demo, 2> demos {{
+// Staccato high arpeggio through chorus II. Transient-rich content keeps
+// fresh high-frequency energy entering the line at every sweep position, so
+// the wet path's clock-dependent smear -- and any error in it -- reads as
+// the brightness of each echoing attack against the dry component.
+Take transferLoss()
+{
+    auto p = panel();
+    p.chorus = ChorusMode::Two;
+    p.cutoff = 0.95f;
+    p.resonance = 0.05f;
+    p.envDepth = 0.0f;
+    p.attack = 0.0f;
+    p.decay = 0.25f;
+    p.sustain = 0.0f;
+    p.release = 0.12f;
+    Take take(p);
+    take.rest(0.05);
+    for (const int note : { 76, 81, 85, 88, 85, 81, 76, 81, 85, 88, 85, 81 })
+    {
+        take.on(note, 0.95f);
+        take.rest(0.22);
+        take.off(note);
+        take.rest(0.18);
+    }
+    take.rest(1.4);
+    return take;
+}
+
+const std::array<Demo, 3> demos {{
     { "01-chorus-timing", chorusTiming },
     { "02-sweep-trajectory", sweepTrajectory },
+    { "03-bbd-transfer-loss", transferLoss },
 }};
 
 // metrics.csv keeps one row per fix so the README can be regenerated whole

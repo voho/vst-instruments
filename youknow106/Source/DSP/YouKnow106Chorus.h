@@ -322,8 +322,7 @@ private:
     // and frequency-response figures without the support filters obscuring the
     // result.
     [[nodiscard]] static float bbdTransfer(float input) noexcept;
-    static float transferLossStep(float& state, float input,
-                                  float clockHz = 26000.0f) noexcept;
+    static float transferLossStep(float& state, float input) noexcept;
 
     // One bucket-brigade line: a shift register of cell pairs clocked
     // asynchronously to the host rate, with the input resampled onto the clock
