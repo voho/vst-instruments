@@ -97,7 +97,7 @@ public:
     void process(float input, ChorusMode mode, float noiseScale,
                  float& left, float& right,
                  bool enableClockBleed = false,
-                 bool enableHyperbolicSweep = true,
+                 bool enableHyperbolicSweep = false,
                  float calibration = 1.0f) noexcept;
 
     // The nominal (unmodulated) delay in seconds for a clock frequency.

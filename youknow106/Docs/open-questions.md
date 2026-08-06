@@ -193,12 +193,15 @@ modes on identified, healthy, calibrated JUNO-106 unit(s), and estimate nominal
 values only to the extent the sample and uncertainty support.
 
 A 2026-08-05 transcription of Service Notes p. 15 closed the topology and the
-mode-rate ratio, and narrowed what remains. IC1 (µPC062) is an integrator plus
-a Schmitt comparator: C3 sits across IC1b pins 6 and 7, IC1a returns its own
-output to pin 3 through R6 47 kΩ against R15 1 kΩ to ground, and R7 33 kΩ
-closes the loop from the integrator's output to IC1a pin 2. IC2a then inverts
-once through R10/R9 33 kΩ, so TP4 carries the triangle and TP3 exactly its
-negative. Two results follow with no measurement:
+mode-rate ratio; the 2026-08-06 netlist pass corrected its comparator wiring.
+IC1 (µPC062) is an integrator plus a Schmitt comparator: C3 sits across IC1b
+pins 6 and 7, and R6 47 kΩ from the comparator's own output meets R7 33 kΩ
+from the integrator's output at the non-inverting input, the inverting input
+grounded. (The 2026-08-05 transcription placed R7 on pin 2 with R15 1 kΩ
+dividing pin 3 down; that reading put both rates 34× high and the sister
+board's netlist has no divider resistor on the node — do not reuse it.) IC2a
+then inverts once through R10/R9 33 kΩ, so TP4 carries the triangle and TP3
+exactly its negative. Two results follow with no measurement:
 
 - The modulation waveform is a **straight, symmetric triangle**, because the
   integrator is fed a constant current for the whole of each half cycle. It is
@@ -233,10 +236,12 @@ The formerly claimed 1.54–5.15 ms JUNO-106 sweep had no valid measurement and
 must not be reintroduced. The sibling's own rate ratio of 1.682 is likewise
 superseded by this instrument's 1.6234799 and must not be reintroduced.
 
-Note that `β = R15/(R15 + R6) = 1/48` is now known, so the absolute rates are
-one number away: reading C3, **or** measuring one period at TP4, **or**
-measuring the triangle's peak-to-peak amplitude at TP4 (which is `2·β·V_sat`
-and therefore also yields C3), each closes the scale on its own.
+With β = 33/47 and C3 = 0.1 µF the scale is derived, so what a hardware
+capture adds is confirmation against Roland's own board: one TP4 period
+checks the rates directly, and the triangle's peak-to-peak amplitude against
+IC1a's saturated swing measures β itself (their ratio is `2·β·V_sat`
+against `2·V_sat`). The falsified `1/48` divider figure must not be used in
+any of that arithmetic.
 
 ### Needed output (for LLM)
 
@@ -252,36 +257,41 @@ and therefore also yields C3), each closes the scale on its own.
   simultaneously with the TP3/TP4 modulation waveform so the clock trajectory
   can be referred to the voltage that produced it.
 
-  This is the one output that resolves the sweep law, and the model has now
-  taken a position on it that a measurement still has to confirm. Service Notes
-  p. 15 shows each MN3101 driven by a transistor voltage-to-current converter
-  (Tr22 with R133 2.2 kΩ, R134 22 kΩ and R135 1.8 kΩ, against C53 150 pF),
-  which is the shape of a *current-controlled* oscillator — **frequency**
-  linear in the control voltage rather than period. `Chorus::process`
-  accordingly bends the delay hyperbolically under
-  `enableChorusHyperbolicSweep`. A period-linear, a frequency-linear and an
-  exponential clock differ only in the trajectory between the endpoints, so no
-  endpoint measurement can tell them apart; only a time series can. Confirming
-  the MN3101's bias transfer from its datasheet would also settle it.
+  This is the one output that resolves the sweep law, and the model's position
+  on it reversed on 2026-08-06 when the first such series surfaced. Service
+  Notes p. 15 shows each MN3101 driven by a transistor voltage-to-current
+  converter (Tr22 with R133 2.2 kΩ, R134 22 kΩ and R135 1.8 kΩ, against C53
+  150 pF), which is the shape of a *current-controlled* oscillator —
+  **frequency** linear in the control voltage rather than period, which would
+  bend the delay hyperbolically. But KR-106's ~50-point click-timing series
+  across a real 106's modulation cycle fits the delay **linear in time** with
+  16 µs RMS residual and "no detectable exponential curvature", and its
+  changelog records shipping clock-domain modulation and reverting on that
+  measurement. The linear-in-delay trajectory therefore ships as the default,
+  and the frequency-linear reading waits behind
+  `enableChorusHyperbolicSweep`. The KR-106 series is below this project's
+  anchoring bar (raw clicks unpublished), so the question stays open: a
+  calibrated time series — or the MN3101's bias transfer from its datasheet —
+  still settles it.
 
-  **Endpoint defect fixed in code; the reason this stays P0 is the law
-  itself.** An earlier implementation scaled the hyperbolic delay about the
-  *centre*, which moved the endpoints: with the measured centre 3.505 ms and
-  sweep 1.845 ms, at Unit Character 1.0 the rendered range became about
-  2.30–7.40 ms instead of the measured 1.66–5.35 ms — a span 38% wider than
-  the only measured figures this chorus has, and the deviation scaled with
-  Unit Character even though whether the oscillator is current-controlled is
-  a topology fact, not a component tolerance. `Chorus::process` now instead
-  sweeps the *clock* linearly between `128/5.35 ms` and `128/1.66 ms` (derived
-  from the same centre/sweep numbers, no new constant), which keeps both
-  endpoints exact at any amount of Unit Character and changes only the path
-  between them. This closes the endpoint-overshoot defect but not the
-  question: the frequency-linear assumption itself is still unconfirmed
-  against hardware, so resolving OQ-01 still requires the clock time-series
-  capture described above.
+  **The retained hyperbolic path had its endpoint defect fixed before it was
+  demoted to a hypothesis.** An earlier implementation scaled the hyperbolic
+  delay about the *centre*, which moved the endpoints: with the measured
+  centre 3.505 ms and sweep 1.845 ms, at Unit Character 1.0 the rendered
+  range became about 2.30–7.40 ms instead of the measured 1.66–5.35 ms — a
+  span 38% wider than the only measured figures this chorus has, and the
+  deviation scaled with Unit Character even though whether the oscillator is
+  current-controlled is a topology fact, not a component tolerance. When
+  enabled, `Chorus::process` sweeps the *clock* linearly between
+  `128/5.35 ms` and `128/1.66 ms` (derived from the same centre/sweep
+  numbers, no new constant), which keeps both endpoints exact at any amount
+  of Unit Character, so the two laws differ only in the path between the
+  endpoints — which is exactly what the requested time series measures.
 - The peak-to-peak amplitude of the modulation triangle at TP4, and the
-  saturated output swing of IC1a, in the same capture. With `β = 1/48` from
-  R15/R6 those give C3, and C3 gives both absolute rates.
+  saturated output swing of IC1a, in the same capture. Their ratio measures
+  `β` directly — confirming (or falsifying) the netlist-derived 33/47 against
+  Roland's own board — and with β and one TP4 period the capture also
+  independently re-derives C3 against the corroborated 0.1 µF.
 - A table containing mode, line, clock minimum/maximum, derived delay
   maximum/minimum, modulation rate and uncertainty. Use
   `delay_seconds = 128 / clock_hz` for the two-phase 256-stage line, where

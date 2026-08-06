@@ -147,7 +147,12 @@ struct EngineParameters
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
     bool enableChorusClockBleed { false };
-    bool enableChorusHyperbolicSweep { true };
+    // Off by default: the only trajectory measurement in existence (KR-106's
+    // ~50-point click-timing series, 16 us RMS residual against a straight
+    // line) reads the 106's delay as linear in time, so the linear sweep
+    // ships and the frequency-linear hypothesis waits behind this switch for
+    // the calibrated capture OQ-01 still requests.
+    bool enableChorusHyperbolicSweep { false };
     bool enableElectrolyticC14Nonlinearity { true };
 };
 

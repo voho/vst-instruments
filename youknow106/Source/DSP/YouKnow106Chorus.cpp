@@ -514,18 +514,25 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         lfoPhase_ -= std::floor(lfoPhase_);
     const float modulation = triangle(lfoPhase_);
 
-    // MN3101 current-controlled oscillator delay sweep law. Tr22's voltage-to-
-    // current converter makes the *clock* linear in the control voltage, not
-    // the delay, so a physically faithful sweep bends delay hyperbolically --
-    // but only if it does so about the clock's own endpoints, not the delay's
-    // centre. Bending about the centre (an earlier revision of this code) moves
-    // the endpoints outward as Unit Character increases -- see OQ-01, which
-    // records the measured centre/sweep (3.505 ms / 1.845 ms) rendering a
-    // 38%-too-wide 2.30-7.40 ms range at Unit Character 1.0 instead of the
-    // measured 1.66-5.35 ms. Sweeping the clock linearly between the two clock
-    // frequencies that correspond to the measured delay endpoints keeps both
-    // endpoints exact at every blend amount, and differs from the linear-in-
-    // delay model only in the trajectory between them.
+    // Delay sweep trajectory. The linear-in-delay law below is the shipped
+    // default, because the one trajectory measurement in existence says so:
+    // a ~50-point click-timing series across the 106's modulation cycle fits
+    // a straight line in delay with 16 us RMS residual and "no exponential
+    // curvature" (recorded in OQ-01; below the anchoring bar, but a direct
+    // measurement standing against an explicit assumption). It also renders
+    // the instrument's fixed-detune character: a linear delay flank is a
+    // constant pitch offset, where a bent flank slides through it.
+    //
+    // The hyperbolic path behind `enableHyperbolicSweep` keeps the competing
+    // frequency-linear reading of Tr22's voltage-to-current converter -- the
+    // clock linear in the control voltage, hence delay bending -- available
+    // for the calibrated clock time-series OQ-01 still requests. When it
+    // engages it bends about the clock's own endpoints, not the delay's
+    // centre: an earlier centre-relative revision rendered a 38%-too-wide
+    // 2.30-7.40 ms range at Unit Character 1.0 instead of the measured
+    // 1.66-5.35 ms, which OQ-01 records. Bending about the endpoint clocks
+    // keeps both endpoints exact at every blend amount, so the two laws
+    // differ only in the trajectory between them.
     float nominalDelayA = centreDelay_ + sweep_ * modulation;
     float nominalDelayB = centreDelay_ - sweep_ * modulation;
 

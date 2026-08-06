@@ -3467,6 +3467,48 @@ void testChorusWidthAndSilence()
     expect(sideEnergy(ChorusMode::Two) > 0.05, "the second mode produces no width");
 }
 
+void testChorusSweepTrajectoryDefault()
+{
+    // The linear-in-delay trajectory ships: the one delay-trajectory
+    // measurement on record (KR-106's click-timing series, 16 us RMS residual
+    // against a straight line) reads the 106's sweep as linear in time, so
+    // the frequency-linear hypothesis waits behind the switch instead of
+    // shipping as the default.
+    EngineParameters defaults;
+    expect(!defaults.enableChorusHyperbolicSweep,
+           "the frequency-linear sweep hypothesis became the default again");
+
+    // The retained hypothesis has to stay alive behind the switch, and its
+    // blend has to answer to Unit Character: at full character the two laws
+    // render different mid-flank trajectories, and at zero character the
+    // switch must do nothing at all.
+    constexpr float sampleRate = 48000.0f;
+    const auto render = [&](bool hyperbolic, float calibration) {
+        Chorus chorus;
+        chorus.prepare(sampleRate);
+        double sum = 0.0;
+        for (int index = 0; index < 48000; ++index)
+        {
+            const float input = std::sin(
+                2.0f * 3.14159265f * 1000.0f * static_cast<float>(index)
+                / sampleRate);
+            float left = 0.0f;
+            float right = 0.0f;
+            chorus.process(input, ChorusMode::One, 0.0f, left, right,
+                           false, hyperbolic, calibration);
+            sum += std::abs(static_cast<double>(left - right));
+        }
+        return sum;
+    };
+    const double linear = render(false, 1.0f);
+    const double bent = render(true, 1.0f);
+    expect(std::abs(linear - bent) > 1.0e-3,
+           "the retained hyperbolic path no longer changes the trajectory");
+    const double bentAtZero = render(true, 0.0f);
+    expectNear(bentAtZero, render(false, 0.0f), 1.0e-9,
+               "the hyperbolic switch acted at zero Unit Character");
+}
+
 void testChorusNoiseIsPresentAndDefeatable()
 {
     constexpr double sampleRate = 48000.0;
@@ -4277,6 +4319,7 @@ int main()
     testLoweringTheVoiceCountLetsNotesFinish();
     testEnvelopeAndGateModes();
     testChorusWidthAndSilence();
+    testChorusSweepTrajectoryDefault();
     testChorusNoiseIsPresentAndDefeatable();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();

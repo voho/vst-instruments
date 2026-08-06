@@ -88,14 +88,38 @@ Take chorusTiming()
     return take;
 }
 
+// One held note through chorus I. With a single steady partial series against
+// the dry component, the wet line's pitch trajectory is the take: a
+// delay-linear sweep holds a constant detune per flank where the hyperbolic
+// law slides through it.
+Take sweepTrajectory()
+{
+    auto p = panel();
+    p.chorus = ChorusMode::One;
+    p.cutoff = 0.85f;
+    p.resonance = 0.05f;
+    p.envDepth = 0.0f;
+    p.attack = 0.08f;
+    p.sustain = 1.0f;
+    p.subLevel = 0.2f;
+    Take take(p);
+    take.rest(0.05);
+    take.on(64, 0.95f);
+    take.rest(9.0);
+    take.off(64);
+    take.rest(1.2);
+    return take;
+}
+
 struct Demo
 {
     const char* slug;
     Take (*render)();
 };
 
-const std::array<Demo, 1> demos {{
+const std::array<Demo, 2> demos {{
     { "01-chorus-timing", chorusTiming },
+    { "02-sweep-trajectory", sweepTrajectory },
 }};
 
 // metrics.csv keeps one row per fix so the README can be regenerated whole

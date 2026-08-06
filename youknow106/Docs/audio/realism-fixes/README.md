@@ -15,3 +15,4 @@ floor, not a difference, and it is below audibility.
 | Take | Diff peak (dBc) | Diff RMS (dBc) |
 | --- | ---: | ---: |
 | `01-chorus-timing` | +12.4 | -1.7 |
+| `02-sweep-trajectory` | +8.7 | -1.0 |
