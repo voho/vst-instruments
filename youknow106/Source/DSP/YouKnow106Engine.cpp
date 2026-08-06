@@ -1846,7 +1846,7 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     // but still spans 0-100). Clamping it to fix01's 0-1 would silently
     // discard that range.
     result.calibration = std::isfinite(result.calibration)
-        ? std::clamp(result.calibration, 0.0f, 100.0f) : 1.0f;
+        ? std::clamp(result.calibration, 0.0f, EngineParameters::calibrationCeiling) : 1.0f;
     fix01(result.chorusNoise, 1.0f);
 
     result.masterTuneCents = std::isfinite(result.masterTuneCents)
@@ -2978,7 +2978,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     {
         const float u = clamp01(static_cast<float>(phase / rise));
         const float frequencyHz = static_cast<float>(dcoQuantisedFrequency(dco.divider, parameters.range));
-        const float curveAmount = 0.12f * (100.0f / (frequencyHz + 50.0f)) * std::clamp(parameters.calibration, 0.0f, 100.0f);
+        const float curveAmount = 0.12f * (100.0f / (frequencyHz + 50.0f)) * parameters.calibration;
         sawNaive -= curveAmount * u * (1.0f - u);
     }
 
@@ -3532,7 +3532,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             if (parameters.enableElectrolyticC14Nonlinearity && parameters.calibration > 0.0f)
             {
                 const float inputMagnitude = std::abs(busIn);
-                const float capMod = 1.0f + 0.15f * (inputMagnitude / (1.0f + inputMagnitude)) * std::clamp(parameters.calibration, 0.0f, 100.0f);
+                const float capMod = 1.0f + 0.15f * (inputMagnitude / (1.0f + inputMagnitude))
+                                   * parameters.calibration;
                 effectiveCouplingG *= capMod;
             }
             const float coupled = voiceBusCoupling_.process(

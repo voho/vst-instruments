@@ -455,15 +455,21 @@ YouKnow106AudioProcessor::createParameterLayout()
     layout.add (travel (velocity, "Velocity", 0.0f, percentAttributes()));
     // Keep the historical id and parameter slot so existing automation remains
     // attached; a stored session value still wins over this default, so only
-    // new instances move. Zero is the calibrated nominal model, one is the
+    // new instances move. Zero is the calibrated nominal model and one is the
     // "matches real hardware" reference every rendered fixture in this
-    // repository defaults to, and the range continues to 100 so the host
-    // control itself can reach the same exaggerated-for-contrast territory
-    // the internal comparison tools use. Skewed so the knob's own centre sits
-    // at 1.0: the practically useful 0-1 span still covers half the travel,
-    // rather than being squeezed into the first percent of a plain 0-100 knob.
-    juce::NormalisableRange<float> calibrationRange { 0.0f, 100.0f, 0.0f };
-    calibrationRange.setSkewForCentre (1.0f);
+    // repository defaults to.
+    //
+    // The range used to continue to 100, to reach the exaggerated-for-contrast
+    // territory the comparison-rendering tools used. Those tools no longer
+    // touch this control -- they toggle one mechanism at a time with Unit
+    // Character held at its default -- so the only thing the upper range still
+    // did was extrapolate. Each mechanism is written as
+    // nominal + (physical - nominal) * calibration, which is a blend only on
+    // [0, 1]: past that it walks straight through the nominal value and out the
+    // other side. The voice mixer inverted its own polarity above 1.8, and the
+    // output summer's blend inverted too. Two is as far as the affine form
+    // stays meaningful, and it still leaves room to exaggerate.
+    juce::NormalisableRange<float> calibrationRange { 0.0f, 2.0f, 0.0f };
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { calibration, 1 }, "Unit Character",
         calibrationRange, 1.0f, percentAttributes()));

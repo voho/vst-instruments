@@ -302,7 +302,29 @@ open question, it is named in its entry.
 
     The zipper texture it was meant to supply has a physically honest source: modelling each hold capacitor as tracking only while its multiplexer window is open and holding afterwards, which follows from the anchored 23-writes-per-4.2 ms scan. That is blocked on the same **OQ-07** question and is not guessed at in the meantime.
 
-*Note: All physical circuit simulation behaviors above scale dynamically with **Unit Character** (`calibration`): `0.0` suppresses every one of them for a pristine digital reference, `1.0` matches real hardware, and the host parameter's own range continues to `100.0` -- skewed so 0-1 still covers half the knob's travel -- for the same exaggerated-for-contrast territory the comparison-rendering tools in this repository use.*
+*Note: All physical circuit simulation behaviors above scale dynamically with **Unit Character** (`calibration`): `0.0` suppresses every one of them for a pristine digital reference and `1.0` matches real hardware.*
+
+The control is bounded at **2.0**. Every mechanism is written as
+`nominal + (physical - nominal) * calibration`, which is a blend only on
+`[0, 1]`; past that it extrapolates without limit, walking straight through the
+nominal value and out the other side. The host range formerly continued to
+100, to reach the exaggerated-for-contrast territory the comparison-rendering
+tools used -- but those tools no longer touch this control, since each pair now
+toggles a single mechanism with Unit Character held at its default, so the upper
+range had no remaining customer and several real defects:
+
+| Mechanism | Behaviour above 1.0, before the bound |
+| --- | --- |
+| Passive mixer loading | polarity inverted at 1.82 with four legs connected, reaching a gain of $-27.8$ at 100 |
+| Output summer blend | gain $-0.22$ at 100 for a unit input, $-3.67$ at twice that |
+| DCO reset shaper | returned $-4.0$ for a $+1.0$ input at 100, with one paired BLAMP slope scaled $\times 301$ and its partner by $e^{-400}$ |
+| Ramp curvature | parabola 3.6 times the ramp's own amplitude |
+| C14 coupling | pole moved from 0.82 Hz to about 7 Hz |
+| Chorus sweep | delay extrapolated 100 times past the measured endpoints, pinning against the clock clamps |
+
+Two still exaggerates every mechanism while leaving each blend on the same side
+of its nominal value. The engine clamps to the same bound in `sanitise()`, so a
+host automating past the range cannot reintroduce the behaviour above.
 
 ### Tuning stability: why no thermal or long-term pitch drift is modelled
 

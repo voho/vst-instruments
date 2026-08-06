@@ -111,17 +111,21 @@ struct EngineParameters
     // more) -- every optional physical-circuit mechanism answers to this one
     // control.
     //
-    // The host-facing range is 0 to 1: zero is the calibrated nominal model
-    // -- no spread, no drift, none of the inherent non-linear shapes leaning
-    // in -- and one models the complete, real-hardware-accurate span. Neither
-    // end is a claim that any real instrument sits exactly there (no
-    // qualifying post-calibration residual data exists to describe a real
-    // population, OQ-10); one is simply the declared "matches real hardware"
-    // reference. Internal callers (the comparison-rendering tools in this
-    // repository) may drive this past 1, up to 100, to exaggerate every
-    // mechanism for audible contrast in a demo -- that range does not exist on
-    // the host parameter. The shipped default is 1.0.
+    // Zero is the calibrated nominal model -- no spread, no drift, none of the
+    // optional non-linear shapes leaning in -- and one models the complete,
+    // real-hardware-accurate span. Neither end is a claim that any real
+    // instrument sits exactly there (no qualifying post-calibration residual
+    // data exists to describe a real population, OQ-10); one is simply the
+    // declared "matches real hardware" reference. The shipped default is 1.0.
+    //
+    // Bounded at 2. Every mechanism is written as
+    // nominal + (physical - nominal) * calibration, which interpolates only on
+    // [0, 1]; beyond that it extrapolates without limit, and several mechanisms
+    // pass through zero and change sign. Values up to 2 still exaggerate while
+    // every blend stays on the same side of its nominal value.
     float calibration { 1.0f };
+    // Bound for the affine blends above; see the note on `calibration`.
+    static constexpr float calibrationCeiling = 2.0f;
     float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
     int polyphony { 6 };           // 6 is the hardware voice count.
 

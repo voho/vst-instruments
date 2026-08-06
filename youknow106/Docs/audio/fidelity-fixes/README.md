@@ -22,8 +22,8 @@ is a change nobody can hear.
 | --- | ---: | ---: |
 | `01-unison-tuning` | -87.6 | -92.4 |
 | `02-output-summer-drive` | -82.2 | -87.0 |
-| `03-chorus-wet` | -23.8 | -44.7 |
+| `03-chorus-wet` | -81.5 | -86.3 |
 | `04-resonant-sweep` | -78.8 | -83.5 |
-| `05-saw-bass` | -23.0 | -52.8 |
-| `06-unit-character-sweep` | +19.2 | +4.7 |
-| `07-high-lead` | -32.6 | -47.4 |
+| `05-saw-bass` | -85.5 | -90.3 |
+| `06-unit-character-sweep` | +4.6 | -22.8 |
+| `07-high-lead` | -85.7 | -90.5 |

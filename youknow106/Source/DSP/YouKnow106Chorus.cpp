@@ -555,8 +555,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         const float hypDelayA = delaySecondsForClock(clockMid - clockSpread * modulation);
         const float hypDelayB = delaySecondsForClock(clockMid + clockSpread * modulation);
 
-        nominalDelayA += (hypDelayA - nominalDelayA) * std::clamp(calibration, 0.0f, 100.0f);
-        nominalDelayB += (hypDelayB - nominalDelayB) * std::clamp(calibration, 0.0f, 100.0f);
+        nominalDelayA += (hypDelayA - nominalDelayA) * std::clamp(calibration, 0.0f, 2.0f);
+        nominalDelayB += (hypDelayB - nominalDelayB) * std::clamp(calibration, 0.0f, 2.0f);
     }
 
     const float delayA = std::max(nominalDelayA, 1.0e-4f);
