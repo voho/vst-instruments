@@ -4,6 +4,7 @@
 //   YouKnow106RenderRealismComparison retrigger-release-tail before <output-dir>
 //   YouKnow106RenderRealismComparison common-vca-level before <output-dir>
 //   YouKnow106RenderRealismComparison bbd-transfer-clock-law before <output-dir>
+//   YouKnow106RenderRealismComparison voice-vca-feedthrough before <output-dir>
 //   ... make and rebuild one DSP change ...
 //   YouKnow106RenderRealismComparison <scenario> after <output-dir>
 //
@@ -66,9 +67,16 @@ using youknow106::tools::realism::writeText;
 constexpr std::string_view scenarioSlug = "retrigger-release-tail";
 constexpr std::string_view commonVcaScenarioSlug = "common-vca-level";
 constexpr std::string_view bbdTransferScenarioSlug = "bbd-transfer-clock-law";
+constexpr std::string_view voiceVcaFeedthroughScenarioSlug =
+    "voice-vca-feedthrough";
 constexpr std::uint32_t eventScheduleSeed = 0x1061065du;
 constexpr std::uint32_t commonVcaEventScheduleSeed = 0x106c0a11u;
 constexpr std::uint32_t bbdTransferEventScheduleSeed = 0x106bbd31u;
+constexpr double voiceVcaFeedthroughListeningGain = 31.622776601683793;
+constexpr double voiceVcaFeedthroughListeningCeiling = 0.95;
+constexpr std::uint64_t voiceVcaNoteOnSample = 20160u;
+constexpr std::uint64_t voiceVcaNoteOffSample = 100800u;
+constexpr std::uint64_t voiceVcaEndSample = 181440u;
 constexpr int scenarioProtocolVersion = 1;
 constexpr std::string_view generatedBegin =
     "<!-- BEGIN GENERATED REALISM COMPARISON -->";
@@ -96,6 +104,27 @@ struct SectionEvent
     const char* name { "" };
     const char* chorus { "" };
 };
+
+struct AnalysisWindow
+{
+    const char* name { "" };
+    std::uint64_t startSample { 0 };
+    std::uint64_t endSample { 0 };
+    const char* purpose { "" };
+};
+
+constexpr std::array<AnalysisWindow, 5> voiceVcaAnalysisWindows {{
+    { "pre-event-floor", 10080u, 20160u,
+      "settled floor immediately before gate open" },
+    { "gate-open-transient", 20160u, 40320u,
+      "gate-open event and subsequent control settling" },
+    { "held-settled-floor", 90720u, 100800u,
+      "settled six-voice gate-open floor" },
+    { "gate-close-transient", 100800u, 120960u,
+      "gate-close event and subsequent control settling" },
+    { "released-settled-floor", 171360u, 181440u,
+      "settled floor at the end of the released tail" }
+}};
 
 struct RenderedScenario
 {
@@ -442,6 +471,66 @@ RenderedScenario renderBbdTransferClockLaw()
              std::move(sections) };
 }
 
+EngineParameters voiceVcaFeedthroughPatch()
+{
+    EngineParameters parameters;
+    parameters.keyMode = KeyMode::Unison;
+    parameters.polyphony = 6;
+    parameters.range = DcoRange::Eight;
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = false;
+    parameters.subLevel = 0.0f;
+    parameters.noiseLevel = 0.0f;
+    parameters.highPass = HighPassMode::One;
+    parameters.cutoff = 0.0f;
+    parameters.resonance = 0.0f;
+    parameters.envDepth = 0.0f;
+    parameters.vcfLfoDepth = 0.0f;
+    parameters.keyFollow = 0.0f;
+    parameters.vcaMode = VcaMode::Gate;
+    parameters.attack = 0.0f;
+    parameters.decay = 0.0f;
+    parameters.sustain = 1.0f;
+    parameters.release = 0.0f;
+    parameters.vcaLevel = 1.0f;
+    parameters.chorus = ChorusMode::Off;
+    parameters.chorusNoise = 0.0f;
+    parameters.velocityDepth = 0.0f;
+    parameters.volume = 1.0f;
+    parameters.calibration = 1.0f;
+    parameters.enableVcfStageOffsets = false;
+    parameters.enableOpAmpSlewLimiting = false;
+    parameters.enableVcfEarlyEffect = false;
+    parameters.enableSpatialThermalGradient = false;
+    parameters.enableChorusClockBleed = false;
+    parameters.enableChorusHyperbolicSweep = false;
+    parameters.enableElectrolyticC14Nonlinearity = false;
+    return parameters;
+}
+
+RenderedScenario renderVoiceVcaFeedthrough()
+{
+    Performance performance(voiceVcaFeedthroughPatch());
+    std::vector<SectionEvent> sections {
+        { 0u, "silent-pre-roll", "off" }
+    };
+
+    performance.render(static_cast<int>(voiceVcaNoteOnSample));
+    sections.push_back({ performance.cursor(), "six-voice-gate-open", "off" });
+    performance.noteOn(60);
+    performance.render(static_cast<int>(voiceVcaNoteOffSample
+                                        - voiceVcaNoteOnSample));
+    sections.push_back({ performance.cursor(), "six-voice-gate-close", "off" });
+    performance.noteOff(60);
+    performance.render(static_cast<int>(voiceVcaEndSample
+                                        - voiceVcaNoteOffSample));
+
+    if (performance.cursor() != voiceVcaEndSample)
+        std::abort();
+    return { performance.takeAudio(), performance.takeEvents(), {}, {},
+             std::move(sections) };
+}
+
 std::string jsonEscape(std::string_view input)
 {
     std::string output;
@@ -544,6 +633,140 @@ std::string sectionJson(const std::vector<SectionEvent>& sections)
         output << '\n';
     }
     output << "  ]";
+    return output.str();
+}
+
+struct WindowMetrics
+{
+    double positivePeak { 0.0 };
+    double negativePeak { 0.0 };
+    double absolutePeak { 0.0 };
+    double rms { 0.0 };
+    double mean { 0.0 };
+    double lowBandRms20To200Hz { 0.0 };
+    double maximumStereoDifference { 0.0 };
+    std::uint64_t peakAbsoluteSample { 0 };
+    std::uint64_t peakWindowOffset { 0 };
+};
+
+WindowMetrics measureWindow(const StereoBuffer& audio,
+                            const AnalysisWindow& window)
+{
+    WindowMetrics metrics;
+    if (window.endSample <= window.startSample
+        || window.endSample > audio.left.size()
+        || audio.left.size() != audio.right.size())
+        return metrics;
+
+    const double highPassCoefficient = 1.0 - std::exp(
+        -2.0 * 3.14159265358979323846 * 20.0
+        / static_cast<double>(comparisonSampleRate));
+    const double lowPassCoefficient = 1.0 - std::exp(
+        -2.0 * 3.14159265358979323846 * 200.0
+        / static_cast<double>(comparisonSampleRate));
+    double low20Left = 0.0;
+    double low20Right = 0.0;
+    double band200Left = 0.0;
+    double band200Right = 0.0;
+    long double sum = 0.0;
+    long double sumSquares = 0.0;
+    long double lowBandSquares = 0.0;
+    // Prime the diagnostic filters from sample zero so each window observes
+    // the same continuous 20--200 Hz analysis signal rather than a new filter
+    // startup transient at its left edge.
+    for (std::uint64_t frame = 0; frame < window.endSample; ++frame)
+    {
+        const double left = audio.left[static_cast<std::size_t>(frame)];
+        const double right = audio.right[static_cast<std::size_t>(frame)];
+        low20Left += highPassCoefficient * (left - low20Left);
+        low20Right += highPassCoefficient * (right - low20Right);
+        const double highLeft = left - low20Left;
+        const double highRight = right - low20Right;
+        band200Left += lowPassCoefficient * (highLeft - band200Left);
+        band200Right += lowPassCoefficient * (highRight - band200Right);
+
+        if (frame < window.startSample)
+            continue;
+
+        metrics.positivePeak = std::max({ metrics.positivePeak, left, right });
+        metrics.negativePeak = std::min({ metrics.negativePeak, left, right });
+        const double framePeak = std::max(std::abs(left), std::abs(right));
+        if (framePeak > metrics.absolutePeak)
+        {
+            metrics.absolutePeak = framePeak;
+            metrics.peakAbsoluteSample = frame;
+            metrics.peakWindowOffset = frame - window.startSample;
+        }
+        metrics.maximumStereoDifference = std::max(
+            metrics.maximumStereoDifference, std::abs(left - right));
+        sum += left + right;
+        sumSquares += static_cast<long double>(left) * left;
+        sumSquares += static_cast<long double>(right) * right;
+        lowBandSquares += static_cast<long double>(band200Left) * band200Left;
+        lowBandSquares += static_cast<long double>(band200Right) * band200Right;
+    }
+
+    const auto samples = static_cast<long double>(
+        (window.endSample - window.startSample) * 2u);
+    metrics.rms = std::sqrt(static_cast<double>(sumSquares / samples));
+    metrics.mean = static_cast<double>(sum / samples);
+    metrics.lowBandRms20To200Hz =
+        std::sqrt(static_cast<double>(lowBandSquares / samples));
+    return metrics;
+}
+
+std::string voiceVcaWindowsJson()
+{
+    std::ostringstream output;
+    output << "[\n";
+    for (std::size_t index = 0; index < voiceVcaAnalysisWindows.size(); ++index)
+    {
+        const auto& window = voiceVcaAnalysisWindows[index];
+        output << "    { \"name\": \"" << window.name
+               << "\", \"start_sample\": " << window.startSample
+               << ", \"end_sample_exclusive\": " << window.endSample
+               << ", \"frames\": " << (window.endSample - window.startSample)
+               << ", \"purpose\": \"" << window.purpose << "\" }";
+        if (index + 1 < voiceVcaAnalysisWindows.size())
+            output << ',';
+        output << '\n';
+    }
+    output << "  ]";
+    return output.str();
+}
+
+std::string voiceVcaWindowMetricsJson(const StereoBuffer& audio, int indent)
+{
+    const std::string spaces(static_cast<std::size_t>(indent), ' ');
+    std::ostringstream output;
+    output << "{\n";
+    for (std::size_t index = 0; index < voiceVcaAnalysisWindows.size(); ++index)
+    {
+        const auto& window = voiceVcaAnalysisWindows[index];
+        const auto metrics = measureWindow(audio, window);
+        output << spaces << "  \"" << window.name << "\": {\n"
+               << spaces << "    \"positive_peak\": "
+               << jsonNumber(metrics.positivePeak) << ",\n"
+               << spaces << "    \"negative_peak\": "
+               << jsonNumber(metrics.negativePeak) << ",\n"
+               << spaces << "    \"absolute_peak\": "
+               << jsonNumber(metrics.absolutePeak) << ",\n"
+               << spaces << "    \"rms\": " << jsonNumber(metrics.rms) << ",\n"
+               << spaces << "    \"mean\": " << jsonNumber(metrics.mean) << ",\n"
+               << spaces << "    \"rms_20_to_200_hz\": "
+               << jsonNumber(metrics.lowBandRms20To200Hz) << ",\n"
+               << spaces << "    \"maximum_left_right_difference\": "
+               << jsonNumber(metrics.maximumStereoDifference) << ",\n"
+               << spaces << "    \"absolute_peak_sample\": "
+               << metrics.peakAbsoluteSample << ",\n"
+               << spaces << "    \"absolute_peak_window_offset\": "
+               << metrics.peakWindowOffset << "\n"
+               << spaces << "  }";
+        if (index + 1 < voiceVcaAnalysisWindows.size())
+            output << ',';
+        output << '\n';
+    }
+    output << spaces << '}';
     return output.str();
 }
 
@@ -740,6 +963,99 @@ std::string bbdTransferManifestPrefix(std::string_view stage,
     return output.str();
 }
 
+std::string voiceVcaFeedthroughManifestPrefix(
+    std::string_view stage, const RenderedScenario& rendered)
+{
+    std::ostringstream output;
+    output << "{\n"
+           << "  \"schema_version\": 1,\n"
+           << "  \"tool\": \"YouKnow106RenderRealismComparison\",\n"
+           << "  \"scenario\": \"" << voiceVcaFeedthroughScenarioSlug << "\",\n"
+           << "  \"scenario_protocol_version\": " << scenarioProtocolVersion << ",\n"
+           << "  \"stage\": \"" << stage << "\",\n"
+           << "  \"dsp_source_sha256\": \"" << YOUKNOW106_DSP_SOURCE_SHA256 << "\",\n"
+           << "  \"compiler_id\": \""
+           << jsonEscape(YOUKNOW106_COMPARISON_COMPILER_ID) << "\",\n"
+           << "  \"compiler_version\": \""
+           << jsonEscape(YOUKNOW106_COMPARISON_COMPILER_VERSION) << "\",\n"
+           << "  \"sample_rate_hz\": " << comparisonSampleRate << ",\n"
+           << "  \"engine_internal_rate_hz\": 192000,\n"
+           << "  \"block_size_samples\": " << comparisonBlockSize << ",\n"
+           << "  \"high_quality\": true,\n"
+           << "  \"channels\": 2,\n"
+           << "  \"frames\": " << rendered.audio.left.size() << ",\n"
+           << "  \"wav_encoding\": \"IEEE-754 float32 little-endian\",\n"
+           << "  \"event_schedule_seed\": null,\n"
+           << "  \"schedule_policy\": \"protocol-exact sample positions; no random timing\",\n"
+           << "  \"engine_seed_policy\": "
+              "\"fixed per-card hash seeds rooted at 17; all intentional audio and chorus noise disabled\",\n"
+           << "  \"schedule\": {\n"
+           << "    \"start_sample\": 0,\n"
+           << "    \"note_on_sample\": " << voiceVcaNoteOnSample << ",\n"
+           << "    \"note_off_sample\": " << voiceVcaNoteOffSample << ",\n"
+           << "    \"end_sample_exclusive\": " << voiceVcaEndSample << ",\n"
+           << "    \"pre_roll_nominal_control_scans\": 100,\n"
+           << "    \"gate_open_nominal_control_scans\": 400,\n"
+           << "    \"released_tail_nominal_control_scans\": 400,\n"
+           << "    \"nominal_control_scan_seconds\": 0.0042\n"
+           << "  },\n"
+           << "  \"listening_protocol\": {\n"
+           << "    \"fixed_gain_linear\": "
+           << jsonNumber(voiceVcaFeedthroughListeningGain) << ",\n"
+           << "    \"fixed_gain_db\": 30.0,\n"
+           << "    \"adaptive_normalization\": false,\n"
+           << "    \"diagnostic_magnification\": true,\n"
+           << "    \"amplified_peak_ceiling\": "
+           << jsonNumber(voiceVcaFeedthroughListeningCeiling) << "\n"
+           << "  },\n"
+           << "  \"patch\": {\n"
+           << "    \"key_mode\": \"Unison\",\n"
+           << "    \"polyphony\": 6,\n"
+           << "    \"note\": 60,\n"
+           << "    \"velocity\": 1.0,\n"
+           << "    \"range\": \"8 foot\",\n"
+           << "    \"saw_enabled\": false,\n"
+           << "    \"pulse_enabled\": false,\n"
+           << "    \"sub_level\": 0.0,\n"
+           << "    \"noise_level\": 0.0,\n"
+           << "    \"high_pass\": \"1\",\n"
+           << "    \"cutoff\": 0.0,\n"
+           << "    \"resonance\": 0.0,\n"
+           << "    \"envelope_depth\": 0.0,\n"
+           << "    \"vcf_lfo_depth\": 0.0,\n"
+           << "    \"key_follow\": 0.0,\n"
+           << "    \"vca_mode\": \"gate\",\n"
+           << "    \"attack\": 0.0,\n"
+           << "    \"decay\": 0.0,\n"
+           << "    \"sustain\": 1.0,\n"
+           << "    \"release\": 0.0,\n"
+           << "    \"vca_level\": 1.0,\n"
+           << "    \"volume\": 1.0,\n"
+           << "    \"chorus\": \"off\",\n"
+           << "    \"chorus_noise\": 0.0,\n"
+           << "    \"velocity_depth\": 0.0,\n"
+           << "    \"unit_character\": 1.0,\n"
+           << "    \"enable_vcf_stage_offsets\": false,\n"
+           << "    \"enable_op_amp_slew_limiting\": false,\n"
+           << "    \"enable_vcf_early_effect\": false,\n"
+           << "    \"enable_spatial_thermal_gradient\": false,\n"
+           << "    \"enable_chorus_clock_bleed\": false,\n"
+           << "    \"enable_chorus_hyperbolic_sweep\": false,\n"
+           << "    \"enable_electrolytic_c14_nonlinearity\": false\n"
+           << "  },\n"
+           << "  \"sections\": " << sectionJson(rendered.sections) << ",\n"
+           << "  \"midi_events\": " << eventJson(rendered.events) << ",\n"
+           << "  \"analysis_windows\": " << voiceVcaWindowsJson() << ",\n"
+           << "  \"analysis_filter\": "
+              "\"diagnostic first-order 20 Hz high-pass followed by 200 Hz low-pass, continuously primed from sample zero\",\n"
+           << "  \"limitations\": [\n"
+           << "    \"The full-engine fixture retains deterministic microscopic filter excitation; raw silence is not expected.\",\n"
+           << "    \"No calibrated hardware capture establishes the residual feedthrough magnitude for a trimmed unit.\",\n"
+           << "    \"The +30 dB files are diagnostic magnifications, not the original listening level; raw files carry actual amplitude.\"\n"
+           << "  ],\n";
+    return output.str();
+}
+
 std::string readmeProse()
 {
     return
@@ -807,6 +1123,32 @@ std::string bbdTransferReadmeProse()
         "```";
 }
 
+std::string voiceVcaFeedthroughReadmeProse()
+{
+    return
+        "# Voice-VCA feedthrough realism comparison\n\n"
+        "This fixture opens all six physical voices in Unison while every intentional\n"
+        "oscillator, sub, and noise source is off. Gate-open and gate-close events occur\n"
+        "at the same nominal converter-scan phase, isolating any signal invented by the\n"
+        "voice-VCA path from musical masking.\n\n"
+        "The `-listen` files apply a protocol-fixed **+30 dB diagnostic magnification**.\n"
+        "They do not represent the defect at its original loudness and are never\n"
+        "adaptively normalized. The raw float32 files carry the actual rendered level.\n"
+        "Before, after, and signed difference always receive the identical fixed gain.\n\n"
+        "The engine intentionally retains deterministic microscopic filter excitation,\n"
+        "so the full render is not expected to become exact digital silence. No calibrated\n"
+        "hardware capture yet establishes the residual feedthrough of a trimmed unit.\n\n"
+        "Only the text between the generated markers below is renderer-owned.\n\n"
+        "```bash\n"
+        "cmake --build build-dsp --parallel --target YouKnow106RenderRealismComparison\n"
+        "./build-dsp/YouKnow106RenderRealismComparison voice-vca-feedthrough before \\\n"
+        "  Docs/audio/realism-comparisons/voice-vca-feedthrough\n"
+        "# Apply and rebuild the single DSP change, then:\n"
+        "./build-dsp/YouKnow106RenderRealismComparison voice-vca-feedthrough after \\\n"
+        "  Docs/audio/realism-comparisons/voice-vca-feedthrough\n"
+        "```";
+}
+
 std::string beforeGenerated(const Level& level, double listeningGain)
 {
     std::ostringstream output;
@@ -859,6 +1201,36 @@ std::string bbdTransferBeforeGenerated(const Level& level,
            << " (" << std::setprecision(3) << decibels(listeningGain) << " dB) |\n\n"
            << "See `bbd-transfer-clock-law-before-manifest.json` for exact section and\n"
            << "MIDI sample positions, clock endpoints, seed, patch, and build fingerprint.";
+    return output.str();
+}
+
+std::string voiceVcaFeedthroughBeforeGenerated(const StereoBuffer& audio,
+                                               const Level& level)
+{
+    std::ostringstream output;
+    output << "Generated baseline for scenario protocol " << scenarioProtocolVersion
+           << ". The `after` pass has not supplied a comparison yet.\n\n"
+           << "| Whole-file metric | Raw value |\n"
+           << "| --- | ---: |\n"
+           << "| Peak | " << std::scientific << std::setprecision(9) << level.peak
+           << " (" << std::fixed << std::setprecision(2)
+           << decibels(level.peak) << " dBFS) |\n"
+           << "| RMS | " << std::scientific << std::setprecision(9) << level.rms
+           << " (" << std::fixed << std::setprecision(2)
+           << decibels(level.rms) << " dBFS) |\n"
+           << "| Listening gain | 31.622776602 (+30.000 dB, fixed) |\n\n"
+           << "| Analysis window | Raw absolute peak | Raw RMS | 20--200 Hz RMS |\n"
+           << "| --- | ---: | ---: | ---: |\n";
+    for (const auto& window : voiceVcaAnalysisWindows)
+    {
+        const auto metrics = measureWindow(audio, window);
+        output << "| " << window.name << " | " << std::scientific
+               << std::setprecision(6) << metrics.absolutePeak << " | "
+               << metrics.rms << " | " << metrics.lowBandRms20To200Hz << " |\n";
+    }
+    output << "\nSee `voice-vca-feedthrough-before-manifest.json` for exact sample\n"
+           << "boundaries, signed peaks, means, peak offsets, stereo equality, patch,\n"
+           << "limitations, build fingerprint, and unrounded values.";
     return output.str();
 }
 
@@ -964,6 +1336,42 @@ std::string bbdTransferAfterGenerated(const Level& before, const Level& after,
     return output.str();
 }
 
+std::string voiceVcaFeedthroughAfterGenerated(
+    const StereoBuffer& beforeAudio, const StereoBuffer& afterAudio,
+    const StereoBuffer& diffAudio, const Level& before, const Level& after,
+    const Level& diff, double peakDbc, double rmsDbc)
+{
+    std::ostringstream output;
+    output << "Generated comparison for scenario protocol " << scenarioProtocolVersion
+           << ". `difference` is signed `after - before`.\n\n"
+           << "| Signal | Raw peak | Raw RMS |\n"
+           << "| --- | ---: | ---: |\n"
+           << std::scientific << std::setprecision(9)
+           << "| Before | " << before.peak << " | " << before.rms << " |\n"
+           << "| After | " << after.peak << " | " << after.rms << " |\n"
+           << "| Signed difference | " << diff.peak << " | " << diff.rms << " |\n\n"
+           << "| Relative metric | Value |\n"
+           << "| --- | ---: |\n"
+           << std::fixed << std::setprecision(2)
+           << "| Difference peak / before peak | " << peakDbc << " dBc |\n"
+           << "| Difference RMS / before RMS | " << rmsDbc << " dBc |\n"
+           << "| Listening gain | +30.000 dB fixed diagnostic magnification |\n\n"
+           << "| Window | Before RMS | After RMS | Difference RMS |\n"
+           << "| --- | ---: | ---: | ---: |\n";
+    for (const auto& window : voiceVcaAnalysisWindows)
+    {
+        const auto beforeWindow = measureWindow(beforeAudio, window);
+        const auto afterWindow = measureWindow(afterAudio, window);
+        const auto diffWindow = measureWindow(diffAudio, window);
+        output << "| " << window.name << " | " << std::scientific
+               << std::setprecision(6) << beforeWindow.rms << " | "
+               << afterWindow.rms << " | " << diffWindow.rms << " |\n";
+    }
+    output << "\nSee `voice-vca-feedthrough-comparison-manifest.json` for complete\n"
+           << "machine-readable window metrics and unrounded values.";
+    return output.str();
+}
+
 bool updateReadme(const std::filesystem::path& outputDirectory,
                   const std::string& generated, std::string& error)
 {
@@ -986,6 +1394,16 @@ bool updateBbdTransferReadme(const std::filesystem::path& outputDirectory,
 {
     return updateGeneratedSection(outputDirectory / "README.md",
                                   bbdTransferReadmeProse(),
+                                  std::string(generatedBegin),
+                                  std::string(generatedEnd), generated, error);
+}
+
+bool updateVoiceVcaFeedthroughReadme(
+    const std::filesystem::path& outputDirectory,
+    const std::string& generated, std::string& error)
+{
+    return updateGeneratedSection(outputDirectory / "README.md",
+                                  voiceVcaFeedthroughReadmeProse(),
                                   std::string(generatedBegin),
                                   std::string(generatedEnd), generated, error);
 }
@@ -1403,12 +1821,206 @@ bool writeBbdTransferAfter(const std::filesystem::path& outputDirectory,
     return true;
 }
 
+bool checkVoiceVcaDiagnosticLevel(const StereoBuffer& audio,
+                                  std::string_view label,
+                                  std::string& error)
+{
+    const auto level = measure(audio);
+    if (level.peak > voiceVcaFeedthroughListeningCeiling)
+    {
+        error = std::string(label) + " fixed +30 dB diagnostic peak "
+              + jsonNumber(level.peak) + " exceeds protocol ceiling "
+              + jsonNumber(voiceVcaFeedthroughListeningCeiling)
+              + "; refusing to adapt the gain";
+        return false;
+    }
+    return true;
+}
+
+bool writeVoiceVcaFeedthroughBefore(
+    const std::filesystem::path& outputDirectory,
+    const RenderedScenario& rendered, std::string& error)
+{
+    if (rendered.audio.left.size() != voiceVcaEndSample)
+    {
+        error = "voice-vca-feedthrough render did not end at sample 181440";
+        return false;
+    }
+
+    const auto rawPath = outputDirectory
+                       / "voice-vca-feedthrough-before-raw-f32.wav";
+    if (std::filesystem::exists(rawPath))
+    {
+        StereoBuffer archived;
+        if (!readFloatWav(rawPath, archived, error))
+            return false;
+        if (!youknow106::tools::realism::buffersEqual(archived, rendered.audio))
+        {
+            error = "refusing to overwrite a non-identical raw before archive: "
+                  + rawPath.string();
+            return false;
+        }
+    }
+    else if (!writeFloatWav(rawPath, rendered.audio, error))
+    {
+        return false;
+    }
+
+    const Level rawLevel = measure(rendered.audio);
+    if (rawLevel.peak <= 0.0 || rawLevel.rms <= 0.0)
+    {
+        error = "scenario rendered exact silence; expected deterministic full-engine floor";
+        return false;
+    }
+    const StereoBuffer listening = applyGain(
+        rendered.audio, voiceVcaFeedthroughListeningGain);
+    if (!checkVoiceVcaDiagnosticLevel(listening, "before", error)
+        || !writeFloatWav(outputDirectory
+                          / "voice-vca-feedthrough-before-listen-f32.wav",
+                          listening, error))
+        return false;
+
+    std::ostringstream manifest;
+    manifest << voiceVcaFeedthroughManifestPrefix("before", rendered)
+             << "  \"raw_level\": " << levelJson(rawLevel, 2) << ",\n"
+             << "  \"raw_window_metrics\": "
+             << voiceVcaWindowMetricsJson(rendered.audio, 2) << ",\n"
+             << "  \"listening\": {\n"
+             << "    \"gain_linear\": "
+             << jsonNumber(voiceVcaFeedthroughListeningGain) << ",\n"
+             << "    \"gain_db\": 30.0,\n"
+             << "    \"adaptive_normalization\": false,\n"
+             << "    \"label\": \"diagnostic magnification; raw file carries actual level\",\n"
+             << "    \"peak_linear\": " << jsonNumber(measure(listening).peak) << "\n"
+             << "  }\n"
+             << "}\n";
+    if (!writeText(outputDirectory
+                   / "voice-vca-feedthrough-before-manifest.json",
+                   manifest.str(), error))
+        return false;
+    return updateVoiceVcaFeedthroughReadme(
+        outputDirectory,
+        voiceVcaFeedthroughBeforeGenerated(rendered.audio, rawLevel), error);
+}
+
+bool writeVoiceVcaFeedthroughAfter(
+    const std::filesystem::path& outputDirectory,
+    const RenderedScenario& rendered, std::string& error)
+{
+    StereoBuffer before;
+    if (!readFloatWav(outputDirectory
+                      / "voice-vca-feedthrough-before-raw-f32.wav",
+                      before, error))
+        return false;
+    if (before.left.size() != voiceVcaEndSample
+        || rendered.audio.left.size() != voiceVcaEndSample)
+    {
+        error = "baseline or after frame count does not match voice-vca-feedthrough protocol v1";
+        return false;
+    }
+
+    StereoBuffer diff;
+    if (!difference(before, rendered.audio, diff, error))
+        return false;
+
+    const Level beforeLevel = measure(before);
+    const Level afterLevel = measure(rendered.audio);
+    const Level diffLevel = measure(diff);
+    if (beforeLevel.peak <= 0.0 || beforeLevel.rms <= 0.0)
+    {
+        error = "raw before archive is silent and cannot be a dBc reference";
+        return false;
+    }
+
+    const double peakDbc = decibels(diffLevel.peak / beforeLevel.peak);
+    const double rmsDbc = decibels(diffLevel.rms / beforeLevel.rms);
+    const StereoBuffer beforeListening = applyGain(
+        before, voiceVcaFeedthroughListeningGain);
+    const StereoBuffer afterListening = applyGain(
+        rendered.audio, voiceVcaFeedthroughListeningGain);
+    const StereoBuffer diffListening = applyGain(
+        diff, voiceVcaFeedthroughListeningGain);
+    if (!checkVoiceVcaDiagnosticLevel(beforeListening, "before", error)
+        || !checkVoiceVcaDiagnosticLevel(afterListening, "after", error)
+        || !checkVoiceVcaDiagnosticLevel(diffListening, "difference", error))
+        return false;
+
+    if (!writeFloatWav(outputDirectory
+                       / "voice-vca-feedthrough-after-raw-f32.wav",
+                       rendered.audio, error)
+        || !writeFloatWav(outputDirectory
+                          / "voice-vca-feedthrough-difference-raw-f32.wav",
+                          diff, error)
+        || !writeFloatWav(outputDirectory
+                          / "voice-vca-feedthrough-before-listen-f32.wav",
+                          beforeListening, error)
+        || !writeFloatWav(outputDirectory
+                          / "voice-vca-feedthrough-after-listen-f32.wav",
+                          afterListening, error)
+        || !writeFloatWav(outputDirectory
+                          / "voice-vca-feedthrough-difference-listen-f32.wav",
+                          diffListening, error))
+        return false;
+
+    std::ostringstream manifest;
+    manifest << voiceVcaFeedthroughManifestPrefix("after", rendered)
+             << "  \"baseline_manifest\": \"voice-vca-feedthrough-before-manifest.json\",\n"
+             << "  \"raw_levels\": {\n"
+             << "    \"before\": " << levelJson(beforeLevel, 4) << ",\n"
+             << "    \"after\": " << levelJson(afterLevel, 4) << ",\n"
+             << "    \"signed_difference_after_minus_before\": "
+             << levelJson(diffLevel, 4) << "\n"
+             << "  },\n"
+             << "  \"raw_window_metrics\": {\n"
+             << "    \"before\": " << voiceVcaWindowMetricsJson(before, 4) << ",\n"
+             << "    \"after\": "
+             << voiceVcaWindowMetricsJson(rendered.audio, 4) << ",\n"
+             << "    \"signed_difference_after_minus_before\": "
+             << voiceVcaWindowMetricsJson(diff, 4) << "\n"
+             << "  },\n"
+             << "  \"relative_metrics\": {\n"
+             << "    \"difference_peak_over_before_peak_dbc\": "
+             << jsonNumber(peakDbc) << ",\n"
+             << "    \"difference_rms_over_before_rms_dbc\": "
+             << jsonNumber(rmsDbc) << "\n"
+             << "  },\n"
+             << "  \"listening\": {\n"
+             << "    \"shared_fixed_gain_linear\": "
+             << jsonNumber(voiceVcaFeedthroughListeningGain) << ",\n"
+             << "    \"shared_fixed_gain_db\": 30.0,\n"
+             << "    \"adaptive_normalization\": false,\n"
+             << "    \"label\": \"diagnostic magnification; raw files carry actual levels\",\n"
+             << "    \"before_peak_linear\": "
+             << jsonNumber(measure(beforeListening).peak) << ",\n"
+             << "    \"after_peak_linear\": "
+             << jsonNumber(measure(afterListening).peak) << ",\n"
+             << "    \"difference_peak_linear\": "
+             << jsonNumber(measure(diffListening).peak) << "\n"
+             << "  }\n"
+             << "}\n";
+    if (!writeText(outputDirectory
+                   / "voice-vca-feedthrough-comparison-manifest.json",
+                   manifest.str(), error))
+        return false;
+
+    if (!updateVoiceVcaFeedthroughReadme(
+            outputDirectory,
+            voiceVcaFeedthroughAfterGenerated(
+                before, rendered.audio, diff, beforeLevel, afterLevel, diffLevel,
+                peakDbc, rmsDbc), error))
+        return false;
+
+    std::printf("Difference peak / before peak: %+.2f dBc\n", peakDbc);
+    std::printf("Difference RMS  / before RMS:  %+.2f dBc\n", rmsDbc);
+    return true;
+}
+
 void printUsage(const char* executable)
 {
     std::fprintf(stderr,
                  "usage: %s <scenario> <before|after> <output-dir>\n"
                  "scenarios: retrigger-release-tail, common-vca-level, "
-                 "bbd-transfer-clock-law\n",
+                 "bbd-transfer-clock-law, voice-vca-feedthrough\n",
                  executable);
 }
 
@@ -1433,7 +2045,10 @@ int main(int argc, char** argv)
     const bool retriggerScenario = scenario == scenarioSlug;
     const bool commonVcaScenario = scenario == commonVcaScenarioSlug;
     const bool bbdTransferScenario = scenario == bbdTransferScenarioSlug;
-    if ((!retriggerScenario && !commonVcaScenario && !bbdTransferScenario)
+    const bool voiceVcaFeedthroughScenario =
+        scenario == voiceVcaFeedthroughScenarioSlug;
+    if ((!retriggerScenario && !commonVcaScenario && !bbdTransferScenario
+         && !voiceVcaFeedthroughScenario)
         || (stage != "before" && stage != "after")
         || outputDirectory.empty())
     {
@@ -1443,8 +2058,10 @@ int main(int argc, char** argv)
 
     RenderedScenario rendered = retriggerScenario
         ? renderRetriggerReleaseTail()
-        : (commonVcaScenario ? renderCommonVcaLevel()
-                             : renderBbdTransferClockLaw());
+        : (commonVcaScenario
+            ? renderCommonVcaLevel()
+            : (bbdTransferScenario ? renderBbdTransferClockLaw()
+                                   : renderVoiceVcaFeedthrough()));
     std::string error;
     if (!validate(rendered.audio, error))
     {
@@ -1460,10 +2077,14 @@ int main(int argc, char** argv)
         written = stage == "before"
             ? writeCommonVcaBefore(outputDirectory, rendered, error)
             : writeCommonVcaAfter(outputDirectory, rendered, error);
-    else
+    else if (bbdTransferScenario)
         written = stage == "before"
             ? writeBbdTransferBefore(outputDirectory, rendered, error)
             : writeBbdTransferAfter(outputDirectory, rendered, error);
+    else
+        written = stage == "before"
+            ? writeVoiceVcaFeedthroughBefore(outputDirectory, rendered, error)
+            : writeVoiceVcaFeedthroughAfter(outputDirectory, rendered, error);
     if (!written)
     {
         std::fprintf(stderr, "comparison failed: %s\n", error.c_str());

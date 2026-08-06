@@ -221,6 +221,36 @@ struct YouKnow106TestAccess
             engine.voices_[static_cast<std::size_t>(slot)]);
     }
 
+    static float renderSilentVoiceAtControlOffset(
+        YouKnow106Engine& engine, float controlOffset) noexcept
+    {
+        constexpr int slot = 0;
+        auto& voice = engine.voices_[slot];
+        auto& card = engine.cards_[slot];
+        engine.initialiseVoice(voice, slot, 60, 1.0f);
+        voice.filter.reset();
+        voice.filterG = 0.0f;
+        voice.feedback = 0.0f;
+        voice.vcaControl = 1.0f;
+        voice.vcaControlTarget = 1.0f;
+        voice.vca = 1.0f;
+        card.vcaControlOffset = controlOffset;
+
+        EngineParameters parameters;
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = false;
+        parameters.subLevel = 0.0f;
+        parameters.noiseLevel = 0.0f;
+        parameters.cutoff = 0.0f;
+        parameters.resonance = 0.0f;
+        parameters.calibration = 1.0f;
+        parameters.enableVcfStageOffsets = false;
+        parameters.enableOpAmpSlewLimiting = false;
+        parameters.enableVcfEarlyEffect = false;
+        parameters.enableSpatialThermalGradient = false;
+        return engine.renderVoice(voice, parameters, 0.0f);
+    }
+
     static double controlScanPhase(const YouKnow106Engine& engine) noexcept
     {
         return engine.controlScanPhase_;
@@ -2772,6 +2802,24 @@ void testRetriggerDoesNotTouchVcaHoldBeforeConverterScan()
            "a note event advanced the converter scheduler");
 }
 
+void testSilentVoiceDoesNotInventUnmeasuredVcaFeedthrough()
+{
+    // VR30/R112 correct the BA662 signal-input offset; they are not the Tr20
+    // control-current path represented by vcaControlOffset. With the filter
+    // output pinned to zero, changing that control offset must therefore not
+    // create audio. The removed implementation reused it as a millivolt input
+    // offset and multiplied by control and gain, so all three cases failed.
+    for (const float controlOffset : { -1.0f, 0.0f, 1.0f })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, true);
+        const float output = YouKnow106TestAccess::renderSilentVoiceAtControlOffset(
+            engine, controlOffset);
+        expect(output == 0.0f,
+               "silent voice invented VCA input-offset feedthrough from its control trim");
+    }
+}
+
 void testCommonVcaHoldUsesJackBoardC7TimeConstant()
 {
     // A one-time-constant voltage step must reach 1-exp(-1), independently of
@@ -4463,6 +4511,7 @@ int main()
     testFixedOutputBoundaryCorpus();
     testNotesWaitForTheSharedConverterScan();
     testRetriggerDoesNotTouchVcaHoldBeforeConverterScan();
+    testSilentVoiceDoesNotInventUnmeasuredVcaFeedthrough();
     testCommonVcaHoldUsesJackBoardC7TimeConstant();
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();

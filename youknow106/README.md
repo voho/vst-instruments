@@ -61,12 +61,11 @@ with an explicit evidence gap and required output in
   byte-five attack at the bottom of the slider. The following VCA hold still
   gives that minimum a short, hardware-like analogue onset rather than an
   impossible instantaneous step.
-  The voice VCA that envelope drives is a *current*-controlled OTA with no
-  volts-per-decade converter in front of it, so its gain follows the control
-  voltage linearly above a hard turn-on and rolls into the grounded-base
-  stage's own 60 mV-per-decade knee below it. That is read off Roland's module
-  drawing rather than fitted; the remaining open item is where a measured
-  BA662 puts the turn-on.
+  The voice VCA that envelope drives is a *current*-controlled OTA. Roland's
+  module drawing shows the external grounded-base volts-to-current stage and no
+  intentional volts-per-decade converter, which narrows a useful compatibility
+  model toward quasi-linear gain above conduction. It does not fix Tr20 onset,
+  the BA662's low-current transfer, or a deadband; those remain OQ-19 measurements.
 - **Cutoff modulation is summed in converter counts before the antilog stage**,
   at 1143 counts per octave, so every modulation source is exponential in hertz.
   The law is anchored on the instrument's own service calibration: converter
@@ -178,7 +177,7 @@ controlling version of this ledger is the
 | Shared digital control generator | Envelope recurrence, sustain mapping, DAC truncation, LFO/delay arithmetic and portamento are ROM-resolved for the stated B-2 image. The 23 converter destinations, their ownership and the 4.2 ms pass are anchored. VCF and voice-VCA hold constants are component-derived, as is the common VCA LEVEL path's 9.08249 ms post-S/H C7 pole. | Writes retain the exact logical order but use normalized sub-pass spacing; exact timestamps and jitter remain open. The remaining sample-and-hold slews are voiced, and initial idle host-snapshot priming is product policy. |
 | DCO, ramp, pulse, sub and mixer | The 8 MHz master reference, integer timer division, range clocks, pitch quantization, constant-current ramp, PWM comparator and divide-by-two sub topology are anchored/derived. A changed-pitch write occurs at that card’s converter slot. The moving-threshold solver prevents a digital-only missed PWM edge and full-cycle blip. | BLEP/BLAMP repairs are transparent digital antialiasing. Exact restart electrical state, loaded saw/pulse/sub/noise levels, filter-drive budget and live waveform-switch transients remain approximated or open. Pulse currently uses a provisional instantaneous audio gate; no invented anti-click envelope is presented as hardware behavior. |
 | Per-voice VCF | Four IR3109/BA662 transconductor stages, the 68 kΩ/560 Ω attenuation, 240 pF stages, per-card cutoff trims and service calibration anchors are hardware-fixed. Cutoff modulation is summed in converter counts before the exponential law. The upper knee is the transconductor's own control-current saturation near 64 kHz, and the converter's R-2R carry error rides on the code it produces. | A topology-preserving trapezoidal/Newton solve is the numerical realization. Resonance byte-to-loop gain, input compensation, feedback saturation and frequency trim are voiced pending measurements. The saturation exponent and the carry sizes are fitted to a third-party measured card, not to a Roland document. |
-| Per-voice VCA | One BA662 VCA per card, after its filter, with ENV/GATE ownership and the 6 Vpp service endpoint, is anchored. Roland's own module-board drawing puts a grounded-base volts-to-amps stage ahead of it, so gain follows control current: linear above a hard turn-on with the transistor's 60 mV-per-decade knee below it. | The turn-on point and knee width are derived from that drawing rather than measured; a BA662 gain sweep would move the turn-on, not the law. The exact-zero deadband and the voice-retirement silence threshold are product policy; velocity is an optional extension. |
+| Per-voice VCA | One BA662 follows each VCF. Roland shows VCF OUT pin 3 AC-coupled by C59 to VCA IN pin 9; the separate R106/C58/R105/Tr20 branch drives VCA CONT pin 11; VCA OUT pin 10 reaches TP8–TP13 and the 33 kΩ summer inputs. The service procedure trims VR30/25/20/15/10/5 through 2.2 MΩ for minimum thump and sets a 6 Vpp gain endpoint. | The current quasi-linear gain/onset/knee/deadband law is schematic-informed compatibility, not a measured BA662 transfer. The nominal model adds no residual feedthrough: Unit Character's control-hold offset is not the VR30 signal-input null, and post-calibration thump magnitude/polarity/spectrum remain unmeasured. Velocity is an optional extension. |
 | Voice sum, coupling, HPF and common VCA LEVEL | Six card outputs sum through 33 kΩ into 3.3 kΩ feedback (0.1 each). C14 precedes the shared four-position HPF; C12 then feeds the one common uPC1252H2 controlled by stored VCA LEVEL. Service Notes pp. 8 and 15, the ROM-resolved `d=b<<5` code and NEC's −5.9 mV/dB typical constant derive the nominal common-VCA law and C7 settling. | The complete coupled switched-HPF network and its switching memory are approximated. The ideal 12-bit R-2R transfer assumes division by 4096; R32 is the least-legible value in the scan, and real resistor/capacitor tolerance, rail error and uPC1252 variation still need an installed-unit sweep. |
 | BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. BBD write nonlinearity is fitted to its datasheet test points. The explicit held output plus fixed per-shift residual coefficient is −3.000 dB versus DC at 12 kHz/40 kHz, or −2.972 dB versus the datasheet's 1 kHz reference. | Absolute sweep and mode rates use a clearly labelled JUNO-60 fallback; hiss level/correlation, loaded support impedances and the wet-mute transient are voiced. The 0.028 dB anchor residual is documented rather than audibly meaningless retuning. Keeping the coefficient fixed makes this model invariant versus normalized `f/Fclock`; Panasonic's low-resolution typical curves at 10/40/100 kHz are real evidence but have not yet been quantitatively extracted or confirmed on an installed unit. Loaded IC6 clipping remains unknown. |
 | VOLUME and output boundary | C17/C20, R54/R57, the nominal-linear 10KB×2 tracks and fixed internal wiper loading are component-derived, with independent left/right capacitor state. | Dual-gang tracking, selector/jack normaling, external loads and headphone transfer remain open. The fixed −18 dBFS RMS mapping and provisional physical reference are product policy, not an analogue circuit claim. |
@@ -188,6 +187,12 @@ The strict [BBD transfer/clock-law
 comparison](Docs/audio/realism-comparisons/bbd-transfer-clock-law/README.md)
 holds one bright full-engine fixture through both chorus modes and visits both
 clock extremes, preserving raw before/after audio and one shared listening gain.
+
+The strict [voice-VCA feedthrough
+comparison](Docs/audio/realism-comparisons/voice-vca-feedthrough/README.md)
+opens all six silent cards at a fixed converter-scan phase. Raw peak falls from
+−68.24 to −148.42 dBFS after removing the unsupported control-squared term; its
+`-listen` files apply a disclosed fixed +30 dB diagnostic gain, never normalization.
 
 ## Voices, analogue character and dispersion
 
@@ -215,7 +220,7 @@ fixed-seed voiced profile enables these full-scale mechanisms:
 | VCF cutoff scale trim | up to ±5% |
 | VCF cutoff offset trim | up to ±0.07 octave |
 | Resonance control offset | up to ±0.02 panel travel |
-| Voice-VCA control offset | up to ±0.004 normalized control |
+| Voice-VCA control-hold offset (not the VR30 audio-input null) | up to ±0.004 normalized control |
 | Voice-VCA gain | up to ±3% |
 | Sub level | up to ±3% |
 | Main-noise level at each card | up to ±3% |
@@ -506,12 +511,17 @@ Focused DSP changes use `YouKnow106RenderRealismComparison`. Unlike the older
 16-bit comparison set, it archives raw float32 before/after/difference signals,
 uses one shared listening gain, reports peak/peak and RMS/RMS nulls, and records
 the source fingerprint, patch, seed and exact MIDI/control sample schedule.
+The [audition index](Docs/audio/realism-comparisons/README.md) links the listening
+files in a useful order and states what each gain and difference track means.
 Committed fixtures currently cover the
-[retrigger/release-tail path](Docs/audio/realism-comparisons/retrigger-release-tail/)
-and the
-[common VCA LEVEL law and settling](Docs/audio/realism-comparisons/common-vca-level/).
-The latter records every automated byte and reports a −8.70 dBc RMS difference
-between the superseded cubic/borrowed-slew model and the nominal circuit solve.
+[retrigger/release-tail path](Docs/audio/realism-comparisons/retrigger-release-tail/),
+the [common VCA LEVEL law and settling](Docs/audio/realism-comparisons/common-vca-level/),
+the [BBD transfer clock law](Docs/audio/realism-comparisons/bbd-transfer-clock-law/),
+and the [voice-VCA feedthrough path](Docs/audio/realism-comparisons/voice-vca-feedthrough/).
+The common-VCA fixture records every automated byte and reports a −8.70 dBc RMS
+difference between the superseded cubic/borrowed-slew model and the nominal
+circuit solve. The VCA-thump fixture uses a protocol-fixed +30 dB diagnostic
+gain because its raw before peak is −68.24 dBFS.
 
 To regenerate the full factory report and previews after a signal-path change:
 

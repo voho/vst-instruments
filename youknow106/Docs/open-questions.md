@@ -58,7 +58,8 @@ evidence standard.
 
 The implementation and evidence boundary were reconciled again after the
 2026-08-04 fidelity pass and the 2026-08-05 physical circuit modeling pass
-(incorporating thermal warmup $V_t(T)$, VCA CV feedthrough thump, power supply
+(incorporating thermal warmup $V_t(T)$, a provisional VCA-feedthrough heuristic
+later removed after the pin-9/pin-11 topology audit, power supply
 rail droop inter-voice coupling, Thévenin passive mixer node loading, and
 BBD residual charge-transfer loss), and again after the 2026-08-05 transcription of
 Service Notes pp. 15–16, which closed the chorus modulation oscillator's
@@ -99,7 +100,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P2 | 16 | Main-noise spectrum/distribution and physical filter-startup excitation | Shared generator topology and TP8 4.0 Vpp adjustment |
 | P3 / dependency | 17 | Real VOLUME gang tracking plus selector, jack, headphone and external-load transfer | Nominal-linear `10KB×2` law and fixed 29.313 kΩ internal wiper load |
 | P2 | 18 | Hardware cutoff-converter knee and upper saturation curve | Exponential audio-range law and transparent 50 kHz product cap |
-| P1 | 19 | Voice-module BA662 control-to-gain curve, knee and possible deadband | BA662 identity, 6 Vpp service trim, ENV/GATE ownership and replaceable voiced compatibility profile |
+| P1 | 19 | Voice-module BA662 control-current-to-gain curve near cutoff and residual thump after the service null | BA662 pins and separate signal/control paths, ENV/GATE ownership, 6 Vpp endpoint and the per-card minimum-thump procedure |
 | P2 | 20 | TR11/TR12 wet-mute switching envelope, leakage and click | Device identity, wet-only mute location and continuously running BBDs |
 | P2 | 21 | Coupled C14/HPF transfer, switch-state memory and mode-change transient | Parts, placement, asymptotic C14 loads and established HPF endpoints |
 
@@ -1105,18 +1106,23 @@ control curve.
 
 **Updated 2026-08-06.** The voiced curve this task was written against — a knee
 at 0.12, a 260 dB-per-unit low-level slope and a hard deadband at 0.005 — is
-gone. Roland's own module-board drawing settles the shape: the BA662 is
-current-controlled and there is no exponential converter anywhere in the VCA
-path, so gain follows `I_ABC = (V_cv − V_be)/32 kΩ` through a grounded-base
-stage — linear above a hard turn-on with the transistor's own 60 mV-per-decade
-knee below it. What this task now wants is the *turn-on point* on a real card,
-not the law. A measurement noise floor can still masquerade as a hard deadband,
-so the sampling density near onset below matters as much as it ever did. A
-circuit reconstruction reports a roughly 150 mV no-current region; the shipping
-turn-on is now that figure, which makes confirming it on a stock card the point
-of this task rather than a footnote to it. This is not the common stored-VCA
-installed-unit validation in OQ-02, and card-to-card residual spread belongs to
-OQ-10.
+gone. Roland's drawing narrows the topology but does not settle the exact law.
+The BA662 is current-controlled; held VCA CV reaches pin 11 through
+R106/C58/R105/grounded-base Tr20, and no intentional volts-per-decade converter
+is drawn. That supports a quasi-linear compatibility approximation above
+conduction. Tr20's installed onset, the resistor-plus-$V_{BE}(I)$ relation and
+the BA662's own low-current $g_m(I)$ still require measurement; a 150 mV onset
+from a reconstruction and an ideal-BJT thermal softplus are not hardware data.
+
+The same pages settle a separate thump mechanism. VCF OUT pin 3 is AC-coupled
+by C59 into VCA IN pin 9; VR30 reaches that signal node through R112 2.2 MΩ,
+and Roland adjusts the six corresponding trimmers at TP8–TP13 for minimum
+thumps. That anchors existence and a null procedure, not the post-calibration
+residual. The removed renderer term reused a control-hold spread as this
+signal-input trim, added a common +0.8 mV bias and then multiplied by control
+and VCA gain, producing unsupported control². The nominal model now adds no
+residual until the measurement below exists. This is not the downstream shared
+stored-VCA validation in OQ-02; population spread remains OQ-10.
 
 ### Needed output (for LLM)
 
@@ -1131,12 +1137,24 @@ OQ-10.
   the measurement noise floor or a defective/leaky module.
 - Measurements on additional cards sufficient to separate a nominal curve from
   OQ-10 dispersion.
-- A fitted law/table with residuals against the shipping schematic-derived law
-  -- 150 mV turn-on, kT/q knee, linear above -- and deterministic boundary/interior
-  fixtures. Keep this analogue transfer replaceable without changing OQ-12
-  envelope states or patch bytes.
+- A fitted law/table with residuals against the current compatibility profile
+  — provisional 150 mV onset, ideal-BJT knee and quasi-linear upper region —
+  plus alternatives justified by the measured data and deterministic
+  boundary/interior fixtures. Keep this analogue transfer replaceable without
+  changing OQ-12 envelope states or patch bytes.
 - Report the measured 6 Vpp service endpoint separately, without inventing a
   tolerance or using it to infer the knee/deadband law.
+- Recreate the Bank-1 offset procedure with all intentional sources silent.
+  Capture each TP8–TP13 output DC-coupled before null, at the best VR30 null and
+  after a documented small trim offset. Record trimmer position, load, bandwidth,
+  noise floor, temperature and calibration state.
+- Apply gate/control steps 0→1→0, 0→0.5→0 and 0→0.1→0, plus several attack
+  slopes. Report signed peak, pulse area, 20–200 Hz energy, polarity and decay.
+  Separate a constant pin-9 residual multiplied once by gain from any derivative-
+  like control coupling; measure multiple cards and retain raw captures.
+- Capture both TP8–TP13 before C14 and the final output after C14/selected HPF.
+  Do not infer the source residual from the final pulse alone, and do not assign
+  per-voice ENV/GATE thump to the later shared uPC1252H2.
 
 ## OQ-20 — Chorus wet-mute switching transient and leakage
 
@@ -1553,38 +1571,46 @@ claims the suite cannot currently see.
   DCO ramp reset (2.2 µs against a 2273 µs period at A440 — the two shapes differ
   only above ~72 kHz).
 
-### OQ-19 — the voice VCA is current-controlled, so the law is quasi-linear
+### OQ-19 — the voice VCA topology narrows the law; measurement still chooses it
 
-The BA662 has **no volts-per-decade law at all**: it is a current-controlled OTA
-whose gain is proportional to `I_ABC`. There is no exponential converter in the VCA
-path. The volts-to-amps conversion is done outside the module by a grounded-base
-transistor on the module board, which Roland's own schematic shows as:
+The BA662 is current-controlled, and Roland draws no intentional volts-per-decade
+converter in the VCA path. The external control-current branch is:
 
 ```
-VCA CV (0…+10 V, from the S/H) → R106 10 kΩ → node
-   (C58 0.1 µF to GND; VR30 100 kΩ "VCA offset" via R112 2.2 MΩ)
-   → R105 22 kΩ → Tr20 emitter   [Tr20 base grounded, collector = pin 11 VCA CONT]
+VCA CV (0…+10 V, from the S/H) → R106 10 kΩ → C58 0.1 µF node
+   → R105 22 kΩ → Tr20 emitter
+   [Tr20 base grounded; collector = pin 11 VCA CONT]
 ```
 
-So `gain ∝ I_ABC ≈ (V_cv − V_BE)/32 kΩ`, clamped at zero: **linear in CV above a
-hard turn-on, with only a narrow bipolar knee at the bottom** — roughly 60 mV of CV
-per decade of gain, i.e. about 0.006 in normalised CV. Full-scale current derives to
-≈294 µA, against ≈301 µA reported from an independent simulation matched to this
-schematic. The trimmed dead zone is about 150 mV of 10 V, i.e. ≈0.015 normalised.
+The independent signal/null path is:
 
-The shipping `VoicedVoiceVcaCompatibilityProfile` has the right *shape* — hard zero,
-exponential knee, linear above — but `knee = 0.12` is roughly **5–10× too wide and
-sits too high**, and `deadband = 0.005` is about 3× too low against the trimmed
-figure. This is the first real evidence to replace that voiced profile.
+```
+module pin 3 VCF OUT → C59 1 µF/50 V NP → VR27/R108 network
+   → pin 9 VCA IN
+VR30 100 kΩ wiper → R112 2.2 MΩ → the same pin-9 input node
+pin 10 VCA OUT → TP8 (TP9…TP13 on cards 2…6) → 33 kΩ voice summer
+```
+
+The control path supports quasi-linear gain above conduction, but
+`I=(Vcv−VBE)/32 kΩ` is only an idealized approximation because $V_{BE}$ depends
+on current; the actual inverse is not an exact softplus, and the BA662's own
+gain near cutoff is not specified here. A reconstruction's 150 mV onset and the
+model's ideal-BJT knee are compatibility values. Separately, Service Notes p. 18
+adjusts VR30/25/20/15/10/5 for minimum thumps at TP8–TP13. This anchors the real
+null topology while leaving its calibrated residual unmeasured.
+
+The shipping replacement is a narrower, smooth compatibility profile. Its
+topology is better motivated than the former wide curve, but its onset, knee and
+deadband are not promoted to measurements. Unit Character's deterministic
+control-hold offset is also explicitly distinct from the VR30 signal-input null.
 
 Contradiction recorded rather than reconciled: a published teardown asserts *"the
 envelope generators are linear and generated by the CPU, so the VCA response must be
 exponential."* That is an inference, and the schematic contradicts it. Whether the
 firmware pre-shapes the envelope DAC data is a separate, unresolved question.
 
-Status: **partially resolved**, confidence moderate-to-high on the topology (Roland's
-own drawing) and moderate on the numbers (derived, not measured). Still not found:
-any measured BA662 gain-versus-control curve.
+Status: **partially resolved**, confidence high on the drawn topology and null
+procedure, low on the unmeasured numerical transfer and post-null residual.
 
 ### OQ-09 — resonance compensation confirmed from Roland's own drawing
 
@@ -1732,14 +1758,11 @@ A later pass should check whether it can reach them before spending the time.
 Both are already recorded in the evidence table and neither has ever been carried
 into the model or a test.
 
-- **`VCA BIAS`, TP7, +0.25 … +0.27 V.** This sits in the same volts-to-amps chain
-  the voice-VCA law was just derived from — the drawing shows `VR30 100 kΩ "VCA
-  offset"` reaching that node through `R112 2.2 MΩ`. The shipping law puts the
-  grounded-base turn-on at **0.015 of the converter's 10 V span**; 0.25 V is
-  **0.025** of that same span. If TP7 *is* that node, the anchored trim window
-  fixes the one number in the law that is currently derived rather than measured,
-  and closes the remaining half of OQ-19 without a BA662 sweep. Whether it is the
-  same node is a schematic read, on the page above.
+- **`VCA BIAS`, TP7, +0.25 … +0.27 V.** This is adjusted globally by VR34 in the
+  DAC-conditioning/control path before the per-card sample-and-holds. It is not
+  the per-card VR30/R112 pin-9 signal-input null and cannot validate a 150 mV
+  VCA onset. Its downstream scaling into pin-11 current still needs a complete
+  solve or simultaneous TP7/control-current measurement.
 - **`DCO CV OFFSET`, TP3, 0 V.** Unused, and worth a look: the model's DCO
   compensation voltage is kept in the frequency it stands for rather than in
   volts, so what a 0 V trim at TP3 constrains is not currently obvious.
@@ -1822,12 +1845,13 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
   resistor matching. Status: **implemented**; the underlying hold topology
   remains OQ-07.
 
-- **OQ-19 — the voice VCA.** Replaced with the grounded-base stage Roland's
-  module drawing prints: linear in control above a hard turn-on, with the
-  transistor's own 60 mV-per-decade knee below it, written as the exact
-  softplus. The old profile put 13–15 dB of extra attenuation on the bottom of
-  every envelope. Status: **shape derived**; a measured BA662 sweep would move
-  the turn-on point rather than the law.
+- **OQ-19 — the voice VCA.** Replaced the old wide curve with a narrower,
+  schematic-informed quasi-linear compatibility law. The drawing anchors the
+  separate pin-11 control-current and pin-9/VR30 thump-null paths, but not an
+  exact softplus, onset, knee or residual. The unsupported control² feedthrough
+  term is now removed; the focused raw fixture falls from −68.24 to −148.42 dBFS
+  peak. Status: **topology narrowed, numerical transfer and calibrated residual
+  still open**.
 
 - **OQ-10 — the cutoff thermal spread.** Reduced from ±165 cents to about
   ±10, derived from the same exponential card profile as the temperature through

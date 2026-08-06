@@ -818,11 +818,11 @@ float YouKnow106Engine::pwmDutyCycle(float controlVolts,
 
 float YouKnow106Engine::VoiceVcaControlLaw::gain(float control) noexcept
 {
-    // I_ABC = (V_cv - V_be) / 32 kOhm through a grounded-base stage, so gain is
-    // linear in the control voltage above the turn-on and rolls into the
-    // transistor's own exponential below it. Softplus is that transfer exactly.
-    // Normalised so full control is unity gain, which makes the turn-on the
-    // only thing the constants choose.
+    // The grounded-base stage motivates a quasi-linear response above
+    // conduction, but V_be depends on current and the BA662's low-current gm is
+    // not measured here. Softplus is a smooth compatibility approximation to
+    // that shape, normalised so full control is unity gain; its provisional
+    // turn-on and knee choose the low-level curvature.
     const float level = clamp01(sanitised(control, 0.0f));
     if (level <= deadband)
         return 0.0f;
@@ -1636,7 +1636,7 @@ void YouKnow106Engine::buildVoiceCards() noexcept
         card.comparatorOffset = hashBipolar(seed + 1u);
         card.cutoffOffsetError = hashBipolar(seed + 2u);
         card.resonanceError = hashBipolar(seed + 3u);
-        card.vcaOffset = hashBipolar(seed + 4u);
+        card.vcaControlOffset = hashBipolar(seed + 4u);
         card.cutoffScaleError = hashBipolar(seed + 5u);
         card.subLevelError = hashBipolar(seed + 6u);
         card.driftPhase = 0.5f * (hashBipolar(seed + 7u) + 1.0f);
@@ -2901,8 +2901,8 @@ void YouKnow106Engine::updateVoiceVcaTarget(
     const float control = parameters.vcaMode == VcaMode::Envelope
                         ? envelope
                         : (voice.keyDown || voice.sustained ? 1.0f : 0.0f);
-    voice.vcaControlTarget = clamp01(control * velocityGain
-                                     + card.vcaOffset * 0.004f * tolerance);
+    voice.vcaControlTarget = clamp01(
+        control * velocityGain + card.vcaControlOffset * 0.004f * tolerance);
 }
 
 void YouKnow106Engine::updateSharedScan(const EngineParameters& parameters,
@@ -3484,20 +3484,14 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     if (!voice.active)
         return 0.0f;
 
-    // Physical BA662 voice-VCA control feedthrough: differential-pair V_be
-    // mismatch leaks a fraction of the bias current to the *output*, so the
-    // leak rides I_ABC itself -- not I_ABC times its own gain, and not the
-    // raw control voltage either. The control-to-current law has a turn-on
-    // knee and a deadband, and below them there is no bias current to leak,
-    // so the leak follows the same law the gain does. A previous revision
-    // added the leak to the amplifier's input (squaring the law, halving
-    // the gate-off thump in decibels and deleting it from release tails);
-    // the one before this used the unshaped control, which kept leaking
-    // after the current had already died. The magnitude stays voiced under
-    // OQ-19; the placement and shaping are the mechanism's.
-    const float vcaCvFeedthrough = (card.vcaOffset * 0.002f + 0.0008f)
-        * VoiceVcaControlLaw::gain(voice.vcaControl) * parameters.calibration;
-    const float output = (filtered * voice.vca + vcaCvFeedthrough) * voltsToSample;
+    // VR30 injects a signal-input null into the BA662 through R112; it is
+    // separate from Tr20's control-current path and is adjusted per card to
+    // minimise control-dependent output error. The former term reused
+    // vcaControlOffset here, added an unexplained +0.8 mV bias and then
+    // multiplied by control and VCA gain, producing an unsupported
+    // control-squared pulse. Do not invent a residual until a calibrated
+    // TP8--TP13 capture establishes its distribution.
+    const float output = filtered * voice.vca * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;
