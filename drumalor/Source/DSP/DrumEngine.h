@@ -131,6 +131,12 @@ private:
     static constexpr int cymbalRomSize = 32768;
     static constexpr int cymbalRomMask = cymbalRomSize - 1;
 
+    struct CymbalRoms
+    {
+        std::array<float, cymbalRomSize> ride {};
+        std::array<float, cymbalRomSize> crash {};
+    };
+
     struct AtomicInstrumentParameters
     {
         std::atomic<float> characterA { 0.5f };
@@ -492,7 +498,7 @@ private:
     // cymbal voices run both; only the balance and the tuning differ, and all
     // of that is resolved into the voice at note-on.
     void configureCymbalChannel (Voice& voice, Instrument instrument,
-                                 float velocity) noexcept;
+                                 float velocity, float machineSelect) noexcept;
     [[nodiscard]] static float swingVcaGain (float control, float knee) noexcept;
     struct CymbalBands
     {
@@ -505,7 +511,9 @@ private:
     [[nodiscard]] float boardDriftAt (std::uint64_t sampleIndex) const noexcept;
     [[nodiscard]] static float companding6BitDac (float value) noexcept;
     [[nodiscard]] float nextCymbalPcm (Voice& voice) const noexcept;
-    void buildCymbalRoms() noexcept;
+    // One mask for the whole process. See the definition for why this is not
+    // per-engine state.
+    [[nodiscard]] static const CymbalRoms& cymbalRoms() noexcept;
     void sineAndCosineLookup (float phase, float& sine, float& cosine) const noexcept;
     [[nodiscard]] static float nextNoise (Voice& voice) noexcept;
     [[nodiscard]] float nextBandLimitedNoise (Voice& voice) const noexcept;
@@ -540,10 +548,6 @@ private:
     std::array<int, metallicBankCount> metallicBankVoiceCounts_ {};
     std::array<float, maximumMetallicDecimatorTaps> metallicDecimatorCoefficients_ {};
     std::array<float, sineTableSize> sineTable_ {};
-    // Two masks, because the machine has two: the ride and the crash are
-    // separate recordings, not one sample at two speeds.
-    std::array<float, cymbalRomSize> rideRom_ {};
-    std::array<float, cymbalRomSize> crashRom_ {};
     std::array<std::atomic<float>, instrumentCount> instrumentLevels_ {};
 
     std::atomic<float> outputGain_ { 0.82f };

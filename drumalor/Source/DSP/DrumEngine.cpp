@@ -558,13 +558,27 @@ void DrumEngine::prepare (double sampleRate, int maxBlockSize) noexcept
     for (int i = 0; i < sineTableSize; ++i)
         sineTable_[static_cast<std::size_t> (i)] = std::sin (
             twoPi * static_cast<float> (i) / static_cast<float> (sineTableSize));
-    buildCymbalRoms();
+    // Force the mask to exist now. It is built on first use, and first use
+    // would otherwise be the first cymbal note-on - which happens on the audio
+    // thread, where a table build has no business running. Every later call is
+    // a load of an already-initialised static.
+    (void) cymbalRoms();
+
     prepared_ = true;
     reset();
 }
 
-void DrumEngine::buildCymbalRoms() noexcept
+const DrumEngine::CymbalRoms& DrumEngine::cymbalRoms() noexcept
 {
+    // Built once for the process, not once per engine and emphatically not
+    // once per prepare(). The contents do not depend on the host sample rate -
+    // they are designed at the machine's own sample clock, and retuning is
+    // what moves them - so rebuilding them would be recomputing a constant.
+    // A mask ROM is shared by every voice in a machine; this is shared by
+    // every engine in the process, for the same reason.
+    static const CymbalRoms roms = [] () noexcept
+    {
+    CymbalRoms built;
     // What a 909 cymbal ROM holds is a recorded cymbal with its envelope
     // divided out, so that six bits can be spent on waveform rather than on
     // level. Divide the envelope out of a real cymbal and what is left is not
@@ -601,9 +615,9 @@ void DrumEngine::buildCymbalRoms() noexcept
     const std::array<RomSpec, 2> specs { {
         // The ride is the tighter, more periodic of the two: fewer partials,
         // placed higher, over a narrower wash.
-        { &rideRom_, 30000.0f, 0x9E3779B9u, 8600.0f, 2.30f, 620.0f, 5200.0f, 0.24f, 18 },
+        { &built.ride, 30000.0f, 0x9E3779B9u, 8600.0f, 2.30f, 620.0f, 5200.0f, 0.24f, 18 },
         // The crash is wider and denser, and keeps more low plate under it.
-        { &crashRom_, 27500.0f, 0x85EBCA6Bu, 9000.0f, 2.85f, 380.0f, 4200.0f, 0.30f, 26 },
+        { &built.crash, 27500.0f, 0x85EBCA6Bu, 9000.0f, 2.85f, 380.0f, 4200.0f, 0.30f, 26 },
     } };
 
     for (const auto& spec : specs)
@@ -697,6 +711,9 @@ void DrumEngine::buildCymbalRoms() noexcept
         for (float& sample : table)
             sample *= normalise;
     }
+        return built;
+    }();
+    return roms;
 }
 
 void DrumEngine::reset() noexcept
@@ -1654,7 +1671,8 @@ float DrumEngine::nextCymbalPcm (Voice& voice) const noexcept
 }
 
 void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
-                                         float velocity) noexcept
+                                         float velocity,
+                                         float machineSelect) noexcept
 {
     const bool ride = instrument == Instrument::Ride;
     auto& channel = voice.cymbal;
@@ -1747,7 +1765,8 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     // are the same recording at very slightly different speeds. The 808's
     // oscillators vary far more, since they free-run and a strike samples them
     // wherever they happen to be rather than restarting them.
-    channel.rom = ride ? rideRom_.data() : crashRom_.data();
+    const auto& roms = cymbalRoms();
+    channel.rom = ride ? roms.ride.data() : roms.crash.data();
     channel.romPhase = 0.0f;
 
     // ------------------------------------------------------- tone control --
@@ -1762,7 +1781,7 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     channel.pcmSplitCoefficient = std::clamp (
         1.0f - std::exp (-twoPi * 3000.0f * inverseSampleRate_), 1.0e-4f, 1.0f);
 
-    const float machine = std::clamp (voice.characterA, 0.0f, 1.0f);
+    const float machine = std::clamp (machineSelect, 0.0f, 1.0f);
     const float analogueMix = std::cos (0.25f * twoPi * machine);
     // The two channels do not arrive at the mixer at the same level - a
     // band-passed oscillator bank and a six-bit converter have no reason to -
@@ -2559,7 +2578,13 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             const bool ride = instrument == Instrument::Ride;
             configureMetallicOscillatorBank (
                 instrument, voice.pitchRatio, voice.characterA, false);
-            configureCymbalChannel (voice, instrument, velocity);
+            // The unvaried parameter, deliberately. Every other control on a
+            // cymbal is a component that drifts, but Machine is not a control
+            // on either machine - it chooses which machine this is. Letting a
+            // per-hit tolerance move it would mean a hit set to one circuit
+            // occasionally arriving with a few percent of the other one mixed
+            // in, which is not something any tolerance does.
+            configureCymbalChannel (voice, instrument, velocity, values.characterA);
 
             // The 808's three VCAs run off two envelope generators, and the
             // third band is the same capacitor read through a different
