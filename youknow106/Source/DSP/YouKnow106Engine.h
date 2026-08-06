@@ -763,6 +763,13 @@ private:
         std::uint32_t divider { 4545u };
         double periodSamples { 100.0 };
         double phase { 0.0 };
+        // The compensation ratio the current cycle's ramp was launched with.
+        // The physical ramp integrates whatever current its slewing CV set at
+        // the discharge, so a CV still catching up changes the *slope of the
+        // next rise*, never the value mid-cycle. Freezing the ratio per cycle
+        // is what keeps the rendered ramp value-continuous: it only takes a
+        // new value at a wrap, where both cycles share the -1 rail.
+        float renderScale { 1.0f };
         float pulseState { -1.0f };
         // The divider's output level is the whole of its state. Holding a
         // separate toggle alongside it only creates a way for the two to
@@ -909,7 +916,9 @@ private:
         // Oscillator compensation CV, kept in the frequency it stands for.
         // The timer's count steps instantly; this voltage slews, and the
         // ratio of the two is the momentary amplitude error a pitch step
-        // leaves on the ramp and the pulse.
+        // leaves on the ramp -- expressed as the slope of each rise, frozen
+        // per cycle (`Dco::renderScale`). It reaches the pulse only through
+        // the comparator's edge times.
         float dcoCvTarget { 261.6f };
         float dcoCv { 261.6f };
         std::uint16_t attackIncrement { envelopePeak };
@@ -1036,6 +1045,7 @@ private:
     // control voltages into filter and amplifier coefficients without making
     // their bandwidth depend on the HQ factor.
     void updateVoiceAudio(Voice& voice, const EngineParameters& parameters) noexcept;
+    [[nodiscard]] static float dcoCompensationRatio(const Voice& voice) noexcept;
     [[nodiscard]] float dcoRampAmplitudeScale(
         const Voice& voice, const EngineParameters& parameters) const noexcept;
     // The PWM comparator is physical and free-running even behind a shut VCA,

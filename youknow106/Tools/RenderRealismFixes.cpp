@@ -199,12 +199,47 @@ Take vcaFeedthrough()
     return take;
 }
 
-const std::array<Demo, 5> demos {{
+// A unison stack gliding an octave up and back down, then a bend-like fast
+// glide. Every converter pass of the glide steps six timer counts while six
+// compensation CVs chase them, which is exactly where the ramp's momentary
+// amplitude error -- and any rendering artefact riding it -- lives.
+Take pitchGlide()
+{
+    auto p = panel();
+    p.chorus = ChorusMode::Off;
+    p.keyMode = KeyMode::Unison;
+    p.portamento = 0.35f;
+    p.cutoff = 0.72f;
+    p.resonance = 0.12f;
+    p.envDepth = 0.0f;
+    p.attack = 0.02f;
+    p.sustain = 1.0f;
+    p.subLevel = 0.25f;
+    Take take(p);
+    take.rest(0.05);
+    take.on(41, 0.95f);
+    take.rest(1.2);
+    take.on(53, 0.95f);
+    take.rest(2.6);
+    take.off(53);
+    take.rest(2.4);
+    p.portamento = 0.16f;
+    take.setParameters(p);
+    take.on(58, 0.95f);
+    take.rest(1.4);
+    take.off(58);
+    take.off(41);
+    take.rest(1.0);
+    return take;
+}
+
+const std::array<Demo, 6> demos {{
     { "01-chorus-timing", chorusTiming },
     { "02-sweep-trajectory", sweepTrajectory },
     { "03-bbd-transfer-loss", transferLoss },
     { "04-stage-offsets", stageOffsets },
     { "05-vca-feedthrough", vcaFeedthrough },
+    { "06-pitch-glide", pitchGlide },
 }};
 
 // metrics.csv keeps one row per fix so the README can be regenerated whole

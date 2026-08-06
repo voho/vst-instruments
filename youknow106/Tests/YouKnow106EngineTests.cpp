@@ -298,9 +298,16 @@ struct YouKnow106TestAccess
         return output;
     }
 
+    static float dcoRenderScale(const YouKnow106Engine& engine,
+                                int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].dco.renderScale;
+    }
+
     static double sawRestartEventSideError(
         const YouKnow106Engine& engine, int slot,
-        double previousPeriodSamples, double previousPhase) noexcept
+        double previousPeriodSamples, double previousPhase,
+        float previousScale) noexcept
     {
         const auto& dco =
             engine.voices_[static_cast<std::size_t>(slot)].dco;
@@ -317,18 +324,26 @@ struct YouKnow106TestAccess
         };
         const auto oldGeometry = geometry(previousPeriodSamples);
         const auto newGeometry = geometry(dco.periodSamples);
-        const float oldSaw = previousPhase < oldGeometry[2]
+        // Both timelines in the scaled naive domain the track carries: the
+        // abandoned ramp under its own frozen ratio, the restarted ramp under
+        // the ratio the restart froze (readable from the post-restart state).
+        const float newScale = dco.renderScale;
+        const float oldSawUnit = previousPhase < oldGeometry[2]
             ? 2.0f * std::clamp(
                   static_cast<float>(previousPhase / oldGeometry[2]),
                   0.0f, 1.0f) - 1.0f
             : 1.0f - 2.0f * static_cast<float>(
                   (previousPhase - oldGeometry[2]) / oldGeometry[1]);
+        const float oldSaw =
+            oldSawUnit * previousScale + (previousScale - 1.0f);
         constexpr float newSaw = -1.0f;
-        const float oldSlope = previousPhase < oldGeometry[2]
+        const float oldSlope = (previousPhase < oldGeometry[2]
             ? 2.0f / static_cast<float>(oldGeometry[2] * oldGeometry[0])
-            : -2.0f / static_cast<float>(oldGeometry[1] * oldGeometry[0]);
+            : -2.0f / static_cast<float>(oldGeometry[1] * oldGeometry[0]))
+            * previousScale;
         const float newSlope =
-            2.0f / static_cast<float>(newGeometry[2] * newGeometry[0]);
+            2.0f / static_cast<float>(newGeometry[2] * newGeometry[0])
+            * newScale;
 
         // Build an independent residual from the values renderVoice actually
         // submits one interval after the converter write. Comparing advanced
@@ -1217,6 +1232,7 @@ void testPhysicalPitchWriteRestartIsBandlimited()
         YouKnow106TestAccess::dcoPeriodSamples(engine, 0);
     const float cvBefore = YouKnow106TestAccess::dcoCv(engine, 0);
     const float cvTargetBefore = YouKnow106TestAccess::dcoCvTarget(engine, 0);
+    const float scaleBefore = YouKnow106TestAccess::dcoRenderScale(engine, 0);
 
     YouKnow106TestAccess::performPitchWrite(engine, 0, parameters);
     expect(!YouKnow106TestAccess::dcoResetPending(engine, 0),
@@ -1258,7 +1274,7 @@ void testPhysicalPitchWriteRestartIsBandlimited()
     expect(ringEnergy(subAfter.ring) > 1.0e-8,
            "the divider restart received no BLEP residual");
     expect(YouKnow106TestAccess::sawRestartEventSideError(
-               engine, 0, periodBefore, 0.75) < 1.0e-6,
+               engine, 0, periodBefore, 0.75, scaleBefore) < 1.0e-6,
            "the saw restart residual ignored its rendered event-side slopes");
 
     // A copied pulse track exposes the transition without the rest of the
@@ -3378,14 +3394,24 @@ void testRailDroopTracksLoadAtOneWallClockRate()
         again.setParameters(parameters);
         for (const int note : { 36, 43, 48, 52, 55, 60 })
             again.noteOn(note, 1.0f);
+        // Arm the detector after the note-on transient. The first
+        // milliseconds carry the six DCO compensation CVs catching up to
+        // their stepped counts, and that onset's rendered spectrum differs
+        // across oversampling factors after decimation -- the same detector
+        // sensitivity the toggle note above describes. The follower's own
+        // wall-clock rate is what this test isolates, and both factors get
+        // the identical wall-clock head start.
+        constexpr int prerollBlocks = 60;
+        for (int block = 0; block < prerollBlocks; ++block)
+            render(again, blockSize);
         int blocks = 0;
         for (; blocks < 400; ++blocks)
         {
-            render(again, blockSize);
             if (again.getDisplayRailDroopVolts() >= 0.632 * final)
                 break;
+            render(again, blockSize);
         }
-        return blocks * blockSize / 48000.0;
+        return (blocks + 1) * blockSize / 48000.0;
     };
 
     const double deep = settlingSeconds(true);
@@ -3471,6 +3497,45 @@ void testChorusWidthAndSilence()
            "the output is not mono with the effect switched out");
     expect(sideEnergy(ChorusMode::One) > 0.05, "the first mode produces no width");
     expect(sideEnergy(ChorusMode::Two) > 0.05, "the second mode produces no width");
+}
+
+void testGlideKeepsTheRampContinuous()
+{
+    // A glide steps the timer count once per converter pass while the
+    // compensation CV slews behind it. The ramp renders that error as the
+    // slope of each cycle, frozen at the wrap where both cycles share the
+    // bottom rail -- so gliding must not add value discontinuities beyond
+    // the authentic pitch staircase. The outer multiply this replaces
+    // stepped the finished waveform mid-cycle at the scan cadence and
+    // measured about four times the static second-difference floor.
+    constexpr double sampleRate = 48000.0;
+    const auto maxSecondDifference = [](const std::vector<float>& x) {
+        double worst = 0.0;
+        for (std::size_t n = 2; n < x.size(); ++n)
+            worst = std::max(worst,
+                             std::abs(static_cast<double>(x[n])
+                                      - 2.0 * static_cast<double>(x[n - 1])
+                                      + static_cast<double>(x[n - 2])));
+        return worst;
+    };
+    const auto rampFloor = [&](bool glide) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.keyMode = KeyMode::Unison;
+        parameters.portamento = 0.30f;
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+        renderExact(engine, 4800);
+        if (glide)
+            engine.noteOn(60, 1.0f);
+        const auto rendered = renderExact(engine, 9600);
+        return maxSecondDifference(rendered.left);
+    };
+    const double still = rampFloor(false);
+    const double gliding = rampFloor(true);
+    expect(still > 0.0 && gliding < 2.0 * still,
+           "gliding steps the rendered ramp beyond the pitch staircase");
 }
 
 void testChorusSweepTrajectoryDefault()
@@ -4331,6 +4396,7 @@ int main()
     testLoweringTheVoiceCountLetsNotesFinish();
     testEnvelopeAndGateModes();
     testChorusWidthAndSilence();
+    testGlideKeepsTheRampContinuous();
     testChorusSweepTrajectoryDefault();
     testChorusNoiseIsPresentAndDefeatable();
     testMainNoiseDensityIsProcessingRateInvariant();

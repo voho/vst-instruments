@@ -24,3 +24,4 @@ below audibility.
 | `03-bbd-transfer-loss` | -20.4 | -47.2 | +0.00 |
 | `04-stage-offsets` | -14.9 | -29.0 | +0.00 |
 | `05-vca-feedthrough` | -53.0 | -78.1 | +0.00 |
+| `06-pitch-glide` | +3.5 | -6.3 | +0.00 |

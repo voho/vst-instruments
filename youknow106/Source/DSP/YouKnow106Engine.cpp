@@ -1233,6 +1233,7 @@ float YouKnow106Engine::Envelope::tick(std::uint16_t attackIncrement,
 void YouKnow106Engine::Dco::reset() noexcept
 {
     phase = 0.0;
+    renderScale = 1.0f;
     pulseState = -1.0f;
     subState = 1.0f;
     saw.reset();
@@ -1249,6 +1250,7 @@ void YouKnow106Engine::restartDcoBandlimited(
         // Nothing from this cell has reached the delayed output timeline yet,
         // so this is a true cold start rather than an audible discontinuity.
         dco.reset();
+        dco.renderScale = dcoCompensationRatio(voice);
         voice.pulseDutyPrimed = false;
         return;
     }
@@ -1265,17 +1267,24 @@ void YouKnow106Engine::restartDcoBandlimited(
     const double oldReset = oldGeometry[1];
     const double oldRise = oldGeometry[2];
     const double oldPhase = dco.phase;
-    const float oldSaw = oldPhase < oldRise
+    // Both timelines are expressed in the scaled naive domain the track
+    // carries: the abandoned ramp with the ratio its cycle launched under,
+    // the restarted ramp with the ratio the CV holds right now. The restarted
+    // ramp starts at the rail, which every scale maps to itself.
+    const float oldScale = dco.renderScale;
+    const float newScale = dcoCompensationRatio(voice);
+    const float oldSawUnit = oldPhase < oldRise
         ? 2.0f * clamp01(static_cast<float>(oldPhase / oldRise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>(
               (oldPhase - oldRise) / oldReset);
+    const float oldSaw = oldSawUnit * oldScale + (oldScale - 1.0f);
     constexpr float newSaw = -1.0f;
 
-    const float oldSlope = oldPhase < oldRise
+    const float oldSlope = (oldPhase < oldRise
         ? 2.0f / static_cast<float>(oldRise * oldGeometry[0])
-        : -2.0f / static_cast<float>(oldReset * oldGeometry[0]);
+        : -2.0f / static_cast<float>(oldReset * oldGeometry[0])) * oldScale;
     const float newSlope =
-        2.0f / static_cast<float>(newGeometry[2] * newGeometry[0]);
+        2.0f / static_cast<float>(newGeometry[2] * newGeometry[0]) * newScale;
 
     // The write happens before the current naive sample enters the track. In
     // this delayed-input residual convention that is offset zero: the track's
@@ -1295,6 +1304,7 @@ void YouKnow106Engine::restartDcoBandlimited(
     addStep(dco.sub, 1.0f - dco.subState, currentNaiveTimestamp);
 
     dco.phase = 0.0;
+    dco.renderScale = newScale;
     dco.pulseState = -1.0f;
     dco.subState = 1.0f;
     // The restart correction above owns the abandoned comparator timeline.
@@ -3021,15 +3031,22 @@ void YouKnow106Engine::updatePulseComparator(
     voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
 }
 
+float YouKnow106Engine::dcoCompensationRatio(const Voice& voice) noexcept
+{
+    // The ratio of the slewed compensation voltage to the one the current
+    // pitch calls for -- the momentary amplitude error a pitch step leaves
+    // until the 522 us hold catches up.
+    return std::clamp(
+        voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+}
+
 float YouKnow106Engine::dcoRampAmplitudeScale(
     const Voice& voice, const EngineParameters& parameters) const noexcept
 {
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
-    const float heldCompensation = std::clamp(
-        voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
     const float cardCurrent =
         1.0f + card.rampCurrentError * 0.03f * parameters.calibration;
-    return heldCompensation * cardCurrent;
+    return dcoCompensationRatio(voice) * cardCurrent;
 }
 
 bool YouKnow106Engine::pulseMixEnabled(bool requested, float duty) noexcept
@@ -3100,16 +3117,27 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // it arrives through the hold capacitor while the timer count steps
     // instantly, so every pitch step leaves a momentary amplitude error
     // until the voltage catches up. The ratio of the slewed voltage to the
-    // one the current pitch calls for *is* that error.
-    const float compensationScale = std::clamp(
-        voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+    // one the current pitch calls for *is* that error -- and it expresses
+    // itself as the *slope of each rise*, because the integrator charges from
+    // whatever current the CV set when the cycle launched. The rendered ramp
+    // therefore freezes the ratio per cycle and reshapes about the fixed
+    // bottom rail (the discharge always returns to the same rail): the
+    // affine map s*naive + (s - 1) keeps -1 at -1 and puts the peak at
+    // 2s - 1, which is also the geometry the duty law already assumes. A
+    // ratio taking effect only at a wrap, where both cycles share the rail,
+    // is what makes the ramp value-continuous through every pitch write; the
+    // previous outer multiply stepped the whole waveform mid-cycle, outside
+    // the bandlimited track -- a measured train of 2.9% single-sample steps
+    // at the 238 Hz scan cadence on every glide.
+    const float compensationScale = dcoCompensationRatio(voice);
     // From the parts' own tolerance classes, which is legitimate here because
     // the ramp has no per-voice trimmer, so nothing removes their spread: the
     // charging resistors are marked FX on the board -- metal-oxide film, 1% --
     // and the 1 nF timing capacitors carry code G, 2%. Worst case that is
-    // -2.93% to +3.07% of slope, which is the 3% used here.
+    // -2.93% to +3.07% of slope, which is the 3% used here. Being constant
+    // per card it commutes with the track, so it stays a plain gain.
     const float amplitude = sawMixVolts
-                          * dcoRampAmplitudeScale(voice, parameters);
+        * (1.0f + card.rampCurrentError * 0.03f * parameters.calibration);
 
     // The rise is straight, and carries no curvature term. The compensation
     // voltage drives a resistor into an integrator's virtual ground, so the
@@ -3132,15 +3160,27 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float fallSlope = -2.0f / static_cast<float>(reset);
     const float incrementF = static_cast<float>(increment);
 
+    // Walk the corners with each cycle's own frozen ratio: the rise-end
+    // corner joins two segments of one cycle, and the wrap joins the old
+    // cycle's fall to the new cycle's rise -- the one place the ratio is
+    // allowed to change, because both waveforms sit on the shared rail there.
+    float cycleScale = dco.renderScale;
     for (double base = 0.0; base <= lastCycle; base += 1.0)
     {
         if (insideThisSample(base + rise))
-            addSlope(dco.saw, (fallSlope - slopeAtEnd) * incrementF,
+            addSlope(dco.saw, (fallSlope - slopeAtEnd) * cycleScale * incrementF,
                      samplesAgo(base + rise));
         if (insideThisSample(base + 1.0))
-            addSlope(dco.saw, (slopeAtStart - fallSlope) * incrementF,
+        {
+            addSlope(dco.saw,
+                     (slopeAtStart * compensationScale
+                      - fallSlope * cycleScale) * incrementF,
                      samplesAgo(base + 1.0));
+            cycleScale = compensationScale;
+        }
     }
+    dco.renderScale = cycleScale;
+    sawNaive = sawNaive * cycleScale + (cycleScale - 1.0f);
 
     const float sawOut = dco.saw.advance(sawNaive) * amplitude;
 
@@ -3246,10 +3286,14 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     voice.previousPulseDuty = duty;
     voice.pulseDutyPrimed = true;
 
-    // The pulse is amplitude-compensated by the same control voltage as the
-    // ramp, so it carries the same momentary scale error on pitch steps.
-    const float pulseOut = dco.pulse.advance(dco.pulseState)
-                         * pulseMixVolts * compensationScale;
+    // The ramp's momentary scale error reaches the pulse through its *edge
+    // times* -- pwmDutyCycle solves the threshold against the achieved ramp
+    // amplitude -- and through nothing else: the comparator's output swing is
+    // its own logic level, not a copy of the ramp's. A previous revision also
+    // multiplied the pulse's amplitude by the compensation ratio, a coupling
+    // no cited mechanism derives (the derivation chain covers the duty
+    // alone), which doubled the zipper's click energy on pulse patches.
+    const float pulseOut = dco.pulse.advance(dco.pulseState) * pulseMixVolts;
 
     // --- Sub --------------------------------------------------------------
     // A flip-flop halves the note clock, so the sub is an exact square one
