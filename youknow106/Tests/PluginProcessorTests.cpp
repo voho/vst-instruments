@@ -4030,10 +4030,16 @@ void testEditorBuildsAndRenders()
     expect (editor->getWidth() == expectedWidth
                 && editor->getHeight() == expectedHeight,
             "the editor did not open at its default size");
+    // This bound previously held the panel to a folded two-row console, at
+    // 1.25-1.65. The composition is now one continuous control row in the
+    // modelled instrument's own order, which is deliberately a wide, shallow
+    // shape -- so the bound moves with the decision rather than outliving it.
+    // It still has to be a bound: an unbounded aspect is how a panel drifts
+    // into a letterbox nothing can be read on.
     const float defaultAspect = static_cast<float> (expectedWidth)
                               / static_cast<float> (expectedHeight);
-    expect (defaultAspect >= 1.25f && defaultAspect <= 1.65f,
-            "the folded console did not become materially more square");
+    expect (defaultAspect >= 1.70f && defaultAspect <= 1.95f,
+            "the single-row console is no longer the wide shape it is drawn for");
     expect (editor->isOpaque(), "the editor does not advertise an opaque surface");
     checkUtilityKnobLayout (*editor, false);
     checkSynthesisSectionsDominateUtilities (*editor);
@@ -4097,12 +4103,21 @@ void testEditorBuildsAndRenders()
                 expect (helpArea.getY() >= keyboardArea.getBottom()
                             && ! helpArea.intersects (keyboardArea),
                         "the fixed help display is not below the keys");
+                // The help text used to own the whole bottom strip. It now
+                // shares that strip with the five service keys, which moved off
+                // the instrument surface so the deck's knob legends could print
+                // at full width. What still has to hold is that help occupies
+                // the entire run *up to* those keys, so it remains a stable
+                // area rather than a box that resizes with its contents. The
+                // bound is derived from the same constants the editor lays the
+                // bar out with, so the two cannot drift apart.
                 expect (helpArea.getWidth()
-                            >= editor->getWidth()
-                                 - juce::roundToInt (30.0f
-                                                    * static_cast<float> (size.x)
-                                                    / panel::panelWidth()),
-                        "the help display is no longer a full-width stable area");
+                            >= juce::roundToInt (
+                                (panel::operationsBarX
+                                 - 2.0f * panel::panelMargin - 8.0f)
+                                * static_cast<float> (size.x)
+                                / panel::panelWidth()),
+                        "the help display no longer spans the bar beside the service keys");
             }
             if (transpose != nullptr)
             {

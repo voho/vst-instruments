@@ -203,40 +203,49 @@ Layout buildLayout() noexcept
         float width;
         float height;
     };
-    // The functional control inventory is unchanged, but its composition is
-    // deliberately folded into an audio row, a modulation row and a live
-    // performance deck. This avoids copying the reference unit's signature
-    // one-line faceplate while keeping each signal-flow relationship legible.
-    // Widths are explicit: the sound cards receive the faceplate, while the
-    // product-only controls are deliberately compact editor components rather
-    // than blank space disguised as synthesis surface.
+    // One continuous row in the instrument's own order, then the lower deck.
+    //
+    // Every width below is its content plus one padding, so a section is as
+    // wide as what it holds and no card carries dead space. The two exceptions
+    // are VOLUME and CHORUS: a single-slot cell is narrower than their own
+    // headers set, so each is widened to the header and the difference comes
+    // out of the multi-slot sections rather than being left as a gap. That is
+    // the same reason the hardware's own HPF strip is narrow and its DCO strip
+    // is wide.
+    //
+    // Slot budget: 1 + 2 + 9 + 1 + 6 + 3 + 4 + 1 = 27 across the sound row.
     constexpr SectionSpec specs[sectionCount] = {
-        // One fader needs one fader's width. VOLUME and CHORUS were sized for
-        // their headers rather than their contents, so both are trimmed back to
-        // what they hold and row B gains the difference.
-        { "VOLUME", Accent::Cyan,    1, 448.0f, soundRowBTop, 92.0f,
-                                                                  soundRowBHeight },
-        { "BENDER", Accent::Magenta, 4, 136.0f, performanceDeckTop, 158.0f,
+        { "VOLUME", Accent::Cyan,    1,   12.0f, soundRowTop,  64.0f,
+                                                                   soundRowHeight },
+        // Bender depths and glide are performance settings the tone memory
+        // does not carry, so they belong beside the lever rather than in the
+        // control row.
+        { "BENDER", Accent::Magenta, 4,  136.0f, performanceDeckTop, 150.0f,
                                                            performanceDeckHeight },
-        // Three stable assign states, so three latches -- which needs more
-        // height than the performance deck has. MODE therefore moves up into
-        // the room VOLUME and CHORUS gave back, beside them in row B.
-        { "MODE",   Accent::Magenta, 2, 548.0f, soundRowBTop, 104.0f,
-                                                                  soundRowBHeight },
-        { "LFO",    Accent::Magenta, 2,  12.0f, soundRowATop, 120.0f,
-                                                                  soundRowAHeight },
-        { "DCO",    Accent::Cyan,    9, 140.0f, soundRowATop, 390.0f,
-                                                                  soundRowAHeight },
-        { "HPF",    Accent::Cyan,    1, 538.0f, soundRowATop, 70.0f,
-                                                                  soundRowAHeight },
-        { "VCF",    Accent::Cyan,    6, 616.0f, soundRowATop, 300.0f,
-                                                                  soundRowAHeight },
-        { "VCA",    Accent::Cyan,    3, 924.0f, soundRowATop, 184.0f,
-                                                                  soundRowAHeight },
-        { "ENV",    Accent::Magenta, 4,  12.0f, soundRowBTop, 308.0f,
-                                                                  soundRowBHeight },
-        { "CHORUS", Accent::Cyan,    2, 328.0f, soundRowBTop, 112.0f,
-                                                                  soundRowBHeight },
+        // Three stable assign states, so three latches. Its cell is sized by
+        // the widest legend it prints rather than by the header.
+        { "MODE",   Accent::Magenta, 2,  294.0f, performanceDeckTop, 90.0f,
+                                                           performanceDeckHeight },
+        // LFO is wider than its two slots would otherwise need: RATE and DELAY
+        // are the closest-set pair of long legends on the row, and their ink
+        // is what fixes this cell width.
+        { "LFO",    Accent::Magenta, 2,   84.0f, soundRowTop,  84.0f,
+                                                                   soundRowHeight },
+        { "DCO",    Accent::Cyan,    9,  176.0f, soundRowTop, 311.0f,
+                                                                   soundRowHeight },
+        { "HPF",    Accent::Cyan,    1,  495.0f, soundRowTop,  47.0f,
+                                                                   soundRowHeight },
+        { "VCF",    Accent::Cyan,    6,  550.0f, soundRowTop, 212.0f,
+                                                                   soundRowHeight },
+        { "VCA",    Accent::Cyan,    3,  770.0f, soundRowTop, 113.0f,
+                                                                   soundRowHeight },
+        { "ENV",    Accent::Magenta, 4,  891.0f, soundRowTop, 147.0f,
+                                                                   soundRowHeight },
+        // Two interlocked latches stacked in one column. Both span the whole
+        // section, so its two slots are one control's width between them; the
+        // header, not the latches, is what sets the floor here.
+        { "CHORUS", Accent::Cyan,    2, 1046.0f, soundRowTop,  62.0f,
+                                                                   soundRowHeight },
     };
 
     for (int index = 0; index < sectionCount; ++index)

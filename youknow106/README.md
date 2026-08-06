@@ -11,8 +11,8 @@ Roland Corporation, and it contains no firmware, ROM data, samples or captured
 audio. It does include the original 128 factory tone-memory states as functional
 18-byte parameter data, independently decoded and checksum-verified as described
 below; no Roland Cloud content was extracted. Its panel retains that
-instrument's functional control set but reorganises it as an original folded
-console; its composition, palette, typography and name are its own.
+instrument's functional control set and its left-to-right reading order, under
+an original livery; its composition, palette, typography and name are its own.
 
 What is modelled from documentation and what remains a voiced choice is set out
 control by control in the
@@ -237,39 +237,45 @@ charge transfer, bandwidth, nonlinearity and hiss.
 
 ## Interface
 
-The interface keeps the reference instrument's control inventory, but not its
-signature one-long-row composition. It is a 1120×780 folded field console in
-which the sound-shaping controls carry most of the area and visual weight:
+The interface keeps the reference instrument's control inventory **and its
+reading order**. It is a 1120×628 console whose sound-shaping controls occupy
+one continuous left-to-right row — VOLUME, LFO, DCO, HPF, VCF, VCA, ENV,
+CHORUS — because that order *is* the instrument's ergonomics. An earlier
+revision folded it into two rows; doing so broke the one relationship the panel
+exists to show, and it is not worth the space it saved.
 
-- the two broad synthesis routes dominate the surface instead of sharing equal
-  weight with product utilities;
-- blue reads as the audio path—DCO, HPF, VCF, VCA and output;
-- green identifies LFO/envelope modulation and live performance;
-- a compact secondary shelf contains the explicitly non-hardware Character Lab
-  and operational buttons; and
-- BENDER, assign mode and four keyboard setup knobs occupy a live deck directly
-  above the keybed.
+- Every section is as wide as what it holds, so a one-fader section is one
+  fader wide and no card carries dead area. The two exceptions are VOLUME and
+  CHORUS, widened to their own headers rather than left with a gap.
+- Blue reads as the audio path — VOLUME, DCO, HPF, VCF, VCA and CHORUS; green
+  identifies LFO and envelope modulation.
+- Everything the hardware does not carry on that row sits on a separate lower
+  deck: the vector lever, BENDER depths, assign mode, and the explicitly
+  non-hardware CHARACTER and KEYBOARD CONTROL cards, drawn in a secondary
+  weight so no extension can be mistaken for a stored tone parameter.
+- The five service keys are not performance controls at all, so they sit on the
+  utility bar beside the help text rather than on the instrument surface.
 
-That change in proportion, grouping, card geometry, masthead, telemetry,
-signal-route traces and illuminated vector lever is intentional: the UI evokes
-the era and workflow without reproducing the reference product's overall
-faceplate design. The slate/green/blue palette, clipped service cards and
-oscilloscope-grid motifs are original to YouKnow106. Functional waveform and
-foot-register marks are redrawn as project-native vectors. This is a design
-choice, not a claim of legal clearance.
+What remains deliberately this project's own is the livery, not the layout: the
+slate/green/blue palette, the masthead and its telemetry, the clipped service
+cards, the oscilloscope-grid motifs and the illuminated vector lever. Functional
+waveform and foot-register marks are redrawn as project-native vectors. The
+panel reads as a relative rather than a copy. This is a design choice, not a
+claim of legal clearance.
 
 Sliders, switches and buttons are still placed by the JUCE-free description in
-`Source/DSP/YouKnow106Panel.cpp`, so tests prove that folded rows do not overlap,
-escape their cards or shrink their legends below the readability floor. A
-bundled low-contrast material scan adds maintained ABS grain, polished touch
-wear, cleaning swirls and sparse hairline scuffs. Recessed fader channels,
-bevelled and grooved caps, and inset illuminated switches add a refined vintage
-material language while remaining project-drawn vectors. Those legacy cues sit
-inside the distinct blue/green field-console composition; they do not recreate
-the reference faceplate.
+`Source/DSP/YouKnow106Panel.cpp`, so tests prove that the row does not overlap,
+escape its cards or shrink its legends below the readability floor — including
+at the smallest window, which is the binding case and is what fixes the lower
+deck's depth. A bundled low-contrast material scan adds maintained ABS grain,
+polished touch wear, cleaning swirls and sparse hairline scuffs. Recessed fader
+channels, bevelled and grooved caps, and inset illuminated switches add a
+refined vintage material language while remaining project-drawn vectors. Those
+legacy cues sit inside the distinct blue/green livery; they do not recreate the
+reference faceplate.
 
 Descriptions no longer float over the instrument. Hovering any interactive
-element updates the fixed full-width help display below the keys immediately.
+element updates the fixed help display below the keys immediately.
 All 55 public controls are covered: the dominant synthesis panel, six extension
 knobs, compact operation and patch controls, program selector, 61-key keyboard
 and pitch/mod lever. That strip also carries the hovered control's **current

@@ -1810,7 +1810,7 @@ void YouKnow106AudioProcessorEditor::resized()
                                panel::mastheadHeight).toNearestInt());
 
     // Patch navigation shares the masthead with branding and telemetry. Its
-    // asymmetric placement is part of the folded-console identity and avoids
+    // asymmetric placement is part of this project's own masthead identity and avoids
     // reproducing the reference unit's numeric-button patch block.
     constexpr float presetLeft = 214.0f;
     constexpr float stepWidth = 22.0f;
@@ -1841,51 +1841,89 @@ void YouKnow106AudioProcessorEditor::resized()
     for (auto& label : utilityLabels)
         label.setFont (panelFont (juce::jmax (10.0f, 11.0f * scale), true));
 
-    // CHARACTER: two extension knobs and HQ occupy one shallow service shelf.
-    // The compact footprint keeps them clearly secondary to the sound engine.
-    utilityLabels[3].setBounds (scaled (674.0f, 304.0f, 112.0f, 14.0f).toNearestInt());
-    calibrationSlider.setBounds (scaled (712.0f, 318.0f, 36.0f, 36.0f).toNearestInt());
-    utilityLabels[4].setBounds (scaled (794.0f, 304.0f, 112.0f, 14.0f).toNearestInt());
-    chorusNoiseSlider.setBounds (scaled (832.0f, 318.0f, 36.0f, 36.0f).toNearestInt());
-    hqButton.setBounds (scaled (924.0f, 308.0f, 168.0f, 42.0f).toNearestInt());
+    // The two secondary cards share one grid: three cells for CHARACTER, four
+    // for KEYBOARD CONTROL, each cell wide enough for its legend at full size.
+    // Sizing the cells from the legends rather than the other way round is what
+    // lets "UNIT CHARACTER" and "TRANSPOSE" print unabbreviated.
+    // Centred in the card's own content box rather than hung from its header,
+    // and sized to it: at 52 the knobs left a band of dead card below them
+    // while the bender faders beside them ran the full depth, which read as two
+    // different decks rather than one.
+    constexpr float deckContentTop = panel::performanceDeckTop
+                                   + panel::headerHeight + 6.0f;
+    constexpr float deckContentHeight = panel::performanceDeckHeight
+                                      - panel::headerHeight - 14.0f;
+    constexpr float deckLabelHeight = 16.0f;
+    constexpr float deckKnobSize = 64.0f;
+    constexpr float deckStackHeight = deckLabelHeight + 6.0f + deckKnobSize;
+    constexpr float deckLabelTop = deckContentTop
+                                 + (deckContentHeight - deckStackHeight) * 0.5f;
+    constexpr float deckKnobTop = deckLabelTop + deckLabelHeight + 6.0f;
 
-    // KEYBOARD CONTROL: the four keyboard-facing extensions, compacted into the
-    // cell under CHARACTER. Four cells across 446 rather than 698, so the knobs
-    // shrink from 42 to 36 and the row reads as the secondary shelf it is.
+    constexpr float characterCell = (panel::characterCardWidth - 14.0f) / 3.0f;
+    constexpr float characterLeft = panel::characterCardX + 7.0f;
+    const auto characterCellLeft = [&] (int index) {
+        return characterLeft + characterCell * static_cast<float> (index);
+    };
+    utilityLabels[3].setBounds (
+        scaled (characterCellLeft (0), deckLabelTop, characterCell,
+                deckLabelHeight).toNearestInt());
+    calibrationSlider.setBounds (
+        scaled (characterCellLeft (0) + (characterCell - deckKnobSize) * 0.5f,
+                deckKnobTop, deckKnobSize, deckKnobSize).toNearestInt());
+    utilityLabels[4].setBounds (
+        scaled (characterCellLeft (1), deckLabelTop, characterCell,
+                deckLabelHeight).toNearestInt());
+    chorusNoiseSlider.setBounds (
+        scaled (characterCellLeft (1) + (characterCell - deckKnobSize) * 0.5f,
+                deckKnobTop, deckKnobSize, deckKnobSize).toNearestInt());
+    // HQ is a latch, not a knob, so it centres on the knob row's own axis
+    // instead of sharing its top edge.
+    constexpr float hqHeight = 48.0f;
+    hqButton.setBounds (
+        scaled (characterCellLeft (2) + 6.0f,
+                deckKnobTop + (deckKnobSize - hqHeight) * 0.5f,
+                characterCell - 12.0f, hqHeight).toNearestInt());
+
     juce::Slider* deckSliders[] = { &transposeSlider, &tuneSlider,
                                      &velocitySlider, &polyphonySlider };
     const std::array<int, 4> deckLabelIndices { 0, 1, 2, 5 };
-    constexpr float deckLeft = 666.0f;
-    constexpr float deckCellWidth = 110.0f;
+    constexpr float keyboardCell = (panel::keyboardCardWidth - 14.0f) / 4.0f;
+    constexpr float keyboardLeft = panel::keyboardCardX + 7.0f;
     for (int index = 0; index < 4; ++index)
     {
-        const float cellLeft = deckLeft + deckCellWidth * static_cast<float> (index);
+        const float cellLeft = keyboardLeft + keyboardCell * static_cast<float> (index);
         utilityLabels[static_cast<std::size_t> (
             deckLabelIndices[static_cast<std::size_t> (index)])].setBounds (
-            scaled (cellLeft + 3.0f, 390.0f,
-                    deckCellWidth - 6.0f, 14.0f).toNearestInt());
+            scaled (cellLeft, deckLabelTop, keyboardCell,
+                    deckLabelHeight).toNearestInt());
         deckSliders[index]->setBounds (
-            scaled (cellLeft + 37.0f, 406.0f, 36.0f, 36.0f).toNearestInt());
+            scaled (cellLeft + (keyboardCell - deckKnobSize) * 0.5f,
+                    deckKnobTop, deckKnobSize, deckKnobSize).toNearestInt());
     }
 
-    // OPERATIONS: five service keys, now on the live deck where they can be
-    // full-width targets. SEND is intentionally not a front-panel operation;
-    // the processor can retain its hardware-dump plumbing without making this
-    // instrument editor a librarian.
-    constexpr float operationLeft = 318.0f;
-    constexpr float operationPitch = 156.0f;
-    constexpr float operationWidth = 144.0f;
+    // The service keys sit on the utility bar beside the help text rather than
+    // on the instrument surface. SEND is intentionally not a front-panel
+    // operation; the processor can retain its hardware-dump plumbing without
+    // making this instrument editor a librarian.
+    constexpr float operationPitch = panel::operationsBarWidth / 5.0f;
+    constexpr float operationWidth = operationPitch - 4.0f;
+    const float operationTop = panel::panelHeight + panel::keyboardHeight
+                             + panel::helpStripGap + 6.0f;
     juce::Button* operationButtons[] = { &panicButton, &resetButton,
                                          &randomize1Button, &randomize10Button,
                                          &randomize50Button };
     for (int index = 0; index < 5; ++index)
         operationButtons[index]->setBounds (
-            scaled (operationLeft + operationPitch * static_cast<float> (index),
-                    508.0f, operationWidth, 48.0f).toNearestInt());
+            scaled (panel::operationsBarX
+                        + operationPitch * static_cast<float> (index),
+                    operationTop, operationWidth,
+                    panel::helpStripHeight - 12.0f).toNearestInt());
 
     performanceLever.setBounds (
-        scaled (panel::panelMargin, panel::performanceDeckTop,
-                116.0f, panel::performanceDeckHeight).toNearestInt());
+        scaled (panel::vectorPadX, panel::performanceDeckTop,
+                panel::vectorPadWidth,
+                panel::performanceDeckHeight).toNearestInt());
 
     keyboard.setBounds (scaled (0.0f, panel::panelHeight, panel::panelWidth(),
                                 panel::keyboardHeight).toNearestInt());
@@ -1895,10 +1933,12 @@ void YouKnow106AudioProcessorEditor::resized()
     keyboard.setKeyWidth (static_cast<float> (keyboard.getWidth())
                           / static_cast<float> (panel::keyboardWhiteKeyCount));
 
+    // The help text shares the utility bar with the service keys, so it stops
+    // where they begin rather than running underneath them.
     contextHelp.setBounds (
         scaled (panel::panelMargin,
                 panel::panelHeight + panel::keyboardHeight + panel::helpStripGap,
-                panel::panelWidth() - 2.0f * panel::panelMargin,
+                panel::operationsBarX - panel::panelMargin - 8.0f,
                 panel::helpStripHeight).toNearestInt());
 }
 
@@ -1908,7 +1948,7 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     texture.fill (g, bounds, fromPalette (panel::colour::faceplate));
 
     // A raised masthead and two semantic traces establish this project's
-    // folded field-console identity. Blue is audio flow; green is modulation
+    // console identity. Blue is audio flow; green is modulation
     // and live performance. They are functional wayfinding, not copied livery.
     const auto masthead = scaled (4.0f, 4.0f,
                                   panel::panelWidth() - 8.0f, 54.0f);
@@ -2013,18 +2053,18 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
                     juce::Justification::centredRight);
     };
 
-    // The two product-only card stacks sit together in row B's right column:
-    // KEYBOARD CONTROL is directly under CHARACTER, both secondary and both
-    // clearly outside the reproduced faceplate. Shrinking it from the full
-    // performance deck to this cell is what lets OPERATIONS take the deck,
-    // where five service keys have room to spread.
-    drawConsoleCard (scaled (662.0f, panel::soundRowBTop, 446.0f, 80.0f),
+    // The product-only cards share the lower deck with the performance
+    // controls, to the right of the lever, bender and assign latches. They are
+    // drawn in the secondary weight so nothing on this deck can be mistaken
+    // for part of the reproduced control row above it.
+    drawConsoleCard (scaled (panel::characterCardX, panel::performanceDeckTop,
+                             panel::characterCardWidth,
+                             panel::performanceDeckHeight),
                      panel::colour::magenta, "CHARACTER", "EXT / 02", true);
-    drawConsoleCard (scaled (662.0f, 366.0f, 446.0f, 92.0f),
+    drawConsoleCard (scaled (panel::keyboardCardX, panel::performanceDeckTop,
+                             panel::keyboardCardWidth,
+                             panel::performanceDeckHeight),
                      panel::colour::magenta, "KEYBOARD CONTROL", "LIVE / 04", true);
-    drawConsoleCard (scaled (302.0f, panel::performanceDeckTop,
-                             806.0f, panel::performanceDeckHeight),
-                     panel::colour::cyan, "OPERATIONS", "OPS / 05", false);
 
     // Hard separation around the playable area protects the keybed visually
     // from the service controls above and the explanatory display below.

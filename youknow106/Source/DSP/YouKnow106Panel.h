@@ -111,20 +111,51 @@ inline constexpr float controlLabelHeight = 20.0f;
 // fader itself stays within this convincingly physical width.
 inline constexpr float maximumSliderWidth = 42.0f;
 
-// A folded console rather than the reference unit's one long control row.
-// Blue carries the audio path across row A; green modulation and product-only
-// character controls occupy row B; live keyboard performance has its own deck.
+// One continuous control row in the modelled instrument's own signal order --
+// VOLUME, LFO, DCO, HPF, VCF, VCA, ENV, CHORUS -- because that left-to-right
+// reading *is* the instrument's ergonomics, and folding it into two rows broke
+// the one relationship the panel exists to show. Section widths track their
+// contents, so a one-fader section is one fader wide.
+//
+// What is still deliberately this project's own is the livery: the palette
+// above, the masthead, the clipped service cards and the accent rules. The
+// panel reads as a relative rather than a copy.
+//
+// Everything the hardware does not carry on that row -- the performance lever,
+// bender depths, assign mode, and the product-only character, keyboard and
+// service controls -- sits on a separate lower deck, so no extension can be
+// mistaken for a stored tone parameter.
 inline constexpr float editorWidth = 1120.0f;
 inline constexpr float mastheadTop = 8.0f;
 inline constexpr float mastheadHeight = 46.0f;
-inline constexpr float soundRowATop = 64.0f;
-inline constexpr float soundRowAHeight = 206.0f;
-inline constexpr float soundRowBTop = 278.0f;
-inline constexpr float soundRowBHeight = 180.0f;
-inline constexpr float performanceDeckTop = 466.0f;
-inline constexpr float performanceDeckHeight = 122.0f;
-inline constexpr float panelHeight = 596.0f;
+inline constexpr float soundRowTop = 62.0f;
+inline constexpr float soundRowHeight = 214.0f;
+inline constexpr float performanceDeckTop = 284.0f;
+// Deep enough that MODE's three stacked latches still set their legends above
+// the readability floor *at the minimum window size*, which is the binding
+// case: the deck's height divided three ways fixes their point size, and that
+// size is then scaled down by 0.875 at the smallest editor. This is therefore
+// a legibility constant rather than a taste one -- 148 leaves POLY 1 at
+// 9.92 pt there, just under the floor.
+inline constexpr float performanceDeckHeight = 152.0f;
+inline constexpr float panelHeight = 444.0f;
 inline constexpr float keyboardHeight = 128.0f;
+
+// The lower deck's editor-drawn cards. They live here beside the sound row's
+// geometry so the two cannot drift apart, and so the deck's arithmetic is
+// checkable without a JUCE build.
+inline constexpr float vectorPadX = 12.0f;
+inline constexpr float vectorPadWidth = 116.0f;
+inline constexpr float characterCardX = 392.0f;
+inline constexpr float characterCardWidth = 350.0f;
+inline constexpr float keyboardCardX = 750.0f;
+inline constexpr float keyboardCardWidth = 358.0f;
+// The five service keys are not performance controls and were the reason the
+// deck could not give its knob legends their full width. They move to the
+// utility bar beside the help text, where they are still one click away and
+// stop competing with the instrument for surface.
+inline constexpr float operationsBarX = 720.0f;
+inline constexpr float operationsBarWidth = 388.0f;
 
 // The patch picker lives in the masthead, while contextual explanations live
 // below the keys instead of obscuring the panel in a floating mouse tooltip.
@@ -143,10 +174,12 @@ inline constexpr float editorHeight = panelHeight + keyboardHeight
 inline constexpr int keyboardLowestMidiNote = 36;
 inline constexpr int keyboardHighestMidiNote = 96;
 inline constexpr int keyboardWhiteKeyCount = 5 * 7 + 1;
+// Both corners keep the panel's own aspect ratio, which the shorter one-row
+// composition widens from 1.44 to about 1.84.
 inline constexpr int minimumEditorWidth = 980;
-inline constexpr int minimumEditorHeight = 683;
+inline constexpr int minimumEditorHeight = 550;
 inline constexpr int maximumEditorWidth = 1680;
-inline constexpr int maximumEditorHeight = 1170;
+inline constexpr int maximumEditorHeight = 942;
 inline constexpr float controlInset = 5.0f;
 inline constexpr float stackGap = 6.0f;
 
