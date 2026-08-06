@@ -92,6 +92,15 @@ constexpr float wetMixerInputOhms = 47000.0f;
 // not specify output impedance, so this is deliberately a first-order nominal
 // model, not a claim that a real unit's pole lands to the hertz. A full MNA or
 // wet-only sweep should replace it when one is available.
+//
+// The reconstruction corners below equal the anti-alias corners because the
+// sister board's clone netlist -- the one whose clock driver and LFO parts
+// matched Roland's p. 15 transcription -- carries exactly three complete
+// Sallen-Key chains, one before the BBDs and one per output line, every
+// section the same 22k/22k pair with 820p/680p then 1n8/270p, alongside a
+// per-BBD 10k/2.2n input pole, both 3.3k taps into 47k/2.2n, and 100n/100k
+// branch coupling. Family-corroborated at designator level, no longer only
+// an assumption; the 106's own p. 15 capacitor codes remain OQ-04's read.
 constexpr float idealSourceTapPoleHz = 23461.38f;
 constexpr float reconstructionFirstHz = 9688.0f;
 constexpr float reconstructionSecondHz = 10377.0f;
@@ -348,7 +357,9 @@ Chorus::SupportChain Chorus::supportChainFor(float sampleRate) noexcept
     chain.antiAliasSecond = sallenKeyCoefficients(
         antiAliasSecondHz,
         sallenKeyQ(antiAliasSecondFeedbackF, antiAliasSecondShuntF), sampleRate);
-    // The output sections are the same two networks again, part for part.
+    // The output sections are the same two networks again, part for part --
+    // an identity read from the sister board's clone netlist rather than
+    // assumed (see the corner constants above).
     chain.reconstructionFirst = sallenKeyCoefficients(
         reconstructionFirstHz,
         sallenKeyQ(antiAliasFirstFeedbackF, antiAliasFirstShuntF), sampleRate);

@@ -85,12 +85,12 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P0 | 01 | Hardware confirmation of the derived 0.5533/0.8983 Hz rates (TP4 capture or original-page read of C3/β), BBD clock/delay endpoints on a real 106, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the 1.6234799 mode-rate ratio, the summing-node β = 33/47 and C3 = 0.1 µF (netlist-corroborated), the derived rate scale, and the family sweep measured on the sibling's identical clock driver |
 | P2 | 02 | Installed-unit common-VCA endpoint, component/rail/IC variation and residual error against the nominal law | The complete nominal path: `d=b<<5`, ideal R-2R `/4096`, p. 8's +4 to −6 V span, p. 15 R30/C7/R32/R31/R165 network, NEC's −5.9 mV/dB typical law, and C7's 9.08249 ms constant |
 | P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation | No-compander topology and the need for a wet-line noise model |
-| P2 | 04 | Loaded post-BBD support transfer, real MN3009 normalized response versus clock, and emitter-follower output impedance | Component topology, provisional ideal-source poles, and the fixed per-shift residual coefficient that is within 0.03 dB of the adopted 40 kHz/12 kHz row on its 1 kHz reference basis |
+| P2 | 04 | Loaded post-BBD support transfer, real MN3009 normalized response versus clock, and emitter-follower output impedance | Component topology, provisional ideal-source poles, the fixed per-shift residual coefficient that is within 0.03 dB of the adopted 40 kHz/12 kHz row on its 1 kHz reference basis, and the input/output Sallen-Key part identity read from the sibling clone netlist |
 | P0 | 05 | TA75558S IC6 and High-output clipping swing versus frequency and load | IC6 identity, linear resistor gains and ±15 V rails |
 | Dependency | 06 | Physical `Vref_rms` for a declared High-output/load condition | Final -18 dBFS RMS mapping, floating output and no-limiter policy |
 | P1 | 07 | Acquisition, droop, loading and time constant of every converter hold | Hold ownership, 4.2 ms pass, VCF 522 µs and voice-VCA 687 µs anchors |
 | P1 | 08 | Exact intra-pass timestamps/branches and the physical state forced by a changed-pitch write | Ordinal 23-write queue and normalized compatibility scheduler |
-| P1 | 09 | Resonance DAC/control voltage to loop gain, compensation and oscillation correction | BA662/IR3109 topology, 4.8 Vpp service trim, shared hold and exact B-2 byte-to-DAC mapping |
+| P1 | 09 | Resonance DAC/control voltage to loop gain, compensation and oscillation correction | BA662/IR3109 topology, 4.8 Vpp service trim, shared hold, exact B-2 byte-to-DAC mapping, and the netlist-verified compensation mechanism (lineage divider values recorded, unpromoted) |
 | P3 | 10 | Post-calibration six-card and multi-unit residual distributions and thermal drift | Zero-spread nominal policy and optional deterministic Unit Character |
 | P1 | 11 | Pulse-Off DC, bleed, loading and switching transient at the voice mixer | About -0.8 V pins the comparator; the final output capacitors are unrelated |
 | P2 | 12 | Envelope wall-clock timing/jitter, analogue/audible thresholds and other firmware revisions | Exact hash-scoped B-2 recurrence and physical `E>>2` DAC truncation |
@@ -418,6 +418,14 @@ switching belong to OQ-20. Use one declared route: measured MN3009 and
 emitter-follower output impedance followed by full modified-nodal analysis, or
 a calibrated de-embedded wet-only sweep.
 
+The 2026-08-06 module netlist pass corroborated the *part identity* of the
+output sections against the input sections on the sibling clone board: three
+complete Sallen-Key chains, one pre-BBD and one per output line, every
+section 22 kΩ/22 kΩ with 820 pF/680 pF then 1.8 nF/270 pF, plus a per-BBD
+10 kΩ/2.2 nF input pole and both 3.3 kΩ taps into 47 kΩ/2.2 nF. The corner
+values themselves, Roland's own p. 15 capacitor codes, and the loaded
+time-varying transfer remain exactly this task.
+
 The renderer's residual charge-transfer state is no longer an open numerical
 law. It advances once per modeled BBD shift (one fCP period), so fixed coefficient 0.8654743 already makes
 the absolute pole track the clock while preserving response versus normalized
@@ -668,6 +676,22 @@ reports roughly 10 V full control and an approximately 150 mV no-current
 region. Because that result is not a stock calibrated-card sweep, use it only
 to place extra samples around a possible conduction onset—not as a target or
 regression tolerance.
+
+Added 2026-08-06 (module netlist pass): the dksynth-lineage reconstruction —
+netlist-explicit in `ThomHPL/Open80017a` and validated by ear as a build in a
+real JUNO-106 — wires the resonance OTA's non-inverting input from VCF IN
+through 24 kΩ against a 1.5 kΩ shunt (÷17.0), its inverting input from
+VCF OUT through 100 kΩ against 1.5 kΩ (÷67.7 loaded), and injects its output
+current at the first filter stage's 4.7 kΩ/560 Ω/68 kΩ summing node. Stage 1
+is a feedback stage (−68 k/4.7 k, the inter-stage sections −68 k/68 k
+unity), so converting those dividers into the model's loop-gain coordinate
+is resistor-only — the OTA's transconductance cancels:
+`(67.7/17.0)·(4.7/68) = 0.275` input boost per unit loop gain, against the
+shipping voiced `0.2296`, same linear form. This is depth within one
+reconstruction lineage, not a second independent source, so the value stays
+unpromoted; the sweep this task asks for still owns it, and can now also
+discriminate the reconstruction's first-stage gain structure, which bears on
+OQ-15's open input coordinate.
 
 ### Needed output (for LLM)
 
@@ -1434,7 +1458,11 @@ Removing the duplicated output Sallen-Key pair does not reconcile it either
 (−9.0 dB at 10 kHz), so the corner *values* are implicated, not only the pole count.
 Note `YouKnow106Chorus.cpp:334-339` re-derives `reconstructionFirst/Second` from the
 same constants as `antiAliasFirst/Second` rather than reading the reconstruction
-side from the schematic separately.
+side from the schematic separately. (Narrowed 2026-08-06: the sibling clone
+netlist reads the output sections at the same part values as the input
+sections — see the module netlist-corroboration pass below — so the shared
+constants are now family-corroborated; the 106's own p. 15 codes stay
+unread and the corner values stay implicated.)
 
 This is coupled to OQ-01: the present chain is a reasonable anti-alias design for
 the modelled 23.9 kHz minimum clock (Nyquist 12 kHz, chain −21.8 dB there) and
@@ -1821,6 +1849,14 @@ JUNO-106-chorus-clone build thread on ModWiggler (`viewtopic.php?t=111159`), the
 allows GitHub and nothing else, so every host above returned a proxy 403 and none
 of them was actually read. That is a property of the session, not of the sources.
 A later pass should check whether it can reach them before spending the time.
+A 2026-08-06 session re-checked: github.com and raw.githubusercontent.com
+answer, while archive.org, vintagesynthparts.com, cdn.roland.com,
+manualslib.com, seriescircuits.com, usermanual.wiki and synthxl.com all still
+refuse at the proxy, and a search for a GitHub-hosted scan of the JUNO-106
+Service Notes (including the joeynotjoe/Schematics-Manuals collection, which
+carries no Juno item) found none — so the p. 15/p. 9 original-page reads
+remain blocked from this environment class and need either a widened egress
+policy or a human with the document.
 
 ### Two anchored ADJUSTMENT values still unused
 
@@ -2104,6 +2140,102 @@ mod-lore around the One-O-Six clone yields only an ambiguous stock-clock
 inference (~15–40 kHz) recorded with the other unpromoted sweep reports.
 Selector spec H/M/L = 0/−15/−30 dBm re-surfaced (OQ-06); everything else was
 dead ends, logged in the session record so the queries are not repeated.
+
+## Module netlist-corroboration pass — 2026-08-06 (voice-module reconstruction and support-chain identity)
+
+**Work mode:** analysis of supplied/public source material. **No hardware was
+measured.** Two source trees were read at netlist level:
+`ThomHPL/Open80017a` (CERN-OHL-S; a KiCad 8 reconstruction of the potted
+80017A voice module whose v0.1 build was installed and played in a real
+JUNO-106 — "no perceivable difference (to my ears)", a listening report, not
+a calibrated sweep — and whose rev 0.2 changes footprints only; it credits
+the dksynth/guest ModWiggler thread, the same lineage as the reconstruction
+OQ-09 already cites, and the same 80017A teardown this project cites for
+device identity), and a re-read of `gligli/juno-chorus-clone` (GPL-3.0).
+From both, component values and connectivity are cited as facts; no code or
+design files are taken. Connectivity was extracted from the LTspice and
+KiCad sources by geometry, not read off renders, and the KR-106
+`docs/analysis` tree was checked directly: it ships analyzer scripts and
+summary reports whose source WAV/click captures are not in the repository,
+confirming the earlier "raw captures unpublished" standing.
+
+### OQ-04 — the output sections are the input sections, read rather than assumed
+
+The chorus-clone netlist carries exactly three complete Sallen-Key chains —
+one before the BBDs, one per output line — every section built from the same
+four values: 22 kΩ/22 kΩ with 820 pF feedback and 680 pF shunt (9.69 kHz,
+Q 0.549), then 22 kΩ/22 kΩ with 1.8 nF and 270 pF (10.38 kHz, Q 1.291).
+Each BBD input has its own 10 kΩ/2.2 nF passive pole; each BBD's two outputs
+reach the summing node through 3.3 kΩ each against 47 kΩ to ground and
+2.2 nF; each branch couples through 100 nF against 100 kΩ (15.9 Hz). The
+engine's `reconstructionFirst/Second` corners therefore no longer merely
+*assume* the input sections' part values: the identity is corroborated at
+designator level for the board family, by the same netlist whose clock
+driver and LFO components matched Roland's p. 15 transcription. Not closed:
+the 106's own p. 15 capacitor codes (a single 10× misread on Roland's print
+would still move a corner a decade), the MN3009/emitter-follower output
+impedance, and the loaded time-varying transfer — all still OQ-04. The
+clone's own front end (10 µF into 33 kΩ and an op-amp input stage) is
+clone-specific and is not evidence against the 106's C44/R120 wet coupling.
+One inference is recorded, not promoted: a five-pole ~10 kHz chain on *both*
+sides of the BBD is a coherent design for a clock whose minimum approaches
+24 kHz (Nyquist 12 kHz) and needlessly dark for a ~43 kHz minimum, which
+sides with the retained 23.9–77.1 kHz range against the higher third-party
+minima — a design-intent argument, not a measurement.
+
+Status: **partially resolved** (part identity family-corroborated;
+corner values, Roland print read and loaded transfer still open).
+
+### OQ-09 — the compensation mechanism is netlist-verified; its converted slope brackets the shipping constant
+
+Extracted connectivity, identical in the LTspice full-module sim and the
+rev 0.2 KiCad values (24 kΩ on the board, 25 kΩ in the sim draft): the
+resonance OTA's non-inverting input is fed from **VCF IN through
+24 kΩ/1.5 kΩ (÷17.0)**, its inverting input from **VCF OUT through
+100 kΩ/1.5 kΩ (÷67.7 loaded — the same network the model's
+`loopDividerRatio` reads unloaded as 66.67 and the earlier
+reverse-engineering reported as 67.7)**, and its **output current injects
+into the first filter stage's summing node** — the junction of the 4.7 kΩ
+input resistor, 560 Ω shunt and the stage's own 68 kΩ feedback. That is the
+mechanism of `inputCompensation()`, now verified at netlist level in a
+design that ran inside a real JUNO-106: raising resonance raises feedback
+and input drive together through one transconductance.
+
+Because stage 1 is a feedback stage (DC gain −68 k/4.7 k = −14.5; the
+inter-stage sections are −68 k/68 k unity), converting the dividers into the
+model's loop-gain coordinate needs no device parameter — the resonance
+OTA's gm cancels: `slope = (67.7/17.0)·(4.7/68) = 0.275` input boost per
+unit loop gain, against the shipping voiced
+`inputCompensationPerFeedback = 0.2296` — 17% above, same linear-in-k form.
+Also read from the same netlist: the loop's limiting mechanism is OTA
+saturation alone (no clipping diodes anywhere in the reconstruction), and
+the first stage's gain structure (−68 k/4.7 k rather than a passive
+divider) is a new lead against OQ-15's open input coordinate.
+
+This is **corroboration, not an anchor**: Open80017a descends from the same
+dksynth thread as the ÷17.0/÷67.7 figures already on file, so the agreement
+is depth within one lineage — now netlist-explicit and build-validated by
+ear — not a second independent source. The constant is unchanged;
+re-fitting it would also unsettle the freshly solved 4.83 Vp-p/248 Hz
+endpoint pair on unpromoted evidence. Status: **mechanism resolved,
+magnitude still open** — the 128-point family OQ-09 asks for owns it.
+
+### OQ-19 — corroboration only
+
+The reconstruction's VCA block drives the OTA bias input through a plain
+resistor-defined current path with 47 pF/47 kΩ compensation — consistent
+with the quasi-linear reading Roland's drawing supports. The clone
+substitutes LM13700 halves for the BA662s, so this establishes topology
+only, never the BA662's own low-current curve; the OQ-19 measurement stands.
+
+### Negative results, recorded so they are not repeated
+
+No GitHub-hosted scan of the JUNO-106 Service Notes exists in any repository
+found by search (the joeynotjoe/Schematics-Manuals collection carries no
+Juno item), so the p. 15/p. 9 original-page reads remain blocked from
+GitHub-only egress. The KR-106 analysis tree publishes no raw captures — its
+`chorus_report.txt` summarizes an out-of-repository Juno-6 WAV. Neither
+Open80017a nor the chorus clone contains any Roland page image.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
