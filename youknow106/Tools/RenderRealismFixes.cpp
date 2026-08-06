@@ -404,6 +404,12 @@ int main(int argc, char** argv)
         for (const auto& [slug, row] : metrics)
             csv << slug << ',' << row.peakDbc << ',' << row.rmsDbc << ','
                 << row.diffGainDb << '\n';
+        csv.close();
+        if (!csv)
+        {
+            std::printf("could not write the metrics manifest\n");
+            return 1;
+        }
 
         std::ofstream readme(outputDir / "README.md");
         readme <<
@@ -433,6 +439,12 @@ int main(int argc, char** argv)
                           slug.c_str(), row.peakDbc, row.rmsDbc,
                           row.diffGainDb);
             readme << line.data();
+        }
+        readme.close();
+        if (!readme)
+        {
+            std::printf("could not write the manifest README\n");
+            return 1;
         }
     }
     return 0;

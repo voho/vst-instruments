@@ -3427,14 +3427,18 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         return 0.0f;
 
     // Physical BA662 voice-VCA control feedthrough: differential-pair V_be
-    // mismatch leaks a fraction of the control current to the *output*, so
-    // the leak follows the control alone -- an OTA's output offset rides
-    // I_ABC, not I_ABC times its own gain. A previous revision added the
-    // leak to the amplifier's input, which squared the law, halved the
-    // gate-off thump in decibels and removed it entirely from release
-    // tails -- cleaner than the mechanism this term is named for. The
-    // magnitude stays voiced under OQ-19; the placement is the mechanism's.
-    const float vcaCvFeedthrough = (card.vcaOffset * 0.002f + 0.0008f) * voice.vcaControl * parameters.calibration;
+    // mismatch leaks a fraction of the bias current to the *output*, so the
+    // leak rides I_ABC itself -- not I_ABC times its own gain, and not the
+    // raw control voltage either. The control-to-current law has a turn-on
+    // knee and a deadband, and below them there is no bias current to leak,
+    // so the leak follows the same law the gain does. A previous revision
+    // added the leak to the amplifier's input (squaring the law, halving
+    // the gate-off thump in decibels and deleting it from release tails);
+    // the one before this used the unshaped control, which kept leaking
+    // after the current had already died. The magnitude stays voiced under
+    // OQ-19; the placement and shaping are the mechanism's.
+    const float vcaCvFeedthrough = (card.vcaOffset * 0.002f + 0.0008f)
+        * VoiceVcaControlLaw::gain(voice.vcaControl) * parameters.calibration;
     const float output = (filtered * voice.vca + vcaCvFeedthrough) * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
