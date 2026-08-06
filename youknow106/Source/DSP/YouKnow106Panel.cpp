@@ -171,12 +171,15 @@ constexpr Placement placements[controlCount] = {
 
     // CHORUS. Two interlocked latching buttons. Neither down is off; selecting
     // one releases the other, so the hardware exposes only Off, I and II.
+    // Both latches span the whole section. At one slot of two they sat in its
+    // left half with the right half empty, which reads as a control that has
+    // gone missing rather than as a two-button group.
     { parameters::chorusI, "I",
       "Toggles the slower stereo BBD Chorus I; press the lit button again for Off. Its 0.522 Hz rate carries this instrument's own schematic timing ratio on a still-provisional JUNO-60 scale.",
-      ControlKind::Toggle, 9, 0, 0, 2, -1, 0 },
+      ControlKind::Toggle, 9, 0, 0, 2, -1, 0, 2 },
     { parameters::chorusII, "II",
       "Toggles the faster stereo BBD Chorus II; press the lit button again for Off. Its 0.848 Hz rate carries this instrument's own schematic timing ratio on a still-provisional JUNO-60 scale.",
-      ControlKind::Toggle, 9, 0, 1, 2, -1, 0 },
+      ControlKind::Toggle, 9, 0, 1, 2, -1, 0, 2 },
 };
 
 struct Layout

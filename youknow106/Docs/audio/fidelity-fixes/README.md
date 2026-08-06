@@ -18,12 +18,23 @@ still measures about -80 to -90 dBc. That is the floor of this measurement,
 not a difference -- and it is below audibility, so a change that lands in it
 is a change nobody can hear.
 
+The committed pair is the 2026-08-06 fidelity pass: the transconductor's own
+control-current saturation replacing the single-pole knee that left a 16 kHz
+cutoff 143 cents flat, the R-2R carry error reinstated where it belongs, the
+voice VCA rebuilt from Roland's grounded-base stage, and the per-card cutoff
+thermal spread cut from +/-165 cents to about +/-10. Nothing here lands in the
+measurement floor, which is the point: these are audible corrections, not
+polish. `04-resonant-sweep` and `06-unit-character-sweep` measure a difference
+*louder* than the programme, because the cutoff correction moves the resonant
+peak far enough that the two takes stop being the same signal rather than
+because either take got louder.
+
 | Take | Diff peak (dBc) | Diff RMS (dBc) |
 | --- | ---: | ---: |
-| `01-unison-tuning` | -48.8 | -67.2 |
-| `02-output-summer-drive` | -41.9 | -64.3 |
-| `03-chorus-wet` | -36.8 | -62.4 |
-| `04-resonant-sweep` | -16.3 | -32.3 |
-| `05-saw-bass` | -36.1 | -66.4 |
-| `06-unit-character-sweep` | -23.0 | -49.3 |
-| `07-high-lead` | -37.5 | -53.1 |
+| `01-unison-tuning` | -19.2 | -38.8 |
+| `02-output-summer-drive` | -2.6 | -27.0 |
+| `03-chorus-wet` | -6.2 | -31.1 |
+| `04-resonant-sweep` | +9.5 | -8.9 |
+| `05-saw-bass` | +0.3 | -26.1 |
+| `06-unit-character-sweep` | +7.5 | -18.7 |
+| `07-high-lead` | +1.2 | -12.1 |

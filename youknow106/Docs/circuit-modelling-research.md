@@ -70,9 +70,9 @@ provenance-pending lead, not Roland-authored evidence.
 | Cutoff control law | Firmware: the panel byte times 128, envelope, modulator, bender and key-follow terms summed in a 14-bit accumulator clamped to [0, 16383], the top 12 bits driving the converter; 5.53 Hz at code 0, 1143 counts per octave; service check of 248 Hz self-oscillation at code 6272. Service Notes p. 1 publishes an approximate 5 Hz–50 kHz range | `f = 5.53 · 2^(counts/1143)` through its established range, followed in the default profile by a transparent numerical `min(..., 50000 Hz)` cap. The digital sum is clamped and truncated to 4-count steps. The former 24 kHz/tanh/52.2 kHz curve may be retained only as a named legacy profile | Count-domain sum, base, octave slope, service point, clamp and truncation are **anchored**. The 50 kHz cap is **product policy**, not a claim about converter saturation. A described 93-point/single-card fallback table lacks the complete raw capture, metadata and population scope needed to resolve OQ-18 |
 | Resonance | A photographed A1QH80017A teardown assigns one BA662 to the IR3109 resonance-feedback path; Service Notes p. 19 trims every card to a 4.8 Vpp self-oscillating sine. Hash-identified B-2 behavior forms aligned work word `W=128b` and physical converter code `DAC12=32b` from stored resonance byte `b`; Service Notes pp. 5, 8 and 13 establish one shared IC26-channel-6 hold. No qualifying original-unit sweep establishes the subsequent DAC-voltage/current-to-loop-gain transfer | The exact stored-byte conversion and one shared queue write feed a named `VoicedResonanceCompatibilityProfile`. That replaceable profile retains the existing quadratic/linear panel-to-loop curve, circuit-shaped nonlinear return and optional per-card Unit Character residual without changing preset bytes | BA662/IR3109 identity, shared ownership and the service endpoint are **anchored**; `b → W → DAC12` is **ROM-resolved** for the identified image. The 4.8 Vpp adjustment has no published tolerance and does not identify loop gain. Every numerical analogue step after the DAC — including the current 30%/90%/maximum landmarks, loop limiter and card residual magnitude — is **voiced compatibility**, not a fitted, measured or calibrated hardware law (OQ-09/OQ-10) |
 | Resonance compensation | No qualifying raw original-unit transfer or circuit-de-embedded sweep was located for the compensation path independently of filter saturation and output amplitude | The named resonance compatibility profile retains input multiplier `1 + 0.2296·k`, preserving the current high-Q drive character | The direction, coefficient and resulting maximum boost are all **voiced compatibility**. They are not hardware measurement anchors and may be replaced with the rest of OQ-09's analogue profile without changing the verified byte/DAC path |
-| Oscillation frequency correction | The service procedure establishes that a per-card adjustment exists, but does not establish the model's feedback-dependent correction curve or its coefficient | The named resonance compatibility profile retains `1 + 0.045·min(k/4,1.2)²` before the explicit 50 kHz product cap | The existence of an adjustment does not validate this equation. Its threshold-scale denominator, 4.5% amount and rendered pitch result are **voiced compatibility/model calibration**, not original-unit transfer evidence |
+| Oscillation frequency correction | Service Notes ADJUSTMENT trims every card at BANK 3 with C4 held to a 4.8 Vp-p self-oscillating sine at 248 Hz — two steps, one card, one state. The larger limit cycle the amplitude anchor requires compresses the stage `tanh` and pulls the oscillation flat, so the two anchors have to be satisfied together | The named resonance compatibility profile carries `1 + 0.098·min(k/4,1.2)²`, solved jointly with `maximumFeedback = 4.51` against both endpoints; the pair renders 4.83 Vp-p at 248.0 Hz | The two **endpoints are anchored** and the constants are now fixed by them rather than voiced. The *shape* between them — the quadratic in `k/4` — remains **voiced**, and carries a known wart: it is a function of loop gain while the droop it corrects is a function of amplitude, so it lifts cutoff slightly below the oscillation threshold. OQ-09's measured response-versus-resonance family is what closes that |
 | Envelope | Hash-identified B-2: one 14-bit state per generated envelope, sustain `S=128b`, saturating additive attack without retrigger reset, and shared decay/release coefficient selection. For `v_hi=v>>8`, `v_lo=v&255`, `c_hi=c>>8`, `c_lo=c&255`, its fall helper is `Q(v,c)=c_hi*v_hi+floor(c_lo*v_hi/256)+floor(c_hi*v_lo/256)`; the low×low term is intentionally omitted | Attack is `min(0x3FFF,E+A[b])`; decay is `S+Q(E-S,c)` when above sustain and otherwise snaps to `S`; release is `Q(E,c)`. The recurrence retains both low bits, while the VCF envelope path, ENV-mode voice VCA and display consume the physical 12-bit fraction `(E>>2)/4095`. The attack region `0x0B60–0x0C5F` hashes to `faef5ad5666a501bfe373f0af4cb345cae8ec6c569821873bb15f69f71ec3eea`; decay/release `0x0D60–0x0E5F` hashes to `0de73bedf11904538056eec3622b09470461f13ad016103ab9992be73e467754` | **ROM-resolved** for the stated B-2 image, including coefficients, DAC truncation, rounding, clamp, sustain and retrigger semantics. OQ-12 now concerns hardware pass timing/jitter, analogue-node/audible thresholds, independent behavioral confirmation and other revisions, not recovering these tables |
-| Voice-module VCA | A photographed A1QH80017A teardown identifies the second BA662 as the per-voice VCA, controlled only by the ENV/GATE selection and its envelope control voltage; Service Notes p. 19 trims its output to 6 Vpp | `VoicedVoiceVcaCompatibilityProfile` retains the current quasi-linear law, 0.12 knee, 260 dB-per-unit low-level slope and 0.005 hard-zero rule. Velocity is an optional plug-in extension applied here | BA662 identity, topology, ENV/GATE ownership and the service endpoint are **anchored**. The 6 Vpp adjustment has no published tolerance and does not establish the control curve. That entire analogue control-to-gain curve remains **voiced compatibility**: no qualifying raw original-module sweep establishes its shape or numbers, and a measurement floor cannot prove a hard deadband (OQ-19). Card residuals are OQ-10; common VCA LEVEL is deliberately absent because it is downstream |
+| Voice-module VCA | A photographed A1QH80017A teardown identifies the second BA662 as the per-voice VCA, controlled only by the ENV/GATE selection and its envelope control voltage; Service Notes p. 19 trims its output to 6 Vpp. Roland's module-board drawing prints the volts-to-amps stage ahead of it: `VCA CV → R106 10 kΩ → node → R105 22 kΩ → Tr20 emitter`, base grounded, collector to pin 11 | `VoiceVcaControlLaw` is that stage: `gain ∝ I_ABC = (V_cv − V_be)/32 kΩ` clamped at zero — linear in control above a hard turn-on with the transistor's own 60 mV-per-decade knee below it, written as the exact softplus. The turn-on is the trimmed 150 mV dead zone on the converter's 10 V span; the knee is kT/q on that same span. Velocity is an optional plug-in extension applied here | BA662 identity, topology, ENV/GATE ownership and the service endpoint are **anchored**. The law's *shape* is now **derived** from Roland's own drawing — the part is current-controlled and carries no volts-per-decade converter at all, so an exponential response would need a converter the schematic does not show. Its two numbers are derived, not measured: OQ-19 still wants a BA662 gain-versus-control sweep, which would move the turn-on rather than the law. The exact-zero deadband and the retirement silence threshold are declared **product policy**. Card residuals are OQ-10; common VCA LEVEL is deliberately absent because it is downstream |
 | Stored VCA LEVEL | The stored VCA LEVEL parameter drives the common uPC1252H2 on the jack board, downstream of the voice sum and shared high-pass and upstream of the chorus. Roland populates the NEC application input as C12 10 µF NP followed by R36 33 kΩ. NEC specifies the IC's GC1 control constant as −5.9 mV/dB typical (5.8–6.1 mV/dB magnitude) over −30 to +30 dB under its stated test conditions | One independent C12/R36 0.482288 Hz coupling state followed by one quantised, slewed common gain used to match patch loudness and chorus drive. The current dB-domain curve is a provisional fit to reported points: approximately −15 dB at panel −5, −12.5 dB at 0 and +5 dB at +5 | C12/R36 topology, input resistance, derived pole, device GC1-voltage-to-gain law, VCA placement and shared ownership are **anchored** by the schematic and 1983 NEC µPC1252H2 datasheet. Roland's byte/DAC/hold-network-to-GC1 voltage, offset and installed endpoints remain **voiced/fitted** pending OQ-02 |
 | Voice assignment | Hash-identified A-5 assigner behavior: POLY 1 keeps per-voice memory of the untransposed physical key and otherwise takes the free voice released longest ago; POLY 2 scans linearly from the first voice, chopping old tails; **no voice stealing in either mode** — a seventh simultaneously held key is dropped | Both policies. A key-up makes that slot assignable even while sustain keeps its old sound ringing, matching the assigner's key table rather than treating sustain as another held physical key | These allocation, physical-key and sustain-ownership semantics are **ROM-resolved for the supplied A-5**, not generalized to unidentified revisions. The distinction under transpose and release is asserted behaviorally |
 | Assign mode switches | Panel wiring establishes two momentary scan contacts and lamp outputs; hash-identified A-5 behavior latches POLY 1, POLY 2 or both/Unison, with both lamps off not a stable mode | The paired parameters expose those three states. An ordinary click has one contact's meaning; Shift-click explicitly represents pressing both together. Re-pressing the selected virtual button preserves its lamp but repeats the assigner action | Contact topology is **anchored** by the panel circuit. Three-state latch, simultaneous-both handling, accepted-press gate/clear/rescan and power-on fallback are **ROM-resolved for the supplied A-5**. Obsolete both-off plug-in state canonicalises to POLY 1 |
@@ -228,8 +228,17 @@ open question, it is named in its entry.
 
    A phase-coherent clock-feedthrough spur is *parameterised* but ships at zero amplitude, along with the other unmeasured chorus-noise components, pending OQ-03: which harmonic dominates and at what level is not established, and the audible part of it — the clock's intermodulation with the signal — is already produced by the explicit output sample-and-hold. Only the dynamic transfer loss above is live.
 
-6. **VCF Cutoff Anti-Log Emitter Resistance ($R_e$) Compression**:
-   Anti-log transistor parasitic emitter resistance ($R_e \approx 8\,\Omega$) causes an $I_{abc} R_e$ voltage drop at high cutoff control currents ($f_c > 8\text{ kHz}$), softly compressing extreme top-end filter sweeps ($\text{rawHz} / (1 + \text{calibration} \cdot (\text{rawHz} / 120000))$) to prevent digital harshness.
+6. **IR3109 control-current saturation — the upper cutoff knee** *(replaced 2026-08-06)*:
+   The transconductor's control current saturates internally at about $700\,\mu\text{A}$, which on this circuit's own $C = 240\text{ pF}$ / $R = 68\text{ k}\Omega$ test condition is a pole near $64\text{ kHz}$. That, not an arbitrary cap, is where the cutoff stops following the anti-log converter, and it is consistent with Roland's published 50 kHz top. Modelled with the generalized algebraic clip the output summer and the BBD write already use, $y = x/(1+|x/64\text{k}|^{1.7})^{1/1.7}$, with the exponent fitted to a measured code-to-frequency table for a real voice card.
+
+   Like the output summer's rails, this is a property of the part and is **not** scaled by Unit Character.
+
+   What it replaces was a single pole, $\text{rawHz}/(1 + \text{calibration}\cdot \text{rawHz}/120000)$, attributed to anti-log emitter resistance. That shape cannot describe the measured knee at either end of the control: at Unit Character 1 it left the model **143 cents flat around a 16 kHz cutoff** and 48–90 cents flat from 5–9 kHz, which is inside the musical range; at Unit Character 0 it was instead **292 cents sharp** at DAC 3584, because the correction it needed was gated off. The replacement is under **5 cents** anywhere below 2.7 kHz and within **30 cents** of the measured card at every published point. `Tests/YouKnow106CircuitTests.cpp::testCutoffControlLaw` asserts both halves.
+
+6b. **R-2R converter integral non-linearity — reinstated where it belongs**:
+   The same measured table documents excess steps of $-4.64$, $+23.31$ and $-4.48$ cents at DAC codes 1024, 2048 and 3072: an R-2R ladder's major-carry error, exactly where it physically belongs. This project modelled it once and removed it correctly — the implementation wrote a transient impulse into `voice.cutoffCountsTarget`, a field the same converter write reassigns, so it measured $-360$ dBc and was bit-identical (see entry 22). **The mechanism was real; only its placement was wrong.**
+
+   It is now a persistent offset applied by the converter write itself, on the code it just produced, so it reaches the hold capacitor and the filter. A slow cutoff sweep crossing mid-scale steps by about 23 cents, as a real card's does. Scaled by Unit Character, because an ideal ladder has no carry error at all: the magnitude is resistor matching, which is a tolerance.
 
 7. **TA75558S IC6 Output Summer Rail Bound**:
    The output summer runs on $\pm 15\text{V}$ rails and cannot drive past them. Modelled with the same generalized algebraic clip as the BBD write, $y = x/(1+|x/L|^n)^{1/n}$, at $L = 13.5\text{ V}$ and $n = 8$: numerically linear through the few volts the stage actually carries, bending only as it approaches the rail.
@@ -271,6 +280,15 @@ open question, it is named in its entry.
 
     Removing it changes the wet path by $-15.8$ dBc peak and leaves every other listening take at the measurement floor.
 
+13b. **Voice VCA control law — derived from Roland's own drawing** *(replaced 2026-08-06)*:
+    The BA662 has no volts-per-decade law at all: it is a current-controlled OTA whose gain follows $I_{ABC}$, and there is no exponential converter anywhere in the VCA path. The volts-to-amps conversion happens outside the module, in a grounded-base stage Roland's schematic prints: `VCA CV (0…+10 V from the S/H) → R106 10 kΩ → node → R105 22 kΩ → Tr20 emitter`, base grounded, collector to pin 11 VCA CONT. So $\text{gain} \propto I_{ABC} = (V_{cv} - V_{be})/32\,\text{k}\Omega$, clamped at zero — **linear in the control voltage above a hard turn-on, with only the transistor's own exponential knee below it.**
+
+    That knee is the classic 60 mV per decade, which is $kT/q$ times $\ln 10$, so the model's knee constant is the thermal voltage referred to the converter's 10 V span. The turn-on is the trimmed dead zone, about 150 mV of that span. `VoiceVcaControlLaw::gain` is the exact softplus of that stage: linear above, exponential below, continuous between.
+
+    What it replaces was a voiced profile whose shape was right but whose numbers were not: a 0.12 knee (5–10× too wide, and sitting too high) with a 260 dB-per-control-unit slope. That put **13–15 dB of extra attenuation on the bottom of every envelope** and squared the end of every release tail, where a current-controlled OTA gives a clean exponential. Only the two product-policy constants remain declared rather than derived: an exact-zero deadband where the modelled leak is already 95 dB down, and a separate silence threshold the block loop uses to decide a voice may be retired.
+
+    A published teardown infers the opposite — *"the envelope generators are linear and generated by the CPU, so the VCA response must be exponential"*. That is an inference; the schematic is a drawing, and it wins. Whether the firmware pre-shapes the envelope DAC data is a separate, still-open question.
+
 14. **CD4051 multiplexer charge injection — removed, as unreachable and unquantifiable**:
     A CD4051's channel switches do inject $\Delta Q = C_{gd}\,\Delta V$ into the hold capacitor as the scan steps. The implementation added that to `cutoffCountsTarget` / `vcaControlTarget` — fields the same converter write assigns from scratch immediately afterwards, so it was overwritten every time and never reached the output. The isolated comparison render measured it at $-360$ dBc: bit-identical.
 
@@ -290,6 +308,33 @@ open question, it is named in its entry.
 
 17. **Voice Cards Spatial Chassis Thermal Gradient ($\Delta T_{\text{psu}}$)**:
     Models spatial heat dissipation across physical voice cards 1–6 based on physical proximity to the internal power supply transformer ($T_{\text{card}}(i) = 25^\circ\text{C} + \Delta T_{\text{ambient}}(t) + 4^\circ\text{C} e^{-(i-1)/2.5}$), introducing per-voice thermal headroom variation under polyphonic playing.
+
+    **The cutoff half of this was ten times too large and disagreed with the
+    temperature it was supposed to come from** *(corrected 2026-08-06)*. It was
+    written as $1 + 0.04\,\text{cal}\,(i - 2.5)$, i.e. $\pm 165$ cents: linear in
+    the card index while the temperature profile computed beside it is
+    exponential in it, absent from the README's own Unit Character table, and
+    roughly ten times what the model's own thermal computation supports — a
+    4 °C gradient moves $V_t$ by about 1.3 %. The module board also carries R111,
+    a 560 Ω *positor* (a PTC thermistor, listed as such in the parts legend)
+    returning the CV divider node to ground specifically to cancel this
+    temperature coefficient.
+
+    It is now derived from the same exponential profile as the temperature,
+    through the AS3109 datasheet's own $0.33\,\%/^\circ\text{C}$ cutoff tempco,
+    and taken about the six-card mean because the FREQ trim is set with the
+    instrument warm. That is about $\pm 10$ cents at Unit Character 1 — an upper
+    bound on what the positor leaves rather than a measured residual (OQ-10),
+    and coincidentally close to the $\pm 10.5$ cents a third-party project with
+    six-card data ships as its own default. The per-voice trimmer residuals
+    ($\pm 84$ cents of offset, $\pm 5\%$ of scale) are unchanged and remain the
+    dominant per-card spread, as a trimmer residual should be.
+
+    The isolated comparison render moves from $-7.2$ to $-30.2$ dBc peak. That
+    is the size of the correction: this mechanism was previously the loudest
+    thing in the whole comparison set apart from the chorus sweep, which is not
+    where a 4 °C chassis gradient behind a dedicated compensating thermistor
+    belongs.
 
     It reaches the OTA's linear span and the cutoff reference. It does **not**
     reach pitch. A revision multiplied each card's oscillator phase increment by
@@ -314,10 +359,12 @@ open question, it is named in its entry.
 21. **C14 Non-Polar Electrolytic Voltage-Dependent HPF Modulation**:
     Models non-linear capacitance variation $C(v) = C_0 / (1 + \alpha |v|)$ across voice-summing coupling capacitor C14 ($10\,\mu\text{F}$ non-polar electrolytic), allowing large low-frequency sub-bass voltage swings to dynamically shift the HPF cutoff corner and generate natural intermodulation "glue". Rendered before/after comparison WAVs and isolated difference files are committed in [`11-electrolytic-c14-nonlinearity-before.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/11-electrolytic-c14-nonlinearity-before.wav), [`11-electrolytic-c14-nonlinearity-after.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/11-electrolytic-c14-nonlinearity-after.wav), and [`11-electrolytic-c14-nonlinearity-diff.wav`](file:///Users/vojta/Dev/vst-instruments/youknow106/Docs/audio/sota-comparisons/11-electrolytic-c14-nonlinearity-diff.wav).
 
-22. **R-2R converter major-carry glitch — removed, as unreachable**:
+22. **R-2R converter major-carry glitch — removed as an impulse, reinstated as an offset**:
     Written into the same targets as entry 14, on the same write that recomputes them, and equally unreachable: the isolated render measured $-360$ dBc. Its code-transition detector was broken independently — `currentDacFraction` was only computed for the shared destinations, so it read zero for every VCF, VCA and pitch write, and the "major carry" test fired on almost every shared write instead of on genuine `0x7FF`$\leftrightarrow$`0x800` transitions.
 
-    The zipper texture it was meant to supply has a physically honest source: modelling each hold capacitor as tracking only while its multiplexer window is open and holding afterwards, which follows from the anchored 23-writes-per-4.2 ms scan. That is blocked on the same **OQ-07** question and is not guessed at in the meantime.
+    Removing it was right, but the mechanism was not the problem — the placement was. A ladder's integral non-linearity is a *static* property of the code, not an event at the transition, and it is now modelled as such in entry 6b, with measured sizes.
+
+    The separate zipper texture the impulse was meant to supply still has no honest source: it would come from modelling each hold capacitor as tracking only while its multiplexer window is open and holding afterwards, which follows from the anchored 23-writes-per-4.2 ms scan. That remains blocked on **OQ-07** and is not guessed at in the meantime.
 
 *Note: All physical circuit simulation behaviors above scale dynamically with **Unit Character** (`calibration`): `0.0` suppresses every one of them for a pristine digital reference and `1.0` matches real hardware.*
 
@@ -430,8 +477,8 @@ and “measurement required” are valid results; a guessed value is not.
 | Oscillator-mixer levels and filter-drive calibration | OQ-15 |
 | Main noise spectrum and filter self-oscillation startup | OQ-16 |
 | Main VOLUME gang tracking and loaded selector/jack transfer | OQ-17 |
-| Hardware cutoff-converter saturation behind the transparent 50 kHz product cap | OQ-18 |
-| Measured central voice-module BA662 gain, knee and possible deadband | OQ-19 |
+| Hardware cutoff-converter saturation behind the transparent 50 kHz product cap | OQ-18 — *knee now derived from the part's own control-current saturation; a Roland-published or independently reproduced curve is what remains* |
+| Measured central voice-module BA662 gain, knee and possible deadband | OQ-19 — *law now derived from Roland's own grounded-base stage; a measured sweep would move the turn-on, not the shape* |
 | Chorus wet-mute switching transient and leakage | OQ-20 |
 | Coupled C14/switched-HPF transfer and mode-change memory | OQ-21 |
 
@@ -483,6 +530,14 @@ No hardware was measured. Summary of what moved:
   at resonance 0, calibration 0 and stops at 20 kHz. Separately, five plausible
   refinements were measured and found inaudible; they are listed so they are not
   attempted again.
+
+  **The −87.7 dB figure did not survive being built.** A doubled filter grid was
+  implemented against the shipping engine and measured at −48.5 → −54.4 dB for
+  about 40% of the whole engine's cost; it is not in the shipping code, and the
+  same-day implementation pass in [open questions](open-questions.md) records the
+  experiments that located the limit in the per-voice interpolation rather than
+  in the grid. The half-band *window*, which that pass did change, was worth more
+  for nothing: see the decimator entry there.
 
 Third-party forum and open-source measurements cited there are **not** promoted to
 anchored, and the JUNO-6 chorus and ADSR data referenced remain labelled comparative

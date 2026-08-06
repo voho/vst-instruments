@@ -689,7 +689,7 @@ void YouKnow106Display::paint (juce::Graphics& g)
 
     // Oscilloscope CRT Screen
     const auto screen = rightBox.reduced (3.0f, 2.0f);
-    g.setColour (juce::Colour (0xff070e14));
+    g.setColour (fromPalette (panel::colour::scope));
     g.fillRoundedRectangle (screen, 2.0f);
 
     // Scope grid
@@ -697,26 +697,51 @@ void YouKnow106Display::paint (juce::Graphics& g)
     g.drawHorizontalLine (juce::roundToInt (screen.getCentreY()), screen.getX(), screen.getRight());
     g.drawVerticalLine (juce::roundToInt (screen.getCentreX()), screen.getY(), screen.getBottom());
 
-    // Waveform Trace
-    juce::Path wavePath;
     constexpr std::size_t numScopePoints = 128;
-    const float stepX = screen.getWidth() / static_cast<float> (numScopePoints - 1);
-    const float centreY = screen.getCentreY();
-    const float halfHeight = screen.getHeight() * 0.44f;
 
+    // Vertical range. The instrument's own output convention puts an ordinary
+    // patch near a tenth of full scale, so a fixed plus-or-minus-one trace is a
+    // flat line for almost everything it plays. Track the peak, attack fast and
+    // release slowly so the picture does not breathe on every note, and quantise
+    // the result to a power-of-two ladder that is printed on the screen -- a
+    // scope whose gain moves silently is not telling the truth about level.
+    float peak = 0.0f;
+    for (const float sample : scopeBuffer)
+        peak = juce::jmax (peak, std::abs (sample));
+    scopePeak = peak > scopePeak ? peak : scopePeak + (peak - scopePeak) * 0.08f;
+
+    float wantedGain = 1.0f;
+    while (wantedGain < 32.0f && scopePeak * wantedGain < 0.42f)
+        wantedGain *= 2.0f;
+    while (wantedGain > 1.0f && scopePeak * wantedGain > 0.95f)
+        wantedGain *= 0.5f;
+    scopeGain = wantedGain;
+
+    // Trigger on the rising edge through zero, with a hysteresis band scaled to
+    // the trace itself so a near-silent buffer does not latch onto its own
+    // dither and jitter the picture from frame to frame.
+    const float hysteresis = juce::jmax (1.0e-4f, scopePeak * 0.06f);
     std::size_t triggerIdx = 0;
-    for (std::size_t i = 0; i < 64; ++i)
+    bool armed = false;
+    for (std::size_t i = 0; i < scopeBuffer.size() - numScopePoints; ++i)
     {
-        if (scopeBuffer[i] <= 0.0f && scopeBuffer[i + 1] > 0.0f)
+        if (scopeBuffer[i] < -hysteresis)
+            armed = true;
+        else if (armed && scopeBuffer[i] >= 0.0f)
         {
             triggerIdx = i;
             break;
         }
     }
 
+    juce::Path wavePath;
+    const float stepX = screen.getWidth() / static_cast<float> (numScopePoints - 1);
+    const float centreY = screen.getCentreY();
+    const float halfHeight = screen.getHeight() * 0.44f;
     for (std::size_t i = 0; i < numScopePoints; ++i)
     {
-        const float sampleVal = scopeBuffer[(triggerIdx + i) % 256];
+        const float sampleVal = scopeBuffer[(triggerIdx + i) % scopeBuffer.size()]
+                              * scopeGain;
         const float px = screen.getX() + static_cast<float> (i) * stepX;
         const float py = centreY - juce::jlimit (-1.0f, 1.0f, sampleVal) * halfHeight;
         if (i == 0)
@@ -730,6 +755,12 @@ void YouKnow106Display::paint (juce::Graphics& g)
     g.strokePath (wavePath, juce::PathStrokeType (2.2f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
     g.setColour (fromPalette (panel::colour::cyan));
     g.strokePath (wavePath, juce::PathStrokeType (1.1f, juce::PathStrokeType::mitered, juce::PathStrokeType::rounded));
+
+    g.setFont (panelFont (8.5f, true));
+    g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.85f));
+    g.drawText (juce::String (juce::roundToInt (scopeGain)) + "x",
+                screen.reduced (4.0f, 2.0f).toNearestInt(),
+                juce::Justification::topRight, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -879,7 +910,8 @@ YouKnow106ContextHelp::YouKnow106ContextHelp()
     showIdle();
 }
 
-void YouKnow106ContextHelp::showFor (juce::Component* component)
+void YouKnow106ContextHelp::showFor (juce::Component* component,
+                                     juce::String value)
 {
     // Combo boxes and sliders may report one of their private child components
     // as the mouse target. Walk outward to the first public component carrying
@@ -901,7 +933,7 @@ void YouKnow106ContextHelp::showFor (juce::Component* component)
         if (title.isEmpty())
             title = "CONTROL";
 
-        setContent (title.toUpperCase(), text);
+        setContent (title.toUpperCase(), text, std::move (value));
         return;
     }
 
@@ -911,17 +943,19 @@ void YouKnow106ContextHelp::showFor (juce::Component* component)
 void YouKnow106ContextHelp::showIdle()
 {
     setContent ("HELP",
-                "Hover a control to learn what it does. Drag a slider or knob "
-                "to show its value.");
+                "Hover a control to read what it does and what it is set to.",
+                {});
 }
 
-void YouKnow106ContextHelp::setContent (juce::String title, juce::String text)
+void YouKnow106ContextHelp::setContent (juce::String title, juce::String text,
+                                        juce::String value)
 {
-    if (helpTitle == title && helpText == text)
+    if (helpTitle == title && helpText == text && helpValue == value)
         return;
 
     helpTitle = std::move (title);
     helpText = std::move (text);
+    helpValue = std::move (value);
     repaint();
 }
 
@@ -937,14 +971,32 @@ void YouKnow106ContextHelp::paint (juce::Graphics& g)
 
     auto content = bounds.reduced (juce::jmax (8.0f, bounds.getHeight() * 0.28f),
                                    juce::jmax (2.0f, bounds.getHeight() * 0.10f));
+    const float fontHeight = juce::jlimit (10.0f, 12.0f,
+                                           bounds.getHeight() * 0.34f);
+
+    // The current setting, right-aligned in its own lit column. Reading a value
+    // used to need a drag, because only JUCE's transient bubble carried it;
+    // hovering is enough now, and the bubble still appears while dragging.
+    if (helpValue.isNotEmpty())
+    {
+        auto valueArea = content.removeFromRight (
+            juce::jlimit (90.0f, 200.0f, bounds.getWidth() * 0.13f));
+        g.setColour (fromPalette (panel::colour::led));
+        g.setFont (panelFont (fontHeight, true));
+        g.drawFittedText (helpValue, valueArea.toNearestInt(),
+                          juce::Justification::centredRight, 1, 0.9f);
+        g.setColour (fromPalette (panel::colour::textDim).withAlpha (0.42f));
+        g.drawVerticalLine (juce::roundToInt (valueArea.getX() - 8.0f),
+                            valueArea.getY(), valueArea.getBottom());
+        content.removeFromRight (12.0f);
+    }
+
     // The title column carries a control's full name, which is routinely longer
     // than one short word. Three times the original width lets it read on one
     // line instead of eliding.
     const float titleWidth = juce::jlimit (276.0f, 384.0f,
                                            bounds.getWidth() * 0.255f);
     const auto titleArea = content.removeFromLeft (titleWidth);
-    const float fontHeight = juce::jlimit (10.0f, 12.0f,
-                                           bounds.getHeight() * 0.34f);
 
     g.setColour (fromPalette (panel::colour::cyan));
     g.setFont (panelFont (fontHeight, true));
@@ -1622,6 +1674,91 @@ void YouKnow106AudioProcessorEditor::attachRadio (juce::Button& button,
     pointer->sendInitialUpdate();
 }
 
+const char* YouKnow106AudioProcessorEditor::parameterIdFor (
+    juce::Component* component) const
+{
+    using namespace youknow106::parameters;
+
+    const auto& controls = panel::controls();
+    const std::pair<const juce::Component*, const char*> extensions[] = {
+        { &transposeSlider,   transpose },
+        { &tuneSlider,        masterTune },
+        { &velocitySlider,    velocity },
+        { &calibrationSlider, calibration },
+        { &chorusNoiseSlider, chorusNoise },
+        { &polyphonySlider,   polyphony },
+        { &hqButton,          hq }
+    };
+
+    for (const juce::Component* candidate = component; candidate != nullptr;
+         candidate = candidate->getParentComponent())
+    {
+        for (std::size_t index = 0; index < controls.size(); ++index)
+        {
+            const auto& entry = panelControls[index];
+            const juce::Component* owner = entry.slider != nullptr
+                ? static_cast<const juce::Component*> (entry.slider.get())
+                : static_cast<const juce::Component*> (entry.button.get());
+            if (owner != nullptr && owner == candidate)
+                return controls[index].parameterId;
+        }
+
+        for (const auto& extension : extensions)
+            if (extension.first == candidate)
+                return extension.second;
+    }
+    return nullptr;
+}
+
+juce::String YouKnow106AudioProcessorEditor::parameterValueTextFor (
+    juce::Component* component) const
+{
+    const char* parameterId = parameterIdFor (component);
+    if (parameterId == nullptr)
+        return {};
+
+    // MODE is one three-state assigner shown as three latches, so none of the
+    // three can report its own parameter and be telling the truth. POLY 1 reads
+    // "On" in Solo Unison, when its lamp is dark; and the UNISON latch owns no
+    // parameter of its own at all -- it closes both momentary contacts, and the
+    // legacy id the panel table names for it is only updated by a program
+    // recall, so a click on it would leave the strip printing whichever mode
+    // was last loaded. All three print the mode the pair actually selects.
+    const auto isMode = [parameterId] (const char* id) {
+        return std::strcmp (parameterId, id) == 0;
+    };
+    if (isMode (youknow106::parameters::poly1)
+        || isMode (youknow106::parameters::poly2)
+        || isMode (youknow106::parameters::legacyKeyMode))
+    {
+        const auto engaged = [this] (const char* id) {
+            const auto* value = audioProcessor.parameters.getRawParameterValue (id);
+            return value != nullptr
+                && value->load (std::memory_order_relaxed) > 0.5f;
+        };
+        const auto mode = youknow106::keyModeFor (
+            engaged (youknow106::parameters::poly1),
+            engaged (youknow106::parameters::poly2));
+        // Named by the legacy choice parameter rather than here, so the strip
+        // cannot drift from what the host's own automation lane calls it.
+        if (const auto* names = audioProcessor.parameters.getParameter (
+                youknow106::parameters::legacyKeyMode))
+            return names->getText (
+                names->convertTo0to1 (static_cast<float> (mode)), 0);
+        return {};
+    }
+
+    const auto* parameter = audioProcessor.parameters.getParameter (parameterId);
+    if (parameter == nullptr)
+        return {};
+
+    auto text = parameter->getCurrentValueAsText().trim();
+    const auto suffix = parameter->getLabel().trim();
+    if (text.isNotEmpty() && suffix.isNotEmpty() && ! text.endsWith (suffix))
+        text << " " << suffix;
+    return text;
+}
+
 juce::Rectangle<float> YouKnow106AudioProcessorEditor::scaled (float x, float y,
                                                                float width,
                                                                float height) const
@@ -1800,7 +1937,10 @@ void YouKnow106AudioProcessorEditor::paint (juce::Graphics& g)
     {
         const auto box = scaled (section.x, section.y,
                                  section.width, section.height);
-        const bool isVcf = (section.name != nullptr && std::string (section.name) == "VCF");
+        // Compared with strcmp rather than by building a std::string: this runs
+        // once per section on every one of twenty-four repaints a second.
+        const bool isVcf = section.name != nullptr
+                        && std::strcmp (section.name, "VCF") == 0;
 
         // A shallow moulded recess for each section, then its coloured header.
         g.setColour (fromPalette (panel::colour::faceplateLow).withAlpha (0.55f));
@@ -1910,7 +2050,7 @@ void YouKnow106AudioProcessorEditor::timerCallback()
     const auto mouse = juce::Desktop::getInstance().getMainMouseSource();
     auto* hovered = mouse.isTouch() ? nullptr : mouse.getComponentUnderMouse();
     if (hovered == this || isParentOf (hovered))
-        contextHelp.showFor (hovered);
+        contextHelp.showFor (hovered, parameterValueTextFor (hovered));
     else
         contextHelp.showIdle();
 }

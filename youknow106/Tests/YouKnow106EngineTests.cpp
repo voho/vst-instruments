@@ -163,6 +163,14 @@ struct YouKnow106TestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].filter.state;
     }
 
+    // The fourth transconductor's capacitor voltage: the filter's output, in
+    // the volts the service procedure measures at TP19.
+    static float filterOutputVolts(const YouKnow106Engine& engine,
+                                   int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].filter.voltage[3];
+    }
+
     static void setFilterState(YouKnow106Engine& engine, int slot,
                                const std::array<float, 4>& state) noexcept
     {
@@ -2488,7 +2496,10 @@ void testFixedOutputBoundaryCorpus()
         Baseline { 0.428115, 0.878409, 0.889283, 0, 0 },
         Baseline { 1.09565, 3.10301, 3.10301, 3288, 13132 },
         Baseline { 2.35389, 4.29507, 4.31081, 6432, 25730 },
-        Baseline { 0.152757, 0.216624, 0.216624, 0, 0 },
+        // Raised when the resonance profile was re-solved against Roland's own
+        // 4.8 Vp-p self-oscillation trim; see
+        // testSelfOscillationMatchesTheServiceTrim.
+        Baseline { 0.24739, 0.349813, 0.349813, 0, 0 },
         Baseline { 0.685897, 1.34564, 1.34564, 1276, 5095 },
         Baseline { 0.414415, 1.07679, 1.10198, 18, 72 },
     };
@@ -3597,6 +3608,102 @@ void testSampleRateAndOversamplingConsistency()
                + std::to_string(shallow) + "), so the padding is wrong");
 }
 
+void testSelfOscillationMatchesTheServiceTrim()
+{
+    // Two Roland ADJUSTMENT steps, both taken on the same card in the same
+    // state, and until now only one of them was ever checked.
+    //
+    //   VCF FREQUENCY   BANK 3, hold C4   248 Hz (B3)
+    //   VCF RESONANCE   TP19...TP14, BANK 3, hold C4   4.8 Vp-p sine
+    //   VCF WIDTH       BANK 3, hold C6   992 Hz (B5)
+    //
+    // The suite checked the frequency and never the amplitude, and the model
+    // was 4.1 dB under it -- 2.99 Vp-p where the procedure trims to 4.8. The
+    // two are coupled: the limit cycle grows with loop gain, and the stage
+    // tanh's compression at that larger amplitude pulls the oscillation flat,
+    // so nothing but satisfying both at once fixes either.
+    constexpr double sampleRate = 48000.0;
+    struct Take { double peakToPeak; double hertz; };
+    const auto oscillate = [&](int note, float keyFollow) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        // A *self*-oscillation trim: nothing may reach the filter but the
+        // card's own excitation.
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = false;
+        parameters.subLevel = 0.0f;
+        parameters.noiseLevel = 0.0f;
+        parameters.resonance = 1.0f;
+        parameters.keyFollow = keyFollow;
+        parameters.cutoff = 49.0f / 127.0f; // converter code 6272
+        engine.setParameters(parameters);
+        engine.noteOn(note, 1.0f);
+        // Kick the cascade rather than waiting seconds for card noise to build
+        // the limit cycle; where it settles is what is being measured.
+        YouKnow106TestAccess::setFilterState(engine, 0, { 1.0f, 1.0f, 1.0f, 1.0f });
+        render(engine, static_cast<int>(sampleRate * 1.5));
+
+        float minimum = 1.0e30f;
+        float maximum = -1.0e30f;
+        std::vector<float> trace;
+        float left = 0.0f;
+        float right = 0.0f;
+        const int window = static_cast<int>(sampleRate / 4);
+        trace.reserve(static_cast<std::size_t>(window));
+        for (int index = 0; index < window; ++index)
+        {
+            engine.process(&left, &right, 1);
+            const float volts = YouKnow106TestAccess::filterOutputVolts(engine, 0);
+            minimum = std::min(minimum, volts);
+            maximum = std::max(maximum, volts);
+            trace.push_back(volts);
+        }
+
+        double mean = 0.0;
+        for (const float volts : trace)
+            mean += volts;
+        mean /= static_cast<double>(trace.size());
+        std::size_t first = 0;
+        std::size_t last = 0;
+        int crossings = 0;
+        for (std::size_t index = 1; index < trace.size(); ++index)
+            if (trace[index - 1] <= mean && trace[index] > mean)
+            {
+                if (crossings++ == 0)
+                    first = index;
+                last = index;
+            }
+        const double hertz = crossings > 1
+            ? (crossings - 1) * sampleRate / static_cast<double>(last - first)
+            : 0.0;
+        return Take { static_cast<double>(maximum - minimum), hertz };
+    };
+
+    const auto atC4 = oscillate(60, 0.0f);
+    // Ten per cent: the procedure publishes no tolerance, and the trimmer it
+    // describes is set by ear against a scope, so this is a fidelity bound
+    // rather than a claim that a card lands on 4.8 to the millivolt.
+    expect(std::abs(atC4.peakToPeak - 4.8) < 0.48,
+           "self-oscillation is " + std::to_string(atC4.peakToPeak)
+               + " Vp-p, not the service procedure's 4.8");
+    expect(std::abs(atC4.hertz - 248.0) < 4.0,
+           "self-oscillation is at " + std::to_string(atC4.hertz)
+               + " Hz, not the service procedure's 248");
+
+    // VCF WIDTH: two octaves of keyboard is two octaves of cutoff, so C6 must
+    // oscillate at exactly four times C4. This is what makes full key tracking
+    // 1.00 rather than approximately so, and it is a second, independent point
+    // on the counts-per-octave slope.
+    const auto tracked4 = oscillate(60, 1.0f);
+    const auto tracked6 = oscillate(84, 1.0f);
+    const double octaves = std::log2(tracked6.hertz
+                                     / std::max(tracked4.hertz, 1.0));
+    expect(std::abs(octaves - 2.0) < 0.02,
+           "full key tracking moves the filter " + std::to_string(octaves)
+               + " octaves across two octaves of keyboard, not 2.00");
+}
+
 void testVcfStageOffsetsBelongToUnitCharacter()
 {
     // A resonant sweep is where four asymmetric stages show up most, so drive
@@ -3648,8 +3755,16 @@ void testVcfStageOffsetsBelongToUnitCharacter()
 
     // Half the character, somewhere between none and all of the asymmetry.
     // The cascade is nonlinear, so the bounds are deliberately loose.
-    const auto full = largestDifference(fullOn, nominalOn);
-    const auto half = largestDifference(run(0.5f, true), nominalOn);
+    //
+    // Each comparison is on-against-off at *one* Unit Character setting, which
+    // is what isolates this mechanism. Measuring each setting against the
+    // nominal render instead conflates every other control the same knob
+    // scales -- the trimmer residuals, the drift, the converter's carry error
+    // -- and on a resonant patch two of those renders decorrelate long before
+    // the mechanism under test has said anything, so the ratio saturates at
+    // one and the bound below stops meaning what it says.
+    const auto full = largestDifference(fullOn, fullOff);
+    const auto half = largestDifference(run(0.5f, true), run(0.5f, false));
     expect(full > 0.0 && half > 0.2 * full && half < 0.8 * full,
            "stage-offset spread does not scale with Unit Character");
 }
@@ -4159,6 +4274,7 @@ int main()
     testChorusNoiseIsPresentAndDefeatable();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
+    testSelfOscillationMatchesTheServiceTrim();
     testVcfStageOffsetsBelongToUnitCharacter();
     testVcfStageOffsetsAreLiveBeforeTheFirstSample();
     testVcfEarlyEffectBelongsToUnitCharacter();

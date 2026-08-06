@@ -96,6 +96,7 @@ inline constexpr std::uint32_t ledDim        = 0x143b2au; // dim green LED off s
 inline constexpr std::uint32_t text          = 0xe8ecf1u;
 inline constexpr std::uint32_t textDim       = 0x8b929cu;
 inline constexpr std::uint32_t slot          = 0x121417u; // slider cut-out
+inline constexpr std::uint32_t scope         = 0x070e14u; // scope screen glass
 } // namespace colour
 
 // Geometry, in abstract panel units. The editor scales the whole description to

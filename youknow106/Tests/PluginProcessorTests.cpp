@@ -3350,6 +3350,102 @@ void testPersistentContextHelpAndValueBubbles()
     help->showFor (editor.get());
     expect (help->getHelpTitle() == "HELP" && help->getHelpText() == idleText,
             "an unannotated area left stale contextual help behind");
+    expect (help->getHelpValue().isEmpty(),
+            "the idle help strip is showing a stale control value");
+
+    // The strip carries the hovered control's current setting as well as its
+    // explanation, so a value can be read without starting a drag. The text has
+    // to be the parameter's own, or the strip and JUCE's drag bubble would
+    // disagree about units on the same control.
+    auto* ourEditor = dynamic_cast<YouKnow106AudioProcessorEditor*> (editor.get());
+    expect (ourEditor != nullptr, "the editor is not this instrument's editor");
+    if (ourEditor != nullptr)
+    {
+        const std::pair<const char*, const char*> valued[] = {
+            { "FREQ", parameters::cutoff },
+            { "RES", parameters::resonance },
+            { "A", parameters::attack },
+            { "Unit Character", parameters::calibration },
+            { "HQ", parameters::hq }
+        };
+        for (const auto& entry : valued)
+        {
+            auto* target = findDescendantNamed (*editor, entry.first);
+            expect (target != nullptr,
+                    std::string ("cannot value-check help for ") + entry.first);
+            auto* parameter = processor.parameters.getParameter (entry.second);
+            if (target == nullptr || parameter == nullptr)
+                continue;
+
+            const auto reported = ourEditor->parameterValueTextFor (target);
+            expect (reported.isNotEmpty(),
+                    std::string ("the help strip has no value for ")
+                        + entry.first);
+            expect (reported.startsWith (
+                        parameter->getCurrentValueAsText().trim()),
+                    std::string ("the help strip disagrees with the parameter "
+                                 "for ") + entry.first);
+
+            help->showFor (target, reported);
+            expect (help->getHelpValue() == reported,
+                    std::string ("the help strip dropped the value for ")
+                        + entry.first);
+            expect (help->getBounds() == stableBounds,
+                    "the fixed help area moved when a value appeared");
+        }
+
+        // Components that are not parameter controls must not invent one.
+        for (const auto* name : { "Pitch and modulation lever",
+                                  "Playable keyboard", "Status display",
+                                  "Reload patch" })
+        {
+            auto* target = findDescendantNamed (*editor, name);
+            if (target == nullptr)
+                continue;
+            expect (ourEditor->parameterValueTextFor (target).isEmpty(),
+                    std::string ("the help strip invented a value for ") + name);
+        }
+
+        // MODE is one three-state assigner drawn as three latches, so none of
+        // them can report its own parameter and be right: POLY 1's parameter is
+        // high in Solo Unison while its lamp is dark, and the UNISON latch owns
+        // no parameter at all -- the legacy id the panel names for it only
+        // moves on a program recall. All three have to print the mode the
+        // authoritative pair selects.
+        const auto setPoly = [&processor] (const char* id, bool on) {
+            if (auto* target = processor.parameters.getParameter (id))
+            {
+                target->beginChangeGesture();
+                target->setValueNotifyingHost (target->convertTo0to1 (on ? 1.0f : 0.0f));
+                target->endChangeGesture();
+            }
+        };
+        const std::pair<std::array<bool, 2>, const char*> modes[] = {
+            { { true, false },  "Poly 1" },
+            { { false, true },  "Poly 2" },
+            { { true, true },   "Unison" }
+        };
+        for (const auto& mode : modes)
+        {
+            setPoly (parameters::poly1, mode.first[0]);
+            setPoly (parameters::poly2, mode.first[1]);
+            for (const auto* latch : { "POLY 1", "POLY 2", "UNISON" })
+            {
+                auto* target = findDescendantNamed (*editor, latch);
+                expect (target != nullptr,
+                        std::string ("the panel has no ") + latch + " latch");
+                if (target == nullptr)
+                    continue;
+                expect (ourEditor->parameterValueTextFor (target) == mode.second,
+                        std::string ("hovering ") + latch + " reports \""
+                            + ourEditor->parameterValueTextFor (target).toStdString()
+                            + "\" instead of the selected mode \"" + mode.second
+                            + "\"");
+            }
+        }
+        setPoly (parameters::poly1, true);
+        setPoly (parameters::poly2, false);
+    }
 
     // Numeric readouts are JUCE Slider popups, independent of the removed
     // descriptive TooltipWindow. Exercise every no-text-box slider so the new
