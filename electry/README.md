@@ -368,7 +368,7 @@ every platform rather than only inside a host.
   17.25 host samples of fixed group delay (0.36 ms at 48 kHz); with both gain
   controls at zero it is skipped outright, costs nothing, and adds no delay at
   all.
-- **Pedal.** A tight 120 Hz input coupling network and a mid-focused voice ahead
+- **Pedal.** A tight 88 Hz input coupling network and a mid-focused voice ahead
   of a bounded diode-pair clipper: passing the whole low end of a Drop-E eighth
   string into a clipper turns the fundamental into intermodulation mud instead
   of a note.

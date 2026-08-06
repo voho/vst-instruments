@@ -806,7 +806,7 @@ private:
                                     double& b0, double& b1, double& b2,
                                     double& a1, double& a2) noexcept;
     static void applyDipDepth(PolarisationLoop& loop, float depth) noexcept;
-        static float allpassPhaseDelay(float coefficient, float omega) noexcept;
+    static float allpassPhaseDelay(float coefficient, float omega) noexcept;
     // Per-string magnetic balance. It depends only on the string, so it is
     // solved once instead of inside the sample loop.
     static float stringFluxScale(int stringIndex) noexcept;

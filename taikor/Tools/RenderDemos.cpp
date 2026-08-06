@@ -198,7 +198,7 @@ private:
     std::vector<float> right_;
 };
 
-// The drum the parameter defaults describe: a 55 cm nagado-daiko with a thick
+// The drum the parameter defaults describe: a 95 cm odaiko with a thick
 // cowhide head on a heavy zelkova shell.
 //
 // The output gain is well below the plug-in's own default because a rim shot on
@@ -206,7 +206,7 @@ private:
 // that had been through a limiter would be showing the listener the limiter
 // rather than the model. Every take is normalised to a common level afterwards,
 // so rendering quietly costs nothing.
-EngineParameters nagadoVoicing()
+EngineParameters defaultVoicing()
 {
     EngineParameters parameters;
     // Well below the plug-in's own default. The head's high-frequency
@@ -224,7 +224,7 @@ EngineParameters nagadoVoicing()
 // Every stroke in the vocabulary, in the order the keyboard lays them out.
 Take renderVocabulary()
 {
-    Take take (nagadoVoicing());
+    Take take (defaultVoicing());
     take.rest (0.10);
     for (std::size_t index = 0; index < taikor::articulationCount; ++index)
         take.hit (static_cast<Articulation> (index), 0, 0.92f, 0.62);
@@ -236,7 +236,7 @@ Take renderVocabulary()
 // vocabulary played on a different drum each time.
 Take renderOctaveLadder (Articulation articulation, double gap, double tail)
 {
-    Take take (nagadoVoicing());
+    Take take (defaultVoicing());
     take.rest (0.10);
     for (int octave = taikor::lowestOctaveOffset; octave <= taikor::highestOctaveOffset;
          ++octave)
@@ -249,7 +249,7 @@ Take renderOctaveLadder (Articulation articulation, double gap, double tail)
 // rather than only being struck once.
 Take renderFamilyPhrase (int octave, double beat, double tail)
 {
-    Take take (nagadoVoicing());
+    Take take (defaultVoicing());
     take.rest (0.08);
 
     // A plain kumi-daiko figure: open strokes on the beat, edge strokes off it.
@@ -276,7 +276,7 @@ Take renderFamilyPhrase (int octave, double beat, double tail)
 // so the harder strokes brighten on their own.
 Take renderVelocityDynamics()
 {
-    Take take (nagadoVoicing());
+    Take take (defaultVoicing());
     take.rest (0.10);
     for (const float velocity : { 0.08f, 0.20f, 0.33f, 0.46f, 0.60f, 0.74f, 0.87f, 1.0f })
         take.hit (Articulation::Don, 0, velocity, 0.52);
@@ -294,7 +294,7 @@ Take renderParameterSweep (float EngineParameters::* field,
                            Articulation articulation, int octave, double gap,
                            double tail, float gain = 0.0f)
 {
-    auto parameters = nagadoVoicing();
+    auto parameters = defaultVoicing();
     if (gain > 0.0f)
         parameters.outputGain = gain;
     Take take (parameters);
@@ -314,7 +314,7 @@ Take renderParameterSweep (float EngineParameters::* field,
 // A hand laid on the head part way through a ringing stroke, from MIDI CC1.
 Take renderHandDamping()
 {
-    Take take (nagadoVoicing());
+    Take take (defaultVoicing());
     take.rest (0.08);
 
     take.hit (Articulation::Don, -1, 0.95f, 2.2);   // left to ring out
@@ -333,7 +333,7 @@ Take renderHandDamping()
 // The pitch wheel, which presses the head and so raises its tension.
 Take renderPitchBend()
 {
-    Take take (nagadoVoicing());
+    Take take (defaultVoicing());
     take.rest (0.08);
 
     take.hit (Articulation::Don, 0, 0.95f, 0.15);
@@ -356,7 +356,7 @@ Take renderPitchBend()
 // what the sticks do rather than where they land.
 Take renderRollsAndPresses()
 {
-    Take take (nagadoVoicing());
+    Take take (defaultVoicing());
     take.rest (0.08);
 
     take.hit (Articulation::Buzz, 0, 0.80f, 0.75);
@@ -391,7 +391,7 @@ Take renderRollsAndPresses()
 // mapping can be heard as an ensemble rather than as a ladder.
 Take renderEnsemblePiece()
 {
-    Take take (nagadoVoicing());
+    Take take (defaultVoicing());
     take.rest (0.08);
 
     constexpr double beat = 0.30;
@@ -509,7 +509,7 @@ Take renderHeadDampingSweep()
 Take renderOctaveBodySweep()
 {
     // The same two octaves realised as a tuned drum and as a smaller drum.
-    auto parameters = nagadoVoicing();
+    auto parameters = defaultVoicing();
     Take take (parameters);
     take.rest (0.10);
 
@@ -600,7 +600,7 @@ const std::array<Demo, 23>& demos()
 // committing anything.
 int runSmokeTest (const std::filesystem::path& directory)
 {
-    Take take (nagadoVoicing());
+    Take take (defaultVoicing());
     take.hit (Articulation::Don, 0, 0.95f, 0.25);
     take.hit (Articulation::Ka, 1, 0.80f, 0.25);
 

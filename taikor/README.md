@@ -70,7 +70,7 @@ A difference of mechanism beats any amount of distance.
 
 These are not eight presets. Each one is a strike position, a contact stiffness
 and a mute state fed into the same model. A Ka is bright because striking the
-head at 0.78 of its radius drives the modes that have a circumferential order and
+head at 0.91 of its radius drives the modes that have a circumferential order and
 barely moves the axisymmetric ones — which is exactly why it is bright on a real
 taiko.
 
@@ -150,9 +150,9 @@ The default output is far quieter than a synthesizer's usually is, deliberately.
 A taiko is a very loud instrument with a very large crest factor, and this one
 models the whole of it: the loudest stroke it can make — a full-velocity rim
 shot on the largest drum — sits more than twenty decibels above unity. The
-default leaves that stroke just under full scale rather than making a middling
-stroke as loud as possible, so nothing in the instrument's range reaches the
-safety limiter at the factory setting.
+default leaves everything short of that one extreme just under full scale rather
+than making a middling stroke as loud as possible; the hardest rim shot on the
+biggest drum itself grazes the safety limiter for about ten milliseconds.
 
 ## Sound engine
 

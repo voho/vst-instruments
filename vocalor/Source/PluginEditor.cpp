@@ -434,12 +434,16 @@ void VocalorVowelPad::paint (juce::Graphics& g)
     g.drawText ("FRONT", juce::Rectangle<float> (area.getRight() - 46.0f, area.getBottom() + 1.0f,
                                                  46.0f, 12.0f).toNearestInt(),
                 juce::Justification::centredRight);
+    // The vertical axis runs close (top) to open (bottom), like the vowel chart
+    // the cardinal targets are laid out on, so each label sits on the edge it
+    // actually describes: EE and OO span the top and the open anchor AH sits on
+    // the bottom.
     g.drawText ("CLOSE", juce::Rectangle<float> (area.getX(), area.getY() - 13.0f,
-                                                 46.0f, 12.0f).toNearestInt(),
-                juce::Justification::centredLeft);
-    g.drawText ("OPEN", juce::Rectangle<float> (area.getRight() - 46.0f, area.getY() - 13.0f,
-                                                46.0f, 12.0f).toNearestInt(),
-                juce::Justification::centredRight);
+                                                 area.getWidth(), 12.0f).toNearestInt(),
+                juce::Justification::centred);
+    g.drawText ("OPEN", juce::Rectangle<float> (area.getX(), area.getBottom() + 1.0f,
+                                                area.getWidth(), 12.0f).toNearestInt(),
+                juce::Justification::centred);
 
     for (int index = 0; index < vocalor::kCardinalVowelCount; ++index)
     {

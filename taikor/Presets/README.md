@@ -3,7 +3,7 @@
 The current plug-in stores its
 [22-parameter drum state](../README.md#controls) in the host session and exposes
 the version-1 defaults on first launch. Those defaults are not the midpoint of
-every control: they describe one specific instrument — a 55 cm nagado-daiko with
+every control: they describe one specific instrument — a 95 cm ō-daiko with
 a thick cowhide head on a heavy carved zelkova shell, struck with a
 medium-hard oak bachi and heard through a close pair 16 cm off the head.
 
@@ -25,7 +25,7 @@ than by ear:
 | Instrument | Diameter | Body depth | Tension | Head | Shell |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Odaiko | 100–120 cm | 60–80 % | 45–60 % | 85–100 % | 85–100 % |
-| Nagado-daiko (default) | 55 cm | 50 % | 55 % | 75 % | 80 % |
+| Nagado-daiko | 55 cm | 50 % | 55 % | 75 % | 80 % |
 | Hira-daiko (shallow) | 60–75 cm | 5–20 % | 50–65 % | 75–90 % | 70–85 % |
 | Shime-daiko | 30–35 cm | 25–40 % | 85–100 % | 55–70 % | 60–80 % |
 | Okedo (stave, lighter) | 45–60 cm | 55–75 % | 55–70 % | 65–80 % | 15–35 % |

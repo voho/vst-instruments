@@ -365,14 +365,19 @@ model in a versioned payload. The current payload is version 4, which appends
 the fitted stiff-string coefficient; version-2 and version-3 memories saved by
 earlier releases still load and render exactly as they did, with the missing
 fields left at their neutral zero values. Sessions saved before Noise, Stretch,
-Formant, or Touch existed restore those controls at their defaults rather than
-inheriting whatever the running instance happened to hold. One stored value now
-means something different: **Awaken** used to be an exponential time constant,
+Formant, Touch, or Register existed restore those controls at the values that
+leave the recalled sound unchanged rather than inheriting whatever the running
+instance happened to hold: for Noise, Stretch, and Formant that is the declared
+default, while Touch and Register restore at 0% instead of the 35% a new
+instance opens with, because only zero adds no velocity colour or key tracking
+to a memory saved without them. One stored value now means something
+different: **Awaken** used to be an exponential time constant,
 so a saved non-zero setting took roughly 4.6 times its stated seconds to open
 fully. It is now the fade duration itself, and a recalled session will therefore
 open about that much sooner; multiply an old setting by roughly 4.6 to
-reproduce the previous feel. No parameter was added, removed, or renamed, so
-every other stored value recalls exactly as before. It does not store the source recording or its full
+reproduce the previous feel. Register is the one added parameter, appended
+after every existing control, and none was removed or renamed, so every other
+stored value recalls exactly as before. It does not store the source recording or its full
 path, so a saved session can recall the synthesized instrument after the
 original file moves or disappears. Imported audio stays local during learning,
 and performance performs no file or network access.

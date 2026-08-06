@@ -606,13 +606,12 @@ bool removeStaleWavs (const std::filesystem::path& directory)
         // Second guard: even inside its own directory the renderer only removes
         // files that follow its own naming, so anything a person put here by
         // hand survives.
-        const auto stem = entry.path().filename().string();
-        if (stem.size() < 3 || ! std::isdigit (static_cast<unsigned char> (stem[0]))
-            || ! std::isdigit (static_cast<unsigned char> (stem[1]))
-            || stem[2] != '-')
+        const auto name = entry.path().filename().string();
+        if (name.size() < 3 || ! std::isdigit (static_cast<unsigned char> (name[0]))
+            || ! std::isdigit (static_cast<unsigned char> (name[1]))
+            || name[2] != '-')
             continue;
 
-        const auto name = entry.path().filename().string();
         const bool known =
             std::any_of (current.begin(), current.end(), [&name] (const Demo& demo)
                          { return name == demo.fileName; });

@@ -925,8 +925,9 @@ Source/DSP/              JUCE-free synthesis engine, voice metadata, and UI math
 Source/PluginProcessor.* MIDI mapping, parameters, state, and audio bridge
 Source/PluginEditor.*    Metered thirteen-pad editor, voice deck, and kit bus deck
 Assets/                  Embedded geometry-free charcoal material texture
-Docs/                    Real interface screenshot(s) used in this README
+Docs/                    Rendered demo audio and the interface screenshot above
 Tests/                   DSP and JUCE processor-contract regression tests
+Tools/                   Demo renderer that keeps Docs/audio and its level table in sync
 Presets/                 Preset guidance and future factory presets
 scripts/                 macOS build and release helpers
 ```

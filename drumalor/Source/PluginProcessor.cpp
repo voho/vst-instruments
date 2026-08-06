@@ -1,7 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <string_view>

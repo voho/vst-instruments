@@ -1118,8 +1118,6 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
                 restoredState, parameters, neuramar::parameters::stretch);
             addDefaultParameterStateIfMissing (
                 restoredState, parameters, neuramar::parameters::formant);
-            addDefaultParameterStateIfMissing (
-                restoredState, parameters, neuramar::parameters::touch);
             parameters.replaceState (restoredState);
         }
         return;
@@ -1155,10 +1153,13 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
     auto restoredParameterState = juce::ValueTree::fromXml (*xml);
     if (! restoredParameterState.isValid())
         return;
-    // Earlier sessions predate the appended Noise, Stretch, Formant, and
-    // Touch controls. APVTS otherwise retains the live value for a missing
-    // parameter child, which could make a legacy exact-recall preset
-    // unexpectedly evolve, stretch, shift, or respond to velocity.
+    // Earlier sessions predate the appended Noise, Stretch, Formant, Touch,
+    // and Register controls. APVTS otherwise retains the live value for a
+    // missing parameter child, which could make a legacy exact-recall preset
+    // unexpectedly evolve, stretch, shift, respond to velocity, or track the
+    // keyboard. Touch and Register migrate through their zero identities;
+    // the other three restore at their declared defaults, which are already
+    // the values that leave a legacy memory unchanged.
     addLegacyIdentitiesIfMissing (restoredParameterState);
     addDefaultParameterStateIfMissing (
         restoredParameterState, parameters, neuramar::parameters::noise);
@@ -1166,8 +1167,6 @@ void NeuramarAudioProcessor::setStateInformation (const void* data, int sizeInBy
         restoredParameterState, parameters, neuramar::parameters::stretch);
     addDefaultParameterStateIfMissing (
         restoredParameterState, parameters, neuramar::parameters::formant);
-    addDefaultParameterStateIfMissing (
-        restoredParameterState, parameters, neuramar::parameters::touch);
 
     std::vector<std::uint8_t> modelBytes;
     if (! readBoundedBlock (maximumModelStateBytes, modelBytes))
