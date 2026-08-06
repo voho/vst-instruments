@@ -3394,24 +3394,27 @@ void testRailDroopTracksLoadAtOneWallClockRate()
         again.setParameters(parameters);
         for (const int note : { 36, 43, 48, 52, 55, 60 })
             again.noteOn(note, 1.0f);
-        // Arm the detector after the note-on transient. The first
-        // milliseconds carry the six DCO compensation CVs catching up to
-        // their stepped counts, and that onset's rendered spectrum differs
-        // across oversampling factors after decimation -- the same detector
-        // sensitivity the toggle note above describes. The follower's own
-        // wall-clock rate is what this test isolates, and both factors get
-        // the identical wall-clock head start.
-        constexpr int prerollBlocks = 60;
-        for (int block = 0; block < prerollBlocks; ++block)
-            render(again, blockSize);
-        int blocks = 0;
-        for (; blocks < 400; ++blocks)
+        // The droop is the followed voice energy, and the follower's
+        // time constant is milliseconds -- the whole rise spans only a few
+        // of this test's blocks, so a block-granular detector quantises the
+        // crossing onto two or three steps and unrelated onset-shape changes
+        // read as large rate ratios. Sample the rise in 16-sample steps
+        // instead: the crossing lands roughly a millisecond-per-step scale
+        // out (about 15-20 steps), the 4x-fast bug this test exists to catch
+        // would quarter that count, and a one-step onset wobble moves the
+        // ratio by only a few percent.
+        constexpr int chunkSamples = 16;
+        constexpr int chunkLimit = 3000;
+        int chunks = 0;
+        for (; chunks < chunkLimit; ++chunks)
         {
             if (again.getDisplayRailDroopVolts() >= 0.632 * final)
                 break;
-            render(again, blockSize);
+            renderExact(again, chunkSamples);
         }
-        return (blocks + 1) * blockSize / 48000.0;
+        expect(chunks > 4 && chunks < chunkLimit,
+               "the droop crossing left the detector's usable window");
+        return (chunks + 1) * chunkSamples / 48000.0;
     };
 
     const double deep = settlingSeconds(true);
