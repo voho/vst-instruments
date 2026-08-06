@@ -2337,14 +2337,6 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     const float target = static_cast<float>(voiceMidi);
     voice.targetMidi = target;
 
-    // Physical sample-and-hold capacitor residual charge leakage: re-striking a
-    // sounding voice before its envelope decays produces an analog key-click pulse.
-    if (wasSounding && voice.envelope.level > 0u && parameters.calibration > 0.0f)
-    {
-        const float residualFraction = static_cast<float>(voice.envelope.level) / static_cast<float>(envelopePeak);
-        voice.vcaControl += residualFraction * 0.08f * parameters.calibration;
-    }
-
     voice.glideSemitonesPerScan = glideStepPerScan(parameters.portamento);
     if (voice.glideSemitonesPerScan > 0.0f)
     {

@@ -48,6 +48,8 @@ with an explicit evidence gap and required output in
   sequential across the pass—avoiding an artificial six-DCO phase lock—without
   claiming its offsets as measurements. Exact timestamps, jitter and several
   hold constants remain open; a phase-zero profile exists only for diagnostics.
+  MIDI assignment itself never writes an analogue hold: a retrigger retains the
+  live capacitor state until that destination's scheduled converter slot.
 - **The envelope attacks in a straight line and falls exponentially, into a
   quasi-linear amplifier.** Its 14-bit recurrence, `128b` sustain mapping,
   coefficient selection, rounding, physical `E>>2` 12-bit DAC truncation and
@@ -483,6 +485,13 @@ There are six suites:
 - **`YouKnow106.AuditFactoryPresets`** smoke-tests the long-form, JUCE-free
   128-tone gain auditor and common-gain factory-preview renderer. A full run
   writes its CSV, report and previews under `Docs/audio/factory-presets`.
+
+Focused DSP changes use `YouKnow106RenderRealismComparison`. Unlike the older
+16-bit comparison set, it archives raw float32 before/after/difference signals,
+uses one shared listening gain, reports peak/peak and RMS/RMS nulls, and records
+the source fingerprint, patch, seed and exact MIDI sample schedule. The first
+fixture and its measured result are in
+[`Docs/audio/realism-comparisons/retrigger-release-tail/`](Docs/audio/realism-comparisons/retrigger-release-tail/).
 
 To regenerate the full factory report and previews after a signal-path change:
 

@@ -257,8 +257,21 @@ open question, it is named in its entry.
 
    What the model applied instead was an *amplitude* asymmetry — the two divider levels made 0.3% unequal — which is a DC offset and even harmonics at roughly $-50$ dBc. That is not the named mechanism, and it is five orders of magnitude larger than the named mechanism can produce. The divider's two levels are symmetric again. Modelling the real effect would mean moving the edge, and the distance to move it is below any sample grid the engine will ever run on.
 
-10. **Sample-and-Hold Capacitive Charge Leakage & Re-strike Key Click**:
-    Re-striking an active voice card before its release envelope finishes causes residual charge leakage on hold capacitor $C_{hold}$ through switch resistance $R_{on}$, producing an authentic analog legato key-click transient.
+10. **Re-strike VCA jump — removed as topologically impossible**:
+    A previous revision added as much as `0.08` of full VCA control directly in
+    `initialiseVoice` whenever a sounding card was reassigned. That is 0.8 V on
+    the service chart's 0…+10 V VCA-CV range, applied synchronously with host
+    MIDI and before the card's converter slot. No wire in the instrument joins
+    the key assigner to the hold capacitor: the B-2 envelope retains its live
+    accumulator on retrigger, and its new value reaches the analogue hold only
+    through the ordered D/A scan. The direct jump is therefore removed.
+
+    Real CD4051 charge injection remains possible, but it occurs when the mux
+    switches and has magnitude $\Delta Q/C_{hold}$; neither quantity has been
+    established. It remains OQ-07 instead of being replaced by an audible
+    guessed pulse. The focused float32 comparison under
+    `Docs/audio/realism-comparisons/retrigger-release-tail/` preserves the old,
+    corrected and signed-difference signals at one shared listening gain.
 
 11. **IR3109 VCF Stage-Space Transistor Input Offset Voltages ($V_{os}$)**:
     Differential pair BJT transistor input offset voltages ($V_{os} \approx 1.5\,\text{mV}$) across the 4 IR3109 transconductor stages break 4-pole differential symmetry, creating stage-dependent dynamic DC shifts and asymmetric soft distortion under high-resonance filter sweeps.

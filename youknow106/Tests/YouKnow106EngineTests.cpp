@@ -152,6 +152,11 @@ struct YouKnow106TestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].currentMidi;
     }
 
+    static float vcaControl(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].vcaControl;
+    }
+
     static bool assignmentPending(const YouKnow106Engine& engine) noexcept
     {
         return engine.assignmentRescanPending_;
@@ -2720,6 +2725,43 @@ void testNotesWaitForTheSharedConverterScan()
     expect(afterScan > 0.01, "the notes never sounded after the scan pass");
 }
 
+void testRetriggerDoesNotTouchVcaHoldBeforeConverterScan()
+{
+    // A host Note On changes digital key/assignment state. The analogue VCA
+    // hold can change only when process() reaches that card's ordered converter
+    // write and then advances the hold network. With no rendered sample between
+    // these two events, any change is necessarily an invented MIDI-time path.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, false);
+    auto parameters = plainPatch();
+    parameters.polyphony = 1;
+    parameters.calibration = 1.0f;
+    parameters.attack = 0.0f;
+    parameters.decay = 0.0f;
+    parameters.sustain = 64.0f / 127.0f;
+    parameters.release = 1.0f;
+    engine.setParameters(parameters);
+
+    engine.noteOn(60, 1.0f);
+    renderExact(engine, 4096);
+    expect(engine.getDisplayEnvelope() > 0.45f
+               && engine.getDisplayEnvelope() < 0.55f,
+           "the retrigger fixture did not settle near half sustain");
+
+    engine.noteOff(60);
+    const float heldBefore = YouKnow106TestAccess::vcaControl(engine, 0);
+    const double phaseBefore = YouKnow106TestAccess::controlScanPhase(engine);
+    expect(std::isfinite(heldBefore) && heldBefore > 0.0f,
+           "the retrigger fixture has no live analogue VCA hold");
+
+    engine.noteOn(60, 1.0f);
+    expect(YouKnow106TestAccess::vcaControl(engine, 0) == heldBefore,
+           "retrigger changed the analogue VCA hold before its converter write");
+    expect(YouKnow106TestAccess::controlScanPhase(engine) == phaseBefore,
+           "a note event advanced the converter scheduler");
+}
+
 void testPortamentoRateFollowsItsControl()
 {
     // The glide rate is set by a control in the pitch integrator's path, not
@@ -4378,6 +4420,7 @@ int main()
     testMainVolumeLoadedLinearPotLaw();
     testFixedOutputBoundaryCorpus();
     testNotesWaitForTheSharedConverterScan();
+    testRetriggerDoesNotTouchVcaHoldBeforeConverterScan();
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
     testModulationDelayRearmsForANewPhrase();

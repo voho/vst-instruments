@@ -169,6 +169,35 @@ if(YOUKNOW106_BUILD_TOOLS)
     target_link_libraries(YouKnow106RenderRealismFixes PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106RenderRealismFixes PRIVATE cxx_std_20)
 
+    # Focused build-to-build comparisons keep their raw float32 baseline and
+    # identify the exact DSP source set used to compile each side. Reconfigure
+    # when any fingerprinted source changes so a normal `cmake --build` cannot
+    # leave stale source metadata in an after manifest.
+    set(YOUKNOW106_DSP_FINGERPRINT_INPUT "")
+    set(YOUKNOW106_DSP_FINGERPRINT_FILES
+        ${YOUKNOW106_DSP_SOURCES}
+        ${YOUKNOW106_DSP_HEADERS})
+    foreach(source IN LISTS YOUKNOW106_DSP_FINGERPRINT_FILES)
+        file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/${source}" source_hash)
+        string(APPEND YOUKNOW106_DSP_FINGERPRINT_INPUT
+            "${source}:${source_hash}\n")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+    endforeach()
+    string(SHA256 YOUKNOW106_DSP_SOURCE_SHA256
+        "${YOUKNOW106_DSP_FINGERPRINT_INPUT}")
+
+    add_executable(YouKnow106RenderRealismComparison
+        Tools/RenderRealismComparison.cpp
+        Tools/RealismComparisonSupport.h)
+    target_link_libraries(YouKnow106RenderRealismComparison
+        PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106RenderRealismComparison PRIVATE cxx_std_20)
+    target_compile_definitions(YouKnow106RenderRealismComparison PRIVATE
+        "YOUKNOW106_DSP_SOURCE_SHA256=\"${YOUKNOW106_DSP_SOURCE_SHA256}\""
+        "YOUKNOW106_COMPARISON_COMPILER_ID=\"${CMAKE_CXX_COMPILER_ID}\""
+        "YOUKNOW106_COMPARISON_COMPILER_VERSION=\"${CMAKE_CXX_COMPILER_VERSION}\"")
+
     add_executable(YouKnow106AuditFactoryPresets Tools/AuditFactoryPresets.cpp)
     target_link_libraries(YouKnow106AuditFactoryPresets
         PRIVATE YouKnow106DSP Threads::Threads)
@@ -181,6 +210,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderFidelityFixes PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderRealismFixes PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106RenderRealismComparison
+            PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106AuditFactoryPresets PRIVATE
             /W4 /permissive-)
     else()
@@ -191,6 +222,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106RenderFidelityFixes PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106RenderRealismFixes PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106RenderRealismComparison PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106AuditFactoryPresets PRIVATE
             -Wall -Wextra -Wpedantic)

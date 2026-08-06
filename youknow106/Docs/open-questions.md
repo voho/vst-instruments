@@ -542,7 +542,9 @@ Two model questions now depend on this task, both added 2026-08-06:
    recomputed, and so were measured at −360 dBc: bit-identical output. A
    physical injection lands on the *slewed hold state*, and its size is
    ΔQ/C_hold — neither term established. Until they are, no injection is
-   modelled.
+   modelled. The former release-tail re-strike shortcut is removed for the
+   same reason: it wrote up to 0.8 V straight into the VCA hold at host Note On,
+   before any converter slot or mux transition could physically occur.
 
 ### Needed output (for LLM)
 
