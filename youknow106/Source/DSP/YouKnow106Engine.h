@@ -128,7 +128,6 @@ struct EngineParameters
     // --- State-of-the-Art Physical Circuit Simulation Toggles ----------------
     bool enableVcfStageOffsets { true };
     bool enableOpAmpSlewLimiting { true };
-    bool enableMuxCrosstalk { true };
     bool enableExponentialReset { true };
     bool enableVcfEarlyEffect { true };
     bool enableSpatialThermalGradient { true };
@@ -139,7 +138,6 @@ struct EngineParameters
     bool enableChorusHyperbolicSweep { true };
     bool enableDcoRampCurvature { true };
     bool enableElectrolyticC14Nonlinearity { true };
-    bool enableDacGlitchImpulse { true };
 };
 
 class YouKnow106Engine
@@ -1029,7 +1027,6 @@ private:
 
     float outputSlewStateLeft_ { 0.0f };
     float outputSlewStateRight_ { 0.0f };
-    float previousDacFraction_ { 0.0f };
 
     float displayEnvelope_ { 0.0f };
     float displayLfo_ { 0.0f };

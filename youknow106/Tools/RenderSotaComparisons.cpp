@@ -75,26 +75,6 @@ Take renderOpAmpSlewTake(bool enableSlewLimiting)
     return take;
 }
 
-// 4. CD4051 Multiplexer Crosstalk: Fast staccato bassline
-Take renderMuxCrosstalkTake(bool enableCrosstalk)
-{
-    auto p = defaultPanel();
-    p.enableMuxCrosstalk = enableCrosstalk;
-    p.range = DcoRange::Sixteen;
-    p.subLevel = 0.9f;
-    p.cutoff = 0.30f;
-    p.resonance = 0.40f;
-    p.envDepth = 0.60f;
-    p.attack = 0.0f;
-    p.decay = 0.20f;
-    p.sustain = 0.10f;
-    Take take(p);
-    take.rest(0.05);
-    for (int i = 0; i < 4; ++i)
-        take.hit(36, 0.95f, 0.1, 0.15);
-    return take;
-}
-
 // 5. Exponential DCO Ramp Reset Dynamics: Bright high note lead
 Take renderExponentialResetTake(bool enableExponentialReset)
 {
@@ -201,42 +181,22 @@ Take renderElectrolyticC14Take(bool enableElectrolyticC14Nonlinearity)
     return take;
 }
 
-// 12. R-2R DAC Major Carrier Glitch Impulse: LFO filter sweep crossing MSB boundaries
-Take renderDacGlitchImpulseTake(bool enableDacGlitchImpulse)
-{
-    auto p = defaultPanel();
-    p.enableDacGlitchImpulse = enableDacGlitchImpulse;
-    p.sawEnabled = true;
-    p.cutoff = 0.50f;
-    p.resonance = 0.50f;
-    p.vcfLfoDepth = 0.60f;
-    p.lfoRate = 0.70f;
-    Take take(p);
-    take.rest(0.05);
-    take.hit(48, 0.95f, 2.0, 0.5);
-    return take;
-}
-
-// One comparison: a slug for the file names, and a take factory that toggles
-// exactly one mechanism while every other one stays at its shipped setting.
 struct Comparison
 {
     const char* slug;
     Take (*render)(bool);
 };
 
-const std::array<Comparison, 11> comparisons {{
+const std::array<Comparison, 9> comparisons {{
     { "01-vcf-transistor-offsets",        renderVcfOffsetsTake },
     { "02-opamp-slew-limiting",           renderOpAmpSlewTake },
-    { "04-multiplexer-crosstalk",         renderMuxCrosstalkTake },
     { "05-exponential-dco-reset",         renderExponentialResetTake },
     { "06-vcf-early-effect",              renderVcfEarlyEffectTake },
     { "07-spatial-thermal-gradient",      renderSpatialThermalGradientTake },
     { "08-chorus-thiran-clock-bleed",     renderChorusClockBleedTake },
     { "09-chorus-hyperbolic-sweep",       renderChorusHyperbolicSweepTake },
     { "10-dco-ramp-curvature",            renderDcoRampCurvatureTake },
-    { "11-electrolytic-c14-nonlinearity", renderElectrolyticC14Take },
-    { "12-dac-glitch-impulse",            renderDacGlitchImpulseTake }
+    { "11-electrolytic-c14-nonlinearity", renderElectrolyticC14Take }
 }};
 
 struct Report

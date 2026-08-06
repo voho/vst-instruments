@@ -2753,52 +2753,13 @@ void YouKnow106Engine::performConverterWrite(
         return write.voice >= 0 && write.voice < hardwareVoices;
     };
 
-    float currentDacFraction = 0.0f;
-    switch (write.destination)
-    {
-        case ConverterDestination::Resonance: currentDacFraction = converterFraction(parameters.resonance); break;
-        case ConverterDestination::CommonVca: currentDacFraction = converterFraction(parameters.vcaLevel); break;
-        case ConverterDestination::Sub: currentDacFraction = converterFraction(parameters.subLevel); break;
-        case ConverterDestination::Noise: currentDacFraction = converterFraction(parameters.noiseLevel); break;
-        case ConverterDestination::Pwm: currentDacFraction = converterFraction(parameters.pwmDepth); break;
-        default: break;
-    }
-
-    if (parameters.enableMuxCrosstalk && std::abs(currentDacFraction - previousDacFraction_) > 1.0e-5f)
-    {
-        const float dacStep = currentDacFraction - previousDacFraction_;
-        const float injection = dacStep * 0.0025f * parameters.calibration;
-        if (validPhysicalVoice())
-        {
-            auto& voice = voices_[static_cast<std::size_t>(write.voice)];
-            if (write.destination == ConverterDestination::Vcf)
-                voice.cutoffCountsTarget += injection * vcfCountsPerOctave;
-            else if (write.destination == ConverterDestination::VoiceVca)
-                voice.vcaControlTarget += injection;
-        }
-    }
-
-    if (parameters.enableDacGlitchImpulse && parameters.calibration > 0.0f && validPhysicalVoice()
-        && std::abs(currentDacFraction - previousDacFraction_) > 1.0e-5f)
-    {
-        const int prevCode = static_cast<int>(std::lround(previousDacFraction_ * 4095.0f));
-        const int currCode = static_cast<int>(std::lround(currentDacFraction * 4095.0f));
-        const int codeDiff = currCode - prevCode;
-        const int bitFlip = prevCode ^ currCode;
-        if ((bitFlip & 0x800) != 0 || (bitFlip & 0x400) != 0)
-        {
-            const float sgn = codeDiff > 0 ? 1.0f : -1.0f;
-            const float glitch = sgn * 0.008f * std::clamp(parameters.calibration, 0.0f, 100.0f);
-            auto& voice = voices_[static_cast<std::size_t>(write.voice)];
-            if (write.destination == ConverterDestination::Vcf)
-                voice.cutoffCountsTarget += glitch * vcfCountsPerOctave;
-            else if (write.destination == ConverterDestination::VoiceVca)
-                voice.vcaControlTarget += glitch;
-        }
-    }
-
-    previousDacFraction_ = currentDacFraction;
-
+    // No charge-injection or converter-glitch term is applied here. Both were
+    // written into cutoffCountsTarget / vcaControlTarget, which the switch
+    // below assigns from scratch on the very same write, so neither could ever
+    // reach the output -- the isolated comparison renders measured both at
+    // -360 dBc, bit-identical. A physical injection would have to land on the
+    // *slewed hold state*, and its size is set by the hold capacitance and the
+    // mux on-resistance, neither of which is known (OQ-07).
     switch (write.destination)
     {
         case ConverterDestination::Resonance:

@@ -4108,30 +4108,6 @@ int main()
     testNoLabelIsTruncated();
     testPanelLayout();
     testCpuBudget();
-    
-    // Test CD4051 Multiplexer Crosstalk
-    {
-        EngineParameters params;
-        params.enableMuxCrosstalk = true;
-        YouKnow106Engine engine;
-        engine.prepare(44100.0, 256, true);
-        engine.setParameters(params);
-        engine.noteOn(60, 1.0f);
-
-        std::vector<float> left(256, 0.0f);
-        std::vector<float> right(256, 0.0f);
-        engine.process(left.data(), right.data(), 256);
-
-        for (int i = 0; i < 256; ++i)
-        {
-            if (!std::isfinite(left[i]) || !std::isfinite(right[i]))
-            {
-                std::cerr << "FAIL: Mux crosstalk process produced non-finite sample\n";
-                ++failures;
-                break;
-            }
-        }
-    }
 
     if (failures != 0)
     {
