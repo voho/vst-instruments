@@ -2567,8 +2567,13 @@ void testFixedOutputBoundaryCorpus()
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
         Baseline { 0.19852, 0.28071, 0.28071, 0, 0 },
-        Baseline { 0.638137, 1.28037, 1.28037, 897, 3596 },
-        Baseline { 0.392731, 0.842908, 0.876324, 0, 0 },
+        // Re-pinned when the sweep endpoints moved from the sibling JUNO-60's
+        // 1.66-5.35 ms to the 106's own third-party-measured 1.4-6.4 ms: the
+        // deeper +/-2.5 ms excursion changes where the fixed analysis window
+        // catches the sweep, and mode II's faster pass over the wider range
+        // now clips a handful of reconstructed samples where it clipped none.
+        Baseline { 0.613627, 1.27797, 1.30604, 877, 3507 },
+        Baseline { 0.399741, 1.24491, 1.24817, 13, 58 },
     };
 
     constexpr double sampleRate = 48000.0;

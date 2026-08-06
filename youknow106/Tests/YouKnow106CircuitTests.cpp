@@ -1954,14 +1954,18 @@ void testJuno60FallbackBucketBrigadeTiming()
 
     expectNear(one.sweepSeconds, two.sweepSeconds, 1.0e-9,
                "the two modes do not share a sweep depth");
-    // A Juno-60's measured sweep, retained because the two instruments drive
-    // their MN3101s through the same converter with the same values, so the
-    // sibling's calibrated capture measures the circuit both share. No
-    // qualifying capture of a Juno-106's own chorus has been located.
-    expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.00166, 1.0e-6,
+    // The 106's own third-party-measured sweep: 1.4-6.4 ms scoped on a
+    // designator-faithful p. 15 build with genuine MN3009s and compared
+    // directly against a real JUNO-106 by its owner. The superseded
+    // sibling-instrument capture (1.66-5.35 ms, Juno-60) must stay
+    // superseded; a calibrated original-unit capture remains OQ-01.
+    expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.0014, 1.0e-6,
                "shortest modulated delay");
-    expectNear(one.centreDelaySeconds + one.sweepSeconds, 0.00535, 1.0e-6,
+    expectNear(one.centreDelaySeconds + one.sweepSeconds, 0.0064, 1.0e-6,
                "longest modulated delay");
+    expect(std::abs(one.centreDelaySeconds - one.sweepSeconds - 0.00166)
+               > 1.0e-4,
+           "the sibling's 1.66 ms endpoint was reintroduced");
     // Both ends have to land inside the part's own clock window, which is what
     // says the capture describes this circuit rather than some other one: 256
     // stages give a delay of 128 / f_clock, and the MN3009 is rated 10-200 kHz.

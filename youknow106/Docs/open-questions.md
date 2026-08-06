@@ -82,7 +82,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 
 | Priority | OQ | Question still unanswered | Already settled / do not redo |
 |---|---|---|---|
-| P0 | 01 | Hardware confirmation of the derived 0.5533/0.8983 Hz rates (TP4 capture or original-page read of C3/β), BBD clock/delay endpoints on a real 106, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the 1.6234799 mode-rate ratio, the summing-node β = 33/47 and C3 = 0.1 µF (netlist-corroborated), the derived rate scale, and the family sweep measured on the sibling's identical clock driver |
+| P0 | 01 | Hardware confirmation of the derived 0.5533/0.8983 Hz rates (TP4 capture), a *calibrated* original-unit sweep capture, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the 1.6234799 mode-rate ratio, the summing-node β = 33/47 and C3 = 0.1 µF (netlist-corroborated), the derived rate scale, and the shipped 1.4–6.4 ms sweep — third-party-scoped on a designator-faithful p. 15 build with genuine MN3009s against a real 106 (2026-08-07), superseding the sibling JUNO-60 capture |
 | P2 | 02 | Installed-unit common-VCA endpoint, component/rail/IC variation and residual error against the nominal law | The complete nominal path: `d=b<<5`, ideal R-2R `/4096`, p. 8's +4 to −6 V span, p. 15 R30/C7/R32/R31/R165 network, NEC's −5.9 mV/dB typical law, and C7's 9.08249 ms constant |
 | P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation | No-compander topology and the need for a wet-line noise model |
 | P2 | 04 | Loaded post-BBD support transfer, real MN3009 normalized response versus clock, and emitter-follower output impedance | Component topology, provisional ideal-source poles, the fixed per-shift residual coefficient that is within 0.03 dB of the adopted 40 kHz/12 kHz row on its 1 kHz reference basis, and the input/output Sallen-Key part identity read from the sibling clone netlist |
@@ -226,16 +226,23 @@ reading, netlist-verified on the sister board's clone) and C3 = 0.1 µF
 that same netlist) gives **0.5532934 Hz for I and 0.8982608 Hz for II** — both
 within 3% of the 106-chorus-clone scope readings, both truncating to the
 owner's manual's about-0.5 and about-0.8. What is still open here is
-**hardware confirmation** (one TP4 capture closes it) and the **sweep
-endpoints**. The implementation keeps the measured **JUNO-60** sweep of
-1.66–5.35 ms — no longer as a mere sibling borrowing, but because the clock
-driver it was measured through is component-identical on the two boards
-(Tr22's 2.2 kΩ/22 kΩ/1.8 kΩ against C53 150 pF, and the per-line 8.2 kΩ,
-all match the clone's netlist), so the sibling's calibrated capture measures
-the circuit both instruments share. The third-party 106-specific sweep
-reports (1.4–6.4 ms; three clone clock readings; a mod-lore inference near
-3.2–8.5 ms) disagree with each other by more than they disagree with that
-capture, and none is calibrated, so none of them replaces it.
+**hardware confirmation** (one TP4 capture closes it) and a **calibrated
+sweep capture of an original unit**. As of 2026-08-07 the implementation
+ships the 106's own third-party-measured sweep of **1.4–6.4 ms**: the
+2026-08-07 ModWiggler read established its provenance in full — it was
+scoped on a designator-faithful build of the p. 15 board (independently
+assessed as 1:1 with the service manual) carrying genuine 256-stage
+MN3009s, published as scope plots, and compared directly against the
+measurer's own real JUNO-106 with the two sweeps called identical. Its
+±2.5 ms excursion also matches the one independent depth report on record.
+The **JUNO-60's** calibrated 1.66–5.35 ms capture is thereby superseded as
+a sibling-instrument value and stays in the suite as a comparison figure
+(the two boards share the Tr22 clock driver, but a sibling measurement is
+never primary 106 evidence). Remaining contradictions stay recorded: that
+clone kit's build guide expects 28–38 kHz clocks (≈3.4–4.6 ms), and one
+suspected-faulty build read 28–60 kHz; the mod-lore inference near
+3.2–8.5 ms is uncalibrated. A calibrated original-unit capture still owns
+the final word.
 
 The formerly claimed 1.54–5.15 ms JUNO-106 sweep had no valid measurement and
 must not be reintroduced. The sibling's own rate ratio of 1.682 is likewise
@@ -287,9 +294,10 @@ any of that arithmetic.
   span 38% wider than the only measured figures this chorus has, and the
   deviation scaled with Unit Character even though whether the oscillator is
   current-controlled is a topology fact, not a component tolerance. When
-  enabled, `Chorus::process` sweeps the *clock* linearly between
-  `128/5.35 ms` and `128/1.66 ms` (derived from the same centre/sweep
-  numbers, no new constant), which keeps both endpoints exact at any amount
+  enabled, `Chorus::process` sweeps the *clock* linearly between the clocks
+  of the shipped delay endpoints — now `128/6.4 ms` and `128/1.4 ms`,
+  derived from the same centre/sweep numbers with no new constant —
+  which keeps both endpoints exact at any amount
   of Unit Character, so the two laws differ only in the path between the
   endpoints — which is exactly what the requested time series measures.
 - The peak-to-peak amplitude of the modulation triangle at TP4, and the

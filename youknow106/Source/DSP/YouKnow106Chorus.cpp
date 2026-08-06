@@ -177,23 +177,27 @@ Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
     // used to stand in for the scale is superseded, as its 1.682 ratio already
     // was; the suites keep both only as comparison values.
     //
-    // The sweep endpoints remain a *Juno-60's* measured figures: delay 1.66 ms
-    // to 5.35 ms, read from a calibrated capture of that instrument. They stay
-    // in service here on stronger grounds than the original borrowing: both
-    // instruments drive their MN3101s through the same voltage-to-current
-    // converter with the same values -- 2.2k/22k/1.8k against 150 pF on the
-    // 106's own page and in the sister board clone's netlist alike -- so a
-    // calibrated capture of one is a measurement of the circuit they share.
-    // The third-party 106-specific sweep reports (1.4-6.4 ms, against three
-    // narrower clone clock readings) disagree with each other by more than
-    // they disagree with this pair, so none of them replaces it. See OQ-01.
+    // The sweep endpoints are the 106's own third-party-measured figures:
+    // delay 1.4 ms to 6.4 ms, scoped on a designator-faithful build of the
+    // p. 15 chorus board carrying genuine 256-stage MN3009s and compared
+    // directly against a real JUNO-106 by its owner, who published the scope
+    // plots and called the two sweeps identical. The same excursion --
+    // +/-2.5 ms about a 3.9 ms centre -- also matches the one independent
+    // depth report on record. This supersedes the JUNO-60's calibrated
+    // 1.66-5.35 ms capture, which stays in the suite as the
+    // sibling-instrument comparison value: the two boards share their Tr22
+    // clock driver, but not every timing part around it. Two narrower clone
+    // clock readings (28-38 kHz expected by that kit's build guide, 28-60 kHz
+    // observed on a suspected-faulty build) remain on record as
+    // contradictions under OQ-01, which still requests a calibrated capture
+    // of an original unit.
     //
     // Modes I and II differ in speed alone, not in depth: the mode line changes
     // a timing resistance, while the triangle's amplitude is set by the
     // comparator's threshold ratio, which the mode line does not touch. That
     // is why II reads as more agitated rather than wider.
-    constexpr float centre = 0.5f * (0.00166f + 0.00535f);
-    constexpr float sweep = 0.5f * (0.00535f - 0.00166f);
+    constexpr float centre = 0.5f * (0.0014f + 0.0064f);
+    constexpr float sweep = 0.5f * (0.0064f - 0.0014f);
     constexpr float rateOne = static_cast<float>(derivedRateHz(true));
     constexpr float rateTwo = static_cast<float>(derivedRateHz(false));
     switch (mode)
@@ -679,7 +683,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // for the calibrated clock time-series OQ-01 still requests. When it
     // engages it bends about the clock's own endpoints, not the delay's
     // centre: an earlier centre-relative revision rendered a 38%-too-wide
-    // 2.30-7.40 ms range at Unit Character 1.0 instead of the measured
+    // 2.30-7.40 ms range at Unit Character 1.0 instead of the then-shipped
     // 1.66-5.35 ms, which OQ-01 records. Bending about the endpoint clocks
     // keeps both endpoints exact at every blend amount, so the two laws
     // differ only in the trajectory between them.
@@ -702,7 +706,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         // topology hypothesis, not a component tolerance, so Character can
         // select it but never exaggerate it. Unclamped, the 0..2 range
         // extrapolated past the hyperbolic path -- leaving the measured
-        // 1.66-5.35 ms envelope and folding the sweep back mid-flank.
+        // delay envelope and folding the sweep back mid-flank.
         const float blend = std::clamp(calibration, 0.0f, 1.0f);
         nominalDelayA += (hypDelayA - nominalDelayA) * blend;
         nominalDelayB += (hypDelayB - nominalDelayB) * blend;

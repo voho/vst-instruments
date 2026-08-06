@@ -136,9 +136,10 @@ with an explicit evidence gap and required output in
   component-identical sibling-board netlist close the scale: the implemented
   rates are derived as 0.5532934 Hz and 0.8982608 Hz. Both truncate to the
   owner's manual's published "about 0.5" and "about 0.8" and agree with a
-  106-chorus clone's scope readings within 3%. The 1.66–5.35 ms sweep endpoints
-  remain a calibrated JUNO-60 measurement of the shared clock-driver circuit,
-  explicitly short of an installed-unit JUNO-106 anchor.
+  106-chorus clone's scope readings within 3%. The 1.4–6.4 ms sweep endpoints
+  are a third-party scope measurement of a designator-faithful p. 15 build
+  with genuine MN3009s, compared directly against a real JUNO-106 by its
+  measurer; a calibrated original-unit capture remains the open ask (OQ-01).
 - **The final outputs are AC-coupled before VOLUME.** The two service-schematic
   paths use C17/C20 10 µF and R54/R57 1.5 kΩ into the 10 kΩ pot tracks. The
   unloaded full-track reference is 1.383956 Hz and `10/11.5` settled gain; the
