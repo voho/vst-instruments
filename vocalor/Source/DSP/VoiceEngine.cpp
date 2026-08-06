@@ -174,7 +174,6 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     formantGlide_[2] = glideFor(0.005f);
     formantGlide_[3] = glideFor(0.004f);
     formantGlide_[4] = glideFor(0.003f);
-    lipZeroCoefficient_ = std::exp(-twoPi * 120.0f * inverseSampleRate_);
     jitterSlowCoefficient_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
                                              * inverseSampleRate_ / 0.0095f);
 
@@ -772,6 +771,11 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
 {
     static constexpr float femaleBw[formantCount] { 75.0f, 90.0f, 125.0f, 185.0f, 260.0f };
     static constexpr float maleBw[formantCount] { 68.0f, 82.0f, 112.0f, 165.0f, 235.0f };
+    // A pressed glottis narrows the epilarynx tube, and that lifts the
+    // singer's-formant cluster around F3 and F4 rather than the whole tract.
+    // Tension drives the narrowing; F3 sits closest to the tube's own
+    // resonance, so it gains the most.
+    static constexpr float epilarynxLift[formantCount] { 0.0f, 0.0f, 0.12f, 0.06f, 0.0f };
     // Nothing above the fifth formant is modelled, so the bank is not allowed to
     // starve the top octaves completely on the most closed vowels.
     constexpr float amplitudeFloor = 0.010f;
@@ -867,9 +871,8 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     for (int formant = 0; formant < formantCount; ++formant)
     {
         const auto index = static_cast<std::size_t>(formant);
-        // Tension presses the singer's-formant region (F3 & F4) a little harder.
-        const float epilarynxBoost = (formant == 2 ? 0.12f * smoothedTension_ : (formant == 3 ? 0.06f * smoothedTension_ : 0.0f));
-        const float shaped = chunkAmplitude_[index] * (1.0f + epilarynxBoost);
+        const float shaped = chunkAmplitude_[index]
+            * (1.0f + epilarynxLift[index] * smoothedTension_);
         if (!chunkStateValid_)
             chunkFormantGain_[index] = shaped;
         else if (advanceSmoothers)
@@ -1268,9 +1271,16 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         const float airDrive = breath * airShape * airEnvelope;
         const float voicedDrive = envelope * voicedScaleAt_[static_cast<std::size_t>(i)]
             * (1.0f + shimmerDepth_ * shimmer);
-        const float rawSource = sourceTilt * voicedDrive + highNoise * airDrive + denormalBias;
-        const float source = rawSource - 0.20f * lipZeroCoefficient_ * voice.lastLipSource;
-        voice.lastLipSource = rawSource;
+        // No separate lip-radiation stage: the wavetable is a glottal flow
+        // *derivative*, and differentiating the flow is exactly what radiation
+        // from the lips does to it. A radiation zero here would apply that
+        // differentiation a second time.
+        //
+        // The vanishingly small bias parks the recursive tract states on a
+        // normal-range fixed point. That keeps the filters out of denormal
+        // territory on hosts that do not set flush-to-zero for us, without the
+        // per-tick compare-and-select that costs a third of the voice budget.
+        const float source = sourceTilt * voicedDrive + highNoise * airDrive + denormalBias;
 
         float tract = 0.0f;
         onsetMix += onsetMixStep;

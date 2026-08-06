@@ -124,6 +124,17 @@ and every formant target is resolved once per 64-sample chunk and then shaped
 per voice by that singer's tract-length and per-formant dispersion, by
 note-dependent formant tuning, and by the shared ensemble drift.
 
+Each formant then glides to that target on its own time constant, from 16 ms at
+F1 down to 3 ms at F5, because the articulators that set them differ in mass:
+the jaw carrying F1 cannot change a vowel as quickly as the tongue tip and
+larynx that set the formants above it. Tension additionally lifts F3 and F4
+alone, modelling the narrowed epilarynx tube that produces the singer's formant,
+rather than brightening the whole tract.
+
+Radiation from the lips is not a separate stage. The excitation is already a
+glottal flow *derivative*, and differentiating the flow is precisely what lip
+radiation does to it, so the model accounts for it once at the source.
+
 Each resonator is normalised to unit gain at its own centre frequency, adjacent
 formants alternate in polarity, and the five amplitudes are derived from the
 all-pole cascade the same poles would realise, with half of that cascade's
