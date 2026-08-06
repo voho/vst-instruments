@@ -1581,6 +1581,12 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
     parameters.pwmDepth = 1.0f;
     parameters.calibration = 1.0f;
     parameters.chorus = ChorusMode::Off;
+    // This fixture pins the pulse leg's gate. With every source off, the only
+    // other signal at full Character is the stage offsets' now-correctly-sized
+    // DC operating point stepping through the output coupling as the VCA
+    // opens -- a real, separate mechanism that would trip the blunt silence
+    // bound below without a pulse leg leaking anything. Isolate the gate.
+    parameters.enableVcfStageOffsets = false;
     engine.setParameters(parameters);
     expectNear(YouKnow106TestAccess::pwmTarget(engine), -0.8, 1.0e-6,
                "Pulse Off did not write the documented -0.8 V shared control");
@@ -3834,10 +3840,16 @@ void testVcfStageOffsetsAreLiveBeforeTheFirstSample()
         {
             for (int stage = 0; stage < 4; ++stage)
             {
+                // The card carries the draw in volts at the pair; the filter
+                // consumes node-coordinate volts, so the seeded value is the
+                // draw referred through the anchored 560/68560 divider.
+                // The tolerance is float-epsilon-sized for the referred
+                // magnitude (~0.1), five orders under the 122x coordinate
+                // error this fixture exists to catch.
                 expectNear(YouKnow106TestAccess::stageOffset(engine, slot, stage),
                            YouKnow106TestAccess::cardStageOffset(engine, slot, stage)
-                               * 0.8,
-                           1.0e-9,
+                               / (560.0f / (68000.0f + 560.0f)) * 0.8,
+                           1.0e-6,
                            std::string("stage offset for slot ")
                                + std::to_string(slot) + " is not seeded " + when);
             }

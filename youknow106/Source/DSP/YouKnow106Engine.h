@@ -839,6 +839,13 @@ private:
         float driftPhase { 0.0f };
         float driftValue { 0.0f };
         std::uint32_t driftState { 1u };
+        // Per-stage input offsets *of the differential pairs*, in volts at
+        // the pair. The cascade's arithmetic runs in module-node volts, where
+        // the pair sees everything through the anchored 560/68560 divider, so
+        // the transfer into the filter divides by `stageAttenuation` -- a
+        // 1.5 mV pair offset stands 183.6 mV tall in node coordinates. An
+        // earlier revision handed these to the node unconverted, which shrank
+        // the documented mechanism 122x into inaudibility.
         std::array<float, 4> vcfStageOffsets { 0.0015f, -0.0012f, 0.0018f, -0.0010f };
         // Signed, unbiased draw for each stage's integrating capacitor.
         std::array<float, 4> vcfStageGErrors {};

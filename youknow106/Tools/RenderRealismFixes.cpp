@@ -145,10 +145,36 @@ Take transferLoss()
     return take;
 }
 
-const std::array<Demo, 3> demos {{
+// One low note under a slow, deep, high-resonance envelope sweep, chorus off.
+// The per-stage pair offsets express themselves as even-harmonic asymmetry
+// and small DC shifts that ride the resonant peak as it crosses the
+// harmonics -- the exact conditions their mechanism entry names.
+Take stageOffsets()
+{
+    auto p = panel();
+    p.chorus = ChorusMode::Off;
+    p.cutoff = 0.30f;
+    p.resonance = 0.92f;
+    p.envDepth = 0.55f;
+    p.attack = 1.8f;
+    p.decay = 2.6f;
+    p.sustain = 0.15f;
+    p.release = 0.4f;
+    p.subLevel = 0.0f;
+    Take take(p);
+    take.rest(0.05);
+    take.on(45, 0.95f);
+    take.rest(7.5);
+    take.off(45);
+    take.rest(1.0);
+    return take;
+}
+
+const std::array<Demo, 4> demos {{
     { "01-chorus-timing", chorusTiming },
     { "02-sweep-trajectory", sweepTrajectory },
     { "03-bbd-transfer-loss", transferLoss },
+    { "04-stage-offsets", stageOffsets },
 }};
 
 // metrics.csv keeps one row per fix so the README can be regenerated whole

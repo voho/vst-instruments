@@ -22,3 +22,4 @@ below audibility.
 | `01-chorus-timing` | +12.4 | -1.7 | +0.00 |
 | `02-sweep-trajectory` | +8.7 | -1.0 | +0.00 |
 | `03-bbd-transfer-loss` | -20.4 | -47.2 | +0.00 |
+| `04-stage-offsets` | -14.9 | -29.0 | +0.00 |

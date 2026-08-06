@@ -1614,7 +1614,14 @@ void YouKnow106Engine::refreshVoiceCardStageTrims() noexcept
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
         for (std::size_t stage = 0; stage < 4; ++stage)
         {
-            voice.filter.offsetVoltage[stage] = card.vcfStageOffsets[stage] * amount;
+            // The draw is volts at the pair; the cascade sums it with
+            // module-node voltages that reach the pair through the anchored
+            // 560/68560 divider, so the node-coordinate offset is the draw
+            // divided by that attenuation. Handing the pair value to the node
+            // unconverted -- as a previous revision did -- scales the
+            // mechanism down 122x and mutes it.
+            voice.filter.offsetVoltage[stage] =
+                card.vcfStageOffsets[stage] / stageAttenuation * amount;
             // Each stage integrates into its own capacitor, so the four poles
             // do not coincide the way one shared `g` makes them. Four
             // mathematically identical poles give a resonance peak and a
