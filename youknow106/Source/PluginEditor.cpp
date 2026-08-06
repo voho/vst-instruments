@@ -1717,6 +1717,37 @@ juce::String YouKnow106AudioProcessorEditor::parameterValueTextFor (
     if (parameterId == nullptr)
         return {};
 
+    // MODE is one three-state assigner shown as three latches, so none of the
+    // three can report its own parameter and be telling the truth. POLY 1 reads
+    // "On" in Solo Unison, when its lamp is dark; and the UNISON latch owns no
+    // parameter of its own at all -- it closes both momentary contacts, and the
+    // legacy id the panel table names for it is only updated by a program
+    // recall, so a click on it would leave the strip printing whichever mode
+    // was last loaded. All three print the mode the pair actually selects.
+    const auto isMode = [parameterId] (const char* id) {
+        return std::strcmp (parameterId, id) == 0;
+    };
+    if (isMode (youknow106::parameters::poly1)
+        || isMode (youknow106::parameters::poly2)
+        || isMode (youknow106::parameters::legacyKeyMode))
+    {
+        const auto engaged = [this] (const char* id) {
+            const auto* value = audioProcessor.parameters.getRawParameterValue (id);
+            return value != nullptr
+                && value->load (std::memory_order_relaxed) > 0.5f;
+        };
+        const auto mode = youknow106::keyModeFor (
+            engaged (youknow106::parameters::poly1),
+            engaged (youknow106::parameters::poly2));
+        // Named by the legacy choice parameter rather than here, so the strip
+        // cannot drift from what the host's own automation lane calls it.
+        if (const auto* names = audioProcessor.parameters.getParameter (
+                youknow106::parameters::legacyKeyMode))
+            return names->getText (
+                names->convertTo0to1 (static_cast<float> (mode)), 0);
+        return {};
+    }
+
     const auto* parameter = audioProcessor.parameters.getParameter (parameterId);
     if (parameter == nullptr)
         return {};

@@ -3405,6 +3405,46 @@ void testPersistentContextHelpAndValueBubbles()
             expect (ourEditor->parameterValueTextFor (target).isEmpty(),
                     std::string ("the help strip invented a value for ") + name);
         }
+
+        // MODE is one three-state assigner drawn as three latches, so none of
+        // them can report its own parameter and be right: POLY 1's parameter is
+        // high in Solo Unison while its lamp is dark, and the UNISON latch owns
+        // no parameter at all -- the legacy id the panel names for it only
+        // moves on a program recall. All three have to print the mode the
+        // authoritative pair selects.
+        const auto setPoly = [&processor] (const char* id, bool on) {
+            if (auto* target = processor.parameters.getParameter (id))
+            {
+                target->beginChangeGesture();
+                target->setValueNotifyingHost (target->convertTo0to1 (on ? 1.0f : 0.0f));
+                target->endChangeGesture();
+            }
+        };
+        const std::pair<std::array<bool, 2>, const char*> modes[] = {
+            { { true, false },  "Poly 1" },
+            { { false, true },  "Poly 2" },
+            { { true, true },   "Unison" }
+        };
+        for (const auto& mode : modes)
+        {
+            setPoly (parameters::poly1, mode.first[0]);
+            setPoly (parameters::poly2, mode.first[1]);
+            for (const auto* latch : { "POLY 1", "POLY 2", "UNISON" })
+            {
+                auto* target = findDescendantNamed (*editor, latch);
+                expect (target != nullptr,
+                        std::string ("the panel has no ") + latch + " latch");
+                if (target == nullptr)
+                    continue;
+                expect (ourEditor->parameterValueTextFor (target) == mode.second,
+                        std::string ("hovering ") + latch + " reports \""
+                            + ourEditor->parameterValueTextFor (target).toStdString()
+                            + "\" instead of the selected mode \"" + mode.second
+                            + "\"");
+            }
+        }
+        setPoly (parameters::poly1, true);
+        setPoly (parameters::poly2, false);
     }
 
     // Numeric readouts are JUCE Slider popups, independent of the removed
