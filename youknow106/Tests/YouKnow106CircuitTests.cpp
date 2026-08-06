@@ -1538,9 +1538,10 @@ void testJuno60FallbackBucketBrigadeTiming()
     expectNear(Chorus::clockForDelaySeconds(Chorus::delaySecondsForClock(43210.0f)),
                43210.0, 1.0e-3, "delay and clock are not reciprocal");
 
-    // Both modes sweep the same delay range and differ only in rate. The depth
-    // is still the JUNO-60's; the rates are its scale re-split by this
-    // instrument's own timing-resistance ratio.
+    // Both modes sweep the same delay range and differ only in rate. The rates
+    // are this instrument's own, derived from its timing network, the
+    // summing-node comparator ratio and the 0.1 uF integrator capacitor; the
+    // depth is the family sweep measured on the sibling's identical driver.
     const auto one = Chorus::settingsFor(ChorusMode::One);
     const auto two = Chorus::settingsFor(ChorusMode::Two);
 
@@ -1557,36 +1558,54 @@ void testJuno60FallbackBucketBrigadeTiming()
            "mode I must integrate through the larger resistance, so it is the "
            "slower mode");
 
-    // Assert the *relation* the schematic fixes, not the resulting literals: a
-    // re-derivation that split the geometric mean the wrong way round would
-    // reproduce two plausible rates and this is what catches it.
+    // The derivation's own terms, each asserted separately so a drive-by
+    // "correction" of one of them fails here rather than in a listening test.
+    // The comparator ratio is the summing-node reading; the falsified 1/48
+    // divider reading put both modes 34x high and must not come back.
+    expectNear(Chorus::lfoThresholdRatio, 33.0 / 47.0, 1.0e-12,
+               "the comparator's summing-node ratio changed");
+    expectNear(Chorus::lfoIntegratorFarads, 1.0e-7, 1.0e-15,
+               "the integrator capacitor is no longer 0.1 uF");
+
+    // The rates the derivation lands, and the relation the schematic fixes:
+    // the literals catch a changed term, the ratio catches a wrong split.
+    expectNear(one.rateHz, 0.5532933, 1.0e-4, "mode I derived rate");
+    expectNear(two.rateHz, 0.8982608, 1.0e-4, "mode II derived rate");
     expectNear(two.rateHz / one.rateHz, Chorus::modeRateRatio(), 1.0e-5,
                "the mode rates do not carry the schematic's timing ratio");
     expect(two.rateHz > one.rateHz,
            "mode II is not the faster leg the manual and the ratio both need");
-    // The absolute scale is still the sibling's and must stay exactly there:
-    // this is a re-split of an unmeasured scale, not a new one.
-    expectNear(std::sqrt(one.rateHz * two.rateHz),
-               std::sqrt(Chorus::siblingMeasuredRateOneHz
-                         * Chorus::siblingMeasuredRateTwoHz),
-               1.0e-5,
-               "the re-split moved the still-unmeasured absolute scale");
-    // Both still round to the owner's manual's published figures. Assert the
-    // rounding rather than a +/-0.05 band, which would leave mode II only
-    // 0.002 Hz of margin and would break on any future re-split.
-    expectNear(std::floor(one.rateHz * 10.0 + 0.5) / 10.0, 0.5, 1.0e-9,
-               "mode I no longer rounds to the published about-0.5 Hz");
-    expectNear(std::floor(two.rateHz * 10.0 + 0.5) / 10.0, 0.8, 1.0e-9,
-               "mode II no longer rounds to the published about-0.8 Hz");
-    // The sibling's own ratio is superseded. Fail loudly if it comes back.
+    // Corroboration, not calibration: scope readings of a 106-chorus clone
+    // report 0.537 and 0.879 Hz. If the derivation drifts away from the only
+    // 106-specific measurements on record, it is broken even while it stays
+    // self-consistent.
+    expect(std::abs(one.rateHz / 0.537 - 1.0) < 0.035,
+           "mode I left the 106-clone scope reading's 3.5% corroboration band");
+    expect(std::abs(two.rateHz / 0.879 - 1.0) < 0.035,
+           "mode II left the 106-clone scope reading's 3.5% corroboration band");
+    // Roland's published figures read as truncations -- "about 0.5" and
+    // "about 0.8" -- and the derived pair still carries them. Assert the
+    // floor, not nearest rounding, which 0.898 would fail against 0.8.
+    expectNear(std::floor(one.rateHz * 10.0) / 10.0, 0.5, 1.0e-9,
+               "mode I no longer truncates to the published about-0.5 Hz");
+    expectNear(std::floor(two.rateHz * 10.0) / 10.0, 0.8, 1.0e-9,
+               "mode II no longer truncates to the published about-0.8 Hz");
+    // The superseded sibling scale must stay superseded, ratio and geometric
+    // mean alike. Fail loudly if either comes back.
     expect(std::abs(two.rateHz / one.rateHz
                     - Chorus::siblingMeasuredRateTwoHz
                           / Chorus::siblingMeasuredRateOneHz) > 1.0e-3,
            "the sibling's 1.682 rate ratio was reintroduced");
+    expect(std::abs(std::sqrt(one.rateHz * two.rateHz)
+                    - std::sqrt(Chorus::siblingMeasuredRateOneHz
+                                * Chorus::siblingMeasuredRateTwoHz)) > 1.0e-3,
+           "the sibling's absolute scale was reintroduced");
 
     expectNear(one.sweepSeconds, two.sweepSeconds, 1.0e-9,
                "the two modes do not share a sweep depth");
-    // A Juno-60's measured sweep, standing in and labelled as such: no
+    // A Juno-60's measured sweep, retained because the two instruments drive
+    // their MN3101s through the same converter with the same values, so the
+    // sibling's calibrated capture measures the circuit both share. No
     // qualifying capture of a Juno-106's own chorus has been located.
     expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.00166, 1.0e-6,
                "shortest modulated delay");

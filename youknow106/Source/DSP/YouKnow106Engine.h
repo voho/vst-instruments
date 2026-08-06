@@ -147,7 +147,12 @@ struct EngineParameters
     // Chorus::process); no Thiran fractional-delay filter exists. Off by
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
     bool enableChorusClockBleed { false };
-    bool enableChorusHyperbolicSweep { true };
+    // Off by default: the only trajectory measurement in existence (KR-106's
+    // ~50-point click-timing series, 16 us RMS residual against a straight
+    // line) reads the 106's delay as linear in time, so the linear sweep
+    // ships and the frequency-linear hypothesis waits behind this switch for
+    // the calibrated capture OQ-01 still requests.
+    bool enableChorusHyperbolicSweep { false };
     bool enableElectrolyticC14Nonlinearity { true };
 };
 
@@ -192,7 +197,12 @@ public:
     [[nodiscard]] int getDisplayVoiceMask() const noexcept { return displayVoiceMask_; }
     [[nodiscard]] float getDisplayTemperatureC() const noexcept
     {
-        return 25.0f + 15.0f * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
+        // Like the droop below: Unit Character scales the warmup the cards
+        // actually see, so the thermometer reports the same rise the audio
+        // model applies -- ambient, at Character zero.
+        return 25.0f
+             + 15.0f * activeParameters_.calibration
+                     * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
     }
     [[nodiscard]] float getDisplayRailDroopVolts() const noexcept
     {
@@ -753,6 +763,13 @@ private:
         std::uint32_t divider { 4545u };
         double periodSamples { 100.0 };
         double phase { 0.0 };
+        // The compensation ratio the current cycle's ramp was launched with.
+        // The physical ramp integrates whatever current its slewing CV set at
+        // the discharge, so a CV still catching up changes the *slope of the
+        // next rise*, never the value mid-cycle. Freezing the ratio per cycle
+        // is what keeps the rendered ramp value-continuous: it only takes a
+        // new value at a wrap, where both cycles share the -1 rail.
+        float renderScale { 1.0f };
         float pulseState { -1.0f };
         // The divider's output level is the whole of its state. Holding a
         // separate toggle alongside it only creates a way for the two to
@@ -834,6 +851,13 @@ private:
         float driftPhase { 0.0f };
         float driftValue { 0.0f };
         std::uint32_t driftState { 1u };
+        // Per-stage input offsets *of the differential pairs*, in volts at
+        // the pair. The cascade's arithmetic runs in module-node volts, where
+        // the pair sees everything through the anchored 560/68560 divider, so
+        // the transfer into the filter divides by `stageAttenuation` -- a
+        // 1.5 mV pair offset stands 183.6 mV tall in node coordinates. An
+        // earlier revision handed these to the node unconverted, which shrank
+        // the documented mechanism 122x into inaudibility.
         std::array<float, 4> vcfStageOffsets { 0.0015f, -0.0012f, 0.0018f, -0.0010f };
         // Signed, unbiased draw for each stage's integrating capacitor.
         std::array<float, 4> vcfStageGErrors {};
@@ -892,7 +916,9 @@ private:
         // Oscillator compensation CV, kept in the frequency it stands for.
         // The timer's count steps instantly; this voltage slews, and the
         // ratio of the two is the momentary amplitude error a pitch step
-        // leaves on the ramp and the pulse.
+        // leaves on the ramp -- expressed as the slope of each rise, frozen
+        // per cycle (`Dco::renderScale`). It reaches the pulse only through
+        // the comparator's edge times.
         float dcoCvTarget { 261.6f };
         float dcoCv { 261.6f };
         std::uint16_t attackIncrement { envelopePeak };
@@ -1019,6 +1045,7 @@ private:
     // control voltages into filter and amplifier coefficients without making
     // their bandwidth depend on the HQ factor.
     void updateVoiceAudio(Voice& voice, const EngineParameters& parameters) noexcept;
+    [[nodiscard]] static float dcoCompensationRatio(const Voice& voice) noexcept;
     [[nodiscard]] float dcoRampAmplitudeScale(
         const Voice& voice, const EngineParameters& parameters) const noexcept;
     // The PWM comparator is physical and free-running even behind a shut VCA,

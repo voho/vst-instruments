@@ -1233,6 +1233,7 @@ float YouKnow106Engine::Envelope::tick(std::uint16_t attackIncrement,
 void YouKnow106Engine::Dco::reset() noexcept
 {
     phase = 0.0;
+    renderScale = 1.0f;
     pulseState = -1.0f;
     subState = 1.0f;
     saw.reset();
@@ -1249,6 +1250,7 @@ void YouKnow106Engine::restartDcoBandlimited(
         // Nothing from this cell has reached the delayed output timeline yet,
         // so this is a true cold start rather than an audible discontinuity.
         dco.reset();
+        dco.renderScale = dcoCompensationRatio(voice);
         voice.pulseDutyPrimed = false;
         return;
     }
@@ -1265,17 +1267,24 @@ void YouKnow106Engine::restartDcoBandlimited(
     const double oldReset = oldGeometry[1];
     const double oldRise = oldGeometry[2];
     const double oldPhase = dco.phase;
-    const float oldSaw = oldPhase < oldRise
+    // Both timelines are expressed in the scaled naive domain the track
+    // carries: the abandoned ramp with the ratio its cycle launched under,
+    // the restarted ramp with the ratio the CV holds right now. The restarted
+    // ramp starts at the rail, which every scale maps to itself.
+    const float oldScale = dco.renderScale;
+    const float newScale = dcoCompensationRatio(voice);
+    const float oldSawUnit = oldPhase < oldRise
         ? 2.0f * clamp01(static_cast<float>(oldPhase / oldRise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>(
               (oldPhase - oldRise) / oldReset);
+    const float oldSaw = oldSawUnit * oldScale + (oldScale - 1.0f);
     constexpr float newSaw = -1.0f;
 
-    const float oldSlope = oldPhase < oldRise
+    const float oldSlope = (oldPhase < oldRise
         ? 2.0f / static_cast<float>(oldRise * oldGeometry[0])
-        : -2.0f / static_cast<float>(oldReset * oldGeometry[0]);
+        : -2.0f / static_cast<float>(oldReset * oldGeometry[0])) * oldScale;
     const float newSlope =
-        2.0f / static_cast<float>(newGeometry[2] * newGeometry[0]);
+        2.0f / static_cast<float>(newGeometry[2] * newGeometry[0]) * newScale;
 
     // The write happens before the current naive sample enters the track. In
     // this delayed-input residual convention that is offset zero: the track's
@@ -1295,6 +1304,7 @@ void YouKnow106Engine::restartDcoBandlimited(
     addStep(dco.sub, 1.0f - dco.subState, currentNaiveTimestamp);
 
     dco.phase = 0.0;
+    dco.renderScale = newScale;
     dco.pulseState = -1.0f;
     dco.subState = 1.0f;
     // The restart correction above owns the abandoned comparator timeline.
@@ -1614,7 +1624,14 @@ void YouKnow106Engine::refreshVoiceCardStageTrims() noexcept
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
         for (std::size_t stage = 0; stage < 4; ++stage)
         {
-            voice.filter.offsetVoltage[stage] = card.vcfStageOffsets[stage] * amount;
+            // The draw is volts at the pair; the cascade sums it with
+            // module-node voltages that reach the pair through the anchored
+            // 560/68560 divider, so the node-coordinate offset is the draw
+            // divided by that attenuation. Handing the pair value to the node
+            // unconverted -- as a previous revision did -- scales the
+            // mechanism down 122x and mutes it.
+            voice.filter.offsetVoltage[stage] =
+                card.vcfStageOffsets[stage] / stageAttenuation * amount;
             // Each stage integrates into its own capacitor, so the four poles
             // do not coincide the way one shared `g` makes them. Four
             // mathematically identical poles give a resonance peak and a
@@ -1967,12 +1984,13 @@ EngineParameters YouKnow106Engine::sanitise(const EngineParameters& parameters) 
     fix01(result.benderLfoDepth, 0.0f);
     fix01(result.volume, 0.80f);
     fix01(result.velocityDepth, 0.0f);
-    // Unlike every other 0-1 control, Unit Character's own range continues to
-    // 100: 0 is the digital reference, 1 matches real hardware, and values up
-    // to 100 exaggerate every mechanism it scales for audible contrast (used
-    // by the comparison-rendering tools; the host parameter itself is skewed
-    // but still spans 0-100). Clamping it to fix01's 0-1 would silently
-    // discard that range.
+    // Unlike every other 0-1 control, Unit Character extends to 2: 0 is the
+    // digital reference, 1 matches real hardware, and the headroom to 2
+    // extrapolates every blended mechanism past its physical draw. The old
+    // 0-100 range this comment once described is gone -- the comparison
+    // tools stopped using it, and past 1 the affine blends walk through
+    // their nominals -- so the ceiling lives in `calibrationCeiling`.
+    // Clamping to fix01's 0-1 would still silently discard the top half.
     result.calibration = std::isfinite(result.calibration)
         ? std::clamp(result.calibration, 0.0f, EngineParameters::calibrationCeiling) : 1.0f;
     fix01(result.chorusNoise, 1.0f);
@@ -3013,15 +3031,22 @@ void YouKnow106Engine::updatePulseComparator(
     voice.pulseDuty = pwmDutyCycle(threshold, amplitudeScale);
 }
 
+float YouKnow106Engine::dcoCompensationRatio(const Voice& voice) noexcept
+{
+    // The ratio of the slewed compensation voltage to the one the current
+    // pitch calls for -- the momentary amplitude error a pitch step leaves
+    // until the 522 us hold catches up.
+    return std::clamp(
+        voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+}
+
 float YouKnow106Engine::dcoRampAmplitudeScale(
     const Voice& voice, const EngineParameters& parameters) const noexcept
 {
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
-    const float heldCompensation = std::clamp(
-        voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
     const float cardCurrent =
         1.0f + card.rampCurrentError * 0.03f * parameters.calibration;
-    return heldCompensation * cardCurrent;
+    return dcoCompensationRatio(voice) * cardCurrent;
 }
 
 bool YouKnow106Engine::pulseMixEnabled(bool requested, float duty) noexcept
@@ -3092,16 +3117,27 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // it arrives through the hold capacitor while the timer count steps
     // instantly, so every pitch step leaves a momentary amplitude error
     // until the voltage catches up. The ratio of the slewed voltage to the
-    // one the current pitch calls for *is* that error.
-    const float compensationScale = std::clamp(
-        voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
+    // one the current pitch calls for *is* that error -- and it expresses
+    // itself as the *slope of each rise*, because the integrator charges from
+    // whatever current the CV set when the cycle launched. The rendered ramp
+    // therefore freezes the ratio per cycle and reshapes about the fixed
+    // bottom rail (the discharge always returns to the same rail): the
+    // affine map s*naive + (s - 1) keeps -1 at -1 and puts the peak at
+    // 2s - 1, which is also the geometry the duty law already assumes. A
+    // ratio taking effect only at a wrap, where both cycles share the rail,
+    // is what makes the ramp value-continuous through every pitch write; the
+    // previous outer multiply stepped the whole waveform mid-cycle, outside
+    // the bandlimited track -- a measured train of 2.9% single-sample steps
+    // at the 238 Hz scan cadence on every glide.
+    const float compensationScale = dcoCompensationRatio(voice);
     // From the parts' own tolerance classes, which is legitimate here because
     // the ramp has no per-voice trimmer, so nothing removes their spread: the
     // charging resistors are marked FX on the board -- metal-oxide film, 1% --
     // and the 1 nF timing capacitors carry code G, 2%. Worst case that is
-    // -2.93% to +3.07% of slope, which is the 3% used here.
+    // -2.93% to +3.07% of slope, which is the 3% used here. Being constant
+    // per card it commutes with the track, so it stays a plain gain.
     const float amplitude = sawMixVolts
-                          * dcoRampAmplitudeScale(voice, parameters);
+        * (1.0f + card.rampCurrentError * 0.03f * parameters.calibration);
 
     // The rise is straight, and carries no curvature term. The compensation
     // voltage drives a resistor into an integrator's virtual ground, so the
@@ -3124,15 +3160,27 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float fallSlope = -2.0f / static_cast<float>(reset);
     const float incrementF = static_cast<float>(increment);
 
+    // Walk the corners with each cycle's own frozen ratio: the rise-end
+    // corner joins two segments of one cycle, and the wrap joins the old
+    // cycle's fall to the new cycle's rise -- the one place the ratio is
+    // allowed to change, because both waveforms sit on the shared rail there.
+    float cycleScale = dco.renderScale;
     for (double base = 0.0; base <= lastCycle; base += 1.0)
     {
         if (insideThisSample(base + rise))
-            addSlope(dco.saw, (fallSlope - slopeAtEnd) * incrementF,
+            addSlope(dco.saw, (fallSlope - slopeAtEnd) * cycleScale * incrementF,
                      samplesAgo(base + rise));
         if (insideThisSample(base + 1.0))
-            addSlope(dco.saw, (slopeAtStart - fallSlope) * incrementF,
+        {
+            addSlope(dco.saw,
+                     (slopeAtStart * compensationScale
+                      - fallSlope * cycleScale) * incrementF,
                      samplesAgo(base + 1.0));
+            cycleScale = compensationScale;
+        }
     }
+    dco.renderScale = cycleScale;
+    sawNaive = sawNaive * cycleScale + (cycleScale - 1.0f);
 
     const float sawOut = dco.saw.advance(sawNaive) * amplitude;
 
@@ -3238,10 +3286,14 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     voice.previousPulseDuty = duty;
     voice.pulseDutyPrimed = true;
 
-    // The pulse is amplitude-compensated by the same control voltage as the
-    // ramp, so it carries the same momentary scale error on pitch steps.
-    const float pulseOut = dco.pulse.advance(dco.pulseState)
-                         * pulseMixVolts * compensationScale;
+    // The ramp's momentary scale error reaches the pulse through its *edge
+    // times* -- pwmDutyCycle solves the threshold against the achieved ramp
+    // amplitude -- and through nothing else: the comparator's output swing is
+    // its own logic level, not a copy of the ramp's. A previous revision also
+    // multiplied the pulse's amplitude by the compensation ratio, a coupling
+    // no cited mechanism derives (the derivation chain covers the duty
+    // alone), which doubled the zipper's click energy on pulse patches.
+    const float pulseOut = dco.pulse.advance(dco.pulseState) * pulseMixVolts;
 
     // --- Sub --------------------------------------------------------------
     // A flip-flop halves the note clock, so the sub is an exact square one
@@ -3374,10 +3426,20 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     if (!voice.active)
         return 0.0f;
 
-    // Physical BA662 / uPC1252H2 control voltage feedthrough: differential pair
-    // transistor V_be mismatch causes small additive CV leakage during fast envelope transients (thump).
-    const float vcaCvFeedthrough = (card.vcaOffset * 0.002f + 0.0008f) * voice.vcaControl * parameters.calibration;
-    const float output = (filtered + vcaCvFeedthrough) * voice.vca * voltsToSample;
+    // Physical BA662 voice-VCA control feedthrough: differential-pair V_be
+    // mismatch leaks a fraction of the bias current to the *output*, so the
+    // leak rides I_ABC itself -- not I_ABC times its own gain, and not the
+    // raw control voltage either. The control-to-current law has a turn-on
+    // knee and a deadband, and below them there is no bias current to leak,
+    // so the leak follows the same law the gain does. A previous revision
+    // added the leak to the amplifier's input (squaring the law, halving
+    // the gate-off thump in decibels and deleting it from release tails);
+    // the one before this used the unshaped control, which kept leaking
+    // after the current had already died. The magnitude stays voiced under
+    // OQ-19; the placement and shaping are the mechanism's.
+    const float vcaCvFeedthrough = (card.vcaOffset * 0.002f + 0.0008f)
+        * VoiceVcaControlLaw::gain(voice.vcaControl) * parameters.calibration;
+    const float output = (filtered * voice.vca + vcaCvFeedthrough) * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;
@@ -3715,11 +3777,15 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             wetLeft = outputSummerClip(wetLeft);
             wetRight = outputSummerClip(wetRight);
 
-            // TA75558S IC6 output summer op-amp dynamic slew-rate limiting (SR = 1.7 V/us)
+            // TA75558S IC6 output slew limit, SR = 1.7 V/us (653846 engine
+            // units per second at 2.6 V per unit). A part property, so --
+            // exactly like the rails above -- it is not scaled by Unit
+            // Character: a previous revision divided it by calibration,
+            // granting the pristine reference a 10x faster op-amp and a
+            // full-character unit one slower than the part's own datasheet.
             if (parameters.enableOpAmpSlewLimiting)
             {
-                const float slewScale = std::max(parameters.calibration, 0.1f);
-                const float maxStep = static_cast<float>(653846.15 / (oversampledRate_ * slewScale));
+                const float maxStep = static_cast<float>(653846.15 / oversampledRate_);
                 const float deltaL = wetLeft - outputSlewStateLeft_;
                 outputSlewStateLeft_ += std::clamp(deltaL, -maxStep, maxStep);
                 wetLeft = outputSlewStateLeft_;

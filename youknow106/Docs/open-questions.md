@@ -81,7 +81,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 
 | Priority | OQ | Question still unanswered | Already settled / do not redo |
 |---|---|---|---|
-| P0 | 01 | Absolute JUNO-106 chorus rate scale, BBD clock/delay endpoints, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the schematic-derived 1.6234799 mode-rate ratio, and the provisional JUNO-60 scale and sweep |
+| P0 | 01 | Hardware confirmation of the derived 0.5533/0.8983 Hz rates (TP4 capture or original-page read of C3/β), BBD clock/delay endpoints on a real 106, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the 1.6234799 mode-rate ratio, the summing-node β = 33/47 and C3 = 0.1 µF (netlist-corroborated), the derived rate scale, and the family sweep measured on the sibling's identical clock driver |
 | P0 | 02 | Roland stored-byte/DAC/hold-network to IC5 GC1 voltage, offset and in-circuit endpoints | Shared uPC1252H2 placement, `b<<5` DAC code, C12/R36 input coupling and the IC's −5.9 mV/dB typical GC1-to-gain law |
 | P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation | No-compander topology and the need for a wet-line noise model |
 | P2 | 04 | Loaded post-BBD support transfer, including MN3009 and emitter-follower output impedance | Component topology and provisional ideal-source poles |
@@ -193,12 +193,15 @@ modes on identified, healthy, calibrated JUNO-106 unit(s), and estimate nominal
 values only to the extent the sample and uncertainty support.
 
 A 2026-08-05 transcription of Service Notes p. 15 closed the topology and the
-mode-rate ratio, and narrowed what remains. IC1 (µPC062) is an integrator plus
-a Schmitt comparator: C3 sits across IC1b pins 6 and 7, IC1a returns its own
-output to pin 3 through R6 47 kΩ against R15 1 kΩ to ground, and R7 33 kΩ
-closes the loop from the integrator's output to IC1a pin 2. IC2a then inverts
-once through R10/R9 33 kΩ, so TP4 carries the triangle and TP3 exactly its
-negative. Two results follow with no measurement:
+mode-rate ratio; the 2026-08-06 netlist pass corrected its comparator wiring.
+IC1 (µPC062) is an integrator plus a Schmitt comparator: C3 sits across IC1b
+pins 6 and 7, and R6 47 kΩ from the comparator's own output meets R7 33 kΩ
+from the integrator's output at the non-inverting input, the inverting input
+grounded. (The 2026-08-05 transcription placed R7 on pin 2 with R15 1 kΩ
+dividing pin 3 down; that reading put both rates 34× high and the sister
+board's netlist has no divider resistor on the node — do not reuse it.) IC2a
+then inverts once through R10/R9 33 kΩ, so TP4 carries the triangle and TP3
+exactly its negative. Two results follow with no measurement:
 
 - The modulation waveform is a **straight, symmetric triangle**, because the
   integrator is fed a constant current for the whole of each half cycle. It is
@@ -211,21 +214,34 @@ negative. Two results follow with no measurement:
   6.4352941 MΩ with Tr1 conducting (mode I, the slower leg) and 3.9638889 MΩ
   without it (mode II). R5 = 1 MΩ, R8 = 2.2 MΩ, R4 = 680 kΩ, R3 = 2.2 MΩ.
 
-What is still open is the **absolute scale and the sweep endpoints**. The
-schematic does not print C3, and `f = 1/(4·β·R_eff·C3)` needs it. The
-implementation therefore keeps the measured **JUNO-60** sweep of 1.66–5.35 ms,
-and takes the JUNO-60 rate pair's geometric mean as the scale, re-split by this
-instrument's own ratio: **0.5222045 Hz for I and 0.8477886 Hz for II**. Both
-round to the owner's manual's published about-0.5 and about-0.8.
+The **absolute scale is now derived** (2026-08-06, netlist-corroboration pass):
+`f = 1/(4·β·R_eff·C3)` with β = R7/R6 = 33/47 (the summing-node comparator
+reading, netlist-verified on the sister board's clone) and C3 = 0.1 µF
+(reported as ".1" on p. 15; 100 nF in exactly the integrator's position in
+that same netlist) gives **0.5532934 Hz for I and 0.8982608 Hz for II** — both
+within 3% of the 106-chorus-clone scope readings, both truncating to the
+owner's manual's about-0.5 and about-0.8. What is still open here is
+**hardware confirmation** (one TP4 capture closes it) and the **sweep
+endpoints**. The implementation keeps the measured **JUNO-60** sweep of
+1.66–5.35 ms — no longer as a mere sibling borrowing, but because the clock
+driver it was measured through is component-identical on the two boards
+(Tr22's 2.2 kΩ/22 kΩ/1.8 kΩ against C53 150 pF, and the per-line 8.2 kΩ,
+all match the clone's netlist), so the sibling's calibrated capture measures
+the circuit both instruments share. The third-party 106-specific sweep
+reports (1.4–6.4 ms; three clone clock readings; a mod-lore inference near
+3.2–8.5 ms) disagree with each other by more than they disagree with that
+capture, and none is calibrated, so none of them replaces it.
 
 The formerly claimed 1.54–5.15 ms JUNO-106 sweep had no valid measurement and
 must not be reintroduced. The sibling's own rate ratio of 1.682 is likewise
 superseded by this instrument's 1.6234799 and must not be reintroduced.
 
-Note that `β = R15/(R15 + R6) = 1/48` is now known, so the absolute rates are
-one number away: reading C3, **or** measuring one period at TP4, **or**
-measuring the triangle's peak-to-peak amplitude at TP4 (which is `2·β·V_sat`
-and therefore also yields C3), each closes the scale on its own.
+With β = 33/47 and C3 = 0.1 µF the scale is derived, so what a hardware
+capture adds is confirmation against Roland's own board: one TP4 period
+checks the rates directly, and the triangle's peak-to-peak amplitude against
+IC1a's saturated swing measures β itself (their ratio is `2·β·V_sat`
+against `2·V_sat`). The falsified `1/48` divider figure must not be used in
+any of that arithmetic.
 
 ### Needed output (for LLM)
 
@@ -241,36 +257,41 @@ and therefore also yields C3), each closes the scale on its own.
   simultaneously with the TP3/TP4 modulation waveform so the clock trajectory
   can be referred to the voltage that produced it.
 
-  This is the one output that resolves the sweep law, and the model has now
-  taken a position on it that a measurement still has to confirm. Service Notes
-  p. 15 shows each MN3101 driven by a transistor voltage-to-current converter
-  (Tr22 with R133 2.2 kΩ, R134 22 kΩ and R135 1.8 kΩ, against C53 150 pF),
-  which is the shape of a *current-controlled* oscillator — **frequency**
-  linear in the control voltage rather than period. `Chorus::process`
-  accordingly bends the delay hyperbolically under
-  `enableChorusHyperbolicSweep`. A period-linear, a frequency-linear and an
-  exponential clock differ only in the trajectory between the endpoints, so no
-  endpoint measurement can tell them apart; only a time series can. Confirming
-  the MN3101's bias transfer from its datasheet would also settle it.
+  This is the one output that resolves the sweep law, and the model's position
+  on it reversed on 2026-08-06 when the first such series surfaced. Service
+  Notes p. 15 shows each MN3101 driven by a transistor voltage-to-current
+  converter (Tr22 with R133 2.2 kΩ, R134 22 kΩ and R135 1.8 kΩ, against C53
+  150 pF), which is the shape of a *current-controlled* oscillator —
+  **frequency** linear in the control voltage rather than period, which would
+  bend the delay hyperbolically. But KR-106's ~50-point click-timing series
+  across a real 106's modulation cycle fits the delay **linear in time** with
+  16 µs RMS residual and "no detectable exponential curvature", and its
+  changelog records shipping clock-domain modulation and reverting on that
+  measurement. The linear-in-delay trajectory therefore ships as the default,
+  and the frequency-linear reading waits behind
+  `enableChorusHyperbolicSweep`. The KR-106 series is below this project's
+  anchoring bar (raw clicks unpublished), so the question stays open: a
+  calibrated time series — or the MN3101's bias transfer from its datasheet —
+  still settles it.
 
-  **Endpoint defect fixed in code; the reason this stays P0 is the law
-  itself.** An earlier implementation scaled the hyperbolic delay about the
-  *centre*, which moved the endpoints: with the measured centre 3.505 ms and
-  sweep 1.845 ms, at Unit Character 1.0 the rendered range became about
-  2.30–7.40 ms instead of the measured 1.66–5.35 ms — a span 38% wider than
-  the only measured figures this chorus has, and the deviation scaled with
-  Unit Character even though whether the oscillator is current-controlled is
-  a topology fact, not a component tolerance. `Chorus::process` now instead
-  sweeps the *clock* linearly between `128/5.35 ms` and `128/1.66 ms` (derived
-  from the same centre/sweep numbers, no new constant), which keeps both
-  endpoints exact at any amount of Unit Character and changes only the path
-  between them. This closes the endpoint-overshoot defect but not the
-  question: the frequency-linear assumption itself is still unconfirmed
-  against hardware, so resolving OQ-01 still requires the clock time-series
-  capture described above.
+  **The retained hyperbolic path had its endpoint defect fixed before it was
+  demoted to a hypothesis.** An earlier implementation scaled the hyperbolic
+  delay about the *centre*, which moved the endpoints: with the measured
+  centre 3.505 ms and sweep 1.845 ms, at Unit Character 1.0 the rendered
+  range became about 2.30–7.40 ms instead of the measured 1.66–5.35 ms — a
+  span 38% wider than the only measured figures this chorus has, and the
+  deviation scaled with Unit Character even though whether the oscillator is
+  current-controlled is a topology fact, not a component tolerance. When
+  enabled, `Chorus::process` sweeps the *clock* linearly between
+  `128/5.35 ms` and `128/1.66 ms` (derived from the same centre/sweep
+  numbers, no new constant), which keeps both endpoints exact at any amount
+  of Unit Character, so the two laws differ only in the path between the
+  endpoints — which is exactly what the requested time series measures.
 - The peak-to-peak amplitude of the modulation triangle at TP4, and the
-  saturated output swing of IC1a, in the same capture. With `β = 1/48` from
-  R15/R6 those give C3, and C3 gives both absolute rates.
+  saturated output swing of IC1a, in the same capture. Their ratio measures
+  `β` directly — confirming (or falsifying) the netlist-derived 33/47 against
+  Roland's own board — and with β and one TP4 period the capture also
+  independently re-derives C3 against the corroborated 0.1 µF.
 - A table containing mode, line, clock minimum/maximum, derived delay
   maximum/minimum, modulation rate and uncertainty. Use
   `delay_seconds = 128 / clock_hz` for the two-phase 256-stage line, where
@@ -1618,7 +1639,7 @@ JUNOTEST procedure above. That single document closes all three:
 
 | Task | The page | What to read off it | What it converts |
 |---|---|---|---|
-| **OQ-01** | p. 15, JACK BOARD | `C3` (reported as `.1` beside C4's `220P`, unconfirmed), and **which pin of IC1a the integrator output arrives at** | chorus rate and depth from *borrowed from a JUNO-60* to **derived**; the model's sweep is at 74 % of the reported excursion |
+| **OQ-01** | p. 15, JACK BOARD | *Now confirmation rather than discovery:* the 2026-08-06 netlist pass closed β (summing node, 33/47) and C3 (0.1 µF) from the sister board's clone, and the rates ship as **derived**. The page read still independently confirms both against Roland's own print — and gains one line from the same pass: **which IC6 input resistor carries the wet return** (R71/R73 side), because the clone wires wet through 39 kΩ and dry through 47 kΩ, the mirror of this project's anchored reading, a 3.24 dB question if the transcription swapped them | original-page confirmation of an already-derived scale; a wet/dry balance check worth 3.24 dB if wrong |
 | **OQ-02** | jack board, between the sample-and-hold and IC5 GC1 | the resistive divider that turns the converter's +4/−6 V into ~124 mV of GC1 | VCA LEVEL from **voiced** to **derived**; the shipping cubic is 6.9 dB out at mid-slider across all 128 factory patches |
 | **OQ-04** | chorus support chain | the capacitor codes behind `YouKnow106Chorus.cpp:73-83`, **read separately for the input and output sides** | wet-path bandwidth; the chain is −12 dB at 10 kHz where the MN3009 alone is ~−3 dB, and the reconstruction sections currently *assume* the input sections' part values rather than reading their own |
 
@@ -1830,6 +1851,111 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
   Bessel function is written out in the engine because the standard
   special-function header — the original reason a Kaiser window was avoided —
   is not available on every toolchain this project builds with.
+
+## Netlist-corroboration pass — 2026-08-06 (chorus board and third-source sweep)
+
+**Work mode:** analysis of supplied/public source material. **No hardware was
+measured.** Three sources were read in full: the KiCad netlist of
+`gligli/juno-chorus-clone` (a Juno-60 chorus-board clone — sibling evidence,
+labelled as such throughout), the `ultramaster_kr106` source tree (GPL-3.0;
+facts and measurements cited, no code taken), and a search-snippet sweep of the
+public web under an egress policy that still blocks every relevant host except
+GitHub.
+
+### OQ-01 — the scale went from borrowed to derived
+
+The clone's netlist settles the two readings the queue was blocked on, for the
+board family if not yet for Roland's own print:
+
+- **The comparator is the two-resistor summing-node Schmitt.** 47 kΩ returns
+  the comparator's own output to its non-inverting input, 33 kΩ brings the
+  triangle to the same node, the inverting input is grounded, and **no divider
+  resistor exists on that node**. β = 33/47, and the falsified `1/48` reading
+  is closed (the arithmetic had already put it 34× off).
+- **The integrator capacitor in that position is 100 nF**, matching the
+  reported ".1" print beside C4's "220P" on the 106's own p. 15.
+- **The clock driver is component-identical on the two boards**: the V-to-I
+  values (2.2 kΩ/22 kΩ/1.8 kΩ, 150 pF) and the per-line 8.2 kΩ all match the
+  106's p. 15 transcription. This upgrades the retained JUNO-60 sweep from "a
+  sibling's numbers" to "a calibrated measurement of the circuit both boards
+  share".
+
+The engine now ships the derived rates `f = 1/(4·β·R_eff·C3)` =
+**0.5532934 / 0.8982608 Hz** (ratio exactly the schematic's 1.6234799). Every
+measured rate now on record sits below the derived nominal, which is the
+expected side for ±5% timing parts: JUNO-60 0.513/0.863 (calibrated capture),
+a 106-chorus clone's scope 0.537/0.879 (−3.0%/−2.2% vs derived), and KR-106's
+real-106 Chorus I **0.514 Hz** (−7.1%; two-carrier cross-verified, raw capture
+not published; its Chorus II value is Juno-6-inherited and unusable for the
+ratio).
+
+### OQ-01 — the sweep *trajectory* has now been measured once, against us
+
+KR-106 reports a ~50-point click-timing **time series** of the 106's wet delay
+across one modulation cycle — exactly the measurement this queue said was the
+only discriminator between period-, frequency- and exponential-linear clocks.
+Result: **delay linear in time, 16 µs RMS residual, "no exponential
+curvature"**, centre 3.30 ms, swing ±2.13 ms (1.17–5.43 ms), and their
+changelog records shipping clock-domain modulation and *reverting to
+delay-linear on measurement*. This contradicts the frequency-linear reading of
+Tr22's current source that `enableChorusHyperbolicSweep` encodes; a
+delay-linear triangle also renders the classic fixed-detune character rather
+than a mid-flank pitch slide. Raw click data is not in their repository, so
+this stays below the anchoring bar — but it is a direct measurement against an
+explicit assumption, and the assumption side of that pairing loses the
+default. The sweep-geometry scatter (their 1.17–5.43 ms vs the 60-measured
+1.66–5.35 vs the owner-report 1.4–6.4) remains mutually inconsistent and
+unpromoted.
+
+### IC6 wet/dry assignment — now a two-source mirror, still guardrailed
+
+Two independent sibling-board transcriptions — the gligli netlist (wet enters
+the final summers through **39 kΩ** from the 2SK30 mute sources, dry through
+**47 kΩ**) and KR-106's own schematic reading (same assignment) — both carry
+the mirror of this project's anchored 106 reading (dry 39 kΩ, wet 47 kΩ,
+wet/dry −1.62 dB). Sibling boards are not primary 106 evidence, so the
+guardrail stands unchanged; the p. 15 re-read checklist gains the
+designator-level check (which IC6 input resistor carries the wet return
+R71/R73). If the transcription were swapped, the wet balance moves 3.24 dB —
+audible, and worth one line of reading.
+
+### KR-106 mining — contradictions and corroborations recorded
+
+Nothing in the KR-106 tree meets this project's anchoring bar (no raw captures
+ship in the repository, and its comments drift against its constants), but the
+following are recorded per contract rule 5. Corroborations: its firmware
+tables and semantics match every OQ-12/13/14 fixture of ours exactly
+(independent j106roms-lineage consistency check); its cycle-count scan
+timeline lands on our provisional ~125 µs VCF→VCA offset (adding a voice-6
+exception near 402 µs and a ~2.2 ms compute/write split); its designator-level
+hold RCs reproduce our 522/687 µs anchors and add a WIDTH-trim dependence; its
+measured 56-point 106 envelope→gain curve is near-linear with a soft toe,
+siding with our OQ-19 law; its measured DAC anchors two-anchor-confirm
+1143 counts/octave. Contradictions: a measured pass period near **4.27 ms
+±3%** against the timing chart's anchored 4.2 ms (anchor kept); a measured
+**sub/pulse ratio of 1.51** against our voiced 0.833 (OQ-15 — the largest new
+audible lead of this pass); "dB-linear ±10 dB confirmed from hardware" against
+our OQ-02 three-point cubic; a service-manual noise-circuit trace implying a
+34 Hz–5.3 kHz band-shaped source against our flat-white OQ-16 placeholder;
+C14 cut corners computed with the 1 MΩ bias resistor participating
+(236/754 Hz vs our 225.8/720.5 — OQ-21); measured INL steps at the shared
+DAC's MSB flips (−4.6/+23.3/−4.5 cents at codes 1024/2048/3072 — OQ-18); and a
++18 dB wet-over-dry 120 Hz component in its noise calibration against our
+rail-ripple-inaudibility derivation (single unit, health unknown — OQ-03).
+Provenance warning recorded: our OQ-09 landmarks (0.91 at 30%, onset 0.9,
+max 4.19) turn out to be KR-106's own fits, with the 0.91 point measured on a
+*Juno-6* — they were already labelled comparison landmarks, and must never be
+promoted.
+
+### Web sweep — one usable absolute, the rest scatter
+
+The chorus-noise thread supplies absolute floors under a declared chain
+(Chorus I −47.97 dBFS / II −44.01, NOS MN3009s; the II−I delta is **3.95 dB
+on both chip populations**, confirming it as structural — OQ-03), and the
+mod-lore around the One-O-Six clone yields only an ambiguous stock-clock
+inference (~15–40 kHz) recorded with the other unpromoted sweep reports.
+Selector spec H/M/L = 0/−15/−30 dBm re-surfaced (OQ-06); everything else was
+dead ends, logged in the session record so the queries are not repeated.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 

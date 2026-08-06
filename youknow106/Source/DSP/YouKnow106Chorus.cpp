@@ -123,20 +123,6 @@ float triangle(double phase) noexcept
     return static_cast<float>(folded * 4.0 - 1.0);
 }
 
-// std::sqrt is not constexpr before C++26, and settingsFor() runs once per
-// sample, so the mode rates have to be folded at compile time some other way.
-// Newton on x^2 = value, from a crude seed; the inputs here are all near unity
-// so a fixed iteration count converges to the last bit.
-constexpr double constexprSqrt(double value) noexcept
-{
-    if (!(value > 0.0))
-        return 0.0;
-
-    double guess = value > 1.0 ? value : 1.0;
-    for (int iteration = 0; iteration < 32; ++iteration)
-        guess = 0.5 * (guess + value / guess);
-    return guess;
-}
 } // namespace
 
 Chorus::StereoNoiseSample Chorus::correlatedRandomStep(
@@ -169,35 +155,35 @@ float Chorus::deterministicToneStep(double& phase, float frequencyHz,
 
 Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
 {
-    // The sweep endpoints are a *Juno-60's* measured figures, and they are
-    // labelled as such deliberately: delay 1.66 ms to 5.35 ms, read from a
-    // calibrated capture of that instrument. No qualifying capture of a
-    // Juno-106's own chorus has been located -- a revision briefly adopted
-    // 1.54-5.15 ms as one, which turned out not to exist -- and the figures
-    // published for this instrument are only "about 0.5 Hz" and "about 0.8 Hz".
+    // The rates are this instrument's own, straight from its circuit:
+    // derivedRateHz() evaluates f = 1/(4 * beta * R_eff * C3) with the
+    // schematic's timing network (6.4352941 MOhm for I, 3.9638889 MOhm for
+    // II), the summing-node comparator ratio 33/47 and the 0.1 uF integrator
+    // capacitor, landing 0.55329 Hz and 0.89826 Hz. Scope readings of a
+    // 106-chorus clone corroborate both within 3% (0.537/0.879 Hz), and both
+    // truncate to the published about-0.5 and about-0.8. The JUNO-60 pair that
+    // used to stand in for the scale is superseded, as its 1.682 ratio already
+    // was; the suites keep both only as comparison values.
     //
-    // The rates are split between those two facts. This instrument's own
-    // schematic fixes their *ratio* exactly: Chorus::lfoTimingOhms derives
-    // 6.4352941 MOhm for mode I and 3.9638889 MOhm for mode II from the mode
-    // switch's T-network, so mode II runs 1.6234799 times faster. What the
-    // schematic cannot give is the *scale*, because it does not print the
-    // integrator capacitor. So the sibling's pair supplies the scale and only
-    // the scale: its geometric mean is preserved exactly, and this instrument's
-    // own ratio re-splits it. Both results still round to the published
-    // about-0.5 and about-0.8. The sibling's own 1.682 ratio is superseded and
-    // must not be reintroduced.
+    // The sweep endpoints remain a *Juno-60's* measured figures: delay 1.66 ms
+    // to 5.35 ms, read from a calibrated capture of that instrument. They stay
+    // in service here on stronger grounds than the original borrowing: both
+    // instruments drive their MN3101s through the same voltage-to-current
+    // converter with the same values -- 2.2k/22k/1.8k against 150 pF on the
+    // 106's own page and in the sister board clone's netlist alike -- so a
+    // calibrated capture of one is a measurement of the circuit they share.
+    // The third-party 106-specific sweep reports (1.4-6.4 ms, against three
+    // narrower clone clock readings) disagree with each other by more than
+    // they disagree with this pair, so none of them replaces it. See OQ-01.
     //
     // Modes I and II differ in speed alone, not in depth: the mode line changes
     // a timing resistance, while the triangle's amplitude is set by the
-    // comparator's threshold divider, which the mode line does not touch. That
+    // comparator's threshold ratio, which the mode line does not touch. That
     // is why II reads as more agitated rather than wider.
     constexpr float centre = 0.5f * (0.00166f + 0.00535f);
     constexpr float sweep = 0.5f * (0.00535f - 0.00166f);
-    constexpr double geometricMean = constexprSqrt(
-        siblingMeasuredRateOneHz * siblingMeasuredRateTwoHz);
-    constexpr double split = constexprSqrt(modeRateRatio());
-    constexpr float rateOne = static_cast<float>(geometricMean / split);
-    constexpr float rateTwo = static_cast<float>(geometricMean * split);
+    constexpr float rateOne = static_cast<float>(derivedRateHz(true));
+    constexpr float rateTwo = static_cast<float>(derivedRateHz(false));
     switch (mode)
     {
         case ChorusMode::One:  return { rateOne, centre, sweep, lineGain };
@@ -234,10 +220,18 @@ float Chorus::bbdTransfer(float input) noexcept
     return static_cast<float>(static_cast<double>(input) / denominator);
 }
 
-float Chorus::transferLossStep(float& state, float input, float clockHz) noexcept
+float Chorus::transferLossStep(float& state, float input) noexcept
 {
-    const float dynamicSmear = std::clamp(transferSmear * (1.0f + (clockHz - 26000.0f) * 1.5e-6f), 0.1f, 0.99f);
-    state += dynamicSmear * (input - state);
+    // One fixed per-transfer coefficient, advanced once per clock edge. The
+    // recursion runs on the clock grid, so the absolute corner already moves
+    // with the clock exactly as the physical per-stage inefficiency does; a
+    // previous revision additionally scaled the coefficient with the clock
+    // (unity at an uncited 26 kHz, slope 1.5e-6 per Hz), which un-anchored
+    // the derivation -- at the datasheet's own 40 kHz condition it rendered
+    // -2.76 dB where the part is specified -3.0 dB -- and brightened with
+    // clock where per-transfer loss physically worsens. The fixture drives
+    // this exact function, so the anchor holds at every clock again.
+    state += transferSmear * (input - state);
     return state;
 }
 
@@ -422,7 +416,7 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
         const float emerging = cells[static_cast<std::size_t>(writeIndex)];
         cells[static_cast<std::size_t>(writeIndex)] = bounded;
 
-        Chorus::transferLossStep(transferState, emerging, clockHz);
+        Chorus::transferLossStep(transferState, emerging);
         noiseState = nextNoiseState(noiseState);
         held = transferState
              + noiseFromState(noiseState) * independentLineRandomAmplitude
@@ -528,18 +522,25 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         lfoPhase_ -= std::floor(lfoPhase_);
     const float modulation = triangle(lfoPhase_);
 
-    // MN3101 current-controlled oscillator delay sweep law. Tr22's voltage-to-
-    // current converter makes the *clock* linear in the control voltage, not
-    // the delay, so a physically faithful sweep bends delay hyperbolically --
-    // but only if it does so about the clock's own endpoints, not the delay's
-    // centre. Bending about the centre (an earlier revision of this code) moves
-    // the endpoints outward as Unit Character increases -- see OQ-01, which
-    // records the measured centre/sweep (3.505 ms / 1.845 ms) rendering a
-    // 38%-too-wide 2.30-7.40 ms range at Unit Character 1.0 instead of the
-    // measured 1.66-5.35 ms. Sweeping the clock linearly between the two clock
-    // frequencies that correspond to the measured delay endpoints keeps both
-    // endpoints exact at every blend amount, and differs from the linear-in-
-    // delay model only in the trajectory between them.
+    // Delay sweep trajectory. The linear-in-delay law below is the shipped
+    // default, because the one trajectory measurement in existence says so:
+    // a ~50-point click-timing series across the 106's modulation cycle fits
+    // a straight line in delay with 16 us RMS residual and "no exponential
+    // curvature" (recorded in OQ-01; below the anchoring bar, but a direct
+    // measurement standing against an explicit assumption). It also renders
+    // the instrument's fixed-detune character: a linear delay flank is a
+    // constant pitch offset, where a bent flank slides through it.
+    //
+    // The hyperbolic path behind `enableHyperbolicSweep` keeps the competing
+    // frequency-linear reading of Tr22's voltage-to-current converter -- the
+    // clock linear in the control voltage, hence delay bending -- available
+    // for the calibrated clock time-series OQ-01 still requests. When it
+    // engages it bends about the clock's own endpoints, not the delay's
+    // centre: an earlier centre-relative revision rendered a 38%-too-wide
+    // 2.30-7.40 ms range at Unit Character 1.0 instead of the measured
+    // 1.66-5.35 ms, which OQ-01 records. Bending about the endpoint clocks
+    // keeps both endpoints exact at every blend amount, so the two laws
+    // differ only in the trajectory between them.
     float nominalDelayA = centreDelay_ + sweep_ * modulation;
     float nominalDelayB = centreDelay_ - sweep_ * modulation;
 
