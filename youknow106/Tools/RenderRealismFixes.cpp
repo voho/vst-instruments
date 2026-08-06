@@ -123,11 +123,20 @@ const std::array<Demo, 2> demos {{
 }};
 
 // metrics.csv keeps one row per fix so the README can be regenerated whole
-// after any individual fix is re-rendered.
-std::map<std::string, std::pair<double, double>> readMetrics(
+// after any individual fix is re-rendered. The fourth column records the gain
+// applied to the written diff file when the raw difference would not fit the
+// format; rows from older manifests without it read as unscaled.
+struct MetricsRow
+{
+    double peakDbc { 0.0 };
+    double rmsDbc { 0.0 };
+    double diffGainDb { 0.0 };
+};
+
+std::map<std::string, MetricsRow> readMetrics(
     const std::filesystem::path& path)
 {
-    std::map<std::string, std::pair<double, double>> rows;
+    std::map<std::string, MetricsRow> rows;
     std::ifstream in(path);
     std::string line;
     while (std::getline(in, line))
@@ -136,12 +145,16 @@ std::map<std::string, std::pair<double, double>> readMetrics(
         std::string slug;
         std::string peak;
         std::string rms;
+        std::string gain;
         if (std::getline(stream, slug, ',') && std::getline(stream, peak, ',')
             && std::getline(stream, rms, ','))
         {
             try
             {
-                rows[slug] = { std::stod(peak), std::stod(rms) };
+                MetricsRow row { std::stod(peak), std::stod(rms), 0.0 };
+                if (std::getline(stream, gain, ','))
+                    row.diffGainDb = std::stod(gain);
+                rows[slug] = row;
             }
             catch (...) {}
         }
@@ -171,6 +184,7 @@ int main(int argc, char** argv)
 
     auto metrics = readMetrics(outputDir / "metrics.csv");
     bool rendered = false;
+    bool missingBefore = false;
     for (const auto& demo : demos)
     {
         if (requested != "all" && requested != demo.slug)
@@ -192,19 +206,37 @@ int main(int argc, char** argv)
         if (!readWav(outputDir / (slug + "-before.wav"), beforeLeft,
                      beforeRight))
         {
+            // A comparison with no baseline is a failed comparison, not a
+            // no-op: without this, a stale manifest would present an older
+            // measurement as this render's result.
             std::printf("%s: no before take found\n", slug.c_str());
+            missingBefore = true;
             continue;
         }
         const Take before(std::move(beforeLeft), std::move(beforeRight));
-        const auto diff = take.diffWith(before);
+        auto diff = take.diffWith(before);
         const auto diffLevel = diff.measure();
         const auto reference = std::max(before.measure().rms, 1.0e-12);
         const double peakDbc = decibels(diffLevel.peak / reference);
         const double rmsDbc = decibels(diffLevel.rms / reference);
+        // Two independently normalised takes can differ by up to twice one
+        // take's peak, and the file writer clamps at full scale. The metrics
+        // above are taken from the unclipped difference; when writing it out,
+        // scale it just under full scale and record the applied gain so the
+        // artifact stays reversible instead of silently clipping.
+        double diffGainDb = 0.0;
+        if (diffLevel.peak > 0.999)
+        {
+            const double scale = 0.999 / diffLevel.peak;
+            diff.applyGain(scale);
+            diffGainDb = decibels(scale);
+            std::printf("%s: diff written %.2f dB down to fit full scale\n",
+                        slug.c_str(), -diffGainDb);
+        }
         writeWav(outputDir / (slug + "-diff.wav"), diff.left(), diff.right());
         std::printf("%-26s diff peak %+6.1f dBc   diff RMS %+6.1f dBc\n",
                     slug.c_str(), peakDbc, rmsDbc);
-        metrics[slug] = { peakDbc, rmsDbc };
+        metrics[slug] = { peakDbc, rmsDbc, diffGainDb };
     }
 
     if (!rendered)
@@ -212,12 +244,19 @@ int main(int argc, char** argv)
         std::printf("unknown fix slug: %s\n", requested.c_str());
         return 1;
     }
+    if (missingBefore)
+    {
+        std::printf("aborting without rewriting the manifest: a requested "
+                    "comparison has no before take\n");
+        return 1;
+    }
 
     if (comparing)
     {
         std::ofstream csv(outputDir / "metrics.csv");
         for (const auto& [slug, row] : metrics)
-            csv << slug << ',' << row.first << ',' << row.second << '\n';
+            csv << slug << ',' << row.peakDbc << ',' << row.rmsDbc << ','
+                << row.diffGainDb << '\n';
 
         std::ofstream readme(outputDir / "README.md");
         readme <<
@@ -229,16 +268,23 @@ int main(int argc, char** argv)
             "Both stages are level-matched to the same peak, so an A/B compares\n"
             "character rather than loudness; `-diff` carries the sample\n"
             "difference at the same gain, so its loudness is its true loudness.\n"
-            "The before take passes through a 16-bit file, so an unchanged build\n"
-            "still measures about -80 to -90 dBc: that is this measurement's\n"
-            "floor, not a difference, and it is below audibility.\n\n"
-            "| Take | Diff peak (dBc) | Diff RMS (dBc) |\n"
-            "| --- | ---: | ---: |\n";
+            "The one exception is a difference too large for the file format:\n"
+            "that file is written just under full scale instead, and the gain\n"
+            "it was given is in the last column, so the artifact is reversible\n"
+            "rather than silently clipped. The metrics are always taken from\n"
+            "the unscaled difference. The before take passes through a 16-bit\n"
+            "file, so an unchanged build still measures about -80 to -90 dBc:\n"
+            "that is this measurement's floor, not a difference, and it is\n"
+            "below audibility.\n\n"
+            "| Take | Diff peak (dBc) | Diff RMS (dBc) | Diff file gain (dB) |\n"
+            "| --- | ---: | ---: | ---: |\n";
         for (const auto& [slug, row] : metrics)
         {
             std::array<char, 256> line {};
-            std::snprintf(line.data(), line.size(), "| `%s` | %+.1f | %+.1f |\n",
-                          slug.c_str(), row.first, row.second);
+            std::snprintf(line.data(), line.size(),
+                          "| `%s` | %+.1f | %+.1f | %+.2f |\n",
+                          slug.c_str(), row.peakDbc, row.rmsDbc,
+                          row.diffGainDb);
             readme << line.data();
         }
     }

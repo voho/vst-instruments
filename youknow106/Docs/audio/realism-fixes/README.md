@@ -8,11 +8,16 @@ composed to expose that fix rather than sharing one generic panel.
 Both stages are level-matched to the same peak, so an A/B compares
 character rather than loudness; `-diff` carries the sample
 difference at the same gain, so its loudness is its true loudness.
-The before take passes through a 16-bit file, so an unchanged build
-still measures about -80 to -90 dBc: that is this measurement's
-floor, not a difference, and it is below audibility.
+The one exception is a difference too large for the file format:
+that file is written just under full scale instead, and the gain
+it was given is in the last column, so the artifact is reversible
+rather than silently clipped. The metrics are always taken from
+the unscaled difference. The before take passes through a 16-bit
+file, so an unchanged build still measures about -80 to -90 dBc:
+that is this measurement's floor, not a difference, and it is
+below audibility.
 
-| Take | Diff peak (dBc) | Diff RMS (dBc) |
-| --- | ---: | ---: |
-| `01-chorus-timing` | +12.4 | -1.7 |
-| `02-sweep-trajectory` | +8.7 | -1.0 |
+| Take | Diff peak (dBc) | Diff RMS (dBc) | Diff file gain (dB) |
+| --- | ---: | ---: | ---: |
+| `01-chorus-timing` | +12.4 | -1.7 | +0.00 |
+| `02-sweep-trajectory` | +8.7 | -1.0 | +0.00 |
