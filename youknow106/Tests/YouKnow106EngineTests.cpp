@@ -2553,28 +2553,22 @@ void testFixedOutputBoundaryCorpus()
     // margin, so ordinary compiler noise cannot turn this into a waveform
     // checksum while meaningful level/headroom changes remain visible.
     constexpr std::array baselines {
-        // The passive mixer node now loads unconditionally and counts the
-        // permanently-wired SUB and NOISE legs, so every fixture that has SAW
-        // and PULSE switched on sits 1.75 dB lower -- the four-leg loading
-        // relative to the three-leg reference. One note no longer crosses full
-        // scale at all. These values also include the nominal common-VCA solve:
-        // byte 127 is +4.709 dB rather than the old fitted +5 dB, so all six
-        // full-LEVEL fixtures move down by the same small-signal factor.
-        Baseline { 0.413977, 0.850119, 0.859349, 0, 0 },
-        Baseline { 1.05959, 3.00664, 3.00664, 3088, 12398 },
-        Baseline { 2.29138, 4.23954, 4.25525, 6380, 25538 },
+        // Re-pinned when the IC6 wet/dry assignment was corrected against the
+        // p. 15 designator read: dry now runs 100/47 (was 100/39) and wet
+        // 100/39 (was 100/47), so every chorus-off fixture sits exactly
+        // 39/47 (-1.62 dB) lower while the chorus fixtures keep almost their
+        // level -- the wet leg gained the same 3.24 dB the dry leg lost.
+        // The unison probe still crosses full scale; its overload counts
+        // shrink with the dry gain but stay decisively nonzero.
+        Baseline { 0.343513, 0.705418, 0.713077, 0, 0 },
+        Baseline { 0.879497, 2.50746, 2.50746, 2078, 8312 },
+        Baseline { 1.94465, 3.81046, 3.82652, 6050, 24202 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
-        Baseline { 0.239242, 0.338292, 0.338292, 0, 0 },
-        // Re-pinned when the chorus rates moved from the borrowed JUNO-60
-        // scale to the instrument's own derived 0.55329/0.89826 Hz: the same
-        // fixed analysis window now lands on a different phase of the (faster)
-        // sweep, which moves these snapshot peaks and threshold counts while
-        // the RMS stays within 3.5%. Level and headroom did not change;
-        // where the window catches the sweep did.
-        Baseline { 0.640259, 1.22922, 1.24585, 957, 3834 },
-        Baseline { 0.395198, 0.895206, 0.929143, 0, 0 },
+        Baseline { 0.19852, 0.28071, 0.28071, 0, 0 },
+        Baseline { 0.638137, 1.28037, 1.28037, 897, 3596 },
+        Baseline { 0.392731, 0.842908, 0.876324, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;

@@ -412,7 +412,7 @@ treating the active MN3009 output as ideal. The MN3009 datasheet does not
 specify the needed output impedance. Service Notes p. 15 identifies the two
 branches as IC8 with R118/R119, R117 and C45, and IC10 with R111/R112, R110 and
 C48; alternating active taps make the loaded circuit time-varying. The later
-7.234/10.621 Hz C28/C25 coupling calculations likewise omit the driving
+7.234/11.315 Hz C28/C25 coupling calculations likewise omit the driving
 emitter followers' source impedance. TR11/TR12 on-resistance, leakage and
 switching belong to OQ-20. Use one declared route: measured MN3009 and
 emitter-follower output impedance followed by full modified-nodal analysis, or
@@ -476,7 +476,7 @@ comparing the first two.
   normalized `f/Fclock`. Compare with the fixed-coefficient baseline rather than
   assuming either clock invariance or the removed affine clock multiplier.
 - Fitted pole(s), magnitude/phase residuals and a direct comparison with the
-  current ideal-source 23.46 kHz tap pole and 7.234/10.621 Hz output-coupling
+  current ideal-source 23.46 kHz tap pole and 7.234/11.315 Hz output-coupling
   corners.
 - Replacement coefficients and response fixtures at supported sample/clock
   rates, or a precise statement of why the result remains unresolved. A sweep
@@ -2091,17 +2091,21 @@ default. The sweep-geometry scatter (their 1.17–5.43 ms vs the 60-measured
 1.66–5.35 vs the owner-report 1.4–6.4) remains mutually inconsistent and
 unpromoted.
 
-### IC6 wet/dry assignment — now a two-source mirror, still guardrailed
+### IC6 wet/dry assignment — RESOLVED 2026-08-07 by the p. 15 read
 
 Two independent sibling-board transcriptions — the gligli netlist (wet enters
 the final summers through **39 kΩ** from the 2SK30 mute sources, dry through
-**47 kΩ**) and KR-106's own schematic reading (same assignment) — both carry
-the mirror of this project's anchored 106 reading (dry 39 kΩ, wet 47 kΩ,
-wet/dry −1.62 dB). Sibling boards are not primary 106 evidence, so the
-guardrail stands unchanged; the p. 15 re-read checklist gains the
-designator-level check (which IC6 input resistor carries the wet return
-R71/R73). If the transcription were swapped, the wet balance moves 3.24 dB —
-audible, and worth one line of reading.
+**47 kΩ**) and KR-106's own schematic reading (same assignment) — both carried
+the mirror of this project's earlier reading (dry 39 kΩ, wet 47 kΩ,
+wet/dry −1.62 dB). The 2026-08-07 designator-level read of the Service Notes
+p. 15 scan settled it in the siblings' favour: R71 = 47 kΩ and R73 = 47 kΩ
+both hang off the shared vertical dry bus from IC2b pin 7, while R72 = 39 kΩ
+and R74 = 39 kΩ arrive from the wet returns behind Tr11/Tr12, into 100 kΩ
+feedback R70/R67. Dry gain `100/47`, wet gain `100/39`, wet/dry +1.62 dB.
+Both legs enter the same inverting input per channel and the two channel
+mixers are drawn identically — no polarity inversion between the wet returns,
+confirming the shipped same-polarity topology. The implementation, suite and
+guardrail were corrected in the same change.
 
 ### KR-106 mining — contradictions and corroborations recorded
 
@@ -2246,9 +2250,14 @@ Open80017a nor the chorus clone contains any Roland page image.
 - **Chorus modes:** the JUNO-106 has Off, I and II. Its owner's manual says I
   and II cannot be used simultaneously, and the board has one enable line plus
   one binary mode line. Obsolete both-buttons session states canonicalise to II.
-- **Chorus balance:** dry enters IC6 through 39 kΩ, wet through 47 kΩ, with
-  100 kΩ feedback. Thus dry gain is `100/39`, wet gain is `100/47`, and
-  wet/dry is `39/47`, or −1.62 dB.
+- **Chorus balance:** dry enters IC6 through 47 kΩ (R71/R73, off the shared
+  IC2b bus), wet through 39 kΩ (R72/R74, from the Tr11/Tr12 mute sources),
+  with 100 kΩ feedback (R70/R67). Thus dry gain is `100/47`, wet gain is
+  `100/39`, and wet/dry is `47/39`, or +1.62 dB — the wet leg is the hotter
+  one. Resolved 2026-08-07 by a designator-level read of the Service Notes
+  p. 15 scan (synthfool.com copy, First Edition, JUL. 31 1984), agreeing with
+  both sibling-board transcriptions; the earlier project reading carried the
+  mirror.
 - **Voice-summer gain and signal order:** each voice contributes `3.3/33 = 0.1`
   before C14/R39 and the shared high-pass. C12/R36 couples that result into the
   common VCA LEVEL; chorus and IC6 follow, then main VOLUME.
@@ -2294,7 +2303,7 @@ Open80017a nor the chorus clone contains any Roland page image.
   and is a different, much larger, DC mechanism. Neither may be routed to DCO
   pitch, which is an integer division of a crystal-derived clock.
 - **Chorus support-chain boundaries:** the populated pre/post-BBD topology,
-  wet-input 15.9 Hz coupling, nominal component-only 7.23/10.62 Hz wet-output
+  wet-input 15.9 Hz coupling, nominal component-only 7.23/11.31 Hz wet-output
   coupling, datasheet-fitted nonlinearity, and split zero-order-hold/residual
   charge-transfer loss are settled or derived at the adopted 40 kHz/12 kHz
   ideal-source anchor. That anchor is the raw held node upstream of the

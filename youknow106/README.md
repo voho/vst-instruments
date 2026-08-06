@@ -115,9 +115,10 @@ with an explicit evidence gap and required output in
   policy, not a circuit claim.
 - **The chorus has no compander**, so it hisses — the hiss is modelled, and
   there is a control to defeat it that the hardware does not have. The final
-  mixer gains dry by `100/39` and wet by `100/47`, putting wet at `39/47` of
-  dry (−1.62 dB). Those absolute gains occur after the BBDs, so they do not
-  falsely overdrive the delay-line model.
+  mixer gains dry by `100/47` and wet by `100/39`, putting wet at `47/39` of
+  dry (+1.62 dB; the p. 15 designator read places dry on R71/R73 47 kΩ and
+  wet on R72/R74 39 kΩ). Those absolute gains occur after the BBDs, so they
+  do not falsely overdrive the delay-line model.
 - **The BBD's physical and numerical aliases are kept separate.** Its clocked
   sample-and-hold still produces the clock-domain images that belong to the
   device. A paper-motivated compact polyBLEP reconstructs only the deterministic

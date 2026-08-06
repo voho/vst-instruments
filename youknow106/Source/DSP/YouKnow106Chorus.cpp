@@ -82,8 +82,8 @@ constexpr float antiAliasSecondShuntF = 270.0e-12f;
 constexpr float antiAliasPassiveHz = 7234.0f;   // R122 10 kOhm x C52 2.2 nF
 constexpr float inputCouplingHz = 15.9155f;     // C44 0.1 uF x R120 100 kOhm
 constexpr float wetOutputCouplingCapacitanceF = 1.0e-6f; // C28 / C25
-constexpr float wetOutputBleedOhms = 22000.0f;
-constexpr float wetMixerInputOhms = 47000.0f;
+constexpr float wetOutputBleedOhms = 22000.0f;           // R103 / R81
+constexpr float wetMixerInputOhms = 39000.0f;            // R72 / R74
 
 // The output's fifth pole is the BBD tap-summing node: either active output
 // reaches C45/C48 2.2 nF through 3.3 kOhm, and R117/R110 47 kOhm returns the
@@ -106,9 +106,9 @@ constexpr float reconstructionFirstHz = 9688.0f;
 constexpr float reconstructionSecondHz = 10377.0f;
 
 // The wet-mute glide is expressed relative to dry. The final IC6 summer's
-// absolute 100/39 dry gain is applied after the BBDs in process(); putting it
-// before them would drive their fitted nonlinearity 8.18 dB too hard.
-constexpr float lineGain = Chorus::wetToDryGain;   // 39/47, -1.62 dB
+// absolute 100/47 dry gain is applied after the BBDs in process(); putting it
+// before them would drive their fitted nonlinearity too hard.
+constexpr float lineGain = Chorus::wetToDryGain;   // 47/39, +1.62 dB
 
 std::uint32_t nextNoiseState(std::uint32_t state) noexcept
 {
@@ -649,8 +649,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         -inverseSampleRate_ / wetMuteTimeConstantSeconds);
     wetGain_ += (target.wetGain - wetGain_) * muteGlide;
     // TR11/TR12 add no modelled distortion or switching artefact of their own.
-    // Conducting, a 2SK30A's few hundred ohms sit against IC6's 47 kOhm wet
-    // input, so it drops about 1% of the signal and sees some 27 mV across
+    // Conducting, a 2SK30A's few hundred ohms sit against IC6's 39 kOhm wet
+    // input, so it drops about 1% of the signal and sees some 30 mV across
     // itself at full level. Ohmic-region channel resistance moves by roughly
     // V_ds / 2|V_p - V_gs| -- about 0.7% -- and that reaches the output only
     // through the same 1% divider, so the distortion is on the order of

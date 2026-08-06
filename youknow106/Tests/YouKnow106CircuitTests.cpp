@@ -1282,10 +1282,10 @@ void testEnvelopeAndAmplifierLaws()
                expectedBusCorner, 1.0e-6,
                "common-VCA C12/R36 input-coupling corner");
     expectNear(YouKnow106Engine::voiceSummerGain * Chorus::dryMixGain,
-               10.0 / 39.0, 1.0e-6,
+               10.0 / 47.0, 1.0e-6,
                "net per-voice dry gain misses the jack-board ratios");
     expectNear(YouKnow106Engine::voiceSummerGain * Chorus::wetMixGain,
-               10.0 / 47.0, 1.0e-6,
+               10.0 / 39.0, 1.0e-6,
                "net per-voice wet gain misses the jack-board ratios");
 }
 
@@ -1980,16 +1980,18 @@ void testJuno60FallbackBucketBrigadeTiming()
     expectNear(off.centreDelaySeconds, one.centreDelaySeconds, 1.0e-9,
                "bypass moved the running delay line away from mode I");
     // Wet over dry is the ratio of the two input resistors into IC6's shared
-    // 100 kOhm feedback. Keep both absolute gains as well as their ratio: the
-    // absolute factor belongs after the nonlinear BBD and cannot be folded
-    // into its input without changing the sound.
-    expectNear(Chorus::dryMixGain, 100.0 / 39.0, 1.0e-6,
+    // 100 kOhm feedback: dry arrives through R71/R73 47 kOhm off the IC2b
+    // bus, wet through R72/R74 39 kOhm from the mute JFETs (Service Notes
+    // p. 15, designator-level read). Keep both absolute gains as well as
+    // their ratio: the absolute factor belongs after the nonlinear BBD and
+    // cannot be folded into its input without changing the sound.
+    expectNear(Chorus::dryMixGain, 100.0 / 47.0, 1.0e-6,
                "IC6 dry gain");
-    expectNear(Chorus::wetMixGain, 100.0 / 47.0, 1.0e-6,
+    expectNear(Chorus::wetMixGain, 100.0 / 39.0, 1.0e-6,
                "IC6 wet gain");
-    expectNear(one.wetGain, 39.0 / 47.0, 1.0e-3, "line gain");
-    expectNear(20.0 * std::log10(one.wetGain), -1.62, 0.01,
-               "the wet path does not sit 1.62 dB below the dry");
+    expectNear(one.wetGain, 47.0 / 39.0, 1.0e-3, "line gain");
+    expectNear(20.0 * std::log10(one.wetGain), 1.62, 0.01,
+               "the wet path does not sit 1.62 dB above the dry");
     expectNear(Chorus::wetMuteTimeConstantSeconds, 0.005, 1.0e-9,
                "the labelled product mute time constant changed");
     expectNear(Chorus::wetMuteTimeConstantSeconds * std::log(9.0f),
@@ -3046,7 +3048,7 @@ void testSupportFilterCornersLandWhereAsked()
                    "the wet coupling high-pass is not at C44/R120's corner");
         constexpr double capacitor = 1.0e-6;
         constexpr double bleed = 22000.0;
-        constexpr double mixer = 47000.0;
+        constexpr double mixer = 39000.0;
         const double connectedResistance = bleed * mixer / (bleed + mixer);
         const double mutedCorner = 1.0 / (2.0 * pi * capacitor * bleed);
         const double connectedCorner =

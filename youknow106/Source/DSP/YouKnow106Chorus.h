@@ -77,12 +77,16 @@ public:
     static_assert(maximumBlepEvents < cellPairs);
 
     // IC6 is the final inverting dry/wet summer on each output. Its 100 kOhm
-    // feedback resistor sees dry through 39 kOhm and wet through 47 kOhm.
+    // feedback resistor (R70/R67) sees dry through 47 kOhm (R71/R73, off the
+    // shared IC2b bus) and wet through 39 kOhm (R72/R74, from the Tr11/Tr12
+    // mute JFETs) -- read at designator level from the Service Notes p. 15
+    // scan, agreeing with both sibling-board netlists. The wet leg is the
+    // hotter one. An earlier revision carried the mirror of this assignment.
     // Polarity is intentionally omitted because both paths invert together;
     // these magnitudes preserve the analogue drive into the following output
     // and VOLUME stages.
-    static constexpr float dryMixGain = 100.0f / 39.0f;
-    static constexpr float wetMixGain = 100.0f / 47.0f;
+    static constexpr float dryMixGain = 100.0f / 47.0f;
+    static constexpr float wetMixGain = 100.0f / 39.0f;
     static constexpr float wetToDryGain = wetMixGain / dryMixGain;
     // Explicit plug-in declick policy, not a measured mute-transistor value.
     static constexpr float wetMuteTimeConstantSeconds = 0.005f;
@@ -240,7 +244,7 @@ public:
     [[nodiscard]] static float onePoleG(float cutoffHz, float sampleRate) noexcept;
     static float supportFilterStep(float& state, float input, float g) noexcept;
     // C28/C25 couple the two reconstructed wet lines into 22 kOhm bleeds.
-    // When the series JFET is on, IC6's 47 kOhm wet input loads that node too.
+    // When the series JFET is on, IC6's 39 kOhm wet input loads that node too.
     [[nodiscard]] static float wetOutputCouplingCornerHz(
         bool wetConnected) noexcept;
 
