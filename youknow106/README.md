@@ -118,16 +118,26 @@ with an explicit evidence gap and required output in
   mixer gains dry by `100/39` and wet by `100/47`, putting wet at `39/47` of
   dry (−1.62 dB). Those absolute gains occur after the BBDs, so they do not
   falsely overdrive the delay-line model.
+- **The BBD's physical and numerical aliases are kept separate.** Its clocked
+  sample-and-hold still produces the clock-domain images that belong to the
+  device. A paper-motivated compact polyBLEP reconstructs only the deterministic
+  held-output steps at their fractional internal-sample times, reducing the
+  additional aliases made by the computer grid. It runs after the residual
+  transfer-loss state and before the output tap pole; buckets, index, clock
+  phase, transfer state, held noise and random-number sequence are unchanged.
+  Stochastic BBD noise is deliberately not predicted or corrected.
 - **The chorus modulator is drawn from the JUNO-106's own schematic.** IC1 is an
   integrator closed around a Schmitt comparator, so the sweep is a straight
   symmetric triangle, and IC2a inverts it for the second line — the antiphase
   pair is one waveform and its negative. The I/II switch shorts a 2.2 MΩ leg of
   the integrator's T-network, which fixes the mode-rate ratio at 1.6234799
-  exactly. What the schematic cannot give is the absolute rate, because it does
-  not print the integrator capacitor: the 1.66–5.35 ms sweep and the rate
-  *scale* are still an explicitly reported JUNO-60 fallback, re-split by this
-  instrument's own ratio to 0.5222 Hz and 0.8478 Hz. Both round to the owner's
-  manual's published "about 0.5" and "about 0.8".
+  exactly. The reported `.1` integrator capacitor on Roland's p. 15 and the
+  component-identical sibling-board netlist close the scale: the implemented
+  rates are derived as 0.5532934 Hz and 0.8982608 Hz. Both truncate to the
+  owner's manual's published "about 0.5" and "about 0.8" and agree with a
+  106-chorus clone's scope readings within 3%. The 1.66–5.35 ms sweep endpoints
+  remain a calibrated JUNO-60 measurement of the shared clock-driver circuit,
+  explicitly short of an installed-unit JUNO-106 anchor.
 - **The final outputs are AC-coupled before VOLUME.** The two service-schematic
   paths use C17/C20 10 µF and R54/R57 1.5 kΩ into the 10 kΩ pot tracks. The
   unloaded full-track reference is 1.383956 Hz and `10/11.5` settled gain; the
@@ -179,14 +189,24 @@ controlling version of this ledger is the
 | Per-voice VCF | Four IR3109/BA662 transconductor stages, the 68 kΩ/560 Ω attenuation, 240 pF stages, per-card cutoff trims and service calibration anchors are hardware-fixed. Cutoff modulation is summed in converter counts before the exponential law. The upper knee is the transconductor's own control-current saturation near 64 kHz, and the converter's R-2R carry error rides on the code it produces. | A topology-preserving trapezoidal/Newton solve is the numerical realization. Resonance byte-to-loop gain, input compensation, feedback saturation and frequency trim are voiced pending measurements. The saturation exponent and the carry sizes are fitted to a third-party measured card, not to a Roland document. |
 | Per-voice VCA | One BA662 follows each VCF. Roland shows VCF OUT pin 3 AC-coupled by C59 to VCA IN pin 9; the separate R106/C58/R105/Tr20 branch drives VCA CONT pin 11; VCA OUT pin 10 reaches TP8–TP13 and the 33 kΩ summer inputs. The service procedure trims VR30/25/20/15/10/5 through 2.2 MΩ for minimum thump and sets a 6 Vpp gain endpoint. | The current quasi-linear gain/onset/knee/deadband law is schematic-informed compatibility, not a measured BA662 transfer. The nominal model adds no residual feedthrough: Unit Character's control-hold offset is not the VR30 signal-input null, and post-calibration thump magnitude/polarity/spectrum remain unmeasured. Velocity is an optional extension. |
 | Voice sum, coupling, HPF and common VCA LEVEL | Six card outputs sum through 33 kΩ into 3.3 kΩ feedback (0.1 each). C14 precedes the shared four-position HPF; C12 then feeds the one common uPC1252H2 controlled by stored VCA LEVEL. Service Notes pp. 8 and 15, the ROM-resolved `d=b<<5` code and NEC's −5.9 mV/dB typical constant derive the nominal common-VCA law and C7 settling. | The complete coupled switched-HPF network and its switching memory are approximated. The ideal 12-bit R-2R transfer assumes division by 4096; R32 is the least-legible value in the scan, and real resistor/capacitor tolerance, rail error and uPC1252 variation still need an installed-unit sweep. |
-| BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. BBD write nonlinearity is fitted to its datasheet test points. The explicit held output plus fixed per-shift residual coefficient is −3.000 dB versus DC at 12 kHz/40 kHz, or −2.972 dB versus the datasheet's 1 kHz reference. | Absolute sweep and mode rates use a clearly labelled JUNO-60 fallback; hiss level/correlation, loaded support impedances and the wet-mute transient are voiced. The 0.028 dB anchor residual is documented rather than audibly meaningless retuning. Keeping the coefficient fixed makes this model invariant versus normalized `f/Fclock`; Panasonic's low-resolution typical curves at 10/40/100 kHz are real evidence but have not yet been quantitatively extracted or confirmed on an installed unit. Loaded IC6 clipping remains unknown. |
+| BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. The mode rates are derived from the JUNO-106 timing network as 0.5532934/0.8982608 Hz. BBD write nonlinearity is fitted to its datasheet test points. At the raw held node, upstream of numerical output reconstruction, the explicit zero-order hold plus fixed per-shift residual coefficient is −3.000 dB versus DC at 12 kHz/40 kHz, or −2.972 dB versus the datasheet's 1 kHz reference. | Sweep endpoints retain a calibrated sibling measurement of the shared clock driver; hiss level/correlation, loaded support impedances and the wet-mute transient are voiced. The emitted waveform is no longer the literal raw rectangle: a deterministic-only polyBLEP after transfer loss reduces host-grid aliases before the tap pole. It is a numerical product mechanism, not MN3009 circuitry, and does not close the open physical transfer questions. Panasonic's low-resolution typical curves at 10/40/100 kHz are real evidence but have not yet been quantitatively extracted or confirmed on an installed unit. Loaded IC6 clipping remains unknown. |
 | VOLUME and output boundary | C17/C20, R54/R57, the nominal-linear 10KB×2 tracks and fixed internal wiper loading are component-derived, with independent left/right capacitor state. | Dual-gang tracking, selector/jack normaling, external loads and headphone transfer remain open. The fixed −18 dBFS RMS mapping and provisional physical reference are product policy, not an analogue circuit claim. |
-| Antialiasing, HQ and safety | These preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, Kaiser half-band decimation flat to 20 kHz at both common host rates, and state-preserving rate changes. | They have no hardware counterpart. The idle-only quality change and short safety fades are product mechanisms and are kept outside the claimed signal path. |
+| Antialiasing, HQ and safety | These preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, Kaiser half-band decimation flat to 20 kHz at both common host rates, and state-preserving rate changes. For the chorus, BBD-generated aliasing (BGA) means the physical-model images at `k*Fclock ± f`; simulation-generated aliasing (SGA) means the extra folds created by the internal sample grid. The bounded polyBLEP scheduler has 54 slots and uses at most 50 in the tested worst case, including multiple BBD edges in one internal sample. | They have no hardware counterpart. The BBD reconstruction is deterministic-only, leaves noise uncorrected, and clears its grid-specific correction slots on an internal-rate change while physical BBD and RNG state survive. It strongly reduces SGA; it does not preserve every BGA component exactly at LQ, so the measured HQ/LQ limits are reported rather than hidden behind a generic “transparent” claim. The idle-only quality change and short safety fades are product mechanisms. |
 
 The strict [BBD transfer/clock-law
 comparison](Docs/audio/realism-comparisons/bbd-transfer-clock-law/README.md)
 holds one bright full-engine fixture through both chorus modes and visits both
 clock extremes, preserving raw before/after audio and one shared listening gain.
+
+The strict [BBD host-grid alias
+comparison](Docs/audio/realism-comparisons/bbd-host-grid-alias/README.md)
+separates wanted BBD clock images from false host-grid folds at one shared gain.
+At the minimum clock its two LQ false second-image folds fall from
+−26.87/−27.42 to −55.23/−53.61 dBc; HQ moves the corresponding roughly −116 dBc
+folds to about −171/−170 dBc. The wanted first image changes by −0.0383 dB in HQ.
+Its −5.2986 dB LQ delta occurs on a −100.47 dBc baseline, not on a prominent
+audio component. No subjective or installed-hardware result is inferred from
+these deterministic numerical measurements.
 
 The strict [voice-VCA feedthrough
 comparison](Docs/audio/realism-comparisons/voice-vca-feedthrough/README.md)
@@ -473,7 +493,7 @@ cmake --build youknow106/build-dsp --parallel
 ctest --test-dir youknow106/build-dsp --output-on-failure
 ```
 
-There are six suites:
+There are six JUCE-free suites, plus the plug-in suite when JUCE is enabled:
 
 - **`YouKnow106.Circuit`** compares the model against something independent for
   every block: the four transconductor stages against a fourth-order
@@ -506,17 +526,24 @@ There are six suites:
 - **`YouKnow106.AuditFactoryPresets`** smoke-tests the long-form, JUCE-free
   128-tone gain auditor and common-gain factory-preview renderer. A full run
   writes its CSV, report and previews under `Docs/audio/factory-presets`.
+- **`YouKnow106.RealismComparisonContract`** rejects a same-length but
+  hash-mismatched baseline, a non-before manifest and a same-build DSP
+  fingerprint before any strict comparison claim can be emitted.
 
 Focused DSP changes use `YouKnow106RenderRealismComparison`. Unlike the older
 16-bit comparison set, it archives raw float32 before/after/difference signals,
 uses one shared listening gain, reports peak/peak and RMS/RMS nulls, and records
 the source fingerprint, patch, seed and exact MIDI/control sample schedule.
+The BBD host-grid fixture additionally requires its baseline manifest to bind
+the scenario, protocol, frame count, raw sample hash and distinct pre-change DSP
+fingerprint.
 The [audition index](Docs/audio/realism-comparisons/README.md) links the listening
 files in a useful order and states what each gain and difference track means.
 Committed fixtures currently cover the
 [retrigger/release-tail path](Docs/audio/realism-comparisons/retrigger-release-tail/),
 the [common VCA LEVEL law and settling](Docs/audio/realism-comparisons/common-vca-level/),
 the [BBD transfer clock law](Docs/audio/realism-comparisons/bbd-transfer-clock-law/),
+the [BBD host-grid alias reconstruction](Docs/audio/realism-comparisons/bbd-host-grid-alias/),
 and the [voice-VCA feedthrough path](Docs/audio/realism-comparisons/voice-vca-feedthrough/).
 The common-VCA fixture records every automated byte and reports a −8.70 dBc RMS
 difference between the superseded cubic/borrowed-slew model and the nominal

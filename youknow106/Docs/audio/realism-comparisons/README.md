@@ -22,7 +22,21 @@ the raw level recorded in each folder's README and manifest.
    Difference RMS is −8.70 dBc. The corrected law follows the stored-DAC,
    resistor and uPC1252 path instead of the former cubic curve.
 
-2. **Voice-VCA silent thump** — the most isolated artifact comparison.
+2. **BBD host-grid alias reconstruction** — the clearest chorus-quality
+   comparison. Listen to
+   [before](bbd-host-grid-alias/bbd-host-grid-alias-before-listen-f32.wav),
+   [after](bbd-host-grid-alias/bbd-host-grid-alias-after-listen-f32.wav), then the
+   [signed difference](bbd-host-grid-alias/bbd-host-grid-alias-difference-listen-f32.wav).
+   The ten labeled sections include direct tones and musical stabs at HQ and LQ;
+   the stronger audible contrast is intentionally in the LQ sections. At the
+   fixed minimum clock, its two false LQ second-image folds fall by 28.35 and
+   26.19 dB. In HQ they were already about -116 dBc and fall another 54--55 dB,
+   while the wanted first image moves only -0.04 dB. The LQ near-Nyquist wanted
+   image is not claimed transparent: it moves -5.30 dB from an already
+   -100.47 dBc baseline. Whole-file difference is -15.95 dBc peak and -27.66
+   dBc RMS at the same fixed 0 dB gain.
+
+3. **Voice-VCA silent thump** — the most isolated artifact comparison.
    Listen to [before](voice-vca-feedthrough/voice-vca-feedthrough-before-listen-f32.wav),
    [after](voice-vca-feedthrough/voice-vca-feedthrough-after-listen-f32.wav),
    and the [signed difference](voice-vca-feedthrough/voice-vca-feedthrough-difference-listen-f32.wav).
@@ -30,7 +44,7 @@ the raw level recorded in each folder's README and manifest.
    the actual raw peak moves from −68.24 to −148.42 dBFS. The old artifact is
    therefore clear here without pretending it was 30 dB louder in normal use.
 
-3. **BBD transfer clock law** — a subtle moving wet-path coloration.
+4. **BBD transfer clock law** — a subtle moving wet-path coloration.
    Listen to [before](bbd-transfer-clock-law/bbd-transfer-clock-law-before-listen-f32.wav),
    [after](bbd-transfer-clock-law/bbd-transfer-clock-law-after-listen-f32.wav),
    and the [signed difference](bbd-transfer-clock-law/bbd-transfer-clock-law-difference-listen-f32.wav).
@@ -38,7 +52,7 @@ the raw level recorded in each folder's README and manifest.
    difference RMS is −48.30 dBc. This fixes duplicated clock scaling, not the
    still-unmeasured installed-unit transfer.
 
-4. **Retrigger release-tail path** — a short, event-dependent transient.
+5. **Retrigger release-tail path** — a short, event-dependent transient.
    Listen to [before](retrigger-release-tail/retrigger-release-tail-before-listen-f32.wav),
    [after](retrigger-release-tail/retrigger-release-tail-after-listen-f32.wav),
    and the [signed difference](retrigger-release-tail/retrigger-release-tail-difference-listen-f32.wav).

@@ -175,10 +175,10 @@ constexpr Placement placements[controlCount] = {
     // left half with the right half empty, which reads as a control that has
     // gone missing rather than as a two-button group.
     { parameters::chorusI, "I",
-      "Toggles the slower stereo BBD Chorus I; press the lit button again for Off. Its 0.522 Hz rate carries this instrument's own schematic timing ratio on a still-provisional JUNO-60 scale.",
+      "Toggles the slower stereo BBD Chorus I; press the lit button again for Off. Its 0.553 Hz rate is derived from this instrument's timing network; installed-unit confirmation remains open.",
       ControlKind::Toggle, 9, 0, 0, 2, -1, 0, 2 },
     { parameters::chorusII, "II",
-      "Toggles the faster stereo BBD Chorus II; press the lit button again for Off. Its 0.848 Hz rate carries this instrument's own schematic timing ratio on a still-provisional JUNO-60 scale.",
+      "Toggles the faster stereo BBD Chorus II; press the lit button again for Off. Its 0.898 Hz rate is derived from this instrument's timing network; installed-unit confirmation remains open.",
       ControlKind::Toggle, 9, 0, 1, 2, -1, 0, 2 },
 };
 

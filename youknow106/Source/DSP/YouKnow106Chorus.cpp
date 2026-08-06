@@ -238,6 +238,27 @@ float Chorus::transferLossStep(float& state, float input) noexcept
     return state;
 }
 
+double Chorus::bbdPolyBlepResidual(double distanceInSamples) noexcept
+{
+    // Integrated third-order Lagrange residual used by Gabrielli, D'Angelo
+    // and Squartini's BBD reference implementation. Its support covers the
+    // two numerical samples on either side of a discontinuity. Distances in
+    // this model are always non-negative; handling NaN and negative test input
+    // as zero keeps this pure helper defensive without extending the curve.
+    if (!(distanceInSamples >= 0.0) || distanceInSamples >= 2.0)
+        return 0.0;
+
+    const double d = distanceInSamples;
+    if (d < 1.0)
+    {
+        return ((((0.125 * d - 1.0 / 3.0) * d - 0.25) * d + 1.0)
+                 * d - 0.5);
+    }
+
+    return ((((-1.0 / 24.0 * d + 1.0 / 3.0) * d - 11.0 / 12.0)
+             * d + 1.0) * d - 1.0 / 3.0);
+}
+
 float Chorus::onePoleG(float cutoffHz, float sampleRate) noexcept
 {
     // The wet coupling pole is at 15.9 Hz, so the old 20 Hz defensive floor
@@ -354,6 +375,8 @@ void Chorus::Line::reset(std::uint32_t seed) noexcept
     outputCouplingState = 0.0f;
     transferState = 0.0f;
     noiseState = seed | 1u;
+    pastBlepEvents.fill({});
+    pastBlepEventCount = 0;
 }
 
 void Chorus::Line::resetAudioRateSupport() noexcept
@@ -371,6 +394,150 @@ void Chorus::Line::resetAudioRateSupport() noexcept
     reconstructionFirst.reset();
     reconstructionSecond.reset();
     outputCouplingState = 0.0f;
+    // Event ages are measured in samples of the numerical output grid. They
+    // cannot be reinterpreted at the new rate, unlike the literal BBD state
+    // deliberately preserved above. Their complete support is only two old
+    // samples and the engine performs this reset under a zero-gain fade.
+    pastBlepEvents.fill({});
+    pastBlepEventCount = 0;
+}
+
+void Chorus::Line::ageBlepEvents() noexcept
+{
+    int retained = 0;
+    for (int index = 0; index < pastBlepEventCount; ++index)
+    {
+        auto event = pastBlepEvents[static_cast<std::size_t>(index)];
+        event.ageInSamples += 1.0;
+        if (event.ageInSamples < 2.0)
+            pastBlepEvents[static_cast<std::size_t>(retained++)] = event;
+    }
+    pastBlepEventCount = retained;
+}
+
+void Chorus::Line::rememberBlepEvent(float jump,
+                                     double ageInSamples) noexcept
+{
+    // The compile-time bound above proves this cannot fill at any supported
+    // clock/sample-rate ratio. Keep the guard in release builds nonetheless:
+    // a future caller violating those declared limits must remain finite and
+    // real-time safe rather than writing outside the fixed array.
+    if (pastBlepEventCount >= maximumBlepEvents)
+        return;
+
+    pastBlepEvents[static_cast<std::size_t>(pastBlepEventCount++)] = {
+        jump, ageInSamples
+    };
+}
+
+double Chorus::Line::deterministicBlepCorrection(
+    double clockIncrement) const noexcept
+{
+    double correction = 0.0;
+
+    // If the most recent edge changed s[-1] to s[0] by delta, the reference
+    // output is s[0] + delta * beta(age). Older past edges have the same sign.
+    for (int index = 0; index < pastBlepEventCount; ++index)
+    {
+        const auto& event = pastBlepEvents[static_cast<std::size_t>(index)];
+        correction += static_cast<double>(event.jump)
+                    * Chorus::bbdPolyBlepResidual(event.ageInSamples);
+    }
+
+    if (!(clockIncrement > 0.0) || !std::isfinite(clockIncrement))
+        return correction;
+
+    // Buckets that will emerge during the residual's two-sample lookahead are
+    // already in the ring: even at 200 kHz / 8 kHz there are at most 50, short
+    // of one 128-cell revolution. Advance a local copy of the aggregate
+    // transfer-loss state through those known values. Nothing physical --
+    // bucket contents/index, phase, held noise, transfer state or RNG -- moves.
+    const double inverseIncrement = 1.0 / clockIncrement;
+    double distance = (1.0 - clockPhase) * inverseIncrement;
+    float predictedTransferState = transferState;
+    int futureIndex = writeIndex;
+
+    for (int event = 0;
+         event < maximumBlepEvents && distance < 2.0;
+         ++event, distance += inverseIncrement)
+    {
+        futureIndex = futureIndex + 1 < cellPairs ? futureIndex + 1 : 0;
+        const float before = predictedTransferState;
+        Chorus::transferLossStep(
+            predictedTransferState,
+            cells[static_cast<std::size_t>(futureIndex)]);
+        const float jump = predictedTransferState - before;
+
+        // A future change s[0] -> s[1] enters the authors' correction with
+        // the opposite sign: s[0] - (s[1] - s[0]) * beta(timeUntilEdge).
+        correction -= static_cast<double>(jump)
+                    * Chorus::bbdPolyBlepResidual(distance);
+    }
+
+    return correction;
+}
+
+float Chorus::Line::processClockedCore(float limitedInput, float clockHz,
+                                       float sampleRate,
+                                       float noiseScale) noexcept
+{
+    ageBlepEvents();
+
+    const double increment =
+        static_cast<double>(clockHz) / static_cast<double>(sampleRate);
+    clockPhase += increment;
+    // A clock above the host rate needs more than one shift per sample, which
+    // is exactly what happens at 44.1 or 48 kHz with oversampling switched off.
+    // The bound is the worst ratio the model supports -- the fastest clock
+    // against the lowest host rate -- so every elapsed edge is consumed and no
+    // backlog can build up and drag the delay off its setting.
+    int shifts = 0;
+    while (clockPhase >= 1.0 && shifts < maximumShiftsPerSample)
+    {
+        clockPhase -= 1.0;
+        ++shifts;
+
+        // The remaining phase is the time since this edge in clock cycles.
+        // Dividing it by the increment gives exactly the Octave reference's
+        // distance in numerical samples, including when several edges occur
+        // during this one sample. Its complement locates the input between the
+        // previous and current numerical samples.
+        const double ageInSamples = increment > 0.0
+            ? std::clamp(clockPhase / increment, 0.0, 1.0)
+            : 0.0;
+        const float fraction = static_cast<float>(ageInSamples);
+        const float atEdge = limitedInput
+                           + (previousInput - limitedInput) * fraction;
+        // The line's own overload. The charge a cell can hold is bounded by
+        // its bias window, so the wet path saturates before anything around
+        // it does; driving the chorus hot grits the delayed signal only.
+        const float bounded = Chorus::bbdTransfer(atEdge);
+
+        writeIndex = writeIndex + 1 < cellPairs ? writeIndex + 1 : 0;
+        const float emerging = cells[static_cast<std::size_t>(writeIndex)];
+        cells[static_cast<std::size_t>(writeIndex)] = bounded;
+
+        const float transferBefore = transferState;
+        Chorus::transferLossStep(transferState, emerging);
+        rememberBlepEvent(transferState - transferBefore, ageInSamples);
+
+        // Noise remains a literal random, edge-held BBD contribution. BLEP is
+        // applied later as a deterministic delta to this already-rounded held
+        // value, so neither its spectrum nor the RNG sequence is predicted or
+        // altered by the numerical reconstruction.
+        noiseState = nextNoiseState(noiseState);
+        held = transferState
+             + noiseFromState(noiseState) * independentLineRandomAmplitude
+               * noiseScale;
+    }
+    // If the ratio somehow exceeded even that bound, drop the remainder rather
+    // than carrying it: a backlog would make the line run slower than the clock
+    // it was asked for and drift further out every sample.
+    if (clockPhase >= 1.0)
+        clockPhase -= std::floor(clockPhase);
+    previousInput = limitedInput;
+
+    return held + static_cast<float>(deterministicBlepCorrection(increment));
 }
 
 float Chorus::Line::process(float input, float clockHz, float sampleRate,
@@ -388,54 +555,15 @@ float Chorus::Line::process(float input, float clockHz, float sampleRate,
     limited -= couplingLow;
     limited = Chorus::supportFilterStep(antiAliasState, limited, support.passiveG);
 
-    const double increment =
-        static_cast<double>(clockHz) / static_cast<double>(sampleRate);
-    clockPhase += increment;
-    // A clock above the host rate needs more than one shift per sample, which
-    // is exactly what happens at 44.1 or 48 kHz with oversampling switched off.
-    // The bound is the worst ratio the model supports -- the fastest clock
-    // against the lowest host rate -- so every elapsed edge is consumed and no
-    // backlog can build up and drag the delay off its setting.
-    int shifts = 0;
-    while (clockPhase >= 1.0 && shifts < maximumShiftsPerSample)
-    {
-        clockPhase -= 1.0;
-        ++shifts;
-
-        // Resample the input onto the clock edge. What is left in `clockPhase`
-        // is measured in clock cycles, so it has to be divided by the increment
-        // to become the fraction of a host sample since the edge -- using it
-        // raw would place every edge far too close to the current sample.
-        const float fraction = increment > 0.0
-            ? static_cast<float>(std::clamp(clockPhase / increment, 0.0, 1.0))
-            : 0.0f;
-        const float atEdge = limited + (previousInput - limited) * fraction;
-        // The line's own overload. The charge a cell can hold is bounded by
-        // its bias window, so the wet path saturates before anything around
-        // it does; driving the chorus hot grits the delayed signal only.
-        const float bounded = Chorus::bbdTransfer(atEdge);
-
-        writeIndex = writeIndex + 1 < cellPairs ? writeIndex + 1 : 0;
-        const float emerging = cells[static_cast<std::size_t>(writeIndex)];
-        cells[static_cast<std::size_t>(writeIndex)] = bounded;
-
-        Chorus::transferLossStep(transferState, emerging);
-        noiseState = nextNoiseState(noiseState);
-        held = transferState
-             + noiseFromState(noiseState) * independentLineRandomAmplitude
-               * noiseScale;
-    }
-    // If the ratio somehow exceeded even that bound, drop the remainder rather
-    // than carrying it: a backlog would make the line run slower than the clock
-    // it was asked for and drift further out every sample.
-    if (clockPhase >= 1.0)
-        clockPhase -= std::floor(clockPhase);
-    previousInput = limited;
+    const float reconstructedHold = processClockedCore(
+        limited, clockHz, sampleRate, noiseScale);
 
     // Sum the complementary BBD output taps through their 3.3 kOhm resistors,
-    // then reconstruct the held staircase through the two output sections.
+    // then reconstruct the BLEP-sampled physical staircase through the two
+    // output sections. The correction is deliberately upstream of every
+    // hardware reconstruction pole and downstream of charge transfer/noise.
     const float tapSum = Chorus::supportFilterStep(
-        tapSumState, held, support.idealSourceTapPoleG);
+        tapSumState, reconstructedHold, support.idealSourceTapPoleG);
     const float first =
         Chorus::biquadStep(reconstructionFirst, tapSum,
                            support.reconstructionFirst);

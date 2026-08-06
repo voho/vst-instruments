@@ -64,6 +64,18 @@ public:
     static constexpr int maximumShiftsPerSample =
         static_cast<int>(maximumClockHz / minimumSampleRate) + 2;
 
+    // The output polyBLEP has compact support over two numerical samples. At
+    // the declared 200 kHz / 8 kHz extreme that interval can contain 50 BBD
+    // edges. Two shift-loop bounds leave a little explicit headroom while
+    // keeping the reconstruction fixed-size and allocation-free.
+    static constexpr int maximumBlepEvents = 2 * maximumShiftsPerSample;
+    static_assert(maximumBlepEvents
+                      >= static_cast<int>(2.0f * maximumClockHz
+                                          / minimumSampleRate) + 1);
+    // Future bucket values are knowable only until the write head can catch
+    // them. The current support ends well before one 128-cell revolution.
+    static_assert(maximumBlepEvents < cellPairs);
+
     // IC6 is the final inverting dry/wet summer on each output. Its 100 kOhm
     // feedback resistor sees dry through 39 kOhm and wet through 47 kOhm.
     // Polarity is intentionally omitted because both paths invert together;
@@ -323,12 +335,20 @@ private:
     // result.
     [[nodiscard]] static float bbdTransfer(float input) noexcept;
     static float transferLossStep(float& state, float input) noexcept;
+    [[nodiscard]] static double bbdPolyBlepResidual(
+        double distanceInSamples) noexcept;
 
     // One bucket-brigade line: a shift register of cell pairs clocked
     // asynchronously to the host rate, with the input resampled onto the clock
     // grid and the output held between clock edges exactly as the part does.
     struct Line
     {
+        struct BlepEvent
+        {
+            float jump { 0.0f };
+            double ageInSamples { 0.0 };
+        };
+
         std::array<float, cellPairs> cells {};
         int writeIndex { 0 };
         double clockPhase { 0.0 };
@@ -338,13 +358,13 @@ private:
         // poles: two Sallen-Key sections and one passive pole. The
         // output has the tap-summing pole followed by two Sallen-Key sections.
         //
-        // When the engine oversamples, the line's zero-order-hold images at the
-        // clock rate land above the host band and the decimators remove them;
-        // with oversampling off the clock exceeds the host Nyquist and the
-        // images fold, with only the output chain to soften them. That is a
-        // documented cost of the low-quality setting, not of the model -- and
-        // five output poles soften it considerably better than the one this
-        // replaced.
+        // The BBD's clock-grid images are physical and remain in the modeled
+        // staircase. Sampling that asynchronous staircase on the numerical
+        // grid creates a second, non-physical family of aliases. A short
+        // polyBLEP history removes only that host-grid error before the five
+        // hardware output poles. It is numerical state: unlike buckets,
+        // clock phase, transfer loss and held noise, it is cleared when the
+        // engine changes processing rate.
         float inputCouplingState { 0.0f };
         float antiAliasState { 0.0f };
         BiquadState antiAliasFirst {};
@@ -355,9 +375,18 @@ private:
         float outputCouplingState { 0.0f };
         float transferState { 0.0f };
         std::uint32_t noiseState { 0x9e3779b9u };
+        std::array<BlepEvent, maximumBlepEvents> pastBlepEvents {};
+        int pastBlepEventCount { 0 };
 
         void reset(std::uint32_t seed) noexcept;
         void resetAudioRateSupport() noexcept;
+        void ageBlepEvents() noexcept;
+        void rememberBlepEvent(float jump, double ageInSamples) noexcept;
+        [[nodiscard]] double deterministicBlepCorrection(
+            double clockIncrement) const noexcept;
+        [[nodiscard]] float processClockedCore(
+            float limitedInput, float clockHz, float sampleRate,
+            float noiseScale) noexcept;
         float process(float input, float clockHz, float sampleRate,
                       const SupportChain& support, float outputCouplingG,
                       float noiseScale) noexcept;

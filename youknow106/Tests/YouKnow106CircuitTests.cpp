@@ -97,6 +97,115 @@ struct YouKnow106TestAccess
         return Chorus::transferLossStep(state, input);
     }
 
+    static double bbdPolyBlepResidual(double distanceInSamples) noexcept
+    {
+        return Chorus::bbdPolyBlepResidual(distanceInSamples);
+    }
+
+    struct BbdCorePhysicalState
+    {
+        std::array<float, Chorus::cellPairs> cells {};
+        int writeIndex { 0 };
+        double clockPhase { 0.0 };
+        float held { 0.0f };
+        float previousInput { 0.0f };
+        float transferState { 0.0f };
+        std::uint32_t noiseState { 0u };
+
+        bool operator==(const BbdCorePhysicalState&) const = default;
+    };
+
+    static void configureBbdCore(
+        Chorus& chorus,
+        const std::array<float, Chorus::cellPairs>& cells,
+        int writeIndex, double clockPhase, float held,
+        float previousInput, float transferState,
+        std::uint32_t noiseState) noexcept
+    {
+        auto& line = chorus.lineA_;
+        line.cells = cells;
+        line.writeIndex = writeIndex;
+        line.clockPhase = clockPhase;
+        line.held = held;
+        line.previousInput = previousInput;
+        line.transferState = transferState;
+        line.noiseState = noiseState;
+        line.pastBlepEvents.fill({});
+        line.pastBlepEventCount = 0;
+    }
+
+    static float processBbdCore(Chorus& chorus, float input,
+                                float clockHz, float sampleRate,
+                                float noiseScale) noexcept
+    {
+        return chorus.lineA_.processClockedCore(
+            input, clockHz, sampleRate, noiseScale);
+    }
+
+    static BbdCorePhysicalState bbdCorePhysicalState(
+        const Chorus& chorus) noexcept
+    {
+        const auto& line = chorus.lineA_;
+        return { line.cells, line.writeIndex, line.clockPhase, line.held,
+                 line.previousInput, line.transferState, line.noiseState };
+    }
+
+    static double bbdCoreCorrection(const Chorus& chorus,
+                                    double clockIncrement) noexcept
+    {
+        return chorus.lineA_.deterministicBlepCorrection(clockIncrement);
+    }
+
+    static int bbdBlepEventCount(const Chorus& chorus) noexcept
+    {
+        return chorus.lineA_.pastBlepEventCount;
+    }
+
+    static float bbdRawHeld(const Chorus& chorus) noexcept
+    {
+        return chorus.lineA_.held;
+    }
+
+    static float processBbdFullLine(Chorus& chorus, float input,
+                                    float clockHz, bool useBlep) noexcept
+    {
+        auto& line = chorus.lineA_;
+        const auto& support = chorus.support_;
+        const float outputCouplingG =
+            support.wetOutputCouplingConnectedG;
+
+        if (useBlep)
+        {
+            return line.process(input, clockHz, chorus.sampleRate_, support,
+                                outputCouplingG, 0.0f);
+        }
+
+        // Legacy-output reference using the same complete input/output support
+        // chain and the same physical core. Only the value entering the tap
+        // pole differs: raw held staircase rather than its BLEP sampling.
+        float limited = Chorus::biquadStep(
+            line.antiAliasFirst, input, support.antiAliasFirst);
+        limited = Chorus::biquadStep(
+            line.antiAliasSecond, limited, support.antiAliasSecond);
+        const float couplingLow = Chorus::supportFilterStep(
+            line.inputCouplingState, limited, support.inputCouplingG);
+        limited -= couplingLow;
+        limited = Chorus::supportFilterStep(
+            line.antiAliasState, limited, support.passiveG);
+        (void) line.processClockedCore(
+            limited, clockHz, chorus.sampleRate_, 0.0f);
+
+        const float tapSum = Chorus::supportFilterStep(
+            line.tapSumState, line.held, support.idealSourceTapPoleG);
+        const float first = Chorus::biquadStep(
+            line.reconstructionFirst, tapSum, support.reconstructionFirst);
+        const float reconstructed = Chorus::biquadStep(
+            line.reconstructionSecond, first, support.reconstructionSecond);
+        const float outputCouplingLow = Chorus::supportFilterStep(
+            line.outputCouplingState, reconstructed, outputCouplingG);
+        return reconstructed - outputCouplingLow;
+    }
+
     static std::array<float, 2> correlatedChorusNoiseStep(
         std::uint32_t& commonState, std::uint32_t& orthogonalState,
         float correlation) noexcept
@@ -183,7 +292,8 @@ struct YouKnow106TestAccess
                 && line.reconstructionFirst.s2 == 0.0f
                 && line.reconstructionSecond.s1 == 0.0f
                 && line.reconstructionSecond.s2 == 0.0f
-                && line.outputCouplingState == 0.0f;
+                && line.outputCouplingState == 0.0f
+                && line.pastBlepEventCount == 0;
         };
         return clear(chorus.lineA_) && clear(chorus.lineB_);
     }
@@ -298,6 +408,209 @@ void expectNear(double actual, double expected, double tolerance,
 }
 
 constexpr double pi = 3.14159265358979323846;
+
+// Independent transcription of the DAFx 2025 companion algorithm. The
+// production residual uses Horner form; spelling the two polynomials out here
+// and maintaining a separate edge/history loop makes this a correspondence
+// test rather than an assertion of the implementation against itself.
+double referenceBbdPolyBlep(double distance)
+{
+    if (!(distance >= 0.0) || distance >= 2.0)
+        return 0.0;
+    if (distance < 1.0)
+        return 0.125 * distance * distance * distance * distance
+             - distance * distance * distance / 3.0
+             - 0.25 * distance * distance + distance - 0.5;
+    return -distance * distance * distance * distance / 24.0
+           + distance * distance * distance / 3.0
+           - 11.0 * distance * distance / 12.0
+           + distance - 1.0 / 3.0;
+}
+
+std::uint32_t referenceXorshift32(std::uint32_t state)
+{
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state;
+}
+
+struct ReferenceBbdCore
+{
+    struct Event
+    {
+        float jump {};
+        double age {};
+    };
+
+    std::array<float, Chorus::cellPairs> cells {};
+    int writeIndex {};
+    double clockPhase {};
+    float held {};
+    float previousInput {};
+    float transferState {};
+    std::uint32_t noiseState { 1u };
+    std::vector<Event> pastEvents;
+
+    float process(float input, float clockHz, float sampleRate)
+    {
+        std::size_t retained = 0;
+        for (auto event : pastEvents)
+        {
+            event.age += 1.0;
+            if (event.age < 2.0)
+                pastEvents[retained++] = event;
+        }
+        pastEvents.resize(retained);
+
+        const double increment = static_cast<double>(clockHz)
+                               / static_cast<double>(sampleRate);
+        clockPhase += increment;
+        while (clockPhase >= 1.0)
+        {
+            clockPhase -= 1.0;
+            const double age = clockPhase / increment;
+            // Algorithm 1 writes x[n-1] + d * (x[n] - x[n-1]), where
+            // d = 1 - age. This is deliberately associated differently from
+            // the production expression while describing the same timing.
+            const float writeFraction = static_cast<float>(1.0 - age);
+            const float atEdge = previousInput
+                + writeFraction * (input - previousInput);
+            const float bounded = YouKnow106TestAccess::bbdTransfer(atEdge);
+
+            writeIndex = writeIndex + 1 < Chorus::cellPairs
+                ? writeIndex + 1 : 0;
+            const float emerging = cells[static_cast<std::size_t>(writeIndex)];
+            cells[static_cast<std::size_t>(writeIndex)] = bounded;
+
+            const float before = transferState;
+            transferState += 0.8654743f * (emerging - transferState);
+            pastEvents.push_back({ transferState - before, age });
+
+            // Noise is disabled in correspondence renders, but the hardware
+            // state advances at every edge irrespective of its level control.
+            noiseState = referenceXorshift32(noiseState);
+            held = transferState;
+        }
+        previousInput = input;
+
+        double correction = 0.0;
+        for (const auto& event : pastEvents)
+            correction += static_cast<double>(event.jump)
+                        * referenceBbdPolyBlep(event.age);
+
+        const double inverseIncrement = 1.0 / increment;
+        double futureDistance = (1.0 - clockPhase) * inverseIncrement;
+        float predicted = transferState;
+        int futureIndex = writeIndex;
+        while (futureDistance < 2.0)
+        {
+            futureIndex = futureIndex + 1 < Chorus::cellPairs
+                ? futureIndex + 1 : 0;
+            const float before = predicted;
+            predicted += 0.8654743f
+                       * (cells[static_cast<std::size_t>(futureIndex)]
+                          - predicted);
+            correction -= static_cast<double>(predicted - before)
+                        * referenceBbdPolyBlep(futureDistance);
+            futureDistance += inverseIncrement;
+        }
+
+        return held + static_cast<float>(correction);
+    }
+};
+
+double sinusoidMagnitude(const std::vector<float>& signal, std::size_t start,
+                         std::size_t length, double frequency,
+                         double sampleRate)
+{
+    std::complex<double> accumulator {};
+    for (std::size_t offset = 0; offset < length; ++offset)
+    {
+        const double phase = -2.0 * pi * frequency
+                           * static_cast<double>(offset) / sampleRate;
+        accumulator += static_cast<double>(signal[start + offset])
+                     * std::exp(std::complex<double>(0.0, phase));
+    }
+    return 2.0 * std::abs(accumulator) / static_cast<double>(length);
+}
+
+double singleToneResidualRms(const std::vector<float>& signal,
+                             std::size_t start, std::size_t length,
+                             double frequency, double sampleRate)
+{
+    double mean = 0.0;
+    double cosine = 0.0;
+    double sine = 0.0;
+    for (std::size_t offset = 0; offset < length; ++offset)
+    {
+        const double value = signal[start + offset];
+        const double phase = 2.0 * pi * frequency
+                           * static_cast<double>(offset) / sampleRate;
+        mean += value;
+        cosine += value * std::cos(phase);
+        sine += value * std::sin(phase);
+    }
+    mean /= static_cast<double>(length);
+    cosine *= 2.0 / static_cast<double>(length);
+    sine *= 2.0 / static_cast<double>(length);
+
+    double residualSquared = 0.0;
+    for (std::size_t offset = 0; offset < length; ++offset)
+    {
+        const double phase = 2.0 * pi * frequency
+                           * static_cast<double>(offset) / sampleRate;
+        const double fitted = mean + cosine * std::cos(phase)
+                                   + sine * std::sin(phase);
+        const double error = static_cast<double>(signal[start + offset]) - fitted;
+        residualSquared += error * error;
+    }
+    return std::sqrt(residualSquared / static_cast<double>(length));
+}
+
+double selectedToneResidualRms(const std::vector<float>& signal,
+                               std::size_t start, std::size_t length,
+                               const std::vector<double>& frequencies,
+                               double sampleRate)
+{
+    std::vector<double> cosines(frequencies.size());
+    std::vector<double> sines(frequencies.size());
+    double mean = 0.0;
+    for (std::size_t offset = 0; offset < length; ++offset)
+    {
+        const double value = signal[start + offset];
+        mean += value;
+        for (std::size_t tone = 0; tone < frequencies.size(); ++tone)
+        {
+            const double phase = 2.0 * pi * frequencies[tone]
+                               * static_cast<double>(offset) / sampleRate;
+            cosines[tone] += value * std::cos(phase);
+            sines[tone] += value * std::sin(phase);
+        }
+    }
+    mean /= static_cast<double>(length);
+    for (std::size_t tone = 0; tone < frequencies.size(); ++tone)
+    {
+        cosines[tone] *= 2.0 / static_cast<double>(length);
+        sines[tone] *= 2.0 / static_cast<double>(length);
+    }
+
+    double residualSquared = 0.0;
+    for (std::size_t offset = 0; offset < length; ++offset)
+    {
+        double fitted = mean;
+        for (std::size_t tone = 0; tone < frequencies.size(); ++tone)
+        {
+            const double phase = 2.0 * pi * frequencies[tone]
+                               * static_cast<double>(offset) / sampleRate;
+            fitted += cosines[tone] * std::cos(phase)
+                    + sines[tone] * std::sin(phase);
+        }
+        const double error = static_cast<double>(signal[start + offset]) - fitted;
+        residualSquared += error * error;
+    }
+    return std::sqrt(residualSquared / static_cast<double>(length));
+}
 
 // --------------------------------------------------------------------------
 // Independent reference: the four transconductor stages integrated with a
@@ -2214,6 +2527,397 @@ void testBucketBrigadeDatasheetAnchors()
                "charge-transfer response misses the 1 kHz-referenced anchor");
 }
 
+void testBbdOutputPolyBlepReferenceAndBounds()
+{
+    // Exact residual landmarks from the authors' companion implementation.
+    // The curve rings through zero between 0.625 and 0.75 samples; asserting
+    // both signs catches replacing it with a monotone smoothing function.
+    expectNear(YouKnow106TestAccess::bbdPolyBlepResidual(0.0), -0.5, 1.0e-15,
+               "BBD polyBLEP residual at the discontinuity");
+    expect(YouKnow106TestAccess::bbdPolyBlepResidual(0.5) < 0.0,
+           "BBD polyBLEP lost its pre-zero residual sign");
+    expect(YouKnow106TestAccess::bbdPolyBlepResidual(0.75) > 0.0,
+           "BBD polyBLEP lost its post-zero residual sign");
+    expectNear(YouKnow106TestAccess::bbdPolyBlepResidual(1.0), 1.0 / 24.0,
+               1.0e-14, "BBD polyBLEP residual at one sample");
+    expectNear(YouKnow106TestAccess::bbdPolyBlepResidual(2.0), 0.0, 1.0e-15,
+               "BBD polyBLEP did not end at two samples");
+    expectNear(YouKnow106TestAccess::bbdPolyBlepResidual(1.0 - 1.0e-8),
+               YouKnow106TestAccess::bbdPolyBlepResidual(1.0 + 1.0e-8),
+               1.0e-8, "BBD polyBLEP pieces are discontinuous at one sample");
+
+    // A short, deliberately irregular vector crosses from 1.25 through 25
+    // edges per numerical sample. The independent implementation above uses
+    // Algorithm 1's input-fraction expression and the companion source's
+    // past/future signs rather than calling any production reconstruction
+    // helper. The prefilled ring makes every edge a useful non-zero case.
+    std::array<float, Chorus::cellPairs> initialCells {};
+    for (int index = 0; index < Chorus::cellPairs; ++index)
+    {
+        initialCells[static_cast<std::size_t>(index)] = static_cast<float>(
+            0.31 * std::sin(2.0 * pi * (index + 3) / 29.0)
+            + 0.07 * std::cos(2.0 * pi * (index + 1) / 11.0));
+    }
+
+    Chorus production;
+    production.prepare(8000.0);
+    constexpr int initialIndex = 17;
+    constexpr double initialPhase = 0.37;
+    constexpr float initialTransfer = -0.12f;
+    constexpr float initialInput = 0.05f;
+    constexpr std::uint32_t initialNoise = 0x1234567u;
+    YouKnow106TestAccess::configureBbdCore(
+        production, initialCells, initialIndex, initialPhase,
+        initialTransfer, initialInput, initialTransfer, initialNoise);
+
+    ReferenceBbdCore reference;
+    reference.cells = initialCells;
+    reference.writeIndex = initialIndex;
+    reference.clockPhase = initialPhase;
+    reference.held = initialTransfer;
+    reference.previousInput = initialInput;
+    reference.transferState = initialTransfer;
+    reference.noiseState = initialNoise;
+    reference.pastEvents.reserve(Chorus::maximumBlepEvents);
+
+    constexpr std::array<float, 8> clocks {
+        20000.0f, 64000.0f, 200000.0f, 10000.0f,
+        80000.0f, 24000.0f, 160000.0f, 40000.0f
+    };
+    double maximumError = 0.0;
+    for (std::size_t sample = 0; sample < clocks.size(); ++sample)
+    {
+        const float input = static_cast<float>(
+            0.18 * std::sin(0.71 * static_cast<double>(sample))
+            - 0.04 * std::cos(0.23 * static_cast<double>(sample)));
+        const float actual = YouKnow106TestAccess::processBbdCore(
+            production, input, clocks[sample], 8000.0f, 0.0f);
+        const float expected = reference.process(
+            input, clocks[sample], 8000.0f);
+        maximumError = std::max(maximumError,
+                                std::abs(static_cast<double>(actual) - expected));
+    }
+    expect(maximumError < 2.0e-6,
+           "BBD polyBLEP differs from the independent multi-edge reference by "
+               + std::to_string(maximumError));
+    if (std::getenv("YOUKNOW106_AUDIT_BBD_BLEP") != nullptr)
+        std::cout << "BBD BLEP independent-vector max error: "
+                  << maximumError << '\n';
+
+    const auto coreState = YouKnow106TestAccess::bbdCorePhysicalState(production);
+    expect(coreState.writeIndex == reference.writeIndex,
+           "BBD reference correspondence moved a different number of buckets");
+    expectNear(coreState.clockPhase, reference.clockPhase, 1.0e-12,
+               "BBD reference correspondence lost fractional clock phase");
+    expectNear(coreState.transferState, reference.transferState, 1.0e-7,
+               "BBD reference correspondence changed transfer-loss state");
+    expect(coreState.noiseState == reference.noiseState,
+           "BBD output reconstruction changed the per-edge RNG sequence");
+
+    // Reconstruction is a const read of already-realised deterministic state.
+    // Evaluate it twice around a full physical snapshot to guard against a
+    // tempting implementation that advances the real ring/transfer state while
+    // looking ahead.
+    const auto beforeCorrection =
+        YouKnow106TestAccess::bbdCorePhysicalState(production);
+    const int eventsBefore = YouKnow106TestAccess::bbdBlepEventCount(production);
+    const double correctionA = YouKnow106TestAccess::bbdCoreCorrection(
+        production, static_cast<double>(clocks.back()) / 8000.0);
+    const double correctionB = YouKnow106TestAccess::bbdCoreCorrection(
+        production, static_cast<double>(clocks.back()) / 8000.0);
+    const auto afterCorrection =
+        YouKnow106TestAccess::bbdCorePhysicalState(production);
+    expect(std::isfinite(correctionA) && correctionA == correctionB,
+           "BBD lookahead is not a pure deterministic evaluation");
+    expect(afterCorrection == beforeCorrection
+               && YouKnow106TestAccess::bbdBlepEventCount(production)
+                    == eventsBefore,
+           "BBD lookahead mutated buckets/index/phase/transfer/held/RNG");
+
+    // At the full declared ratio there are exactly 25 edges per sample and 50
+    // in the residual's open two-sample support. The 54-slot fixed array must
+    // hold that state indefinitely without clipping or growing.
+    Chorus maximumRate;
+    maximumRate.prepare(8000.0);
+    std::array<float, Chorus::cellPairs> zeroCells {};
+    YouKnow106TestAccess::configureBbdCore(
+        maximumRate, zeroCells, 0, 0.0, 0.0f, 0.0f, 0.0f, 0x9e3779b9u);
+    for (int sample = 0; sample < 16; ++sample)
+    {
+        YouKnow106TestAccess::processBbdCore(
+            maximumRate, 0.0f, Chorus::maximumClockHz,
+            Chorus::minimumSampleRate, 0.0f);
+        expect(YouKnow106TestAccess::bbdBlepEventCount(maximumRate)
+                   <= Chorus::maximumBlepEvents,
+               "BBD polyBLEP event history overflowed its fixed bound");
+    }
+    expect(YouKnow106TestAccess::bbdBlepEventCount(maximumRate) == 50,
+           "BBD polyBLEP did not retain every edge in the worst two-sample window");
+
+    // A noise-only line has no deterministic transfer jumps, hence a zero BLEP
+    // delta. Its output, held sample and xorshift sequence remain bit-identical
+    // to the pre-correction path even while 25 edges occur per sample.
+    Chorus noiseOnly;
+    noiseOnly.prepare(8000.0);
+    YouKnow106TestAccess::configureBbdCore(
+        noiseOnly, zeroCells, 0, 0.0, 0.0f, 0.0f, 0.0f, 0x9e3779b9u);
+    std::uint32_t expectedNoiseState = 0x9e3779b9u;
+    for (int sample = 0; sample < 4; ++sample)
+    {
+        const float output = YouKnow106TestAccess::processBbdCore(
+            noiseOnly, 0.0f, 200000.0f, 8000.0f, 1.0f);
+        for (int edge = 0; edge < 25; ++edge)
+            expectedNoiseState = referenceXorshift32(expectedNoiseState);
+        const auto state = YouKnow106TestAccess::bbdCorePhysicalState(noiseOnly);
+        const float expectedNoise =
+            (static_cast<float>(expectedNoiseState & 0xffffffu)
+                 * (2.0f / 16777215.0f) - 1.0f) * 1.0e-3f;
+        expect(output == state.held && state.held == expectedNoise,
+               "deterministic BBD BLEP coloured or rerounded held line noise");
+        expect(state.transferState == 0.0f,
+               "noise-only BBD developed a deterministic transfer signal");
+    }
+    expect(expectedNoiseState == 0x5f34ccddu,
+           "noise-only BBD golden edge count/RNG state changed");
+
+    // Rate-change policy: physical state is covered separately, while this
+    // sample-grid history must be discarded with the old TPT carries.
+    maximumRate.prepare(16000.0, true);
+    expect(YouKnow106TestAccess::bbdBlepEventCount(maximumRate) == 0,
+           "BBD polyBLEP history survived a numerical grid change");
+}
+
+void testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases()
+{
+    constexpr float sampleRate = 44100.0f;
+    constexpr double inputFrequency = 784.0;
+    constexpr int seconds = 2;
+    constexpr std::size_t analysisLength = 44100;
+
+    const auto render = [](float clockHz) {
+        Chorus line;
+        line.prepare(sampleRate);
+        std::array<float, Chorus::cellPairs> cells {};
+        YouKnow106TestAccess::configureBbdCore(
+            line, cells, 0, 0.0, 0.0f, 0.0f, 0.0f, 0x9e3779b9u);
+
+        std::pair<std::vector<float>, std::vector<float>> result;
+        result.first.resize(static_cast<std::size_t>(seconds * sampleRate));
+        result.second.resize(result.first.size());
+        for (std::size_t sample = 0; sample < result.first.size(); ++sample)
+        {
+            const float input = static_cast<float>(
+                0.02 * std::sin(2.0 * pi * inputFrequency
+                                * static_cast<double>(sample) / sampleRate));
+            result.second[sample] = YouKnow106TestAccess::processBbdCore(
+                line, input, clockHz, sampleRate, 0.0f);
+            result.first[sample] = YouKnow106TestAccess::bbdRawHeld(line);
+        }
+        return result; // first raw ZOH, second host-grid BLEP
+    };
+
+    // Above the numerical sample rate, the first physical clock images lie
+    // outside its Nyquist band. In-band energy other than the coherent input
+    // tone is therefore simulation-grid aliasing (the very small fitted BBD
+    // nonlinearity is held 34 dB below its datasheet drive here).
+    const auto highClock = render(50000.0f);
+    const std::size_t start = highClock.first.size() - analysisLength;
+    const double rawResidual = singleToneResidualRms(
+        highClock.first, start, analysisLength, inputFrequency, sampleRate);
+    const double correctedResidual = singleToneResidualRms(
+        highClock.second, start, analysisLength, inputFrequency, sampleRate);
+    const double highClockImprovementDb = 20.0 * std::log10(
+        (rawResidual + 1.0e-20) / (correctedResidual + 1.0e-20));
+    expect(highClockImprovementDb > 20.0,
+           "BBD host-grid alias floor improved by only "
+               + std::to_string(highClockImprovementDb) + " dB at 50 kHz");
+
+    // The companion paper's other above-host case is also an integration test
+    // for more than two BBD edges per numerical sample. This implementation
+    // sums every discontinuity in the residual support instead of silently
+    // truncating the fifth one to a fixed three-neighbour example.
+    const auto multipleEdgeClock = render(90000.0f);
+    const std::size_t multipleStart =
+        multipleEdgeClock.first.size() - analysisLength;
+    const double rawMultipleResidual = singleToneResidualRms(
+        multipleEdgeClock.first, multipleStart, analysisLength,
+        inputFrequency, sampleRate);
+    const double correctedMultipleResidual = singleToneResidualRms(
+        multipleEdgeClock.second, multipleStart, analysisLength,
+        inputFrequency, sampleRate);
+    const double multipleEdgeImprovementDb = 20.0 * std::log10(
+        (rawMultipleResidual + 1.0e-20)
+        / (correctedMultipleResidual + 1.0e-20));
+    expect(multipleEdgeImprovementDb > 20.0,
+           "BBD multi-edge host-grid alias floor improved by only "
+               + std::to_string(multipleEdgeImprovementDb) + " dB at 90 kHz");
+
+    // At 10 kHz the images k*fCP +/- f0 below host Nyquist are genuine BBD
+    // output, not errors to optimize away. Compare their amplitudes with the
+    // closed-form rectangular-hold aperture, referenced to the fundamental.
+    // This guards against a generic low-pass "fix" that would sound cleaner
+    // precisely by deleting the hardware's characteristic aliases.
+    const auto lowClock = render(10000.0f);
+    const std::size_t lowStart = lowClock.first.size() - analysisLength;
+    const double fundamental = sinusoidMagnitude(
+        lowClock.second, lowStart, analysisLength, inputFrequency, sampleRate);
+    const double rawFundamental = sinusoidMagnitude(
+        lowClock.first, lowStart, analysisLength, inputFrequency, sampleRate);
+    expect(fundamental > 1.0e-4,
+           "BBD physical-image fixture produced no fundamental");
+
+    const auto sinc = [](double value) {
+        return std::abs(value) < 1.0e-15
+            ? 1.0 : std::sin(pi * value) / (pi * value);
+    };
+    const double referenceAperture = std::abs(sinc(inputFrequency / 10000.0));
+    double worstAudibleImageErrorDb = 0.0;
+    double worstPhysicalImageErrorDb = 0.0;
+    for (const double image : { 9216.0, 10784.0, 19216.0, 20784.0 })
+    {
+        const double measured = sinusoidMagnitude(
+            lowClock.second, lowStart, analysisLength, image, sampleRate)
+                              / fundamental;
+        const double expected = std::abs(sinc(image / 10000.0))
+                              / referenceAperture;
+        const double errorDb = 20.0 * std::log10(
+            (measured + 1.0e-20) / (expected + 1.0e-20));
+        if (std::getenv("YOUKNOW106_AUDIT_BBD_BLEP") != nullptr)
+        {
+            const double rawRatio = sinusoidMagnitude(
+                lowClock.first, lowStart, analysisLength, image, sampleRate)
+                                  / rawFundamental;
+            std::cout << "BBD image " << image << " Hz: raw "
+                      << 20.0 * std::log10(rawRatio + 1.0e-20)
+                      << " dBr, BLEP "
+                      << 20.0 * std::log10(measured + 1.0e-20)
+                      << " dBr, ZOH reference "
+                      << 20.0 * std::log10(expected + 1.0e-20)
+                      << " dBr\n";
+        }
+        worstPhysicalImageErrorDb = std::max(
+            worstPhysicalImageErrorDb, std::abs(errorDb));
+        if (image < 15000.0)
+            worstAudibleImageErrorDb = std::max(
+                worstAudibleImageErrorDb, std::abs(errorDb));
+    }
+    // The first image pair, in the sensitive 9--11 kHz band, stays within
+    // 0.61 dB. The third-order polynomial deliberately becomes its numerical
+    // antialias transition close to the 22.05 kHz Nyquist limit; the second
+    // pair is attenuated by at most 5.96 dB rather than folded elsewhere. Both
+    // limits are explicit so a future generic smoother cannot quietly erase
+    // the physical images and call the lower alias floor an improvement.
+    expect(worstAudibleImageErrorDb < 0.75,
+           "BBD polyBLEP moved an audible physical k*fCP+/-f image by "
+               + std::to_string(worstAudibleImageErrorDb) + " dB");
+    expect(worstPhysicalImageErrorDb < 6.2,
+           "BBD polyBLEP erased a near-Nyquist physical k*fCP+/-f image by "
+               + std::to_string(worstPhysicalImageErrorDb) + " dB");
+
+    const std::vector<double> physicalTones {
+        inputFrequency, 9216.0, 10784.0, 19216.0, 20784.0
+    };
+    const double rawLowResidual = selectedToneResidualRms(
+        lowClock.first, lowStart, analysisLength, physicalTones, sampleRate);
+    const double correctedLowResidual = selectedToneResidualRms(
+        lowClock.second, lowStart, analysisLength, physicalTones, sampleRate);
+    const double lowClockImprovementDb = 20.0 * std::log10(
+        (rawLowResidual + 1.0e-20) / (correctedLowResidual + 1.0e-20));
+    expect(lowClockImprovementDb > 15.0,
+           "BBD image-excluded host-grid floor improved by only "
+               + std::to_string(lowClockImprovementDb) + " dB at 10 kHz");
+
+    // Repeat the physical-image observation through the complete modeled Line:
+    // five input poles plus coupling, nonlinear/transfer BBD, tap pole, four
+    // output poles and wet-output coupling. The 44.1 kHz path is the explicit
+    // low-quality case; 176.4 kHz is the engine's default 4x processing grid on
+    // a 44.1 kHz host. The latter's images are far inside numerical Nyquist,
+    // and the shared linear decimator cannot change their before/after ratio.
+    const auto renderFullLine = [](float processingRate) {
+        Chorus rawLine;
+        Chorus correctedLine;
+        rawLine.prepare(processingRate);
+        correctedLine.prepare(processingRate);
+
+        const std::size_t frames = static_cast<std::size_t>(processingRate);
+        std::pair<std::vector<float>, std::vector<float>> rendered;
+        rendered.first.resize(frames);
+        rendered.second.resize(frames);
+        for (std::size_t sample = 0; sample < frames; ++sample)
+        {
+            const float input = static_cast<float>(
+                0.02 * std::sin(2.0 * pi * inputFrequency
+                                * static_cast<double>(sample)
+                                / processingRate));
+            rendered.first[sample] = YouKnow106TestAccess::processBbdFullLine(
+                rawLine, input, 10000.0f, false);
+            rendered.second[sample] = YouKnow106TestAccess::processBbdFullLine(
+                correctedLine, input, 10000.0f, true);
+        }
+        expect(YouKnow106TestAccess::bbdCorePhysicalState(rawLine)
+                   == YouKnow106TestAccess::bbdCorePhysicalState(correctedLine),
+               "full-Line BLEP changed physical BBD state relative to raw output");
+        return rendered;
+    };
+
+    const auto imageDeltasFor = [&](const auto& rendered,
+                                    double processingRate) {
+        std::array<double, 4> deltas {};
+        const std::size_t length = static_cast<std::size_t>(processingRate / 2.0);
+        const std::size_t offset = rendered.first.size() - length;
+        const std::array<double, 4> images { 9216.0, 10784.0,
+                                             19216.0, 20784.0 };
+        for (std::size_t image = 0; image < images.size(); ++image)
+        {
+            const double rawMagnitude = sinusoidMagnitude(
+                rendered.first, offset, length, images[image], processingRate);
+            const double correctedMagnitude = sinusoidMagnitude(
+                rendered.second, offset, length, images[image], processingRate);
+            deltas[image] = 20.0 * std::log10(
+                (correctedMagnitude + 1.0e-20) / (rawMagnitude + 1.0e-20));
+        }
+        return deltas;
+    };
+
+    const auto fullLowQuality = renderFullLine(44100.0f);
+    const auto fullLowQualityDeltas = imageDeltasFor(
+        fullLowQuality, 44100.0);
+    expect(std::abs(fullLowQualityDeltas[0]) < 0.75
+               && std::abs(fullLowQualityDeltas[1]) < 0.75,
+           "full low-quality Line moved the first physical BBD image pair");
+    expect(fullLowQualityDeltas[2] > -6.2
+               && fullLowQualityDeltas[3] > -6.2,
+           "full low-quality Line erased the near-Nyquist BBD image pair");
+
+    const auto fullHq = renderFullLine(176400.0f);
+    const auto fullHqDeltas = imageDeltasFor(fullHq, 176400.0);
+    double worstHqImageDelta = 0.0;
+    for (const double delta : fullHqDeltas)
+        worstHqImageDelta = std::max(worstHqImageDelta, std::abs(delta));
+    expect(worstHqImageDelta < 0.1,
+           "default-HQ Line moved a physical BBD image by "
+               + std::to_string(worstHqImageDelta) + " dB");
+
+    if (std::getenv("YOUKNOW106_AUDIT_BBD_BLEP") != nullptr)
+    {
+        std::cout << "BBD BLEP 50 kHz SGA improvement: "
+                  << highClockImprovementDb << " dB\n"
+                  << "BBD BLEP 90 kHz SGA improvement: "
+                  << multipleEdgeImprovementDb << " dB\n"
+                  << "BBD BLEP 10 kHz image-excluded improvement: "
+                  << lowClockImprovementDb << " dB\n"
+                  << "BBD BLEP worst physical-image amplitude error: "
+                  << worstPhysicalImageErrorDb << " dB\n"
+                  << "BBD full Line LQ image deltas: ";
+        for (const double delta : fullLowQualityDeltas)
+            std::cout << delta << " dB ";
+        std::cout << "\nBBD full Line HQ image deltas: ";
+        for (const double delta : fullHqDeltas)
+            std::cout << delta << " dB ";
+        std::cout << '\n';
+    }
+}
+
 // A filter coefficient is only right in company with the update it is used
 // with. Asserting the formula would prove nothing, so this measures where the
 // corner of the pairing the line actually runs ends up, at the two rates the
@@ -2678,6 +3382,8 @@ int main()
     testChorusBypassStateAndWetMuteTiming();
     testChorusRateChangePreservesPhysicalState();
     testBucketBrigadeDatasheetAnchors();
+    testBbdOutputPolyBlepReferenceAndBounds();
+    testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases();
     testSupportFilterCornersLandWhereAsked();
     testHighPassReachesTheSummedSignal();
     testCorrectionResidualsVanishAtTheEdges();

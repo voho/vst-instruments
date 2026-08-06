@@ -271,6 +271,15 @@ if(BUILD_TESTING)
                  COMMAND YouKnow106AuditFactoryPresets --smoke
                          "${CMAKE_CURRENT_BINARY_DIR}/factory-audit-smoke")
         set_tests_properties(YouKnow106.AuditFactoryPresets PROPERTIES TIMEOUT 60)
+
+        # A same-length WAV is not sufficient evidence for a build-to-build
+        # claim. The strict BBD comparison must bind its baseline audio hash,
+        # protocol and pre-change DSP fingerprint to the archived manifest.
+        add_test(NAME YouKnow106.RealismComparisonContract
+                 COMMAND YouKnow106RenderRealismComparison
+                         --self-test-baseline-contract)
+        set_tests_properties(YouKnow106.RealismComparisonContract
+                             PROPERTIES TIMEOUT 30)
     endif()
     # The engine suite renders the complete factory-balance corpus, while the
     # circuit suite re-solves reference ODE models at high internal rates.

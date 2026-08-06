@@ -87,10 +87,11 @@ provenance-pending lead, not Roland-authored evidence.
 | Chorus delay-sweep law | Service Notes p. 15 shows each MN3101 driven by a transistor voltage-to-current converter (Tr22, R133 2.2 kΩ / R134 22 kΩ / R135 1.8 kΩ, C53 150 pF); KR-106 reports a ~50-point click-timing series across a real 106's modulation cycle fitting the delay linear in time, 16 µs RMS residual (raw clicks unpublished) | Delay arithmetic in seconds, `centre ± sweep·tri`, then `clock = 128/delay`; the frequency-linear (hyperbolic-delay) alternative retained behind `enableChorusHyperbolicSweep`, off by default | **Measured once, below the anchoring bar.** The current-source bias is the shape of a frequency-linear oscillator, but period-linear, frequency-linear and exponential clocks share identical endpoints, and the one existing time series — the only measurement kind that can discriminate them — reads delay-linear. That trajectory ships; the frequency-linear reading of Tr22 waits behind the switch for the calibrated clock time-series OQ-01 requests |
 | Chorus modes | The owner's manual states that I and II cannot be used simultaneously; the board has one chorus-enable line and one binary I/II line, and the patch format stores the same two bits | Exactly three rendered states: Off, I and II, with mutually exclusive panel buttons | **Anchored.** `OneTwo` survives only as an input-compatibility enum for early plug-in sessions. It canonicalises to II and never selects a fourth rate. No parallel-resistor or JUNO-60 both-buttons mode is inferred for the JUNO-106 |
 | Chorus nonlinearity | MN3009 typical distortion is 0.3% at 0.78 Vrms and 2.5% at its 1.5 Vrms input-swing point; the bias window implies an asymptote near 2.9 V at the modelled node | A generalized algebraic soft clip fitted jointly to both datasheet distortion anchors, with a 2.924 V asymptote. It remains substantially straighter below overload than a plain `tanh`, then bends rapidly near the part's window | **Datasheet-fitted.** A plain `tanh` at the same asymptote produced about 1.2% at the 0.78 Vrms test point and therefore coloured normal wet levels too strongly. The surrounding ±15 V op-amps stay linear while the BBD write bends, so hot drive grits wet without equivalently clipping dry |
-| Chorus charge transfer | The adopted MN3009 datasheet row is −3 dB at 12 kHz on a 40 kHz clock for the complete part, including its rectangular held output, with 0 dB referenced at 1 kHz. The same sheet has low-resolution typical `Gi-fi` curves at fCP 10, 40 and 100 kHz | The explicit BBD output hold supplies `sinc(12/40)=−1.326 dB` versus DC; a one-pole supplies only the residual −1.674 dB with coefficient 0.8654743. `transferLossStep` advances once per modeled BBD shift (one fCP period), so keeping that coefficient fixed already makes its absolute pole proportional to clock and its response invariant versus normalized `f/Fclock`. The complete held response is −3.000 dB versus DC and −2.972 dB versus 1 kHz | **Derived at one numeric datasheet anchor without double-counting the existing zero-order hold.** The 0.028 dB reference-basis residual is documented instead of retuned as an inaudible change. The removed extra multiplier `alpha·(1+(clock−26000)·1.5e−6)` double-counted clock scaling and produced −2.757 dB versus DC, or −2.732 dB versus 1 kHz, at 40 kHz/12 kHz. The plotted curves are qualitative multi-clock evidence and do not justify claiming physical clock invariance; quantitative extraction and installed-unit confirmation remain OQ-04 |
+| Chorus charge transfer | The adopted MN3009 datasheet row is −3 dB at 12 kHz on a 40 kHz clock for the complete part, including its rectangular held output, with 0 dB referenced at 1 kHz. The same sheet has low-resolution typical `Gi-fi` curves at fCP 10, 40 and 100 kHz | At the raw deterministic held node, before numerical output reconstruction, the explicit BBD hold supplies `sinc(12/40)=−1.326 dB` versus DC; a one-pole supplies only the residual −1.674 dB with coefficient 0.8654743. `transferLossStep` advances once per modeled BBD shift (one fCP period), so keeping that coefficient fixed already makes its absolute pole proportional to clock and its response invariant versus normalized `f/Fclock`. This upstream held response is −3.000 dB versus DC and −2.972 dB versus 1 kHz | **Derived at one numeric datasheet anchor without double-counting the existing zero-order hold.** The emitted post-polyBLEP waveform is not a literal rectangular hold, so the anchor is explicitly scoped upstream and is not silently retuned. The removed extra multiplier `alpha·(1+(clock−26000)·1.5e−6)` double-counted clock scaling and produced −2.757 dB versus DC, or −2.732 dB versus 1 kHz, at 40 kHz/12 kHz. The plotted curves are qualitative multi-clock evidence and do not justify claiming physical clock invariance; quantitative extraction and installed-unit confirmation remain OQ-04 |
+| BBD output-grid reconstruction | A real BBD's clocked sampling creates device-domain images at `k·Fclock ± f`, termed BBD-generated aliasing (BGA) by Gabrielli, D'Angelo and Squartini. A discrete computer model can add simulation-generated aliasing (SGA) when asynchronous held-output steps are represented on its own fixed sample grid | A compact polyBLEP reconstructs only the deterministic step after residual transfer loss and before the tap-summing pole. Exact fractional edge times feed 54 fixed correction slots; the multiple-edge 90 kHz case and the tested 200 kHz/8 kHz worst case use at most 50. Buckets, read index, BBD phase, transfer state, held noise and RNG sequence are identical with the correction enabled; stochastic noise is not corrected. Grid-specific slots clear when the internal rate changes | The BGA/SGA distinction and method family are **supported by peer-reviewed numerical literature**; this exact compact scheduler and its results are an **engine-validated product mechanism**, with no hardware counterpart. The paper studies an ideal 4096-stage MN3005 at 44.1 kHz without leakage, noise or nonlinearity; this is a nonlinear, noisy 256-stage MN3009 model, so the paper's SNR figures are not product measurements. HQ preserves measured BGA far more closely than LQ; the implementation does not claim exact BGA invariance at every grid |
 | Chorus noise | No compander anywhere in the circuit; no calibrated hardware SNR or stereo-correlation measurement has been located | A provisional independent per-line floor plus separately parameterized common/correlated random, hum and clock-spur hypotheses. The optional latter components default to zero; the one Chorus Noise extension scales every component and can defeat them all | **Voiced.** The closest located capture reports noise level alone, with no reference tone, calibrated level, weighting, bandwidth or cross-spectrum, so it cannot establish the amplitudes, spectra or correlation. A calibrated same-path stereo capture is needed before enabling or anchoring the optional terms |
-| Chorus support and coupling filters | Service-note component values show two emitter-follower Sallen-Key low-pass sections before and after each BBD, an extra passive input pole, a wet-input coupling high-pass, an output tap-summing pole, and C28/C25 wet-output coupling into the mute/summer loads | Two Sallen-Key sections at 9.69 kHz/Q 0.549 and 10.38 kHz/Q 1.291 on each side; R122 10 kΩ with C52 2.2 nF gives the 7.23 kHz input pole; C44/C47 0.1 µF with R120/R114 100 kΩ gives the 15.9 Hz wet-input high-pass; `(3.3 kΩ || 47 kΩ) × 2.2 nF` gives a nominal 23.46 kHz tap-summing low-pass. With TR11/TR12 open (wet muted), C28/C25 see 22 kΩ, nominally 7.234 Hz; conducting puts R71/R73 47 kΩ in parallel, nominally 10.621 Hz | The component topology and two low-frequency output loads are **anchored/derived** at ideal-source boundaries. MN3009 output impedance and emitter-follower source impedance remain OQ-04; TR11/TR12 on-resistance, leakage and switching remain OQ-20. The 23.46 kHz pole is explicitly **provisional** because it assumes an ideal active MN3009 output |
-| Oversampling | Standard practice for nonlinear audio | The complete voice, filter, amplifier and both delay lines run at 4x for host rates below 88.2 kHz, 2x below 176.4 kHz, and natively above, followed by a 63-tap Kaiser (β = 7.857, the standard 80 dB design) half-band per stage. Filter/VCA audio coefficients update at every internal sample, so their wall-clock bandwidth does not change with HQ. A requested live rate change waits for voices and musical tails, then a block-size-independent 5 ms fade brackets rebuilding sample-grid histories. Converter/LFO/DCO phases, BBD buckets/clock/RNG state and C14/C12/C17/C20 coupling states survive; OTA carries are retimed, while chorus support-filter carries that embed the old timestep clear at zero gain | Genuine internal oversampling with filtered decimation, not a quality label. Reported latency is the deepest path's real group delay and shallower modes are padded to keep it constant. With oversampling off, the delay lines' clock-rate images fold with only the five-pole output chain to soften them — a documented cost of that setting. The transition fade and selective support reset are click-prevention product policies, not reference-unit behavior |
+| Chorus support and coupling filters | Service-note component values show two emitter-follower Sallen-Key low-pass sections before and after each BBD, an extra passive input pole, a wet-input coupling high-pass, an output tap-summing pole, and C28/C25 wet-output coupling into the mute/summer loads | Two Sallen-Key sections at 9.69 kHz/Q 0.549 and 10.38 kHz/Q 1.291 on each side; R122 10 kΩ with C52 2.2 nF gives the 7.23 kHz input pole; C44/C47 0.1 µF with R120/R114 100 kΩ gives the 15.9 Hz wet-input high-pass; `(3.3 kΩ || 47 kΩ) × 2.2 nF` gives a nominal 23.46 kHz tap-summing low-pass. The numerical output-step reconstruction is inserted before this tap pole, not in place of it. With TR11/TR12 open (wet muted), C28/C25 see 22 kΩ, nominally 7.234 Hz; conducting puts R71/R73 47 kΩ in parallel, nominally 10.621 Hz | The component topology and two low-frequency output loads are **anchored/derived** at ideal-source boundaries. The polyBLEP is a separate product reconstruction and supplies no evidence for these physical filters. MN3009 output impedance and emitter-follower source impedance remain OQ-04; TR11/TR12 on-resistance, leakage and switching remain OQ-20. The 23.46 kHz pole is explicitly **provisional** because it assumes an ideal active MN3009 output |
+| Oversampling | Standard practice for nonlinear audio | The complete voice, filter, amplifier and both delay lines run at 4x for host rates below 88.2 kHz, 2x below 176.4 kHz, and natively above, followed by a 63-tap Kaiser (β = 7.857, the standard 80 dB design) half-band per stage. Filter/VCA audio coefficients update at every internal sample, so their wall-clock bandwidth does not change with HQ. A requested live rate change waits for voices and musical tails, then a block-size-independent 5 ms fade brackets rebuilding sample-grid histories. Converter/LFO/DCO phases, BBD buckets/clock/RNG state and C14/C12/C17/C20 coupling states survive; OTA carries are retimed, while chorus support-filter carries and the BBD's grid-specific polyBLEP correction slots clear at zero gain | Genuine internal oversampling with filtered decimation, not a quality label. Reported latency is the deepest path's real group delay and shallower modes are padded to keep it constant. Without HQ, physical BGA can fold according to the modeled BBD/support chain while polyBLEP reduces the additional SGA; HQ moves that numerical boundary and the filtered decimator defines what reaches the host. Neither mechanism is described as deleting all physical BGA. The transition fade and selective numerical/support reset are click-prevention product policies, not reference-unit behavior |
 | Output stage | Service-note signal order: voice VCAs, 0.1-per-voice summer, C14, shared HPF, C12/common VCA LEVEL and chorus/final summer IC6, identified on p. 15 as TA75558S. Each IC6 output then crosses C17/C20 10 µF and R54/R57 1.5 kΩ into one 10 kΩ track of the dual VR1 VOLUME control, marked `10KB×2`. Each wiper sees the complete 41.3 kΩ selector ladder in parallel with the 101 kΩ IC7/headphone input, or 29.313 kΩ, before any external load | C17/C20, R54/R57 and the nominal-linear tracks run as one position-dependent host-rate network. For shaft position `x`, `Z=(10kx)||29.313k` and `Vw/VIC6=Z/[1.5k+10k(1−x)+Z]`; gain is 0.39655 at half and 0.83252 at full (normalized midpoint 0.4763), while the same resistance moves the coupling corner. A 5 ms shaft glide prevents automation zippering. The fixed pre-jack High-tap product boundary then applies `digital=analogue*10^(-18/20)/Vref_rms`, permits floating samples beyond `+/-1`, and adds no limiter | IC6 identity, placement, named parts, fixed internal loading and linear transfer are **anchored/derived**. Panasonic's later JIS/EIAJ table maps plain B to the nominal-linear 1B resistance law, replacing the unsupported squared taper. A TA75558S identity and rail labels do not establish its loaded in-circuit swing. Real dual-gang tracking/tolerance, selected-tap loading, R64/R65, C21/C22, jack normaling, one-versus-two-plug transfer, external loads, loaded IC6 clipping (OQ-05), absolute `Vref_rms` and driven headphone output remain open |
 | Velocity and MIDI modulation | The keyboard is not velocity sensitive and Note On uses a fixed value; the owner's MIDI implementation chart recognizes CC 1 Modulation and CC 64 Hold | Velocity is an explicit extension defaulting to zero. CC 1 drives the bender lever's forward/LFO modulation axis and is scaled by the panel BENDER LFO depth, matching the documented MIDI path | Velocity response is a plug-in extension inert at zero; CC 1/64 reception is **anchored**, not an extension |
 
@@ -250,9 +251,10 @@ open question, it is named in its entry.
    $f_{clk}$: the absolute pole moves with the swept clock, while the response
    at a fixed normalized frequency $f/f_{clk}$ stays constant. Coefficient
    0.8654743 supplies the residual loss left after the explicit zero-order hold
-   and gives −3.000 dB versus DC for the complete held output at 40 kHz clock,
-   12 kHz signal. The datasheet references 0 dB at 1 kHz, on which basis the
-   model is −2.972 dB: within 0.03 dB, with no placebo retune applied.
+   and gives −3.000 dB versus DC for the raw held output, upstream of numerical
+   reconstruction, at 40 kHz clock and 12 kHz signal. The datasheet references
+   0 dB at 1 kHz, on which basis that node is −2.972 dB: within 0.03 dB, with no
+   placebo retune applied.
 
    The removed expression
    $\alpha(1+(f_{clk}-26000)\,1.5\times10^{-6})$ applied clock scaling a second
@@ -270,14 +272,77 @@ open question, it is named in its entry.
 
    A phase-coherent clock-feedthrough spur remains parameterised but ships at
    zero amplitude with the other unmeasured chorus-noise components pending
-   OQ-03. The explicit asynchronous held output already produces its genuine
-   clock images; no unsupported spur level is enabled.
+   OQ-03. The raw asynchronous hold is where the genuine clock images originate;
+   the following numerical reconstruction is characterised separately below.
+   No unsupported spur level is enabled.
 
    The strict [BBD transfer/clock-law comparison](audio/realism-comparisons/bbd-transfer-clock-law/README.md)
    traverses both modeled clock extremes in Chorus I and II, retains raw float
    output and uses one shared listening gain. It measures this implementation
    change, not a quantitative fit to the datasheet's multi-clock curves or an
    installed-unit response.
+
+5b. **BBD host-grid alias reconstruction — deterministic numerical correction** *(2026-08-06)*:
+   Gabrielli, D'Angelo and Squartini separate the aliases caused by a BBD's own
+   clocked sampling, **BBD-generated aliasing (BGA)**, from the additional
+   **simulation-generated aliasing (SGA)** caused when asynchronous output
+   steps meet the fixed sample grid of a computer simulation. Their polyBLEP
+   result motivates this mechanism, but is not transplanted wholesale: their
+   experiment is an ideal, linear, noiseless 4096-stage MN3005 at 44.1 kHz;
+   YouKnow106 models a nonlinear, noisy 256-stage MN3009 at multiple internal
+   rates. Their reported SNR changes are therefore literature context, not
+   product claims.
+
+   The engine applies a compact polyBLEP to the deterministic held-step delta
+   after `transferLossStep` and before the provisional tap-summing pole. The
+   correction scheduler is fixed and bounded: 54 slots are allocated and the
+   200 kHz clock at an 8 kHz processing grid, the tested worst case, consumes
+   50. Multiple clock edges in one internal sample are accumulated rather than
+   dropped. Enabling it leaves buckets, read index, clock phase, transfer state,
+   held noise and RNG sequence unchanged. Noise is deliberately uncorrected;
+   the correction slots, unlike the physical BBD state, clear on a change of
+   internal rate because their timestamps belong to the old grid. A noise-on
+   fixed/swept HQ/LQ PSD and audition fixture remains OQ-03 work; “resolved”
+   below refers only to deterministic host-grid steps.
+
+   A counterfactual RNG-lookahead measurement explains why noise was not folded
+   into this change. With Chorus Noise 1 and silent input, reconstructing every
+   provisional edge-held random jump changed 20 Hz–20 kHz RMS by only **−0.05 to
+   −0.06 dB in HQ** (aligned difference about −82/−81 dBFS). LQ changed by
+   **−0.83 to −1.04 dB**; its 15–20 kHz band fell 3.29–4.07 dB, but that band was
+   already below −96 dBFS. Since a real MN3009's noise can mix clock-held charge
+   noise with continuous device/output noise, correcting all of the currently
+   voiced hiss would assert an unmeasured source mechanism for essentially no
+   default-HQ benefit. The pure-RNG lookahead is feasible but intentionally not
+   shipped pending the calibrated OQ-03 capture.
+
+   Isolated-core tests measure SGA reduction of **36.2873 dB at 50 kHz** and
+   **42.6752 dB at the 90 kHz multi-edge case**. At 10 kHz, excluding the wanted
+   `k·Fclock ± f` image bins, the improvement is **25.0819 dB**. Those are this
+   implementation's deterministic numerical results, not the paper's numbers
+   and not a hardware measurement.
+
+   BGA preservation is measured rather than assumed. Through a complete line at
+   44.1 kHz LQ, the components at 9.216, 10.784, 19.216 and 20.784 kHz move by
+   **−0.3405, −0.6039, −4.5851 and −5.9408 dB** respectively. At the default
+   176.4 kHz HQ internal rate their deltas are **−0.0016, −0.0030, −0.0281 and
+   −0.0382 dB**. Thus HQ is effectively transparent to these wanted images;
+   LQ is a documented quality compromise, especially for higher-order BGA.
+
+   The strict [BBD host-grid alias comparison](audio/realism-comparisons/bbd-host-grid-alias/README.md)
+   uses the minimum clock and a 2.093 kHz probe. Its wanted image changes by
+   **−0.0383 dB in HQ**. The LQ wanted-bin change is **−5.2986 dB**, but that bin
+   was already **−100.47 dBc** in the baseline. The two false LQ second-image
+   folds improve from **−26.87/−27.42 to −55.23/−53.61 dBc**; in HQ, roughly
+   **−116 dBc** folds move to about **−171/−170 dBc**. Across the complete
+   concatenated listening demo the signed after-minus-before difference is
+   **−15.95 dBc peak and −27.66 dBc RMS**, at one fixed gain. These files are
+   controlled before/after evidence, not a subjective listening test.
+
+   Whole-demo user CPU time moved from **67.04 to 67.15 s**, about **0.16%** and
+   within run noise. A pure Chorus benchmark exposes the local cost:
+   **+16.6% HQ, +18.3% LQ and +27.9%** in the worst 8 kHz-grid condition. The
+   bounded memory and measured cost are product-engineering evidence only.
 
 6. **IR3109 control-current saturation — the upper cutoff knee** *(replaced 2026-08-06)*:
    The transconductor's control current saturates internally at about $700\,\mu\text{A}$, which on this circuit's own $C = 240\text{ pF}$ / $R = 68\text{ k}\Omega$ test condition is a pole near $64\text{ kHz}$. That, not an arbitrary cap, is where the cutoff stops following the anti-log converter, and it is consistent with Roland's published 50 kHz top. Modelled with the generalized algebraic clip the output summer and the BBD write already use, $y = x/(1+|x/64\text{k}|^{1.7})^{1/1.7}$, with the exponent fitted to a measured code-to-frequency table for a real voice card.
@@ -587,14 +652,21 @@ No hardware was measured. Summary of what moved:
   The mode ratio is unaffected and remains 1.6235 either way.
 - **OQ-04 is quantified.** The adopted MN3009 table anchor is −3 dB at 12 kHz
   on a 40 kHz clock, relative to 1 kHz. Removing the duplicate clock multiplier
-  makes the complete held model −3.000 dB versus DC and −2.972 dB versus 1 kHz;
-  the former law gave −2.757 dB versus DC and −2.732 dB versus 1 kHz and
-  imposed unsupported LFO-correlated brightness. The modelled support chain is
-  still 12 dB down at 10 kHz, and removing the duplicated reconstruction pair
-  does not reconcile it, so its corner values remain implicated. This is coupled
-  to OQ-01: wet-path bandwidth constrains the BBD clock, while quantitative
+  makes the raw held node upstream of polyBLEP −3.000 dB versus DC and
+  −2.972 dB versus 1 kHz; the former law gave −2.757 dB versus DC and
+  −2.732 dB versus 1 kHz and imposed unsupported LFO-correlated brightness. The
+  modelled support chain is still 12 dB down at 10 kHz, and removing the
+  duplicated reconstruction pair does not reconcile it, so its corner values
+  remain implicated. This is coupled to OQ-01: wet-path bandwidth constrains
+  the BBD clock, while quantitative
   extraction of the datasheet's 10/40/100 kHz curves and a multi-clock
   de-embedded installed-unit sweep are needed to establish the normalized law.
+- **BBD host-grid aliasing is now separated from physical BBD aliasing.** A
+  deterministic-only, paper-motivated polyBLEP suppresses the additional
+  simulation-grid folds without changing buckets, transfer/noise or RNG state.
+  The [strict comparison](audio/realism-comparisons/bbd-host-grid-alias/README.md)
+  reports the large SGA reductions and the non-zero LQ BGA tradeoff; the method
+  is a validated product mechanism, not a new MN3009 or listening-test claim.
 - **OQ-02's nominal law is now derived.** A direct p. 15 schematic read identifies
   R30/C7/R32/R31/R165. Combined with p. 8's converter range, the ROM-resolved
   `d=b<<5` code and NEC's −5.9 mV/dB typical constant, it replaces the former
@@ -644,7 +716,13 @@ topology-preserving transforms for the integrator prewarp and the `1/(4 − k)`
 four-pole result; Stilson and Smith on the ladder's root locus; Huovilainen
 and D'Angelo and Välimäki on nonlinear ladder solutions; Välimäki, Pekonen and
 Nam on integrated-B-spline BLEP residual tables built at 64x with a Blackman
-window; and Holters and Parker on bucket-brigade device modelling. No
+window; Holters and Parker on bucket-brigade device modelling; and Gabrielli,
+D'Angelo and Squartini's DAFx-25 paper
+[“Antialiasing in BBD Chips Using BLEP”](https://dafx.de/paper-archive/2025/DAFx25_paper_29.pdf),
+with its [companion code and audio](https://dangelo.audio/dafx25-bbd),
+for the BGA/SGA distinction and output-step polyBLEP method. The latter studies
+an ideal MN3005 and supports a numerical method family, not this MN3009's
+physical response or the implementation-specific measurements above. No
 third-party source code, netlist, ROM image, firmware or recording is included
 in this repository. The one external functional-data corpus is the independently
 decoded 2,304-byte factory tone memory described above; laws fitted through
