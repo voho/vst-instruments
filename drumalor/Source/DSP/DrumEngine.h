@@ -117,6 +117,20 @@ private:
     static constexpr int sineTableSize = 2048;
     static constexpr int sineTableMask = sineTableSize - 1;
 
+    // The 909's cymbal ROMs. On the machine these are mask ROMs holding a
+    // recorded cymbal, and every hit reads the same data - so they are engine
+    // state built once, not per-voice state. Drumalor generates the contents
+    // rather than embedding a recording, but what the counter walks is a fixed
+    // table either way.
+    //
+    // The table is walked cyclically and its contents are built to loop
+    // seamlessly, which is the one place this departs from the hardware: a
+    // real ROM is finite and the counter stops at its end. Here the address
+    // envelope is what ends the sound, so the source has to keep going until
+    // it does.
+    static constexpr int cymbalRomSize = 32768;
+    static constexpr int cymbalRomMask = cymbalRomSize - 1;
+
     struct AtomicInstrumentParameters
     {
         std::atomic<float> characterA { 0.5f };
@@ -233,7 +247,12 @@ private:
         float vcaBandwidthState { 0.0f };
         float vcaBandwidthCoefficient { 1.0f };
         float vcaBandwidthOpen { 1.0f };
-        float pcmNoise { 0.30f };
+        // What the counter is reading, and where it has got to. The ROM is
+        // engine-owned and shared by every voice; the address is per-voice
+        // because two crashes overlapping are two counters walking the same
+        // mask at their own rates, which is exactly what the machine does.
+        const float* rom { nullptr };
+        float romPhase { 0.0f };
         // The tone mixer is the last stage before the buffer amplifier, so the
         // digital channel passes through it too. It has no three analogue legs
         // of its own, so it is split by a single first-order crossover and
@@ -242,7 +261,6 @@ private:
         float pcmSplitCoefficient { 0.3f };
         float pcmLowGain { 0.0f };
         float pcmHighGain { 0.0f };
-        float modalGain { 0.0f };
     };
 
     struct HitVariation
@@ -484,8 +502,10 @@ private:
     };
     [[nodiscard]] CymbalBands renderCymbalBands (Voice& voice,
                                                  float source) noexcept;
+    [[nodiscard]] float boardDriftAt (std::uint64_t sampleIndex) const noexcept;
     [[nodiscard]] static float companding6BitDac (float value) noexcept;
-    [[nodiscard]] float nextCymbalPcm (Voice& voice, float source) const noexcept;
+    [[nodiscard]] float nextCymbalPcm (Voice& voice) const noexcept;
+    void buildCymbalRoms() noexcept;
     void sineAndCosineLookup (float phase, float& sine, float& cosine) const noexcept;
     [[nodiscard]] static float nextNoise (Voice& voice) noexcept;
     [[nodiscard]] float nextBandLimitedNoise (Voice& voice) const noexcept;
@@ -511,12 +531,19 @@ private:
     std::array<AtomicInstrumentParameters, instrumentCount> parameters_ {};
     std::array<std::uint64_t, instrumentCount> triggerCounters_ {};
     std::array<float, instrumentCount> componentDrift_ {};
+    // Engine time, in samples since the last reset. Advanced by whole blocks,
+    // so it does not depend on how the host divides them.
+    std::uint64_t engineSamples_ { 0 };
     std::array<Voice, maxVoices> voices_ {};
     std::array<Voice, retiringVoiceCount> retiringVoices_ {};
     std::array<RelaxationOscillatorBank, metallicBankCount> metallicBanks_ {};
     std::array<int, metallicBankCount> metallicBankVoiceCounts_ {};
     std::array<float, maximumMetallicDecimatorTaps> metallicDecimatorCoefficients_ {};
     std::array<float, sineTableSize> sineTable_ {};
+    // Two masks, because the machine has two: the ride and the crash are
+    // separate recordings, not one sample at two speeds.
+    std::array<float, cymbalRomSize> rideRom_ {};
+    std::array<float, cymbalRomSize> crashRom_ {};
     std::array<std::atomic<float>, instrumentCount> instrumentLevels_ {};
 
     std::atomic<float> outputGain_ { 0.82f };

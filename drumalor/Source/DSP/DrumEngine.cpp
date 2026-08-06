@@ -36,8 +36,12 @@ constexpr std::array<InstrumentMetadata, instrumentCount> metadata {{
     { Instrument::Clap,      "Clap",       "clap",       39, "Spread",  "Tone",       { 0.48f, 0.62f, 0.0f, 0.45f, 0.0f,  0.00f, 0 } },
     { Instrument::ClosedHat, "Closed Hat", "closedHat", 42, "Metal",   "Tone",       { 0.58f, 0.70f, 0.0f, 0.30f, 0.0f,  0.16f, 1 } },
     { Instrument::OpenHat,   "Open Hat",   "openHat",   46, "Metal",   "Tone",       { 0.62f, 0.68f, 0.0f, 0.55f, 0.0f,  0.20f, 1 } },
-    { Instrument::Ride,      "Ride",       "ride",       51, "Bell",    "Tone",       { 0.45f, 0.62f, 0.0f, 0.62f, 0.0f,  0.27f, 0 } },
-    { Instrument::Crash,     "Crash",      "crash",      49, "Spread",  "Brightness", { 0.58f, 0.65f, 0.0f, 0.65f, 0.0f, -0.27f, 0 } },
+    // Machine runs 0 = the 1980 analogue cymbal channel, 1 = the 1983 digital
+    // one. The defaults sit each voice on the machine that actually made that
+    // sound: the ride existed only on the digital machine, and the analogue
+    // one's single cymbal was, in everything but name, a crash.
+    { Instrument::Ride,      "Ride",       "ride",       51, "Machine", "Tone",       { 0.78f, 0.62f, 0.0f, 0.62f, 0.0f,  0.27f, 0 } },
+    { Instrument::Crash,     "Crash",      "crash",      49, "Machine", "Brightness", { 0.28f, 0.65f, 0.0f, 0.65f, 0.0f, -0.27f, 0 } },
     { Instrument::LowTom,    "Low Tom",    "lowTom",     45, "Punch",   "Skin",       { 0.55f, 0.40f, 0.0f, 0.60f, 0.0f, -0.20f, 0 } },
     { Instrument::MidTom,    "Mid Tom",    "midTom",     47, "Punch",   "Skin",       { 0.55f, 0.45f, 0.0f, 0.52f, 0.0f,  0.00f, 0 } },
     { Instrument::HighTom,   "High Tom",   "highTom",    50, "Punch",   "Skin",       { 0.50f, 0.50f, 0.0f, 0.45f, 0.0f,  0.20f, 0 } },
@@ -554,8 +558,145 @@ void DrumEngine::prepare (double sampleRate, int maxBlockSize) noexcept
     for (int i = 0; i < sineTableSize; ++i)
         sineTable_[static_cast<std::size_t> (i)] = std::sin (
             twoPi * static_cast<float> (i) / static_cast<float> (sineTableSize));
+    buildCymbalRoms();
     prepared_ = true;
     reset();
+}
+
+void DrumEngine::buildCymbalRoms() noexcept
+{
+    // What a 909 cymbal ROM holds is a recorded cymbal with its envelope
+    // divided out, so that six bits can be spent on waveform rather than on
+    // level. Divide the envelope out of a real cymbal and what is left is not
+    // a tone: it is a dense, stationary, inharmonic wash with a handful of
+    // strong low partials under it - the plate's first few modes surviving as
+    // pitch while everything above them has already smeared into noise.
+    //
+    // That is what is built here: shaped noise for the wash, a small set of
+    // inharmonic partials for the clang. No recording is embedded, and none of
+    // this comes from the 808's oscillator bank - on the hardware the two
+    // machines share nothing, and the whole point of the digital channel is
+    // that it is a different sound source, not a different filter.
+    //
+    // The tables are fixed data, so the design rate is the nominal sample
+    // clock rather than the host rate. Retuning moves the clock and carries
+    // the whole spectrum with it, which is the machine's only pitch control.
+    struct RomSpec
+    {
+        std::array<float, cymbalRomSize>* table;
+        float clockRate;
+        std::uint32_t seed;
+        float washCentre;
+        float washWidth;
+        float partialLow;
+        float partialHigh;
+        float partialLevel;
+        int partialCount;
+    };
+    // The wash carries these sounds and the partials only colour them. A 909
+    // cymbal is remembered as sizzle, not as pitch, and the ROM has to be
+    // weighted accordingly: partials loud enough to keep the plate from
+    // sounding like filtered hiss, quiet enough that they do not eat the full
+    // scale the wash needs.
+    const std::array<RomSpec, 2> specs { {
+        // The ride is the tighter, more periodic of the two: fewer partials,
+        // placed higher, over a narrower wash.
+        { &rideRom_, 30000.0f, 0x9E3779B9u, 8600.0f, 2.30f, 620.0f, 5200.0f, 0.24f, 18 },
+        // The crash is wider and denser, and keeps more low plate under it.
+        { &crashRom_, 27500.0f, 0x85EBCA6Bu, 9000.0f, 2.85f, 380.0f, 4200.0f, 0.30f, 26 },
+    } };
+
+    for (const auto& spec : specs)
+    {
+        auto& table = *spec.table;
+        const float nyquist = 0.5f * spec.clockRate;
+
+        // ---------------------------------------------------------- wash --
+        // Deterministic white noise, then shaped. The shaping runs over the
+        // table twice and only the second lap is kept, so the filter state at
+        // the end of the table is the state it had at the start: the wash
+        // loops without a seam, which a straight single pass would not.
+        for (int i = 0; i < cymbalRomSize; ++i)
+            table[static_cast<std::size_t> (i)] = signedUnitFromHash (
+                hash32 (spec.seed + static_cast<std::uint32_t> (i)));
+
+        // A broad resonant band-pass is enough: a cymbal's wash has no
+        // features worth more than this once its envelope is gone.
+        const float omega = twoPi * std::min (spec.washCentre, 0.45f * spec.clockRate)
+            / spec.clockRate;
+        const float alpha = std::sin (omega)
+            * std::sinh (0.5f * std::log (2.0f) * spec.washWidth * omega
+                         / std::max (1.0e-6f, std::sin (omega)));
+        const float inverseA0 = 1.0f / (1.0f + alpha);
+        const float b0 = alpha * inverseA0;
+        const float b2 = -b0;
+        const float a1 = -2.0f * std::cos (omega) * inverseA0;
+        const float a2 = (1.0f - alpha) * inverseA0;
+
+        float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
+        for (int lap = 0; lap < 2; ++lap)
+        {
+            for (int i = 0; i < cymbalRomSize; ++i)
+            {
+                const auto index = static_cast<std::size_t> (i);
+                const float input = table[index];
+                const float output = b0 * input + b2 * x2 - a1 * y1 - a2 * y2;
+                x2 = x1;
+                x1 = input;
+                y2 = y1;
+                y1 = output;
+                if (lap == 1)
+                    table[index] = output;
+            }
+        }
+
+        // ------------------------------------------------------ partials --
+        // Frequencies are quantized to a whole number of cycles per table, so
+        // every partial closes on itself at the wrap and the loop stays
+        // seamless. Inharmonic by construction: a cymbal's modes are not a
+        // series, and spacing them by an irrational-ish walk keeps any two of
+        // them from beating into a pitch.
+        const float cyclesPerHertz = static_cast<float> (cymbalRomSize) / spec.clockRate;
+        std::uint32_t state = spec.seed ^ 0xC2B2AE35u;
+        for (int partial = 0; partial < spec.partialCount; ++partial)
+        {
+            state = hash32 (state);
+            const float position = static_cast<float> (partial)
+                / static_cast<float> (std::max (1, spec.partialCount - 1));
+            // Geometric spread across the partial band, jittered so the set
+            // never lines up into a harmonic series.
+            const float jitter = 1.0f + 0.34f * signedUnitFromHash (state);
+            const float frequency = std::clamp (
+                spec.partialLow * std::pow (spec.partialHigh / spec.partialLow, position)
+                    * jitter,
+                20.0f, 0.94f * nyquist);
+            const auto cycles = static_cast<float> (std::max (1,
+                static_cast<int> (std::lround (frequency * cyclesPerHertz))));
+            state = hash32 (state);
+            const float phase = signedUnitFromHash (state);
+            // The low modes of a plate are the loud ones and the ones that
+            // survive; above them the partials are only there to thicken.
+            const float amplitude = spec.partialLevel
+                / (1.0f + 5.0f * position * position);
+
+            for (int i = 0; i < cymbalRomSize; ++i)
+                table[static_cast<std::size_t> (i)] += amplitude * std::sin (
+                    twoPi * (cycles * static_cast<float> (i)
+                             / static_cast<float> (cymbalRomSize) + phase));
+        }
+
+        // ----------------------------------------------------- normalise --
+        // The ROM is stored at full scale, which is the entire reason the
+        // machine gets away with six bits: the quantizer always sees a signal
+        // using its whole range, and the envelope that makes it a cymbal is
+        // applied afterwards by the VCA.
+        float peak = 0.0f;
+        for (const float sample : table)
+            peak = std::max (peak, std::abs (sample));
+        const float normalise = peak > 1.0e-6f ? 0.985f / peak : 0.0f;
+        for (float& sample : table)
+            sample *= normalise;
+    }
 }
 
 void DrumEngine::reset() noexcept
@@ -566,6 +707,7 @@ void DrumEngine::reset() noexcept
         voice = Voice {};
     triggerCounters_.fill (0);
     componentDrift_.fill (0.0f);
+    engineSamples_ = 0;
     metallicBankVoiceCounts_.fill (0);
     metallicBankMask_ = 0u;
     resetMetallicOscillatorBanks();
@@ -1385,6 +1527,32 @@ DrumEngine::CymbalBands DrumEngine::renderCymbalBands (Voice& voice,
     return bands;
 }
 
+float DrumEngine::boardDriftAt (std::uint64_t sampleIndex) const noexcept
+{
+    // Rail voltage and board temperature wander with time, not with how many
+    // notes have been played - a machine left switched on drifts whether or
+    // not anything is triggering. Deriving this from the engine clock rather
+    // than from a trigger counter is what keeps it honest, and it is also what
+    // keeps one voice's sound from depending on another voice's history.
+    //
+    // A smooth wander between hash-derived corners a few seconds apart: slow
+    // enough that consecutive hits agree with each other, fast enough that a
+    // long take does not sit at one offset.
+    const double period = std::max (1.0, 2.9 * sampleRate_);
+    const double position = static_cast<double> (sampleIndex) / period;
+    const auto corner = static_cast<std::uint64_t> (position);
+    const auto fraction = static_cast<float> (position - static_cast<double> (corner));
+    const auto cornerHash = [] (std::uint64_t index) noexcept
+    {
+        return signedUnitFromHash (hash32 (
+            static_cast<std::uint32_t> (index) ^ 0x27d4eb2fu));
+    };
+    const float from = cornerHash (corner);
+    const float to = cornerHash (corner + 1u);
+    const float smooth = fraction * fraction * (3.0f - 2.0f * fraction);
+    return from + (to - from) * smooth;
+}
+
 float DrumEngine::companding6BitDac (float value) noexcept
 {
     // The TR-909 stores its cymbals as six bits per sample and gets away with
@@ -1419,9 +1587,11 @@ float DrumEngine::companding6BitDac (float value) noexcept
     return sign * (base + step * (std::min (7.0f, code) + 0.5f));
 }
 
-float DrumEngine::nextCymbalPcm (Voice& voice, float source) const noexcept
+float DrumEngine::nextCymbalPcm (Voice& voice) const noexcept
 {
     auto& channel = voice.cymbal;
+    if (channel.rom == nullptr)
+        return 0.0f;
 
     // A counter walks the ROM at the sample clock - about 30 kHz nominal, and
     // tunable, because the clock is what the TUNE control moves. Drumalor
@@ -1436,9 +1606,18 @@ float DrumEngine::nextCymbalPcm (Voice& voice, float source) const noexcept
     if (channel.clockPhase >= 1.0f)
     {
         channel.clockPhase -= std::floor (channel.clockPhase);
-        const float composite = std::clamp (
-            source + channel.pcmNoise * nextNoise (voice), -1.0f, 1.0f);
-        channel.hold = companding6BitDac (composite);
+
+        // One address per clock, and nothing between addresses: the counter
+        // steps, the ROM answers, the DAC holds. Reading the table with a
+        // nearest-address lookup rather than interpolating is the point - the
+        // machine has no interpolator, and the aliasing that step produces is
+        // part of why its cymbals sound the way they do.
+        channel.romPhase += 1.0f;
+        if (channel.romPhase >= static_cast<float> (cymbalRomSize))
+            channel.romPhase -= static_cast<float> (cymbalRomSize);
+        const auto address = static_cast<int> (channel.romPhase) & cymbalRomMask;
+        channel.hold = companding6BitDac (
+            channel.rom[static_cast<std::size_t> (address)]);
 
         // A second DAC reads the address lines and an anti-log converter turns
         // its ramp into the envelope. Because it steps with the counter and
@@ -1560,55 +1739,63 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
         1.0e-4f, 1.0f);
     channel.vcaBandwidthCoefficient = channel.vcaBandwidthOpen;
 
+    // The counter is reset by the trigger, so every hit reads the mask from
+    // its first address: the ROM contributes nothing to hit-to-hit variation,
+    // which is exactly the digital machine's reputation. What varies is the
+    // rate it is read at, because the sample clock is a free-running analogue
+    // oscillator and drifts with the board like everything else - so two hits
+    // are the same recording at very slightly different speeds. The 808's
+    // oscillators vary far more, since they free-run and a strike samples them
+    // wherever they happen to be rather than restarting them.
+    channel.rom = ride ? rideRom_.data() : crashRom_.data();
+    channel.romPhase = 0.0f;
+
     // ------------------------------------------------------- tone control --
-    // The 808's output stage is a three-band mixer, so both character controls
-    // land here as weights rather than as a filter sweep. Ride reads them as
-    // Bell and Tone, Crash as Spread and Brightness.
+    // Both machines' outputs meet at this mixer, so this is where the choice
+    // between them is made. Machine picks the machine; Tone tilts whichever
+    // one is playing.
     //
-    // The digital channel's crossover sits between the two regions the mixer
-    // separates, so tilting one tilts the other with it.
+    // The crossfade is equal-power because the two channels are genuinely
+    // uncorrelated - separate sources rather than one source through two
+    // filters - so their powers add and a linear fade would sag in the middle.
     channel.pcmSplitState = 0.0f;
     channel.pcmSplitCoefficient = std::clamp (
         1.0f - std::exp (-twoPi * 3000.0f * inverseSampleRate_), 1.0e-4f, 1.0f);
 
+    const float machine = std::clamp (voice.characterA, 0.0f, 1.0f);
+    const float analogueMix = std::cos (0.25f * twoPi * machine);
+    // The two channels do not arrive at the mixer at the same level - a
+    // band-passed oscillator bank and a six-bit converter have no reason to -
+    // so the digital leg carries the trim that matches them. Both machines
+    // were levelled at their own output stages too; a control that changed
+    // loudness rather than character would be useless for choosing between
+    // them. Measured across the full sweep, not guessed.
+    const float digitalMix = std::sin (0.25f * twoPi * machine)
+        * (ride ? 1.39f : 1.88f);
+    const float tone = voice.characterB;
+
     if (ride)
     {
-        const float bell = voice.characterA;
-        const float tone = voice.characterB;
-        // Striking the cup is not striking the bow: the cup is stiff, curved
-        // and small, so it rings its own few modes and couples badly into the
-        // diffuse field spread across the rest of the plate. Bell therefore
-        // has to take wash away, not merely add body.
-        // Moving the stick from the bow to the cup is not a linear journey.
-        // Most of the bow behaves like the bow; the wash only falls away once
-        // the tip is actually on the cup, which is a small, stiff, strongly
-        // curved piece of the same plate.
-        const float cup = bell * bell;
-        const float wash = 1.0f - 0.66f * cup;
-        channel.lowGain = 1.02f + 1.15f * cup - 0.82f * tone;
-        channel.midGain = (0.22f + 1.02f * tone) * wash;
-        channel.highGain = (0.02f + 1.30f * tone) * wash;
-        const float digital = 0.66f * wash;
-        channel.pcmLowGain = digital * (1.42f - 1.34f * tone);
-        channel.pcmHighGain = digital * (0.14f + 1.82f * tone);
-        channel.modalGain = 0.12f + 0.66f * cup;
-        channel.pcmNoise = 0.26f;
+        // The 808 never had a ride, so at the analogue end this is that
+        // machine's cymbal channel tuned up and given the shorter decay a ride
+        // pattern needs, not an imitation of a ride cymbal.
+        channel.lowGain = analogueMix * (1.24f - 0.70f * tone);
+        channel.midGain = analogueMix * (0.34f + 1.06f * tone);
+        channel.highGain = analogueMix * (0.06f + 1.36f * tone);
+        channel.pcmLowGain = digitalMix * (1.34f - 1.12f * tone);
+        channel.pcmHighGain = digitalMix * (0.20f + 1.78f * tone);
     }
     else
     {
-        const float spread = voice.characterA;
+        // The analogue machine's cymbal is a splash, not a dark wash: most of
+        // what leaves it comes off the 7.1 kHz section, and weighting the two
+        // top VCAs below the 3.44 kHz one is what made this read as dull.
         const float brightness = voice.characterB;
-        channel.lowGain = 0.98f - 0.46f * brightness;
-        channel.midGain = 0.28f + 0.80f * brightness;
-        channel.highGain = 0.10f + 1.05f * brightness;
-        // Spread pushes the ROM's contents away from the oscillator bank and
-        // toward broadband hiss, which is the difference between a cymbal
-        // recorded close and one recorded with the room in it.
-        const float digital = 0.58f + 0.16f * spread;
-        channel.pcmLowGain = digital * (1.20f - 0.95f * brightness);
-        channel.pcmHighGain = digital * (0.25f + 1.40f * brightness);
-        channel.pcmNoise = 0.20f + 0.62f * spread;
-        channel.modalGain = 0.26f - 0.11f * spread;
+        channel.lowGain = analogueMix * (1.02f - 0.44f * brightness);
+        channel.midGain = analogueMix * (0.40f + 1.16f * brightness);
+        channel.highGain = analogueMix * (0.20f + 1.72f * brightness);
+        channel.pcmLowGain = digitalMix * (1.22f - 0.98f * brightness);
+        channel.pcmHighGain = digitalMix * (0.28f + 1.46f * brightness);
     }
 }
 
@@ -2649,33 +2836,52 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
     drift = std::clamp (0.86f * drift
                            + 0.14f * signedUnitFromHash (seed ^ 0xa341316cu),
                         -1.0f, 1.0f);
+    // The board the voice sits on drifts too, and it drifts for everything on
+    // it at once: one supply, one ambient temperature. Two drums struck a
+    // moment apart therefore lean the same way, which is the part of an
+    // analogue kit that a per-voice tolerance cannot produce - it makes the
+    // kit sound like one instrument having a moment rather than thirteen
+    // independent ones jittering.
+    const float boardDrift = boardDriftAt (engineSamples_);
+
     // Humanise scales how much of that modelled tolerance actually reaches the
-    // voice. The drift accumulator itself is untouched, so the per-instrument
-    // sequence stays reproducible at every setting, and the 0.5 default maps to
-    // a depth of exactly 1.0 - the historical fixed variation. Zero gives a
-    // machine-tight kit; 1.0 doubles the spread. Each raw deviation is clamped
-    // before scaling, so the depth-1.0 result is bit-identical to the original.
+    // voice. The drift accumulators themselves are untouched, so the sequence
+    // stays reproducible at every setting. Zero gives a machine-tight kit, 0.5
+    // is the calibrated unit, and 1.0 doubles the spread into a visibly older
+    // one. The deviations are sized to be heard rather than merely measured:
+    // roughly a sixth of a semitone of pitch at the default, which is where a
+    // repeated hit stops reading as a loop of one recording.
     const float humaniseDepth = 2.0f * clampUnit (
         humanise_.load (std::memory_order_relaxed), 0.5f);
     HitVariation variation;
-    variation.pitchCents = humaniseDepth * (3.2f * drift
-        + 2.4f * signedUnitFromHash (seed ^ 0xc8013ea4u));
+    variation.pitchCents = humaniseDepth * (5.6f * drift
+        + 4.4f * signedUnitFromHash (seed ^ 0xc8013ea4u)
+        + 6.5f * boardDrift);
     variation.decayScale = 1.0f + humaniseDepth * std::clamp (
-        0.025f * drift + 0.016f * signedUnitFromHash (seed ^ 0xad90777du),
-        -0.045f, 0.045f);
-    variation.characterAOffset = humaniseDepth * (0.018f * drift
-        + 0.014f * signedUnitFromHash (seed ^ 0x7e95761eu));
-    variation.characterBOffset = humaniseDepth * (-0.014f * drift
-        + 0.016f * signedUnitFromHash (seed ^ 0x3c6ef372u));
+        0.044f * drift + 0.030f * signedUnitFromHash (seed ^ 0xad90777du)
+            + 0.038f * boardDrift,
+        -0.090f, 0.090f);
+    // The board term is deliberately absent from these two: what drifts with
+    // temperature is a frequency or a time constant, not where a panel control
+    // is set. Leaving it out also keeps the kit's overall level steady while
+    // it drifts, which is the difference between a machine warming up and a
+    // machine with a fader moving on it.
+    variation.characterAOffset = humaniseDepth * (0.032f * drift
+        + 0.026f * signedUnitFromHash (seed ^ 0x7e95761eu));
+    variation.characterBOffset = humaniseDepth * (-0.026f * drift
+        + 0.029f * signedUnitFromHash (seed ^ 0x3c6ef372u));
     variation.transientScale = 1.0f + humaniseDepth * std::clamp (
-        -0.035f * drift + 0.035f * signedUnitFromHash (seed ^ 0xbb67ae85u),
-        -0.075f, 0.075f);
-    variation.circuitDriveOffset = humaniseDepth * (0.035f * drift
-        + 0.045f * signedUnitFromHash (seed ^ 0x1b873593u));
-    variation.circuitBias = humaniseDepth * (0.010f * drift
-        + 0.007f * signedUnitFromHash (seed ^ 0x85ebca6bu));
-    variation.phaseOffset = humaniseDepth * (0.010f * drift
-        + 0.012f * signedUnitFromHash (seed ^ 0xc2b2ae35u));
+        -0.062f * drift + 0.064f * signedUnitFromHash (seed ^ 0xbb67ae85u)
+            + 0.030f * boardDrift,
+        -0.150f, 0.150f);
+    variation.circuitDriveOffset = humaniseDepth * (0.062f * drift
+        + 0.080f * signedUnitFromHash (seed ^ 0x1b873593u)
+        + 0.055f * boardDrift);
+    variation.circuitBias = humaniseDepth * (0.018f * drift
+        + 0.013f * signedUnitFromHash (seed ^ 0x85ebca6bu)
+        + 0.012f * boardDrift);
+    variation.phaseOffset = humaniseDepth * (0.018f * drift
+        + 0.022f * signedUnitFromHash (seed ^ 0xc2b2ae35u));
     auto& voice = voices_[static_cast<std::size_t> (findVoiceSlot())];
     if (voice.active && voice.ageSamples != 0u)
         retireVoice (voice);
@@ -2931,82 +3137,36 @@ float DrumEngine::renderRide (Voice& voice) noexcept
     // band-passes hang off. It free-runs behind the VCAs, so a strike samples
     // whatever the circuit happens to be doing rather than restarting it.
     const float oscillatorBank = metallicSourceFor (voice.instrument);
-    const float noise = nextBandLimitedNoise (voice);
     const auto bands = renderCymbalBands (voice, oscillatorBank);
 
-    // What the 909's counter reads out of the ROM. The stored waveform has had
-    // its envelope taken out to make the six bits go further, so this is
-    // deliberately full-scale and stationary; nextCymbalPcm quantizes it and
-    // then the address envelope puts the decay back, after the quantizer,
-    // which is what makes the grain decay with the note instead of sitting
-    // under it as a fixed floor.
-    const float pcm = nextCymbalPcm (
-        voice, 0.80f * oscillatorBank + 0.34f * noise);
+    // What the 909's counter reads out of its own ROM. It shares nothing with
+    // the oscillator bank above: on the hardware these are two machines, and
+    // feeding both from one source is what made the pair average into a single
+    // timbre instead of sounding like either of them.
+    const float pcm = nextCymbalPcm (voice);
 
-    // Neither machine has one of these. A ride does: the stick lands on a
-    // finite piece of bronze, and near the cup that is most of what you hear.
-    float modes = 0.0f;
-    if (voice.ageSamples < voice.modalActiveSamples)
-    {
-        const float contact = voice.ageSamples == 0u
-            ? 2.15f * voice.transientScale * voice.excitationScale
-            : 0.055f * modalNoiseScale_ * noise * voice.transientEnvelope
-                * voice.transientScale * voice.excitationScale;
-        const auto activeModes = static_cast<std::size_t> (voice.modeCount);
-        for (std::size_t mode = 0; mode < activeModes; ++mode)
-        {
-            float gain = voice.modeGains[mode];
-            gain *= mode < 4
-                ? 0.50f + 1.40f * voice.characterA
-                : 0.90f - 0.25f * voice.characterA;
-            modes += gain * voice.resonators[mode].tick (contact);
-        }
-    }
-
-    // The output buffer sums the three high-passed analogue bands, the digital
-    // channel and the plate into one node, which is where the voice's own
-    // output stage picks it up.
+    // The output buffer sums the three high-passed analogue bands and the
+    // digital channel into one node, which is where the voice's own output
+    // stage picks it up. Nothing else: neither machine has a modal plate, and
+    // the one that used to sit here is what kept a pitched ring on top of two
+    // circuits that do not produce one.
     return 1.14f * (channel.lowGain * bands.low
                     + channel.midGain * bands.mid
                     + channel.highGain * bands.high
-                    + pcm
-                    + channel.modalGain * modes);
+                    + pcm);
 }
 
 float DrumEngine::renderCrash (Voice& voice) noexcept
 {
     const auto& channel = voice.cymbal;
     const float oscillatorBank = metallicSourceFor (voice.instrument);
-    const float noise = nextBandLimitedNoise (voice);
     const auto bands = renderCymbalBands (voice, oscillatorBank);
-    // Spread moves what the ROM holds from the oscillator bank toward
-    // broadband hiss. On the 808 side it has already widened the bank's own
-    // component tolerances, so the two ends of the control are a tight
-    // periodic machine cymbal and a diffuse one.
-    const float pcm = nextCymbalPcm (
-        voice, (0.86f - 0.34f * voice.characterA) * oscillatorBank
-                   + (0.26f + 0.30f * voice.characterA) * noise);
-
-    // Struck once and then left. The long tail belongs to the two circuits;
-    // driving low resonators for the length of a crash is what used to leave a
-    // handful of pitches clinging to it.
-    float modes = 0.0f;
-    if (voice.ageSamples < voice.modalActiveSamples)
-    {
-        const float excitation = voice.ageSamples == 0u
-            ? 1.75f * voice.transientScale * voice.excitationScale
-            : 0.075f * modalNoiseScale_ * noise * voice.transientEnvelope
-                * voice.transientScale * voice.excitationScale;
-        const auto activeModes = static_cast<std::size_t> (voice.modeCount);
-        for (std::size_t mode = 0; mode < activeModes; ++mode)
-            modes += voice.modeGains[mode] * voice.resonators[mode].tick (excitation);
-    }
+    const float pcm = nextCymbalPcm (voice);
 
     return 1.02f * (channel.lowGain * bands.low
                     + channel.midGain * bands.mid
                     + channel.highGain * bands.high
-                    + pcm
-                    + channel.modalGain * modes);
+                    + pcm);
 }
 
 float DrumEngine::renderTom (Voice& voice) noexcept
@@ -3265,6 +3425,10 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         return;
     if (! prepared_)
         prepare (sampleRate_, std::max (maxBlockSize_, numSamples));
+
+    // Whole blocks, so the count after a given stretch of audio is the same
+    // however the host chose to divide it.
+    engineSamples_ += static_cast<std::uint64_t> (numSamples);
 
     updateMetallicBankParameterTargets();
 

@@ -1523,24 +1523,53 @@ void testCymbalQualityContract()
     expect (crash.logBandEntropy >= 0.70 && crash.activeBandFraction >= 0.60,
             "Crash spectrum collapsed onto too few persistent modes");
 
-    auto maximumBell = rideDefaults;
-    maximumBell.characterA = 1.0f;
-    const auto bellRide = analyseCymbalPreset (
-        drumalor::Instrument::Ride, maximumBell);
-    expect (bellRide.airShare >= 0.055,
-            "Ride Bell removed the cymbal wash (air share "
-                + std::to_string (bellRide.airShare) + ")");
-    expect (bellRide.logBandEntropy >= 0.65
-                && bellRide.activeBandFraction >= 0.55,
-            "Ride Bell produced a sparse, clingy resonator tail");
-    const double defaultBellBalance = ride.bodyShare
-        / std::max (1.0e-12, ride.airShare);
-    const double maximumBellBalance = bellRide.bodyShare
-        / std::max (1.0e-12, bellRide.airShare);
-    expect (maximumBellBalance >= 1.25 * defaultBellBalance,
-            "Ride Bell did not emphasize body relative to wash (default/max "
-                + std::to_string (defaultBellBalance) + "/"
-                + std::to_string (maximumBellBalance) + ")");
+    // Machine chooses between the two circuits rather than mixing a third
+    // sound out of them, so both ends have to stand on their own: a cymbal at
+    // either extreme must be a complete, usable cymbal, not a half-empty
+    // version of the middle.
+    for (const auto instrument : { drumalor::Instrument::Ride,
+                                   drumalor::Instrument::Crash })
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (instrument));
+        auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+        auto analogueOnly = defaults;
+        auto digitalOnly = defaults;
+        analogueOnly.characterA = 0.0f;
+        digitalOnly.characterA = 1.0f;
+        const auto analogue = analyseCymbalPreset (instrument, analogueOnly);
+        const auto digital = analyseCymbalPreset (instrument, digitalOnly);
+
+        expect (analogue.airShare >= 0.10 && digital.airShare >= 0.10,
+                label + " Machine left one end without metallic air (analogue/digital "
+                    + std::to_string (analogue.airShare) + "/"
+                    + std::to_string (digital.airShare) + ")");
+        expect (analogue.logBandEntropy >= 0.65 && digital.logBandEntropy >= 0.65,
+                label + " Machine produced a sparse, clingy tail at one end");
+
+        // Choosing a machine is not choosing a volume. Both were levelled at
+        // their own output stages, and a control that changed loudness would
+        // be useless for comparing them.
+        const double levelChangeDb = std::abs (20.0 * std::log10 (
+            digital.rms / std::max (1.0e-12, analogue.rms)));
+        expect (levelChangeDb <= 2.0,
+                label + " Machine changed level rather than character (observed "
+                    + std::to_string (levelChangeDb) + " dB)");
+
+        // ...but it must change something, or it is not selecting anything.
+        // The two circuits share no source, so their spectra have no reason to
+        // agree, and a control that left the spectrum alone would mean the
+        // decorrelation had been lost again.
+        const double balanceChangeDb = std::abs (10.0 * std::log10 (
+            (digital.airShare / std::max (1.0e-12, digital.bodyShare))
+            / std::max (1.0e-12,
+                        analogue.airShare / std::max (1.0e-12, analogue.bodyShare))));
+        const bool movedPersistence = std::abs (digital.tonalPersistence
+                                                - analogue.tonalPersistence)
+            >= 0.04 * std::max (digital.tonalPersistence, analogue.tonalPersistence);
+        expect (balanceChangeDb >= 1.0 || movedPersistence,
+                label + " Machine did not distinguish the two circuits (balance "
+                    + std::to_string (balanceChangeDb) + " dB)");
+    }
 
     // Tone/Brightness must move spectral balance, not merely produce a
     // numerically different waveform as the generic parameter test checks.
@@ -1576,27 +1605,30 @@ void testCymbalQualityContract()
             "Crash Brightness changed air/body balance by less than 3 dB (observed "
                 + std::to_string (crashBrightnessChangeDb) + " dB)");
 
-    auto narrowCrashParameters = crashDefaults;
-    auto wideCrashParameters = crashDefaults;
-    narrowCrashParameters.characterA = 0.0f;
-    wideCrashParameters.characterA = 1.0f;
-    const auto narrowCrash = analyseCymbalPreset (
-        drumalor::Instrument::Crash, narrowCrashParameters);
-    const auto wideCrash = analyseCymbalPreset (
-        drumalor::Instrument::Crash, wideCrashParameters);
-    const double spreadLevelChangeDb = std::abs (20.0 * std::log10 (
-        wideCrash.rms / std::max (1.0e-12, narrowCrash.rms)));
-    expect (spreadLevelChangeDb <= 4.0,
-            "Crash Spread changed perceived level by more than 4 dB (observed "
-                + std::to_string (spreadLevelChangeDb) + " dB)");
-    const bool spreadBroadenedBands = wideCrash.logBandEntropy
-        >= narrowCrash.logBandEntropy + 0.015;
-    const bool spreadReducedRinging = wideCrash.tonalPersistence
-        <= 0.92 * narrowCrash.tonalPersistence + 0.002;
-    expect (spreadBroadenedBands || spreadReducedRinging,
-            "Crash Spread did not diffuse its spectrum or reduce tonal persistence");
-    expect (wideCrash.activeBandFraction + 0.10 >= narrowCrash.activeBandFraction,
-            "Crash Spread lost too much spectral coverage");
+    // The level match has to hold across the whole sweep, not only at its two
+    // ends: an equal-power crossfade between two uncorrelated sources should
+    // not dip in the middle, and a dip there would be the audible sign that
+    // the two channels had become correlated again.
+    for (const auto instrument : { drumalor::Instrument::Ride,
+                                   drumalor::Instrument::Crash })
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (instrument));
+        auto sweep = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+        double quietest = std::numeric_limits<double>::max();
+        double loudest = 0.0;
+        for (int step = 0; step <= 8; ++step)
+        {
+            sweep.characterA = static_cast<float> (step) / 8.0f;
+            const auto measured = analyseCymbalPreset (instrument, sweep);
+            quietest = std::min (quietest, measured.rms);
+            loudest = std::max (loudest, measured.rms);
+        }
+        const double sweepRangeDb = 20.0 * std::log10 (
+            loudest / std::max (1.0e-12, quietest));
+        expect (sweepRangeDb <= 2.5,
+                label + " Machine sweep was not level (range "
+                    + std::to_string (sweepRangeDb) + " dB)");
+    }
 }
 
 std::vector<float> renderCymbalMono (drumalor::Instrument instrument,
@@ -1927,6 +1959,96 @@ std::vector<float> renderKitHits (drumalor::Instrument instrument,
         result.insert (result.end(), segment.begin(), segment.end());
     }
     return result;
+}
+
+// "Same but different", for every voice on the board.
+//
+// An analogue drum machine never plays a note twice. Two strikes of the same
+// drum at the same velocity land on components that have drifted, oscillators
+// that were somewhere else in their cycle, and a supply that has sagged since
+// the last one - so the pair is recognisably one drum and measurably not one
+// recording. Both halves of that need asserting: a kit that repeats exactly is
+// a sampler, and a kit whose repeats wander is broken.
+//
+// This runs over all thirteen voices rather than a sampled few, because the
+// property is meant to hold for the instrument, not for the voices that
+// happened to be checked.
+void testEveryVoiceVariesBetweenHits()
+{
+    constexpr int hitCount = 6;
+    constexpr int samplesPerHit = 12000;
+    const drumalor::KitParameters factory {};
+
+    for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
+    {
+        const auto instrument = static_cast<drumalor::Instrument> (index);
+        const std::string label (drumalor::getInstrumentDisplayName (instrument));
+        const auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+        const auto render = renderKitHits (
+            instrument, defaults, factory, hitCount, samplesPerHit);
+        const auto stride = static_cast<std::size_t> (samplesPerHit) * 2u;
+
+        const auto segment = [&render, stride] (std::size_t hit)
+        {
+            return std::vector<float> (
+                render.begin() + static_cast<std::ptrdiff_t> (hit * stride),
+                render.begin() + static_cast<std::ptrdiff_t> ((hit + 1u) * stride));
+        };
+        const auto peak = [] (const std::vector<float>& x)
+        {
+            double highest = 0.0;
+            for (const float value : x)
+                highest = std::max (highest, std::abs (static_cast<double> (value)));
+            return highest;
+        };
+
+        const auto meanAbsolute = [] (const std::vector<float>& x)
+        {
+            double total = 0.0;
+            for (const float value : x)
+                total += std::abs (static_cast<double> (value));
+            return total / static_cast<double> (std::max<std::size_t> (1, x.size()));
+        };
+
+        double quietest = std::numeric_limits<double>::max();
+        double loudest = 0.0;
+        bool everyPairDiffered = true;
+        double smallestRelativeChange = std::numeric_limits<double>::max();
+        for (std::size_t hit = 0; hit + 1u < static_cast<std::size_t> (hitCount); ++hit)
+        {
+            const auto previous = segment (hit);
+            const auto current = segment (hit + 1u);
+            everyPairDiffered = everyPairDiffered && previous != current;
+            const double reference = std::max (meanAbsolute (previous),
+                                               meanAbsolute (current));
+            smallestRelativeChange = std::min (
+                smallestRelativeChange,
+                meanAbsoluteDifference (previous, current)
+                    / std::max (1.0e-12, reference));
+            quietest = std::min (quietest, peak (current));
+            loudest = std::max (loudest, peak (current));
+        }
+        expect (everyPairDiffered,
+                label + " played two consecutive hits identically, which no "
+                        "analogue voice does");
+
+        // Not merely unequal in the last bit - different enough to hear. A
+        // voice that repeated to within a fraction of a percent would satisfy
+        // an exact comparison and still sound like one recording retriggered.
+        expect (smallestRelativeChange >= 0.02,
+                label + " repeated too closely between hits to be heard as "
+                        "variation (smallest change "
+                    + std::to_string (smallestRelativeChange) + " of level)");
+
+        // Different, but the same drum: the spread across six strikes has to
+        // stay inside what a machine's tolerances would explain. This is the
+        // half that catches variation turning into sloppiness.
+        const double spreadDb = 20.0 * std::log10 (
+            loudest / std::max (1.0e-12, quietest));
+        expect (spreadDb <= 6.0,
+                label + " varied its level between hits by more than a machine "
+                        "would (" + std::to_string (spreadDb) + " dB)");
+    }
 }
 
 void testPerVoiceMixer()
@@ -3043,6 +3165,7 @@ int main()
     testCymbalCircuitContract();
     testParameterInfluence();
     testPerc1DriveAddsDensity();
+    testEveryVoiceVariesBetweenHits();
     testPerVoiceMixer();
     testChokeGroups();
     testHumaniseDepth();
