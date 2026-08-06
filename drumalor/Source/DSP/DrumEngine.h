@@ -165,6 +165,86 @@ private:
         void clear() noexcept;
     };
 
+    // One cymbal channel, laid out the way the two machines that made this
+    // sound actually lay out: a TR-808 analogue channel and a TR-909 digital
+    // one, summed at a single buffer amplifier.
+    //
+    // The 808 half is the classic block chain - six Schmitt-trigger inverter
+    // oscillators summed at a virtual earth, two active band-passes on that
+    // node, a trigger pulse through an attack smoother into two envelope
+    // generators, three swing-type VCAs, a Sallen-Key high-pass on each band,
+    // and a tone-control mixer.
+    //
+    // The 909 half is a counter walking a ROM into a companded 6-bit DAC, a
+    // second DAC on the address lines through an anti-log converter to make
+    // the envelope, the VCA that restores it, and the low-pass that removes
+    // the sample clock. Drumalor generates the ROM contents rather than
+    // embedding any recording.
+    struct CymbalChannel
+    {
+        // 808: the two band-passes hanging off the oscillator summing node.
+        Biquad bandLow {};
+        Biquad bandHigh {};
+        // 808: one Sallen-Key high-pass per band, ahead of the tone mixer.
+        Biquad highpassLow {};
+        Biquad highpassMid {};
+        Biquad highpassHigh {};
+        // 909: the reconstruction filter after the DAC and its VCA.
+        Biquad reconstruction {};
+
+        // 808 trigger path. The trigger pulse is not a step: it charges the
+        // envelope capacitors through the attack smoother, so every band opens
+        // over a short ramp rather than switching on.
+        float gate { 0.0f };
+        float gateCoefficient { 1.0f };
+        float peak { 1.0f };
+        // 808 swing VCAs: the control-voltage knee and the control leakage
+        // that a steered pair puts through even with no signal.
+        float vcaKnee { 0.22f };
+        float feedthrough { 0.0f };
+        // 808 tone-control mixer weights for the three high-passed bands.
+        float lowGain { 0.0f };
+        float midGain { 0.0f };
+        float highGain { 0.0f };
+        // Ages past which the mid and high VCAs are shut so far that their
+        // bands cannot reach even -150 dB, so the sections feeding them are
+        // skipped. Derived from the voice's own decay, so the boundary lands
+        // at the same instant at every sample rate and under every host block
+        // partitioning. The low band carries the DECAY control and runs for as
+        // long as the voice does.
+        std::uint64_t midActiveSamples { 0 };
+        std::uint64_t highActiveSamples { 0 };
+
+        // 909 sample clock, as a phase increment per engine sample.
+        float clockPhase { 1.0f };
+        float clockIncrement { 0.625f };
+        // The DAC's held output and the source it was quantized from.
+        float hold { 0.0f };
+        // The address-line DAC's anti-log envelope and its per-clock ratio.
+        // Because it steps with the counter rather than with time, retuning
+        // the clock moves pitch and tail length together, exactly as the
+        // machine does.
+        float romEnvelope { 1.0f };
+        float romDecay { 1.0f };
+        // An OTA's transconductance sets its bandwidth as well as its gain, so
+        // a channel closing down loses its top before it loses its level. This
+        // is the pole that moves with the control current; it is retuned once
+        // per sample clock rather than once per sample.
+        float vcaBandwidthState { 0.0f };
+        float vcaBandwidthCoefficient { 1.0f };
+        float vcaBandwidthOpen { 1.0f };
+        float pcmNoise { 0.30f };
+        // The tone mixer is the last stage before the buffer amplifier, so the
+        // digital channel passes through it too. It has no three analogue legs
+        // of its own, so it is split by a single first-order crossover and
+        // weighted by the same control.
+        float pcmSplitState { 0.0f };
+        float pcmSplitCoefficient { 0.3f };
+        float pcmLowGain { 0.0f };
+        float pcmHighGain { 0.0f };
+        float modalGain { 0.0f };
+    };
+
     struct HitVariation
     {
         float pitchCents { 0.0f };
@@ -245,9 +325,6 @@ private:
         float bandLimitedNoiseCurrent { 0.0f };
         float bandLimitedNoiseNext { 0.0f };
         float bandLimitedNoisePhase { 0.0f };
-        float cymbalClockPhase { 1.0f };
-        float cymbalPcmValue { 0.0f };
-        float cymbalPcmReconstructed { 0.0f };
         float baseFrequency { 100.0f };
         float sweepAmount { 0.0f };
         float panLeft { 0.70710678f };
@@ -265,6 +342,9 @@ private:
         Biquad filterA {};
         Biquad filterB {};
         Biquad filterC {};
+        // Only the Ride and Crash use this; every other voice leaves it at its
+        // reset state and never ticks it.
+        CymbalChannel cymbal {};
     };
 
     struct RelaxationOscillatorBank
@@ -389,6 +469,22 @@ private:
         const RelaxationOscillatorBank& bank) const noexcept;
     [[nodiscard]] float metallicSourceFor (Instrument instrument) const noexcept;
     [[nodiscard]] static int metallicBankIndexFor (Instrument instrument) noexcept;
+
+    // The TR-808 analogue cymbal channel and the TR-909 digital one. Both
+    // cymbal voices run both; only the balance and the tuning differ, and all
+    // of that is resolved into the voice at note-on.
+    void configureCymbalChannel (Voice& voice, Instrument instrument,
+                                 float velocity) noexcept;
+    [[nodiscard]] static float swingVcaGain (float control, float knee) noexcept;
+    struct CymbalBands
+    {
+        float low { 0.0f };
+        float mid { 0.0f };
+        float high { 0.0f };
+    };
+    [[nodiscard]] CymbalBands renderCymbalBands (Voice& voice,
+                                                 float source) noexcept;
+    [[nodiscard]] static float companding6BitDac (float value) noexcept;
     [[nodiscard]] float nextCymbalPcm (Voice& voice, float source) const noexcept;
     void sineAndCosineLookup (float phase, float& sine, float& cosine) const noexcept;
     [[nodiscard]] static float nextNoise (Voice& voice) noexcept;
@@ -398,6 +494,7 @@ private:
     [[nodiscard]] float applyAnalogOutputStage (Voice& voice, float input) const noexcept;
     void configureHighpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureBandpass (Biquad& filter, float frequency, float q) const noexcept;
+    void configureLowpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureResonator (Resonator& resonator, float frequency,
                              float decaySeconds) const noexcept;
 
@@ -452,8 +549,6 @@ private:
     float metallicInternalSampleRate_ { 192000.0f };
     float metallicInverseSampleRate_ { 1.0f / 192000.0f };
     float metallicIncrementSmoothing_ { 0.01f };
-    float cymbalClockIncrement_ { 0.625f };
-    float cymbalReconstructionCoefficient_ { 0.8f };
     int metallicOversampleFactor_ { 4 };
     int metallicDecimatorTapCount_ { 257 };
     float smoothedOutputGain_ { 0.82f };

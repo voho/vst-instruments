@@ -236,13 +236,12 @@ friction between two faces rather than by anything inside the metal — so a
 closed hat is not a short open hat: friction takes every partial at much the
 same rate, where an open plate loses its top first and darkens as it rings.
 
-Ride and Crash darken as they ring for the same reason a real cymbal does. Their
-high partials radiate best and the plate's own nonlinear coupling drains them
-downward, so the shimmer goes first and the low-mid roar is what is still there
-seconds later. **Bell** takes the wash out from under the ping, which is what
-striking a cup instead of a bow does: the cup is stiff, curved and small, so it
-rings its own few modes and couples badly into the diffuse field spread across
-the rest of the plate.
+Ride and Crash are the two voices where the instrument and the circuit want the
+same thing. A real cymbal's high partials radiate best and its own nonlinear
+coupling drains them downward, so the shimmer goes first and the low-mid roar is
+what is still there seconds later — and both of the machines modelled in the
+next section darken for reasons of their own that point the same way. Their
+plate bank is described there with the rest of the cymbal path.
 
 Each virtual channel has fixed per-unit component tolerances. Its metallic
 Schmitt/RC oscillators keep running behind the VCA, so a strike samples the
@@ -325,8 +324,13 @@ not deliberately changed now null at -68 to -83 dB RMS instead of at -70 to -86
 or exactly; the Shaker still draws a different but statistically identical noise
 realisation because it is the one voice that takes two noise samples per sample;
 and Perc 1 sits at -23 dB, which is the deliberate Drive change and nothing else.
-The only deliberately audible change at 48 kHz is still Perc 1's Drive. The JUCE-free regression suite went from 16.3 s to 9.8 s on the
+The only deliberately audible change at 48 kHz in that pass was Perc 1's Drive. The JUCE-free regression suite went from 16.3 s to 9.8 s on the
 same machine while gaining three test groups.
+
+The cymbal rewrite described below is the next deliberate change, and it is
+confined to Ride and Crash: rendering all seven demonstration takes before and
+after leaves the four that contain no cymbal byte-identical, and moves only the
+three that do.
 
 Each voice finishes through a lightweight asymmetric diode/transistor-style
 transfer with a variable operating point and a virtual supply rail that sags
@@ -387,21 +391,99 @@ drift. Tonal snare and tom cores remain smooth resonators, but
 add explicitly band-limited component asymmetry and subtle virtual-rail pitch
 coupling instead of mathematically perfect table sines.
 
-Ride and Crash keep a deliberately hybrid cymbal architecture. Their six-pulse
-source feeds the 3.44/7.1/10.5 kHz analogue-style band structure. A separate
-voice-local nominal 30 kHz clock quantizes a generated oscillator/noise composite
-to 63 symmetric levels, then passes it through a reconstruction pole, adding the
-grain and diffuse continuity of early PCM cymbals without loading a sample or
-copying ROM data. At host rates below 30 kHz the clock is necessarily limited to
-the host rate.
+### Two machines made cymbals two different ways
 
-Short, high-spread acoustic modes supply stick/bell/body energy, while the long
-tail comes from three independently weighted wash bands instead of continuously
-driven low resonators. This removes the former hollow spectral gap and lingering
-pitched “cling.” **Bell** preserves a broad Ride wash while bringing the body
-forward; **Spread** moves Crash from coherent pulse metal toward a wider,
-less-periodic tail. **Tone** and **Brightness** tilt the three bands rather than
-moving a single narrow filter.
+Ride and Crash each run two channels, because the two machines that defined this
+sound solved the same problem from opposite ends and a kit wants what each of
+them got right. Every block below is one the published circuit analyses
+identify, in the order they identify it; the sources are listed further down.
+
+**The analogue channel** starts where the 1980 machine starts: six Schmitt-trigger
+inverter oscillators in the low hundreds of hertz, summed at a virtual earth.
+Four are fixed by their own resistor and capacitor; the last two are set by
+trimpots reachable only with the case open, which is why they are also what the
+cowbell is made from and why no two units agree about them. Drumalor gives them
+the measured nominal frequencies and a fixed per-unit trim — a few tenths of a
+percent on the fixed four, a couple of percent on the trimmed pair.
+
+Two active band-passes hang off that summing node, at the measured 3.44 kHz and
+7.1 kHz, with the Q a multiple-feedback section gives and the midband gain that
+topology has. Their job is not to filter the six squares but to throw their
+fundamentals away and keep the intermodulation above them: that is the whole
+trick by which six oscillators under 800 Hz become a metallic spectrum three
+octaves higher.
+
+The trigger pulse does not open anything directly. It reaches the envelope
+capacitors through an attack smoother, so every band ramps rather than
+switching, and the three swing-type VCAs that follow are not multipliers: a
+steered pair only begins handing signal across once the control has climbed
+past its own base-emitter drop, so its law is superlinear at the bottom and
+straightens out above it. That is why an 808 cymbal's decay does not sound like
+the exponential that drives it, and why velocity is an accent voltage here
+rather than an output trim — a quiet hit does not open the VCAs as far and
+leaves sooner, which the regression suite measures directly. Each band then
+passes its own Sallen-Key high-pass into the tone-control mixer that sums them.
+
+**The digital channel** is the 1983 answer. A counter walks a ROM at a sample
+clock — about 30 kHz nominal, divided down from a free-running oscillator, and
+tunable, because moving that clock is the only pitch control the machine's
+cymbals have. The stored waveform has had its envelope taken out so six bits go
+further, so it is quantized at full scale through a companded converter and the
+envelope is put back afterwards by the VCA. The service notes record six bits
+and heavy compression rather than a code layout, so Drumalor uses the ordinary
+one: sign, two chord bits and three step bits, four chords with a linear bottom
+one, 64 codes in all. That ordering is the whole
+character: the quantization error is multiplied by the same envelope as the
+signal, so a cymbal is gritty where it is loud and clean where it is quiet
+instead of dissolving into a fixed floor.
+
+That envelope comes from a second converter reading the *address* lines through
+an anti-log stage, so it steps with the counter rather than with a clock of its
+own and always finishes exactly where the ROM does. Retune the machine and
+pitch and tail length move together — a transposed cymbal is a shorter one.
+Drumalor keeps that, bounded only by its own eight-second ceiling on how long
+any voice may ring. The VCA restoring the envelope is an OTA, and an OTA's
+control current buys bandwidth as well as gain, so the channel loses its top
+before it loses its level; that, plus the analogue channel giving its highest
+band the shortest envelope, is why both cymbals darken measurably as they ring
+instead of fading with a frozen spectrum.
+
+Drumalor generates what the counter reads. No sample, recording or ROM image is
+embedded, and at host rates below the sample clock the clock is necessarily
+limited to the host rate.
+
+Neither machine has a modal bank; a real cymbal does, and it is where the stick
+and the cup live, so a short high-spread bank supplies that and is struck once
+rather than driven for the length of the note. **Bell** moves the Ride from the
+bow to the cup, which is a stiff, strongly curved, small piece of the same
+plate: it brings the body forward and takes the wash out from under it, on a
+curve rather than a ramp, because most of a bow behaves like a bow. **Spread**
+moves the Crash's ROM contents from the oscillator bank toward broadband hiss
+and widens the bank's own component tolerances. **Tone** and **Brightness** are
+the tone-control mixer; because that mixer is the last stage before the buffer
+amplifier, the digital channel passes through it too, split by a single
+first-order crossover in place of three analogue legs it does not have.
+
+Once a VCA is shut far enough that its band cannot reach −150 dB — and the
+squared swing law means the envelope only has to fall 90 dB for the gain to be
+180 dB down — the sections feeding it stop running. The boundary is derived
+from the voice's own decay, so it lands at the same instant at every sample
+rate and under every host block partitioning, and the suite requires the
+decaying tail to contain no sample-to-sample step larger than the loud part of
+the hit already made. Measured on one Linux x86-64 machine at 48 kHz in
+128-sample blocks against the previous cymbals, that retirement more than pays
+for the extra sections:
+
+| Pattern | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| Ride, 16th notes at 120 BPM | 16.5% | 14.1% | −15% |
+| Ride on 8ths with kick, snare and crash | 12.7% | 10.9% | −14% |
+| All thirteen voices | 22.2% | 20.7% | −7% |
+
+Those figures are CPU time as a fraction of real time and are specific to that
+machine; only the before/after ratio is meaningful. The saving comes from the
+tail, so a pattern dense enough to keep all 64 voices young pays about 20% more
+rather than less.
 
 These are circuit-inspired behavioral models, not a claim of
 component-for-component emulation of a TR-808, TR-909, or another specific
@@ -462,15 +544,22 @@ self-contained real-time instrument:
   motivate charged state, resonant feedback, changing pitch/loss, and stable
   time-varying updates for the Kick.
 - Werner, Abel, and Smith's [TR-808 cymbal circuit analysis](https://pureadmin.qub.ac.uk/ws/portalfiles/portal/125044847/tr_808_cymbal_a_physically_informed_circuit_bendable_digital.pdf)
-  supplies the measured six-oscillator frequencies, pulse duty cycle, and
-  multi-band filter structure used by the synthesized cymbal source. Olsen,
+  is the source for the analogue cymbal channel: the measured six-oscillator
+  frequencies and pulse duty cycle, the fixed-versus-trimmed split across those
+  six, the two band-pass centres, and the block order — oscillators, band-passes,
+  trigger logic and attack smoother, envelope generators, swing-type VCAs,
+  Sallen-Key high-passes, tone-control mixer, output buffer. Olsen,
   Werner, and Germain's [network-variable-preserving oscillator study](https://dafx.de/paper-archive/2017/papers/DAFx17_paper_74.pdf)
   motivates combining relaxation-circuit state, accurate edge timing, and BLEP
   correction rather than choosing between physical modeling and antialiasing. The
   [TR-909 service notes](https://www.polynominal.com/site/studio/gear/drum/roland-tr909/roland-tr909-service-manual.pdf)
-  document its real-cymbal PCM memories and envelope restoration; Drumalor
-  models that early clock/DAC character with newly generated data rather than
-  embedding the original recordings.
+  document the digital channel: cymbal memories addressed by a counter at a
+  tunable, divided-down sample clock, read as six-bit companded codes whose
+  envelope is restored after the converter, with that envelope generated by a
+  second converter on the address lines through an anti-log stage so it tracks
+  the clock rather than the wall. Drumalor models that clock, converter and
+  envelope with newly generated data rather than embedding the original
+  recordings.
 - Esqueda and Murai's [2025 antialiased recurrent model](https://dafx25.dii.univpm.it/wp-content/uploads/2025/09/DAFx25_paper_61.pdf)
   shows that compact learned state-space models can run in real time. Drumalor
   deliberately does not use one: without measurements from a defined target
@@ -568,6 +657,21 @@ pitch tracking, DC safety, and consistency from 8 to 192 kHz. Cymbal contracts
 reject hollow midrange gaps and sparse
 ringing tails, require retained Ride wash at maximum Bell, verify directional
 Tone/Brightness response, and keep Crash Spread diffusion level-matched.
+
+A second cymbal group tests the circuit rather than the spectrum, so each check
+fails for one missing block instead of for a general loss of realism. Both
+voices must open through the attack smoother rather than as a step into a
+resonant band-pass, and must reach their onset peak after it, not on the first
+sample. Both must darken as they ring. Retuning the sample clock must carry the
+address envelope with it, so a cymbal transposed down a twelve holds at least
+twice the relative tail of one transposed up. Velocity must behave as an accent
+voltage into the swing VCAs rather than as an output gain, which is visible as a
+quiet hit leaving sooner and not merely quieter. The decaying tail must contain
+no sample-to-sample step larger than the loud part of the hit already made,
+which is what retiring a shut band audibly would look like. And because the
+sample clock is fixed in hertz and the ROM's length in seconds, neither may
+follow the host rate: both voices hold their level within 1.5 dB from 44.1 to
+192 kHz.
 
 Version 1.1 adds contracts for everything it introduces. The kit mixer is held
 to a clean -6 dB gain law, a symmetric pan law, hard-panned channel isolation,

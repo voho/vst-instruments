@@ -3,6 +3,7 @@
 #include "YouKnow106Chorus.h"
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 

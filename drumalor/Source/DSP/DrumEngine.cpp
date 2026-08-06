@@ -545,10 +545,6 @@ void DrumEngine::prepare (double sampleRate, int maxBlockSize) noexcept
     configureMetallicDecimator();
     metallicIncrementSmoothing_ = 1.0f - std::exp (
         -1.0f / std::max (1.0f, 0.0015f * metallicInternalSampleRate_));
-    cymbalClockIncrement_ = std::min (1.0f, 30000.0f * inverseSampleRate_);
-    const float reconstructionCutoff = std::min (13500.0f, 0.42f * floatSampleRate);
-    cymbalReconstructionCoefficient_ = 1.0f - std::exp (
-        -twoPi * reconstructionCutoff / floatSampleRate);
     // The shared bus compressor uses a peak detector with a fast musical
     // attack and a slow release, so it glues a kit without pumping on hats.
     busAttackCoefficient_ = 1.0f - std::exp (
@@ -1080,8 +1076,14 @@ void DrumEngine::configureMetallicOscillatorBank (Instrument instrument,
     static constexpr std::array<float, metallicOscillatorCount> hatRatios {
         1.0f, 1.342f, 1.778f, 2.133f, 2.697f, 3.415f
     };
-    // Measured nominal HD14584 oscillator frequencies from the classic
-    // six-inverter cymbal source. The 800/540 Hz pair also anchors Perc 1.
+    // The six Schmitt-trigger inverter oscillators of the classic analogue
+    // cymbal source, at their measured nominal frequencies. Four of them are
+    // hardwired by their own resistor and capacitor; the last two are set by
+    // trimpots reachable only with the machine open, which is why the 800/540
+    // pair is also what the cowbell is built from and why no two units agree
+    // about them. The tolerance depths below say the same thing: a few tenths
+    // of a percent on the fixed four, a couple of percent on the trimmed pair,
+    // fixed per virtual unit rather than redrawn per hit.
     static constexpr std::array<float, metallicOscillatorCount> cymbalFrequencies {
         205.3f, 369.6f, 304.4f, 522.7f, 800.0f, 540.0f
     };
@@ -1108,6 +1110,10 @@ void DrumEngine::configureMetallicOscillatorBank (Instrument instrument,
         }
         else if (instrument == Instrument::Ride || instrument == Instrument::Crash)
         {
+            // A real machine has one cymbal channel, so its ride and its crash
+            // would be the same sound. Two cymbals on a kit are not, and the
+            // cheapest honest way to have both is a second board with the
+            // whole oscillator set trimmed down together.
             frequency = cymbalFrequencies[index]
                 * (instrument == Instrument::Crash ? 0.94f : 1.0f);
             toleranceDepth = oscillatorIndex < 4
@@ -1305,27 +1311,305 @@ float DrumEngine::metallicSourceFor (Instrument instrument) const noexcept
         ? metallicBanks_[static_cast<std::size_t> (bankIndex)].output : 0.0f;
 }
 
+float DrumEngine::swingVcaGain (float control, float knee) noexcept
+{
+    // The 808's "swing type" VCA is a steered pair, not a multiplier. Its gain
+    // is not the control voltage: the steering transistor only begins to hand
+    // signal across once the control has climbed past its own base-emitter
+    // drop, so the law is superlinear at the bottom and straightens out above
+    // it. That is why an 808 cymbal's decay does not sound like an exponential
+    // - the envelope is one, and the VCA bends it into something that hangs on
+    // and then leaves quickly.
+    //
+    // Normalised so a fully open control is unity gain: the knee changes the
+    // shape of the decay, not the level of the hit.
+    control = std::max (0.0f, control);
+    knee = std::max (1.0e-4f, knee);
+    return control * control * (1.0f + knee) / (control + knee);
+}
+
+DrumEngine::CymbalBands DrumEngine::renderCymbalBands (Voice& voice,
+                                                       float source) noexcept
+{
+    auto& channel = voice.cymbal;
+
+    // The attack smoother. A trigger pulse arrives as an edge, but what
+    // reaches the envelope capacitors is that edge through an RC, so every
+    // band opens over a ramp. It is a small thing that is audible on every
+    // hit: without it the first sample of a cymbal is a step into a resonant
+    // band-pass, which clicks.
+    channel.gate = flushDenormal (
+        channel.gate + channel.gateCoefficient * (1.0f - channel.gate));
+
+    // Two active band-passes hang off the oscillator summing node. Their
+    // centres are the measured 808 values; the multiple-feedback topology puts
+    // the Q where these do. Between them they throw away the six oscillators'
+    // fundamentals and keep the intermodulation above them, which is the whole
+    // trick - six squares in the low hundreds of hertz become a metallic
+    // spectrum three octaves higher.
+    const float lowBand = channel.bandLow.tick (source);
+
+    // Three swing VCAs on two envelope generators. The 808 gives the low band
+    // the long one - the DECAY pot is on that capacitor - and the top of the
+    // spectrum a short one, so the channel darkens as it rings for the same
+    // reason a real cymbal does, and the panel control moves the part of it
+    // that lasts.
+    const float peak = channel.peak * channel.gate;
+    const float lowControl = peak * voice.envelope;
+
+    // A steered pair also leaks its control voltage into the signal path. It
+    // is inaudible as a tone and audible as the envelope's own shape riding
+    // under the band, which is part of why the machine thumps slightly on the
+    // low band of a hard hit.
+    CymbalBands bands;
+    bands.low = channel.highpassLow.tick (
+        swingVcaGain (lowControl, channel.vcaKnee) * lowBand
+        + channel.feedthrough * lowControl);
+
+    // Once a VCA is shut past the point where its band could reach -150 dB,
+    // the section feeding it is doing arithmetic nobody can hear. Because the
+    // swing law squares its control, the envelope only has to fall 90 dB for
+    // the gain to be 180 dB down.
+    const bool midActive = voice.ageSamples < channel.midActiveSamples;
+    const bool highActive = voice.ageSamples < channel.highActiveSamples;
+    if (! midActive && ! highActive)
+        return bands;
+
+    const float highBand = channel.bandHigh.tick (source);
+    if (midActive)
+        bands.mid = channel.highpassMid.tick (
+            swingVcaGain (peak * voice.pitchEnvelope, channel.vcaKnee) * highBand);
+    if (highActive)
+        bands.high = channel.highpassHigh.tick (
+            swingVcaGain (peak * voice.auxiliaryEnvelope, channel.vcaKnee) * highBand);
+    return bands;
+}
+
+float DrumEngine::companding6BitDac (float value) noexcept
+{
+    // The TR-909 stores its cymbals as six bits per sample and gets away with
+    // it by not storing them linearly: the code is a sign, a two-bit chord and
+    // a three-bit step inside that chord, so the quantizer's step doubles with
+    // every octave of level. Four chords, eight steps each, both signs - 64
+    // codes, and the bottom chord stays linear so small samples do not fall
+    // into a dead band.
+    //
+    // This is a segmented converter, so it is shifts and compares rather than
+    // a logarithm, exactly as the hardware is.
+    const float magnitude = std::min (1.0f, std::abs (value));
+    const float sign = value < 0.0f ? -1.0f : 1.0f;
+    float base = 0.0f;
+    float step = 1.0f / 64.0f;
+    if (magnitude >= 0.5f)
+    {
+        base = 0.5f;
+        step = 1.0f / 16.0f;
+    }
+    else if (magnitude >= 0.25f)
+    {
+        base = 0.25f;
+        step = 1.0f / 32.0f;
+    }
+    else if (magnitude >= 0.125f)
+    {
+        base = 0.125f;
+        step = 1.0f / 64.0f;
+    }
+    const float code = std::floor ((magnitude - base) / step);
+    return sign * (base + step * (std::min (7.0f, code) + 0.5f));
+}
+
 float DrumEngine::nextCymbalPcm (Voice& voice, float source) const noexcept
 {
-    // The TR-909 cymbals replayed compressed PCM at roughly 30 kHz. Drumalor
-    // remains fully synthesized, but this voice-local clock and 63-level
-    // quantizer contribute the same held-DAC grain to a generated oscillator/
-    // noise composite. No sample or copyrighted ROM data is embedded.
-    voice.cymbalClockPhase += cymbalClockIncrement_;
-    if (voice.cymbalClockPhase >= 1.0f)
+    auto& channel = voice.cymbal;
+
+    // A counter walks the ROM at the sample clock - about 30 kHz nominal, and
+    // tunable, because the clock is what the TUNE control moves. Drumalor
+    // generates what the counter reads instead of embedding a recording, but
+    // the rest of the path is the machine's: the stored waveform carries no
+    // envelope of its own, so it is quantized at full scale and the VCA below
+    // puts the decay back. That is why 909 cymbals are gritty at the start and
+    // clean at the end rather than dissolving into a fixed noise floor: the
+    // quantization error decays with the sound because it is multiplied by the
+    // same envelope.
+    channel.clockPhase += channel.clockIncrement;
+    if (channel.clockPhase >= 1.0f)
     {
-        voice.cymbalClockPhase -= std::floor (voice.cymbalClockPhase);
-        const float decorrelation = 0.18f * nextNoise (voice);
-        const float composite = std::clamp (source + decorrelation, -1.0f, 1.0f);
-        voice.cymbalPcmValue = std::round (31.0f * composite) * (1.0f / 31.0f);
+        channel.clockPhase -= std::floor (channel.clockPhase);
+        const float composite = std::clamp (
+            source + channel.pcmNoise * nextNoise (voice), -1.0f, 1.0f);
+        channel.hold = companding6BitDac (composite);
+
+        // A second DAC reads the address lines and an anti-log converter turns
+        // its ramp into the envelope. Because it steps with the counter and
+        // not with a clock of its own, the decay always finishes exactly where
+        // the ROM does - retune the machine and pitch and length move together.
+        channel.romEnvelope = flushDenormal (channel.romEnvelope * channel.romDecay);
+
+        // The VCA that restores it is an operational transconductance
+        // amplifier, and its control current buys bandwidth as well as gain.
+        // A cymbal fading out on one of these does not simply get quieter: it
+        // gets duller on the way down, which is most of why a 909 tail sounds
+        // like metal leaving a room rather than a fader closing.
+        channel.vcaBandwidthCoefficient = channel.vcaBandwidthOpen
+            * (0.26f + 0.74f * std::sqrt (std::max (0.0f, channel.romEnvelope)));
     }
-    // A real reconstruction network does not expose the held DAC steps
-    // directly. This exact one-pole update removes their broadband digital
-    // edge while retaining the audible 30 kHz clock grain at ordinary rates.
-    voice.cymbalPcmReconstructed = flushDenormal (
-        voice.cymbalPcmReconstructed + cymbalReconstructionCoefficient_
-            * (voice.cymbalPcmValue - voice.cymbalPcmReconstructed));
-    return voice.cymbalPcmReconstructed;
+
+    // The DAC holds its code until the next clock. What leaves the machine is
+    // that staircase through the closing VCA and a low-pass that removes the
+    // clock, so the grain survives and the sampling image does not.
+    channel.vcaBandwidthState = flushDenormal (
+        channel.vcaBandwidthState + channel.vcaBandwidthCoefficient
+            * (channel.hold * channel.romEnvelope - channel.vcaBandwidthState));
+    const float reconstructed = channel.reconstruction.tick (
+        channel.vcaBandwidthState);
+
+    // Both channels meet at the tone mixer, so this one is split there as
+    // well. One first-order crossover stands in for the three analogue legs a
+    // digital channel does not have.
+    channel.pcmSplitState = flushDenormal (
+        channel.pcmSplitState
+        + channel.pcmSplitCoefficient * (reconstructed - channel.pcmSplitState));
+    return channel.pcmLowGain * channel.pcmSplitState
+         + channel.pcmHighGain * (reconstructed - channel.pcmSplitState);
+}
+
+void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
+                                         float velocity) noexcept
+{
+    const bool ride = instrument == Instrument::Ride;
+    auto& channel = voice.cymbal;
+    const auto floatSampleRate = static_cast<float> (sampleRate_);
+
+    // ---------------------------------------------------------------- 808 --
+    // The band-pass centres are the measured ones. They track Pitch only
+    // weakly: these are RC sections on a board, so transposing the machine
+    // moves its oscillators far more than it moves the filters they feed.
+    const float filterPitch = std::pow (voice.pitchRatio, 0.40f);
+    configureBandpass (channel.bandLow, 3440.0f * filterPitch, ride ? 4.20f : 3.30f);
+    configureBandpass (channel.bandHigh, 7100.0f * filterPitch, ride ? 3.00f : 2.40f);
+    // A multiple-feedback section is not a unit-gain filter: its midband gain
+    // is the ratio of the feedback resistor to the input one, and it is large,
+    // because what these sections have to lift out of the summing node is the
+    // intermodulation between six squares rather than the squares themselves.
+    const auto applyMidbandGain = [] (Biquad& filter, float gain) noexcept
+    {
+        filter.b0 *= gain;
+        filter.b1 *= gain;
+        filter.b2 *= gain;
+    };
+    applyMidbandGain (channel.bandLow, 6.4f);
+    applyMidbandGain (channel.bandHigh, 5.6f);
+
+    // One Sallen-Key high-pass per band ahead of the tone mixer. Their job is
+    // to take the low end off each VCA, which is where the six oscillators'
+    // own fundamentals would otherwise survive as a hum under the metal.
+    configureHighpass (channel.highpassLow, 1500.0f * filterPitch, 0.72f);
+    configureHighpass (channel.highpassMid, 4200.0f * filterPitch, 0.72f);
+    configureHighpass (channel.highpassHigh, 8000.0f * filterPitch, 0.72f);
+
+    // The attack smoother between the trigger pulse and the envelope
+    // capacitors. Without it the first sample of a cymbal is a step into a
+    // resonant band-pass, which clicks; with it the channel opens over a ramp.
+    const float attackSeconds = ride ? 0.00085f : 0.00160f;
+    channel.gate = 0.0f;
+    channel.gateCoefficient = 1.0f - std::exp (
+        -1.0f / std::max (1.0f, attackSeconds * floatSampleRate));
+
+    // ACCENT is a voltage on the trigger line, so a hard hit charges the
+    // envelope capacitors further and drives the VCAs past their knee instead
+    // of merely turning the channel up. That is a timbre change, and it is why
+    // a quiet 808 cymbal is softer-edged rather than the same sound quieter.
+    channel.peak = 0.58f + 0.42f * std::clamp (velocity, 0.0f, 1.0f);
+    channel.vcaKnee = ride ? 0.22f : 0.27f;
+    channel.feedthrough = 0.020f;
+
+    // ---------------------------------------------------------------- 909 --
+    // A free-running oscillator around 60 kHz, divided by two, is the sample
+    // clock; TUNE moves it, and moving it is the only pitch control the
+    // machine's cymbals have. Below a host rate that cannot carry it the clock
+    // is necessarily limited to the host rate.
+    const float nominalClockRate = (ride ? 30000.0f : 27500.0f) * voice.pitchRatio;
+    channel.clockIncrement = std::clamp (
+        nominalClockRate * inverseSampleRate_, 1.0e-4f, 1.0f);
+    const float clockRate = channel.clockIncrement * floatSampleRate;
+
+    // How long a cymbal was recorded into the ROM, and therefore how long the
+    // counter takes to walk it. Decay sets the recording; the clock sets the
+    // playback, so a transposed cymbal is a shorter one - the address envelope
+    // always finishes exactly where the ROM does. The only departure from the
+    // hardware is the ceiling, which is the engine's own eight-second limit on
+    // how long any voice may ring.
+    const float recordedSeconds = voice.decaySeconds * (ride ? 0.72f : 0.80f);
+    const float playbackSeconds = std::clamp (
+        recordedSeconds / std::max (0.20f, voice.pitchRatio), 0.04f, 7.0f);
+    channel.romEnvelope = 1.0f;
+    channel.romDecay = std::exp (
+        minusSixtyDb / std::max (4.0f, playbackSeconds * clockRate));
+    channel.clockPhase = 1.0f;
+    channel.hold = 0.0f;
+
+    // The low-pass that takes the sample clock back out again. Two poles below
+    // half the clock: enough to bury the image, not enough to hide the grain.
+    const float reconstructionCorner = std::min (13000.0f, 0.42f * clockRate);
+    configureLowpass (channel.reconstruction, reconstructionCorner, 0.72f);
+    // The VCA's own pole, wide open. It closes with the control current above.
+    channel.vcaBandwidthState = 0.0f;
+    channel.vcaBandwidthOpen = std::clamp (
+        1.0f - std::exp (-twoPi * 1.6f * reconstructionCorner * inverseSampleRate_),
+        1.0e-4f, 1.0f);
+    channel.vcaBandwidthCoefficient = channel.vcaBandwidthOpen;
+
+    // ------------------------------------------------------- tone control --
+    // The 808's output stage is a three-band mixer, so both character controls
+    // land here as weights rather than as a filter sweep. Ride reads them as
+    // Bell and Tone, Crash as Spread and Brightness.
+    //
+    // The digital channel's crossover sits between the two regions the mixer
+    // separates, so tilting one tilts the other with it.
+    channel.pcmSplitState = 0.0f;
+    channel.pcmSplitCoefficient = std::clamp (
+        1.0f - std::exp (-twoPi * 3000.0f * inverseSampleRate_), 1.0e-4f, 1.0f);
+
+    if (ride)
+    {
+        const float bell = voice.characterA;
+        const float tone = voice.characterB;
+        // Striking the cup is not striking the bow: the cup is stiff, curved
+        // and small, so it rings its own few modes and couples badly into the
+        // diffuse field spread across the rest of the plate. Bell therefore
+        // has to take wash away, not merely add body.
+        // Moving the stick from the bow to the cup is not a linear journey.
+        // Most of the bow behaves like the bow; the wash only falls away once
+        // the tip is actually on the cup, which is a small, stiff, strongly
+        // curved piece of the same plate.
+        const float cup = bell * bell;
+        const float wash = 1.0f - 0.66f * cup;
+        channel.lowGain = 1.02f + 1.15f * cup - 0.82f * tone;
+        channel.midGain = (0.22f + 1.02f * tone) * wash;
+        channel.highGain = (0.02f + 1.30f * tone) * wash;
+        const float digital = 0.66f * wash;
+        channel.pcmLowGain = digital * (1.42f - 1.34f * tone);
+        channel.pcmHighGain = digital * (0.14f + 1.82f * tone);
+        channel.modalGain = 0.12f + 0.66f * cup;
+        channel.pcmNoise = 0.26f;
+    }
+    else
+    {
+        const float spread = voice.characterA;
+        const float brightness = voice.characterB;
+        channel.lowGain = 0.98f - 0.46f * brightness;
+        channel.midGain = 0.28f + 0.80f * brightness;
+        channel.highGain = 0.10f + 1.05f * brightness;
+        // Spread pushes the ROM's contents away from the oscillator bank and
+        // toward broadband hiss, which is the difference between a cymbal
+        // recorded close and one recorded with the room in it.
+        const float digital = 0.58f + 0.16f * spread;
+        channel.pcmLowGain = digital * (1.20f - 0.95f * brightness);
+        channel.pcmHighGain = digital * (0.25f + 1.40f * brightness);
+        channel.pcmNoise = 0.20f + 0.62f * spread;
+        channel.modalGain = 0.26f - 0.11f * spread;
+    }
 }
 
 void DrumEngine::configureHighpass (Biquad& filter, float frequency, float q) const noexcept
@@ -1355,6 +1639,22 @@ void DrumEngine::configureBandpass (Biquad& filter, float frequency, float q) co
     filter.b0 = alpha * inverseA0;
     filter.b1 = 0.0f;
     filter.b2 = -filter.b0;
+    filter.a1 = -2.0f * cosine * inverseA0;
+    filter.a2 = (1.0f - alpha) * inverseA0;
+    filter.clear();
+}
+
+void DrumEngine::configureLowpass (Biquad& filter, float frequency, float q) const noexcept
+{
+    frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
+    q = std::clamp (q, 0.15f, 20.0f);
+    const float omega = twoPi * frequency * inverseSampleRate_;
+    const float cosine = std::cos (omega);
+    const float alpha = std::sin (omega) / (2.0f * q);
+    const float inverseA0 = 1.0f / (1.0f + alpha);
+    filter.b0 = 0.5f * (1.0f - cosine) * inverseA0;
+    filter.b1 = (1.0f - cosine) * inverseA0;
+    filter.b2 = filter.b0;
     filter.a1 = -2.0f * cosine * inverseA0;
     filter.a2 = (1.0f - alpha) * inverseA0;
     filter.clear();
@@ -2067,66 +2367,63 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
         }
 
         case Instrument::Ride:
-        {
-            configureMetallicOscillatorBank (
-                instrument, voice.pitchRatio, voice.characterA, false);
-
-            const float modalPitch = std::pow (voice.pitchRatio, 0.74f);
-            const float modalDecay = 0.16f + voice.decaySeconds
-                * (0.13f + 0.08f * voice.characterA);
-            // Cast bronze has almost no internal loss, so what takes a cymbal's
-            // upper modes is radiation and the plate's own nonlinear coupling
-            // draining them downward - both of which climb steeply with
-            // frequency. Either way the top of the bank has to go first.
-            initialiseModalVoice (voice, rideRatios, 12, 720.0f * modalPitch,
-                                  modalDecay, 0.09f, 0.56f + 0.28f * voice.characterB,
-                                  { 0.58f, 0.42f, 0.0f });
-            const float filterPitch = std::pow (voice.pitchRatio, 0.46f);
-            configureBandpass (voice.filterA, 3440.0f * filterPitch, 0.68f);
-            configureBandpass (voice.filterB, 7100.0f * filterPitch, 0.76f);
-            configureBandpass (voice.filterC, 10500.0f * filterPitch, 0.90f);
-            // A cymbal darkens as it rings. Its high partials radiate best and
-            // its nonlinear coupling drains them into the plate, so the shimmer
-            // is the first thing gone and the low-mid roar is what is still
-            // there seconds later. These two ratios were the other way round,
-            // which made the ride's centroid climb for its whole tail - a
-            // cymbal played backwards.
-            voice.envelopeMultiplier = coefficientForTime (
-                voice.decaySeconds * 1.34f, static_cast<float> (sampleRate_));
-            voice.auxiliaryMultiplier = coefficientForTime (
-                voice.decaySeconds * 0.58f, static_cast<float> (sampleRate_));
-            voice.transientMultiplier = coefficientForTime (
-                0.0022f + 0.0038f * voice.characterA,
-                static_cast<float> (sampleRate_));
-            break;
-        }
-
         case Instrument::Crash:
         {
+            const bool ride = instrument == Instrument::Ride;
             configureMetallicOscillatorBank (
                 instrument, voice.pitchRatio, voice.characterA, false);
+            configureCymbalChannel (voice, instrument, velocity);
 
-            const float modalPitch = std::pow (voice.pitchRatio, 0.72f);
-            const float modalDecay = 0.12f + voice.decaySeconds
-                * (0.10f + 0.08f * voice.characterA);
-            initialiseModalVoice (voice, crashRatios, 12, 620.0f * modalPitch,
-                                  modalDecay, 0.12f + 0.36f * voice.characterA,
-                                  0.58f + 0.30f * voice.characterB,
-                                  { 0.58f, 0.42f, 0.0f });
-            const float filterPitch = std::pow (voice.pitchRatio, 0.44f);
-            configureBandpass (voice.filterA, 3440.0f * filterPitch, 0.62f);
-            configureBandpass (voice.filterB, 7100.0f * filterPitch, 0.72f);
-            configureBandpass (voice.filterC, 10500.0f * filterPitch, 0.84f);
+            // The 808's three VCAs run off two envelope generators, and the
+            // third band is the same capacitor read through a different
+            // resistor, so the channel carries three time constants: the
+            // DECAY-controlled one on the low band, a middle one, and a short
+            // one at the top. A cymbal darkens as it rings for exactly this
+            // reason in metal too - the high partials radiate best and the
+            // plate's own nonlinear coupling drains them downward - so the
+            // circuit and the instrument agree about which end goes first.
+            const auto floatSampleRate = static_cast<float> (sampleRate_);
+            const float midSeconds = voice.decaySeconds * (ride ? 0.52f : 0.58f);
+            const float highSeconds = voice.decaySeconds * (ride ? 0.20f : 0.26f);
             voice.envelopeMultiplier = coefficientForTime (
-                voice.decaySeconds * 1.42f, static_cast<float> (sampleRate_));
-            voice.auxiliaryMultiplier = coefficientForTime (
-                voice.decaySeconds * 0.54f, static_cast<float> (sampleRate_));
-            voice.transientMultiplier = coefficientForTime (
-                0.0035f + 0.0065f * voice.characterA,
-                static_cast<float> (sampleRate_));
+                voice.decaySeconds * (ride ? 1.20f : 1.28f), floatSampleRate);
             voice.pitchEnvelopeMultiplier = coefficientForTime (
-                0.010f + 0.020f * voice.characterA,
-                static_cast<float> (sampleRate_));
+                midSeconds, floatSampleRate);
+            voice.auxiliaryMultiplier = coefficientForTime (
+                highSeconds, floatSampleRate);
+            // Each envelope reaches -60 dB in its own time, so at 1.5 times
+            // that it is 90 dB down and the squared swing law puts its band
+            // 180 dB below the hit - far under the -150 dB at which the engine
+            // already retires a resonator bank.
+            const auto retirementAge = [this] (float seconds) noexcept
+            {
+                return static_cast<std::uint64_t> (std::ceil (
+                    1.5 * static_cast<double> (std::max (0.0f, seconds))
+                    * sampleRate_)) + 1u;
+            };
+            voice.cymbal.midActiveSamples = retirementAge (midSeconds);
+            voice.cymbal.highActiveSamples = retirementAge (highSeconds);
+            voice.transientMultiplier = coefficientForTime (
+                ride ? 0.0022f + 0.0038f * voice.characterA
+                     : 0.0035f + 0.0065f * voice.characterA,
+                floatSampleRate);
+
+            // Neither machine has a modal bank; a real cymbal does, and it is
+            // where the stick and the cup live. Cast bronze has almost no
+            // internal loss, so what takes its upper modes is radiation and
+            // the plate's nonlinear coupling draining them downward - both of
+            // which climb steeply with frequency, so the top of the bank goes
+            // first either way.
+            const float modalPitch = std::pow (voice.pitchRatio, ride ? 0.74f : 0.72f);
+            const float modalDecay = (ride ? 0.16f : 0.12f) + voice.decaySeconds
+                * (ride ? 0.13f + 0.08f * voice.characterA
+                        : 0.10f + 0.08f * voice.characterA);
+            initialiseModalVoice (
+                voice, ride ? rideRatios : crashRatios, 12,
+                (ride ? 720.0f : 620.0f) * modalPitch, modalDecay,
+                ride ? 0.09f : 0.12f + 0.36f * voice.characterA,
+                (ride ? 0.56f : 0.58f) + (ride ? 0.28f : 0.30f) * voice.characterB,
+                { 0.58f, 0.42f, 0.0f });
             break;
         }
 
@@ -2629,21 +2926,25 @@ float DrumEngine::renderHat (Voice& voice) noexcept
 
 float DrumEngine::renderRide (Voice& voice) noexcept
 {
+    const auto& channel = voice.cymbal;
+    // The six Schmitt-trigger oscillators, summed at the virtual earth the two
+    // band-passes hang off. It free-runs behind the VCAs, so a strike samples
+    // whatever the circuit happens to be doing rather than restarting it.
     const float oscillatorBank = metallicSourceFor (voice.instrument);
     const float noise = nextBandLimitedNoise (voice);
+    const auto bands = renderCymbalBands (voice, oscillatorBank);
+
+    // What the 909's counter reads out of the ROM. The stored waveform has had
+    // its envelope taken out to make the six bits go further, so this is
+    // deliberately full-scale and stationary; nextCymbalPcm quantizes it and
+    // then the address envelope puts the decay back, after the quantizer,
+    // which is what makes the grain decay with the note instead of sitting
+    // under it as a fixed floor.
     const float pcm = nextCymbalPcm (
-        voice, 0.68f * oscillatorBank + 0.24f * noise);
+        voice, 0.80f * oscillatorBank + 0.34f * noise);
 
-    // Three circuit bands mirror the useful structure of the 808 cymbal,
-    // while the quantized generated layer fills the continuous spectrum that
-    // made the sample-based 909 ride sit easily in a mix.
-    const float bodyBand = voice.filterA.tick (
-        0.78f * oscillatorBank + 0.22f * pcm);
-    const float shimmerBand = voice.filterB.tick (
-        0.58f * oscillatorBank + 0.42f * pcm);
-    const float airBand = voice.filterC.tick (
-        0.34f * oscillatorBank + 0.66f * pcm);
-
+    // Neither machine has one of these. A ride does: the stick lands on a
+    // finite piece of bronze, and near the cup that is most of what you hear.
     float modes = 0.0f;
     if (voice.ageSamples < voice.modalActiveSamples)
     {
@@ -2651,7 +2952,8 @@ float DrumEngine::renderRide (Voice& voice) noexcept
             ? 2.15f * voice.transientScale * voice.excitationScale
             : 0.055f * modalNoiseScale_ * noise * voice.transientEnvelope
                 * voice.transientScale * voice.excitationScale;
-        for (std::size_t mode = 0; mode < resonatorCount; ++mode)
+        const auto activeModes = static_cast<std::size_t> (voice.modeCount);
+        for (std::size_t mode = 0; mode < activeModes; ++mode)
         {
             float gain = voice.modeGains[mode];
             gain *= mode < 4
@@ -2661,46 +2963,33 @@ float DrumEngine::renderRide (Voice& voice) noexcept
         }
     }
 
-    const float bell = voice.characterA;
-    const float tone = voice.characterB;
-    const float body = (0.52f + 0.52f * bell - 0.24f * tone)
-        * bodyBand * voice.envelope;
-    // Striking the cup is not striking the bow. The cup is stiff, curved and
-    // small, so it rings its own few modes and couples badly into the diffuse
-    // field spread across the rest of the plate - which is why a bell hit is a
-    // clear pitched ping with the wash taken out from under it, and why Bell
-    // has to remove wash rather than merely add body.
-    const float wash = 1.0f - 0.45f * bell;
-    const float shimmer = (0.16f + 0.68f * tone) * wash
-        * shimmerBand * voice.auxiliaryEnvelope;
-    const float air = (0.050f + 0.54f * tone) * wash
-        * airBand * voice.auxiliaryEnvelope;
-    const float bellModes = (0.12f + 0.42f * bell) * modes;
-    return 1.12f * (body + shimmer + air + bellModes);
+    // The output buffer sums the three high-passed analogue bands, the digital
+    // channel and the plate into one node, which is where the voice's own
+    // output stage picks it up.
+    return 1.14f * (channel.lowGain * bands.low
+                    + channel.midGain * bands.mid
+                    + channel.highGain * bands.high
+                    + pcm
+                    + channel.modalGain * modes);
 }
 
 float DrumEngine::renderCrash (Voice& voice) noexcept
 {
+    const auto& channel = voice.cymbal;
     const float oscillatorBank = metallicSourceFor (voice.instrument);
     const float noise = nextBandLimitedNoise (voice);
+    const auto bands = renderCymbalBands (voice, oscillatorBank);
+    // Spread moves what the ROM holds from the oscillator bank toward
+    // broadband hiss. On the 808 side it has already widened the bank's own
+    // component tolerances, so the two ends of the control are a tight
+    // periodic machine cymbal and a diffuse one.
     const float pcm = nextCymbalPcm (
-        voice, 0.52f * oscillatorBank + 0.34f * noise);
-    const float spread = voice.characterA;
-    const float coherent = 0.68f - 0.28f * spread;
-    const float quantized = 0.32f + 0.18f * spread;
-    const float diffuse = 0.10f * spread;
-    const float source = coherent * oscillatorBank + quantized * pcm
-                       + diffuse * noise;
+        voice, (0.86f - 0.34f * voice.characterA) * oscillatorBank
+                   + (0.26f + 0.30f * voice.characterA) * noise);
 
-    const float bodyBand = voice.filterA.tick (source);
-    const float shimmerBand = voice.filterB.tick (
-        (0.86f - 0.18f * spread) * source + 0.18f * spread * noise);
-    const float airBand = voice.filterC.tick (
-        (0.72f - 0.20f * spread) * source + 0.28f * spread * noise);
-
-    // The modal layer is struck briefly and then left alone. The long tail is
-    // carried by diffuse oscillator/PCM bands, avoiding the old continuously
-    // driven resonators that exposed a handful of clinging pitches.
+    // Struck once and then left. The long tail belongs to the two circuits;
+    // driving low resonators for the length of a crash is what used to leave a
+    // handful of pitches clinging to it.
     float modes = 0.0f;
     if (voice.ageSamples < voice.modalActiveSamples)
     {
@@ -2708,20 +2997,16 @@ float DrumEngine::renderCrash (Voice& voice) noexcept
             ? 1.75f * voice.transientScale * voice.excitationScale
             : 0.075f * modalNoiseScale_ * noise * voice.transientEnvelope
                 * voice.transientScale * voice.excitationScale;
-        for (std::size_t mode = 0; mode < resonatorCount; ++mode)
+        const auto activeModes = static_cast<std::size_t> (voice.modeCount);
+        for (std::size_t mode = 0; mode < activeModes; ++mode)
             modes += voice.modeGains[mode] * voice.resonators[mode].tick (excitation);
     }
 
-    const float brightness = voice.characterB;
-    const float bloom = 0.34f + 0.66f * (1.0f - voice.pitchEnvelope);
-    const float body = (0.43f - 0.11f * brightness)
-        * bodyBand * voice.envelope;
-    const float shimmer = (0.19f + 0.54f * brightness)
-        * shimmerBand * voice.auxiliaryEnvelope * bloom;
-    const float air = (0.078f + 0.46f * brightness)
-        * airBand * voice.auxiliaryEnvelope * bloom;
-    const float struckMetal = (0.20f - 0.07f * spread) * modes;
-    return 1.18f * (body + shimmer + air + struckMetal);
+    return 1.02f * (channel.lowGain * bands.low
+                    + channel.midGain * bands.mid
+                    + channel.highGain * bands.high
+                    + pcm
+                    + channel.modalGain * modes);
 }
 
 float DrumEngine::renderTom (Voice& voice) noexcept
