@@ -1959,6 +1959,15 @@ std::vector<float> renderKitHits (drumalor::Instrument instrument,
 // This runs over all thirteen voices rather than a sampled few, because the
 // property is meant to hold for the instrument, not for the voices that
 // happened to be checked.
+//
+// What it does not do is attribute the difference to Humanise. Measured at
+// Humanise 0, where the per-hit parameter variation is switched off entirely,
+// most voices still differ between strikes by more than this threshold - the
+// noise-driven ones by over 100%, because their noise source decorrelates them
+// regardless. So this is a contract against a voice becoming a fixed waveform
+// retriggered, which is the failure it is meant to catch. Whether the
+// parameter variation itself is alive, and ordered across the control's range,
+// is what testHumaniseDepth() measures.
 void testEveryVoiceVariesBetweenHits()
 {
     // Four strikes of a sixth of a second each. The property lives in the
@@ -1974,16 +1983,34 @@ void testEveryVoiceVariesBetweenHits()
         const auto instrument = static_cast<drumalor::Instrument> (index);
         const std::string label (drumalor::getInstrumentDisplayName (instrument));
         const auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
-        const auto render = renderKitHits (
-            instrument, defaults, factory, hitCount, samplesPerHit);
-        const auto stride = static_cast<std::size_t> (samplesPerHit) * 2u;
 
-        const auto segment = [&render, stride] (std::size_t hit)
+        // Each strike is captured alone. Retriggering into a running engine
+        // would leave the previous hits' tails inside the next segment, and
+        // those tails differ in number and age from one segment to the next -
+        // so a voice that synthesized every strike identically would still
+        // produce different segments and pass. Silencing between captures
+        // means any difference found is in the new hit itself.
+        //
+        // The engine is kept across hits rather than rebuilt, because the
+        // variation being measured lives in engine state: the trigger counter,
+        // the per-voice drift accumulator and the elapsed clock the board term
+        // reads. A fresh engine per hit would reset exactly what is under test.
+        drumalor::DrumEngine engine;
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.setInstrumentParameters (instrument, defaults);
+        engine.setKitParameters (factory);
+        std::vector<std::vector<float>> hits;
+        for (int hit = 0; hit < hitCount; ++hit)
         {
-            return std::vector<float> (
-                render.begin() + static_cast<std::ptrdiff_t> (hit * stride),
-                render.begin() + static_cast<std::ptrdiff_t> ((hit + 1u) * stride));
-        };
+            engine.trigger (instrument, 0.85f);
+            hits.push_back (renderInterleaved (engine, samplesPerHit, defaultBlockSize));
+            // allSoundsOff chokes over a few milliseconds rather than cutting,
+            // so give it room to finish before the next capture begins.
+            engine.allSoundsOff();
+            (void) renderInterleaved (engine, 1024, defaultBlockSize);
+        }
+
+        const auto segment = [&hits] (std::size_t hit) { return hits[hit]; };
         const auto peak = [] (const std::vector<float>& x)
         {
             double highest = 0.0;

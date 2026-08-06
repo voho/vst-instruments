@@ -1275,11 +1275,20 @@ void DrumEngine::configureMetallicOscillatorBank (Instrument instrument,
             // whole oscillator set trimmed down together.
             frequency = cymbalFrequencies[index]
                 * (instrument == Instrument::Crash ? 0.94f : 1.0f);
+            // Fixed per unit, and deliberately not a control. These are the
+            // component tolerances of six oscillators on a board: four set by
+            // their own R and C, two by trimpots reachable only with the case
+            // open. Nothing on the panel moves them.
+            //
+            // They used to read characterA, back when that was the Crash's
+            // Spread. It is Machine now, so leaving the dependency would have
+            // meant choosing a machine also retuned the analogue one - and
+            // because this bank is shared engine state rather than per-voice,
+            // the per-hit tolerance on characterA would have retuned crash
+            // tails that were still ringing.
             toleranceDepth = oscillatorIndex < 4
-                ? 0.004f + (instrument == Instrument::Crash
-                                ? 0.004f * bank.characterA : 0.0f)
-                : 0.018f + (instrument == Instrument::Crash
-                                ? 0.012f * bank.characterA : 0.002f);
+                ? (instrument == Instrument::Crash ? 0.0063f : 0.004f)
+                : (instrument == Instrument::Crash ? 0.0250f : 0.020f);
         }
         else
         {
@@ -1738,8 +1747,17 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     // hardware is the ceiling, which is the engine's own eight-second limit on
     // how long any voice may ring.
     const float recordedSeconds = voice.decaySeconds * (ride ? 0.72f : 0.80f);
+    // From the clock the counter actually runs at, not from the requested
+    // pitch. Above roughly +8 semitones at 48 kHz the increment hits its
+    // one-address-per-sample ceiling and the channel stops rising in pitch;
+    // dividing by the requested ratio past that point would keep shortening
+    // the tail after the pitch had stopped moving, so +12 and +24 would sound
+    // identical but decay differently. Pitch and tail move together or neither
+    // does - that is the whole point of taking the envelope off the address
+    // lines - so the ceiling has to apply to both.
+    const float effectiveClockRatio = clockRate / (ride ? 30000.0f : 27500.0f);
     const float playbackSeconds = std::clamp (
-        recordedSeconds / std::max (0.20f, voice.pitchRatio), 0.04f, 7.0f);
+        recordedSeconds / std::max (0.20f, effectiveClockRatio), 0.04f, 7.0f);
     channel.romEnvelope = 1.0f;
     channel.romDecay = std::exp (
         minusSixtyDb / std::max (4.0f, playbackSeconds * clockRate));
