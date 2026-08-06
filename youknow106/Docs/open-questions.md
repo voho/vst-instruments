@@ -2206,7 +2206,8 @@ inter-stage sections are −68 k/68 k unity), converting the dividers into the
 model's loop-gain coordinate needs no device parameter — the resonance
 OTA's gm cancels: `slope = (67.7/17.0)·(4.7/68) = 0.275` input boost per
 unit loop gain, against the shipping voiced
-`inputCompensationPerFeedback = 0.2296` — 17% above, same linear-in-k form.
+`inputCompensationPerFeedback = 0.2296` — about 20% above it (equivalently,
+the shipping value sits 17% below), same linear-in-k form.
 Also read from the same netlist: the loop's limiting mechanism is OTA
 saturation alone (no clipping diodes anywhere in the reconstruction), and
 the first stage's gain structure (−68 k/4.7 k rather than a passive
@@ -2215,10 +2216,13 @@ divider) is a new lead against OQ-15's open input coordinate.
 This is **corroboration, not an anchor**: Open80017a descends from the same
 dksynth thread as the ÷17.0/÷67.7 figures already on file, so the agreement
 is depth within one lineage — now netlist-explicit and build-validated by
-ear — not a second independent source. The constant is unchanged;
-re-fitting it would also unsettle the freshly solved 4.83 Vp-p/248 Hz
-endpoint pair on unpromoted evidence. Status: **mechanism resolved,
-magnitude still open** — the 128-point family OQ-09 asks for owns it.
+ear — not a second independent source. The constant is unchanged on that
+provenance ground alone. A future refit is also *cheap*: the multiplier acts
+only on the mixed source signal entering the cascade, and the
+4.83 Vp-p/248 Hz endpoint pair is solved with every source silenced, so the
+two calibrations are independent and re-fitting the compensation would not
+disturb the endpoint solve. Status: **mechanism resolved, magnitude still
+open** — the 128-point family OQ-09 asks for owns it.
 
 ### OQ-19 — corroboration only
 

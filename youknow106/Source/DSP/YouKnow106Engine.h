@@ -293,9 +293,10 @@ public:
         // its output current at the first stage's 4.7k/560/68k summing node.
         // With stage 1's own -68k/4.7k feedback gain the OTA's gm cancels
         // and the slope in this loop-gain coordinate is resistor-only,
-        // (67.7/17.0)*(4.7/68) = 0.275 -- 17% above the value below, same
-        // linear-in-k form. One reconstruction lineage, so not promoted;
-        // OQ-09's measured family still owns this number.
+        // (67.7/17.0)*(4.7/68) = 0.275 -- about 20% above the value below
+        // (which sits 17% under it), same linear-in-k form. One
+        // reconstruction lineage, so not promoted; OQ-09's measured family
+        // still owns this number.
         static constexpr float inputCompensationPerFeedback = 0.2296f;
         // Solved against the 248 Hz service trim at that loop gain, which the
         // larger limit cycle would otherwise leave 108 cents flat; was 0.045.
