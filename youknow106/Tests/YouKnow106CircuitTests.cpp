@@ -2176,26 +2176,42 @@ void testBucketBrigadeDatasheetAnchors()
     // charge-transfer pole must supply only the residual loss. Measure that
     // pole as it is actually stepped and combine it with the independent ZOH
     // aperture; applying -3 dB to both mechanisms would fail at about -4.33 dB.
+    // There is deliberately no clock argument on transferLossStep: one call is
+    // one modeled BBD shift, or one fCP period, so its fixed coefficient already
+    // scales the absolute pole with clock. A second clock multiplier used to make
+    // this test false-green at its default 26 kHz while the comment and phase grid
+    // claimed 40 kHz.
     constexpr double clockRate = 40000.0;
-    constexpr double frequency = 12000.0;
     constexpr int settle = 2048;
-    constexpr int window = 10000; // exactly 3000 cycles
-    float transferState = 0.0f;
-    std::complex<double> accumulator {};
-    for (int index = 0; index < settle + window; ++index)
-    {
-        const double phase = 2.0 * pi * frequency * index / clockRate;
-        const float output = YouKnow106TestAccess::transferLossStep(
-            transferState, static_cast<float>(std::sin(phase)));
-        if (index >= settle)
-            accumulator += static_cast<double>(output)
-                         * std::exp(std::complex<double>(0.0, -phase));
-    }
-    const double transferGain = 2.0 * std::abs(accumulator) / window;
-    const double ratio = frequency / clockRate;
-    const double heldAperture = std::abs(std::sin(pi * ratio) / (pi * ratio));
-    expectNear(20.0 * std::log10(transferGain * heldAperture), -3.0, 0.01,
+    constexpr int window = 40000; // integer cycles at both test frequencies
+    const auto completeHeldGainAt = [=](double frequency) {
+        float transferState = 0.0f;
+        std::complex<double> accumulator {};
+        for (int index = 0; index < settle + window; ++index)
+        {
+            const double phase = 2.0 * pi * frequency * index / clockRate;
+            const float output = YouKnow106TestAccess::transferLossStep(
+                transferState, static_cast<float>(std::sin(phase)));
+            if (index >= settle)
+                accumulator += static_cast<double>(output)
+                             * std::exp(std::complex<double>(0.0, -phase));
+        }
+        const double transferGain = 2.0 * std::abs(accumulator) / window;
+        const double ratio = frequency / clockRate;
+        const double heldAperture = std::abs(std::sin(pi * ratio) / (pi * ratio));
+        return transferGain * heldAperture;
+    };
+
+    const double gainAtOneKhz = completeHeldGainAt(1000.0);
+    const double gainAtTwelveKhz = completeHeldGainAt(12000.0);
+    expectNear(20.0 * std::log10(gainAtTwelveKhz), -3.0, 0.01,
                "charge-transfer loss double-counts the held-output aperture");
+
+    // Panasonic references the bandwidth row to 1 kHz, not DC. The deliberate
+    // DC-referenced fit is -2.9719 dB on that basis: within 0.03 dB of the
+    // minimum-bandwidth row, too small to justify a second inaudible retune.
+    expectNear(20.0 * std::log10(gainAtTwelveKhz / gainAtOneKhz), -3.0, 0.03,
+               "charge-transfer response misses the 1 kHz-referenced anchor");
 }
 
 // A filter coefficient is only right in company with the update it is used

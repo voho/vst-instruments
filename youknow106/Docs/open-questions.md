@@ -60,7 +60,7 @@ The implementation and evidence boundary were reconciled again after the
 2026-08-04 fidelity pass and the 2026-08-05 physical circuit modeling pass
 (incorporating thermal warmup $V_t(T)$, VCA CV feedthrough thump, power supply
 rail droop inter-voice coupling, Thévenin passive mixer node loading, and
-BBD dynamic charge loss), and again after the 2026-08-05 transcription of
+BBD residual charge-transfer loss), and again after the 2026-08-05 transcription of
 Service Notes pp. 15–16, which closed the chorus modulation oscillator's
 topology, waveform and mode-rate ratio and showed by derivation that mains
 ripple on the regulated rails is inaudible. The table below is the
@@ -84,7 +84,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P0 | 01 | Hardware confirmation of the derived 0.5533/0.8983 Hz rates (TP4 capture or original-page read of C3/β), BBD clock/delay endpoints on a real 106, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the 1.6234799 mode-rate ratio, the summing-node β = 33/47 and C3 = 0.1 µF (netlist-corroborated), the derived rate scale, and the family sweep measured on the sibling's identical clock driver |
 | P2 | 02 | Installed-unit common-VCA endpoint, component/rail/IC variation and residual error against the nominal law | The complete nominal path: `d=b<<5`, ideal R-2R `/4096`, p. 8's +4 to −6 V span, p. 15 R30/C7/R32/R31/R165 network, NEC's −5.9 mV/dB typical law, and C7's 9.08249 ms constant |
 | P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation | No-compander topology and the need for a wet-line noise model |
-| P2 | 04 | Loaded post-BBD support transfer, including MN3009 and emitter-follower output impedance | Component topology and provisional ideal-source poles |
+| P2 | 04 | Loaded post-BBD support transfer, real MN3009 normalized response versus clock, and emitter-follower output impedance | Component topology, provisional ideal-source poles, and the fixed per-shift residual coefficient that is within 0.03 dB of the adopted 40 kHz/12 kHz row on its 1 kHz reference basis |
 | P0 | 05 | TA75558S IC6 and High-output clipping swing versus frequency and load | IC6 identity, linear resistor gains and ±15 V rails |
 | Dependency | 06 | Physical `Vref_rms` for a declared High-output/load condition | Final -18 dBFS RMS mapping, floating output and no-limiter policy |
 | P1 | 07 | Acquisition, droop, loading and time constant of every converter hold | Hold ownership, 4.2 ms pass, VCF 522 µs and voice-VCA 687 µs anchors |
@@ -417,6 +417,22 @@ switching belong to OQ-20. Use one declared route: measured MN3009 and
 emitter-follower output impedance followed by full modified-nodal analysis, or
 a calibrated de-embedded wet-only sweep.
 
+The renderer's residual charge-transfer state is no longer an open numerical
+law. It advances once per modeled BBD shift (one fCP period), so fixed coefficient 0.8654743 already makes
+the absolute pole track the clock while preserving response versus normalized
+`f/Fclock`. Together with the explicit held output it gives −3.000 dB versus DC
+at 40 kHz clock/12 kHz signal, or −2.972 dB against the datasheet's 1 kHz
+reference. The 0.028 dB residual is documented rather than given an inaudible
+retune. The former additional factor `1+(clock−26000)·1.5e−6` double-counted
+that scaling: it gave −2.757 dB versus DC, or −2.732 dB versus 1 kHz, and swept
+the normalized 0.3-cycle response from about
+−3.04 to −2.14 dB over the modelled 23.9–77.1 kHz range. Removing it fixes an
+implementation inconsistency and unsupported LFO-correlated brightness; it does
+does not quantitatively establish the real MN3009's transfer at other clocks.
+The datasheet itself contains low-resolution typical `Gi-fi` curves at fCP 10,
+40 and 100 kHz, so the remaining gap is extraction/calibration and installed-unit
+confirmation, not a total absence of multi-clock evidence.
+
 ### Needed output (for LLM)
 
 - The selected route and why its evidence is sufficient.
@@ -426,7 +442,8 @@ a calibrated de-embedded wet-only sweep.
   and uncertainty.
 - For the sweep route: raw input/output data from 100 Hz to beyond the candidate
   −3 dB point where feasible; exact probes, level, loading and fixture response.
-  Hold each BBD clock at a documented fixed rate or use a validated
+  Hold each BBD clock at several documented fixed rates spanning the usable
+  range, including 40 kHz, or use a validated
   linear-periodically-time-varying method, because a normally sweeping chorus
   is not LTI. Include both output taps and stereo lines or state the narrower
   scope. Do not force a through-BBD sweep beyond the line's usable
@@ -435,6 +452,9 @@ a calibrated de-embedded wet-only sweep.
 - Explicit de-embedding of the pre/post support filters, BBD zero-order hold,
   charge-transfer response, fixture and load. Removing only the dry path is not
   sufficient.
+- Plot residual MN3009 magnitude and phase against both absolute frequency and
+  normalized `f/Fclock`. Compare with the fixed-coefficient baseline rather than
+  assuming either clock invariance or the removed affine clock multiplier.
 - Fitted pole(s), magnitude/phase residuals and a direct comparison with the
   current ideal-source 23.46 kHz tap pole and 7.234/10.621 Hz output-coupling
   corners.
@@ -1331,11 +1351,30 @@ absolute level. Remaining gap: calibrated PSD, stereo correlation and spurs.
 ### OQ-04 — the MN3009's own bandwidth bounds the support chain
 
 Panasonic MN3009 datasheet, **anchored**: input signal frequency is `−3 dB at
-12 kHz` minimum (0 dB reference at 1 kHz), with the characteristic curve showing
-about **−3 dB at 16 kHz for a 40 kHz clock**; insertion loss `0 dB typ.`
-(−4 / +4 dB); clock range 10–200 kHz; `S/N 88 dB typ.`; noise `0.2 mVrms max`
-A-weighted at 100 kHz clock. The THD anchors the model already fits are confirmed
-verbatim: `0.3 % typ. at V_i = 0.78 Vrms`, `2.5 %` at the 1.5 Vrms maximum input.
+12 kHz` minimum (0 dB reference at 1 kHz) at a 40 kHz clock; this is the sole
+numeric transfer anchor adopted by the model. Its typical `Gi-fi` plot explicitly
+shows distinct fCP 10, 40 and 100 kHz curves. By visual inspection their
+normalized corner does not move upward at faster clocks, so they do not
+qualitatively support the removed faster-clock brightening. The scan is too
+coarse to promote eyeballed points to calibration data without digitization and
+uncertainty, but it is genuine qualitative multi-clock evidence. Insertion loss is `0 dB typ.`
+(−4 / +4 dB); clock
+range 10–200 kHz; `S/N 88 dB typ.`; noise `0.2 mVrms max` A-weighted at 100 kHz
+clock. The THD anchors the model already fits are confirmed verbatim: `0.3 %
+typ. at V_i = 0.78 Vrms`, `2.5 %` at the 1.5 Vrms maximum input.
+
+A numerical audit found that `transferLossStep` advances once per modeled BBD
+shift (one fCP period).
+Fixed alpha 0.8654743 therefore already scales the absolute pole with clock and,
+with the explicit zero-order hold, produces −3.000 dB versus DC and −2.972 dB
+versus the datasheet's 1 kHz reference at 40 kHz/12 kHz. The extra affine clock
+multiplier instead produced −2.757 dB versus DC and −2.732 dB versus 1 kHz there
+and changed the normalized 0.3-cycle response from about −3.04 to −2.14 dB
+over the modelled 23.9–77.1 kHz sweep. It is removed as double scaling. This
+settles the renderer's internally consistent one-anchor law, **not** the real
+part's normalized response versus clock; that still requires quantitative
+extraction of the typical curves and preferably the multi-clock de-embedded
+installed-unit sweep specified above.
 
 The shipping support chain evaluates to **−12.0 dB at 10 kHz and −38.5 dB at
 15 kHz** relative to 2 kHz (input Sallen-Key pair + 7.2 kHz passive + tap pole +
@@ -1354,8 +1393,11 @@ the modelled 23.9 kHz minimum clock (Nyquist 12 kHz, chain −21.8 dB there) and
 over-engineered for a ~43 kHz clock. **The wet-path bandwidth is a measurable proxy
 that constrains the BBD clock, so OQ-01 and OQ-04 should be resolved together.**
 
-Status: **not resolved**, but the contradiction is now quantified. Recommended next
-step is a schematic re-read of the capacitor codes behind
+Status: **physical loaded transfer not resolved**, but the renderer's duplicate
+clock scaling is removed and the broader contradiction is quantified.
+Recommended next step is digitizing the datasheet's three curves with uncertainty,
+then checking them with a multi-clock de-embedded MN3009/installed-unit sweep,
+plus a schematic re-read of the capacitor codes behind
 `YouKnow106Chorus.cpp:73-83` — a single 10× code misread moves a corner by a decade.
 
 ### OQ-02 — the nominal common-VCA law is circuit-derived
@@ -1834,7 +1876,7 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
   time-average of the clock is the same for both.
 
   The model also already carries the physics the explanation appeals to: BBD
-  noise is injected once per clock edge at fixed per-sample amplitude, so its
+  noise is injected once per modeled BBD shift at fixed per-sample amplitude, so its
   in-band density already rises as the clock falls, automatically and without a
   coefficient. Reproducing the 3.95 dB by any depth or level difference between
   the modes would be inventing a mechanism the circuit does not have. **Not
@@ -2025,10 +2067,12 @@ dead ends, logged in the session record so the queries are not repeated.
 - **Chorus support-chain boundaries:** the populated pre/post-BBD topology,
   wet-input 15.9 Hz coupling, nominal component-only 7.23/10.62 Hz wet-output
   coupling, datasheet-fitted nonlinearity, and split zero-order-hold/residual
-  charge-transfer loss are settled or derived at their stated ideal-source
-  boundaries. OQ-04 owns MN3009 and emitter-follower source loading, including
-  the loaded tap-summing transfer; OQ-20 owns TR11/TR12 on-resistance, leakage
-  and switching transients.
+  charge-transfer loss are settled or derived at the adopted 40 kHz/12 kHz
+  ideal-source anchor. Its residual coefficient is fixed per BBD shift; the
+  removed affine clock multiplier double-counted clock scaling. OQ-04 owns real
+  MN3009 normalized response across multiple clocks and emitter-follower source
+  loading, including the loaded tap-summing transfer; OQ-20 owns TR11/TR12
+  on-resistance, leakage and switching transients.
 - **Nominal main VOLUME law:** VR1 is `10KB×2`; Panasonic's later JIS/EIAJ
   table maps plain B to the nominal-linear 1B group. The fixed internal 41.3 kΩ
   selector and 101 kΩ headphone-input loads are modeled. OQ-17 owns real gang

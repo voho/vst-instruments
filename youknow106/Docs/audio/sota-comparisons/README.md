@@ -14,7 +14,7 @@ RMS.
 | Mechanism | Diff peak (dBc) | Diff RMS (dBc) |
 | --- | ---: | ---: |
 | `01-vcf-transistor-offsets` | -23.2 | -41.4 |
-| `02-opamp-slew-limiting` | -128.0 | -158.0 |
+| `02-opamp-slew-limiting` | -128.0 | -158.4 |
 | `06-vcf-early-effect` | -41.4 | -62.2 |
 | `07-spatial-thermal-gradient` | -30.3 | -48.6 |
 | `08-chorus-thiran-clock-bleed` | -36.2 | -77.8 |

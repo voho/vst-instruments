@@ -180,9 +180,14 @@ controlling version of this ledger is the
 | Per-voice VCF | Four IR3109/BA662 transconductor stages, the 68 kΩ/560 Ω attenuation, 240 pF stages, per-card cutoff trims and service calibration anchors are hardware-fixed. Cutoff modulation is summed in converter counts before the exponential law. The upper knee is the transconductor's own control-current saturation near 64 kHz, and the converter's R-2R carry error rides on the code it produces. | A topology-preserving trapezoidal/Newton solve is the numerical realization. Resonance byte-to-loop gain, input compensation, feedback saturation and frequency trim are voiced pending measurements. The saturation exponent and the carry sizes are fitted to a third-party measured card, not to a Roland document. |
 | Per-voice VCA | One BA662 VCA per card, after its filter, with ENV/GATE ownership and the 6 Vpp service endpoint, is anchored. Roland's own module-board drawing puts a grounded-base volts-to-amps stage ahead of it, so gain follows control current: linear above a hard turn-on with the transistor's 60 mV-per-decade knee below it. | The turn-on point and knee width are derived from that drawing rather than measured; a BA662 gain sweep would move the turn-on, not the law. The exact-zero deadband and the voice-retirement silence threshold are product policy; velocity is an optional extension. |
 | Voice sum, coupling, HPF and common VCA LEVEL | Six card outputs sum through 33 kΩ into 3.3 kΩ feedback (0.1 each). C14 precedes the shared four-position HPF; C12 then feeds the one common uPC1252H2 controlled by stored VCA LEVEL. Service Notes pp. 8 and 15, the ROM-resolved `d=b<<5` code and NEC's −5.9 mV/dB typical constant derive the nominal common-VCA law and C7 settling. | The complete coupled switched-HPF network and its switching memory are approximated. The ideal 12-bit R-2R transfer assumes division by 4096; R32 is the least-legible value in the scan, and real resistor/capacitor tolerance, rail error and uPC1252 variation still need an installed-unit sweep. |
-| BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. BBD write nonlinearity is fitted to its datasheet test points. | Absolute sweep and mode rates use a clearly labelled JUNO-60 fallback; hiss level/correlation, loaded support impedances and the wet-mute transient are voiced. Loaded IC6 clipping remains unknown. |
+| BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. BBD write nonlinearity is fitted to its datasheet test points. The explicit held output plus fixed per-shift residual coefficient is −3.000 dB versus DC at 12 kHz/40 kHz, or −2.972 dB versus the datasheet's 1 kHz reference. | Absolute sweep and mode rates use a clearly labelled JUNO-60 fallback; hiss level/correlation, loaded support impedances and the wet-mute transient are voiced. The 0.028 dB anchor residual is documented rather than audibly meaningless retuning. Keeping the coefficient fixed makes this model invariant versus normalized `f/Fclock`; Panasonic's low-resolution typical curves at 10/40/100 kHz are real evidence but have not yet been quantitatively extracted or confirmed on an installed unit. Loaded IC6 clipping remains unknown. |
 | VOLUME and output boundary | C17/C20, R54/R57, the nominal-linear 10KB×2 tracks and fixed internal wiper loading are component-derived, with independent left/right capacitor state. | Dual-gang tracking, selector/jack normaling, external loads and headphone transfer remain open. The fixed −18 dBFS RMS mapping and provisional physical reference are product policy, not an analogue circuit claim. |
 | Antialiasing, HQ and safety | These preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, Kaiser half-band decimation flat to 20 kHz at both common host rates, and state-preserving rate changes. | They have no hardware counterpart. The idle-only quality change and short safety fades are product mechanisms and are kept outside the claimed signal path. |
+
+The strict [BBD transfer/clock-law
+comparison](Docs/audio/realism-comparisons/bbd-transfer-clock-law/README.md)
+holds one bright full-engine fixture through both chorus modes and visits both
+clock extremes, preserving raw before/after audio and one shared listening gain.
 
 ## Voices, analogue character and dispersion
 
@@ -241,7 +246,10 @@ integer pitch quantization, free-running/staggered DCO phase, scanned and slewed
 control voltages, the nonlinear four-stage filter and resonance return, a shared
 noise generator plus microscopic deterministic filter excitation, the
 unnormalized six-card unison sum, component-derived coupling poles, and BBD
-charge transfer, bandwidth, nonlinearity and hiss.
+charge transfer, bandwidth, nonlinearity and hiss. The residual charge-transfer
+state advances once per modeled BBD shift (one fCP period), so its fixed
+coefficient already moves its absolute pole with the instantaneous clock instead
+of requiring a second clock multiplier.
 
 ## Interface
 
@@ -355,7 +363,7 @@ No Roland Cloud product content was downloaded or extracted.
 The complete [factory gain audit](Docs/audio/factory-presets/README.md) renders
 all 128 tones through the shipping engine at 48 kHz/HQ with no per-preset
 normalisation. Its stress score found finite output for every tone, a median
-gated RMS of -20.75 dBFS, no preset below -60 dBFS maximum 400 ms RMS, and 31
+gated RMS of -20.75 dBFS, no preset below -60 dBFS maximum 400 ms RMS, and 32
 tones whose polyphonic/transient peaks crossed 0 dBFS. Those crossings are
 reported, not silently limited or rebalanced: the model intentionally permits
 floating output, the score includes unison and six-key stress, and the absolute

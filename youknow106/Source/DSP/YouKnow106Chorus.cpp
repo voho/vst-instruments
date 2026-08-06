@@ -8,12 +8,15 @@ namespace youknow106
 namespace
 {
 // Aggregate charge-transfer inefficiency of the whole line, condensed to one
-// pole advanced at the BBD clock rate. The MN3009's -3 dB at 12 kHz with a
-// 40 kHz clock is the response of the complete part, including the rectangular
-// sample-and-hold pulse at its output. That pulse already contributes
-// sinc(12/40) = -1.326 dB in this model. The residual pole must therefore
-// contribute -1.674 dB, not another -3 dB. Solving the discrete one-pole at
-// 0.3 cycles/sample gives this update coefficient.
+// pole advanced at the BBD clock rate. The MN3009's 12 kHz bandwidth row at a
+// 40 kHz clock describes the complete part, including the rectangular output
+// hold, and is referenced to 1 kHz. This model's hold contributes
+// sinc(12/40) = -1.326 dB versus DC, so the residual pole contributes -1.674 dB
+// rather than another -3 dB. Solving at 0.3 cycles/sample gives -3.000 dB versus
+// DC and -2.972 dB versus 1 kHz, within 0.03 dB of that datasheet row. The state
+// advances once per modeled BBD shift (one fCP period), so a fixed coefficient
+// already makes the pole's absolute frequency follow the clock. Scaling it
+// again from clockHz would change the normalized response and double-count it.
 constexpr float transferSmear = 0.8654743f;
 
 // Static transfer of the delay line, referred to the model's signal scale
