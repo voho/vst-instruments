@@ -873,8 +873,17 @@ void testAliasFloor()
                                                     frequency, sampleRate));
             }
 
-            const double decibels = 20.0 * std::log10((worst + 1.0e-15) / harmonic);
-            expect(decibels < -55.0,
+                const double decibels = 20.0 * std::log10((worst + 1.0e-15) / harmonic);
+            if (std::getenv("YOUKNOW106_AUDIT_ALIAS") != nullptr)
+                std::cout << "ALIAS note " << note << " at "
+                          << static_cast<int>(sampleRate) << " Hz: "
+                          << decibels << " dB\n";
+            // Tightened from -55 dB once the residual tables were read with
+            // interpolation. The worst case measures about -71.6 dB, so this
+            // is a real bound rather than a slack one; the remaining floor is
+            // not set by the residual tables, since neither interpolation nor
+            // a wider kernel moves it.
+            expect(decibels < -70.0,
                    "alias floor for note " + std::to_string(note) + " at "
                        + std::to_string(static_cast<int>(sampleRate))
                        + " Hz is only " + std::to_string(decibels) + " dB down");

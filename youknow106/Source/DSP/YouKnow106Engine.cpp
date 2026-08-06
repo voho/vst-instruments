@@ -1032,6 +1032,13 @@ void YouKnow106Engine::buildCorrectionTables() noexcept
 // in [0, 1). Output sample `j` of the correction ring is `j - halfWidth`
 // samples away from the sample just rendered, so the residual is read at
 // `j - halfWidth + samplesAgo` and the table is offset by the half width.
+//
+// The table is read with linear interpolation, not nearest neighbour. The
+// table is built at 64x, so rounding to the nearest entry quantises every
+// edge's sub-sample position to 1/64 of an internal sample -- about 23 ns of
+// timing jitter at 192 kHz, applied to every comparator edge, divider edge and
+// ramp corner. That jitter is broadband and lands squarely in the alias floor
+// the residuals exist to lower.
 void YouKnow106Engine::addStep(BandlimitedTrack& track, float height,
                                float samplesAgo) const noexcept
 {
@@ -1042,11 +1049,16 @@ void YouKnow106Engine::addStep(BandlimitedTrack& track, float height,
     {
         const float position = (static_cast<float>(j) + offset)
                              * static_cast<float>(correctionOversample);
-        const int index = std::clamp(static_cast<int>(position + 0.5f), 0,
-                                     correctionTableLength - 1);
+        const int lower = std::clamp(static_cast<int>(position), 0,
+                                     correctionTableLength - 2);
+        const float fraction = std::clamp(
+            position - static_cast<float>(lower), 0.0f, 1.0f);
+        const float residual =
+            stepResidual_[static_cast<std::size_t>(lower)]
+            + (stepResidual_[static_cast<std::size_t>(lower + 1)]
+               - stepResidual_[static_cast<std::size_t>(lower)]) * fraction;
         const int slot = (track.base + j) % correctionRing;
-        track.ring[static_cast<std::size_t>(slot)] +=
-            height * stepResidual_[static_cast<std::size_t>(index)];
+        track.ring[static_cast<std::size_t>(slot)] += height * residual;
     }
 }
 
@@ -1060,11 +1072,16 @@ void YouKnow106Engine::addSlope(BandlimitedTrack& track, float slopeStep,
     {
         const float position = (static_cast<float>(j) + offset)
                              * static_cast<float>(correctionOversample);
-        const int index = std::clamp(static_cast<int>(position + 0.5f), 0,
-                                     correctionTableLength - 1);
+        const int lower = std::clamp(static_cast<int>(position), 0,
+                                     correctionTableLength - 2);
+        const float fraction = std::clamp(
+            position - static_cast<float>(lower), 0.0f, 1.0f);
+        const float residual =
+            slopeResidual_[static_cast<std::size_t>(lower)]
+            + (slopeResidual_[static_cast<std::size_t>(lower + 1)]
+               - slopeResidual_[static_cast<std::size_t>(lower)]) * fraction;
         const int slot = (track.base + j) % correctionRing;
-        track.ring[static_cast<std::size_t>(slot)] +=
-            slopeStep * slopeResidual_[static_cast<std::size_t>(index)];
+        track.ring[static_cast<std::size_t>(slot)] += slopeStep * residual;
     }
 }
 
