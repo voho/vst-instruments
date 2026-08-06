@@ -98,8 +98,18 @@ The version 1.0 parameter block is unchanged and still occupies host parameter
 indices 0-52, so existing sessions and automation lanes keep working. Every
 control added in 1.1 is appended after it and defaults to preserving the earlier
 sound: unity channel level, the original kit pan positions, the original hi-hat
-choke pair, a bypassed bus, and the Humanise setting that reproduces the
-previous fixed variation depth sample for sample.
+choke pair and a bypassed bus.
+
+Two things in 1.1 do change how an existing session sounds, and neither is
+recoverable by leaving a control alone. The Ride's and Crash's first character
+control is now Machine rather than Bell and Spread, so those two voices will
+play differently from a saved position that meant something else; the parameter
+block is unchanged, so the session still loads and every other voice is
+untouched. And the per-hit analogue variation is wider than the depth 1.0 used
+to mean - it was sized to be measured rather than heard - so a kit at the
+default Humanise no longer reproduces the older rendering sample for sample.
+Setting Humanise to 0% removes the variation entirely if a session needs the
+tighter behaviour back.
 
 ## Kit mixer and bus
 
@@ -500,9 +510,9 @@ blocks, against the previous cymbals:
 
 | Pattern | Before | After | Change |
 | --- | ---: | ---: | ---: |
-| Ride, 16th notes at 120 BPM | 11.9% | 10.4% | −13% |
-| Ride on 8ths with kick, snare and crash | 7.8% | 7.2% | −8% |
-| All thirteen voices | 10.2% | 9.9% | −3% |
+| Ride, 16th notes at 120 BPM | 11.6% | 9.9% | −15% |
+| Ride on 8ths with kick, snare and crash | 7.6% | 7.1% | −7% |
+| All thirteen voices | 10.0% | 9.8% | −3% |
 
 Those figures are CPU time as a fraction of real time and are specific to that
 machine and harness; only the before/after ratio is meaningful. The saving comes

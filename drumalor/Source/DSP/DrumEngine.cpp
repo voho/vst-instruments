@@ -2329,12 +2329,6 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             -1.0f, 1.0f);
     }
 
-    // Short, increasingly dense acoustic modes give the synthetic 909 layer
-    // body without allowing a handful of low partials to cling for the tail.
-    static constexpr float rideRatios[12] {
-        1.0f, 1.431f, 2.097f, 3.042f, 4.181f, 5.528f,
-        6.958f, 8.694f, 10.736f, 12.944f, 15.347f, 17.778f
-    };
     // A hi-hat is a pair of thin bronze plates, and a plate's modes are dense,
     // inharmonic and spaced further apart as they climb - nothing like a
     // membrane's series and nothing like the six square waves that were
@@ -2342,10 +2336,6 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     static constexpr float hatRatios[12] {
         1.0f, 1.593f, 2.135f, 2.782f, 3.474f, 4.316f,
         5.278f, 6.389f, 7.628f, 9.012f, 10.550f, 12.240f
-    };
-    static constexpr float crashRatios[12] {
-        1.0f, 1.468f, 2.129f, 3.032f, 4.161f, 5.548f,
-        7.177f, 9.032f, 11.129f, 13.387f, 15.968f, 18.871f
     };
 
     switch (instrument)
@@ -2620,22 +2610,12 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                      : 0.0035f + 0.0065f * voice.characterA,
                 floatSampleRate);
 
-            // Neither machine has a modal bank; a real cymbal does, and it is
-            // where the stick and the cup live. Cast bronze has almost no
-            // internal loss, so what takes its upper modes is radiation and
-            // the plate's nonlinear coupling draining them downward - both of
-            // which climb steeply with frequency, so the top of the bank goes
-            // first either way.
-            const float modalPitch = std::pow (voice.pitchRatio, ride ? 0.74f : 0.72f);
-            const float modalDecay = (ride ? 0.16f : 0.12f) + voice.decaySeconds
-                * (ride ? 0.13f + 0.08f * voice.characterA
-                        : 0.10f + 0.08f * voice.characterA);
-            initialiseModalVoice (
-                voice, ride ? rideRatios : crashRatios, 12,
-                (ride ? 720.0f : 620.0f) * modalPitch, modalDecay,
-                ride ? 0.09f : 0.12f + 0.36f * voice.characterA,
-                (ride ? 0.56f : 0.58f) + (ride ? 0.28f : 0.30f) * voice.characterB,
-                { 0.58f, 0.42f, 0.0f });
+            // No modal bank is set up here, because neither cymbal renders one
+            // any more. initialiseVoice() has already cleared the voice, so
+            // modeCount and modalActiveSamples are zero and every generic
+            // modal guard downstream is false. Configuring twelve resonators
+            // whose state nothing reads would be a note-on cost - transcendental
+            // work on the audio thread - paid by every hit of a dense ride.
             break;
         }
 

@@ -52,8 +52,8 @@ struct InstrumentParameters
 // Kit-wide controls that shape every voice and the shared output bus.
 struct KitParameters
 {
-    // 0.5 reproduces the original fixed analogue drift depth exactly; 0 makes
-    // the kit machine-tight and 1.0 doubles the per-hit variation.
+    // 0 makes the kit machine-tight, 0.5 is the calibrated unit and 1.0
+    // doubles the per-hit variation.
     float humanise { 0.5f };
     // Both bus stages are fully bypassed at 0.
     float busDrive { 0.0f };
