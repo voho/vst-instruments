@@ -1046,8 +1046,7 @@ private:
     // their bandwidth depend on the HQ factor.
     void updateVoiceAudio(Voice& voice, const EngineParameters& parameters) noexcept;
     [[nodiscard]] static float dcoCompensationRatio(const Voice& voice) noexcept;
-    [[nodiscard]] float dcoRampAmplitudeScale(
-        const Voice& voice, const EngineParameters& parameters) const noexcept;
+    [[nodiscard]] float dcoLaunchScale(const Voice& voice) const noexcept;
     // The PWM comparator is physical and free-running even behind a shut VCA,
     // so it follows the shared held threshold for inactive cards as well.
     void updatePulseComparator(Voice& voice,

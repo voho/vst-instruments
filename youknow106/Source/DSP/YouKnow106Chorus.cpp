@@ -556,8 +556,14 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         const float hypDelayA = delaySecondsForClock(clockMid - clockSpread * modulation);
         const float hypDelayB = delaySecondsForClock(clockMid + clockSpread * modulation);
 
-        nominalDelayA += (hypDelayA - nominalDelayA) * std::clamp(calibration, 0.0f, 2.0f);
-        nominalDelayB += (hypDelayB - nominalDelayB) * std::clamp(calibration, 0.0f, 2.0f);
+        // The blend saturates at one: which trajectory the clock follows is a
+        // topology hypothesis, not a component tolerance, so Character can
+        // select it but never exaggerate it. Unclamped, the 0..2 range
+        // extrapolated past the hyperbolic path -- leaving the measured
+        // 1.66-5.35 ms envelope and folding the sweep back mid-flank.
+        const float blend = std::clamp(calibration, 0.0f, 1.0f);
+        nominalDelayA += (hypDelayA - nominalDelayA) * blend;
+        nominalDelayB += (hypDelayB - nominalDelayB) * blend;
     }
 
     const float delayA = std::max(nominalDelayA, 1.0e-4f);

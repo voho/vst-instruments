@@ -1249,8 +1249,13 @@ void YouKnow106Engine::restartDcoBandlimited(
     {
         // Nothing from this cell has reached the delayed output timeline yet,
         // so this is a true cold start rather than an audible discontinuity.
+        // That principle extends to the compensation hold: an unprimed card's
+        // hold carries an initialization value, not history, and a ratio
+        // taken against it fabricated a multi-volt, DC-shifted first cycle
+        // on every fresh low note. A cold start begins settled -- the hold
+        // adopts its target and the first cycle launches at unity scale.
         dco.reset();
-        dco.renderScale = dcoCompensationRatio(voice);
+        voice.dcoCv = voice.dcoCvTarget;
         voice.pulseDutyPrimed = false;
         return;
     }
@@ -1272,7 +1277,7 @@ void YouKnow106Engine::restartDcoBandlimited(
     // the restarted ramp with the ratio the CV holds right now. The restarted
     // ramp starts at the rail, which every scale maps to itself.
     const float oldScale = dco.renderScale;
-    const float newScale = dcoCompensationRatio(voice);
+    const float newScale = dcoLaunchScale(voice);
     const float oldSawUnit = oldPhase < oldRise
         ? 2.0f * clamp01(static_cast<float>(oldPhase / oldRise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>(
@@ -3021,7 +3026,15 @@ void YouKnow106Engine::updatePulseComparator(
     Voice& voice, const EngineParameters& parameters) noexcept
 {
     const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
-    const float amplitudeScale = dcoRampAmplitudeScale(voice, parameters);
+    // The comparator compares the threshold against the ramp actually being
+    // integrated, whose amplitude this cycle is the *frozen* per-cycle ratio
+    // -- the same one the render carries -- not the instantaneous CV ratio,
+    // which belongs to the next cycle's slope. Solving the duty against a
+    // different amplitude than the rendered ramp put the solved edges on a
+    // waveform that did not exist.
+    const float cardCurrent =
+        1.0f + card.rampCurrentError * 0.03f * parameters.calibration;
+    const float amplitudeScale = voice.dco.renderScale * cardCurrent;
     // The alignment window is 48% to 52% duty across cards: +/-0.24 V is
     // +/-2 points on the 12 V ramp. Pulse Off remains separate at -0.8 V and
     // pins the comparator high even while this card's VCA is shut.
@@ -3040,13 +3053,23 @@ float YouKnow106Engine::dcoCompensationRatio(const Voice& voice) noexcept
         voice.dcoCv / std::max(voice.dcoCvTarget, 1.0e-3f), 0.25f, 4.0f);
 }
 
-float YouKnow106Engine::dcoRampAmplitudeScale(
-    const Voice& voice, const EngineParameters& parameters) const noexcept
+float YouKnow106Engine::dcoLaunchScale(const Voice& voice) const noexcept
 {
-    const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
-    const float cardCurrent =
-        1.0f + card.rampCurrentError * 0.03f * parameters.calibration;
-    return dcoCompensationRatio(voice) * cardCurrent;
+    // The frozen per-cycle slope stands in for the integral of the slewing
+    // compensation current across the rise it charges. Weighting the launch
+    // ratio by tau/period is that integral to first order: a cycle much
+    // longer than the hold's 522 us sees an almost settled current, and a
+    // cycle shorter than it sees the launch value. Exact in both limits --
+    // and what keeps a stale hold from painting its full error across a
+    // 15 ms bass cycle that the hold in truth corrects within its first
+    // millisecond.
+    const float ratio = dcoCompensationRatio(voice);
+    const float tauSamples = dcoHoldSlewSecondsVoiced
+                           * static_cast<float>(oversampledRate_);
+    const float weight = std::min(
+        1.0f, tauSamples / static_cast<float>(
+                  std::max(voice.dco.periodSamples, 1.0)));
+    return 1.0f + (ratio - 1.0f) * weight;
 }
 
 bool YouKnow106Engine::pulseMixEnabled(bool requested, float duty) noexcept
@@ -3119,9 +3142,11 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // until the voltage catches up. The ratio of the slewed voltage to the
     // one the current pitch calls for *is* that error -- and it expresses
     // itself as the *slope of each rise*, because the integrator charges from
-    // whatever current the CV set when the cycle launched. The rendered ramp
-    // therefore freezes the ratio per cycle and reshapes about the fixed
-    // bottom rail (the discharge always returns to the same rail): the
+    // the slewing current across the cycle. The rendered ramp therefore
+    // freezes each cycle's launch scale -- dcoLaunchScale, the ratio weighted
+    // to first order by the hold's tau against the period, standing in for
+    // the slew's integral -- and reshapes about the fixed bottom rail (the
+    // discharge always returns to the same rail): the
     // affine map s*naive + (s - 1) keeps -1 at -1 and puts the peak at
     // 2s - 1, which is also the geometry the duty law already assumes. A
     // ratio taking effect only at a wrap, where both cycles share the rail,
@@ -3129,7 +3154,6 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // previous outer multiply stepped the whole waveform mid-cycle, outside
     // the bandlimited track -- a measured train of 2.9% single-sample steps
     // at the 238 Hz scan cadence on every glide.
-    const float compensationScale = dcoCompensationRatio(voice);
     // From the parts' own tolerance classes, which is legitimate here because
     // the ramp has no per-voice trimmer, so nothing removes their spread: the
     // charging resistors are marked FX on the board -- metal-oxide film, 1% --
@@ -3172,11 +3196,12 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
                      samplesAgo(base + rise));
         if (insideThisSample(base + 1.0))
         {
+            const float launchScale = dcoLaunchScale(voice);
             addSlope(dco.saw,
-                     (slopeAtStart * compensationScale
+                     (slopeAtStart * launchScale
                       - fallSlope * cycleScale) * incrementF,
                      samplesAgo(base + 1.0));
-            cycleScale = compensationScale;
+            cycleScale = launchScale;
         }
     }
     dco.renderScale = cycleScale;

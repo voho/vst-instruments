@@ -156,8 +156,12 @@ Take stageOffsets()
     p.cutoff = 0.30f;
     p.resonance = 0.92f;
     p.envDepth = 0.55f;
-    p.attack = 1.8f;
-    p.decay = 2.6f;
+    // Panel positions for a 1.8 s attack and 2.6 s decay -- these fields are
+    // normalised slider travel, not seconds, and a first revision of this
+    // take wrote seconds into them, pinning both at maximum and spending the
+    // whole take inside the attack instead of the sweep it was composed for.
+    p.attack = youknow106::YouKnow106Engine::panelPositionForAttack(1.8f);
+    p.decay = youknow106::YouKnow106Engine::panelPositionForDecay(2.6f);
     p.sustain = 0.15f;
     p.release = 0.4f;
     p.subLevel = 0.0f;
