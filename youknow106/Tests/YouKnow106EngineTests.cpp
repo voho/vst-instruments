@@ -2500,8 +2500,14 @@ void testFixedOutputBoundaryCorpus()
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
         Baseline { 0.24739, 0.349813, 0.349813, 0, 0 },
-        Baseline { 0.685897, 1.34564, 1.34564, 1276, 5095 },
-        Baseline { 0.414415, 1.07679, 1.10198, 18, 72 },
+        // Re-pinned when the chorus rates moved from the borrowed JUNO-60
+        // scale to the instrument's own derived 0.55329/0.89826 Hz: the same
+        // fixed analysis window now lands on a different phase of the (faster)
+        // sweep, which moves these snapshot peaks and threshold counts while
+        // the RMS stays within 3.5%. Level and headroom did not change;
+        // where the window catches the sweep did.
+        Baseline { 0.661991, 1.27326, 1.29002, 1164, 4644 },
+        Baseline { 0.408654, 0.925712, 0.960813, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;

@@ -123,20 +123,6 @@ float triangle(double phase) noexcept
     return static_cast<float>(folded * 4.0 - 1.0);
 }
 
-// std::sqrt is not constexpr before C++26, and settingsFor() runs once per
-// sample, so the mode rates have to be folded at compile time some other way.
-// Newton on x^2 = value, from a crude seed; the inputs here are all near unity
-// so a fixed iteration count converges to the last bit.
-constexpr double constexprSqrt(double value) noexcept
-{
-    if (!(value > 0.0))
-        return 0.0;
-
-    double guess = value > 1.0 ? value : 1.0;
-    for (int iteration = 0; iteration < 32; ++iteration)
-        guess = 0.5 * (guess + value / guess);
-    return guess;
-}
 } // namespace
 
 Chorus::StereoNoiseSample Chorus::correlatedRandomStep(
@@ -169,35 +155,35 @@ float Chorus::deterministicToneStep(double& phase, float frequencyHz,
 
 Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
 {
-    // The sweep endpoints are a *Juno-60's* measured figures, and they are
-    // labelled as such deliberately: delay 1.66 ms to 5.35 ms, read from a
-    // calibrated capture of that instrument. No qualifying capture of a
-    // Juno-106's own chorus has been located -- a revision briefly adopted
-    // 1.54-5.15 ms as one, which turned out not to exist -- and the figures
-    // published for this instrument are only "about 0.5 Hz" and "about 0.8 Hz".
+    // The rates are this instrument's own, straight from its circuit:
+    // derivedRateHz() evaluates f = 1/(4 * beta * R_eff * C3) with the
+    // schematic's timing network (6.4352941 MOhm for I, 3.9638889 MOhm for
+    // II), the summing-node comparator ratio 33/47 and the 0.1 uF integrator
+    // capacitor, landing 0.55329 Hz and 0.89826 Hz. Scope readings of a
+    // 106-chorus clone corroborate both within 3% (0.537/0.879 Hz), and both
+    // truncate to the published about-0.5 and about-0.8. The JUNO-60 pair that
+    // used to stand in for the scale is superseded, as its 1.682 ratio already
+    // was; the suites keep both only as comparison values.
     //
-    // The rates are split between those two facts. This instrument's own
-    // schematic fixes their *ratio* exactly: Chorus::lfoTimingOhms derives
-    // 6.4352941 MOhm for mode I and 3.9638889 MOhm for mode II from the mode
-    // switch's T-network, so mode II runs 1.6234799 times faster. What the
-    // schematic cannot give is the *scale*, because it does not print the
-    // integrator capacitor. So the sibling's pair supplies the scale and only
-    // the scale: its geometric mean is preserved exactly, and this instrument's
-    // own ratio re-splits it. Both results still round to the published
-    // about-0.5 and about-0.8. The sibling's own 1.682 ratio is superseded and
-    // must not be reintroduced.
+    // The sweep endpoints remain a *Juno-60's* measured figures: delay 1.66 ms
+    // to 5.35 ms, read from a calibrated capture of that instrument. They stay
+    // in service here on stronger grounds than the original borrowing: both
+    // instruments drive their MN3101s through the same voltage-to-current
+    // converter with the same values -- 2.2k/22k/1.8k against 150 pF on the
+    // 106's own page and in the sister board clone's netlist alike -- so a
+    // calibrated capture of one is a measurement of the circuit they share.
+    // The third-party 106-specific sweep reports (1.4-6.4 ms, against three
+    // narrower clone clock readings) disagree with each other by more than
+    // they disagree with this pair, so none of them replaces it. See OQ-01.
     //
     // Modes I and II differ in speed alone, not in depth: the mode line changes
     // a timing resistance, while the triangle's amplitude is set by the
-    // comparator's threshold divider, which the mode line does not touch. That
+    // comparator's threshold ratio, which the mode line does not touch. That
     // is why II reads as more agitated rather than wider.
     constexpr float centre = 0.5f * (0.00166f + 0.00535f);
     constexpr float sweep = 0.5f * (0.00535f - 0.00166f);
-    constexpr double geometricMean = constexprSqrt(
-        siblingMeasuredRateOneHz * siblingMeasuredRateTwoHz);
-    constexpr double split = constexprSqrt(modeRateRatio());
-    constexpr float rateOne = static_cast<float>(geometricMean / split);
-    constexpr float rateTwo = static_cast<float>(geometricMean * split);
+    constexpr float rateOne = static_cast<float>(derivedRateHz(true));
+    constexpr float rateTwo = static_cast<float>(derivedRateHz(false));
     switch (mode)
     {
         case ChorusMode::One:  return { rateOne, centre, sweep, lineGain };

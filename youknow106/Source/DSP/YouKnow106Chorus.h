@@ -115,13 +115,16 @@ public:
     // uPC062 and IC2a M5218L).
     //
     // IC1b integrates: C3 sits across pins 6 and 7 and pin 5 is grounded.
-    // IC1a compares: R6 47 kOhm returns its own output to pin 3 while R15
-    // 1 kOhm holds pin 3 down, so the feedback is positive, and R7 33 kOhm
-    // brings the integrator's output back to pin 2 to close the loop. That is
-    // an integrator-plus-comparator pair, whose capacitor is charged from a
-    // constant current for the whole of each half cycle. Its output is a
-    // straight, symmetric triangle -- not the exponential segments an RC
-    // relaxation oscillator would give -- and `triangle()` below is that shape.
+    // IC1a compares: R6 47 kOhm returns its own output to pin 3, and R7 33 kOhm
+    // brings the integrator's output to that same node, so pin 3 is a summing
+    // junction weighed against the grounded pin 2 -- the classic two-resistor
+    // Schmitt. (An earlier transcription placed R7 on pin 2 with R15 dividing
+    // pin 3 down; `lfoThresholdRatio` below records why that reading is
+    // falsified.) That is an integrator-plus-comparator pair, whose capacitor
+    // is charged from a constant current for the whole of each half cycle. Its
+    // output is a straight, symmetric triangle -- not the exponential segments
+    // an RC relaxation oscillator would give -- and `triangle()` below is that
+    // shape.
     // IC2a then inverts it once through R10/R9 33 kOhm, so the second line's
     // modulation is exactly the negative of the first's rather than an
     // independent oscillator: TP4 carries the triangle and TP3 its inverse.
@@ -139,22 +142,35 @@ public:
     static constexpr double lfoIntegratorOhms = 2.2e6;     // R8
     static constexpr double lfoShuntOhms = 680.0e3;        // R4
     static constexpr double lfoModeShuntOhms = 2.2e6;      // R3, shorted in I
-    // R15 / (R15 + R6). The comparator trips when the triangle reaches this
-    // fraction of the saturated output, so the triangle spans +/- that fraction
-    // and the oscillation is f = 1 / (4 * beta * R_eff * C3).
+    // R7 / R6. The comparator trips where its summing node crosses the
+    // grounded inverting input, so the triangle spans +/- (R7/R6) of the
+    // saturated output and the oscillation is f = 1 / (4 * beta * R_eff * C3).
     //
-    // Nothing computes a rate from this: the absolute scale is still the
-    // labelled JUNO-60 fallback, and this constant exists so the derivation can
-    // be finished when C3 is read. It is kept here *and* known to be wrong,
-    // which is why it is spelled out rather than quietly corrected. Evaluating
-    // f with this value and the project's own lfoTimingOhms() gives 18.65 and
-    // 30.27 Hz against third-party measurements near 0.537 and 0.879 -- out by
-    // a factor of about 34 -- while R7/R6 = 33/47 = 0.702 lands both within 3%.
-    // Which of the two the schematic actually shows is a reading task, not a
-    // measurement, and picking one without doing that reading would just be
-    // trading a known-wrong constant for a guessed one. See OQ-01. The mode
-    // *ratio* is unaffected either way and comes out at 1.6235.
-    static constexpr double lfoThresholdRatio = 1.0 / 48.0;
+    // An earlier transcription read R7 as reaching the inverting pin instead,
+    // with R15 1 kOhm dividing the non-inverting one down to beta = 1/48. That
+    // reading is falsified twice over: evaluating f with it puts both modes
+    // some 34x above every rate ever reported for this family, and the netlist
+    // of the sister board's clone (gligli/juno-chorus-clone, the Juno-60
+    // chorus board this circuit is shared with) wires 47k from the comparator
+    // output and 33k from the triangle into one non-inverting summing node
+    // with the inverting input grounded, and has no divider resistor on that
+    // node at all. The mode *ratio* is unaffected either way; the scale below
+    // is not.
+    static constexpr double lfoComparatorFeedbackOhms = 47.0e3;   // R6
+    static constexpr double lfoComparatorTriangleOhms = 33.0e3;   // R7
+    static constexpr double lfoThresholdRatio =
+        lfoComparatorTriangleOhms / lfoComparatorFeedbackOhms;
+
+    // C3, the integrator capacitor. The 106's own page prints it in Roland's
+    // bare ".1" form beside C4's "220P" -- reported from a p. 15 render, with
+    // the original-page confirmation still open in OQ-01 -- and the sister
+    // board clone's netlist carries 100 nF in exactly this position, across
+    // the integrator's pins 6 and 7. The derivation below corroborates the
+    // value against two independent measured rate pairs: scope readings of a
+    // 106-chorus clone (0.537/0.879 Hz) land within 3%, and the JUNO-60's own
+    // measured pair implies timing resistances in the same family as
+    // lfoTimingOhms() under the same beta and C3.
+    static constexpr double lfoIntegratorFarads = 0.1e-6;
 
     [[nodiscard]] static constexpr double lfoTimingOhms(bool modeOne) noexcept
     {
@@ -175,9 +191,21 @@ public:
         return lfoTimingOhms(true) / lfoTimingOhms(false);
     }
 
-    // The JUNO-60's measured rates. They remain this model's only source for
-    // the absolute scale, and are kept here verbatim so the re-split below can
-    // be checked against them rather than against a rounded result.
+    // The absolute modulation rate, from this instrument's own circuit alone:
+    // f = 1 / (4 * beta * R_eff * C3), which lands 0.55329 Hz for mode I and
+    // 0.89826 Hz for mode II. Mode I integrates through the larger resistance
+    // and is the slower leg.
+    [[nodiscard]] static constexpr double derivedRateHz(bool modeOne) noexcept
+    {
+        return 1.0 / (4.0 * lfoThresholdRatio * lfoTimingOhms(modeOne)
+                      * lfoIntegratorFarads);
+    }
+
+    // The JUNO-60's measured rates. They no longer supply this model's scale
+    // -- derivedRateHz() does -- and stay only as the comparison pair the
+    // suites hold the derivation against: the sibling's own 1.682 ratio must
+    // stay superseded, and its scale must stay retired rather than quietly
+    // drifting back in.
     static constexpr double siblingMeasuredRateOneHz = 0.513;
     static constexpr double siblingMeasuredRateTwoHz = 0.863;
 
