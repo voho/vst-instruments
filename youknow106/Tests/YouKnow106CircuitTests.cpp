@@ -877,23 +877,61 @@ void testEnvelopeAndAmplifierLaws()
     }
 
     // VCA LEVEL is not this per-voice law. It drives the common jack-board VCA
-    // after the six voices are summed. These are regression guards for the
-    // current provisional three-point byte-to-dB fit, not a settled Roland
-    // byte-to-GC1 law. NEC's separate -5.9 mV/dB GC1 device boundary does not
-    // supply that missing mapping. The declared input is
-    // p=b/127=DAC12/4064 and the legacy display coordinate is x=-5+10p, so the
-    // midpoint below is explicitly x=0.
-    const auto patchLevelDb = [](float position) {
-        return 20.0 * std::log10(YouKnow106Engine::patchLevelGain(position));
+    // after the six voices are summed. Solve Roland's p. 8 converter and p. 15
+    // resistor network independently in double precision, then apply NEC's
+    // -5.9 mV/dB typical control constant. This guards every stage instead of
+    // pinning a few outputs copied from the implementation.
+    constexpr double dacSteps = 4096.0;
+    constexpr double dacReferenceVolts = 5.0;
+    constexpr double r30 = 2200.0;
+    constexpr double r32 = 1500.0;
+    constexpr double r31 = 47.0;
+    constexpr double r165 = 15000.0;
+    constexpr double biasVolts = 15.0;
+    constexpr double voltsPerDb = -5.9e-3;
+    const auto expectedCommonVcaControl = [=](int storedByte) {
+        const double physicalCode = 32.0 * storedByte;
+        const double converterVolts =
+            dacReferenceVolts * physicalCode / dacSteps;
+        const double holdVolts = 4.0 - 2.0 * converterVolts;
+        const double holdSeries = r30 + r32;
+        return (holdVolts / holdSeries + biasVolts / r165)
+             / (1.0 / holdSeries + 1.0 / r31 + 1.0 / r165);
     };
-    expectNear(patchLevelDb(0.0f), -15.0, 1.0e-4,
-               "VCA LEVEL minimum misses the reported -5-panel anchor");
-    expectNear(patchLevelDb(0.5f), -12.5, 1.0e-4,
-               "VCA LEVEL centre misses the reported zero-panel anchor");
-    expectNear(patchLevelDb(1.0f), 5.0, 1.0e-4,
-               "VCA LEVEL maximum misses the reported +5-panel anchor");
+    double previousPatchGain = -1.0;
+    for (const int storedByte : { 0, 32, 64, 96, 127 })
+    {
+        const float position = static_cast<float>(storedByte) / 127.0f;
+        const double expectedControl = expectedCommonVcaControl(storedByte);
+        const double expectedDb = expectedControl / voltsPerDb;
+        const double modelControl =
+            YouKnow106Engine::commonVcaControlVolts(position);
+        const double modelGain = YouKnow106Engine::patchLevelGain(position);
+        const double modelDb = 20.0 * std::log10(modelGain);
+        const std::string where =
+            " at stored byte " + std::to_string(storedByte);
+        expectNear(modelControl, expectedControl, 2.0e-8,
+                   "common-VCA GC1 resistor solve" + where);
+        expectNear(modelDb, expectedDb, 2.0e-5,
+                   "common-VCA NEC dB conversion" + where);
+        expect(modelGain > previousPatchGain,
+               "common-VCA gain is not monotone" + where);
+        previousPatchGain = modelGain;
+    }
     expect(YouKnow106Engine::patchLevelGain(0.0f) > 0.0f,
            "VCA LEVEL minimum incorrectly mutes the patch");
+
+    // C7 sees R30 || (R32 + (R31 || R165)) with the independent sources
+    // grounded. This is a distinct control smoother from the C12/R36 audio
+    // coupling network tested below.
+    const double gcBiasResistance = r31 * r165 / (r31 + r165);
+    const double farSideResistance = r32 + gcBiasResistance;
+    const double c7TheveninResistance =
+        r30 * farSideResistance / (r30 + farSideResistance);
+    const double expectedC7Tau = c7TheveninResistance * 10.0e-6;
+    expectNear(YouKnow106Engine::commonVcaHoldTimeConstantSeconds(),
+               expectedC7Tau, 1.0e-9,
+               "common-VCA C7 loaded time constant");
 
     // The jack-board gain chain is fixed by resistor ratios. IC1a attenuates
     // every voice before the shared VCA and BBDs; IC6 supplies the dry/wet

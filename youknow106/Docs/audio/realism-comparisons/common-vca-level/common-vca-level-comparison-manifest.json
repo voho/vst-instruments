@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "tool": "YouKnow106RenderRealismComparison",
+  "scenario": "common-vca-level",
+  "scenario_protocol_version": 1,
+  "stage": "after",
+  "dsp_source_sha256": "717f6612c8d640be9a6bc9046f59cc91a6a693db4f25bfd2ac78c37e9f9dc112",
+  "compiler_id": "AppleClang",
+  "compiler_version": "21.0.0.21000101",
+  "sample_rate_hz": 48000,
+  "block_size_samples": 128,
+  "high_quality": true,
+  "channels": 2,
+  "frames": 226966,
+  "wav_encoding": "IEEE-754 float32 little-endian",
+  "event_schedule_seed_hex": "0x106c0a11",
+  "engine_seed_policy": "fixed per-card hash seeds rooted at 17; chorus noise disabled",
+  "automation_sample_semantics": "host parameter is set immediately before this host sample; the modelled converter consumes the byte at its next scheduled CommonVca write",
+  "requested_steady_bytes": [0, 32, 64, 96, 127],
+  "patch": {
+    "key_mode": "Poly 1",
+    "polyphony": 6,
+    "notes": [48, 55, 60],
+    "range": "8 foot",
+    "saw_enabled": true,
+    "pulse_enabled": true,
+    "pwm_depth": 0.36,
+    "sub_level": 0.28,
+    "noise_level": 0.0,
+    "high_pass": "1",
+    "cutoff": 0.82,
+    "resonance": 0.08,
+    "envelope_depth": 0.0,
+    "key_follow": 0.5,
+    "vca_mode": "gate",
+    "initial_vca_level_byte": 64,
+    "chorus_noise": 0.0,
+    "velocity_depth": 0.0,
+    "volume": 0.35,
+    "unit_character": 1.0
+  },
+  "sections": [
+    { "start_sample": 4800, "name": "dry", "chorus": "off" },
+    { "start_sample": 101492, "name": "chorus-ii", "chorus": "II" }
+  ],
+  "vca_level_automation": [
+    { "host_parameter_set_sample": 0, "stored_byte": 64, "normalised_panel": 0.50393700787401574, "dac12_code": 2048, "section": "setup", "purpose": "initial stored level" },
+    { "host_parameter_set_sample": 12000, "stored_byte": 0, "normalised_panel": 0, "dac12_code": 0, "section": "dry", "purpose": "steady plateau" },
+    { "host_parameter_set_sample": 24000, "stored_byte": 32, "normalised_panel": 0.25196850393700787, "dac12_code": 1024, "section": "dry", "purpose": "steady plateau" },
+    { "host_parameter_set_sample": 36000, "stored_byte": 64, "normalised_panel": 0.50393700787401574, "dac12_code": 2048, "section": "dry", "purpose": "steady plateau" },
+    { "host_parameter_set_sample": 48000, "stored_byte": 96, "normalised_panel": 0.75590551181102361, "dac12_code": 3072, "section": "dry", "purpose": "steady plateau" },
+    { "host_parameter_set_sample": 60000, "stored_byte": 127, "normalised_panel": 1, "dac12_code": 4064, "section": "dry", "purpose": "steady plateau" },
+    { "host_parameter_set_sample": 72000, "stored_byte": 0, "normalised_panel": 0, "dac12_code": 0, "section": "dry", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 72390, "stored_byte": 127, "normalised_panel": 1, "dac12_code": 4064, "section": "dry", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 72825, "stored_byte": 32, "normalised_panel": 0.25196850393700787, "dac12_code": 1024, "section": "dry", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 73202, "stored_byte": 96, "normalised_panel": 0.75590551181102361, "dac12_code": 3072, "section": "dry", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 73584, "stored_byte": 0, "normalised_panel": 0, "dac12_code": 0, "section": "dry", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 73923, "stored_byte": 64, "normalised_panel": 0.50393700787401574, "dac12_code": 2048, "section": "dry", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 74272, "stored_byte": 127, "normalised_panel": 1, "dac12_code": 4064, "section": "dry", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 74713, "stored_byte": 32, "normalised_panel": 0.25196850393700787, "dac12_code": 1024, "section": "dry", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 75092, "stored_byte": 64, "normalised_panel": 0.50393700787401574, "dac12_code": 2048, "section": "dry", "purpose": "section landing level" },
+    { "host_parameter_set_sample": 113492, "stored_byte": 0, "normalised_panel": 0, "dac12_code": 0, "section": "chorus-ii", "purpose": "steady plateau" },
+    { "host_parameter_set_sample": 125492, "stored_byte": 32, "normalised_panel": 0.25196850393700787, "dac12_code": 1024, "section": "chorus-ii", "purpose": "steady plateau" },
+    { "host_parameter_set_sample": 137492, "stored_byte": 64, "normalised_panel": 0.50393700787401574, "dac12_code": 2048, "section": "chorus-ii", "purpose": "steady plateau" },
+    { "host_parameter_set_sample": 149492, "stored_byte": 96, "normalised_panel": 0.75590551181102361, "dac12_code": 3072, "section": "chorus-ii", "purpose": "steady plateau" },
+    { "host_parameter_set_sample": 161492, "stored_byte": 127, "normalised_panel": 1, "dac12_code": 4064, "section": "chorus-ii", "purpose": "steady plateau" },
+    { "host_parameter_set_sample": 173492, "stored_byte": 0, "normalised_panel": 0, "dac12_code": 0, "section": "chorus-ii", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 173913, "stored_byte": 127, "normalised_panel": 1, "dac12_code": 4064, "section": "chorus-ii", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 174349, "stored_byte": 32, "normalised_panel": 0.25196850393700787, "dac12_code": 1024, "section": "chorus-ii", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 174694, "stored_byte": 96, "normalised_panel": 0.75590551181102361, "dac12_code": 3072, "section": "chorus-ii", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 175048, "stored_byte": 0, "normalised_panel": 0, "dac12_code": 0, "section": "chorus-ii", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 175426, "stored_byte": 64, "normalised_panel": 0.50393700787401574, "dac12_code": 2048, "section": "chorus-ii", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 175844, "stored_byte": 127, "normalised_panel": 1, "dac12_code": 4064, "section": "chorus-ii", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 176222, "stored_byte": 32, "normalised_panel": 0.25196850393700787, "dac12_code": 1024, "section": "chorus-ii", "purpose": "rapid transition" },
+    { "host_parameter_set_sample": 176566, "stored_byte": 64, "normalised_panel": 0.50393700787401574, "dac12_code": 2048, "section": "chorus-ii", "purpose": "section landing level" }
+  ],
+  "midi_events": [
+    { "sample": 4800, "action": "note_on", "note": 48 },
+    { "sample": 4800, "action": "note_on", "note": 55 },
+    { "sample": 4800, "action": "note_on", "note": 60 },
+    { "sample": 77492, "action": "note_off", "note": 48 },
+    { "sample": 77492, "action": "note_off", "note": 55 },
+    { "sample": 77492, "action": "note_off", "note": 60 },
+    { "sample": 106292, "action": "note_on", "note": 48 },
+    { "sample": 106292, "action": "note_on", "note": 55 },
+    { "sample": 106292, "action": "note_on", "note": 60 },
+    { "sample": 178966, "action": "note_off", "note": 48 },
+    { "sample": 178966, "action": "note_off", "note": 55 },
+    { "sample": 178966, "action": "note_off", "note": 60 }
+  ],
+  "baseline_manifest": "common-vca-level-before-manifest.json",
+  "raw_levels": {
+    "before": {
+      "peak_linear": 0.67824774980545044,
+      "peak_dbfs": -3.37223276809687,
+      "rms_linear": 0.085207203474166271,
+      "rms_dbfs": -21.390473762685367
+    },
+    "after": {
+      "peak_linear": 0.63388949632644653,
+      "peak_dbfs": -3.9597288902666774,
+      "rms_linear": 0.093615828756125077,
+      "rms_dbfs": -20.573014273049029
+    },
+    "signed_difference_after_minus_before": {
+      "peak_linear": 0.37584179639816284,
+      "peak_dbfs": -8.4998984955809327,
+      "rms_linear": 0.031285662003997225,
+      "rms_dbfs": -30.093093018529473
+    }
+  },
+  "relative_metrics": {
+    "difference_peak_over_before_peak_dbc": -5.1276657274840627,
+    "difference_rms_over_before_rms_dbc": -8.7026192558441
+  },
+  "listening": {
+    "target_peak_dbfs": -6.0,
+    "shared_gain_linear": 0.73894418930403161,
+    "shared_gain_db": -2.6277672319031309,
+    "policy": "one gain derived from max(before peak, after peak), identically applied to before, after, and signed difference"
+  }
+}

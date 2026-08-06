@@ -107,7 +107,13 @@ with an explicit evidence gap and required output in
   on the jack board. Each voice reaches that bus through 33 kOhm against the
   summer's 3.3 kOhm feedback, so it is attenuated by exactly 0.1 before it can
   drive the shared VCA or BBDs. This is why patches can store their own output
-  trims without changing their envelope law.
+  trims without changing their envelope law. For stored byte `b`, the physical
+  12-bit code is `d=b<<5`; the nominal jack-board network and NEC control
+  constant derive `gain_dB=-16.3196647+0.165581014*b`. C7 and its loaded
+  resistance give the shared control a 9.08249 ms time constant, so changes on
+  an active signal path settle like the hardware node instead of following a
+  voiced curve. Initial idle host-snapshot priming remains an explicit startup
+  policy, not a circuit claim.
 - **The chorus has no compander**, so it hisses — the hiss is modelled, and
   there is a control to defeat it that the hardware does not have. The final
   mixer gains dry by `100/39` and wet by `100/47`, putting wet at `39/47` of
@@ -169,11 +175,11 @@ controlling version of this ledger is the
 | --- | --- | --- |
 | Patch memory and selection | All 128 locations are in hardware order A11…A88, then B11…B88. Each tone is the exact 16 continuous bytes plus two packed switch bytes used by the hardware, decoded by the SysEx path. Program Change 0…127 maps directly to those slots. | The hardware stores no names; displayed names are archival metadata. A host preset also restores plug-in/performance controls, while hardware Program Change and SysEx correctly restore tone memory only. |
 | Key assigner and POLY modes | Six-card allocation, POLY 1/POLY 2, note dropping instead of stealing, held-key rescans and Solo Unison behavior are ROM-resolved for the stated A-5 image. The physical keybed is represented as 61 keys. | Velocity, more than six voices and host notes beyond the drawn keybed are extensions. The mouse Shift-click gesture is a UI equivalent for pressing both momentary POLY contacts. |
-| Shared digital control generator | Envelope recurrence, sustain mapping, DAC truncation, LFO/delay arithmetic and portamento are ROM-resolved for the stated B-2 image. The 23 converter destinations, their ownership and the 4.2 ms pass are anchored. | Writes retain the exact logical order but use normalized sub-pass spacing; exact timestamps and jitter remain open. Only the VCF and voice-VCA hold constants are currently anchored; other sample-and-hold slews are voiced. |
+| Shared digital control generator | Envelope recurrence, sustain mapping, DAC truncation, LFO/delay arithmetic and portamento are ROM-resolved for the stated B-2 image. The 23 converter destinations, their ownership and the 4.2 ms pass are anchored. VCF and voice-VCA hold constants are component-derived, as is the common VCA LEVEL path's 9.08249 ms post-S/H C7 pole. | Writes retain the exact logical order but use normalized sub-pass spacing; exact timestamps and jitter remain open. The remaining sample-and-hold slews are voiced, and initial idle host-snapshot priming is product policy. |
 | DCO, ramp, pulse, sub and mixer | The 8 MHz master reference, integer timer division, range clocks, pitch quantization, constant-current ramp, PWM comparator and divide-by-two sub topology are anchored/derived. A changed-pitch write occurs at that card’s converter slot. The moving-threshold solver prevents a digital-only missed PWM edge and full-cycle blip. | BLEP/BLAMP repairs are transparent digital antialiasing. Exact restart electrical state, loaded saw/pulse/sub/noise levels, filter-drive budget and live waveform-switch transients remain approximated or open. Pulse currently uses a provisional instantaneous audio gate; no invented anti-click envelope is presented as hardware behavior. |
 | Per-voice VCF | Four IR3109/BA662 transconductor stages, the 68 kΩ/560 Ω attenuation, 240 pF stages, per-card cutoff trims and service calibration anchors are hardware-fixed. Cutoff modulation is summed in converter counts before the exponential law. The upper knee is the transconductor's own control-current saturation near 64 kHz, and the converter's R-2R carry error rides on the code it produces. | A topology-preserving trapezoidal/Newton solve is the numerical realization. Resonance byte-to-loop gain, input compensation, feedback saturation and frequency trim are voiced pending measurements. The saturation exponent and the carry sizes are fitted to a third-party measured card, not to a Roland document. |
 | Per-voice VCA | One BA662 VCA per card, after its filter, with ENV/GATE ownership and the 6 Vpp service endpoint, is anchored. Roland's own module-board drawing puts a grounded-base volts-to-amps stage ahead of it, so gain follows control current: linear above a hard turn-on with the transistor's 60 mV-per-decade knee below it. | The turn-on point and knee width are derived from that drawing rather than measured; a BA662 gain sweep would move the turn-on, not the law. The exact-zero deadband and the voice-retirement silence threshold are product policy; velocity is an optional extension. |
-| Voice sum, coupling, HPF and common VCA LEVEL | Six card outputs sum through 33 kΩ into 3.3 kΩ feedback (0.1 each). C14 precedes the shared four-position HPF; C12 then feeds the one common uPC1252H2 controlled by stored VCA LEVEL. Named parts, placement and asymptotic coupling poles are anchored/derived. | The complete coupled switched-HPF network and its switching memory are approximated. Roland’s stored-byte/DAC/hold-to-GC1 transfer is not documented, so the common-VCA curve is a voiced fit. |
+| Voice sum, coupling, HPF and common VCA LEVEL | Six card outputs sum through 33 kΩ into 3.3 kΩ feedback (0.1 each). C14 precedes the shared four-position HPF; C12 then feeds the one common uPC1252H2 controlled by stored VCA LEVEL. Service Notes pp. 8 and 15, the ROM-resolved `d=b<<5` code and NEC's −5.9 mV/dB typical constant derive the nominal common-VCA law and C7 settling. | The complete coupled switched-HPF network and its switching memory are approximated. The ideal 12-bit R-2R transfer assumes division by 4096; R32 is the least-legible value in the scan, and real resistor/capacitor tolerance, rail error and uPC1252 variation still need an installed-unit sweep. |
 | BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. BBD write nonlinearity is fitted to its datasheet test points. | Absolute sweep and mode rates use a clearly labelled JUNO-60 fallback; hiss level/correlation, loaded support impedances and the wet-mute transient are voiced. Loaded IC6 clipping remains unknown. |
 | VOLUME and output boundary | C17/C20, R54/R57, the nominal-linear 10KB×2 tracks and fixed internal wiper loading are component-derived, with independent left/right capacitor state. | Dual-gang tracking, selector/jack normaling, external loads and headphone transfer remain open. The fixed −18 dBFS RMS mapping and provisional physical reference are product policy, not an analogue circuit claim. |
 | Antialiasing, HQ and safety | These preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, Kaiser half-band decimation flat to 20 kHz at both common host rates, and state-preserving rate changes. | They have no hardware counterpart. The idle-only quality change and short safety fades are product mechanisms and are kept outside the claimed signal path. |
@@ -349,13 +355,15 @@ No Roland Cloud product content was downloaded or extracted.
 The complete [factory gain audit](Docs/audio/factory-presets/README.md) renders
 all 128 tones through the shipping engine at 48 kHz/HQ with no per-preset
 normalisation. Its stress score found finite output for every tone, a median
-gated RMS of -25.70 dBFS, no preset below -60 dBFS maximum 400 ms RMS, and 12
+gated RMS of -20.75 dBFS, no preset below -60 dBFS maximum 400 ms RMS, and 31
 tones whose polyphonic/transient peaks crossed 0 dBFS. Those crossings are
 reported, not silently limited or rebalanced: the model intentionally permits
 floating output, the score includes unison and six-key stress, and the absolute
-output reference plus common VCA LEVEL law remain OQ-06/OQ-02 measurement
-questions. The ten preview WAVs use one disclosed -12.86 dB common attenuation
-so their relative levels survive 16-bit delivery without clipping.
+output reference remains the OQ-06 measurement question. The nominal common
+VCA LEVEL law is circuit-derived; OQ-02 now asks only how installed component,
+rail and IC variation moves it. The ten preview WAVs use one disclosed -10.76 dB
+common attenuation so their relative levels survive 16-bit delivery without
+clipping.
 
 The hardware stores positions, not patch-name text. Names such as “Brass Set 1”
 and “Owgan” are conventional archival descriptions shown for navigation, not
@@ -489,9 +497,13 @@ There are six suites:
 Focused DSP changes use `YouKnow106RenderRealismComparison`. Unlike the older
 16-bit comparison set, it archives raw float32 before/after/difference signals,
 uses one shared listening gain, reports peak/peak and RMS/RMS nulls, and records
-the source fingerprint, patch, seed and exact MIDI sample schedule. The first
-fixture and its measured result are in
-[`Docs/audio/realism-comparisons/retrigger-release-tail/`](Docs/audio/realism-comparisons/retrigger-release-tail/).
+the source fingerprint, patch, seed and exact MIDI/control sample schedule.
+Committed fixtures currently cover the
+[retrigger/release-tail path](Docs/audio/realism-comparisons/retrigger-release-tail/)
+and the
+[common VCA LEVEL law and settling](Docs/audio/realism-comparisons/common-vca-level/).
+The latter records every automated byte and reports a −8.70 dBc RMS difference
+between the superseded cubic/borrowed-slew model and the nominal circuit solve.
 
 To regenerate the full factory report and previews after a signal-path change:
 

@@ -157,6 +157,16 @@ struct YouKnow106TestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].vcaControl;
     }
 
+    static float sharedVca(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.sharedVca_;
+    }
+
+    static void setSharedVca(YouKnow106Engine& engine, float state) noexcept
+    {
+        engine.sharedVca_ = state;
+    }
+
     static bool assignmentPending(const YouKnow106Engine& engine) noexcept
     {
         return engine.assignmentRescanPending_;
@@ -510,11 +520,10 @@ EngineParameters plainPatch()
     parameters.decay = 1.0f;
     parameters.sustain = 1.0f;
     parameters.release = 0.0f;
-    // The stored LEVEL slider is a shared post-sum trim. About 90.86% travel is
-    // 0 dB in the current provisional three-point fit; full travel adds 5 dB and
-    // changes the downstream chorus drive, so this plain reference stays at
-    // the fitted unity point.
-    parameters.vcaLevel = 0.90856f;
+    // The stored LEVEL slider is a shared post-sum trim. Byte 99 is the nearest
+    // stored setting to 0 dB in the nominal jack-board/NEC solve (+0.073 dB);
+    // full travel adds 4.71 dB and changes the downstream chorus drive.
+    parameters.vcaLevel = 99.0f / 127.0f;
     parameters.volume = 1.0f;
     parameters.chorus = ChorusMode::Off;
     // The plain reference patch carries no character at all: no component
@@ -2518,23 +2527,24 @@ void testFixedOutputBoundaryCorpus()
         // permanently-wired SUB and NOISE legs, so every fixture that has SAW
         // and PULSE switched on sits 1.75 dB lower -- the four-leg loading
         // relative to the three-leg reference. One note no longer crosses full
-        // scale at all. Self-oscillation is untouched, because its signal is
-        // the microscopic filter excitation added past the mixer.
-        Baseline { 0.428115, 0.878409, 0.889283, 0, 0 },
-        Baseline { 1.09565, 3.10301, 3.10301, 3288, 13132 },
-        Baseline { 2.35389, 4.29507, 4.31081, 6432, 25730 },
+        // scale at all. These values also include the nominal common-VCA solve:
+        // byte 127 is +4.709 dB rather than the old fitted +5 dB, so all six
+        // full-LEVEL fixtures move down by the same small-signal factor.
+        Baseline { 0.413977, 0.850119, 0.859349, 0, 0 },
+        Baseline { 1.05959, 3.00664, 3.00664, 3088, 12398 },
+        Baseline { 2.29138, 4.23954, 4.25525, 6380, 25538 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
-        Baseline { 0.24739, 0.349813, 0.349813, 0, 0 },
+        Baseline { 0.239242, 0.338292, 0.338292, 0, 0 },
         // Re-pinned when the chorus rates moved from the borrowed JUNO-60
         // scale to the instrument's own derived 0.55329/0.89826 Hz: the same
         // fixed analysis window now lands on a different phase of the (faster)
         // sweep, which moves these snapshot peaks and threshold counts while
         // the RMS stays within 3.5%. Level and headroom did not change;
         // where the window catches the sweep did.
-        Baseline { 0.661991, 1.27326, 1.29002, 1164, 4644 },
-        Baseline { 0.408654, 0.925712, 0.960813, 0, 0 },
+        Baseline { 0.640259, 1.22922, 1.24585, 957, 3834 },
+        Baseline { 0.395198, 0.895206, 0.929143, 0, 0 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -2760,6 +2770,38 @@ void testRetriggerDoesNotTouchVcaHoldBeforeConverterScan()
            "retrigger changed the analogue VCA hold before its converter write");
     expect(YouKnow106TestAccess::controlScanPhase(engine) == phaseBefore,
            "a note event advanced the converter scheduler");
+}
+
+void testCommonVcaHoldUsesJackBoardC7TimeConstant()
+{
+    // A one-time-constant voltage step must reach 1-exp(-1), independently of
+    // the engine's internal oversampling rate. The converter may rewrite the
+    // same target during the render; it must not bypass C7's continuous state.
+    constexpr double sampleRate = 48000.0;
+    const double oneTau = 1.0 - std::exp(-1.0);
+    const int hostSamples = static_cast<int>(std::lround(
+        YouKnow106Engine::commonVcaHoldTimeConstantSeconds() * sampleRate));
+
+    for (const bool oversampling : { false, true })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, oversampling);
+        auto parameters = plainPatch();
+        parameters.vcaLevel = 1.0f;
+        engine.setParameters(parameters);
+        YouKnow106TestAccess::setSharedVca(engine, 0.0f);
+
+        renderExact(engine, hostSamples);
+        const double elapsed = hostSamples / sampleRate;
+        const double expected = 1.0 - std::exp(
+            -elapsed / YouKnow106Engine::commonVcaHoldTimeConstantSeconds());
+        expectNear(YouKnow106TestAccess::sharedVca(engine), expected, 2.0e-5,
+                   oversampling
+                       ? "common-VCA C7 slew changed at 4x processing"
+                       : "common-VCA C7 slew misses one time constant at 1x");
+        expectNear(expected, oneTau, 1.0e-4,
+                   "common-VCA one-tau fixture is not one time constant");
+    }
 }
 
 void testPortamentoRateFollowsItsControl()
@@ -4421,6 +4463,7 @@ int main()
     testFixedOutputBoundaryCorpus();
     testNotesWaitForTheSharedConverterScan();
     testRetriggerDoesNotTouchVcaHoldBeforeConverterScan();
+    testCommonVcaHoldUsesJackBoardC7TimeConstant();
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
     testModulationDelayRearmsForANewPhrase();

@@ -54,7 +54,7 @@ constant only with an explicit unit/population scope and tolerance rationale.
 The priorities describe likely audible impact, not permission to weaken the
 evidence standard.
 
-## What is still open — 2026-08-05
+## What is still open — 2026-08-06
 
 The implementation and evidence boundary were reconciled again after the
 2026-08-04 fidelity pass and the 2026-08-05 physical circuit modeling pass
@@ -82,7 +82,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 | Priority | OQ | Question still unanswered | Already settled / do not redo |
 |---|---|---|---|
 | P0 | 01 | Hardware confirmation of the derived 0.5533/0.8983 Hz rates (TP4 capture or original-page read of C3/β), BBD clock/delay endpoints on a real 106, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the 1.6234799 mode-rate ratio, the summing-node β = 33/47 and C3 = 0.1 µF (netlist-corroborated), the derived rate scale, and the family sweep measured on the sibling's identical clock driver |
-| P0 | 02 | Roland stored-byte/DAC/hold-network to IC5 GC1 voltage, offset and in-circuit endpoints | Shared uPC1252H2 placement, `b<<5` DAC code, C12/R36 input coupling and the IC's −5.9 mV/dB typical GC1-to-gain law |
+| P2 | 02 | Installed-unit common-VCA endpoint, component/rail/IC variation and residual error against the nominal law | The complete nominal path: `d=b<<5`, ideal R-2R `/4096`, p. 8's +4 to −6 V span, p. 15 R30/C7/R32/R31/R165 network, NEC's −5.9 mV/dB typical law, and C7's 9.08249 ms constant |
 | P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation | No-compander topology and the need for a wet-line noise model |
 | P2 | 04 | Loaded post-BBD support transfer, including MN3009 and emitter-follower output impedance | Component topology and provisional ideal-source poles |
 | P0 | 05 | TA75558S IC6 and High-output clipping swing versus frequency and load | IC6 identity, linear resistor gains and ±15 V rails |
@@ -103,17 +103,18 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P2 | 20 | TR11/TR12 wet-mute switching envelope, leakage and click | Device identity, wet-only mute location and continuously running BBDs |
 | P2 | 21 | Coupled C14/HPF transfer, switch-state memory and mode-change transient | Parts, placement, asymptotic C14 loads and established HPF endpoints |
 
-The most consequential audible blockers are OQ-01, OQ-02, OQ-03, OQ-05,
-OQ-09, OQ-15 and OQ-19. A well-instrumented original unit can also collect OQ-03,
+The most consequential audible blockers are OQ-01, OQ-03, OQ-05, OQ-09,
+OQ-15 and OQ-19. A well-instrumented original unit can also collect OQ-02, OQ-03,
 OQ-05, OQ-17 and OQ-20 output data in the same session; keeping those captures
 on one calibration/load chain would remove several cross-normalisation errors.
 
 A later public-source pass is recorded in
-[Evidence search — 2026-08-06](#evidence-search--2026-08-06). It moves OQ-01,
-OQ-02, OQ-03, OQ-04, OQ-06, OQ-07, OQ-10 and OQ-18 to *partially resolved* or
-adds quantified contradictions, and records five refinements measured as
-inaudible so they are not attempted again. No row of the table above is closed
-by it: none of its third-party measurements meet this project's anchoring bar.
+[Evidence search — 2026-08-06](#evidence-search--2026-08-06). It moved OQ-01,
+OQ-03, OQ-04, OQ-06, OQ-07, OQ-10 and OQ-18 to *partially resolved* or added
+quantified contradictions, and records five refinements measured as inaudible
+so they are not attempted again. Its first OQ-02 assessment is retained as the
+history of the former cubic; the subsequent primary-schematic read derives the
+nominal law. No third-party measurement is promoted to an anchor.
 
 ### Evidence baseline
 
@@ -134,14 +135,17 @@ and NEC's 1983
 The supplied 2026-08-05 evidence-search artifact has SHA-256
 `e6b6f500a3968191efd239aca9a786bd7a2643d97fd51bfc030b265ae8ab8ab5`.
 It contained a report and measurement protocols, but no JUNO-106 CSV, audio,
-scope export, board photograph or other raw capture. Primary-source and
-direct-teardown reconciliation therefore closes no task, but it narrows four
-boundaries:
+scope export, board photograph or other raw capture. At that stage the
+primary-source and direct-teardown reconciliation closed no task, but narrowed
+four boundaries. The later direct read of Service Notes pp. 8 and 15 closes the
+nominal part of OQ-02:
 
 - NEC pp. 256–260 directly specify the µPC1252H2 GC1 voltage-to-gain constant
-  as −5.9 mV/dB typical (5.8–6.1 mV/dB magnitude) over −30 to +30 dB. OQ-02
-  now asks only for Roland's byte/DAC/hold network to GC1 voltage, offset and
-  installed-circuit endpoints.
+  as −5.9 mV/dB typical (5.8–6.1 mV/dB magnitude) over −30 to +30 dB.
+  Service Notes p. 8 supplies the +4 to −6 V converter range, while p. 15
+  supplies R30 2.2 kΩ, C7 10 µF NP, R32 1.5 kΩ, R31 47 Ω and R165 15 kΩ.
+  Together with `d=b<<5`, these derive the nominal byte-to-GC1 and settling laws;
+  OQ-02 now asks only for installed-circuit variation and endpoint validation.
 - A [photographed A1QH80017A
   teardown](https://obsoletetechnology.wordpress.com/projects/80017a-vcfvca-teardown/)
   identifies one IR3109 and two BA662 devices, assigning one BA662 to resonance
@@ -304,59 +308,62 @@ any of that arithmetic.
   centre/sweep) and tolerances only if the evidence genuinely supports a
   JUNO-106 nominal.
 
-## OQ-02 — Stored VCA LEVEL byte-to-GC1/in-circuit gain law
+## OQ-02 — Installed common-VCA tolerance and endpoint validation
 
-**Priority:** P0
+**Priority:** P2
 
 ### Task definition
 
-Recover the complete stored VCA LEVEL mapping for the common uPC1252H2 (IC5)
-on the jack board. Its location after the six-voice sum and shared high-pass,
-before the chorus, and its one-shared-hold ownership are settled. The IC's
-device law is now also settled: NEC pp. 256–260 specify GC1 as the gain-control
-voltage input and a −5.9 mV/dB typical control constant, with 5.8–6.1 mV/dB
-magnitude over −30 to +30 dB under the stated ±12 V, 2 mA, 33 kΩ and 1 kHz test
-conditions. Thus the nominal device boundary is
-`gain_dB = GC1_volts / -0.0059`. The application circuit and input
-specification also settle the populated C12 10 µF/R36 33 kΩ input coupling at
-0.482288 Hz. None of this maps Roland's held control to GC1 voltage, offset or
-installed-circuit endpoints.
-Service Notes pp. 5, 8 and 13 show IC23 channel 6 feeding that hold. The
-provisional firmware trace forms an aligned internal word `b<<7`; the DAC
-routine drops its bottom two bits, producing physical 12-bit code `b<<5`. The
-unknown is the code-to-hold-to-jack-board-network-to-GC1 law. The current model
-is a provisional fit to reported points near −15 dB at −5, −12.5 dB at 0 and
-+5 dB at +5 in the project's recentered coordinate. That notation is not the
-original panel's byte scale and must be mapped explicitly. This task directly
-affects preset loudness and chorus drive. The byte-exact 128-tone factory bank
-now supplies the real stored-byte corpus for regression, but it is deliberately
-not rebalanced and cannot substitute for the original unit's byte-to-gain
-transfer. Audible levels may therefore need revisiting when this task is
-resolved. The shipping-engine [factory gain audit](audio/factory-presets/README.md)
-is the current product baseline: every tone remains finite, its stress-score
-median is -26.65 dBFS gated RMS and 9 tones cross 0 dBFS. Those results expose
-regressions and headroom pressure but do **not** close this question or establish
-the hardware's relative levels.
+Measure how a healthy installed common uPC1252H2 (IC5) departs from the now-
+derived nominal VCA LEVEL law. Its position after the six-voice sum and shared
+high-pass and before the chorus, and its ownership by one shared hold, are
+settled. So is the nominal path:
+
+- Hash-identified B-2 behavior forms aligned word `b<<7`; the converter routine
+  drops the bottom two bits, giving physical 12-bit code `d=b<<5`.
+- Service Notes p. 8 gives VCA LEVEL's converter span as +4 to −6 V. With an
+  ideal 12-bit R-2R convention, `Vhold=4−10d/4096`. Division by 4096 is an
+  explicit ideal-DAC assumption, not a measured full-scale endpoint.
+- Service Notes p. 15 shows R30 2.2 kΩ from the converter to the C7 10 µF NP
+  hold node, then R32 1.5 kΩ to GC1, with R31 47 Ω to ground and R165 15 kΩ
+  to +15 V. The available scan makes R32 the least-legible of these values; the
+  nominal derivation uses the 1.5 kΩ reading and records that caveat.
+- Solving that loaded network gives
+  `Vgc=0.01250467817·Vhold+0.04626730922`. NEC pp. 256–260 specify
+  `gain_dB=Vgc/−0.0059` typical, hence
+  `gain_dB=−16.3196647+0.165581014·b` for bytes 0…127.
+- C7 sees
+  `R30||(R32+(R31||R165))=908.249 Ω`, deriving `τ=9.08249 ms` and
+  `fc=17.523 Hz`. C12 10 µF NP/R36 33 kΩ independently gives the settled
+  0.482288 Hz signal-input coupling pole.
+
+That nominal law replaces the former voiced cubic and no longer blocks the
+implementation. The remaining question is real-unit variation: resistor and C7
+tolerances, +15 V rail error, DAC integral/end-point error, R32 scan
+transcription, and the NEC part's 5.8–6.1 mV/dB specified spread can move the
+curve and settling. The byte-exact factory bank remains a regression corpus,
+not a substitute for measurement. The targeted
+[before/after comparison](audio/realism-comparisons/common-vca-level/README.md)
+exercises bytes 0, 32, 64, 96 and 127 plus rapid transitions, dry and through
+Chorus II, with exact automation and shared listening gain; it measures the
+implementation change, not an original unit.
 
 ### Needed output (for LLM)
 
-- A 128-row CSV containing commanded byte, physical 12-bit DAC code,
-  corresponding physical/nominal panel position, held control-node voltage,
-  uPC1252H2 GC1 voltage, simultaneous settled VCA input/output amplitude,
-  `Vout/Vin`, and relative dB.
-- Exact input/output probe points, tone frequency and level, VOLUME setting,
-  load, supply rails, calibration state and gain-reference setting.
-- The byte-to-panel mapping and all analogue endpoint/saturation behaviour;
-  verify the `b<<7` aligned-word and `b<<5` physical-DAC-code lead independently
-  rather than returning it as a new gain law.
-- A fitted byte-to-GC1 equation or lookup table with residuals and uncertainty,
-  followed by the NEC device law and a measured residual check against the
-  installed IC; compare the complete result explicitly with the current
-  three-point fit.
-- Separate regression fixtures for the anchored GC1 voltage-to-dB relation and
-  the measured byte-to-GC1 endpoints/intermediate values/monotonicity. If a
-  full sweep cannot be found or measured, return a protocol and identify which
-  conclusions the three existing points cannot support.
+- A 128-row CSV containing commanded byte, physical 12-bit DAC code, held-node
+  voltage, GC1 voltage, simultaneous settled VCA input/output amplitude,
+  `Vout/Vin`, relative dB, and residual against the nominal equations above.
+- A step-response capture at C7 and GC1 sufficient to fit the installed time
+  constant and distinguish acquisition behavior from subsequent hold/droop.
+- Exact probe points, tone frequency and level, VOLUME setting, load, supply
+  rails, board/revision, R30/R32/R31/R165/C7 measured values, calibration state,
+  warm-up and gain-reference setting.
+- A fitted residual curve with uncertainty, explicitly separating ideal-DAC,
+  passive-network and uPC1252 contributions. Verify R32's value on the physical
+  board or a clearer primary drawing.
+- Regression fixtures for nominal byte-to-GC1/dB values, monotonicity and the
+  9.08249 ms nominal step response, plus a separately labelled measured-unit
+  profile only if raw evidence justifies one.
 
 ## OQ-03 — Chorus noise and SNR under calibrated conditions
 
@@ -518,9 +525,12 @@ of the converter holds. Ownership is no longer open: Service Notes pp. 5, 8 and
 VCA for six cards—plus five shared holds—SUB, stored VCA LEVEL, PWM, RESONANCE
 and NOISE—and one unused channel. The pass is 4.2 ms. Approximately 522 µs for
 the VCF hold family and 687 µs for the per-voice ENV/GATE VCA hold family are
-existing component-derived anchors. The common stored VCA LEVEL hold is a
-different destination whose constant remains unmeasured; extending 522 µs to
-it or to every other destination remains provisional.
+existing component-derived anchors. The common stored VCA LEVEL path has a
+separately derived post-S/H pole: p. 15's R30 2.2 kΩ, C7 10 µF NP, R32
+1.5 kΩ, R31
+47 Ω and R165 15 kΩ derive `Rth=908.249 Ω` and `τ=9.08249 ms`. Extending
+any of those three known constants to every other destination remains
+provisional.
 
 Two model questions now depend on this task, both added 2026-08-06:
 
@@ -901,7 +911,7 @@ it.
   open 0.40 value is the preceding source/node coordinate mapping, not
   permission to refit that circuit attenuation.
 - Keep scope to normal enabled-pulse and static noise transfer. Pulse-off is
-  OQ-11 and noise spectrum is OQ-16. The common stored-VCA transfer is OQ-02;
+  OQ-11 and noise spectrum is OQ-16. Installed common-VCA tolerance is OQ-02;
   downstream clipping, output reference and physical loading are
   OQ-05/OQ-06/OQ-17.
 
@@ -987,8 +997,8 @@ The implementation applies this loaded nominal-linear track law, adds a 5 ms
 anti-zipper glide, and does not expose the hardware selector. Its
 declared fixed product-policy position is the pre-jack High-tap equivalent;
 the physical selector attenuation, output impedance and loading are not
-modelled. This remains distinct from stored VCA LEVEL (OQ-02), IC6 clipping
-(OQ-05) and dBFS policy (OQ-06).
+modelled. This remains distinct from installed stored-VCA tolerance (OQ-02),
+IC6 clipping (OQ-05) and dBFS policy (OQ-06).
 
 ### Needed output (for LLM)
 
@@ -1084,8 +1094,9 @@ not the law. A measurement noise floor can still masquerade as a hard deadband,
 so the sampling density near onset below matters as much as it ever did. A
 circuit reconstruction reports a roughly 150 mV no-current region; the shipping
 turn-on is now that figure, which makes confirming it on a stock card the point
-of this task rather than a footnote to it. This is not the common stored VCA
-LEVEL in OQ-02, and card-to-card residual spread belongs to OQ-10.
+of this task rather than a footnote to it. This is not the common stored-VCA
+installed-unit validation in OQ-02, and card-to-card residual spread belongs to
+OQ-10.
 
 ### Needed output (for LLM)
 
@@ -1228,10 +1239,11 @@ recorded; two items are usable and currently unasserted by the suite:
 | VCA BIAS | TP7 | +0.25 … +0.27 V | not currently used |
 | DCO CV OFFSET | TP3 | 0 V | not currently used |
 
-The D/A & S/H timing chart also gives converter output ranges the model presently
-treats abstractly: **DCO CV / SUB LEVEL 0 to −10 V; VCF CV / VCA LEVEL / PWM CV +4
-to −6 V; VCA CV / RESO CV / NOISE LEVEL 0 to +10 V**, refresh 4.2 ms. Relevant to
-**OQ-02** and **OQ-07**.
+The D/A & S/H timing chart also gives converter output ranges: **DCO CV / SUB
+LEVEL 0 to −10 V; VCF CV / VCA LEVEL / PWM CV +4 to −6 V; VCA CV / RESO CV /
+NOISE LEVEL 0 to +10 V**, refresh 4.2 ms. The VCA LEVEL range is now consumed by
+the nominal OQ-02 derivation; the remaining abstract destinations belong to
+**OQ-07**.
 
 ### OQ-01 — the missing integrator capacitor is printed
 
@@ -1346,38 +1358,35 @@ Status: **not resolved**, but the contradiction is now quantified. Recommended n
 step is a schematic re-read of the capacitor codes behind
 `YouKnow106Chorus.cpp:73-83` — a single 10× code misread moves a corner by a decade.
 
-### OQ-02 — the µPC1252 law implies a linear-in-dB slider
+### OQ-02 — the nominal common-VCA law is circuit-derived
 
-The NEC datasheet (**anchored**, already cited by this project) specifies the
-control constant as **−5.9 mV/dB typ** (−5.8 / −6.1), **linear over
-A_V = −30 … +30 dB**, unity at V_C = 0 mV. The part is exponential: gain in dB is
-linear in control voltage.
+The first pass correctly identified that NEC specifies **−5.9 mV/dB typical**
+(5.8–6.1 mV/dB magnitude) and that the former `patchLevelGain=−15+20·p³`
+could not follow from a linear passive divider. Its claim that the divider was
+still unread is now superseded by a direct Service Notes p. 15 read.
 
-Two consequences for the voiced `patchLevelGain` = `−15 + 20·p³`:
+The complete nominal chain is:
 
-**The endpoints are corroborated.** That span implies a GC1 swing of 118 mV at
-−5.9 mV/dB. A third-party in-circuit estimate of the 106's GC1 voltage gives
-−28 mV … +96 mV, a **124 mV** swing, i.e. −16 … +4.7 dB. The voiced three-point fit
-lands within 5 % of the physically-derived span. Recorded as corroboration; the
-estimate itself is unverified and is not promoted.
+1. Physical code `d=b<<5` from the hash-identified B-2 firmware.
+2. Page 8's +4 to −6 V range, interpreted with an explicitly assumed ideal
+   12-bit R-2R transfer: `Vhold=4−10d/4096`.
+3. Page 15's R30 2.2 kΩ into the C7 10 µF NP hold node, R32 1.5 kΩ onward
+   to GC1, R31 47 Ω to ground and R165 15 kΩ to +15 V.
+4. The loaded solve
+   `Vgc=0.01250467817·Vhold+0.04626730922`, followed by NEC's
+   `gain_dB=Vgc/−0.0059`.
 
-**The shape between them does not follow.** If the DAC→GC1 path is a linear
-resistive divider, gain must be linear in dB across the slider:
+Therefore `gain_dB=−16.3196647+0.165581014·b`, linear in dB across stored
+bytes 0…127. C7 sees
+`R30||(R32+(R31||R165))=908.249 Ω`, giving `τ=9.08249 ms` and
+`fc=17.523 Hz`. This replaces both the former cubic curve and its borrowed hold
+constant. R32 is the least-legible value in the scan, `/4096` is an ideal-DAC
+assumption, and physical component, rail and IC spread remain for an installed
+sweep under the narrowed OQ-02.
 
-| Slider | Model (cubic) | Linear-in-dB | Difference |
-|---|---|---|---|
-| 0.25 | −14.69 dB | −10.82 dB | −3.9 dB |
-| 0.50 | −12.50 dB | −5.65 dB | **−6.9 dB** |
-| 0.75 | −6.56 dB | −0.48 dB | −6.1 dB |
-
-The cubic changes by only **2.5 dB across the entire lower half of the slider**
-where an exponential part driven linearly would change by **10.4 dB**.
-
-The remaining unknown is precisely what OQ-02 already names — the DAC/hold-network
-to GC1 path. The timing chart's `+4 to −6 V` range for VCA LEVEL divided to ~124 mV
-implies an ~80:1 resistive divider, which would be linear. **Reading that divider
-between the sample-and-hold and IC5 GC1 off the jack-board schematic converts OQ-02
-from voiced to derived.** Status: **partially resolved**, confidence moderate.
+Status: **nominal law resolved by primary schematic/datasheet derivation;
+installed tolerance not measured**. The strict comparison fixture records the
+audible implementation delta separately from any hardware claim.
 
 ### OQ-18 — a measured code-to-frequency curve exists
 
@@ -1627,22 +1636,24 @@ wave-generator test procedure, typically carrying scope photographs — its TLS
 certificate has expired, so a browser that accepts the warning is needed), and the
 Gearspace chorus-noise thread's attached spectra and WAV files.
 
-### Where the three blocking reads actually live
+### Where the blocking reads actually live
 
-The top three unresolved tasks — OQ-01, OQ-02 and OQ-04 — are not measurements.
-Each is *a page of a document somebody has to look at*, and the queue has never
-said which document or where to get it. It does now.
+This section originally identified OQ-01, OQ-02 and OQ-04 as three unresolved
+document reads. The OQ-02 read is now complete; its row remains to record exactly
+which evidence closed the nominal law. OQ-01 and OQ-04 remain document work,
+while OQ-02's remaining installed-tolerance task is a measurement.
 
 **The Service Notes are freely readable on the Internet Archive**, item
 `synthmanual-roland-juno-106-service-notes`, which carries both page images and a
 full OCR text stream. A second copy is hosted at
 `analoguerenaissance.com/D80017A/juno-serv.pdf`, on the same site as the unread
-JUNOTEST procedure above. That single document closes all three:
+JUNOTEST procedure above. That single document contains all three relevant
+regions:
 
 | Task | The page | What to read off it | What it converts |
 |---|---|---|---|
 | **OQ-01** | p. 15, JACK BOARD | *Now confirmation rather than discovery:* the 2026-08-06 netlist pass closed β (summing node, 33/47) and C3 (0.1 µF) from the sister board's clone, and the rates ship as **derived**. The page read still independently confirms both against Roland's own print — and gains one line from the same pass: **which IC6 input resistor carries the wet return** (R71/R73 side), because the clone wires wet through 39 kΩ and dry through 47 kΩ, the mirror of this project's anchored reading, a 3.24 dB question if the transcription swapped them | original-page confirmation of an already-derived scale; a wet/dry balance check worth 3.24 dB if wrong |
-| **OQ-02** | jack board, between the sample-and-hold and IC5 GC1 | the resistive divider that turns the converter's +4/−6 V into ~124 mV of GC1 | VCA LEVEL from **voiced** to **derived**; the shipping cubic is 6.9 dB out at mid-slider across all 128 factory patches |
+| **OQ-02 — read complete** | p. 8 converter chart and p. 15 jack board | `d=b<<5`, +4/−6 V, R30 2.2 kΩ, C7 10 µF NP, R32 1.5 kΩ, R31 47 Ω and R165 15 kΩ | Nominal VCA LEVEL from **voiced** to **derived**: `−16.3196647+0.165581014·b` dB and `τ=9.08249 ms`; only installed variation remains. This replaces the shipping cubic, which was 6.9 dB out at mid-slider across all 128 factory patches |
 | **OQ-04** | chorus support chain | the capacitor codes behind `YouKnow106Chorus.cpp:73-83`, **read separately for the input and output sides** | wet-path bandwidth; the chain is −12 dB at 10 kHz where the MN3009 alone is ~−3 dB, and the reconstruction sections currently *assume* the input sections' part values rather than reading their own |
 
 For OQ-01 the schematic read is a single yes/no, and the arithmetic has already
@@ -1831,12 +1842,12 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
   wants a different mechanism — most plausibly something in the mode switch's
   own network rather than in the sweep.
 
-- **OQ-02 (VCA LEVEL) was not changed.** The datasheet argument is strong — the
-  µPC1252 is linear in dB, so a linear DAC→GC1 divider implies a linear-in-dB
-  slider — but it is explicitly conditional on that divider, which nobody has
-  read yet. Changing the law would move every factory patch's loudness by up to
-  6.9 dB on the strength of an "if". It stays voiced until the jack-board
-  divider is read; that reading is the whole of OQ-02.
+- **OQ-02 (VCA LEVEL) was not changed during this evidence-search pass.** At
+  that point the linear-in-dB argument was conditional on an unread divider, so
+  retaining the cubic was the evidence-safe decision. A subsequent direct read
+  of p. 15 identified R30/C7/R32/R31/R165; combined with p. 8, `d=b<<5` and the
+  NEC constant, it now derives the nominal linear-in-dB law and 9.08249 ms
+  settling. This bullet is retained as decision history, not current status.
 
 ### Also measured, and acted on
 

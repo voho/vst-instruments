@@ -38,6 +38,24 @@ constexpr float voiceBusCouplingResistanceOhms = 33000.0f;
 constexpr float commonVcaInputCapacitanceF = 10.0e-6f;
 constexpr float commonVcaInputResistanceOhms = 33000.0f;
 
+// Stored VCA LEVEL control path on the jack board. Roland's p. 8 converter
+// chart gives the +4..-6 V buffer span and the firmware stores byte b as the
+// physical 12-bit code b<<5. Page 15 then shows R30/C7 at the held node, R32
+// into IC5 GC1, R31 to ground and R165 to +15 V. The DAC uses the usual ideal
+// 4096-step R-2R convention; the largest reachable stored code is 4064.
+constexpr float commonVcaDacReferenceVolts = 5.0f;
+constexpr float commonVcaDacSteps = 4096.0f;
+constexpr float commonVcaMaximumDacCode = 4064.0f;
+constexpr float commonVcaBufferOffsetVolts = 4.0f;
+constexpr float commonVcaBufferGain = -2.0f;
+constexpr float commonVcaR30Ohms = 2200.0f;
+constexpr float commonVcaR32Ohms = 1500.0f;
+constexpr float commonVcaR31Ohms = 47.0f;
+constexpr float commonVcaR165Ohms = 15000.0f;
+constexpr float commonVcaBiasVolts = 15.0f;
+constexpr float commonVcaC7Farads = 10.0e-6f;
+constexpr float commonVcaControlVoltsPerDecibel = -5.9e-3f;
+
 // Stereo post-IC6 coupling, identically C17/R54/VR1 and C20/R57/VR1. The fixed
 // internal load is the complete selector ladder in parallel with IC7's input;
 // external jack loads, normaling and driven headphone behavior remain OQ-17.
@@ -816,22 +834,45 @@ float YouKnow106Engine::VoiceVcaControlLaw::gain(float control) noexcept
     return knee * softplus / (1.0f - turnOn);
 }
 
+float YouKnow106Engine::commonVcaControlVolts(float dacFraction) noexcept
+{
+    const float position = clamp01(dacFraction);
+    const float converterVolts = commonVcaDacReferenceVolts
+        * commonVcaMaximumDacCode * position / commonVcaDacSteps;
+    const float holdVolts = commonVcaBufferOffsetVolts
+                          + commonVcaBufferGain * converterVolts;
+
+    // At DC C7 is open, so the held voltage sees R30+R32 in series. GC1 is
+    // additionally tied to ground by R31 and biased from +15 V by R165.
+    constexpr float holdSeriesOhms = commonVcaR30Ohms + commonVcaR32Ohms;
+    return (holdVolts / holdSeriesOhms
+            + commonVcaBiasVolts / commonVcaR165Ohms)
+         / (1.0f / holdSeriesOhms
+            + 1.0f / commonVcaR31Ohms
+            + 1.0f / commonVcaR165Ohms);
+}
+
+float YouKnow106Engine::commonVcaHoldTimeConstantSeconds() noexcept
+{
+    // With ideal voltage sources AC-grounded, C7 sees R30 in parallel with
+    // R32 plus the GC1 bias network. Nominal: 908.249 ohms * 10 uF = 9.08249 ms.
+    constexpr float gcBiasOhms =
+        commonVcaR31Ohms * commonVcaR165Ohms
+        / (commonVcaR31Ohms + commonVcaR165Ohms);
+    constexpr float farSideOhms = commonVcaR32Ohms + gcBiasOhms;
+    constexpr float theveninOhms =
+        commonVcaR30Ohms * farSideOhms
+        / (commonVcaR30Ohms + farSideOhms);
+    return theveninOhms * commonVcaC7Farads;
+}
+
 float YouKnow106Engine::patchLevelGain(float dacFraction) noexcept
 {
-    // NEC specifies the common jack-board uPC1252H2's GC1 device transfer as
-    // -5.9 mV/dB typical. What remains unknown is Roland's converter/hold and
-    // jack-board mapping from p=b/127=DAC12/4064 to GC1 voltage and offset. The
-    // compatibility display coordinate is explicitly x=-5+10p; its three
-    // x=-5/0/+5 anchors motivate -15/-12.5/+5 dB respectively. The cubic below
-    // is the declared provisional p-to-dB mapping, algebraically equivalent to
-    // a voiced GC1 curve under the NEC slope, not a measured byte-to-voltage
-    // law.
-    //
-    // This is intentionally identified as a three-point fit, not an exact
-    // potentiometer model: a full panel-byte/control-voltage sweep from a
-    // calibrated unit would be needed to determine the intermediate curve.
-    const float position = clamp01(dacFraction);
-    const float decibels = -15.0f + 20.0f * position * position * position;
+    // NEC's typical control constant is linear in dB. Installed rail, resistor,
+    // capacitor and IC spread remain measurement questions; they are not
+    // replaced here by synthetic random offsets.
+    const float decibels = commonVcaControlVolts(dacFraction)
+                         / commonVcaControlVoltsPerDecibel;
     return std::pow(10.0f, decibels / 20.0f);
 }
 
@@ -3550,9 +3591,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
         panelGlidePrimed_ = true;
     }
 
-    // Each converter destination owns a separately named hold network. Only
-    // the VCF and voice-VCA values are evidence-backed; the other constants
-    // remain isolated compatibility policies until their RCs are established.
+    // Each converter destination owns a separately named hold network. VCF,
+    // voice VCA and common VCA are evidence-backed; the other constants remain
+    // isolated compatibility policies until their RCs are established.
     const auto slewFor = [this](float seconds) {
         return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
     };
@@ -3560,7 +3601,7 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     const float voiceVcaSlew = slewFor(voiceVcaHoldSlewSeconds);
     const float dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
     const float resonanceSlew = slewFor(resonanceHoldSlewSecondsVoiced);
-    const float commonVcaSlew = slewFor(commonVcaHoldSlewSecondsVoiced);
+    const float commonVcaSlew = slewFor(commonVcaHoldTimeConstantSeconds());
     const float pwmSlew = slewFor(pwmHoldSlewSecondsVoiced);
     const float subSlew = slewFor(subHoldSlewSecondsVoiced);
     const float noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);

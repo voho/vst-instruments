@@ -506,12 +506,15 @@ public:
         [[nodiscard]] static float gain(float control) noexcept;
     };
     // The stored VCA LEVEL trim drives a second, shared uPC1252H2 after the
-    // voice sum. NEC specifies the IC's GC1 device boundary at -5.9 mV/dB
-    // typical, but Roland's p=b/127=DAC12/4064 to GC1 voltage/offset law is
-    // still unknown. The voiced compatibility layer therefore interprets p as
-    // display x=-5+10p and maps the three x=-5/0/+5 points directly to
-    // -15/-12.5/+5 dB. That is algebraically equivalent to a provisional GC1
-    // voltage curve under the NEC slope, not a measured byte-to-voltage law.
+    // voice sum. Roland's converter chart and jack-board drawing establish the
+    // complete nominal path: stored byte b becomes 12-bit code b<<5, the
+    // +4..-6 V hold crosses R30/R32 into the R31/R165-biased GC1 node, and NEC
+    // specifies -5.9 mV/dB typical. The two helpers expose the intermediate
+    // voltage and C7's derived time constant so the suite can check the
+    // resistor solve independently of the final gain conversion.
+    [[nodiscard]] static float commonVcaControlVolts(
+        float dacFraction) noexcept;
+    [[nodiscard]] static float commonVcaHoldTimeConstantSeconds() noexcept;
     [[nodiscard]] static float patchLevelGain(float dacFraction) noexcept;
     // Single-pole high-pass corner for a panel position, the gain the leg
     // returns the low band with, and the gain it returns the high band with.
@@ -665,15 +668,15 @@ private:
     // account claimed the whole cutoff range; the firmware arithmetic settles
     // it.
     static constexpr float vcfBenderCounts = 4064.0f;
-    // Hold-capacitor slew after the converter. Only the VCF and voice-VCA
-    // families have the currently supported 522/687 us values. The remaining
-    // nodes retain compatibility values behind separate names so a measured
+    // Hold-capacitor slew after the converter. VCF and voice-VCA use the
+    // supported 522/687 us values; the common VCA derives its separate value
+    // from C7 and its loaded jack-board resistor network. The remaining nodes
+    // retain compatibility values behind separate names so a measured
     // destination can be replaced without silently changing the others.
     static constexpr float vcfHoldSlewSeconds = 522.0e-6f;
     static constexpr float voiceVcaHoldSlewSeconds = 687.0e-6f;
     static constexpr float dcoHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float resonanceHoldSlewSecondsVoiced = 522.0e-6f;
-    static constexpr float commonVcaHoldSlewSecondsVoiced = 687.0e-6f;
     static constexpr float pwmHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float subHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float noiseHoldSlewSecondsVoiced = 522.0e-6f;

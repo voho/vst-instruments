@@ -500,8 +500,9 @@ std::string makeReport (const std::vector<AuditRow>& rows, bool smoke,
                << " at " << toDb (loudest->metrics.gatedRms) << " dBFS.\n";
     report << "\nThese are review flags, not equal-loudness failures. The bank "
               "intentionally mixes transient, sustained, effect and Solo Unison "
-              "programs, and the still-voiced common VCA LEVEL law (OQ-02) "
-              "directly affects their relative results.\n\n"
+              "programs, and the circuit-derived common VCA LEVEL law directly "
+              "affects their relative results. OQ-02 now covers installed-unit "
+              "variation rather than the nominal curve.\n\n"
            << "| Slot | Name | Peak dBFS | >0 dBFS samples | Max 400 ms RMS | "
               "Gated RMS | Crest | Warnings |\n"
            << "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |\n";
