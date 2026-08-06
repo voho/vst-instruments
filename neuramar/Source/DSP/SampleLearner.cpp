@@ -9,7 +9,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
-#include <numeric>
 #include <utility>
 
 namespace neuramar
@@ -1805,12 +1804,11 @@ struct AdamState
     void update(std::array<float, Size>& values,
                 const std::array<float, Size>& gradients,
                 float learningRate, float beta1Correction,
-                float beta2Correction, int step) noexcept
+                float beta2Correction) noexcept
     {
         constexpr float beta1 = 0.9f;
         constexpr float beta2 = 0.999f;
         constexpr float epsilon = 1.0e-8f;
-        (void) step;
         for (std::size_t index = 0; index < Size; ++index)
         {
             first[index] = beta1 * first[index] + (1.0f - beta1) * gradients[index];
@@ -2004,13 +2002,13 @@ struct AdamState
         const float beta1Correction = 1.0f - beta1Power;
         const float beta2Correction = 1.0f - beta2Power;
         inputAdam.update(inputWeights, inputGradient, learningRate,
-                         beta1Correction, beta2Correction, epoch + 1);
+                         beta1Correction, beta2Correction);
         hiddenAdam.update(hiddenBiases, hiddenGradient, learningRate,
-                          beta1Correction, beta2Correction, epoch + 1);
+                          beta1Correction, beta2Correction);
         outputAdam.update(outputWeights, outputGradient, learningRate,
-                          beta1Correction, beta2Correction, epoch + 1);
+                          beta1Correction, beta2Correction);
         biasAdam.update(outputBiases, biasGradient, learningRate,
-                        beta1Correction, beta2Correction, epoch + 1);
+                        beta1Correction, beta2Correction);
         completedEpochs = epoch + 1;
 
         if ((epoch & 3) == 0 || epoch + 1 == trainingEpochCount)

@@ -713,8 +713,9 @@ void ModelAnatomyDisplay::setAnatomy (const neuramar::ModelAnatomy& next,
 void ModelAnatomyDisplay::advance (int activeVoiceCount, float stretch)
 {
     stretchAmount = stretch;
-    // One sweep of the learned trajectory every four seconds keeps slow
-    // memories readable without turning fast ones into a strobe.
+    // At the 30 Hz timer one sweep of the learned trajectory takes the
+    // memory's duration plus a moment, bounded to 1-8 s, so slow memories
+    // stay readable without fast ones turning into a strobe.
     const auto step = anatomy.durationSeconds > 0.0f
         ? 1.0f / (30.0f * juce::jlimit (1.0f, 8.0f, anatomy.durationSeconds
                                         + 1.5f))

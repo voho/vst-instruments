@@ -4,7 +4,6 @@
 #include <bit>
 #include <cmath>
 #include <limits>
-#include <type_traits>
 
 namespace neuramar
 {
