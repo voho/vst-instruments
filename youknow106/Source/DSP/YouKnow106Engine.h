@@ -140,7 +140,6 @@ struct EngineParameters
     // default -- its amplitude is an unvalidated placeholder pending OQ-03.
     bool enableChorusClockBleed { false };
     bool enableChorusHyperbolicSweep { true };
-    bool enableDcoRampCurvature { true };
     bool enableElectrolyticC14Nonlinearity { true };
 };
 

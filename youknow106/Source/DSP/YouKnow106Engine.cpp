@@ -2970,17 +2970,16 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     const float amplitude = sawMixVolts
                           * dcoRampAmplitudeScale(voice, parameters);
 
+    // The rise is straight, and carries no curvature term. The compensation
+    // voltage drives a resistor into an integrator's virtual ground, so the
+    // op-amp holds that node at 0 V and the charging current is constant
+    // whatever the source's own output resistance is; what curvature remains
+    // comes from finite open-loop gain, of order 1e-5. A straight rise is also
+    // the only shape consistent with the comparator's anchored 6 V / 50% duty
+    // point, which a bowed ramp would move.
     float sawNaive = phase < rise
         ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
-
-    if (parameters.enableDcoRampCurvature && parameters.calibration > 0.0f && phase < rise)
-    {
-        const float u = clamp01(static_cast<float>(phase / rise));
-        const float frequencyHz = static_cast<float>(dcoQuantisedFrequency(dco.divider, parameters.range));
-        const float curveAmount = 0.12f * (100.0f / (frequencyHz + 50.0f)) * parameters.calibration;
-        sawNaive -= curveAmount * u * (1.0f - u);
-    }
 
     if (parameters.enableExponentialReset && parameters.calibration > 0.0f)
     {

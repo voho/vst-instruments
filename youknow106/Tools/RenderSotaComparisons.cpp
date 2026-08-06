@@ -151,21 +151,6 @@ Take renderChorusHyperbolicSweepTake(bool enableChorusHyperbolicSweep)
     return take;
 }
 
-// 10. DCO Integrator Finite Source Resistance Ramp Charging Curvature: Deep 16' bass note
-Take renderDcoRampCurvatureTake(bool enableDcoRampCurvature)
-{
-    auto p = defaultPanel();
-    p.enableDcoRampCurvature = enableDcoRampCurvature;
-    p.range = DcoRange::Sixteen;
-    p.sawEnabled = true;
-    p.cutoff = 0.95f;
-    p.resonance = 0.10f;
-    Take take(p);
-    take.rest(0.05);
-    take.hit(36, 0.95f, 1.5, 0.4);
-    return take;
-}
-
 // 11. C14 Non-Polar Electrolytic Voltage-Dependent HPF Modulation: Sub-bass + polyphonic chord
 Take renderElectrolyticC14Take(bool enableElectrolyticC14Nonlinearity)
 {
@@ -187,7 +172,7 @@ struct Comparison
     Take (*render)(bool);
 };
 
-const std::array<Comparison, 9> comparisons {{
+const std::array<Comparison, 8> comparisons {{
     { "01-vcf-transistor-offsets",        renderVcfOffsetsTake },
     { "02-opamp-slew-limiting",           renderOpAmpSlewTake },
     { "05-exponential-dco-reset",         renderExponentialResetTake },
@@ -195,7 +180,6 @@ const std::array<Comparison, 9> comparisons {{
     { "07-spatial-thermal-gradient",      renderSpatialThermalGradientTake },
     { "08-chorus-thiran-clock-bleed",     renderChorusClockBleedTake },
     { "09-chorus-hyperbolic-sweep",       renderChorusHyperbolicSweepTake },
-    { "10-dco-ramp-curvature",            renderDcoRampCurvatureTake },
     { "11-electrolytic-c14-nonlinearity", renderElectrolyticC14Take }
 }};
 
