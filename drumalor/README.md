@@ -717,7 +717,7 @@ into. Humanise is verified to order hit-to-hit spread across its range and to
 stay reproducible after reset at every setting. Every one of the thirteen voices
 is separately required to be same-but-different: no two consecutive strikes at
 one velocity may be identical, the difference between them must be audible rather
-than in the last bit, and the spread across six strikes must stay inside what a
+than in the last bit, and the spread across the strikes must stay inside what a
 machine's tolerances would explain. The kit bus is checked for exact
 bypass at 0%, safe and level-matched saturation, real dynamic-range reduction,
 released gain reduction, and block-partition invariance. Metering is checked for

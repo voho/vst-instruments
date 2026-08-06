@@ -2042,8 +2042,15 @@ void testEveryVoiceVariesBetweenHits()
                 smallestRelativeChange,
                 meanAbsoluteDifference (previous, current)
                     / std::max (1.0e-12, reference));
-            quietest = std::min (quietest, peak (current));
-            loudest = std::max (loudest, peak (current));
+        }
+        // Over every strike, including the first. Taking the extrema from the
+        // pair loop would only ever see hits 1..n-1, so a first-hit
+        // initialisation fault - the most likely way for one strike to come
+        // out at the wrong level - would sail past the bound below.
+        for (const auto& hit : hits)
+        {
+            quietest = std::min (quietest, peak (hit));
+            loudest = std::max (loudest, peak (hit));
         }
         expect (everyPairDiffered,
                 label + " played two consecutive hits identically, which no "
@@ -2057,8 +2064,8 @@ void testEveryVoiceVariesBetweenHits()
                         "variation (smallest change "
                     + std::to_string (smallestRelativeChange) + " of level)");
 
-        // Different, but the same drum: the spread across six strikes has to
-        // stay inside what a machine's tolerances would explain. This is the
+        // Different, but the same drum: the spread across the four strikes has
+        // to stay inside what a machine's tolerances would explain. This is the
         // half that catches variation turning into sloppiness.
         const double spreadDb = 20.0 * std::log10 (
             loudest / std::max (1.0e-12, quietest));
