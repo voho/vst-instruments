@@ -299,7 +299,9 @@ open question, it is named in its entry.
 
     The paired slope-residual corrections were hand-tuned rather than derived — the falling slope scaled by $(1 + 3\,\text{cal})$ and its partner by $e^{-4\,\text{cal}}$ — so the residual injected did not describe the discontinuity the naive signal actually carried, and left uncorrected alias energy on top of the harmonic tilt. The reset is back to the anchored straight fall, with both corner residuals taken from the shape being rendered.
 
-    Doing it properly remains open, and is a small effect: the reset occupies $2.2\,\mu\text{s}$, which is 0.1% of the period at A440. It needs the reset written into the phase-to-voltage map as $v(t) = 1 - 2(1 - e^{-t/\tau})/(1 - e^{-T_r/\tau})$, which lands on exactly $-1$ so both corners stay pure slope discontinuities and the residual amounts fall straight out; and it needs `pulseFallPhase` inverted through the same curve, since the comparator's falling crossing is currently solved against a linear fall and would otherwise disagree with the ramp.
+    Doing it properly is **not worth doing**, and this entry used to imply the opposite. The measurement list below settles it: an exponential rather than linear reset is $2.2\,\mu\text{s}$ against a $2273\,\mu\text{s}$ period at A440, and the two shapes differ only above about 72 kHz — it is on the *measured as not audible* list, not the open-work list. It is written out here only so that a later pass recognises it as already answered rather than re-deriving it.
+
+    Were it ever wanted, it needs the reset written into the phase-to-voltage map as $v(t) = 1 - 2(1 - e^{-t/\tau})/(1 - e^{-T_r/\tau})$, which lands on exactly $-1$ so both corners stay pure slope discontinuities and the residual amounts fall straight out; and it needs `pulseFallPhase` inverted through the same curve, since the comparator's falling crossing is currently solved against a linear fall and would otherwise disagree with the ramp.
 
 16. **IR3109 VCF Transistor Early Effect Modulation ($V_A$)**:
     Models transistor Early Voltage ($V_A \approx 100\,\text{V}$) transconductance modulation $g_n = g\,(1 + 0.005\,\tanh(V_n / V_{\text{headroom}}))$ inside the 4-stage OTA cascade solver, introducing a small signal-dependent cutoff shift and odd-harmonic content under hot resonant sweeps. With $V_A \sim 100\,\text{V}$ and a few hundred millivolts of collector swing at the differential pair, the fractional change in $g$ is a few parts per thousand; the coefficient is now a named constant beside $V_A$ so the two cannot drift apart.
@@ -457,6 +459,12 @@ The canonical research queue is
 definition, the exact output expected from an LLM or hardware researcher, the
 current assumption being tested and a shared evidence contract. “Not found”
 and “measurement required” are valid results; a guessed value is not.
+
+**The three largest remaining items are not measurements.** OQ-01, OQ-02 and
+OQ-04 are each a page of the Service Notes that somebody has to look at, and
+that document is freely readable. Which page closes which task, and what to
+read off it, is tabulated in
+[where the three blocking reads actually live](open-questions.md#where-the-three-blocking-reads-actually-live).
 
 | Area | Canonical task |
 | --- | --- |
