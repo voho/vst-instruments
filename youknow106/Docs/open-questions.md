@@ -1009,8 +1009,17 @@ multi-card scope are unavailable. Neither source establishes the former
 24 kHz knee, tanh shape or 52.2 kHz asymptote. The adopted default product
 policy is the validated exponential law followed by a transparent numerical
 `min(..., 50000 Hz)` safety cap; this is not claimed as analogue saturation.
+
 The former 24 kHz/tanh/52.2 kHz curve may exist only as a named legacy
 compatibility profile. The hardware high-code law remains the research target.
+
+**Updated 2026-08-06.** The knee is no longer a product cap alone. An AS3109
+teardown reports the control current saturating internally at 700 µA, which on
+this circuit's own 240 pF / 68 kΩ is a pole near 64 kHz, and the shipping law
+now bends toward that asymptote with a single fitted exponent. The 50 kHz cap
+remains, and now binds only at and above the top of the slider. What this task
+still wants is a Roland-published or independently reproduced curve to replace
+the one third-party table that exponent was fitted to.
 
 ### Needed output (for LLM)
 
@@ -1039,14 +1048,20 @@ photographed A1QH80017A teardown settles that it is the second BA662 beside the
 IR3109/resonance devices, while the service schematic settles placement and
 ENV/GATE ownership. Service Notes p. 19 adjusts each card to 6 Vpp during the
 VCA GAIN procedure, but publishes no tolerance and does not identify the
-control curve. Even the broadly quasi-linear shape remains unverified. The
-current central law uses a knee at 0.12, a 260 dB-per-unit low-level slope and a
-hard deadband at 0.005 as a voiced compatibility curve attributed to an
-unavailable, only coarsely described sweep. No qualifying raw original-module
-sweep establishes those constants, and a measurement noise floor can
-masquerade as a hard deadband. A circuit reconstruction reports a roughly
-150 mV no-current region, but it is useful only as a reason to sample densely
-near onset—not as a stock-card constant. This is not the common stored VCA
+control curve.
+
+**Updated 2026-08-06.** The voiced curve this task was written against — a knee
+at 0.12, a 260 dB-per-unit low-level slope and a hard deadband at 0.005 — is
+gone. Roland's own module-board drawing settles the shape: the BA662 is
+current-controlled and there is no exponential converter anywhere in the VCA
+path, so gain follows `I_ABC = (V_cv − V_be)/32 kΩ` through a grounded-base
+stage — linear above a hard turn-on with the transistor's own 60 mV-per-decade
+knee below it. What this task now wants is the *turn-on point* on a real card,
+not the law. A measurement noise floor can still masquerade as a hard deadband,
+so the sampling density near onset below matters as much as it ever did. A
+circuit reconstruction reports a roughly 150 mV no-current region; the shipping
+turn-on is now that figure, which makes confirming it on a stock card the point
+of this task rather than a footnote to it. This is not the common stored VCA
 LEVEL in OQ-02, and card-to-card residual spread belongs to OQ-10.
 
 ### Needed output (for LLM)
@@ -1062,8 +1077,8 @@ LEVEL in OQ-02, and card-to-card residual spread belongs to OQ-10.
   the measurement noise floor or a defective/leaky module.
 - Measurements on additional cards sufficient to separate a nominal curve from
   OQ-10 dispersion.
-- A fitted law/table with residuals against the current voiced
-  0.12/260/0.005 compatibility profile and deterministic boundary/interior
+- A fitted law/table with residuals against the shipping schematic-derived law
+  -- 150 mV turn-on, kT/q knee, linear above -- and deterministic boundary/interior
   fixtures. Keep this analogue transfer replaceable without changing OQ-12
   envelope states or patch bytes.
 - Report the measured 6 Vpp service endpoint separately, without inventing a
@@ -1385,6 +1400,12 @@ Status: **partially resolved.** A defensible replacement is a fit to the measure
 curve with the base and exponent re-fitted together; note the model's
 `vcfBaseFrequencyHz = 5.53` sits 63 cents below the measured 5.73 Hz at code 0.
 
+*Acted on the same day; see the implementation pass below.* The base and slope
+were deliberately **not** refitted — they are pinned by Roland's own 248 Hz
+calibration anchor, and the 63-cent base gap and the measured 3.46–3.49 against
+the model's 3.50 octaves per 1000 codes are the same statement seen from two
+ends. Only the knee moved.
+
 ### OQ-07 / OQ-18 — the R-2R carry non-linearity is real and was removed
 
 The same measured table documents excess steps at the bit boundaries of
@@ -1399,7 +1420,15 @@ point a slow cutoff sweep steps by roughly 23 cents crossing mid-scale, which is
 audible on a slow resonant sweep. Folding it into the OQ-18 fit costs nothing extra,
 since the measured curve already contains it.
 
-Status: **partially resolved**, confidence moderate.
+Status: **partially resolved**, confidence moderate. *Implemented the same day,
+as a persistent offset applied by the converter write rather than folded into
+the static map: the map is a function of counts and never sees the code
+boundary, and putting the offset on the write is what lets the hold capacitor
+slew it as the hardware's would. See the implementation pass below.* *Implemented the same day
+as a persistent offset applied by the converter write, not folded into the
+static map: the map does not see the code, and putting it on the write is what
+lets the hold capacitor slew it as the hardware's would. See the implementation
+pass below.*
 
 ### OQ-10 — a comparison point for per-card dispersion
 
@@ -1574,6 +1603,128 @@ Two leads remain unread: `analoguerenaissance.com/JUNOTEST/` (a JUNO-106 VCF/VCA
 wave-generator test procedure, typically carrying scope photographs — its TLS
 certificate has expired, so a browser that accepts the warning is needed), and the
 Gearspace chorus-noise thread's attached spectra and WAV files.
+
+## Implementation pass — 2026-08-06 (later same day)
+
+**Work mode:** analysis of supplied evidence plus measurement of the shipping
+algorithms. **No hardware was measured.** Every dB and cent figure below was
+produced against the built engine and is reproducible from this repository.
+
+This pass acted on the evidence search above. Four items moved from *voiced* to
+*derived*, and three proposals were measured and **rejected** — those are
+recorded here in as much detail as the accepted ones, because a rejected idea
+that is not written down is an idea that gets tried again.
+
+### Acted on
+
+- **OQ-18 — the upper cutoff knee.** The single-pole `R_e` compression is
+  replaced by the transconductor's own control-current saturation, using the
+  generalized algebraic clip already used twice elsewhere in the engine, with
+  the asymptote taken from the AS3109 teardown's 700 µA internal saturation
+  (a 64 kHz pole on this circuit's 240 pF / 68 kΩ) and only the exponent fitted
+  to the measured card. The base and slope are **not** refitted: they are pinned
+  by Roland's own 248 Hz calibration anchor, and the search's own conclusion was
+  that the exponential law and 1143 counts/octave are sound.
+
+  Result: worst error against the measured table falls from **−143 cents to
+  under 30**, the correction is under **5 cents anywhere below 2.7 kHz**, and
+  the Unit Character 0 case is no longer 292 cents sharp — the saturation is a
+  property of the part, so it applies at every setting, like the output
+  summer's rails. Status: **partially resolved → derived, with one fitted
+  exponent.** The remaining gap is a Roland-published or independently
+  reproduced curve.
+
+- **OQ-07 / OQ-18 — the R-2R carry.** Reinstated as a persistent offset applied
+  by the converter write to the code it just produced, which is where the search
+  said it belongs. A slow sweep crossing mid-scale now steps by about 23 cents.
+  Scaled by Unit Character: an ideal ladder has no carry error, so its size is
+  resistor matching. Status: **implemented**; the underlying hold topology
+  remains OQ-07.
+
+- **OQ-19 — the voice VCA.** Replaced with the grounded-base stage Roland's
+  module drawing prints: linear in control above a hard turn-on, with the
+  transistor's own 60 mV-per-decade knee below it, written as the exact
+  softplus. The old profile put 13–15 dB of extra attenuation on the bottom of
+  every envelope. Status: **shape derived**; a measured BA662 sweep would move
+  the turn-on point rather than the law.
+
+- **OQ-10 — the cutoff thermal spread.** Reduced from ±165 cents to about
+  ±10, derived from the same exponential card profile as the temperature through
+  the AS3109's 0.33 %/°C tempco and taken about the six-card mean. Still an
+  upper bound rather than a residual, because R111's positor exists to cancel
+  exactly this. Status: **internally consistent now**; OQ-10 itself still needs
+  population data.
+
+### Rejected, with the measurement that rejected it
+
+- **Running the VCF on a doubled grid does not buy −87.7 dB.** The search's
+  model-internal note predicted the bright-resonant in-band floor would go from
+  −55.5 dB to −87.7 dB with the filter run at 2× the internal rate. It was
+  built — half-step coefficients, linear input interpolation, a symmetric
+  three-tap decimator whose null sits on the folding frequency — and measured at
+  **−48.5 dB → −54.4 dB**, for about **40 % of the whole engine's cost**. It is
+  not in the shipping code.
+
+  What the intervening experiments established, which is the reusable part:
+
+  1. The artefacts are not broadband. They are discrete lines at
+     `192 kHz − n·f0` for `n` around 169–183: harmonics the tanh set creates
+     above the internal Nyquist, appearing directly in band because that grid
+     cannot hold them.
+  2. They are **not** the converter scan (doubling the scan rate moved nothing),
+     **not** the card noise (zeroing it moved nothing), **not** the output
+     summer or its slew limiter (disabling both moved nothing), and **not** the
+     decimation chain (48, 96 and 192 kHz hosts all reach the same 192 kHz
+     internal rate and measure identically).
+  3. Widening the oscillator's residual kernel from 4 to 8 half-widths moved the
+     same case by **0.7 dB**, confirming the earlier note that the BLEP tables
+     are not the limit here.
+  4. The doubled grid is limited by the *interpolation*, not the decimation.
+     Zero-order hold into the doubled grid measured −48.8 dB — no better than
+     not doubling at all — while linear interpolation with no decimation filter
+     measured −55.5 dB. Getting the predicted figure would need a real
+     interpolating upsampler per voice, which costs more than the filter it
+     feeds.
+
+- **The chorus-mode noise delta cannot be reproduced by sweep depth.** The
+  search records a usable third-party delta — Chorus II is 3.95 dB noisier than
+  Chorus I — with the suggested mechanism "mode II's sweep spends more time at
+  low clock rates". That contradicts this project's own settled finding, which
+  the schematic fixes: **the mode line changes a timing resistance only**, so I
+  and II have identical sweep depth and identical clock ranges, and the
+  time-average of the clock is the same for both.
+
+  The model also already carries the physics the explanation appeals to: BBD
+  noise is injected once per clock edge at fixed per-sample amplitude, so its
+  in-band density already rises as the clock falls, automatically and without a
+  coefficient. Reproducing the 3.95 dB by any depth or level difference between
+  the modes would be inventing a mechanism the circuit does not have. **Not
+  implemented.** The delta stands as unexplained evidence against OQ-03, and
+  wants a different mechanism — most plausibly something in the mode switch's
+  own network rather than in the sweep.
+
+- **OQ-02 (VCA LEVEL) was not changed.** The datasheet argument is strong — the
+  µPC1252 is linear in dB, so a linear DAC→GC1 divider implies a linear-in-dB
+  slider — but it is explicitly conditional on that divider, which nobody has
+  read yet. Changing the law would move every factory patch's loudness by up to
+  6.9 dB on the strength of an "if". It stays voiced until the jack-board
+  divider is read; that reading is the whole of OQ-02.
+
+### Also measured, and acted on
+
+- **The decimation window was costing the top of the band.** Both decimation
+  stages shared a 63-tap Blackman-Harris half-band, whose main lobe is eight
+  bins wide. At a 44.1 kHz host that put the final stage's transition at roughly
+  18–30 kHz: **0.85 dB down at 20 kHz, with content folding onto 19.1 kHz
+  rejected by only 31.7 dB.** Replacing the window with a Kaiser at the standard
+  80 dB design value, at the same tap count and therefore the same cost, moves
+  the transition to about 20–28 kHz: **−0.43 dB at 20 kHz and −46.2 dB of fold
+  rejection at 44.1 kHz**, and **−0.00 dB / −80.5 dB at 48 kHz** against the old
+  −0.06 / −63.7. `Tests/YouKnow106CircuitTests.cpp::testDecimatorProtectsTheTopOfTheBand`
+  measures the built kernel rather than trusting the design equations. The
+  Bessel function is written out in the engine because the standard
+  special-function header — the original reason a Kaiser window was avoided —
+  is not available on every toolchain this project builds with.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 

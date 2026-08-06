@@ -260,12 +260,46 @@ public:
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
     };
 
+    // Where the transconductor's own control current stops following the
+    // anti-log converter. An IR3109 teardown reports the internal control
+    // current saturating at 700 uA, which is a pole near 64 kHz on this
+    // circuit's C = 240 pF / R = 68 kOhm test condition -- the physical origin
+    // of the upper knee, and consistent with Roland's published 50 kHz top.
+    //
+    // The shape is the generalized algebraic clip the output summer and the
+    // BBD write already use: numerically linear through the whole musical
+    // range and bending only as the current approaches its limit. The exponent
+    // is the one free parameter, fitted to a measured code-to-frequency curve
+    // for a real voice card; a single pole (the exponent at one) cannot
+    // describe that knee, and the revision that used one left the model up to
+    // 143 cents flat around a 16 kHz cutoff.
+    //
+    // Like the output summer's rails this is a property of the part, so it
+    // applies at every Unit Character setting. Gating it left the "calibrated
+    // reference" with a filter that kept tracking the exponential law past the
+    // point the transconductor can follow it, 292 cents sharp near the top.
+    static constexpr float vcfControlSaturationHz = 64000.0f;
+    static constexpr float vcfControlSaturationExponent = 1.7f;
+
     // Complete default-profile cutoff after the compatibility profile's
-    // frequency correction. The explicit product safety cap applies after
-    // every correction so no composition can exceed the declared boundary.
+    // frequency correction and the transconductor's control-current
+    // saturation. The explicit product safety cap applies after every
+    // correction so no composition can exceed the declared boundary.
     [[nodiscard]] static float vcfEffectiveCutoffHz(float counts,
-                                                    float feedback,
-                                                    float calibration = 0.0f) noexcept;
+                                                    float feedback) noexcept;
+
+    // Integral non-linearity of the R-2R cutoff converter, in counts, for a
+    // summed count value. A measured code-to-frequency table for a real voice
+    // card shows excess steps of -4.64, +23.31 and -4.48 cents at the three
+    // top bit boundaries (DAC codes 1024, 2048 and 3072), which is where an
+    // R-2R ladder's major-carry error physically belongs. This is a persistent
+    // offset on the converter's own output, not an impulse: a revision wrote
+    // it into the field the same converter write reassigns, so it measured
+    // bit-identical and was removed.
+    //
+    // Scaled by Unit Character, because an ideal ladder has no carry error at
+    // all: the magnitude is resistor matching, which is a tolerance.
+    [[nodiscard]] static float vcfConverterCarryCounts(float counts) noexcept;
 
     [[nodiscard]] static float envelopeAttackSeconds(float panelPosition) noexcept;
     [[nodiscard]] static float envelopeDecaySeconds(float panelPosition) noexcept;
@@ -390,15 +424,52 @@ public:
                                               float resetFraction) noexcept;
     [[nodiscard]] static float pulseFallPhase(float duty,
                                               float resetFraction) noexcept;
-    // The digital ENV/GATE path is resolved independently, but no qualifying
-    // dense original-module sweep establishes the following analogue control
-    // transfer. Keep its current knee/deadband and law together as one named,
-    // replaceable sound-design profile rather than free hardware constants.
-    struct VoicedVoiceVcaCompatibilityProfile
+    // The voice amplifier's control law, from Roland's own module-board
+    // drawing rather than from a chosen curve. The BA662 is a *current*
+    // controlled OTA -- its gain follows I_ABC and it carries no volts-per-
+    // decade converter at all. The volts-to-amps conversion happens outside
+    // the module, in a grounded-base stage:
+    //
+    //   VCA CV (0..+10 V from the S/H) -> R106 10k -> node -> R105 22k
+    //     -> Tr20 emitter, base grounded, collector = pin 11 VCA CONT
+    //
+    // so I_ABC = (V_cv - V_be) / 32 kOhm, clamped at zero. That is linear in
+    // the control voltage above a hard turn-on with only the transistor's own
+    // exponential knee at the bottom -- the classic 60 mV per decade, which is
+    // kT/q times ln 10 and is why the knee below is the thermal voltage
+    // referred to the converter's 10 V span. The turn-on point is the trimmed
+    // dead zone, about 150 mV of that same span.
+    //
+    // The exact softplus below is what a grounded-base stage does: linear
+    // above turn-on, exponential below, with no discontinuity between them.
+    // It replaces a voiced profile whose knee was 5-10x too wide and sat too
+    // high, which put an extra 13-15 dB of attenuation on the bottom of every
+    // envelope and squared the end of every release tail.
+    //
+    // A published teardown infers the opposite -- "the envelope generators are
+    // linear and generated by the CPU, so the VCA response must be
+    // exponential". That is an inference; the schematic is a drawing, and it
+    // wins. Whether the firmware pre-shapes the envelope DAC data is a
+    // separate question and is not assumed here.
+    struct VoiceVcaControlLaw
     {
-        static constexpr float knee = 0.12f;
-        static constexpr float kneeDbPerControlUnit = 260.0f;
-        static constexpr float deadband = 0.005f;
+        // 150 mV of the converter's 10 V span.
+        static constexpr float turnOn = 0.015f;
+        // kT/q at room temperature, on that same span. One decade of gain is
+        // ln(10) of these, i.e. the datasheet-familiar 60 mV.
+        static constexpr float knee = 0.0026f;
+        // Below this the modelled leakage is more than 95 dB down, so the
+        // model returns an exact zero rather than a denormal tail. Product
+        // policy, not a measured off-isolation figure.
+        static constexpr float deadband = 0.001f;
+        // What the block-processing loop treats as a shut amplifier when it
+        // decides a voice may be retired. Also product policy: a real VCA's
+        // residual feedthrough never reaches exactly zero, so a retirement
+        // test written against an exact zero would never fire. Set above the
+        // leak at the largest control offset a card can present -- 0.008, at
+        // the Unit Character ceiling -- which is 75 dB down, so a voice cannot
+        // idle forever above the threshold and block a deferred quality change.
+        static constexpr float silenceGain = 3.0e-4f;
 
         [[nodiscard]] static float gain(float control) noexcept;
     };
@@ -521,6 +592,31 @@ private:
     static constexpr float vcfStageCapacitorTolerance = 0.02f;
     static constexpr float otaEarlyVoltage = 100.0f;
     static constexpr float otaEarlyEffectCoefficient = 0.005f;
+    // Temperature coefficient of the transconductor's cutoff control path, from
+    // the AS3109 datasheet -- the IR3109 clone whose own test condition is this
+    // circuit's 240 pF and 68 kOhm. It is what turns the modelled chassis
+    // thermal gradient into a per-card cutoff difference.
+    //
+    // A revision instead spread the six cards by 1 + 0.04 * (card - 2.5), which
+    // is +/-165 cents: roughly ten times what this coefficient supports across
+    // the 4 degC gradient computed beside it, linear in the card index while
+    // that gradient is exponential in it, and absent from the README's own Unit
+    // Character table. The module board also carries R111, a 560 Ohm positor --
+    // a PTC thermistor, listed as such in the parts legend -- returning the CV
+    // divider node to ground precisely to cancel this tempco, so the derived
+    // figure below is an upper bound on what survives it rather than a
+    // measured residual. How much the positor actually leaves is OQ-10.
+    static constexpr float vcfCutoffTempcoPerCelsius = 0.0033f;
+    // Card-to-card thermal gradient across the chassis, in degrees Celsius at
+    // the card nearest the supply, falling exponentially with the card index.
+    // Shared by the headroom and cutoff paths so the two cannot disagree.
+    static constexpr float chassisGradientPeakCelsius = 4.0f;
+    static constexpr float chassisGradientCards = 2.5f;
+    [[nodiscard]] static float chassisGradientCelsius(int cardIndex) noexcept;
+    // The same profile averaged over the six physical cards. The FREQ trim is
+    // set at operating temperature, so what a calibrated instrument carries is
+    // the spread about that mean, not the mean itself.
+    [[nodiscard]] static float chassisGradientMeanCelsius() noexcept;
     // Roland publishes an approximate 5 Hz--50 kHz range, but no qualifying
     // capture fixes the high-code saturation shape. Keep the established
     // exponential law and apply an explicit product safety cap at that stated

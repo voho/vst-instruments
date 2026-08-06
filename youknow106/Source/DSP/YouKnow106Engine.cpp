@@ -123,15 +123,28 @@ double YouKnow106Engine::dcoQuantisedFrequency(std::uint32_t divider,
     return rangeClockHz(range) / static_cast<double>(limited);
 }
 
+namespace
+{
+// The anti-log converter's own transfer, with no endpoint policy on it. The
+// transconductor's control-current saturation is what actually bends the top
+// of this law, and it has to see the unclamped value or the product cap would
+// be limiting the input to the physics instead of the result of it.
+float vcfAntilogHz(float counts) noexcept
+{
+    const float safe = std::clamp(sanitised(counts, 0.0f), -2000.0f, 20000.0f);
+    return YouKnow106Engine::vcfBaseFrequencyHz
+         * std::exp2(safe / YouKnow106Engine::vcfCountsPerOctave);
+}
+} // namespace
+
 float YouKnow106Engine::vcfCutoffHz(float counts) noexcept
 {
     // The digital sum upstream is already clamped to the 14-bit accumulator;
-    // the margin here only covers analogue trim and drift. No dense capture
-    // establishes a high-code knee, so retain the validated exponential law
-    // and identify the published 50 kHz endpoint as a transparent product cap.
-    const float safe = std::clamp(sanitised(counts, 0.0f), -2000.0f, 20000.0f);
-    const float hz = vcfBaseFrequencyHz * std::exp2(safe / vcfCountsPerOctave);
-    return std::clamp(hz, 1.0f, vcfSafetyCapHz);
+    // the margin here only covers analogue trim and drift. This is the
+    // converter's law alone -- what the transconductor can still follow is
+    // vcfEffectiveCutoffHz -- with the published 50 kHz endpoint as a
+    // transparent product cap.
+    return std::clamp(vcfAntilogHz(counts), 1.0f, vcfSafetyCapHz);
 }
 
 float YouKnow106Engine::vcfPanelCounts(float panelPosition) noexcept
@@ -178,16 +191,59 @@ float YouKnow106Engine::VoicedResonanceCompatibilityProfile::frequencyTrim(
     return 1.0f + frequencyTrimAmount * fraction * fraction;
 }
 
-float YouKnow106Engine::vcfEffectiveCutoffHz(float counts,
-                                             float feedback,
-                                             float calibration) noexcept
+float YouKnow106Engine::vcfConverterCarryCounts(float counts) noexcept
 {
-    const float rawHz = vcfCutoffHz(counts)
+    // Cents to counts: 1143 counts is an octave and 1200 cents is an octave.
+    constexpr float perCent = vcfCountsPerOctave / 1200.0f;
+    // Cumulative excess step at each of the three top bit boundaries. The
+    // converter takes the top twelve bits, so a DAC code is four counts.
+    float carry = 0.0f;
+    if (counts >= 4096.0f)   // DAC 1024
+        carry += -4.64f * perCent;
+    if (counts >= 8192.0f)   // DAC 2048 -- the major carry
+        carry += 23.31f * perCent;
+    if (counts >= 12288.0f)  // DAC 3072
+        carry += -4.48f * perCent;
+    return carry;
+}
+
+float YouKnow106Engine::vcfEffectiveCutoffHz(float counts,
+                                             float feedback) noexcept
+{
+    const float rawHz = vcfAntilogHz(counts)
                       * VoicedResonanceCompatibilityProfile::frequencyTrim(feedback);
-    // Physical anti-log transistor parasitic emitter resistance (R_e) compression
-    // at high control currents (> 8 kHz).
-    const float compressedHz = rawHz / (1.0f + calibration * (rawHz / 120000.0f));
-    return std::min(vcfSafetyCapHz, compressedHz);
+    // The transconductor's control current saturates internally, so the pole
+    // stops following the anti-log converter near the top of the slider. The
+    // generalized algebraic clip keeps the law numerically exact through the
+    // musical range -- under five cents of correction below 2.7 kHz -- and
+    // bends it only as the current approaches its own limit.
+    const double normalised = static_cast<double>(rawHz)
+                            / static_cast<double>(vcfControlSaturationHz);
+    const double exponent = static_cast<double>(vcfControlSaturationExponent);
+    const double saturated = static_cast<double>(rawHz)
+        / std::pow(1.0 + std::pow(normalised, exponent), 1.0 / exponent);
+    return std::min(vcfSafetyCapHz, static_cast<float>(saturated));
+}
+
+float YouKnow106Engine::chassisGradientCelsius(int cardIndex) noexcept
+{
+    const float index = static_cast<float>(std::max(cardIndex, 0));
+    return chassisGradientPeakCelsius
+         * std::exp(-index / chassisGradientCards);
+}
+
+float YouKnow106Engine::chassisGradientMeanCelsius() noexcept
+{
+    // A constant, but not one the language will fold: std::exp is not
+    // constexpr. This is read once per voice per internal sample, so it is
+    // computed once rather than six exponentials at a time.
+    static const float mean = [] {
+        float total = 0.0f;
+        for (int card = 0; card < hardwareVoices; ++card)
+            total += chassisGradientCelsius(card);
+        return total / static_cast<float>(hardwareVoices);
+    }();
+    return mean;
 }
 
 namespace
@@ -742,17 +798,22 @@ float YouKnow106Engine::pwmDutyCycle(float controlVolts,
     return std::clamp(1.0f - volts / (12.0f * scale), 0.0f, 1.0f);
 }
 
-float YouKnow106Engine::VoicedVoiceVcaCompatibilityProfile::gain(
-    float control) noexcept
+float YouKnow106Engine::VoiceVcaControlLaw::gain(float control) noexcept
 {
-    // Preserve YouKnow106's established quasi-linear response, exponential
-    // low-control knee and hard-zero policy. OQ-19 keeps all three numerical
-    // choices voiced; a measurement floor alone would not prove this deadband.
+    // I_ABC = (V_cv - V_be) / 32 kOhm through a grounded-base stage, so gain is
+    // linear in the control voltage above the turn-on and rolls into the
+    // transistor's own exponential below it. Softplus is that transfer exactly.
+    // Normalised so full control is unity gain, which makes the turn-on the
+    // only thing the constants choose.
     const float level = clamp01(sanitised(control, 0.0f));
     if (level <= deadband)
         return 0.0f;
-    const float kneeDb = kneeDbPerControlUnit * std::max(0.0f, knee - level);
-    return level * std::pow(10.0f, -kneeDb / 20.0f);
+    const float x = (level - turnOn) / knee;
+    // log1p(exp(x)) is x to the last bit long before x reaches thirty, and the
+    // exponential would overflow well after that; take the limit early so the
+    // linear region costs one comparison rather than two transcendentals.
+    const float softplus = x > 30.0f ? x : std::log1p(std::exp(x));
+    return knee * softplus / (1.0f - turnOn);
 }
 
 float YouKnow106Engine::patchLevelGain(float dacFraction) noexcept
@@ -1428,10 +1489,44 @@ YouKnow106Engine::YouKnow106Engine() noexcept
 
 void YouKnow106Engine::buildHalfbandKernel() noexcept
 {
-    // Blackman-Harris windowed half-band. The window is chosen over a Kaiser
-    // because the C++ standard special-function Bessel is not available on
-    // every toolchain this project builds with, and its stopband is already
-    // well below the noise floor of everything upstream of it.
+    // Kaiser-windowed half-band. A Blackman-Harris window has a deeper
+    // stopband than this design but spends far too many of sixty-three taps
+    // reaching it: its main lobe is eight bins wide, which puts the last
+    // decimation stage's transition band at roughly 18 to 30 kHz. At a
+    // 44.1 kHz host that leaves the top of the audio band inside the
+    // transition -- 0.85 dB down at 20 kHz, and content folding onto 19.1 kHz
+    // rejected by only 31.7 dB, which is audible material rather than a
+    // theoretical figure.
+    //
+    // Kaiser trades stopband depth for transition width continuously, and at
+    // beta = 7.857 (the standard design value for an 80 dB stopband) sixty-
+    // three taps put the transition at about 20 to 28 kHz instead. That is
+    // strictly better at both host rates the instrument is likely to see:
+    // 44.1 kHz improves from -31.7 to -46.2 dB of fold rejection at 19.1 kHz
+    // and from -0.85 to -0.43 dB at 20 kHz, and 48 kHz improves from -63.7 to
+    // -80.5 dB with no measurable passband cost at all. The remaining 80 dB
+    // stopband still sits below everything upstream of it.
+    //
+    // The Bessel function is written out below rather than taken from the
+    // standard special-function header, which is not available on every
+    // toolchain this project builds with -- the reason the window was
+    // originally avoided.
+    const auto besselI0 = [](double x) noexcept {
+        double sum = 1.0;
+        double term = 1.0;
+        for (int k = 1; k < 64; ++k)
+        {
+            const double ratio = x / (2.0 * static_cast<double>(k));
+            term *= ratio * ratio;
+            sum += term;
+            if (term < 1.0e-18 * sum)
+                break;
+        }
+        return sum;
+    };
+    constexpr double kaiserBeta = 7.857;
+    const double besselDenominator = besselI0(kaiserBeta);
+
     constexpr int centre = (halfbandTaps - 1) / 2;
     float sum = 0.0f;
     for (int n = 0; n < halfbandTaps; ++n)
@@ -1455,12 +1550,13 @@ void YouKnow106Engine::buildHalfbandKernel() noexcept
             ideal = 0.5f * std::sin(x) / x;
         }
 
-        const float t = static_cast<float>(n) / static_cast<float>(halfbandTaps - 1);
-        const float window = 0.35875f
-                           - 0.48829f * std::cos(twoPi * t)
-                           + 0.14128f * std::cos(2.0f * twoPi * t)
-                           - 0.01168f * std::cos(3.0f * twoPi * t);
-        halfbandKernel_[static_cast<std::size_t>(n)] = ideal * window;
+        const double t = 2.0 * static_cast<double>(n)
+                             / static_cast<double>(halfbandTaps - 1) - 1.0;
+        const double window =
+            besselI0(kaiserBeta * std::sqrt(std::max(0.0, 1.0 - t * t)))
+            / besselDenominator;
+        halfbandKernel_[static_cast<std::size_t>(n)] =
+            ideal * static_cast<float>(window);
         sum += halfbandKernel_[static_cast<std::size_t>(n)];
     }
 
@@ -2727,8 +2823,13 @@ void YouKnow106Engine::updateVoiceVcfTarget(
     // the audio grid, below the converter's own resolution, exactly where
     // the hardware's trimmers sit.
     counts = std::clamp(counts, 0.0f, vcfCountsCeiling);
+    const float code = vcfDacCountStep * std::floor(counts / vcfDacCountStep);
+    // The ladder's own integral non-linearity rides on the code it just
+    // produced, so it stays on the hold capacitor and reaches the filter.
+    // Crossing mid-scale on a slow sweep therefore steps by about 23 cents,
+    // as a real card's does.
     voice.cutoffCountsTarget =
-        vcfDacCountStep * std::floor(counts / vcfDacCountStep);
+        code + vcfConverterCarryCounts(code) * parameters.calibration;
 }
 
 void YouKnow106Engine::updateVoiceVcaTarget(
@@ -2885,12 +2986,12 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
         + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * tolerance
         + card.driftValue * 40.0f * tolerance
         + psuCutoffShift;
-    const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback, tolerance);
+    const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
     const float limited =
         std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
     voice.filterG = std::tan(pi * limited * inverseOversampledRate_);
 
-    voice.vca = VoicedVoiceVcaCompatibilityProfile::gain(voice.vcaControl)
+    voice.vca = VoiceVcaControlLaw::gain(voice.vcaControl)
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
 
     // The IR3109 stage offsets used to be rewritten here, every audio sample,
@@ -3239,16 +3340,31 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
                             * voice.inputCompensation
                             + microscopicNoise * noiseRateScale_;
     // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C
+    const float cardGradient = chassisGradientCelsius(voice.cardIndex);
     const float psuThermalOffset = parameters.enableSpatialThermalGradient
-        ? 4.0f * std::exp(-static_cast<float>(voice.cardIndex) / 2.5f) * parameters.calibration
+        ? cardGradient * parameters.calibration
         : 0.0f;
     const float tempRise = 15.0f * parameters.calibration;
     const float tempC = 25.0f + psuThermalOffset + tempRise * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
     const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
     const float dynamicHeadroom = 2.0f * dynamicThermalVoltage / stageAttenuation;
+    // The same gradient, through the control path's own temperature
+    // coefficient, and about the six-card mean: the FREQ trim is set with the
+    // instrument warm, so a calibrated unit carries the spread and not the
+    // mean. Roughly +/-10 cents at Unit Character 1, an upper bound on what
+    // R111's positor leaves uncancelled.
     const float thermalCutoffSpread = parameters.enableSpatialThermalGradient
-        ? (1.0f + 0.04f * parameters.calibration * (static_cast<float>(voice.cardIndex) - 2.5f))
+        ? 1.0f + vcfCutoffTempcoPerCelsius * parameters.calibration
+                     * (cardGradient - chassisGradientMeanCelsius())
         : 1.0f;
+    // One solve per internal sample. Solving the cascade on a doubled grid was
+    // built and measured: on the bright resonant patch that shows the engine's
+    // worst in-band artefacts it moved the floor from -48.5 dB to -54.4 dB and
+    // cost about 40% of the whole engine, because the affordable per-voice
+    // interpolation and decimation either side of the doubled grid put back
+    // most of what the doubled grid removed. A published expectation of -87.7
+    // dB for the same change does not reproduce against this engine; see the
+    // modelling notes.
     const float effectiveFilterG = voice.filterG * thermalCutoffSpread;
     const float filtered = voice.filter.process(filterInput, effectiveFilterG,
                                                 voice.feedback, dynamicHeadroom,
@@ -3523,15 +3639,16 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 mono += renderVoice(voice, parameters, noiseSample);
                 loudestEnvelope = std::max(loudestEnvelope, voice.envelope.value);
 
-                // Retire on the voiced amplifier profile actually being shut.
-                // A card's optional control offset can sit above a small raw
-                // threshold yet remain inside that profile's hard-zero region;
-                // without this check a silent voice would block a deferred
-                // quality change forever.
+                // Retire on the modelled amplifier actually being shut. A
+                // card's optional control offset can hold the control voltage
+                // just above the turn-on for ever, where the grounded-base
+                // stage still passes an inaudible trickle; without an explicit
+                // silence threshold a voice at -100 dB would block a deferred
+                // quality change indefinitely.
                 if (voice.envelope.stage == EnvelopeStage::Idle
                     && !voice.keyDown && !voice.sustained
-                    && VoicedVoiceVcaCompatibilityProfile::gain(
-                           voice.vcaControl) <= 0.0f)
+                    && VoiceVcaControlLaw::gain(voice.vcaControl)
+                           <= VoiceVcaControlLaw::silenceGain)
                     silenceVoice(voice);
                 else
                     sounding = true;

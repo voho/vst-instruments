@@ -3350,6 +3350,62 @@ void testPersistentContextHelpAndValueBubbles()
     help->showFor (editor.get());
     expect (help->getHelpTitle() == "HELP" && help->getHelpText() == idleText,
             "an unannotated area left stale contextual help behind");
+    expect (help->getHelpValue().isEmpty(),
+            "the idle help strip is showing a stale control value");
+
+    // The strip carries the hovered control's current setting as well as its
+    // explanation, so a value can be read without starting a drag. The text has
+    // to be the parameter's own, or the strip and JUCE's drag bubble would
+    // disagree about units on the same control.
+    auto* ourEditor = dynamic_cast<YouKnow106AudioProcessorEditor*> (editor.get());
+    expect (ourEditor != nullptr, "the editor is not this instrument's editor");
+    if (ourEditor != nullptr)
+    {
+        const std::pair<const char*, const char*> valued[] = {
+            { "FREQ", parameters::cutoff },
+            { "RES", parameters::resonance },
+            { "A", parameters::attack },
+            { "Unit Character", parameters::calibration },
+            { "HQ", parameters::hq }
+        };
+        for (const auto& entry : valued)
+        {
+            auto* target = findDescendantNamed (*editor, entry.first);
+            expect (target != nullptr,
+                    std::string ("cannot value-check help for ") + entry.first);
+            auto* parameter = processor.parameters.getParameter (entry.second);
+            if (target == nullptr || parameter == nullptr)
+                continue;
+
+            const auto reported = ourEditor->parameterValueTextFor (target);
+            expect (reported.isNotEmpty(),
+                    std::string ("the help strip has no value for ")
+                        + entry.first);
+            expect (reported.startsWith (
+                        parameter->getCurrentValueAsText().trim()),
+                    std::string ("the help strip disagrees with the parameter "
+                                 "for ") + entry.first);
+
+            help->showFor (target, reported);
+            expect (help->getHelpValue() == reported,
+                    std::string ("the help strip dropped the value for ")
+                        + entry.first);
+            expect (help->getBounds() == stableBounds,
+                    "the fixed help area moved when a value appeared");
+        }
+
+        // Components that are not parameter controls must not invent one.
+        for (const auto* name : { "Pitch and modulation lever",
+                                  "Playable keyboard", "Status display",
+                                  "Reload patch" })
+        {
+            auto* target = findDescendantNamed (*editor, name);
+            if (target == nullptr)
+                continue;
+            expect (ourEditor->parameterValueTextFor (target).isEmpty(),
+                    std::string ("the help strip invented a value for ") + name);
+        }
+    }
 
     // Numeric readouts are JUCE Slider popups, independent of the removed
     // descriptive TooltipWindow. Exercise every no-text-box slider so the new

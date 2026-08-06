@@ -65,6 +65,11 @@ private:
     float temperature = 25.0f;
     float railDroop = 0.0f;
     std::array<float, 256> scopeBuffer {};
+    // Scope vertical range: a slow-release peak follower and the power-of-two
+    // gain it selects. Both are display state, so they live with the drawing
+    // rather than with the audio the processor publishes.
+    float scopePeak = 0.0f;
+    float scopeGain = 1.0f;
 };
 
 // JUCE's MIDI keyboard is interactive but does not implement TooltipClient.
@@ -119,7 +124,10 @@ class YouKnow106ContextHelp final : public juce::Component
 public:
     YouKnow106ContextHelp();
 
-    void showFor (juce::Component* component);
+    // `value` is the hovered control's current setting, already formatted by
+    // the parameter itself. It is optional because not every component the
+    // strip explains is a parameter -- the keyboard and the lever are not.
+    void showFor (juce::Component* component, juce::String value = {});
     void showIdle();
     void paint (juce::Graphics&) override;
 
@@ -133,11 +141,17 @@ public:
         return helpText;
     }
 
+    [[nodiscard]] const juce::String& getHelpValue() const noexcept
+    {
+        return helpValue;
+    }
+
 private:
-    void setContent (juce::String title, juce::String text);
+    void setContent (juce::String title, juce::String text, juce::String value);
 
     juce::String helpTitle;
     juce::String helpText;
+    juce::String helpValue;
 };
 
 class YouKnow106AudioProcessorEditor final : public juce::AudioProcessorEditor,
@@ -149,6 +163,13 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    // What the help strip prints beside a hovered component: that component's
+    // parameter, formatted by the parameter itself, or empty for a component
+    // that is not a parameter control. Public because it is the whole of the
+    // strip's value behaviour and the regression suite has to be able to ask
+    // for it without a real pointer over a real window.
+    [[nodiscard]] juce::String parameterValueTextFor (juce::Component*) const;
 
 private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -175,6 +196,10 @@ private:
     void attachExclusiveButton (juce::Button&, const char* parameterId,
                                 const char* otherParameterId);
     void attachRadio (juce::Button&, const char* parameterId, int value);
+    // Which parameter a hovered component belongs to, walking outward through
+    // the private children a Slider or ComboBox may report as the mouse
+    // target. Null for components that are not parameter controls.
+    [[nodiscard]] const char* parameterIdFor (juce::Component*) const;
     [[nodiscard]] juce::Rectangle<float> scaled (float x, float y, float width,
                                                  float height) const;
 

@@ -13,13 +13,13 @@ RMS.
 
 | Mechanism | Diff peak (dBc) | Diff RMS (dBc) |
 | --- | ---: | ---: |
-| `01-vcf-transistor-offsets` | -22.9 | -40.7 |
-| `02-opamp-slew-limiting` | -129.7 | -158.7 |
-| `06-vcf-early-effect` | -41.0 | -61.0 |
-| `07-spatial-thermal-gradient` | -7.2 | -23.3 |
-| `08-chorus-thiran-clock-bleed` | -32.1 | -67.2 |
+| `01-vcf-transistor-offsets` | -23.1 | -41.2 |
+| `02-opamp-slew-limiting` | -123.5 | -157.4 |
+| `06-vcf-early-effect` | -41.4 | -62.1 |
+| `07-spatial-thermal-gradient` | -30.2 | -48.5 |
+| `08-chorus-thiran-clock-bleed` | -31.7 | -73.4 |
 | `09-chorus-hyperbolic-sweep` | +12.2 | -2.2 |
-| `11-electrolytic-c14-nonlinearity` | -70.6 | -85.0 |
+| `11-electrolytic-c14-nonlinearity` | -70.6 | -85.1 |
 
 A mechanism whose diff RMS sits below about -80 dBc is not audible on the
 material it was given, whatever its entry in the research document claims.

@@ -65,6 +65,15 @@ struct YouKnow106TestAccess
         return realised;
     }
 
+    // The decimation kernel as built, so the suite can measure the transfer
+    // the last stage actually applies rather than trusting a design formula.
+    static std::vector<float> halfbandKernel()
+    {
+        YouKnow106Engine engine;
+        engine.buildHalfbandKernel();
+        return { engine.halfbandKernel_.begin(), engine.halfbandKernel_.end() };
+    }
+
     static float bbdTransfer(float input) noexcept
     {
         return Chorus::bbdTransfer(input);
@@ -590,13 +599,71 @@ void testCutoffControlLaw()
     expectNear(YouKnow106Engine::vcfEffectiveCutoffHz(20000.0f, 8.0f),
                50000.0, 1.0e-3,
                "resonance trim escaped the final 50 kHz cutoff safety cap");
-    const float midCounts = 9000.0f;
-    expectNear(YouKnow106Engine::vcfEffectiveCutoffHz(midCounts, 2.0f),
-               YouKnow106Engine::vcfCutoffHz(midCounts)
-                   * YouKnow106Engine::VoicedResonanceCompatibilityProfile::
-                       frequencyTrim(2.0f),
-               1.0e-3,
-               "post-trim cap altered a cutoff below the safety boundary");
+
+    // The transconductor's control-current saturation has to be invisible
+    // through the musical range and only bend the top: what it replaced was a
+    // single pole that pulled a 5 kHz cutoff 48 cents flat and a 16 kHz one by
+    // 143. Below 2.7 kHz the correction is under five cents.
+    for (float counts = 0.0f; counts <= 10100.0f; counts += 100.0f)
+    {
+        const float effective = YouKnow106Engine::vcfEffectiveCutoffHz(counts, 0.0f);
+        const float law = YouKnow106Engine::vcfCutoffHz(counts);
+        const double cents = 1200.0 * std::log2(effective / law);
+        expect(cents <= 0.0 && cents > -5.0,
+               "control-current saturation is not transparent below 2.7 kHz: "
+                   + std::to_string(cents) + " cents at " + std::to_string(counts)
+                   + " counts");
+    }
+    // And the saturation must never lift a cutoff, at any code.
+    for (float counts = 0.0f; counts <= 20000.0f; counts += 50.0f)
+        expect(YouKnow106Engine::vcfEffectiveCutoffHz(counts, 0.0f)
+                   <= YouKnow106Engine::vcfCutoffHz(counts) + 1.0e-3f,
+               "control-current saturation raised a cutoff above the anti-log law");
+
+    // A measured code-to-frequency table for a real voice card, gain
+    // calibrated so DAC 1568 reads the service manual's own 248 Hz anchor.
+    // Third-party and not independently verified, so it is a comparison
+    // fixture rather than a hardware assertion -- but the shipping law has to
+    // stay inside a musically meaningful distance of it. The revision this
+    // replaced was 143 cents flat at DAC 3328.
+    struct MeasuredCutoff { float dacCode; double hertz; };
+    constexpr std::array<MeasuredCutoff, 8> measured {{
+        { 1024.0f, 67.2 },   { 1568.0f, 248.0 },   { 2560.0f, 2725.0 },
+        { 2816.0f, 5048.0 }, { 3072.0f, 9297.0 },  { 3328.0f, 16779.0 },
+        { 3584.0f, 27876.0 }, { 4064.0f, 50792.0 }
+    }};
+    for (const auto& point : measured)
+    {
+        const float counts = point.dacCode * YouKnow106Engine::vcfDacCountStep
+                           + YouKnow106Engine::vcfConverterCarryCounts(
+                                 point.dacCode * YouKnow106Engine::vcfDacCountStep);
+        const double cents = 1200.0 * std::log2(
+            YouKnow106Engine::vcfEffectiveCutoffHz(counts, 0.0f) / point.hertz);
+        expect(std::abs(cents) < 45.0,
+               "cutoff law is " + std::to_string(cents)
+                   + " cents from the measured card at DAC "
+                   + std::to_string(static_cast<int>(point.dacCode)));
+    }
+
+    // The R-2R ladder's major carry. A slow sweep crossing mid-scale steps by
+    // roughly 23 cents, and the two smaller boundary errors sit either side of
+    // it. An ideal ladder has none of this, so it is scaled by Unit Character
+    // in the converter write rather than living in the law.
+    constexpr float perCent = YouKnow106Engine::vcfCountsPerOctave / 1200.0f;
+    expectNear(YouKnow106Engine::vcfConverterCarryCounts(0.0f), 0.0, 1.0e-6,
+               "the converter carries an offset below its first bit boundary");
+    expectNear(YouKnow106Engine::vcfConverterCarryCounts(8192.0f)
+                   - YouKnow106Engine::vcfConverterCarryCounts(8188.0f),
+               23.31 * perCent, 1.0e-4,
+               "the major carry at DAC 2048 is not the measured 23.31 cents");
+    expectNear(YouKnow106Engine::vcfConverterCarryCounts(4096.0f)
+                   - YouKnow106Engine::vcfConverterCarryCounts(4092.0f),
+               -4.64 * perCent, 1.0e-4,
+               "the carry at DAC 1024 is not the measured -4.64 cents");
+    expectNear(YouKnow106Engine::vcfConverterCarryCounts(12288.0f)
+                   - YouKnow106Engine::vcfConverterCarryCounts(12284.0f),
+               -4.48 * perCent, 1.0e-4,
+               "the carry at DAC 3072 is not the measured -4.48 cents");
 }
 
 void testStoredControlDigitalVectors()
@@ -748,21 +815,53 @@ void testEnvelopeAndAmplifierLaws()
                5137.0 * 0.0042, 1.0e-4,
                "slowest decay-to-minus-20-dB misses the integer recurrence");
 
-    // OQ-19 remains measurement-open. These checks guard only the named voiced
-    // compatibility profile's broad behavior; they deliberately do not turn
-    // its provisional knee, slope or low-level deadband into hardware fixtures.
-    using VoiceVcaProfile =
-        YouKnow106Engine::VoicedVoiceVcaCompatibilityProfile;
+    // The voice amplifier is a current-controlled OTA behind a grounded-base
+    // volts-to-amps stage, so its gain is linear in the control voltage above
+    // the turn-on with the transistor's own exponential knee below it. These
+    // check that shape against the schematic rather than against a chosen
+    // curve; the remaining open part of OQ-19 is a measured BA662 gain sweep,
+    // which would fix the turn-on point, not the law.
+    using VoiceVcaLaw = YouKnow106Engine::VoiceVcaControlLaw;
     float previousGain = -1.0f;
     for (int step = 0; step <= 1000; ++step)
     {
-        const float gain = VoiceVcaProfile::gain(step / 1000.0f);
+        const float gain = VoiceVcaLaw::gain(step / 1000.0f);
         expect(std::isfinite(gain) && gain >= 0.0f && gain >= previousGain,
-               "voiced voice-VCA compatibility profile is not finite and monotone");
+               "the voice-VCA control law is not finite and monotone");
         previousGain = gain;
     }
-    expect(previousGain > VoiceVcaProfile::gain(0.0f),
-           "voiced voice-VCA compatibility profile does not respond to control");
+    expectNear(VoiceVcaLaw::gain(1.0f), 1.0, 1.0e-6,
+               "full control does not give the voice VCA unity gain");
+
+    // Linear in control above the turn-on: equal control steps are equal gain
+    // steps, which an exponential law cannot do. Checked well clear of the
+    // knee, whose whole width is a couple of per cent of the span.
+    for (float control = 0.1f; control <= 0.9f; control += 0.1f)
+    {
+        const double linear = (static_cast<double>(control) - VoiceVcaLaw::turnOn)
+                            / (1.0 - VoiceVcaLaw::turnOn);
+        expectNear(VoiceVcaLaw::gain(control), linear, 2.0e-6,
+                   "the voice VCA is not linear in control above its turn-on");
+    }
+
+    // And exponential below it, at the grounded-base stage's own 60 mV per
+    // decade -- kT/q times ln 10, referred to the converter's 10 V span. One
+    // decade of control below the turn-on against two decades below it, where
+    // the softplus is already close to its exponential asymptote.
+    {
+        const float decade = VoiceVcaLaw::knee * 2.302585f;
+        const double upper = VoiceVcaLaw::gain(VoiceVcaLaw::turnOn - decade);
+        const double lower = VoiceVcaLaw::gain(VoiceVcaLaw::turnOn - 2.0f * decade);
+        expectNear(upper / lower, 10.0, 0.5,
+                   "the voice VCA's low-level knee is not 60 mV per decade");
+        expect(VoiceVcaLaw::gain(VoiceVcaLaw::deadband) == 0.0f,
+               "the voice VCA does not shut below its declared deadband");
+        // A card sitting at the largest control offset the Unit Character
+        // ceiling can present must still count as shut, or its voice never
+        // retires. 0.004 per unit of Unit Character, bounded at two.
+        expect(VoiceVcaLaw::gain(2.0f * 0.004f) < VoiceVcaLaw::silenceGain,
+               "the worst card control offset escapes the silence threshold");
+    }
 
     // VCA LEVEL is not this per-voice law. It drives the common jack-board VCA
     // after the six voices are summed. These are regression guards for the
@@ -2378,11 +2477,66 @@ void testOutputSummerIsLinearBelowItsRails()
                -YouKnow106Engine::outputSummerClip(-3.0f), 1.0e-6,
                "the output summer is not symmetric");
 }
+
+void testDecimatorProtectsTheTopOfTheBand()
+{
+    // The last decimation stage runs at twice the host rate, so everything it
+    // fails to remove around the host rate lands back inside the audio band.
+    // A 44.1 kHz host is the hard case: 20 kHz sits at 0.227 of the stage's
+    // own rate, only just below the quarter-rate crossover, and the content
+    // that folds onto it comes from just above.
+    const auto kernel = YouKnow106TestAccess::halfbandKernel();
+    expect(kernel.size() == 63, "the decimation kernel is not 63 taps");
+
+    const auto response = [&kernel](double hertz, double stageRate) {
+        std::complex<double> accumulator {};
+        const double omega = 2.0 * pi * hertz / stageRate;
+        for (std::size_t tap = 0; tap < kernel.size(); ++tap)
+            accumulator += static_cast<double>(kernel[tap])
+                         * std::exp(std::complex<double>(
+                               0.0, -omega * static_cast<double>(tap)));
+        return 20.0 * std::log10(std::max(std::abs(accumulator), 1.0e-30));
+    };
+
+    expectNear(response(0.0, 96000.0), 0.0, 1.0e-6,
+               "the decimation kernel does not have unity gain at DC");
+
+    struct HostCase { double host; double passbandDb; double foldDb; };
+    // Both bounds are what this kernel measures, with a little margin. The
+    // Blackman-Harris design they replace could not meet either at 44.1 kHz:
+    // it was 0.85 dB down at 20 kHz and rejected the fold onto 19.1 kHz by
+    // only 31.7 dB.
+    constexpr std::array<HostCase, 2> cases {{
+        { 44100.0, -0.6, -44.0 },
+        { 48000.0, -0.1, -78.0 }
+    }};
+    for (const auto& host : cases)
+    {
+        const double stageRate = 2.0 * host.host;
+        for (double hertz = 0.0; hertz <= 20000.0; hertz += 250.0)
+        {
+            const double gain = response(hertz, stageRate);
+            expect(gain <= 0.05 && gain >= host.passbandDb,
+                   "the decimator is " + std::to_string(gain)
+                       + " dB at " + std::to_string(hertz) + " Hz on a "
+                       + std::to_string(static_cast<int>(host.host))
+                       + " Hz host");
+        }
+        // Content folding onto 19.1 kHz arrives from either side of the host
+        // rate, and both images have to be rejected.
+        for (const double source : { host.host - 19100.0, host.host + 19100.0 })
+            expect(response(source, stageRate) < host.foldDb,
+                   "content at " + std::to_string(source)
+                       + " Hz folds onto 19.1 kHz at only "
+                       + std::to_string(response(source, stageRate)) + " dB");
+    }
+}
 } // namespace
 
 int main()
 {
     testOutputSummerIsLinearBelowItsRails();
+    testDecimatorProtectsTheTopOfTheBand();
     testCascadeAgainstReferenceSolve();
     testCascadeOscillationThreshold();
     testCascadeSurvivesAdversarialControl();

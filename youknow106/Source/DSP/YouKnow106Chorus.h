@@ -141,10 +141,19 @@ public:
     static constexpr double lfoModeShuntOhms = 2.2e6;      // R3, shorted in I
     // R15 / (R15 + R6). The comparator trips when the triangle reaches this
     // fraction of the saturated output, so the triangle spans +/- that fraction
-    // and the oscillation is f = 1 / (4 * beta * R_eff * C3). Every term of
-    // that expression is now known except C3, which the schematic does not
-    // print -- so one reading of C3, or of one period at TP4, would fix the
-    // absolute rates this model still borrows from a sibling. See OQ-01.
+    // and the oscillation is f = 1 / (4 * beta * R_eff * C3).
+    //
+    // Nothing computes a rate from this: the absolute scale is still the
+    // labelled JUNO-60 fallback, and this constant exists so the derivation can
+    // be finished when C3 is read. It is kept here *and* known to be wrong,
+    // which is why it is spelled out rather than quietly corrected. Evaluating
+    // f with this value and the project's own lfoTimingOhms() gives 18.65 and
+    // 30.27 Hz against third-party measurements near 0.537 and 0.879 -- out by
+    // a factor of about 34 -- while R7/R6 = 33/47 = 0.702 lands both within 3%.
+    // Which of the two the schematic actually shows is a reading task, not a
+    // measurement, and picking one without doing that reading would just be
+    // trading a known-wrong constant for a guessed one. See OQ-01. The mode
+    // *ratio* is unaffected either way and comes out at 1.6235.
     static constexpr double lfoThresholdRatio = 1.0 / 48.0;
 
     [[nodiscard]] static constexpr double lfoTimingOhms(bool modeOne) noexcept

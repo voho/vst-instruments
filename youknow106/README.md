@@ -59,12 +59,20 @@ with an explicit evidence gap and required output in
   byte-five attack at the bottom of the slider. The following VCA hold still
   gives that minimum a short, hardware-like analogue onset rather than an
   impossible instantaneous step.
-  The voice-VCA knee is still a voiced compatibility fit pending the dense
-  original-module sweep in the evidence queue.
+  The voice VCA that envelope drives is a *current*-controlled OTA with no
+  volts-per-decade converter in front of it, so its gain follows the control
+  voltage linearly above a hard turn-on and rolls into the grounded-base
+  stage's own 60 mV-per-decade knee below it. That is read off Roland's module
+  drawing rather than fitted; the remaining open item is where a measured
+  BA662 puts the turn-on.
 - **Cutoff modulation is summed in converter counts before the antilog stage**,
   at 1143 counts per octave, so every modulation source is exponential in hertz.
   The law is anchored on the instrument's own service calibration: converter
-  code 6272 self-oscillates at 248 Hz, and the test suite asserts it.
+  code 6272 self-oscillates at 248 Hz, and the test suite asserts it. The top of
+  that law bends where the transconductor's own control current saturates, near
+  a 64 kHz pole, rather than at an invented knee — and the converter's R-2R
+  ladder carries its real integral non-linearity, so a slow sweep steps by about
+  23 cents crossing mid-scale exactly as a measured card does.
 - **The voiced resonance profile compensates on the input side.** In the
   current YouKnow106 compatibility sound, raising resonance drives *more*
   signal into the filter, so a high-Q patch gets dirtier rather than thinner.
@@ -153,12 +161,12 @@ controlling version of this ledger is the
 | Key assigner and POLY modes | Six-card allocation, POLY 1/POLY 2, note dropping instead of stealing, held-key rescans and Solo Unison behavior are ROM-resolved for the stated A-5 image. The physical keybed is represented as 61 keys. | Velocity, more than six voices and host notes beyond the drawn keybed are extensions. The mouse Shift-click gesture is a UI equivalent for pressing both momentary POLY contacts. |
 | Shared digital control generator | Envelope recurrence, sustain mapping, DAC truncation, LFO/delay arithmetic and portamento are ROM-resolved for the stated B-2 image. The 23 converter destinations, their ownership and the 4.2 ms pass are anchored. | Writes retain the exact logical order but use normalized sub-pass spacing; exact timestamps and jitter remain open. Only the VCF and voice-VCA hold constants are currently anchored; other sample-and-hold slews are voiced. |
 | DCO, ramp, pulse, sub and mixer | The 8 MHz master reference, integer timer division, range clocks, pitch quantization, constant-current ramp, PWM comparator and divide-by-two sub topology are anchored/derived. A changed-pitch write occurs at that card’s converter slot. The moving-threshold solver prevents a digital-only missed PWM edge and full-cycle blip. | BLEP/BLAMP repairs are transparent digital antialiasing. Exact restart electrical state, loaded saw/pulse/sub/noise levels, filter-drive budget and live waveform-switch transients remain approximated or open. Pulse currently uses a provisional instantaneous audio gate; no invented anti-click envelope is presented as hardware behavior. |
-| Per-voice VCF | Four IR3109/BA662 transconductor stages, the 68 kΩ/560 Ω attenuation, 240 pF stages, per-card cutoff trims and service calibration anchors are hardware-fixed. Cutoff modulation is summed in converter counts before the exponential law. | A topology-preserving trapezoidal/Newton solve is the numerical realization. Resonance byte-to-loop gain, input compensation, feedback saturation, frequency trim and the high-cutoff knee are voiced pending measurements. |
-| Per-voice VCA | One BA662 VCA per card, after its filter, with ENV/GATE ownership and the 6 Vpp service endpoint, is anchored. | The present knee, very-low-level slope and deadband are a replaceable voiced curve; velocity is an optional extension. |
+| Per-voice VCF | Four IR3109/BA662 transconductor stages, the 68 kΩ/560 Ω attenuation, 240 pF stages, per-card cutoff trims and service calibration anchors are hardware-fixed. Cutoff modulation is summed in converter counts before the exponential law. The upper knee is the transconductor's own control-current saturation near 64 kHz, and the converter's R-2R carry error rides on the code it produces. | A topology-preserving trapezoidal/Newton solve is the numerical realization. Resonance byte-to-loop gain, input compensation, feedback saturation and frequency trim are voiced pending measurements. The saturation exponent and the carry sizes are fitted to a third-party measured card, not to a Roland document. |
+| Per-voice VCA | One BA662 VCA per card, after its filter, with ENV/GATE ownership and the 6 Vpp service endpoint, is anchored. Roland's own module-board drawing puts a grounded-base volts-to-amps stage ahead of it, so gain follows control current: linear above a hard turn-on with the transistor's 60 mV-per-decade knee below it. | The turn-on point and knee width are derived from that drawing rather than measured; a BA662 gain sweep would move the turn-on, not the law. The exact-zero deadband and the voice-retirement silence threshold are product policy; velocity is an optional extension. |
 | Voice sum, coupling, HPF and common VCA LEVEL | Six card outputs sum through 33 kΩ into 3.3 kΩ feedback (0.1 each). C14 precedes the shared four-position HPF; C12 then feeds the one common uPC1252H2 controlled by stored VCA LEVEL. Named parts, placement and asymptotic coupling poles are anchored/derived. | The complete coupled switched-HPF network and its switching memory are approximated. Roland’s stored-byte/DAC/hold-to-GC1 transfer is not documented, so the common-VCA curve is a voiced fit. |
 | BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. BBD write nonlinearity is fitted to its datasheet test points. | Absolute sweep and mode rates use a clearly labelled JUNO-60 fallback; hiss level/correlation, loaded support impedances and the wet-mute transient are voiced. Loaded IC6 clipping remains unknown. |
 | VOLUME and output boundary | C17/C20, R54/R57, the nominal-linear 10KB×2 tracks and fixed internal wiper loading are component-derived, with independent left/right capacitor state. | Dual-gang tracking, selector/jack normaling, external loads and headphone transfer remain open. The fixed −18 dBFS RMS mapping and provisional physical reference are product policy, not an analogue circuit claim. |
-| Antialiasing, HQ and safety | These preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, half-band decimation and state-preserving rate changes. | They have no hardware counterpart. The idle-only quality change and short safety fades are product mechanisms and are kept outside the claimed signal path. |
+| Antialiasing, HQ and safety | These preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, Kaiser half-band decimation flat to 20 kHz at both common host rates, and state-preserving rate changes. | They have no hardware counterpart. The idle-only quality change and short safety fades are product mechanisms and are kept outside the claimed signal path. |
 
 ## Voices, analogue character and dispersion
 
@@ -194,16 +202,17 @@ fixed-seed voiced profile enables these full-scale mechanisms:
 | VCF stage input offsets | up to ±1.5 mV per transconductor stage |
 | VCF stage capacitor tolerance | up to ±2% per stage, staggering the four poles |
 | Spatial thermal gradient — card temperature | up to +4 °C across the six cards, plus a +15 °C warm-up over ~900 s, raising the OTA thermal voltage and its headroom |
-| Spatial thermal gradient — cutoff | **up to ±10% on each card's integrator gain, a monotonic ramp by card index (±165 cents)** |
+| Spatial thermal gradient — cutoff | up to ±0.6% on each card's integrator gain (±10 cents), from the same exponential card profile as the temperature above |
+| Cutoff converter carry error | −4.6, +23.3 and −4.5 cents at the three top bit boundaries |
 
-That last row is the largest per-card mechanism in the engine, and it is
-inconsistent with the others: it is roughly ten times what the temperature
-computation beside it supports, its shape is linear in card index while that
-temperature profile is exponential, and it applies on top of the two cutoff
-trimmer residuals above. It is recorded here rather than quietly omitted, and the
-2026-08-06 evidence-search section of
-[open questions](Docs/open-questions.md) states the case for reducing it against
-OQ-10.
+The cutoff row above used to read ±165 cents — a monotonic ramp by card index,
+roughly ten times what the temperature computation beside it supports, linear in
+the card index while that temperature profile is exponential, and applied on top
+of the two cutoff trimmer residuals. It now comes from that same exponential
+profile through the AS3109's own 0.33%/°C cutoff tempco, taken about the six-card
+mean because the FREQ trim is set warm. The module board carries a PTC positor in
+exactly this path to cancel that tempco, so even the reduced figure is an upper
+bound rather than a measured residual (OQ-10).
 
 Every mechanism scales linearly with the knob. Seeds are fixed, so the same
 patch, settings and note sequence render identically; the instrument does not
@@ -255,10 +264,20 @@ Descriptions no longer float over the instrument. Hovering any interactive
 element updates the fixed full-width help display below the keys immediately.
 All 55 public controls are covered: the dominant synthesis panel, six extension
 knobs, compact operation and patch controls, program selector, 61-key keyboard
-and pitch/mod lever. The same TooltipClient strings remain accessibility
-metadata, while every no-text-box slider retains a separate numeric value bubble
-during hover or adjustment. Routing, minimum explanatory length, stable help
-geometry and value-bubble presence are regression-tested.
+and pitch/mod lever. That strip also carries the hovered control's **current
+setting**, in its own lit right-hand column and in the parameter's own units, so
+reading a value no longer requires starting a drag. The same TooltipClient
+strings remain accessibility metadata, while every no-text-box slider retains a
+separate numeric value bubble during adjustment. Routing, minimum explanatory
+length, stable help geometry and value-bubble presence are regression-tested.
+
+The masthead oscilloscope ranges itself. The instrument's output convention puts
+an ordinary patch near a tenth of full scale, so a fixed ±1 trace was a flat line
+for most of what it plays; the trace now follows a slow-release peak, snaps to a
+power-of-two gain and prints that gain on the screen, because a scope whose
+sensitivity moves silently is not telling the truth about level. Its trigger
+carries a hysteresis band scaled to the trace, so a near-silent buffer no longer
+latches onto its own dither.
 
 The vector lever is live performance input rather than a saved parameter. Drag
 left/right for pitch bend and upward for modulation; both axes spring exactly

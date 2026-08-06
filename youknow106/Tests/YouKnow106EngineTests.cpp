@@ -3648,8 +3648,16 @@ void testVcfStageOffsetsBelongToUnitCharacter()
 
     // Half the character, somewhere between none and all of the asymmetry.
     // The cascade is nonlinear, so the bounds are deliberately loose.
-    const auto full = largestDifference(fullOn, nominalOn);
-    const auto half = largestDifference(run(0.5f, true), nominalOn);
+    //
+    // Each comparison is on-against-off at *one* Unit Character setting, which
+    // is what isolates this mechanism. Measuring each setting against the
+    // nominal render instead conflates every other control the same knob
+    // scales -- the trimmer residuals, the drift, the converter's carry error
+    // -- and on a resonant patch two of those renders decorrelate long before
+    // the mechanism under test has said anything, so the ratio saturates at
+    // one and the bound below stops meaning what it says.
+    const auto full = largestDifference(fullOn, fullOff);
+    const auto half = largestDifference(run(0.5f, true), run(0.5f, false));
     expect(full > 0.0 && half > 0.2 * full && half < 0.8 * full,
            "stage-offset spread does not scale with Unit Character");
 }
