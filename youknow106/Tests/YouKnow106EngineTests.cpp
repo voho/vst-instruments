@@ -724,6 +724,48 @@ void testSelfOscillationLandsOnTheServiceAnchor()
                "the self-oscillation does not land on the service anchor");
 }
 
+void testMixerLevelIsContinuousInSubAndNoise()
+{
+    // SUB LEVEL and NOISE LEVEL are sliders that vary an amplitude, not
+    // switches that connect a leg. Their 100 kOhm resistors are wired whatever
+    // the slider reads, so leaving the stop must not change how hard the other
+    // legs load the summing node. Counting them only above zero stepped the
+    // whole voice by 2.95 dB at the first non-zero byte.
+    const auto levelAt = [](float subLevel, float noiseLevel) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.subLevel = subLevel;
+        parameters.noiseLevel = noiseLevel;
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+        const auto rendered = render(engine, 24000);
+        double sumOfSquares = 0.0;
+        const std::size_t start = 12000;
+        for (std::size_t index = start; index < rendered.left.size(); ++index)
+            sumOfSquares += static_cast<double>(rendered.left[index])
+                          * static_cast<double>(rendered.left[index]);
+        return std::sqrt(sumOfSquares
+                         / static_cast<double>(rendered.left.size() - start));
+    };
+
+    // One converter step is 1/127 of travel; the sub it adds at that code is
+    // far below the level change a disconnected leg would have caused.
+    const double atRest = levelAt(0.0f, 0.0f);
+    const double justOff = levelAt(1.0f / 127.0f, 0.0f);
+    expect(atRest > 0.0, "the reference patch produced no output");
+    const double stepDb = std::abs(20.0 * std::log10(justOff / atRest));
+    expect(stepDb < 0.5,
+           "leaving the SUB stop moved the voice by " + std::to_string(stepDb)
+               + " dB; that leg is wired whether or not it is turned up");
+
+    const double noiseJustOff = levelAt(0.0f, 1.0f / 127.0f);
+    const double noiseStepDb = std::abs(20.0 * std::log10(noiseJustOff / atRest));
+    expect(noiseStepDb < 0.5,
+           "leaving the NOISE stop moved the voice by "
+               + std::to_string(noiseStepDb) + " dB");
+}
+
 void testUnisonDoesNotBeat()
 {
     // Six voices on one key must not beat against each other at *any* Unit
@@ -2378,22 +2420,18 @@ void testFixedOutputBoundaryCorpus()
     // margin, so ordinary compiler noise cannot turn this into a waveform
     // checksum while meaningful level/headroom changes remain visible.
     constexpr std::array baselines {
-        Baseline { 0.523852, 1.07344, 1.08763, 22, 74 },
-        Baseline { 1.34140, 3.82873, 3.82873, 4242, 16952 },
-        // Solo Unison sums six cards into IC6 hard enough that the modelled
-        // node reached 6.042 units -- 15.7 V out of an op-amp on +/-15 V
-        // rails. The stage now stops at its rails, as the part does, so this
-        // row settles at 11.7 V peak. The remaining fixtures are unchanged:
-        // none of them was driving IC6 anywhere near its supply.
-        Baseline { 2.71601, 4.51923, 4.52454, 6728, 26916 },
+        // The passive mixer node now loads unconditionally and counts the
+        // permanently-wired SUB and NOISE legs, so every fixture that has SAW
+        // and PULSE switched on sits 1.75 dB lower -- the four-leg loading
+        // relative to the three-leg reference. One note no longer crosses full
+        // scale at all. Self-oscillation is untouched, because its signal is
+        // the microscopic filter excitation added past the mixer.
+        Baseline { 0.428115, 0.878409, 0.889283, 0, 0 },
+        Baseline { 1.09565, 3.10301, 3.10301, 3288, 13132 },
+        Baseline { 2.35389, 4.29507, 4.31081, 6432, 25730 },
         Baseline { 0.152757, 0.216624, 0.216624, 0, 0 },
-        // The two chorus rows moved when the mode rates were re-split by this
-        // instrument's own timing-resistance ratio: mode I now runs 1.8% faster
-        // and mode II 1.8% slower, so a fixed analysis window lands on a
-        // different part of each sweep. Level and headroom are unchanged --
-        // only where in the sweep the window falls.
-        Baseline { 0.837556, 1.64361, 1.64361, 2094, 8410 },
-        Baseline { 0.506815, 1.32580, 1.34234, 95, 359 },
+        Baseline { 0.685897, 1.34564, 1.34564, 1276, 5095 },
+        Baseline { 0.414415, 1.07679, 1.10198, 18, 72 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -4036,6 +4074,7 @@ int main()
     testRangeTransposesByOctaves();
     testSubIsOneOctaveDown();
     testSelfOscillationLandsOnTheServiceAnchor();
+    testMixerLevelIsContinuousInSubAndNoise();
     testUnisonDoesNotBeat();
     testAliasFloor();
     testRampHasARampSpectrum();
