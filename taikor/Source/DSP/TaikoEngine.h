@@ -77,7 +77,7 @@ struct ArticulationMetadata
 // the physical drum, the second how it is struck, and the third the close pair
 // of microphones in front of it. Nothing here is a voicing preset: each field
 // feeds a term of the model, so the defaults describe one specific drum - a
-// 55 cm nagado-daiko with a thick cowhide head on a heavy zelkova shell,
+// 95 cm odaiko with a thick cowhide head on a heavy zelkova shell,
 // struck with a medium-hard oak bachi - rather than the midpoint of every axis.
 struct EngineParameters
 {

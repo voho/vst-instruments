@@ -61,15 +61,18 @@ juce::String octaveName (int octaveOffset)
 }
 
 // A short description of the drum an octave produces, so the octave row reads
-// as instruments rather than as numbers.
+// as instruments rather than as numbers. The names mirror the README's octave
+// table around the default drum: octave 0 is the 95 cm odaiko the controls
+// describe, +1 is nagado-daiko territory, and -2 is past the end of the
+// family - sub-bass that is felt rather than heard.
 juce::String octaveDescription (int octaveOffset)
 {
     switch (octaveOffset)
     {
-        case -2: return "Odaiko";
+        case -2: return "Sub";
         case -1: return "Large";
-        case 0:  return "Nagado";
-        case 1:  return "Small";
+        case 0:  return "Odaiko";
+        case 1:  return "Nagado";
         case 2:  return "Shime";
         case 3:  return "Tiny";
         default: return {};
@@ -487,10 +490,14 @@ void TaikorHeadDisplay::paint (juce::Graphics& g)
                    headRadius * 2.0f, headRadius * 2.0f, 1.2f);
 
     // The close pair, where the microphone controls put it. The dots sit at the
-    // radius the model reads the head at, and they fade as the pair backs off.
+    // radius and arc the model actually reads the head at - the same constants
+    // resolveDrumFor uses - and they fade as the pair backs off. The arc kept
+    // the engine's old 2.2-radian spread after the model narrowed to a true
+    // close pair, so at full spread the display showed capsules a hundred and
+    // twenty-six degrees apart while the drum being heard used fifty.
     const auto micRingRadius = headRadius * (0.10f + 0.68f * micSpread);
     constexpr float micReference = 0.60f;
-    const auto separation = 2.2f * micSpread;
+    const auto separation = 0.9f * micSpread;
     const auto proximity = 1.0f - micDistance;
 
     for (int side = 0; side < 2; ++side)
