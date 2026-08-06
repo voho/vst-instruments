@@ -3411,60 +3411,30 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // would mean moving the edge, and the amount to move it by is nothing.
     const float subOut = dco.sub.advance(dco.subState) * subGain;
 
-    // --- Summing node (Thévenin passive mixer network) -----------------------
-    // Saw (100k), Pulse (100k), Sub (100k) and Noise (100k) meet at the IR3109
-    // input (68k), so the node voltage is sum(V/100k) / (1/68k + N/100k) and
-    // every connected leg loads every other one.
-    //
-    // Which legs are *connected* is not the same question as which are
-    // audible. SAW and PULSE are panel switches, so their legs really do come
-    // and go. SUB LEVEL and NOISE LEVEL are sliders that vary an amplitude:
-    // those two legs are permanently wired, and stay in the load whatever the
-    // slider reads. Counting them only above zero made the whole voice jump by
-    // 2.95 dB the moment SUB left its stop -- a step change on a continuous
-    // control.
+    // --- Summing node --------------------------------------------------------
+    // Module p. 13 (2026-08-07 designator read): saw and pulse leave the
+    // waveshaper already summed on ONE per-voice WAVE output (IC12/IC8/IC4
+    // pin 14 or 16), the sub joins that line through R101/R97 27k behind
+    // D6/D5 from its own switch transistor, the shared noise rail arrives on
+    // its own leg, and C56/C50 couple the node into the voice module's input.
+    // No panel switch reaches this node: SAW is gated by a control rail at
+    // the generator ("0: saw ON" at Tr24/R148), PULSE by the -0.8 V hold that
+    // pins the comparator (what the pinned state leaves on the node is
+    // OQ-11), SUB by its collector supply and NOISE by the level OTA.
+    // Sources mute; legs never switch. The node's loading is therefore one
+    // configuration-independent constant, which the established
+    // filterInputAttenuation coordinate already absorbs -- an earlier
+    // revision modelled four switchable 100k legs against the module's 68k
+    // and attenuated any patch with both waveforms on by a phantom 1.76 dB.
+    // The absolute source-to-filter budget remains OQ-15.
     float mixed = 0.0f;
-    int connectedLegCount = 2; // SUB and NOISE are always wired.
-
     if (parameters.sawEnabled)
-    {
         mixed += sawOut;
-        ++connectedLegCount;
-    }
-    // A pinned comparator contributes no *audio* -- what the pinned leg does
-    // downstream is OQ-11 -- but the resistor is still connected either way.
-    if (parameters.pulseEnabled)
-    {
-        if (pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty))
-            mixed += pulseOut;
-        ++connectedLegCount;
-    }
+    if (pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty))
+        mixed += pulseOut;
     mixed += subOut;
     mixed += noiseSample * noiseMixVolts * noiseCv_
            * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration);
-
-    // Not scaled by Unit Character. Resistor-network loading is what the
-    // nominal circuit does, not a tolerance a calibrated unit would be free of,
-    // and gating it left the pristine reference unloaded.
-    //
-    // The reference configuration is the three permanently-or-usually
-    // connected legs -- saw, sub and noise -- rather than a single leg, so the
-    // established absolute level of a plain saw patch is preserved and only the
-    // *relative* loading of adding a leg changes. Choosing that reference is a
-    // product decision, not a measurement: whether the SAW and PULSE switches
-    // open their resistors or merely mute their sources is not established
-    // here, and the two readings differ by a constant gain that
-    // `filterInputAttenuation` and the output reference would absorb (OQ-15).
-    // What is not in doubt is the shape -- every connected leg loads every
-    // other one -- and that a slider which varies an amplitude cannot connect
-    // or disconnect anything.
-    {
-        constexpr float gIn = 1.0f / 68.0f;
-        constexpr float gLeg = 1.0f / 100.0f;
-        constexpr float gReference = gIn + 3.0f * gLeg;
-        const float gTotal = gIn + static_cast<float>(connectedLegCount) * gLeg;
-        mixed *= gReference / gTotal;
-    }
 
     voice.noiseState ^= voice.noiseState << 13;
     voice.noiseState ^= voice.noiseState >> 17;

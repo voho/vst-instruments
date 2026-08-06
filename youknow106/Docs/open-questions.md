@@ -96,7 +96,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P2 | 12 | Envelope wall-clock timing/jitter, analogue/audible thresholds and other firmware revisions | Exact hash-scoped B-2 recurrence and physical `E>>2` DAC truncation |
 | P2 | 13 | LFO/delay wall-clock timing, analogue smoothing/output scale and revision differences | Exact hash-scoped B-2 rate, delay and fade algorithms |
 | P2 | 14 | Portamento pot/ADC transfer, hysteresis, cadence and revision differences | Exact hash-scoped B-2 coefficient and 8.8-state law |
-| P0 | 15 | Loaded oscillator/sub/noise mixer levels and their actual filter-drive budget | Node-specific 12 Vpp/4 Vpp anchors and the 68 kΩ/560 Ω core attenuator |
+| P0 | 15 | Loaded oscillator/sub/noise mixer levels and their actual filter-drive budget (WAVE-output source impedance, the 33 kΩ/39 kΩ saw-rail chain's role, the noise leg's value) | Node-specific 12 Vpp/4 Vpp anchors, the 68 kΩ/560 Ω core attenuator, and the mixer topology from the p. 13 read: one summed WAVE output per voice, sub via 27 kΩ + diode, C56/C50 coupling, sources muted at their generators — legs never switch (2026-08-07) |
 | P2 | 16 | Calibrated TP8 capture (PSD/distribution against the shaped model), and physical filter-startup excitation | Shared generator topology, TP8 4.0 Vpp adjustment, and the 33.9 Hz/4.82 kHz band-shaping derived from the p. 13 designators (C42/4.7 kΩ and C41/R79, 2026-08-07) |
 | P3 / dependency | 17 | Real VOLUME gang tracking plus selector, jack, headphone and external-load transfer | Nominal-linear `10KB×2` law and fixed 29.313 kΩ internal wiper load |
 | P2 | 18 | Hardware cutoff-converter knee and upper saturation curve | Exponential audio-range law and transparent 50 kHz product cap |
@@ -940,17 +940,26 @@ as voiced compatibility values. This task must not compare voltages from
 different nodes as though they were interchangeable.
 
 
-Added 2026-08-06: the passive mixer node now loads unconditionally and counts
-the permanently-wired SUB and NOISE legs, normalised against the three
-usually-connected legs so a plain saw patch keeps its established level. What
-remains open here is whether the SAW and PULSE panel switches **open their
-100 kΩ resistors or merely mute their sources**. The two readings differ by a
-constant gain that `filterInputAttenuation` and the output reference would
-absorb, so the choice does not change the shape — every connected leg loads
-every other — but it does set the absolute level and which configuration is the
-right normalising reference. A continuity check on the switched legs, or a
-level measurement at the IR3109 input with one waveform switched off, settles
-it.
+Added 2026-08-06, resolved 2026-08-07: the sources-or-legs question is
+answered by the p. 13/p. 9 read — **sources mute, legs never switch**. Saw
+and pulse leave the waveshaper already summed on one per-voice WAVE output
+(IC12/IC8/IC4 pin 14/16); the sub joins that line through R101/R97 27 kΩ
+behind D6/D5 from its own switch transistor whose collector supply is the
+SUB LEVEL rail; the shared noise rail arrives on its own leg; C56/C50
+10 µF NP couple the node into the module input. SAW is gated by a control
+rail at the generator ("0: saw ON" at Tr24/R148 47 kΩ), PULSE by the −0.8 V
+comparator hold, SUB by its collector supply, NOISE by the level OTA. The
+node's loading is therefore one configuration-independent constant absorbed
+by `filterInputAttenuation` and the output reference; the earlier
+four-switchable-100 kΩ-legs Thévenin model is superseded. Still open here:
+the WAVE output's source impedance, the exact termination and role of the
+33 kΩ/39 kΩ (R102/R103, R99/R98) chain toward the saw on/off rail, the
+noise leg's value (the assumed per-voice 100 kΩ was NOT verified in the
+scan), and the loaded level budget those would close. Provenance note: the
+KR-106 "measured sub/pulse ratio 1.51" recorded by the 2026-08-06 mining
+pass could not be re-located in that project's current tree (its own engine
+mixes sub at 0.67 against 0.5 waves, ratio 1.34, as engine constants, not
+measurements), so that lead is downgraded until raw provenance surfaces.
 
 ### Needed output (for LLM)
 
