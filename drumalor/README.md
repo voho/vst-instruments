@@ -118,6 +118,39 @@ automatable per-voice controls. Level is a clean gain applied to the voice, and
 Pan is the same constant-power law the fixed positions always used, so a kit
 left alone images and balances identically.
 
+### Kit tuning
+
+The factory kit is tuned rather than merely assembled. Every voice that has a
+definite pitch sits on a harmonic of one root - a G an octave below the kick,
+which is itself that root's second harmonic:
+
+| Voice | Harmonic | Pitch | Note |
+| --- | ---: | ---: | --- |
+| Kick | 2 | 49.0 Hz | G1 |
+| Low Tom | 3 | 73.5 Hz | D2 |
+| Mid Tom | 5 | 122.5 Hz | B2 |
+| High Tom | 6 | 147.0 Hz | D3 |
+| Snare | 8 | 196.0 Hz | G3 |
+| Perc 1 | 32 | 784.0 Hz | G5 |
+| Perc 2 | 40 | 980.0 Hz | B5 |
+
+Being a harmonic series rather than an equal-tempered chord, the two voices on
+the fifth harmonic and its octave - Mid Tom and Perc 2 - sit about 14 cents
+below where a piano would put a B. That is what a just major third is, and it
+is why the kit sounds settled rather than beating against itself.
+
+The Clap, both hats, both cymbals and the Shaker are deliberately not in that
+table. They have no definite pitch to tune: a cymbal's inharmonicity is the
+point of it, and the six oscillators behind the hats and cymbals are chosen so
+that no two of them agree. Giving them a note would mean taking that away.
+
+The tuning lives in each voice's default Pitch offset, so it is visible on the
+panel and reversible: setting a voice's Pitch to zero returns it to its own
+untuned nominal frequency rather than to the kit's root. A contract measures
+every pitched voice and requires it within a quarter of a semitone of a
+harmonic, so a later change to any nominal frequency cannot quietly pull the
+kit apart.
+
 **Kit Humanise** scales how much of the modelled per-hit component tolerance
 actually reaches each voice: pitch, decay, transient energy, tone, circuit drive
 and bias. At 0% the kit is machine-tight; at 100% the drift is twice as wide.

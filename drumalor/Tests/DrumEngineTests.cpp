@@ -2108,6 +2108,92 @@ void testEveryVoiceVariesBetweenHits()
     }
 }
 
+// The factory kit is tuned, not merely assembled.
+//
+// Every voice that has a definite pitch sits on a harmonic of one root - a G
+// an octave below the kick, which is itself that root's second harmonic. So
+// the kit is 2:3:5:6:8 across kick, low tom, mid tom, high tom and snare, with
+// the two percussion voices far above on 32 and 40. Nothing in the engine
+// enforces this; it is a choice made in the default pitch offsets, and this is
+// what keeps a later change to any voice's nominal frequency from quietly
+// pulling it off the series.
+//
+// The clap, both hats, both cymbals and the shaker are deliberately absent.
+// They have no definite pitch to tune - a cymbal's inharmonicity is the point
+// of it - and asserting a note for them would be asserting nothing.
+void testFactoryKitIsHarmonicallyTuned()
+{
+    constexpr double sampleRate = 48000.0;
+    // A G0. The kick sits on its second harmonic rather than on the root
+    // itself, which is what leaves room for the low tom a fifth above.
+    constexpr double rootHz = 24.5;
+    constexpr double toleranceCents = 25.0;
+
+    // Strongest partial in the band a drum's pitch is heard in, measured after
+    // the strike so the transient does not win. Goertzel rather than a full
+    // transform: only one bin at a time is ever needed.
+    const auto fundamentalOf = [sampleRate] (drumalor::Instrument instrument)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.setInstrumentParameters (
+            instrument, drumalor::getInstrumentMetadata (instrument).defaultParameters);
+        engine.trigger (instrument, 0.95f);
+        const auto rendered = renderInterleaved (
+            engine, static_cast<int> (1.0 * sampleRate), defaultBlockSize);
+        std::vector<double> mono (rendered.size() / 2u);
+        for (std::size_t i = 0; i < mono.size(); ++i)
+            mono[i] = 0.5 * (rendered[2u * i] + rendered[2u * i + 1u]);
+
+        const int from = static_cast<int> (0.030 * sampleRate);
+        const int to = static_cast<int> (0.300 * sampleRate);
+        const auto magnitude = [&mono, from, to, sampleRate] (double hz)
+        {
+            const double w = 2.0 * M_PI * hz / sampleRate;
+            const double c = 2.0 * std::cos (w);
+            double s1 = 0.0, s2 = 0.0;
+            for (int i = from; i < to && i < static_cast<int> (mono.size()); ++i)
+            {
+                const double window = 0.5 - 0.5 * std::cos (
+                    2.0 * M_PI * (i - from) / std::max (1, to - from - 1));
+                const double s0 = window * mono[static_cast<std::size_t> (i)] + c * s1 - s2;
+                s2 = s1;
+                s1 = s0;
+            }
+            return std::sqrt (std::abs (s1 * s1 + s2 * s2 - c * s1 * s2));
+        };
+        double best = 0.0, bestHz = 0.0;
+        for (double hz = 30.0; hz < 1200.0; hz *= 1.01)
+            if (const double m = magnitude (hz); m > best) { best = m; bestHz = hz; }
+        for (double hz = bestHz * 0.99; hz < bestHz * 1.01; hz *= 1.0005)
+            if (const double m = magnitude (hz); m > best) { best = m; bestHz = hz; }
+        return bestHz;
+    };
+
+    for (const auto instrument : { drumalor::Instrument::Kick,
+                                   drumalor::Instrument::Snare,
+                                   drumalor::Instrument::LowTom,
+                                   drumalor::Instrument::MidTom,
+                                   drumalor::Instrument::HighTom,
+                                   drumalor::Instrument::Perc1,
+                                   drumalor::Instrument::Perc2 })
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (instrument));
+        const double hz = fundamentalOf (instrument);
+        expect (hz > 0.0, label + " had no measurable pitch to tune");
+
+        const double harmonic = hz / rootHz;
+        const double nearest = std::max (1.0, std::round (harmonic));
+        const double cents = 1200.0 * std::log2 (harmonic / nearest);
+        expect (std::abs (cents) <= toleranceCents,
+                label + " is not on a harmonic of the kit root ("
+                    + std::to_string (hz) + " Hz is harmonic "
+                    + std::to_string (harmonic) + ", "
+                    + std::to_string (cents) + " cents from "
+                    + std::to_string (nearest) + ")");
+    }
+}
+
 void testPerVoiceMixer()
 {
     constexpr double sampleRate = 48000.0;
@@ -3223,6 +3309,7 @@ int main()
     testParameterInfluence();
     testPerc1DriveAddsDensity();
     testEveryVoiceVariesBetweenHits();
+    testFactoryKitIsHarmonicallyTuned();
     testPerVoiceMixer();
     testChokeGroups();
     testHumaniseDepth();

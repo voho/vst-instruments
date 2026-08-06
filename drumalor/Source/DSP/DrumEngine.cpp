@@ -31,8 +31,8 @@ constexpr float supplySagReleaseSeconds = 0.085f;
 // and the choke/mute group. Only the two hi-hats share a group by default, so
 // a factory kit still behaves exactly like the original pedal-linked pair.
 constexpr std::array<InstrumentMetadata, instrumentCount> metadata {{
-    { Instrument::Kick,      "Kick",       "kick",       36, "Punch",   "Drive",      { 0.68f, 0.42f, 0.0f, 0.55f, 0.0f,  0.00f, 0 } },
-    { Instrument::Snare,     "Snare",      "snare",      38, "Wires",   "Snap",       { 0.62f, 0.64f, 0.0f, 0.48f, 0.0f,  0.00f, 0 } },
+    { Instrument::Kick,      "Kick",       "kick",       36, "Punch",   "Drive",      { 0.68f, 0.42f, 0.4f, 0.55f, 0.0f,  0.00f, 0 } },
+    { Instrument::Snare,     "Snare",      "snare",      38, "Wires",   "Snap",       { 0.62f, 0.64f, 1.0f, 0.48f, 0.0f,  0.00f, 0 } },
     { Instrument::Clap,      "Clap",       "clap",       39, "Spread",  "Tone",       { 0.48f, 0.62f, 0.0f, 0.45f, 0.0f,  0.00f, 0 } },
     { Instrument::ClosedHat, "Closed Hat", "closedHat", 42, "Metal",   "Tone",       { 0.58f, 0.70f, 0.0f, 0.30f, 0.0f,  0.16f, 1 } },
     { Instrument::OpenHat,   "Open Hat",   "openHat",   46, "Metal",   "Tone",       { 0.62f, 0.68f, 0.0f, 0.55f, 0.0f,  0.20f, 1 } },
@@ -42,12 +42,12 @@ constexpr std::array<InstrumentMetadata, instrumentCount> metadata {{
     // one's single cymbal was, in everything but name, a crash.
     { Instrument::Ride,      "Ride",       "ride",       51, "Machine", "Tone",       { 0.78f, 0.62f, 0.0f, 0.62f, 0.0f,  0.27f, 0 } },
     { Instrument::Crash,     "Crash",      "crash",      49, "Machine", "Brightness", { 0.68f, 0.82f, 0.0f, 0.86f, 0.0f, -0.27f, 0 } },
-    { Instrument::LowTom,    "Low Tom",    "lowTom",     45, "Punch",   "Skin",       { 0.55f, 0.40f, 0.0f, 0.60f, 0.0f, -0.20f, 0 } },
-    { Instrument::MidTom,    "Mid Tom",    "midTom",     47, "Punch",   "Skin",       { 0.55f, 0.45f, 0.0f, 0.52f, 0.0f,  0.00f, 0 } },
-    { Instrument::HighTom,   "High Tom",   "highTom",    50, "Punch",   "Skin",       { 0.50f, 0.50f, 0.0f, 0.45f, 0.0f,  0.20f, 0 } },
+    { Instrument::LowTom,    "Low Tom",    "lowTom",     45, "Punch",   "Skin",       { 0.55f, 0.40f, -1.9f, 0.60f, 0.0f, -0.20f, 0 } },
+    { Instrument::MidTom,    "Mid Tom",    "midTom",     47, "Punch",   "Skin",       { 0.55f, 0.45f, -0.1f, 0.52f, 0.0f,  0.00f, 0 } },
+    { Instrument::HighTom,   "High Tom",   "highTom",    50, "Punch",   "Skin",       { 0.50f, 0.50f, -2.9f, 0.45f, 0.0f,  0.20f, 0 } },
     { Instrument::Shaker,    "Shaker",     "shaker",     82, "Density", "Color",      { 0.62f, 0.62f, 0.0f, 0.45f, 0.0f,  0.12f, 0 } },
-    { Instrument::Perc1,     "Perc 1",     "perc1",      56, "Ratio",   "Drive",      { 0.50f, 0.45f, 0.0f, 0.45f, 0.0f, -0.12f, 0 } },
-    { Instrument::Perc2,     "Perc 2",     "perc2",      75, "Hollow",  "Click",      { 0.55f, 0.55f, 0.0f, 0.40f, 0.0f,  0.12f, 0 } },
+    { Instrument::Perc1,     "Perc 1",     "perc1",      56, "Ratio",   "Drive",      { 0.50f, 0.45f, -0.8f, 0.45f, 0.0f, -0.12f, 0 } },
+    { Instrument::Perc2,     "Perc 2",     "perc2",      75, "Hollow",  "Click",      { 0.55f, 0.55f, 0.9f, 0.40f, 0.0f,  0.12f, 0 } },
 }};
 
 constexpr std::array<float, instrumentCount> minimumDecay {{
