@@ -28,6 +28,20 @@ constexpr float pulseMixVolts = 6.0f;
 constexpr float subMixVolts = 5.0f;
 constexpr float noiseMixVolts = 2.0f;
 
+// The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
+// factory-selected for noise) with R104 470 kOhm collector load, coupled by
+// C42 1 uF into the BA662 level OTA whose input pin sits on a 4.7 kOhm bias
+// resistor -- a 33.9 Hz high-pass -- and whose output is loaded by C41 100 pF
+// against R79 330 kOhm -- a 4.82 kHz pole -- before the buffered NOISE rail.
+// The audible source is therefore band-shaped by its own circuit, not flat.
+// The generator's bounded +/-2 V pre-filter amplitude remains the voiced
+// stand-in for the TP8 adjustment; the shaping passes its passband at unity,
+// so the established in-band density is unchanged (OQ-16).
+constexpr float noiseCouplingCapacitanceF = 1.0e-6f;      // C42
+constexpr float noiseCouplingLoadOhms = 4700.0f;          // R81, IC14 input
+constexpr float noiseOtaLoadCapacitanceF = 100.0e-12f;    // C41
+constexpr float noiseOtaLoadResistanceOhms = 330000.0f;   // R79
+
 // Voice-summer output coupling ahead of the four-position HPF selector:
 // IC1a -> C14 10 uF NP -> R39 33 kOhm -> IC3 common input.
 constexpr float voiceBusCouplingCapacitanceF = 10.0e-6f;
@@ -966,6 +980,17 @@ float YouKnow106Engine::commonVcaInputCouplingCornerHz() noexcept
                    * commonVcaInputResistanceOhms);
 }
 
+float YouKnow106Engine::noiseSourceHighPassHz() noexcept
+{
+    return 1.0f / (twoPi * noiseCouplingCapacitanceF * noiseCouplingLoadOhms);
+}
+
+float YouKnow106Engine::noiseSourceLowPassHz() noexcept
+{
+    return 1.0f / (twoPi * noiseOtaLoadCapacitanceF
+                   * noiseOtaLoadResistanceOhms);
+}
+
 float YouKnow106Engine::outputCouplingHighGain() noexcept
 {
     return outputCouplingPotOhms
@@ -1722,6 +1747,10 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
         pi * voiceBusCouplingCornerHz() * inverseOversampledRate_);
     commonVcaInputCouplingG_ = std::tan(
         pi * commonVcaInputCouplingCornerHz() * inverseOversampledRate_);
+    noiseSourceHighPassG_ = std::tan(
+        pi * noiseSourceHighPassHz() * inverseOversampledRate_);
+    noiseSourceLowPassG_ = std::tan(
+        pi * noiseSourceLowPassHz() * inverseOversampledRate_);
     outputCouplingG_ = std::tan(
         pi * outputCouplingCornerHz() * inverseSampleRate_);
     const double deepest = totalLatencySamples(maximumOversampleFactor);
@@ -1828,6 +1857,8 @@ void YouKnow106Engine::clearRateDependentOutputPath(
         voiceBusCoupling_.reset();
         highPass_.reset();
         commonVcaInputCoupling_.reset();
+        noiseSourceHighPass_.reset();
+        noiseSourceLowPass_.reset();
     }
     latencyPadLeft_.fill(0.0f);
     latencyPadRight_.fill(0.0f);
@@ -3690,13 +3721,23 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             }
 
             // One noise generator feeds every voice, so noise grows as more
-            // keys are held instead of staying put.
+            // keys are held instead of staying put. Its support circuit
+            // band-shapes the rail: C42 into the level OTA's 4.7 kOhm input
+            // bias high-passes at 33.9 Hz, and C41 against R79 low-passes at
+            // 4.82 kHz. The level control between the two poles is a scalar,
+            // so shaping the shared source once here is exact for every
+            // voice; the passband stays at unity, so in-band density keeps
+            // its established rate normalisation.
             noiseState_ ^= noiseState_ << 13;
             noiseState_ ^= noiseState_ >> 17;
             noiseState_ ^= noiseState_ << 5;
-            const float noiseSample =
+            const float rawNoise =
                 (static_cast<float>(noiseState_ & 0xffffffu)
                      * (2.0f / 16777215.0f) - 1.0f) * noiseRateScale_;
+            const float noiseSample = noiseSourceLowPass_.process(
+                noiseSourceHighPass_.process(
+                    rawNoise, noiseSourceHighPassG_, 0.0f, 1.0f),
+                noiseSourceLowPassG_, 1.0f, 0.0f);
 
             // Polyphonic current draw loads the +/-15 V regulators, so the
             // rails sag as more cards work. This is the DC part only. The

@@ -2986,6 +2986,58 @@ void testHighPassReachesTheSummedSignal()
            "the high-pass cuts a high note as hard as a low one");
 }
 
+void testNoiseSourceShapingFollowsItsCircuit()
+{
+    // Module board p. 13: the shared noise source is band-shaped by its own
+    // support parts -- C42 1 uF into the level OTA's 4.7 kOhm input bias,
+    // then C41 100 pF against R79 330 kOhm on the OTA's output -- so the
+    // rail is not flat white. The corners must come from those designators.
+    expectNear(YouKnow106Engine::noiseSourceHighPassHz(),
+               1.0 / (2.0 * pi * 1.0e-6 * 4700.0), 1.0e-3,
+               "noise-source high-pass is not at C42/4.7k's corner");
+    expectNear(YouKnow106Engine::noiseSourceLowPassHz(),
+               1.0 / (2.0 * pi * 100.0e-12 * 330000.0), 1.0e-3,
+               "noise-source low-pass is not at C41/R79's corner");
+
+    // And the shaping has to reach the rendered rail. The normalised
+    // first-difference energy of a noise render separates a flat generator
+    // from one low-passed near 4.8 kHz decisively: flat white at a 48 kHz
+    // internal rate sits near 2.0, the shaped source well below 1.2.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, 512, false);
+    EngineParameters parameters;
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = false;
+    parameters.subLevel = 0.0f;
+    parameters.noiseLevel = 1.0f;
+    parameters.cutoff = 1.0f;
+    parameters.resonance = 0.0f;
+    parameters.attack = 0.0f;
+    parameters.sustain = 1.0f;
+    parameters.calibration = 0.0f;
+    engine.setParameters(parameters);
+    engine.reset();
+    engine.noteOn(60, 1.0f);
+
+    std::vector<float> left(24000), right(24000);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    double energy = 0.0;
+    double differenceEnergy = 0.0;
+    const std::size_t half = left.size() / 2;
+    for (std::size_t index = half + 1; index < left.size(); ++index)
+    {
+        const double sample = left[index];
+        const double difference = sample - static_cast<double>(left[index - 1]);
+        energy += sample * sample;
+        differenceEnergy += difference * difference;
+    }
+    expect(energy > 1.0e-6, "the noise fixture rendered nothing to measure");
+    expect(differenceEnergy / energy < 1.2,
+           "the rendered noise is too bright for the C41/R79-shaped source");
+    expect(differenceEnergy / energy > 0.05,
+           "the rendered noise lost its passband as well as its top");
+}
+
 void testSupportFilterCornersLandWhereAsked()
 {
     const auto gainAt = [](double frequency, float g, float sampleRate) {
@@ -3392,6 +3444,7 @@ int main()
     testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases();
     testSupportFilterCornersLandWhereAsked();
     testHighPassReachesTheSummedSignal();
+    testNoiseSourceShapingFollowsItsCircuit();
     testCorrectionResidualsVanishAtTheEdges();
     
     // SOTA physical modeling tests

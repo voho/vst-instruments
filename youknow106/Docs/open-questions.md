@@ -97,7 +97,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P2 | 13 | LFO/delay wall-clock timing, analogue smoothing/output scale and revision differences | Exact hash-scoped B-2 rate, delay and fade algorithms |
 | P2 | 14 | Portamento pot/ADC transfer, hysteresis, cadence and revision differences | Exact hash-scoped B-2 coefficient and 8.8-state law |
 | P0 | 15 | Loaded oscillator/sub/noise mixer levels and their actual filter-drive budget | Node-specific 12 Vpp/4 Vpp anchors and the 68 kΩ/560 Ω core attenuator |
-| P2 | 16 | Main-noise spectrum/distribution and physical filter-startup excitation | Shared generator topology and TP8 4.0 Vpp adjustment |
+| P2 | 16 | Calibrated TP8 capture (PSD/distribution against the shaped model), and physical filter-startup excitation | Shared generator topology, TP8 4.0 Vpp adjustment, and the 33.9 Hz/4.82 kHz band-shaping derived from the p. 13 designators (C42/4.7 kΩ and C41/R79, 2026-08-07) |
 | P3 / dependency | 17 | Real VOLUME gang tracking plus selector, jack, headphone and external-load transfer | Nominal-linear `10KB×2` law and fixed 29.313 kΩ internal wiper load |
 | P2 | 18 | Hardware cutoff-converter knee and upper saturation curve | Exponential audio-range law and transparent 50 kHz product cap |
 | P1 | 19 | Voice-module BA662 control-current-to-gain curve near cutoff and residual thump after the service null | BA662 pins and separate signal/control paths, ENV/GATE ownership, 6 Vpp endpoint and the per-card minimum-thump procedure |
@@ -990,7 +990,17 @@ Characterise two distinct noise mechanisms that must not be conflated:
 to 4.0 Vpp at TP8 (Service Notes pp. 5, 13 and 19), and (b) the much smaller
 voice-module/input-referred noise
 that lets a real resonant filter start oscillating from silence. The model uses
-bounded uniform white xorshift noise for the shared source and an unexplained
+bounded uniform white xorshift noise for the shared source — since 2026-08-07
+band-shaped by the source's own support circuit as read at designator level
+from p. 13: C42 1 µF into the BA662 level OTA's 4.7 kΩ input bias makes a
+33.9 Hz high-pass, and C41 100 pF against R79 330 kΩ loads the OTA output
+with a 4.82 kHz pole; the level control sits between the two poles and is a
+scalar, so the shared source is shaped once with unity passband, keeping the
+established in-band density. This settles the *shape* class (the earlier
+flat-white placeholder, and KR-106's uncorroborated 34 Hz–5.3 kHz trace, are
+superseded by the direct read); the generator's bounded uniform amplitude
+distribution and the absolute pre-filter coordinate remain voiced. The model
+also uses an unexplained
 20 µV per-card white excitation at the filter input, after the open 0.40 source
 coordinate scale. Each of the six physical card filters now runs continuously
 behind its closed VCA, preserving filter history and its deterministic per-card
@@ -1004,11 +1014,14 @@ hiss in OQ-03.
 
 ### Needed output (for LLM)
 
-- A circuit trace for the hardware noise generator and any shaping/filtering,
-  plus raw TP8 captures with calibration setting, bandwidth and load.
+- Raw TP8 captures with calibration setting, bandwidth and load. (The circuit
+  trace itself was closed by the 2026-08-07 p. 13 designator read; what a
+  capture now adds is validation of the implemented 33.9 Hz/4.82 kHz shaped
+  model against the real rail.)
 - PSD, autocorrelation, amplitude distribution, crest factor, bandwidth and
-  discrete spurs for the shared generator; state whether flat bounded white
-  noise is adequate over the audible band.
+  discrete spurs for the shared generator; state whether shaped bounded
+  uniform noise is adequate over the audible band or whether the source's
+  amplitude distribution is audibly non-uniform.
 - An input-referred noise estimate for the voice filter/OTA path from component
   data or measurement, with bandwidth, temperature and the physical injection
   location; reconcile that node with where the model injects its nominal

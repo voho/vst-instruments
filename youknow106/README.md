@@ -168,6 +168,11 @@ with an explicit evidence gap and required output in
   than internal sample count. A quality change still waits for voices and
   musical tails; a block-size-independent 5 ms fade hides the unavoidable
   rate-dependent rebuild while preserving the host-rate output-capacitor state.
+- **The shared noise is band-shaped by its own circuit, not flat.** The p. 13
+  designators draw C42 1 µF into the level OTA's 4.7 kΩ input bias (33.9 Hz
+  high-pass) and C41 100 pF against R79 330 kΩ on its output (4.82 kHz pole),
+  so the rail loses the synthetic top-octave hiss a flat generator carried;
+  the passband keeps the established density (OQ-16).
 
 ## Fidelity ledger: stage by stage
 

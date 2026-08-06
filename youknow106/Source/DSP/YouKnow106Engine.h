@@ -575,6 +575,14 @@ public:
     // IC5/uPC1252H2 follows the switched HPF through the manufacturer's
     // application input network: C12 10 uF bipolar and R36 33 kOhm.
     [[nodiscard]] static float commonVcaInputCouplingCornerHz() noexcept;
+    // The shared noise generator's own support circuit, module board p. 13:
+    // Tr21's collector noise crosses C42 1 uF into the BA662 level OTA's
+    // 4.7 kOhm input bias (high-pass), and the OTA's output is loaded by
+    // C41 100 pF against R79 330 kOhm (low-pass). The level control sits
+    // between the two poles and is a plain scalar, so shaping the shared
+    // source once ahead of the per-voice level scaling is exact.
+    [[nodiscard]] static float noiseSourceHighPassHz() noexcept;
+    [[nodiscard]] static float noiseSourceLowPassHz() noexcept;
 
 private:
     // The JUCE-free suites use this narrow friend to drive one filter step, one
@@ -1195,8 +1203,17 @@ private:
     float noiseCv_ { 0.0f };
 
     // One noise generator serves every voice, so noise sums coherently as more
-    // keys are held instead of staying at a fixed level.
+    // keys are held instead of staying at a fixed level. Its own support
+    // circuit band-shapes it before the NOISE rail: C42 into the BA662's
+    // 4.7 kOhm input bias makes a 33.9 Hz high-pass ahead of the level OTA,
+    // and C41 against R79 loads the OTA's output with a 4.82 kHz pole. Both
+    // run at the internal rate; their states are physical node voltages, so
+    // they survive a quality change like the coupling capacitors do.
     std::uint32_t noiseState_ { 0x6d2b79f5u };
+    HighPass noiseSourceHighPass_;
+    HighPass noiseSourceLowPass_;
+    float noiseSourceHighPassG_ { 0.01f };
+    float noiseSourceLowPassG_ { 0.1f };
 
     // The lever is read by the converter, not wired to the voices: its value
     // is sampled once per scan pass, quantised to the converter's byte, and
