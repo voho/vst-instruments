@@ -1604,6 +1604,70 @@ wave-generator test procedure, typically carrying scope photographs — its TLS
 certificate has expired, so a browser that accepts the warning is needed), and the
 Gearspace chorus-noise thread's attached spectra and WAV files.
 
+### Where the three blocking reads actually live
+
+The top three unresolved tasks — OQ-01, OQ-02 and OQ-04 — are not measurements.
+Each is *a page of a document somebody has to look at*, and the queue has never
+said which document or where to get it. It does now.
+
+**The Service Notes are freely readable on the Internet Archive**, item
+`synthmanual-roland-juno-106-service-notes`, which carries both page images and a
+full OCR text stream. A second copy is hosted at
+`analoguerenaissance.com/D80017A/juno-serv.pdf`, on the same site as the unread
+JUNOTEST procedure above. That single document closes all three:
+
+| Task | The page | What to read off it | What it converts |
+|---|---|---|---|
+| **OQ-01** | p. 15, JACK BOARD | `C3` (reported as `.1` beside C4's `220P`, unconfirmed), and **which pin of IC1a the integrator output arrives at** | chorus rate and depth from *borrowed from a JUNO-60* to **derived**; the model's sweep is at 74 % of the reported excursion |
+| **OQ-02** | jack board, between the sample-and-hold and IC5 GC1 | the resistive divider that turns the converter's +4/−6 V into ~124 mV of GC1 | VCA LEVEL from **voiced** to **derived**; the shipping cubic is 6.9 dB out at mid-slider across all 128 factory patches |
+| **OQ-04** | chorus support chain | the capacitor codes behind `YouKnow106Chorus.cpp:73-83`, **read separately for the input and output sides** | wet-path bandwidth; the chain is −12 dB at 10 kHz where the MN3009 alone is ~−3 dB, and the reconstruction sections currently *assume* the input sections' part values rather than reading their own |
+
+For OQ-01 the schematic read is a single yes/no, and the arithmetic has already
+decided which answer is consistent:
+
+- if the integrator output reaches IC1a's **inverting** input, with R6/R15 setting
+  hysteresis, then `β = R15/(R15+R6) = 1/48` — the value the code carries, which
+  the project's own timing arithmetic puts **34× off** the reported rates, and
+  which would make the modulation triangle only about ±0.3 V;
+- if the integrator output and the comparator output meet at a **summing node on
+  the non-inverting input**, then `β = R7/R6 = 33/47 = 0.702`, which lands the
+  derived rates within **3 %** of the reported ones and gives a ±10 V triangle —
+  a sensible amplitude to drive Tr22's control current.
+
+Two independent lines already favour the second reading. Neither is a substitute
+for looking.
+
+Further third-party leads, recorded as pointers rather than as evidence — none has
+been read, and nothing in them may be promoted without the reading:
+a Gearspace thread titled *"Detailed values of the Juno-106 chorus"*
+(`gearspace.com/threads/detailed-values-of-the-juno-106-chorus.1367045/`), a long
+JUNO-106-chorus-clone build thread on ModWiggler (`viewtopic.php?t=111159`), the
+**One-O-Six** chorus clone kit's published bill of materials
+(`alpesmachines.net`), and a 106 chorus rack build at
+`hkadesign.org.uk/106chorus.html`.
+
+**Environment note.** This attempt was made from a session whose egress policy
+allows GitHub and nothing else, so every host above returned a proxy 403 and none
+of them was actually read. That is a property of the session, not of the sources.
+A later pass should check whether it can reach them before spending the time.
+
+### Two anchored ADJUSTMENT values still unused
+
+Both are already recorded in the evidence table and neither has ever been carried
+into the model or a test.
+
+- **`VCA BIAS`, TP7, +0.25 … +0.27 V.** This sits in the same volts-to-amps chain
+  the voice-VCA law was just derived from — the drawing shows `VR30 100 kΩ "VCA
+  offset"` reaching that node through `R112 2.2 MΩ`. The shipping law puts the
+  grounded-base turn-on at **0.015 of the converter's 10 V span**; 0.25 V is
+  **0.025** of that same span. If TP7 *is* that node, the anchored trim window
+  fixes the one number in the law that is currently derived rather than measured,
+  and closes the remaining half of OQ-19 without a BA662 sweep. Whether it is the
+  same node is a schematic read, on the page above.
+- **`DCO CV OFFSET`, TP3, 0 V.** Unused, and worth a look: the model's DCO
+  compensation voltage is kept in the frequency it stands for rather than in
+  volts, so what a 0 V trim at TP3 constrains is not currently obvious.
+
 ## Implementation pass — 2026-08-06 (later same day)
 
 **Work mode:** analysis of supplied evidence plus measurement of the shipping
