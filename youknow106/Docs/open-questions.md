@@ -494,6 +494,28 @@ existing component-derived anchors. The common stored VCA LEVEL hold is a
 different destination whose constant remains unmeasured; extending 522 µs to
 it or to every other destination remains provisional.
 
+Two model questions now depend on this task, both added 2026-08-06:
+
+1. **What do the 522/687 µs figures denote?** The engine charges each hold
+   toward its target for the whole 4.2 ms pass. Physically the multiplexer
+   connects a given hold for roughly 1/23 of that, then disconnects and the
+   capacitor holds and droops. If 522 µs were the on-window RC, a hold would
+   reach only about 30% per pass and take some six passes to settle, which
+   would visibly slow every envelope — so the figures most likely already
+   describe settling. Establishing which they are decides whether the control
+   voltages are continuous ramps, as now, or the stepped staircase a
+   track-and-hold produces. That staircase is what the instrument's filter
+   sweeps are usually described as sounding like, so this is an audible
+   question, not a bookkeeping one.
+2. **What is the hold capacitance, and the multiplexer's on-resistance?**
+   A CD4051's channel switches inject ΔQ = C_gd·ΔV into the hold capacitor as
+   the scan steps. Two mechanisms modelling that injection were removed on
+   2026-08-06 because they wrote into a target the same converter write
+   recomputed, and so were measured at −360 dBc: bit-identical output. A
+   physical injection lands on the *slewed hold state*, and its size is
+   ΔQ/C_hold — neither term established. Until they are, no injection is
+   modelled.
+
 ### Needed output (for LLM)
 
 - A schematic/measurement table for every destination: confirmed converter
@@ -812,6 +834,19 @@ its 4.0 Vpp noise adjustment cannot directly establish a `+/-2 V` pre-filter
 noise amplitude or distribution. Treat `+/-5 V` sub, `+/-2 V` noise and `0.40`
 as voiced compatibility values. This task must not compare voltages from
 different nodes as though they were interchangeable.
+
+
+Added 2026-08-06: the passive mixer node now loads unconditionally and counts
+the permanently-wired SUB and NOISE legs, normalised against the three
+usually-connected legs so a plain saw patch keeps its established level. What
+remains open here is whether the SAW and PULSE panel switches **open their
+100 kΩ resistors or merely mute their sources**. The two readings differ by a
+constant gain that `filterInputAttenuation` and the output reference would
+absorb, so the choice does not change the shape — every connected leg loads
+every other — but it does set the absolute level and which configuration is the
+right normalising reference. A continuity check on the switched legs, or a
+level measurement at the IR3109 input with one waveform switched off, settles
+it.
 
 ### Needed output (for LLM)
 

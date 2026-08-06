@@ -104,12 +104,16 @@ struct EngineParameters
     // unmeasured chorus-noise level remains a voiced compatibility value.
     float velocityDepth { 0.0f };  // The hardware ignores MIDI velocity.
     // Exposed to the host as Unit Character: one master over every modelled
-    // component tolerance, trimmer residual, thermal wander and inherent
-    // circuit non-linearity (ramp charging curvature, exponential reset, the
-    // chorus clock laws, the spatial thermal gradient, C14's voltage-dependent
-    // capacitance, the VCF Early effect, the converter's glitch impulse and
-    // more) -- every optional physical-circuit mechanism answers to this one
-    // control.
+    // component tolerance, trimmer residual, thermal wander and optional
+    // circuit non-linearity -- the IR3109 stage offsets and integrating-
+    // capacitor spread, the chorus clock law, the spatial thermal gradient,
+    // C14's voltage-dependent capacitance and the VCF Early effect. Every
+    // optional physical-circuit mechanism answers to this one control.
+    //
+    // Mechanisms the *nominal* circuit has are deliberately not on it: the
+    // output summer's supply rails and the passive mixer's resistor loading
+    // apply at every setting, because a freshly calibrated instrument has them
+    // too.
     //
     // Zero is the calibrated nominal model -- no spread, no drift, none of the
     // optional non-linear shapes leaning in -- and one models the complete,
@@ -129,7 +133,11 @@ struct EngineParameters
     float chorusNoise { 1.0f };    // 1.0 is the modelled BBD noise floor.
     int polyphony { 6 };           // 6 is the hardware voice count.
 
-    // --- State-of-the-Art Physical Circuit Simulation Toggles ----------------
+    // --- Optional physical-circuit mechanisms --------------------------------
+    // Each is a card dispersion or an inherent non-linearity that the
+    // calibrated nominal model does not carry. Mechanisms that turned out to
+    // be unreachable, mis-attributed or contradicted by an anchored claim have
+    // been removed rather than left switchable; see the modelling notes.
     bool enableVcfStageOffsets { true };
     bool enableOpAmpSlewLimiting { true };
     bool enableVcfEarlyEffect { true };
