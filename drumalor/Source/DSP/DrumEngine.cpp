@@ -41,7 +41,7 @@ constexpr std::array<InstrumentMetadata, instrumentCount> metadata {{
     // sound: the ride existed only on the digital machine, and the analogue
     // one's single cymbal was, in everything but name, a crash.
     { Instrument::Ride,      "Ride",       "ride",       51, "Machine", "Tone",       { 0.78f, 0.62f, 0.0f, 0.62f, 0.0f,  0.27f, 0 } },
-    { Instrument::Crash,     "Crash",      "crash",      49, "Machine", "Brightness", { 0.28f, 0.65f, 0.0f, 0.65f, 0.0f, -0.27f, 0 } },
+    { Instrument::Crash,     "Crash",      "crash",      49, "Machine", "Brightness", { 0.68f, 0.82f, 0.0f, 0.86f, 0.0f, -0.27f, 0 } },
     { Instrument::LowTom,    "Low Tom",    "lowTom",     45, "Punch",   "Skin",       { 0.55f, 0.40f, 0.0f, 0.60f, 0.0f, -0.20f, 0 } },
     { Instrument::MidTom,    "Mid Tom",    "midTom",     47, "Punch",   "Skin",       { 0.55f, 0.45f, 0.0f, 0.52f, 0.0f,  0.00f, 0 } },
     { Instrument::HighTom,   "High Tom",   "highTom",    50, "Punch",   "Skin",       { 0.50f, 0.50f, 0.0f, 0.45f, 0.0f,  0.20f, 0 } },
@@ -616,8 +616,12 @@ const DrumEngine::CymbalRoms& DrumEngine::cymbalRoms() noexcept
         // The ride is the tighter, more periodic of the two: fewer partials,
         // placed higher, over a narrower wash.
         { &built.ride, 30000.0f, 0x9E3779B9u, 8600.0f, 2.30f, 620.0f, 5200.0f, 0.24f, 18 },
-        // The crash is wider and denser, and keeps more low plate under it.
-        { &built.crash, 27500.0f, 0x85EBCA6Bu, 9000.0f, 2.85f, 380.0f, 4200.0f, 0.30f, 26 },
+        // The crash is the bright one. Its wash sits high and wide, its
+        // partials are quiet enough to colour rather than pitch it, and its
+        // clock runs faster than the ride's - which also lifts the
+        // reconstruction filter's corner, so more of that top survives the
+        // trip out of the converter.
+        { &built.crash, 31000.0f, 0x85EBCA6Bu, 11200.0f, 3.15f, 520.0f, 5400.0f, 0.15f, 30 },
     } };
 
     for (const auto& spec : specs)
@@ -1656,8 +1660,17 @@ float DrumEngine::nextCymbalPcm (Voice& voice) const noexcept
         // A cymbal fading out on one of these does not simply get quieter: it
         // gets duller on the way down, which is most of why a 909 tail sounds
         // like metal leaving a room rather than a fader closing.
+        // Accent belongs in this control current too, not only in the level
+        // downstream. An OTA's transconductance is set by what is driving it,
+        // and a softer hit drives it less - so it is duller as well as quieter,
+        // and gives its top up sooner. Leaving velocity out here made it a
+        // plain output gain on the digital channel, which is precisely what
+        // the analogue channel's swing VCAs are shaped to avoid being.
+        const float control = channel.romEnvelope * channel.peak;
         channel.vcaBandwidthCoefficient = channel.vcaBandwidthOpen
-            * (0.26f + 0.74f * std::sqrt (std::max (0.0f, channel.romEnvelope)));
+            * (channel.vcaBandwidthFloor
+               + (1.0f - channel.vcaBandwidthFloor)
+                     * std::sqrt (std::max (0.0f, control)));
     }
 
     // The DAC holds its code until the next clock. What leaves the machine is
@@ -1735,7 +1748,7 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     // clock; TUNE moves it, and moving it is the only pitch control the
     // machine's cymbals have. Below a host rate that cannot carry it the clock
     // is necessarily limited to the host rate.
-    const float nominalClockRate = (ride ? 30000.0f : 27500.0f) * voice.pitchRatio;
+    const float nominalClockRate = (ride ? 30000.0f : 31000.0f) * voice.pitchRatio;
     channel.clockIncrement = std::clamp (
         nominalClockRate * inverseSampleRate_, 1.0e-4f, 1.0f);
     const float clockRate = channel.clockIncrement * floatSampleRate;
@@ -1746,7 +1759,7 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     // always finishes exactly where the ROM does. The only departure from the
     // hardware is the ceiling, which is the engine's own eight-second limit on
     // how long any voice may ring.
-    const float recordedSeconds = voice.decaySeconds * (ride ? 0.72f : 0.80f);
+    const float recordedSeconds = voice.decaySeconds * (ride ? 0.72f : 1.15f);
     // From the clock the counter actually runs at, not from the requested
     // pitch. Above roughly +8 semitones at 48 kHz the increment hits its
     // one-address-per-sample ceiling and the channel stops rising in pitch;
@@ -1755,7 +1768,7 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     // identical but decay differently. Pitch and tail move together or neither
     // does - that is the whole point of taking the envelope off the address
     // lines - so the ceiling has to apply to both.
-    const float effectiveClockRatio = clockRate / (ride ? 30000.0f : 27500.0f);
+    const float effectiveClockRatio = clockRate / (ride ? 30000.0f : 31000.0f);
     const float playbackSeconds = std::clamp (
         recordedSeconds / std::max (0.20f, effectiveClockRatio), 0.04f, 7.0f);
     channel.romEnvelope = 1.0f;
@@ -1773,6 +1786,7 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     channel.vcaBandwidthOpen = std::clamp (
         1.0f - std::exp (-twoPi * 1.6f * reconstructionCorner * inverseSampleRate_),
         1.0e-4f, 1.0f);
+    channel.vcaBandwidthFloor = ride ? 0.26f : 0.52f;
     channel.vcaBandwidthCoefficient = channel.vcaBandwidthOpen;
 
     // The counter is reset by the trigger, so every hit reads the mask from
@@ -2603,10 +2617,10 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // plate's own nonlinear coupling drains them downward - so the
             // circuit and the instrument agree about which end goes first.
             const auto floatSampleRate = static_cast<float> (sampleRate_);
-            const float midSeconds = voice.decaySeconds * (ride ? 0.52f : 0.58f);
-            const float highSeconds = voice.decaySeconds * (ride ? 0.20f : 0.26f);
+            const float midSeconds = voice.decaySeconds * (ride ? 0.52f : 0.78f);
+            const float highSeconds = voice.decaySeconds * (ride ? 0.20f : 0.52f);
             voice.envelopeMultiplier = coefficientForTime (
-                voice.decaySeconds * (ride ? 1.20f : 1.28f), floatSampleRate);
+                voice.decaySeconds * (ride ? 1.20f : 1.55f), floatSampleRate);
             voice.pitchEnvelopeMultiplier = coefficientForTime (
                 midSeconds, floatSampleRate);
             voice.auxiliaryMultiplier = coefficientForTime (
