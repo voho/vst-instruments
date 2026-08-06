@@ -165,6 +165,10 @@ if(YOUKNOW106_BUILD_TOOLS)
     target_link_libraries(YouKnow106RenderFidelityFixes PRIVATE YouKnow106DSP)
     target_compile_features(YouKnow106RenderFidelityFixes PRIVATE cxx_std_20)
 
+    add_executable(YouKnow106RenderRealismFixes Tools/RenderRealismFixes.cpp)
+    target_link_libraries(YouKnow106RenderRealismFixes PRIVATE YouKnow106DSP)
+    target_compile_features(YouKnow106RenderRealismFixes PRIVATE cxx_std_20)
+
     add_executable(YouKnow106AuditFactoryPresets Tools/AuditFactoryPresets.cpp)
     target_link_libraries(YouKnow106AuditFactoryPresets
         PRIVATE YouKnow106DSP Threads::Threads)
@@ -176,6 +180,7 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106RenderDemos PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderSota PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106RenderFidelityFixes PRIVATE /W4 /permissive-)
+        target_compile_options(YouKnow106RenderRealismFixes PRIVATE /W4 /permissive-)
         target_compile_options(YouKnow106AuditFactoryPresets PRIVATE
             /W4 /permissive-)
     else()
@@ -184,6 +189,8 @@ if(YOUKNOW106_BUILD_TOOLS)
         target_compile_options(YouKnow106RenderSota PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106RenderFidelityFixes PRIVATE
+            -Wall -Wextra -Wpedantic)
+        target_compile_options(YouKnow106RenderRealismFixes PRIVATE
             -Wall -Wextra -Wpedantic)
         target_compile_options(YouKnow106AuditFactoryPresets PRIVATE
             -Wall -Wextra -Wpedantic)
