@@ -43,6 +43,13 @@ struct YouKnow106TestAccess
                                parameters, 0.0f);
     }
 
+    static float stageGScale(const YouKnow106Engine& engine, int slot,
+                             int stage) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)]
+            .filter.gScale[static_cast<std::size_t>(stage)];
+    }
+
     static float stageOffset(const YouKnow106Engine& engine, int slot,
                              int stage) noexcept
     {
@@ -408,6 +415,9 @@ void expectNear(double actual, double expected, double tolerance,
 
 constexpr double pi = 3.14159265358979323846;
 constexpr int blockSize = 256;
+// Mirrors the engine's own private constant so the test states the bound it
+// checks rather than importing it.
+constexpr float vcfStageCapacitorToleranceForTest = 0.02f;
 
 struct Render
 {
@@ -722,6 +732,46 @@ void testSelfOscillationLandsOnTheServiceAnchor()
     expectNear(law, 248.1, 0.5, "panel byte 49 does not read the service code");
     expectNear(1200.0 * std::log2(frequency / law), 0.0, 5.0,
                "the self-oscillation does not land on the service anchor");
+}
+
+void testFilterPolesAreStaggeredOnlyByUnitCharacter()
+{
+    // The four IR3109 sections integrate into their own 240 pF capacitors, so
+    // their poles do not coincide the way one shared `g` makes them. That
+    // spread is a card dispersion like the stage offsets: signed, unbiased,
+    // and absent at the calibrated reference rather than merely small.
+    const auto scales = [](float calibration) {
+        YouKnow106Engine engine;
+        engine.prepare(48000.0, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.calibration = calibration;
+        engine.setParameters(parameters);
+        engine.noteOn(60, 1.0f);
+        std::array<float, 4> result {};
+        for (int stage = 0; stage < 4; ++stage)
+            result[static_cast<std::size_t>(stage)] =
+                YouKnow106TestAccess::stageGScale(engine, 0, stage);
+        return result;
+    };
+
+    for (const float scale : scales(0.0f))
+        expect(scale == 1.0f,
+               "the filter poles are staggered in the calibrated nominal model");
+
+    const auto spread = scales(1.0f);
+    bool anyDifferent = false;
+    for (int stage = 0; stage < 4; ++stage)
+    {
+        const float scale = spread[static_cast<std::size_t>(stage)];
+        anyDifferent = anyDifferent || scale != 1.0f;
+        // A capacitor tolerance, not a filter control: the pole must stay
+        // where a 240 pF part with a few percent spread puts it.
+        expect(std::abs(scale - 1.0f) <= 1.05f * vcfStageCapacitorToleranceForTest,
+               "a filter pole moved further than the capacitor class allows");
+        expect(scale > 0.0f, "a filter pole scale went non-positive");
+    }
+    expect(anyDifferent,
+           "the filter poles all coincide at full Unit Character");
 }
 
 void testMixerLevelIsContinuousInSubAndNoise()
@@ -4049,6 +4099,7 @@ int main()
     testRangeTransposesByOctaves();
     testSubIsOneOctaveDown();
     testSelfOscillationLandsOnTheServiceAnchor();
+    testFilterPolesAreStaggeredOnlyByUnitCharacter();
     testMixerLevelIsContinuousInSubAndNoise();
     testUnisonDoesNotBeat();
     testAliasFloor();

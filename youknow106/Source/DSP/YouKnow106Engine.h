@@ -505,6 +505,11 @@ private:
     // thousand -- the 0.005 the modelling notes state. A revision used 0.08
     // here, sixteen times that, which is a signal-dependent cutoff shift large
     // enough to hear as odd-harmonic grit on every resonant sweep.
+    // Half-span of the integrating capacitors' tolerance. The four 240 pF
+    // parts are discrete, so nothing trims them into agreement; a few percent
+    // is the ordinary class. Voiced under OQ-10, like the other card
+    // dispersions -- no measured population fixes it.
+    static constexpr float vcfStageCapacitorTolerance = 0.02f;
     static constexpr float otaEarlyVoltage = 100.0f;
     static constexpr float otaEarlyEffectCoefficient = 0.005f;
     // Roland publishes an approximate 5 Hz--50 kHz range, but no qualifying
@@ -641,6 +646,10 @@ private:
         std::array<float, 4> state {};
         std::array<float, 4> voltage {};
         std::array<float, 4> offsetVoltage {};
+        // Each stage integrates into its own 240 pF capacitor, so each pole
+        // sits where that capacitor's tolerance puts it. Unity is the
+        // calibrated nominal model, where all four coincide.
+        std::array<float, 4> gScale { 1.0f, 1.0f, 1.0f, 1.0f };
 
         void reset() noexcept;
         // Re-express the trapezoidal derivative carry for a changed numerical
@@ -699,6 +708,8 @@ private:
         float driftValue { 0.0f };
         std::uint32_t driftState { 1u };
         std::array<float, 4> vcfStageOffsets { 0.0015f, -0.0012f, 0.0018f, -0.0010f };
+        // Signed, unbiased draw for each stage's integrating capacitor.
+        std::array<float, 4> vcfStageGErrors {};
     };
 
     struct Voice
@@ -803,11 +814,12 @@ private:
     void buildHalfbandKernel() noexcept;
     void buildCorrectionTables() noexcept;
     void buildVoiceCards() noexcept;
-    // Copies each card's IR3109 stage offsets into its voice, scaled by Unit
-    // Character. Those offsets are fixed properties of a card and the amount
-    // only moves when the panel does, so this is called where those change --
-    // not from the audio path, which used to rewrite all four every sample.
-    void refreshVoiceCardStageOffsets() noexcept;
+    // Copies each card's IR3109 per-stage trims -- input offset voltage and
+    // integrating-capacitor tolerance -- into its voice, scaled by Unit
+    // Character. Both are fixed properties of a card and the amount only moves
+    // when the panel does, so this is called where those change, not from the
+    // audio path.
+    void refreshVoiceCardStageTrims() noexcept;
     void noteOnInternal(int midiNote, float velocity) noexcept;
     // Assigns a note already present in the held-key table. Kept separate from
     // noteOnInternal so a POLY-mode rebuild does not count the physical key a

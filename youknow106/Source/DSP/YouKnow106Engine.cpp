@@ -1311,7 +1311,8 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
                 ? (1.0f + otaEarlyEffectCoefficient * calibration
                        * std::tanh(voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
                 : 1.0f;
-            const float stageG = gLimited * earlyMod;
+            const float stageG = gLimited * gScale[static_cast<std::size_t>(n)]
+                               * earlyMod;
             const float x = (previous - voltage[static_cast<std::size_t>(n)]
                              + offsetVoltage[static_cast<std::size_t>(n)]) * inverseHeadroom;
             const float t = std::tanh(x);
@@ -1493,13 +1494,15 @@ void YouKnow106Engine::buildVoiceCards() noexcept
         {
             card.vcfStageOffsets[stage] =
                 0.0015f * hashBipolar(seed + 10u + static_cast<std::uint32_t>(stage));
+            card.vcfStageGErrors[stage] =
+                hashBipolar(seed + 20u + static_cast<std::uint32_t>(stage));
         }
         card.driftValue = 0.0f;
         card.driftState = seed | 1u;
     }
 }
 
-void YouKnow106Engine::refreshVoiceCardStageOffsets() noexcept
+void YouKnow106Engine::refreshVoiceCardStageTrims() noexcept
 {
     // A differential pair's input offset has a population mean of zero: there
     // is no nominal V_os a calibrated model could carry, and no service step
@@ -1514,7 +1517,19 @@ void YouKnow106Engine::refreshVoiceCardStageOffsets() noexcept
     {
         const auto& card = cards_[static_cast<std::size_t>(voice.cardIndex)];
         for (std::size_t stage = 0; stage < 4; ++stage)
+        {
             voice.filter.offsetVoltage[stage] = card.vcfStageOffsets[stage] * amount;
+            // Each stage integrates into its own capacitor, so the four poles
+            // do not coincide the way one shared `g` makes them. Four
+            // mathematically identical poles give a resonance peak and a
+            // self-oscillation more symmetric and purer than any real
+            // four-section filter produces. Like the offsets, this is signed
+            // and unbiased -- there is no nominal mismatch, so at Unit
+            // Character zero all four collapse to unity.
+            voice.filter.gScale[stage] =
+                1.0f + card.vcfStageGErrors[stage] * vcfStageCapacitorTolerance
+                           * amount;
+        }
     }
 }
 
@@ -1763,7 +1778,7 @@ void YouKnow106Engine::reset()
     }
     // `voice = Voice {}` above zeroed the offsets, and the cards outlive a
     // reset, so put them back before anything can render a symmetric filter.
-    refreshVoiceCardStageOffsets();
+    refreshVoiceCardStageTrims();
 
     clearOutputPath();
     clearHeldNotes();
@@ -1907,7 +1922,7 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
     // the render loop so host automation cannot make a block-boundary step.
     activeParameters_ = targetParameters_;
     // Unit Character scales the stage offsets, so they follow the panel.
-    refreshVoiceCardStageOffsets();
+    refreshVoiceCardStageTrims();
 
     // A host normally delivers its saved snapshot after prepare(). If the
     // output path is empty, prime every shared hold from that snapshot instead
@@ -2190,7 +2205,7 @@ void YouKnow106Engine::initialiseVoice(Voice& voice, int slot, int midiNote,
     voice.cardIndex = slot;
     // A no-op while slot and card index always agree, but written so a future
     // assigner change cannot silently leave a voice on another card's offsets.
-    refreshVoiceCardStageOffsets();
+    refreshVoiceCardStageTrims();
     voice.active = true;
     voice.keyDown = true;
     voice.sustained = false;
@@ -2880,7 +2895,7 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
 
     // The IR3109 stage offsets used to be rewritten here, every audio sample,
     // from values that never change. They now live in
-    // refreshVoiceCardStageOffsets, called where the card or the panel moves.
+    // refreshVoiceCardStageTrims, called where the card or the panel moves.
 }
 
 void YouKnow106Engine::updatePulseComparator(

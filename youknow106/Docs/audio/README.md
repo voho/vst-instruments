@@ -81,7 +81,7 @@ output swing is still an explicit measurement question.
 | `02-pwm-strings.wav` | Pulse-width-modulated strings in the faster mode-II chorus | 15.3 s | −7.7 dBFS | +4.7 dB |
 | `03-sixteen-foot-bass.wav` | A 16' bassline: the exponential envelope segments doing the punch | 13.8 s | −20.0 dBFS | +17.0 dB |
 | `04-filter-brass.wav` | Resonant filter-envelope stabs, ending on a full bender push | 10.3 s | −13.8 dBFS | +10.8 dB |
-| `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −17.7 dBFS | +14.7 dB |
+| `05-self-oscillation.wav` | The filter played as a voice at full resonance and key follow | 12.9 s | −17.8 dBFS | +14.8 dB |
 | `06-chorus-modes.wav` | The same pad with the effect off, in mode I, then in mode II | 15.8 s | −9.7 dBFS | +6.7 dB |
 | `07-unison-glide.wav` | Six-voice unison lead with constant-rate portamento | 11.5 s | −5.1 dBFS | +2.1 dB |
 | `08-delayed-vibrato.wav` | The modulator's two-stage delay fading vibrato onto a held chord | 9.6 s | −13.1 dBFS | +10.1 dB |

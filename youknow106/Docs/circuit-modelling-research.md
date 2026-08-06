@@ -254,6 +254,13 @@ open question, it is named in its entry.
 11. **IR3109 VCF Stage-Space Transistor Input Offset Voltages ($V_{os}$)**:
     Differential pair BJT transistor input offset voltages ($V_{os} \approx 1.5\,\text{mV}$) across the 4 IR3109 transconductor stages break 4-pole differential symmetry, creating stage-dependent dynamic DC shifts and asymmetric soft distortion under high-resonance filter sweeps.
 
+11b. **IR3109 integrating-capacitor tolerance (staggered poles)**:
+    Each of the four transconductor sections integrates into its own 240 pF capacitor, and those are discrete parts that nothing trims into agreement. Driving all four sections from one shared $g$ places all four poles at exactly the same frequency — a coincidence no real four-section filter achieves, and one that makes the resonance peak more symmetric and the self-oscillation purer than the hardware's.
+
+    Each stage now carries its own transconductance scale, drawn per card from the same deterministic seed as the stage offsets and applied as $1 + \varepsilon_n \cdot 0.02 \cdot \text{calibration}$. Like the offsets, the draw is signed and unbiased: there is no nominal mismatch, so at Unit Character zero all four collapse to exactly unity and the closed-form $1/(4-k)$ check still holds. `Tests/YouKnow106EngineTests.cpp::testFilterPolesAreStaggeredOnlyByUnitCharacter` asserts both ends.
+
+    The $\pm 2\%$ half-span is **voiced** under OQ-10 — the ordinary class for such a part, not a measured population. The resonant-sweep listening take moves by $-16.3$ dBc, by far the most of the seven, which is where staggered poles should show.
+
 12. **TA75558S IC6 Output Summer Op-Amp Dynamic Slew-Rate Limiting**:
     Dual op-amp TA75558S finite maximum slew rate ($\text{SR} \approx 1.7\,\text{V}/\mu\text{s}$) imposes a dynamic rate-of-change limit ($\Delta V_{\text{max}} = \text{SR} \cdot \Delta t$) on output signals, naturally rounding off extreme high-frequency transients and resonant spikes to eliminate digital harshness.
 
