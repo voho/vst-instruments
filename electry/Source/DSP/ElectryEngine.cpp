@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 
 namespace electry
 {
@@ -652,7 +651,6 @@ void ElectryEngine::handLossResponse(float depth, const HandLossShape& shape,
         return;
     magnitude *= (float) std::sqrt((nr * nr + ni * ni) / dn);
     phase += (float) (std::atan2(ni, nr) - std::atan2(di, dr));
-
 }
 
 // One place that pushes a depth into both bands, so the note-on solve and the
@@ -1876,7 +1874,6 @@ void ElectryEngine::configureVoicePickups(Voice& voice) noexcept
         1.0f, static_cast<float>(apertureHistorySize - 2));
     voice.apertureNeck.setWindow(apertureLength);
     voice.apertureBridge.setWindow(apertureLength);
-
 }
 
 void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
@@ -2864,8 +2861,6 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         sample = loop.dispersion7.process(sample, loop.dispersionHighCoefficient);
         sample = loop.dispersion8.process(sample, loop.dispersionHighCoefficient);
         sample = loop.damping.process(sample, loop.loopDampingCoefficient);
-        // A convex blend of the wave and a lowpass of it, so the magnitude never
-        // exceeds one whatever the depth, and depth zero is exactly the identity.
         // A peaking section with sub-unity gain: its magnitude never exceeds one
         // anywhere, so it cannot destabilise the loop at any depth, and because
         // it returns to unity above its band it costs almost nothing at the high
@@ -3028,7 +3023,7 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
 
     // Articulations attack the string at different angles, splitting energy
     // differently between the two polarisations. The split is resolved once
-    // per attack in updateArticulationWeights().
+    // per attack in updateStyleWeights().
     const float verticalWeight = voice.verticalWeight;
     const float horizontalWeight = voice.horizontalWeight;
 

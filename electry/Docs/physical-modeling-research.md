@@ -70,7 +70,9 @@ The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
    parameter's glide rather than snapping. There is deliberately no DC filter
    inside the loop: a fixed-corner blocker's steep phase lead near a low
    fundamental would detune the upper partials against the compensated
-   fundamental, and the pickup position comb already rejects DC exactly.
+   fundamental. The pluck comb's image still rejects a net displacement
+   exactly, and the 5 Hz output blocker removes the offset the weighted
+   pickup comb now passes.
 4. Excitation runs in phases: a contact stage applies a bounded total
    retention over the pick/string engagement and plays band-shaped scrape or
    finger noise. At release, the principal signal passes two low-pass stages
@@ -275,8 +277,9 @@ voicing estimates, not conductance measurements.
 Note release ramps an extra loop-gain factor toward a roughly 60 ms T60 over
 about 22 ms — the fretting or picking hand damping the string — and
 optionally injects a short wound- or plain-voiced damping noise. The palm
-mute style caps T60 between 0.6 s and 90 ms depending on the mute-damping
-control, with a darker excitation and stronger contact noise.
+mute style adds a parallel bridge-hand loss whose reference-derived targets
+run from 2.60 s to 0.32 s across the mute-damping control (the bridge-hand
+damping section below), with a darker excitation and stronger contact noise.
 
 ## Sympathetic bridge coupling
 
@@ -772,12 +775,13 @@ route with genuine oversampling rather than the circuit-solved route:
   reason a held chord thickens and thins again as it decays. An interstage
   one-pole stands in for Miller capacitance, so each stage is progressively
   darker.
-- **Cabinet.** Five biquad sections inside the oversampled domain: a
+- **Cabinet.** Six biquad sections inside the oversampled domain: a
   second-order high-pass at the box frequency (a sealed cabinet has no useful
   output below it), a low-mid thump, a scooped boxy mid, a presence peak, and a
-  fourth-order Butterworth roll-off from 5 kHz, because a twelve-inch speaker is
-  essentially gone an octave above that. Running it before decimation rather
-  than after removes the alias-generating content first. The regression suite
+  fourth-order Butterworth roll-off (two cascaded sections) from 5 kHz, because
+  a twelve-inch speaker is essentially gone an octave above that. Running it
+  before decimation rather than after removes the alias-generating content
+  first. The regression suite
   asserts each of those five features relative to 1 kHz. This is a filter model
   of the *class* of response, deliberately not an impulse response of a
   measured cabinet: no capture is included and none is claimed.
@@ -1293,8 +1297,10 @@ runs, comparing 1.0 and 1.1 sources built identically: the default
 Bridge/Mono configuration went from 0.28x to 0.15x realtime at 96 kHz, the
 worst-case Both/Stereo configuration from 0.27x to 0.19x, and an idle engine
 from 0.013x to 0.003x. The regression suite prints both eight-string ratios on
-every run and asserts that the default configuration is measurably cheaper than
-the worst case, so the culling cannot silently regress.
+every run; the culling itself is asserted structurally, by reading the engine's
+own culling and link flags for every selector position, because the few-per-cent
+wall-clock saving proved smaller than the run-to-run spread of a shared CI
+runner and a timing assertion on it was flaky.
 
 ## Why the runtime remains analytic
 
@@ -1424,7 +1430,7 @@ box corner, which is deliberately low enough that a Drop-E eighth string's
 fundamental reaches the cabinet rather than being cut before it. A further test renders a short take through the demo
 renderer, so the committed demonstration audio's toolchain is covered too.
 
-Ten rendered examples of the whole path are committed under
+Fourteen rendered examples of the whole path are committed under
 [`Docs/audio/`](audio/README.md) and produced from this same JUCE-free code by
 `Tools/RenderDemos.cpp`, so what the document describes can be listened to
 rather than only read. They are demonstrations, not evidence: an audible
