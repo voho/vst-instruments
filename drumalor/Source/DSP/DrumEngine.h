@@ -253,6 +253,14 @@ private:
         float vcaBandwidthState { 0.0f };
         float vcaBandwidthCoefficient { 1.0f };
         float vcaBandwidthOpen { 1.0f };
+        // How far the OTA's pole is allowed to close as its control current
+        // falls. The transconductance sets bandwidth as well as gain, so a
+        // channel fading out loses its top before its level - but how much top
+        // it loses is a bias choice, and the two cymbal channels are not
+        // biased alike. A ride's tail is meant to darken as it goes; a crash's
+        // is meant to stay a splash for its whole length, which on a tail this
+        // long is most of what "bright" means.
+        float vcaBandwidthFloor { 0.26f };
         // What the counter is reading, and where it has got to. The ROM is
         // engine-owned and shared by every voice; the address is per-voice
         // because two crashes overlapping are two counters walking the same

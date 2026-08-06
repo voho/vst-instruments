@@ -118,6 +118,39 @@ automatable per-voice controls. Level is a clean gain applied to the voice, and
 Pan is the same constant-power law the fixed positions always used, so a kit
 left alone images and balances identically.
 
+### Kit tuning
+
+The factory kit is tuned rather than merely assembled. Every voice that has a
+definite pitch sits on a harmonic of one root - a G an octave below the kick,
+which is itself that root's second harmonic:
+
+| Voice | Harmonic | Pitch | Note |
+| --- | ---: | ---: | --- |
+| Kick | 2 | 49.0 Hz | G1 |
+| Low Tom | 3 | 73.5 Hz | D2 |
+| Mid Tom | 5 | 122.5 Hz | B2 |
+| High Tom | 6 | 147.0 Hz | D3 |
+| Snare | 8 | 196.0 Hz | G3 |
+| Perc 1 | 32 | 784.0 Hz | G5 |
+| Perc 2 | 40 | 980.0 Hz | B5 |
+
+Being a harmonic series rather than an equal-tempered chord, the two voices on
+the fifth harmonic and its octave - Mid Tom and Perc 2 - sit about 14 cents
+below where a piano would put a B. That is what a just major third is, and it
+is why the kit sounds settled rather than beating against itself.
+
+The Clap, both hats, both cymbals and the Shaker are deliberately not in that
+table. They have no definite pitch to tune: a cymbal's inharmonicity is the
+point of it, and the six oscillators behind the hats and cymbals are chosen so
+that no two of them agree. Giving them a note would mean taking that away.
+
+The tuning lives in each voice's default Pitch offset, so it is visible on the
+panel and reversible: setting a voice's Pitch to zero returns it to its own
+untuned nominal frequency rather than to the kit's root. A contract measures
+every pitched voice and requires it within a quarter of a semitone of a
+harmonic, so a later change to any nominal frequency cannot quietly pull the
+kit apart.
+
 **Kit Humanise** scales how much of the modelled per-hit component tolerance
 actually reaches each voice: pitch, decay, transient energy, tone, circuit drive
 and bias. At 0% the kit is machine-tight; at 100% the drift is twice as wide.
@@ -486,11 +519,25 @@ circuits themselves.
 an equal-power crossfade in between. It is a real choice rather than a blend
 control because the two channels share no source — the analogue one is its six
 oscillators through the band-passes, the digital one is its own ROM — so the
-ends are the two machines and not two filterings of one. The defaults put each
-voice on the machine that actually made that sound: the analogue machine had no
-ride at all, and its single cymbal was in everything but name a crash. The
-digital leg carries a measured trim so that moving the control changes
-character and not loudness. **Tone** and **Brightness** are
+ends are the two machines and not two filterings of one. Both voices default
+near the digital machine, which is the one that actually had a separate ride and
+crash; the analogue machine had a single cymbal, and it is still what the
+control's other end gives you. The digital leg carries a measured trim so that
+moving the control changes character and not loudness.
+
+The two are voiced apart rather than being one cymbal at two speeds, because a
+ride and a crash are not the same instrument played differently. The crash runs
+a faster sample clock - which also lifts the reconstruction filter's corner, so
+more of its top survives the converter - over a ROM whose wash sits higher and
+whose partials are quieter, and it holds its upper bands far longer through both
+channels. Measured at their defaults, the crash starts half again as bright as
+the ride and is still brighter in its third second than the ride is a tenth of a
+second in, and it rings about four times as long. The two channels' output VCAs
+are biased differently for the same reason: an OTA gives up bandwidth as its
+control current falls, and a ride is meant to darken as it goes where a crash is
+meant to stay a splash for its whole length.
+
+**Tone** and **Brightness** are
 the tone-control mixer; because that mixer is the last stage before the buffer
 amplifier, the digital channel passes through it too, split by a single
 first-order crossover in place of three analogue legs it does not have.
@@ -700,8 +747,12 @@ resonant band-pass, and must reach their onset peak after it, not on the first
 sample. Both must darken as they ring. Retuning the sample clock must carry the
 address envelope with it, so a cymbal transposed down a twelve holds at least
 twice the relative tail of one transposed up. Velocity must behave as an accent
-voltage into the swing VCAs rather than as an output gain, which is visible as a
-quiet hit leaving sooner and not merely quieter. The decaying tail must contain
+rather than as an output gain, which each channel is asked for in the terms it
+can answer: measured at the analogue end, a quiet hit must leave sooner and not
+merely be quieter, because the swing VCAs are superlinear in the accent voltage;
+measured at the digital end, where the address envelope is walked by the counter
+and no accent can shorten it, a quiet hit must instead be duller, because the
+OTA restoring the envelope loses bandwidth along with gain. The decaying tail must contain
 no sample-to-sample step larger than the loud part of the hit already made,
 which is what retiring a shut band audibly would look like. And because the
 sample clock is fixed in hertz and the ROM's length in seconds, neither may
