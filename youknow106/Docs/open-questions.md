@@ -108,6 +108,13 @@ OQ-09, OQ-15 and OQ-19. A well-instrumented original unit can also collect OQ-03
 OQ-05, OQ-17 and OQ-20 output data in the same session; keeping those captures
 on one calibration/load chain would remove several cross-normalisation errors.
 
+A later public-source pass is recorded in
+[Evidence search — 2026-08-06](#evidence-search--2026-08-06). It moves OQ-01,
+OQ-02, OQ-03, OQ-04, OQ-06, OQ-07, OQ-10 and OQ-18 to *partially resolved* or
+adds quantified contradictions, and records five refinements measured as
+inaudible so they are not attempted again. No row of the table above is closed
+by it: none of its third-party measurements meet this project's anchoring bar.
+
 ### Evidence baseline
 
 The supplied evidence-search reports and final compilation have been reconciled
@@ -1131,6 +1138,332 @@ mode changes.
 - A minimal replacement topology with explicit state-migration/reset semantics
   and deterministic steady-state/transient fixtures, or a quantified argument
   that the present approximation is below the declared audibility/error bound.
+
+## Evidence search — 2026-08-06
+
+**Work mode:** evidence search (public sources) plus analysis of the shipping
+implementation. **No hardware was measured for this pass.** Every dB figure
+attributed to the model below was produced by an offline replica of the shipping
+algorithms — the exact residual tables, the exact `OtaCascade::process`, the exact
+half-band kernel — and is reproducible from the source alone. Nothing here is
+promoted to **anchored** unless it comes from Roland service documentation or a
+component datasheet.
+
+### New primary-source material
+
+The Roland JUNO-106 Service Notes **specification page** and **ADJUSTMENT section**
+were read in full. Both are primary Roland documentation and therefore **anchored**.
+
+The specification page corroborates a large block of already-implemented constants,
+and no change follows from it — it is recorded so a later pass does not re-derive
+them: `VCF CUTOFF FREQ. 5Hz to 50kHz`; `VCF ENV MOD. ±14 octaves` (model 16255/1143
+= 14.22); `VCF LFO MOD. ±3.5 octaves` (4047/1143 = 3.54); `VCF BENDER ±3.5 octaves`
+(4064/1143 = 3.56); `DCO LFO MOD. ±400 cents`; `DCO BENDER ±1200 cents`;
+`LFO RATE 0.1Hz to 30Hz`.
+
+Two specification entries are **new evidence against open tasks**:
+
+- `AUDIO OUTPUT   L: −30dBm;  M: −15dBm;  H: 0dBm`. This is a Roland-published
+  nominal output level for each selector position and bears directly on **OQ-06**,
+  which currently treats the absolute output reference as product policy. Roland
+  gives no reference impedance, so it does not by itself fix `Vref_rms`; it does
+  fix the selector's intended 15 dB steps, which is a testable constraint on the
+  41.3 kΩ ladder model. Status: **partially resolved**, confidence moderate.
+- `ENV DECAY 1.5ms to 12s` / `RELEASE 1.5ms to 12s` against the model's
+  firmware-derived 16.8 ms – 25.55 s. The top differs by roughly 2×. The model
+  measures to digital zero while Roland's figure is almost certainly to an
+  unstated threshold, so this is probably not a contradiction — but per contract
+  rule 5 it is recorded as an unreconciled discrepancy rather than explained away.
+  Relevant to **OQ-12**. Status: **not resolved**.
+
+The ADJUSTMENT section yields a complete calibration corpus. Most is already
+recorded; two items are usable and currently unasserted by the suite:
+
+| Step | Test point | Target | Note |
+|---|---|---|---|
+| VCF FREQUENCY | BANK 3, hold C4 | 248 Hz (B3) | already the model's anchor |
+| **VCF WIDTH** | **BANK 3, hold C6** | **992 Hz (B5)** | **a second cutoff anchor two octaves up — independently constrains the counts-per-octave slope** |
+| **VCF RESONANCE** | TP19…TP14, BANK 3, hold C4 | **4.8 Vp-p sine** | recorded in the project, but self-oscillation *amplitude* is asserted nowhere; the suite checks frequency only |
+| VCA GAIN | TP8…TP13, BANK 3, hold C4 | 6 Vp-p | already recorded |
+| NOISE LEVEL | TP8, BANK 6 | 4 Vp-p | already recorded, and correctly noted as downstream of the pre-filter coordinate OQ-15 asks about |
+| PWM | BANK 5, hold C4 | 50 %, tol. 48–52 %; at PWM 10, 93–97 % | already recorded |
+| VCA BIAS | TP7 | +0.25 … +0.27 V | not currently used |
+| DCO CV OFFSET | TP3 | 0 V | not currently used |
+
+The D/A & S/H timing chart also gives converter output ranges the model presently
+treats abstractly: **DCO CV / SUB LEVEL 0 to −10 V; VCF CV / VCA LEVEL / PWM CV +4
+to −6 V; VCA CV / RESO CV / NOISE LEVEL 0 to +10 V**, refresh 4.2 ms. Relevant to
+**OQ-02** and **OQ-07**.
+
+### OQ-01 — the missing integrator capacitor is printed
+
+`YouKnow106Chorus.h:141-147` states that every term of
+`f = 1/(4·β·R_eff·C3)` is known except C3, "which the schematic does not print".
+
+A 300 dpi render of Service Notes p. 15 (JACK BOARD) is reported to show
+**C3 = 0.1 µF**, printed in Roland's usual bare ".1" form beside C4's "220P".
+**This reading needs independent confirmation against the project's own copy of
+p. 15 before use** — it was not verified by the author of this section directly.
+
+Independently of that reading, an arithmetic check falsifies a second term.
+Evaluating `f = 1/(4·β·R_eff·C3)` with the model's own `lfoTimingOhms()`:
+
+| β | Mode I | Mode II | vs the third-party measured 0.537 / 0.879 Hz |
+|---|---|---|---|
+| `1/48` — `lfoThresholdRatio` as implemented | 18.65 Hz | 30.27 Hz | +3372 % / +3344 % |
+| `R7/R6 = 33/47 = 0.702` | 0.5533 Hz | 0.8983 Hz | +3.0 % / +2.2 % |
+
+So `lfoThresholdRatio = 1.0/48.0` is inconsistent with the circuit by roughly 34×.
+It causes no audible defect today because the absolute rate is supplied by the
+JUNO-60 fallback rather than computed from β — but it is the reason the derivation
+was believed to be blocked. Reaching the measured rates with C3 = 0.1 µF requires
+β ≈ 0.72, which is either `R7/R6` or an R15 nearer 120 kΩ than the reported 1 kΩ.
+**Which of the two is correct is a schematic-reading task, not a measurement.**
+
+The mode ratio is unaffected and comes out at **1.6235** either way — identical to
+the project's own `modeRateRatio()` of 1.6234799, and within **0.82 %** of the
+third-party measured ratio. The ratio was always right; only the scale was borrowed.
+
+Status: **partially resolved.** Confidence: the β inconsistency is high (pure
+arithmetic against the project's own constants); the C3 value is moderate pending
+confirmation. Remaining gap: confirm C3 and the β network on p. 15; then the
+absolute scale is **derived**, not borrowed.
+
+### OQ-01 — third-party JUNO-106 measurements (not anchored)
+
+These are uncalibrated third-party measurements. They are **not** promoted to
+anchored and must not be treated as fixtures without confirmation.
+
+| Quantity | Model today (JUNO-60 fallback) | Reported for a JUNO-106 |
+|---|---|---|
+| LFO rate I / II | 0.5222 / 0.8478 Hz | 0.537 / 0.879 Hz (scope, on a *clone* of the 106 chorus) |
+| Delay sweep | 1.66–5.35 ms | 1.4–6.4 ms |
+| Centre delay | 3.505 ms | 3.9 ms |
+| Excursion | ±1.845 ms | ±2.5 ms — **the model is at 74 % of it** |
+| BBD clock | 23.9–77.1 kHz | 20.0–91.4 kHz |
+
+The delay-sweep figure comes from an owner comparing a real 106 against a clone
+after discovering the clone's "MN3009s" were re-badged MN3007s; it is bracketed by
+three independent clock readings at BBD pins on 106-chorus clones (25–65, 35–85 and
+28–60 kHz). Provenance is forum posts with scope screenshots, several now dead —
+below this project's anchoring bar, but mutually consistent and consistent with the
+schematic derivation above to within a few percent.
+
+Measurement trap worth recording: the MN3101 datasheet states *"Clock signal
+frequency is 1/2 of oscillation frequency"*. A probe on the OSC pins reads 2× the
+BBD clock; only CP1/CP2 read it directly. Several published readings are ambiguous
+on this point.
+
+Provenance of the current fallback, for the record: the 23.9–77.1 kHz / 1.66–5.35 ms
+constants match `pendragon-andyh/Juno60`, whose README gives 0.513/0.863 Hz and
+0.00166/0.00535 s — measured, but on a **JUNO-60**, by inspection in Sonic
+Visualiser.
+
+Status: **not resolved** (evidence below the anchoring bar). Confidence: moderate
+that the model's sweep depth is materially shallow; the ±26 % excursion shortfall is
+the largest single audible number found in this pass.
+
+### OQ-03 — a robust chorus-noise delta
+
+A third-party measurement of a real JUNO-106 (48 kHz/24-bit, VOLUME 10, OUTPUT
+HIGH, +25 dB into a Fireface 800, original Panasonic MN3009s) reports peak noise of
+**−47.97 dBFS for Chorus I and −44.01 dBFS for Chorus II**.
+
+The absolute figures are not usable — the chain gain is stated but the reference is
+the converter's dBFS, not dBu. The **difference is usable**, because the chain gain
+cancels: **Chorus II is 3.95 dB noisier than Chorus I**. The model uses one noise
+amplitude for both modes and does not reproduce this. It is physically plausible —
+mode II's sweep spends more time at low clock rates, where BBD noise is worse.
+
+Status: **partially resolved.** Confidence moderate for the delta, low for the
+absolute level. Remaining gap: calibrated PSD, stereo correlation and spurs.
+
+### OQ-04 — the MN3009's own bandwidth bounds the support chain
+
+Panasonic MN3009 datasheet, **anchored**: input signal frequency is `−3 dB at
+12 kHz` minimum (0 dB reference at 1 kHz), with the characteristic curve showing
+about **−3 dB at 16 kHz for a 40 kHz clock**; insertion loss `0 dB typ.`
+(−4 / +4 dB); clock range 10–200 kHz; `S/N 88 dB typ.`; noise `0.2 mVrms max`
+A-weighted at 100 kHz clock. The THD anchors the model already fits are confirmed
+verbatim: `0.3 % typ. at V_i = 0.78 Vrms`, `2.5 %` at the 1.5 Vrms maximum input.
+
+The shipping support chain evaluates to **−12.0 dB at 10 kHz and −38.5 dB at
+15 kHz** relative to 2 kHz (input Sallen-Key pair + 7.2 kHz passive + tap pole +
+output Sallen-Key pair + ZOH aperture at the 3.505 ms centre clock). The part alone
+is roughly 3 dB down over that range, so the modelled darkening is dominated by the
+support chain, not the BBD.
+
+Removing the duplicated output Sallen-Key pair does not reconcile it either
+(−9.0 dB at 10 kHz), so the corner *values* are implicated, not only the pole count.
+Note `YouKnow106Chorus.cpp:334-339` re-derives `reconstructionFirst/Second` from the
+same constants as `antiAliasFirst/Second` rather than reading the reconstruction
+side from the schematic separately.
+
+This is coupled to OQ-01: the present chain is a reasonable anti-alias design for
+the modelled 23.9 kHz minimum clock (Nyquist 12 kHz, chain −21.8 dB there) and
+over-engineered for a ~43 kHz clock. **The wet-path bandwidth is a measurable proxy
+that constrains the BBD clock, so OQ-01 and OQ-04 should be resolved together.**
+
+Status: **not resolved**, but the contradiction is now quantified. Recommended next
+step is a schematic re-read of the capacitor codes behind
+`YouKnow106Chorus.cpp:73-83` — a single 10× code misread moves a corner by a decade.
+
+### OQ-02 — the µPC1252 law implies a linear-in-dB slider
+
+The NEC datasheet (**anchored**, already cited by this project) specifies the
+control constant as **−5.9 mV/dB typ** (−5.8 / −6.1), **linear over
+A_V = −30 … +30 dB**, unity at V_C = 0 mV. The part is exponential: gain in dB is
+linear in control voltage.
+
+Two consequences for the voiced `patchLevelGain` = `−15 + 20·p³`:
+
+**The endpoints are corroborated.** That span implies a GC1 swing of 118 mV at
+−5.9 mV/dB. A third-party in-circuit estimate of the 106's GC1 voltage gives
+−28 mV … +96 mV, a **124 mV** swing, i.e. −16 … +4.7 dB. The voiced three-point fit
+lands within 5 % of the physically-derived span. Recorded as corroboration; the
+estimate itself is unverified and is not promoted.
+
+**The shape between them does not follow.** If the DAC→GC1 path is a linear
+resistive divider, gain must be linear in dB across the slider:
+
+| Slider | Model (cubic) | Linear-in-dB | Difference |
+|---|---|---|---|
+| 0.25 | −14.69 dB | −10.82 dB | −3.9 dB |
+| 0.50 | −12.50 dB | −5.65 dB | **−6.9 dB** |
+| 0.75 | −6.56 dB | −0.48 dB | −6.1 dB |
+
+The cubic changes by only **2.5 dB across the entire lower half of the slider**
+where an exponential part driven linearly would change by **10.4 dB**.
+
+The remaining unknown is precisely what OQ-02 already names — the DAC/hold-network
+to GC1 path. The timing chart's `+4 to −6 V` range for VCA LEVEL divided to ~124 mV
+implies an ~80:1 resistive divider, which would be linear. **Reading that divider
+between the sample-and-hold and IC5 GC1 off the jack-board schematic converts OQ-02
+from voiced to derived.** Status: **partially resolved**, confidence moderate.
+
+### OQ-18 — a measured code-to-frequency curve exists
+
+A third-party open-source project publishes a measured cutoff-vs-DAC-code table for
+a real JUNO-106 voice card, gain-calibrated so DAC 1568 reads 248.000 Hz — the same
+service anchor this project uses (6272 counts = 1568 DAC codes). Provenance
+indicators are strong: the anchor matches; the companion source is a clean-room
+reimplementation of the **D7811G** firmware's cutoff routine, and the µPD7811 is the
+106's CPU; and the documented bit-boundary steps fall exactly where R-2R
+major-carry non-linearity physically belongs. It is nonetheless **third-party and
+not independently verified**, and the project is **GPL-3.0** while this one is MIT —
+measurements are facts and may be cited like a datasheet, but no code may be copied
+and any fit must be re-derived.
+
+Comparison against the shipping path at Unit Character 1.0, resonance 0:
+
+| DAC | Measured | Model | Error |
+|---|---|---|---|
+| 1024 | 67.2 Hz | 66.3 Hz | −25 ¢ |
+| 1568 | 248.0 Hz | 247.6 Hz | −3 ¢ |
+| 2560 | 2 725 Hz | 2 690 Hz | −23 ¢ |
+| 2816 | 5 048 Hz | 4 911 Hz | −48 ¢ |
+| 3072 | 9 297 Hz | 8 827 Hz | −90 ¢ |
+| **3328** | **16 779 Hz** | **15 447 Hz** | **−143 ¢** |
+| 3584 | 27 876 Hz | 25 876 Hz | −129 ¢ |
+| 4064 | 50 792 Hz | 50 000 Hz | −27 ¢ |
+
+Findings:
+
+- The **exponential law is confirmed**: measured slope 3.46–3.49 octaves per 1000
+  DAC codes against the model's constant 3.500, so `vcfCountsPerOctave = 1143`
+  is sound and the 248 Hz anchor agrees to 3 cents.
+- The **50 kHz endpoint is confirmed** (measured 50.8 kHz at the top of the slider),
+  and independently by the Roland spec page's `5Hz to 50kHz`.
+- What is wrong is the **knee shape between them**. The single-pole `R_e`
+  compression `rawHz/(1 + calibration·rawHz/120000)` over-corrects, leaving the
+  model up to **143 cents flat around a 16 kHz cutoff** and 48–90 cents flat from
+  5–9 kHz, which is inside the musical range. At Unit Character 0 the uncompressed
+  law is instead **+292 ¢ sharp** at DAC 3584. A single pole cannot describe the
+  measured knee.
+
+Status: **partially resolved.** A defensible replacement is a fit to the measured
+curve with the base and exponent re-fitted together; note the model's
+`vcfBaseFrequencyHz = 5.53` sits 63 cents below the measured 5.73 Hz at code 0.
+
+### OQ-07 / OQ-18 — the R-2R carry non-linearity is real and was removed
+
+The same measured table documents excess steps at the bit boundaries of
+**−4.64 ¢ at code 1024, +23.31 ¢ at code 2048, −4.48 ¢ at code 3072**.
+
+This project added an R-2R major-carry model and then removed it, correctly: the
+implementation wrote a transient impulse into `voice.cutoffCountsTarget`, a field
+the same converter write immediately reassigned, so it measured −360 dBc and was
+bit-identical. **The mechanism is real; only its placement was wrong.** It belongs
+in the static code-to-frequency map as an INL offset, not as an impulse — at which
+point a slow cutoff sweep steps by roughly 23 cents crossing mid-scale, which is
+audible on a slow resonant sweep. Folding it into the OQ-18 fit costs nothing extra,
+since the measured curve already contains it.
+
+Status: **partially resolved**, confidence moderate.
+
+### OQ-10 — a comparison point for per-card dispersion
+
+The same third-party project ships **±10 DAC counts (≈ ±10.5 cents)** as its
+per-voice VCF cutoff spread and ±2.4 % for VCA gain. That is a chosen default rather
+than a published measurement, but it was chosen by an author holding six-card data,
+which makes it a meaningful prior.
+
+For comparison, this model's `thermalCutoffSpread` alone contributes
+`1 + 0.04·calibration·(cardIndex − 2.5)`, i.e. **±165 cents** at the shipping
+default, applied *in addition to* `cutoffOffsetError` (±84 cents) and
+`cutoffScaleError` (±5 %). Three internal observations, independent of the external
+comparison:
+
+1. It is roughly 10× what the model's own `dynamicThermalVoltage` computation
+   supports — a 4 °C card-to-card gradient moves `V_t` by about 1.3 %.
+2. Its shape is linear in `cardIndex` while the temperature profile computed
+   alongside it is `exp(−cardIndex/2.5)`; the two disagree.
+3. It is absent from the README's Unit Character table, which lists only
+   "VCF cutoff scale trim up to ±5%".
+
+Status: **not resolved** (OQ-10 still needs real population data), but the present
+value is internally inconsistent and is recorded here as such.
+
+### Model-internal measurements — no hardware evidence required
+
+These characterise the implementation, not the instrument, and are fully
+reproducible from source. They are recorded because two of them bear on audibility
+claims the suite cannot currently see.
+
+- **In-band alias floor** (≤20 kHz, re the loudest harmonic, C6 saw): oscillator
+  alone **−111.5 dB**; with the VCF wide open at resonance 0 **−85 dB**; with cutoff
+  16 kHz and resonance ≈0.85 **−55.5 dB**; the same case with the filter run at 2×
+  the internal rate **−87.7 dB**. The dominant in-band artefact is the VCF's `tanh`
+  set, not the oscillator. `testAliasFloor` cannot observe this: it runs at
+  resonance 0, calibration 0, and stops sweeping at 20 kHz.
+- **Final half-band decimator at a 44.1 kHz host**: −0.85 dB at 20 kHz, −2.5 dB at
+  21 kHz, with fold-back rejection of only −31.7 dB for content landing at 19.1 kHz.
+  Both stages share the 63-tap kernel; the first stage's transition band is wide
+  enough that only the last stage matters.
+- **Measured as *not* audible**, recorded so the work is not repeated: widening the
+  BLEP kernel or interpolating its table more finely (already −111 dB); `double`
+  state in `OtaCascade` (bit-indistinguishable from `float` at 40 Hz / 200 Hz /
+  1 kHz cutoff, resonance 3.9); more Newton iterations (the 8-iteration cap is
+  reached 10–22 % of the time under hot resonant input, but the resulting error is
+  −103 dBc); antiderivative antialiasing on `outputSummerClip` (no measurable
+  aliasing at the rail, +3 dB or +6 dB in); and an exponential rather than linear
+  DCO ramp reset (2.2 µs against a 2273 µs period at A440 — the two shapes differ
+  only above ~72 kHz).
+
+### Explicit negatives — searched for, does not exist publicly
+
+Recorded so a later pass does not repeat the search: no published THD figure, SNR,
+dry noise floor, output level in Vrms/dBu, output impedance, headphone
+specification, frequency-response plot, filter-sweep spectra of a real 80017A,
+envelope captures at the VCA output, or null test against any emulation for a real
+JUNO-106. No DAFx or AES paper uses the JUNO-106 as a measured reference. No
+cents-scale chorus pitch-deviation measurement for a healthy unit exists. Roland's
+ACB material contains no numbers.
+
+Two leads remain unread: `analoguerenaissance.com/JUNOTEST/` (a JUNO-106 VCF/VCA and
+wave-generator test procedure, typically carrying scope photographs — its TLS
+certificate has expired, so a browser that accepts the warning is needed), and the
+Gearspace chorus-noise thread's attached spectra and WAV files.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 

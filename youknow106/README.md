@@ -191,6 +191,19 @@ fixed-seed voiced profile enables these full-scale mechanisms:
 | Sub level | up to ±3% |
 | Main-noise level at each card | up to ±3% |
 | Slow cutoff wander | d = 0.9992d + 0.004noise at 375 Hz; contributes 40d converter counts |
+| VCF stage input offsets | up to ±1.5 mV per transconductor stage |
+| VCF stage capacitor tolerance | up to ±2% per stage, staggering the four poles |
+| Spatial thermal gradient — card temperature | up to +4 °C across the six cards, plus a +15 °C warm-up over ~900 s, raising the OTA thermal voltage and its headroom |
+| Spatial thermal gradient — cutoff | **up to ±10% on each card's integrator gain, a monotonic ramp by card index (±165 cents)** |
+
+That last row is the largest per-card mechanism in the engine, and it is
+inconsistent with the others: it is roughly ten times what the temperature
+computation beside it supports, its shape is linear in card index while that
+temperature profile is exponential, and it applies on top of the two cutoff
+trimmer residuals above. It is recorded here rather than quietly omitted, and the
+2026-08-06 evidence-search section of
+[open questions](Docs/open-questions.md) states the case for reducing it against
+OQ-10.
 
 Every mechanism scales linearly with the knob. Seeds are fixed, so the same
 patch, settings and note sequence render identically; the instrument does not

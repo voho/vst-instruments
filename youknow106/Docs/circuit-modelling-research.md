@@ -438,6 +438,56 @@ and “measurement required” are valid results; a guessed value is not.
 JUNO-60 findings may be retained only as labelled comparative evidence. They
 cannot close a JUNO-106 task.
 
+### 2026-08-06 evidence search and implementation measurement
+
+A public-source evidence search plus an offline measurement of the shipping
+algorithms is recorded in the
+[2026-08-06 section of open questions](open-questions.md#evidence-search--2026-08-06).
+No hardware was measured. Summary of what moved:
+
+- **New anchored material.** The Service Notes specification page and complete
+  ADJUSTMENT table were read. The specification page independently corroborates
+  the cutoff range, all four modulation budgets and the LFO rate range. Two
+  entries are new evidence: `AUDIO OUTPUT L −30 / M −15 / H 0 dBm` bears on OQ-06,
+  and the `1.5ms to 12s` decay/release figure is recorded as an unreconciled
+  discrepancy against the model's firmware-derived 16.8 ms – 25.55 s. The
+  ADJUSTMENT table's **992 Hz at C6 VCF WIDTH point is a second cutoff anchor**
+  two octaves above the 248 Hz one the model already uses, and the 4.8 Vpp
+  self-oscillation amplitude is still asserted nowhere in the suite.
+- **OQ-01 is closer to derivable than the code comment states.** The integrator
+  capacitor the comment says the schematic does not print is reported as
+  `C3 = 0.1 µF` on p. 15, pending confirmation. Independently, an arithmetic check
+  shows `lfoThresholdRatio = 1/48` is inconsistent with the circuit by roughly 34×;
+  `R7/R6 = 33/47` lands the derived rates within 3 % of third-party measurements.
+  The mode ratio is unaffected and remains 1.6235 either way.
+- **OQ-04 is quantified.** The MN3009 is about 3 dB down over 12–16 kHz per its
+  datasheet, while the modelled support chain is 12 dB down at 10 kHz. Removing the
+  duplicated reconstruction pair does not reconcile it, so the corner values are
+  implicated. This is coupled to OQ-01: wet-path bandwidth constrains the BBD clock.
+- **OQ-02 gains a shape argument.** The µPC1252 is linear in dB by datasheet, so a
+  linear DAC→GC1 divider implies a linear-in-dB slider law. The voiced cubic's
+  endpoints are corroborated to within 5 % of the physically-derived span, but it
+  changes by only 2.5 dB across the lower half of the slider where the part would
+  give 10.4 dB.
+- **OQ-18 gains a measured comparison curve**, which confirms the exponential law,
+  the 1143 counts/octave slope and the 50 kHz endpoint, and localises the error to
+  the knee shape (up to 143 cents flat near a 16 kHz cutoff). The same source
+  documents the R-2R carry non-linearity as a real ±4.6 / +23.3 cent effect — the
+  mechanism this project removed was genuine, but belonged in the static
+  code-to-frequency map rather than as an impulse into a field the next converter
+  write overwrote.
+- **Implementation measurements.** The in-band alias floor is set by the VCF's
+  `tanh` set, not the oscillator: −111.5 dB for the oscillator alone against
+  −55.5 dB for a bright resonant patch, improving to −87.7 dB with the filter run
+  at twice the internal rate. `testAliasFloor` cannot observe this, since it runs
+  at resonance 0, calibration 0 and stops at 20 kHz. Separately, five plausible
+  refinements were measured and found inaudible; they are listed so they are not
+  attempted again.
+
+Third-party forum and open-source measurements cited there are **not** promoted to
+anchored, and the JUNO-6 chorus and ADSR data referenced remain labelled comparative
+evidence under the rule above.
+
 ## Sources
 
 Values were gathered from the instrument's service notes and owner's manual;
