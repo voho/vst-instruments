@@ -3276,7 +3276,6 @@ void testRailDroopTracksLoadAtOneWallClockRate()
         auto parameters = plainPatch();
         parameters.calibration = 1.0f;
         parameters.vcaLevel = 1.0f;
-        parameters.enableExponentialReset = false;
         parameters.enableVcfEarlyEffect = false;
         parameters.enableSpatialThermalGradient = false;
         engine.setParameters(parameters);
@@ -3553,7 +3552,6 @@ void testVcfStageOffsetsBelongToUnitCharacter()
         auto parameters = plainPatch();
         parameters.calibration = calibration;
         parameters.enableVcfStageOffsets = enabled;
-        parameters.enableExponentialReset = false;
         parameters.enableVcfEarlyEffect = false;
         parameters.enableSpatialThermalGradient = false;
         parameters.resonance = 0.85f;
@@ -3628,38 +3626,6 @@ void testVcfStageOffsetsAreLiveBeforeTheFirstSample()
     engine.reset();
     engine.setParameters(parameters);
     expectSeeded("after reset");
-}
-
-void testExponentialResetBelongsToUnitCharacter()
-{
-    // A bright, high-range hit is where the ramp resets often enough, and
-    // steeply enough, for the JFET RC discharge shape to register.
-    const auto run = [](float calibration, bool enabled) {
-        YouKnow106Engine engine;
-        engine.prepare(48000.0, blockSize, true);
-        auto parameters = plainPatch();
-        parameters.calibration = calibration;
-        parameters.enableExponentialReset = enabled;
-        parameters.range = DcoRange::Four;
-        parameters.cutoff = 0.95f;
-        parameters.resonance = 0.10f;
-        engine.setParameters(parameters);
-        engine.noteOn(84, 1.0f);
-        return render(engine, 24000);
-    };
-
-    // Unit Character zero is the calibrated-nominal reference: an optional
-    // mechanism has to be bit-identically absent there, not merely small.
-    const auto nominalOn = run(0.0f, true);
-    const auto nominalOff = run(0.0f, false);
-    expect(nominalOn.left == nominalOff.left && nominalOn.right == nominalOff.right,
-           "exponential DCO reset still colours the nominal model at Unit "
-           "Character zero");
-
-    const auto fullOn = run(1.0f, true);
-    const auto fullOff = run(1.0f, false);
-    expect(!(fullOn.left == fullOff.left),
-           "exponential DCO reset does nothing at full Unit Character");
 }
 
 void testVcfEarlyEffectBelongsToUnitCharacter()
@@ -4135,7 +4101,6 @@ int main()
     testSampleRateAndOversamplingConsistency();
     testVcfStageOffsetsBelongToUnitCharacter();
     testVcfStageOffsetsAreLiveBeforeTheFirstSample();
-    testExponentialResetBelongsToUnitCharacter();
     testVcfEarlyEffectBelongsToUnitCharacter();
     testSpatialThermalGradientBelongsToUnitCharacter();
     testDeterminismAndSilence();

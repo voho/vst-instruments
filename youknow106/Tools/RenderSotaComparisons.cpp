@@ -75,21 +75,6 @@ Take renderOpAmpSlewTake(bool enableSlewLimiting)
     return take;
 }
 
-// 5. Exponential DCO Ramp Reset Dynamics: Bright high note lead
-Take renderExponentialResetTake(bool enableExponentialReset)
-{
-    auto p = defaultPanel();
-    p.enableExponentialReset = enableExponentialReset;
-    p.range = DcoRange::Four;
-    p.sawEnabled = true;
-    p.cutoff = 0.95f;
-    p.resonance = 0.10f;
-    Take take(p);
-    take.rest(0.05);
-    take.hit(84, 0.95f, 1.0, 0.3);
-    return take;
-}
-
 // 6. IR3109 VCF BJT Early Effect: Resonant filter sweep
 Take renderVcfEarlyEffectTake(bool enableVcfEarlyEffect)
 {
@@ -172,10 +157,9 @@ struct Comparison
     Take (*render)(bool);
 };
 
-const std::array<Comparison, 8> comparisons {{
+const std::array<Comparison, 7> comparisons {{
     { "01-vcf-transistor-offsets",        renderVcfOffsetsTake },
     { "02-opamp-slew-limiting",           renderOpAmpSlewTake },
-    { "05-exponential-dco-reset",         renderExponentialResetTake },
     { "06-vcf-early-effect",              renderVcfEarlyEffectTake },
     { "07-spatial-thermal-gradient",      renderSpatialThermalGradientTake },
     { "08-chorus-thiran-clock-bleed",     renderChorusClockBleedTake },

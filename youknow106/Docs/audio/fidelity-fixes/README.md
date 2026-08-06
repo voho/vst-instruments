@@ -20,10 +20,10 @@ is a change nobody can hear.
 
 | Take | Diff peak (dBc) | Diff RMS (dBc) |
 | --- | ---: | ---: |
-| `01-unison-tuning` | -29.6 | -39.7 |
-| `02-output-summer-drive` | -27.0 | -41.0 |
-| `03-chorus-wet` | -33.4 | -46.0 |
-| `04-resonant-sweep` | -24.7 | -39.8 |
-| `05-saw-bass` | -27.6 | -38.1 |
-| `06-unit-character-sweep` | -28.5 | -40.6 |
-| `07-high-lead` | -59.6 | -72.9 |
+| `01-unison-tuning` | -20.4 | -32.8 |
+| `02-output-summer-drive` | -10.8 | -32.5 |
+| `03-chorus-wet` | -12.6 | -32.8 |
+| `04-resonant-sweep` | -2.5 | -32.2 |
+| `05-saw-bass` | -9.3 | -35.6 |
+| `06-unit-character-sweep` | -7.0 | -29.9 |
+| `07-high-lead` | -12.0 | -31.6 |

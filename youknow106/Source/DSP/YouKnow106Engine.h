@@ -132,7 +132,6 @@ struct EngineParameters
     // --- State-of-the-Art Physical Circuit Simulation Toggles ----------------
     bool enableVcfStageOffsets { true };
     bool enableOpAmpSlewLimiting { true };
-    bool enableExponentialReset { true };
     bool enableVcfEarlyEffect { true };
     bool enableSpatialThermalGradient { true };
     // Only the heterodyne clock-bleed tone is implemented (see

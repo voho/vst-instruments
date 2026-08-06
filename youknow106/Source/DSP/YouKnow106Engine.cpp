@@ -2981,30 +2981,23 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         ? 2.0f * clamp01(static_cast<float>(phase / rise)) - 1.0f
         : 1.0f - 2.0f * static_cast<float>((phase - rise) / reset);
 
-    if (parameters.enableExponentialReset && parameters.calibration > 0.0f)
-    {
-        const float expRounding = 0.05f * parameters.calibration;
-        sawNaive = sawNaive - expRounding * std::max(sawNaive, 0.0f) * sawNaive;
-    }
-
-    // The ramp reset corner slope discontinuities are repaired with slope residuals.
+    // Both reset corners are slope discontinuities, repaired with slope
+    // residuals whose amounts come from the waveform actually being rendered.
+    // That correspondence is the whole point: a residual computed for a
+    // different shape than the naive signal carries does not cancel, it just
+    // adds a different error.
     const float slopeAtStart = 2.0f / static_cast<float>(rise);
     const float slopeAtEnd = slopeAtStart;
-    const float fallSlopeStart = (parameters.enableExponentialReset && parameters.calibration > 0.0f)
-        ? (-2.0f * (1.0f + 3.0f * parameters.calibration) / static_cast<float>(reset))
-        : (-2.0f / static_cast<float>(reset));
-    const float fallSlopeEnd = (parameters.enableExponentialReset && parameters.calibration > 0.0f)
-        ? (fallSlopeStart * std::exp(-4.0f * parameters.calibration))
-        : fallSlopeStart;
+    const float fallSlope = -2.0f / static_cast<float>(reset);
     const float incrementF = static_cast<float>(increment);
 
     for (double base = 0.0; base <= lastCycle; base += 1.0)
     {
         if (insideThisSample(base + rise))
-            addSlope(dco.saw, (fallSlopeStart - slopeAtEnd) * incrementF,
+            addSlope(dco.saw, (fallSlope - slopeAtEnd) * incrementF,
                      samplesAgo(base + rise));
         if (insideThisSample(base + 1.0))
-            addSlope(dco.saw, (slopeAtStart - fallSlopeEnd) * incrementF,
+            addSlope(dco.saw, (slopeAtStart - fallSlope) * incrementF,
                      samplesAgo(base + 1.0));
     }
 
