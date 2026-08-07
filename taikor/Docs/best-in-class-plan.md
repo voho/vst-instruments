@@ -179,15 +179,19 @@ each lands with a test in `Tests/` that fails without it.
   measurement puts the two within a factor of two of cancelling, so it is not a
   prediction worth asserting.
 
-- [ ] **4. Let a stroke damp the head it lands on.** A bachi meeting a ringing
-  membrane is a mass arriving on a moving surface: with restitution `e` it
-  removes the fraction `(1−e²)·ψ²·m/(M+m)` of what is moving, where `ψ` is the
-  mode shape at the new strike point, `m` the stick's mass and `M` the head's
-  modal mass. Applied over the contact duration to the membrane modes and the
-  continuum of every voice still sounding on the same drum. Closes gap 3.
-  *Verified by*: eight identical strokes rendered by the engine must be
-  measurably quieter than eight copies of one stroke summed offline, while the
-  first stroke's own attack is bit-identical.
+- [x] **4. Let a stroke damp the head it lands on.** A bachi meeting a ringing
+  membrane is a collision, and a collision with restitution `e` leaves a mass
+  `M` moving at `v` going at `v(M − em)/(M + m)`. The mass the stick meets is
+  each mode's own referred to the contact point, `M/ψ²` with `ψ` the mode shape
+  there, so a centre stroke resets the boom, an edge stroke leaves it and dries
+  the edge instead, and the high modes — lighter than a bachi — are turned
+  round. Applied to the membrane modes and the continuum of every voice still
+  sounding on the same drum. Closes gap 3.
+  *Verified by*: what eight identical strokes leave ringing must be at least
+  3 dB under eight copies of one stroke summed offline (it is 3.2), while the
+  first stroke is bit-identical to the single one; and a ghost stroke on the
+  same drum must take a real bite out of what is ringing while the same stroke
+  an octave away takes none.
 
 - [ ] **5. Give the tack line a real voice.** Replace the inaudible chatter with
   byō rattle that scales with the rim contact force and with the Stick Noise

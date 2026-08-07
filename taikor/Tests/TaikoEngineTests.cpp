@@ -1236,6 +1236,152 @@ void testTheDrumSoundsLikeADrumAndNotLikeATone()
                 "the stroke ends as a sine");
 }
 
+// A drum has one head, and a stroke lands on whatever that head is already
+// doing. Every stroke used to build an independent copy of the modal bank and
+// the voices only summed, so eight identical strokes were bit-identical to
+// eight copies of one stroke added offline - which is exactly the arithmetic a
+// sample library does, and the place a model has no excuse for matching it.
+void testAStrokeLandsOnAHeadThatIsAlreadyMoving()
+{
+    auto parameters = defaultParameters();
+    // Every stroke identical, so the comparison below is against the engine's
+    // own output rather than against a different set of jittered strokes, and
+    // quiet enough that no part of the output stage is doing anything
+    // non-linear to either side of it.
+    parameters.humanise = 0.0f;
+    parameters.drive = 0.0f;
+    parameters.outputGain = 0.02f;
+
+    constexpr int spacing = 3000;   // 62.5 ms, a fast but playable roll
+    constexpr int strokes = 8;
+    constexpr int total = strokes * spacing + 48000;
+
+    // Rendered one sample at a time so a stroke can be placed exactly, which is
+    // what makes the offline superposition below an exact prediction of the old
+    // behaviour rather than an approximation of it.
+    const auto rollOf = [&parameters] (int count)
+    {
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, 1);
+        engine.reset();
+
+        std::vector<float> mono (static_cast<std::size_t> (total));
+        float left = 0.0f;
+        float right = 0.0f;
+        int placed = 0;
+        for (int sample = 0; sample < total; ++sample)
+        {
+            if (placed < count && sample == placed * spacing)
+            {
+                engine.trigger (taikor::Articulation::Don, 0, 0.9f);
+                ++placed;
+            }
+            engine.process (&left, &right, 1);
+            mono[static_cast<std::size_t> (sample)] = 0.5f * (left + right);
+        }
+        return mono;
+    };
+
+    const auto single = rollOf (1);
+    const auto roll = rollOf (strokes);
+
+    std::vector<double> superposed (static_cast<std::size_t> (total), 0.0);
+    for (int stroke = 0; stroke < strokes; ++stroke)
+        for (int sample = stroke * spacing; sample < total; ++sample)
+            superposed[static_cast<std::size_t> (sample)] +=
+                single[static_cast<std::size_t> (sample - stroke * spacing)];
+
+    // Up to the second stroke the two must agree exactly: nothing has landed on
+    // anything yet, and a mechanism that quietly changed a single stroke would
+    // not be this one.
+    double firstStrokeDifference = 0.0;
+    for (int sample = 0; sample < spacing; ++sample)
+        firstStrokeDifference = std::max (
+            firstStrokeDifference,
+            std::abs (superposed[static_cast<std::size_t> (sample)]
+                      - roll[static_cast<std::size_t> (sample)]));
+    expect (firstStrokeDifference < 1.0e-6,
+            "the first stroke of a roll must be untouched by the strokes after it");
+
+    // Measured over what is left once the last stick has come off the head.
+    // Summing the whole take instead measures the eight attacks, which are the
+    // one part of a roll no head damping can touch: they are the blows
+    // themselves. What the mechanism decides is how much of each of them is
+    // still there afterwards, and by the end of eight strokes the first one's
+    // fundamental has been sat on seven times.
+    constexpr int afterLastStroke = strokes * spacing;
+    double engineEnergy = 0.0;
+    double summedEnergy = 0.0;
+    for (int sample = afterLastStroke; sample < total; ++sample)
+    {
+        const double engineSample = roll[static_cast<std::size_t> (sample)];
+        const double summedSample = superposed[static_cast<std::size_t> (sample)];
+        engineEnergy += engineSample * engineSample;
+        summedEnergy += summedSample * summedSample;
+    }
+
+    expect (summedEnergy > 0.0, "the roll produced nothing to measure");
+    const auto shortfall = 10.0 * std::log10 (engineEnergy / std::max (summedEnergy, 1.0e-30));
+    expect (shortfall < -3.0,
+            "what a roll leaves ringing must be well below the same strokes added "
+            "offline, because each stick lands on a head the one before it left "
+            "moving - it is only " + std::to_string (-shortfall) + " dB down");
+
+    // And it has to be one drum. A stroke an octave away is a different
+    // instrument standing beside it and cannot reach this head at all.
+    auto probe = parameters;
+    // Full velocity depth, so the interrupting stroke can be made genuinely
+    // quiet: it has to be measurably weaker than what it is landing on, or the
+    // window below is measuring the new stroke rather than the old one.
+    probe.velocityDepth = 1.0f;
+
+    const auto acrossDrums = [&probe] (int interruptingOctave)
+    {
+        taikor::TaikoEngine engine;
+        engine.setParameters (probe);
+        engine.prepare (48000.0, 1);
+        engine.reset();
+
+        std::vector<float> mono (static_cast<std::size_t> (total));
+        float left = 0.0f;
+        float right = 0.0f;
+        engine.trigger (taikor::Articulation::Don, 0, 1.0f);
+        for (int sample = 0; sample < total; ++sample)
+        {
+            // A Tsu lands near the middle, where the fundamental is. An octave
+            // below the playable range means no second stroke at all.
+            if (sample == 12000 && interruptingOctave >= taikor::lowestOctaveOffset)
+                engine.trigger (taikor::Articulation::Tsu, interruptingOctave, 0.02f);
+            engine.process (&left, &right, 1);
+            mono[static_cast<std::size_t> (sample)] = 0.5f * (left + right);
+        }
+        return mono;
+    };
+
+    const auto reported = taikor::TaikoEngine::measure (probe, 0);
+    // Half a second after the interruption and later, so the ghost stroke's own
+    // attack is long gone and what is left in this band is the first stroke's
+    // fundamental.
+    const auto remaining = [&reported] (const std::vector<float>& samples)
+    {
+        return binMagnitude (samples, reported.loadedFundamentalHz, 48000.0, 24000u,
+                             44000u);
+    };
+
+    const auto interrupted = remaining (acrossDrums (0));
+    const auto untouched = remaining (acrossDrums (2));
+    expect (untouched > 0.0, "the drum must still be ringing to measure");
+    expect (interrupted < untouched * 0.85,
+            "a ghost stroke on the same drum must take a real bite out of what is "
+            "still ringing there");
+    // The control: the same ghost stroke on the drum an octave up leaves the
+    // first one exactly where it was, because it is not the same head.
+    const auto undisturbed = remaining (acrossDrums (-99));
+    expect (std::abs (untouched - undisturbed) < undisturbed * 0.02,
+            "a stroke on a different drum must not damp this one");
+}
+
 // The attack pitch glide is the head stretching itself. A membrane clamped at
 // its rim cannot move without getting longer, and a longer head is a tighter
 // one, so the tension rises with the square of the displacement. Everything
@@ -3036,6 +3182,7 @@ int main()
     testVoiceStealingStaysBounded();
     testTheDrumSoundsLikeADrumAndNotLikeATone();
     testShellResonanceHasNoStepInIt();
+    testAStrokeLandsOnAHeadThatIsAlreadyMoving();
     testTheAttackGlideComesFromTheHead();
     testHeadStiffnessOpensTheModalRatios();
     testTheContinuumFollowsTheHead();

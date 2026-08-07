@@ -399,6 +399,30 @@ power of the radius, so the smallest head at no tension reached fifteen
 semitones of bend before it was bounded, and the factory drum reaches a tenth of
 a tension at full velocity.
 
+### A drum has one head
+
+A stroke lands on whatever the head is already doing. The bachi arriving on a
+moving membrane is a collision, and a collision with restitution *e* leaves a
+mass *M* moving at *v* going at *v(M − em)/(M + m)*: the stick takes some of
+what is there and gives back only part of it. The mass it meets is not the
+whole head but each mode's own, referred to the point of contact — a mode's
+modal mass divided by the square of its shape under the stick.
+
+Three things follow, and none of them are written down anywhere as rules. A
+centre stroke very largely resets the drum's boom, because a bachi is heavier
+than the fundamental's modal mass and lands where that mode is largest. An edge
+stroke leaves the boom alone and dries up the edge instead, because that is
+where its shape is. And the high modes, whose modal masses are a fraction of a
+stick's, are simply turned round by it.
+
+That is the whole of the answer to what a sample library calls the machine-gun
+problem, and it is not a variation mechanism: it is the reason a roll on one
+drum is not eight separate drums. Eight identical strokes 62 ms apart used to be
+bit-identical to eight copies of one stroke added together offline; what they
+leave ringing afterwards is now more than three decibels under what that
+arithmetic predicts, while the strokes themselves are untouched. Round robins
+are an attempt to hide the fact that a sampler cannot do this at all.
+
 ### Two sticks, and nothing else
 
 The twelfth stroke claps the bachi together and never touches the drum, so it is

@@ -395,6 +395,10 @@ private:
         // frequency the head has been stretched to.
         float radiationPrefactor { 0.0f };
         std::uint8_t circumferentialOrder { 0 };
+        // Which row of the mode table this came from, so a later stroke can
+        // find the mode's shape at its own contact point without the whole
+        // Bessel solve being redone per mode. Membrane modes only.
+        std::uint8_t modeEntry { 0 };
         // log(level / retirement floor), so the lifetime below can be redone
         // from a new decay rate without the whole bank's levels to hand. Zero
         // for a mode that was never audible.
@@ -768,6 +772,17 @@ private:
                                   float& impedance) noexcept;
     void buildVoiceModes (Voice& voice, const DrumState& drum, const StickState& stick,
                           const StrikeProfile& profile, float extraDamping) noexcept;
+    // A bachi arriving on a head that is already sounding takes energy out of
+    // it. Every stroke after the first on one drum lands on a moving membrane,
+    // and the stick is a mass meeting it: with restitution e it removes
+    // (1 - e^2) of the share of the mode's momentum it can reach, which is set
+    // by its own mass against the mode's and by the mode's shape under the
+    // contact. Nothing else in this instrument couples two strokes together,
+    // and without it a roll is arithmetic - eight identical strokes were
+    // bit-identical to eight copies of one added offline.
+    void dampRingingHeads (int excludedSlot, int octave, const StrikeProfile& profile,
+                           float strikeRadius, const DrumState& drum,
+                           float strikerMass) noexcept;
     void scheduleContacts (Voice& voice, const StrikeProfile& profile,
                            float contactSeconds, float peakForce,
                            float noiseLevel) noexcept;

@@ -1513,6 +1513,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.lossOmegaSquared = lossOmegaSquared;
                 mode.radiationPrefactor = radiationPrefactor;
                 mode.circumferentialOrder = 0;
+                mode.modeEntry = static_cast<std::uint8_t> (entryIndex);
                 mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 // Axisymmetric modes look identical from both sides of the
@@ -1612,6 +1613,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.lossOmegaSquared = lossOmegaSquared;
                 mode.radiationPrefactor = radiationPrefactor;
                 mode.circumferentialOrder = static_cast<std::uint8_t> (order);
+                mode.modeEntry = static_cast<std::uint8_t> (entryIndex);
                 mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 mode.micLeft = observedL;
@@ -1958,6 +1960,107 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_));
 }
 
+void TaikoEngine::dampRingingHeads (int excludedSlot, int octave,
+                                    const StrikeProfile& profile, float strikeRadius,
+                                    const DrumState& drum, float strikerMass) noexcept
+{
+    // Only a stroke that actually lands on the hide. Two sticks clapped
+    // together never touch the drum, and a Katsu is the bachi on the wooden
+    // body - the profile's own membrane gain is the statement of how much of
+    // the stroke reaches the head, so it is what scales this.
+    if (! profile.usesDrumBody || ! (profile.membraneGain > 0.0f))
+        return;
+
+    const auto& entries = membraneModes();
+    const float rho = clampFloat (strikeRadius, 0.0f, 0.995f);
+    const float area = piFloat * drum.radius * drum.radius;
+    // How much of the stroke actually reaches the hide. It is the same figure
+    // the excitation is scaled by, so a ghost stroke that barely drives the
+    // head barely stops it either.
+    const float reach = strikerMass * profile.membraneGain;
+
+    // What each mode keeps. A contact lasting a millisecond is instantaneous
+    // against a mode whose period is twenty, so the collision is the textbook
+    // one: a mass m meeting a mass M moving at v leaves it at v(M - e m)/(M + m).
+    // The mass the stick actually meets is the mode's own referred to the
+    // contact point, M / shape^2 - which is why a stroke out by the tacks
+    // leaves a centre boom running and dries up the edge instead, and why the
+    // high modes, whose modal masses are a fraction of a bachi's, are simply
+    // bounced back.
+    std::array<float, modeEntryCount> retained {};
+    for (int index = 0; index < modeEntryCount; ++index)
+    {
+        const auto& entry = entries[static_cast<std::size_t> (index)];
+        const int order = entry.circumferentialOrder;
+        const auto besselAtZero =
+            static_cast<float> (besselJ (order + 1, entry.besselZero));
+        const float besselSquared = std::max (besselAtZero * besselAtZero, 1.0e-9f);
+        // The same modal mass buildVoiceModes drives through, so the two cannot
+        // disagree about how heavy a mode is.
+        const float modalMass = (order == 0 ? 1.0f : 0.5f) * area * besselSquared
+                              * drum.batterDensity;
+        const auto shape =
+            static_cast<float> (besselJ (order, entry.besselZero * rho));
+        // A mode with a circumferential order comes as a pair a quarter of its
+        // own period apart, so the contact meets the two at the cosine and the
+        // sine of one angle. Both branches are damped by the mean of the two,
+        // because the branch a mode ended up in is not stored and the stroke
+        // that is arriving lands at its own angle anyway.
+        const float angular = order == 0 ? 1.0f : 0.5f;
+
+        const float massRatio = reach * shape * shape * angular
+                              / std::max (modalMass, 1.0e-6f);
+        retained[static_cast<std::size_t> (index)] =
+            (1.0f - restitution * massRatio) / (1.0f + massRatio);
+    }
+
+    // And the continuum above them. It stands for the short-wavelength modes,
+    // whose modal masses are far below a bachi's, so the stick is a wall to
+    // them and what survives is whatever share of them the contact did not
+    // cover. Their shapes pile up against the rim, so that share follows the
+    // same function of radius the strike lights them with, normalised so it is
+    // a fraction rather than a gain: a stroke out by the tacks takes nearly all
+    // of it and one over the middle barely touches it.
+    constexpr float edgeBoostAtRim = edgeBoostBase + 2.0f * edgeBoostSlope;
+    const float coverage =
+        clampFloat (profile.membraneGain
+                        * (edgeBoostBase + edgeBoostSlope * rho * (1.0f + rho))
+                        / edgeBoostAtRim,
+                    0.0f, 1.0f);
+    const float continuumGain = 1.0f - coverage;
+
+    for (int slot = 0; slot < maxVoices; ++slot)
+    {
+        if (slot == excludedSlot)
+            continue;
+
+        auto& voice = voices_[static_cast<std::size_t> (slot)];
+        if (! voice.active || voice.octaveOffset != octave)
+            continue;
+
+        for (int index = 0; index < voice.activeModeCount; ++index)
+        {
+            auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (! mode.membrane)
+                continue;
+
+            // Scaling both states by the same factor is exactly scaling the
+            // mode's output from here on, which is what the hand does elsewhere
+            // for the same reason. The factor may be negative, and that is the
+            // collision rather than a mistake: a mode light enough against the
+            // stick is turned round by it, and it cannot come back harder than
+            // the restitution allows.
+            const auto gain =
+                static_cast<double> (retained[static_cast<std::size_t> (mode.modeEntry)]);
+            mode.resonator.y1 *= gain;
+            mode.resonator.y2 *= gain;
+        }
+
+        for (auto& band : voice.continuum)
+            band.envelope *= continuumGain;
+    }
+}
+
 void TaikoEngine::scheduleContacts (Voice& voice, const StrikeProfile& profile,
                                     float contactSeconds, float peakForce,
                                     float noiseLevel) noexcept
@@ -2142,6 +2245,12 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     solveContact (strikerMass, targetImpedance, profile, applied_.bachiHardness,
                   impactSpeed, contactSeconds, peakForce);
     contactSeconds *= 1.0f + 0.08f * humanise * signedUnitFromHash (seed + 4u);
+
+    // Before anything is built: the head this stroke is about to land on may
+    // already be moving, and a stick arriving on a moving membrane takes energy
+    // out of it. Only the drum this stroke is played on, and only the voices
+    // that are not this one.
+    dampRingingHeads (slot, octave, profile, voice.strikeRadius, drum, strikerMass);
 
     // The free hand resting on the head, for the muted strokes.
     const float extraDamping = profile.muteAmount;
