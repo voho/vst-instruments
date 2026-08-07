@@ -1351,12 +1351,13 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         handT60 = std::exp(lerp(std::log(2.60f), std::log(0.32f),
                                 parameters.muteDamping));
     }
-    else if (voice.playStyle == PlayStyle::Harmonics)
-    {
-        // The touching finger stays near the node, so the harmonic rings but
-        // not forever.
-        t60 = std::min(t60, 3.8f);
-    }
+    // A harmonic used to clamp T60 to 3.8 s here, standing in for the touching
+    // finger. The finger is now in the loop as the node touch it actually is,
+    // and it lifts once the note has formed, so the surviving partials decay
+    // at the string's own rate - which is why a natural harmonic on an open
+    // string outlasts the fretted note rather than dying before it. Measured
+    // on the open A2, the clamp cost the octave partial 16 dB/s of extra loss
+    // that nothing physical was asking for.
 
     // High-frequency decay target relative to the fundamental's decay, at the
     // `fHigh` reference below.
@@ -2449,10 +2450,35 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
                                    + (strokeIsUp ? 1 : 0)) * 17)
                               ^ static_cast<std::uint32_t>(noteSequence_ * 2654435761u));
     voice.artifactNoiseState = hash32(voice.noiseState ^ 0xa53c9e17u);
-    // The natural-harmonic touch divides the string at its midpoint node and
-    // sounds the octave above the fretted note.
-    const int harmonicOffset = playStyle == PlayStyle::Harmonics ? 12 : 0;
-    voice.baseFrequency = midiToHz(static_cast<float>(midiNote + harmonicOffset));
+    voice.baseFrequency = midiToHz(static_cast<float>(midiNote));
+
+    // The harmonic touch. The finger rests on the midpoint node of the
+    // sounding length, so every odd partial - the fundamental included - has
+    // an antinode under it and is removed, while every even one has a node
+    // there and is left exactly alone in both magnitude and phase. The octave
+    // is therefore what the string does, not a transposition of it: the loop
+    // still runs at the fretted pitch and keeps that note's inharmonicity,
+    // decay targets and pickup-comb geometry.
+    //
+    // 0.92 rather than 1.0 because a player's finger is a light contact rather
+    // than a hard termination; against a loop gain near 0.996 that removes the
+    // suppressed partials inside a couple of round trips anyway.
+    if (playStyle == PlayStyle::Harmonics)
+    {
+        voice.touchFraction = 0.5f;
+        voice.touchDepth = 0.92f;
+        voice.touchHoldRemaining =
+            static_cast<int>(0.045 * sampleRate_);
+        voice.touchReleaseStep = 0.92f
+            / std::max(1.0f, 0.080f * static_cast<float>(sampleRate_));
+    }
+    else
+    {
+        voice.touchFraction = 0.0f;
+        voice.touchDepth = 0.0f;
+        voice.touchHoldRemaining = 0;
+        voice.touchReleaseStep = 0.0f;
+    }
 
     // Each physical string has a slightly different saddle/bridge rattle.
     // Its variation is seeded by the note sequence, never by wall-clock time,
@@ -2662,6 +2688,9 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.releaseGainTarget = 1.0f;
     voice.releaseGainCoefficient = 0.0f;
     voice.legatoBlend = 1.0f;
+    voice.touchDepth = 0.0f;
+    voice.touchHoldRemaining = 0;
+    voice.touchFraction = 0.0f;
     // Every retained filter state must clear with the voice, or a silenced
     // string could leak residue into a later, otherwise identical render and
     // break the engine's determinism contract.
@@ -2925,10 +2954,38 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     auto& vertical = voice.vertical;
     auto& horizontal = voice.horizontal;
 
+    // The touching finger, if there is one. It is held while the note forms
+    // and then lifts: by then the partials it removed have gone and cannot be
+    // re-excited, so releasing it is free and stops paying for two extra
+    // delay reads.
+    if (voice.touchDepth > 0.0f)
+    {
+        if (voice.touchHoldRemaining > 0)
+        {
+            --voice.touchHoldRemaining;
+        }
+        else
+        {
+            voice.touchDepth -= voice.touchReleaseStep;
+            if (voice.touchDepth < 1.0e-4f)
+                voice.touchDepth = 0.0f;
+        }
+    }
+    const float touchWeight = 0.5f * voice.touchDepth;
+    const float touchDelayScale = 1.0f + voice.touchFraction;
+
     // Loop reads and the damping/dispersion chain.
     const auto advanceLoop = [&] (PolarisationLoop& loop, float extraFeedback)
     {
         float sample = loop.readFractional(loop.currentDelay);
+        if (touchWeight > 0.0f)
+        {
+            // (1 - d/2) x(n) + (d/2) x(n - M), written as one blend so the
+            // untouched path stays exactly the same instruction sequence.
+            const float touched = loop.readFractional(
+                loop.currentDelay * touchDelayScale);
+            sample += touchWeight * (touched - sample);
+        }
         sample = loop.dispersion1.process(sample, loop.dispersionLowCoefficient);
         sample = loop.dispersion2.process(sample, loop.dispersionLowCoefficient);
         sample = loop.dispersion3.process(sample, loop.dispersionLowCoefficient);

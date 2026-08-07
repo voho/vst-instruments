@@ -105,7 +105,7 @@ from the playable instrument.
 | 15 | D#0 | Sustain (default) — the ordinary ringing pick |
 | 16 | E0 | Palm mute — damping follows the Mute Damp control, from a loose half-mute to a tight metal chug at the firm end |
 | 17 | F0 | Hammer-on / pull-off — continues a sounding string legato within a nine-fret reach, fingered attack, no plectrum noise |
-| 18 | F#0 | Natural harmonic — glassy octave harmonic with a soft node-focused touch |
+| 18 | F#0 | Natural harmonic — a finger resting on the string's midpoint node, so the octave is what the string does rather than a transposition of it |
 
 Notes 19..27 are ignored, and notes 28..86 are playable on a 22-fret,
 eight-string Drop-E instrument tuned
@@ -192,6 +192,22 @@ All Sound Off and All Notes Off.
   window are smoothsteps, so its area is exactly what the symmetric raised
   cosine it replaced had, and the asymmetry changes the attack's spectrum
   without changing how hard the note lands.
+- **Touch harmonics:** a light finger on the string is a point loss, and mode
+  `n`'s displacement under it goes as `sin(n pi p)`, so the energy the contact
+  removes per round trip goes as `sin^2(n pi p)`. Condensed into the single
+  delay loop that is exactly a one-tap FIR, `(1 - d/2) + (d/2) z^-M` with
+  `M = p * period` — unity where the touch sits on a node, `1 - d` where it
+  sits on an antinode. Both coefficients are positive and sum to one, so it
+  can never exceed unity gain inside the string's feedback loop. The natural
+  harmonic rests that finger on the midpoint, which removes every odd partial
+  including the fundamental and leaves every even one alone in magnitude *and*
+  phase, so the octave arises from the string instead of from retuning the
+  loop: the string keeps its own length, inharmonicity, decay targets and
+  pickup comb. The finger lifts once the note has formed — the partials it
+  removed cannot be re-excited — which stops paying for the two extra delay
+  reads and lets the harmonic ring as long as the string does. The clamp that
+  used to stand in for the finger cost the open A2's octave partial 16 dB per
+  second of loss nothing physical was asking for.
 - **Frets:** fretting position drives sounding length, inharmonicity,
   pickup comb geometry, and Fleischer-style dead-spot damping (deeper on
   the bolt-on end of the construction axis). The Artifacts path can open a

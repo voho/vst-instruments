@@ -168,7 +168,7 @@ verification is by a test in `Tests/` that fails without the change.
   the hand must relax to the nut once the phrase ends, so the same E4 is open
   again.
 
-- [ ] **2. Harmonics become a real node touch.** Replace the octave transpose
+- [x] **2. Harmonics become a real node touch.** Replace the octave transpose
   with a point-touch loss inside the loop: a one-tap FIR `(1 - d/2) + (d/2)z^-M`
   at `M = p * period`, whose magnitude is exactly the `sin^2(n*pi*p)`
   mode-shape weighting of a light finger at fractional position `p`. At

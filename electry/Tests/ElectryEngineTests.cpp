@@ -192,6 +192,19 @@ struct ElectryEngineTestAccess
         return -1;
     }
 
+    // The touching finger's live depth and position, so the harmonic checks
+    // can assert on the filter that actually runs rather than on a copy of it.
+    static float touchDepth(const ElectryEngine& engine, int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)].touchDepth;
+    }
+
+    static float touchFraction(const ElectryEngine& engine,
+                               int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)].touchFraction;
+    }
+
     // Where the fretting hand's index finger currently sits, so the allocator
     // checks can assert on the state that drove the choice rather than only on
     // the choice itself.
@@ -2327,6 +2340,131 @@ void testStringAllocationAndPolyphony()
            "restruck note did not reuse its string");
     expect(TestAccess::stringForNote(engine, 45) == firstString,
            "restruck note moved to another string");
+}
+
+// The natural harmonic is a finger resting on a node, not a transposition.
+// The distinction is measurable in three places: which partials survive, that
+// the loop still runs at the fretted pitch (so the surviving partial decays at
+// the rate that partial has when the note is picked ordinarily), and that the
+// filter doing it cannot exceed unity gain anywhere.
+void testTouchHarmonics()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.bodyResonance = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    engine.setParameters(parameters);
+
+    // The touch filter is (1 - d/2) + (d/2) z^-M. Both coefficients are
+    // non-negative and sum to one, so its magnitude is bounded by one at every
+    // frequency and every depth - which is what makes it safe inside the
+    // string's feedback loop. Checked here against the closed form because the
+    // loop has no other guard against a gain above unity.
+    double worstMagnitude = 0.0;
+    for (int depthStep = 0; depthStep <= 20; ++depthStep)
+    {
+        const double depth = 0.05 * depthStep;
+        for (int phaseStep = 0; phaseStep <= 720; ++phaseStep)
+        {
+            const double angle = 3.14159265358979323846 * phaseStep / 360.0;
+            const double real = (1.0 - 0.5 * depth) + 0.5 * depth * std::cos(angle);
+            const double imag = -0.5 * depth * std::sin(angle);
+            worstMagnitude = std::max(worstMagnitude, std::hypot(real, imag));
+        }
+    }
+    expect(worstMagnitude <= 1.0 + 1.0e-12,
+           "the touch filter exceeds unity gain somewhere ("
+               + std::to_string(worstMagnitude) + ")");
+
+    // The touch is exactly absent for every other articulation, so an ordinary
+    // note pays neither the arithmetic nor a change of sound.
+    engine.reset();
+    engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+    engine.noteOn(45, 0.8f);
+    const int sustainString = TestAccess::stringForNote(engine, 45);
+    expect(sustainString >= 0
+               && TestAccess::touchDepth(engine, sustainString) == 0.0f,
+           "an ordinary picked note put a finger on the string");
+
+    engine.reset();
+    engine.noteOn(styleKeyswitch(PlayStyle::Harmonics), 1.0f);
+    engine.noteOn(45, 0.8f);
+    const int harmonicString = TestAccess::stringForNote(engine, 45);
+    expect(harmonicString >= 0
+               && TestAccess::touchDepth(engine, harmonicString) > 0.5f
+               && std::abs(TestAccess::touchFraction(engine, harmonicString)
+                           - 0.5f) < 1.0e-6f,
+           "the harmonic did not place a finger on the midpoint node");
+    {
+        // The finger lifts and the extra reads stop; the harmonic keeps
+        // ringing because the partials it removed cannot come back.
+        StereoBuffer settle(static_cast<int>(0.5 * sampleRate));
+        renderInto(engine, settle);
+        expect(TestAccess::touchDepth(engine, harmonicString) == 0.0f,
+               "the touching finger never lifted");
+    }
+
+    const double f0 = midiHz(45);
+    const auto sustain = renderNote(engine, sampleRate, 45, 0.8f,
+                                    PlayStyle::Sustain, 2.4);
+    const auto harmonic = renderNote(engine, sampleRate, 45, 0.8f,
+                                     PlayStyle::Harmonics, 2.4);
+
+    const int bodyStart = static_cast<int>(0.10 * sampleRate);
+    const int bodyLength = static_cast<int>(0.35 * sampleRate);
+    const auto partial = [&] (const StereoBuffer& buffer, int n)
+    {
+        return dftMagnitude(buffer.left, bodyStart, bodyLength, sampleRate,
+                            f0 * n);
+    };
+
+    // Odd partials have an antinode under the midpoint finger and go; even
+    // ones have a node there and are left alone. That is the whole mechanism,
+    // and it is the reason the octave appears at all.
+    const double harmonicSecond = partial(harmonic, 2);
+    for (const int odd : { 1, 3, 5 })
+    {
+        const double suppression = decibels(partial(harmonic, odd)
+                                            / std::max(harmonicSecond, 1.0e-15));
+        expect(suppression < -20.0,
+               "partial " + std::to_string(odd)
+                   + " survived the midpoint node touch at "
+                   + std::to_string(suppression) + " dB");
+    }
+    expect(decibels(partial(harmonic, 4) / std::max(harmonicSecond, 1.0e-15))
+               > -20.0,
+           "the fourth partial, which has a node under the finger, was removed");
+
+    // The fundamental is present in the ordinary picked note, so the
+    // suppression above is the touch rather than a property of the string.
+    expect(decibels(partial(sustain, 1)
+                    / std::max(partial(sustain, 2), 1.0e-15)) > -20.0,
+           "the picked reference note has no fundamental to suppress");
+
+    // The loop still runs at the fretted pitch, so the surviving octave
+    // partial decays at the rate that partial has when the string is picked
+    // normally. A model that retuned the loop an octave up would give it the
+    // decay of a much shorter string instead.
+    const auto decayDb = [&] (const StereoBuffer& buffer)
+    {
+        const double early = dftMagnitude(buffer.left, bodyStart, bodyLength,
+                                          sampleRate, 2.0 * f0);
+        const double late = dftMagnitude(
+            buffer.left, static_cast<int>(1.6 * sampleRate), bodyLength,
+            sampleRate, 2.0 * f0);
+        return decibels(late / std::max(early, 1.0e-15));
+    };
+    const double harmonicDecay = decayDb(harmonic);
+    const double sustainDecay = decayDb(sustain);
+    expect(std::abs(harmonicDecay - sustainDecay) < 2.0,
+           "the harmonic's octave partial does not decay like the same partial "
+           "of the picked note (harmonic " + std::to_string(harmonicDecay)
+               + " dB, picked " + std::to_string(sustainDecay) + " dB)");
 }
 
 // The fretting hand has a position and a reach, so the same pitch is not
@@ -4504,6 +4642,7 @@ int main()
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
     testFrettingHandPosition();
+    testTouchHarmonics();
     testSustainPedal();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();

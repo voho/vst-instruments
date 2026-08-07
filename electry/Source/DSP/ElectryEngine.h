@@ -601,6 +601,35 @@ private:
         float legatoBlend { 1.0f };
         float legatoIncrement { 0.0f };
 
+        // A light finger or thumb resting on the string, at `touchFraction` of
+        // its sounding length. Mode n's displacement there goes as
+        // sin(n pi p), so the energy a light contact removes per round trip
+        // goes as sin^2(n pi p) = (1 - cos(2 pi n p)) / 2. Condensed into the
+        // single delay loop that is exactly a one-tap FIR
+        //
+        //     H(z) = (1 - d/2) + (d/2) z^-M,   M = p * period,
+        //
+        // whose magnitude is 1 where the touch sits on a node and 1 - d where
+        // it sits on an antinode - the mode-shape weighting itself rather than
+        // an approximation of it. Both coefficients are non-negative and sum
+        // to one for d in [0, 1], so |H| <= 1 everywhere and the loop cannot
+        // be destabilised at any depth.
+        //
+        // At an exact node position p = 1/k the filter is exactly unity in
+        // magnitude *and* phase at every surviving partial, so the harmonic
+        // series above the node is untouched and no tuning compensation is
+        // needed. That is why the harmonic is produced this way rather than by
+        // retuning the loop an octave up: the string keeps its own length,
+        // inharmonicity, decay targets and pickup-comb geometry.
+        //
+        // The finger lifts once the note has formed. By then the partials it
+        // removed are gone and cannot be re-excited, so lifting it is free and
+        // buys back two delay reads per sample.
+        float touchFraction { 0.0f };
+        float touchDepth { 0.0f };
+        int touchHoldRemaining { 0 };
+        float touchReleaseStep { 0.0f };
+
         // Tension-modulation state (attack pitch glide).
         float energyEnvelope { 0.0f };
         float tensionDepth { 0.0f };

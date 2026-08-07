@@ -21,6 +21,7 @@ level-matched blind listening.
 | Tension modulation | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity | A string-energy envelope drives a bounded shortening of the loop delay, producing the attack pitch glide that relaxes over hundreds of milliseconds | The published phenomenon in its energy-envelope shortcut form; not the exact elongation integral or a time-varying-fraction-delay implementation |
 | Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase excitation combines contact retention and scrape, a principal string-period-scaled two-pole modal release that approximates triangular pluck displacement, one further release pole whose corner follows the square root of the string's open frequency (a heavier string leaves the pick more slowly) with its own attenuation at the fundamental divided back out, and a normally much smaller broadband pick-edge transient for sustained pick styles; the release window is asymmetric (a slow load and a fast slip, both smoothsteps, at constant area) and its reflected image is distributed over a hardness-dependent contact patch of 0.5 to 1.5 mm; delay-line projection is level-calibrated to open E4 so equal effort remains usable on E1, while polarity, polarisation split, spectrum, and comb position differ per style | A realtime modal approximation to released-string displacement plus a separate pick edge, a distributed contact width, and bounded register calibration; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, or force-based finger contact solver |
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling | The Artifacts path's incidental fret contact: a decaying collision window whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise on hard-picked notes | Collision-informed contact behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
+| Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved, with a soft finger excitation and no plectrum noise | Continuous-state legato with fingered attacks; not a distributed finger-force model |
 | Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite, as a real aperture, two-coil sum and three-dimensional field never cancel exactly; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
 | Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Structural bridge displacement is differentiated before four double-precision, peak-normalised modal resonators and a 4 kHz guard, producing body-induced voltage before the loaded pickup coils; positive real modal conductance across each note's first six partials can only shorten loop T60 | Geometry-informed structural pickup voltage plus passive mode-dependent energy extraction; not undifferentiated acoustic body displacement mixed into pickup voltage, and the mode tables remain voicing estimates rather than measured admittance data |
@@ -527,6 +528,59 @@ time to travel, and each string moves by its own compliance (the section on
 the pitch-wheel bar below). Hammer-on/pull-off onto a sounding string
 retargets the same loop over about 10 ms without clearing its state, so the
 vibration genuinely continues.
+
+## The touching finger
+
+A finger laid lightly across a vibrating string does not terminate it; it
+removes energy in proportion to how much the string is moving underneath it.
+Mode `n`'s displacement at a fraction `p` of the sounding length goes as
+`sin(n pi p)`, so the energy a light contact takes per round trip goes as
+
+```text
+sin^2(n pi p) = (1 - cos(2 pi n p)) / 2
+```
+
+That is a comb in harmonic number, and condensing it into the single delay
+loop makes it a comb in the delay line as well. Writing `M = p * period` in
+samples and `omega_n = 2 pi n / period`, the round-trip loss factor is
+`1 - d (1 - cos(omega_n M)) / 2`, which is the magnitude of
+
+```text
+H(z) = (1 - d/2) + (d/2) z^-M
+```
+
+to first order in `d`: unity where `omega M` is a multiple of `2 pi` (the touch
+is on a node of that mode) and `1 - d` where it is an odd multiple of `pi` (the
+touch is on an antinode). Electry uses that filter directly. Both coefficients
+are non-negative and sum to one for `d` in `[0, 1]`, so the magnitude is
+bounded by one at every frequency and every depth, which is what makes it safe
+inside the string's feedback loop; the regression suite checks that bound
+against the closed form.
+
+At an exact node position `p = 1/k` the filter is unity in magnitude **and**
+phase at every surviving partial - `exp(-j 2 pi n / k) = 1` whenever `k`
+divides `n` - so the harmonic series above the node keeps both its levels and
+its tuning, and no phase compensation is needed. That is the reason the natural
+harmonic is produced this way rather than by transposing the note: the loop
+still runs at the fretted pitch, so the sounding octave carries the fretted
+string's inharmonicity, its solved decay targets and its pickup-comb geometry
+rather than those of a string half as long.
+
+The finger lifts once the note has formed. The partials it removed are gone by
+then and the excitation is over, so nothing can put them back; releasing the
+touch therefore costs nothing audible and stops paying for two extra delay
+reads per sample. It also removes the clamp that used to stand in for the
+finger - the harmonic style capped T60 at 3.8 s - which on the open A2 was
+charging the octave partial 16 dB per second of loss that no physical
+mechanism was asking for. A natural harmonic now outlasts the fretted note, as
+it does on the instrument.
+
+Away from a node the filter is still bounded and still shaped by the same
+mode-shape law, but no partial is perfectly preserved and the surviving one
+carries a little extra loss and a little phase. That is physically right - an
+artificial harmonic taken off a node is weaker, dirtier and shorter - and it
+means such a harmonic's pitch is a function of where the hand is rather than a
+member of the equal-tempered scale. It is left that way rather than quantised.
 
 ## Fret collisions
 
@@ -1352,7 +1406,13 @@ silence, dead-zone and range gating; the alternate sequence surviving style
 changes and skipping hammered notes; measurably distinct attack spectra and
 levels for down, up, hammered, muted and harmonic playing, an audibly
 composed upstroke palm mute, a stroke-independent harmonic octave, and a
-bit-identical hammered note under either latched stroke; palm-mute decay
+bit-identical hammered note under either latched stroke; a node touch that
+removes the odd partials by more than 20 dB while leaving the even ones, a
+touch filter whose closed-form magnitude never exceeds one at any depth, an
+exactly absent touch on every other articulation, a finger that lifts, and a
+harmonic whose octave partial decays within 2 dB of the same partial of the
+ordinarily picked note - the direct evidence that the loop is no longer
+retuned; palm-mute decay
 contraction; the per-string wheel-compliance table's physical ordering and
 the rendered audio following it on two strings; wheel travel time following
 Bend Time with an exact settle on the target; a ringing coupled string
