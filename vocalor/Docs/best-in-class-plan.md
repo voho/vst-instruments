@@ -237,7 +237,7 @@ opens on something playable.
   coupling and none at zero coupling; the low-frequency murmur pole must appear;
   the rendered audio must stay finite and bounded at every coupling.
 
-- [ ] **6. Articulator-rate coarticulation.** Make the vowel transition rate a
+- [x] **6. Articulator-rate coarticulation.** Make the vowel transition rate a
   property of the articulators rather than a de-zipper: F1 on a jaw time
   constant, F2 on a slower tongue-body constant, F3–F5 faster, with the total
   transition scaled by how far the vowel actually moved. Closes gap 6.

@@ -169,11 +169,24 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     const auto glideFor = [this](float seconds) noexcept {
         return 1.0f - std::exp(-static_cast<float>(controlPeriod) * inverseSampleRate_ / seconds);
     };
-    formantGlide_[0] = glideFor(0.016f);
-    formantGlide_[1] = glideFor(0.009f);
-    formantGlide_[2] = glideFor(0.005f);
-    formantGlide_[3] = glideFor(0.004f);
-    formantGlide_[4] = glideFor(0.003f);
+    // 16, 9, 5, 4 and 3 ms put a whole vowel change inside 50 ms, which is a
+    // de-zipper rather than an articulation: a sung vowel-to-vowel transition
+    // runs 100-200 ms. The lower formants follow the larger cavity adjustments
+    // and stay the slowest, which is the ordering the constants above already
+    // had. A move of a quarter of the formant's own nominal frequency or more
+    // takes the full time; anything smaller is proportionally quicker.
+    constexpr float slowSeconds[formantCount] { 0.068f, 0.050f, 0.032f, 0.025f, 0.020f };
+    constexpr float fastSeconds[formantCount] { 0.020f, 0.015f, 0.011f, 0.009f, 0.008f };
+    // Reciprocal of a quarter of each formant's nominal frequency, so the
+    // control update scales the distance with a multiply instead of a divide.
+    constexpr float nominalHz[formantCount] { 600.0f, 1500.0f, 2600.0f, 3400.0f, 4500.0f };
+    for (int formant = 0; formant < formantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        formantGlideSlow_[index] = glideFor(slowSeconds[index]);
+        formantGlideFast_[index] = glideFor(fastSeconds[index]);
+        formantSpanScale_[index] = 4.0f / nominalHz[index];
+    }
     lipZeroCoefficient_ = std::exp(-twoPi * 120.0f * inverseSampleRate_);
     jitterSlowCoefficient_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
                                              * inverseSampleRate_ / 0.0095f);
@@ -1272,10 +1285,22 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
             // instead, which is what happens to a real one at that pitch.
             targetHz = std::max(targetHz, kMinimumFormantSpacing * tunedF1);
         }
-        if (voice.formantHz[index] <= 1.0f)
+        const float currentHz = voice.formantHz[index];
+        if (currentHz <= 1.0f)
+        {
             voice.formantHz[index] = targetHz;
+        }
         else
-            voice.formantHz[index] += formantGlide_[index] * (targetHz - voice.formantHz[index]);
+        {
+            // An articulator has a speed, not a deadline: a quarter-frequency
+            // move or more takes the full jaw-and-tongue time, and a small one
+            // settles in a fraction of it.
+            const float span = std::min(1.0f, std::abs(targetHz - currentHz)
+                                                  * formantSpanScale_[index]);
+            const float coefficient = formantGlideFast_[index]
+                + span * (formantGlideSlow_[index] - formantGlideFast_[index]);
+            voice.formantHz[index] = currentHz + coefficient * (targetHz - currentHz);
+        }
 
         const float bounded = std::clamp(voice.formantHz[index], 25.0f, upperLimit);
         const auto trig = sineCosineFromCycles(bounded * inverseSampleRate_);

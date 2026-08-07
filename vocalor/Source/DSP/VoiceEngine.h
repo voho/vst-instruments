@@ -356,7 +356,12 @@ private:
     float aspirationPreEmphasis_ { 0.0f };
     float aspirationScale_ { 1.0f };
     float controlGlide_ { 0.0f };
-    std::array<float, formantCount> formantGlide_ {};
+    // Vowel transitions are a jaw and a tongue moving, not a de-zipper, so a
+    // formant has a speed rather than a deadline: a small move settles quickly
+    // and a large one takes the full articulator time.
+    std::array<float, formantCount> formantGlideFast_ {};
+    std::array<float, formantCount> formantGlideSlow_ {};
+    std::array<float, formantCount> formantSpanScale_ {};
     float lipZeroCoefficient_ { 0.0f };
     // Control-rate coefficient for the intonation adjustment, expressed as a
     // time constant so a singer takes the same time to settle at every rate.

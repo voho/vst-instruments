@@ -1702,6 +1702,101 @@ void testSingerFormantAndLipZero()
            "Singer's Formant tension render exceeded amplitude guardrail");
 }
 
+/** A vowel change is a jaw and a tongue moving, not a de-zipper.
+
+    The 1.1 formant glides ran on 16, 9, 5, 4 and 3 ms time constants, so a
+    vowel switch was over in about 50 ms; a sung vowel-to-vowel transition runs
+    100-200. The engine had the mechanism for coarticulation and used it to stop
+    clicks.
+*/
+void testCoarticulationTiming()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    /** 10-90 % rise time of each formant, in milliseconds, after the pad is
+        stepped from @c fromX,@c fromY to @c toX,@c toY on a held note. */
+    const auto riseTimes = [] (float fromX, float fromY, float toX, float toY)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.vowelMorph = 1.0f;
+        parameters.vowelX = fromX;
+        parameters.vowelY = fromY;
+        engine.setParameters (parameters);
+        engine.noteOn (57, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.4));
+
+        const auto start = vocalor::VoiceEngineTestAccess::voiceFormants (engine);
+        parameters.vowelX = toX;
+        parameters.vowelY = toY;
+        engine.setParameters (parameters);
+
+        // Settle first so the destination is measured, not guessed.
+        std::array<std::array<float, vocalor::kFormantCount>, 400> trace {};
+        constexpr int step = 64;
+        for (std::size_t frame = 0; frame < trace.size(); ++frame)
+        {
+            render (engine, step);
+            trace[frame] = vocalor::VoiceEngineTestAccess::voiceFormants (engine);
+        }
+        const auto finish = trace.back();
+
+        std::array<double, vocalor::kFormantCount> milliseconds {};
+        for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t> (formant);
+            const auto span = finish[index] - start[index];
+            if (std::abs (span) < 1.0f)
+                continue;
+
+            double tenth = -1.0;
+            double ninetieth = -1.0;
+            for (std::size_t frame = 0; frame < trace.size(); ++frame)
+            {
+                const auto progress = (trace[frame][index] - start[index]) / span;
+                const auto at = 1000.0 * static_cast<double> ((frame + 1) * step) / sampleRate;
+                if (tenth < 0.0 && progress >= 0.10)
+                    tenth = at;
+                if (ninetieth < 0.0 && progress >= 0.90)
+                {
+                    ninetieth = at;
+                    break;
+                }
+            }
+            milliseconds[index] = (tenth >= 0.0 && ninetieth >= 0.0) ? ninetieth - tenth : -1.0;
+        }
+        return milliseconds;
+    };
+
+    // Close front to open: the largest move the pad offers.
+    const auto large = riseTimes (1.0f, 0.0f, 0.5f, 1.0f);
+    std::cout << "vowel step /i/ -> /a/, 10-90 % rise: " << std::fixed << std::setprecision (0);
+    for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+        std::cout << ' ' << (formant + 1) << ':' << large[static_cast<std::size_t> (formant)] << "ms";
+    std::cout << '\n';
+
+    // F1 and F2 make the large moves here: 310 -> 850 Hz and 2790 -> 1220. F3
+    // moves 500 Hz and F4 only 250, and F5 is the same 4950 Hz for both these
+    // vowels, so only the first three carry a timing claim at all.
+    expect (large[0] > 80.0 && large[0] < 260.0,
+            "F1 did not move on a jaw's timescale after a full vowel step");
+    expect (large[1] > 55.0 && large[1] < 220.0,
+            "F2 did not move on a tongue's timescale after a full vowel step");
+    expect (large[0] > large[1] && large[1] > large[2],
+            "the formants no longer move in order of the cavity that carries them");
+    expect (large[2] > 12.0,
+            "F3 still switches as fast as a de-zipper on a 500 Hz move");
+
+    // A small move is a small adjustment, not the same journey done slowly.
+    const auto small = riseTimes (0.5f, 1.0f, 0.56f, 0.94f);
+    std::cout << "small vowel step, F1 10-90 % rise: " << small[0] << "ms\n";
+    expect (small[0] > 0.0 && small[0] < 0.6 * large[0],
+            "a small vowel move took as long as a full one: the transition has a "
+            "deadline rather than a speed");
+}
+
 /** A parallel bank of poles cannot be asked for an /m/.
 
     Its transfer function does have zeros, but they land wherever the sections
@@ -2334,6 +2429,7 @@ int main()
     testJustIntonation();
     testEnsembleDispersion();
     testNasalBranch();
+    testCoarticulationTiming();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();

@@ -187,6 +187,22 @@ like a tract rather than like five independent peaking filters:
   front: F2 and F3 of /i/ are carried nearly as strongly as F1 instead of
   sitting 22 dB below it.
 
+**Coarticulation.** A vowel change is a jaw and a tongue moving. The formant
+glides ran on 16, 9, 5, 4 and 3 ms time constants, which put a whole vowel
+switch inside about 50 ms — a de-zipper rather than an articulation, where a
+sung vowel-to-vowel transition runs 100 – 200 ms. Each formant now has a speed
+rather than a deadline: a move of a quarter of that formant's own nominal
+frequency or more takes the full jaw-and-tongue time, and anything smaller is
+proportionally quicker, so the transition also accelerates as it closes on the
+target instead of crawling into it. The lower formants stay the slowest, since
+they follow the larger cavity adjustments.
+
+Stepping the pad from the close-front corner to the open one on a held A3 gives
+10 – 90 % rise times of 117 ms for F1, 92 ms for F2, 31 ms for F3 and 21 ms for
+F4. F3 and F4 are quicker because their targets move 500 and 250 Hz where F1
+moves 540 and F2 1570 — a small adjustment is a small adjustment. A 6 % pad
+nudge takes F1 45 ms rather than the full 117.
+
 **Nasal branch.** A parallel bank of poles does have zeros, but they land
 wherever its sections happen to cancel; there is no way to place one. That ruled
 out the nasal branch, and therefore ruled out a hum — the most common choir
