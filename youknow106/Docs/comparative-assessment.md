@@ -165,11 +165,18 @@ neither separates beyond the material's own noise.** YouKnow106 is closer
 on harmonic-stack accuracy in 5 of 9 valid cases and clearly closer on
 the two comparisons the adjudication rated cleanest (A15: 2.23 vs
 5.39 dB RMS; A38: 2.95 vs 6.29); KR-106 reads closer on broadband band
-envelopes in 9 of 10 (means 9.65 vs 10.64 dB). A control experiment
-tested whether YouKnow106's modelled chorus hiss — which KR-106 omits —
-explained the band gap against the MP3-floored reference: re-rendering
-with the hiss muted did *not* close it, so that hypothesis is **refuted
-and recorded**, and the band result stands as measured. Pitch is
+envelopes in 9 of 10 (means 9.65 vs 10.64 dB). Two controls were run on
+that band result. A hiss-muted re-render refuted the first conjecture
+(that YouKnow106's chorus-hiss model was penalised against the
+MP3-floored reference). A three-way band-region decomposition then
+identified the real mechanism: **KR-106's modelled noise floor
+coincides with the recording's own floor (±1.3 dB in every region)
+while YouKnow106's sits ≈5 dB below it**, so the gap's largest
+component — ≈5 dB of band deviation in the floor-dominated 4–8 kHz
+region — is the metric rewarding agreement with the recording chain,
+which an undocumented lossy chain cannot convert into a fidelity claim
+about the instrument in either direction. The genuine residual is the
+small (≈1–2 dB, mixed-direction) low/mid-band difference. Pitch is
 essentially exact on both. The axes this material cannot measure — scan
 stepping, BBD clock behaviour, alias floors, and every deterministically
 fenced anchor — remain where the two projects genuinely differ, per the

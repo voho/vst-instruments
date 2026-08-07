@@ -117,6 +117,14 @@ so they are not attempted again. Its first OQ-02 assessment is retained as the
 history of the former cubic; the subsequent primary-schematic read derives the
 nominal law. No third-party measurement is promoted to an anchor.
 
+A supplied five-page summary report dated 2026-08-07 is reconciled in
+[Supplied-report reconciliation pass — 2026-08-07](#supplied-report-reconciliation-pass--2026-08-07-summary-compilation-checked-no-promotion-imported).
+It restates this queue's own constants to their full recorded precision,
+attaches no capture and cites no new source, so it corroborates nothing and
+closes nothing; its promotions — the chorus sweep to anchored, the lineage
+compensation slope to derived, the voice-VCA onset to derived and OQ-21 to
+resolved — are declined there.
+
 ### Evidence baseline
 
 The supplied evidence-search reports and final compilation have been reconciled
@@ -2882,12 +2890,22 @@ benchmarkable competitor. The two models measure comparably close to the
 real unit on this material; YouKnow106 is closer on harmonic-stack
 accuracy in 5 of 9 valid cases and clearly closer on the two cleanest
 (A15 2.23 vs 5.39, A38 2.95 vs 6.29 dB RMS), KR-106 closer on broadband
-band envelopes in 9 of 10. **One hypothesis was tested and refuted, and
-is recorded so it is not retried:** the conjecture that KR's band
-advantage came from its missing chorus-hiss model flattering the
-MP3-floored reference — a hiss-muted re-render did not close the gap.
-The band-envelope gap on this material therefore stands unexplained and
-joins the upper-mid darkness lead above as material for the calibrated
+band envelopes in 9 of 10. **Two controls were run on that band gap.**
+The first conjecture — that YouKnow106's chorus-hiss model was being
+punished against the MP3-floored reference — was tested with a
+hiss-muted re-render and refuted (recorded so it is not retried as
+framed). The second control decomposed the gap by band region with a
+three-way inter-harmonic floor measurement and identified the actual
+mechanism: **KR-106's modelled floor sits on the recording's own floor
+(within ±1.3 dB in every region), while YouKnow106's total floor sits
+≈5 dB below it** — consistent with KR's dry/wet noise floors having been
+calibrated from similar chain-bearing recordings. The gap's largest
+component (≈5 dB of band deviation at 4–8 kHz) is therefore the metric
+rewarding coincidence with the *recording chain's* floor, which an
+undocumented lossy chain cannot convert into a claim about the
+*instrument's* floor in either direction. The residual low/mid-band gap
+(≈1–2 dB, mixed directions) remains a genuine small tonal difference and
+keeps the upper-mid darkness lead above alive for the calibrated
 captures.
 
 The published comparison page carries every clip, spectrogram pair, band
@@ -2901,6 +2919,82 @@ collection with undocumented settings. It remains the only lossless
 real-106 audio in hand (usable for noise-floor and qualitative checks),
 but a controlled filter characterisation still requires the queue's
 calibrated captures.
+
+## Supplied-report reconciliation pass — 2026-08-07 (summary compilation checked; no promotion imported)
+
+**Work mode:** analysis of supplied evidence. The supplied artifact is a
+five-page typeset report, "High-Fidelity Parametric Emulation and Circuit
+Analysis of the Roland JUNO-106 Synthesizer", written in reaction to this
+queue: a system-wide parameter table, a restated open-queue status table and
+prose derivations, using this project's own five-class evidence hierarchy.
+It was delivered as a rendered document only — no raw capture, CSV, scope
+export, netlist or citation this project has not already reconciled travels
+with it, and no file is retained in the repository to hash. Every checkable
+number was still verified against the current model state.
+
+### It is a restatement, not corroboration
+
+The report reproduces this project's own computed constants to their full
+recorded precision — 1.6234799, 0.8654743, 908.249 Ω,
+`−16.31966 + 0.165581·b`, Rs ≈ 3.70 kΩ, 0.5533/0.8983 Hz,
++10.50 dB/+1.41 dB/59.41 Hz — including values that exist nowhere outside
+this repository at that precision. That level of agreement demonstrates
+shared origin, not independent derivation: a future pass must not count
+this document as a second source for any of them. Where its arithmetic
+could be re-run it is correct and current — the R_eff pair and mode-rate
+ratio, the β = 33/47 rate scale, the 47/39 wet/dry direction and +1.62 dB,
+the 560/68560 attenuator in the correct shunt-in-denominator form, the
+±19.6 mV/13.9 mV rms drive figures, the Vgc affine constants and the
+Q(v,c) recurrence — and its chorus mode-switch prose matches the
+relabelled T-network read (Tr1 grounding the R4 junction), not the
+superseded R3-shorting description. One internal slip: the quoted
+compensation factor 0.2749 does not reproduce from its own equation
+`(67.67/17.00)·(4.7/68)`, which evaluates to 0.2751.
+
+### Promotions and misstatements declined
+
+- **Chorus sweep "Anchored".** The 1.4–6.4 ms sweep stays third-party-scoped
+  exactly as OQ-01 records it. No third-party measurement is promoted to an
+  anchor, and a calibrated original-unit capture still owns the final word.
+- **Resonance compensation 0.2749 "Derived".** The resistor-only conversion
+  restated here is the same dksynth-lineage divider set already recorded
+  under OQ-09 — depth within one reconstruction lineage, not a second
+  source. The shipping coefficient remains the voiced 0.2296; OQ-09's
+  measured family owns the number.
+- **OQ-21 "Resolved".** Only the Boost-shelf sub-question is resolved, and
+  the report's own status row cites nothing beyond those shelf constants.
+  The coupled C14/HPF transfer, switch-state memory and mode-change
+  transient remain open; OQ-21 keeps its P2 row.
+- **Voice-VCA onset "Derived".** The +0.25…+0.27 V TP7 standoff is the
+  anchored part; the 150 mV onset remains a reconstruction-lead-placed
+  compatibility value, and OQ-19's sweep owns it.
+- **"IR3109 teardown" as the 700 µA source.** The recorded source of the
+  control-current saturation is the AS3109 teardown; this project records
+  no IR3109-sourced figure. The clone-versus-original provenance
+  distinction stands.
+- **ADAA "below −66 dBc".** The fenced, measured bound is −60 dBc in the
+  hot resonant case (`testCascadeDeniesTheFoldback`); the tighter figure
+  arrives without a measurement and the fence is unchanged.
+- **OQ-05 "Linear model; ±12 V swing limit into R_L ≥ 2 kΩ".** Both halves
+  misdescribe the current state: the shipped IC6 stage is not linear — it
+  is the rail-bound algebraic clip (13.5 V, exponent 8) with antiderivative
+  antialiasing — and no ±12 V bound is recorded anywhere in this project.
+  The pair reads like a 4558-family guaranteed-minimum output-swing row,
+  but it arrives uncited; if a sourced TA75558S specification row is later
+  produced it belongs in OQ-05's protocol as a datasheet bound, never as
+  the loaded board measurement that task requires.
+
+The report also lists the designator-level wet/dry read as merely
+"Derived" where the project's 2026-08-07 read is anchored, and states the
+nominal 4.20 ms pass without the recorded ~4.27 ms measured contradiction
+— classification drift in the lenient direction as well as the strict one,
+so its class column was compiled without auditing the evidence hierarchy
+and is not imported in either direction.
+
+### Net effect
+
+No model change, no class change, no queue change. The queue's 20 open
+questions plus the OQ-06 dependency stand exactly as written above.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
