@@ -276,6 +276,25 @@ LFO. Pitch jitter runs through two nested smoothers for a 1/f-like spectrum, and
 ensemble and chord modes instantiate independent singers, preventing the
 phase-locked oscillator sound common to simple choir patches.
 
+**Ensemble dispersion.** How far apart twelve singers sit is what separates a
+section from one thick voice, and Vocalor's section used to be far too tight.
+Each singer carried a uniform ±5.6 cents of static detune — 3.2 cents of
+standard deviation for the distribution it drew from, and 4.4 cents measured
+across the twelve identities at full Humanize. Jers and Ternström measured
+25 – 30 cents of dispersion between real choir singers, and listeners were
+reported to tolerate 14 cents of standard deviation, so the section was running
+at roughly a third of what it was allowed and a quarter of what a real one does.
+
+The static detune is now drawn from a triangular distribution — two hashes
+averaged, which concentrates the section near the target rather than spacing it
+evenly across the extremes, as a real one does — and each singer carries two
+incommensurate slow wanders instead of one, so the section never returns to the
+same relative configuration. Twelve singers now measure 12.6 cents of standard
+deviation at full Humanize and the largest singer moves 10.4 cents over nine
+seconds. Humanize is the dial between the two: at zero the section is perfectly
+locked, at its 52 % default it sits at about 6 cents, and at full it is a
+rehearsal room.
+
 **Room.** The four-tap cross-coupled network reads through interpolated,
 slowly modulated taps that break up the metallic ringing a static comb produces
 on sustained vowels, and a gentle low cut keeps the tail out of the low mids.

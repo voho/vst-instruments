@@ -213,10 +213,17 @@ opens on something playable.
   for the minor third and 702.0 for the fifth, within a cent; at zero they must
   measure exactly the equal-tempered intervals they do today.
 
-- [ ] **4. Ensemble pitch scatter and drift correction.** Widen the static
-  per-singer detune to the measured range and give each singer a slow random
-  walk with a restoring pull toward the target pitch, so the section wanders and
-  recovers instead of sitting at fixed offsets. Closes gap 4. *Verified:* the
+- [x] **4. Ensemble pitch scatter and drift correction.** Widen the static
+  per-singer detune to the measured range and make the section wander instead of
+  sitting at fixed offsets. The plan said "a slow random walk with a restoring
+  pull"; what landed is a second incommensurate bounded oscillator per singer.
+  A random walk would have had to advance from per-singer state at chunk rate,
+  and the engine's whole drift model is deliberately evaluated from the absolute
+  sample position so that nothing depends on how a host splits a buffer.
+  Introducing stateful noise there would have cost that guarantee to gain
+  nothing audible: two incommensurate oscillators already never return the
+  section to the same relative configuration, and they are bounded by
+  construction, which is the property a restoring pull was there to provide. Closes gap 4. *Verified:* the
   standard deviation of the sounding fundamental across twelve singers must land
   in the measured band at full Humanize and fall to zero at zero Humanize; the
   drift must be bounded over a long render; the per-singer offsets must not be

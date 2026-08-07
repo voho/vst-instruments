@@ -467,7 +467,14 @@ void VoiceEngine::buildSingerIdentities()
     {
         auto& singer = singers_[static_cast<std::size_t>(i)];
         const std::uint32_t base = 0x9e3779b9u * static_cast<std::uint32_t>(i + 1);
-        singer.detuneCents = 5.6f * hashFloat(base + 1u);
+        // Jers and Ternstrom measured 25-30 cents of dispersion between choir
+        // singers, and listeners tolerate about 14 cents of standard deviation.
+        // A uniform +/-5.6 cents was roughly a quarter of that, which is why
+        // twelve singers read as one thick voice rather than as a section. Two
+        // hashes averaged give a triangular spread, which concentrates the
+        // section near the target the way a real one does rather than spacing
+        // it evenly across the extremes.
+        singer.detuneCents = 12.0f * (hashFloat(base + 1u) + hashFloat(base + 11u));
         singer.anatomy = 0.045f * hashFloat(base + 2u);
         const float position = singerCount > 1 ? 2.0f * static_cast<float>(i) / static_cast<float>(singerCount - 1) - 1.0f : 0.0f;
         singer.pan = std::clamp(0.82f * position + 0.12f * hashFloat(base + 3u), -1.0f, 1.0f);
@@ -475,6 +482,7 @@ void VoiceEngine::buildSingerIdentities()
         singer.vibratoRate = 4.65f + 0.72f * (0.5f + 0.5f * hashFloat(base + 5u));
         singer.vibratoDepth = 0.76f + 0.42f * (0.5f + 0.5f * hashFloat(base + 6u));
         singer.driftIncrement = (0.025f + 0.075f * (0.5f + 0.5f * hashFloat(base + 7u))) * inverseSampleRate_;
+        singer.drift2Increment = (0.011f + 0.033f * (0.5f + 0.5f * hashFloat(base + 12u))) * inverseSampleRate_;
         singer.depthIncrement = (0.018f + 0.042f * (0.5f + 0.5f * hashFloat(base + 8u))) * inverseSampleRate_;
         singer.formantIncrement = (0.009f + 0.025f * (0.5f + 0.5f * hashFloat(base + 9u))) * inverseSampleRate_;
         for (int formant = 0; formant < formantCount; ++formant)
@@ -1047,6 +1055,8 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         auto& singer = singers_[static_cast<std::size_t>(singerIndex)];
         singer.drift = sine(absolutePhase(0.071 + 0.137 * static_cast<double>(singerIndex),
                                           static_cast<double>(singer.driftIncrement)));
+        singer.drift2 = sine(absolutePhase(0.283 + 0.079 * static_cast<double>(singerIndex),
+                                           static_cast<double>(singer.drift2Increment)));
         singer.depthDrift = sine(absolutePhase(0.419 + 0.193 * static_cast<double>(singerIndex),
                                                static_cast<double>(singer.depthIncrement)));
         singer.formantDrift = sine(absolutePhase(0.733 + 0.113 * static_cast<double>(singerIndex),
@@ -1086,6 +1096,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
 {
     const auto& singer = singers_[static_cast<std::size_t>(voice.singer)];
     const float singerDrift = singer.drift;
+    const float singerDrift2 = singer.drift2;
     const float depthDrift = singer.depthDrift;
     const float formantDrift = singer.formantDrift;
     const float sharedPitch = sharedPitchDrift_;
@@ -1125,7 +1136,10 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         voice.justCents += justGlide_ * (justTarget - voice.justCents);
 
     const float identityCents = singer.detuneCents * p.humanize;
-    const float wanderCents = p.humanize * (2.1f * singerDrift + 0.75f * sharedPitch);
+    // A section does not sit at fixed offsets: it drifts and recovers, which
+    // is what keeps the dispersion from reading as a chorus setting.
+    const float wanderCents = p.humanize * (4.2f * singerDrift + 2.6f * singerDrift2
+                                            + 0.75f * sharedPitch);
     voice.pitchScoop *= scoopMultiplier_;
     voice.glideCents *= chunkGlideDecay_;
     const float cents = voice.pitchScoop + voice.glideCents + identityCents + wanderCents

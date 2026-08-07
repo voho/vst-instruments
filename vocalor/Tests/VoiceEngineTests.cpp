@@ -104,6 +104,18 @@ struct VoiceEngineTestAccess
 
     static int heldNoteCount(const VoiceEngine& engine) noexcept { return engine.heldCount_; }
 
+    /** Sounding frequency of every held voice, in Hz. An ensemble puts twelve
+        of them on one note, and how far apart they sit is what separates a
+        section from one thick voice. */
+    static std::vector<float> soundingFrequencies(const VoiceEngine& engine)
+    {
+        std::vector<float> result;
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                result.push_back(voice.phaseIncrement * static_cast<float>(engine.sampleRate_));
+        return result;
+    }
+
     /** Sounding frequency of the first held voice on @c midiNote, in Hz, or 0
         if that note is not sounding. Chord mode puts every member of the triad
         on a different sounding note behind one root, so this is what the
@@ -1690,6 +1702,86 @@ void testSingerFormantAndLipZero()
            "Singer's Formant tension render exceeded amplitude guardrail");
 }
 
+/** Twelve singers have to disperse like twelve singers.
+
+    The 1.1 engine gave each singer a uniform +/-5.6 cents of static detune,
+    about 3.2 cents of standard deviation at full Humanize. Jers and Ternstrom
+    measured 25-30 cents of dispersion between real choir singers, and listeners
+    were reported to tolerate 14 cents of standard deviation; a quarter of the
+    tolerance is why twelve voices could still read as one thick one.
+*/
+void testEnsembleDispersion()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    const auto dispersionCents = [] (float humanize, int renderSamples,
+                                     std::vector<float>& offsets)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.mode = vocalor::PerformanceMode::Choir;
+        parameters.choirSize = 12;
+        parameters.humanize = humanize;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        render (engine, renderSamples);
+
+        const auto sounding = vocalor::VoiceEngineTestAccess::soundingFrequencies (engine);
+        offsets.clear();
+        if (sounding.size() < 2)
+            return 0.0;
+
+        double mean = 0.0;
+        for (const auto frequency : sounding)
+            mean += 1200.0 * std::log2 (std::max (static_cast<double> (frequency), 1.0e-9));
+        mean /= static_cast<double> (sounding.size());
+
+        double sumOfSquares = 0.0;
+        for (const auto frequency : sounding)
+        {
+            const auto cents = 1200.0 * std::log2 (std::max (static_cast<double> (frequency), 1.0e-9))
+                             - mean;
+            offsets.push_back (static_cast<float> (cents));
+            sumOfSquares += cents * cents;
+        }
+        return std::sqrt (sumOfSquares / static_cast<double> (sounding.size()));
+    };
+
+    std::vector<float> early;
+    std::vector<float> late;
+    std::vector<float> tight;
+
+    const auto spread = dispersionCents (1.0f, static_cast<int> (sampleRate * 1.0), early);
+    std::cout << "12-singer pitch dispersion at full Humanize: " << std::fixed
+              << std::setprecision (1) << spread << " cents\n";
+    expect (early.size() == 12, "the dispersion probe did not find twelve singers");
+    // The measured band is 10-15 cents of standard deviation between section
+    // colleagues; anything under 6 is a studio overdub, anything over 20 is out
+    // of tune rather than human.
+    expect (spread > 8.0 && spread < 18.0,
+            "the ensemble dispersion is not in the range measured for real choirs");
+
+    // Humanize is the dial from a studio unison to a rehearsal room, so at zero
+    // the section has to be perfectly locked.
+    expect (dispersionCents (0.0f, static_cast<int> (sampleRate * 1.0), tight) < 0.05,
+            "the ensemble was not perfectly in tune with Humanize at zero");
+
+    // The offsets are not fixed: a section drifts and recovers.
+    dispersionCents (1.0f, static_cast<int> (sampleRate * 9.0), late);
+    expect (late.size() == early.size(), "the late dispersion probe lost singers");
+    double largestMove = 0.0;
+    for (std::size_t i = 0; i < late.size(); ++i)
+        largestMove = std::max (largestMove,
+                                std::abs (static_cast<double> (late[i] - early[i])));
+    std::cout << "largest singer drift over nine seconds: " << largestMove << " cents\n";
+    expect (largestMove > 1.5,
+            "the per-singer offsets are frozen: the section does not drift at all");
+    expect (largestMove < 40.0,
+            "the per-singer drift is unbounded rather than a wander around the target");
+}
+
 /** An a cappella ensemble tunes its chord to the bass, not to a keyboard.
 
     Chord mode stacked equal-tempered semitones, so a one-finger triad beat
@@ -2135,6 +2227,7 @@ int main()
     testPerformanceExpression();
     testFormantTuningAtHighPitch();
     testJustIntonation();
+    testEnsembleDispersion();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();

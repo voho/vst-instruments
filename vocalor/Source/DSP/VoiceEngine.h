@@ -192,9 +192,14 @@ private:
         // Sampled once per chunk, not once per voice control update: every
         // voice sharing a singer identity reads the same three values.
         float drift { 0.0f };
+        // A second, incommensurate wander. With one oscillator per singer the
+        // whole section returns to the same relative configuration every time
+        // the slowest period comes round; with two it does not.
+        float drift2 { 0.0f };
         float depthDrift { 0.0f };
         float formantDrift { 0.0f };
         float driftIncrement { 0.0f };
+        float drift2Increment { 0.0f };
         float depthIncrement { 0.0f };
         float formantIncrement { 0.0f };
         // Per-formant dispersion: real ensembles differ in more than a single
