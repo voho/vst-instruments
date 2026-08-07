@@ -114,7 +114,28 @@ public:
                  float& left, float& right,
                  bool enableClockBleed = false,
                  bool enableHyperbolicSweep = false,
-                 float calibration = 1.0f) noexcept;
+                 float calibration = 1.0f,
+                 bool enableRateProportionalNoise = false) noexcept;
+
+    // The one measured structural property of this circuit's noise that the
+    // model does not otherwise carry: mode II's floor sits 3.95 dB above mode
+    // I's, on Panasonic parts and again on Xvive parts (OQ-03). The settled
+    // topology gives the two modes identical sweep depth and clock range --
+    // the mode line changes the modulation *rate* and nothing else -- so a
+    // noise mechanism proportional to that rate, equivalently to the sweep's
+    // own slope d(delay)/dt, predicts exactly
+    // 20*log10(modeRateRatio()) = 4.21 dB and is chip-population independent,
+    // which is the delta's strongest recorded property.
+    //
+    // It is a candidate, not a mechanism: the calibrated same-chain capture
+    // OQ-03 asks for would confirm or kill it, and a capture at a third,
+    // artificial rate would separate rate-proportional noise from
+    // mode-switch-network noise directly. Until then it ships behind its own
+    // switch, off by default, so the hypothesis is testable without being
+    // asserted. The reference is mode I, so engaging it leaves mode I's
+    // established floor exactly where it is and raises only mode II's.
+    [[nodiscard]] static float rateProportionalNoiseGain(
+        float rateHz, bool enabled) noexcept;
 
     // The nominal (unmodulated) delay in seconds for a clock frequency.
     [[nodiscard]] static constexpr float delaySecondsForClock(float clockHz) noexcept

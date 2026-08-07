@@ -153,6 +153,12 @@ struct EngineParameters
     // ships and the frequency-linear hypothesis waits behind this switch for
     // the calibrated capture OQ-01 still requests.
     bool enableChorusHyperbolicSweep { false };
+    // Off by default: the 3.95 dB II-I noise delta measured on two chip
+    // populations is real, and a mechanism proportional to modulation rate
+    // predicts it to 0.26 dB from this instrument's own mode-rate ratio -- but
+    // it remains a candidate until the calibrated same-chain capture OQ-03
+    // asks for confirms or kills it. See Chorus::rateProportionalNoiseGain.
+    bool enableChorusRateNoise { false };
     bool enableElectrolyticC14Nonlinearity { true };
 };
 

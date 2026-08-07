@@ -3909,6 +3909,72 @@ void testChorusSweepTrajectoryDefault()
                "the hyperbolic switch acted at zero Unit Character");
 }
 
+void testChorusRateNoiseReproducesTheMeasuredModeDelta()
+{
+    // The chorus noise floor of a real 106 sits 3.95 dB higher in mode II than
+    // in mode I, measured on Panasonic parts and again on Xvive parts
+    // (OQ-03). The settled topology gives both modes the same sweep depth and
+    // the same clock range, so the only thing the mode line changes is the
+    // modulation rate -- and this instrument's own timing network puts that
+    // ratio at 1.6234799, which is 4.21 dB. The candidate mechanism is
+    // therefore noise proportional to that rate.
+    //
+    // It ships off, because a prediction that lands 0.26 dB from a measurement
+    // is a lead and not evidence. What this fence holds is that the switch
+    // does what it claims in both positions: silent when off, and exactly the
+    // predicted delta when on.
+    constexpr double sampleRate = 48000.0;
+
+    // Each line writes one noise sample per bucket edge, so its instantaneous
+    // floor rides the swept clock and the measurement has to cover a whole
+    // number of modulation cycles or the two modes are compared over different
+    // parts of their own sweeps. Measured over a fixed window instead, mode II
+    // reads 0.69 dB hot before anything is switched on at all.
+    const auto idleFloorDb = [&](ChorusMode mode, bool rateNoise) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.chorus = mode;
+        parameters.enableChorusRateNoise = rateNoise;
+        engine.setParameters(parameters);
+        // Past the wet-mute glide and the support filters' own settling.
+        render(engine, static_cast<int>(sampleRate * 0.5));
+
+        constexpr int cycles = 6;
+        const double period = 1.0 / Chorus::settingsFor(mode).rateHz;
+        const auto rendered = render(
+            engine, static_cast<int>(sampleRate * period * cycles + 0.5));
+        double energy = 0.0;
+        for (float sample : rendered.left)
+            energy += static_cast<double>(sample) * sample;
+        return 10.0 * std::log10(
+            energy / static_cast<double>(rendered.left.size()) + 1.0e-30);
+    };
+
+    const double offOne = idleFloorDb(ChorusMode::One, false);
+    const double offTwo = idleFloorDb(ChorusMode::Two, false);
+    const double onOne = idleFloorDb(ChorusMode::One, true);
+    const double onTwo = idleFloorDb(ChorusMode::Two, true);
+
+    expect(std::abs(offTwo - offOne) < 0.10,
+           "the modes already differ by " + std::to_string(offTwo - offOne)
+               + " dB with the rate-noise candidate switched out");
+    // Mode I is the reference leg, so engaging the candidate must leave it
+    // exactly where the shipped default has it.
+    expect(std::abs(onOne - offOne) < 1.0e-6,
+           "engaging the rate-noise candidate moved mode I's own floor by "
+               + std::to_string(onOne - offOne) + " dB");
+
+    const double predicted =
+        20.0 * std::log10(Chorus::modeRateRatio());
+    expect(std::abs(predicted - 4.21) < 0.01,
+           "the mode-rate ratio no longer predicts the recorded 4.21 dB");
+    expect(std::abs((onTwo - onOne) - predicted) < 0.10,
+           "the rate-noise candidate raises mode II by "
+               + std::to_string(onTwo - onOne) + " dB, not the predicted "
+               + std::to_string(predicted));
+}
+
 void testChorusNoiseIsPresentAndDefeatable()
 {
     constexpr double sampleRate = 48000.0;
@@ -4851,6 +4917,7 @@ int main()
     testGlideKeepsTheRampContinuous();
     testChorusSweepTrajectoryDefault();
     testChorusNoiseIsPresentAndDefeatable();
+    testChorusRateNoiseReproducesTheMeasuredModeDelta();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
     testSelfOscillationMatchesTheServiceTrim();
