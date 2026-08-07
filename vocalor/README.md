@@ -18,11 +18,13 @@ service while rendering audio.
 ![Vocalor Standalone instrument interface](Docs/screenshots/vocalor-standalone.png)
 
 The screenshot above was captured from the 1.0 Standalone application and shows
-the previous layout. The 1.1 editor keeps the same visual language and adds the
-vowel-space pad, the live vocal-tract analyser with output meters, and the
-phrasing and room-geometry controls described below; it has not been
-re-captured because the screenshots can only be produced from a macOS build.
-The VST3 and Audio Unit use the same resizable JUCE editor.
+the previous layout. The 1.1 editor added the vowel-space pad, the live
+vocal-tract analyser with output meters, and the phrasing and room-geometry
+controls; 1.2 adds Dynamics, Intonation and Nasal to the same row and regroups
+it into voice character, performance, space and master. The visual language is
+unchanged. It has not been re-captured because the screenshots can only be
+produced from a macOS build. The VST3 and Audio Unit use the same resizable
+JUCE editor.
 
 The interface remains fully resolution-independent: the layered hardware knobs,
 choice states, panel depth, vowel pad, response curve, and complete vocal-range
@@ -101,11 +103,15 @@ to the pad, the **vocal-tract response** display draws the live magnitude
 response of the five formant resonators of a sounding voice on a logarithmic
 axis, marks F1 to F5, and carries the stereo output meters.
 
-Ten continuous controls shape **Breath**, **Resonance**, **Tension**,
-**Vibrato**, **Humanize**, **Glide**, **Spread**, **Room**, room **Size**, and
-the **Output** level. The status display reports active voices and sample rate,
-the Panic button mutes immediately, and the on-screen keyboard is also mapped to
-the computer keys shown above it.
+Thirteen continuous controls fill the bottom row in four groups. **Voice
+character** holds **Breath**, **Resonance**, **Tension**, **Nasal**,
+**Vibrato** and **Humanize**; **performance** holds **Dynamics**,
+**Intonation** and **Glide**; **space** holds **Spread**, **Room** and room
+**Size**; and **master** holds the **Output** level. The status display reports
+active voices and sample rate, the Panic button mutes immediately, and the
+on-screen keyboard is also mapped to the computer keys shown above it. The
+editor's minimum width rose from 1020 to 1120 px with the three added knobs, so
+that a cell still holds the value box under its dial.
 
 ## Factory presets
 
