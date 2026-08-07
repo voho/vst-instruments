@@ -430,17 +430,29 @@ Take renderChordModeHarmony()
         take.note (step.root, step.velocity, step.hold, 0.20);
     }
 
-    // The tonic to finish, held long enough for the six singers to breathe.
+    // The tonic to finish, held while the intonation control walks from equal
+    // temperament to five-limit just. Nothing else moves: what changes is that
+    // the third stops beating against the root as it narrows 13.7 cents.
     parameters.chordQuality = ChordQuality::Major;
     take.setParameters (parameters);
-    take.note (62, 0.72f, 2.60, 0.0);
+    take.noteOn (62, 0.72f);
+    take.rest (1.3);
+    for (int step = 1; step <= 12; ++step)
+    {
+        parameters.intonation = static_cast<float> (step) / 12.0f;
+        take.setParameters (parameters);
+        take.rest (0.12);
+    }
+    take.rest (2.2);
+    take.noteOff (62);
     take.rest (3.0);
     return take;
 }
 
-// A short choir phrase sung from pianissimo to forte. Nothing but the MIDI
-// velocity changes between notes: a softer note is duller as well as quieter,
-// because velocity reaches the glottal pulse rather than a volume knob.
+// A short choir phrase sung from pianissimo to forte on note velocity, then a
+// held fifth swelled with the Dynamics control. Neither is a volume knob: a
+// soft note is duller as well as quieter, because both reach the glottal pulse
+// and the aspiration balance rather than the output stage.
 Take renderChoirDynamics()
 {
     auto parameters = demoVoicing();
@@ -458,20 +470,33 @@ Take renderChoirDynamics()
     for (const auto& step : phrase)
         take.note (step.midi, step.velocity, 0.66, 0.12);
 
-    // The full choir lands on an open fifth for the final crescendo.
-    take.noteOn (57, 0.85f);
-    take.noteOn (64, 0.82f);
-    take.rest (2.6);
+    // The full choir lands on an open fifth and swells on the Dynamics control
+    // alone. The keys are struck once, so everything that moves from here is
+    // the dynamic: level, source tilt, glottal pulse shape and breath balance.
+    parameters.dynamics = 0.20f;
+    take.setParameters (parameters);
+    take.noteOn (57, 0.80f);
+    take.noteOn (64, 0.78f);
+    take.rest (0.5);
+    for (int step = 1; step <= 16; ++step)
+    {
+        parameters.dynamics = 0.20f + 0.80f * static_cast<float> (step) / 16.0f;
+        take.setParameters (parameters);
+        take.rest (0.13);
+    }
+    take.rest (1.1);
     take.noteOff (57);
     take.noteOff (64);
     take.rest (3.0);
     return take;
 }
 
-// One held male note, first driven from a lax to a firmly adducted glottis,
-// then dissolved into breath. Tension crossfades between two analysed glottal
-// pulse shapes, so the timbre change has a physical cause; breath is aspiration
-// noise injected at the glottis and filtered by the same tract.
+// One held male note taken through the three most physical controls in the
+// instrument: from a lax to a firmly adducted glottis, dissolved into breath,
+// and finally closed into a hum. Tension crossfades between two analysed
+// glottal pulse shapes and clusters the upper formants, breath is aspiration
+// noise injected at the glottis and filtered by the same tract, and the velum
+// adds the nasal branch's murmur pole and anti-resonance.
 Take renderTensionAndBreath()
 {
     auto parameters = demoVoicing();
@@ -505,6 +530,12 @@ Take renderTensionAndBreath()
     sweep (&EngineParameters::tension, 0.45f, 1.0); // relax again
     sweep (&EngineParameters::breath, 0.95f, 3.0);  // and let the air take over
     take.rest (0.5);
+    sweep (&EngineParameters::breath, 0.14f, 0.9);  // back off the air
+    // ... and finally the velum, which turns the same held note into a hum:
+    // a murmur pole at the nasal cavity's resonance and a notch where the
+    // closed mouth loads the tract.
+    sweep (&EngineParameters::nasal, 1.0f, 2.2);
+    take.rest (1.4);
 
     take.noteOff (45);
     take.rest (2.4);

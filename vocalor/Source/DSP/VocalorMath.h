@@ -43,6 +43,62 @@ void formantsForPresetVowel (bool male, int vowelIndex, float* outHz) noexcept;
 /** Frequency multiplier for a formant shift expressed in semitones. */
 [[nodiscard]] float formantShiftRatio (float semitones) noexcept;
 
+/** How a continuous dynamic level reaches the voice.
+
+    A dynamic is not a fader. A singer at pianissimo is quieter, but is also
+    duller (less vocal effort, so a laxer glottal pulse and a steeper source
+    spectrum), proportionally breathier (the voiced source falls away faster
+    than the leak noise), and vibrates less. These are the four scalars the
+    engine applies; every one of them is exactly 1 at full dynamic, so the
+    control is inert at its default.
+*/
+struct DynamicResponse
+{
+    float voicedGain { 1.0f };
+    float airGain { 1.0f };
+    float effortScale { 1.0f };
+    float sourceTensionScale { 1.0f };
+    float vibratoScale { 1.0f };
+};
+
+/** Resolves the dynamic response for a normalised dynamic level 0..1. */
+[[nodiscard]] DynamicResponse dynamicResponse (float dynamics) noexcept;
+
+/** First formant after the singer's own resonance strategy.
+
+    A speech tract keeps F1 where the vowel puts it. A singer cannot: once the
+    fundamental climbs past F1 the whole spectrum sits above the lowest
+    resonance, the radiated power collapses and the timbre breaks. The measured
+    response is to open the jaw and take F1 up with the pitch, which puts a
+    resonance back on the fundamental at the cost of the vowel's identity --
+    which is why sopranos are hard to understand at the top of the range.
+
+    @c baseHz is the vowel's own F1, @c fundamentalHz the note being sung, and
+    @c ceilingHz the highest F1 that jaw actually reaches. The strategy engages
+    as the fundamental comes up on F1 and is complete a little above it; below
+    that the vowel is returned unchanged.
+*/
+[[nodiscard]] float tunedFirstFormant (float baseHz, float fundamentalHz,
+                                       float ceilingHz) noexcept;
+
+/** Smallest F2/F1 ratio any real vowel presents. A tracked F1 that climbs into
+    F2 would be a tract with two coincident lowest resonances, which is not a
+    configuration a mouth has; F2 is pushed clear instead. */
+inline constexpr float kMinimumFormantSpacing = 1.40f;
+
+/** Cents by which the just interval departs from its equal-tempered neighbour.
+
+    An a cappella ensemble does not sing equal temperament. It narrows the major
+    third and widens the minor one until the overtones align, which is the
+    "ring" of a locked chord and the thing a keyboard-tuned choir patch cannot
+    produce. The table is five-limit: 5:4 for the major third (13.7 cents
+    narrow), 6:5 for the minor (15.6 wide), 3:2 for the fifth (2.0 wide).
+
+    @c semitonesAboveRoot may be any integer, positive or negative; only its
+    pitch class matters, because an octave is just either way.
+*/
+[[nodiscard]] float justIntonationOffsetCents (int semitonesAboveRoot) noexcept;
+
 /** Portamento time in seconds for the normalised glide parameter. */
 [[nodiscard]] float glideTimeSeconds (float glide) noexcept;
 

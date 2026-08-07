@@ -55,6 +55,12 @@ float clampUnit (float value) noexcept
         return 0.0f;
     return std::clamp (value, 0.0f, 1.0f);
 }
+
+float smoothStep (float value) noexcept
+{
+    value = clampUnit (value);
+    return value * value * (3.0f - 2.0f * value);
+}
 } // namespace
 
 VowelPoint cardinalVowelPosition (int index) noexcept
@@ -128,6 +134,55 @@ float formantShiftRatio (float semitones) noexcept
     if (! std::isfinite (semitones))
         return 1.0f;
     return std::exp2 (std::clamp (semitones, -24.0f, 24.0f) / 12.0f);
+}
+
+DynamicResponse dynamicResponse (float dynamics) noexcept
+{
+    const float below = 1.0f - clampUnit (dynamics);
+    DynamicResponse response;
+    // Level is linear in dB, which is how a dynamic layer is expected to behave
+    // under a controller: an empty wheel is 18.1 dB down on the voiced source.
+    response.voicedGain = std::exp2 (-3.00f * below);
+    // Aspiration only loses 7.2 dB over the same span. The glottis leaks a
+    // larger share of the flow at low effort, so a soft note is breathier as
+    // well as quieter rather than being the same sound turned down.
+    response.airGain = std::exp2 (-1.20f * below);
+    // Vocal effort sets the source spectral tilt, so a soft note is dull. This
+    // is the part that has to be large: a dynamic layer that only moves the
+    // level by 18 dB and the presence band by the same 18 dB is an output trim.
+    response.effortScale = 1.0f - 0.85f * below;
+    // ... and it is produced with a laxer glottis, which is a change in the
+    // pulse shape itself rather than a filter over a fixed one.
+    response.sourceTensionScale = 1.0f - 0.75f * below;
+    response.vibratoScale = 1.0f - 0.55f * below;
+    return response;
+}
+
+float tunedFirstFormant (float baseHz, float fundamentalHz, float ceilingHz) noexcept
+{
+    if (! (baseHz > 0.0f) || ! std::isfinite (fundamentalHz) || ! (fundamentalHz > 0.0f))
+        return baseHz;
+
+    // Never below the vowel's own F1: this is a strategy for a fundamental that
+    // has climbed too high, not a general retuning.
+    const float ceiling = std::max (baseHz, std::isfinite (ceilingHz) ? ceilingHz : baseHz);
+    const float target = std::min (ceiling, std::max (baseHz, fundamentalHz));
+    // Fully engaged by the time the fundamental is 15 % above F1, absent below
+    // 20 % under it, and smooth between so the tract never steps into it.
+    const float engagement = smoothStep ((fundamentalHz / baseHz - 0.80f) / 0.35f);
+    return baseHz + engagement * (target - baseHz);
+}
+
+float justIntonationOffsetCents (int semitonesAboveRoot) noexcept
+{
+    // just - equal, in cents, for 16:15, 9:8, 6:5, 5:4, 4:3, 45:32, 3:2, 8:5,
+    // 5:3, 16:9 and 15:8. The unison and the octave are the same either way.
+    static constexpr float offsets[12] = {
+          0.000f,  11.731f,   3.910f,  15.641f, -13.686f,  -1.955f,
+         -9.776f,   1.955f,  13.686f, -15.641f,  -3.910f, -11.731f
+    };
+    const int pitchClass = ((semitonesAboveRoot % 12) + 12) % 12;
+    return offsets[static_cast<std::size_t> (pitchClass)];
 }
 
 float glideTimeSeconds (float glide) noexcept
