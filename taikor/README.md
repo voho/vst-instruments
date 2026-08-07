@@ -92,10 +92,18 @@ else rather than on their own. Turn Head Diameter down if you would rather have
 the family centred higher; the octave mapping scales with whatever drum the
 controls describe.
 
-**Velocity** sets the impact speed of the stick. The timbre change that comes
-with it is not a separate control, because it is not a separate effect: Hertz
-contact time falls as the fifth root of impact speed, so a harder stroke is
-shorter, brighter and louder at once.
+**Velocity** sets the impact speed of the stick, from 0.12 m/s — a tip barely
+leaving the head — to 6 m/s. The timbre change that comes with it is not a
+separate control, because it is not a separate effect: Hertz contact time falls
+as the fifth root of impact speed, so a harder stroke is shorter, brighter and
+louder at once.
+
+The mapping is geometric and nothing shapes it, so equal steps of MIDI velocity
+are equal steps of decibels — which is what an arm does. At full Velocity Depth
+that is thirty-four decibels between a ghost stroke and a full blow on an open
+Don, and forty on the stick click. The single most common complaint about the
+sampled taiko libraries this competes with is that they have very little of
+that; it is not a limitation a model has any reason to inherit.
 
 **MIDI CC1** lays a hand on the head. It damps whatever is still ringing, and
 it goes on damping while it is held — so a stroke played with the hand down is
@@ -149,10 +157,10 @@ a voicing offset.
 The default output is far quieter than a synthesizer's usually is, deliberately.
 A taiko is a very loud instrument with a very large crest factor, and this one
 models the whole of it: the loudest stroke it can make — a full-velocity rim
-shot on the largest drum — sits more than twenty decibels above unity. The
-default leaves that stroke just under full scale rather than making a middling
-stroke as loud as possible, so nothing in the instrument's range reaches the
-safety limiter at the factory setting.
+shot — sits about eighteen decibels above unity, and a ghost stroke thirty-four
+decibels below that. The default leaves the loudest single stroke just under
+full scale rather than making a middling stroke as loud as possible, so nothing
+a player can do to one drum reaches the safety limiter at the factory setting.
 
 ## Sound engine
 

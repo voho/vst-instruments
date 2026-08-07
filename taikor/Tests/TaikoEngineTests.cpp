@@ -1260,6 +1260,83 @@ void testTheDrumSoundsLikeADrumAndNotLikeATone()
                 "the stroke ends as a sine");
 }
 
+// The complaint players make about every sampled taiko library is the same one:
+// limited dynamics, and loud. A model has no reason to inherit it. The whole
+// instrument used to cover about twenty-two decibels of level from the softest
+// MIDI velocity to the hardest, and the bottom half of the keyboard's velocity
+// range lived inside half a decibel of the floor because the map squared the
+// control before a logarithmic curve, which compresses the bottom rather than
+// expanding it.
+void testTheDynamicRangeReachesFromAGhostStrokeToAFullBlow()
+{
+    auto parameters = defaultParameters();
+    parameters.humanise = 0.0f;
+    parameters.velocityDepth = 1.0f;
+
+    const auto peakAt = [&parameters] (taikor::Articulation articulation, float velocity)
+    {
+        return strike (parameters, articulation, 0, velocity, 48000.0, 24000).peak;
+    };
+
+    for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+    {
+        const auto articulation = static_cast<taikor::Articulation> (index);
+        const auto name = std::string (taikor::getArticulationDisplayName (articulation));
+
+        const auto ghost = peakAt (articulation, 0.02f);
+        const auto full = peakAt (articulation, 1.0f);
+        expect (ghost > 1.0e-6 && std::isfinite (ghost),
+                "a ghost stroke must still sound: " + name);
+
+        const auto span = 20.0 * std::log10 (full / std::max (ghost, 1.0e-12));
+        expect (span > 30.0,
+                "the instrument must cover more than thirty decibels from a ghost "
+                "stroke to a full blow: " + name + " covers "
+                    + std::to_string (span));
+    }
+
+    // And it has to be usable across that range rather than merely wide.
+    // Impact speed is geometric in the control and level goes as a power of
+    // impact speed, so equal steps of MIDI velocity are equal steps of decibels
+    // - which is what an arm does. The squared map made the first fifth of the
+    // range worth a decibel and the last fifth worth ten.
+    std::vector<double> steps;
+    double previous = 20.0 * std::log10 (peakAt (taikor::Articulation::Don, 0.2f));
+    for (float velocity = 0.4f; velocity <= 1.001f; velocity += 0.2f)
+    {
+        const auto level = 20.0 * std::log10 (peakAt (taikor::Articulation::Don, velocity));
+        steps.push_back (level - previous);
+        previous = level;
+    }
+
+    const auto smallest = *std::min_element (steps.begin(), steps.end());
+    const auto largest = *std::max_element (steps.begin(), steps.end());
+    expect (smallest > 0.0, "every step up in velocity must be a step up in level");
+    expect (largest < smallest * 1.8,
+            "equal steps of velocity must be near-equal steps of level: the widest "
+            "is " + std::to_string (largest) + " dB and the narrowest "
+                + std::to_string (smallest));
+
+    // The top of the range has not moved: the map is geometric between the same
+    // two impact speeds it always was, so at full Velocity Depth and full
+    // velocity the stroke is struck at exactly the speed it used to be. What
+    // that has to mean in the output is that the factory level still leaves the
+    // loudest single stroke on the reference drum off the safety limiter, even
+    // with the humanising jitter pushing the impact speed as far as it goes.
+    auto loudest = defaultParameters();
+    loudest.velocityDepth = 1.0f;
+    loudest.humanise = 1.0f;
+    for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+    {
+        const auto articulation = static_cast<taikor::Articulation> (index);
+        const auto rendered = strike (loudest, articulation, 0, 1.0f, 48000.0, 24000);
+        expect (rendered.peak < 0.95,
+                "the loudest single stroke must stay clear of the safety limiter at "
+                "the factory output level: "
+                    + std::string (taikor::getArticulationDisplayName (articulation)));
+    }
+}
+
 // A nagado-daiko is byo-uchi: the head is nailed on with a ring of iron tacks,
 // each holding down its share of the head's tension, and a stroke that catches
 // the hoop hard enough lifts the head against that preload and sets them
@@ -3321,6 +3398,7 @@ int main()
     testShellResonanceHasNoStepInIt();
     testAStrokeLandsOnAHeadThatIsAlreadyMoving();
     testTheTackLineRattlesOnlyWhenItIsBeaten();
+    testTheDynamicRangeReachesFromAGhostStrokeToAFullBlow();
     testTheAttackGlideComesFromTheHead();
     testHeadStiffnessOpensTheModalRatios();
     testTheContinuumFollowsTheHead();

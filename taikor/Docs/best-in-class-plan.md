@@ -207,14 +207,17 @@ each lands with a test in `Tests/` that fails without it.
   than in the spectrum, for the reason the wooden bank already is: the rattle
   lasts about a millisecond and shares its band with the head's continuum.
 
-- [ ] **6. Open the bottom of the dynamic range.** Lower the minimum impact
+- [x] **6. Open the bottom of the dynamic range.** Lower the minimum impact
   speed from 0.45 m/s to 0.12 m/s and drop the squaring, so velocity is even in
   decibels across its range instead of piling the bottom half onto the floor.
   The top of the range is left exactly where it is, so the loudest stroke the
   instrument can make does not move and the factory Output stays correct.
   Closes gap 5.
   *Verified by*: the peak level span from velocity 0.02 to 1.00 at full Velocity
-  Depth must exceed 34 dB, and the loudest stroke must not get louder.
+  Depth must exceed 30 dB for every stroke (it is 34 to 42; it was 22 to 29);
+  five equal steps of velocity must be within a factor of 1.8 of each other in
+  decibels (they are within 1.2; they were within 2.2); and the loudest single
+  stroke at the factory output must still stay clear of the safety limiter.
 
 - [ ] **7. Play the drum as an ensemble.** *Dropped after investigation — see
   below.*

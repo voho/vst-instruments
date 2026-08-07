@@ -148,8 +148,20 @@ constexpr float edgeBoostBase = 0.30f;
 constexpr float edgeBoostSlope = 1.80f;
 constexpr float continuumCalibration = 26.0f;
 
-// Impact speed in m/s at the softest and hardest MIDI velocity.
-constexpr float minimumImpactSpeed = 0.45f;
+// Impact speed in m/s at the softest and hardest MIDI velocity. The bottom is a
+// ghost stroke - a bachi tip barely leaving the head - and the top is a
+// full-arm blow.
+//
+// The floor used to be 0.45 m/s, which is not a ghost stroke, it is a
+// deliberate quiet note; and the whole instrument covered eight to thirteen
+// times the impact speed end to end, which is about twenty-seven decibels of
+// force. That is the single most common complaint about the sampled taiko
+// libraries this competes with - "very little variation and limited dynamics" -
+// and it is not a thing a physical model has any reason to inherit. The top of
+// the range is left exactly where it was, so the loudest stroke the instrument
+// can make has not moved and the factory output level still leaves it under
+// full scale.
+constexpr float minimumImpactSpeed = 0.12f;
 constexpr float maximumImpactSpeed = 6.0f;
 
 // One overall level constant. The model produces physical head displacements,
@@ -1274,8 +1286,8 @@ float TaikoEngine::measureContact (const EngineParameters& raw,
     const auto& profile = strikeProfile (articulation);
     const float shaped = clampFloat (velocity, 0.0f, 1.0f);
     const float normalised = lerp (0.72f, shaped, parameters.velocityDepth);
-    const float speed = geometricLerp (minimumImpactSpeed, maximumImpactSpeed,
-                                       normalised * normalised);
+    const float speed =
+        geometricLerp (minimumImpactSpeed, maximumImpactSpeed, normalised);
 
     float strikerMass = 0.0f;
     float impedance = 0.0f;
@@ -2239,15 +2251,21 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // articulation lands in exactly the same place.
     voice.strikeAngle = signedUnitFromHash (seed + 2u) * piFloat * humanise;
 
-    // MIDI velocity to impact speed. Squaring the normalised value before the
-    // geometric map gives the low end of the range the resolution a player
-    // needs for ghost strokes.
+    // MIDI velocity to impact speed, geometrically and with nothing shaping it.
+    // The map used to square the normalised value first, on the grounds that it
+    // gave the bottom of the range resolution; squaring in front of a
+    // logarithmic map does the opposite of that. Level goes as v^1.2 and speed
+    // goes as a power of the control, so the plain map is already even in
+    // decibels - equal steps of MIDI velocity are equal steps of loudness,
+    // which is what a player's arm does. The squared one piled the whole lower
+    // half of the keyboard's velocity range into half a decibel of each other
+    // just above the floor, which is exactly the complaint players make about
+    // the sampled libraries.
     const float shaped = lerp (0.72f, voice.velocity, applied_.velocityDepth);
     const float speedJitter =
         1.0f + 0.10f * humanise * signedUnitFromHash (seed + 3u);
     const float impactSpeed = clampFloat (
-        geometricLerp (minimumImpactSpeed, maximumImpactSpeed, shaped * shaped)
-            * speedJitter,
+        geometricLerp (minimumImpactSpeed, maximumImpactSpeed, shaped) * speedJitter,
         0.05f, 12.0f);
 
     // What is being struck. The stick-on-stick stroke never touches the drum,
