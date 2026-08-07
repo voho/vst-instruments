@@ -1,10 +1,10 @@
 # Drumalor demonstration audio
 
 Seven rendered examples of what Drumalor produces: the full thirteen-voice
-vocabulary one hit at a time, two programmed grooves, the snare played from a
-ghost note to a full accent and through its three articulations, a tom and
-cymbal phrase, the Humanise control heard on a repeated bar, and the kit bus
-pushed on a loop.
+vocabulary one hit at a time, two programmed grooves — one of them played on the
+hi-hat pedal — the snare played from a ghost note to a full accent and through
+its three articulations, a tom and cymbal phrase, the Humanise control heard on
+a repeated bar, and the kit bus pushed on a loop.
 
 Every file here is rendered by [`Tools/RenderDemos.cpp`](../../Tools/RenderDemos.cpp)
 from the shipping JUCE-free signal path — the same `DrumEngine` the VST3, Audio
@@ -23,7 +23,11 @@ tempo, exactly as a sequencer would play the instrument.
   each voice given the ring its factory decay asks for.
 - **02** is a plain rock beat at 96 BPM. Listen for the open hat at the end of
   every second bar: the next bar's closed hat cuts it off, because the two hats
-  share choke group A out of the box, like a pedal.
+  share choke group A out of the box, like a pedal. Two more bars follow with a
+  foot actually on the pedal — every hat in them is the same Open Hat note, and
+  what changes is how far apart the plates are, so the pair tightens and opens
+  again across the bar and the last stroke is the foot shutting it with no note
+  at all.
 - **03** is a busier break at 104 BPM. The ghost notes are ordinary snare hits
   at low velocity — velocity drives the struck timbre and the wire content as
   well as the level, so the ghosts darken rather than merely getting quieter.

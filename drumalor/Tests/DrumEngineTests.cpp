@@ -2945,6 +2945,156 @@ void testReStrikeDamping()
             "a second ride strike was damped as though the plate were a drum head");
 }
 
+void testHiHatPedal()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int captureSamples = static_cast<int> (1.20 * sampleRate);
+
+    const auto renderHat = [&] (drumalor::Instrument instrument,
+                                bool setPedal, float pedal)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        if (setPedal)
+            engine.setHiHatPedal (pedal);
+        engine.trigger (instrument, 0.90f);
+        const auto interleaved = renderInterleaved (
+            engine, captureSamples, defaultBlockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        return mono;
+    };
+
+    // The two notes are the pedal's endpoints, so a session that never sends a
+    // controller has to be reproduced sample for sample by one that parks the
+    // pedal where that note already was.
+    expect (renderHat (drumalor::Instrument::ClosedHat, false, 0.0f)
+                == renderHat (drumalor::Instrument::ClosedHat, true, 1.0f),
+            "a fully closed pedal did not reproduce the Closed Hat exactly");
+    expect (renderHat (drumalor::Instrument::OpenHat, false, 0.0f)
+                == renderHat (drumalor::Instrument::OpenHat, true, 0.0f),
+            "a fully open pedal did not reproduce the Open Hat exactly");
+
+    // And in between it is a pedal rather than a switch: the pair rings for
+    // less and less as the foot comes down, because clamping the plates damps
+    // them by friction between two faces instead of by anything inside the
+    // bronze, and every intermediate position is its own sound rather than one
+    // of the two endpoints faded.
+    constexpr std::array pedalPositions { 0.0f, 0.30f, 0.55f, 0.80f, 1.0f };
+    std::vector<std::vector<float>> pedalRenders;
+    double previousTail = std::numeric_limits<double>::max();
+    for (const float pedal : pedalPositions)
+    {
+        const auto samples = renderHat (drumalor::Instrument::OpenHat, true, pedal);
+        expect (std::all_of (samples.begin(), samples.end(),
+                             [] (float value) { return std::isfinite (value); })
+                    && peakInRange (samples, 0, samples.size()) <= 1.001,
+                "a half-open hat was not finite and bounded");
+
+        const double early = rmsInRange (samples, 0,
+                                         static_cast<std::size_t> (0.020 * sampleRate));
+        const double late = rmsInRange (samples,
+                                        static_cast<std::size_t> (0.100 * sampleRate),
+                                        static_cast<std::size_t> (0.400 * sampleRate));
+        const double tail = late / std::max (1.0e-20, early);
+        expect (tail < previousTail,
+                "closing the pedal to " + std::to_string (pedal)
+                    + " did not shorten the hat (" + std::to_string (tail)
+                    + " against " + std::to_string (previousTail) + ")");
+        previousTail = tail;
+        pedalRenders.push_back (samples);
+    }
+
+    for (std::size_t position = 1; position < pedalRenders.size(); ++position)
+    {
+        const auto& before = pedalRenders[position - 1u];
+        const auto& after = pedalRenders[position];
+        const double beforePeak = peakInRange (before, 0, before.size());
+        const double afterPeak = peakInRange (after, 0, after.size());
+        std::vector<float> matched (after.size());
+        const auto gain = static_cast<float> (beforePeak / std::max (1.0e-9, afterPeak));
+        for (std::size_t index = 0; index < after.size(); ++index)
+            matched[index] = after[index] * gain;
+        const double residual = meanAbsoluteDifference (before, matched)
+            / std::max (1.0e-12, meanAbsoluteMagnitude (before));
+        expect (residual > 0.10,
+                "pedal position " + std::to_string (pedalPositions[position])
+                    + " is a level change rather than its own sound ("
+                    + std::to_string (residual) + ")");
+    }
+
+    // Closing the pedal on a hat that is already ringing has to take it down,
+    // and take it down faster the further the foot goes. The window starts well
+    // after the close so the foot chick a full close makes is not measured as
+    // though it were the hat surviving.
+    const auto closeOnTail = [&] (float pedal)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.setHiHatPedal (0.0f);
+        engine.trigger (drumalor::Instrument::OpenHat, 0.90f);
+        renderInterleaved (engine, static_cast<int> (0.060 * sampleRate), defaultBlockSize);
+        engine.setHiHatPedal (pedal);
+        renderInterleaved (engine, static_cast<int> (0.150 * sampleRate), defaultBlockSize);
+        const auto interleaved = renderInterleaved (
+            engine, static_cast<int> (0.200 * sampleRate), defaultBlockSize);
+        return metricsForInterleaved (interleaved).rms();
+    };
+    const double leftOpen = closeOnTail (0.0f);
+    const double halfClosed = closeOnTail (0.50f);
+    const double shut = closeOnTail (1.0f);
+    expect (halfClosed < 0.85 * leftOpen,
+            "half closing the pedal did not damp a ringing open hat ("
+                + std::to_string (halfClosed) + " against " + std::to_string (leftOpen) + ")");
+    expect (shut < 0.30 * halfClosed,
+            "shutting the pedal did not cut a ringing open hat ("
+                + std::to_string (shut) + " against " + std::to_string (halfClosed) + ")");
+
+    // A foot coming down fast makes its own sound, with no note involved, and a
+    // foot resting on the pedal or lifting off it does not.
+    const auto pedalOnly = [&] (float from, float to)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.setHiHatPedal (from);
+        renderInterleaved (engine, 512, defaultBlockSize);
+        engine.setHiHatPedal (to);
+        const auto interleaved = renderInterleaved (
+            engine, static_cast<int> (0.250 * sampleRate), defaultBlockSize);
+        return metricsForInterleaved (interleaved);
+    };
+    const auto chick = pedalOnly (0.0f, 1.0f);
+    expect (chick.finite && chick.rms() > 1.0e-4,
+            "a fast pedal close produced no foot chick (" + std::to_string (chick.rms()) + ")");
+    expect (chick.peak <= 1.001, "the foot chick exceeded the output safety bound");
+    const auto lift = pedalOnly (1.0f, 0.0f);
+    expect (lift.rms() < 1.0e-6, "lifting the pedal made a sound");
+    const auto creep = pedalOnly (0.50f, 0.60f);
+    expect (creep.rms() < 1.0e-6, "resting on the pedal made a sound");
+
+    // The pedal is engine state, not a parameter, and reset() has to forget it
+    // so a reopened session starts from the two notes again.
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+    engine.setHiHatPedal (1.0f);
+    expect (engine.getHiHatPedal() > 0.99f, "the pedal did not take a controller value");
+    engine.reset();
+    expect (engine.getHiHatPedal() == 0.0f, "reset did not release the pedal");
+
+    // Nonsense from a controller must not reach the model.
+    engine.setHiHatPedal (0.40f);
+    engine.setHiHatPedal (std::numeric_limits<float>::quiet_NaN());
+    expect (std::abs (engine.getHiHatPedal() - 0.40f) < 1.0e-6f,
+            "a non-finite pedal position was accepted");
+    engine.setHiHatPedal (14.0f);
+    expect (engine.getHiHatPedal() <= 1.0f, "an out-of-range pedal position was accepted");
+}
+
 void testUiPresentationMath()
 {
     using namespace drumalor::ui;
@@ -3306,6 +3456,7 @@ int main()
     testMembraneTensionModulation();
     testSnareArticulations();
     testReStrikeDamping();
+    testHiHatPedal();
     testUiPresentationMath();
     testIdleMetallicCostAndDenormalSafety();
     testInvalidValuesAndStressPerformance();

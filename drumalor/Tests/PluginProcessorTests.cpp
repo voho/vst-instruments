@@ -544,6 +544,52 @@ void testInitialOutputGain()
     loud.releaseResources();
 }
 
+void testHiHatPedalController()
+{
+    // MIDI CC 4 is the hi-hat pedal on every electronic kit, and the processor
+    // has to route it at the controller event's own sample offset rather than
+    // once a block: closing the pedal halfway through a bar has to land where
+    // the player put it.
+    DrumalorAudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    juce::AudioBuffer<float> audio;
+    juce::MidiBuffer midi;
+    // Park the pedal open, strike the open hat, then shut the pedal.
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 4, 0), 0);
+    midi.addEvent (juce::MidiMessage::noteOn (
+                       1, drumalor::getStandardMidiNote (drumalor::Instrument::OpenHat),
+                       static_cast<juce::uint8> (120)),
+                   1);
+    midi.addEvent (juce::MidiMessage::controllerEvent (1, 4, 127), 200);
+    render (processor, audio, midi);
+    expect (peakInRange (audio, 0, 200) > 1.0e-5f,
+            "the open hat did not sound before the pedal closed");
+
+    // Let the closing settle, then confirm the hat is gone rather than still
+    // ringing out its open tail.
+    juce::MidiBuffer none;
+    for (int block = 0; block < 24; ++block)
+        render (processor, audio, none);
+    expect (processor.getActiveVoiceCount() == 0,
+            "MIDI CC4 did not close the hi-hat");
+
+    // A pedal that has never moved leaves the two notes exactly as they were,
+    // and lifting the pedal must not be heard as a stroke.
+    DrumalorAudioProcessor untouched;
+    untouched.prepareToPlay (sampleRate, blockSize);
+    juce::AudioBuffer<float> silence;
+    juce::MidiBuffer lift;
+    lift.addEvent (juce::MidiMessage::controllerEvent (1, 4, 127), 0);
+    lift.addEvent (juce::MidiMessage::controllerEvent (1, 4, 0), 32);
+    render (untouched, silence, lift);
+    expect (peakInRange (silence, 0, blockSize) < 1.0e-6f,
+            "lifting the hi-hat pedal produced audio");
+
+    processor.releaseResources();
+    untouched.releaseResources();
+}
+
 void testAllNotesOff()
 {
     DrumalorAudioProcessor processor;
@@ -903,6 +949,7 @@ int main()
     testSampleAccurateMidiAndMappings();
     testInitialOutputGain();
     testAllNotesOff();
+    testHiHatPedalController();
     testUiQueueAndLifecycle();
     testEditorRendering();
 

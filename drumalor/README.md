@@ -20,10 +20,11 @@ percussion voices. Each has its own MIDI mapping, synthesis character, pitch,
 and decay controls.
 
 > **Listen first.** Seven [rendered demonstrations](Docs/audio/README.md) cover
-> the full thirteen-voice kit one hit at a time, programmed grooves with
-> ghost notes, snare velocity dynamics, toms and cymbals, the Humanise control
-> and the kit bus. They are rendered by the shipping engine, so they cannot
-> drift from what the plug-in does.
+> the full thirteen-voice kit one hit at a time, programmed grooves with ghost
+> notes and a bar played on the hi-hat pedal, snare velocity and its three
+> articulations, toms and cymbals, the Humanise control and the kit bus. They
+> are rendered by the shipping engine, so they cannot drift from what the
+> plug-in does.
 
 The project builds three products from one JUCE codebase:
 
@@ -106,6 +107,30 @@ a 36 % residual and a cross-stick a 92 % one.
 This changes two aliases that earlier versions accepted: note 40 was a second
 name for a plain snare, and note 37 was a second name for Perc 2. Perc 2 keeps
 its primary note 75 and its 76 and 77 aliases.
+
+**Hi-hat pedal (MIDI CC 4).** The hats are a pedal, not two notes. Every
+electronic kit sends pedal position as continuous controller 4, 0 fully open to
+127 tightly closed, and Drumalor treats it as one modelled quantity: how far
+apart the two plates are. That single number sets the pair's stiffness, its
+decay, and which damping law it obeys — an open plate loses its top first, a
+clamped pair is damped by friction between two faces and takes every partial at
+much the same rate — so a half-open hat is genuinely between the two rather than
+a crossfade of them.
+
+The two Closed Hat and Open Hat channel strips remain separate instruments in
+the mixer, with their own character, pitch, level, pan and Decay. Once the pedal
+is live, the note chooses the channel and the pedal decides how open the pair
+is; their two Decay settings become the endpoints, interpolated geometrically.
+Closing the pedal on a ringing hat damps it progressively, over a few
+milliseconds at the bottom of the travel and a third of a second near the top,
+and a foot coming down fast enough to shut the pair produces its own chick with
+no note involved. Lifting the pedal or resting on it is silent.
+
+Until a controller touches it, the pedal does nothing at all: the Closed Hat
+note is exactly a fully closed pair and the Open Hat note exactly a free one, so
+a session that never sends CC 4 renders sample for sample as it always did. That
+identity is a regression contract, not an intention. Resetting the plug-in
+releases the pedal.
 
 **Choke groups** generalise the hi-hat pedal. Any voice can be placed in group
 A, B, or C; triggering it then cuts every sounding voice in the same group with
@@ -691,7 +716,14 @@ carry less energy than the two strokes rendered separately, requires a ghost
 stroke to leave more of a ringing head alive than a full one does, requires a
 forty-eight-stroke press roll to stay bounded and to hold well under half as
 many voices as it has strokes, and requires a second ride strike to still add
-rather than being damped as though a plate were a drum head.
+rather than being damped as though a plate were a drum head. A hi-hat pedal
+contract requires a fully closed pedal to reproduce the Closed Hat and a fully
+open one the Open Hat sample for sample, requires each of five pedal positions
+to ring shorter than the last and to differ from its neighbour by more than a
+level change, requires closing the pedal on a ringing open hat to damp it and
+shutting it to cut it, requires a fast close to make a foot chick while a lift
+or a rest makes none, and requires reset to release the pedal and nonsense
+controller values to be refused.
 A dedicated
 efficiency contract proves that a metallic bank frozen behind an unrelated drum
 wakes into exactly the same state as one frozen during silence, and measures
@@ -776,9 +808,10 @@ the VST3 at the highest strictness level:
   "$HOME/Library/Audio/Plug-Ins/VST3/Drumalor.vst3"
 ```
 
-Also exercise all 13 note mappings, velocity extremes, rapid retriggers, the
-open/closed-hat choke, all 91 voice parameters and the four kit controls,
-choke groups, project-state recall, sample-
+Also exercise all 13 note mappings and the snare's three articulation notes,
+velocity extremes, rapid retriggers, a continuous CC 4 hi-hat pedal from an
+electronic kit or a controller lane, the open/closed-hat choke, all 91 voice
+parameters and the four kit controls, choke groups, project-state recall, sample-
 rate changes, and buffer sizes from 32 to 2048 samples in at least two hosts.
 A validator passing does not guarantee musical or host-level correctness.
 

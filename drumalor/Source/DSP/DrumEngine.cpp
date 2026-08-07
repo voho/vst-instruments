@@ -593,6 +593,8 @@ void DrumEngine::reset() noexcept
         voice = Voice {};
     triggerCounters_.fill (0);
     componentDrift_.fill (0.0f);
+    hiHatPedal_ = 0.0f;
+    hiHatPedalActive_ = false;
     metallicBankVoiceCounts_.fill (0);
     metallicBankMask_ = 0u;
     resetMetallicOscillatorBanks();
@@ -1494,6 +1496,64 @@ void DrumEngine::retireVoice (const Voice& source) noexcept
     beginFadeToSilence (*destination, retirementFadeMultiplier_);
 }
 
+bool DrumEngine::isHiHat (Instrument instrument) noexcept
+{
+    return instrument == Instrument::ClosedHat || instrument == Instrument::OpenHat;
+}
+
+// How far apart the two plates are, from 0 (clamped) to 1 (free). Before any
+// controller has touched the pedal the two notes are the two endpoints, exactly
+// as they always were; afterwards the pedal decides and the note only chooses
+// which channel strip is playing.
+float DrumEngine::hiHatAperture (Instrument instrument) const noexcept
+{
+    if (! hiHatPedalActive_)
+        return instrument == Instrument::ClosedHat ? 0.0f : 1.0f;
+    return std::clamp (1.0f - hiHatPedal_, 0.0f, 1.0f);
+}
+
+float DrumEngine::getHiHatPedal() const noexcept
+{
+    return hiHatPedalActive_ ? hiHatPedal_ : 0.0f;
+}
+
+void DrumEngine::setHiHatPedal (float position) noexcept
+{
+    if (! std::isfinite (position))
+        return;
+    position = std::clamp (position, 0.0f, 1.0f);
+    const bool wasActive = hiHatPedalActive_;
+    const float previous = wasActive ? hiHatPedal_ : 0.0f;
+    hiHatPedalActive_ = true;
+    hiHatPedal_ = position;
+    const float aperture = 1.0f - position;
+
+    // Closing the pedal on a ringing hat is not a switch being thrown. The two
+    // plates come together over the travel of the foot and the friction between
+    // their faces takes the sound out of the pair as they meet, so a pedal all
+    // the way down cuts a hat in a few milliseconds and one that only half
+    // closes leaves it ringing, shorter and duller than it was. A pedal that
+    // opens again does not undo it: the energy has already gone.
+    for (auto* pool : { &voices_, &retiringVoices_ })
+        for (auto& voice : *pool)
+        {
+            if (! voice.active || ! isHiHat (voice.instrument)
+                || aperture >= voice.hatAperture - 0.02f)
+                continue;
+            beginChoke (voice, 0.004f + 0.36f * aperture);
+            voice.hatAperture = aperture;
+        }
+
+    // A foot coming down hard enough to shut the pair makes its own sound, and
+    // it is the only stroke on a kit that is played without a stick. Its
+    // strength follows the size of the move rather than a clock, so a host that
+    // thins its controller stream changes when the chick lands, never how hard.
+    const float travel = position - previous;
+    if (wasActive && previous < 0.55f && position >= 0.55f && travel > 0.18f)
+        trigger (Instrument::ClosedHat,
+                 std::clamp (0.18f + 1.25f * travel, 0.15f, 1.0f));
+}
+
 bool DrumEngine::isStruckMembrane (Instrument instrument) noexcept
 {
     switch (instrument)
@@ -2175,21 +2235,57 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
         case Instrument::ClosedHat:
         case Instrument::OpenHat:
         {
-            const bool closed = instrument == Instrument::ClosedHat;
+            // The pedal, as one number. Everything that used to be chosen by
+            // which of the two notes arrived is now read off it, and the two
+            // notes are exactly its endpoints - so an untouched pedal, where a
+            // Closed Hat note means nought and an Open Hat note means one,
+            // reproduces both voices sample for sample.
+            //
+            // The blend is guarded at both ends rather than trusted to arrive
+            // there: `open + (closed - open) * 1` is not bit-identical to
+            // `closed` in float, and a hat that changed in the last place of
+            // its decay constant when nobody had touched the pedal would be a
+            // silly thing to ship.
+            voice.hatAperture = hiHatAperture (instrument);
+            const float clamped = 1.0f - voice.hatAperture;
+            const auto pedalBlend = [clamped] (float openValue, float closedValue)
+            {
+                return clamped <= 0.0f ? openValue
+                     : clamped >= 1.0f ? closedValue
+                     : openValue + (closedValue - openValue) * clamped;
+            };
+
+            // How long the pair rings is the pedal's business, and the two
+            // channels' own Decay settings are its endpoints. The interpolation
+            // is geometric because the control is logarithmic in seconds, so
+            // half a pedal is half the travel a listener hears rather than half
+            // the number.
+            const float closedSeconds = decaySecondsFor (
+                Instrument::ClosedHat, snapshotParameters (Instrument::ClosedHat).decay);
+            const float openSeconds = decaySecondsFor (
+                Instrument::OpenHat, snapshotParameters (Instrument::OpenHat).decay);
+            voice.decaySeconds = (clamped >= 1.0f ? closedSeconds
+                                  : clamped <= 0.0f ? openSeconds
+                                  : closedSeconds * std::pow (
+                                        openSeconds / closedSeconds, voice.hatAperture))
+                * variation.decayScale;
+            voice.envelopeMultiplier = coefficientForTime (
+                voice.decaySeconds, static_cast<float> (sampleRate_));
+
             configureMetallicOscillatorBank (
                 instrument, voice.pitchRatio, voice.characterA, false);
             configureHighpass (voice.filterA, 3400.0f + 6500.0f * voice.characterB, 0.70f);
             configureBandpass (voice.filterB,
                                (6500.0f + 4800.0f * voice.characterB) * voice.velocityTimbre,
                                0.85f);
-            voice.transientMultiplier = coefficientForTime (closed ? 0.0025f : 0.006f,
-                                                             static_cast<float> (sampleRate_));
+            voice.transientMultiplier = coefficientForTime (
+                pedalBlend (0.006f, 0.0025f), static_cast<float> (sampleRate_));
             // The very top of a plate goes first. On an open hat that is most
             // of what you hear happen - it starts bright and darkens as it
             // rings - while a closed pair is damped by friction, which takes
             // every partial at much the same rate and leaves far less to hear.
             voice.auxiliaryMultiplier = coefficientForTime (
-                voice.decaySeconds * (closed ? 0.78f : 0.42f),
+                voice.decaySeconds * pedalBlend (0.42f, 0.78f),
                 static_cast<float> (sampleRate_));
 
             // The plates themselves. Closing the pedal clamps them together,
@@ -2204,7 +2300,9 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // why a soft hat is duller and not merely quieter.
             voice.contactSeconds = (0.00042f - 0.00022f * voice.characterA)
                 * std::pow (std::max (0.08f, velocity), -0.35f);
-            voice.baseFrequency = (closed ? 610.0f : 540.0f)
+            // Clamping the pair is a boundary the modes did not have, so the
+            // whole plate stiffens as the pedal comes down.
+            voice.baseFrequency = pedalBlend (540.0f, 610.0f)
                 * std::pow (voice.pitchRatio, 0.86f);
             // How far up the plate a strike gets is the contact again, but on a
             // plate the contact patch is a stick tip against something a
@@ -2220,10 +2318,15 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                 0.00042f / std::max (1.0e-5f, voice.contactSeconds), 0.30f, 1.60f);
             initialiseModalVoice (
                 voice, hatRatios, 12, voice.baseFrequency,
-                voice.decaySeconds * (closed ? 0.85f : 0.70f),
+                voice.decaySeconds * pedalBlend (0.70f, 0.85f),
                 0.10f, 0.60f + 0.14f * voice.characterB + 0.34f * reach,
-                closed ? ModalLoss { 0.86f, 0.10f, 0.04f }
-                       : ModalLoss { 0.55f, 0.30f, 0.15f });
+                // An open plate loses its top first, so its damping climbs
+                // steeply with frequency; a clamped pair is damped by friction
+                // between two faces instead, which takes every partial at much
+                // the same rate. The pedal moves continuously between the two
+                // laws rather than switching between two sounds.
+                ModalLoss { pedalBlend (0.55f, 0.86f), pedalBlend (0.30f, 0.10f),
+                            pedalBlend (0.15f, 0.04f) });
             break;
         }
 

@@ -173,6 +173,10 @@ public:
 
     void rest (double seconds) { render (seconds); }
 
+    // The hi-hat pedal, exactly as an electronic kit's CC 4 reaches the engine:
+    // 0 is fully open and 1 is tightly closed.
+    void pedal (float position) { engine_->setHiHatPedal (position); }
+
     [[nodiscard]] const std::vector<float>& left() const noexcept { return left_; }
     [[nodiscard]] const std::vector<float>& right() const noexcept { return right_; }
 
@@ -346,6 +350,33 @@ Take renderRockGroove()
         { Instrument::Crash, crash },
     });
 
+    // Two more bars of the same beat with the foot on the pedal. Every hat here
+    // is the same Open Hat note; what changes is how far apart the plates are,
+    // so the pair opens from tight through half-open and back, and the last
+    // sixteenth of the second bar shuts it with no note at all - the chick is
+    // the foot, not a stroke.
+    take.rest (0.15);
+    const std::string pedalKick  = std::string ("X-------X-------") + "X-------X---X---";
+    const std::string pedalSnare = std::string ("----X-------X---") + "----X-------X---";
+    const std::string pedalHat   = std::string ("x-x-x-x-x-x-x-x-") + "x-x-x-x-x-x-x---";
+    constexpr std::array<float, 16> pedalRamp {{
+        1.00f, 1.00f, 0.82f, 0.82f, 0.64f, 0.64f, 0.46f, 0.46f,
+        0.28f, 0.28f, 0.10f, 0.10f, 0.28f, 0.46f, 0.64f, 0.82f
+    }};
+    for (int bar = 0; bar < 2; ++bar)
+        for (std::size_t index = 0; index < pedalHat.size(); ++index)
+        {
+            take.pedal (pedalRamp[index % pedalRamp.size()]);
+            if (pedalKick[index] != '-')
+                take.strike (Instrument::Kick, velocityForStep (pedalKick[index]));
+            if (pedalSnare[index] != '-')
+                take.strike (Instrument::Snare, velocityForStep (pedalSnare[index]));
+            if (pedalHat[index] != '-')
+                take.strike (Instrument::OpenHat, velocityForStep (pedalHat[index]));
+            take.rest (step);
+        }
+    take.pedal (1.0f);
+
     take.rest (1.6);
     return take;
 }
@@ -518,7 +549,7 @@ const std::array<Demo, 7>& demos()
           "All thirteen voices of the factory kit, one hit at a time",
           renderKitVocabulary },
         { "02-rock-groove.wav",
-          "A plain rock beat at 96 BPM with the open hat choked by the closed",
+          "A plain rock beat at 96 BPM, then the same beat played on the hi-hat pedal",
           renderRockGroove },
         { "03-breakbeat-ghost-notes.wav",
           "A busier break at 104 BPM with ghost-note snare", renderBreakbeat },

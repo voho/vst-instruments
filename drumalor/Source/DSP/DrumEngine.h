@@ -109,6 +109,14 @@ public:
                                   const InstrumentParameters& parameters) noexcept;
     void setKitParameters (const KitParameters& parameters) noexcept;
     void setOutputGain (float linearGain) noexcept;
+    // Continuous hi-hat pedal position: 0 is fully open, 1 is tightly closed.
+    // Until this is called the two hats behave exactly as they always did, on
+    // their own notes; from the first call onwards the pedal is what decides
+    // how open the pair is and the notes only choose which channel strip plays.
+    // Call it from the same thread that calls trigger(): the plug-in routes
+    // MIDI CC 4 to it at the controller event's own sample offset.
+    void setHiHatPedal (float position) noexcept;
+    [[nodiscard]] float getHiHatPedal() const noexcept;
     void trigger (Instrument instrument, float velocity,
                   Articulation articulation = Articulation::Head) noexcept;
     [[nodiscard]] bool triggerMidi (int midiNote, float velocity) noexcept;
@@ -294,6 +302,10 @@ private:
         float bodyScale { 1.0f };
         float wireScale { 1.0f };
         float rimLevel { 0.0f };
+        // How open the pair was when this hat was struck. A pedal that closes
+        // further than this damps the voice; one that opens again does not
+        // bring it back, because a hat that has been shut has been shut.
+        float hatAperture { 1.0f };
         float cymbalClockPhase { 1.0f };
         float cymbalPcmValue { 0.0f };
         float cymbalPcmReconstructed { 0.0f };
@@ -401,6 +413,8 @@ private:
                        float decaySeconds, float brightness, ModalLoss loss) noexcept;
     void chokeGroup (int group) noexcept;
     [[nodiscard]] static bool isStruckMembrane (Instrument instrument) noexcept;
+    [[nodiscard]] static bool isHiHat (Instrument instrument) noexcept;
+    [[nodiscard]] float hiHatAperture (Instrument instrument) const noexcept;
     void dampRingingMembrane (Instrument instrument, float velocity) noexcept;
     void beginChoke (Voice& voice, float seconds) noexcept;
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
@@ -474,6 +488,11 @@ private:
     std::array<float, maximumMetallicDecimatorTaps> metallicDecimatorCoefficients_ {};
     std::array<float, sineTableSize> sineTable_ {};
     std::array<std::atomic<float>, instrumentCount> instrumentLevels_ {};
+
+    // Pedal position and whether a controller has ever set it. Both are only
+    // touched from the trigger/audio path and from reset().
+    float hiHatPedal_ { 0.0f };
+    bool hiHatPedalActive_ { false };
 
     std::atomic<float> outputGain_ { 0.82f };
     std::atomic<float> humanise_ { 0.5f };
