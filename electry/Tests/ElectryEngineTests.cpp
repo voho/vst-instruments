@@ -2604,11 +2604,11 @@ void testFrettingHandVibrato()
         parameters.sympatheticAmount = 0.0f;
         engine.setParameters(parameters);
         engine.reset();
-        engine.noteOn(45, 0.85f);
+        engine.noteOn(47, 0.85f);
         engine.setVibrato(pressure);
 
         Trace trace;
-        trace.stringIndex = TestAccess::stringForNote(engine, 45);
+        trace.stringIndex = TestAccess::stringForNote(engine, 47);
         constexpr int chunk = 32;
         const int total = static_cast<int>(seconds * sampleRate);
         StereoBuffer scratch(chunk);
@@ -2639,7 +2639,7 @@ void testFrettingHandVibrato()
         parameters.sympatheticAmount = 0.0f;
         untouched.setParameters(parameters);
         untouched.reset();
-        untouched.noteOn(45, 0.85f);
+        untouched.noteOn(47, 0.85f);
         StereoBuffer withoutControl(static_cast<int>(0.6 * sampleRate));
         renderInto(untouched, withoutControl);
 
@@ -2647,7 +2647,7 @@ void testFrettingHandVibrato()
         silenced.prepare(sampleRate, 512);
         silenced.setParameters(parameters);
         silenced.reset();
-        silenced.noteOn(45, 0.85f);
+        silenced.noteOn(47, 0.85f);
         silenced.setVibrato(0.0f);
         StereoBuffer withSilentControl(static_cast<int>(0.6 * sampleRate));
         renderInto(silenced, withSilentControl);
@@ -2734,7 +2734,7 @@ void testFrettingHandVibrato()
         parameters.sympatheticAmount = 1.0f;
         engine.setParameters(parameters);
         engine.reset();
-        engine.noteOn(45, 0.9f);
+        engine.noteOn(47, 0.9f);
         StereoBuffer lead(static_cast<int>(0.25 * sampleRate));
         renderInto(engine, lead);
         if (useWheel)
@@ -3231,6 +3231,59 @@ void testSustainPedal()
                                       releasedBuffer.size());
     expect(lateRms < heldRms * 0.1,
            "note did not damp after the sustain pedal was released");
+}
+
+void testVibratoOnlyMovesFingeredStrings()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // The lowest playable note is the low string played open: nothing is
+    // holding it down, so there is no contact for the hand to rock and a
+    // fretting-hand vibrato cannot reach it. The bar can, but that is the
+    // pitch wheel, not channel pressure.
+    const auto renderNote = [&](int midiNote, float vibrato)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        engine.setParameters(parameters);
+        engine.noteOn(midiNote, 0.8f);
+        StereoBuffer settle(static_cast<int>(0.05 * sampleRate));
+        renderInto(engine, settle);
+        engine.setVibrato(vibrato);
+        StereoBuffer buffer(static_cast<int>(0.40 * sampleRate));
+        renderInto(engine, buffer);
+        return buffer.left;
+    };
+
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        engine.noteOn(ElectryEngine::lowestPlayableNote, 0.8f);
+        StereoBuffer settle(512);
+        renderInto(engine, settle);
+        std::array<electry::StringVisualState, ElectryEngine::stringCount> strings {};
+        engine.getStringVisualState(strings);
+        bool open = false;
+        for (const auto& string : strings)
+            open = open || (string.sounding && string.fret == 0);
+        expect(open,
+               "the lowest playable note is not fingered at fret 0, so this "
+               "test is no longer exercising an open string");
+    }
+
+    expect(renderNote(ElectryEngine::lowestPlayableNote, 1.0f)
+               == renderNote(ElectryEngine::lowestPlayableNote, 0.0f),
+           "channel pressure bent an open string, which no fretting hand can do");
+
+    // The same pressure on a stopped note has to do something, or the check
+    // above would pass simply by the control being dead. 47 is two frets up
+    // the same string that 45 plays open.
+    const auto fretted = renderNote(47, 1.0f);
+    const auto still = renderNote(47, 0.0f);
+    expect(fretted != still,
+           "channel pressure left a fingered string alone");
 }
 
 void testParameterSanitisation()
@@ -5282,6 +5335,7 @@ int main()
     testFrettingHandVibrato();
     testDeadNote();
     testSustainPedal();
+    testVibratoOnlyMovesFingeredStrings();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();
     testStrumSpread();

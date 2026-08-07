@@ -1101,6 +1101,7 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
                          || playStyle_ == PlayStyle::Slide)
                      && voice.active
                      && voice.midiNote != midiNote;
+
     if (legato)
         legatoRetarget(voice, midiNote, velocity, playStyle_);
     else
@@ -1682,10 +1683,17 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     // adjusts its displacement to reach it. Only fingered strings get it - the
     // sympathetically ringing ones are configured elsewhere and never see it,
     // which is exactly what separates a finger from the bar.
+    //
+    // An open string is not fingered either. Nothing is holding it down, so
+    // there is no contact to rock and no way for the hand to raise its pitch;
+    // that is the same distinction the finger-noise term already draws at
+    // fret 0. The bar still reaches it, because the bar stretches the whole
+    // instrument rather than one stopped note.
+    const float vibrato = voice.fret > 0 ? vibratoSemitones_ : 0.0f;
     const float semitones = legatoOffset
                           + pitchBendSemitones_
                             * bendSensitivity(voice.stringIndex)
-                          + vibratoSemitones_;
+                          + vibrato;
     const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
                             20.0f, 0.24f * static_cast<float>(sampleRate_));
 

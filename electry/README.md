@@ -9,7 +9,7 @@ harmonics as the string's own mode shapes rather than as transpositions,
 slides whose length is a distance over a hand speed and whose squeak is the
 winding passing under the finger, a pitch wheel that bends every string like a
 vibrato bar, channel pressure that is the fretting hand's own one-sided
-vibrato, a resonance wheel that can push a distorted tone into self-sustaining
+vibrato on the strings it is actually stopping, a resonance wheel that can push a distorted tone into self-sustaining
 amplifier feedback, one-way bridge coupling into
 the strings you are *not* fingering, and a published pickup signal
 structure (position comb, finite magnetic aperture, nonlinear flux, induced
@@ -139,7 +139,12 @@ sympathetically ringing open strings included — over a nominal ±2 semitone
 range, each string by its own physically derived compliance (the slack low
 E1 and the plain G bend deepest, the stiff wound D-string least, the
 two-to-one smear a real bar puts on a chord), and the strings travel to the
-wheel over the Bend Time parameter rather than snapping. The modulation wheel (CC 1) is the
+wheel over the Bend Time parameter rather than snapping. Channel pressure is
+the other half of that distinction: it is a finger rather than the bar, so it
+leans only into the strings the hand is stopping, pushes them sharp and never
+flat, and leaves an open string exactly where it is — nothing is holding an
+open string down for the hand to rock, and reaching it would need the bar.
+The modulation wheel (CC 1) is the
 performance resonance: it raises the sympathetic coupling from the
 Sympathetic Ring parameter toward total and opens an acoustic feedback path
 from the amplified output back into the strings, scaled by the Resonance
