@@ -1371,17 +1371,54 @@ void testPulseWidthAndHighPassLaws()
     }
 
     // Only two of the four high-pass legs filter; one boosts and one passes.
-    // The boost is the measured shelf: +10.5 dB at DC, +1.41 dB in the high
-    // band, corner near 59 Hz. The cut corners follow from the network's own
-    // part values.
-    expectNear(20.0 * std::log10(
-                   YouKnow106Engine::highPassShelfGain(HighPassMode::Boost)),
-               10.5, 0.05, "bass boost does not lift the low band 10.5 dB");
-    expectNear(20.0 * std::log10(
-                   YouKnow106Engine::highPassHighGain(HighPassMode::Boost)),
-               1.41, 0.05, "bass boost does not lift the high band 1.41 dB");
-    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Boost), 59.4, 0.5,
-               "bass boost shelf corner");
+    // The boost shelf is derived from the p. 15 branch itself -- the dry R25
+    // leg at unity plus IC4b's DC-coupled leg -- so each constant is asserted
+    // against its own closed form. The third-party noise sweep these figures
+    // were once fitted to now corroborates them instead of sourcing them.
+    expectNear(YouKnow106Engine::highPassShelfGain(HighPassMode::Boost),
+               1.0 + (47.0 / 220.0) * (1.0 + 100.0 / 10.0), 1.0e-6,
+               "boost DC gain is not 1 + (R29/R24)(1 + R18/R19)");
+    expectNear(YouKnow106Engine::highPassHighGain(HighPassMode::Boost),
+               1.0 + (47.0 / 220.0) * (47.0 / 57.0), 1.0e-6,
+               "boost plateau is not 1 + (R29/R24) * C9/(C9 + C8)");
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Boost),
+               1.0 / (2.0 * pi * 47.0e3 * 57.0e-9), 0.05,
+               "boost corner is not the R22 * (C9 + C8) pole");
+    // The branch is two stages -- C9 parallel R22 into the C8 shunt, then
+    // IC4b's gain-of-11 with C6 bypassing R18 -- yet one pole describes it,
+    // because the first stage's 72.05 Hz zero all but cancels the feedback's
+    // 72.34 Hz pole. Solve the complete network and hold the shipped one-pole
+    // shelf to the exact response everywhere in the band.
+    {
+        const std::complex<double> j { 0.0, 1.0 };
+        constexpr double r29 = 47.0e3, r24 = 220.0e3, r18 = 100.0e3;
+        constexpr double r19 = 10.0e3, r22 = 47.0e3;
+        constexpr double c9 = 47.0e-9, c8 = 10.0e-9, c6 = 22.0e-9;
+        const double shelf =
+            YouKnow106Engine::highPassShelfGain(HighPassMode::Boost);
+        const double high =
+            YouKnow106Engine::highPassHighGain(HighPassMode::Boost);
+        const double poleHz =
+            YouKnow106Engine::highPassCornerHz(HighPassMode::Boost);
+        double worstDb = 0.0;
+        for (double freq = 1.0; freq < 20000.0; freq *= 1.1)
+        {
+            const std::complex<double> s = j * (2.0 * pi * freq);
+            const std::complex<double> firstStage =
+                (1.0 + s * r22 * c9) / (1.0 + s * r22 * (c9 + c8));
+            const std::complex<double> amplifier =
+                (1.0 + r18 / r19 + s * r18 * c6) / (1.0 + s * r18 * c6);
+            const std::complex<double> exact =
+                1.0 + (r29 / r24) * firstStage * amplifier;
+            const std::complex<double> shipped =
+                high + (shelf - high) / (1.0 + s / (2.0 * pi * poleHz));
+            worstDb = std::max(worstDb,
+                               std::abs(20.0 * std::log10(std::abs(exact))
+                                        - 20.0 * std::log10(std::abs(shipped))));
+        }
+        expect(worstDb < 0.02,
+               "one-pole boost shelf drifts past 0.02 dB from the solved branch");
+    }
     expectNear(YouKnow106Engine::highPassShelfGain(HighPassMode::One), 1.0, 1.0e-6,
                "the flat leg does not pass the low band untouched");
     expectNear(YouKnow106Engine::highPassHighGain(HighPassMode::One), 1.0, 1.0e-6,

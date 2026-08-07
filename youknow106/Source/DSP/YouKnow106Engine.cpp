@@ -903,30 +903,38 @@ float YouKnow106Engine::highPassCornerHz(HighPassMode mode) noexcept
     // was wrong in a way that concealed itself: 15 kOhm against 47 nF has the
     // same product as 47 kOhm against 15 nF, so position 2 came out right by
     // coincidence while position 3 stayed 13 Hz off. Reading the schematic's
-    // own designators is what separated them. The boost's corner is unchanged,
-    // being the measured shelf's own pole rather than a part value -- and the
-    // boost is a summed two-zero/two-pole shelf, not one RC, which is why it
-    // has never been described by a corner alone here.
+    // own designators is what separated them.
+    //
+    // The boost's corner is the branch's own dominant pole, read at designator
+    // level from a complete 300 dpi scan of p. 15 (2026-08-07): Y3 crosses
+    // C9 47 nF in parallel with R22 47 kOhm into the node C8 10 nF shunts to
+    // ground, so the pole is R22*(C9+C8), or 59.41 Hz, and the section's
+    // 72.05 Hz zero all but cancels the 72.34 Hz pole of IC4b's C6-bypassed
+    // feedback -- which is why one corner describes a two-stage branch to
+    // within 0.016 dB.
     switch (mode)
     {
-        case HighPassMode::Boost: return 59.4f;
+        case HighPassMode::Boost: return 59.4083f; // R22 x (C9 + C8)
         case HighPassMode::Two:   return 225.8f;   // 47 kOhm x 15 nF
         case HighPassMode::Three: return 720.5f;   // 47 kOhm x 4.7 nF
         case HighPassMode::One:
-        default:                  return 59.4f;
+        default:                  return 59.4083f;
     }
 }
 
 float YouKnow106Engine::highPassShelfGain(HighPassMode mode) noexcept
 {
-    // How much of the low band the leg returns. The boost position is a real
-    // measured shelf: +10.5 dB at DC, verified against a hardware noise
-    // sweep -- far more than the +3 dB an earlier account reported. The
-    // straight-through leg returns the low band untouched, and the two
-    // cutting legs discard it.
+    // How much of the low band the leg returns. The boost position's DC gain
+    // is derived from the branch: the dry R25 leg at unity plus IC4b's
+    // DC-coupled leg -- R22 passes DC around C9, C6 leaves the full
+    // 1 + R18/R19 = 11 stage gain, and R24 220 kOhm reaches the R29 47 kOhm
+    // summing bus -- for 1 + (47/220)*11 = 3.35, or +10.50 dB. A hardware
+    // noise sweep independently landed on the same figure, far more than the
+    // +3 dB an earlier account reported. The straight-through leg returns the
+    // low band untouched, and the two cutting legs discard it.
     switch (mode)
     {
-        case HighPassMode::Boost: return std::pow(10.0f, 10.5f / 20.0f);
+        case HighPassMode::Boost: return 1.0f + (47.0f / 220.0f) * 11.0f;
         case HighPassMode::One:   return 1.0f;
         case HighPassMode::Two:
         case HighPassMode::Three:
@@ -936,12 +944,15 @@ float YouKnow106Engine::highPassShelfGain(HighPassMode mode) noexcept
 
 float YouKnow106Engine::highPassHighGain(HighPassMode mode) noexcept
 {
-    // The boost leg lifts the high band a little too -- the measured shelf
-    // settles at +1.41 dB well above its corner. Every other leg passes the
-    // high band at unity.
+    // The boost leg lifts the high band a little too. Above the corner C9
+    // carries the branch and C8 divides it -- C9/(C9+C8) = 47/57 -- while C6
+    // shorts IC4b's feedback to unity gain, so the plateau is
+    // 1 + (47/220)*(47/57) = 1.17616, or +1.41 dB, exactly where the hardware
+    // noise sweep settled. Every other leg passes the high band at unity.
     switch (mode)
     {
-        case HighPassMode::Boost: return std::pow(10.0f, 1.41f / 20.0f);
+        case HighPassMode::Boost:
+            return 1.0f + (47.0f / 220.0f) * (47.0f / 57.0f);
         case HighPassMode::One:
         case HighPassMode::Two:
         case HighPassMode::Three:
@@ -1535,8 +1546,8 @@ float YouKnow106Engine::HighPass::process(float input, float g,
 {
     // Topology-preserving single pole. The cutting legs pass the high band at
     // unity and discard the low band; the boost leg is a real shelf, lifting
-    // the low band strongly and the high band slightly, as the measured
-    // network does.
+    // the low band strongly and the high band slightly, as the derived
+    // branch does.
     const double v = (static_cast<double>(input) - state)
                    * static_cast<double>(g)
                    / (1.0 + static_cast<double>(g));

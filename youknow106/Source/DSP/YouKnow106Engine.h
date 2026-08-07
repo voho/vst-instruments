@@ -529,9 +529,11 @@ public:
     [[nodiscard]] static float patchLevelGain(float dacFraction) noexcept;
     // Single-pole high-pass corner for a panel position, the gain the leg
     // returns the low band with, and the gain it returns the high band with.
-    // The bass-boost position is a real shelf measured on the hardware:
-    // +10.5 dB at DC falling to +1.4 dB in the high band across a corner
-    // near 60 Hz.
+    // The bass-boost position's shelf is derived from the jack-board branch
+    // itself -- dry R25 plus the DC-coupled IC4b leg -- and lands on
+    // +10.50 dB at DC falling to +1.41 dB in the high band across the
+    // R22*(C9+C8) pole at 59.41 Hz; the third-party noise sweep those figures
+    // were once fitted to now stands as corroboration.
     [[nodiscard]] static float highPassCornerHz(HighPassMode mode) noexcept;
     [[nodiscard]] static float highPassShelfGain(HighPassMode mode) noexcept;
     [[nodiscard]] static float highPassHighGain(HighPassMode mode) noexcept;
