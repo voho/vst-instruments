@@ -3203,6 +3203,28 @@ void testSympatheticKitBleed()
     expect (renderKick (0.85f, 64) == renderKick (0.85f, 257),
             "Kit Bleed depends on the host block size");
 
+    // A bed that has been switched off must be at rest rather than frozen, or
+    // it would hand back whatever it was ringing with the next time the control
+    // came off zero.
+    {
+        drumalor::DrumEngine engine;
+        drumalor::KitParameters kit;
+        kit.bleed = 1.0f;
+        engine.setKitParameters (kit);
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.trigger (drumalor::Instrument::Kick, 1.0f);
+        renderMetrics (engine, static_cast<int> (0.20 * sampleRate));
+        kit.bleed = 0.0f;
+        engine.setKitParameters (kit);
+        renderMetrics (engine, static_cast<int> (1.50 * sampleRate));
+        kit.bleed = 1.0f;
+        engine.setKitParameters (kit);
+        const auto revived = renderMetrics (engine, static_cast<int> (0.50 * sampleRate));
+        expect (revived.peak == 0.0,
+                "switching Kit Bleed back on released a frozen bed ("
+                    + std::to_string (revived.peak) + ")");
+    }
+
     // Nothing to excite it means nothing out of it, however long the kit idles.
     drumalor::DrumEngine idle;
     drumalor::KitParameters loud;

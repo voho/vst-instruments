@@ -3322,6 +3322,22 @@ void DrumEngine::updateSympatheticBeds() noexcept
     }
 }
 
+void DrumEngine::clearSympatheticBeds() noexcept
+{
+    // A bed that stops being rendered would otherwise keep whatever it was
+    // ringing with, and hand it back as a burst the next time the control came
+    // off zero - the same stale-state click the bus detector already avoids.
+    // The control's smoother lands exactly on zero, so this runs once per block
+    // while the path is off rather than on every transition.
+    for (auto& bed : sympatheticBeds_)
+    {
+        for (auto& resonator : bed.resonators)
+            resonator.clear();
+        bed.drive.clear();
+        bed.wires.clear();
+    }
+}
+
 void DrumEngine::renderSympatheticBeds (float excitation, float amount,
                                         float& left, float& right) noexcept
 {
@@ -3494,6 +3510,8 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         || smoothedBusDrive_ > 0.0f || smoothedBusCompression_ > 0.0f;
     if (! busActive)
         resetBusStage();
+    if (! bleedActive)
+        clearSympatheticBeds();
     std::uint64_t silentSamples = 0;
 
     for (int sample = 0; sample < numSamples; ++sample)

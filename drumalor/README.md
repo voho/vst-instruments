@@ -753,8 +753,9 @@ controller values to be refused. A kit-bleed contract requires exact bypass at
 zero, requires a kick alone to put energy into the snare's wire band and to put
 more of it in at every higher setting, requires the buzz to lift off a threshold
 rather than track the kick in proportion, requires the result to be independent
-of the host block size, and requires an idle kit to stay at digital zero however
-long it idles.
+of the host block size, requires a bed that has been switched off to be at rest
+rather than frozen when the control comes back on, and requires an idle kit to
+stay at digital zero however long it idles.
 A dedicated
 efficiency contract proves that a metallic bank frozen behind an unrelated drum
 wakes into exactly the same state as one frozen during silence, and measures

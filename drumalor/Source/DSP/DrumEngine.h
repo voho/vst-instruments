@@ -453,6 +453,7 @@ private:
                         float compressionAmount) noexcept;
     void configureSympatheticBeds() noexcept;
     void updateSympatheticBeds() noexcept;
+    void clearSympatheticBeds() noexcept;
     void renderSympatheticBeds (float excitation, float amount,
                                 float& left, float& right) noexcept;
     void resetBusStage() noexcept;
