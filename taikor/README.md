@@ -132,7 +132,7 @@ a voicing offset.
 | Strike Position | Centre 100 → Rim 100 | As written | Offsets every stroke's own radius |
 | Velocity Depth | 0–100 % | 75 % | How far MIDI velocity moves the impact speed |
 | Tension Mod | 0–100 % | 40 % | Depth of the attack pitch glide, which is the head stretching itself: a hard stroke displaces the hide, a displaced hide is a longer and therefore tighter one, and the drum starts sharp. At 0 the head is treated as linear |
-| Stick Noise | 0–100 % | 35 % | Broadband contact noise on the hide |
+| Stick Noise | 0–100 % | 35 % | Broadband contact noise on the hide, and the rattle of the tack line when a stroke beats the preload holding the head down |
 | Humanise | 0–100 % | 40 % | Per-stroke variation in position, angle, speed and contact time. At 0 the drum is a machine and repeats exactly |
 | Octave Body | Tuned → Family | 70 % | How an octave is realised (see below) |
 
@@ -398,6 +398,23 @@ in the middle of them: the fractional tension rise goes as the fourth inverse
 power of the radius, so the smallest head at no tension reached fifteen
 semitones of bend before it was bounded, and the factory drum reaches a tenth of
 a tension at full velocity.
+
+### The tack line
+
+A nagado-daiko is *byō-uchi*: the head is not roped on, it is nailed to the
+shell with a ring of iron tacks. Each of them holds down the head's tension
+over its share of the circumference — a few hundred newtons on the factory drum
+— and a stroke that catches the hoop has to beat that before it lifts the head
+at all. Past it the tacks chatter against the wood, which is the metallic edge a
+firm rim shot has and a light one has no trace of at all.
+
+It is a threshold rather than a level, so it does not fade in: below the preload
+there is nothing. Raising Head Tension or Head Diameter raises the preload,
+because both raise the tension a single tack carries, so a tighter or a larger
+drum wants a harder stroke before it rattles. Stick Noise owns the level, since
+this is contact noise. And it is the one part of the instrument that does not
+scale with the drum: a byō is a nail, and the same nails go into a nagado and an
+ō-daiko, so the rattle keeps its own band across the whole family.
 
 ### A drum has one head
 

@@ -193,12 +193,19 @@ each lands with a test in `Tests/` that fails without it.
   same drum must take a real bite out of what is ringing while the same stroke
   an octave away takes none.
 
-- [ ] **5. Give the tack line a real voice.** Replace the inaudible chatter with
+- [x] **5. Give the tack line a real voice.** Replace the inaudible chatter with
   byō rattle that scales with the rim contact force and with the Stick Noise
   control, band-limited around the tacks' own ring rather than added broadband.
   Closes gap 4b.
-  *Verified by*: the rattle must vanish at Stick Noise 0, must grow with
-  velocity, and must appear on Don Rim and Katsu but not on a Don.
+  *Verified by*: the preload must rise with Head Tension and with Head
+  Diameter; a light rim shot must not reach it and a full one must clear it
+  threefold; Stick Noise 0 must silence it; only the strokes that reach the hoop
+  may have it at all; and in the rendered audio a rim shot's high band must open
+  up with velocity at least 2 dB faster than a centre stroke's, once each is
+  measured against its own level - it is 5.0 dB ahead with the tacks and 2.3 dB
+  behind without them. The level itself is checked in the built state rather
+  than in the spectrum, for the reason the wooden bank already is: the rattle
+  lasts about a millisecond and shares its band with the head's continuum.
 
 - [ ] **6. Open the bottom of the dynamic range.** Lower the minimum impact
   speed from 0.45 m/s to 0.12 m/s and drop the squaring, so velocity is even in

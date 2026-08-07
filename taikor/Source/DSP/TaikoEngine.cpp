@@ -225,6 +225,24 @@ constexpr float hysteresisScale = 0.00048f;
 // one scalar stands in for it - the same arrangement as radiationCalibration.
 constexpr float shellCalibration = 4200.0f;
 
+// The tack line of a byo-uchi drum. A nagado carries roughly this many iron
+// tacks around each head, so each of them holds down the head's tension over
+// that much of the circumference - which is the force a stroke has to beat
+// before anything rattles. Nothing here scales with the drum beyond that: a
+// tack is a nail, and a three-shaku o-daiko is nailed with much the same nails
+// as a nagado, so the rattle keeps its own pitch across the whole family.
+constexpr float tackCount = 48.0f;
+constexpr float tackLowCorner = 2600.0f;
+// How long a lifted tack goes on chattering while the head settles back onto
+// it. Short, but several times the contact that started it.
+constexpr float tackRattleSeconds = 0.004f;
+constexpr float tackHighCorner = 9000.0f;
+// How loudly a rattling tack reaches the pair, per newton it is being lifted
+// with. In the same role as directCalibration and for the same reason: the
+// geometry is computed, the radiating efficiency of a 6 mm iron head against a
+// wooden shell is not.
+constexpr float tackCalibration = 0.16f;
+
 // Level of the airborne impact path relative to what the head radiates. It
 // stands in for the contact patch's radiating area and directivity, neither of
 // which this model describes; everything about how that path varies with
@@ -820,6 +838,11 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.retirementOffset = 0;
     voice.noiseBandState = 0.0f;
     voice.contactReference = 0.0f;
+    voice.tackScale = 0.0f;
+    voice.tackRimGain = 0.0f;
+    voice.tackEnvelope = 0.0f;
+    voice.tackLowState = 0.0f;
+    voice.tackHighState = 0.0f;
     for (auto& band : voice.continuum)
     {
         band.envelope = 0.0f;
@@ -2293,6 +2316,31 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
         1.0f - std::exp (-2.0f * piFloat * noiseCorner * inverseSampleRate_);
     voice.noiseBandState = 0.0f;
 
+    // The tack line. Each tack holds down the head's tension over its share of
+    // the circumference, so the force a stroke has to beat before anything
+    // rattles is a property of the drum - a tighter or a larger head is held
+    // harder - while the rattle's own band is a property of the nail and does
+    // not move with the drum at all.
+    voice.tackRimGain = profile.rimGain;
+    voice.tackPreload = drum.tension * 2.0f * piFloat * drum.radius / tackCount;
+    voice.tackScale = profile.rimGain > 0.0f
+        ? tackCalibration * applied_.strikeNoise * profile.noiseGain
+        : 0.0f;
+    voice.tackNoiseState = hash32 (voice.noiseState + 0x5bf03635u) | 1u;
+    voice.tackEnvelope = 0.0f;
+    voice.tackEnvelopeDecay =
+        std::exp (-1.0f / (tackRattleSeconds * static_cast<float> (sampleRate_)));
+    voice.tackLowState = 0.0f;
+    voice.tackHighState = 0.0f;
+    voice.tackLowCoefficient = 1.0f - std::exp (
+        -2.0f * piFloat
+        * std::min (tackLowCorner, 0.45f * static_cast<float> (sampleRate_))
+        * inverseSampleRate_);
+    voice.tackHighCoefficient = 1.0f - std::exp (
+        -2.0f * piFloat
+        * std::min (tackHighCorner, 0.45f * static_cast<float> (sampleRate_))
+        * inverseSampleRate_);
+
     // Stretching the head raises its tension, so a hard stroke starts sharp and
     // settles as it decays. Nothing here schedules that: the coefficient below
     // is the drum's, not the stroke's, and what makes the glide big on a hard
@@ -2723,14 +2771,42 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
               * contactEnvelope;
     }
 
-    // Iron tack (byo) micro-chatter physics on rim and shell strikes
-    if (contactEnvelope > 0.0f && (voice.articulation == Articulation::DonRim || voice.articulation == Articulation::Katsu))
-    {
-        const float tackNoise = nextNoise (voice.noiseState) * contactEnvelope * 0.08f;
-        noise += tackNoise;
-    }
-
     const float excitation = force + noise;
+
+    // The tack line, which rattles only once the stroke has beaten the preload
+    // holding the head down. It used to be a fixed 0.08 of broadband noise
+    // added to a contact whose amplitude is in the thousands of newtons - 87 dB
+    // under the stroke, inaudible at every setting, and answering to nothing:
+    // not the Stick Noise control, not the velocity, not the drum. This is the
+    // same idea done as a threshold, so it appears when a rim shot lands hard
+    // and is simply absent below that. It goes out through the air rather than
+    // into the head, because a chattering nail is a small metal source at the
+    // rim and not something driving the membrane.
+    float tack = 0.0f;
+    if (voice.tackScale > 0.0f)
+    {
+        if (force > 0.0f)
+        {
+            const float excess = force * voice.tackRimGain - voice.tackPreload;
+            if (excess > 0.0f)
+                voice.tackEnvelope = std::max (voice.tackEnvelope, excess);
+        }
+
+        if (voice.tackEnvelope > 1.0e-3f)
+        {
+            const float white = nextNoise (voice.tackNoiseState);
+            voice.tackLowState += voice.tackLowCoefficient * (white - voice.tackLowState);
+            const float above = white - voice.tackLowState;
+            voice.tackHighState +=
+                voice.tackHighCoefficient * (above - voice.tackHighState);
+            tack = voice.tackHighState * voice.tackEnvelope * voice.tackScale;
+            voice.tackEnvelope *= voice.tackEnvelopeDecay;
+        }
+        else
+        {
+            voice.tackEnvelope = 0.0f;
+        }
+    }
 
     float left = 0.0f;
     float right = 0.0f;
@@ -2809,7 +2885,12 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
         voice.directPrevious = excitation;
         voice.directLowpassState +=
             voice.directLowpassCoefficient * (slope - voice.directLowpassState);
-        const float radiated = voice.directLowpassState;
+        // The tack rattle joins the airborne path after the contact patch's
+        // own low-pass rather than before it: that corner describes how large
+        // the bachi's contact with the hide is, and a tack head is a great deal
+        // smaller than that. It does take the same distances and delays, since
+        // the tacks a stroke can rattle are the ones it landed among.
+        const float radiated = voice.directLowpassState + tack;
 
         voice.directLine[static_cast<std::size_t> (voice.directWriteIndex)] = radiated;
 

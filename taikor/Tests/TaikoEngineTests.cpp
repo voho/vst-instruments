@@ -180,6 +180,30 @@ struct TaikoEngineTestAccess
         return engine.voices_[static_cast<std::size_t> (slot)].appliedTensionShift;
     }
 
+    // The tack line as the stroke set it up. Read rather than measured for the
+    // same reason the wooden bank is: the rattle lasts about a millisecond and
+    // shares its band with the head's continuum, so the question of which
+    // numbers it was given cannot be answered from the spectrum.
+    struct TackLine
+    {
+        float preload { 0.0f };
+        float rimGain { 0.0f };
+        float scale { 0.0f };
+        float peakContactForce { 0.0f };
+    };
+
+    static TackLine tackLine (const TaikoEngine& engine, int slot = 0) noexcept
+    {
+        const auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
+        TackLine result;
+        result.preload = voice.tackPreload;
+        result.rimGain = voice.tackRimGain;
+        result.scale = voice.tackScale;
+        result.peakContactForce =
+            voice.contactCount > 0 ? voice.contacts[0].amplitude : 0.0f;
+        return result;
+    }
+
     static bool everyDecayIsFinite (const TaikoEngine& engine)
     {
         for (const auto& voice : engine.voices_)
@@ -1234,6 +1258,119 @@ void testTheDrumSoundsLikeADrumAndNotLikeATone()
         expect (bank[0] < bank[1] * 3.0f,
                 "the lowest mode must not outlive the one above it so far that "
                 "the stroke ends as a sine");
+}
+
+// A nagado-daiko is byo-uchi: the head is nailed on with a ring of iron tacks,
+// each holding down its share of the head's tension, and a stroke that catches
+// the hoop hard enough lifts the head against that preload and sets them
+// chattering. What used to be here instead was a fixed 0.08 of broadband noise
+// added to a contact whose amplitude runs to thousands of newtons - 87 dB down,
+// inaudible at every setting, answering to neither the Stick Noise control nor
+// the velocity nor the drum.
+void testTheTackLineRattlesOnlyWhenItIsBeaten()
+{
+    const auto lineFor = [] (taikor::EngineParameters parameters,
+                             taikor::Articulation articulation, float velocity)
+    {
+        parameters.humanise = 0.0f;
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.reset();
+        engine.trigger (articulation, 0, velocity);
+        return taikor::TaikoEngineTestAccess::tackLine (engine);
+    };
+
+    const auto base = defaultParameters();
+
+    // Only the strokes that reach the hoop have a tack line at all. The rest
+    // land on the middle of the hide, which is not nailed to anything.
+    for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+    {
+        const auto articulation = static_cast<taikor::Articulation> (index);
+        const auto line = lineFor (base, articulation, 1.0f);
+        const bool catchesHoop = articulation == taikor::Articulation::DonRim
+                              || articulation == taikor::Articulation::Ka
+                              || articulation == taikor::Articulation::Katsu;
+        expect ((line.scale > 0.0f) == catchesHoop,
+                "only the strokes that catch the hoop may drive the tacks: "
+                    + std::string (taikor::getArticulationDisplayName (articulation)));
+    }
+
+    // And it is contact noise, so the Stick Noise control owns it.
+    auto silent = base;
+    silent.strikeNoise = 0.0f;
+    expect (lineFor (silent, taikor::Articulation::DonRim, 1.0f).scale == 0.0f,
+            "Stick Noise at zero must silence the tacks with the rest of the "
+            "contact noise");
+
+    // The preload is the head's tension carried over one tack's share of the
+    // circumference, so a tighter or a larger head holds its tacks down harder
+    // and takes a harder stroke to rattle.
+    auto slack = base;
+    slack.tension = 0.25f;
+    auto tight = base;
+    tight.tension = 0.85f;
+    auto small = base;
+    small.headDiameter = 0.30f;
+
+    const auto slackLine = lineFor (slack, taikor::Articulation::DonRim, 1.0f);
+    const auto tightLine = lineFor (tight, taikor::Articulation::DonRim, 1.0f);
+    const auto smallLine = lineFor (small, taikor::Articulation::DonRim, 1.0f);
+    expect (tightLine.preload > slackLine.preload * 2.0f,
+            "a tighter head must hold its tacks down harder");
+    expect (smallLine.preload < slackLine.preload || smallLine.preload
+                < tightLine.preload,
+            "a smaller head must carry less tension per tack than a larger one at "
+            "the same tension");
+
+    // The threshold has to be somewhere a player crosses. A light rim shot must
+    // not reach it and a full one must clear it comfortably.
+    const auto quiet = lineFor (base, taikor::Articulation::DonRim, 0.15f);
+    const auto full = lineFor (base, taikor::Articulation::DonRim, 1.0f);
+    expect (quiet.peakContactForce * quiet.rimGain < quiet.preload,
+            "a light rim shot must not lift the head off its tacks at all");
+    expect (full.peakContactForce * full.rimGain > full.preload * 3.0f,
+            "a full rim shot must clear the preload with room to spare");
+
+    // And it must be audible, which is the part the built state cannot show.
+    // The rattle is the one noise source in the instrument that is not
+    // proportional to the force of the stroke - it is proportional to whatever
+    // is left after the preload - so what identifies it is that a rim shot's
+    // high band grows with velocity faster than a centre stroke's does, once
+    // each is measured against its own level.
+    const auto highBandGrowth = [] (taikor::Articulation articulation)
+    {
+        auto parameters = defaultParameters();
+        parameters.humanise = 0.0f;
+
+        const auto measure = [&parameters, articulation] (float velocity)
+        {
+            const auto rendered =
+                strike (parameters, articulation, 0, velocity, 48000.0, 9600);
+            const auto mono = rendered.mono();
+            double band = 0.0;
+            // Over the attack, which is where a millisecond of rattle lives.
+            for (double frequency = 3000.0; frequency < 10000.0; frequency *= 1.03)
+            {
+                const auto magnitude =
+                    binMagnitude (mono, frequency, 48000.0, 0u, 2400u);
+                band += magnitude * magnitude;
+            }
+            // Against the stroke's own level, so this is a shape and not a
+            // restatement of the fact that a hard stroke is louder.
+            return band / std::max (rendered.peak * rendered.peak, 1.0e-18);
+        };
+
+        return 10.0 * std::log10 (measure (0.90f) / std::max (measure (0.15f), 1.0e-30));
+    };
+
+    const auto rimGrowth = highBandGrowth (taikor::Articulation::DonRim);
+    const auto centreGrowth = highBandGrowth (taikor::Articulation::Don);
+    expect (rimGrowth > centreGrowth + 2.0,
+            "a rim shot's high band must open up with velocity faster than a centre "
+            "stroke's, because past the preload the tacks start rattling - it is "
+            "ahead by only " + std::to_string (rimGrowth - centreGrowth) + " dB");
 }
 
 // A drum has one head, and a stroke lands on whatever that head is already
@@ -3183,6 +3320,7 @@ int main()
     testTheDrumSoundsLikeADrumAndNotLikeATone();
     testShellResonanceHasNoStepInIt();
     testAStrokeLandsOnAHeadThatIsAlreadyMoving();
+    testTheTackLineRattlesOnlyWhenItIsBeaten();
     testTheAttackGlideComesFromTheHead();
     testHeadStiffnessOpensTheModalRatios();
     testTheContinuumFollowsTheHead();

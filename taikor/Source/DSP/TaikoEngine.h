@@ -451,6 +451,33 @@ private:
         float noiseBandState { 0.0f };
         float noiseBandCoefficient { 0.5f };
 
+        // The tack line. A nagado-daiko is byo-uchi: the head is nailed to the
+        // shell with a ring of iron tacks, and each of them holds down its
+        // share of the head's tension. A stroke that catches the hoop lifts the
+        // head against that preload, and where it wins the tack chatters
+        // against the wood. It is a threshold and not a level - below the
+        // preload nothing rattles at all, which is why a firm rim shot has a
+        // metallic edge a light one has no trace of.
+        float tackPreload { 0.0f };      // newtons a stroke has to beat
+        float tackRimGain { 0.0f };      // how much of the stroke reaches the hoop
+        float tackScale { 0.0f };        // level per newton of excess
+        // Its own noise source, not the stroke's. Sharing one would mean that
+        // whether the tacks rattled decided which numbers the hide's contact
+        // noise and the head's continuum were given, so two renders that differ
+        // only in whether a rim shot cleared the preload would differ
+        // everywhere - which makes the rattle impossible to measure and the
+        // rest of the stroke needlessly dependent on it.
+        std::uint32_t tackNoiseState { 1u };
+        // A lifted tack does not go quiet the instant the stick leaves: it
+        // chatters against the wood while the head settles back onto it, which
+        // is a few milliseconds rather than the one the contact lasts.
+        float tackEnvelope { 0.0f };
+        float tackEnvelopeDecay { 0.99f };
+        float tackLowState { 0.0f };
+        float tackHighState { 0.0f };
+        float tackLowCoefficient { 0.5f };
+        float tackHighCoefficient { 0.5f };
+
         // One band of the continuum: noise through a one-pole band-pass, under
         // its own decaying envelope. It belongs to the head, so the hand damps
         // it along with the resolved modes.
