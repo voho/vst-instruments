@@ -23,6 +23,24 @@ constexpr float soundSpeed = 343.0f;
 constexpr float minimumArealDensity = 0.30f;
 constexpr float maximumArealDensity = 1.60f;
 
+// The head as a material rather than as an areal density, which is what its
+// bending stiffness needs. Ando's measurements of nagado-daiko diaphragms put
+// chemically treated cow skin at about 3.5 GPa and conclude that a taiko head
+// has to be treated as a stretched plate - a stiff membrane - rather than as an
+// ideal one. A synthetic film is a little stiffer per unit volume and a great
+// deal denser, so the thickness that carries the same areal density is far
+// smaller; since the flexural rigidity goes as the cube of that thickness, the
+// two ends of Head Material are three hundred times apart in stiffness even
+// though their moduli are within fifteen per cent of each other.
+constexpr float filmModulus = 4.0e9f;    // biaxially oriented polyester
+constexpr float hideModulus = 3.5e9f;    // treated cow skin
+constexpr float filmDensity = 1390.0f;   // kg/m^3
+constexpr float hideDensity = 1000.0f;   // kg/m^3
+constexpr float headPoisson = 0.30f;
+// The (0,1) Bessel zero squared, which is the reference the stiffness stretch
+// below is taken against.
+constexpr float fundamentalZeroSquared = 5.7831859629467f;
+
 // Head tension in N/m. A tacked taiko head is under enormous tension compared
 // with a drum-kit head, which is why it sits so far above its own diameter.
 constexpr float minimumTension = 1200.0f;
@@ -130,8 +148,20 @@ constexpr float edgeBoostBase = 0.30f;
 constexpr float edgeBoostSlope = 1.80f;
 constexpr float continuumCalibration = 26.0f;
 
-// Impact speed in m/s at the softest and hardest MIDI velocity.
-constexpr float minimumImpactSpeed = 0.45f;
+// Impact speed in m/s at the softest and hardest MIDI velocity. The bottom is a
+// ghost stroke - a bachi tip barely leaving the head - and the top is a
+// full-arm blow.
+//
+// The floor used to be 0.45 m/s, which is not a ghost stroke, it is a
+// deliberate quiet note; and the whole instrument covered eight to thirteen
+// times the impact speed end to end, which is about twenty-seven decibels of
+// force. That is the single most common complaint about the sampled taiko
+// libraries this competes with - "very little variation and limited dynamics" -
+// and it is not a thing a physical model has any reason to inherit. The top of
+// the range is left exactly where it was, so the loudest stroke the instrument
+// can make has not moved and the factory output level still leaves it under
+// full scale.
+constexpr float minimumImpactSpeed = 0.12f;
 constexpr float maximumImpactSpeed = 6.0f;
 
 // One overall level constant. The model produces physical head displacements,
@@ -146,6 +176,34 @@ constexpr float maximumImpactSpeed = 6.0f;
 // click is the one path that does not pass through this scalar and would
 // otherwise drift against everything else.
 constexpr float modelScale = 292.0f;
+
+// The shape constant of the attack pitch glide: how much of the head's in-plane
+// stiffness a displacement of a given size actually calls on. The physics is
+// the Berger/von Karman result that a membrane clamped at its rim gains tension
+// as the square of its transverse displacement; what this absorbs is the modal
+// shape factor between the resonator states the engine has and the mean square
+// slope the tension rise really depends on. It is dimensionless, and it is the
+// only number here chosen rather than derived - deliberately placed after the
+// division by modelScale, so the engine's output calibration cannot reach the
+// drum's pitch. It used to: the term this replaced summed the raw resonator
+// states, which are in units of that calibration, and at full velocity a third
+// of the bend came from it.
+constexpr float tensionStretchCalibration = 0.044f;
+// Where that expansion stops describing the head. Berger's result is the first
+// term of a series in the displacement, and it is meaningless once the tension
+// a single stroke adds is comparable with the tension already there, so it is
+// applied through a form that agrees with it exactly while the displacement is
+// small and asymptotes here. The bound is not decoration: the fractional
+// tension rise goes as the fourth inverse power of the radius, so a 15 cm head
+// taken to the top of the keyboard with the octave bought entirely by size -
+// which is a tiny slack membrane rather than a shime-daiko - reached fifteen
+// semitones of attack bend without it. Nothing near the factory drum comes
+// close; a full-arm stroke there raises the tension by a tenth.
+constexpr float tensionStretchLimit = 0.30f;
+// Release of the peak follower that stands in for the head's squared
+// displacement. Long against a cycle of any mode that matters and short against
+// the head's own decay, so the glide follows the ring rather than a clock.
+constexpr float tensionFollowerSeconds = 0.040f;
 
 // Radiation damping is the one loss term whose absolute size depends on how
 // the drum is mounted and how much of the body is free to move, none of which
@@ -178,6 +236,24 @@ constexpr float hysteresisScale = 0.00048f;
 // rather than in front of, and this model does not describe that geometry, so
 // one scalar stands in for it - the same arrangement as radiationCalibration.
 constexpr float shellCalibration = 4200.0f;
+
+// The tack line of a byo-uchi drum. A nagado carries roughly this many iron
+// tacks around each head, so each of them holds down the head's tension over
+// that much of the circumference - which is the force a stroke has to beat
+// before anything rattles. Nothing here scales with the drum beyond that: a
+// tack is a nail, and a three-shaku o-daiko is nailed with much the same nails
+// as a nagado, so the rattle keeps its own pitch across the whole family.
+constexpr float tackCount = 48.0f;
+constexpr float tackLowCorner = 2600.0f;
+// How long a lifted tack goes on chattering while the head settles back onto
+// it. Short, but several times the contact that started it.
+constexpr float tackRattleSeconds = 0.004f;
+constexpr float tackHighCorner = 9000.0f;
+// How loudly a rattling tack reaches the pair, per newton it is being lifted
+// with. In the same role as directCalibration and for the same reason: the
+// geometry is computed, the radiating efficiency of a 6 mm iron head against a
+// wooden shell is not.
+constexpr float tackCalibration = 0.16f;
 
 // Level of the airborne impact path relative to what the head radiates. It
 // stands in for the contact patch's radiating area and directivity, neither of
@@ -391,6 +467,17 @@ double TaikoEngine::besselJ (int order, double x) noexcept
     }
 
     return sum;
+}
+
+float TaikoEngine::stiffnessStretch (float besselZero, float stiffness) noexcept
+{
+    if (! (stiffness > 0.0f))
+        return 1.0f;
+
+    const float squared = besselZero * besselZero;
+    const float numerator = 1.0f + stiffness * squared;
+    const float denominator = 1.0f + stiffness * fundamentalZeroSquared;
+    return std::sqrt (numerator / denominator);
 }
 
 // Loss into the shell, the hoops and the stand. Steeply low-pass in frequency:
@@ -748,6 +835,10 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.retireStep = 0.0f;
     voice.peakLevel = 0.0f;
     voice.tensionEnvelope = 0.0f;
+    // Belongs to the stroke, like the schedule below it: it carries the drum's
+    // in-plane stiffness against its tension, and a slot reused by a stroke on
+    // a different drum must not inherit the last one's.
+    voice.tensionDepth = 0.0f;
     voice.appliedTensionShift = 1.0f;
     // Belongs to the stroke, not to the slot. The attack glide runs before the
     // new contact schedule is known - Tension Mod is on by default, so that is
@@ -759,6 +850,11 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.retirementOffset = 0;
     voice.noiseBandState = 0.0f;
     voice.contactReference = 0.0f;
+    voice.tackScale = 0.0f;
+    voice.tackRimGain = 0.0f;
+    voice.tackEnvelope = 0.0f;
+    voice.tackLowState = 0.0f;
+    voice.tackHighState = 0.0f;
     for (auto& band : voice.continuum)
     {
         band.envelope = 0.0f;
@@ -853,6 +949,40 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
 
     drum.waveSpeed = std::sqrt (drum.tension / drum.batterDensity);
     drum.resonantWaveSpeed = std::sqrt (drum.resonantTension / drum.resonantDensity);
+
+    // The head's bending stiffness, which is what makes a taiko head a
+    // stretched plate rather than an ideal membrane. Head Material already sets
+    // the areal density; dividing by the material's own volumetric density
+    // recovers the thickness the hide actually has, and the flexural rigidity
+    // D = E h^3 / 12(1 - nu^2) follows. It is stored as the dimensionless
+    // D / (T a^2), because that is the only combination the mode frequencies
+    // depend on - and it is a comparison between the head's stiffness and its
+    // tension, which is exactly the ratio Ando's eigenvalue tables are indexed
+    // by.
+    //
+    // The far head is cut from the same hide and is a touch lighter, so it is
+    // thinner in the same proportion and its rigidity falls as the cube of it.
+    const float headDensity = lerp (filmDensity, hideDensity, applied.headMaterial);
+    const float headModulus = lerp (filmModulus, hideModulus, applied.headMaterial);
+    const float thickness = drum.batterDensity / headDensity;
+    const float rigidity = headModulus * thickness * thickness * thickness
+                         / (12.0f * (1.0f - headPoisson * headPoisson));
+    const float radiusSquared = drum.radius * drum.radius;
+    const float densityRatio = drum.resonantDensity / drum.batterDensity;
+
+    drum.stiffnessBatter = rigidity / (drum.tension * radiusSquared);
+    drum.stiffnessResonant = rigidity * densityRatio * densityRatio * densityRatio
+                           / (drum.resonantTension * radiusSquared);
+
+    // The same material seen in the plane of the head rather than across it.
+    // A membrane clamped at its rim cannot move without stretching, and the
+    // tension it gains goes as E h / (1 - nu^2) times the square of the
+    // displacement over the radius. Divided by the tension it already has,
+    // because what moves the pitch is the fractional change - which is why a
+    // slack o-daiko head bends a long way sharp on a hard stroke and a shime
+    // held at four times the tension barely moves at all.
+    drum.stretchStiffness = headModulus * thickness
+                          / ((1.0f - headPoisson * headPoisson) * drum.tension);
 
     // Hysteretic loss in the head material. A thick hide loses more per cycle
     // than a thin film; the damping control scales what the material gives.
@@ -1156,8 +1286,8 @@ float TaikoEngine::measureContact (const EngineParameters& raw,
     const auto& profile = strikeProfile (articulation);
     const float shaped = clampFloat (velocity, 0.0f, 1.0f);
     const float normalised = lerp (0.72f, shaped, parameters.velocityDepth);
-    const float speed = geometricLerp (minimumImpactSpeed, maximumImpactSpeed,
-                                       normalised * normalised);
+    const float speed =
+        geometricLerp (minimumImpactSpeed, maximumImpactSpeed, normalised);
 
     float strikerMass = 0.0f;
     float impedance = 0.0f;
@@ -1268,12 +1398,19 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         const int order = entry.circumferentialOrder;
         const auto lambda = static_cast<float> (entry.besselZero);
 
-        // Ideal membrane modes: f = c * lambda / (2 pi a). The ratios are set
-        // by the Bessel zeros alone, so tension and size move the whole set
-        // together and only the air changes its shape.
-        const float idealBatter = drum.waveSpeed * lambda / (2.0f * piFloat * radius);
+        // Membrane modes: f = c * lambda / (2 pi a), opened out by the head's
+        // own bending stiffness. The Bessel zeros set the wavenumbers, and
+        // stiffness adds a term in the fourth power of the wavenumber to
+        // omega^2, so the ratios are no longer constants of the geometry: they
+        // spread with the mode's order, and they spread further the smaller and
+        // the thicker the head is. Taken relative to the (0,1) mode, so the
+        // pitch the drum is tuned to does not move and only the spread above it
+        // does.
+        const float idealBatter = drum.waveSpeed * lambda / (2.0f * piFloat * radius)
+                                * stiffnessStretch (lambda, drum.stiffnessBatter);
         const float idealResonant =
-            drum.resonantWaveSpeed * lambda / (2.0f * piFloat * radius);
+            drum.resonantWaveSpeed * lambda / (2.0f * piFloat * radius)
+            * stiffnessStretch (lambda, drum.stiffnessResonant);
 
         // Air hanging off the head as added mass. Modes with a high radial or
         // circumferential order shift less air per unit of displacement, so
@@ -1411,6 +1548,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.lossOmegaSquared = lossOmegaSquared;
                 mode.radiationPrefactor = radiationPrefactor;
                 mode.circumferentialOrder = 0;
+                mode.modeEntry = static_cast<std::uint8_t> (entryIndex);
                 mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 // Axisymmetric modes look identical from both sides of the
@@ -1510,6 +1648,7 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                 mode.lossOmegaSquared = lossOmegaSquared;
                 mode.radiationPrefactor = radiationPrefactor;
                 mode.circumferentialOrder = static_cast<std::uint8_t> (order);
+                mode.modeEntry = static_cast<std::uint8_t> (entryIndex);
                 mode.membrane = true;
                 mode.drive = drive * profile.membraneGain * modelScale;
                 mode.micLeft = observedL;
@@ -1856,6 +1995,107 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         static_cast<std::uint64_t> (maximumTailSeconds * sampleRate_));
 }
 
+void TaikoEngine::dampRingingHeads (int excludedSlot, int octave,
+                                    const StrikeProfile& profile, float strikeRadius,
+                                    const DrumState& drum, float strikerMass) noexcept
+{
+    // Only a stroke that actually lands on the hide. Two sticks clapped
+    // together never touch the drum, and a Katsu is the bachi on the wooden
+    // body - the profile's own membrane gain is the statement of how much of
+    // the stroke reaches the head, so it is what scales this.
+    if (! profile.usesDrumBody || ! (profile.membraneGain > 0.0f))
+        return;
+
+    const auto& entries = membraneModes();
+    const float rho = clampFloat (strikeRadius, 0.0f, 0.995f);
+    const float area = piFloat * drum.radius * drum.radius;
+    // How much of the stroke actually reaches the hide. It is the same figure
+    // the excitation is scaled by, so a ghost stroke that barely drives the
+    // head barely stops it either.
+    const float reach = strikerMass * profile.membraneGain;
+
+    // What each mode keeps. A contact lasting a millisecond is instantaneous
+    // against a mode whose period is twenty, so the collision is the textbook
+    // one: a mass m meeting a mass M moving at v leaves it at v(M - e m)/(M + m).
+    // The mass the stick actually meets is the mode's own referred to the
+    // contact point, M / shape^2 - which is why a stroke out by the tacks
+    // leaves a centre boom running and dries up the edge instead, and why the
+    // high modes, whose modal masses are a fraction of a bachi's, are simply
+    // bounced back.
+    std::array<float, modeEntryCount> retained {};
+    for (int index = 0; index < modeEntryCount; ++index)
+    {
+        const auto& entry = entries[static_cast<std::size_t> (index)];
+        const int order = entry.circumferentialOrder;
+        const auto besselAtZero =
+            static_cast<float> (besselJ (order + 1, entry.besselZero));
+        const float besselSquared = std::max (besselAtZero * besselAtZero, 1.0e-9f);
+        // The same modal mass buildVoiceModes drives through, so the two cannot
+        // disagree about how heavy a mode is.
+        const float modalMass = (order == 0 ? 1.0f : 0.5f) * area * besselSquared
+                              * drum.batterDensity;
+        const auto shape =
+            static_cast<float> (besselJ (order, entry.besselZero * rho));
+        // A mode with a circumferential order comes as a pair a quarter of its
+        // own period apart, so the contact meets the two at the cosine and the
+        // sine of one angle. Both branches are damped by the mean of the two,
+        // because the branch a mode ended up in is not stored and the stroke
+        // that is arriving lands at its own angle anyway.
+        const float angular = order == 0 ? 1.0f : 0.5f;
+
+        const float massRatio = reach * shape * shape * angular
+                              / std::max (modalMass, 1.0e-6f);
+        retained[static_cast<std::size_t> (index)] =
+            (1.0f - restitution * massRatio) / (1.0f + massRatio);
+    }
+
+    // And the continuum above them. It stands for the short-wavelength modes,
+    // whose modal masses are far below a bachi's, so the stick is a wall to
+    // them and what survives is whatever share of them the contact did not
+    // cover. Their shapes pile up against the rim, so that share follows the
+    // same function of radius the strike lights them with, normalised so it is
+    // a fraction rather than a gain: a stroke out by the tacks takes nearly all
+    // of it and one over the middle barely touches it.
+    constexpr float edgeBoostAtRim = edgeBoostBase + 2.0f * edgeBoostSlope;
+    const float coverage =
+        clampFloat (profile.membraneGain
+                        * (edgeBoostBase + edgeBoostSlope * rho * (1.0f + rho))
+                        / edgeBoostAtRim,
+                    0.0f, 1.0f);
+    const float continuumGain = 1.0f - coverage;
+
+    for (int slot = 0; slot < maxVoices; ++slot)
+    {
+        if (slot == excludedSlot)
+            continue;
+
+        auto& voice = voices_[static_cast<std::size_t> (slot)];
+        if (! voice.active || voice.octaveOffset != octave)
+            continue;
+
+        for (int index = 0; index < voice.activeModeCount; ++index)
+        {
+            auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (! mode.membrane)
+                continue;
+
+            // Scaling both states by the same factor is exactly scaling the
+            // mode's output from here on, which is what the hand does elsewhere
+            // for the same reason. The factor may be negative, and that is the
+            // collision rather than a mistake: a mode light enough against the
+            // stick is turned round by it, and it cannot come back harder than
+            // the restitution allows.
+            const auto gain =
+                static_cast<double> (retained[static_cast<std::size_t> (mode.modeEntry)]);
+            mode.resonator.y1 *= gain;
+            mode.resonator.y2 *= gain;
+        }
+
+        for (auto& band : voice.continuum)
+            band.envelope *= continuumGain;
+    }
+}
+
 void TaikoEngine::scheduleContacts (Voice& voice, const StrikeProfile& profile,
                                     float contactSeconds, float peakForce,
                                     float noiseLevel) noexcept
@@ -2011,15 +2251,21 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     // articulation lands in exactly the same place.
     voice.strikeAngle = signedUnitFromHash (seed + 2u) * piFloat * humanise;
 
-    // MIDI velocity to impact speed. Squaring the normalised value before the
-    // geometric map gives the low end of the range the resolution a player
-    // needs for ghost strokes.
+    // MIDI velocity to impact speed, geometrically and with nothing shaping it.
+    // The map used to square the normalised value first, on the grounds that it
+    // gave the bottom of the range resolution; squaring in front of a
+    // logarithmic map does the opposite of that. Level goes as v^1.2 and speed
+    // goes as a power of the control, so the plain map is already even in
+    // decibels - equal steps of MIDI velocity are equal steps of loudness,
+    // which is what a player's arm does. The squared one piled the whole lower
+    // half of the keyboard's velocity range into half a decibel of each other
+    // just above the floor, which is exactly the complaint players make about
+    // the sampled libraries.
     const float shaped = lerp (0.72f, voice.velocity, applied_.velocityDepth);
     const float speedJitter =
         1.0f + 0.10f * humanise * signedUnitFromHash (seed + 3u);
     const float impactSpeed = clampFloat (
-        geometricLerp (minimumImpactSpeed, maximumImpactSpeed, shaped * shaped)
-            * speedJitter,
+        geometricLerp (minimumImpactSpeed, maximumImpactSpeed, shaped) * speedJitter,
         0.05f, 12.0f);
 
     // What is being struck. The stick-on-stick stroke never touches the drum,
@@ -2040,6 +2286,12 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
     solveContact (strikerMass, targetImpedance, profile, applied_.bachiHardness,
                   impactSpeed, contactSeconds, peakForce);
     contactSeconds *= 1.0f + 0.08f * humanise * signedUnitFromHash (seed + 4u);
+
+    // Before anything is built: the head this stroke is about to land on may
+    // already be moving, and a stick arriving on a moving membrane takes energy
+    // out of it. Only the drum this stroke is played on, and only the voices
+    // that are not this one.
+    dampRingingHeads (slot, octave, profile, voice.strikeRadius, drum, strikerMass);
 
     // The free hand resting on the head, for the muted strokes.
     const float extraDamping = profile.muteAmount;
@@ -2082,19 +2334,51 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
         1.0f - std::exp (-2.0f * piFloat * noiseCorner * inverseSampleRate_);
     voice.noiseBandState = 0.0f;
 
-    // Stretching the head raises its tension, so a hard stroke starts sharp
-    // and settles as it decays. The depth follows the impact speed because
-    // that is what sets how far the head is pushed.
-    const float glideDepth = applied_.tensionModulation * 0.115f
-                           * clampFloat (impactSpeed / maximumImpactSpeed, 0.0f, 1.0f)
-                           * profile.membraneGain;
-    voice.tensionDepth = glideDepth;
-    voice.tensionEnvelope = glideDepth > 0.0f ? 1.0f : 0.0f;
-    voice.tensionDecay = std::exp (-1.0f / (0.115f * static_cast<float> (sampleRate_))
-                                   * static_cast<float> (controlPeriod));
+    // The tack line. Each tack holds down the head's tension over its share of
+    // the circumference, so the force a stroke has to beat before anything
+    // rattles is a property of the drum - a tighter or a larger head is held
+    // harder - while the rattle's own band is a property of the nail and does
+    // not move with the drum at all.
+    voice.tackRimGain = profile.rimGain;
+    voice.tackPreload = drum.tension * 2.0f * piFloat * drum.radius / tackCount;
+    voice.tackScale = profile.rimGain > 0.0f
+        ? tackCalibration * applied_.strikeNoise * profile.noiseGain
+        : 0.0f;
+    voice.tackNoiseState = hash32 (voice.noiseState + 0x5bf03635u) | 1u;
+    voice.tackEnvelope = 0.0f;
+    voice.tackEnvelopeDecay =
+        std::exp (-1.0f / (tackRattleSeconds * static_cast<float> (sampleRate_)));
+    voice.tackLowState = 0.0f;
+    voice.tackHighState = 0.0f;
+    voice.tackLowCoefficient = 1.0f - std::exp (
+        -2.0f * piFloat
+        * std::min (tackLowCorner, 0.45f * static_cast<float> (sampleRate_))
+        * inverseSampleRate_);
+    voice.tackHighCoefficient = 1.0f - std::exp (
+        -2.0f * piFloat
+        * std::min (tackHighCorner, 0.45f * static_cast<float> (sampleRate_))
+        * inverseSampleRate_);
+
+    // Stretching the head raises its tension, so a hard stroke starts sharp and
+    // settles as it decays. Nothing here schedules that: the coefficient below
+    // is the drum's, not the stroke's, and what makes the glide big on a hard
+    // stroke and absent on a soft one is that the head is displaced further.
+    //
+    // It carries 1/modelScale^2 because the resonator states it will be applied
+    // to are in units of that calibration and the displacement it stands for is
+    // in metres. That division is the point of the whole rewrite: the engine's
+    // one loudness constant is documented as unable to distort any relationship
+    // inside the model, and the term this replaces let it set a third of the
+    // bend.
+    constexpr float inverseModelScaleSquared = 1.0f / (modelScale * modelScale);
+    voice.tensionDepth = tensionStretchCalibration * applied_.tensionModulation
+                       * drum.stretchStiffness * inverseModelScaleSquared
+                       / std::max (drum.radius * drum.radius, 1.0e-6f);
+    voice.tensionEnvelope = 0.0f;
+    voice.tensionDecay =
+        std::exp (-static_cast<float> (controlPeriod)
+                  / (tensionFollowerSeconds * static_cast<float> (sampleRate_)));
     voice.appliedTensionShift = 1.0f;
-    if (glideDepth > 0.0f)
-        applyTensionShift (voice, 1.0f + glideDepth);
 
     // The airborne path from the stick to each microphone. Plain geometry: the
     // strike lands somewhere on the head, each mic sits somewhere in front of
@@ -2200,6 +2484,16 @@ bool TaikoEngine::triggerMidi (int midiNote, float velocity) noexcept
     return true;
 }
 
+// Every membrane mode is moved by the same factor, which is exact for an ideal
+// membrane and a first-order approximation once the head has bending stiffness
+// and a cavity behind it: neither the stiff term nor the air spring scales with
+// the head's tension, so a mode that owes part of its frequency to them should
+// move slightly less than the fundamental does. The residue is small over the
+// gestures that use this - the attack glide is under a tenth of a semitone of
+// tension and the wheel is two - and correcting it exactly would mean carrying
+// the tension, stiffness and cavity shares of every mode separately through a
+// path that already has to keep the retirement sort, the deadline and the fade
+// consistent with each other.
 void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
 {
     const auto rate = static_cast<float> (sampleRate_);
@@ -2389,10 +2683,38 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
     // raise its tension, and both therefore scale the membrane's frequencies.
     // Applying them together also means a stroke that is already ringing bends
     // with the wheel, rather than the wheel only reaching the next stroke.
-    if (voice.tensionEnvelope > 1.0e-4f)
-        voice.tensionEnvelope *= voice.tensionDecay;
+    //
+    // The glide is the head's own doing. A membrane clamped at its rim gets
+    // longer when it moves, so its tension rises with the square of the
+    // displacement - the Berger/von Karman term - and the frequency with the
+    // square root of the tension. What the head is doing right now is in the
+    // resonator states, so that is what this reads: a peak follower over their
+    // mean square, released slowly enough to sit still through a cycle of the
+    // lowest mode and quickly enough to follow the head as it empties.
+    //
+    // There is no envelope and no time constant of its own in any of this. The
+    // glide is over when the head has stopped moving, which is why a slack
+    // o-daiko bends further and for longer than a shime-daiko does at four
+    // times the tension.
+    if (voice.tensionDepth > 0.0f)
+    {
+        float squaredDisplacement = 0.0f;
+        for (int index = 0; index < voice.activeModeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (! mode.membrane)
+                continue;
+            const auto state = static_cast<float> (mode.resonator.y1);
+            squaredDisplacement += state * state;
+        }
+
+        voice.tensionEnvelope = std::max (squaredDisplacement,
+                                          voice.tensionEnvelope * voice.tensionDecay);
+    }
     else
+    {
         voice.tensionEnvelope = 0.0f;
+    }
 
     // The voice's modes were built with whatever tuning stood at the strike, so
     // only the movement since then is left to apply. Both the Pitch control and
@@ -2400,8 +2722,10 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
     // tail retunes it for the same reason the wheel does - so they are carried
     // together as one offset in semitones.
     const float tuningNow = applied_.pitch + 2.0f * pitchBend_;
-    const float shift = (1.0f + voice.tensionDepth * voice.tensionEnvelope)
-                      * std::exp2 ((tuningNow - voice.tuningAtStrike) / 12.0f);
+    const float raw = voice.tensionDepth * voice.tensionEnvelope;
+    const float rise = tensionStretchLimit * raw / (tensionStretchLimit + raw);
+    const float stretch = std::sqrt (1.0f + rise);
+    const float shift = stretch * std::exp2 ((tuningNow - voice.tuningAtStrike) / 12.0f);
 
     if (std::abs (shift - voice.appliedTensionShift) > 1.0e-5f)
         applyTensionShift (voice, shift);
@@ -2469,6 +2793,41 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
 
     const float excitation = force + noise;
 
+    // The tack line, which rattles only once the stroke has beaten the preload
+    // holding the head down. It used to be a fixed 0.08 of broadband noise
+    // added to a contact whose amplitude is in the thousands of newtons - 87 dB
+    // under the stroke, inaudible at every setting, and answering to nothing:
+    // not the Stick Noise control, not the velocity, not the drum. This is the
+    // same idea done as a threshold, so it appears when a rim shot lands hard
+    // and is simply absent below that. It goes out through the air rather than
+    // into the head, because a chattering nail is a small metal source at the
+    // rim and not something driving the membrane.
+    float tack = 0.0f;
+    if (voice.tackScale > 0.0f)
+    {
+        if (force > 0.0f)
+        {
+            const float excess = force * voice.tackRimGain - voice.tackPreload;
+            if (excess > 0.0f)
+                voice.tackEnvelope = std::max (voice.tackEnvelope, excess);
+        }
+
+        if (voice.tackEnvelope > 1.0e-3f)
+        {
+            const float white = nextNoise (voice.tackNoiseState);
+            voice.tackLowState += voice.tackLowCoefficient * (white - voice.tackLowState);
+            const float above = white - voice.tackLowState;
+            voice.tackHighState +=
+                voice.tackHighCoefficient * (above - voice.tackHighState);
+            tack = voice.tackHighState * voice.tackEnvelope * voice.tackScale;
+            voice.tackEnvelope *= voice.tackEnvelopeDecay;
+        }
+        else
+        {
+            voice.tackEnvelope = 0.0f;
+        }
+    }
+
     float left = 0.0f;
     float right = 0.0f;
 
@@ -2512,6 +2871,16 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
     for (int index = 0; index < voice.activeModeCount; ++index)
     {
         auto& mode = voice.modes[static_cast<std::size_t> (index)];
+        // The wooden bank is driven linearly, like the head. A shaper used to
+        // sit here, labelled as soft odd-harmonic saturation in the zelkova: a
+        // clamp after a pre-gain, then a cubic term, then a trim. None of it
+        // did what it said. The drive the shell bank is handed never came near
+        // the clamp and the cubic term sat far under the linear one, so what
+        // was left was a fixed gain gated on Shell Resonance passing 1 %, which
+        // put a step in the middle of a continuous control. A drum shell struck
+        // by a stick is nowhere near its elastic limit, so there is nothing
+        // here for a saturator to do. testShellResonanceHasNoStepInIt keeps it
+        // that way.
         const float value = mode.resonator.tick (excitation * mode.drive);
         if (mode.membrane)
         {
@@ -2535,7 +2904,12 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
         voice.directPrevious = excitation;
         voice.directLowpassState +=
             voice.directLowpassCoefficient * (slope - voice.directLowpassState);
-        const float radiated = voice.directLowpassState;
+        // The tack rattle joins the airborne path after the contact patch's
+        // own low-pass rather than before it: that corner describes how large
+        // the bachi's contact with the hide is, and a tack head is a great deal
+        // smaller than that. It does take the same distances and delays, since
+        // the tacks a stroke can rattle are the ones it landed among.
+        const float radiated = voice.directLowpassState + tack;
 
         voice.directLine[static_cast<std::size_t> (voice.directWriteIndex)] = radiated;
 
@@ -2841,6 +3215,12 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     result.tensionNewtonsPerMetre = drum.tension;
     result.arealDensityKgPerSquareMetre = drum.batterDensity;
     result.waveSpeedMetresPerSecond = drum.waveSpeed;
+    result.headStiffnessParameter = drum.stiffnessBatter;
+    // No stiffness stretch on either of these: the stretch is taken relative to
+    // the (0,1) mode and this is the (0,1) mode, so it is unity by
+    // construction. That is the whole point of normalising it there - the pitch
+    // the drum is tuned to is a membrane frequency however stiff the head is,
+    // and only the modes above it move.
     result.idealFundamentalHz =
         drum.waveSpeed * lambda / (2.0f * piFloat * drum.radius);
 
@@ -2959,7 +3339,8 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
             // the batter head's own mode, air-loaded and damped.
             const auto order = static_cast<float> (radial.circumferentialOrder);
             const float ideal =
-                drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
+                drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
+                * stiffnessStretch (radialLambda, drum.stiffnessBatter);
             const float shape =
                 (2.4048f / radialLambda) / (1.0f + 0.6f * order);
             const float load = 1.0f / std::sqrt (
@@ -2986,9 +3367,11 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
         }
 
         const float radialBatter =
-            drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
+            drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
+            * stiffnessStretch (radialLambda, drum.stiffnessBatter);
         const float radialResonant =
-            drum.resonantWaveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
+            drum.resonantWaveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
+            * stiffnessStretch (radialLambda, drum.stiffnessResonant);
 
         // The air load falls off with the mode's own order exactly as it does
         // where the modes are built: a mode with nodal rings shifts far less

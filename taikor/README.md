@@ -92,10 +92,18 @@ else rather than on their own. Turn Head Diameter down if you would rather have
 the family centred higher; the octave mapping scales with whatever drum the
 controls describe.
 
-**Velocity** sets the impact speed of the stick. The timbre change that comes
-with it is not a separate control, because it is not a separate effect: Hertz
-contact time falls as the fifth root of impact speed, so a harder stroke is
-shorter, brighter and louder at once.
+**Velocity** sets the impact speed of the stick, from 0.12 m/s — a tip barely
+leaving the head — to 6 m/s. The timbre change that comes with it is not a
+separate control, because it is not a separate effect: Hertz contact time falls
+as the fifth root of impact speed, so a harder stroke is shorter, brighter and
+louder at once.
+
+The mapping is geometric and nothing shapes it, so equal steps of MIDI velocity
+are equal steps of decibels — which is what an arm does. At full Velocity Depth
+that is thirty-four decibels between a ghost stroke and a full blow on an open
+Don, and forty on the stick click. The single most common complaint about the
+sampled taiko libraries this competes with is that they have very little of
+that; it is not a limitation a model has any reason to inherit.
 
 **MIDI CC1** lays a hand on the head. It damps whatever is still ringing, and
 it goes on damping while it is held — so a stroke played with the hand down is
@@ -113,10 +121,10 @@ a voicing offset.
 
 | Control | Range | Default | What it changes |
 | --- | --- | --- | --- |
-| Head Diameter | 15–180 cm | 95 cm | The membrane radius. Pitch moves as 1/a; the modal *ratios* are fixed by the Bessel zeros and do not move at all. The default is an ō-daiko, so the instrument opens on its heaviest voice rather than asking you to go and find it |
+| Head Diameter | 15–180 cm | 95 cm | The membrane radius. Pitch moves as 1/a, and the modal ratios open out as the drum gets smaller because the head's own stiffness stops being negligible. The default is an ō-daiko, so the instrument opens on its heaviest voice rather than asking you to go and find it |
 | Body Depth | 0–100 % | 50 % | Enclosed volume. A shallow body is a stiffer air spring, so it splits the two heads further apart |
-| Head Tension | 0–100 % | 55 % | 1.2–22 kN/m. Wave speed is √(T/σ) |
-| Head Material | 0–100 % | 75 % | Thin synthetic film → thick cowhide. Sets areal density *and* internal loss, because both come from the same hide |
+| Head Tension | 0–100 % | 55 % | 1.2–22 kN/m. Wave speed is √(T/σ), and the tension is also what the head's stiffness has to compete with, so a slack head is more inharmonic than a tight one |
+| Head Material | 0–100 % | 75 % | Thin synthetic film → thick cowhide. Sets areal density, internal loss *and* bending stiffness, because all three come from the same piece of material |
 | Shell Material | 0–100 % | 80 % | Light laminated ply → dense carved zelkova. Moves the body's ring modes, their Q, and how much the rim absorbs |
 | Resonant Head | 0–100 % | 50 % | Far head's tension relative to the batter head, 0.85×–1.15× |
 | Air Coupling | 0–100 % | 85 % | How strongly the enclosed air ties the two heads together |
@@ -131,8 +139,8 @@ a voicing offset.
 | Bachi Hardness | 0–100 % | 70 % | Felt beater → seasoned oak. Sets the Hertz contact stiffness |
 | Strike Position | Centre 100 → Rim 100 | As written | Offsets every stroke's own radius |
 | Velocity Depth | 0–100 % | 75 % | How far MIDI velocity moves the impact speed |
-| Tension Mod | 0–100 % | 40 % | Attack pitch glide: a hard stroke stretches the head |
-| Stick Noise | 0–100 % | 35 % | Broadband contact noise on the hide |
+| Tension Mod | 0–100 % | 40 % | Depth of the attack pitch glide, which is the head stretching itself: a hard stroke displaces the hide, a displaced hide is a longer and therefore tighter one, and the drum starts sharp. At 0 the head is treated as linear |
+| Stick Noise | 0–100 % | 35 % | Broadband contact noise on the hide, and the rattle of the tack line when a stroke beats the preload holding the head down |
 | Humanise | 0–100 % | 40 % | Per-stroke variation in position, angle, speed and contact time. At 0 the drum is a machine and repeats exactly |
 | Octave Body | Tuned → Family | 70 % | How an octave is realised (see below) |
 
@@ -149,10 +157,13 @@ a voicing offset.
 The default output is far quieter than a synthesizer's usually is, deliberately.
 A taiko is a very loud instrument with a very large crest factor, and this one
 models the whole of it: the loudest stroke it can make — a full-velocity rim
-shot on the largest drum — sits more than twenty decibels above unity. The
-default leaves everything short of that one extreme just under full scale rather
-than making a middling stroke as loud as possible; the hardest rim shot on the
-biggest drum itself grazes the safety limiter for about ten milliseconds.
+shot on the largest drum — sits more than twenty decibels above unity, and the
+bottom of the range is a ghost stroke some thirty-four decibels below a full
+blow on the same drum. The default leaves everything short of that one extreme
+just under full scale rather than making a middling stroke as loud as possible:
+the hardest rim shot on the factory drum peaks around −2 dBFS, while the same
+stroke on the biggest drum grazes the safety limiter for about twenty
+milliseconds.
 
 ## Sound engine
 
@@ -161,9 +172,34 @@ biggest drum itself grazes the safety limiter for about ten milliseconds.
 A circular membrane of radius *a* under tension *T* with areal density *σ* has
 modes at *f(m,n) = c·λ(m,n) / 2πa*, where *c = √(T/σ)* and *λ(m,n)* is the *n*-th
 zero of the Bessel function *J(m)*. Taikor runs twenty such modes — four
-axisymmetric and sixteen with a circumferential order — and the ratios between
-them are fixed constants of the geometry, which is why size and tension move the
-whole drum together and only the air changes its shape.
+axisymmetric and sixteen with a circumferential order.
+
+A taiko head is not that membrane, though, and the difference is audible. It is
+chemically treated cowhide with a Young's modulus around 3.5 GPa, several
+tenths of a millimetre thick, held at a tension far above a drum-kit head's — a
+*stretched plate*, in the acoustics literature, rather than an ideal membrane.
+A plate resists bending as well as stretching, and bending adds a term in the
+fourth power of the wavenumber to *ω²*: *ω² = (T k² + D k⁴)/σ*, with the
+flexural rigidity *D = E h³ / 12(1 − ν²)*. So the ratios between the modes are
+not constants of the geometry. They open out with the mode's order, and they
+open out further the smaller the drum and the thicker its hide.
+
+That single term is most of what separates a shime-daiko's spectrum from an
+ō-daiko's. On the factory drum two octaves down, the top of the resolved bank
+sits about ten cents above where an ideal membrane would put it; at the
+reference, thirty; three octaves up, close to a hundred and fifty. Head Material
+moves it as hard again, because it is thickness as well as density and *D* goes
+as the cube of thickness: a thin synthetic film is an ideal membrane to within
+half a cent, and a thick hide stretches its top mode by well over a semitone.
+
+The stretch is taken relative to the *(0,1)* mode rather than applied
+absolutely, because a drum is tuned by the pitch it sounds. A player brings the
+fundamental back where it belongs with the ropes or the tacks, and what
+stiffness leaves behind afterwards is the spread above it. That is also what
+keeps an octave an octave: the stiffness parameter falls as the tension rises
+and as the square of the radius, so the two halves of the Octave Body transform
+move it in opposite directions and an absolute shift would put the keyboard out
+of tune with itself.
 
 No stroke lands on the geometric centre, because every mode with a
 circumferential order has *J(m)(0) = 0* and a strike at radius zero drives the
@@ -346,8 +382,74 @@ shime-daiko with an odaiko club. Leaving it fixed made the smallest drums about
 twenty-five decibels louder than the largest — a property of the wrong stick
 rather than of the instrument.
 
-A hard stroke also stretches the head, raising its tension until it decays: the
-attack pitch glide every large drum has.
+### The attack pitch glide
+
+A membrane clamped at its rim cannot move without getting longer, and a longer
+head is a tighter one. The tension it gains goes as the square of its
+displacement — the von Kármán / Berger term — and the pitch as the square root
+of the tension, so a struck head starts sharp and settles. That is the attack
+glide every large drum has, and it is the whole of the mechanism: there is no
+envelope and no time constant anywhere in it. The glide ends when the head has
+stopped moving, so it decays at the head's own rate rather than on a clock.
+
+Everything follows from that without being written down separately. A hard
+stroke bends further than a light one because it pushes the head further —
+about fifty cents against three at the factory setting. A slack head bends far
+more than a tight one, because the tension a given displacement adds is measured
+against the tension already there: at a quarter of the tension range the same
+stroke bends four times as far. A Katsu barely bends the head at all, because a
+stick on the shell hardly moves the hide. And the depth is computed after the
+model's one output-level calibration has been divided out, so that constant
+cannot reach the drum's pitch.
+
+It is a first-order expansion, so it is applied through a form that agrees with
+it exactly while the displacement is small and saturates where the expansion
+stops describing the head. That matters at the edge of the controls rather than
+in the middle of them: the fractional tension rise goes as the fourth inverse
+power of the radius, so the smallest head at no tension reached fifteen
+semitones of bend before it was bounded, and the factory drum reaches a tenth of
+a tension at full velocity.
+
+### The tack line
+
+A nagado-daiko is *byō-uchi*: the head is not roped on, it is nailed to the
+shell with a ring of iron tacks. Each of them holds down the head's tension
+over its share of the circumference — a few hundred newtons on the factory drum
+— and a stroke that catches the hoop has to beat that before it lifts the head
+at all. Past it the tacks chatter against the wood, which is the metallic edge a
+firm rim shot has and a light one has no trace of at all.
+
+It is a threshold rather than a level, so it does not fade in: below the preload
+there is nothing. Raising Head Tension or Head Diameter raises the preload,
+because both raise the tension a single tack carries, so a tighter or a larger
+drum wants a harder stroke before it rattles. Stick Noise owns the level, since
+this is contact noise. And it is the one part of the instrument that does not
+scale with the drum: a byō is a nail, and the same nails go into a nagado and an
+ō-daiko, so the rattle keeps its own band across the whole family.
+
+### A drum has one head
+
+A stroke lands on whatever the head is already doing. The bachi arriving on a
+moving membrane is a collision, and a collision with restitution *e* leaves a
+mass *M* moving at *v* going at *v(M − em)/(M + m)*: the stick takes some of
+what is there and gives back only part of it. The mass it meets is not the
+whole head but each mode's own, referred to the point of contact — a mode's
+modal mass divided by the square of its shape under the stick.
+
+Three things follow, and none of them are written down anywhere as rules. A
+centre stroke very largely resets the drum's boom, because a bachi is heavier
+than the fundamental's modal mass and lands where that mode is largest. An edge
+stroke leaves the boom alone and dries up the edge instead, because that is
+where its shape is. And the high modes, whose modal masses are a fraction of a
+stick's, are simply turned round by it.
+
+That is the whole of the answer to what a sample library calls the machine-gun
+problem, and it is not a variation mechanism: it is the reason a roll on one
+drum is not eight separate drums. Eight identical strokes 62 ms apart used to be
+bit-identical to eight copies of one stroke added together offline; what they
+leave ringing afterwards is now more than three decibels under what that
+arithmetic predicts, while the strokes themselves are untouched. Round robins
+are an attempt to hide the fact that a sampler cannot do this at all.
 
 ### Two sticks, and nothing else
 
@@ -424,11 +526,21 @@ than merely higher.
 ### What is not modelled
 
 The room, the player's body, the stand, and the far head's own radiation into
-the space behind the drum. Two constants are calibrated rather than derived —
-the overall depth of radiation damping, and how efficiently the shell reaches
-the microphones — because both depend on how the drum is mounted, which this
-model does not describe. Everything about how those terms *vary* with size,
-material and stroke is computed.
+the space behind the drum. The enclosed air is a lumped spring rather than a
+column, which is exact only below the body's first axial resonance — 212 Hz on
+the factory drum, and between 139 and 451 Hz across Body Depth, so the
+assumption gives out inside the drum's own range.
+
+Six constants are calibrated rather than derived, and each of them sets the
+*depth* of a term whose shape is computed: the overall level of radiation
+damping and how efficiently the shell, the sticks and the airborne click reach
+the microphones — all four of which depend on how the drum is mounted and where
+the player is standing, neither of which this model describes; the weight of the
+head's high-frequency continuum against its resolved bank; and the shape factor
+of the attack pitch glide, which stands in for the difference between the modal
+states the engine has and the mean square slope the tension rise depends on.
+Everything about how those terms *vary* with size, material, position and stroke
+is computed.
 
 ## Interface
 
@@ -483,8 +595,12 @@ ctest --test-dir build-dsp --output-on-failure
 The JUCE-free suite covers the stroke vocabulary and MIDI mapping, the octave
 contract at every Octave Body setting, all eight strokes at five sample rates,
 sample-rate and block-size invariance, bit-exact determinism, the velocity and
-contact-time laws, every physical control's effect on the solved drum *and* on
-the rendered audio, the close pair's decorrelation and mono compatibility, tail
+contact-time laws, the instrument's dynamic range and the evenness of its
+velocity response, the head's bending stiffness and the modal ratios it opens
+out, the attack glide's dependence on the head rather than on a clock, the tack
+line's threshold, what one stroke takes out of a head another stroke left
+ringing, every physical control's effect on the solved drum *and* on the
+rendered audio, the close pair's decorrelation and mono compatibility, tail
 termination and exact idle silence, voice stealing, hostile input, and the
 presentation mathematics the editor draws with. It also smoke-tests the
 demonstration renderer.
@@ -571,6 +687,7 @@ Tests/PluginProcessorTests.cpp  JUCE processor and editor contract tests
 Tools/RenderDemos.cpp       Renders the committed demonstration WAVs
 ThirdParty/                 Vendored JUCE licence text, staged into every package
 Docs/audio/                 Twenty-three rendered demonstrations and their manifest
+Docs/best-in-class-plan.md  Competitive landscape, gap analysis and the work it drove
 Presets/                    Preset guidance and drum-building reference
 scripts/                    macOS build and packaging helpers
 ```
