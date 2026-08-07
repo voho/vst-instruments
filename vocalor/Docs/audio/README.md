@@ -3,9 +3,10 @@
 Nine rendered examples of what Vocalor produces: a solo legato phrase, the
 three preset vowels on both voice profiles, the continuous vowel space and the
 formant shift each explored on a single held note, the twelve-singer ensemble,
-chord mode's one-finger harmony, a choir phrase sung from pianissimo to forte,
-the glottal tension and breath controls, and the room at both ends of its size
-range.
+chord mode's one-finger harmony locking onto just intervals, a choir phrase
+sung from pianissimo to forte and then swelled on the Dynamics control, the
+glottal tension and breath controls closing into a hum, and the room at both
+ends of its size range.
 
 Every file here is rendered by [`Tools/RenderDemos.cpp`](../../Tools/RenderDemos.cpp)
 from the shipping JUCE-free signal path — the same `VoiceEngine` the VST3, Audio
@@ -34,14 +35,20 @@ The set is ordered so it can be played straight through:
 - **05–07** are the ensembles. 05 is twelve independently humanised singers
   holding a chord pad — no two enter, drift or waver together. 06 is chord
   mode: each single key is rendered as six singers spread across the triad,
-  with the major/minor switch audible inside the progression. 07 is an
-  eight-singer phrase where only the MIDI velocity changes: a soft note is
-  duller as well as quieter, because velocity reaches the glottal pulse.
-- **08** is the voice itself under the two most physical controls: one held
-  male note driven from a lax to a firmly pressed glottis — a crossfade between
-  two analysed glottal pulse shapes, not an EQ — and then dissolved into
-  breath, which is aspiration noise injected at the glottis and filtered by
-  the very same tract.
+  with the major/minor switch audible inside the progression, and the final
+  tonic is held while the intonation control walks from equal temperament to
+  five-limit just — listen for the third settling as it narrows 13.7 cents and
+  stops beating against the root. 07 is an eight-singer phrase where only the
+  MIDI velocity changes, then a held fifth swelled on the Dynamics control
+  alone: the keys are struck once, so everything that moves after that is the
+  dynamic reaching the source tilt, the pulse shape and the breath balance.
+- **08** is the voice itself under the three most physical controls, all on
+  one held male note: driven from a lax to a firmly pressed glottis — a
+  crossfade between two analysed glottal pulse shapes that also closes the
+  singer's-formant cluster, not an EQ — dissolved into breath, which is
+  aspiration noise injected at the glottis and filtered by the very same
+  tract, and finally closed into a hum as the velum opens and the nasal
+  branch's murmur pole and anti-resonance take over.
 - **09** sings the same three-note motif in a small dry booth and then in a
   large hall. Room size moves the reflections apart and lengthens the tail; it
   is geometry, not just a wet/dry fader.

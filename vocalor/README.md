@@ -10,10 +10,10 @@ service while rendering audio.
 
 > **Listen first.** Nine [rendered demonstrations](Docs/audio/README.md) cover
 > a solo legato phrase, the preset vowels on both voice profiles, the vowel
-> space and formant shift on held notes, the twelve-singer ensemble, chord
-> mode, choir dynamics, tension and breath, and the room at both sizes. They
-> are rendered by the shipping engine, so they cannot drift from what the
-> plug-in does.
+> space and formant shift on held notes, the twelve-singer ensemble, chord mode
+> locking onto just intervals, a choir swelled on the Dynamics control, tension
+> and breath closing into a hum, and the room at both sizes. They are rendered
+> by the shipping engine, so they cannot drift from what the plug-in does.
 
 ![Vocalor Standalone instrument interface](Docs/screenshots/vocalor-standalone.png)
 
