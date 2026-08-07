@@ -185,7 +185,10 @@ equivalent; **voiced/guessed** means an audible value chosen provisionally
 because the required hardware measurement does not exist; and **product policy**
 means a deliberate plug-in feature with no hardware claim. The detailed,
 controlling version of this ledger is the
-[research contract](Docs/circuit-modelling-research.md).
+[research contract](Docs/circuit-modelling-research.md); how this coverage
+compares with every other JUNO-106 emulation, and which market claims
+remain external-validation debts, is the
+[comparative assessment](Docs/comparative-assessment.md).
 
 | Stage | Same as the hardware / evidence-fixed | Approximated, guessed/voiced or product-only |
 | --- | --- | --- |
