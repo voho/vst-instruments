@@ -70,14 +70,14 @@ the twelve-singer pad genuinely sums far louder than a single lax voice.
 | File | What it is | Length | Rendered peak | Normalisation |
 | --- | --- | ---: | ---: | ---: |
 | `01-solo-legato-phrase.wav` | A solo soprano phrase sung legato, with a light glide between notes | 10.5 s | −14.3 dBFS | +11.3 dB |
-| `02-vowel-anchors.wav` | The three preset vowels on the female voice, then on the male | 11.3 s | −17.1 dBFS | +14.1 dB |
-| `03-vowel-space-morph.wav` | One held note while the morph target walks every cardinal vowel | 13.2 s | −16.4 dBFS | +13.4 dB |
+| `02-vowel-anchors.wav` | The three preset vowels on the female voice, then on the male | 11.3 s | −17.2 dBFS | +14.2 dB |
+| `03-vowel-space-morph.wav` | One held note while the morph target walks every cardinal vowel | 13.2 s | −16.5 dBFS | +13.5 dB |
 | `04-formant-shift.wav` | The whole tract shifted an octave up and down at a fixed pitch | 12.2 s | −13.7 dBFS | +10.7 dB |
-| `05-ensemble-pad.wav` | Twelve independently humanised singers holding a chord pad | 11.6 s | −12.8 dBFS | +9.8 dB |
-| `06-chord-mode-harmony.wav` | Single keys each rendered as a six-singer chord, major and minor | 12.7 s | −15.4 dBFS | +12.4 dB |
-| `07-choir-dynamics.wav` | An eight-singer choir phrase sung from pianissimo to forte | 10.4 s | −10.1 dBFS | +7.1 dB |
-| `08-tension-and-breath.wav` | A held male note from a lax to a pressed glottis, then into breath | 12.4 s | −16.7 dBFS | +13.7 dB |
-| `09-room-small-and-large.wav` | The same motif sung in a dry booth and in a large hall | 11.5 s | −13.5 dBFS | +10.5 dB |
+| `05-ensemble-pad.wav` | Twelve independently humanised singers holding a chord pad | 11.6 s | −12.3 dBFS | +9.3 dB |
+| `06-chord-mode-harmony.wav` | Single keys each rendered as a six-singer chord, major and minor | 15.1 s | −15.9 dBFS | +12.9 dB |
+| `07-choir-dynamics.wav` | An eight-singer choir phrase sung from pianissimo to forte | 11.5 s | −11.4 dBFS | +8.4 dB |
+| `08-tension-and-breath.wav` | A held male note from a lax to a pressed glottis, then into breath | 16.9 s | −16.8 dBFS | +13.8 dB |
+| `09-room-small-and-large.wav` | The same motif sung in a dry booth and in a large hall | 11.5 s | −13.4 dBFS | +10.4 dB |
 <!-- peaks-table-end -->
 
 ## Regenerating them

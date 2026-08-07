@@ -67,11 +67,11 @@ strokes at the start of the velocity take.
 | File | What it is | Length | Rendered peak | Normalisation |
 | --- | --- | ---: | ---: | ---: |
 | `01-kit-vocabulary.wav` | All thirteen voices of the factory kit, one hit at a time | 12.6 s | −11.9 dBFS | +8.9 dB |
-| `02-rock-groove.wav` | A plain rock beat at 96 BPM with the open hat choked by the closed | 11.7 s | −8.4 dBFS | +5.4 dB |
-| `03-breakbeat-ghost-notes.wav` | A busier break at 104 BPM with ghost-note snare | 10.8 s | −11.8 dBFS | +8.8 dB |
-| `04-snare-velocity.wav` | One snare from a ghost note to a full accent | 6.1 s | −14.4 dBFS | +11.4 dB |
-| `05-toms-and-cymbals.wav` | Ride time, crashes and a descending tom fill | 13.1 s | −7.6 dBFS | +4.6 dB |
-| `06-humanise.wav` | The same bar machine-tight, at the factory Humanise, then doubled | 13.4 s | −11.9 dBFS | +8.9 dB |
+| `02-rock-groove.wav` | A plain rock beat at 96 BPM, then the same beat played on the hi-hat pedal | 21.9 s | −8.6 dBFS | +5.6 dB |
+| `03-breakbeat-ghost-notes.wav` | A busier break at 104 BPM with ghost-note snare | 10.8 s | −11.9 dBFS | +8.9 dB |
+| `04-snare-velocity.wav` | One snare from a ghost note to a full accent, then its rimshot and cross-stick | 9.8 s | −14.4 dBFS | +11.4 dB |
+| `05-toms-and-cymbals.wav` | Ride time, crashes and a descending tom fill | 13.1 s | −7.4 dBFS | +4.4 dB |
+| `06-humanise.wav` | The same bar machine-tight, at the factory Humanise, then doubled | 13.4 s | −11.8 dBFS | +8.8 dB |
 | `07-kit-bus.wav` | One loop dry, through Bus Drive, then glued by Bus Compression | 13.6 s | −10.0 dBFS | +7.0 dB |
 <!-- peaks-table-end -->
 
