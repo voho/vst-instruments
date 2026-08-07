@@ -909,8 +909,9 @@ void testEditorRendering()
         };
         expect (countButtons (pickStrip) == 3,
                 "editor did not retain the three picking-style buttons");
-        expect (countButtons (styleStrip) == 4,
-                "editor did not retain the four play-style buttons");
+        expect (countButtons (styleStrip)
+                    == electry::ElectryEngine::playStyleKeyswitchCount,
+                "editor did not retain one button per play style");
         for (std::size_t first = 0; first < buttonBounds.size(); ++first)
             for (std::size_t second = first + 1u; second < buttonBounds.size(); ++second)
                 expect (! buttonBounds[first].intersects (buttonBounds[second]),

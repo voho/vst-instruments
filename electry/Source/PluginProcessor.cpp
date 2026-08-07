@@ -334,6 +334,7 @@ void ElectryAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     engine.setSustainPedal (false);
     engine.setResonance (0.0f);
     engine.setPalmMutePressure (0.0f);
+    engine.setVibrato (0.0f);
     effects.prepare (sampleRate);
     updateEffectParameters();
     effects.reset();
@@ -357,6 +358,7 @@ void ElectryAudioProcessor::releaseResources()
     engine.setSustainPedal (false);
     engine.setResonance (0.0f);
     engine.setPalmMutePressure (0.0f);
+    engine.setVibrato (0.0f);
     engine.allNotesOff();
     engine.reset();
     effects.reset();
@@ -485,6 +487,7 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
             engine.setPitchBend (0.0f);
             engine.setResonance (0.0f);
             engine.setPalmMutePressure (0.0f);
+            engine.setVibrato (0.0f);
             engine.setSustainPedal (false);
         }
         else if (controller == 120u)
@@ -499,6 +502,21 @@ void ElectryAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
             // ring-out remains musical.
             engine.allNotesOff();
         }
+    }
+    else if (kind == 0xd0u && numBytes >= 2)
+    {
+        // Channel pressure is the fretting hand leaning into a string it is
+        // already holding: a vibrato on the strings being fingered, and
+        // deliberately not on the sympathetically ringing ones, which is what
+        // separates a finger from the bar the pitch wheel models.
+        engine.setVibrato (static_cast<float> (data[1] & 0x7fu) / 127.0f);
+    }
+    else if (kind == 0xa0u && numBytes >= 3)
+    {
+        // Polyphonic aftertouch drives the same hand. Electry has one fretting
+        // hand rather than one per key, so the most recent key's pressure is
+        // what that hand is doing.
+        engine.setVibrato (static_cast<float> (data[2] & 0x7fu) / 127.0f);
     }
     else if (kind == 0xe0u && numBytes >= 3)
     {

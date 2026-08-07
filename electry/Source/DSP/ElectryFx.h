@@ -247,6 +247,27 @@ private:
         OnePole interstage {};
         float bias { 0.0f };
 
+        // The power stage's supply rail. A loud passage draws current the
+        // supply cannot hold up, so the plate voltage droops - measured on
+        // real amplifiers from around 350 V to around 250 V within a tenth of
+        // a second, recovering over three to six tenths - and the stage's
+        // headroom goes with it. The follower is deliberately asymmetric: the
+        // reservoir discharges far faster than it recharges.
+        float sag { 0.0f };
+
+        // The output transformer. A core saturates at a flux limit, and flux
+        // is the integral of the voltage, so the limit is a volt-second limit
+        // and the low end reaches it first at the same level. `flux` is a
+        // one-pole at the primary-inductance corner - unity at DC, falling as
+        // 1/f above it, which is that integral normalised - and what the core
+        // cannot carry is subtracted back out of the signal, so the stage is
+        // transparent well above the corner and compresses and thickens
+        // underneath it. The high-pass in front of it is the transformer's own
+        // inability to pass DC, and it also keeps the bias drift's residue out
+        // of the flux.
+        Biquad transformerHighpass {};
+        OnePole flux {};
+
         std::array<Biquad, 6> cabinet {};
 
         void reset() noexcept;
@@ -254,6 +275,16 @@ private:
 
     void designFilters() noexcept;
     void updateDriveConstants() noexcept;
+    // The output transformer's core, isolated as a pure function of the signal
+    // and its flux state so the regression suite can measure it at the stage
+    // rather than through the cabinet that follows it - which, being a
+    // second-order high-pass at the box frequency, shapes a low tone and its
+    // harmonics so differently from a mid one that a distortion figure taken
+    // at the output measures the cabinet.
+    [[nodiscard]] static float transformerFluxCoefficient(
+        float sampleRate) noexcept;
+    [[nodiscard]] static float transformerCore(OnePole& flux, float input,
+                                               float coefficient) noexcept;
     [[nodiscard]] float renderGainStage(GainChannel& channel,
                                         float input) noexcept;
     [[nodiscard]] float renderGainFrame(GainChannel& channel,
@@ -288,6 +319,9 @@ private:
     float engagementCoefficient_ { 0.02f };
     float interstageCoefficient_ { 0.5f };
     float biasCoefficient_ { 0.001f };
+    float sagAttack_ { 0.001f };
+    float sagRelease_ { 0.0001f };
+    float fluxCoefficient_ { 0.99f };
     float compressorAttack_ { 0.0f };
     float compressorRelease_ { 0.0f };
     float compressorEnvelope_ { 0.0f };

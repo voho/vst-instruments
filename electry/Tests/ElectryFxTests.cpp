@@ -51,6 +51,67 @@ struct ElectryFxTestAccess
                        stage.oddTaps[static_cast<std::size_t>(tap)]);
         return sum;
     }
+
+    // Harmonic distortion the output transformer's core adds to a steady sine,
+    // measured at the stage itself. Measuring it at the chain's output instead
+    // would measure the cabinet: a second-order high-pass at the box frequency
+    // treats a 40 Hz tone and its harmonics so differently from a 400 Hz tone
+    // and its own that the cabinet's shaping is worth more decibels than the
+    // effect under test.
+    static double transformerDistortionDb(int cycles, double amplitude,
+                                          double rate, int length)
+    {
+        // The tone is specified in whole cycles per analysis window, so every
+        // harmonic lands exactly on a bin. With a fractional cycle count the
+        // fundamental's own leakage floors the measurement around -25 dB
+        // whatever the core is doing.
+        const double frequencyHz = cycles * rate / length;
+        ElectryFx::OnePole flux;
+        const float coefficient = ElectryFx::transformerFluxCoefficient(
+            static_cast<float>(rate));
+        std::vector<double> output(static_cast<std::size_t>(length), 0.0);
+        // Two passes: the first settles the flux state, the second is measured.
+        for (int pass = 0; pass < 2; ++pass)
+            for (int i = 0; i < length; ++i)
+            {
+                const double phase = 2.0 * 3.14159265358979323846
+                                   * frequencyHz * i / rate;
+                output[static_cast<std::size_t>(i)] =
+                    ElectryFx::transformerCore(
+                        flux, static_cast<float>(amplitude * std::sin(phase)),
+                        coefficient);
+            }
+
+        // Goertzel-style projection onto the fundamental and its harmonics.
+        const auto magnitude = [&] (double target)
+        {
+            double real = 0.0;
+            double imaginary = 0.0;
+            for (int i = 0; i < length; ++i)
+            {
+                const double phase = 2.0 * 3.14159265358979323846
+                                   * target * i / rate;
+                real += output[static_cast<std::size_t>(i)] * std::cos(phase);
+                imaginary -= output[static_cast<std::size_t>(i)]
+                           * std::sin(phase);
+            }
+            return std::hypot(real, imaginary) / length;
+        };
+
+        const double fundamental = magnitude(frequencyHz);
+        double harmonics = 0.0;
+        for (int partial = 2; partial <= 9; ++partial)
+        {
+            const double target = frequencyHz * partial;
+            if (target >= 0.45 * rate)
+                break;
+            const double value = magnitude(target);
+            harmonics += value * value;
+        }
+        return 10.0 * std::log10(
+            std::max(harmonics, 1.0e-30)
+            / std::max(fundamental * fundamental, 1.0e-30));
+    }
 };
 } // namespace electry
 
@@ -159,9 +220,14 @@ double aliasFloorDb(float distortion, float amp, double amplitude)
 
     std::vector<float> left;
     std::vector<float> right;
-    // The first pass settles the mix smoothers, the engagement ramp and the
-    // filter state; the second is analysed.
-    for (int pass = 0; pass < 2; ++pass)
+    // Every pass but the last settles the mix smoothers, the engagement ramp,
+    // the filter state and - the slow one - the power supply's sag follower,
+    // whose recovery is 400 ms against this probe's 341. The metric is a
+    // steady-state one, so the fixture has to actually reach a steady state:
+    // measured with two passes, the 0.7% of residual drift still left in the
+    // analysed window smeared enough energy off the harmonic bins to read as a
+    // -37 dB alias floor that was not aliasing at all.
+    for (int pass = 0; pass < 8; ++pass)
     {
         left = sineBlock(aliasProbeLength, aliasProbeCycles, amplitude);
         right = left;
@@ -408,6 +474,159 @@ void testCabinetVoicing()
            "the cabinet does not roll off above the speaker's range");
     expect(beyond - reference < -25.0,
            "the cabinet's top-end roll-off is not steep enough");
+}
+
+// The back half of the amplifier: a supply that droops under load and an
+// output transformer whose core saturates on volt-seconds rather than on
+// volts. Both are level- and time-dependent, so both are measured on how the
+// stage behaves over a note rather than on a static transfer curve.
+void testPowerStage()
+{
+    // A steady tone held long enough for the supply to droop and recover. The
+    // level is read in short windows so the shape of the droop is visible, not
+    // just its endpoint.
+    const auto heldToneLevels = [] (double amplitude)
+    {
+        ElectryFx fx;
+        fx.prepare(sampleRate);
+        FxParameters parameters;
+        parameters.amp = 1.0f;
+        fx.setParameters(parameters);
+
+        constexpr int block = 512;
+        constexpr int cycles = 4; // 375 Hz at 48 kHz, well inside the cabinet
+        std::vector<double> levels;
+        // A gap first, so the engagement ramp and the filters settle before
+        // the tone that is actually measured arrives.
+        for (int i = 0; i < 40; ++i)
+        {
+            std::vector<float> left(block, 0.0f);
+            std::vector<float> right(block, 0.0f);
+            fx.process(left.data(), right.data(), block);
+        }
+        for (int i = 0; i < 96; ++i)
+        {
+            auto left = sineBlock(block, cycles, amplitude);
+            auto right = left;
+            fx.process(left.data(), right.data(), block);
+            levels.push_back(rmsOf(left));
+        }
+        return levels;
+    };
+
+    const auto loud = heldToneLevels(0.45);
+    const auto quiet = heldToneLevels(0.006);
+
+    // Block 1 is about 16 ms in - past the tone's own first sample and well
+    // before the 70 ms sag follower has taken hold. Block 60 is 640 ms in,
+    // where the supply has fully drooped.
+    const auto droopDb = [] (const std::vector<double>& levels)
+    {
+        return 20.0 * std::log10(std::max(levels[60], 1.0e-12)
+                                 / std::max(levels[1], 1.0e-12));
+    };
+    const double loudDroop = droopDb(loud);
+    const double quietDroop = droopDb(quiet);
+    std::cout << "Supply sag: loud " << loudDroop << " dB, quiet "
+              << quietDroop << " dB\n";
+
+    expect(loudDroop < -1.0,
+           "a loud sustained passage did not duck as the supply drooped ("
+               + std::to_string(loudDroop) + " dB)");
+    expect(quietDroop > loudDroop + 0.6,
+           "a quiet passage drooped as much as a loud one (loud "
+               + std::to_string(loudDroop) + " dB, quiet "
+               + std::to_string(quietDroop) + " dB)");
+
+    // It is a droop rather than a decay: the level is still falling at 100 ms
+    // and has settled by 640, which is the shape of a reservoir discharging
+    // and not of a filter settling.
+    const double midDroop = 20.0 * std::log10(
+        std::max(loud[6], 1.0e-12) / std::max(loud[1], 1.0e-12));
+    expect(midDroop > loudDroop + 0.15 && midDroop < 0.0,
+           "the droop did not develop over the modelled time constant (130 ms "
+               + std::to_string(midDroop) + " dB, 640 ms "
+               + std::to_string(loudDroop) + " dB)");
+
+    // The supply recovers: a fresh loud passage after a rest starts at the
+    // undrooped level again.
+    {
+        ElectryFx fx;
+        fx.prepare(sampleRate);
+        FxParameters parameters;
+        parameters.amp = 1.0f;
+        fx.setParameters(parameters);
+        constexpr int block = 512;
+        const auto run = [&] (double amplitude, int blocks)
+        {
+            double last = 0.0;
+            double first = 0.0;
+            for (int i = 0; i < blocks; ++i)
+            {
+                auto left = sineBlock(block, 4, amplitude);
+                auto right = left;
+                fx.process(left.data(), right.data(), block);
+                if (i == 1)
+                    first = rmsOf(left);
+                last = rmsOf(left);
+            }
+            return std::pair<double, double> { first, last };
+        };
+        run(0.45, 40);                    // settle
+        const auto held = run(0.45, 80);  // drooped by the end
+        for (int i = 0; i < 140; ++i)     // a second and a half of rest
+        {
+            std::vector<float> left(block, 0.0f);
+            std::vector<float> right(block, 0.0f);
+            fx.process(left.data(), right.data(), block);
+        }
+        const auto fresh = run(0.45, 12);
+        const double recovery = 20.0 * std::log10(
+            std::max(fresh.first, 1.0e-12) / std::max(held.second, 1.0e-12));
+        std::cout << "Supply recovery after a rest: " << recovery << " dB\n";
+        expect(recovery > 0.8,
+               "the supply did not recover during a rest ("
+                   + std::to_string(recovery) + " dB)");
+    }
+
+    // The output transformer's core saturates on flux, and flux is the
+    // integral of the voltage, so at the same level the low end reaches the
+    // limit long before the top does. Measured at the stage rather than at the
+    // chain's output, and the reason is recorded in the access seam: the
+    // cabinet's second-order high-pass at the box frequency shapes a low tone
+    // and its harmonics so differently from a mid tone and its own that a
+    // distortion figure taken after it measures the cabinet.
+    constexpr double stageRate = 192000.0;
+    constexpr int stageLength = 24000;
+    // 6, 60 and 600 whole cycles in a 125 ms window: 48, 480 and 4800 Hz.
+    const double lowDistortion = FxAccess::transformerDistortionDb(
+        6, 0.9, stageRate, stageLength);
+    const double midDistortion = FxAccess::transformerDistortionDb(
+        60, 0.9, stageRate, stageLength);
+    const double highDistortion = FxAccess::transformerDistortionDb(
+        600, 0.9, stageRate, stageLength);
+    std::cout << "Transformer distortion at 0.9: 48 Hz " << lowDistortion
+              << " dB, 480 Hz " << midDistortion << " dB, 4.8 kHz "
+              << highDistortion << " dB\n";
+    expect(lowDistortion > midDistortion + 30.0,
+           "the output transformer does not saturate the low end first (48 Hz "
+               + std::to_string(lowDistortion) + " dB, 480 Hz "
+               + std::to_string(midDistortion) + " dB)");
+    expect(midDistortion > highDistortion + 40.0,
+           "the transformer's distortion does not keep falling with frequency "
+           "(480 Hz " + std::to_string(midDistortion) + " dB, 4.8 kHz "
+               + std::to_string(highDistortion) + " dB)");
+
+    // It is a volt-second limit, so it is level-dependent too: a quiet low
+    // tone passes the core almost untouched.
+    const double quietLow = FxAccess::transformerDistortionDb(
+        6, 0.06, stageRate, stageLength);
+    std::cout << "Transformer distortion at 0.06: 48 Hz " << quietLow
+              << " dB\n";
+    expect(quietLow < lowDistortion - 25.0,
+           "the transformer saturates a quiet low tone as hard as a loud one "
+           "(loud " + std::to_string(lowDistortion) + " dB, quiet "
+               + std::to_string(quietLow) + " dB)");
 }
 
 void testChainLevelMatching()
@@ -777,6 +996,7 @@ int main()
     testExactDryBypass();
     testGainStageAliasing();
     testCabinetVoicing();
+    testPowerStage();
     testChainLevelMatching();
     testDelayAndRoom();
     testEngagementIsClickFree();

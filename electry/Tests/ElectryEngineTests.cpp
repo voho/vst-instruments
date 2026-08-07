@@ -192,6 +192,62 @@ struct ElectryEngineTestAccess
         return -1;
     }
 
+    // The touching finger's live depth and position, so the harmonic checks
+    // can assert on the filter that actually runs rather than on a copy of it.
+    static float touchDepth(const ElectryEngine& engine, int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)].touchDepth;
+    }
+
+    static float touchFraction(const ElectryEngine& engine,
+                               int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)].touchFraction;
+    }
+
+    // How far through its travel a legato glide is, so the slide's timing can
+    // be read from the glide itself rather than from a delay target that
+    // tension modulation is also moving.
+    static float legatoBlend(const ElectryEngine& engine,
+                             int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)].legatoBlend;
+    }
+
+    // The slide's friction level, so the check that a silent Finger Noise
+    // control means an exactly absent scrape reads the engine rather than the
+    // audio.
+    static float slideNoiseAmplitude(const ElectryEngine& engine,
+                                     int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .slideNoiseAmplitude;
+    }
+
+    // The rate the winding ridges are passing under the finger, recovered from
+    // the one-pole that actually forms the friction band. The engine stores
+    // the coefficient rather than the frequency, so the test inverts the same
+    // relation the engine used.
+    static double slideBandCentreHz(const ElectryEngine& engine,
+                                    int stringIndex) noexcept
+    {
+        const float coefficient = engine
+            .voices_[static_cast<std::size_t>(stringIndex)].slideBandLow;
+        if (coefficient <= 0.0f || coefficient >= 1.0f)
+            return 0.0;
+        return -std::log(static_cast<double>(coefficient))
+             * engine.sampleRate_
+             / (2.0 * 3.14159265358979323846 * 0.6);
+    }
+
+    // Where the fretting hand's index finger currently sits, so the allocator
+    // checks can assert on the state that drove the choice rather than only on
+    // the choice itself.
+    static float frettingHandPosition(const ElectryEngine& engine) noexcept
+    {
+        return engine.frettingHandPosition_;
+    }
+
     // The per-string pitch-wheel compliance, so the audio checks can assert
     // against exactly the constants the engine runs.
     static float bendSensitivity(int stringIndex) noexcept
@@ -1038,9 +1094,9 @@ void testKeyswitchesSelectStylesSilently()
     expect(ElectryEngine::firstKeyswitchNote == 12,
            "keyswitch range does not start at MIDI 12");
     expect(ElectryEngine::pickStyleKeyswitchCount == 3
-               && ElectryEngine::playStyleKeyswitchCount == 4
-               && ElectryEngine::keyswitchCount == 7,
-           "the two keyswitch banks do not expose 3 picking and 4 play styles");
+               && ElectryEngine::playStyleKeyswitchCount == 7
+               && ElectryEngine::keyswitchCount == 10,
+           "the two keyswitch banks do not expose 3 picking and 7 play styles");
     expect(ElectryEngine::firstPlayStyleKeyswitchNote == 15,
            "the play-style bank does not follow the picking bank at MIDI 15");
     expect(ElectryEngine::lowestPlayableNote == 28
@@ -1061,7 +1117,7 @@ void testKeyswitchesSelectStylesSilently()
 
     // Walking every keyswitch leaves the last of each bank latched.
     expect(engine.getCurrentPickStyle() == PickStyle::Alternate
-               && engine.getCurrentPlayStyle() == PlayStyle::Harmonics,
+               && engine.getCurrentPlayStyle() == PlayStyle::Dead,
            "walking the keyswitch banks did not latch the last of each");
 
     // The two banks are independent: a play-style switch keeps the picking
@@ -2319,6 +2375,831 @@ void testStringAllocationAndPolyphony()
            "restruck note did not reuse its string");
     expect(TestAccess::stringForNote(engine, 45) == firstString,
            "restruck note moved to another string");
+}
+
+// The natural harmonic is a finger resting on a node, not a transposition.
+// The distinction is measurable in three places: which partials survive, that
+// the loop still runs at the fretted pitch (so the surviving partial decays at
+// the rate that partial has when the note is picked ordinarily), and that the
+// filter doing it cannot exceed unity gain anywhere.
+void testTouchHarmonics()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.bodyResonance = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+    engine.setParameters(parameters);
+
+    // The touch filter is (1 - d/2) + (d/2) z^-M. Both coefficients are
+    // non-negative and sum to one, so its magnitude is bounded by one at every
+    // frequency and every depth - which is what makes it safe inside the
+    // string's feedback loop. Checked here against the closed form because the
+    // loop has no other guard against a gain above unity.
+    double worstMagnitude = 0.0;
+    for (int depthStep = 0; depthStep <= 20; ++depthStep)
+    {
+        const double depth = 0.05 * depthStep;
+        for (int phaseStep = 0; phaseStep <= 720; ++phaseStep)
+        {
+            const double angle = 3.14159265358979323846 * phaseStep / 360.0;
+            const double real = (1.0 - 0.5 * depth) + 0.5 * depth * std::cos(angle);
+            const double imag = -0.5 * depth * std::sin(angle);
+            worstMagnitude = std::max(worstMagnitude, std::hypot(real, imag));
+        }
+    }
+    expect(worstMagnitude <= 1.0 + 1.0e-12,
+           "the touch filter exceeds unity gain somewhere ("
+               + std::to_string(worstMagnitude) + ")");
+
+    // The touch is exactly absent for every other articulation, so an ordinary
+    // note pays neither the arithmetic nor a change of sound.
+    engine.reset();
+    engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+    engine.noteOn(45, 0.8f);
+    const int sustainString = TestAccess::stringForNote(engine, 45);
+    expect(sustainString >= 0
+               && TestAccess::touchDepth(engine, sustainString) == 0.0f,
+           "an ordinary picked note put a finger on the string");
+
+    engine.reset();
+    engine.noteOn(styleKeyswitch(PlayStyle::Harmonics), 1.0f);
+    engine.noteOn(45, 0.8f);
+    const int harmonicString = TestAccess::stringForNote(engine, 45);
+    expect(harmonicString >= 0
+               && TestAccess::touchDepth(engine, harmonicString) > 0.5f
+               && std::abs(TestAccess::touchFraction(engine, harmonicString)
+                           - 0.5f) < 1.0e-6f,
+           "the harmonic did not place a finger on the midpoint node");
+    {
+        // The finger lifts and the extra reads stop; the harmonic keeps
+        // ringing because the partials it removed cannot come back.
+        StereoBuffer settle(static_cast<int>(0.5 * sampleRate));
+        renderInto(engine, settle);
+        expect(TestAccess::touchDepth(engine, harmonicString) == 0.0f,
+               "the touching finger never lifted");
+    }
+
+    const double f0 = midiHz(45);
+    const auto sustain = renderNote(engine, sampleRate, 45, 0.8f,
+                                    PlayStyle::Sustain, 2.4);
+    const auto harmonic = renderNote(engine, sampleRate, 45, 0.8f,
+                                     PlayStyle::Harmonics, 2.4);
+
+    const int bodyStart = static_cast<int>(0.10 * sampleRate);
+    const int bodyLength = static_cast<int>(0.35 * sampleRate);
+    const auto partial = [&] (const StereoBuffer& buffer, int n)
+    {
+        return dftMagnitude(buffer.left, bodyStart, bodyLength, sampleRate,
+                            f0 * n);
+    };
+
+    // Odd partials have an antinode under the midpoint finger and go; even
+    // ones have a node there and are left alone. That is the whole mechanism,
+    // and it is the reason the octave appears at all.
+    const double harmonicSecond = partial(harmonic, 2);
+    for (const int odd : { 1, 3, 5 })
+    {
+        const double suppression = decibels(partial(harmonic, odd)
+                                            / std::max(harmonicSecond, 1.0e-15));
+        expect(suppression < -20.0,
+               "partial " + std::to_string(odd)
+                   + " survived the midpoint node touch at "
+                   + std::to_string(suppression) + " dB");
+    }
+    expect(decibels(partial(harmonic, 4) / std::max(harmonicSecond, 1.0e-15))
+               > -20.0,
+           "the fourth partial, which has a node under the finger, was removed");
+
+    // The fundamental is present in the ordinary picked note, so the
+    // suppression above is the touch rather than a property of the string.
+    expect(decibels(partial(sustain, 1)
+                    / std::max(partial(sustain, 2), 1.0e-15)) > -20.0,
+           "the picked reference note has no fundamental to suppress");
+
+    // The loop still runs at the fretted pitch, so the surviving octave
+    // partial decays at the rate that partial has when the string is picked
+    // normally. A model that retuned the loop an octave up would give it the
+    // decay of a much shorter string instead.
+    const auto decayDb = [&] (const StereoBuffer& buffer)
+    {
+        const double early = dftMagnitude(buffer.left, bodyStart, bodyLength,
+                                          sampleRate, 2.0 * f0);
+        const double late = dftMagnitude(
+            buffer.left, static_cast<int>(1.6 * sampleRate), bodyLength,
+            sampleRate, 2.0 * f0);
+        return decibels(late / std::max(early, 1.0e-15));
+    };
+    const double harmonicDecay = decayDb(harmonic);
+    const double sustainDecay = decayDb(sustain);
+    expect(std::abs(harmonicDecay - sustainDecay) < 2.0,
+           "the harmonic's octave partial does not decay like the same partial "
+           "of the picked note (harmonic " + std::to_string(harmonicDecay)
+               + " dB, picked " + std::to_string(sustainDecay) + " dB)");
+}
+
+// A dead note is a real pick stroke with the fretting hand lying across the
+// strings: the attack is a picked attack, and no pitch survives it. It is
+// modelled as that hand's own broadband loss in the loop, not as a gate on the
+// output, which is why the attack is untouched.
+void testDeadNote()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.bodyResonance = 0.0f;
+    engine.setParameters(parameters);
+
+    const int note = 45;
+    const double f0 = midiHz(note);
+    const auto picked = renderNote(engine, sampleRate, note, 0.85f,
+                                   PlayStyle::Sustain, 1.0);
+    const auto dead = renderNote(engine, sampleRate, note, 0.85f,
+                                 PlayStyle::Dead, 1.0);
+
+    // The pick lands exactly as hard: what is different is what happens after
+    // it, so the first twenty milliseconds are within a few decibels.
+    const int attackEnd = static_cast<int>(0.020 * sampleRate);
+    const double pickedAttack = peakAbs(picked.left, 0, attackEnd);
+    const double deadAttack = peakAbs(dead.left, 0, attackEnd);
+    const double attackGap = decibels(deadAttack / std::max(pickedAttack, 1e-15));
+    std::cerr << "PROBE dead attack " << attackGap << " dB\n";
+    expect(std::abs(attackGap) < 4.0,
+           "a dead note does not land like a picked one ("
+               + std::to_string(attackGap) + " dB)");
+
+    // And then it is over. Nothing of the fretted pitch is left after 150 ms.
+    const int tailStart = static_cast<int>(0.15 * sampleRate);
+    const int tailLength = static_cast<int>(0.25 * sampleRate);
+    double worstPartial = -300.0;
+    for (int partial = 1; partial <= 8; ++partial)
+    {
+        const double frequency = f0 * partial;
+        if (frequency > 6000.0)
+            break;
+        const double deadMagnitude = dftMagnitude(dead.left, tailStart,
+                                                  tailLength, sampleRate,
+                                                  frequency);
+        const double pickedMagnitude = dftMagnitude(picked.left, tailStart,
+                                                    tailLength, sampleRate,
+                                                    frequency);
+        worstPartial = std::max(worstPartial,
+                                decibels(deadMagnitude
+                                         / std::max(pickedMagnitude, 1e-15)));
+    }
+    expect(worstPartial < -40.0,
+           "a partial of the fretted pitch survived the dead note ("
+               + std::to_string(worstPartial) + " dB against the picked note)");
+
+    const double deadTail = rmsInRange(dead.left, tailStart,
+                                       tailStart + tailLength);
+    const double pickedTail = rmsInRange(picked.left, tailStart,
+                                         tailStart + tailLength);
+    expect(deadTail < pickedTail * 0.02,
+           "a dead note kept ringing ("
+               + std::to_string(decibels(deadTail
+                                         / std::max(pickedTail, 1e-15)))
+               + " dB against the picked note)");
+
+    // It is the hand rather than a gate: the loop's own solved decay carries
+    // it, so the note is still decaying rather than being cut off. Measured
+    // between two early windows, which a gate would make identical.
+    const double early = rmsInRange(dead.left, attackEnd,
+                                    static_cast<int>(0.040 * sampleRate));
+    const double later = rmsInRange(dead.left,
+                                    static_cast<int>(0.060 * sampleRate),
+                                    static_cast<int>(0.090 * sampleRate));
+    expect(later < early * 0.5 && later > 0.0,
+           "the dead note does not decay through its own loop");
+}
+
+// Channel pressure is the fretting hand leaning into the string it is holding.
+// A finger is not the bar: it moves only what it is fingering, it can push a
+// string sharp and cannot pull it below the fret, and it takes a moment to
+// start.
+void testFrettingHandVibrato()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // Track the sounding delay target, which is what the vibrato actually
+    // drives; the audio follows it, and it is sampled far more cheaply and
+    // precisely than a frequency estimate on a moving tone.
+    struct Trace
+    {
+        std::vector<float> target;
+        int stringIndex { -1 };
+    };
+    const auto traceOf = [&] (float pressure, double seconds)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.85f);
+        engine.setVibrato(pressure);
+
+        Trace trace;
+        trace.stringIndex = TestAccess::stringForNote(engine, 45);
+        constexpr int chunk = 32;
+        const int total = static_cast<int>(seconds * sampleRate);
+        StereoBuffer scratch(chunk);
+        for (int at = 0; at < total; at += chunk)
+        {
+            engine.process(scratch.left.data(), scratch.right.data(), chunk);
+            trace.target.push_back(
+                trace.stringIndex >= 0
+                    ? TestAccess::snapshot(engine,
+                                           trace.stringIndex).verticalDelayTarget
+                    : 0.0f);
+        }
+        return trace;
+    };
+
+    const auto still = traceOf(0.0f, 1.6);
+    const auto moving = traceOf(1.0f, 1.6);
+    expect(still.stringIndex == 3 && moving.stringIndex == 3,
+           "the vibrato fixture did not land on the open A string");
+
+    // Zero pressure is an exact no-op: the same score with the control never
+    // touched renders bit-for-bit the same audio.
+    {
+        ElectryEngine untouched;
+        untouched.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        untouched.setParameters(parameters);
+        untouched.reset();
+        untouched.noteOn(45, 0.85f);
+        StereoBuffer withoutControl(static_cast<int>(0.6 * sampleRate));
+        renderInto(untouched, withoutControl);
+
+        ElectryEngine silenced;
+        silenced.prepare(sampleRate, 512);
+        silenced.setParameters(parameters);
+        silenced.reset();
+        silenced.noteOn(45, 0.85f);
+        silenced.setVibrato(0.0f);
+        StereoBuffer withSilentControl(static_cast<int>(0.6 * sampleRate));
+        renderInto(silenced, withSilentControl);
+
+        bool identical = true;
+        for (std::size_t i = 0; i < withoutControl.left.size(); ++i)
+            identical = identical
+                && withoutControl.left[i] == withSilentControl.left[i];
+        expect(identical, "a silent pressure control is not a bit-exact no-op");
+    }
+
+    // The string's own tension modulation is relaxing the delay target the
+    // whole time, so the vibrato is measured against the same note without it
+    // rather than against a constant. The ratio removes the trend exactly:
+    // both renders are the same note at the same velocity.
+    std::vector<double> ratio;
+    ratio.reserve(moving.target.size());
+    for (std::size_t i = 0; i < std::min(moving.target.size(),
+                                         still.target.size()); ++i)
+        ratio.push_back(still.target[i] > 0.0f
+            ? static_cast<double>(moving.target[i]) / still.target[i] : 1.0);
+
+    // The note is pushed sharp and never flat: a shorter delay is a higher
+    // pitch, so the ratio never rises above one.
+    const std::size_t settled = ratio.size() / 2;
+    double highest = 0.0;
+    double lowest = 1.0e9;
+    double mean = 0.0;
+    for (std::size_t i = settled; i < ratio.size(); ++i)
+    {
+        highest = std::max(highest, ratio[i]);
+        lowest = std::min(lowest, ratio[i]);
+        mean += ratio[i];
+    }
+    mean /= static_cast<double>(ratio.size() - settled);
+    expect(highest <= 1.0002,
+           "the fretting-hand vibrato pulled the string flat of the fret "
+           "(highest ratio " + std::to_string(highest) + ")");
+    expect(mean < 0.9995,
+           "the vibrato is centred on the fretted pitch rather than sharp of "
+           "it (mean ratio " + std::to_string(mean) + ")");
+
+    // Its depth is the modelled one: a shorter delay by 2^(-cents/1200).
+    const double depthCents = 1200.0 * std::log2(1.0 / lowest);
+    expect(depthCents > 25.0 && depthCents < 55.0,
+           "the vibrato depth is not the modelled 40 cents ("
+               + std::to_string(depthCents) + " cents)");
+
+    // It oscillates at a player's rate rather than drifting: count how often
+    // the trace crosses its own midpoint over the settled window.
+    const double midpoint = 0.5 * (highest + lowest);
+    int crossings = 0;
+    for (std::size_t i = settled + 1; i < ratio.size(); ++i)
+        if ((ratio[i - 1] < midpoint) != (ratio[i] < midpoint))
+            ++crossings;
+    const double windowSeconds = static_cast<double>(ratio.size() - settled)
+                               * 32.0 / sampleRate;
+    const double rate = 0.5 * crossings / windowSeconds;
+    expect(rate > 4.0 && rate < 8.0,
+           "the vibrato rate is not a player's ("
+               + std::to_string(rate) + " Hz)");
+
+    // The onset is real: the first 60 ms carries far less movement than the
+    // settled part, because a player lands the note before starting to move.
+    double earlySpread = 0.0;
+    const std::size_t earlyEnd = static_cast<std::size_t>(
+        0.06 * sampleRate / 32.0);
+    for (std::size_t i = 0; i < std::min(earlyEnd, ratio.size()); ++i)
+        earlySpread = std::max(earlySpread, std::abs(ratio[i] - 1.0));
+    expect(earlySpread < 0.4 * (1.0 - lowest),
+           "the vibrato started instantly instead of easing in (early "
+               + std::to_string(earlySpread) + ", settled "
+               + std::to_string(1.0 - lowest) + ")");
+
+    // A finger is not the bar: the sympathetically ringing strings must not
+    // move, where the wheel moves them. Compared on the coupled ring left by a
+    // picked note with the coupling wide open.
+    const auto coupledRing = [&] (bool useWheel, bool useVibrato)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 1.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.9f);
+        StereoBuffer lead(static_cast<int>(0.25 * sampleRate));
+        renderInto(engine, lead);
+        if (useWheel)
+            engine.setPitchBend(1.0f);
+        if (useVibrato)
+            engine.setVibrato(1.0f);
+        // Read the coupled open low E's own loop: only the bar retunes it.
+        StereoBuffer settle(static_cast<int>(0.6 * sampleRate));
+        renderInto(engine, settle);
+        return TestAccess::snapshot(engine, 0).verticalDelayTarget;
+    };
+    const float restingCoupled = coupledRing(false, false);
+    const float vibratoCoupled = coupledRing(false, true);
+    const float barCoupled = coupledRing(true, false);
+    expect(std::abs(vibratoCoupled - restingCoupled) < 1.0e-3f,
+           "the fretting-hand vibrato bent a string nobody is fingering");
+    expect(std::abs(barCoupled - restingCoupled) > 1.0f,
+           "the bar fixture did not bend the coupled string, so the "
+           "comparison above proves nothing");
+}
+
+// A slide is a finger that stays down and travels: the sounding length moves
+// continuously, the travel time is a distance divided by a hand speed rather
+// than a fixed number, and the winding drags under the finger the whole way.
+void testSlideArticulation()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // Broadband magnitude-weighted centroid over a log grid. The harmonic-
+    // series centroid used elsewhere cannot see the scrape, which is noise
+    // rather than a partial.
+    const auto broadbandCentroid = [&] (const std::vector<float>& data,
+                                        int start, int length)
+    {
+        double weighted = 0.0;
+        double total = 0.0;
+        for (double frequency = 300.0; frequency < 16000.0; frequency *= 1.09)
+        {
+            const double magnitude = dftMagnitude(data, start, length,
+                                                  sampleRate, frequency);
+            weighted += magnitude * frequency;
+            total += magnitude;
+        }
+        return total > 0.0 ? weighted / total : 0.0;
+    };
+
+    struct Slide
+    {
+        StereoBuffer audio { 1 };
+        int settleSamples { 0 };
+        int stringIndex { -1 };
+        int fret { -1 };
+        float amplitude { 0.0f };
+    };
+
+    const auto renderSlide = [&] (int fromNote, int toNote, float fingerNoise,
+                                  float bendTime)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.bodyResonance = 0.0f;
+        parameters.pickNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.fingerNoise = fingerNoise;
+        parameters.bendTimeSeconds = bendTime;
+        engine.setParameters(parameters);
+        engine.reset();
+
+        engine.noteOn(fromNote, 0.85f);
+        StereoBuffer lead(static_cast<int>(0.30 * sampleRate));
+        renderInto(engine, lead);
+
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(toNote, 0.85f);
+
+        Slide result;
+        result.stringIndex = TestAccess::stringForNote(engine, toNote);
+        result.fret = result.stringIndex >= 0
+            ? TestAccess::snapshot(engine, result.stringIndex).fret : -1;
+        result.amplitude = result.stringIndex >= 0
+            ? TestAccess::slideNoiseAmplitude(engine, result.stringIndex) : 0.0f;
+
+        // Render in short chunks so the moment the glide settles can be read
+        // from the delay target the engine is actually driving: the glide is
+        // monotone, so it has settled once the target stops moving.
+        constexpr int chunk = 64;
+        const int total = static_cast<int>(2.0 * sampleRate);
+        result.audio = StereoBuffer(total);
+        result.settleSamples = total;
+        bool settled = false;
+        for (int at = 0; at < total; at += chunk)
+        {
+            const int samples = std::min(chunk, total - at);
+            engine.process(result.audio.left.data() + at,
+                           result.audio.right.data() + at, samples);
+            if (settled || result.stringIndex < 0)
+                continue;
+            if (TestAccess::legatoBlend(engine, result.stringIndex) >= 1.0f)
+            {
+                result.settleSamples = at + samples;
+                settled = true;
+            }
+        }
+        return result;
+    };
+
+    // A2 open on the wound A string, sliding up to the twelfth fret.
+    const auto longSlide = renderSlide(45, 57, 0.8f, 0.28f);
+    expect(longSlide.stringIndex == 3 && longSlide.fret == 12,
+           "the slide did not stay on the string it started from");
+
+    // The pitch travels: a window in the middle of the slide sits strictly
+    // between the two endpoints rather than at either of them.
+    const double fromHz = midiHz(45);
+    const double toHz = midiHz(57);
+    const int slideStart = static_cast<int>(0.30 * sampleRate);
+    const int midpoint = slideStart + longSlide.settleSamples / 2;
+    const double middle = measureFrequency(
+        longSlide.audio.left, midpoint, static_cast<int>(0.04 * sampleRate),
+        sampleRate, std::sqrt(fromHz * toHz));
+    expect(middle > fromHz * 1.15 && middle < toHz * 0.87,
+           "the slide jumped instead of travelling (mid-slide pitch "
+               + std::to_string(middle) + " Hz between " + std::to_string(fromHz)
+               + " and " + std::to_string(toHz) + ")");
+
+    const double settled = measureFrequency(
+        longSlide.audio.left, slideStart + longSlide.settleSamples
+            + static_cast<int>(0.2 * sampleRate),
+        static_cast<int>(0.5 * sampleRate), sampleRate, toHz);
+    expect(std::abs(centsBetween(settled, toHz)) < 12.0,
+           "the slide did not arrive on its target pitch");
+
+    // The travel time is a distance over a hand speed, so a two-fret slide is
+    // far shorter than a twelve-fret one. A fixed legato time would make them
+    // equal.
+    const auto shortSlide = renderSlide(45, 47, 0.8f, 0.28f);
+    expect(shortSlide.settleSamples * 3 < longSlide.settleSamples,
+           "a two-fret slide took nearly as long as a twelve-fret one (short "
+               + std::to_string(shortSlide.settleSamples) + " samples, long "
+               + std::to_string(longSlide.settleSamples) + ")");
+
+    // The winding drags: the scrape is what Finger Noise controls, and at zero
+    // it is exactly absent rather than merely quiet.
+    const auto silentSlide = renderSlide(45, 57, 0.0f, 0.28f);
+    expect(silentSlide.amplitude == 0.0f,
+           "the slide scrape survived a silent Finger Noise control");
+    expect(longSlide.amplitude > 0.0f, "the slide produced no scrape at all");
+
+    const int frictionStart = slideStart;
+    const int frictionLength = std::max(1024, longSlide.settleSamples);
+    const auto scrapeEnergy = [&] (const Slide& withNoise, const Slide& without)
+    {
+        double sum = 0.0;
+        for (int i = frictionStart; i < frictionStart + frictionLength; ++i)
+        {
+            const double difference =
+                static_cast<double>(withNoise.audio.left[
+                    static_cast<std::size_t>(i)])
+                - static_cast<double>(without.audio.left[
+                    static_cast<std::size_t>(i)]);
+            sum += difference * difference;
+        }
+        return std::sqrt(sum / frictionLength);
+    };
+    const double woundScrape = scrapeEnergy(longSlide, silentSlide);
+
+    // A plain string has no winding, so the same gesture barely makes a sound.
+    const auto plainLoud = renderSlide(64, 71, 0.8f, 0.28f);
+    const auto plainSilent = renderSlide(64, 71, 0.0f, 0.28f);
+    expect(plainLoud.stringIndex == 7,
+           "the plain-string slide did not stay on the top string");
+    double plainSum = 0.0;
+    for (int i = frictionStart; i < frictionStart + frictionLength; ++i)
+    {
+        const double difference =
+            static_cast<double>(plainLoud.audio.left[static_cast<std::size_t>(i)])
+            - static_cast<double>(plainSilent.audio.left[
+                static_cast<std::size_t>(i)]);
+        plainSum += difference * difference;
+    }
+    const double plainScrape = std::sqrt(plainSum / frictionLength);
+    expect(plainScrape < woundScrape * 0.5,
+           "a plain string squeaks as loudly as a wound one (wound "
+               + std::to_string(woundScrape) + ", plain "
+               + std::to_string(plainScrape) + ")");
+
+    // The squeak's pitch is the rate the winding ridges pass under the finger,
+    // so a fast hand squeaks high and a slow one low. This is asserted on the
+    // band the engine actually configures rather than on the rendered audio,
+    // and the reason is worth recording: the loaded pickup coil is a
+    // second-order low-pass at a couple of kilohertz, so it flattens most of
+    // the difference between a two-kilohertz squeak and an eight-kilohertz one
+    // before it reaches the output. That is the instrument behaving correctly -
+    // a real pickup does the same thing to a real squeak - but it means an
+    // output-side centroid measures the coil rather than the friction.
+    const auto bandCentre = [&] (float bendTime)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.fingerNoise = 0.8f;
+        parameters.bendTimeSeconds = bendTime;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.85f);
+        StereoBuffer lead(static_cast<int>(0.30 * sampleRate));
+        renderInto(engine, lead);
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(57, 0.85f);
+        const int stringIndex = TestAccess::stringForNote(engine, 57);
+        return stringIndex >= 0
+            ? TestAccess::slideBandCentreHz(engine, stringIndex) : 0.0;
+    };
+    const double fastCentre = bandCentre(0.20f);
+    const double slowCentre = bandCentre(0.80f);
+    expect(fastCentre > slowCentre * 3.0,
+           "the squeak's band does not follow the speed of the hand (fast "
+               + std::to_string(fastCentre) + " Hz, slow "
+               + std::to_string(slowCentre) + " Hz)");
+
+    // It is audible, though: the same gesture taken at two speeds renders two
+    // different sounds rather than one scaled in time.
+    const auto fastSlide = renderSlide(45, 57, 0.8f, 0.20f);
+    const auto fastSilent = renderSlide(45, 57, 0.0f, 0.20f);
+    const auto slowSlide = renderSlide(45, 57, 0.8f, 0.80f);
+    const auto slowSilent = renderSlide(45, 57, 0.0f, 0.80f);
+    const auto differenceOf = [] (const Slide& a, const Slide& b)
+    {
+        std::vector<float> out(a.audio.left.size(), 0.0f);
+        for (std::size_t i = 0; i < out.size(); ++i)
+            out[i] = a.audio.left[i] - b.audio.left[i];
+        return out;
+    };
+    const auto fastFriction = differenceOf(fastSlide, fastSilent);
+    const auto slowFriction = differenceOf(slowSlide, slowSilent);
+    const double fastCentroid = broadbandCentroid(
+        fastFriction, slideStart, std::max(1024, fastSlide.settleSamples));
+    const double slowCentroid = broadbandCentroid(
+        slowFriction, slideStart, std::max(1024, slowSlide.settleSamples));
+    expect(fastCentroid > 300.0 && slowCentroid > 300.0
+               && std::abs(fastCentroid - slowCentroid) > 150.0,
+           "two slides at different hand speeds produced the same friction "
+           "(fast " + std::to_string(fastCentroid) + " Hz, slow "
+               + std::to_string(slowCentroid) + " Hz)");
+}
+
+// The pinch harmonic is the same touch filter driven by the picking hand:
+// the thumb catches the string at the pick's own position, so which partial
+// squeals is a function of Pick Position rather than a fixed interval.
+void testPinchHarmonic()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.bodyResonance = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+
+    const int note = 52;
+    const double f0 = midiHz(note);
+    const int start = static_cast<int>(0.02 * sampleRate);
+    const int window = static_cast<int>(0.12 * sampleRate);
+
+    // Energy-weighted mean partial index: where in the harmonic series the
+    // note's weight actually sits. A pinch moves it a long way up.
+    const auto meanPartial = [&] (const StereoBuffer& buffer)
+    {
+        double weighted = 0.0;
+        double total = 0.0;
+        for (int n = 1; n <= 16; ++n)
+        {
+            const double magnitude = dftMagnitude(buffer.left, start, window,
+                                                  sampleRate, f0 * n);
+            const double power = magnitude * magnitude;
+            weighted += power * n;
+            total += power;
+        }
+        return total > 0.0 ? weighted / total : 0.0;
+    };
+
+    const auto renderAt = [&] (float pickPosition, PlayStyle style)
+    {
+        parameters.pickPosition = pickPosition;
+        engine.setParameters(parameters);
+        return renderNote(engine, sampleRate, note, 0.9f, style, 1.0);
+    };
+
+    const auto pickedNearBridge = renderAt(0.18f, PlayStyle::Sustain);
+    const auto pinchedNearBridge = renderAt(0.18f, PlayStyle::Pinch);
+    const auto pinchedOverNeck = renderAt(1.0f, PlayStyle::Pinch);
+
+    const auto strongestPartial = [&] (const StereoBuffer& buffer)
+    {
+        int best = 1;
+        double bestMagnitude = -1.0;
+        for (int n = 1; n <= 16; ++n)
+        {
+            const double magnitude = dftMagnitude(buffer.left, start, window,
+                                                  sampleRate, f0 * n);
+            if (magnitude > bestMagnitude)
+            {
+                bestMagnitude = magnitude;
+                best = n;
+            }
+        }
+        return best;
+    };
+
+    const double pickedMean = meanPartial(pickedNearBridge);
+    const double pinchedMean = meanPartial(pinchedNearBridge);
+    const double neckMean = meanPartial(pinchedOverNeck);
+
+    expect(pinchedMean > pickedMean + 2.0,
+           "the pinch did not move the note's weight up the harmonic series "
+           "(picked " + std::to_string(pickedMean) + ", pinched "
+               + std::to_string(pinchedMean) + ")");
+    expect(neckMean < pinchedMean - 3.0,
+           "moving the picking hand toward the neck did not move the squeal "
+           "down the series (bridge " + std::to_string(pinchedMean) + ", neck "
+               + std::to_string(neckMean) + ")");
+
+    // The touch sits at the pick, so the surviving partial is the one with a
+    // node there: around the eighth near the bridge, the octave with the hand
+    // over the neck where the touch is at nearly half the string.
+    const int bridgeSquealPartial = strongestPartial(pinchedNearBridge);
+    const int neckSquealPartial = strongestPartial(pinchedOverNeck);
+    expect(bridgeSquealPartial >= 6,
+           "the near-bridge pinch did not select a high partial (strongest "
+               + std::to_string(bridgeSquealPartial) + ")");
+    expect(neckSquealPartial == 2,
+           "the pinch with the hand over the neck did not select the octave "
+           "(strongest " + std::to_string(neckSquealPartial) + ")");
+
+    // Measured against the ordinary pick stroke, the squeal partial gains a
+    // long way on the fundamental. This is the effect itself rather than a
+    // proxy for it.
+    const auto partialOverFundamental = [&] (const StereoBuffer& buffer, int n)
+    {
+        return decibels(
+            dftMagnitude(buffer.left, start, window, sampleRate, f0 * n)
+            / std::max(dftMagnitude(buffer.left, start, window, sampleRate, f0),
+                       1.0e-15));
+    };
+    const double gain = partialOverFundamental(pinchedNearBridge,
+                                               bridgeSquealPartial)
+                      - partialOverFundamental(pickedNearBridge,
+                                               bridgeSquealPartial);
+    expect(gain > 10.0,
+           "the pinch did not lift its partial against the fundamental (gain "
+               + std::to_string(gain) + " dB)");
+
+    // It is its own articulation, not a relabelled one.
+    const auto natural = renderAt(0.18f, PlayStyle::Harmonics);
+    expect(normalisedDifferenceRms(pinchedNearBridge.left, pickedNearBridge.left,
+                                   0, static_cast<int>(0.3 * sampleRate)) > 0.2,
+           "a pinch renders nearly the same audio as an ordinary pick stroke");
+    expect(normalisedDifferenceRms(pinchedNearBridge.left, natural.left, 0,
+                                   static_cast<int>(0.3 * sampleRate)) > 0.2,
+           "a pinch renders nearly the same audio as a natural harmonic");
+}
+
+// The fretting hand has a position and a reach, so the same pitch is not
+// always fingered at the lowest fret that can produce it. The lead phrase
+// below is the whole point of the change: under the lowest-fret rule its
+// fourth note fell onto an open string in the middle of a line played at the
+// fifth position, which is a different string, a different decay and a note
+// the fretting hand is not touching at all.
+void testFrettingHandPosition()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+    engine.reset();
+
+    // Open-position shapes are unchanged, because at the nut an open string
+    // costs the hand nothing. This is the same C-major shape the allocation
+    // test pins, repeated here so a hand-model regression is caught by the
+    // check that owns the hand model.
+    for (const int note : { 48, 52, 55, 60, 64 })
+        engine.noteOn(note, 0.8f);
+    expect(TestAccess::stringForNote(engine, 48) == 3
+               && TestAccess::stringForNote(engine, 52) == 4
+               && TestAccess::stringForNote(engine, 55) == 5
+               && TestAccess::stringForNote(engine, 60) == 6
+               && TestAccess::stringForNote(engine, 64) == 7,
+           "the open C shape moved when the fretting hand was introduced");
+    expect(TestAccess::frettingHandPosition(engine) == 0.0f,
+           "an open-position chord moved the hand off the nut");
+
+    // A descending lead phrase. Each note is picked, released, and given time
+    // to retire, so every string is free when the next note arrives and the
+    // only thing choosing between them is the hand.
+    engine.reset();
+    struct Placement
+    {
+        int string { -1 };
+        int fret { -1 };
+    };
+    const auto playAndRelease = [&] (int note)
+    {
+        engine.noteOn(note, 0.8f);
+        Placement placement;
+        placement.string = TestAccess::stringForNote(engine, note);
+        if (placement.string >= 0)
+            placement.fret = TestAccess::snapshot(engine, placement.string).fret;
+        engine.noteOff(note);
+        // Let the damped string retire so every string is free again. It takes
+        // under half a second, comfortably inside the second and a half after
+        // which the hand would relax back to the nut.
+        double waited = 0.0;
+        while (engine.getActiveVoiceCount() > 0 && waited < 1.0)
+        {
+            StereoBuffer tail(static_cast<int>(0.25 * sampleRate));
+            renderInto(engine, tail);
+            waited += 0.25;
+        }
+        expect(engine.getActiveVoiceCount() == 0,
+               "the released note did not retire between phrase notes");
+        return placement;
+    };
+
+    // B4 from a cold hand is fretted at 7 on the top string, and the hand
+    // settles two frets below it so the note sits under the middle fingers.
+    const auto b4 = playAndRelease(71);
+    expect(b4.string == 7 && b4.fret == 7,
+           "B4 from the nut did not take the top string at the seventh fret");
+    expect(std::abs(TestAccess::frettingHandPosition(engine) - 5.0f) < 1.0e-6f,
+           "the hand did not settle below the note it had to reach for");
+
+    const auto a4 = playAndRelease(69);
+    expect(a4.string == 7 && a4.fret == 5,
+           "A4 left the position the hand had just taken");
+
+    // From here the lowest-fret rule and the hand disagree. G4 at the fifth
+    // position is the eighth fret of the B string, not the third fret of the
+    // top string, which is behind the index finger.
+    const auto g4 = playAndRelease(67);
+    expect(g4.string == 6 && g4.fret == 8,
+           "G4 was fingered behind the hand instead of inside it");
+
+    // The one that matters: E4 is an open string, and the old rule always took
+    // it. In the fifth position it is the fifth fret of the B string.
+    const auto e4 = playAndRelease(64);
+    expect(e4.string == 6 && e4.fret == 5,
+           "E4 fell back to the open string in the middle of a fretted phrase");
+
+    const auto d4 = playAndRelease(62);
+    expect(d4.string == 5 && d4.fret == 7,
+           "D4 left the hand's position");
+
+    // The phrase ends: nothing is held, and after a second and a half the hand
+    // relaxes to the nut, so the same E4 is an open string again.
+    StereoBuffer rest(static_cast<int>(2.0 * sampleRate));
+    renderInto(engine, rest);
+    const auto openAgain = playAndRelease(64);
+    expect(openAgain.string == 7 && openAgain.fret == 0,
+           "the hand did not return to the nut after the phrase ended");
+    expect(TestAccess::frettingHandPosition(engine) == 0.0f,
+           "the hand did not relax to the nut when the phrase ended");
 }
 
 void testSustainPedal()
@@ -4394,6 +5275,12 @@ int main()
     testMaterialAndControlAudibility();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
+    testFrettingHandPosition();
+    testTouchHarmonics();
+    testPinchHarmonic();
+    testSlideArticulation();
+    testFrettingHandVibrato();
+    testDeadNote();
     testSustainPedal();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();

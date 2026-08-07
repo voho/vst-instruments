@@ -1,10 +1,17 @@
 # Electry demonstration audio
 
 Fourteen rendered examples of what Electry produces: its full playable range,
-the twelve combinations of the independent picking-style and play-style
-keyswitch banks, the guitar-build and pickup axes, the pitch-wheel bar and the
+every combination of the independent picking-style and play-style keyswitch
+banks, the guitar-build and pickup axes, the pitch-wheel bar and the
 resonance-wheel amplifier feedback, and the Drop-E metal rhythm and lead tones
 through the built-in amplifier chain.
+
+Two of the takes were extended when the play-style bank grew from four
+articulations to seven. `03-play-styles.wav` walks the whole bank, so it now
+also carries the pinch harmonic, slides of two and twelve frets, and dead
+notes; `06-lead-amp-delay-room.wav` gained a slid entry into a note held with
+the fretting hand's vibrato and a pinch harmonic before its natural-harmonic
+and feedback close. The file count is unchanged.
 
 Every file here is rendered by `Tools/RenderDemos.cpp` from the shipping
 JUCE-free signal path — `ElectryEngine` into `ElectryFx`, the same code the
@@ -66,10 +73,10 @@ which pins the untouched signal paths.
 | --- | --- | --- | --- |
 | [`01-range-open-strings.wav`](01-range-open-strings.wav) | mono | 6.2 s | The eight open strings of the Drop-E instrument, low to high (E1 B1 E2 A2 D3 G3 B3 E4), then all eight ringing together. Default settings. |
 | [`02-range-full-fretboard.wav`](02-range-full-fretboard.wav) | mono | 4.1 s | Every playable note, MIDI 28 to 86 — E1 to D6, five and a half octaves — with the string allocator choosing which physical string each one lands on. |
-| [`03-play-styles.wav`](03-play-styles.wav) | mono | 6.7 s | The two keyswitch banks combined on the same two notes: sustain, palm mute and natural harmonic each under a down stroke, an up stroke and an alternate-picked pair, and the hammer-on run under two latched strokes — audibly identical, because a fingered note takes no stroke. |
+| [`03-play-styles.wav`](03-play-styles.wav) | mono | 12.6 s | The two keyswitch banks combined: sustain, palm mute, natural harmonic, pinch harmonic and dead note each on the same two notes under a down stroke, an up stroke and an alternate-picked pair; the hammer-on run under two latched strokes — audibly identical, because a fingered note takes no stroke; and three slides, of two frets, twelve up and twelve back down, whose lengths differ because a slide's duration is a distance over a hand speed. |
 | [`04-drop-e-rhythm-dry.wav`](04-drop-e-rhythm-dry.wav) | mono | 7.5 s | A chugged Drop-E rhythm figure as the raw DI: bridge humbucker, 28-inch-leaning build, heavy set, picked close to the bridge. |
 | [`05-drop-e-rhythm-amp.wav`](05-drop-e-rhythm-amp.wav) | mono | 7.5 s | The identical MIDI and identical guitar settings through the oversampled gain stage, the modelled cabinet and the rhythm compressor. Compare directly with `04`. |
-| [`06-lead-amp-delay-room.wav`](06-lead-amp-delay-room.wav) | stereo | 9.4 s | A lead phrase — alternate-picked notes, a hammer-on, a wheel bend up a step and a dive released onto the note (both riding the Bend Time glide), a natural harmonic, and a final note pushed into amplifier feedback by the resonance wheel — into the amplifier, the 360 ms lead delay and the room. |
+| [`06-lead-amp-delay-room.wav`](06-lead-amp-delay-room.wav) | stereo | 11.8 s | A lead phrase — alternate-picked notes, a hammer-on, a wheel bend up a step and a dive released onto the note (both riding the Bend Time glide), a slide of seven frets into a note held with the fretting hand's own one-sided vibrato, a pinch harmonic, a natural harmonic, and a final note pushed into amplifier feedback by the resonance wheel — into the amplifier, the 360 ms lead delay and the room. |
 | [`07-pickups-and-tone.wav`](07-pickups-and-tone.wav) | mono | 7.0 s | One phrase played three times through Neck, Both and Bridge, then a single note repeated as the guitar's own passive tone control closes from 100% to 0%. |
 | [`08-sympathetic-strum-stereo.wav`](08-sympathetic-strum-stereo.wav) | stereo | 7.3 s | Strum travel (22 ms per string crossed), the divided-pickup stereo field, and bridge-coupled sympathetic strings: a down-strum, an up-strum, the same chord with the coupling at exactly zero, then one low note setting the unfingered strings ringing. |
 | [`09-guitar-build-contrasts.wav`](09-guitar-build-contrasts.wav) | mono | 7.7 s | The same short figure on three instruments: a 25.5-inch light-strung build, the default 27.63-inch guitar, and a 28-inch baritone with a heavy set and older strings. |

@@ -21,39 +21,52 @@ level-matched blind listening.
 | Tension modulation | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity | A string-energy envelope drives a bounded shortening of the loop delay, producing the attack pitch glide that relaxes over hundreds of milliseconds | The published phenomenon in its energy-envelope shortcut form; not the exact elongation integral or a time-varying-fraction-delay implementation |
 | Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase excitation combines contact retention and scrape, a principal string-period-scaled two-pole modal release that approximates triangular pluck displacement, one further release pole whose corner follows the square root of the string's open frequency (a heavier string leaves the pick more slowly) with its own attenuation at the fundamental divided back out, and a normally much smaller broadband pick-edge transient for sustained pick styles; the release window is asymmetric (a slow load and a fast slip, both smoothsteps, at constant area) and its reflected image is distributed over a hardness-dependent contact patch of 0.5 to 1.5 mm; delay-line projection is level-calibrated to open E4 so equal effort remains usable on E1, while polarity, polarisation split, spectrum, and comb position differ per style | A realtime modal approximation to released-string displacement plus a separate pick edge, a distributed contact width, and bounded register calibration; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, or force-based finger contact solver |
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling | The Artifacts path's incidental fret contact: a decaying collision window whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise on hard-picked notes | Collision-informed contact behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
+| Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
+| Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
+| Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide | A time-varying delay length plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not an energy-compensated time-varying waveguide, and not a measured contact-noise spectrum |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved, with a soft finger excitation and no plectrum noise | Continuous-state legato with fingered attacks; not a distributed finger-force model |
 | Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite, as a real aperture, two-coil sum and three-dimensional field never cancel exactly; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
 | Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Structural bridge displacement is differentiated before four double-precision, peak-normalised modal resonators and a 4 kHz guard, producing body-induced voltage before the loaded pickup coils; positive real modal conductance across each note's first six partials can only shorten loop T60 | Geometry-informed structural pickup voltage plus passive mode-dependent energy extraction; not undifferentiated acoustic body displacement mixed into pickup voltage, and the mode tables remain voicing estimates rather than measured admittance data |
 | Construction controls | Solid-body material/geometry contrasts, humbucker vs single-coil construction, set-neck vs bolt-on, and modern extended-range scale practice | Wood, size, shape, construction, and pickup type interpolate between contrasting reference voicings; scale length spans 25.5 to 28 inches for Drop-E | Parametrized construction and extended-range voicing; not a licensed or capture-verified reproduction of a named instrument |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, and release damping noise, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
 | Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with a loop filter solved from the same pair of decay targets a played string of the same steel gets - the high-frequency one backed off toward the fundamental's wherever the pair would ask the loop for a gain above unity, so the fundamental's target is never the one given up - exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
+| Dead note | The same additive-loss contact model as the bridge hand, applied by the fretting hand instead | A broadband 30 ms loss added in parallel to the string's own at both fitted points, with none of the palm mute's mode-shape relief or loss band, because this contact is nowhere near the bridge and is the whole hand rather than its heel | A contact loss inside the loop, so the pick's attack is untouched and the note decays through its own solved filter; not a gate, and not a model of hand pressure or coverage |
 | Bridge-hand damping | Palm-muting practice, the same decay-targeted loop design, and dry muted power-chord reference recordings for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; the raw hand rate is multiplied by three at the high reference and divided by twenty-two at the fundamental, an effective 66:1 ratio between the two fitted points, because a contact near the bridge removes far more energy from high modes than from a fundamental that barely moves there; a relief that large only works paired with a band of loss centred on five times the fundamental, which removes the harmonics the longer tail would otherwise let ring - alone, each of the two is worse than neither; the Palm Mute style (whose depth the Mute Damp control spans from a loose half-mute to a tight chug) and the continuous pressure are one absorber at different depths and combine the same way, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as an additive loss with reference-calibrated depths and a bounded, conservative frequency tilt, applied identically to every play style; not a distributed hand/string contact solve or a resolved mode-shape weighting |
+| Fretting hand | Ordinary left-hand kinematics; the position/reach/fretting-mode controls the sampled field exposes (Orange Tree Samples' floating fret position, Impact Soundworks' Set Hand and Fretting Mode) | A floating hand position with a four-fret reach above the index finger drives string allocation through a fret-distance cost; open strings are free at the nut and progressively expensive as the hand travels; the hand shifts only when the note is out of reach and only at the start of a chord, and relaxes to the nut when the phrase ends | A single-position hand with a fixed reach and a deterministic cost; not a fingering solver, a chord recogniser, or a model of alternative fingerings for a whole phrase |
 | Strum travel | Ordinary plectrum kinematics | Note-ons inside a 35 ms window are treated as one stroke; the first string fixes the edge the pick starts from and every further string's excitation is delayed by the travel time per string crossed | Constant-velocity pick travel across the string plane; not a model of pick angle, chord voicing, or the player's hand position |
 | Pitch-wheel bar | The elastic string-tension relation `dF/F = dT/2T` with `dT = E A dl/l` (Fletcher and Rossing) applied to a whole-bridge stretch, as a vibrato bar applies it | The wheel stretches every string - fingered and sympathetically ringing alike - over a nominal +/-2 semitone range; each string's share follows its elastic core stiffness against its tension (which reduces to core-fraction squared over open frequency squared for one scale length), compressed toward the two-to-one spread measured on real tremolo bridges and normalised so the most compliant string spans the full range; the strings travel over the Bend Time glide rather than snapping | The documented per-string compliance direction with a voiced compression exponent; not a model of a specific bridge's geometry, spring balance, or friction |
+| Fretting-hand vibrato | The same elastic tension relation the bar uses, applied by one finger rather than by the whole bridge; ordinary rock vibrato practice for the rate and depth | Channel pressure drives a shared 4.8-6.4 Hz raised-cosine offset of up to 40 cents on the fingered strings only, easing in over 90 ms and never going below the fretted pitch | The documented asymmetry and locality of a fingered vibrato against a bar's; not a model of finger force, string displacement geometry, or a per-string bend |
 | Amplifier feedback | Acoustic guitar-to-amplifier feedback practice: a loudspeaker's pressure field re-excites the strings, and each string answers at its own resonances | The host pushes its previous processed block back as a bounded mono acoustic return with one block of latency (the air path); a soft-clipped, gain-scaled copy drives the string loops and the sympathetic bus, scaled by the CC1 resonance, the Resonance Depth parameter and the rig's acoustic loudness derived from the amplifier controls, so a distorted tone at full wheel regenerates while a dry DI never can; every element of the loop is bounded, so the howl saturates instead of growing | A one-block-latent, level-gated, saturating regeneration path; not a room acoustics, speaker directivity, or standing-wave model |
 | Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, incidental fret contact on hard-picked notes, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
 | Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
 | Oversampling | Standard nonlinear-audio antialiasing practice | The complete physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x | Genuine internal oversampling and filtered decimation, not a quality label applied to a native-rate nonlinear stage |
 | Output field | Phase-coherent divided/hex pickup practice | Mono is the conventional summed DI. Stereo weights each modeled string by its physical lateral position, keeps shared body modes centered, uses linked output limiting and independent matched decimation, and folds coherently to mono | A virtual divided-pickup string field with no time or phase widening; not room, amplifier, cabinet, chorus, or acoustic stereo |
-| Amplifier and cabinet | Pakarinen and Yeh's review of vacuum-tube amplifier modeling; standard antialiasing practice for cascaded nonlinear stages; sealed-guitar-cabinet response measurements; extended-range metal rhythm practice for the voicing | Two cascaded smooth triode ceilings driven off a standing grid bias with a level-tracking bias drift and an interstage Miller roll-off, a tight input coupling network, and a five-section cabinet (box high-pass, low-mid thump, scooped mid, presence peak, fourth-order roll-off), all inside a 4x oversampled domain reached through Kaiser-windowed halfband stages designed at prepare time | Structurally motivated static-nonlinearity amplifier voicing with genuine oversampling and a filter-modelled cabinet; not a circuit-solved (Wave Digital or nodal state-space) amplifier, a measured impulse response, or a model of any named amplifier or speaker |
+| Amplifier and cabinet | Pakarinen and Yeh's review of vacuum-tube amplifier modeling; published supply-sag behaviour (a plate rail falling from around 350 V to around 250 V within 100 ms and recovering over 300-600 ms); transformer core saturation as a volt-second limit; standard antialiasing practice for cascaded nonlinear stages; sealed-guitar-cabinet response measurements; extended-range metal rhythm practice for the voicing | Two cascaded smooth triode ceilings driven off a standing grid bias with a level-tracking bias drift and an interstage Miller roll-off, a tight input coupling network, a power stage whose supply droops by up to 28% under its own output current with a 70 ms attack and a 400 ms recovery and whose rail sets the headroom rather than the gain, an output transformer modelled as a normalised flux integral with the excess the core cannot carry subtracted back out, and a five-section cabinet (box high-pass, low-mid thump, scooped mid, presence peak, fourth-order roll-off), all inside a 4x oversampled domain reached through Kaiser-windowed halfband stages designed at prepare time | Structurally motivated static-nonlinearity amplifier voicing with genuine oversampling and a filter-modelled cabinet; not a circuit-solved (Wave Digital or nodal state-space) amplifier, a measured impulse response, or a model of any named amplifier or speaker |
 
 ## Implemented signal path
 
 The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
 
-1. MIDI notes 12..18 are two independent banks of latching keyswitches:
+1. MIDI notes 12..21 are two independent banks of latching keyswitches:
    12..14 (C0..D0) latch the picking style - downstroke, upstroke,
-   alternating strokes - and 15..18 (D#0..F#0) latch the play style -
-   sustain, palm mute, hammer-on/pull-off, natural harmonic. The banks
-   compose, so any of the twelve combinations is reachable in at most two
-   keyswitches; a hammered note has no plectrum, so it neither takes a stroke
-   colour nor consumes a step of the alternate sequence. Notes 19..27 are
-   ignored. Notes 28..86 are playable on eight physical strings in Drop-E
+   alternating strokes - and 15..21 (D#0..A0) latch the play style -
+   sustain, palm mute, hammer-on/pull-off, natural harmonic, pinch harmonic,
+   slide, dead note. The banks compose, so any of the twenty-one combinations
+   is reachable in at most two keyswitches; a hammered or slid note has no
+   plectrum, so it neither takes a stroke colour nor consumes a step of the
+   alternate sequence. Notes 22..27 are ignored. Notes 28..86 are playable on eight physical strings in Drop-E
    tuning (E1-B1-E2-A2-D3-G3-B3-E4); a deterministic allocator maps each note,
    preferring a repick of an already-sounding note, then the hammer-on
-   continuation of the nearest sounding string, then the free string with the
-   lowest fret (which reproduces open-position chord shapes), and finally an
-   oldest-first steal.
+   continuation of the nearest sounding string, then the free string that costs
+   the fretting hand least, and finally an oldest-first steal. The hand's cost
+   is a fret distance: zero inside the span its four fingers reach, growing
+   linearly outside it and 1.6 times faster below the index finger than above
+   the little one, because the hand pivots forward from the thumb. An open
+   string needs no finger and so costs nothing at the nut, and 0.25 frets per
+   fret of hand travel once the hand has left it. The hand moves only when the
+   note it is asked for lies outside its span, and only on the first note of a
+   chord window, and it relaxes to the nut when nothing is held and no note has
+   arrived for a second and a half.
 2. Each string voice runs two single-delay-loop waveguides (vertical and
    horizontal polarisation). Each loop has a third-order Lagrange fractional
    read, eight factored first-order dispersion allpasses jointly fitted from
@@ -415,6 +428,30 @@ new decay targets and the loop delay subtracts the new analytic phase delay at
 the fundamental, so a heavily muted string sounds the played pitch instead of
 drifting sharp as a naive extra damping filter would make it.
 
+## The dead note
+
+The bridge hand and the fretting hand are two different contacts in two
+different places, and Electry keeps them apart for the reason the palm-mute
+work established: where a contact sits decides which modes it can take energy
+from. The heel of the bridge hand rests a tenth of the sounding length from the
+saddle, where the fundamental barely moves, which is why its loss is relieved
+by a factor of twenty-two at the fundamental and multiplied by three at the
+high fitted point. The fretting hand laid flat across the strings is neither
+near the bridge nor a single point: it takes the fundamental as hard as it
+takes everything else.
+
+So the dead note is a broadband 30 ms loss added in parallel with the string's
+own at both fitted points, with none of the mute's relief and none of its loss
+band. Being a loss in the loop rather than a gate on the output matters twice
+over. The pick's attack is untouched - a dead note's peak sits within 1.1 dB of
+the same note picked open - and the note then decays through the loop filter
+the ordinary solve produced for it, so it is still falling rather than being
+cut. Nothing of the fretted pitch is left after 150 ms: every partial through
+the eighth sits more than 40 dB under the same partial of the picked note.
+
+The two contacts combine in parallel with each other as everything else in this
+model does, so a dead note played under palm-mute pressure gets both.
+
 ## Strum travel
 
 A pick crosses the strings at a finite speed. Electry treats note-ons that
@@ -523,6 +560,131 @@ the pitch-wheel bar below). Hammer-on/pull-off onto a sounding string
 retargets the same loop over about 10 ms without clearing its state, so the
 vibration genuinely continues.
 
+## The touching finger
+
+A finger laid lightly across a vibrating string does not terminate it; it
+removes energy in proportion to how much the string is moving underneath it.
+Mode `n`'s displacement at a fraction `p` of the sounding length goes as
+`sin(n pi p)`, so the energy a light contact takes per round trip goes as
+
+```text
+sin^2(n pi p) = (1 - cos(2 pi n p)) / 2
+```
+
+That is a comb in harmonic number, and condensing it into the single delay
+loop makes it a comb in the delay line as well. Writing `M = p * period` in
+samples and `omega_n = 2 pi n / period`, the round-trip loss factor is
+`1 - d (1 - cos(omega_n M)) / 2`, which is the magnitude of
+
+```text
+H(z) = (1 - d/2) + (d/2) z^-M
+```
+
+to first order in `d`: unity where `omega M` is a multiple of `2 pi` (the touch
+is on a node of that mode) and `1 - d` where it is an odd multiple of `pi` (the
+touch is on an antinode). Electry uses that filter directly. Both coefficients
+are non-negative and sum to one for `d` in `[0, 1]`, so the magnitude is
+bounded by one at every frequency and every depth, which is what makes it safe
+inside the string's feedback loop; the regression suite checks that bound
+against the closed form.
+
+At an exact node position `p = 1/k` the filter is unity in magnitude **and**
+phase at every surviving partial - `exp(-j 2 pi n / k) = 1` whenever `k`
+divides `n` - so the harmonic series above the node keeps both its levels and
+its tuning, and no phase compensation is needed. That is the reason the natural
+harmonic is produced this way rather than by transposing the note: the loop
+still runs at the fretted pitch, so the sounding octave carries the fretted
+string's inharmonicity, its solved decay targets and its pickup-comb geometry
+rather than those of a string half as long.
+
+The finger lifts once the note has formed. The partials it removed are gone by
+then and the excitation is over, so nothing can put them back; releasing the
+touch therefore costs nothing audible and stops paying for two extra delay
+reads per sample. It also removes the clamp that used to stand in for the
+finger - the harmonic style capped T60 at 3.8 s - which on the open A2 was
+charging the octave partial 16 dB per second of loss that no physical
+mechanism was asking for. A natural harmonic now outlasts the fretted note, as
+it does on the instrument.
+
+Away from a node the filter is still bounded and still shaped by the same
+mode-shape law, but no partial is perfectly preserved and the surviving one
+carries a little extra loss and a little phase. That is physically right - an
+artificial harmonic taken off a node is weaker, dirtier and shorter - and it
+means such a harmonic's pitch is a function of where the hand is rather than a
+member of the equal-tempered scale. It is left that way rather than quantised.
+
+The pinch harmonic is the same filter driven by the other hand. The picking
+hand's thumb catches the string immediately after the pick, at the pick's own
+position, so `p` is the pluck fraction and Pick Position chooses which partial
+squeals - which is exactly what moving the picking hand does on the instrument.
+Measured on a fretted E3 with the pick at its 18% default (a touch at 0.120 of
+the sounding length, so the nearest node belongs to the eighth partial), the
+strongest surviving partial is the eighth or ninth and it gains 15 dB on the
+fundamental against the same note picked ordinarily; the note's energy-weighted
+mean partial index moves from 4.0 to 7.4. With the picking hand over the neck
+the touch sits at the clamped 0.49 of the string and the squeal is the octave,
+mean partial 2.5.
+
+The thumb is modelled as a firmer contact than the fretting finger - depth 1.0
+against 0.92 - and it stays on the string for 90 ms rather than 45, because the
+mode-shape law gives a contact this close to the bridge little purchase on the
+low partials: at a tenth of the sounding length `sin^2(pi/10)` is 0.095, so the
+fundamental loses about seven per cent of its energy per round trip where a
+midpoint touch would take nearly all of it. The fundamental therefore survives
+a pinch far better than it survives a natural harmonic, which is what the
+physics says and what the instrument does; the squeal reads as a squeal because
+it is 15 dB up on the fundamental in relative terms and because the amplifier
+that a pinch is normally played through compresses the difference further.
+
+## The slide
+
+Pakarinen, Puputti, and Välimäki's
+[*Virtual Slide Guitar*](https://research.aalto.fi/en/publications/virtual-slide-guitar)
+(Computer Music Journal 32(3), 2008, with the
+[NIME 2008 companion](https://www.nime.org/proceedings/2008/nime2008_049.pdf))
+makes the point Electry's slide is built on: a wound string is not smooth. The
+wrap wire lies in ridges along its surface, and anything dragged along it -
+their slide tube, a fingertip - is excited at the rate those ridges pass under
+the contact. Electry takes that mechanism rather than their energy-compensated
+time-varying waveguide, and takes the finger rather than the tube.
+
+Two things follow. First, the duration of a slide is a distance divided by a
+hand speed, not a time: the finger travels, so a twelve-fret slide takes six
+times as long as a two-fret one. The Bend Time control - the same travel-time
+control the pitch wheel uses - sets 8% of itself per fret, so its 280 ms
+default is 22 ms per fret and the whole control spans a very fast hand to a
+deliberate one. The glide is the existing legato retarget with that duration,
+so the loop state is preserved throughout and the sounding length passes
+through every intermediate fret.
+
+Second, the friction. The position of fret `n` along the string is
+`L (1 - 2^(-n/12))` from the nut, so the distance the hand actually covers
+shrinks as the slide moves up the neck exactly as the fret spacing does; the
+speed is that distance over the glide time. The winding pitch runs from about
+0.36 mm on a .080 to about 0.18 mm on a .024 - much flatter than the string
+diameter itself, because a heavier string is mostly a heavier core - and the
+engine uses a linear stand-in fitted to that pair, which is a voicing estimate
+rather than a measurement. Two one-poles form a band at `v / w`: at a
+twelve-fret slide taken in 190 ms that is around 8 kHz, and at 770 ms around
+2 kHz. The level follows `6 b (1 - b)`, the derivative of the glide's own
+smoothstep, so the squeak swells and dies with the movement and is exactly zero
+when the finger is still.
+
+A plain string has no winding, so its friction is a tenth of a wound string's
+and the band is fixed. The Finger Noise control - the fretting hand's own
+contact level - scales the whole thing and silences it exactly at zero.
+
+The friction is routed like every other contact noise in this engine: a
+one-percent trace into the string and the rest as a local pickup and body
+transient. That matters for how it is measured, and the measurement is worth
+recording because it is the reason the regression suite asserts the band at
+the source rather than at the output. The loaded pickup coil is a second-order
+low-pass at a couple of kilohertz, so it flattens most of the difference
+between a two-kilohertz squeak and an eight-kilohertz one before either
+reaches the output. That is the instrument behaving correctly - a real pickup
+does the same thing to a real squeak - but it means an output-side centroid
+measures the coil rather than the friction.
+
 ## Fret collisions
 
 Bilbao and Torin,
@@ -563,6 +725,41 @@ parameter, the same travel-time control the keyswitch finger bends used
 before the wheel replaced them. The compression exponent is a voicing
 decision; the compliance ordering and the full-range normalisation are the
 documented mechanism.
+
+## The fretting hand's vibrato
+
+The pitch wheel is a bar: it stretches every string, the sympathetically
+ringing ones included, and each answers with its own elastic compliance.
+Channel pressure is the other gesture, and it is a different one in three
+measurable ways rather than in degree.
+
+It is **local**. A finger moves the string it is on, so the vibrato reaches
+only the fingered voices; the bridge-coupled strings are configured from the
+wheel alone and never see it. The regression suite pins both halves of that -
+a coupled open low E whose delay target does not move under full pressure, and
+the same fixture under a full wheel where it moves by more than a sample, so
+the first check is proving something.
+
+It is **one-sided**. A fretting finger raises a string's tension by pushing it
+across the fingerboard; it cannot lower the tension below what the fret sets.
+The oscillation is therefore a raised cosine, `d (1 - cos)/2`, whose minimum is
+the fretted pitch rather than its mean, and the note is only ever pushed sharp.
+A symmetric vibrato would be a bar's, or a violinist's.
+
+It is **equal in semitones**, deliberately, where the bar's is not. A bar
+stretches every string by the same length and each string answers with its own
+`dF/F = dT/2T`; a finger is aiming at a pitch and adjusts its displacement
+until it gets there. Compliance-weighting a fingered vibrato would make the
+low strings wobble more than the high ones, which is not what a hand does.
+
+The depth is 40 cents at full pressure and the rate runs 4.8 to 6.4 Hz, faster
+as the player leans in. Both are ordinary rock-vibrato values rather than
+derived ones, and are labelled as voicing. The depth eases in with a 90 ms time
+constant, because a player lands a note before starting to move on it; the
+suite measures that the first 60 ms carries less than 40% of the settled
+movement. At zero pressure the offset is exactly zero and the render is
+bit-for-bit identical to one from an engine whose pressure control was never
+touched.
 
 ## Amplifier feedback through the acoustic return
 
@@ -805,10 +1002,58 @@ route with genuine oversampling rather than the circuit-solved route:
   disengagement are crossfaded, and the suite bounds the largest sample step
   across both transitions against the dry and settled-wet slew.
 
+- **Power stage.** Two preamp triode ceilings into a filter cabinet is the
+  front half of an amplifier, and the two mechanisms that make a real one
+  answer to how hard a part is played both live in the back half.
+
+  *Supply sag.* The current the output stage draws follows its own output, not
+  its grid signal, so the follower reads the stage's own last sample. It
+  attacks in 70 ms and recovers over 400 ms - a reservoir discharges far faster
+  than it recharges, which is the whole character of the effect - and the rail
+  droops by up to 28%, the 350 V to 250 V a real supply measures. What the rail
+  sets is the *headroom*, not the gain, so the stage is
+  `droop * triode(u / droop)`: the transfer curve is scaled uniformly in both
+  axes, the small-signal slope is exactly unchanged, and the ceiling falls in
+  proportion. Measured on a held 375 Hz tone, a loud passage ducks 1.16 dB
+  between 16 ms and 640 ms in while a quiet one ducks 0.22, and the level
+  returns within 1.1 dB after a second and a half of rest. A droop of one is
+  the identity, so a quiet passage is bit-for-bit what it was.
+
+  *Output transformer.* A core saturates at a flux limit, and flux is the
+  integral of the voltage, so the limit is a volt-second limit: at the same
+  level the low end reaches it long before the top does. A one-pole at the
+  45 Hz primary-inductance corner is that integral normalised - unity at DC,
+  falling as 1/f above it - and the excess the core cannot carry is subtracted
+  back out, which leaves the stage transparent well above the corner and
+  compressing and thickening underneath it. A second-order high-pass at 26 Hz
+  in front is the transformer's own inability to pass DC, and it also keeps the
+  bias drift's residue out of the flux.
+
+  The transformer is measured at the stage rather than at the chain's output,
+  and the reason is worth recording because it is a real limit on what an
+  output-side measurement can say here. The cabinet's second-order high-pass at
+  the box frequency shapes a low tone and its harmonics so differently from a
+  mid tone and its own that a distortion figure taken after it is worth about
+  nine decibels of bias in the effect's own direction - more than the effect
+  measured through it. At the stage the picture is unambiguous: a full-level
+  tone distorts at -25.3 dB at 48 Hz, -71.5 dB at 480 Hz and -130.9 dB at
+  4.8 kHz, a fall of about 46 dB per decade that is the cubic-in-flux law seen
+  directly, and a tone 24 dB quieter distorts 41 dB less at 48 Hz.
+
+  The alias floor pays for the sag, because a drooping rail pushes the stage's
+  argument further into saturation: the amplifier at full drive moves from
+  -86 dB to -69 dB, still comfortably inside the suite's -60 dB bound. The
+  alias fixture itself needed lengthening, and that is worth naming as a
+  measurement error rather than a model one: with the two settling passes it
+  used before, the 0.7% of sag still converging inside the analysed window
+  smeared enough energy off the harmonic bins to read as a -37 dB alias floor
+  that was not aliasing at all.
+
 What is deliberately not claimed: no circuit is solved (no Wave Digital
-Filters, no nodal state-space, no K-method), there is no power-supply sag or
-output-transformer model, the cabinet is not a measured impulse response, and
-none of it is a model of any named amplifier or speaker.
+Filters, no nodal state-space, no K-method), the power stage is a behavioural
+model of sag and core saturation rather than a solved supply or a measured
+transformer, the cabinet is not a measured impulse response, and none of it is
+a model of any named amplifier or speaker.
 
 ## Voicing against a reference recording
 
@@ -1291,6 +1536,21 @@ declared:
 - **Inlined hot primitives.** The fractional delay read, the aperture window and
   the noise generator are defined in the header so they inline into the render
   loop instead of costing a call six times per string per sample.
+- **Articulations that cost nothing when they are not playing.** The node
+  touch's two extra delay taps run only while a finger or thumb is on the
+  string, and the finger lifts once the note has formed rather than staying
+  down for the note's length. The slide's friction band is generated only while
+  the finger is moving and its amplitude is cleared the moment the glide
+  settles. The vibrato adds nothing per sample at all; it moves the same delay
+  target the wheel does, at a fraction of the wheel's excursion. What is left is
+  three float comparisons per voice per rendered sample, all of them false for
+  an ordinary note. Measured best of five against the sources before this work,
+  the default Bridge + Mono eight-string render moved from 0.179x to 0.189x
+  realtime and the worst-case Both + Stereo from 0.220x to 0.221x, against a
+  run-to-run spread on the same machine of around ten per cent - so the worst
+  case is inside the noise and the default costs a few per cent. Moving the new
+  per-voice fields to the end of the voice struct rather than into the middle of
+  it was worth about half of that.
 
 Measured with an eight-string Drop-E chord held for two seconds, best of five
 runs, comparing 1.0 and 1.1 sources built identically: the default
@@ -1350,7 +1610,17 @@ silence, dead-zone and range gating; the alternate sequence surviving style
 changes and skipping hammered notes; measurably distinct attack spectra and
 levels for down, up, hammered, muted and harmonic playing, an audibly
 composed upstroke palm mute, a stroke-independent harmonic octave, and a
-bit-identical hammered note under either latched stroke; palm-mute decay
+bit-identical hammered note under either latched stroke; a node touch that
+removes the odd partials by more than 20 dB while leaving the even ones, a
+touch filter whose closed-form magnitude never exceeds one at any depth, an
+exactly absent touch on every other articulation, a finger that lifts, and a
+harmonic whose octave partial decays within 2 dB of the same partial of the
+ordinarily picked note - the direct evidence that the loop is no longer
+retuned; a pinch harmonic whose energy-weighted mean partial index sits well
+above an ordinary pick stroke's, whose strongest partial is at least the sixth
+near the bridge and exactly the octave with the hand over the neck, which gains
+more than 10 dB on the fundamental, and which renders as neither a pick stroke
+nor a natural harmonic; palm-mute decay
 contraction; the per-string wheel-compliance table's physical ordering and
 the rendered audio following it on two strings; wheel travel time following
 Bend Time with an exact settle on the target; a ringing coupled string
@@ -1393,9 +1663,22 @@ click-free stereo-field opening; exact digital silence from an untouched
 engine, a subnormal-free ring-out that reaches exact zero, and a clean wake
 from the frozen state; contrasting construction
 endpoints that both stay in tune; plectrum contact noise in the pre-attack
-window; release noise that appears only after note-off; eight-string
-polyphony with open-position chord mapping, repick reuse, and stealing;
-pitch-wheel travel and sustain-pedal hold; hostile parameter and performance
+window; release noise that appears only after note-off; a dead note that lands like a
+picked one, leaves no partial of the fretted pitch after 150 ms, and decays
+through its own loop rather than being gated; eight-string
+polyphony with open-position chord mapping, repick reuse, and stealing; a
+slide whose pitch travels through the intermediate semitones rather than
+jumping, whose travel time scales with the interval, whose friction band
+follows the speed of the hand, which is far louder on a wound string than on a
+plain one and exactly absent at a silent Finger Noise control; a
+fretting hand that keeps a lead phrase in one position instead of falling back
+to open strings, leaves the open-position shapes untouched, and relaxes to the
+nut when the phrase ends;
+pitch-wheel travel and sustain-pedal hold; a
+fretting-hand vibrato at the modelled depth and rate that is sharp of the fret
+and never flat of it, eases in rather than switching on, leaves the
+bridge-coupled strings alone where the bar moves them, and is a bit-exact no-op
+at zero pressure; hostile parameter and performance
 input safety; and a portable CPU ceiling with the eight-string render ratio
 printed on every run in worst-case Stereo, maximum Body Resonance, and maximum
 Artifacts mode. Mono is checked sample-for-sample dual mono; Stereo tests pin
@@ -1415,7 +1698,11 @@ The amplifier chain has its own suite: halfband unity DC gain, the -6 dB
 halfband symmetry point, passband ripple and stopband rejection; a bit-exact
 dry bypass with every control at zero and an audible effect from each control
 on its own at 100%; the alias floor of the pedal, the amplifier, and the two
-stacked, at two input levels; each of the cabinet's five voicing features
+stacked, at two input levels; a supply that droops on a loud sustained passage
+and far less on a quiet one, develops over its modelled time constant and
+recovers during a rest; an output transformer whose distortion falls about
+46 dB per decade of frequency and 41 dB for 24 dB of level, measured at the
+stage rather than through the cabinet; each of the cabinet's five voicing features
 relative to 1 kHz; loudness bounds across the whole amp travel and every
 combination of the gain and compressor controls on a rendered Drop-E rhythm
 figure, dry and palm muted; the lead delay's first repeat at 360 ms with a
