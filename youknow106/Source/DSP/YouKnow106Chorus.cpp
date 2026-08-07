@@ -651,11 +651,22 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     primed_ = false;
 }
 
+float Chorus::rateProportionalNoiseGain(float rateHz, bool enabled) noexcept
+{
+    if (!enabled)
+        return 1.0f;
+    const float reference = static_cast<float>(derivedRateHz(true));
+    if (!(rateHz > 0.0f) || !(reference > 0.0f))
+        return 1.0f;
+    return rateHz / reference;
+}
+
 void Chorus::process(float input, ChorusMode mode, float noiseScale,
                      float& left, float& right,
                      bool enableClockBleed,
                      bool enableHyperbolicSweep,
-                     float calibration) noexcept
+                     float calibration,
+                     bool enableRateProportionalNoise) noexcept
 {
     const auto target = settingsFor(mode);
 
@@ -747,10 +758,16 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     const float wetOutputCouplingG = mode == ChorusMode::Off
         ? support_.wetOutputCouplingMutedG
         : support_.wetOutputCouplingConnectedG;
+    // The candidate rate-proportional term multiplies the lines' own random
+    // floor and nothing else: the optional common/hum/spur layers below stay
+    // on the plain Chorus Noise master, because the hypothesis is about the
+    // sweep's slope through the buckets, not about the surrounding board.
+    const float lineNoiseScale = noiseScale
+        * rateProportionalNoiseGain(rateHz_, enableRateProportionalNoise);
     float wetA = lineA_.process(input, clockA, sampleRate_, support_,
-                                wetOutputCouplingG, noiseScale);
+                                wetOutputCouplingG, lineNoiseScale);
     float wetB = lineB_.process(input, clockB, sampleRate_, support_,
-                                wetOutputCouplingG, noiseScale);
+                                wetOutputCouplingG, lineNoiseScale);
 
     if (enableClockBleed)
     {

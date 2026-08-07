@@ -278,9 +278,21 @@ float YouKnow106Engine::vcfEffectiveCutoffHz(float counts,
 
 float YouKnow106Engine::chassisGradientCelsius(int cardIndex) noexcept
 {
-    const float index = static_cast<float>(std::max(cardIndex, 0));
+    // A per-card constant, read once per voice per internal sample. The
+    // exponential belongs in a table, not in the audio path.
+    static const std::array<float, maxVoices> profile = [] {
+        std::array<float, maxVoices> values {};
+        for (int card = 0; card < maxVoices; ++card)
+            values[static_cast<std::size_t>(card)] = chassisGradientPeakCelsius
+                * std::exp(-static_cast<float>(card) / chassisGradientCards);
+        return values;
+    }();
+
+    const int index = std::max(cardIndex, 0);
+    if (index < maxVoices)
+        return profile[static_cast<std::size_t>(index)];
     return chassisGradientPeakCelsius
-         * std::exp(-index / chassisGradientCards);
+         * std::exp(-static_cast<float>(index) / chassisGradientCards);
 }
 
 float YouKnow106Engine::chassisGradientMeanCelsius() noexcept
@@ -1442,32 +1454,82 @@ void YouKnow106Engine::OtaCascade::retime(float previousG,
     state = voltage;
 }
 
-// The pair's instantaneous transfer is tanh; its antiderivative ln(cosh)
-// gives the exact average of tanh along a straight drive path, which is what
-// one step of the integrator physically consumes. Written out stably: for
-// large |x|, ln(cosh x) -> |x| - ln 2.
-static inline float tanhAntiderivative(float x) noexcept
+// ln(1+u) on [0, 1] through 2 atanh(u/(2+u)). The substitution puts the
+// series argument at s <= 1/3, where seven terms are already below the float
+// grid; the double-precision core is what keeps the result inside one ULP of
+// std::log1p at both ends of the interval.
+float YouKnow106Engine::CascadeKernels::log1pUnitInterval(float uf) noexcept
+{
+    const double u = static_cast<double>(uf);
+    const double s = u / (2.0 + u);
+    const double s2 = s * s;
+    const double series = 1.0 + s2 * (1.0 / 3.0
+                          + s2 * (0.2 + s2 * (1.0 / 7.0
+                          + s2 * (1.0 / 9.0 + s2 * (1.0 / 11.0 + s2 / 13.0)))));
+    return static_cast<float>(2.0 * s * series);
+}
+
+// tanh and ln cosh from one exponential. Kept together so the two can never
+// be evaluated from different roundings of the same e.
+static inline void tanhAndLnCosh(float x, float& tanhOut,
+                                 float& lnCoshOut) noexcept
 {
     const float magnitude = std::abs(x);
-    return magnitude + std::log1p(std::exp(-2.0f * magnitude))
+    const float e = std::exp(-2.0f * magnitude);
+    lnCoshOut = magnitude
+              + YouKnow106Engine::CascadeKernels::log1pUnitInterval(e)
+              - 0.6931471805599453f;
+    const double eWide = static_cast<double>(e);
+    const double t = (1.0 - eWide) / (1.0 + eWide);
+    tanhOut = static_cast<float>(x < 0.0f ? -t : t);
+}
+
+// The pair's instantaneous transfer.
+float YouKnow106Engine::CascadeKernels::tanh(float x) noexcept
+{
+    const float magnitude = std::abs(x);
+    if (magnitude > tanhRailMagnitude)
+        return x < 0.0f ? -1.0f : 1.0f;
+    const double e = static_cast<double>(std::exp(-2.0f * magnitude));
+    const double t = (1.0 - e) / (1.0 + e);
+    return static_cast<float>(x < 0.0f ? -t : t);
+}
+
+// The same identity, expressed as one call for the callers that need only
+// the amplifier's antiderivative.
+
+// Its antiderivative, which gives the exact average of tanh along a straight
+// drive path -- what one step of the integrator physically consumes. Written
+// out stably: for large |x|, ln(cosh x) -> |x| - ln 2.
+float YouKnow106Engine::CascadeKernels::lnCosh(float x) noexcept
+{
+    const float magnitude = std::abs(x);
+    return magnitude + log1pUnitInterval(std::exp(-2.0f * magnitude))
          - 0.6931471805599453f;
 }
 
 // Average of tanh from x0 to x1, and its derivative with respect to x1. The
 // short-path branch is the midpoint rule the divided difference converges to.
-static inline void tanhPathAverage(float x1, float x0, float& average,
-                                   float& slope) noexcept
+// `lnCoshAtX0` is the antiderivative at the carried path start: it is fixed
+// for the whole solve, so the caller evaluates it once per stage instead of
+// once per Newton iteration.
+static inline void tanhPathAverage(float x1, float x0, float lnCoshAtX0,
+                                   float& average, float& slope) noexcept
 {
     const float span = x1 - x0;
     if (std::abs(span) < 1.0e-3f)
     {
-        const float t = std::tanh(0.5f * (x1 + x0));
+        const float t =
+            YouKnow106Engine::CascadeKernels::tanh(0.5f * (x1 + x0));
         average = t;
         slope = 0.5f * (1.0f - t * t);
         return;
     }
-    average = (tanhAntiderivative(x1) - tanhAntiderivative(x0)) / span;
-    slope = (std::tanh(x1) - average) / span;
+    float tanhAtX1 = 0.0f;
+    float lnCoshAtX1 = 0.0f;
+    tanhAndLnCosh(x1, tanhAtX1, lnCoshAtX1);
+    average = (lnCoshAtX1 - lnCoshAtX0) / span;
+    slope = (tanhAtX1 - average) / span;
 }
 
 // One implicitly integrated step of the four transconductor stages with the
@@ -1510,16 +1572,27 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
     std::array<float, 4> residual {};
     std::array<float, 4> drive {};
 
+    // The antiderivative at each stage's carried path start. It depends only
+    // on driveMemory, which this call does not move, so it belongs outside
+    // the Newton loop -- inside it, every iteration paid for the same four
+    // exponentials again.
+    std::array<float, 4> pathStart {};
+    for (int n = 0; n < 4; ++n)
+        pathStart[static_cast<std::size_t>(n)] =
+            CascadeKernels::lnCosh(driveMemory[static_cast<std::size_t>(n)]);
+
     for (int iteration = 0; iteration < maximumIterations; ++iteration)
     {
-        const float feedbackTanh = std::tanh(voltage[3] / feedbackHeadroom);
+        const float feedbackTanh =
+            CascadeKernels::tanh(voltage[3] / feedbackHeadroom);
         const float feedbackSech2 = 1.0f - feedbackTanh * feedbackTanh;
         float previous = input - k * feedbackHeadroom * feedbackTanh;
         for (int n = 0; n < 4; ++n)
         {
             const float earlyMod = (enableEarlyEffect && calibration > 0.0f)
                 ? (1.0f + otaEarlyEffectCoefficient * calibration
-                       * std::tanh(voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
+                       * CascadeKernels::tanh(
+                             voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
                 : 1.0f;
             const float stageG = gLimited * gScale[static_cast<std::size_t>(n)]
                                * earlyMod;
@@ -1529,6 +1602,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
             float pathAverage = 0.0f;
             float pathSlope = 0.0f;
             tanhPathAverage(x, driveMemory[static_cast<std::size_t>(n)],
+                            pathStart[static_cast<std::size_t>(n)],
                             pathAverage, pathSlope);
             // The 2 restores the full step: the trapezoidal g carries the
             // half that used to pair with the endpoint average.
@@ -1571,6 +1645,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
         const float scale = a[3] / denominator;
 
         float largest = 0.0f;
+        float magnitude = 0.0f;
         for (int n = 0; n < 4; ++n)
         {
             const float delta = std::clamp(
@@ -1578,16 +1653,32 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
                 -32.0f, 32.0f);
             voltage[static_cast<std::size_t>(n)] -= delta;
             largest = std::max(largest, std::abs(delta));
+            magnitude = std::max(magnitude,
+                                 std::abs(voltage[static_cast<std::size_t>(n)]));
         }
 
-        if (largest < 1.0e-7f)
+        // Scaled to the states the step is measured against, because these
+        // are volts and single precision cannot resolve an absolute 1e-7 on
+        // them. With the former fixed threshold the test was unsatisfiable
+        // wherever the cascade was working: instrumented, the loop ran its
+        // full cap on 7.99 calls in 8 at resonance 0.95 and 6.22 in 8 with
+        // chorus engaged, against 2.86 on a quiet patch -- not because it had
+        // not converged, but because it could not say so. Its remaining step
+        // at the cap measured a mean of 5.1e-5 V on states averaging 1.7 V,
+        // several iterations after the iteration reached its own round-off
+        // floor of about 1e-6 relative. This threshold sits on that floor, so
+        // the loop now stops where it converges. The cap below is unchanged,
+        // so the worst-case residual cannot grow: a step that has not met
+        // this bound still gets every iteration it used to get.
+        if (largest < 1.0e-6f * (1.0f + magnitude))
             break;
     }
 
     // Re-evaluate the drives at the converged voltages so the carried path
     // start is exactly consistent with the carried charge.
     {
-        const float feedbackTanh = std::tanh(voltage[3] / feedbackHeadroom);
+        const float feedbackTanh =
+            CascadeKernels::tanh(voltage[3] / feedbackHeadroom);
         float previous = input - k * feedbackHeadroom * feedbackTanh;
         for (int n = 0; n < 4; ++n)
         {
@@ -1878,6 +1969,20 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     {
         driftControlCountdown_ = 0;
     }
+    // The cutoff chain's memo is keyed on counts and loop gain, both of which
+    // survive a quality change untouched, while the coefficient it produces
+    // is measured in internal samples and does not. Retire it here so the
+    // rebuild below cannot be handed back the old grid's answer.
+    // The cutoff chain's memo is keyed on counts and loop gain, both of which
+    // survive a quality change untouched, while the coefficient it produces
+    // is measured in internal samples and does not. Retire it here so a card
+    // whose holds have settled exactly cannot be handed back the old grid's
+    // answer.
+    for (auto& voice : voices_)
+    {
+        voice.cutoffChainCounts = -1.0e30f;
+        voice.cutoffChainFeedback = -1.0e30f;
+    }
     chorus_.prepare(oversampledRate_, preserveFreeRunningState);
 }
 
@@ -2074,6 +2179,7 @@ void YouKnow106Engine::reset()
     rateTransitionGain_ = 1.0f;
 
     thermalWarmupSeconds_ = 0.0f;
+    thermalWarmupFraction_ = 0.0f;
     powerSupplyDroop_ = 0.0f;
     lfoAccumulator_ = 0u;
     lfoRising_ = true;
@@ -3174,10 +3280,23 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
         + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * tolerance
         + card.driftValue * 40.0f * tolerance
         + psuCutoffShift;
-    const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
-    const float limited =
-        std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
-    voice.filterG = std::tan(pi * limited * inverseOversampledRate_);
+    // The chain from counts to the integrator's coefficient costs an exp2,
+    // two double pow and a tan, per card, per internal sample -- and it is a
+    // pure function of the two values compared here. A card whose hold has
+    // settled and whose drift step has not landed presents bit-identical
+    // inputs for thousands of samples in a row, which is most of what an idle
+    // instrument does. The guard is exact equality, so the cache can only
+    // return the value the chain would have recomputed.
+    if (analogCounts != voice.cutoffChainCounts
+        || voice.feedback != voice.cutoffChainFeedback)
+    {
+        const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
+        const float limited =
+            std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
+        voice.filterG = std::tan(pi * limited * inverseOversampledRate_);
+        voice.cutoffChainCounts = analogCounts;
+        voice.cutoffChainFeedback = voice.feedback;
+    }
 
     voice.vca = VoiceVcaControlLaw::gain(voice.vcaControl)
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
@@ -3388,10 +3507,15 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
 
     struct ComparatorEvent
     {
-        double time { 0.0 }; // 0..1 across this internal sample
-        float state { -1.0f };
+        double time; // 0..1 across this internal sample
+        float state;
     };
-    std::array<ComparatorEvent, maximumWrapsPerSample * 2 + 4> events {};
+    // Deliberately not value-initialised. The buffer is sized for the runaway
+    // case of sixty-four oscillator cycles inside one internal sample; a real
+    // note fills two or three entries, and nothing below reads past
+    // `eventCount`. Zero-filling it cost a two-kilobyte store on every voice
+    // on every internal sample -- some 2.4 GB/s at six voices and 192 kHz.
+    std::array<ComparatorEvent, maximumWrapsPerSample * 2 + 4> events;
     int eventCount = 0;
     const auto appendCrossing = [&events, &eventCount](double numerator,
                                                        double denominator,
@@ -3571,7 +3695,12 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         ? cardGradient * parameters.calibration
         : 0.0f;
     const float tempRise = 15.0f * parameters.calibration;
-    const float tempC = 25.0f + psuThermalOffset + tempRise * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
+    // The warm-up fraction is one chassis-wide number, advanced beside the
+    // timer it derives from. Six voices asking six times per internal sample
+    // for the same exponential of the same elapsed time is the same answer at
+    // six times the price.
+    const float tempC =
+        25.0f + psuThermalOffset + tempRise * thermalWarmupFraction_;
     const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
     const float dynamicHeadroom = 2.0f * dynamicThermalVoltage / stageAttenuation;
     // The same gradient, through the control path's own temperature
@@ -3796,6 +3925,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             subCv_ += (subCvTarget_ - subCv_) * subSlew;
             noiseCv_ += (noiseCvTarget_ - noiseCv_) * noiseSlew;
             thermalWarmupSeconds_ += static_cast<float>(inverseOversampledRate_);
+            thermalWarmupFraction_ =
+                1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f);
 
             if (--driftControlCountdown_ <= 0)
             {
@@ -3949,7 +4080,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                             wetLeft, wetRight,
                             parameters.enableChorusClockBleed,
                             parameters.enableChorusHyperbolicSweep,
-                            parameters.calibration);
+                            parameters.calibration,
+                            parameters.enableChorusRateNoise);
 
             // TA75558S IC6 cannot swing past its own +/-15 V rails. Unlike the
             // modelled tolerances, this is not scaled by Unit Character: a

@@ -43,6 +43,11 @@ struct YouKnow106TestAccess
                                parameters, 0.0f);
     }
 
+    static float filterG(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].filterG;
+    }
+
     static float stageGScale(const YouKnow106Engine& engine, int slot,
                              int stage) noexcept
     {
@@ -3904,6 +3909,72 @@ void testChorusSweepTrajectoryDefault()
                "the hyperbolic switch acted at zero Unit Character");
 }
 
+void testChorusRateNoiseReproducesTheMeasuredModeDelta()
+{
+    // The chorus noise floor of a real 106 sits 3.95 dB higher in mode II than
+    // in mode I, measured on Panasonic parts and again on Xvive parts
+    // (OQ-03). The settled topology gives both modes the same sweep depth and
+    // the same clock range, so the only thing the mode line changes is the
+    // modulation rate -- and this instrument's own timing network puts that
+    // ratio at 1.6234799, which is 4.21 dB. The candidate mechanism is
+    // therefore noise proportional to that rate.
+    //
+    // It ships off, because a prediction that lands 0.26 dB from a measurement
+    // is a lead and not evidence. What this fence holds is that the switch
+    // does what it claims in both positions: silent when off, and exactly the
+    // predicted delta when on.
+    constexpr double sampleRate = 48000.0;
+
+    // Each line writes one noise sample per bucket edge, so its instantaneous
+    // floor rides the swept clock and the measurement has to cover a whole
+    // number of modulation cycles or the two modes are compared over different
+    // parts of their own sweeps. Measured over a fixed window instead, mode II
+    // reads 0.69 dB hot before anything is switched on at all.
+    const auto idleFloorDb = [&](ChorusMode mode, bool rateNoise) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.chorus = mode;
+        parameters.enableChorusRateNoise = rateNoise;
+        engine.setParameters(parameters);
+        // Past the wet-mute glide and the support filters' own settling.
+        render(engine, static_cast<int>(sampleRate * 0.5));
+
+        constexpr int cycles = 6;
+        const double period = 1.0 / Chorus::settingsFor(mode).rateHz;
+        const auto rendered = render(
+            engine, static_cast<int>(sampleRate * period * cycles + 0.5));
+        double energy = 0.0;
+        for (float sample : rendered.left)
+            energy += static_cast<double>(sample) * sample;
+        return 10.0 * std::log10(
+            energy / static_cast<double>(rendered.left.size()) + 1.0e-30);
+    };
+
+    const double offOne = idleFloorDb(ChorusMode::One, false);
+    const double offTwo = idleFloorDb(ChorusMode::Two, false);
+    const double onOne = idleFloorDb(ChorusMode::One, true);
+    const double onTwo = idleFloorDb(ChorusMode::Two, true);
+
+    expect(std::abs(offTwo - offOne) < 0.10,
+           "the modes already differ by " + std::to_string(offTwo - offOne)
+               + " dB with the rate-noise candidate switched out");
+    // Mode I is the reference leg, so engaging the candidate must leave it
+    // exactly where the shipped default has it.
+    expect(std::abs(onOne - offOne) < 1.0e-6,
+           "engaging the rate-noise candidate moved mode I's own floor by "
+               + std::to_string(onOne - offOne) + " dB");
+
+    const double predicted =
+        20.0 * std::log10(Chorus::modeRateRatio());
+    expect(std::abs(predicted - 4.21) < 0.01,
+           "the mode-rate ratio no longer predicts the recorded 4.21 dB");
+    expect(std::abs((onTwo - onOne) - predicted) < 0.10,
+           "the rate-noise candidate raises mode II by "
+               + std::to_string(onTwo - onOne) + " dB, not the predicted "
+               + std::to_string(predicted));
+}
+
 void testChorusNoiseIsPresentAndDefeatable()
 {
     constexpr double sampleRate = 48000.0;
@@ -4623,6 +4694,123 @@ void testPanelLayout()
            "the folded panel width disagrees with the editor contract");
 }
 
+// Cost of rendering `seconds` of a patch, as a multiple of realtime, taking
+// the fastest of three passes so one descheduled run cannot decide a fence.
+double realtimeCost(const EngineParameters& parameters, int notes,
+                    double sampleRate, double seconds)
+{
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    engine.setParameters(parameters);
+    for (int note = 0; note < notes; ++note)
+        engine.noteOn(48 + note * 4, 1.0f);
+
+    std::vector<float> left(static_cast<std::size_t>(blockSize));
+    std::vector<float> right(static_cast<std::size_t>(blockSize));
+    // Past the attack and the modulation delay, so every pass measures the
+    // same steady state.
+    for (int block = 0; block < 40; ++block)
+        engine.process(left.data(), right.data(), blockSize);
+
+    const int total = static_cast<int>(sampleRate * seconds);
+    double best = std::numeric_limits<double>::max();
+    for (int pass = 0; pass < 3; ++pass)
+    {
+        const auto started = std::chrono::steady_clock::now();
+        int done = 0;
+        while (done < total)
+        {
+            const int count = std::min(blockSize, total - done);
+            engine.process(left.data(), right.data(), count);
+            done += count;
+        }
+        const std::chrono::duration<double> elapsed =
+            std::chrono::steady_clock::now() - started;
+        best = std::min(best, elapsed.count()
+                                  / (static_cast<double>(total) / sampleRate));
+    }
+    return best;
+}
+
+void testQualityChangeRefreshesTheFilterCoefficient()
+{
+    // updateVoiceAudio memoises the counts-to-coefficient chain -- an exp2,
+    // two double pow and a tan per card per internal sample -- on exact
+    // equality of the counts and loop gain it consumes. Those two survive a
+    // quality change untouched while the coefficient they produce is measured
+    // in internal samples and does not, so the memo has to be retired when
+    // the grid moves. Without that, a settled card would keep integrating on
+    // the old rate's pole and the whole instrument would shift in cutoff
+    // whenever HQ was switched.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.cutoff = 0.55f;
+    parameters.chorus = ChorusMode::Off;
+    engine.setParameters(parameters);
+
+    // No key is pressed anywhere in this fixture. The six cards run behind
+    // their closed VCAs whatever the keyboard is doing, their holds settle to
+    // an exact constant at Unit Character zero, and the memo is therefore
+    // being hit on every sample -- which is precisely the state a quality
+    // change has to be able to interrupt. Playing a note afterwards would
+    // hide the fault: a new note moves the counts and forces a solve.
+    render(engine, static_cast<int>(sampleRate * 0.5));
+    const float hqCoefficient = YouKnow106TestAccess::filterG(engine, 0);
+    const int hqFactor = engine.getOversamplingFactor();
+    expect(hqCoefficient > 0.0f, "the settled card has no filter coefficient");
+
+    engine.setOversamplingEnabled(false);
+    render(engine, static_cast<int>(sampleRate * 0.5));
+    expect(engine.getOversamplingFactor() != hqFactor,
+           "the quality change never took effect");
+    const float plainCoefficient = YouKnow106TestAccess::filterG(engine, 0);
+
+    // g = tan(pi f / rate), and for this cutoff the argument is small enough
+    // that the coefficient scales with the rate ratio to well inside 1%.
+    const double expected = static_cast<double>(hqCoefficient) * hqFactor;
+    expect(plainCoefficient != hqCoefficient,
+           "the filter coefficient did not move when the internal rate did: "
+           "the cutoff memo survived a quality change");
+    expect(std::abs(plainCoefficient / expected - 1.0) < 0.01,
+           "the rebuilt filter coefficient is "
+               + std::to_string(plainCoefficient) + ", not the "
+               + std::to_string(expected) + " the new grid calls for");
+}
+
+void testResonanceDoesNotMultiplyTheSolveCost()
+{
+    // A ratio, not a time, because a wall-clock ceiling only says how fast the
+    // machine running the suite is. What this fences is a property of the
+    // solver: the implicit cascade must not cost several times more to run at
+    // high resonance than at low, which is what happens when its convergence
+    // test cannot be satisfied and every hot sample runs the iteration cap.
+    //
+    // Measured on one 2.8 GHz core at 48 kHz/HQ before the step test was
+    // scaled to the volts it measures: 2.21, 2.24, 2.23. After: 1.31, 1.30,
+    // 1.32. Both patches drive the same six cards through the same path and
+    // differ only in RESONANCE, so the ratio is the solver's own.
+    constexpr double sampleRate = 48000.0;
+    auto parameters = plainPatch();
+    parameters.chorus = ChorusMode::Off;
+    // Not the reference patch's fully-open filter: this has to be a setting
+    // where the cascade is actually integrating a musical pole.
+    parameters.cutoff = 0.62f;
+
+    parameters.resonance = 0.10f;
+    const double plain = realtimeCost(parameters, 6, sampleRate, 1.0);
+    parameters.resonance = 0.95f;
+    const double resonant = realtimeCost(parameters, 6, sampleRate, 1.0);
+
+    expect(plain > 0.0, "the plain benchmark patch did not run");
+    const double ratio = resonant / plain;
+    expect(ratio < 1.7,
+           "resonance 0.95 costs " + std::to_string(ratio)
+               + "x what resonance 0.10 costs; the cascade solve is running "
+                 "its iteration cap");
+}
+
 void testCpuBudget()
 {
     // Not a benchmark of the host, just a guard against a change that makes the
@@ -4729,6 +4917,7 @@ int main()
     testGlideKeepsTheRampContinuous();
     testChorusSweepTrajectoryDefault();
     testChorusNoiseIsPresentAndDefeatable();
+    testChorusRateNoiseReproducesTheMeasuredModeDelta();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();
     testSelfOscillationMatchesTheServiceTrim();
@@ -4744,6 +4933,8 @@ int main()
     testPairedSwitchModes();
     testNoLabelIsTruncated();
     testPanelLayout();
+    testQualityChangeRefreshesTheFilterCoefficient();
+    testResonanceDoesNotMultiplyTheSolveCost();
     testCpuBudget();
 
     if (failures != 0)

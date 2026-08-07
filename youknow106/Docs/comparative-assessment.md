@@ -148,7 +148,7 @@ drifts off the value.
 | Chorus sweep | 1.4–6.4 ms scoped on a designator-faithful build with genuine MN3009s, called identical against the measurer's real 106 | Shipped endpoints | Third-party measured |
 | BBD transfer | MN3009 EC row: −3 dB at 12 kHz, 40 kHz clock (edition-verified 2026-08-07) | −3.000 dB at the anchor | Anchored, fenced with a cross-reading guard band |
 | Digital laws | Hash-identified A-5/B-2 firmware behaviour | Byte-exact envelope/LFO/delay/portamento fixtures | ROM-resolved, fenced |
-| Chorus noise delta | Measured 3.95 dB II−I on two chip populations | Not yet modelled; a rate-proportional candidate mechanism (4.21 dB predicted) is recorded against OQ-03 | Open, honestly |
+| Chorus noise delta | Measured 3.95 dB II−I on two chip populations | The rate-proportional candidate now ships behind `enableChorusRateNoise`, off by default: engaged it raises mode II by a measured 4.2225 dB against its 4.2089 dB prediction and leaves mode I's floor bit-identical | Open; the candidate is implemented and testable, not asserted |
 
 What this scoreboard is not: a full-instrument null test. That requires
 the calibrated same-chain captures the queue specifies, and no product on
@@ -196,6 +196,55 @@ comparison above; and on the cutoff law KR-106 ships the measured table
 as a lookup, so that axis matches by construction on their side and by
 derivation on this one. Full tables, clips and caveats live on the
 published comparison page.
+
+## Real-time cost — the axis this document was missing
+
+**Added 2026-08-07 by the [best-in-class pass](best-in-class-plan.md).** The
+comparison above weighs mechanisms and measured proximity and said nothing
+about what the plug-in costs to run, although that is one of the axes this
+market actually separates products on: Cherry Audio advertises lightness as a
+feature of DCO-106 ("a lightweight yet powerful engine that manages 16 voices
+of polyphony without overwhelming your system"), Roland Cloud's ACB JUNO-106
+is repeatedly marked down for it — around 10% of a core with no note sounding,
+and heavier than TAL's whole chain in direct comparison (KVR t=518758,
+t=524111) — and TAL is the field's light-CPU reference point.
+
+Measured on this project: one 2.8 GHz core, host rate 48 kHz, block 256, HQ on
+(4× internal, 192 kHz), Unit Character 1.0, best of three three-second
+renders, process CPU time. Before and after the pass, same harness, back to
+back:
+
+| Scenario | Before | After |
+|---|---|---|
+| Idle — no key held, six cards running behind closed VCAs | 1.398× realtime | **0.852×** |
+| Six voices, chorus off, resonance 0.10 | 1.105× | **0.699×** |
+| Six voices, chorus II, saw+pulse+sub+noise, resonance 0.70 | 2.376× | **1.361×** |
+| Six voices, chorus off, resonance 0.95 | 3.960× | **1.395×** |
+| Six voices, chorus II, full mixer, HQ off | — | **0.449×** |
+| Sixteen-voice extension, chorus II, full mixer | 7.7× | **4.10×** |
+
+The figures are CPU seconds per second of audio, so under 1.0 is faster than
+realtime. Read straight, and the "before" column is the honest part: **this
+engine did not run in real time on that machine in any configuration, and it
+cost more with no key held than with six voices sounding.** That was the
+largest measurable gap the project had against the commercial field, and none
+of it was a hardware-evidence question — it was libm in the filter's implicit
+solve, a convergence test single precision could not satisfy, and
+loop-invariant work inside the per-sample loops.
+
+Equally straight about the "after" column: **two of the four scenarios crossed
+the realtime line and two did not.** Idle and ordinary six-voice playing now
+run in real time on that machine; the chorus-engaged and near-oscillation
+cases are still above it, at 1.36 and 1.40. The pass roughly halved the cost
+without moving a calibrated constant; it did not make the instrument cheap.
+
+Two caveats this table does not escape. Cross-product CPU comparison is not
+possible from published material: no vendor states a measurement condition,
+and the forum figures above are user reports, not benchmarks under a declared
+patch, host, buffer and rate. And a figure from one machine is a figure from
+one machine — what it supports is the before/after claim on this project's own
+code, not a ranking against a competitor. The suite fences the *ratio* of
+resonant to plain render cost rather than any wall-clock time, for that reason.
 
 ## Market-presence note
 
