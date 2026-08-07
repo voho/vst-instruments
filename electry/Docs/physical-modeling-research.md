@@ -21,6 +21,7 @@ level-matched blind listening.
 | Tension modulation | Tolonen, Välimäki, and Karjalainen's tension-modulation nonlinearity | A string-energy envelope drives a bounded shortening of the loop delay, producing the attack pitch glide that relaxes over hundreds of milliseconds | The published phenomenon in its energy-envelope shortcut form; not the exact elongation integral or a time-varying-fraction-delay implementation |
 | Plectrum and finger excitation | Plectrum and touch interaction modeling by Germain and Evangelista and by Evangelista and Eckerholm | A three-phase excitation combines contact retention and scrape, a principal string-period-scaled two-pole modal release that approximates triangular pluck displacement, one further release pole whose corner follows the square root of the string's open frequency (a heavier string leaves the pick more slowly) with its own attenuation at the fundamental divided back out, and a normally much smaller broadband pick-edge transient for sustained pick styles; the release window is asymmetric (a slow load and a fast slip, both smoothsteps, at constant area) and its reflected image is distributed over a hardness-dependent contact patch of 0.5 to 1.5 mm; delay-line projection is level-calibrated to open E4 so equal effort remains usable on E1, while polarity, polarisation split, spectrum, and comb position differ per style | A realtime modal approximation to released-string displacement plus a separate pick edge, a distributed contact width, and bounded register calibration; not an exact delay-line initial-condition solve, beam-mechanics plectrum profile, or force-based finger contact solver |
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling | The Artifacts path's incidental fret contact: a decaying collision window whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise on hard-picked notes | Collision-informed contact behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
+| Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
 | Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved, with a soft finger excitation and no plectrum noise | Continuous-state legato with fingered attacks; not a distributed finger-force model |
 | Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite, as a real aperture, two-coil sum and three-dimensional field never cancel exactly; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
@@ -43,14 +44,14 @@ level-matched blind listening.
 
 The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
 
-1. MIDI notes 12..18 are two independent banks of latching keyswitches:
+1. MIDI notes 12..19 are two independent banks of latching keyswitches:
    12..14 (C0..D0) latch the picking style - downstroke, upstroke,
-   alternating strokes - and 15..18 (D#0..F#0) latch the play style -
-   sustain, palm mute, hammer-on/pull-off, natural harmonic. The banks
-   compose, so any of the twelve combinations is reachable in at most two
-   keyswitches; a hammered note has no plectrum, so it neither takes a stroke
-   colour nor consumes a step of the alternate sequence. Notes 19..27 are
-   ignored. Notes 28..86 are playable on eight physical strings in Drop-E
+   alternating strokes - and 15..19 (D#0..G0) latch the play style -
+   sustain, palm mute, hammer-on/pull-off, natural harmonic, pinch harmonic.
+   The banks compose, so any of the fifteen combinations is reachable in at
+   most two keyswitches; a hammered note has no plectrum, so it neither takes a
+   stroke colour nor consumes a step of the alternate sequence. Notes 20..27
+   are ignored. Notes 28..86 are playable on eight physical strings in Drop-E
    tuning (E1-B1-E2-A2-D3-G3-B3-E4); a deterministic allocator maps each note,
    preferring a repick of an already-sounding note, then the hammer-on
    continuation of the nearest sounding string, then the free string that costs
@@ -581,6 +582,29 @@ carries a little extra loss and a little phase. That is physically right - an
 artificial harmonic taken off a node is weaker, dirtier and shorter - and it
 means such a harmonic's pitch is a function of where the hand is rather than a
 member of the equal-tempered scale. It is left that way rather than quantised.
+
+The pinch harmonic is the same filter driven by the other hand. The picking
+hand's thumb catches the string immediately after the pick, at the pick's own
+position, so `p` is the pluck fraction and Pick Position chooses which partial
+squeals - which is exactly what moving the picking hand does on the instrument.
+Measured on a fretted E3 with the pick at its 18% default (a touch at 0.120 of
+the sounding length, so the nearest node belongs to the eighth partial), the
+strongest surviving partial is the eighth or ninth and it gains 15 dB on the
+fundamental against the same note picked ordinarily; the note's energy-weighted
+mean partial index moves from 4.0 to 7.4. With the picking hand over the neck
+the touch sits at the clamped 0.49 of the string and the squeal is the octave,
+mean partial 2.5.
+
+The thumb is modelled as a firmer contact than the fretting finger - depth 1.0
+against 0.92 - and it stays on the string for 90 ms rather than 45, because the
+mode-shape law gives a contact this close to the bridge little purchase on the
+low partials: at a tenth of the sounding length `sin^2(pi/10)` is 0.095, so the
+fundamental loses about seven per cent of its energy per round trip where a
+midpoint touch would take nearly all of it. The fundamental therefore survives
+a pinch far better than it survives a natural harmonic, which is what the
+physics says and what the instrument does; the squeal reads as a squeal because
+it is 15 dB up on the fundamental in relative terms and because the amplifier
+that a pinch is normally played through compresses the difference further.
 
 ## Fret collisions
 
@@ -1412,7 +1436,11 @@ touch filter whose closed-form magnitude never exceeds one at any depth, an
 exactly absent touch on every other articulation, a finger that lifts, and a
 harmonic whose octave partial decays within 2 dB of the same partial of the
 ordinarily picked note - the direct evidence that the loop is no longer
-retuned; palm-mute decay
+retuned; a pinch harmonic whose energy-weighted mean partial index sits well
+above an ordinary pick stroke's, whose strongest partial is at least the sixth
+near the bridge and exactly the octave with the hand over the neck, which gains
+more than 10 dB on the fundamental, and which renders as neither a pick stroke
+nor a natural harmonic; palm-mute decay
 contraction; the per-string wheel-compliance table's physical ordering and
 the rendered audio following it on two strings; wheel travel time following
 Bend Time with an exact settle on the target; a ringing coupled string

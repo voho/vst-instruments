@@ -83,12 +83,12 @@ that change what it shows.
 
 ## Keyswitches and playable range
 
-MIDI notes 12..18 are two independent banks of latching keyswitches; they
+MIDI notes 12..19 are two independent banks of latching keyswitches; they
 never sound, and each bank keeps its most recent selection for every
 following note until changed. Notes 12..14 (C0..D0) latch how the pick
-moves; notes 15..18 (D#0..F#0) latch what the hands do. The two latch
-independently, so any of the twelve combinations — an up-stroke palm mute,
-alternate-picked harmonics — is reachable in at most two keyswitches.
+moves; notes 15..19 (D#0..G0) latch what the hands do. The two latch
+independently, so any of the fifteen combinations — an up-stroke palm mute,
+alternate-picked pinch harmonics — is reachable in at most two keyswitches.
 Keyswitch note-offs are ignored. The editor's PICK STROKE and PLAY STYLE
 strips send the same keyswitches and always show the currently latched pair.
 The on-screen keyboard colours and labels both keyswitch banks separately
@@ -106,8 +106,9 @@ from the playable instrument.
 | 16 | E0 | Palm mute — damping follows the Mute Damp control, from a loose half-mute to a tight metal chug at the firm end |
 | 17 | F0 | Hammer-on / pull-off — continues a sounding string legato within a nine-fret reach, fingered attack, no plectrum noise |
 | 18 | F#0 | Natural harmonic — a finger resting on the string's midpoint node, so the octave is what the string does rather than a transposition of it |
+| 19 | G0 | Pinch harmonic — the picking hand's thumb catches the string at the pick's own position, so Pick Position chooses which partial squeals |
 
-Notes 19..27 are ignored, and notes 28..86 are playable on a 22-fret,
+Notes 20..27 are ignored, and notes 28..86 are playable on a 22-fret,
 eight-string Drop-E instrument tuned
 E1-B1-E2-A2-D3-G3-B3-E4; notes outside these ranges are ignored. Each note is
 allocated to one of the eight physical strings by a fretting hand that has a
@@ -207,7 +208,18 @@ All Sound Off and All Notes Off.
   removed cannot be re-excited — which stops paying for the two extra delay
   reads and lets the harmonic ring as long as the string does. The clamp that
   used to stand in for the finger cost the open A2's octave partial 16 dB per
-  second of loss nothing physical was asking for.
+  second of loss nothing physical was asking for. The pinch harmonic is the
+  same filter driven by the other hand: the thumb catches the string at the
+  pick's own position, so Pick Position chooses which partial squeals. Measured
+  on a fretted E3 with the pick near the bridge, the surviving partial is the
+  eighth or ninth and it gains 15 dB on the fundamental against the ordinary
+  pick stroke; with the picking hand over the neck the touch sits near the
+  midpoint and the squeal is the octave. It is a firmer, longer contact than
+  the fretting finger's because the mode-shape law gives a touch that close to
+  the bridge little purchase on the low partials — the fundamental loses about
+  seven per cent of its energy per round trip where a midpoint touch takes
+  nearly all of it — and that asymmetry is the technique rather than a
+  shortcoming of the model.
 - **Frets:** fretting position drives sounding length, inharmonicity,
   pickup comb geometry, and Fleischer-style dead-spot damping (deeper on
   the bolt-on end of the construction axis). The Artifacts path can open a

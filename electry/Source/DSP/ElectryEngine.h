@@ -19,15 +19,18 @@ enum class PickStyle
 };
 
 // What the hands do to the string: the sustained default, the bridge-hand
-// palm mute, the fretting-hand legato (hammer-on / pull-off), or the natural
-// harmonic touch. Latched by its own keyswitch bank, independently of the
-// picking style.
+// palm mute, the fretting-hand legato (hammer-on / pull-off), the natural
+// harmonic touch at the midpoint node, or the pinch harmonic, where the
+// picking hand's thumb catches the string at the pick's own position. Latched
+// by its own keyswitch bank, independently of the picking style. New styles
+// are appended, so every existing keyswitch note keeps its meaning.
 enum class PlayStyle
 {
     Sustain,
     PalmMute,
     Hammer,
-    Harmonics
+    Harmonics,
+    Pinch
 };
 
 enum class PickupSelector { Neck, Both, Bridge };
@@ -123,7 +126,7 @@ public:
     static constexpr int pickStyleKeyswitchCount
         = static_cast<int>(PickStyle::Alternate) + 1;
     static constexpr int playStyleKeyswitchCount
-        = static_cast<int>(PlayStyle::Harmonics) + 1;
+        = static_cast<int>(PlayStyle::Pinch) + 1;
     static constexpr int keyswitchCount = pickStyleKeyswitchCount
                                         + playStyleKeyswitchCount;
     static constexpr int firstPlayStyleKeyswitchNote
@@ -136,8 +139,8 @@ public:
     // without shifting, so the hand covers `position .. position + reach`.
     static constexpr int frettingHandReach = 4;
 
-    static_assert(keyswitchCount == 7,
-                  "three picking styles and four play styles need one keyswitch each");
+    static_assert(keyswitchCount == 8,
+                  "three picking styles and five play styles need one keyswitch each");
     static_assert(firstKeyswitchNote + keyswitchCount <= lowestPlayableNote,
                   "keyswitches must not overlap the playable range");
 

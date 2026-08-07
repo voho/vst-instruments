@@ -182,7 +182,7 @@ verification is by a test in `Tests/` that fails without the change.
   suppressed by a stated margin; the touch filter's magnitude never exceeds one
   at any frequency; and a zero touch depth is bit-identical to no touch at all.
 
-- [ ] **3. Pinch harmonic as a fifth play style.** The picking hand's thumb
+- [x] **3. Pinch harmonic as a fifth play style.** The picking hand's thumb
   catches the string a fraction of a millisecond after the pick, at the pick's
   own position. Reuse the step-2 touch at `p = pick position`, so which partial
   squeals follows the Pick Position control exactly as it does on a real

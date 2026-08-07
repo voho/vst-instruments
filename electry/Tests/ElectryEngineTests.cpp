@@ -1059,9 +1059,9 @@ void testKeyswitchesSelectStylesSilently()
     expect(ElectryEngine::firstKeyswitchNote == 12,
            "keyswitch range does not start at MIDI 12");
     expect(ElectryEngine::pickStyleKeyswitchCount == 3
-               && ElectryEngine::playStyleKeyswitchCount == 4
-               && ElectryEngine::keyswitchCount == 7,
-           "the two keyswitch banks do not expose 3 picking and 4 play styles");
+               && ElectryEngine::playStyleKeyswitchCount == 5
+               && ElectryEngine::keyswitchCount == 8,
+           "the two keyswitch banks do not expose 3 picking and 5 play styles");
     expect(ElectryEngine::firstPlayStyleKeyswitchNote == 15,
            "the play-style bank does not follow the picking bank at MIDI 15");
     expect(ElectryEngine::lowestPlayableNote == 28
@@ -1082,7 +1082,7 @@ void testKeyswitchesSelectStylesSilently()
 
     // Walking every keyswitch leaves the last of each bank latched.
     expect(engine.getCurrentPickStyle() == PickStyle::Alternate
-               && engine.getCurrentPlayStyle() == PlayStyle::Harmonics,
+               && engine.getCurrentPlayStyle() == PlayStyle::Pinch,
            "walking the keyswitch banks did not latch the last of each");
 
     // The two banks are independent: a play-style switch keeps the picking
@@ -2465,6 +2465,124 @@ void testTouchHarmonics()
            "the harmonic's octave partial does not decay like the same partial "
            "of the picked note (harmonic " + std::to_string(harmonicDecay)
                + " dB, picked " + std::to_string(sustainDecay) + " dB)");
+}
+
+// The pinch harmonic is the same touch filter driven by the picking hand:
+// the thumb catches the string at the pick's own position, so which partial
+// squeals is a function of Pick Position rather than a fixed interval.
+void testPinchHarmonic()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.bodyResonance = 0.0f;
+    parameters.pickNoise = 0.0f;
+    parameters.fingerNoise = 0.0f;
+    parameters.releaseNoise = 0.0f;
+
+    const int note = 52;
+    const double f0 = midiHz(note);
+    const int start = static_cast<int>(0.02 * sampleRate);
+    const int window = static_cast<int>(0.12 * sampleRate);
+
+    // Energy-weighted mean partial index: where in the harmonic series the
+    // note's weight actually sits. A pinch moves it a long way up.
+    const auto meanPartial = [&] (const StereoBuffer& buffer)
+    {
+        double weighted = 0.0;
+        double total = 0.0;
+        for (int n = 1; n <= 16; ++n)
+        {
+            const double magnitude = dftMagnitude(buffer.left, start, window,
+                                                  sampleRate, f0 * n);
+            const double power = magnitude * magnitude;
+            weighted += power * n;
+            total += power;
+        }
+        return total > 0.0 ? weighted / total : 0.0;
+    };
+
+    const auto renderAt = [&] (float pickPosition, PlayStyle style)
+    {
+        parameters.pickPosition = pickPosition;
+        engine.setParameters(parameters);
+        return renderNote(engine, sampleRate, note, 0.9f, style, 1.0);
+    };
+
+    const auto pickedNearBridge = renderAt(0.18f, PlayStyle::Sustain);
+    const auto pinchedNearBridge = renderAt(0.18f, PlayStyle::Pinch);
+    const auto pinchedOverNeck = renderAt(1.0f, PlayStyle::Pinch);
+
+    const auto strongestPartial = [&] (const StereoBuffer& buffer)
+    {
+        int best = 1;
+        double bestMagnitude = -1.0;
+        for (int n = 1; n <= 16; ++n)
+        {
+            const double magnitude = dftMagnitude(buffer.left, start, window,
+                                                  sampleRate, f0 * n);
+            if (magnitude > bestMagnitude)
+            {
+                bestMagnitude = magnitude;
+                best = n;
+            }
+        }
+        return best;
+    };
+
+    const double pickedMean = meanPartial(pickedNearBridge);
+    const double pinchedMean = meanPartial(pinchedNearBridge);
+    const double neckMean = meanPartial(pinchedOverNeck);
+
+    expect(pinchedMean > pickedMean + 2.0,
+           "the pinch did not move the note's weight up the harmonic series "
+           "(picked " + std::to_string(pickedMean) + ", pinched "
+               + std::to_string(pinchedMean) + ")");
+    expect(neckMean < pinchedMean - 3.0,
+           "moving the picking hand toward the neck did not move the squeal "
+           "down the series (bridge " + std::to_string(pinchedMean) + ", neck "
+               + std::to_string(neckMean) + ")");
+
+    // The touch sits at the pick, so the surviving partial is the one with a
+    // node there: around the eighth near the bridge, the octave with the hand
+    // over the neck where the touch is at nearly half the string.
+    const int bridgeSquealPartial = strongestPartial(pinchedNearBridge);
+    const int neckSquealPartial = strongestPartial(pinchedOverNeck);
+    expect(bridgeSquealPartial >= 6,
+           "the near-bridge pinch did not select a high partial (strongest "
+               + std::to_string(bridgeSquealPartial) + ")");
+    expect(neckSquealPartial == 2,
+           "the pinch with the hand over the neck did not select the octave "
+           "(strongest " + std::to_string(neckSquealPartial) + ")");
+
+    // Measured against the ordinary pick stroke, the squeal partial gains a
+    // long way on the fundamental. This is the effect itself rather than a
+    // proxy for it.
+    const auto partialOverFundamental = [&] (const StereoBuffer& buffer, int n)
+    {
+        return decibels(
+            dftMagnitude(buffer.left, start, window, sampleRate, f0 * n)
+            / std::max(dftMagnitude(buffer.left, start, window, sampleRate, f0),
+                       1.0e-15));
+    };
+    const double gain = partialOverFundamental(pinchedNearBridge,
+                                               bridgeSquealPartial)
+                      - partialOverFundamental(pickedNearBridge,
+                                               bridgeSquealPartial);
+    expect(gain > 10.0,
+           "the pinch did not lift its partial against the fundamental (gain "
+               + std::to_string(gain) + " dB)");
+
+    // It is its own articulation, not a relabelled one.
+    const auto natural = renderAt(0.18f, PlayStyle::Harmonics);
+    expect(normalisedDifferenceRms(pinchedNearBridge.left, pickedNearBridge.left,
+                                   0, static_cast<int>(0.3 * sampleRate)) > 0.2,
+           "a pinch renders nearly the same audio as an ordinary pick stroke");
+    expect(normalisedDifferenceRms(pinchedNearBridge.left, natural.left, 0,
+                                   static_cast<int>(0.3 * sampleRate)) > 0.2,
+           "a pinch renders nearly the same audio as a natural harmonic");
 }
 
 // The fretting hand has a position and a reach, so the same pitch is not
@@ -4643,6 +4761,7 @@ int main()
     testStringAllocationAndPolyphony();
     testFrettingHandPosition();
     testTouchHarmonics();
+    testPinchHarmonic();
     testSustainPedal();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();

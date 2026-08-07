@@ -2118,6 +2118,16 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             noiseCutoff *= 1.35f;
             modalBrightness *= 1.48f;
             break;
+        case PlayStyle::Pinch:
+            // An ordinary pick stroke with the thumb following it in. The pick
+            // itself is unchanged - the pluck position is the player's, not the
+            // style's, because the thumb has to land where the pick did - and
+            // the thumb only adds its own contact scrape.
+            amplitude *= 0.92f;
+            noiseLevel *= 1.15f;
+            noiseCutoff *= 1.10f;
+            modalBrightness *= 1.10f;
+            break;
     }
 
     // The stroke composes with every picked style: an upstroke palm mute is a
@@ -2186,6 +2196,10 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             displacementGain = 0.30f;
             transientGain = 0.42f;
             break;
+        case PlayStyle::Pinch:
+            displacementGain = 1.35f;
+            transientGain *= 1.20f;
+            break;
     }
 
     // The plectrum's edge is the sharpest thing in the attack, so it is what the
@@ -2245,8 +2259,51 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // is what moves a high fretted note toward the hollow, mid-string comb of
     // a real guitar.
     const float fretStretch = std::exp2(static_cast<float>(voice.fret) / 12.0f);
-    voice.excitationCombDelay = clampf(pluckFraction * fretStretch, 0.02f, 0.49f)
-                              * voice.vertical.targetDelay;
+    const float combFraction = clampf(pluckFraction * fretStretch, 0.02f, 0.49f);
+    voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
+
+    // Where the touching hand is, if either hand is touching. The natural
+    // harmonic is the fretting hand on the midpoint node: every odd partial
+    // has an antinode under it and goes, every even one has a node there and
+    // is left exactly alone in magnitude and phase, so the octave is what the
+    // string does rather than a transposition of it.
+    //
+    // The pinch harmonic is the picking hand's thumb catching the string
+    // immediately after the pick, so it touches at the pick's own position -
+    // which is why moving Pick Position toward the neck moves the squeal down
+    // the harmonic series, exactly as moving the hand does on the instrument.
+    // Its depth is one rather than the fretting finger's 0.92 because a thumb
+    // pressed against a string is a much firmer contact, and it stays on the
+    // string far longer, because the mode-shape law gives a contact this close
+    // to the bridge little purchase on the low partials: at a tenth of the
+    // sounding length the fundamental loses about seven per cent of its energy
+    // per round trip where a midpoint touch would take nearly all of it. That
+    // asymmetry is the physics of the technique, not a shortcoming of it.
+    switch (voice.playStyle)
+    {
+        case PlayStyle::Harmonics:
+            voice.touchFraction = 0.5f;
+            voice.touchDepth = 0.92f;
+            voice.touchHoldRemaining = static_cast<int>(0.045 * sampleRate_);
+            voice.touchReleaseStep = 0.92f
+                / std::max(1.0f, 0.080f * sampleRate);
+            break;
+        case PlayStyle::Pinch:
+            voice.touchFraction = combFraction;
+            voice.touchDepth = 1.0f;
+            voice.touchHoldRemaining = static_cast<int>(0.090 * sampleRate_);
+            voice.touchReleaseStep = 1.0f
+                / std::max(1.0f, 0.130f * sampleRate);
+            break;
+        case PlayStyle::Sustain:
+        case PlayStyle::PalmMute:
+        case PlayStyle::Hammer:
+            voice.touchFraction = 0.0f;
+            voice.touchDepth = 0.0f;
+            voice.touchHoldRemaining = 0;
+            voice.touchReleaseStep = 0.0f;
+            break;
+    }
 
     // A plectrum touches the string over a patch, not at a point: half a
     // millimetre of contact for a stiff sharp pick, around a millimetre and a
@@ -2381,6 +2438,12 @@ void ElectryEngine::updateStyleWeights(Voice& voice) noexcept
         case PlayStyle::Harmonics:
             verticalWeight = 0.86f; horizontalWeight = 0.52f; makeup = 1.34f;
             break;
+        case PlayStyle::Pinch:
+            // The thumb follows the pick in along the same path, so the split
+            // stays close to a downstroke's; the makeup pays back the energy
+            // the touch takes out of the low partials.
+            verticalWeight = 0.90f; horizontalWeight = 0.46f; makeup = 1.55f;
+            break;
     }
     // The upstroke approaches from below, tilting the attack toward the
     // horizontal polarisation. For a plain sustained upstroke these ratios
@@ -2451,34 +2514,6 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
                               ^ static_cast<std::uint32_t>(noteSequence_ * 2654435761u));
     voice.artifactNoiseState = hash32(voice.noiseState ^ 0xa53c9e17u);
     voice.baseFrequency = midiToHz(static_cast<float>(midiNote));
-
-    // The harmonic touch. The finger rests on the midpoint node of the
-    // sounding length, so every odd partial - the fundamental included - has
-    // an antinode under it and is removed, while every even one has a node
-    // there and is left exactly alone in both magnitude and phase. The octave
-    // is therefore what the string does, not a transposition of it: the loop
-    // still runs at the fretted pitch and keeps that note's inharmonicity,
-    // decay targets and pickup-comb geometry.
-    //
-    // 0.92 rather than 1.0 because a player's finger is a light contact rather
-    // than a hard termination; against a loop gain near 0.996 that removes the
-    // suppressed partials inside a couple of round trips anyway.
-    if (playStyle == PlayStyle::Harmonics)
-    {
-        voice.touchFraction = 0.5f;
-        voice.touchDepth = 0.92f;
-        voice.touchHoldRemaining =
-            static_cast<int>(0.045 * sampleRate_);
-        voice.touchReleaseStep = 0.92f
-            / std::max(1.0f, 0.080f * static_cast<float>(sampleRate_));
-    }
-    else
-    {
-        voice.touchFraction = 0.0f;
-        voice.touchDepth = 0.0f;
-        voice.touchHoldRemaining = 0;
-        voice.touchReleaseStep = 0.0f;
-    }
 
     // Each physical string has a slightly different saddle/bridge rattle.
     // Its variation is seeded by the note sequence, never by wall-clock time,
