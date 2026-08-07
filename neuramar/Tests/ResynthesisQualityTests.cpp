@@ -1112,6 +1112,249 @@ void testStruckBodyModalRecall()
            "recalled modal frequencies missed their known positions ("
                + std::to_string(meanCents) + " cents)");
 }
+
+// ---------------------------------------------------------------------------
+// Automatic root detection across the analytic source classes
+//
+// The benchmark's one-click protocol treats automatic root error as a headline
+// result and proposes a 98%-correct gate, and until now the suite tested four
+// hand-picked cases. This is a corpus: one fixture per analytic ground-truth
+// class, each with a known fundamental, reported as a correct-semitone rate and
+// an octave-error rate. Alchemy's own documentation makes the stake explicit -
+// additive import quality depends on identifying the root, and a resynthesis
+// model built on the wrong octave is wrong in a way no later control fixes.
+// ---------------------------------------------------------------------------
+
+[[nodiscard]] int midiNoteFor(double frequencyHz) noexcept
+{
+    return static_cast<int>(std::lround(
+        69.0 + 12.0 * std::log2(frequencyHz / 440.0)));
+}
+
+struct RootCase
+{
+    const char* name;
+    double fundamentalHz;
+    std::vector<float> audio;
+};
+
+[[nodiscard]] std::vector<float> makeRootFixture(const std::string& kind,
+                                                 double fundamentalHz,
+                                                 double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(durationSeconds * sampleRate));
+    std::vector<float> signal(sampleCount, 0.0f);
+    std::uint32_t noiseState = 0x2b7e1516u;
+    const auto nextNoise = [&noiseState]() noexcept
+    {
+        noiseState = noiseState * 1664525u + 1013904223u;
+        return static_cast<double>(noiseState >> 8) / 8388608.0 - 1.0;
+    };
+    const int partialCeiling = std::max(1, static_cast<int>(std::floor(
+        0.44 * sampleRate / fundamentalHz)));
+
+    for (std::size_t index = 0; index < sampleCount; ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double position = static_cast<double>(index)
+            / static_cast<double>(std::max<std::size_t>(sampleCount - 1, 1));
+        const double envelope = (1.0 - std::exp(-time / 0.006))
+            * (0.85 + 0.15 * std::exp(-time / 0.40));
+        double value = 0.0;
+
+        if (kind == "rolloff")
+        {
+            for (int harmonic = 1; harmonic <= std::min(28, partialCeiling);
+                 ++harmonic)
+                value += std::exp(-0.22 * (harmonic - 1))
+                    * std::sin(2.0 * pi * fundamentalHz * harmonic * time
+                               + 0.19 * harmonic);
+        }
+        else if (kind == "missing-fundamental")
+        {
+            // Odd/even contrast with no energy at all at f0 or 2 f0.
+            for (int harmonic = 3; harmonic <= std::min(20, partialCeiling);
+                 ++harmonic)
+            {
+                const double weight = (harmonic & 1) != 0 ? 1.0 : 0.22;
+                value += weight * std::pow(harmonic, -0.85)
+                    * std::sin(2.0 * pi * fundamentalHz * harmonic * time
+                               + 0.31 * harmonic);
+            }
+        }
+        else if (kind == "formant")
+        {
+            for (int harmonic = 1; harmonic <= std::min(40, partialCeiling);
+                 ++harmonic)
+            {
+                const double frequency = fundamentalHz * harmonic;
+                const double shape =
+                    0.06 + 1.60 * gaussianLogFrequency(frequency, 640.0, 0.19)
+                    + 1.05 * gaussianLogFrequency(frequency, 1720.0, 0.17);
+                value += shape * std::pow(harmonic, -0.55)
+                    * std::sin(2.0 * pi * frequency * time + 0.11 * harmonic);
+            }
+        }
+        else if (kind == "stiff")
+        {
+            for (int partial = 1; partial <= std::min(26, partialCeiling);
+                 ++partial)
+            {
+                const double number = static_cast<double>(partial);
+                const double frequency = fundamentalHz * number
+                    * std::sqrt(1.0 + 4.0e-4 * number * number);
+                if (frequency >= 0.44 * sampleRate)
+                    break;
+                value += std::pow(number, -1.05)
+                    * std::exp(-time * (0.7 + 0.05 * number))
+                    * std::sin(2.0 * pi * frequency * time + 0.23 * number);
+            }
+        }
+        else if (kind == "noisy")
+        {
+            for (int harmonic = 1; harmonic <= std::min(24, partialCeiling);
+                 ++harmonic)
+                value += std::pow(harmonic, -0.95)
+                    * std::sin(2.0 * pi * fundamentalHz * harmonic * time
+                               + 0.17 * harmonic);
+            value += 0.28 * nextNoise();
+        }
+        else if (kind == "vibrato")
+        {
+            // A stable 5 Hz, 35-cent vibrato: inside the four-semitone contour
+            // the analyser is allowed to track.
+            const double deviation = 0.35 / 12.0
+                * std::sin(2.0 * pi * 5.0 * time);
+            const double phaseHz = fundamentalHz * std::exp2(deviation);
+            for (int harmonic = 1; harmonic <= std::min(20, partialCeiling);
+                 ++harmonic)
+                value += std::pow(harmonic, -1.0)
+                    * std::sin(2.0 * pi * phaseHz * harmonic * time
+                               + 0.13 * harmonic);
+        }
+        else if (kind == "moving-formant")
+        {
+            const double centreHz = 700.0 * std::exp2(1.1 * position);
+            for (int harmonic = 1; harmonic <= std::min(36, partialCeiling);
+                 ++harmonic)
+            {
+                const double frequency = fundamentalHz * harmonic;
+                const double shape = 0.10
+                    + 1.70 * gaussianLogFrequency(frequency, centreHz, 0.28);
+                value += shape * std::pow(harmonic, -0.65)
+                    * std::sin(2.0 * pi * frequency * time + 0.29 * harmonic);
+            }
+        }
+        else if (kind == "delayed-onsets")
+        {
+            for (int harmonic = 1; harmonic <= std::min(24, partialCeiling);
+                 ++harmonic)
+            {
+                const double delay = 0.0015 * (harmonic - 1);
+                if (time < delay)
+                    continue;
+                value += std::pow(harmonic, -0.9)
+                    * (1.0 - std::exp(-(time - delay) / 0.004))
+                    * std::sin(2.0 * pi * fundamentalHz * harmonic * time
+                               + 0.21 * harmonic);
+            }
+            value += 0.9 * std::exp(-time / 0.0020) * nextNoise();
+        }
+        else if (kind == "swept-saw")
+        {
+            // A band-limited saw through a moving resonant low-pass: every
+            // partial is present and the spectral peak walks two octaves.
+            const double cutoffHz = fundamentalHz * std::exp2(
+                2.0 + 2.0 * position);
+            for (int harmonic = 1; harmonic <= std::min(64, partialCeiling);
+                 ++harmonic)
+            {
+                const double frequency = fundamentalHz * harmonic;
+                const double excess = std::max(0.0,
+                    std::log2(frequency / cutoffHz));
+                const double resonance = 1.0
+                    + 2.6 * gaussianLogFrequency(frequency, cutoffHz, 0.10);
+                value += resonance * std::exp2(-3.0 * excess) / harmonic
+                    * std::sin(2.0 * pi * frequency * time + 0.07 * harmonic);
+            }
+        }
+        else if (kind == "phase-modulation")
+        {
+            // A 3:1 phase-modulation tone at a high index. The series stays
+            // harmonic but the fundamental is far from the loudest partial.
+            const double index2 = 5.5 * std::exp(-time / 0.28);
+            value = std::sin(2.0 * pi * fundamentalHz * time
+                             + index2 * std::sin(
+                                 2.0 * pi * 3.0 * fundamentalHz * time));
+        }
+
+        signal[index] = static_cast<float>(0.20 * envelope * value);
+    }
+    return signal;
+}
+
+void testAutomaticRootCorpus()
+{
+    // One fixture per analytic ground-truth class, across the register range
+    // the detector is bounded to. Durations are kept short deliberately: this
+    // measures root identification, not fit quality, and the suite pays for
+    // every learn.
+    const std::vector<std::pair<std::string, double>> corpus {
+        { "rolloff", 220.0 },
+        { "rolloff", 61.735 },        // B1, low register
+        { "rolloff", 987.767 },       // B5, high register
+        { "missing-fundamental", 146.832 },
+        { "formant", 110.0 },
+        { "stiff", 329.628 },
+        { "noisy", 196.0 },
+        { "vibrato", 261.626 },
+        { "moving-formant", 174.614 },
+        { "delayed-onsets", 82.407 },
+        { "swept-saw", 130.813 },
+        { "phase-modulation", 233.082 }
+    };
+
+    std::size_t correct = 0;
+    std::size_t octaveErrors = 0;
+    for (const auto& [kind, fundamentalHz] : corpus)
+    {
+        const auto audio = makeRootFixture(kind, fundamentalHz, 0.62);
+        const auto learned = neuramar::SampleLearner::learn(audio, sampleRate);
+        if (!learned)
+        {
+            std::cout << "Root corpus " << kind << " @ " << fundamentalHz
+                      << " Hz: failed to learn (" << learned.error << ")\n";
+            expect(false, "root corpus fixture failed to learn: "
+                       + learned.error);
+            continue;
+        }
+        const int expectedNote = midiNoteFor(fundamentalHz);
+        const int detectedNote = learned.model->rootMidiNote();
+        const int error = detectedNote - expectedNote;
+        if (error == 0)
+            ++correct;
+        else if (error % 12 == 0)
+            ++octaveErrors;
+        std::cout << "Root corpus " << kind << " @ " << fundamentalHz
+                  << " Hz: detected " << learned.model->rootFrequencyHz()
+                  << " Hz, MIDI " << detectedNote << " (expected "
+                  << expectedNote << ", error " << error << " st)\n";
+    }
+
+    const double total = static_cast<double>(corpus.size());
+    const double correctRate = static_cast<double>(correct) / total;
+    const double octaveRate = static_cast<double>(octaveErrors) / total;
+    std::cout << "Root corpus result: " << correctRate
+              << " correct semitone, " << octaveRate << " octave errors over "
+              << corpus.size() << " analytic classes\n";
+    expect(correctRate >= 0.90,
+           "automatic root detection fell below its corpus rate ("
+               + std::to_string(correctRate) + ")");
+    expect(octaveRate <= 0.10,
+           "automatic root detection made too many octave errors ("
+               + std::to_string(octaveRate) + ")");
+}
 } // namespace
 
 int main()
@@ -1120,6 +1363,7 @@ int main()
     testStiffStringPartialPlacement();
     testRootNoteReconstruction();
     testStruckBodyModalRecall();
+    testAutomaticRootCorpus();
     if (failures != 0)
     {
         std::cerr << failures << " Neuramar quality benchmark(s) failed\n";

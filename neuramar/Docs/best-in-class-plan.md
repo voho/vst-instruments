@@ -304,7 +304,14 @@ Each step is a single commit, green before it lands.
   hand-off-continuity tests run at the new ceiling; the benchmark's cost table
   gains a sixteen-voice row.
 
-- [ ] **6. Measure and fix automatic root detection across a corpus.**
+- [x] **6. Measure and fix automatic root detection across a corpus.**
+  *Landed as a measurement; no fix was needed.* Twelve analytic classes —
+  roll-off at three registers, missing fundamental, fixed formants, stiff
+  string, broadband noise, vibrato, moving formant, delayed onsets, a
+  two-octave resonant saw sweep, and a 3:1 phase-modulation tone — are all
+  identified to the correct semitone with no octave errors. The step is
+  reported as what it is: an untested claim turned into a measured one with a
+  regression gate behind it, not a defect found and repaired.
   Add a deterministic root-detection corpus to the test suite covering the
   analytic ground-truth classes the benchmark names — exponential roll-off,
   odd/even with a missing fundamental, formant-dominant, stiff-string,

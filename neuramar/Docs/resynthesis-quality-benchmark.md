@@ -143,6 +143,40 @@ Applying the shorter aperture over the whole 120 ms dense region instead of the
 first 40 ms did not improve the attack any further and made the same fixture's
 residual ERB MAE worse (3.55 to 3.62 dB), so it is confined to the attack.
 
+### Automatic root detection
+
+Added in 1.3. The one-click protocol below treats automatic root error as a
+headline result and proposes a 98%-correct-semitone gate, and until this was
+added the suite tested four hand-picked cases. The corpus is one 0.62 s fixture
+per analytic source class, each with a known fundamental:
+
+| Class | Fundamental | Detected | MIDI error |
+| --- | --- | --- | --- |
+| Exponential harmonic roll-off | 220.000 Hz | 219.993 Hz | 0 |
+| Roll-off, low register | 61.735 Hz | 61.732 Hz | 0 |
+| Roll-off, high register | 987.767 Hz | 993.628 Hz | 0 |
+| Odd/even with missing fundamental | 146.832 Hz | 146.811 Hz | 0 |
+| Two narrow fixed formants | 110.000 Hz | 110.009 Hz | 0 |
+| Stiff string, `B = 4.0e-4` | 329.628 Hz | 329.687 Hz | 0 |
+| Harmonics plus broadband noise | 196.000 Hz | 196.125 Hz | 0 |
+| Stable 5 Hz / 35-cent vibrato | 261.626 Hz | 261.165 Hz | 0 |
+| Time-moving formant | 174.614 Hz | 174.605 Hz | 0 |
+| Delayed partial onsets, broadband transient | 82.407 Hz | 82.405 Hz | 0 |
+| Saw through a two-octave resonant sweep | 130.813 Hz | 130.813 Hz | 0 |
+| 3:1 phase modulation, index 5.5 | 233.082 Hz | 233.108 Hz | 0 |
+
+Twelve of twelve correct, no octave errors. This step found no defect: it
+converted an untested claim into a measured one and left a regression gate
+behind (0.90 correct-semitone, 0.10 octave-error). That is the honest result and
+it is recorded as such rather than dressed up as a fix.
+
+It is also not the 98% gate. These are analytic fixtures with a defined
+fundamental; the proposed gate is over real recordings, where chords,
+percussion, and unstable pitch have no single right answer, and it remains a
+target. The high-register row is the one worth watching: 993.6 Hz against
+987.8 Hz is 10 cents, comfortably inside the semitone but the largest relative
+error in the set.
+
 ### Held-out source/filter family
 
 A 220 Hz note with three fixed formants, an alternating odd/even excitation, and
