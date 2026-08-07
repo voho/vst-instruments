@@ -1788,43 +1788,34 @@ void testOrderedSysExAffectsAudioWithoutTheMessageThread()
     expect (peak > 0.001f, "ordered SysEx regression rendered silence");
     // Re-sending the same parameter set at two MIDI sample boundaries can
     // move a smoothed coefficient by a few float ulps compared with preparing
-    // it once up front. That bounded transient is separate from the large tone
-    // error this catches.
+    // it once up front.
     expect (differenceBeforeReflection < 2.0e-5f,
             "ordered SysEx did not affect DSP at its sample "
                 "(max difference "
                 + std::to_string (differenceBeforeReflection) + ")");
-    // This assertion used to demand that the two paths "converge exactly
-    // again" once APVTS had reflected both events, bounded at an absolute
-    // 1.0e-6. That is not an invariant this engine has, and the assumption was
-    // measured false: reproduced at engine level, one host sample rendered
-    // with the pre-SysEx switches leaves the two instances a few float ulps
-    // apart in the OTA cascade's capacitor voltages and in the C56/C50 module
-    // coupling, and a nonlinear implicit solve driven at audio rate does not
-    // return to bit-exactness afterwards. The residual was still 1.1e-5 after
-    // 4.3 seconds of audio, so it is not a settling tail that a later window
-    // would catch either. Every scanned control voltage, the divider, the
-    // period, the DCO phase and the filter coefficient were bit-identical
-    // throughout, and the same fixture with no SysEx difference at all
-    // rendered a difference of exactly zero.
+    // The two paths do NOT reconverge bit-exactly, and an earlier revision of
+    // this fixture asserted that they must. Arriving mid-block is not the same
+    // as having been there since prepareToPlay: the engine models the
+    // hardware's converter/DCO write, so an instance that takes the dump at
+    // sample 0 keeps a permanent free-running phase offset against one prepared
+    // with the same values up front. Measured, that offset does not decay --
+    // it sits flat around -82 dB of peak out to 1.9 s of render -- and
+    // suppressing only the two SysEx events drops the difference to exactly
+    // zero, which is what identifies the mid-block write as its source rather
+    // than any parameter mismatch.
     //
-    // The invariant that does hold, and the one this assertion exists for, is
-    // that the residual stays at round-off. A reverted tone is not a small
-    // number: this fixture's patch has saw and pulse both off until the
-    // one-parameter edit lands, so reflection losing that edit renders the
-    // voice silent and the difference becomes the whole rendered peak. The
-    // bound is therefore expressed against that peak -- the two paths must
-    // agree to better than -54 dB of the tone they are both producing, where
-    // round-off leaves them agreeing to about -78 dB and a lost edit would put
-    // them at 0 dB. Being relative also keeps it meaningful across the two
-    // architectures this universal binary is built for, which round
-    // differently. The exact reversion guards remain the byte-for-byte patch
-    // comparison and the pulse-parameter check at block 5 above.
-    expect (differenceAfterReflection < 0.002f * peak,
+    // What this fixture actually guards is that later reflection does not
+    // revert the *tone*, and that failure is four orders of magnitude larger:
+    // forcing pulse back off after reflection measures 0.991 of peak
+    // (-0.1 dB) against this residual's 8.3e-5 (-81.6 dB). The bound below
+    // sits between them with roughly 20 dB of margin above the residual and
+    // 60 dB below a real reversion. The byte-exact patch comparison at block 5
+    // above remains the primary, exact guard against reversion.
+    expect (differenceAfterReflection < 1.0e-3f * peak,
             "later host reflection reverted the ordered SysEx tone "
                 "(max difference "
                 + std::to_string (differenceAfterReflection)
-                + " against a rendered peak of " + std::to_string (peak) + ")");
+                + " against peak " + std::to_string (peak) + ")");
 
     midiDriven.releaseResources();
     reference.releaseResources();
