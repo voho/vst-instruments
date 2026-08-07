@@ -533,9 +533,42 @@ onset stage must measure the same peak gain as the main tract it crossfades
 into, despite running wider bandwidths; the bank must not cancel between F1 and
 F2 at any of three vowel corners; an ensemble of *n* must render *n* singers; and
 a resonance or formant-shift jump must glide the pole radii rather than step
-them. This catches regressions; it is not a substitute for listening tests, host
+them.
+
+Everything 1.2 adds is asserted numerically rather than described, because each
+of these controls is one that could easily have been a fader instead:
+
+- the dynamic must roll the 2.4 – 4.7 kHz band off by more than it drops the
+  fundamental, and must raise the aspiration-to-voiced ratio as it falls; a
+  ±2 semitone bend must produce the ±2 semitone frequency ratio; the sustain
+  pedal must hold a note through its note-off and release it on pedal-up;
+  expression must reproduce the same render at half the amplitude sample for
+  sample; and the mod wheel must take the dynamic over for good the first time
+  it moves
+- F1 must track the fundamental once the fundamental passes it, stop at the
+  jaw's ceiling, and leave the vowel alone below that; the level at C6 must
+  neither collapse against C4 nor shout over it
+- the just intervals must measure their own ratios to within a cent, in chord
+  mode and in played polyphony, and must re-tune when a bass arrives after them,
+  gliding rather than stepping
+- twelve singers must disperse inside the band real choirs measure, lock
+  perfectly at zero Humanize, and drift without running away
+- the nasal branch must cut its own band by 20 dB or more, raise the murmur
+  band, leave the overall level alone, and stay stable at every coupling
+- a full vowel step must produce 10 – 90 % formant rise times inside a stated
+  window, ordered by the cavity that carries each formant, and a small step must
+  settle in a fraction of the time
+- the epilarynx must contract the F3-to-F5 span and raise the 2 – 4 kHz share,
+  and must leave the vowel's own upper formants alone at rest
+- every factory preset must carry values the engine does not clamp away, render
+  finite, audible, bounded audio on a held note and a held interval, and release
+  fully
+
+This catches regressions; it is not a substitute for listening tests, host
 automation tests, or profiling on the oldest supported Mac. The suite also
-smoke-tests the demonstration renderer.
+smoke-tests the demonstration renderer. The JUCE-side test, which builds only on
+macOS, additionally covers the new MIDI messages reaching the engine and the
+factory bank reaching the host parameters.
 
 ## Regenerate the demonstration audio
 

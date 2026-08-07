@@ -223,27 +223,49 @@ opens on something playable.
   Introducing stateful noise there would have cost that guarantee to gain
   nothing audible: two incommensurate oscillators already never return the
   section to the same relative configuration, and they are bounded by
-  construction, which is the property a restoring pull was there to provide. Closes gap 4. *Verified:* the
-  standard deviation of the sounding fundamental across twelve singers must land
-  in the measured band at full Humanize and fall to zero at zero Humanize; the
-  drift must be bounded over a long render; the per-singer offsets must not be
-  constant over time.
+  construction, which is the property a restoring pull was there to provide.
+  Closes gap 4. *Verified:* the standard deviation of the sounding fundamental
+  across twelve singers must land in the measured band at full Humanize and fall
+  to zero at zero Humanize; the drift must be bounded over a long render; the
+  per-singer offsets must not be constant over time.
 
-- [x] **5. Nasal branch.** Add a velum-coupling parameter that inserts a nasal
-  pole near 280 Hz and a placed zero between it and F1, with the zero position
-  distinguishing /m/ from /n/, and damps F1 as the velum opens. This is what
-  turns Vocalor's "ah" into a hum. Closes gap 5. *Verified:* the tract magnitude
-  response must show a notch of at least 12 dB at the nasal zero at full
-  coupling and none at zero coupling; the low-frequency murmur pole must appear;
-  the rendered audio must stay finite and bounded at every coupling.
+- [x] **5. Nasal branch.** Add a velum-coupling parameter that inserts a murmur
+  pole at the nasal cavity's own resonance and a placed notch where the closed
+  mouth loads the tract, and drops the oral formants as the velum opens, because
+  a closed mouth is a side branch rather than the radiator. This is what turns
+  Vocalor's "ah" into a hum. Closes gap 5. *Verified:* the notch band must fall
+  by at least 20 dB at full coupling, the murmur band must rise, the band above
+  the notch must fall without the branch becoming a low-pass filter, the overall
+  level must move less than 4 dB, and the rendered audio must stay finite and
+  bounded at every coupling.
+
+  Two things changed once measured. The plan said the zero position would
+  **distinguish /m/ from /n/**; that was dropped, because it needs a second
+  control for a difference that only means anything when there are consonants to
+  place it in, and Vocalor does not sing words. And the obvious implementation —
+  Klatt's antiresonator, normalised to unity at DC — is wrong here: for a zero
+  this low it leaves 48 dB of gain at Nyquist, and it measured as a 12.8 dB
+  *rise* in the 1.65 – 2.2 kHz band. A hum came out as the brightest sound the
+  instrument makes. It is a matched pole-zero pair instead, which returns the
+  response to unity either side of the notch.
 
 - [x] **6. Articulator-rate coarticulation.** Make the vowel transition rate a
-  property of the articulators rather than a de-zipper: F1 on a jaw time
-  constant, F2 on a slower tongue-body constant, F3–F5 faster, with the total
-  transition scaled by how far the vowel actually moved. Closes gap 6.
-  *Verified:* a pad step from /i/ to /a/ must produce 10–90 % rise times inside
-  a stated window per formant, with F2 measurably slower than F1; a small vowel
-  move must still settle quickly; the existing zipper-free guarantee must hold.
+  property of the articulators rather than a de-zipper: each formant gets a
+  speed rather than a deadline, with the transition time scaled by how far that
+  formant actually has to move. Closes gap 6. *Verified:* a pad step from /i/ to
+  /a/ must produce 10–90 % rise times inside a stated window for F1 and F2,
+  ordered F1 > F2 > F3; a small vowel move must settle in well under half the
+  time; the existing zipper-free guarantee must hold.
+
+  The plan said **"F1 on a jaw time constant, F2 on a slower tongue-body
+  constant"**. That ordering is not supportable: the jaw and the tongue body
+  move at comparable speeds in vowel-to-vowel transitions and there is no robust
+  general claim that one leads the other. What is defensible is the ordering the
+  engine already had — the lower formants follow the larger cavity adjustments
+  and are the slowest — so that was kept and moved onto articulator timescales.
+  The plan also expected a timing claim for every formant; F5 is 4950 Hz for
+  both /i/ and /a/ and does not move at all, which the first version of the test
+  got wrong.
 
 - [x] **7. Singer's-formant cluster.** Replace the F3/F4 amplitude trim with an
   epilarynx model that pulls F3, F4 and F5 toward a profile-dependent cluster
@@ -262,6 +284,27 @@ opens on something playable.
   program already in force as a no-op, because that is the write a host makes
   while restoring a session and it would otherwise overwrite the player's
   edits.
+
+## What the steps measured
+
+Every figure below is printed by the DSP test suite, so it can be re-checked by
+running it. "Before" is commit `732b705`, the state this plan was written
+against.
+
+| Gap | Before | After |
+| --- | --- | --- |
+| Dynamic timbre swing (2.4 – 4.7 kHz against the fundamental, 100 % → 30 %) | no dynamic control existed | 13.9 dB against 10.9 dB |
+| Close vowel at C6 against the open vowel | 25.1 dB quieter | 7.0 dB quieter |
+| Close vowel at C6 against itself at C4 | 20.1 dB quieter | 0.8 dB louder |
+| Chord-mode major third | 400.0 cents | 386.3 cents at full intonation |
+| Twelve-singer pitch dispersion at full Humanize | 4.4 cents | 12.6 cents |
+| Largest singer drift over nine seconds | 3.5 cents | 10.4 cents |
+| Nasal notch band, velum fully open | no nasal branch existed | 27.8 dB down, overall level 0.1 dB |
+| Vowel step /i/ → /a/, F1 10 – 90 % rise | 35 ms, from its 16 ms time constant | 117 ms, measured |
+| F3-to-F5 span, Tension 0 → 95 % | unchanged: tension never moved those frequencies | 1860 → 1065 Hz |
+| 2.05 – 4 kHz share, Tension 0 → 95 % | +12 % on F3 and +6 % on F4, no clustering | 8.8 dB |
+| Factory programs | 1, unnamed | 12, named and rendered by the suite |
+| Twelve-singer 96 kHz render | 493.6 ns/sample | 500.5 ns/sample |
 
 ## Deliberately not done
 
