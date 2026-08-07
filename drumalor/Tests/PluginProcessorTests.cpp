@@ -338,6 +338,11 @@ void testNewParametersAffectTheEngine()
                            1, drumalor::getStandardMidiNote (drumalor::Instrument::Kick),
                            static_cast<juce::uint8> (127)),
                        0);
+        // The control is ramped at the master gain's 20 ms constant, so let it
+        // settle over silence before the hit rather than measuring the ramp.
+        juce::AudioBuffer<float> settle;
+        for (int block = 0; block < 8; ++block)
+            render (processor, settle, none);
 
         constexpr double pi = 3.14159265358979323846;
         const double omega = 2.0 * pi * 2500.0 / sampleRate;
@@ -622,8 +627,10 @@ void testHiHatPedalController()
 
     // Let the closing settle, then confirm the hat is gone rather than still
     // ringing out its open tail.
+    // Half a second, which is far longer than the closed pair or the foot chick
+    // a full close makes can ring for.
     juce::MidiBuffer none;
-    for (int block = 0; block < 24; ++block)
+    for (int block = 0; block < 48; ++block)
         render (processor, audio, none);
     expect (processor.getActiveVoiceCount() == 0,
             "MIDI CC4 did not close the hi-hat");
