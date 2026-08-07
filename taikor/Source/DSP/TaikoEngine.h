@@ -492,8 +492,19 @@ private:
         };
         std::array<ContinuumBand, continuumBandCount> continuum {};
 
-        // Attack pitch glide. The head is stretched by the stroke, so its
-        // tension - and every mode with it - starts sharp and settles.
+        // Attack pitch glide. A membrane held at a fixed rim cannot move
+        // transversely without getting longer, and a longer head is a tighter
+        // one: the tension rises with the square of the displacement, so a
+        // struck head starts sharp and settles as it empties. That is the whole
+        // of the mechanism, and it is why the glide has no clock of its own -
+        // it decays because the head does.
+        //
+        // tensionEnvelope is a peak-following mean square of the membrane
+        // modes' states, which stands in for the head's squared displacement;
+        // tensionDecay is its release per control tick; tensionDepth is
+        // everything in front of it - the head's in-plane stiffness against its
+        // tension, over the radius squared, over the square of the model's
+        // output calibration so that calibration cannot reach the pitch.
         float tensionEnvelope { 0.0f };
         float tensionDecay { 0.999f };
         float tensionDepth { 0.0f };
@@ -609,6 +620,12 @@ private:
         // they open out further the smaller and thicker the head is.
         float stiffnessBatter { 0.0f };
         float stiffnessResonant { 0.0f };
+        // The head's in-plane stiffness measured against its own tension,
+        // E h / ((1 - nu^2) T). It is the coefficient of (w/a)^2 in the tension
+        // a clamped membrane gains from being displaced, and therefore the only
+        // thing the attack pitch glide needs from the drum: a slack head bends
+        // a long way sharp and a tight one barely moves.
+        float stretchStiffness { 0.0f };
         float headLossFactor { 0.012f };
         // The viscous half of the hide's loss, damping as omega squared where
         // headLossFactor damps as omega. See resolveDrumFor.

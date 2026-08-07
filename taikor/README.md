@@ -131,7 +131,7 @@ a voicing offset.
 | Bachi Hardness | 0–100 % | 70 % | Felt beater → seasoned oak. Sets the Hertz contact stiffness |
 | Strike Position | Centre 100 → Rim 100 | As written | Offsets every stroke's own radius |
 | Velocity Depth | 0–100 % | 75 % | How far MIDI velocity moves the impact speed |
-| Tension Mod | 0–100 % | 40 % | Attack pitch glide: a hard stroke stretches the head |
+| Tension Mod | 0–100 % | 40 % | Depth of the attack pitch glide, which is the head stretching itself: a hard stroke displaces the hide, a displaced hide is a longer and therefore tighter one, and the drum starts sharp. At 0 the head is treated as linear |
 | Stick Noise | 0–100 % | 35 % | Broadband contact noise on the hide |
 | Humanise | 0–100 % | 40 % | Per-stroke variation in position, angle, speed and contact time. At 0 the drum is a machine and repeats exactly |
 | Octave Body | Tuned → Family | 70 % | How an octave is realised (see below) |
@@ -371,8 +371,33 @@ shime-daiko with an odaiko club. Leaving it fixed made the smallest drums about
 twenty-five decibels louder than the largest — a property of the wrong stick
 rather than of the instrument.
 
-A hard stroke also stretches the head, raising its tension until it decays: the
-attack pitch glide every large drum has.
+### The attack pitch glide
+
+A membrane clamped at its rim cannot move without getting longer, and a longer
+head is a tighter one. The tension it gains goes as the square of its
+displacement — the von Kármán / Berger term — and the pitch as the square root
+of the tension, so a struck head starts sharp and settles. That is the attack
+glide every large drum has, and it is the whole of the mechanism: there is no
+envelope and no time constant anywhere in it. The glide ends when the head has
+stopped moving, so it decays at the head's own rate rather than on a clock.
+
+Everything follows from that without being written down separately. A hard
+stroke bends further than a light one because it pushes the head further —
+about fifty cents against three at the factory setting. A slack head bends far
+more than a tight one, because the tension a given displacement adds is measured
+against the tension already there: at a quarter of the tension range the same
+stroke bends four times as far. A Katsu barely bends the head at all, because a
+stick on the shell hardly moves the hide. And the depth is computed after the
+model's one output-level calibration has been divided out, so that constant
+cannot reach the drum's pitch.
+
+It is a first-order expansion, so it is applied through a form that agrees with
+it exactly while the displacement is small and saturates where the expansion
+stops describing the head. That matters at the edge of the controls rather than
+in the middle of them: the fractional tension rise goes as the fourth inverse
+power of the radius, so the smallest head at no tension reached fifteen
+semitones of bend before it was bounded, and the factory drum reaches a tenth of
+a tension at full velocity.
 
 ### Two sticks, and nothing else
 

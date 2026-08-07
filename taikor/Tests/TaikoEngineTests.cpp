@@ -171,6 +171,15 @@ struct TaikoEngineTestAccess
         return result;
     }
 
+    // The frequency multiplier the attack glide is currently applying to the
+    // membrane. Read directly because the glide is a few tens of cents on a
+    // partial that is gone in a second, which no window short enough to catch
+    // it can resolve.
+    static float appliedTensionShift (const TaikoEngine& engine, int slot = 0) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t> (slot)].appliedTensionShift;
+    }
+
     static bool everyDecayIsFinite (const TaikoEngine& engine)
     {
         for (const auto& voice : engine.voices_)
@@ -1225,6 +1234,88 @@ void testTheDrumSoundsLikeADrumAndNotLikeATone()
         expect (bank[0] < bank[1] * 3.0f,
                 "the lowest mode must not outlive the one above it so far that "
                 "the stroke ends as a sine");
+}
+
+// The attack pitch glide is the head stretching itself. A membrane clamped at
+// its rim cannot move without getting longer, and a longer head is a tighter
+// one, so the tension rises with the square of the displacement. Everything
+// that follows from that had to be true and was not: the glide used to be a
+// fixed 115 ms envelope whose depth read the impact speed and nothing else -
+// not the tension it was fighting, not the size of the head, not the material -
+// with a term on top of it that scaled with the engine's own output
+// calibration.
+void testTheAttackGlideComesFromTheHead()
+{
+    // The largest frequency multiplier the glide reaches over the first third
+    // of a second, which is where the head is moving enough to matter.
+    const auto peakGlide = [] (taikor::EngineParameters parameters,
+                               taikor::Articulation articulation, float velocity)
+    {
+        parameters.humanise = 0.0f;
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, 64);
+        engine.reset();
+        engine.trigger (articulation, 0, velocity);
+
+        std::array<float, 64> left {};
+        std::array<float, 64> right {};
+        float worst = 1.0f;
+        for (int block = 0; block < 250; ++block)
+        {
+            engine.process (left.data(), right.data(), 64);
+            worst = std::max (worst,
+                              taikor::TaikoEngineTestAccess::appliedTensionShift (engine));
+        }
+        return worst;
+    };
+
+    const auto base = defaultParameters();
+
+    auto full = base;
+    full.tensionModulation = 1.0f;
+    const auto hard = peakGlide (full, taikor::Articulation::Don, 1.0f);
+    const auto soft = peakGlide (full, taikor::Articulation::Don, 0.25f);
+
+    expect (hard > 1.002f,
+            "a hard stroke must bend the head sharp");
+    // Against the excess over unity, because these are frequency multipliers
+    // and the claim is about how far the head was pushed, not about the pitch
+    // it settles back to.
+    expect (hard - 1.0f > (soft - 1.0f) * 3.0f,
+            "the glide must follow how far the head is actually pushed, so a hard "
+            "stroke must bend markedly further than a light one");
+
+    // Off entirely at zero, with no residue. The control is a depth on a
+    // physical term, so zero has to mean the head is treated as linear.
+    auto none = base;
+    none.tensionModulation = 0.0f;
+    const auto silentGlide = peakGlide (none, taikor::Articulation::Don, 1.0f);
+    expect (std::abs (silentGlide - 1.0f) < 1.0e-6f,
+            "with Tension Mod at zero nothing may bend the head");
+
+    // The claim the old envelope could not make. The fractional tension a
+    // displacement buys goes as the head's in-plane stiffness over the tension
+    // it already has, and the displacement a given blow produces falls with the
+    // tension too, so a tight head bends very much less than a slack one. On a
+    // real drum this is the difference between an o-daiko, which audibly bends
+    // on every hard stroke, and a shime-daiko, which does not.
+    auto slack = full;
+    slack.tension = 0.25f;
+    auto tight = full;
+    tight.tension = 0.85f;
+
+    const auto slackGlide = peakGlide (slack, taikor::Articulation::Don, 1.0f);
+    const auto tightGlide = peakGlide (tight, taikor::Articulation::Don, 1.0f);
+    expect (slackGlide - 1.0f > (tightGlide - 1.0f) * 3.0f,
+            "a slack head must bend far further than a tight one struck the same way");
+
+    // And it has to be the head doing it. A Katsu is the stick on the wooden
+    // body: it puts very little into the membrane, so it must stretch it very
+    // little, without that having to be written down anywhere as a rule.
+    const auto shellGlide = peakGlide (full, taikor::Articulation::Katsu, 1.0f);
+    expect (shellGlide - 1.0f < (hard - 1.0f) * 0.25f,
+            "a stroke on the shell must barely stretch the head");
 }
 
 // Shell Resonance is a continuous control and has to behave like one. It used
@@ -2945,6 +3036,7 @@ int main()
     testVoiceStealingStaysBounded();
     testTheDrumSoundsLikeADrumAndNotLikeATone();
     testShellResonanceHasNoStepInIt();
+    testTheAttackGlideComesFromTheHead();
     testHeadStiffnessOpensTheModalRatios();
     testTheContinuumFollowsTheHead();
     testEveryParameterSurvivesTheCache();

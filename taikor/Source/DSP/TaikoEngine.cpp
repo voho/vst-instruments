@@ -165,6 +165,34 @@ constexpr float maximumImpactSpeed = 6.0f;
 // otherwise drift against everything else.
 constexpr float modelScale = 292.0f;
 
+// The shape constant of the attack pitch glide: how much of the head's in-plane
+// stiffness a displacement of a given size actually calls on. The physics is
+// the Berger/von Karman result that a membrane clamped at its rim gains tension
+// as the square of its transverse displacement; what this absorbs is the modal
+// shape factor between the resonator states the engine has and the mean square
+// slope the tension rise really depends on. It is dimensionless, and it is the
+// only number here chosen rather than derived - deliberately placed after the
+// division by modelScale, so the engine's output calibration cannot reach the
+// drum's pitch. It used to: the term this replaced summed the raw resonator
+// states, which are in units of that calibration, and at full velocity a third
+// of the bend came from it.
+constexpr float tensionStretchCalibration = 0.044f;
+// Where that expansion stops describing the head. Berger's result is the first
+// term of a series in the displacement, and it is meaningless once the tension
+// a single stroke adds is comparable with the tension already there, so it is
+// applied through a form that agrees with it exactly while the displacement is
+// small and asymptotes here. The bound is not decoration: the fractional
+// tension rise goes as the fourth inverse power of the radius, so a 15 cm head
+// taken to the top of the keyboard with the octave bought entirely by size -
+// which is a tiny slack membrane rather than a shime-daiko - reached fifteen
+// semitones of attack bend without it. Nothing near the factory drum comes
+// close; a full-arm stroke there raises the tension by a tenth.
+constexpr float tensionStretchLimit = 0.30f;
+// Release of the peak follower that stands in for the head's squared
+// displacement. Long against a cycle of any mode that matters and short against
+// the head's own decay, so the glide follows the ring rather than a clock.
+constexpr float tensionFollowerSeconds = 0.040f;
+
 // Radiation damping is the one loss term whose absolute size depends on how
 // the drum is mounted and how much of the body is free to move, none of which
 // this model represents. Its shape - which modes lose energy and how that
@@ -777,6 +805,10 @@ void TaikoEngine::silenceVoice (Voice& voice) noexcept
     voice.retireStep = 0.0f;
     voice.peakLevel = 0.0f;
     voice.tensionEnvelope = 0.0f;
+    // Belongs to the stroke, like the schedule below it: it carries the drum's
+    // in-plane stiffness against its tension, and a slot reused by a stroke on
+    // a different drum must not inherit the last one's.
+    voice.tensionDepth = 0.0f;
     voice.appliedTensionShift = 1.0f;
     // Belongs to the stroke, not to the slot. The attack glide runs before the
     // new contact schedule is known - Tension Mod is on by default, so that is
@@ -906,6 +938,16 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
     drum.stiffnessBatter = rigidity / (drum.tension * radiusSquared);
     drum.stiffnessResonant = rigidity * densityRatio * densityRatio * densityRatio
                            / (drum.resonantTension * radiusSquared);
+
+    // The same material seen in the plane of the head rather than across it.
+    // A membrane clamped at its rim cannot move without stretching, and the
+    // tension it gains goes as E h / (1 - nu^2) times the square of the
+    // displacement over the radius. Divided by the tension it already has,
+    // because what moves the pitch is the fractional change - which is why a
+    // slack o-daiko head bends a long way sharp on a hard stroke and a shime
+    // held at four times the tension barely moves at all.
+    drum.stretchStiffness = headModulus * thickness
+                          / ((1.0f - headPoisson * headPoisson) * drum.tension);
 
     // Hysteretic loss in the head material. A thick hide loses more per cycle
     // than a thin film; the damping control scales what the material gives.
@@ -2142,19 +2184,26 @@ void TaikoEngine::trigger (Articulation articulation, int octaveOffset,
         1.0f - std::exp (-2.0f * piFloat * noiseCorner * inverseSampleRate_);
     voice.noiseBandState = 0.0f;
 
-    // Stretching the head raises its tension, so a hard stroke starts sharp
-    // and settles as it decays. The depth follows the impact speed because
-    // that is what sets how far the head is pushed.
-    const float glideDepth = applied_.tensionModulation * 0.115f
-                           * clampFloat (impactSpeed / maximumImpactSpeed, 0.0f, 1.0f)
-                           * profile.membraneGain;
-    voice.tensionDepth = glideDepth;
-    voice.tensionEnvelope = glideDepth > 0.0f ? 1.0f : 0.0f;
-    voice.tensionDecay = std::exp (-1.0f / (0.115f * static_cast<float> (sampleRate_))
-                                   * static_cast<float> (controlPeriod));
+    // Stretching the head raises its tension, so a hard stroke starts sharp and
+    // settles as it decays. Nothing here schedules that: the coefficient below
+    // is the drum's, not the stroke's, and what makes the glide big on a hard
+    // stroke and absent on a soft one is that the head is displaced further.
+    //
+    // It carries 1/modelScale^2 because the resonator states it will be applied
+    // to are in units of that calibration and the displacement it stands for is
+    // in metres. That division is the point of the whole rewrite: the engine's
+    // one loudness constant is documented as unable to distort any relationship
+    // inside the model, and the term this replaces let it set a third of the
+    // bend.
+    constexpr float inverseModelScaleSquared = 1.0f / (modelScale * modelScale);
+    voice.tensionDepth = tensionStretchCalibration * applied_.tensionModulation
+                       * drum.stretchStiffness * inverseModelScaleSquared
+                       / std::max (drum.radius * drum.radius, 1.0e-6f);
+    voice.tensionEnvelope = 0.0f;
+    voice.tensionDecay =
+        std::exp (-static_cast<float> (controlPeriod)
+                  / (tensionFollowerSeconds * static_cast<float> (sampleRate_)));
     voice.appliedTensionShift = 1.0f;
-    if (glideDepth > 0.0f)
-        applyTensionShift (voice, 1.0f + glideDepth);
 
     // The airborne path from the stick to each microphone. Plain geometry: the
     // strike lands somewhere on the head, each mic sits somewhere in front of
@@ -2457,29 +2506,38 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
 
     // The attack glide and the wheel are one thing: both press the head, both
     // raise its tension, and both therefore scale the membrane's frequencies.
-    // Berger-style modal energy tension coupling: large displacement stores
-    // kinetic and potential energy across the membrane modes, increasing the
-    // instantaneous wave speed on hard attacks.
-    float modalEnergySum = 0.0f;
-    if (voice.tensionEnvelope > 0.01f)
+    //
+    // The glide is the head's own doing. A membrane clamped at its rim gets
+    // longer when it moves, so its tension rises with the square of the
+    // displacement - the Berger/von Karman term - and the frequency with the
+    // square root of the tension. What the head is doing right now is in the
+    // resonator states, so that is what this reads: a peak follower over their
+    // mean square, released slowly enough to sit still through a cycle of the
+    // lowest mode and quickly enough to follow the head as it empties.
+    //
+    // There is no envelope and no time constant of its own in any of this. The
+    // glide is over when the head has stopped moving, which is why a slack
+    // o-daiko bends further and for longer than a shime-daiko does at four
+    // times the tension.
+    if (voice.tensionDepth > 0.0f)
     {
+        float squaredDisplacement = 0.0f;
         for (int index = 0; index < voice.activeModeCount; ++index)
         {
             const auto& mode = voice.modes[static_cast<std::size_t> (index)];
-            if (mode.membrane)
-            {
-                const float y1 = static_cast<float> (mode.resonator.y1);
-                modalEnergySum += y1 * y1;
-            }
+            if (! mode.membrane)
+                continue;
+            const auto state = static_cast<float> (mode.resonator.y1);
+            squaredDisplacement += state * state;
         }
-    }
-    const float energyTensionBoost = voice.tensionEnvelope > 0.01f
-        ? applied_.tensionModulation * 0.005f * std::sqrt(modalEnergySum) : 0.0f;
 
-    if (voice.tensionEnvelope > 1.0e-4f)
-        voice.tensionEnvelope *= voice.tensionDecay;
+        voice.tensionEnvelope = std::max (squaredDisplacement,
+                                          voice.tensionEnvelope * voice.tensionDecay);
+    }
     else
+    {
         voice.tensionEnvelope = 0.0f;
+    }
 
     // The voice's modes were built with whatever tuning stood at the strike, so
     // only the movement since then is left to apply. Both the Pitch control and
@@ -2487,9 +2545,10 @@ void TaikoEngine::updateVoiceControl (Voice& voice) noexcept
     // tail retunes it for the same reason the wheel does - so they are carried
     // together as one offset in semitones.
     const float tuningNow = applied_.pitch + 2.0f * pitchBend_;
-    const float effectiveTensionDepth = voice.tensionDepth + energyTensionBoost;
-    const float shift = (1.0f + effectiveTensionDepth * voice.tensionEnvelope)
-                      * std::exp2 ((tuningNow - voice.tuningAtStrike) / 12.0f);
+    const float raw = voice.tensionDepth * voice.tensionEnvelope;
+    const float rise = tensionStretchLimit * raw / (tensionStretchLimit + raw);
+    const float stretch = std::sqrt (1.0f + rise);
+    const float shift = stretch * std::exp2 ((tuningNow - voice.tuningAtStrike) / 12.0f);
 
     if (std::abs (shift - voice.appliedTensionShift) > 1.0e-5f)
         applyTensionShift (voice, shift);

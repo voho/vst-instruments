@@ -161,7 +161,7 @@ each lands with a test in `Tests/` that fails without it.
   *Verified by*: a test that sweeps Shell Resonance across 0.01 and requires the
   rendered Katsu level to be continuous, which fails by 1.59 dB today.
 
-- [ ] **3. Derive the attack pitch glide from the head's own stretching.**
+- [x] **3. Derive the attack pitch glide from the head's own stretching.**
   Replace the fixed envelope and the `modelScale`-dependent energy term with a
   von Kármán/Berger tension rise: the mean tension a clamped membrane gains from
   a transverse displacement `w` is `ΔT/T ∝ (E h / T(1−ν²))·(w/a)²`, and `w` is
@@ -170,8 +170,14 @@ each lands with a test in `Tests/` that fails without it.
   115 ms clock, falls as tension rises, and no longer depends on the output
   calibration. Closes gap 2.
   *Verified by*: the applied tension shift after a hard stroke must fall when
-  Head Tension is raised at constant velocity and rise with a thicker head,
-  neither of which is true today; and it must still rise with velocity.
+  Head Tension is raised at constant velocity - a slack head must bend at least
+  three times as far as a tight one - which is not true today because the depth
+  does not read the tension at all. It must also rise with velocity, vanish
+  exactly at Tension Mod 0, and stay near unity for a stroke on the shell.
+  The claim that a thicker head bends further was in the first draft of this
+  plan and is dropped: a thicker head is stiffer in the plane *and* heavier, and
+  measurement puts the two within a factor of two of cancelling, so it is not a
+  prediction worth asserting.
 
 - [ ] **4. Let a stroke damp the head it lands on.** A bachi meeting a ringing
   membrane is a mass arriving on a moving surface: with restitution `e` it
