@@ -2835,6 +2835,53 @@ is pinouts and truth tables only — the µPC1252H2 entry is a block diagram
 with no electrical curves, and no 4051 on-resistance is given — so it
 advances neither OQ-02 nor OQ-07 numerically.
 
+## Factory-demo A/B pass — 2026-08-07 (real-unit audio compared, adjudicated)
+
+**Work mode:** analysis of supplied evidence. A complete per-preset demo set
+of a real JUNO-106 playing its factory patches (synthmania.com, MP3 128k,
+unit and chain undocumented) was compared against the engine rendering the
+same stored patch bytes at matched keys. Twelve comparisons were built and
+put through two rounds of independent refute-first adjudication; the first
+round rejected every naive pairing (the demos are chordal almost
+throughout, and sub-equipped patches set octave traps for pitch trackers),
+and ten adjudicator-prescribed rescues (correct keys, clean segments,
+chord-vs-chord renders through the engine's full common path) produced ten
+presentable comparisons, all with caveats, none excluded. Median absolute
+pitch error across the measurable set: **4.0 cents**. Where the material
+could measure at all, harmonic-stack agreement reached 2.2–2.9 dB RMS
+(A15 chord composite, A38) and 4.9 dB (A34). The MP3/undocumented-chain
+bound is stated on every card; this pass does not substitute for the
+queue's calibrated captures.
+
+Genuine model observations that survived adjudication, recorded as leads
+(each hedged by the demo chain and none promoted):
+
+- **Upper-mid darkness** recurs across independent verifiers: harmonic-peak
+  deficits of ~3.6 dB (1–2 kHz) growing to ~10 dB (2–3 kHz) on A15;
+  ~6–8 dB less 2–3.5 kHz presence on A34's matched note; a ~3 dB
+  attack-brightness deficit at 320–600 Hz on A48; B33's harmonics above
+  ~3 kHz fading faster through the pluck decay. Bears on OQ-15's open
+  drive budget and OQ-18's knee via patch-byte-dependent cutoff.
+- **Sub-oscillator balance**: A15's chord render carries a ~14 dB hotter
+  41 Hz sub line than the hardware relative to the reference band, while
+  A34's single note locks sub weight within ~1 dB — an inconsistency that
+  points at the mixer's loaded level budget (OQ-15, the 27 kΩ+diode leg)
+  rather than a single scalar.
+- **Hiss floor**: the model's broadband floor reads ~9 dB above the
+  hardware recording's floor at 3–9 kHz on A17 after discounting known
+  confounds — "plausible but unproven" per the verifier, because the
+  hardware floor may be the MP3's own; feeds OQ-03's calibrated-capture
+  ask.
+- **Chorus behaviour corroborated where measurable**: A17's 0.45 Hz swirl
+  and ±6 Hz vibrato sidebands match; A63 reproduces the square-plus-sub
+  voicing "to within a few dB everywhere the MP3 can measure".
+
+The published comparison page carries every clip, spectrogram pair, band
+overlay, metric and caveat. The CNCD sample-CD corpus (327 uncompressed
+real-106 WAVs, including a 70-file stepped-cutoff bass series) was also
+retrieved and remains unconsumed — the stepped series is close to a
+filter-characterisation dataset and is the natural next A/B target.
+
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
 - **Chorus modes:** the JUNO-106 has Off, I and II. Its owner's manual says I
