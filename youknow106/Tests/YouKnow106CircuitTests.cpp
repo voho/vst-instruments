@@ -35,6 +35,21 @@ struct YouKnow106TestAccess
             loopHeadroomVolts;
     }
 
+    static constexpr float pwmFirstPoleSeconds() noexcept
+    {
+        return YouKnow106Engine::pwmHoldFirstPoleSeconds;
+    }
+
+    static constexpr float pwmSecondPoleSeconds() noexcept
+    {
+        return YouKnow106Engine::pwmHoldSecondPoleSeconds;
+    }
+
+    static constexpr float subHoldSlewSeconds() noexcept
+    {
+        return YouKnow106Engine::subHoldSlewSeconds;
+    }
+
     static std::vector<float> renderCascade(const std::vector<float>& input,
                                             float g, float feedback)
     {
@@ -46,23 +61,53 @@ struct YouKnow106TestAccess
         return output;
     }
 
-    static std::array<float, 4> cascadeDerivativeAfterRetime(
+    static std::array<float, 4> cascadeVoltagesAfterRetime(
         const std::array<float, 4>& voltage,
-        const std::array<float, 4>& derivative,
         float previousG, float nextG) noexcept
     {
         Cascade cascade;
         cascade.voltage = voltage;
-        for (std::size_t stage = 0; stage < cascade.state.size(); ++stage)
-            cascade.state[stage] = voltage[stage]
-                                 + previousG * derivative[stage];
+        cascade.state = voltage;
         cascade.retime(previousG, nextG);
+        return cascade.voltage;
+    }
 
-        std::array<float, 4> realised {};
-        for (std::size_t stage = 0; stage < realised.size(); ++stage)
-            realised[stage] = (cascade.state[stage] - cascade.voltage[stage])
-                            / nextG;
-        return realised;
+    static float cascadeRetimeStepError(float previousG, float nextG)
+    {
+        // Settle under a DC drive at one grid, change grids, and report how
+        // far the next output steps from the settled value.
+        Cascade cascade;
+        cascade.reset();
+        float settled = 0.0f;
+        for (int index = 0; index < 20000; ++index)
+            settled = cascade.process(0.5f, previousG, 0.0f);
+        cascade.retime(previousG, nextG);
+        return std::abs(cascade.process(0.5f, nextG, 0.0f) - settled);
+    }
+
+    static float cascadeIdentityRetimeError()
+    {
+        // Two cascades share a transient history; one takes an identity
+        // retime mid-ring. If the carried states fully describe the filter,
+        // the pair must stay bit-identical afterwards.
+        Cascade a;
+        Cascade b;
+        a.reset();
+        b.reset();
+        constexpr float g = 0.05f;
+        for (int index = 0; index < 64; ++index)
+        {
+            const float x = index == 0 ? 1.0f : 0.0f;
+            a.process(x, g, 3.0f);
+            b.process(x, g, 3.0f);
+        }
+        b.retime(g, g);
+        float worst = 0.0f;
+        for (int index = 0; index < 256; ++index)
+            worst = std::max(worst,
+                             std::abs(a.process(0.0f, g, 3.0f)
+                                      - b.process(0.0f, g, 3.0f)));
+        return worst;
     }
 
     // The decimation kernel as built, so the suite can measure the transfer
@@ -750,17 +795,27 @@ void testCascadeAgainstReferenceSolve()
         }
     }
 
-    // Changing HQ changes dt, not a voice card's capacitor charge or physical
-    // derivative. The trapezoidal carry must be re-expressed on the new grid
-    // rather than reused as though its old g had the new units.
+    // Changing HQ changes dt, not a voice card's capacitor charge or drive
+    // history. The path-average form carries a physical voltage and a
+    // dimensionless drive, both invariant on the new grid, so a retime must
+    // leave every capacitor voltage exactly in place, a settled cascade must
+    // not step when the grid changes under it, and an identity retime must
+    // be invisible.
     constexpr std::array voltage { 0.25f, -0.5f, 0.75f, -1.0f };
-    constexpr std::array derivative { 0.125f, -0.25f, 0.5f, -0.75f };
-    const auto retimed = YouKnow106TestAccess::cascadeDerivativeAfterRetime(
-        voltage, derivative, 0.03125f, 0.125f);
-    for (std::size_t stage = 0; stage < derivative.size(); ++stage)
-        expectNear(retimed[stage], derivative[stage], 2.0e-6,
-                   "HQ retiming changed OTA stage derivative "
+    const auto kept = YouKnow106TestAccess::cascadeVoltagesAfterRetime(
+        voltage, 0.03125f, 0.125f);
+    for (std::size_t stage = 0; stage < voltage.size(); ++stage)
+        expectNear(kept[stage], voltage[stage], 0.0,
+                   "HQ retiming disturbed OTA capacitor charge "
                        + std::to_string(stage));
+    expect(YouKnow106TestAccess::cascadeRetimeStepError(0.03125f, 0.125f)
+               < 1.0e-5f,
+           "a settled cascade stepped when the numerical grid refined");
+    expect(YouKnow106TestAccess::cascadeRetimeStepError(0.125f, 0.03125f)
+               < 1.0e-5f,
+           "a settled cascade stepped when the numerical grid coarsened");
+    expect(YouKnow106TestAccess::cascadeIdentityRetimeError() == 0.0f,
+           "an identity retime altered the cascade");
 }
 
 void testCascadeOscillationThreshold()
@@ -811,6 +866,73 @@ void testCascadeSurvivesAdversarialControl()
         finite = finite && std::isfinite(value) && std::abs(value) < 1.0e4f;
     }
     expect(finite, "cascade diverged under an adversarial control sweep");
+}
+
+void testCascadeDeniesTheFoldback()
+{
+    // The analogue cascade cannot fold energy back into the audio band; a
+    // sampled tanh set can. The recorded hot case -- a full-level
+    // C6-register saw into a 16 kHz cutoff at strong resonance on the
+    // 192 kHz internal grid -- measured discrete in-band lines at
+    // 192 kHz - n*f0 near -55 dBc under endpoint evaluation. The
+    // path-average step must hold every such line below -60 dBc while the
+    // reference-solve and oscillation tests above pin the linear behaviour
+    // it must not change.
+    constexpr double sampleRate = 192000.0;
+    constexpr double fundamental = 1046.502;
+    constexpr float amplitude = 2.4f;
+    const float g = static_cast<float>(std::tan(pi * 16000.0 / sampleRate));
+    constexpr float feedback = 3.8f;
+
+    constexpr std::size_t settle = std::size_t { 1 } << 15;
+    constexpr std::size_t capture = std::size_t { 1 } << 17;
+    const int harmonics = static_cast<int>(0.5 * sampleRate / fundamental);
+    std::vector<float> input(settle + capture);
+    for (std::size_t index = 0; index < input.size(); ++index)
+    {
+        double sum = 0.0;
+        const double phase =
+            2.0 * pi * fundamental * static_cast<double>(index) / sampleRate;
+        for (int h = 1; h <= harmonics; ++h)
+            sum += std::sin(h * phase) / h;
+        input[index] = amplitude * static_cast<float>(sum * 2.0 / pi);
+    }
+    const auto output = YouKnow106TestAccess::renderCascade(input, g, feedback);
+
+    // Windowed single-bin magnitude; Blackman-Harris keeps the saw's own
+    // harmonics from leaking into the measured alias lines.
+    const auto magnitudeAt = [&] (double frequency) {
+        double re = 0.0;
+        double im = 0.0;
+        for (std::size_t index = 0; index < capture; ++index)
+        {
+            const double window = 0.35875
+                - 0.48829 * std::cos(2.0 * pi * index / (capture - 1))
+                + 0.14128 * std::cos(4.0 * pi * index / (capture - 1))
+                - 0.01168 * std::cos(6.0 * pi * index / (capture - 1));
+            const double phase = 2.0 * pi * frequency
+                * static_cast<double>(settle + index) / sampleRate;
+            const double value =
+                window * static_cast<double>(output[settle + index]);
+            re += value * std::cos(phase);
+            im += value * std::sin(phase);
+        }
+        return std::sqrt(re * re + im * im);
+    };
+
+    const double reference = magnitudeAt(fundamental);
+    expect(reference > 0.0, "the alias fixture lost its fundamental");
+    double worstDb = -300.0;
+    for (int n = 165; n <= 201; ++n)
+    {
+        const double alias = std::abs(sampleRate - n * fundamental);
+        if (alias < 20.0 || alias > 20000.0)
+            continue;
+        worstDb = std::max(worstDb,
+                           20.0 * std::log10(magnitudeAt(alias) / reference));
+    }
+    expect(worstDb < -60.0,
+           "a folded tanh line rose above -60 dBc in the hot resonant case");
 }
 
 void testNoteTimerLaw()
@@ -1282,10 +1404,10 @@ void testEnvelopeAndAmplifierLaws()
                expectedBusCorner, 1.0e-6,
                "common-VCA C12/R36 input-coupling corner");
     expectNear(YouKnow106Engine::voiceSummerGain * Chorus::dryMixGain,
-               10.0 / 39.0, 1.0e-6,
+               10.0 / 47.0, 1.0e-6,
                "net per-voice dry gain misses the jack-board ratios");
     expectNear(YouKnow106Engine::voiceSummerGain * Chorus::wetMixGain,
-               10.0 / 47.0, 1.0e-6,
+               10.0 / 39.0, 1.0e-6,
                "net per-voice wet gain misses the jack-board ratios");
 }
 
@@ -1320,6 +1442,21 @@ void testPulseWidthAndHighPassLaws()
         expect(duty > 0.0f && duty < 1.0f, "pulse reaches a rail");
     }
 
+    // The held PWM CV reaches the comparators through its p. 13 smoothing
+    // chain -- R117 100 kOhm into C62 47 nF, then R116 560 kOhm with C63
+    // 4.7 nF around IC17a -- and the stored SUB level crosses R11 1 kOhm into
+    // C1 10 uF ahead of the R9/R10 inverter. The shipped time constants must
+    // stay the products of those anchored designators.
+    expectNear(YouKnow106TestAccess::pwmFirstPoleSeconds(),
+               100.0e3 * 47.0e-9, 1.0e-9,
+               "PWM first smoothing pole is not R117 * C62");
+    expectNear(YouKnow106TestAccess::pwmSecondPoleSeconds(),
+               560.0e3 * 4.7e-9, 1.0e-9,
+               "PWM second smoothing pole is not R116 * C63");
+    expectNear(YouKnow106TestAccess::subHoldSlewSeconds(),
+               1.0e3 * 10.0e-6, 1.0e-9,
+               "SUB hold slew is not R11 * C1");
+
     // The per-card comparator offset is calibrated to leave a 48% to 52% duty
     // window across the six voices, so the voltage the engine draws against has
     // to be the one that produces exactly two points either way. Asserting the
@@ -1341,17 +1478,54 @@ void testPulseWidthAndHighPassLaws()
     }
 
     // Only two of the four high-pass legs filter; one boosts and one passes.
-    // The boost is the measured shelf: +10.5 dB at DC, +1.41 dB in the high
-    // band, corner near 59 Hz. The cut corners follow from the network's own
-    // part values.
-    expectNear(20.0 * std::log10(
-                   YouKnow106Engine::highPassShelfGain(HighPassMode::Boost)),
-               10.5, 0.05, "bass boost does not lift the low band 10.5 dB");
-    expectNear(20.0 * std::log10(
-                   YouKnow106Engine::highPassHighGain(HighPassMode::Boost)),
-               1.41, 0.05, "bass boost does not lift the high band 1.41 dB");
-    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Boost), 59.4, 0.5,
-               "bass boost shelf corner");
+    // The boost shelf is derived from the p. 15 branch itself -- the dry R25
+    // leg at unity plus IC4b's DC-coupled leg -- so each constant is asserted
+    // against its own closed form. The third-party noise sweep these figures
+    // were once fitted to now corroborates them instead of sourcing them.
+    expectNear(YouKnow106Engine::highPassShelfGain(HighPassMode::Boost),
+               1.0 + (47.0 / 220.0) * (1.0 + 100.0 / 10.0), 1.0e-6,
+               "boost DC gain is not 1 + (R29/R24)(1 + R18/R19)");
+    expectNear(YouKnow106Engine::highPassHighGain(HighPassMode::Boost),
+               1.0 + (47.0 / 220.0) * (47.0 / 57.0), 1.0e-6,
+               "boost plateau is not 1 + (R29/R24) * C9/(C9 + C8)");
+    expectNear(YouKnow106Engine::highPassCornerHz(HighPassMode::Boost),
+               1.0 / (2.0 * pi * 47.0e3 * 57.0e-9), 0.05,
+               "boost corner is not the R22 * (C9 + C8) pole");
+    // The branch is two stages -- C9 parallel R22 into the C8 shunt, then
+    // IC4b's gain-of-11 with C6 bypassing R18 -- yet one pole describes it,
+    // because the first stage's 72.05 Hz zero all but cancels the feedback's
+    // 72.34 Hz pole. Solve the complete network and hold the shipped one-pole
+    // shelf to the exact response everywhere in the band.
+    {
+        const std::complex<double> j { 0.0, 1.0 };
+        constexpr double r29 = 47.0e3, r24 = 220.0e3, r18 = 100.0e3;
+        constexpr double r19 = 10.0e3, r22 = 47.0e3;
+        constexpr double c9 = 47.0e-9, c8 = 10.0e-9, c6 = 22.0e-9;
+        const double shelf =
+            YouKnow106Engine::highPassShelfGain(HighPassMode::Boost);
+        const double high =
+            YouKnow106Engine::highPassHighGain(HighPassMode::Boost);
+        const double poleHz =
+            YouKnow106Engine::highPassCornerHz(HighPassMode::Boost);
+        double worstDb = 0.0;
+        for (double freq = 1.0; freq < 20000.0; freq *= 1.1)
+        {
+            const std::complex<double> s = j * (2.0 * pi * freq);
+            const std::complex<double> firstStage =
+                (1.0 + s * r22 * c9) / (1.0 + s * r22 * (c9 + c8));
+            const std::complex<double> amplifier =
+                (1.0 + r18 / r19 + s * r18 * c6) / (1.0 + s * r18 * c6);
+            const std::complex<double> exact =
+                1.0 + (r29 / r24) * firstStage * amplifier;
+            const std::complex<double> shipped =
+                high + (shelf - high) / (1.0 + s / (2.0 * pi * poleHz));
+            worstDb = std::max(worstDb,
+                               std::abs(20.0 * std::log10(std::abs(exact))
+                                        - 20.0 * std::log10(std::abs(shipped))));
+        }
+        expect(worstDb < 0.02,
+               "one-pole boost shelf drifts past 0.02 dB from the solved branch");
+    }
     expectNear(YouKnow106Engine::highPassShelfGain(HighPassMode::One), 1.0, 1.0e-6,
                "the flat leg does not pass the low band untouched");
     expectNear(YouKnow106Engine::highPassHighGain(HighPassMode::One), 1.0, 1.0e-6,
@@ -1954,14 +2128,18 @@ void testJuno60FallbackBucketBrigadeTiming()
 
     expectNear(one.sweepSeconds, two.sweepSeconds, 1.0e-9,
                "the two modes do not share a sweep depth");
-    // A Juno-60's measured sweep, retained because the two instruments drive
-    // their MN3101s through the same converter with the same values, so the
-    // sibling's calibrated capture measures the circuit both share. No
-    // qualifying capture of a Juno-106's own chorus has been located.
-    expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.00166, 1.0e-6,
+    // The 106's own third-party-measured sweep: 1.4-6.4 ms scoped on a
+    // designator-faithful p. 15 build with genuine MN3009s and compared
+    // directly against a real JUNO-106 by its owner. The superseded
+    // sibling-instrument capture (1.66-5.35 ms, Juno-60) must stay
+    // superseded; a calibrated original-unit capture remains OQ-01.
+    expectNear(one.centreDelaySeconds - one.sweepSeconds, 0.0014, 1.0e-6,
                "shortest modulated delay");
-    expectNear(one.centreDelaySeconds + one.sweepSeconds, 0.00535, 1.0e-6,
+    expectNear(one.centreDelaySeconds + one.sweepSeconds, 0.0064, 1.0e-6,
                "longest modulated delay");
+    expect(std::abs(one.centreDelaySeconds - one.sweepSeconds - 0.00166)
+               > 1.0e-4,
+           "the sibling's 1.66 ms endpoint was reintroduced");
     // Both ends have to land inside the part's own clock window, which is what
     // says the capture describes this circuit rather than some other one: 256
     // stages give a delay of 128 / f_clock, and the MN3009 is rated 10-200 kHz.
@@ -1980,16 +2158,18 @@ void testJuno60FallbackBucketBrigadeTiming()
     expectNear(off.centreDelaySeconds, one.centreDelaySeconds, 1.0e-9,
                "bypass moved the running delay line away from mode I");
     // Wet over dry is the ratio of the two input resistors into IC6's shared
-    // 100 kOhm feedback. Keep both absolute gains as well as their ratio: the
-    // absolute factor belongs after the nonlinear BBD and cannot be folded
-    // into its input without changing the sound.
-    expectNear(Chorus::dryMixGain, 100.0 / 39.0, 1.0e-6,
+    // 100 kOhm feedback: dry arrives through R71/R73 47 kOhm off the IC2b
+    // bus, wet through R72/R74 39 kOhm from the mute JFETs (Service Notes
+    // p. 15, designator-level read). Keep both absolute gains as well as
+    // their ratio: the absolute factor belongs after the nonlinear BBD and
+    // cannot be folded into its input without changing the sound.
+    expectNear(Chorus::dryMixGain, 100.0 / 47.0, 1.0e-6,
                "IC6 dry gain");
-    expectNear(Chorus::wetMixGain, 100.0 / 47.0, 1.0e-6,
+    expectNear(Chorus::wetMixGain, 100.0 / 39.0, 1.0e-6,
                "IC6 wet gain");
-    expectNear(one.wetGain, 39.0 / 47.0, 1.0e-3, "line gain");
-    expectNear(20.0 * std::log10(one.wetGain), -1.62, 0.01,
-               "the wet path does not sit 1.62 dB below the dry");
+    expectNear(one.wetGain, 47.0 / 39.0, 1.0e-3, "line gain");
+    expectNear(20.0 * std::log10(one.wetGain), 1.62, 0.01,
+               "the wet path does not sit 1.62 dB above the dry");
     expectNear(Chorus::wetMuteTimeConstantSeconds, 0.005, 1.0e-9,
                "the labelled product mute time constant changed");
     expectNear(Chorus::wetMuteTimeConstantSeconds * std::log(9.0f),
@@ -2158,6 +2338,61 @@ void testChorusNoiseComponents()
     expect(masterSilencesEverything,
            "noiseScale no longer mutes every declared chorus-noise component");
 
+    // Including the heterodyne clock bleed, which the loop above cannot reach:
+    // it passes the default sixth argument, so enableClockBleed is false.
+    // A revision scaled the bleed by max(noiseScale, 0.1f), leaving a tenth of
+    // it alive at zero and contradicting this class's own contract.
+    Chorus bleedMuted;
+    bleedMuted.prepare(sampleRate);
+    YouKnow106TestAccess::configureOptionalChorusNoise(
+        bleedMuted, 0.01f, 0.4f, 0.01f, 50.0f, 0.01f, 1.0f);
+    bool bleedIsMutedToo = true;
+    for (int index = 0; index < 2048; ++index)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        bleedMuted.process(0.0f, ChorusMode::Two, 0.0f, left, right, true);
+        bleedIsMutedToo = bleedIsMutedToo && left == 0.0f && right == 0.0f;
+    }
+    expect(bleedIsMutedToo,
+           "the Chorus Noise master no longer defeats the clock bleed");
+
+    // The bleed and the optional clock-spur hypothesis are separate mechanisms
+    // at the same modulated clock. They kept one phase accumulator between
+    // them, so enabling both advanced it twice a sample and doubled each
+    // tone's frequency. Enabling the bleed must not move the spur.
+    const auto spurOnly = [&](bool withBleed) {
+        Chorus chorus;
+        chorus.prepare(sampleRate);
+        YouKnow106TestAccess::configureOptionalChorusNoise(
+            chorus, 0.0f, 0.0f, 0.0f, 50.0f, 0.02f, 1.0f);
+        std::vector<float> captured(1024);
+        for (std::size_t index = 0; index < captured.size(); ++index)
+        {
+            float left = 0.0f;
+            float right = 0.0f;
+            chorus.process(0.0f, ChorusMode::Two, 1.0f, left, right, withBleed);
+            // Subtract the bleed's own contribution by taking the difference
+            // of the two channels, which the spur and bleed both drive but
+            // with independent clocks -- any doubling shows as a mismatch.
+            captured[index] = left;
+        }
+        return captured;
+    };
+    const auto withoutBleed = spurOnly(false);
+    const auto withBleed = spurOnly(true);
+    double spurDrift = 0.0;
+    for (std::size_t index = 0; index < withoutBleed.size(); ++index)
+        spurDrift = std::max(spurDrift,
+                             std::abs(static_cast<double>(withBleed[index])
+                                    - static_cast<double>(withoutBleed[index])));
+    // The bleed itself is 0.005 at full scale, so anything much beyond that
+    // means the spur's own frequency moved rather than a tone being added.
+    expect(spurDrift < 0.02,
+           "enabling the clock bleed displaced the optional clock spur by "
+               + std::to_string(spurDrift)
+               + ", so the two are sharing a phase accumulator again");
+
     // The common layer is built from one common and one orthogonal seeded
     // process. rho=+1 duplicates channels exactly; rho=-1 changes only sign.
     constexpr std::size_t syntheticLength = 2048;
@@ -2312,9 +2547,11 @@ void testChorusBypassStateAndWetMuteTiming()
     }
 
     // Remove only the mute-gain difference through the test seam. The wet
-    // output capacitor legitimately evolved against 22 kOhm while bypassed
-    // rather than 22 kOhm || 47 kOhm while connected, so the resumed samples
-    // are no longer bit-identical. Their small error energy still proves the
+    // output capacitor legitimately evolved against 22 kOhm alone while
+    // bypassed (R103/R81) rather than 22 kOhm || 39 kOhm while connected
+    // (IC6's wet input R72/R74 loading the same node), so the resumed samples
+    // are no longer bit-identical. 47 kOhm is the *dry* leg R71/R73 and is the
+    // retired mirror of this assignment -- it must not reappear here. Their small error energy still proves the
     // BBDs, main support filters and modulation oscillator kept running.
     YouKnow106TestAccess::setChorusWetGain(
         bypassedForComparison,
@@ -2525,6 +2762,17 @@ void testBucketBrigadeDatasheetAnchors()
     // minimum-bandwidth row, too small to justify a second inaudible retune.
     expectNear(20.0 * std::log10(gainAtTwelveKhz / gainAtOneKhz), -3.0, 0.03,
                "charge-transfer response misses the 1 kHz-referenced anchor");
+
+    // The 2026-08-07 two-phase output-stage solve left the typical part's
+    // coefficient a span, because the datasheet's own panels contradict each
+    // other about what the Gi-fi curves measure: the tracked reading puts
+    // the raw held node at -1.33 dB here, the broadband reading near
+    // -3.45 dB, and the guaranteed-minimum bound at -4.355 dB. Any future
+    // retune must land inside that cross-reading band and confront the
+    // session record before moving the anchor above.
+    const double heldDecibels = 20.0 * std::log10(gainAtTwelveKhz);
+    expect(heldDecibels > -4.355 && heldDecibels < -1.33,
+           "raw held node left the cross-reading guard band at 40 kHz / 12 kHz");
 }
 
 void testBbdOutputPolyBlepReferenceAndBounds()
@@ -2980,6 +3228,58 @@ void testHighPassReachesTheSummedSignal()
            "the high-pass cuts a high note as hard as a low one");
 }
 
+void testNoiseSourceShapingFollowsItsCircuit()
+{
+    // Module board p. 13: the shared noise source is band-shaped by its own
+    // support parts -- C42 1 uF into the level OTA's 4.7 kOhm input bias,
+    // then C41 100 pF against R79 330 kOhm on the OTA's output -- so the
+    // rail is not flat white. The corners must come from those designators.
+    expectNear(YouKnow106Engine::noiseSourceHighPassHz(),
+               1.0 / (2.0 * pi * 1.0e-6 * 4700.0), 1.0e-3,
+               "noise-source high-pass is not at C42/4.7k's corner");
+    expectNear(YouKnow106Engine::noiseSourceLowPassHz(),
+               1.0 / (2.0 * pi * 100.0e-12 * 330000.0), 1.0e-3,
+               "noise-source low-pass is not at C41/R79's corner");
+
+    // And the shaping has to reach the rendered rail. The normalised
+    // first-difference energy of a noise render separates a flat generator
+    // from one low-passed near 4.8 kHz decisively: flat white at a 48 kHz
+    // internal rate sits near 2.0, the shaped source well below 1.2.
+    YouKnow106Engine engine;
+    engine.prepare(48000.0, 512, false);
+    EngineParameters parameters;
+    parameters.sawEnabled = false;
+    parameters.pulseEnabled = false;
+    parameters.subLevel = 0.0f;
+    parameters.noiseLevel = 1.0f;
+    parameters.cutoff = 1.0f;
+    parameters.resonance = 0.0f;
+    parameters.attack = 0.0f;
+    parameters.sustain = 1.0f;
+    parameters.calibration = 0.0f;
+    engine.setParameters(parameters);
+    engine.reset();
+    engine.noteOn(60, 1.0f);
+
+    std::vector<float> left(24000), right(24000);
+    engine.process(left.data(), right.data(), static_cast<int>(left.size()));
+    double energy = 0.0;
+    double differenceEnergy = 0.0;
+    const std::size_t half = left.size() / 2;
+    for (std::size_t index = half + 1; index < left.size(); ++index)
+    {
+        const double sample = left[index];
+        const double difference = sample - static_cast<double>(left[index - 1]);
+        energy += sample * sample;
+        differenceEnergy += difference * difference;
+    }
+    expect(energy > 1.0e-6, "the noise fixture rendered nothing to measure");
+    expect(differenceEnergy / energy < 1.2,
+           "the rendered noise is too bright for the C41/R79-shaped source");
+    expect(differenceEnergy / energy > 0.05,
+           "the rendered noise lost its passband as well as its top");
+}
+
 void testSupportFilterCornersLandWhereAsked()
 {
     const auto gainAt = [](double frequency, float g, float sampleRate) {
@@ -3046,7 +3346,7 @@ void testSupportFilterCornersLandWhereAsked()
                    "the wet coupling high-pass is not at C44/R120's corner");
         constexpr double capacitor = 1.0e-6;
         constexpr double bleed = 22000.0;
-        constexpr double mixer = 47000.0;
+        constexpr double mixer = 39000.0;
         const double connectedResistance = bleed * mixer / (bleed + mixer);
         const double mutedCorner = 1.0 / (2.0 * pi * capacitor * bleed);
         const double connectedCorner =
@@ -3070,6 +3370,30 @@ void testSupportFilterCornersLandWhereAsked()
         expectNear(gainAt(23461.38, chain.idealSourceTapPoleG, 192000.0f),
                    0.70710678, 0.005,
                    "the BBD tap-summing pole is not at its nominal corner");
+    }
+    {
+        // The tap pole is the one corner in this chain above Nyquist at the
+        // rates the engine runs without oversampling, so onePoleG's 0.45
+        // ceiling relocates it there -- 19.845 kHz at 44.1 kHz, 21.600 kHz at
+        // 48 kHz. It cannot be restored (tan() inverts past fs/2) and the
+        // ceiling measures better in the top octave than either a higher one
+        // or a matched-z coefficient, so this fixture pins the deviation
+        // rather than forbidding it: the whole point is that it is known.
+        for (const float rate : { 44100.0f, 48000.0f })
+        {
+            expectNear(Chorus::onePoleG(23461.38f, rate),
+                       Chorus::onePoleG(rate * 0.45f, rate), 1.0e-9,
+                       "the non-oversampled BBD tap pole stopped clamping to "
+                       "0.45 fs, so its realised corner moved silently");
+        }
+        // ...and that the oversampled path carries the settled corner exactly.
+        for (const float rate : { 176400.0f, 192000.0f })
+        {
+            expect(Chorus::onePoleG(23461.38f, rate)
+                       < Chorus::onePoleG(rate * 0.45f, rate),
+                   "the oversampled BBD tap pole is being clamped, which would "
+                   "move a settled corner at the engine's own internal rate");
+        }
     }
 
     const auto measureCorner = [&gainAt](float requested, float sampleRate) {
@@ -3366,6 +3690,7 @@ int main()
     testCascadeAgainstReferenceSolve();
     testCascadeOscillationThreshold();
     testCascadeSurvivesAdversarialControl();
+    testCascadeDeniesTheFoldback();
     testNoteTimerLaw();
     testCutoffControlLaw();
     testStoredControlDigitalVectors();
@@ -3386,6 +3711,7 @@ int main()
     testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases();
     testSupportFilterCornersLandWhereAsked();
     testHighPassReachesTheSummedSignal();
+    testNoiseSourceShapingFollowsItsCircuit();
     testCorrectionResidualsVanishAtTheEdges();
     
     // SOTA physical modeling tests

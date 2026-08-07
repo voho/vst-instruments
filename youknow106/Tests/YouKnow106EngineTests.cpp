@@ -167,6 +167,37 @@ struct YouKnow106TestAccess
         engine.sharedVca_ = state;
     }
 
+    static void setPwmHeld(YouKnow106Engine& engine, float state) noexcept
+    {
+        engine.pwmVoltsFirstPole_ = state;
+        engine.pwmVolts_ = state;
+    }
+
+    static constexpr float pwmFirstPoleSeconds() noexcept
+    {
+        return YouKnow106Engine::pwmHoldFirstPoleSeconds;
+    }
+
+    static constexpr float pwmSecondPoleSeconds() noexcept
+    {
+        return YouKnow106Engine::pwmHoldSecondPoleSeconds;
+    }
+
+    static constexpr float subSlewSeconds() noexcept
+    {
+        return YouKnow106Engine::subHoldSlewSeconds;
+    }
+
+    static float subHeld(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.subCv_;
+    }
+
+    static void setSubHeld(YouKnow106Engine& engine, float state) noexcept
+    {
+        engine.subCv_ = state;
+    }
+
     static bool assignmentPending(const YouKnow106Engine& engine) noexcept
     {
         return engine.assignmentRescanPending_;
@@ -1670,9 +1701,11 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
     // Card 6 has a deterministic negative comparator trim. During re-enable,
     // the shared base CV therefore crosses zero before that card stops being
     // pinned high. Its audible gate must follow the card comparator, not the
-    // already-positive shared base value.
+    // already-positive shared base value. The shared CV climbs out of -0.8 V
+    // through the R117/C62 and R116/C63 smoothing poles, so the crossing sits
+    // several milliseconds after the write; search a window that covers it.
     bool sawPerCardOffsetWindow = false;
-    for (int sample = 0; sample < 256; ++sample)
+    for (int sample = 0; sample < 2048; ++sample)
     {
         renderExact(engine, 1);
         if (YouKnow106TestAccess::pwmHeld(engine) > 0.0f
@@ -2553,28 +2586,25 @@ void testFixedOutputBoundaryCorpus()
     // margin, so ordinary compiler noise cannot turn this into a waveform
     // checksum while meaningful level/headroom changes remain visible.
     constexpr std::array baselines {
-        // The passive mixer node now loads unconditionally and counts the
-        // permanently-wired SUB and NOISE legs, so every fixture that has SAW
-        // and PULSE switched on sits 1.75 dB lower -- the four-leg loading
-        // relative to the three-leg reference. One note no longer crosses full
-        // scale at all. These values also include the nominal common-VCA solve:
-        // byte 127 is +4.709 dB rather than the old fitted +5 dB, so all six
-        // full-LEVEL fixtures move down by the same small-signal factor.
-        Baseline { 0.413977, 0.850119, 0.859349, 0, 0 },
-        Baseline { 1.05959, 3.00664, 3.00664, 3088, 12398 },
-        Baseline { 2.29138, 4.23954, 4.25525, 6380, 25538 },
+        // Re-pinned three times on 2026-08-07: the IC6 wet/dry legs were
+        // corrected to the p. 15 read (dry 100/47, wet 100/39 -- chorus-off
+        // fixtures moved down 1.62 dB, wet gained the same 3.24 dB the dry
+        // lost), the sweep endpoints moved to the 106's own measured
+        // 1.4-6.4 ms (the fixed window catches a different phase of the
+        // deeper sweep), and the mixer node stopped counting switchable
+        // legs -- sources mute, legs never switch -- which returned the
+        // phantom 1.76 dB the old Thevenin model took from every fixture
+        // with both waveforms on. The waveform-free self-oscillation probe
+        // is the control: only the first correction reaches it.
+        Baseline { 0.42033, 0.862052, 0.87213, 0, 0 },
+        Baseline { 1.07583, 3.04992, 3.04992, 3188, 12730 },
+        Baseline { 2.31987, 4.26482, 4.2802, 6402, 25626 },
         // Raised when the resonance profile was re-solved against Roland's own
         // 4.8 Vp-p self-oscillation trim; see
         // testSelfOscillationMatchesTheServiceTrim.
-        Baseline { 0.239242, 0.338292, 0.338292, 0, 0 },
-        // Re-pinned when the chorus rates moved from the borrowed JUNO-60
-        // scale to the instrument's own derived 0.55329/0.89826 Hz: the same
-        // fixed analysis window now lands on a different phase of the (faster)
-        // sweep, which moves these snapshot peaks and threshold counts while
-        // the RMS stays within 3.5%. Level and headroom did not change;
-        // where the window catches the sweep did.
-        Baseline { 0.640259, 1.22922, 1.24585, 957, 3834 },
-        Baseline { 0.395198, 0.895206, 0.929143, 0, 0 },
+        Baseline { 0.19852, 0.28071, 0.28071, 0, 0 },
+        Baseline { 0.749961, 1.5589, 1.59184, 1545, 6213 },
+        Baseline { 0.488373, 1.52319, 1.52458, 46, 185 },
     };
 
     constexpr double sampleRate = 48000.0;
@@ -2849,6 +2879,79 @@ void testCommonVcaHoldUsesJackBoardC7TimeConstant()
                        : "common-VCA C7 slew misses one time constant at 1x");
         expectNear(expected, oneTau, 1.0e-4,
                    "common-VCA one-tau fixture is not one time constant");
+    }
+}
+
+void testPwmHoldCrossesItsTwoSmoothingPoles()
+{
+    // The PWM hold reaches the comparators through R117/C62 and then R116/C63
+    // around IC17a. A step from a discharged network must follow the two-pole
+    // cascade those components fix -- independently of the engine's internal
+    // oversampling rate -- rather than the retired single compatibility pole.
+    constexpr double sampleRate = 48000.0;
+    const double tauFirst = YouKnow106TestAccess::pwmFirstPoleSeconds();
+    const double tauSecond = YouKnow106TestAccess::pwmSecondPoleSeconds();
+    const int hostSamples =
+        static_cast<int>(std::lround(tauFirst * sampleRate));
+
+    for (const bool oversampling : { false, true })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, oversampling);
+        auto parameters = plainPatch();
+        parameters.pulseEnabled = true;
+        parameters.pwmSource = PwmSource::Manual;
+        parameters.pwmDepth = 0.5f;
+        engine.setParameters(parameters);
+        const double target = YouKnow106TestAccess::pwmTarget(engine);
+        expect(target > 0.0, "manual PWM fixture has no positive target");
+        YouKnow106TestAccess::setPwmHeld(engine, 0.0f);
+
+        renderExact(engine, hostSamples);
+        const double elapsed = hostSamples / sampleRate;
+        const double expected = target
+            * (1.0
+               - (tauFirst * std::exp(-elapsed / tauFirst)
+                  - tauSecond * std::exp(-elapsed / tauSecond))
+                     / (tauFirst - tauSecond));
+        expectNear(YouKnow106TestAccess::pwmHeld(engine), expected,
+                   5.0e-3 * target,
+                   oversampling
+                       ? "PWM two-pole smoothing changed at 4x processing"
+                       : "PWM smoothing does not follow the R117/C62 and "
+                         "R116/C63 cascade");
+    }
+}
+
+void testSubHoldUsesItsR11C1TimeConstant()
+{
+    // The stored SUB level reaches its mixer OTA through R11 1 kOhm into C1
+    // 10 uF: one 10 ms pole. A one-time-constant step must reach 1-exp(-1)
+    // regardless of the internal processing rate.
+    constexpr double sampleRate = 48000.0;
+    const double oneTau = 1.0 - std::exp(-1.0);
+    const double tau = YouKnow106TestAccess::subSlewSeconds();
+    const int hostSamples = static_cast<int>(std::lround(tau * sampleRate));
+
+    for (const bool oversampling : { false, true })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, oversampling);
+        auto parameters = plainPatch();
+        parameters.subLevel = 1.0f;
+        engine.setParameters(parameters);
+        const double target = YouKnow106TestAccess::subTarget(engine);
+        expect(target > 0.0, "sub fixture has no positive target");
+        YouKnow106TestAccess::setSubHeld(engine, 0.0f);
+
+        renderExact(engine, hostSamples);
+        const double elapsed = hostSamples / sampleRate;
+        const double expected = target * (1.0 - std::exp(-elapsed / tau));
+        expectNear(YouKnow106TestAccess::subHeld(engine), expected, 2.0e-5,
+                   oversampling ? "SUB R11/C1 slew changed at 4x processing"
+                                : "SUB slew misses its R11/C1 time constant");
+        expectNear(expected / target, oneTau, 1.0e-4,
+                   "SUB one-tau fixture is not one time constant");
     }
 }
 
@@ -3200,10 +3303,18 @@ void testQualityChangeFadesRateDependentOutputPath()
 
 void testQualityChangePreservesOutputCouplingTail()
 {
-    // A 95%-duty pulse charges the final capacitor strongly. Once its Gate VCA
-    // closes, the host-rate 115 ms tail remains long after the internal chorus
-    // and decimator wait. Rebuilding HQ must not clear that rate-independent
+    // A 95%-duty pulse charges the final capacitor. Once its Gate VCA closes,
+    // the host-rate 115 ms tail remains long after the internal chorus and
+    // decimator wait. Rebuilding HQ must not clear that rate-independent
     // state; an earlier implementation made a roughly -19 dBFS step here.
+    //
+    // Six cards at full VCA LEVEL, not one at 99. Until C56/C50 were modelled
+    // this fixture leaned on the mixer's raw PWM DC reaching C17/C20 intact,
+    // which the real instrument's per-voice module-input coupling does not
+    // allow. What still charges the final capacitor is legitimate: each card's
+    // own 0.48 Hz coupling passes the note-on duty step as a slow transient,
+    // and the six sum. The single-voice residual (0.0025) no longer clears the
+    // guard below; the six-card sum leaves 0.026, five times it.
     constexpr double sampleRate = 48000.0;
     YouKnow106Engine switched;
     YouKnow106Engine reference;
@@ -3217,14 +3328,22 @@ void testQualityChangePreservesOutputCouplingTail()
     parameters.vcaMode = VcaMode::Gate;
     parameters.chorus = ChorusMode::Off;
     parameters.chorusNoise = 0.0f;
+    parameters.vcaLevel = 1.0f;
     switched.setParameters(parameters);
     reference.setParameters(parameters);
-    switched.noteOn(36, 1.0f);
-    reference.noteOn(36, 1.0f);
+    constexpr std::array chordNotes { 36, 40, 43, 47, 50, 53 };
+    for (const int note : chordNotes)
+    {
+        switched.noteOn(note, 1.0f);
+        reference.noteOn(note, 1.0f);
+    }
     renderExact(switched, static_cast<int>(sampleRate));
     renderExact(reference, static_cast<int>(sampleRate));
-    switched.noteOff(36);
-    reference.noteOff(36);
+    for (const int note : chordNotes)
+    {
+        switched.noteOff(note);
+        reference.noteOff(note);
+    }
     expect(!switched.setOversamplingEnabled(false),
            "the quality change ignored the still-sounding gate release");
 
@@ -3306,6 +3425,76 @@ void testQualityChangePreservesFreeRunningClocks()
     expectNear(YouKnow106TestAccess::dcoPeriodSamples(switched, 0),
                deepPeriod / 4.0, 1.0e-9,
                "a quality rebuild left the DCO period in old-rate samples");
+}
+
+void testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca()
+{
+    // Module board p. 13: the summed WAVE node reaches pin 1 VCF IN only
+    // through C56/C50 10 uF NP, so no mixer DC reaches the filter core or the
+    // voice VCA behind it. The pulse carries the most of it -- the
+    // comparator's mean walks with duty -- and without the capacitor that DC
+    // multiplied by the envelope in the VCA, leaving a note-on thump that grew
+    // *louder* with PWM depth. The capacitance is a designator-level read; the
+    // resistance it works against is not, so the corner is voiced (OQ-15).
+    constexpr double sampleRate = 48000.0;
+    expectNear(YouKnow106Engine::moduleCouplingCornerHz(), 0.482288, 1.0e-5,
+               "the module-input coupling corner left its 10 uF / 33 kOhm pair");
+
+    // The thump must fall as PWM deepens, not rise. Measured as the peak of a
+    // 50 ms window after note-on, against the settled sustain level.
+    double previousRatio = 1.0e9;
+    for (const float depth : { 0.0f, 0.3f, 0.6f, 1.0f })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        auto parameters = plainPatch();
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = true;
+        parameters.pwmSource = PwmSource::Manual;
+        parameters.pwmDepth = depth;
+        parameters.vcaMode = VcaMode::Envelope;
+        parameters.attack = 0.05f;
+        parameters.decay = 0.45f;
+        parameters.sustain = 0.7f;
+        parameters.release = 0.3f;
+        parameters.chorus = ChorusMode::Off;
+        parameters.chorusNoise = 0.0f;
+        engine.setParameters(parameters);
+        // Let the coupling capacitors settle first. The DCOs free-run behind
+        // the closed VCAs, so a cold engine spends about 3 x 330 ms charging
+        // C56/C50 to the standing duty offset -- a power-on transient the real
+        // instrument also has, and not what this fixture is about. Measuring
+        // without it would read that charging curve and see the thump grow
+        // with depth exactly as the uncoupled model did.
+        renderExact(engine, static_cast<int>(sampleRate));
+        engine.noteOn(48, 1.0f);
+
+        const auto rendered = renderExact(
+            engine, static_cast<int>(sampleRate * 1.5));
+        // A 50 ms boxcar isolates the sub-audio thump from the pulse itself.
+        const auto window = static_cast<std::size_t>(sampleRate * 0.05);
+        double running = 0.0;
+        for (std::size_t index = 0; index < window; ++index)
+            running += rendered.left[index];
+        double thump = std::abs(running) / static_cast<double>(window);
+        for (std::size_t index = window; index < window * 4; ++index)
+        {
+            running += rendered.left[index] - rendered.left[index - window];
+            thump = std::max(thump,
+                             std::abs(running) / static_cast<double>(window));
+        }
+        const double sustained = peakOf(
+            rendered.left,
+            rendered.left.size() - static_cast<std::size_t>(sampleRate * 0.5));
+        expect(sustained > 0.01,
+               "the module-coupling fixture produced no sustained tone");
+        const double ratio = thump / sustained;
+        expect(ratio < previousRatio,
+               "deepening PWM raised the note-on thump, so mixer DC is "
+               "reaching the voice VCA again at depth "
+                   + std::to_string(depth));
+        previousRatio = ratio;
+    }
 }
 
 void testFinalOutputCouplingRemovesManualPwmDc()
@@ -4513,6 +4702,8 @@ int main()
     testRetriggerDoesNotTouchVcaHoldBeforeConverterScan();
     testSilentVoiceDoesNotInventUnmeasuredVcaFeedthrough();
     testCommonVcaHoldUsesJackBoardC7TimeConstant();
+    testPwmHoldCrossesItsTwoSmoothingPoles();
+    testSubHoldUsesItsR11C1TimeConstant();
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
     testModulationDelayRearmsForANewPhrase();
@@ -4522,6 +4713,7 @@ int main()
     testQualityChangeFadesRateDependentOutputPath();
     testQualityChangePreservesOutputCouplingTail();
     testQualityChangePreservesFreeRunningClocks();
+    testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca();
     testFinalOutputCouplingRemovesManualPwmDc();
     testHardStopSilencesTheWholeOutputPath();
     testComponentDriftRateIsIndependentOfOversampling();

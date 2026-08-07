@@ -17,6 +17,14 @@ namespace
 // advances once per modeled BBD shift (one fCP period), so a fixed coefficient
 // already makes the pole's absolute frequency follow the clock. Scaling it
 // again from clockHz would change the normalized response and double-count it.
+//
+// The 2026-08-07 two-phase output-stage solve confirmed this hold-plus-
+// residual-pole structure outright -- OUT1/OUT2 present the same sample on
+// complementary half-cycles, so their sum is a full-period hold -- but left
+// the typical part's coefficient an unresolved span, because the datasheet's
+// Gi-fi and Gi-fcp panels contradict each other about what the curves
+// measure. The guaranteed-minimum anchor below sits inside every candidate
+// reading's band and stands; the suites fence the cross-reading guard band.
 constexpr float transferSmear = 0.8654743f;
 
 // Static transfer of the delay line, referred to the model's signal scale
@@ -82,33 +90,34 @@ constexpr float antiAliasSecondShuntF = 270.0e-12f;
 constexpr float antiAliasPassiveHz = 7234.0f;   // R122 10 kOhm x C52 2.2 nF
 constexpr float inputCouplingHz = 15.9155f;     // C44 0.1 uF x R120 100 kOhm
 constexpr float wetOutputCouplingCapacitanceF = 1.0e-6f; // C28 / C25
-constexpr float wetOutputBleedOhms = 22000.0f;
-constexpr float wetMixerInputOhms = 47000.0f;
+constexpr float wetOutputBleedOhms = 22000.0f;           // R103 / R81
+constexpr float wetMixerInputOhms = 39000.0f;            // R72 / R74
 
 // The output's fifth pole is the BBD tap-summing node: either active output
 // reaches C45/C48 2.2 nF through 3.3 kOhm, and R117/R110 47 kOhm returns the
 // node to ground. Treating the active BBD output as an ideal source gives
-// (3.3 kOhm || 47 kOhm) against 2.2 nF, or 23.46138 kHz. The MN3009 datasheet does
-// not specify output impedance, so this is deliberately a first-order nominal
-// model, not a claim that a real unit's pole lands to the hertz. A full MNA or
-// wet-only sweep should replace it when one is available.
+// (3.3 kOhm || 47 kOhm) against 2.2 nF, or 23.46138 kHz. The datasheet's
+// Gi-RL panel now bounds the summed-output source impedance near 3.7 kOhm,
+// which would put the loaded pole at 11.9-22.2 kHz depending on how the two
+// follower legs share the node -- recorded against OQ-04, whose declared MNA
+// or wet-only sweep route decides it rather than a silent retune here.
 //
 // The reconstruction corners below equal the anti-alias corners because the
-// sister board's clone netlist -- the one whose clock driver and LFO parts
-// matched Roland's p. 15 transcription -- carries exactly three complete
-// Sallen-Key chains, one before the BBDs and one per output line, every
-// section the same 22k/22k pair with 820p/680p then 1n8/270p, alongside a
-// per-BBD 10k/2.2n input pole, both 3.3k taps into 47k/2.2n, and 100n/100k
-// branch coupling. Family-corroborated at designator level, no longer only
-// an assumption; the 106's own p. 15 capacitor codes remain OQ-04's read.
+// 106's own p. 15 scan reads them so at designator level (2026-08-07):
+// pre-BBD C33 820p/C31 680p then C34 1.8n/C32 270p, and per output line
+// C37/C35 and C38/C36 (line 1), C42/C40 and C43/C41 (line 2), every section
+// the same 22k/22k pair, alongside per-BBD 10k/2.2n input poles (R122/R115,
+// C52/C56), both 3.3k tap pairs into 47k/2.2n, and 100n/100k branch
+// coupling -- agreeing with the sister board's clone netlist that first
+// corroborated the family. OQ-04 keeps only the loaded transfer.
 constexpr float idealSourceTapPoleHz = 23461.38f;
 constexpr float reconstructionFirstHz = 9688.0f;
 constexpr float reconstructionSecondHz = 10377.0f;
 
 // The wet-mute glide is expressed relative to dry. The final IC6 summer's
-// absolute 100/39 dry gain is applied after the BBDs in process(); putting it
-// before them would drive their fitted nonlinearity 8.18 dB too hard.
-constexpr float lineGain = Chorus::wetToDryGain;   // 39/47, -1.62 dB
+// absolute 100/47 dry gain is applied after the BBDs in process(); putting it
+// before them would drive their fitted nonlinearity too hard.
+constexpr float lineGain = Chorus::wetToDryGain;   // 47/39, +1.62 dB
 
 std::uint32_t nextNoiseState(std::uint32_t state) noexcept
 {
@@ -177,23 +186,27 @@ Chorus::ModeSettings Chorus::settingsFor(ChorusMode mode) noexcept
     // used to stand in for the scale is superseded, as its 1.682 ratio already
     // was; the suites keep both only as comparison values.
     //
-    // The sweep endpoints remain a *Juno-60's* measured figures: delay 1.66 ms
-    // to 5.35 ms, read from a calibrated capture of that instrument. They stay
-    // in service here on stronger grounds than the original borrowing: both
-    // instruments drive their MN3101s through the same voltage-to-current
-    // converter with the same values -- 2.2k/22k/1.8k against 150 pF on the
-    // 106's own page and in the sister board clone's netlist alike -- so a
-    // calibrated capture of one is a measurement of the circuit they share.
-    // The third-party 106-specific sweep reports (1.4-6.4 ms, against three
-    // narrower clone clock readings) disagree with each other by more than
-    // they disagree with this pair, so none of them replaces it. See OQ-01.
+    // The sweep endpoints are the 106's own third-party-measured figures:
+    // delay 1.4 ms to 6.4 ms, scoped on a designator-faithful build of the
+    // p. 15 chorus board carrying genuine 256-stage MN3009s and compared
+    // directly against a real JUNO-106 by its owner, who published the scope
+    // plots and called the two sweeps identical. The same excursion --
+    // +/-2.5 ms about a 3.9 ms centre -- also matches the one independent
+    // depth report on record. This supersedes the JUNO-60's calibrated
+    // 1.66-5.35 ms capture, which stays in the suite as the
+    // sibling-instrument comparison value: the two boards share their Tr22
+    // clock driver, but not every timing part around it. Two narrower clone
+    // clock readings (28-38 kHz expected by that kit's build guide, 28-60 kHz
+    // observed on a suspected-faulty build) remain on record as
+    // contradictions under OQ-01, which still requests a calibrated capture
+    // of an original unit.
     //
     // Modes I and II differ in speed alone, not in depth: the mode line changes
     // a timing resistance, while the triangle's amplitude is set by the
     // comparator's threshold ratio, which the mode line does not touch. That
     // is why II reads as more agitated rather than wider.
-    constexpr float centre = 0.5f * (0.00166f + 0.00535f);
-    constexpr float sweep = 0.5f * (0.00535f - 0.00166f);
+    constexpr float centre = 0.5f * (0.0014f + 0.0064f);
+    constexpr float sweep = 0.5f * (0.0064f - 0.0014f);
     constexpr float rateOne = static_cast<float>(derivedRateHz(true));
     constexpr float rateTwo = static_cast<float>(derivedRateHz(false));
     switch (mode)
@@ -273,6 +286,20 @@ float Chorus::onePoleG(float cutoffHz, float sampleRate) noexcept
     // The wet coupling pole is at 15.9 Hz, so the old 20 Hz defensive floor
     // silently moved a real component value. A small positive floor still
     // protects tan() from invalid callers without voicing the circuit.
+    //
+    // The 0.45 ceiling is load-bearing, not defensive: tan() turns negative
+    // past fs/2 and would invert the recursion. It engages on exactly one
+    // corner, the 23.46 kHz tap pole, and only with oversampling off -- at
+    // 44.1 kHz it renders 19.845 kHz and at 48 kHz 21.600 kHz. That pole is
+    // genuinely above Nyquist at those rates, so it cannot be restored, and
+    // measurement says this ceiling is already the best available one-pole:
+    // against the analogue response at 44.1 kHz the error at 5/10/15/20 kHz
+    // is +0.18/+0.64/+1.14/-0.97 dB here, against +0.19/+0.72/+1.47/+2.18 dB
+    // for a 0.49 ceiling and +0.19/+0.72/+1.47/+2.11 dB for a matched-z
+    // coefficient. Raising it to approach pass-through is both less accurate
+    // in the top octave and less stable -- the state pole walks from -0.73
+    // toward -1. Recorded so the deviation is known rather than silent; the
+    // oversampled path (176.4/192 kHz) carries the settled corner exactly.
     const float limited = std::clamp(cutoffHz, 0.1f, sampleRate * 0.45f);
     const float g = std::tan(3.14159265358979324f * limited / sampleRate);
     return g / (1.0f + g);
@@ -615,6 +642,8 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     humPhase_ = 0.0;
     clockSpurPhaseA_ = 0.0;
     clockSpurPhaseB_ = 0.0;
+    optionalSpurPhaseA_ = 0.0;
+    optionalSpurPhaseB_ = 0.0;
     // A patch loaded with the effect switched on is not a player reaching for
     // the button: there is nothing to glide from. The first sample after a
     // reset takes the mode as it stands, and only changes made afterwards
@@ -649,8 +678,8 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         -inverseSampleRate_ / wetMuteTimeConstantSeconds);
     wetGain_ += (target.wetGain - wetGain_) * muteGlide;
     // TR11/TR12 add no modelled distortion or switching artefact of their own.
-    // Conducting, a 2SK30A's few hundred ohms sit against IC6's 47 kOhm wet
-    // input, so it drops about 1% of the signal and sees some 27 mV across
+    // Conducting, a 2SK30A's few hundred ohms sit against IC6's 39 kOhm wet
+    // input, so it drops about 1% of the signal and sees some 30 mV across
     // itself at full level. Ohmic-region channel resistance moves by roughly
     // V_ds / 2|V_p - V_gs| -- about 0.7% -- and that reaches the output only
     // through the same 1% divider, so the distortion is on the order of
@@ -679,7 +708,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
     // for the calibrated clock time-series OQ-01 still requests. When it
     // engages it bends about the clock's own endpoints, not the delay's
     // centre: an earlier centre-relative revision rendered a 38%-too-wide
-    // 2.30-7.40 ms range at Unit Character 1.0 instead of the measured
+    // 2.30-7.40 ms range at Unit Character 1.0 instead of the then-shipped
     // 1.66-5.35 ms, which OQ-01 records. Bending about the endpoint clocks
     // keeps both endpoints exact at every blend amount, so the two laws
     // differ only in the trajectory between them.
@@ -702,7 +731,7 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         // topology hypothesis, not a component tolerance, so Character can
         // select it but never exaggerate it. Unclamped, the 0..2 range
         // extrapolated past the hyperbolic path -- leaving the measured
-        // 1.66-5.35 ms envelope and folding the sweep back mid-flank.
+        // delay envelope and folding the sweep back mid-flank.
         const float blend = std::clamp(calibration, 0.0f, 1.0f);
         nominalDelayA += (hypDelayA - nominalDelayA) * blend;
         nominalDelayB += (hypDelayB - nominalDelayB) * blend;
@@ -729,7 +758,12 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         clockSpurPhaseB_ += static_cast<double>(clockB) * inverseSampleRate_;
         clockSpurPhaseA_ -= std::floor(clockSpurPhaseA_);
         clockSpurPhaseB_ -= std::floor(clockSpurPhaseB_);
-        const float bleedScale = 0.005f * std::max(noiseScale, 0.1f);
+        // Scaled by the one Chorus Noise master with no floor. A revision
+        // clamped this to `max(noiseScale, 0.1f)`, which left a tenth of the
+        // bleed tone alive at noiseScale 0 and broke this class's own
+        // contract -- process() documents 0.0 as removing every declared
+        // chorus-noise component, and the bleed is one of them.
+        const float bleedScale = 0.005f * noiseScale;
         const float heterodyneBleedA = bleedScale * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseA_));
         const float heterodyneBleedB = bleedScale * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseB_));
         wetA += heterodyneBleedA;
@@ -771,16 +805,20 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
 
         if (optionalNoise_.clockSpurAmplitude != 0.0f)
         {
-            // Each candidate spur follows its own modulated BBD clock.  The
-            // harmonic and post-line insertion level are disabled hypotheses,
-            // not claims about a measured unit.
+            // Each candidate spur follows its own modulated BBD clock, on its
+            // own accumulator.  The harmonic and post-line insertion level are
+            // disabled hypotheses, not claims about a measured unit.
+            // `deterministicToneStep` advances the phase it is handed, and the
+            // heterodyne bleed above already advances clockSpurPhaseA_/B_ by
+            // the same clock: sharing them made each tone run at twice its
+            // intended frequency whenever both were enabled together.
             optionalA += optionalNoise_.clockSpurAmplitude
                 * deterministicToneStep(
-                    clockSpurPhaseA_, clockA * optionalNoise_.clockSpurHarmonic,
+                    optionalSpurPhaseA_, clockA * optionalNoise_.clockSpurHarmonic,
                     sampleRate_);
             optionalB += optionalNoise_.clockSpurAmplitude
                 * deterministicToneStep(
-                    clockSpurPhaseB_, clockB * optionalNoise_.clockSpurHarmonic,
+                    optionalSpurPhaseB_, clockB * optionalNoise_.clockSpurHarmonic,
                     sampleRate_);
         }
 

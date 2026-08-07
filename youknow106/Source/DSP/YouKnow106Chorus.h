@@ -77,12 +77,16 @@ public:
     static_assert(maximumBlepEvents < cellPairs);
 
     // IC6 is the final inverting dry/wet summer on each output. Its 100 kOhm
-    // feedback resistor sees dry through 39 kOhm and wet through 47 kOhm.
+    // feedback resistor (R70/R67) sees dry through 47 kOhm (R71/R73, off the
+    // shared IC2b bus) and wet through 39 kOhm (R72/R74, from the Tr11/Tr12
+    // mute JFETs) -- read at designator level from the Service Notes p. 15
+    // scan, agreeing with both sibling-board netlists. The wet leg is the
+    // hotter one. An earlier revision carried the mirror of this assignment.
     // Polarity is intentionally omitted because both paths invert together;
     // these magnitudes preserve the analogue drive into the following output
     // and VOLUME stages.
-    static constexpr float dryMixGain = 100.0f / 39.0f;
-    static constexpr float wetMixGain = 100.0f / 47.0f;
+    static constexpr float dryMixGain = 100.0f / 47.0f;
+    static constexpr float wetMixGain = 100.0f / 39.0f;
     static constexpr float wetToDryGain = wetMixGain / dryMixGain;
     // Explicit plug-in declick policy, not a measured mute-transistor value.
     static constexpr float wetMuteTimeConstantSeconds = 0.005f;
@@ -141,19 +145,25 @@ public:
     // modulation is exactly the negative of the first's rather than an
     // independent oscillator: TP4 carries the triangle and TP3 its inverse.
     //
-    // The CHORUS I/II line drives JFET Tr1, which *shorts R3* -- it does not
-    // insert it. R5 reaches the integrator's virtual ground through R8, and the
-    // shunt leg returns to ground, so both legs terminate at 0 V and the
-    // charging current sees
+    // The CHORUS I/II line drives JFET Tr1 through D1/Tr2/R2. R4 680 kOhm
+    // runs from the R5/R8 junction to Tr1's drain -- the mode shunt -- and R3
+    // 2.2 MOhm is Tr1's gate-source bleed: conducting, Tr1 grounds the
+    // junction through R4 alone; off, the leg reaches ground through R4 + R3.
+    // (An earlier reading had Tr1 shorting R3 itself; the original-page pass
+    // relabelled the legs without moving a single value.) R5 reaches the
+    // integrator's virtual ground through R8, so both legs terminate at 0 V
+    // and the charging current sees
     //
     //     R_eff = R8 * R5 / (R_sh || R8) + R8 ,
     //
     // with R_sh = R4 alone while Tr1 conducts and R4 + R3 while it does not.
-    // The mode with the larger R_eff integrates more slowly, which is mode I.
+    // The p. 13 mode table does not label which logic level conducts Tr1; the
+    // assignment rests on the derived R_eff pair matching the measured rates,
+    // with the larger R_eff -- the slower leg -- as mode I.
     static constexpr double lfoSeriesOhms = 1.0e6;         // R5
     static constexpr double lfoIntegratorOhms = 2.2e6;     // R8
     static constexpr double lfoShuntOhms = 680.0e3;        // R4
-    static constexpr double lfoModeShuntOhms = 2.2e6;      // R3, shorted in I
+    static constexpr double lfoModeShuntOhms = 2.2e6;      // R3, in the leg only in II
     // R7 / R6. The comparator trips where its summing node crosses the
     // grounded inverting input, so the triangle spans +/- (R7/R6) of the
     // saturated output and the oscillation is f = 1 / (4 * beta * R_eff * C3).
@@ -174,8 +184,8 @@ public:
         lfoComparatorTriangleOhms / lfoComparatorFeedbackOhms;
 
     // C3, the integrator capacitor. The 106's own page prints it in Roland's
-    // bare ".1" form beside C4's "220P" -- reported from a p. 15 render, with
-    // the original-page confirmation still open in OQ-01 -- and the sister
+    // bare ".1" form beside C4's "220P" -- confirmed on the original First
+    // Edition p. 15 scan -- and the sister
     // board clone's netlist carries 100 nF in exactly this position, across
     // the integrator's pins 6 and 7. The derivation below corroborates the
     // value against two independent measured rate pairs: scope readings of a
@@ -194,8 +204,9 @@ public:
     }
 
     // 6.4352941 MOhm over 3.9638889 MOhm. This ratio is the JUNO-106's own,
-    // derived from its own schematic; only the absolute scale below is still
-    // borrowed. The sibling's measured pair implies 1.682, which agrees to
+    // derived from its own schematic, and derivedRateHz() below sets the
+    // absolute scale from the same circuit -- nothing here is borrowed any
+    // more. The sibling's measured pair implies 1.682, which agrees to
     // about 3.6% -- close enough to say the two instruments share this circuit,
     // not close enough to keep using the sibling's decimals here.
     [[nodiscard]] static constexpr double modeRateRatio() noexcept
@@ -240,7 +251,7 @@ public:
     [[nodiscard]] static float onePoleG(float cutoffHz, float sampleRate) noexcept;
     static float supportFilterStep(float& state, float input, float g) noexcept;
     // C28/C25 couple the two reconstructed wet lines into 22 kOhm bleeds.
-    // When the series JFET is on, IC6's 47 kOhm wet input loads that node too.
+    // When the series JFET is on, IC6's 39 kOhm wet input loads that node too.
     [[nodiscard]] static float wetOutputCouplingCornerHz(
         bool wetConnected) noexcept;
 
@@ -408,8 +419,14 @@ private:
     std::uint32_t commonNoiseState_ { 0xd1b54a35u };
     std::uint32_t orthogonalNoiseState_ { 0x94d049bbu };
     double humPhase_ { 0.0 };
+    // The heterodyne clock bleed's own accumulators.
     double clockSpurPhaseA_ { 0.0 };
     double clockSpurPhaseB_ { 0.0 };
+    // The optional clock-spur hypothesis keeps separate ones: both mechanisms
+    // run at the same modulated clock, so sharing a phase advanced it twice
+    // per sample and doubled each tone's frequency when both were enabled.
+    double optionalSpurPhaseA_ { 0.0 };
+    double optionalSpurPhaseB_ { 0.0 };
     // Whether the glided settings have a starting point yet.
     bool primed_ { false };
 };

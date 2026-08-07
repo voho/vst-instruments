@@ -308,7 +308,7 @@ public:
     };
 
     // Where the transconductor's own control current stops following the
-    // anti-log converter. An IR3109 teardown reports the internal control
+    // anti-log converter. An AS3109 teardown reports the internal control
     // current saturating at 700 uA, which is a pole near 64 kHz on this
     // circuit's C = 240 pF / R = 68 kOhm test condition -- the physical origin
     // of the upper knee, and consistent with Roland's published 50 kHz top.
@@ -496,7 +496,19 @@ public:
     // separate question and is not assumed here.
     struct VoiceVcaControlLaw
     {
-        // Provisional 150 mV onset on the converter's 10 V span.
+        // 150 mV of envelope travel above the control rail's anchored
+        // operating point, normalised on the converter's 10 V span.
+        // Service Notes pp. 18-19 adjust VR34 (10KB) for +0.25...+0.27 V at
+        // TP7 with the D/A forced to 0 V, and p. 13 puts VR34's injection
+        // through R126/R127 into distribution amplifier IC27b, whose output
+        // is TP7 and feeds the VCA-group demux IC26 -- so the per-voice VCA
+        // control rail already stands at about +0.26 V at envelope zero. The
+        // reconstruction's ~150 mV no-current region was measured from the CV
+        // input on a calibrated unit, i.e. on top of that trimmed standoff,
+        // which is the coordinate this constant is expressed in. The standoff
+        // is anchored; the 150 mV itself remains the surviving voiced free
+        // parameter and OQ-19's sweep owns it. Do not add the +0.26 V again
+        // as a separate offset -- it is already the adjusted state.
         static constexpr float turnOn = 0.015f;
         // Ideal-BJT kT/q at room temperature on that same span; compatibility
         // approximation, not a measured BA662/Juno knee.
@@ -529,9 +541,11 @@ public:
     [[nodiscard]] static float patchLevelGain(float dacFraction) noexcept;
     // Single-pole high-pass corner for a panel position, the gain the leg
     // returns the low band with, and the gain it returns the high band with.
-    // The bass-boost position is a real shelf measured on the hardware:
-    // +10.5 dB at DC falling to +1.4 dB in the high band across a corner
-    // near 60 Hz.
+    // The bass-boost position's shelf is derived from the jack-board branch
+    // itself -- dry R25 plus the DC-coupled IC4b leg -- and lands on
+    // +10.50 dB at DC falling to +1.41 dB in the high band across the
+    // R22*(C9+C8) pole at 59.41 Hz; the third-party noise sweep those figures
+    // were once fitted to now stands as corroboration.
     [[nodiscard]] static float highPassCornerHz(HighPassMode mode) noexcept;
     [[nodiscard]] static float highPassShelfGain(HighPassMode mode) noexcept;
     [[nodiscard]] static float highPassHighGain(HighPassMode mode) noexcept;
@@ -575,6 +589,19 @@ public:
     // IC5/uPC1252H2 follows the switched HPF through the manufacturer's
     // application input network: C12 10 uF bipolar and R36 33 kOhm.
     [[nodiscard]] static float commonVcaInputCouplingCornerHz() noexcept;
+    // C56/C50 10 uF NP, the per-voice coupling from the summed WAVE node into
+    // the voice module's pin 1 VCF IN (module board p. 13). The capacitor is a
+    // designator-level read; the resistance it works against is not, so the
+    // corner itself is voiced -- see the constant's note in the .cpp.
+    [[nodiscard]] static float moduleCouplingCornerHz() noexcept;
+    // The shared noise generator's own support circuit, module board p. 13:
+    // Tr21's collector noise crosses C42 1 uF into the BA662 level OTA's
+    // 4.7 kOhm input bias (high-pass), and the OTA's output is loaded by
+    // C41 100 pF against R79 330 kOhm (low-pass). The level control sits
+    // between the two poles and is a plain scalar, so shaping the shared
+    // source once ahead of the per-voice level scaling is exact.
+    [[nodiscard]] static float noiseSourceHighPassHz() noexcept;
+    [[nodiscard]] static float noiseSourceLowPassHz() noexcept;
 
 private:
     // The JUCE-free suites use this narrow friend to drive one filter step, one
@@ -614,8 +641,18 @@ private:
     static constexpr float rampResetSeconds = 2.2e-6f;
     static constexpr float rampAmplitudeVolts = 12.0f;
 
-    // Four-pole transconductor cascade. Small-signal pole per stage is
-    // wc = Ig / (2 Vt C) with C = 240 pF; the suites solve the same ODE.
+    // Four-pole transconductor cascade. The 560/68560 divider below is inside
+    // the part, so each differential pair sees an attenuated copy of the stage
+    // difference and the small-signal pole in module-node coordinates is
+    //
+    //     wc = Ig * stageAttenuation / (2 Vt C)  with C = 240 pF,
+    //
+    // equivalently wc = Ig / (C H) with H = 2 Vt / stageAttenuation = 6.37 V,
+    // the pair's linear span referred to the node and the coordinate the
+    // solver actually runs in. Dropping the divider here states a pole 122x
+    // too high -- it would put the 700 uA saturation at 8.9 MHz instead of the
+    // 64 kHz asserted against vcfControlSaturationHz below. The suites solve
+    // the same ODE.
     static constexpr float thermalVoltage = 0.026f;
     static constexpr float poleCapacitorFarads = 240.0e-12f;
     // Each stage attenuates its differential input by 560 / (68000 + 560)
@@ -681,15 +718,32 @@ private:
     static constexpr float vcfBenderCounts = 4064.0f;
     // Hold-capacitor slew after the converter. VCF and voice-VCA use the
     // supported 522/687 us values; the common VCA derives its separate value
-    // from C7 and its loaded jack-board resistor network. The remaining nodes
-    // retain compatibility values behind separate names so a measured
-    // destination can be replaced without silently changing the others.
+    // from C7 and its loaded jack-board resistor network. PWM and SUB derive
+    // theirs from p. 13's designator-complete post-hold smoothing networks
+    // (OQ-07): the PWM hold reaches the comparators through R117/C62 and then
+    // R116/C63 around IC17a -- two cascaded poles -- and the stored SUB level
+    // reaches its mixer OTA through R11 into C1 ahead of the R9/R10 inverter.
+    // Both networks settle to their held value, so the calibrated DC laws are
+    // untouched; what they add is the lag the hardware's PWM LFO and level
+    // staircase actually cross. The remaining nodes retain compatibility
+    // values behind separate names so a measured destination can be replaced
+    // without silently changing the others.
     static constexpr float vcfHoldSlewSeconds = 522.0e-6f;
     static constexpr float voiceVcaHoldSlewSeconds = 687.0e-6f;
+    static constexpr float pwmSmoothingR117Ohms = 100.0e3f;
+    static constexpr float pwmSmoothingC62Farads = 47.0e-9f;
+    static constexpr float pwmSmoothingR116Ohms = 560.0e3f;
+    static constexpr float pwmSmoothingC63Farads = 4.7e-9f;
+    static constexpr float pwmHoldFirstPoleSeconds =         // 4.7 ms
+        pwmSmoothingR117Ohms * pwmSmoothingC62Farads;
+    static constexpr float pwmHoldSecondPoleSeconds =        // 2.632 ms
+        pwmSmoothingR116Ohms * pwmSmoothingC63Farads;
+    static constexpr float subSmoothingR11Ohms = 1.0e3f;
+    static constexpr float subSmoothingC1Farads = 10.0e-6f;
+    static constexpr float subHoldSlewSeconds =              // 10 ms
+        subSmoothingR11Ohms * subSmoothingC1Farads;
     static constexpr float dcoHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float resonanceHoldSlewSecondsVoiced = 522.0e-6f;
-    static constexpr float pwmHoldSlewSecondsVoiced = 522.0e-6f;
-    static constexpr float subHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float noiseHoldSlewSecondsVoiced = 522.0e-6f;
     // The shared white-noise generator and each card's microscopic filter
     // excitation represent continuous-time noise densities.  Their discrete
@@ -801,9 +855,20 @@ private:
     // together as one implicit system.
     struct OtaCascade
     {
+        // Capacitor voltage after the previous completed step. The update
+        // integrates each stage from here, so a numerical-rate change leaves
+        // every physical charge untouched.
         std::array<float, 4> state {};
         std::array<float, 4> voltage {};
         std::array<float, 4> offsetVoltage {};
+        // The previous step's converged differential-pair drive, in the
+        // pair's own dimensionless coordinate. Each step averages the pair's
+        // tanh along the straight path from this value to the new drive --
+        // the exact integral the trapezoid approximates by its endpoints --
+        // which leaves the linear response and the self-oscillation limit
+        // cycle bit-identical while denying the tanh set the fold-back the
+        // analogue circuit never had.
+        std::array<float, 4> driveMemory {};
         // Each stage integrates into its own 240 pF capacitor, so each pole
         // sits where that capacitor's tolerance puts it. Unity is the
         // calibrated nominal model, where all four coincide.
@@ -957,6 +1022,10 @@ private:
         Envelope envelope {};
         Dco dco {};
         OtaCascade filter {};
+        // C56/C50, the per-voice module-input coupling. It stands between the
+        // summed WAVE node and pin 1 VCF IN, so no mixer DC reaches the
+        // filter core or the voice VCA behind it.
+        HighPass moduleCoupling {};
     };
 
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
@@ -1187,7 +1256,12 @@ private:
     // The service timing chart routes exactly one hold each to PWM, sub level
     // and noise level. Every voice card consumes these shared voltages, while
     // its downstream comparator and level errors remain card-specific.
+    // The PWM hold crosses two smoothing poles on its way to the comparators
+    // -- R117/C62, then R116/C63 around IC17a -- so it carries the R117/C62
+    // node as a second continuous state between the target and the value the
+    // cards see.
     float pwmVoltsTarget_ { 6.0f };
+    float pwmVoltsFirstPole_ { 6.0f };
     float pwmVolts_ { 6.0f };
     float subCvTarget_ { 0.0f };
     float subCv_ { 0.0f };
@@ -1195,8 +1269,17 @@ private:
     float noiseCv_ { 0.0f };
 
     // One noise generator serves every voice, so noise sums coherently as more
-    // keys are held instead of staying at a fixed level.
+    // keys are held instead of staying at a fixed level. Its own support
+    // circuit band-shapes it before the NOISE rail: C42 into the BA662's
+    // 4.7 kOhm input bias makes a 33.9 Hz high-pass ahead of the level OTA,
+    // and C41 against R79 loads the OTA's output with a 4.82 kHz pole. Both
+    // run at the internal rate; their states are physical node voltages, so
+    // they survive a quality change like the coupling capacitors do.
     std::uint32_t noiseState_ { 0x6d2b79f5u };
+    HighPass noiseSourceHighPass_;
+    HighPass noiseSourceLowPass_;
+    float noiseSourceHighPassG_ { 0.01f };
+    float noiseSourceLowPassG_ { 0.1f };
 
     // The lever is read by the converter, not wired to the voices: its value
     // is sampled once per scan pass, quantised to the converter's byte, and
@@ -1239,6 +1322,9 @@ private:
     // is why they live here and carry no per-voice dispersion.
     HighPass voiceBusCoupling_ {};
     float voiceBusCouplingG_ { 0.0001f };
+    // Shared by all six cards: one part number, one nominal corner. The state
+    // is per voice because each card has its own capacitor.
+    float moduleCouplingG_ { 0.0001f };
     HighPass highPass_ {};
     float highPassG_ { 0.01f };
     float highPassShelf_ { 1.0f };

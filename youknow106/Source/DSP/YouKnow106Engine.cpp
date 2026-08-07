@@ -28,10 +28,43 @@ constexpr float pulseMixVolts = 6.0f;
 constexpr float subMixVolts = 5.0f;
 constexpr float noiseMixVolts = 2.0f;
 
+// The noise generator's support circuit, module board p. 13: Tr21 (2SC945,
+// factory-selected for noise) with R104 470 kOhm collector load, coupled by
+// C42 1 uF into the BA662 level OTA whose input pin sits on a 4.7 kOhm bias
+// resistor -- a 33.9 Hz high-pass -- and whose output is loaded by C41 100 pF
+// against R79 330 kOhm -- a 4.82 kHz pole -- before the buffered NOISE rail.
+// The audible source is therefore band-shaped by its own circuit, not flat.
+// The generator's bounded +/-2 V pre-filter amplitude remains the voiced
+// stand-in for the TP8 adjustment; the shaping passes its passband at unity,
+// so the established in-band density is unchanged (OQ-16).
+constexpr float noiseCouplingCapacitanceF = 1.0e-6f;      // C42
+constexpr float noiseCouplingLoadOhms = 4700.0f;          // R81, IC14 input
+constexpr float noiseOtaLoadCapacitanceF = 100.0e-12f;    // C41
+constexpr float noiseOtaLoadResistanceOhms = 330000.0f;   // R79
+
 // Voice-summer output coupling ahead of the four-position HPF selector:
 // IC1a -> C14 10 uF NP -> R39 33 kOhm -> IC3 common input.
 constexpr float voiceBusCouplingCapacitanceF = 10.0e-6f;
 constexpr float voiceBusCouplingResistanceOhms = 33000.0f;
+
+// Per-voice module-input coupling, module board p. 13: the summed WAVE node
+// reaches the voice module's pin 1 VCF IN only through C56/C50 10 uF NP. The
+// topology is settled -- the 2026-08-07 designator read lists this capacitor
+// with the rest of the mixer node -- and it is why no mixer DC can reach the
+// filter core or the voice VCA behind it.
+//
+// The capacitor is the read part; the resistance it works against is not.
+// R99/R102 33 kOhm is *not* this pole's load -- the same p. 13 pass re-roles
+// it as a DC bridge from the sub switch emitter to the WAVE line, in parallel
+// with D5/D6 -- and the node's termination, together with the WAVE output's
+// source impedance, is exactly OQ-15's remaining measurement. 33 kOhm is
+// therefore a voiced stand-in, taken by analogy with the two settled
+// 10 uF NP / 33 kOhm couplings downstream (C14/R39 and C12/R36), and what
+// this pole does is insensitive to the choice: every plausible 10-100 kOhm
+// termination lands the corner between 0.16 and 1.6 Hz, far below the lowest
+// note either way. The audible content is the DC block itself, not the corner.
+constexpr float moduleCouplingCapacitanceF = 10.0e-6f;      // C56 / C50
+constexpr float moduleCouplingResistanceOhms = 33000.0f;    // voiced, OQ-15
 
 // Manufacturer application input for IC5/uPC1252H2, populated by Roland as
 // C12 10 uF NP followed by R36 33 kOhm.
@@ -889,30 +922,38 @@ float YouKnow106Engine::highPassCornerHz(HighPassMode mode) noexcept
     // was wrong in a way that concealed itself: 15 kOhm against 47 nF has the
     // same product as 47 kOhm against 15 nF, so position 2 came out right by
     // coincidence while position 3 stayed 13 Hz off. Reading the schematic's
-    // own designators is what separated them. The boost's corner is unchanged,
-    // being the measured shelf's own pole rather than a part value -- and the
-    // boost is a summed two-zero/two-pole shelf, not one RC, which is why it
-    // has never been described by a corner alone here.
+    // own designators is what separated them.
+    //
+    // The boost's corner is the branch's own dominant pole, read at designator
+    // level from a complete 300 dpi scan of p. 15 (2026-08-07): Y3 crosses
+    // C9 47 nF in parallel with R22 47 kOhm into the node C8 10 nF shunts to
+    // ground, so the pole is R22*(C9+C8), or 59.41 Hz, and the section's
+    // 72.05 Hz zero all but cancels the 72.34 Hz pole of IC4b's C6-bypassed
+    // feedback -- which is why one corner describes a two-stage branch to
+    // within 0.016 dB.
     switch (mode)
     {
-        case HighPassMode::Boost: return 59.4f;
+        case HighPassMode::Boost: return 59.4083f; // R22 x (C9 + C8)
         case HighPassMode::Two:   return 225.8f;   // 47 kOhm x 15 nF
         case HighPassMode::Three: return 720.5f;   // 47 kOhm x 4.7 nF
         case HighPassMode::One:
-        default:                  return 59.4f;
+        default:                  return 59.4083f;
     }
 }
 
 float YouKnow106Engine::highPassShelfGain(HighPassMode mode) noexcept
 {
-    // How much of the low band the leg returns. The boost position is a real
-    // measured shelf: +10.5 dB at DC, verified against a hardware noise
-    // sweep -- far more than the +3 dB an earlier account reported. The
-    // straight-through leg returns the low band untouched, and the two
-    // cutting legs discard it.
+    // How much of the low band the leg returns. The boost position's DC gain
+    // is derived from the branch: the dry R25 leg at unity plus IC4b's
+    // DC-coupled leg -- R22 passes DC around C9, C6 leaves the full
+    // 1 + R18/R19 = 11 stage gain, and R24 220 kOhm reaches the R29 47 kOhm
+    // summing bus -- for 1 + (47/220)*11 = 3.35, or +10.50 dB. A hardware
+    // noise sweep independently landed on the same figure, far more than the
+    // +3 dB an earlier account reported. The straight-through leg returns the
+    // low band untouched, and the two cutting legs discard it.
     switch (mode)
     {
-        case HighPassMode::Boost: return std::pow(10.0f, 10.5f / 20.0f);
+        case HighPassMode::Boost: return 1.0f + (47.0f / 220.0f) * 11.0f;
         case HighPassMode::One:   return 1.0f;
         case HighPassMode::Two:
         case HighPassMode::Three:
@@ -922,12 +963,15 @@ float YouKnow106Engine::highPassShelfGain(HighPassMode mode) noexcept
 
 float YouKnow106Engine::highPassHighGain(HighPassMode mode) noexcept
 {
-    // The boost leg lifts the high band a little too -- the measured shelf
-    // settles at +1.41 dB well above its corner. Every other leg passes the
-    // high band at unity.
+    // The boost leg lifts the high band a little too. Above the corner C9
+    // carries the branch and C8 divides it -- C9/(C9+C8) = 47/57 -- while C6
+    // shorts IC4b's feedback to unity gain, so the plateau is
+    // 1 + (47/220)*(47/57) = 1.17616, or +1.41 dB, exactly where the hardware
+    // noise sweep settled. Every other leg passes the high band at unity.
     switch (mode)
     {
-        case HighPassMode::Boost: return std::pow(10.0f, 1.41f / 20.0f);
+        case HighPassMode::Boost:
+            return 1.0f + (47.0f / 220.0f) * (47.0f / 57.0f);
         case HighPassMode::One:
         case HighPassMode::Two:
         case HighPassMode::Three:
@@ -964,6 +1008,23 @@ float YouKnow106Engine::commonVcaInputCouplingCornerHz() noexcept
 {
     return 1.0f / (twoPi * commonVcaInputCapacitanceF
                    * commonVcaInputResistanceOhms);
+}
+
+float YouKnow106Engine::moduleCouplingCornerHz() noexcept
+{
+    return 1.0f / (twoPi * moduleCouplingCapacitanceF
+                   * moduleCouplingResistanceOhms);
+}
+
+float YouKnow106Engine::noiseSourceHighPassHz() noexcept
+{
+    return 1.0f / (twoPi * noiseCouplingCapacitanceF * noiseCouplingLoadOhms);
+}
+
+float YouKnow106Engine::noiseSourceLowPassHz() noexcept
+{
+    return 1.0f / (twoPi * noiseOtaLoadCapacitanceF
+                   * noiseOtaLoadResistanceOhms);
 }
 
 float YouKnow106Engine::outputCouplingHighGain() noexcept
@@ -1363,42 +1424,73 @@ void YouKnow106Engine::OtaCascade::reset() noexcept
 {
     state.fill(0.0f);
     voltage.fill(0.0f);
+    driveMemory.fill(0.0f);
 }
 
 void YouKnow106Engine::OtaCascade::retime(float previousG,
                                           float nextG) noexcept
 {
-    if (!(previousG > 0.0f) || !std::isfinite(previousG)
-        || !(nextG >= 0.0f) || !std::isfinite(nextG))
-    {
-        // With no usable derivative history, retaining charge is still less
-        // destructive than clearing a continuously powered voice card.
-        state = voltage;
-        return;
-    }
-
-    // After a trapezoidal step, state - voltage is g times the derivative at
-    // that physical capacitor. A live HQ change alters dt (and therefore g),
-    // not the capacitor voltage or transconductance. Preserve the derivative
-    // by scaling only that carry into the new timestep.
-    const float ratio = nextG / previousG;
-    for (std::size_t stage = 0; stage < state.size(); ++stage)
-        state[stage] = voltage[stage]
-                     + (state[stage] - voltage[stage]) * ratio;
+    // A live HQ change alters dt (and therefore g), not the capacitor
+    // voltages or the transconductance. Both carried states survive a rate
+    // change untouched: `state` is a physical capacitor voltage, and
+    // `driveMemory` is the pair drive at the previous step's endpoint --
+    // dimensionless, so it needs no re-expression on the new grid. The
+    // earlier trapezoidal carry had to be rescaled here; the path-average
+    // form has nothing to rescale.
+    (void) previousG;
+    (void) nextG;
+    state = voltage;
 }
 
-// One trapezoidally integrated step of the four transconductor stages with the
+// The pair's instantaneous transfer is tanh; its antiderivative ln(cosh)
+// gives the exact average of tanh along a straight drive path, which is what
+// one step of the integrator physically consumes. Written out stably: for
+// large |x|, ln(cosh x) -> |x| - ln 2.
+static inline float tanhAntiderivative(float x) noexcept
+{
+    const float magnitude = std::abs(x);
+    return magnitude + std::log1p(std::exp(-2.0f * magnitude))
+         - 0.6931471805599453f;
+}
+
+// Average of tanh from x0 to x1, and its derivative with respect to x1. The
+// short-path branch is the midpoint rule the divided difference converges to.
+static inline void tanhPathAverage(float x1, float x0, float& average,
+                                   float& slope) noexcept
+{
+    const float span = x1 - x0;
+    if (std::abs(span) < 1.0e-3f)
+    {
+        const float t = std::tanh(0.5f * (x1 + x0));
+        average = t;
+        slope = 0.5f * (1.0f - t * t);
+        return;
+    }
+    average = (tanhAntiderivative(x1) - tanhAntiderivative(x0)) / span;
+    slope = (std::tanh(x1) - average) / span;
+}
+
+// One implicitly integrated step of the four transconductor stages with the
 // inverting resonance return closed around them. The unknowns are the four
 // stage voltages; the Jacobian is lower bidiagonal apart from a single corner
 // term contributed by the feedback, so the Newton step is solved directly
 // rather than with a general linear solver.
 //
-// Stage equation: Vn = s_n + g * H * tanh((V_{n-1} - V_n) / H), with
-// H = 2 Vt / attenuation, the differential pair's linear span referred to the
-// stage input, and V_0 = input - k * fb(V_4). The compatibility profile uses
-// a circuit-shaped nonlinear return, fb(V) = Hfb * tanh(V / Hfb), so its loop
-// remains bounded. The selected divider and headroom are part of that voiced
-// profile, not a measured code-to-loop transfer.
+// Stage equation: Vn = Vn_prev + 2 g * H * avg(tanh; x_prev -> x), with
+// x = (V_{n-1} - V_n + offset) / H, H = 2 Vt / attenuation the differential
+// pair's linear span referred to the stage input, and V_0 = input - k *
+// fb(V_4). The average of tanh along the straight drive path from the
+// previous step's endpoint is the integral the trapezoid approximates by its
+// endpoints; taking it exactly (the divided difference of ln cosh) changes
+// nothing the endpoints already got right -- the linear response and the
+// self-oscillation limit cycle are measured identical -- but denies the tanh
+// set the spectral fold-back the analogue cascade never had: the hot
+// bright-resonant in-band alias floor drops 11.5 dB. The compatibility
+// profile uses a circuit-shaped nonlinear return, fb(V) = Hfb * tanh(V /
+// Hfb), so its loop remains bounded; the return stays an endpoint evaluation
+// because V4 arrives already band-limited by the fourth pole. The selected
+// divider and headroom are part of that voiced profile, not a measured
+// code-to-loop transfer.
 float YouKnow106Engine::OtaCascade::process(float input, float g,
                                             float feedback,
                                             float headroom,
@@ -1416,6 +1508,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
     std::array<float, 4> selfDerivative {};
     std::array<float, 4> previousDerivative {};
     std::array<float, 4> residual {};
+    std::array<float, 4> drive {};
 
     for (int iteration = 0; iteration < maximumIterations; ++iteration)
     {
@@ -1432,13 +1525,21 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
                                * earlyMod;
             const float x = (previous - voltage[static_cast<std::size_t>(n)]
                              + offsetVoltage[static_cast<std::size_t>(n)]) * inverseHeadroom;
-            const float t = std::tanh(x);
-            const float sech2 = 1.0f - t * t;
+            drive[static_cast<std::size_t>(n)] = x;
+            float pathAverage = 0.0f;
+            float pathSlope = 0.0f;
+            tanhPathAverage(x, driveMemory[static_cast<std::size_t>(n)],
+                            pathAverage, pathSlope);
+            // The 2 restores the full step: the trapezoidal g carries the
+            // half that used to pair with the endpoint average.
             residual[static_cast<std::size_t>(n)] =
                 voltage[static_cast<std::size_t>(n)]
-                - state[static_cast<std::size_t>(n)] - stageG * headroom * t;
-            selfDerivative[static_cast<std::size_t>(n)] = 1.0f + stageG * sech2;
-            previousDerivative[static_cast<std::size_t>(n)] = -stageG * sech2;
+                - state[static_cast<std::size_t>(n)]
+                - 2.0f * stageG * headroom * pathAverage;
+            selfDerivative[static_cast<std::size_t>(n)] =
+                1.0f + 2.0f * stageG * pathSlope;
+            previousDerivative[static_cast<std::size_t>(n)] =
+                -2.0f * stageG * pathSlope;
             previous = voltage[static_cast<std::size_t>(n)];
         }
 
@@ -1483,16 +1584,35 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
             break;
     }
 
+    // Re-evaluate the drives at the converged voltages so the carried path
+    // start is exactly consistent with the carried charge.
+    {
+        const float feedbackTanh = std::tanh(voltage[3] / feedbackHeadroom);
+        float previous = input - k * feedbackHeadroom * feedbackTanh;
+        for (int n = 0; n < 4; ++n)
+        {
+            drive[static_cast<std::size_t>(n)] =
+                (previous - voltage[static_cast<std::size_t>(n)]
+                 + offsetVoltage[static_cast<std::size_t>(n)]) * inverseHeadroom;
+            previous = voltage[static_cast<std::size_t>(n)];
+        }
+    }
+
     for (int n = 0; n < 4; ++n)
     {
-        // Trapezoidal carry: s_next = 2 V - s.
+        // Carry the converged step: the capacitor voltage becomes the next
+        // step's integration origin, and the converged drive becomes the next
+        // path's starting point.
         state[static_cast<std::size_t>(n)] =
-            2.0f * voltage[static_cast<std::size_t>(n)]
-            - state[static_cast<std::size_t>(n)];
-        if (!std::isfinite(state[static_cast<std::size_t>(n)]))
+            voltage[static_cast<std::size_t>(n)];
+        driveMemory[static_cast<std::size_t>(n)] =
+            drive[static_cast<std::size_t>(n)];
+        if (!std::isfinite(state[static_cast<std::size_t>(n)])
+            || !std::isfinite(driveMemory[static_cast<std::size_t>(n)]))
         {
             state[static_cast<std::size_t>(n)] = 0.0f;
             voltage[static_cast<std::size_t>(n)] = 0.0f;
+            driveMemory[static_cast<std::size_t>(n)] = 0.0f;
         }
     }
 
@@ -1510,8 +1630,8 @@ float YouKnow106Engine::HighPass::process(float input, float g,
 {
     // Topology-preserving single pole. The cutting legs pass the high band at
     // unity and discard the low band; the boost leg is a real shelf, lifting
-    // the low band strongly and the high band slightly, as the measured
-    // network does.
+    // the low band strongly and the high band slightly, as the derived
+    // branch does.
     const double v = (static_cast<double>(input) - state)
                    * static_cast<double>(g)
                    / (1.0 + static_cast<double>(g));
@@ -1720,8 +1840,14 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
         std::sqrt(oversampledRate_ / noiseReferenceRateHz));
     voiceBusCouplingG_ = std::tan(
         pi * voiceBusCouplingCornerHz() * inverseOversampledRate_);
+    moduleCouplingG_ = std::tan(
+        pi * moduleCouplingCornerHz() * inverseOversampledRate_);
     commonVcaInputCouplingG_ = std::tan(
         pi * commonVcaInputCouplingCornerHz() * inverseOversampledRate_);
+    noiseSourceHighPassG_ = std::tan(
+        pi * noiseSourceHighPassHz() * inverseOversampledRate_);
+    noiseSourceLowPassG_ = std::tan(
+        pi * noiseSourceLowPassHz() * inverseOversampledRate_);
     outputCouplingG_ = std::tan(
         pi * outputCouplingCornerHz() * inverseSampleRate_);
     const double deepest = totalLatencySamples(maximumOversampleFactor);
@@ -1828,6 +1954,8 @@ void YouKnow106Engine::clearRateDependentOutputPath(
         voiceBusCoupling_.reset();
         highPass_.reset();
         commonVcaInputCoupling_.reset();
+        noiseSourceHighPass_.reset();
+        noiseSourceLowPass_.reset();
     }
     latencyPadLeft_.fill(0.0f);
     latencyPadRight_.fill(0.0f);
@@ -1924,6 +2052,7 @@ void YouKnow106Engine::reset()
         voice = Voice {};
         voice.dco.reset();
         voice.filter.reset();
+        voice.moduleCoupling.reset();
         voice.envelope.reset();
     }
     for (int index = 0; index < maxVoices; ++index)
@@ -1954,6 +2083,7 @@ void YouKnow106Engine::reset()
     updateSharedScan(activeParameters_, lfoValue_);
     resonanceCv_ = resonanceCvTarget_;
     sharedVca_ = sharedVcaTarget_;
+    pwmVoltsFirstPole_ = pwmVoltsTarget_;
     pwmVolts_ = pwmVoltsTarget_;
     subCv_ = subCvTarget_;
     noiseCv_ = noiseCvTarget_;
@@ -2094,6 +2224,7 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
         updateSharedScan(next, lfoValue_);
         resonanceCv_ = resonanceCvTarget_;
         sharedVca_ = sharedVcaTarget_;
+        pwmVoltsFirstPole_ = pwmVoltsTarget_;
         pwmVolts_ = pwmVoltsTarget_;
         subCv_ = subCvTarget_;
         noiseCv_ = noiseCvTarget_;
@@ -2434,6 +2565,7 @@ void YouKnow106Engine::silenceVoice(Voice& voice) noexcept
         voice.dco.reset();
         voice.pulseDutyPrimed = false;
         voice.filter.reset();
+        voice.moduleCoupling.reset();
         voice.noiseState = hash32(
             static_cast<std::uint32_t>(voice.cardIndex) * 2246822519u + 1u) | 1u;
     }
@@ -3380,60 +3512,30 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // would mean moving the edge, and the amount to move it by is nothing.
     const float subOut = dco.sub.advance(dco.subState) * subGain;
 
-    // --- Summing node (Thévenin passive mixer network) -----------------------
-    // Saw (100k), Pulse (100k), Sub (100k) and Noise (100k) meet at the IR3109
-    // input (68k), so the node voltage is sum(V/100k) / (1/68k + N/100k) and
-    // every connected leg loads every other one.
-    //
-    // Which legs are *connected* is not the same question as which are
-    // audible. SAW and PULSE are panel switches, so their legs really do come
-    // and go. SUB LEVEL and NOISE LEVEL are sliders that vary an amplitude:
-    // those two legs are permanently wired, and stay in the load whatever the
-    // slider reads. Counting them only above zero made the whole voice jump by
-    // 2.95 dB the moment SUB left its stop -- a step change on a continuous
-    // control.
+    // --- Summing node --------------------------------------------------------
+    // Module p. 13 (2026-08-07 designator read): saw and pulse leave the
+    // waveshaper already summed on ONE per-voice WAVE output (IC12/IC8/IC4
+    // pin 14 or 16), the sub joins that line through R101/R97 27k behind
+    // D6/D5 from its own switch transistor, the shared noise rail arrives on
+    // its own leg, and C56/C50 couple the node into the voice module's input.
+    // No panel switch reaches this node: SAW is gated by a control rail at
+    // the generator ("0: saw ON" at Tr24/R148), PULSE by the -0.8 V hold that
+    // pins the comparator (what the pinned state leaves on the node is
+    // OQ-11), SUB by its collector supply and NOISE by the level OTA.
+    // Sources mute; legs never switch. The node's loading is therefore one
+    // configuration-independent constant, which the established
+    // filterInputAttenuation coordinate already absorbs -- an earlier
+    // revision modelled four switchable 100k legs against the module's 68k
+    // and attenuated any patch with both waveforms on by a phantom 1.76 dB.
+    // The absolute source-to-filter budget remains OQ-15.
     float mixed = 0.0f;
-    int connectedLegCount = 2; // SUB and NOISE are always wired.
-
     if (parameters.sawEnabled)
-    {
         mixed += sawOut;
-        ++connectedLegCount;
-    }
-    // A pinned comparator contributes no *audio* -- what the pinned leg does
-    // downstream is OQ-11 -- but the resistor is still connected either way.
-    if (parameters.pulseEnabled)
-    {
-        if (pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty))
-            mixed += pulseOut;
-        ++connectedLegCount;
-    }
+    if (pulseMixEnabled(parameters.pulseEnabled, voice.pulseDuty))
+        mixed += pulseOut;
     mixed += subOut;
     mixed += noiseSample * noiseMixVolts * noiseCv_
            * (1.0f + card.noiseLevelError * 0.03f * parameters.calibration);
-
-    // Not scaled by Unit Character. Resistor-network loading is what the
-    // nominal circuit does, not a tolerance a calibrated unit would be free of,
-    // and gating it left the pristine reference unloaded.
-    //
-    // The reference configuration is the three permanently-or-usually
-    // connected legs -- saw, sub and noise -- rather than a single leg, so the
-    // established absolute level of a plain saw patch is preserved and only the
-    // *relative* loading of adding a leg changes. Choosing that reference is a
-    // product decision, not a measurement: whether the SAW and PULSE switches
-    // open their resistors or merely mute their sources is not established
-    // here, and the two readings differ by a constant gain that
-    // `filterInputAttenuation` and the output reference would absorb (OQ-15).
-    // What is not in doubt is the shape -- every connected leg loads every
-    // other one -- and that a slider which varies an amplitude cannot connect
-    // or disconnect anything.
-    {
-        constexpr float gIn = 1.0f / 68.0f;
-        constexpr float gLeg = 1.0f / 100.0f;
-        constexpr float gReference = gIn + 3.0f * gLeg;
-        const float gTotal = gIn + static_cast<float>(connectedLegCount) * gLeg;
-        mixed *= gReference / gTotal;
-    }
 
     voice.noiseState ^= voice.noiseState << 13;
     voice.noiseState ^= voice.noiseState >> 17;
@@ -3443,10 +3545,24 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
              * (2.0f / 16777215.0f) - 1.0f) * filterNoiseVolts;
 
     // --- Filter, amplifier -------------------------------------------------
-    // No high-pass here. The schematic puts it on the jack board, downstream of
-    // the summing amplifier, so it is one shared stage after all six voices
-    // rather than a leg inside each -- see the mix.
-    const float filterInput = mixed * filterInputAttenuation
+    // C56/C50 stand between the summed WAVE node and pin 1 VCF IN, so the
+    // module -- and the voice VCA behind it -- never see the mixer's DC. An
+    // enabled pulse carries the largest of it: the comparator's output is a
+    // duty-asymmetric square, so its mean walks with PWM (at the 95 % duty the
+    // hold's 0.6 V endpoint reaches, mean = 6 V * (2d - 1) = 5.4 V at the
+    // node). Passed straight through, that DC would multiply by the envelope
+    // in the voice VCA and leave an envelope-shaped thump that got *louder*
+    // with PWM depth -- a step the instrument does not make.
+    //
+    // The panel HPF is a different stage and stays where it is: the schematic
+    // puts it on the jack board, downstream of the summing amplifier, so it is
+    // one shared stage after all six voices rather than a leg inside each --
+    // see the mix.
+    const float coupled = voice.moduleCoupling.process(
+        mixed, moduleCouplingG_, 0.0f, 1.0f);
+    // The microscopic card excitation is injected at the filter input, after
+    // the source coordinate scale, so it stays outside this capacitor (OQ-16).
+    const float filterInput = coupled * filterInputAttenuation
                             * voice.inputCompensation
                             + microscopicNoise * noiseRateScale_;
     // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C
@@ -3586,8 +3702,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     }
 
     // Each converter destination owns a separately named hold network. VCF,
-    // voice VCA and common VCA are evidence-backed; the other constants remain
-    // isolated compatibility policies until their RCs are established.
+    // voice VCA, common VCA, PWM and SUB are evidence-backed; DCO, resonance
+    // and noise remain isolated compatibility policies until their RCs are
+    // established.
     const auto slewFor = [this](float seconds) {
         return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
     };
@@ -3596,8 +3713,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     const float dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
     const float resonanceSlew = slewFor(resonanceHoldSlewSecondsVoiced);
     const float commonVcaSlew = slewFor(commonVcaHoldTimeConstantSeconds());
-    const float pwmSlew = slewFor(pwmHoldSlewSecondsVoiced);
-    const float subSlew = slewFor(subHoldSlewSecondsVoiced);
+    const float pwmSlewFirst = slewFor(pwmHoldFirstPoleSeconds);
+    const float pwmSlewSecond = slewFor(pwmHoldSecondPoleSeconds);
+    const float subSlew = slewFor(subHoldSlewSeconds);
     const float noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
     voiceEnergyFollower_ = slewFor(voiceEnergyFollowerSeconds);
     const float outputGlide =
@@ -3672,7 +3790,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 (resonanceCvTarget_ - resonanceCv_) * resonanceSlew;
             sharedVca_ +=
                 (sharedVcaTarget_ - sharedVca_) * commonVcaSlew;
-            pwmVolts_ += (pwmVoltsTarget_ - pwmVolts_) * pwmSlew;
+            pwmVoltsFirstPole_ +=
+                (pwmVoltsTarget_ - pwmVoltsFirstPole_) * pwmSlewFirst;
+            pwmVolts_ += (pwmVoltsFirstPole_ - pwmVolts_) * pwmSlewSecond;
             subCv_ += (subCvTarget_ - subCv_) * subSlew;
             noiseCv_ += (noiseCvTarget_ - noiseCv_) * noiseSlew;
             thermalWarmupSeconds_ += static_cast<float>(inverseOversampledRate_);
@@ -3690,13 +3810,23 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             }
 
             // One noise generator feeds every voice, so noise grows as more
-            // keys are held instead of staying put.
+            // keys are held instead of staying put. Its support circuit
+            // band-shapes the rail: C42 into the level OTA's 4.7 kOhm input
+            // bias high-passes at 33.9 Hz, and C41 against R79 low-passes at
+            // 4.82 kHz. The level control between the two poles is a scalar,
+            // so shaping the shared source once here is exact for every
+            // voice; the passband stays at unity, so in-band density keeps
+            // its established rate normalisation.
             noiseState_ ^= noiseState_ << 13;
             noiseState_ ^= noiseState_ >> 17;
             noiseState_ ^= noiseState_ << 5;
-            const float noiseSample =
+            const float rawNoise =
                 (static_cast<float>(noiseState_ & 0xffffffu)
                      * (2.0f / 16777215.0f) - 1.0f) * noiseRateScale_;
+            const float noiseSample = noiseSourceLowPass_.process(
+                noiseSourceHighPass_.process(
+                    rawNoise, noiseSourceHighPassG_, 0.0f, 1.0f),
+                noiseSourceLowPassG_, 1.0f, 0.0f);
 
             // Polyphonic current draw loads the +/-15 V regulators, so the
             // rails sag as more cards work. This is the DC part only. The

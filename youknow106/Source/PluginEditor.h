@@ -27,6 +27,9 @@ public:
                                bool isHighlighted, bool isDown) override;
     void drawButtonText (juce::Graphics&, juce::TextButton&,
                          bool isHighlighted, bool isDown) override;
+    void drawComboBox (juce::Graphics&, int width, int height,
+                       bool isButtonDown, int buttonX, int buttonY,
+                       int buttonW, int buttonH, juce::ComboBox&) override;
     void drawLabel (juce::Graphics&, juce::Label&) override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
 };
@@ -129,6 +132,10 @@ public:
     // strip explains is a parameter -- the keyboard and the lever are not.
     void showFor (juce::Component* component, juce::String value = {});
     void showIdle();
+    // A transient status line -- a completed patch-file load or save -- that
+    // holds the idle strip for a few seconds and then yields. Hover help
+    // still wins while it is up.
+    void showNotice (juce::String title, juce::String text);
     void paint (juce::Graphics&) override;
 
     [[nodiscard]] const juce::String& getHelpTitle() const noexcept
@@ -152,9 +159,13 @@ private:
     juce::String helpTitle;
     juce::String helpText;
     juce::String helpValue;
+    juce::String noticeTitle;
+    juce::String noticeText;
+    juce::uint32 noticeExpiresAt { 0 };
 };
 
 class YouKnow106AudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                             public juce::FileDragAndDropTarget,
                                              private juce::Timer
 {
 public:
@@ -163,6 +174,11 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    // A .syx patch dump can be dropped anywhere on the instrument; the LOAD
+    // key is the same operation through a chooser.
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void filesDropped (const juce::StringArray& files, int x, int y) override;
 
     // What the help strip prints beside a hovered component: that component's
     // parameter, formatted by the parameter itself, or empty for a component
@@ -186,6 +202,12 @@ private:
     // a nudge of the button means.
     void stepProgram (int delta);
     void refreshPresetBar();
+    // Patch-file transfer, LOAD/SAVE keys and drag-and-drop alike. Files
+    // carry the hardware's own F0 41 30 patch dumps and nothing else.
+    void chooseAndImportPatchFile();
+    void chooseAndExportPatchFile();
+    void importPatchFile (const juce::File& file);
+    void exportPatchFile (const juce::File& file);
     void attachSlider (juce::Slider&, const char* parameterId);
     void attachButton (juce::Button&, const char* parameterId);
     void attachPolyButton (juce::Button&, const char* parameterId,
@@ -226,6 +248,11 @@ private:
     juce::TextButton randomize10Button { "RND10%" };
     juce::TextButton randomize50Button { "RND50%" };
     juce::TextButton resetButton { "RESET" };
+    // The tape section's own pairing: LOAD and SAVE move one patch between
+    // the panel and a .syx file.
+    juce::TextButton syxLoadButton { "LOAD" };
+    juce::TextButton syxSaveButton { "SAVE" };
+    std::unique_ptr<juce::FileChooser> sysExFileChooser;
     juce::Slider transposeSlider;
     juce::Slider tuneSlider;
     juce::Slider velocitySlider;

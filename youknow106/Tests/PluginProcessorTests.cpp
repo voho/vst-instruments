@@ -1596,6 +1596,77 @@ void testSysExPatchRoundTripsThroughTheParameters()
     processor.releaseResources();
 }
 
+// A .syx file is the live stream written to disk. The importer must find the
+// instrument's patches anywhere in a longer stream, apply exactly the first
+// -- a bank file must not silently keep only its last patch -- and adopt the
+// file's channel so later exports answer on it.
+void testPatchFileImportAppliesFirstPatchAndCountsTheRest()
+{
+    YouKnow106AudioProcessor processor;
+    processor.prepareToPlay (sampleRate, blockSize);
+
+    sysex::Patch first {};
+    first.cutoff = 0.25f;
+    first.resonance = 0.75f;
+    first.chorus = ChorusMode::One;
+    sysex::Patch second {};
+    second.cutoff = 0.9f;
+
+    // A realistic file: leading SysEx from another maker, both patches on
+    // channel 3, and trailing bytes whose frame never closes.
+    std::vector<std::uint8_t> file { 0xf0, 0x7e, 0x01, 0x02, 0xf7, 0x42 };
+    std::array<std::uint8_t, sysex::patchMessageBytes> raw {};
+    auto written = sysex::writePatchMessage (first, 3, raw.data(), raw.size());
+    expect (written > 0, "could not build the first patch message");
+    file.insert (file.end(), raw.begin(),
+                 raw.begin() + static_cast<std::ptrdiff_t> (written));
+    written = sysex::writePatchMessage (second, 3, raw.data(), raw.size());
+    expect (written > 0, "could not build the second patch message");
+    file.insert (file.end(), raw.begin(),
+                 raw.begin() + static_cast<std::ptrdiff_t> (written));
+    file.push_back (0xf0);
+    file.push_back (0x41);
+
+    int patchesFound = 0;
+    expect (processor.importPatchSysExBytes (file.data(), file.size(),
+                                             patchesFound),
+            "a file carrying two patches did not import");
+    expect (patchesFound == 2, "the importer miscounted the file's patches");
+    expect (std::abs (parameterValue (processor, parameters::cutoff) - 0.25f)
+                < 0.01f,
+            "the file's first patch did not reach the cutoff parameter");
+    expect (std::abs (parameterValue (processor, parameters::resonance) - 0.75f)
+                < 0.01f,
+            "the file's first patch did not reach the resonance parameter");
+    expect (parameterValue (processor, parameters::chorusI) > 0.5f,
+            "the file's first patch did not engage chorus I");
+    expect (processor.sysExMidiChannel() == 3,
+            "the import did not adopt the file's channel");
+
+    // And straight back out on the adopted channel.
+    const auto emitted =
+        processor.currentPatchAsSysEx (processor.sysExMidiChannel());
+    sysex::Patch returned {};
+    int channel = -1;
+    expect (sysex::readPatchMessage (
+                emitted.getRawData(),
+                static_cast<std::size_t> (emitted.getRawDataSize()),
+                returned, channel),
+            "the emitted message was not readable");
+    expect (channel == 3, "the emitted dump did not answer on the imported channel");
+    expect (returned.chorus == ChorusMode::One,
+            "the applied tone did not come back out");
+
+    int nothingFound = -1;
+    const std::array<std::uint8_t, 5> foreign { 0xf0, 0x7e, 0x01, 0x02, 0xf7 };
+    expect (!processor.importPatchSysExBytes (foreign.data(), foreign.size(),
+                                              nothingFound),
+            "a foreign-only file claimed to import");
+    expect (nothingFound == 0, "a foreign-only file counted patches");
+
+    processor.releaseResources();
+}
+
 // SysEx has the same timing obligation as notes and Program Change. A full
 // dump followed by a one-parameter edit in the same block must build one
 // ordered audio-side tone even when no message-thread callback is available.
@@ -3279,11 +3350,13 @@ void testEveryInteractiveEditorControlExplainsItself()
     };
     audit (audit, *editor);
 
-    // Six extension knobs, six compact operation buttons, four patch-bar
-    // controls, the keybed and the vector lever. Patch dumping remains a
-    // processor/MIDI capability, but no longer takes scarce front-panel area.
+    // Six extension knobs, eight compact operation buttons -- the five
+    // service keys, HQ, and the patch-file LOAD/SAVE pair -- four patch-bar
+    // controls, the keybed and the vector lever. Patch files move through the
+    // utility bar; live MIDI SEND remains a processor capability only and
+    // takes no front-panel area.
     constexpr int expectedInteractiveCount =
-        panel::controlCount + 6 + 6 + 4 + 1 + 1;
+        panel::controlCount + 6 + 8 + 4 + 1 + 1;
     expect (interactiveCount == expectedInteractiveCount,
             "the contextual-help audit did not cover every interactive control");
     expect (findDescendantButtonWithText (*editor, "SEND") == nullptr,
@@ -4195,6 +4268,7 @@ int main()
     testProgramChangeAffectsFollowingNoteWithoutTheMessageThread();
     testZeroSampleBlockStillHandlesProgramAndSysEx();
     testSysExPatchRoundTripsThroughTheParameters();
+    testPatchFileImportAppliesFirstPatchAndCountsTheRest();
     testOrderedSysExAffectsAudioWithoutTheMessageThread();
     testReflectionAckCannotRetireShadowAgainstAStaleSnapshot();
     testSingleParameterSysExDoesNotDisturbAnythingElse();
