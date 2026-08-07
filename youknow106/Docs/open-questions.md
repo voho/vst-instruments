@@ -96,7 +96,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P2 | 12 | Envelope wall-clock timing/jitter, analogue/audible thresholds and other firmware revisions | Exact hash-scoped B-2 recurrence and physical `E>>2` DAC truncation |
 | P2 | 13 | LFO/delay wall-clock timing, analogue smoothing/output scale and revision differences | Exact hash-scoped B-2 rate, delay and fade algorithms |
 | P2 | 14 | Portamento pot/ADC transfer, hysteresis, cadence and revision differences | Exact hash-scoped B-2 coefficient and 8.8-state law |
-| P0 | 15 | Loaded oscillator/sub/noise mixer levels and their actual filter-drive budget (WAVE-output source impedance; junction-level confirmation of the 39 kΩ noise-leg candidate and of the 33 kΩ sub-emitter path read on 2026-08-07) | Node-specific 12 Vpp/4 Vpp anchors, the 68 kΩ/560 Ω core attenuator, and the mixer topology from the p. 13 read: one summed WAVE output per voice, sub via 27 kΩ + diode, C56/C50 coupling, sources muted at their generators — legs never switch (2026-08-07) |
+| P0 | 15 | Loaded oscillator/sub/noise mixer levels and their actual filter-drive budget (chiefly the WAVE output's source impedance; the 39 kΩ noise leg and 33 kΩ sub-emitter path are traced readings from 2026-08-07 with one crossing below junction-dot certainty) | Node-specific 12 Vpp/4 Vpp anchors, the 68 kΩ/560 Ω core attenuator, and the mixer topology from the p. 13 read: one summed WAVE output per voice, sub via 27 kΩ + diode, C56/C50 coupling, sources muted at their generators — legs never switch (2026-08-07) |
 | P2 | 16 | Calibrated TP8 capture (PSD/distribution against the shaped model), and physical filter-startup excitation | Shared generator topology, TP8 4.0 Vpp adjustment, and the 33.9 Hz/4.82 kHz band-shaping derived from the p. 13 designators (C42/4.7 kΩ and C41/R79, 2026-08-07) |
 | P3 / dependency | 17 | Real VOLUME gang tracking plus selector, jack, headphone and external-load transfer | Nominal-linear `10KB×2` law and fixed 29.313 kΩ internal wiper load |
 | P2 | 18 | Hardware cutoff-converter knee and upper saturation curve | Exponential audio-range law and transparent 50 kHz product cap |
@@ -2739,15 +2739,21 @@ the correctly read current-edition row and ships unchanged; the
   recorded — and **R99/R102 33 kΩ bridges the same emitter node to the
   line in parallel with the diode**, a resistive DC path the previous read
   did not place. **R98/R103 39 kΩ leaves the WAVE line toward a shared
-  bus**; the two legs join and route toward the sheet's bottom-right. The
-  terminal was not confirmed at junction level, so this stays a reading
-  candidate — but three facts now converge on it being **the noise leg**:
-  the MC5534's own on/off pin 17 carries the saw gate (so a resistor
-  chain has no gating role left), every other leg on the mixer node is
-  accounted for, and the shared noise must enter each voice somewhere.
-  If confirmed, the noise leg is **39 kΩ**, not the unverified 100 kΩ
-  assumption. One junction-level read (or a p. 12 designation-table
-  cross-check) is owed before the model consumes it.
+  bus** — and the follow-up trace closed it: the joined legs descend to
+  the ×3 replication tie hooks, and a bus run along the sheet's bottom
+  (beside, and distinct from, the labelled RESO CV riser) joins the
+  **NOISE SIG rail exactly at the noise circuit's output corner**. Three
+  independent facts corroborate the reading: the MC5534's own on/off
+  pin 17 carries the saw gate, so a resistor chain has no gating role
+  left; every other leg on the mixer node is accounted for; and p. 12's
+  designation tables group the 33 kΩ/39 kΩ pair with the wave-line block
+  in every channel (R102/R103, R99/R98, R68/R69, R63/R62, R32/R33,
+  R29/R28). The earlier "saw-rail chain" interpretation is dead. **The
+  noise leg is 39 kΩ**, not the unverified 100 kΩ assumption — a traced
+  reading with one caveat: one crossing on the long bottom run sits
+  below junction-dot certainty at 300 dpi. Converting the leg into the
+  model's level budget still waits on the WAVE output's source
+  impedance, which is OQ-15's remaining measurement.
 - IC1a's summer is read exactly: R2 3.3 kΩ feedback, six 33 kΩ legs, and
   **R1 3.3 kΩ is TP2's injection resistor** — noise does not enter at the
   summer.
