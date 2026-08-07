@@ -86,6 +86,7 @@ VocalorAudioProcessor::VocalorAudioProcessor()
     parameterPointers.formantShift = parameters.getRawParameterValue (formantShift);
     parameterPointers.glide        = parameters.getRawParameterValue (glide);
     parameterPointers.roomSize     = parameters.getRawParameterValue (roomSize);
+    parameterPointers.dynamics     = parameters.getRawParameterValue (dynamics);
 
     jassert (parameterPointers.profile != nullptr && parameterPointers.output != nullptr);
     jassert (parameterPointers.vowelMorph != nullptr && parameterPointers.roomSize != nullptr);
@@ -163,6 +164,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
 
     addPercent (glide, "Glide", 0.0f);
     addPercent (roomSize, "Room size", 0.50f);
+
+    // Version 1.2. Dynamics defaults to full so a session that predates it
+    // recalls at the level it was written at; the mod wheel takes it over the
+    // first time it moves.
+    addPercent (dynamics, "Dynamics", 1.0f);
 
     return { result.begin(), result.end() };
 }
@@ -259,10 +265,37 @@ void VocalorAudioProcessor::dispatchMidiData (const juce::uint8* data, int numBy
     else if (kind == 0xb0u && numBytes >= 3)
     {
         const auto controller = data[1] & 0x7fu;
-        if (controller == 120u)
+        const auto value = static_cast<float> (data[2] & 0x7fu) / 127.0f;
+        if (controller == 1u)
+            engine.setModWheel (value);
+        else if (controller == 11u)
+            engine.setExpression (value);
+        else if (controller == 64u)
+            engine.setSustainPedal ((data[2] & 0x7fu) >= 64u);
+        else if (controller == 120u)
             engine.allSoundOff();
+        else if (controller == 121u)
+        {
+            // Reset All Controllers lifts the pedal too, which delivers every
+            // note-off it was holding before the rest of the state is cleared.
+            engine.setSustainPedal (false);
+            engine.resetControllers();
+        }
         else if (controller == 123u)
             engine.allNotesOff();
+    }
+    else if (kind == 0xd0u && numBytes >= 2)
+    {
+        // Channel pressure drives the same dynamic as the wheel, so a
+        // controller with only one of the two is fully expressive.
+        engine.setModWheel (static_cast<float> (data[1] & 0x7fu) / 127.0f);
+    }
+    else if (kind == 0xe0u && numBytes >= 3)
+    {
+        const auto raw = static_cast<int> (data[1] & 0x7fu)
+                       | (static_cast<int> (data[2] & 0x7fu) << 7);
+        engine.setPitchBend (vocalor::kPitchBendSemitones
+                             * static_cast<float> (raw - 8192) / 8192.0f);
     }
 }
 
@@ -294,6 +327,7 @@ void VocalorAudioProcessor::updateEngineParameters() noexcept
     next.formantShift = parameterPointers.formantShift->load (std::memory_order_relaxed);
     next.glide = parameterPointers.glide->load (std::memory_order_relaxed);
     next.roomSize = parameterPointers.roomSize->load (std::memory_order_relaxed);
+    next.dynamics = parameterPointers.dynamics->load (std::memory_order_relaxed);
     engine.setParameters (next);
 }
 

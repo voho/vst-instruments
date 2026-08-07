@@ -44,7 +44,7 @@ The project builds three products from one JUCE codebase:
 
 ## Interface and controls
 
-Vocalor exposes 20 automatable host parameters. Every parameter keeps its
+Vocalor exposes 21 automatable host parameters. Every parameter keeps its
 identifier, range, default, and host ordering, so existing sessions and any
 automation written against them recall in place.
 
@@ -78,6 +78,7 @@ different singer count.
 | `formantShift` | Formant shift | −12 – +12 st | 0 st | 1.1 |
 | `glide` | Glide | 0 – 100 % | 0 % | 1.1 |
 | `roomSize` | Room size | 0 – 100 % | 50 % | 1.1 |
+| `dynamics` | Dynamics | 0 – 100 % | 100 % | 1.2 |
 
 The top row selects the voice profile, the performance mode, the chord quality,
 and the vowel anchor. **Ensemble size** renders exactly that many independently
@@ -103,6 +104,40 @@ Ten continuous controls shape **Breath**, **Resonance**, **Tension**,
 the **Output** level. The status display reports active voices and sample rate,
 the Panic button mutes immediately, and the on-screen keyboard is also mapped to
 the computer keys shown above it.
+
+## Performance expression
+
+Vocalor 1.1 responded to note-on, note-off, and CC 120/123 and discarded every
+other MIDI message, pitch bend included. The whole dynamic response of a note
+was decided by its note-on velocity and never moved again. 1.2 adds the
+continuous performance inputs the instrument is actually played from:
+
+| Message | Effect |
+| --- | --- |
+| Pitch bend | ±2 semitones on every sounding and subsequent voice |
+| CC 1 (mod wheel) | Dynamics |
+| Channel pressure | Dynamics — the same control, so a controller with only one of the two is fully expressive |
+| CC 11 (expression) | Output trim, applied after the room so a swell shapes the tail with the dry signal |
+| CC 64 (sustain) | Holds note-offs; pedal-up delivers each of them through the ordinary release path |
+| CC 121 | Lifts the pedal and returns bend, wheel and expression to neutral |
+| CC 120 / CC 123 | All sound off / all notes off, as before |
+
+**Dynamics** is the control the instrument is meant to be played from, and it is
+not a fader. Falling from full to empty it takes 18.1 dB off the voiced source
+but only 7.2 dB off the aspiration, so a soft note is proportionally breathier;
+it lowers the vocal effort, which drops the source tilt corner and therefore
+dulls the note; it relaxes the glottal pulse toward the lax prototype, which is
+a change in the pulse shape rather than a filter over a fixed one; and it
+narrows the vibrato. Measured on a held middle C, dropping the dynamic from 100 %
+to 30 % costs 10.9 dB at the fundamental and 13.9 dB across 2.4 – 4.7 kHz: the
+presence band falls 3 dB further than the level does. The test suite asserts
+that difference, because a dynamic that moved both by the same amount would be
+an output trim wearing a different name.
+
+The `dynamics` host parameter owns the level until a mod wheel or channel
+pressure message arrives; from the first such message the controller owns it,
+and CC 121 hands it back. A session that predates 1.2 recalls with the parameter
+at 100 %, which is exactly the 1.1 behaviour.
 
 ## Sound engine
 

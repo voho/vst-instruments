@@ -170,7 +170,7 @@ opens on something playable.
 
 ## Steps
 
-- [ ] **1. Continuous performance expression.** Add pitch bend (±2 semitones),
+- [x] **1. Continuous performance expression.** Add pitch bend (±2 semitones),
   mod-wheel dynamics (CC 1 and channel pressure), expression (CC 11) and the
   sustain pedal (CC 64) to the MIDI path, and a `dynamics` host parameter that
   the wheel takes over once it has moved. Dynamics is not a fader: it drives the

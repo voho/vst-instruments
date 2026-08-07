@@ -130,6 +130,28 @@ float formantShiftRatio (float semitones) noexcept
     return std::exp2 (std::clamp (semitones, -24.0f, 24.0f) / 12.0f);
 }
 
+DynamicResponse dynamicResponse (float dynamics) noexcept
+{
+    const float below = 1.0f - clampUnit (dynamics);
+    DynamicResponse response;
+    // Level is linear in dB, which is how a dynamic layer is expected to behave
+    // under a controller: an empty wheel is 18.1 dB down on the voiced source.
+    response.voicedGain = std::exp2 (-3.00f * below);
+    // Aspiration only loses 7.2 dB over the same span. The glottis leaks a
+    // larger share of the flow at low effort, so a soft note is breathier as
+    // well as quieter rather than being the same sound turned down.
+    response.airGain = std::exp2 (-1.20f * below);
+    // Vocal effort sets the source spectral tilt, so a soft note is dull. This
+    // is the part that has to be large: a dynamic layer that only moves the
+    // level by 18 dB and the presence band by the same 18 dB is an output trim.
+    response.effortScale = 1.0f - 0.85f * below;
+    // ... and it is produced with a laxer glottis, which is a change in the
+    // pulse shape itself rather than a filter over a fixed one.
+    response.sourceTensionScale = 1.0f - 0.75f * below;
+    response.vibratoScale = 1.0f - 0.55f * below;
+    return response;
+}
+
 float glideTimeSeconds (float glide) noexcept
 {
     // Perceptually even: a small knob movement near zero stays snappy.

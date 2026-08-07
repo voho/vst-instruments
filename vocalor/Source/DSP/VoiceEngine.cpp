@@ -202,6 +202,20 @@ void VoiceEngine::reset()
     smoothedResonance_ = blockParameters_.resonance;
     smoothedFormantShift_ = blockParameters_.formantShift;
     smoothedRoomSize_ = clampUnit(blockParameters_.roomSize);
+    // A host calls prepareToPlay() when the transport or the sample rate moves,
+    // and a controller does not resend its position, so the performance state
+    // returns to the neutral one the host parameters describe.
+    pitchBendSemitones_ = 0.0f;
+    modWheel_ = 1.0f;
+    modWheelMoved_ = false;
+    expression_ = 1.0f;
+    sustainPedal_ = false;
+    sustainedNotes_.fill(0);
+    smoothedDynamics_ = effectiveDynamics(blockParameters_);
+    smoothedExpression_ = expression_;
+    chunkResponse_ = dynamicResponse(smoothedDynamics_);
+    voicedDynamic_ = chunkResponse_.voicedGain;
+    airDynamic_ = chunkResponse_.airGain;
     meterLeft_ = meterRight_ = 0.0f;
     chunkStateValid_ = false;
     // Every cached coefficient below depends on the sample rate, and reset()
@@ -250,6 +264,59 @@ void VoiceEngine::setParameters(const EngineParameters& p)
     atomicParameters_.glide.store(clampUnit(p.glide), std::memory_order_relaxed);
     atomicParameters_.legato.store(p.legato ? 1 : 0, std::memory_order_relaxed);
     atomicParameters_.roomSize.store(clampUnit(p.roomSize), std::memory_order_relaxed);
+    atomicParameters_.dynamics.store(clampUnit(p.dynamics), std::memory_order_relaxed);
+}
+
+void VoiceEngine::setPitchBend(float semitones) noexcept
+{
+    pitchBendSemitones_ = std::isfinite(semitones)
+        ? std::clamp(semitones, -48.0f, 48.0f) : 0.0f;
+}
+
+void VoiceEngine::setModWheel(float value) noexcept
+{
+    modWheel_ = clampUnit(value);
+    modWheelMoved_ = true;
+}
+
+void VoiceEngine::setExpression(float value) noexcept
+{
+    expression_ = clampUnit(value);
+}
+
+void VoiceEngine::resetControllers() noexcept
+{
+    pitchBendSemitones_ = 0.0f;
+    modWheel_ = 1.0f;
+    modWheelMoved_ = false;
+    expression_ = 1.0f;
+}
+
+void VoiceEngine::setSustainPedal(bool down)
+{
+    if (down == sustainPedal_)
+        return;
+    sustainPedal_ = down;
+    if (down)
+        return;
+
+    // Pedal up. Every deferred note-off is delivered through the ordinary
+    // path, so the held-note stack, the legato fallback and the release all
+    // behave exactly as they would have without the pedal.
+    for (int pitch = 0; pitch < 128; ++pitch)
+    {
+        auto& pending = sustainedNotes_[static_cast<std::size_t>(pitch)];
+        while (pending > 0)
+        {
+            --pending;
+            noteOff(pitch);
+        }
+    }
+}
+
+float VoiceEngine::effectiveDynamics(const EngineParameters& p) const noexcept
+{
+    return modWheelMoved_ ? modWheel_ : clampUnit(p.dynamics);
 }
 
 EngineParameters VoiceEngine::snapshotParameters() const noexcept
@@ -277,6 +344,7 @@ EngineParameters VoiceEngine::snapshotParameters() const noexcept
     p.glide = atomicParameters_.glide.load(std::memory_order_relaxed);
     p.legato = atomicParameters_.legato.load(std::memory_order_relaxed) != 0;
     p.roomSize = atomicParameters_.roomSize.load(std::memory_order_relaxed);
+    p.dynamics = atomicParameters_.dynamics.load(std::memory_order_relaxed);
     return p;
 }
 
@@ -679,6 +747,17 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
 void VoiceEngine::noteOff(int midiNote)
 {
     midiNote = std::clamp(midiNote, 0, 127);
+    if (sustainPedal_)
+    {
+        // The key is treated as still held for as long as the pedal is down,
+        // which is what keeps a legato phrase from falling back to a key the
+        // player has already let go of.
+        auto& pending = sustainedNotes_[static_cast<std::size_t>(midiNote)];
+        if (pending < std::numeric_limits<std::uint16_t>::max())
+            ++pending;
+        return;
+    }
+
     const auto heldState = releaseHeldNote(midiNote);
     // Another controller still holds this pitch, so it keeps sounding.
     if (heldState == HeldNoteState::StillHeld)
@@ -717,6 +796,7 @@ void VoiceEngine::allNotesOff()
 {
     heldCount_ = 0;
     heldNoteCounts_.fill(0);
+    sustainedNotes_.fill(0);
     legatoPhrase_ = false;
     soundingRoot_ = -1;
     for (auto& voice : voices_)
@@ -731,6 +811,7 @@ void VoiceEngine::allSoundOff() noexcept
     clearRoom();
     heldCount_ = 0;
     heldNoteCounts_.fill(0);
+    sustainedNotes_.fill(0);
     legatoPhrase_ = false;
     soundingRoot_ = -1;
     lastRootMidi_ = -1;
@@ -784,16 +865,23 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     // chunk. Smooth them here instead.
     const float resonanceTarget = clampUnit(p.resonance);
     const float shiftTarget = std::clamp(p.formantShift, -24.0f, 24.0f);
+    // The dynamic reaches the source tilt and the vibrato depth at the control
+    // rate, so it is smoothed here as well; the two level gains it produces get
+    // a second, per-sample smoother in process().
+    const float dynamicsTarget = effectiveDynamics(p);
     if (!chunkStateValid_)
     {
         smoothedResonance_ = resonanceTarget;
         smoothedFormantShift_ = shiftTarget;
+        smoothedDynamics_ = dynamicsTarget;
     }
     else if (advanceSmoothers)
     {
         smoothedResonance_ += chunkGainCoefficient_ * (resonanceTarget - smoothedResonance_);
         smoothedFormantShift_ += chunkGainCoefficient_ * (shiftTarget - smoothedFormantShift_);
+        smoothedDynamics_ += chunkGainCoefficient_ * (dynamicsTarget - smoothedDynamics_);
     }
+    chunkResponse_ = dynamicResponse(smoothedDynamics_);
 
     std::array<float, formantCount> target {};
     formantsForPresetVowel(male, vowelIndex, target.data());
@@ -973,7 +1061,8 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     const float vibratoRate = singer.vibratoRate *
         (1.0f + p.humanize * (0.055f * singerDrift + 0.018f * sharedRate));
     const float vibratoDepth = p.vibrato * singer.vibratoDepth *
-        (20.0f + 7.0f * p.humanize * depthDrift) * vibratoFade;
+        (20.0f + 7.0f * p.humanize * depthDrift) * vibratoFade
+        * chunkResponse_.vibratoScale;
     // Integrating the rate keeps the vibrato phase exact for arbitrarily long
     // notes. Recomputing age * rate amplified any rate drift by the note age
     // and lost sub-sample precision once the age exceeded 2^24 samples.
@@ -993,7 +1082,8 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     voice.pitchScoop *= scoopMultiplier_;
     voice.glideCents *= chunkGlideDecay_;
     const float cents = voice.pitchScoop + voice.glideCents + identityCents + wanderCents
-                      + jitterCents + vibratoDepth * sine(voice.vibratoPhase);
+                      + jitterCents + vibratoDepth * sine(voice.vibratoPhase)
+                      + 100.0f * pitchBendSemitones_;
     const float frequency = voice.baseFrequency * std::exp2(cents * (1.0f / 1200.0f));
     voice.targetPhaseIncrement = std::clamp(frequency * inverseSampleRate_, 0.0f, 0.48f);
     voice.phaseIncrementStep = (voice.targetPhaseIncrement - voice.phaseIncrement)
@@ -1007,7 +1097,8 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
 
     // Vocal effort changes the source spectral slope far more than it changes
     // level: a soft note is dull as well as quiet.
-    const float effort = std::clamp(0.42f * voice.velocity + 0.58f * p.tension, 0.0f, 1.0f);
+    const float effort = std::clamp((0.42f * voice.velocity + 0.58f * p.tension)
+                                        * chunkResponse_.effortScale, 0.0f, 1.0f);
     if (effort != voice.tiltEffort)
     {
         voice.tiltEffort = effort;
@@ -1264,8 +1355,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         // and is shaped by the very same tract as the voiced excitation. That
         // is both more faithful and two resonators per voice cheaper than the
         // separate noise filter the 1.0 engine used.
-        const float breath = breathAt_[static_cast<std::size_t>(i)];
-        const float airDrive = breath * airShape * airEnvelope;
+        const float airDrive = airLevelAt_[static_cast<std::size_t>(i)]
+            * airShape * airEnvelope;
         const float voicedDrive = envelope * voicedScaleAt_[static_cast<std::size_t>(i)]
             * (1.0f + shimmerDepth_ * shimmer);
         const float rawSource = sourceTilt * voicedDrive + highNoise * airDrive + denormalBias;
@@ -1381,11 +1472,14 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
         smoothTo(smoothedGain_, blockParameters_.outputGain);
         smoothTo(smoothedBreath_, blockParameters_.breath);
         smoothTo(smoothedTension_, blockParameters_.tension);
+        smoothTo(smoothedExpression_, expression_);
         // Nothing is sounding, so the chunk-rate smoothers can snap straight to
         // their targets. Doing that keeps idle automation independent of how
         // many silent blocks the host happens to send.
         chunkStateValid_ = false;
         updateChunkState(blockParameters_, false);
+        smoothTo(voicedDynamic_, chunkResponse_.voicedGain);
+        smoothTo(airDynamic_, chunkResponse_.airGain);
 
         // The tracked tail is below the silence threshold. Clearing it once
         // prevents an inaudible delayed sample from resurfacing after Room is
@@ -1420,11 +1514,13 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             const auto index = static_cast<std::size_t>(i);
             mixLeft_[index] = 0.0f;
             mixRight_[index] = 0.0f;
-            breathAt_[index] = smoothedBreath_;
-            tensionAt_[index] = smoothedTension_;
-            voicedScaleAt_[index] = 0.88f - 0.24f * smoothedBreath_;
+            airLevelAt_[index] = smoothedBreath_ * airDynamic_;
+            tensionAt_[index] = smoothedTension_ * chunkResponse_.sourceTensionScale;
+            voicedScaleAt_[index] = (0.88f - 0.24f * smoothedBreath_) * voicedDynamic_;
             smoothedBreath_ += parameterSmoothing_ * (blockParameters_.breath - smoothedBreath_);
             smoothedTension_ += parameterSmoothing_ * (blockParameters_.tension - smoothedTension_);
+            voicedDynamic_ += parameterSmoothing_ * (chunkResponse_.voicedGain - voicedDynamic_);
+            airDynamic_ += parameterSmoothing_ * (chunkResponse_.airGain - airDynamic_);
         }
 
         for (int v = 0; v < activeTotal_; ++v)
@@ -1446,16 +1542,20 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             const float dryRight = mixRight_[index];
             smoothedRoom_ += parameterSmoothing_ * (blockParameters_.room - smoothedRoom_);
             smoothedGain_ += parameterSmoothing_ * (blockParameters_.outputGain - smoothedGain_);
+            smoothedExpression_ += parameterSmoothing_ * (expression_ - smoothedExpression_);
 
             float wetLeft = 0.0f;
             float wetRight = 0.0f;
             if (roomAudible)
                 updateRoom(dryLeft, dryRight, wetLeft, wetRight);
 
+            // Expression rides the output stage, after the room, so a swell
+            // shapes the wet tail with the dry signal instead of pumping it.
+            const float gain = smoothedGain_ * smoothedExpression_;
             const float dryScale = 1.0f - 0.12f * smoothedRoom_;
             const float wetScale = 0.72f * smoothedRoom_;
-            const float outLeft = smoothedGain_ * (dryScale * dryLeft + wetScale * wetLeft);
-            const float outRight = smoothedGain_ * (dryScale * dryRight + wetScale * wetRight);
+            const float outLeft = gain * (dryScale * dryLeft + wetScale * wetLeft);
+            const float outRight = gain * (dryScale * dryRight + wetScale * wetRight);
             blockPeakLeft = std::max(blockPeakLeft, std::abs(outLeft));
             blockPeakRight = std::max(blockPeakRight, std::abs(outRight));
 
@@ -1518,6 +1618,7 @@ void VoiceEngine::publishDisplayState(int voiceCount, float blockPeakLeft,
                          std::memory_order_relaxed);
     displayVowelY_.store(anchor.y + morph * (clampUnit(blockParameters_.vowelY) - anchor.y),
                          std::memory_order_relaxed);
+    displayDynamics_.store(smoothedDynamics_, std::memory_order_relaxed);
     activeVoiceCount_.store(voiceCount, std::memory_order_relaxed);
 }
 
@@ -1535,6 +1636,7 @@ EngineDisplayState VoiceEngine::getDisplayState() const noexcept
     state.levelRight = displayLevelRight_.load(std::memory_order_relaxed);
     state.vowelX = displayVowelX_.load(std::memory_order_relaxed);
     state.vowelY = displayVowelY_.load(std::memory_order_relaxed);
+    state.dynamics = displayDynamics_.load(std::memory_order_relaxed);
     state.sampleRate = displaySampleRate_.load(std::memory_order_relaxed);
     state.activeVoices = activeVoiceCount_.load(std::memory_order_relaxed);
     return state;

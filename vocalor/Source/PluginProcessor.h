@@ -31,7 +31,14 @@ inline constexpr auto vowelMorph   = "vowelMorph";
 inline constexpr auto formantShift = "formantShift";
 inline constexpr auto glide        = "glide";
 inline constexpr auto roomSize     = "roomSize";
+// Added in 1.2, appended for the same reason.
+inline constexpr auto dynamics     = "dynamics";
 } // namespace vocalor::parameters
+
+/** Pitch-bend range in semitones. Fixed rather than negotiated over RPN 0:
+    hosts and controllers overwhelmingly assume two semitones for an
+    instrument that does not advertise otherwise. */
+inline constexpr float kPitchBendSemitones = 2.0f;
 
 class VocalorAudioProcessorEditor;
 
@@ -110,6 +117,7 @@ private:
         std::atomic<float>* formantShift = nullptr;
         std::atomic<float>* glide = nullptr;
         std::atomic<float>* roomSize = nullptr;
+        std::atomic<float>* dynamics = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent

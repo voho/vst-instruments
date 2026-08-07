@@ -210,8 +210,8 @@ void testParameterLayoutIsStable()
     auto& state = processor.parameters;
     using namespace vocalor::parameters;
 
-    expect (processor.getParameters().size() == 20,
-            "the published parameter count is no longer 20");
+    expect (processor.getParameters().size() == 21,
+            "the published parameter count is no longer 21");
 
     // Version-1 identifiers and defaults are part of the saved session format.
     // Changing any of them would silently alter existing projects.
@@ -236,6 +236,12 @@ void testParameterLayoutIsStable()
         expect (nearly (denormalisedDefault (state, entry.id), entry.value, 0.002f),
                 std::string ("default for the new parameter ") + entry.id + " is not neutral");
 
+    // Version-1.2 additions carry the same obligation.
+    const Expected versionOnePointTwo[] = { { dynamics, 1.0f } };
+    for (const auto& entry : versionOnePointTwo)
+        expect (nearly (denormalisedDefault (state, entry.id), entry.value, 0.002f),
+                std::string ("default for the new parameter ") + entry.id + " is not neutral");
+
     if (auto* shift = state.getParameter (formantShift))
     {
         const auto range = shift->getNormalisableRange();
@@ -247,7 +253,7 @@ void testParameterLayoutIsStable()
         expect (false, "the formant shift parameter is missing");
     }
 
-    for (const char* id : { vowelX, vowelY, vowelMorph, glide, roomSize })
+    for (const char* id : { vowelX, vowelY, vowelMorph, glide, roomSize, dynamics })
     {
         if (auto* parameter = state.getParameter (id))
         {
@@ -265,6 +271,91 @@ void testParameterLayoutIsStable()
         expect (choice->choices.size() == 2, "legato is not a two-state choice");
     else
         expect (false, "legato is not an AudioParameterChoice");
+}
+
+/** The 1.2 MIDI performance messages have to reach the engine at all: the 1.1
+    processor parsed note-on, note-off and CC 120/123 and silently discarded
+    every other message, pitch bend included. */
+void testPerformanceMidiReachesTheEngine()
+{
+    // Pitch bend moves the sound without changing the note count.
+    {
+        ProcessorHarness harness;
+        harness.chargeVoiceAndRoom();
+        const auto before = peakInRange (harness.buffer, 0, blockSize);
+
+        juce::MidiBuffer bend;
+        bend.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+        harness.process (std::move (bend));
+        for (int block = 0; block < 8; ++block)
+            harness.process();
+
+        expect (harness.processor.getActiveVoiceCount() > 0,
+                "a pitch bend silenced the sounding voice");
+        expect (peakInRange (harness.buffer, 0, blockSize) > 1.0e-8 && before > 1.0e-8,
+                "a pitch bend left no audio");
+    }
+
+    // The mod wheel is a dynamic, so an empty wheel has to be audibly quieter
+    // than a full one while the note keeps sounding.
+    {
+        ProcessorHarness harness;
+        harness.chargeVoiceAndRoom();
+        const auto loud = peakInRange (harness.buffer, 0, blockSize);
+
+        juce::MidiBuffer wheel;
+        wheel.addEvent (juce::MidiMessage::controllerEvent (1, 1, 0), 0);
+        harness.process (std::move (wheel));
+        for (int block = 0; block < 120; ++block)
+            harness.process();
+        const auto soft = peakInRange (harness.buffer, 0, blockSize);
+
+        expect (harness.processor.getActiveVoiceCount() > 0,
+                "an empty mod wheel ended the note instead of softening it");
+        expect (soft < 0.5 * loud && soft > 0.0,
+                "the mod wheel did not lower the dynamic level");
+    }
+
+    // Channel pressure feeds the same dynamic.
+    {
+        ProcessorHarness harness;
+        harness.chargeVoiceAndRoom();
+        const auto loud = peakInRange (harness.buffer, 0, blockSize);
+
+        juce::MidiBuffer pressure;
+        pressure.addEvent (juce::MidiMessage::channelPressureChange (1, 0), 0);
+        harness.process (std::move (pressure));
+        for (int block = 0; block < 120; ++block)
+            harness.process();
+
+        expect (peakInRange (harness.buffer, 0, blockSize) < 0.5 * loud,
+                "channel pressure did not reach the dynamic");
+    }
+
+    // The sustain pedal holds a note through its note-off and releases it on
+    // pedal-up.
+    {
+        ProcessorHarness harness;
+        harness.chargeVoiceAndRoom();
+
+        juce::MidiBuffer down;
+        down.addEvent (juce::MidiMessage::controllerEvent (1, 64, 127), 0);
+        down.addEvent (juce::MidiMessage::noteOff (1, 60), 1);
+        harness.process (std::move (down));
+        for (int block = 0; block < 20; ++block)
+            harness.process();
+        const auto sustained = peakInRange (harness.buffer, 0, blockSize);
+        expect (sustained > 1.0e-6,
+                "the sustain pedal did not hold the note through its note-off");
+
+        juce::MidiBuffer up;
+        up.addEvent (juce::MidiMessage::controllerEvent (1, 64, 0), 0);
+        harness.process (std::move (up));
+        for (int block = 0; block < 600; ++block)
+            harness.process();
+        expect (harness.processor.getActiveVoiceCount() == 0,
+                "releasing the sustain pedal did not release the note it held");
+    }
 }
 
 void testVowelPadIsInaudibleAtZeroMorph()
@@ -576,6 +667,7 @@ int main()
     testMidiAllSoundOffIsSampleAccurate();
     testMidiAllNotesOffKeepsRelease();
     testParameterLayoutIsStable();
+    testPerformanceMidiReachesTheEngine();
     testVowelPadIsInaudibleAtZeroMorph();
     testNewParametersReachTheEngine();
     testLegatoKeepsASingleVoice();

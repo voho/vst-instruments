@@ -104,6 +104,14 @@ struct VoiceEngineTestAccess
 
     static int heldNoteCount(const VoiceEngine& engine) noexcept { return engine.heldCount_; }
 
+    /** The two per-sample level scalars the dynamic reaches, as the render loop
+        sees them: the voiced drive and the aspiration drive. Their ratio is the
+        breath-to-voice balance, which has to rise as the dynamic falls. */
+    static std::array<float, 3> dynamicDrives(const VoiceEngine& engine) noexcept
+    {
+        return { engine.voicedScaleAt_[0], engine.airLevelAt_[0], engine.smoothedDynamics_ };
+    }
+
     /** Peak magnitude of F1 and F2 in the onset stage and in the main tract,
         each evaluated at its own pole angle, read straight out of the live
         coefficients. The onset stage runs 1.75x wider bandwidths, so before
@@ -1652,6 +1660,224 @@ void testSingerFormantAndLipZero()
     expect(metrics.peak < 16.0,
            "Singer's Formant tension render exceeded amplitude guardrail");
 }
+
+/** Continuous performance expression.
+
+    The 1.1 engine froze the entire dynamic response of a note at note-on and
+    had no pitch bend, mod wheel, expression pedal or sustain pedal at all. The
+    dynamic added here is not a fader: it has to move the source spectrum and
+    the breath-to-voice balance by more than it moves the level, or it is only
+    an output trim wearing a different name.
+*/
+void testPerformanceExpression()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr double fundamental = 261.6255653;
+
+    // The response curve is exactly inert at its default, which is what lets
+    // every other test in this file keep its 1.1 expectations.
+    const auto full = vocalor::dynamicResponse (1.0f);
+    expect (full.voicedGain == 1.0f && full.airGain == 1.0f && full.effortScale == 1.0f
+                && full.sourceTensionScale == 1.0f && full.vibratoScale == 1.0f,
+            "the dynamic response is not inert at its full setting");
+
+    const auto empty = vocalor::dynamicResponse (0.0f);
+    expect (std::abs (empty.voicedGain - 0.125f) < 1.0e-6f,
+            "an empty dynamic is not 18 dB down on the voiced source");
+    expect (empty.airGain > 3.0f * empty.voicedGain,
+            "aspiration falls as fast as the voiced source at a low dynamic");
+
+    float previousGain = -1.0f;
+    bool monotonic = true;
+    for (int step = 0; step <= 10; ++step)
+    {
+        const auto response = vocalor::dynamicResponse (0.1f * static_cast<float> (step));
+        monotonic = monotonic && response.voicedGain > previousGain
+                              && response.effortScale > 0.0f;
+        previousGain = response.voicedGain;
+    }
+    expect (monotonic, "the dynamic level is not monotonic in its control");
+
+    // A soft note has to be duller, not merely quieter.
+    const auto spectrumAt = [] (float dynamics)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.breath = 0.30f;
+        parameters.dynamics = dynamics;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        renderMono (engine, static_cast<int> (sampleRate * 0.5));
+        const auto samples = renderMono (engine, static_cast<int> (sampleRate * 0.5));
+
+        double high = 0.0;
+        for (int harmonic = 9; harmonic <= 18; ++harmonic)
+        {
+            const auto magnitude = harmonicMagnitude (
+                samples, fundamental * harmonic, sampleRate);
+            high += magnitude * magnitude;
+        }
+        return std::array<double, 2> {
+            harmonicMagnitude (samples, fundamental, sampleRate), std::sqrt (high) };
+    };
+
+    const auto loudSpectrum = spectrumAt (1.0f);
+    const auto softSpectrum = spectrumAt (0.30f);
+    const auto toDb = [] (double loud, double soft)
+    {
+        return 20.0 * std::log10 (std::max (loud, 1.0e-12) / std::max (soft, 1.0e-12));
+    };
+    const auto fundamentalDrop = toDb (loudSpectrum[0], softSpectrum[0]);
+    const auto bandDrop = toDb (loudSpectrum[1], softSpectrum[1]);
+    std::cout << "dynamic 1.0 -> 0.3: fundamental " << std::fixed << std::setprecision (2)
+              << fundamentalDrop << " dB, 2.4-4.7 kHz " << bandDrop << " dB\n";
+    expect (fundamentalDrop > 8.0 && fundamentalDrop < 18.0,
+            "the dynamic did not move the level by a plausible amount");
+    expect (bandDrop - fundamentalDrop > 2.2,
+            "the dynamic is a fader: it did not roll the source spectrum off as it fell");
+
+    // ... and proportionally breathier, measured where the render loop reads it.
+    const auto breathBalanceAt = [] (float dynamics)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.breath = 0.40f;
+        parameters.dynamics = dynamics;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.5));
+        const auto drives = vocalor::VoiceEngineTestAccess::dynamicDrives (engine);
+        return static_cast<double> (drives[1])
+             / std::max (static_cast<double> (drives[0]), 1.0e-9);
+    };
+    expect (breathBalanceAt (0.30f) > 2.0 * breathBalanceAt (1.0f),
+            "a soft note is not proportionally breathier than a loud one");
+
+    // Pitch bend, on a note that is already sounding.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (steadyParameters());
+        engine.noteOn (60, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.6));
+        const auto unbent = static_cast<double> (
+            vocalor::VoiceEngineTestAccess::frequencyForRoot (engine, 60));
+        expect (unbent > 255.0 && unbent < 268.0,
+                "the unbent reference note was not near middle C");
+
+        engine.setPitchBend (2.0f);
+        render (engine, static_cast<int> (sampleRate * 0.2));
+        const auto up = static_cast<double> (
+            vocalor::VoiceEngineTestAccess::frequencyForRoot (engine, 60));
+        expect (std::abs (up / unbent - std::exp2 (2.0 / 12.0)) < 0.002,
+                "a two-semitone bend did not produce the two-semitone frequency ratio");
+
+        engine.setPitchBend (-12.0f);
+        render (engine, static_cast<int> (sampleRate * 0.2));
+        const auto down = static_cast<double> (
+            vocalor::VoiceEngineTestAccess::frequencyForRoot (engine, 60));
+        expect (std::abs (down / unbent - 0.5) < 0.002,
+                "an octave bend down did not halve the frequency");
+
+        // A non-finite bend must not reach the oscillator.
+        engine.setPitchBend (std::numeric_limits<float>::quiet_NaN());
+        const auto recovered = render (engine, static_cast<int> (sampleRate * 0.2));
+        expect (recovered.finite, "a non-finite pitch bend produced non-finite audio");
+    }
+
+    // Sustain pedal: a note-off arriving under a held pedal is deferred, not
+    // dropped, and pedal-up delivers it through the ordinary release path.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (steadyParameters());
+        engine.noteOn (60, 0.80f);
+        render (engine, blockSize);
+        engine.setSustainPedal (true);
+        engine.noteOff (60);
+        render (engine, static_cast<int> (sampleRate * 0.3));
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (engine) == 60,
+                "the sustain pedal did not hold a note through its note-off");
+
+        engine.setSustainPedal (false);
+        render (engine, static_cast<int> (sampleRate * 0.05));
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (engine) == -1,
+                "releasing the sustain pedal did not release the note it was holding");
+        const auto tail = render (engine, static_cast<int> (sampleRate * 3.0));
+        expect (tail.finite && engine.getActiveVoiceCount() == 0,
+                "the note the pedal released never finished its release");
+    }
+
+    // Expression is a level trim and nothing else: half expression has to be
+    // the same render at half the amplitude, sample for sample.
+    {
+        const auto renderAt = [] (float expression)
+        {
+            vocalor::VoiceEngine engine;
+            engine.prepare (sampleRate, blockSize);
+            engine.reset();
+            engine.setParameters (steadyParameters());
+            engine.setExpression (expression);
+            engine.noteOn (60, 0.80f);
+            renderMono (engine, static_cast<int> (sampleRate * 0.4));
+            return renderMono (engine, static_cast<int> (sampleRate * 0.4));
+        };
+
+        const auto loud = renderAt (1.0f);
+        const auto soft = renderAt (0.5f);
+        double peak = 0.0;
+        double worst = 0.0;
+        for (std::size_t i = 0; i < loud.size(); ++i)
+        {
+            peak = std::max (peak, std::abs (static_cast<double> (loud[i])));
+            worst = std::max (worst, std::abs (static_cast<double> (soft[i])
+                                               - 0.5 * static_cast<double> (loud[i])));
+        }
+        expect (peak > 1.0e-4, "the expression reference render was silent");
+        expect (worst < 1.0e-4 * peak,
+                "expression changed the sound rather than only its level");
+    }
+
+    // The mod wheel takes the dynamic over for good the first time it moves.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.dynamics = 1.0f;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.2));
+        const auto ownedBy = [&engine]
+        {
+            return vocalor::VoiceEngineTestAccess::dynamicDrives (engine)[2];
+        };
+        expect (std::abs (ownedBy() - 1.0f) < 1.0e-3f,
+                "the host dynamic parameter did not own the level before the wheel moved");
+
+        engine.setModWheel (0.25f);
+        render (engine, static_cast<int> (sampleRate * 0.4));
+        expect (std::abs (ownedBy() - 0.25f) < 0.01f,
+                "the mod wheel did not take over the dynamic level");
+
+        parameters.dynamics = 0.90f;
+        engine.setParameters (parameters);
+        render (engine, static_cast<int> (sampleRate * 0.4));
+        expect (std::abs (ownedBy() - 0.25f) < 0.01f,
+                "the host parameter overrode the mod wheel after the wheel had moved");
+
+        engine.resetControllers();
+        render (engine, static_cast<int> (sampleRate * 0.4));
+        expect (std::abs (ownedBy() - 0.90f) < 0.01f,
+                "resetting the controllers did not hand the dynamic back to the host");
+    }
+}
 } // namespace
 
 int main()
@@ -1672,6 +1898,7 @@ int main()
     testEnsembleSizeIsExact();
     testTractCoefficientSmoothing();
     testSingerFormantAndLipZero();
+    testPerformanceExpression();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();

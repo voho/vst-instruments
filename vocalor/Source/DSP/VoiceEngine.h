@@ -39,6 +39,10 @@ struct EngineParameters
     float glide { 0.0f };
     bool legato { false };
     float roomSize { 0.5f };
+    // Added in 1.2: the base dynamic level. The mod wheel takes this over once
+    // it has moved, so a controller that never sends CC 1 leaves the host
+    // parameter in charge. 1.0 reproduces the 1.1 behaviour exactly.
+    float dynamics { 1.0f };
 };
 
 /** Lock-free snapshot of what the engine is currently doing, for the editor. */
@@ -52,6 +56,9 @@ struct EngineDisplayState
     float vowelX { 0.5f };
     float vowelY { 0.5f };
     float sampleRate { 48000.0f };
+    // Whatever currently owns the dynamic level, so the editor reports the mod
+    // wheel rather than the host parameter the wheel has taken over.
+    float dynamics { 1.0f };
     int activeVoices { 0 };
 };
 
@@ -67,6 +74,27 @@ public:
     void noteOff(int midiNote);
     void allNotesOff();
     void allSoundOff() noexcept;
+
+    // Continuous performance expression. These are driven by MIDI rather than
+    // by host parameters, so they are called from the audio thread in the same
+    // order as the note events: a pedal-down that precedes a note-off in the
+    // block has to be seen first.
+
+    /** Pitch bend in semitones, applied to every sounding and future voice. */
+    void setPitchBend(float semitones) noexcept;
+    /** Mod wheel (CC 1) or channel pressure. The first call hands the dynamic
+        level to the controller for good; until then the host parameter owns it. */
+    void setModWheel(float value) noexcept;
+    /** Expression (CC 11). A pure output trim: it does not touch the spectrum. */
+    void setExpression(float value) noexcept;
+    /** Sustain pedal (CC 64). While down, note-offs are recorded rather than
+        acted on; pedal-up delivers every one of them through the ordinary
+        note-off path, so the legato fallback behaves as it otherwise would. */
+    void setSustainPedal(bool down);
+    /** Reset all controllers (CC 121). Leaves the sustain pedal alone: that is
+        a switch whose physical position the message does not report. */
+    void resetControllers() noexcept;
+
     void process(float* left, float* right, int numSamples);
     [[nodiscard]] int getActiveVoiceCount() const;
     [[nodiscard]] EngineDisplayState getDisplayState() const noexcept;
@@ -119,6 +147,7 @@ private:
         std::atomic<float> glide { 0.0f };
         std::atomic<int> legato { 0 };
         std::atomic<float> roomSize { 0.5f };
+        std::atomic<float> dynamics { 1.0f };
     };
 
     struct Resonator
@@ -225,6 +254,7 @@ private:
     };
 
     EngineParameters snapshotParameters() const noexcept;
+    [[nodiscard]] float effectiveDynamics(const EngineParameters& parameters) const noexcept;
     void buildTables();
     void buildSingerIdentities();
     void initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, int singer,
@@ -274,7 +304,10 @@ private:
     int activeTotal_ { 0 };
     std::array<float, chunkSize> mixLeft_ {};
     std::array<float, chunkSize> mixRight_ {};
-    std::array<float, chunkSize> breathAt_ {};
+    // Aspiration level and voiced level per sample. The dynamic gains are
+    // folded into these two arrays rather than applied separately, so the
+    // render loop costs exactly what it did before the dynamic existed.
+    std::array<float, chunkSize> airLevelAt_ {};
     std::array<float, chunkSize> tensionAt_ {};
     std::array<float, chunkSize> voicedScaleAt_ {};
 
@@ -322,6 +355,12 @@ private:
     std::array<float, formantCount> chunkAmplitude_ {};
     float jitterHumanize_ { -1.0f };
     float glideAmount_ { -1.0f };
+    // Dynamic response resolved once per chunk. The two gains it carries are
+    // smoothed again per sample, because a 7-bit controller step across an
+    // 18 dB span is audible if it lands on a chunk boundary.
+    DynamicResponse chunkResponse_ {};
+    float voicedDynamic_ { 1.0f };
+    float airDynamic_ { 1.0f };
     // Bit per singer identity currently sounding, so the ensemble drift is only
     // advanced for the singers a note actually uses.
     std::uint32_t singersInUse_ { ~0u };
@@ -340,8 +379,21 @@ private:
     // cannot be smoothed after the fact, so they are smoothed before use.
     float smoothedResonance_ { 0.72f };
     float smoothedFormantShift_ { 0.0f };
+    float smoothedDynamics_ { 1.0f };
+    float smoothedExpression_ { 1.0f };
     float roomEnvelope_ { 0.0f };
     std::atomic<int> activeVoiceCount_ { 0 };
+
+    // MIDI performance state. Owned by the audio thread, like the note events
+    // it is interleaved with.
+    float pitchBendSemitones_ { 0.0f };
+    float modWheel_ { 1.0f };
+    bool modWheelMoved_ { false };
+    float expression_ { 1.0f };
+    bool sustainPedal_ { false };
+    // One counter per pitch rather than a flag: the engine is MIDI-omni, so a
+    // pitch can accumulate several deferred note-offs behind a held pedal.
+    std::array<std::uint16_t, 128> sustainedNotes_ {};
 
     std::array<int, heldNoteCapacity> heldNotes_ {};
     // The engine is MIDI-omni, so one pitch can be held by several controllers
@@ -381,6 +433,7 @@ private:
     std::atomic<float> displayLevelRight_ { 0.0f };
     std::atomic<float> displayVowelX_ { 0.5f };
     std::atomic<float> displayVowelY_ { 0.5f };
+    std::atomic<float> displayDynamics_ { 1.0f };
     // The editor's timer keeps reading the display state while a host can be
     // inside prepare() for a sample-rate change, so the rate is published like
     // every other display field rather than read from sampleRate_ directly.

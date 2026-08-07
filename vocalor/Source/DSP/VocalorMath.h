@@ -43,6 +43,27 @@ void formantsForPresetVowel (bool male, int vowelIndex, float* outHz) noexcept;
 /** Frequency multiplier for a formant shift expressed in semitones. */
 [[nodiscard]] float formantShiftRatio (float semitones) noexcept;
 
+/** How a continuous dynamic level reaches the voice.
+
+    A dynamic is not a fader. A singer at pianissimo is quieter, but is also
+    duller (less vocal effort, so a laxer glottal pulse and a steeper source
+    spectrum), proportionally breathier (the voiced source falls away faster
+    than the leak noise), and vibrates less. These are the four scalars the
+    engine applies; every one of them is exactly 1 at full dynamic, so the
+    control is inert at its default.
+*/
+struct DynamicResponse
+{
+    float voicedGain { 1.0f };
+    float airGain { 1.0f };
+    float effortScale { 1.0f };
+    float sourceTensionScale { 1.0f };
+    float vibratoScale { 1.0f };
+};
+
+/** Resolves the dynamic response for a normalised dynamic level 0..1. */
+[[nodiscard]] DynamicResponse dynamicResponse (float dynamics) noexcept;
+
 /** Portamento time in seconds for the normalised glide parameter. */
 [[nodiscard]] float glideTimeSeconds (float glide) noexcept;
 
