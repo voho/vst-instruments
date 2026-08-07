@@ -43,6 +43,11 @@ struct YouKnow106TestAccess
                                parameters, 0.0f);
     }
 
+    static float filterG(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].filterG;
+    }
+
     static float stageGScale(const YouKnow106Engine& engine, int slot,
                              int stage) noexcept
     {
@@ -4661,6 +4666,53 @@ double realtimeCost(const EngineParameters& parameters, int notes,
     return best;
 }
 
+void testQualityChangeRefreshesTheFilterCoefficient()
+{
+    // updateVoiceAudio memoises the counts-to-coefficient chain -- an exp2,
+    // two double pow and a tan per card per internal sample -- on exact
+    // equality of the counts and loop gain it consumes. Those two survive a
+    // quality change untouched while the coefficient they produce is measured
+    // in internal samples and does not, so the memo has to be retired when
+    // the grid moves. Without that, a settled card would keep integrating on
+    // the old rate's pole and the whole instrument would shift in cutoff
+    // whenever HQ was switched.
+    constexpr double sampleRate = 48000.0;
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    auto parameters = plainPatch();
+    parameters.cutoff = 0.55f;
+    parameters.chorus = ChorusMode::Off;
+    engine.setParameters(parameters);
+
+    // No key is pressed anywhere in this fixture. The six cards run behind
+    // their closed VCAs whatever the keyboard is doing, their holds settle to
+    // an exact constant at Unit Character zero, and the memo is therefore
+    // being hit on every sample -- which is precisely the state a quality
+    // change has to be able to interrupt. Playing a note afterwards would
+    // hide the fault: a new note moves the counts and forces a solve.
+    render(engine, static_cast<int>(sampleRate * 0.5));
+    const float hqCoefficient = YouKnow106TestAccess::filterG(engine, 0);
+    const int hqFactor = engine.getOversamplingFactor();
+    expect(hqCoefficient > 0.0f, "the settled card has no filter coefficient");
+
+    engine.setOversamplingEnabled(false);
+    render(engine, static_cast<int>(sampleRate * 0.5));
+    expect(engine.getOversamplingFactor() != hqFactor,
+           "the quality change never took effect");
+    const float plainCoefficient = YouKnow106TestAccess::filterG(engine, 0);
+
+    // g = tan(pi f / rate), and for this cutoff the argument is small enough
+    // that the coefficient scales with the rate ratio to well inside 1%.
+    const double expected = static_cast<double>(hqCoefficient) * hqFactor;
+    expect(plainCoefficient != hqCoefficient,
+           "the filter coefficient did not move when the internal rate did: "
+           "the cutoff memo survived a quality change");
+    expect(std::abs(plainCoefficient / expected - 1.0) < 0.01,
+           "the rebuilt filter coefficient is "
+               + std::to_string(plainCoefficient) + ", not the "
+               + std::to_string(expected) + " the new grid calls for");
+}
+
 void testResonanceDoesNotMultiplyTheSolveCost()
 {
     // A ratio, not a time, because a wall-clock ceiling only says how fast the
@@ -4814,6 +4866,7 @@ int main()
     testPairedSwitchModes();
     testNoLabelIsTruncated();
     testPanelLayout();
+    testQualityChangeRefreshesTheFilterCoefficient();
     testResonanceDoesNotMultiplyTheSolveCost();
     testCpuBudget();
 

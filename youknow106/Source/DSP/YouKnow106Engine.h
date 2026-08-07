@@ -1008,6 +1008,13 @@ private:
         int lastVoiceMidi { -1 };
         float glideSemitonesPerScan { 0.0f };
         float filterG { 0.05f };
+        // The counts and loop gain `filterG` was last solved for. Both are
+        // compared for exact equality, so this memo cannot return anything
+        // the chain would not have recomputed; a sentinel that no real
+        // count can equal forces the first solve. The internal rate is not
+        // part of the key because a rate change rebuilds voice state.
+        float cutoffChainCounts { -1.0e30f };
+        float cutoffChainFeedback { -1.0e30f };
         // Converter counts and control voltages, before and after the sample
         // and hold's own slew. The staircase the scan writes is smoothed by a
         // real time constant on each hold capacitor, so modulation arrives
@@ -1373,6 +1380,10 @@ private:
     // Deterministic physical circuit state: voice card thermal warmup timer (s)
     // and power supply rail droop (V) under heavy polyphonic loading.
     float thermalWarmupSeconds_ { 0.0f };
+    // 1 - exp(-t/900), advanced once per internal sample beside the timer
+    // above. It is chassis-wide, so recomputing it per voice recomputed the
+    // same number six times.
+    float thermalWarmupFraction_ { 0.0f };
     float powerSupplyDroop_ { 0.0f };
     // Settled once per block beside the converter hold coefficients, because
     // it depends on the internal rate the pending quality switch may just have

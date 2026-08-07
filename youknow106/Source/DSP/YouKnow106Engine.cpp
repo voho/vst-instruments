@@ -278,9 +278,21 @@ float YouKnow106Engine::vcfEffectiveCutoffHz(float counts,
 
 float YouKnow106Engine::chassisGradientCelsius(int cardIndex) noexcept
 {
-    const float index = static_cast<float>(std::max(cardIndex, 0));
+    // A per-card constant, read once per voice per internal sample. The
+    // exponential belongs in a table, not in the audio path.
+    static const std::array<float, maxVoices> profile = [] {
+        std::array<float, maxVoices> values {};
+        for (int card = 0; card < maxVoices; ++card)
+            values[static_cast<std::size_t>(card)] = chassisGradientPeakCelsius
+                * std::exp(-static_cast<float>(card) / chassisGradientCards);
+        return values;
+    }();
+
+    const int index = std::max(cardIndex, 0);
+    if (index < maxVoices)
+        return profile[static_cast<std::size_t>(index)];
     return chassisGradientPeakCelsius
-         * std::exp(-index / chassisGradientCards);
+         * std::exp(-static_cast<float>(index) / chassisGradientCards);
 }
 
 float YouKnow106Engine::chassisGradientMeanCelsius() noexcept
@@ -1957,6 +1969,20 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
     {
         driftControlCountdown_ = 0;
     }
+    // The cutoff chain's memo is keyed on counts and loop gain, both of which
+    // survive a quality change untouched, while the coefficient it produces
+    // is measured in internal samples and does not. Retire it here so the
+    // rebuild below cannot be handed back the old grid's answer.
+    // The cutoff chain's memo is keyed on counts and loop gain, both of which
+    // survive a quality change untouched, while the coefficient it produces
+    // is measured in internal samples and does not. Retire it here so a card
+    // whose holds have settled exactly cannot be handed back the old grid's
+    // answer.
+    for (auto& voice : voices_)
+    {
+        voice.cutoffChainCounts = -1.0e30f;
+        voice.cutoffChainFeedback = -1.0e30f;
+    }
     chorus_.prepare(oversampledRate_, preserveFreeRunningState);
 }
 
@@ -2153,6 +2179,7 @@ void YouKnow106Engine::reset()
     rateTransitionGain_ = 1.0f;
 
     thermalWarmupSeconds_ = 0.0f;
+    thermalWarmupFraction_ = 0.0f;
     powerSupplyDroop_ = 0.0f;
     lfoAccumulator_ = 0u;
     lfoRising_ = true;
@@ -3253,10 +3280,23 @@ void YouKnow106Engine::updateVoiceAudio(Voice& voice,
         + card.cutoffOffsetError * 0.07f * vcfCountsPerOctave * tolerance
         + card.driftValue * 40.0f * tolerance
         + psuCutoffShift;
-    const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
-    const float limited =
-        std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
-    voice.filterG = std::tan(pi * limited * inverseOversampledRate_);
+    // The chain from counts to the integrator's coefficient costs an exp2,
+    // two double pow and a tan, per card, per internal sample -- and it is a
+    // pure function of the two values compared here. A card whose hold has
+    // settled and whose drift step has not landed presents bit-identical
+    // inputs for thousands of samples in a row, which is most of what an idle
+    // instrument does. The guard is exact equality, so the cache can only
+    // return the value the chain would have recomputed.
+    if (analogCounts != voice.cutoffChainCounts
+        || voice.feedback != voice.cutoffChainFeedback)
+    {
+        const float cutoffHz = vcfEffectiveCutoffHz(analogCounts, voice.feedback);
+        const float limited =
+            std::min(cutoffHz, static_cast<float>(oversampledRate_) * 0.45f);
+        voice.filterG = std::tan(pi * limited * inverseOversampledRate_);
+        voice.cutoffChainCounts = analogCounts;
+        voice.cutoffChainFeedback = voice.feedback;
+    }
 
     voice.vca = VoiceVcaControlLaw::gain(voice.vcaControl)
               * (1.0f + card.vcaGainError * 0.03f * tolerance);
@@ -3467,10 +3507,15 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
 
     struct ComparatorEvent
     {
-        double time { 0.0 }; // 0..1 across this internal sample
-        float state { -1.0f };
+        double time; // 0..1 across this internal sample
+        float state;
     };
-    std::array<ComparatorEvent, maximumWrapsPerSample * 2 + 4> events {};
+    // Deliberately not value-initialised. The buffer is sized for the runaway
+    // case of sixty-four oscillator cycles inside one internal sample; a real
+    // note fills two or three entries, and nothing below reads past
+    // `eventCount`. Zero-filling it cost a two-kilobyte store on every voice
+    // on every internal sample -- some 2.4 GB/s at six voices and 192 kHz.
+    std::array<ComparatorEvent, maximumWrapsPerSample * 2 + 4> events;
     int eventCount = 0;
     const auto appendCrossing = [&events, &eventCount](double numerator,
                                                        double denominator,
@@ -3650,7 +3695,12 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
         ? cardGradient * parameters.calibration
         : 0.0f;
     const float tempRise = 15.0f * parameters.calibration;
-    const float tempC = 25.0f + psuThermalOffset + tempRise * (1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f));
+    // The warm-up fraction is one chassis-wide number, advanced beside the
+    // timer it derives from. Six voices asking six times per internal sample
+    // for the same exponential of the same elapsed time is the same answer at
+    // six times the price.
+    const float tempC =
+        25.0f + psuThermalOffset + tempRise * thermalWarmupFraction_;
     const float dynamicThermalVoltage = 0.026f * ((tempC + 273.15f) / 298.15f);
     const float dynamicHeadroom = 2.0f * dynamicThermalVoltage / stageAttenuation;
     // The same gradient, through the control path's own temperature
@@ -3875,6 +3925,8 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
             subCv_ += (subCvTarget_ - subCv_) * subSlew;
             noiseCv_ += (noiseCvTarget_ - noiseCv_) * noiseSlew;
             thermalWarmupSeconds_ += static_cast<float>(inverseOversampledRate_);
+            thermalWarmupFraction_ =
+                1.0f - std::exp(-thermalWarmupSeconds_ / 900.0f);
 
             if (--driftControlCountdown_ <= 0)
             {
