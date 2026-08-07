@@ -85,15 +85,21 @@ produce a genuinely bridge-coupled ring at all.
 It is behind on the player. Specifically:
 
 1. **The fretting hand does not exist.** `chooseString()` picks "the free
-   string that plays the note at the lowest fret". That reproduces open-position
-   chords and nothing else. A G barre chord at the third fret - G2 D3 G3 B3 D4
-   G4 - comes out as one fretted note and three *open* strings, because open
-   strings always win a lowest-fret contest. Open and fretted strings differ in
-   timbre, in decay, in dead-spot behaviour and in whether the fretting hand is
-   damping them at all, so this is not a subtlety: above the first position
-   Electry plays a different instrument from the one the part was written for.
-   Every competitor in the field has a hand position, a reach and a fretting
-   mode; Electry has none of the three.
+   string that plays the note at the lowest fret". That is a good model of
+   first position and of nothing else, because it has no memory: the same pitch
+   is always fingered at the same place regardless of what the hand was doing a
+   moment ago. Measured on the descending lead phrase B4 A4 G4 E4 D4, the rule
+   places the first two notes at the seventh and fifth frets of the top string
+   and then falls off the position - G4 at the third fret, **E4 on the open
+   string**, D4 at the third fret of the B string - where a hand at the fifth
+   position stays inside the pentatonic box on the B and G strings. An open
+   string differs from a fretted one in timbre, in decay, in dead-spot
+   behaviour and in whether the fretting hand is touching it at all, and it can
+   be neither bent nor vibratoed. The wider consequence is that most of the
+   fretboard is unreachable: the model documents that fretting up the neck
+   moves the pluck comb toward mid-string and changes the inharmonicity, and
+   then never gets there. Every competitor in the field exposes a hand
+   position, a fret reach and a fretting mode; Electry has none of the three.
 
 2. **No slide.** Hammer-on/pull-off retargets a sounding loop over about 10 ms.
    There is no articulation in which the finger stays in contact and travels,
@@ -148,18 +154,19 @@ repository cannot ship).
 Each step states what changes, which gap it closes, and how it is verified. All
 verification is by a test in `Tests/` that fails without the change.
 
-- [ ] **1. A fretting hand with a position and a reach.** Replace the
+- [x] **1. A fretting hand with a position and a reach.** Replace the
   lowest-fret string chooser with one that models a hand: a floating position,
   a four-fret reach that the index finger anchors, open strings always available
   to the fretting-free hand, and a cost that trades fret distance from the hand
   against string preference. The hand follows the part - it is pulled toward
   whatever the last few notes needed - so an open-position figure keeps its open
   strings and a barre figure at the fifth fret keeps its fretted ones.
-  *Closes gap 1.* Verified by `testFrettingHandPosition`: the open C, D and F
-  shapes must still map to exactly the strings they map to today; a G barre at
-  the third fret must place all six notes inside one four-fret window with no
-  open strings; and a phrase that moves up the neck must move the hand rather
-  than falling back to open strings.
+  *Closes gap 1.* Verified by `testFrettingHandPosition`: the open C shape must
+  still map to exactly the strings it maps to today with the hand left at the
+  nut; the descending lead phrase above must stay inside one position, placing
+  E4 at the fifth fret of the B string rather than on the open top string; and
+  the hand must relax to the nut once the phrase ends, so the same E4 is open
+  again.
 
 - [ ] **2. Harmonics become a real node touch.** Replace the octave transpose
   with a point-touch loss inside the loop: a one-tap FIR `(1 - d/2) + (d/2)z^-M`

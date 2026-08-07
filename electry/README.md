@@ -110,11 +110,19 @@ from the playable instrument.
 Notes 19..27 are ignored, and notes 28..86 are playable on a 22-fret,
 eight-string Drop-E instrument tuned
 E1-B1-E2-A2-D3-G3-B3-E4; notes outside these ranges are ignored. Each note is
-allocated to one of the eight physical strings: a repick of a sounding note
-grabs the same string, hammer-on continues the nearest sounding string,
-otherwise the free string with the lowest fret wins (which reproduces
-open-position chord shapes), and when everything sounds, the oldest string
-is stolen.
+allocated to one of the eight physical strings by a fretting hand that has a
+position and a reach: a repick of a sounding note grabs the same string,
+hammer-on continues the nearest sounding string, otherwise the free string
+that puts the note nearest the fingers wins, and when everything sounds, the
+oldest string is stolen. The hand's index finger covers four further frets,
+open strings need no finger and are free at the nut, and the hand moves only
+when the note it is asked for lies outside its span - and then only on the
+first note of a chord, because a chord is one hand shape. It relaxes back to
+the nut when the phrase ends. That is what lets a phrase played up the neck
+stay up the neck: the rule this replaced always chose the lowest fret that
+could produce the note, so an open string won every contest and most of the
+fretboard - and the sounding length, inharmonicity and pickup-comb geometry
+that come with it - was unreachable.
 
 The pitch wheel is a vibrato bar: it bends every string — the
 sympathetically ringing open strings included — over a nominal ±2 semitone

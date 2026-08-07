@@ -131,6 +131,10 @@ public:
     // Drop-E eight-string, 22-fret instrument: open low E1 to fret 22 on E4.
     static constexpr int lowestPlayableNote = 28;
     static constexpr int highestPlayableNote = 86;
+    // How far the fretting hand reaches above its index finger. Four fret
+    // spaces is one finger per fret with the ordinary stretch a player uses
+    // without shifting, so the hand covers `position .. position + reach`.
+    static constexpr int frettingHandReach = 4;
 
     static_assert(keyswitchCount == 7,
                   "three picking styles and four play styles need one keyswitch each");
@@ -835,6 +839,12 @@ private:
     void beginVoiceRelease(Voice& voice) noexcept;
     void silenceVoice(Voice& voice) noexcept;
     int chooseString(int midiNote, PlayStyle playStyle) const noexcept;
+    // What it costs the fretting hand to take this note on this string, in
+    // fret-distance units. Lower wins; ties resolve toward the thicker string,
+    // as they did when the rule was simply the lowest fret.
+    [[nodiscard]] float frettingCost(int fret) const noexcept;
+    // The hand moves only when it has to, and only at the start of a chord.
+    void updateFrettingHand(int fret, bool newChord) noexcept;
     [[nodiscard]] float currentSoundingSemitoneOffset(const Voice& voice) const noexcept;
     void updateVoiceControl(Voice& voice) noexcept;
     void renderVoice(Voice& voice, RenderSums& sums) noexcept;
@@ -885,6 +895,21 @@ private:
     std::int64_t lastNoteOnClock_ { -(1ll << 40) };
     int chordAnchorString_ { 0 };
     int chordWindowSamples_ { 1680 };
+
+    // Where the fretting hand is. The index finger sits at this fret and the
+    // little finger reaches `frettingHandReach` frets above it; open strings
+    // need no finger at all and are always available. The hand only moves when
+    // the note it has been asked for is outside that span, and only on the
+    // first note of a chord, because a chord is one hand shape. It returns to
+    // the nut when the phrase ends.
+    //
+    // Without this the allocator played every note at the lowest fret that
+    // could produce it, which is a good model of first position and of nothing
+    // else: it can never be up the neck, so the sounding length, inharmonicity
+    // and pickup comb geometry that the fret drives were unreachable for most
+    // of the range.
+    float frettingHandPosition_ { 0.0f };
+    int handReturnSamples_ { 72000 };
 
     // Continuous bridge-hand damping: the parameter plus the CC2 pressure.
     float palmMutePressure_ { 0.0f };

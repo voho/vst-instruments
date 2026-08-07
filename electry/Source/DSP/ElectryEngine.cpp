@@ -789,6 +789,7 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // A strum's notes reach the engine within one host block; 35 ms is wide
     // enough to group a chord and short enough not to merge separate beats.
     chordWindowSamples_ = std::max(1, static_cast<int>(0.035 * sampleRate_));
+    handReturnSamples_ = std::max(1, static_cast<int>(1.5 * sampleRate_));
 
     // The compliance table lives behind a guarded function-local static (its
     // initializer is not constexpr-able); touch it here so the one-time
@@ -837,6 +838,7 @@ void ElectryEngine::reset()
     engineClock_ = 0;
     lastNoteOnClock_ = -(1ll << 40);
     chordAnchorString_ = 0;
+    frettingHandPosition_ = 0.0f;
     palmMuteBlend_ = clampf(smoothedParameters_.palmMute + palmMutePressure_,
                             0.0f, 1.0f);
     appliedPalmMute_ = palmMuteBlend_;
@@ -1024,6 +1026,27 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
     const bool strokeIsUp = picked
         && (pickStyle_ == PickStyle::Up
             || (pickStyle_ == PickStyle::Alternate && alternateNextStrokeIsUp_));
+
+    // Note-ons that arrive inside one chord window belong to the same pick
+    // stroke and to the same hand shape, so both the strum travel below and
+    // the fretting hand read the same flag.
+    const bool newChord = engineClock_ - lastNoteOnClock_
+                        > static_cast<std::int64_t>(chordWindowSamples_);
+
+    // The hand relaxes to the nut when the phrase ends: nothing is held and
+    // no note has arrived for over a second. Without this a figure played high
+    // up would keep pulling a following open-position chord out of position.
+    if (newChord
+        && engineClock_ - lastNoteOnClock_
+               > static_cast<std::int64_t>(handReturnSamples_))
+    {
+        bool anyHeld = false;
+        for (const auto& voice : voices_)
+            anyHeld = anyHeld || (voice.active && voice.keyDown);
+        if (! anyHeld)
+            frettingHandPosition_ = 0.0f;
+    }
+
     const int stringIndex = chooseString(midiNote, playStyle_);
     if (stringIndex < 0)
         return;
@@ -1033,14 +1056,15 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
 
     auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
 
-    // Strum travel. Note-ons that arrive inside one chord window belong to the
-    // same pick stroke; the first of them fixes the edge the pick starts from,
-    // and every later string is offset by the time the pick needs to reach it.
-    // At a zero spread this is exactly the previous simultaneous behaviour.
-    const bool newChord = engineClock_ - lastNoteOnClock_
-                        > static_cast<std::int64_t>(chordWindowSamples_);
+    // Strum travel. The first note of a chord fixes the edge the pick starts
+    // from, and every later string is offset by the time the pick needs to
+    // reach it. At a zero spread this is exactly the previous simultaneous
+    // behaviour.
     if (newChord)
         chordAnchorString_ = stringIndex;
+    updateFrettingHand(
+        midiNote - stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote,
+        newChord);
     lastNoteOnClock_ = engineClock_;
 
     int startDelaySamples = 0;
@@ -1141,18 +1165,20 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
             return best;
     }
 
-    // Otherwise prefer the free string that plays the note at the lowest
-    // fret; ties resolve toward the thicker string. This reproduces common
-    // open-position fingerings deterministically.
+    // Otherwise the fretting hand chooses: the free string that puts the note
+    // nearest the fingers, with open strings always available because they
+    // need no finger. Ties resolve toward the thicker string, exactly as they
+    // did under the lowest-fret rule this replaces.
     int best = -1;
-    int bestFret = fretCount + 1;
+    float bestCost = 1.0e30f;
     for (int s = 0; s < stringCount; ++s)
     {
         if (! playable(s) || voices_[static_cast<std::size_t>(s)].active)
             continue;
-        if (fretOn(s) < bestFret)
+        const float cost = frettingCost(fretOn(s));
+        if (cost < bestCost)
         {
-            bestFret = fretOn(s);
+            bestCost = cost;
             best = s;
         }
     }
@@ -1182,6 +1208,54 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
         }
     }
     return best;
+}
+
+float ElectryEngine::frettingCost(int fret) const noexcept
+{
+    // An open string costs no finger at all, so in first position it is free -
+    // which is why the open-position chord shapes come out unchanged. Up the
+    // neck it is a decision rather than a convenience: taking it abandons the
+    // hand's position and changes the note's timbre, decay and damping, so its
+    // cost grows with how far the hand has travelled.
+    if (fret <= 0)
+        return 0.25f * frettingHandPosition_;
+
+    const float low = frettingHandPosition_;
+    const float high = low + static_cast<float>(frettingHandReach);
+    if (fret < low)
+    {
+        // The hand pivots forward from the thumb, so reaching back below the
+        // index finger is the more expensive of the two directions.
+        return 1.6f * (low - static_cast<float>(fret));
+    }
+    if (fret > high)
+        return static_cast<float>(fret) - high;
+
+    // Inside the hand's span every note is reachable; the small tilt prefers
+    // the index finger, which breaks ties the way a player's hand does.
+    return 0.05f * (static_cast<float>(fret) - low);
+}
+
+void ElectryEngine::updateFrettingHand(int fret, bool newChord) noexcept
+{
+    // An open string tells the hand nothing, and a chord is one shape: only
+    // the note that opens a chord window is allowed to move the hand, so a
+    // barre or a stretch is fingered from one position instead of dragging
+    // the hand across itself note by note.
+    if (fret < 1 || ! newChord)
+        return;
+
+    const float low = frettingHandPosition_;
+    const float high = low + static_cast<float>(frettingHandReach);
+    if (static_cast<float>(fret) >= low && static_cast<float>(fret) <= high)
+        return;
+
+    // When the hand does shift, it lands with the note under the middle of the
+    // fingers rather than under the index, leaving reach in both directions.
+    constexpr int settleOffset = 2;
+    frettingHandPosition_ = clampf(
+        static_cast<float>(fret - settleOffset), 0.0f,
+        static_cast<float>(fretCount - frettingHandReach));
 }
 
 // ---------------------------------------------------------------------------

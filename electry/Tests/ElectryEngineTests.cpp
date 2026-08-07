@@ -192,6 +192,14 @@ struct ElectryEngineTestAccess
         return -1;
     }
 
+    // Where the fretting hand's index finger currently sits, so the allocator
+    // checks can assert on the state that drove the choice rather than only on
+    // the choice itself.
+    static float frettingHandPosition(const ElectryEngine& engine) noexcept
+    {
+        return engine.frettingHandPosition_;
+    }
+
     // The per-string pitch-wheel compliance, so the audio checks can assert
     // against exactly the constants the engine runs.
     static float bendSensitivity(int stringIndex) noexcept
@@ -2321,6 +2329,107 @@ void testStringAllocationAndPolyphony()
            "restruck note moved to another string");
 }
 
+// The fretting hand has a position and a reach, so the same pitch is not
+// always fingered at the lowest fret that can produce it. The lead phrase
+// below is the whole point of the change: under the lowest-fret rule its
+// fourth note fell onto an open string in the middle of a line played at the
+// fifth position, which is a different string, a different decay and a note
+// the fretting hand is not touching at all.
+void testFrettingHandPosition()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    engine.setParameters(EngineParameters {});
+    engine.reset();
+
+    // Open-position shapes are unchanged, because at the nut an open string
+    // costs the hand nothing. This is the same C-major shape the allocation
+    // test pins, repeated here so a hand-model regression is caught by the
+    // check that owns the hand model.
+    for (const int note : { 48, 52, 55, 60, 64 })
+        engine.noteOn(note, 0.8f);
+    expect(TestAccess::stringForNote(engine, 48) == 3
+               && TestAccess::stringForNote(engine, 52) == 4
+               && TestAccess::stringForNote(engine, 55) == 5
+               && TestAccess::stringForNote(engine, 60) == 6
+               && TestAccess::stringForNote(engine, 64) == 7,
+           "the open C shape moved when the fretting hand was introduced");
+    expect(TestAccess::frettingHandPosition(engine) == 0.0f,
+           "an open-position chord moved the hand off the nut");
+
+    // A descending lead phrase. Each note is picked, released, and given time
+    // to retire, so every string is free when the next note arrives and the
+    // only thing choosing between them is the hand.
+    engine.reset();
+    struct Placement
+    {
+        int string { -1 };
+        int fret { -1 };
+    };
+    const auto playAndRelease = [&] (int note)
+    {
+        engine.noteOn(note, 0.8f);
+        Placement placement;
+        placement.string = TestAccess::stringForNote(engine, note);
+        if (placement.string >= 0)
+            placement.fret = TestAccess::snapshot(engine, placement.string).fret;
+        engine.noteOff(note);
+        // Let the damped string retire so every string is free again. It takes
+        // under half a second, comfortably inside the second and a half after
+        // which the hand would relax back to the nut.
+        double waited = 0.0;
+        while (engine.getActiveVoiceCount() > 0 && waited < 1.0)
+        {
+            StereoBuffer tail(static_cast<int>(0.25 * sampleRate));
+            renderInto(engine, tail);
+            waited += 0.25;
+        }
+        expect(engine.getActiveVoiceCount() == 0,
+               "the released note did not retire between phrase notes");
+        return placement;
+    };
+
+    // B4 from a cold hand is fretted at 7 on the top string, and the hand
+    // settles two frets below it so the note sits under the middle fingers.
+    const auto b4 = playAndRelease(71);
+    expect(b4.string == 7 && b4.fret == 7,
+           "B4 from the nut did not take the top string at the seventh fret");
+    expect(std::abs(TestAccess::frettingHandPosition(engine) - 5.0f) < 1.0e-6f,
+           "the hand did not settle below the note it had to reach for");
+
+    const auto a4 = playAndRelease(69);
+    expect(a4.string == 7 && a4.fret == 5,
+           "A4 left the position the hand had just taken");
+
+    // From here the lowest-fret rule and the hand disagree. G4 at the fifth
+    // position is the eighth fret of the B string, not the third fret of the
+    // top string, which is behind the index finger.
+    const auto g4 = playAndRelease(67);
+    expect(g4.string == 6 && g4.fret == 8,
+           "G4 was fingered behind the hand instead of inside it");
+
+    // The one that matters: E4 is an open string, and the old rule always took
+    // it. In the fifth position it is the fifth fret of the B string.
+    const auto e4 = playAndRelease(64);
+    expect(e4.string == 6 && e4.fret == 5,
+           "E4 fell back to the open string in the middle of a fretted phrase");
+
+    const auto d4 = playAndRelease(62);
+    expect(d4.string == 5 && d4.fret == 7,
+           "D4 left the hand's position");
+
+    // The phrase ends: nothing is held, and after a second and a half the hand
+    // relaxes to the nut, so the same E4 is an open string again.
+    StereoBuffer rest(static_cast<int>(2.0 * sampleRate));
+    renderInto(engine, rest);
+    const auto openAgain = playAndRelease(64);
+    expect(openAgain.string == 7 && openAgain.fret == 0,
+           "the hand did not return to the nut after the phrase ended");
+    expect(TestAccess::frettingHandPosition(engine) == 0.0f,
+           "the hand did not relax to the nut when the phrase ended");
+}
+
 void testSustainPedal()
 {
     constexpr double sampleRate = 48000.0;
@@ -4394,6 +4503,7 @@ int main()
     testMaterialAndControlAudibility();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
+    testFrettingHandPosition();
     testSustainPedal();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();
