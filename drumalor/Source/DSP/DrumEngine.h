@@ -28,6 +28,24 @@ enum class Instrument : std::uint8_t
     Count
 };
 
+// How the stick met the drum. A drummer's snare is three instruments, and the
+// difference between them is entirely where the stick landed and how long it
+// stayed: on the head, on the head and the rim together, or laid flat across a
+// hand-damped head with its shaft dropped onto the rim. Every voice accepts the
+// value; only the Snare currently does anything but ignore it.
+enum class Articulation : std::uint8_t
+{
+    Head,
+    Rimshot,
+    CrossStick
+};
+
+struct MidiTrigger
+{
+    Instrument instrument {};
+    Articulation articulation { Articulation::Head };
+};
+
 inline constexpr std::size_t instrumentCount = static_cast<std::size_t> (Instrument::Count);
 inline constexpr double maximumTailSeconds = 8.0;
 // Choke/mute groups A, B and C. Group 0 means the voice never chokes anything.
@@ -78,6 +96,7 @@ struct InstrumentMetadata
 [[nodiscard]] std::string_view getCharacterALabel (Instrument instrument) noexcept;
 [[nodiscard]] std::string_view getCharacterBLabel (Instrument instrument) noexcept;
 [[nodiscard]] std::optional<Instrument> instrumentForMidiNote (int midiNote) noexcept;
+[[nodiscard]] std::optional<MidiTrigger> midiTriggerForNote (int midiNote) noexcept;
 
 class DrumEngine
 {
@@ -90,7 +109,8 @@ public:
                                   const InstrumentParameters& parameters) noexcept;
     void setKitParameters (const KitParameters& parameters) noexcept;
     void setOutputGain (float linearGain) noexcept;
-    void trigger (Instrument instrument, float velocity) noexcept;
+    void trigger (Instrument instrument, float velocity,
+                  Articulation articulation = Articulation::Head) noexcept;
     [[nodiscard]] bool triggerMidi (int midiNote, float velocity) noexcept;
     void allSoundsOff() noexcept;
     void process (float* left, float* right, int numSamples) noexcept;
@@ -196,6 +216,7 @@ private:
         bool choking { false };
         bool bandLimitedNoiseReady { false };
         Instrument instrument { Instrument::Kick };
+        Articulation articulation { Articulation::Head };
         int chokeGroup { 0 };
         std::uint64_t generation { 0 };
         std::uint64_t ageSamples { 0 };
@@ -266,6 +287,13 @@ private:
         float modalTension { 0.0f };
         float tensionDepth { 0.0f };
         float tensionSmoothing { 1.0f };
+        // What the articulation did to the mix. A rimshot drives the wires
+        // harder and rings the rim; a cross-stick has the player's hand on the
+        // head, so the membrane and the wires are both mostly gone and what is
+        // left is the shell.
+        float bodyScale { 1.0f };
+        float wireScale { 1.0f };
+        float rimLevel { 0.0f };
         float cymbalClockPhase { 1.0f };
         float cymbalPcmValue { 0.0f };
         float cymbalPcmReconstructed { 0.0f };
@@ -344,7 +372,8 @@ private:
     [[nodiscard]] int findVoiceSlot() const noexcept;
     void initialiseVoice (Voice& voice, Instrument instrument, float velocity,
                           const InstrumentParameters& parameters, std::uint32_t seed,
-                          const HitVariation& variation) noexcept;
+                          const HitVariation& variation,
+                          Articulation articulation) noexcept;
     void initialiseModalVoice (Voice& voice, const float* ratios, int modeCount,
                                float baseFrequency, float decaySeconds,
                                float spread, float brightness,

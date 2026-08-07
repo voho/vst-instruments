@@ -189,15 +189,21 @@ regression suite green.
   pitch once the energy has gone, and to hold their decay range at both ends of
   Skin, which is what proves only `a1` moves.
 
-- [ ] **3. Snare rimshot and cross-stick.** Add articulations to the trigger
+- [x] **3. Snare rimshot and cross-stick.** Add articulations to the trigger
   path and map them to the standard notes: 38 head, 40 rimshot, 37 cross-stick.
   A rimshot is the same snare struck at 0.92 of the radius with the shortest
   contact in the kit and the wires fully engaged; a cross-stick is a stick laid
   across a hand-damped head with the shaft struck on the rim, so the membrane is
   heavily loaded, the wires stay down and what radiates is the shell.
-  *Closes gap 7.* Verified by: the three articulations are distinguishable by
-  measured band balance and decay, the rimshot is brighter and shorter, and the
-  cross-stick carries far less wire noise; plus the mapping contract.
+  *Closes gap 7.* Landed. Verified by a contract on the mapping and on the
+  sound: the rimshot engages the wires 1.2 times harder and reaches 1.3 times
+  further up the head's series at the strike, the cross-stick drops the wire
+  band to a fifth and its tail to under a third of a head strike's, and neither
+  nulls against a peak-matched head hit - the residuals are -8.8 dB and -0.7 dB
+  where both used to be exactly minus infinity, because notes 40 and 37 were
+  second names for a plain snare and for the claves. No new parameter and no new
+  voice: a strike position and a contact time are what the head bank is already
+  built from.
 
 - [ ] **4. A stick landing on a moving head takes energy out of it.** When a
   membrane voice is struck while a voice of the same instrument is still

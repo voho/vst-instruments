@@ -2,8 +2,9 @@
 
 Seven rendered examples of what Drumalor produces: the full thirteen-voice
 vocabulary one hit at a time, two programmed grooves, the snare played from a
-ghost note to a full accent, a tom and cymbal phrase, the Humanise control
-heard on a repeated bar, and the kit bus pushed on a loop.
+ghost note to a full accent and through its three articulations, a tom and
+cymbal phrase, the Humanise control heard on a repeated bar, and the kit bus
+pushed on a loop.
 
 Every file here is rendered by [`Tools/RenderDemos.cpp`](../../Tools/RenderDemos.cpp)
 from the shipping JUCE-free signal path — the same `DrumEngine` the VST3, Audio
@@ -27,7 +28,11 @@ tempo, exactly as a sequencer would play the instrument.
   at low velocity — velocity drives the struck timbre and the wire content as
   well as the level, so the ghosts darken rather than merely getting quieter.
 - **04** is that velocity axis in isolation: one snare, eight hits from a ghost
-  stroke to a full accent, with nothing else changing between them.
+  stroke to a full accent, with nothing else changing between them. The last
+  six hits are that same snare's three articulations played twice at one
+  velocity — head, rimshot, cross-stick — which are the same modelled head
+  struck in a different place with a different contact rather than three
+  separate sounds.
 - **05** takes the backbeat away: ride time with crashes on the turns, tom
   answers, and a descending sixteenth fill across all three toms into a final
   crash.

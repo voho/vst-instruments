@@ -159,6 +159,18 @@ public:
         render (gapSeconds);
     }
 
+    // The same thing by raw note number, for the articulations that are a note
+    // rather than a voice.
+    void hitNote (int midiNote, float velocity, double gapSeconds)
+    {
+        if (! engine_->triggerMidi (midiNote, velocity))
+        {
+            std::fprintf (stderr, "the GM note map dropped a demo hit\n");
+            std::abort();
+        }
+        render (gapSeconds);
+    }
+
     void rest (double seconds) { render (seconds); }
 
     [[nodiscard]] const std::vector<float>& left() const noexcept { return left_; }
@@ -364,15 +376,24 @@ Take renderBreakbeat()
     return take;
 }
 
-// MIDI velocity from a ghost stroke to a full accent on the factory snare.
-// Nothing about the timbre is adjusted between hits - velocity drives the
-// struck-timbre filters and the wire content as well as the level.
+// MIDI velocity from a ghost stroke to a full accent on the factory snare, then
+// the same drum's other two articulations. Nothing about the timbre is adjusted
+// between hits - velocity drives the struck-timbre filters and the wire content
+// as well as the level, and the articulations are the same modelled head struck
+// in a different place with a different contact rather than three sounds.
 Take renderSnareVelocity()
 {
     Take take;
     take.rest (0.10);
     for (const float velocity : { 0.08f, 0.20f, 0.33f, 0.46f, 0.60f, 0.74f, 0.87f, 1.0f })
         take.hit (Instrument::Snare, velocity, 0.55);
+    take.rest (0.45);
+
+    // Head, rimshot, cross-stick, twice over, all at the same velocity.
+    for (int repeat = 0; repeat < 2; ++repeat)
+        for (const int note : { 38, 40, 37 })
+            take.hitNote (note, 0.92f, 0.55);
+
     take.rest (1.6);
     return take;
 }
@@ -502,7 +523,8 @@ const std::array<Demo, 7>& demos()
         { "03-breakbeat-ghost-notes.wav",
           "A busier break at 104 BPM with ghost-note snare", renderBreakbeat },
         { "04-snare-velocity.wav",
-          "One snare from a ghost note to a full accent", renderSnareVelocity },
+          "One snare from a ghost note to a full accent, then its rimshot and cross-stick",
+          renderSnareVelocity },
         { "05-toms-and-cymbals.wav",
           "Ride time, crashes and a descending tom fill", renderTomsAndCymbals },
         { "06-humanise.wav",

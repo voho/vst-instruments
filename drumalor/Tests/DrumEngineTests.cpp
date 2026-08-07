@@ -761,7 +761,7 @@ void testMetadataAndMidiMapping()
     constexpr std::array expectedMappings {
         MidiMapping { 35, drumalor::Instrument::Kick },
         MidiMapping { 36, drumalor::Instrument::Kick },
-        MidiMapping { 37, drumalor::Instrument::Perc2 },
+        MidiMapping { 37, drumalor::Instrument::Snare },
         MidiMapping { 38, drumalor::Instrument::Snare },
         MidiMapping { 39, drumalor::Instrument::Clap },
         MidiMapping { 40, drumalor::Instrument::Snare },
@@ -824,6 +824,45 @@ void testMetadataAndMidiMapping()
     }
     expect (! drumalor::instrumentForMidiNote (-1).has_value(), "negative MIDI note was accepted");
     expect (! drumalor::instrumentForMidiNote (128).has_value(), "out-of-range MIDI note was accepted");
+
+    // The snare's three articulations sit on the notes every electronic kit
+    // and every mainstream drum instrument sends them on. Every other mapped
+    // note is a plain head strike.
+    struct ArticulationMapping
+    {
+        int note;
+        drumalor::Articulation articulation;
+    };
+    constexpr std::array articulationMappings {
+        ArticulationMapping { 38, drumalor::Articulation::Head },
+        ArticulationMapping { 40, drumalor::Articulation::Rimshot },
+        ArticulationMapping { 37, drumalor::Articulation::CrossStick },
+    };
+    for (const auto& mapping : articulationMappings)
+    {
+        const auto actual = drumalor::midiTriggerForNote (mapping.note);
+        expect (actual.has_value() && actual->instrument == drumalor::Instrument::Snare
+                    && actual->articulation == mapping.articulation,
+                "note " + std::to_string (mapping.note)
+                    + " does not carry its snare articulation");
+    }
+    for (int midiNote = 0; midiNote <= 127; ++midiNote)
+    {
+        const auto actual = drumalor::midiTriggerForNote (midiNote);
+        const bool isSnareArticulation = std::any_of (
+            articulationMappings.begin(), articulationMappings.end(),
+            [midiNote] (const ArticulationMapping& mapping)
+            { return mapping.note == midiNote && mapping.articulation
+                         != drumalor::Articulation::Head; });
+        if (actual.has_value() && ! isSnareArticulation)
+            expect (actual->articulation == drumalor::Articulation::Head,
+                    "note " + std::to_string (midiNote)
+                        + " carries an articulation it should not");
+    }
+    expect (! drumalor::midiTriggerForNote (-1).has_value(),
+            "negative MIDI note produced a trigger");
+    expect (! drumalor::midiTriggerForNote (128).has_value(),
+            "out-of-range MIDI note produced a trigger");
 }
 
 void testEveryInstrumentAndSampleRate()
@@ -2645,6 +2684,124 @@ void testMembraneTensionModulation()
     }
 }
 
+void testSnareArticulations()
+{
+    constexpr double sampleRate = 48000.0;
+    const auto defaults = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Snare).defaultParameters;
+
+    const auto renderArticulation = [&] (int midiNote)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.setInstrumentParameters (drumalor::Instrument::Snare, defaults);
+        expect (engine.triggerMidi (midiNote, 0.95f),
+                "the snare articulation note " + std::to_string (midiNote)
+                    + " was not accepted");
+        constexpr int captureSamples = static_cast<int> (0.60 * sampleRate);
+        const auto interleaved = renderInterleaved (
+            engine, captureSamples, defaultBlockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        return mono;
+    };
+
+    const auto head = renderArticulation (38);
+    const auto rimshot = renderArticulation (40);
+    const auto crossStick = renderArticulation (37);
+
+    for (const auto* pair : { &head, &rimshot, &crossStick })
+    {
+        expect (std::all_of (pair->begin(), pair->end(),
+                             [] (float value) { return std::isfinite (value); }),
+                "a snare articulation produced NaN or infinity");
+        expect (peakInRange (*pair, 0, pair->size()) <= 1.001,
+                "a snare articulation exceeded the output safety bound");
+        expect (rmsInRange (*pair, 0, pair->size()) > 1.0e-5,
+                "a snare articulation was silent");
+    }
+
+    // The wires are the difference. A rimshot drives the head hard enough to
+    // throw them well clear; a cross-stick is a hand resting on the head with
+    // the shaft dropped on the hoop, so they never leave it.
+    const auto wireToBody = [&] (const std::vector<float>& samples)
+    {
+        return bandPowerInRange (samples, sampleRate, 1500.0, 9000.0, 0.0, 0.150)
+            / std::max (1.0e-20, bandPowerInRange (
+                samples, sampleRate, 150.0, 700.0, 0.0, 0.150));
+    };
+    const double headWires = wireToBody (head);
+    const double rimshotWires = wireToBody (rimshot);
+    const double crossStickWires = wireToBody (crossStick);
+    expect (rimshotWires > 1.15 * headWires,
+            "a rimshot does not engage the wires harder than a head strike (head/rim "
+                + std::to_string (headWires) + "/" + std::to_string (rimshotWires) + ")");
+    expect (crossStickWires < 0.35 * headWires,
+            "a cross-stick still buzzes the wires (head/cross "
+                + std::to_string (headWires) + "/" + std::to_string (crossStickWires) + ")");
+
+    // A hand on the head is a heavy, frequency-independent absorber, so the
+    // cross-stick is over long before the other two.
+    const auto tailFraction = [&] (const std::vector<float>& samples)
+    {
+        const double early = rmsInRange (samples, 0,
+                                         static_cast<std::size_t> (0.030 * sampleRate));
+        const double late = rmsInRange (samples,
+                                        static_cast<std::size_t> (0.120 * sampleRate),
+                                        static_cast<std::size_t> (0.300 * sampleRate));
+        return late / std::max (1.0e-20, early);
+    };
+    expect (tailFraction (crossStick) < 0.40 * tailFraction (head),
+            "a cross-stick rings as long as a head strike (head/cross "
+                + std::to_string (tailFraction (head)) + "/"
+                + std::to_string (tailFraction (crossStick)) + ")");
+
+    // And the three are genuinely three sounds rather than three levels: after
+    // matching peaks, none of them nulls against another.
+    const auto shapeResidualDecibels = [] (const std::vector<float>& first,
+                                           const std::vector<float>& second)
+    {
+        const double firstPeak = peakInRange (first, 0, first.size());
+        const double secondPeak = peakInRange (second, 0, second.size());
+        std::vector<float> matched (second.size());
+        const auto gain = static_cast<float> (firstPeak / std::max (1.0e-9, secondPeak));
+        for (std::size_t index = 0; index < second.size(); ++index)
+            matched[index] = second[index] * gain;
+        return 20.0 * std::log10 (std::max (1.0e-12,
+            meanAbsoluteDifference (first, matched)
+            / std::max (1.0e-12, meanAbsoluteMagnitude (first))));
+    };
+    // Both are still the same drum with the same wire wash and the same noise
+    // realisation, so a large common component is correct; what is not correct
+    // is a null. Notes 40 and 37 used to be second names for a plain head hit
+    // and for the claves, so this residual was exactly minus infinity for the
+    // rimshot. It now measures -8.8 dB, and the cross-stick -0.7 dB.
+    expect (shapeResidualDecibels (head, rimshot) > -12.0,
+            "a rimshot is a louder head strike rather than a different one ("
+                + std::to_string (shapeResidualDecibels (head, rimshot)) + " dB)");
+    expect (shapeResidualDecibels (head, crossStick) > -6.0,
+            "a cross-stick is a quieter head strike rather than a different one ("
+                + std::to_string (shapeResidualDecibels (head, crossStick)) + " dB)");
+
+    // A rimshot is the shortest contact in the kit against a steel hoop, so it
+    // reaches further up the head's series than a plain stroke does.
+    const auto highToLow = [&] (const std::vector<float>& samples)
+    {
+        return bandPowerInRange (samples, sampleRate, 1200.0, 6000.0, 0.0, 0.040)
+            / std::max (1.0e-20, bandPowerInRange (
+                samples, sampleRate, 150.0, 600.0, 0.0, 0.040));
+    };
+    expect (highToLow (rimshot) > 1.10 * highToLow (head),
+            "a rimshot is not brighter at the strike than a head hit (head/rim "
+                + std::to_string (highToLow (head)) + "/"
+                + std::to_string (highToLow (rimshot)) + ")");
+}
+
 void testUiPresentationMath()
 {
     using namespace drumalor::ui;
@@ -3004,6 +3161,7 @@ int main()
     testMetering();
     testMembraneAndVelocityTimbre();
     testMembraneTensionModulation();
+    testSnareArticulations();
     testUiPresentationMath();
     testIdleMetallicCostAndDenormalSafety();
     testInvalidValuesAndStressPerformance();

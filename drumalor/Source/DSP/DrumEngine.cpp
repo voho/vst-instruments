@@ -427,25 +427,38 @@ std::string_view getCharacterBLabel (Instrument instrument) noexcept
     return getInstrumentMetadata (instrument).characterBLabel;
 }
 
-std::optional<Instrument> instrumentForMidiNote (int midiNote) noexcept
+std::optional<MidiTrigger> midiTriggerForNote (int midiNote) noexcept
 {
     switch (midiNote)
     {
-        case 35: case 36: return Instrument::Kick;
-        case 38: case 40: return Instrument::Snare;
-        case 39: return Instrument::Clap;
-        case 42: case 44: return Instrument::ClosedHat;
-        case 46: return Instrument::OpenHat;
-        case 51: case 53: case 59: return Instrument::Ride;
-        case 49: case 57: return Instrument::Crash;
-        case 41: case 43: case 45: return Instrument::LowTom;
-        case 47: case 48: return Instrument::MidTom;
-        case 50: return Instrument::HighTom;
-        case 70: case 82: return Instrument::Shaker;
-        case 56: return Instrument::Perc1;
-        case 37: case 75: case 76: case 77: return Instrument::Perc2;
+        case 35: case 36: return MidiTrigger { Instrument::Kick, Articulation::Head };
+        case 38: return MidiTrigger { Instrument::Snare, Articulation::Head };
+        // 40 and 37 are General MIDI's Electric Snare and Side Stick, and are
+        // what every electronic kit and every mainstream drum instrument sends
+        // for a rimshot and a cross-stick. They used to be a second name for a
+        // plain snare and a second name for the claves.
+        case 40: return MidiTrigger { Instrument::Snare, Articulation::Rimshot };
+        case 37: return MidiTrigger { Instrument::Snare, Articulation::CrossStick };
+        case 39: return MidiTrigger { Instrument::Clap, Articulation::Head };
+        case 42: case 44: return MidiTrigger { Instrument::ClosedHat, Articulation::Head };
+        case 46: return MidiTrigger { Instrument::OpenHat, Articulation::Head };
+        case 51: case 53: case 59: return MidiTrigger { Instrument::Ride, Articulation::Head };
+        case 49: case 57: return MidiTrigger { Instrument::Crash, Articulation::Head };
+        case 41: case 43: case 45: return MidiTrigger { Instrument::LowTom, Articulation::Head };
+        case 47: case 48: return MidiTrigger { Instrument::MidTom, Articulation::Head };
+        case 50: return MidiTrigger { Instrument::HighTom, Articulation::Head };
+        case 70: case 82: return MidiTrigger { Instrument::Shaker, Articulation::Head };
+        case 56: return MidiTrigger { Instrument::Perc1, Articulation::Head };
+        case 75: case 76: case 77: return MidiTrigger { Instrument::Perc2, Articulation::Head };
         default: return std::nullopt;
     }
+}
+
+std::optional<Instrument> instrumentForMidiNote (int midiNote) noexcept
+{
+    const auto trigger = midiTriggerForNote (midiNote);
+    return trigger.has_value() ? std::optional<Instrument> { trigger->instrument }
+                               : std::nullopt;
 }
 
 float DrumEngine::Biquad::tick (float input) noexcept
@@ -1770,11 +1783,13 @@ void DrumEngine::initialiseModalVoice (Voice& voice, const float* ratios, int mo
 
 void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float velocity,
                                   const InstrumentParameters& values, std::uint32_t seed,
-                                  const HitVariation& variation) noexcept
+                                  const HitVariation& variation,
+                                  Articulation articulation) noexcept
 {
     voice = Voice {};
     voice.active = true;
     voice.instrument = instrument;
+    voice.articulation = articulation;
     voice.chokeGroup = std::clamp (values.chokeGroup, 0, chokeGroupCount);
     voice.generation = ++generation_;
     voice.noiseState = seed == 0u ? 1u : seed;
@@ -1959,6 +1974,24 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
 
         case Instrument::Snare:
         {
+            // A drummer's snare is three instruments, and the only difference
+            // between them is where the stick landed and how long it stayed.
+            //
+            // A rimshot is the head and the rim struck together: the tip lands
+            // right against the hoop, where J_m is far from the centre and the
+            // whole circumferential series is fed at once, and the shaft meets
+            // steel, so the contact is the shortest anything in this kit makes.
+            // The head is driven hard, so the wires leave it further and buzz
+            // more, and the hoop itself rings - which is the crack.
+            //
+            // A cross-stick is the opposite: the stick lies flat across the
+            // head with the player's hand resting on it, and the butt is
+            // dropped onto the rim. The hand is a heavy absorber sitting on the
+            // membrane, so the head is gone in a fifth of the time and the
+            // wires never lift off at all. What radiates is the shell, and that
+            // is why a cross-stick is a woody knock rather than a quiet snare.
+            const bool rimshot = articulation == Articulation::Rimshot;
+            const bool crossStick = articulation == Articulation::CrossStick;
             voice.baseFrequency = 185.0f * voice.pitchRatio;
             voice.phaseIncrements[0] = std::min (0.45f, voice.baseFrequency * inverseSampleRate_);
             voice.phaseIncrements[1] = std::min (0.45f, voice.baseFrequency * 1.78f * inverseSampleRate_);
@@ -1969,7 +2002,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // harder. A snare's contact is the shortest in the kit, which is
             // most of why it is the brightest thing in it.
             voice.contactSeconds = (0.00085f - 0.00050f * voice.characterB)
-                * std::pow (std::max (0.08f, velocity), -0.35f);
+                * std::pow (std::max (0.08f, velocity), -0.35f)
+                * (rimshot ? 0.38f : crossStick ? 0.60f : 1.0f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
             voice.contactPhase = 0.0f;
@@ -1984,16 +2018,25 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             head.radius = 0.178f;
             head.shellDepth = 0.140f;
             head.headDensity = 0.30f;
-            head.strikeRadius = 0.36f;
+            // Where the stick landed, as a fraction of the head's radius. This
+            // is the whole articulation: J_m(lambda r/a) decides which modes a
+            // strike can reach, and a hoop strike reaches all of them.
+            head.strikeRadius = rimshot ? 0.93f : crossStick ? 0.80f : 0.36f;
             head.contactSeconds = voice.contactSeconds;
             head.airLoadScale = 0.75f + 0.50f * voice.characterB;
             // Wires resting on the far head damp everything, and a small shallow
             // drum radiates well for its size, so a snare is the shortest-lived
             // head in the kit at every frequency.
+            // A hand resting on a membrane is a far heavier absorber than any
+            // loss inside the film, and it is frequency-independent because it
+            // is contact rather than material, so it goes into the fixed term.
             buildHeadBank (voice, voice.baseFrequency,
-                           head, voice.decaySeconds * 0.62f,
-                           0.38f + 0.34f * voice.characterB,
-                           { 16.0f, 0.030f, 3.0e-6f, 300.0f });
+                           head,
+                           voice.decaySeconds * (crossStick ? 0.14f
+                                                 : rimshot ? 0.72f : 0.62f),
+                           0.38f + 0.34f * voice.characterB
+                               + (rimshot ? 0.30f : 0.0f),
+                           { crossStick ? 92.0f : 16.0f, 0.030f, 3.0e-6f, 300.0f });
             // A batter head tensioned hard enough to answer a stick has little
             // room left to stretch, which is why a snare's note barely moves
             // where a tom's audibly does.
@@ -2003,8 +2046,40 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                                    * std::pow (voice.pitchRatio, 0.30f) * voice.velocityTimbre,
                                0.65f + 0.45f * voice.characterB);
             configureHighpass (voice.filterB, 700.0f + 1700.0f * voice.characterB, 0.7f);
-            voice.transientMultiplier = coefficientForTime (0.004f + 0.005f * voice.characterB,
-                                                             static_cast<float> (sampleRate_));
+            voice.transientMultiplier = coefficientForTime (
+                (0.004f + 0.005f * voice.characterB)
+                    * (rimshot ? 0.55f : crossStick ? 0.70f : 1.0f),
+                static_cast<float> (sampleRate_));
+
+            // The hoop. A cast or triple-flanged rim struck by a stick shaft is
+            // a short, hard, strongly pitched ring, and it sits an octave and a
+            // half apart between the two strokes because they excite different
+            // parts of it: a rimshot rings the hoop against a driven head, a
+            // cross-stick rings the shell through a dead one.
+            if (rimshot || crossStick)
+            {
+                configureBandpass (voice.filterC,
+                                   (rimshot ? 1750.0f : 720.0f)
+                                       * std::pow (voice.pitchRatio, 0.5f),
+                                   rimshot ? 9.0f : 6.5f);
+                voice.rimLevel = rimshot ? 2.10f : 1.80f;
+            }
+            // A driven head lifts its wires further; a hand-damped one never
+            // lifts them at all, and a cross-stick's body is the shell rather
+            // than the batter head's own note.
+            voice.wireScale = rimshot ? 1.60f : crossStick ? 0.05f : 1.0f;
+            voice.bodyScale = crossStick ? 0.10f : 1.0f;
+            if (crossStick)
+            {
+                voice.envelopeMultiplier = coefficientForTime (
+                    voice.decaySeconds * 0.20f, static_cast<float> (sampleRate_));
+                voice.auxiliaryMultiplier = coefficientForTime (
+                    voice.decaySeconds * 0.16f, static_cast<float> (sampleRate_));
+            }
+            else if (rimshot)
+            {
+                voice.excitationScale *= 1.22f;
+            }
             break;
         }
 
@@ -2349,7 +2424,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     }
 }
 
-void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
+void DrumEngine::trigger (Instrument instrument, float velocity,
+                          Articulation articulation) noexcept
 {
     if (! validInstrument (instrument) || ! std::isfinite (velocity) || velocity <= 0.0f)
         return;
@@ -2414,7 +2490,7 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
         retireVoice (voice);
     if (voice.active)
         releaseBankReference (voice.instrument);
-    initialiseVoice (voice, instrument, velocity, values, seed, variation);
+    initialiseVoice (voice, instrument, velocity, values, seed, variation, articulation);
     addBankReference (instrument);
     anyVoiceActive_ = true;
     updateActiveVoiceCount();
@@ -2422,10 +2498,10 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
 
 bool DrumEngine::triggerMidi (int midiNote, float velocity) noexcept
 {
-    const auto instrument = instrumentForMidiNote (midiNote);
-    if (! instrument.has_value())
+    const auto mapping = midiTriggerForNote (midiNote);
+    if (! mapping.has_value())
         return false;
-    trigger (*instrument, velocity);
+    trigger (mapping->instrument, velocity, mapping->articulation);
     return true;
 }
 
@@ -2599,7 +2675,8 @@ float DrumEngine::renderKick (Voice& voice) noexcept
 
 float DrumEngine::renderSnare (Voice& voice) noexcept
 {
-    const float body = (0.72f * oscillator (voice, 0) + 0.36f * oscillator (voice, 1))
+    const float body = voice.bodyScale
+        * (0.72f * oscillator (voice, 0) + 0.36f * oscillator (voice, 1))
         * voice.envelope;
     const float noise = nextBandLimitedNoise (voice);
 
@@ -2636,10 +2713,18 @@ float DrumEngine::renderSnare (Voice& voice) noexcept
         * (0.30f + 0.70f * rattle);
     const float snap = voice.filterB.tick (noise) * voice.transientEnvelope
         * voice.transientScale * voice.velocityTimbre;
-    const float wireMix = 0.18f + 0.82f * voice.characterA;
+    const float wireMix = (0.18f + 0.82f * voice.characterA) * voice.wireScale;
+    // The hoop is struck, not driven: it takes the contact and then rings on its
+    // own, which is why it is fed the transient rather than the head.
+    const float rim = voice.rimLevel <= 0.0f
+        ? 0.0f
+        : voice.rimLevel * voice.filterC.tick (
+              voice.transientEnvelope * voice.transientScale
+              + 0.22f * noise * voice.transientEnvelope);
     return 0.72f * ((0.62f - 0.38f * voice.characterA) * body
                     + (0.80f - 0.34f * voice.characterA) * headModes
-                    + wireMix * wires + 0.35f * voice.characterB * snap);
+                    + wireMix * wires + 0.35f * voice.characterB * snap
+                    + rim);
 }
 
 float DrumEngine::renderClap (Voice& voice) noexcept

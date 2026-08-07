@@ -78,9 +78,34 @@ Each voice has seven automatable controls, and the kit adds four more, for
 | Perc 1 | 56 | Cowbell | Ratio | Drive | L12 |
 | Perc 2 | 75 | Claves | Hollow | Click | R12 |
 
-Common kit-layout aliases are accepted too: 35 for Kick; 40 for Snare; 44 for
-Closed Hat; 53 and 59 for Ride; 57 for Crash; 41 and 43 for Low Tom; 48 for Mid
-Tom; 70 for Shaker; and 37, 76, or 77 for Perc 2. Other notes are silent.
+Common kit-layout aliases are accepted too: 35 for Kick; 44 for Closed Hat; 53
+and 59 for Ride; 57 for Crash; 41 and 43 for Low Tom; 48 for Mid Tom; 70 for
+Shaker; and 76 or 77 for Perc 2. Other notes are silent.
+
+**Snare articulations.** The snare answers three notes rather than one, on the
+notes electronic kits and mainstream drum instruments send them on:
+
+| Note | Articulation | What it is |
+| ---: | --- | --- |
+| 38 | Head | The stick on the batter head, a third of the way out |
+| 40 | Rimshot | Head and hoop struck together, right against the rim |
+| 37 | Cross-stick | The stick laid across a hand-damped head, shaft on the hoop |
+
+These are not three samples or three levels of one: they are the same modelled
+drum struck in three places, and the difference follows from the model. The
+rimshot lands at 93 % of the head's radius, where `J_m(lambda r/a)` is far from
+the centre and the whole circumferential series is fed at once, with the
+shortest contact anything in this kit makes, and it drives the head hard enough
+to throw the wires well clear. The cross-stick puts a hand on the membrane -
+a heavy, frequency-independent absorber, so it goes into the fixed loss term
+rather than the material ones - which takes the head down in a seventh of the
+time, keeps the wires on the head, and leaves the hoop as the only thing
+radiating. Measured against a head strike after matching peaks, a rimshot leaves
+a 36 % residual and a cross-stick a 92 % one.
+
+This changes two aliases that earlier versions accepted: note 40 was a second
+name for a plain snare, and note 37 was a second name for Perc 2. Perc 2 keeps
+its primary note 75 and its 76 and 77 aliases.
 
 **Choke groups** generalise the hi-hat pedal. Any voice can be placed in group
 A, B, or C; triggering it then cuts every sounding voice in the same group with
@@ -242,6 +267,12 @@ which moves everything else. Above the frequency where a head's modes stop being
 separable there is no series to model, only a band of noise decaying at that
 region's own rate, raised by the contact while the two surfaces are actually
 touching.
+
+The Snare is played in three places rather than one, and the difference between
+them is entirely where the stick landed and how long it stayed. See the
+articulation table above; there is no separate rimshot voice, no separate
+cross-stick sample and no extra parameter, because a strike position and a
+contact time are already what the head bank is built from.
 
 The Snare adds a nonlinear wire model. Real snare wires only rattle while the
 resonant head lifts them off their resting contact and damp it below that
@@ -625,7 +656,13 @@ three Toms and requires a full-velocity strike to ring sharper than a ghost
 stroke while the strike energy is still in the head, requires the two to settle
 at the same pitch once it has gone, and requires the tail to keep its decay
 range at both ends of Skin - which is what proves the model moves only `a1` and
-leaves the pole radius, and therefore the decay time, alone. A dedicated
+leaves the pole radius, and therefore the decay time, alone. An articulation
+contract checks that notes 38, 40 and 37 carry the head, rimshot and cross-stick
+strokes and that no other mapped note carries an articulation, that the rimshot
+engages the wires harder and reaches higher up the head's series than a plain
+stroke, that the cross-stick both silences the wires and rings for well under
+half as long, and that neither of the two nulls against a peak-matched head hit.
+A dedicated
 efficiency contract proves that a metallic bank frozen behind an unrelated drum
 wakes into exactly the same state as one frozen during silence, and measures
 that adding a hi-hat costs meaningfully more than the same kick alone, which is
