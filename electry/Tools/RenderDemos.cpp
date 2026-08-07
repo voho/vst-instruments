@@ -178,6 +178,8 @@ public:
     void noteOff(int note) { engine_.noteOff(note); }
     void pitchBend(float bipolar) { engine_.setPitchBend(bipolar); }
     void resonance(float amount) { engine_.setResonance(amount); }
+    // Channel pressure: the fretting hand leaning into the string it holds.
+    void vibrato(float amount) { engine_.setVibrato(amount); }
     void palmMutePressure(float amount) { engine_.setPalmMutePressure(amount); }
     void sustain(bool down) { engine_.setSustainPedal(down); }
 
@@ -318,10 +320,10 @@ Take renderFullFretboard()
 
 Take renderPlayStyles()
 {
-    // The twelve combinations of the two independent keyswitch banks: each
-    // play style in bank order, played with a down stroke, an up stroke, and
-    // an alternate-picked pair, so the styles' hands and the strokes'
-    // geometry can be compared directly.
+    // Every combination of the two independent keyswitch banks: each play
+    // style in bank order, played with a down stroke, an up stroke, and an
+    // alternate-picked pair, so the styles' hands and the strokes' geometry
+    // can be compared directly.
     Take take(EngineParameters {}, FxParameters {}, false);
     for (int styleIndex = 0;
          styleIndex < ElectryEngine::playStyleKeyswitchCount; ++styleIndex)
@@ -342,6 +344,25 @@ Take renderPlayStyles()
                 take.noteOff(45);
                 take.noteOff(40);
                 take.wait(0.06);
+            }
+            continue;
+        }
+        if (style == PlayStyle::Slide)
+        {
+            // A slide needs something to slide from, and its length follows
+            // the interval: two frets, then twelve, then twelve back down.
+            take.pick(PickStyle::Down);
+            for (const int target : { 42, 52, 40 })
+            {
+                take.style(PlayStyle::Sustain);
+                take.noteOn(40, 0.9f);
+                take.wait(0.22);
+                take.style(PlayStyle::Slide);
+                take.noteOn(target, 0.8f);
+                take.wait(0.60);
+                take.noteOff(target);
+                take.noteOff(40);
+                take.wait(0.10);
             }
             continue;
         }
@@ -488,6 +509,25 @@ Take renderLeadThroughAmp()
     take.wait(0.55);
     take.noteOff(74);
     take.wait(0.05);
+
+    // A slid entry into a note held with the fretting hand's vibrato, then a
+    // pinch harmonic: the picking hand's thumb catching the string at the
+    // pick's own position.
+    take.style(PlayStyle::Sustain);
+    take.noteOn(67, 0.95f);
+    take.wait(0.20);
+    take.style(PlayStyle::Slide);
+    take.noteOn(74, 0.85f);
+    take.wait(0.30);
+    take.vibrato(1.0f);
+    take.wait(0.95);
+    take.vibrato(0.0f);
+    take.noteOff(74);
+    take.noteOff(67);
+    take.wait(0.10);
+
+    take.style(PlayStyle::Pinch);
+    take.pluck(57, 1.0f, 0.85, 0.05);
 
     take.style(PlayStyle::Harmonics);
     take.pluck(64, 0.9f, 0.85, 0.05);
@@ -911,7 +951,9 @@ const std::array<Demo, 14>& demos()
           "every playable note from E1 to D6 across the eight strings",
           renderFullFretboard },
         { "03-play-styles.wav",
-          "the pick-stroke and play-style combinations on the same two notes",
+          "every pick-stroke and play-style combination: sustain, palm mute, "
+          "hammer-on, natural and pinch harmonics, slides of two and twelve "
+          "frets, and dead notes",
           renderPlayStyles },
         { "04-drop-e-rhythm-dry.wav",
           "a chugged Drop-E rhythm figure, dry DI",
@@ -920,8 +962,9 @@ const std::array<Demo, 14>& demos()
           "the same figure through the oversampled amp, cabinet and compressor",
           renderRhythmAmped },
         { "06-lead-amp-delay-room.wav",
-          "a lead phrase with wheel bends, a harmonic and a feedback close "
-          "into amp, delay and room",
+          "a lead phrase with wheel bends, a slide into a fingered vibrato, a "
+          "pinch harmonic, a natural harmonic and a feedback close, into amp, "
+          "delay and room",
           renderLeadThroughAmp },
         { "07-pickups-and-tone.wav",
           "one phrase through neck, both and bridge, then the tone control "

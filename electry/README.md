@@ -3,8 +3,13 @@
 Electry is an original, physically modeled dry electric guitar instrument.
 Eight string voices run dual-polarisation waveguide loops with physically
 derived stiffness dispersion, decay-targeted damping, tension-modulation
-pitch glide, a pitch wheel that bends every string like a vibrato bar,
-a resonance wheel that can push a distorted tone into self-sustaining
+pitch glide, a fretting hand with a position and a reach that decides where
+each note is played, a point-touch model that produces natural and pinch
+harmonics as the string's own mode shapes rather than as transpositions,
+slides whose length is a distance over a hand speed and whose squeak is the
+winding passing under the finger, a pitch wheel that bends every string like a
+vibrato bar, channel pressure that is the fretting hand's own one-sided
+vibrato on the strings it is actually stopping, a resonance wheel that can push a distorted tone into self-sustaining
 amplifier feedback, one-way bridge coupling into
 the strings you are *not* fingering, and a published pickup signal
 structure (position comb, finite magnetic aperture, nonlinear flux, induced
@@ -18,9 +23,10 @@ a capture-accurate clone of any one instrument.
 
 The compact FX panel provides a distortion pedal, an amplifier and modelled
 cabinet, compression, lead delay, and a stereo room; every effect defaults to a
-true 0% dry setting, and the two clipping stages run inside a 4x oversampled
-domain so a high-gain metal tone saturates instead of folding its own harmonics
-back into the guitar band. Mono is the authentic summed dry DI; Stereo is a
+true 0% dry setting, and the two clipping stages, the power supply's sag and the
+output transformer's core all run inside a 4x oversampled domain so a high-gain
+metal tone saturates instead of folding its own harmonics back into the guitar
+band. Mono is the authentic summed dry DI; Stereo is a
 phase-coherent divided-pickup view of the eight physical strings, not an effect
 or delay. Both are also ready for the amp simulation of your choice. Material,
 body, pickup, and construction controls span deliberately contrasting
@@ -31,10 +37,11 @@ modern 28-inch baritone/8-string build.
 
 ## Hear it
 
-Fourteen rendered examples — the full playable range, the pick-stroke and
-play-style combinations, the guitar-build and pickup axes, the
-pitch-wheel bar and resonance-wheel feedback, and the Drop-E rhythm and lead
-tones dry and through the amplifier — are committed under
+Fourteen rendered examples — the full playable range, every pick-stroke and
+play-style combination including the pinch harmonic, the slide and the dead
+note, the guitar-build and pickup axes, the pitch-wheel bar, the fretting
+hand's vibrato and the resonance-wheel feedback, and the Drop-E rhythm and
+lead tones dry and through the amplifier — are committed under
 [`Docs/audio/`](Docs/audio/README.md), with the score for each one in
 `Tools/RenderDemos.cpp`. They are produced by the shipping JUCE-free signal
 path, so they cannot drift away from what the plug-in sounds like, and they are
@@ -83,12 +90,12 @@ that change what it shows.
 
 ## Keyswitches and playable range
 
-MIDI notes 12..18 are two independent banks of latching keyswitches; they
+MIDI notes 12..21 are two independent banks of latching keyswitches; they
 never sound, and each bank keeps its most recent selection for every
 following note until changed. Notes 12..14 (C0..D0) latch how the pick
-moves; notes 15..18 (D#0..F#0) latch what the hands do. The two latch
-independently, so any of the twelve combinations — an up-stroke palm mute,
-alternate-picked harmonics — is reachable in at most two keyswitches.
+moves; notes 15..21 (D#0..A0) latch what the hands do. The two latch
+independently, so any of the twenty-one combinations — an up-stroke palm mute,
+alternate-picked pinch harmonics — is reachable in at most two keyswitches.
 Keyswitch note-offs are ignored. The editor's PICK STROKE and PLAY STYLE
 strips send the same keyswitches and always show the currently latched pair.
 The on-screen keyboard colours and labels both keyswitch banks separately
@@ -105,23 +112,39 @@ from the playable instrument.
 | 15 | D#0 | Sustain (default) — the ordinary ringing pick |
 | 16 | E0 | Palm mute — damping follows the Mute Damp control, from a loose half-mute to a tight metal chug at the firm end |
 | 17 | F0 | Hammer-on / pull-off — continues a sounding string legato within a nine-fret reach, fingered attack, no plectrum noise |
-| 18 | F#0 | Natural harmonic — glassy octave harmonic with a soft node-focused touch |
+| 18 | F#0 | Natural harmonic — a finger resting on the string's midpoint node, so the octave is what the string does rather than a transposition of it |
+| 19 | G0 | Pinch harmonic — the picking hand's thumb catches the string at the pick's own position, so Pick Position chooses which partial squeals |
+| 20 | G#0 | Slide — the finger stays down and travels; the travel time is a distance over a hand speed, and the winding scrapes under it the whole way |
+| 21 | A0 | Dead note — the fretting hand lies across the strings without pressing them to the fret, so the pick lands normally and no pitch survives |
 
-Notes 19..27 are ignored, and notes 28..86 are playable on a 22-fret,
+Notes 22..27 are ignored, and notes 28..86 are playable on a 22-fret,
 eight-string Drop-E instrument tuned
 E1-B1-E2-A2-D3-G3-B3-E4; notes outside these ranges are ignored. Each note is
-allocated to one of the eight physical strings: a repick of a sounding note
-grabs the same string, hammer-on continues the nearest sounding string,
-otherwise the free string with the lowest fret wins (which reproduces
-open-position chord shapes), and when everything sounds, the oldest string
-is stolen.
+allocated to one of the eight physical strings by a fretting hand that has a
+position and a reach: a repick of a sounding note grabs the same string,
+hammer-on continues the nearest sounding string, otherwise the free string
+that puts the note nearest the fingers wins, and when everything sounds, the
+oldest string is stolen. The hand's index finger covers four further frets,
+open strings need no finger and are free at the nut, and the hand moves only
+when the note it is asked for lies outside its span - and then only on the
+first note of a chord, because a chord is one hand shape. It relaxes back to
+the nut when the phrase ends. That is what lets a phrase played up the neck
+stay up the neck: the rule this replaced always chose the lowest fret that
+could produce the note, so an open string won every contest and most of the
+fretboard - and the sounding length, inharmonicity and pickup-comb geometry
+that come with it - was unreachable.
 
 The pitch wheel is a vibrato bar: it bends every string — the
 sympathetically ringing open strings included — over a nominal ±2 semitone
 range, each string by its own physically derived compliance (the slack low
 E1 and the plain G bend deepest, the stiff wound D-string least, the
 two-to-one smear a real bar puts on a chord), and the strings travel to the
-wheel over the Bend Time parameter rather than snapping. The modulation wheel (CC 1) is the
+wheel over the Bend Time parameter rather than snapping. Channel pressure is
+the other half of that distinction: it is a finger rather than the bar, so it
+leans only into the strings the hand is stopping, pushes them sharp and never
+flat, and leaves an open string exactly where it is — nothing is holding an
+open string down for the hand to rock, and reaching it would need the bar.
+The modulation wheel (CC 1) is the
 performance resonance: it raises the sympathetic coupling from the
 Sympathetic Ring parameter toward total and opens an acoustic feedback path
 from the amplified output back into the strings, scaled by the Resonance
@@ -184,6 +207,45 @@ All Sound Off and All Notes Off.
   window are smoothsteps, so its area is exactly what the symmetric raised
   cosine it replaced had, and the asymmetry changes the attack's spectrum
   without changing how hard the note lands.
+- **Touch harmonics:** a light finger on the string is a point loss, and mode
+  `n`'s displacement under it goes as `sin(n pi p)`, so the energy the contact
+  removes per round trip goes as `sin^2(n pi p)`. Condensed into the single
+  delay loop that is exactly a one-tap FIR, `(1 - d/2) + (d/2) z^-M` with
+  `M = p * period` — unity where the touch sits on a node, `1 - d` where it
+  sits on an antinode. Both coefficients are positive and sum to one, so it
+  can never exceed unity gain inside the string's feedback loop. The natural
+  harmonic rests that finger on the midpoint, which removes every odd partial
+  including the fundamental and leaves every even one alone in magnitude *and*
+  phase, so the octave arises from the string instead of from retuning the
+  loop: the string keeps its own length, inharmonicity, decay targets and
+  pickup comb. The finger lifts once the note has formed — the partials it
+  removed cannot be re-excited — which stops paying for the two extra delay
+  reads and lets the harmonic ring as long as the string does. The clamp that
+  used to stand in for the finger cost the open A2's octave partial 16 dB per
+  second of loss nothing physical was asking for. The pinch harmonic is the
+  same filter driven by the other hand: the thumb catches the string at the
+  pick's own position, so Pick Position chooses which partial squeals. Measured
+  on a fretted E3 with the pick near the bridge, the surviving partial is the
+  eighth or ninth and it gains 15 dB on the fundamental against the ordinary
+  pick stroke; with the picking hand over the neck the touch sits near the
+  midpoint and the squeal is the octave. It is a firmer, longer contact than
+  the fretting finger's because the mode-shape law gives a touch that close to
+  the bridge little purchase on the low partials — the fundamental loses about
+  seven per cent of its energy per round trip where a midpoint touch takes
+  nearly all of it — and that asymmetry is the technique rather than a
+  shortcoming of the model.
+- **Slide:** the finger stays down and travels, so the sounding length moves
+  continuously through every intermediate fret and the loop state is preserved
+  the whole way. Its duration is a distance divided by a hand speed rather than
+  a fixed time — the Bend Time control sets 8% of itself per fret, so the
+  280 ms default is 22 ms per fret and a twelve-fret slide takes six times as
+  long as a two-fret one. While the finger moves it drags across the winding,
+  and the ridges pass under it at `v / w`, the hand's speed along the string
+  over the winding pitch, which is exactly why a fast slide squeaks high and a
+  slow one low; the level follows the derivative of the glide, so the squeak
+  swells and dies with the movement and is exactly zero when the finger is
+  still. A plain string has no winding and barely squeaks. The Finger Noise
+  control sets the level and silences it exactly at zero.
 - **Frets:** fretting position drives sounding length, inharmonicity,
   pickup comb geometry, and Fleischer-style dead-spot damping (deeper on
   the bolt-on end of the construction axis). The Artifacts path can open a
@@ -277,6 +339,16 @@ All Sound Off and All Notes Off.
   CC 1 resonance raises the coupling live toward total and opens the
   amplifier-feedback path described under the keyswitch section, so the same
   mechanism spans a polite studio ring to a howling wall of amp.
+- **Dead notes:** the fretting hand laid across the strings without pressing
+  them to a fret. It is the whole hand rather than the heel and it is nowhere
+  near the bridge, so unlike the palm mute it is broadband — it takes the
+  fundamental as hard as everything else, which is the difference between a
+  dead note and a very tight mute. It is a loss inside the loop rather than a
+  gate on the output, so the pick lands at the same level (within 1.1 dB of an
+  ordinarily picked note's peak) and the note then decays through its own
+  solved filter; nothing of the fretted pitch survives 150 ms, 40 dB or more
+  below the same partial of the picked note. It combines in parallel with the
+  bridge hand, so a dead note played under palm-mute pressure gets both.
 - **Bridge-hand damping:** the heel of the hand is an absorber, so its
   loss is added to the string's own rather than rescaling it: the decay rates
   sum, which is to say the reciprocals of the decay times do. That is what makes
@@ -332,7 +404,12 @@ All Sound Off and All Notes Off.
   removes the last division from the pickup path. Together those took the
   eight-string render at 96 kHz from 0.190x to 0.166x realtime worst case
   (Both + Stereo), 0.146x to 0.129x at the default Bridge + Mono, and a
-  full-throw wheel glide on the same chord from 0.210x to 0.172x. A pickup the
+  full-throw wheel glide on the same chord from 0.210x to 0.172x. The seven
+  play styles added since cost three float comparisons per voice per sample -
+  the node touch, its decay, and the slide's friction - all of which are false
+  for an ordinary note: measured best of five against the same fixture, the
+  default configuration moved about five per cent and the worst case stayed
+  inside the run-to-run spread. A pickup the
   selector has
   faded out is skipped outright, including its two fractional reads, aperture
   window, flux polynomial and induced-EMF guard. Mono runs one shared coil, DC
@@ -390,6 +467,22 @@ every platform rather than only inside a host.
   crosses at full slew, which radiates far more high-order content than the
   saturation itself. Asymmetry — and the even-order harmonics that come with it
   — comes from the operating point, which is where a real stage's comes from.
+- **Power stage.** The back half of the amplifier, inside the same oversampled
+  domain. The supply sags: the current the stage draws follows its own output,
+  a follower tracks that with a 70 ms attack and a 400 ms recovery, and the
+  rail droops by up to 28% — the 350 V to 250 V a real supply measures. What
+  the rail sets is the headroom rather than the gain, so the stage is
+  `droop * triode(u / droop)`: the small-signal slope is untouched and the
+  ceiling falls in proportion, which is why a held chug blooms and then ducks
+  by 1.2 dB while a quiet passage ducks by 0.2, and why the level comes back
+  during a rest. The output transformer follows: a core saturates at a flux
+  limit and flux is the integral of the voltage, so the limit is a volt-second
+  limit and the low end reaches it first. A one-pole at the 45 Hz
+  primary-inductance corner is that integral normalised, what the core cannot
+  carry is subtracted back out, and a second-order high-pass in front is the
+  transformer's own inability to pass DC. Measured at the stage, a full-level
+  tone distorts at −25 dB at 48 Hz, −71 dB at 480 Hz and −131 dB at 4.8 kHz,
+  and a tone 24 dB quieter distorts 41 dB less at 48 Hz.
 - **Cabinet.** A second-order high-pass at the box frequency, a low-mid thump,
   a scooped boxy region, a presence peak, and a fourth-order Butterworth
   roll-off from 5 kHz, all inside the oversampled domain so the

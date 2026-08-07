@@ -111,6 +111,10 @@ int main()
         { "mid chord (C3 root, 8 voices)", 48, 8, true },
         { "high chord (C6 root, 8 voices)", 84, 8, true },
         { "high chord, Air and Bone at zero", 84, 8, false },
+        // The full voice ceiling. Its point is that the eight-voice rows above
+        // are unchanged by raising it: the ceiling is an option, not a cost
+        // every performance pays.
+        { "mid cluster (C3 root, 16 voices)", 48, 16, true },
         { "single mid note", 60, 1, true },
     };
 

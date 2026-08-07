@@ -210,8 +210,8 @@ void testParameterLayoutIsStable()
     auto& state = processor.parameters;
     using namespace vocalor::parameters;
 
-    expect (processor.getParameters().size() == 20,
-            "the published parameter count is no longer 20");
+    expect (processor.getParameters().size() == 23,
+            "the published parameter count is no longer 23");
 
     // Version-1 identifiers and defaults are part of the saved session format.
     // Changing any of them would silently alter existing projects.
@@ -236,6 +236,14 @@ void testParameterLayoutIsStable()
         expect (nearly (denormalisedDefault (state, entry.id), entry.value, 0.002f),
                 std::string ("default for the new parameter ") + entry.id + " is not neutral");
 
+    // Version-1.2 additions carry the same obligation.
+    const Expected versionOnePointTwo[] = {
+        { dynamics, 1.0f }, { intonation, 0.0f }, { nasal, 0.0f }
+    };
+    for (const auto& entry : versionOnePointTwo)
+        expect (nearly (denormalisedDefault (state, entry.id), entry.value, 0.002f),
+                std::string ("default for the new parameter ") + entry.id + " is not neutral");
+
     if (auto* shift = state.getParameter (formantShift))
     {
         const auto range = shift->getNormalisableRange();
@@ -247,7 +255,8 @@ void testParameterLayoutIsStable()
         expect (false, "the formant shift parameter is missing");
     }
 
-    for (const char* id : { vowelX, vowelY, vowelMorph, glide, roomSize })
+    for (const char* id : { vowelX, vowelY, vowelMorph, glide, roomSize, dynamics,
+                            intonation, nasal })
     {
         if (auto* parameter = state.getParameter (id))
         {
@@ -265,6 +274,144 @@ void testParameterLayoutIsStable()
         expect (choice->choices.size() == 2, "legato is not a two-state choice");
     else
         expect (false, "legato is not an AudioParameterChoice");
+}
+
+/** The factory bank has to reach the host, and a program change has to be the
+    only thing that overwrites the parameters. */
+void testFactoryProgramsReachTheParameters()
+{
+    VocalorAudioProcessor processor;
+    using namespace vocalor::parameters;
+
+    const auto count = vocalor::factoryPresetCount();
+    expect (processor.getNumPrograms() == count,
+            "the processor does not publish the factory bank");
+    expect (processor.getCurrentProgram() == 0,
+            "the processor did not open on the first program");
+
+    for (int index = 0; index < count; ++index)
+        expect (processor.getProgramName (index)
+                    == juce::String (vocalor::factoryPresetName (index)),
+                "program " + std::to_string (index) + " reported the wrong name");
+
+    // Selecting a program writes its engine parameters into the host ones.
+    const int hum = [count]
+    {
+        for (int index = 0; index < count; ++index)
+            if (vocalor::factoryPreset (index).parameters.nasal > 0.5f)
+                return index;
+        return -1;
+    }();
+    expect (hum > 0, "the factory bank has no preset that opens the velum");
+
+    if (hum > 0)
+    {
+        processor.setCurrentProgram (hum);
+        expect (processor.getCurrentProgram() == hum,
+                "the processor did not adopt the selected program");
+        const auto& values = vocalor::factoryPreset (hum).parameters;
+        if (auto* parameter = processor.parameters.getParameter (nasal))
+            expect (nearly (parameter->convertFrom0to1 (parameter->getValue()),
+                            values.nasal, 0.01f),
+                    "selecting a program did not write its nasality");
+        if (auto* parameter = processor.parameters.getParameter (breath))
+            expect (nearly (parameter->convertFrom0to1 (parameter->getValue()),
+                            values.breath, 0.01f),
+                    "selecting a program did not write its breath");
+
+        // Re-asserting the program in force must leave an edit alone: this is
+        // the path a host takes when it restores a session.
+        setDenormalised (processor.parameters, breath, 0.11f);
+        processor.setCurrentProgram (hum);
+        if (auto* parameter = processor.parameters.getParameter (breath))
+            expect (nearly (parameter->convertFrom0to1 (parameter->getValue()), 0.11f, 0.01f),
+                    "re-asserting the current program overwrote an edited parameter");
+    }
+}
+
+/** The 1.2 MIDI performance messages have to reach the engine at all: the 1.1
+    processor parsed note-on, note-off and CC 120/123 and silently discarded
+    every other message, pitch bend included. */
+void testPerformanceMidiReachesTheEngine()
+{
+    // Pitch bend moves the sound without changing the note count.
+    {
+        ProcessorHarness harness;
+        harness.chargeVoiceAndRoom();
+        const auto before = peakInRange (harness.buffer, 0, blockSize);
+
+        juce::MidiBuffer bend;
+        bend.addEvent (juce::MidiMessage::pitchWheel (1, 16383), 0);
+        harness.process (std::move (bend));
+        for (int block = 0; block < 8; ++block)
+            harness.process();
+
+        expect (harness.processor.getActiveVoiceCount() > 0,
+                "a pitch bend silenced the sounding voice");
+        expect (peakInRange (harness.buffer, 0, blockSize) > 1.0e-8 && before > 1.0e-8,
+                "a pitch bend left no audio");
+    }
+
+    // The mod wheel is a dynamic, so an empty wheel has to be audibly quieter
+    // than a full one while the note keeps sounding.
+    {
+        ProcessorHarness harness;
+        harness.chargeVoiceAndRoom();
+        const auto loud = peakInRange (harness.buffer, 0, blockSize);
+
+        juce::MidiBuffer wheel;
+        wheel.addEvent (juce::MidiMessage::controllerEvent (1, 1, 0), 0);
+        harness.process (std::move (wheel));
+        for (int block = 0; block < 120; ++block)
+            harness.process();
+        const auto soft = peakInRange (harness.buffer, 0, blockSize);
+
+        expect (harness.processor.getActiveVoiceCount() > 0,
+                "an empty mod wheel ended the note instead of softening it");
+        expect (soft < 0.5 * loud && soft > 0.0,
+                "the mod wheel did not lower the dynamic level");
+    }
+
+    // Channel pressure feeds the same dynamic.
+    {
+        ProcessorHarness harness;
+        harness.chargeVoiceAndRoom();
+        const auto loud = peakInRange (harness.buffer, 0, blockSize);
+
+        juce::MidiBuffer pressure;
+        pressure.addEvent (juce::MidiMessage::channelPressureChange (1, 0), 0);
+        harness.process (std::move (pressure));
+        for (int block = 0; block < 120; ++block)
+            harness.process();
+
+        expect (peakInRange (harness.buffer, 0, blockSize) < 0.5 * loud,
+                "channel pressure did not reach the dynamic");
+    }
+
+    // The sustain pedal holds a note through its note-off and releases it on
+    // pedal-up.
+    {
+        ProcessorHarness harness;
+        harness.chargeVoiceAndRoom();
+
+        juce::MidiBuffer down;
+        down.addEvent (juce::MidiMessage::controllerEvent (1, 64, 127), 0);
+        down.addEvent (juce::MidiMessage::noteOff (1, 60), 1);
+        harness.process (std::move (down));
+        for (int block = 0; block < 20; ++block)
+            harness.process();
+        const auto sustained = peakInRange (harness.buffer, 0, blockSize);
+        expect (sustained > 1.0e-6,
+                "the sustain pedal did not hold the note through its note-off");
+
+        juce::MidiBuffer up;
+        up.addEvent (juce::MidiMessage::controllerEvent (1, 64, 0), 0);
+        harness.process (std::move (up));
+        for (int block = 0; block < 600; ++block)
+            harness.process();
+        expect (harness.processor.getActiveVoiceCount() == 0,
+                "releasing the sustain pedal did not release the note it held");
+    }
 }
 
 void testVowelPadIsInaudibleAtZeroMorph()
@@ -576,6 +723,8 @@ int main()
     testMidiAllSoundOffIsSampleAccurate();
     testMidiAllNotesOffKeepsRelease();
     testParameterLayoutIsStable();
+    testPerformanceMidiReachesTheEngine();
+    testFactoryProgramsReachTheParameters();
     testVowelPadIsInaudibleAtZeroMorph();
     testNewParametersReachTheEngine();
     testLegatoKeepsASingleVoice();

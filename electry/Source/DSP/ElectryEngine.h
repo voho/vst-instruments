@@ -19,15 +19,23 @@ enum class PickStyle
 };
 
 // What the hands do to the string: the sustained default, the bridge-hand
-// palm mute, the fretting-hand legato (hammer-on / pull-off), or the natural
-// harmonic touch. Latched by its own keyswitch bank, independently of the
-// picking style.
+// palm mute, the fretting-hand legato (hammer-on / pull-off), the natural
+// harmonic touch at the midpoint node, the pinch harmonic, where the picking
+// hand's thumb catches the string at the pick's own position, or the slide,
+// where the finger stays down and travels along the string, or the dead note,
+// where the fretting hand rests across the strings without stopping them so the
+// pick makes its attack and no pitch survives. Latched by its own keyswitch
+// bank, independently of the picking style. New styles are appended, so every
+// existing keyswitch note keeps its meaning.
 enum class PlayStyle
 {
     Sustain,
     PalmMute,
     Hammer,
-    Harmonics
+    Harmonics,
+    Pinch,
+    Slide,
+    Dead
 };
 
 enum class PickupSelector { Neck, Both, Bridge };
@@ -115,15 +123,15 @@ public:
 
     // Keyswitches occupy one contiguous group below the playable range,
     // starting at 12 (C0): first the picking-style bank (Down/Up/Alternate),
-    // then the play-style bank (Sustain/PalmMute/Hammer/Harmonics). The two
-    // banks latch independently, so any of the twelve combinations can be
-    // reached in two keyswitches at most. Notes between the banks and the
-    // playable range (19..27) are ignored.
+    // then the play-style bank (Sustain/PalmMute/Hammer/Harmonics/Pinch/
+    // Slide/Dead). The two banks latch independently, so any of the twenty-one
+    // combinations can be reached in two keyswitches at most. Notes between
+    // the banks and the playable range (22..27) are ignored.
     static constexpr int firstKeyswitchNote = 12;
     static constexpr int pickStyleKeyswitchCount
         = static_cast<int>(PickStyle::Alternate) + 1;
     static constexpr int playStyleKeyswitchCount
-        = static_cast<int>(PlayStyle::Harmonics) + 1;
+        = static_cast<int>(PlayStyle::Dead) + 1;
     static constexpr int keyswitchCount = pickStyleKeyswitchCount
                                         + playStyleKeyswitchCount;
     static constexpr int firstPlayStyleKeyswitchNote
@@ -131,9 +139,13 @@ public:
     // Drop-E eight-string, 22-fret instrument: open low E1 to fret 22 on E4.
     static constexpr int lowestPlayableNote = 28;
     static constexpr int highestPlayableNote = 86;
+    // How far the fretting hand reaches above its index finger. Four fret
+    // spaces is one finger per fret with the ordinary stretch a player uses
+    // without shifting, so the hand covers `position .. position + reach`.
+    static constexpr int frettingHandReach = 4;
 
-    static_assert(keyswitchCount == 7,
-                  "three picking styles and four play styles need one keyswitch each");
+    static_assert(keyswitchCount == 10,
+                  "three picking styles and seven play styles need one keyswitch each");
     static_assert(firstKeyswitchNote + keyswitchCount <= lowestPlayableNote,
                   "keyswitches must not overlap the playable range");
 
@@ -156,6 +168,13 @@ public:
     // MIDI CC2 adds continuous bridge-hand damping on top of the Palm Mute
     // parameter, so a phrase can be muted and opened without automation.
     void setPalmMutePressure(float normalised) noexcept;
+    // Channel pressure is the fretting hand leaning into a string it is
+    // already holding: a vibrato. It is a finger rather than the bar the
+    // pitch wheel models, so it moves only the strings that are being
+    // fingered, leaves the sympathetically ringing ones alone, and is
+    // upward-biased, because a finger can raise a string's tension and cannot
+    // lower it below the fret. Zero pressure is an exact no-op.
+    void setVibrato(float normalised) noexcept;
     void setSustainPedal(bool down) noexcept;
     // The acoustic return path: what the loudspeaker is playing back at the
     // guitar, typically the previous block of the amplified output. The
@@ -725,6 +744,50 @@ private:
         float sympatheticEnergy { 0.0f };
         OnePole sympatheticEmf {};
 
+        // A light finger or thumb resting on the string, at `touchFraction` of
+        // its sounding length. Mode n's displacement there goes as
+        // sin(n pi p), so the energy a light contact removes per round trip
+        // goes as sin^2(n pi p) = (1 - cos(2 pi n p)) / 2. Condensed into the
+        // single delay loop that is exactly a one-tap FIR
+        //
+        //     H(z) = (1 - d/2) + (d/2) z^-M,   M = p * period,
+        //
+        // whose magnitude is 1 where the touch sits on a node and 1 - d where
+        // it sits on an antinode - the mode-shape weighting itself rather than
+        // an approximation of it. Both coefficients are non-negative and sum
+        // to one for d in [0, 1], so |H| <= 1 everywhere and the loop cannot
+        // be destabilised at any depth.
+        //
+        // At an exact node position p = 1/k the filter is exactly unity in
+        // magnitude *and* phase at every surviving partial, so the harmonic
+        // series above the node is untouched and no tuning compensation is
+        // needed. That is why the harmonic is produced this way rather than by
+        // retuning the loop an octave up: the string keeps its own length,
+        // inharmonicity, decay targets and pickup-comb geometry.
+        //
+        // The finger lifts once the note has formed. By then the partials it
+        // removed are gone and cannot be re-excited, so lifting it is free and
+        // buys back two delay reads per sample.
+        float touchFraction { 0.0f };
+        float touchDepth { 0.0f };
+        int touchHoldRemaining { 0 };
+        float touchReleaseStep { 0.0f };
+
+        // Slide friction. While the finger travels it drags across the wound
+        // string's winding, and the ridges pass under it at v / w, where v is
+        // the finger's speed along the string and w the winding pitch - which
+        // is exactly the squeak a slide makes and why it rises in pitch with
+        // the speed of the hand. Two one-poles form a band there; the level
+        // follows the derivative of the glide's own smoothstep, so the squeak
+        // swells and dies with the movement and is exactly zero when the
+        // finger is still. A plain string has no winding and barely squeaks.
+        float slideNoiseAmplitude { 0.0f };
+        float slideNoiseLevel { 0.0f };
+        float slideBandHigh { 0.5f };
+        float slideBandLow { 0.9f };
+        OnePole slideShaperHigh {};
+        OnePole slideShaperLow {};
+
         int controlCountdown { 0 };
         float outputEnergy { 0.0f };
         float displayLevel { 0.0f };
@@ -822,7 +885,7 @@ private:
     void configureVoiceDamping(Voice& voice) noexcept;
     void configureVoicePickups(Voice& voice) noexcept;
     void configureSympatheticString(Voice& voice) noexcept;
-    void updateStyleWeights(Voice& voice) noexcept;
+    void updateStyleWeights(Voice& voice, bool legato = false) noexcept;
     void refreshVoicingIfNeeded() noexcept;
     void configureBody() noexcept;
     void configurePickupFilters() noexcept;
@@ -831,10 +894,17 @@ private:
     void startVoice(Voice& voice, int midiNote, float velocity,
                     PlayStyle playStyle, bool strokeIsUp,
                     int startDelaySamples) noexcept;
-    void legatoRetarget(Voice& voice, int midiNote, float velocity) noexcept;
+    void legatoRetarget(Voice& voice, int midiNote, float velocity,
+                        PlayStyle playStyle) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
     void silenceVoice(Voice& voice) noexcept;
     int chooseString(int midiNote, PlayStyle playStyle) const noexcept;
+    // What it costs the fretting hand to take this note on this string, in
+    // fret-distance units. Lower wins; ties resolve toward the thicker string,
+    // as they did when the rule was simply the lowest fret.
+    [[nodiscard]] float frettingCost(int fret) const noexcept;
+    // The hand moves only when it has to, and only at the start of a chord.
+    void updateFrettingHand(int fret, bool newChord) noexcept;
     [[nodiscard]] float currentSoundingSemitoneOffset(const Voice& voice) const noexcept;
     void updateVoiceControl(Voice& voice) noexcept;
     void renderVoice(Voice& voice, RenderSums& sums) noexcept;
@@ -872,6 +942,23 @@ private:
     float appliedBendGlideSeconds_ { -1.0f };
     // The wheel position the sympathetic strings were last retuned to.
     float sympatheticAppliedBend_ { 0.0f };
+    // Fretting-hand vibrato from channel pressure. One hand, so one shared
+    // phase across every fingered string; upward-biased, so its minimum is the
+    // fretted pitch rather than its mean; and smoothed with an onset time
+    // constant, because a player lands the note before starting the vibrato.
+    // Its depth is deliberately expressed in equal semitones rather than
+    // through the per-string elastic compliance the wheel's bar uses: a bar
+    // stretches every string by the same length and each answers differently,
+    // while a finger is controlling a pitch and adjusts its own displacement
+    // to get it.
+    static constexpr float vibratoMaximumSemitones = 0.40f;
+    float vibratoTarget_ { 0.0f };
+    float vibratoAmount_ { 0.0f };
+    float vibratoOnsetCoefficient_ { 0.02f };
+    float vibratoPhase_ { 0.0f };
+    float vibratoPhaseIncrement_ { 0.0f };
+    float vibratoSemitones_ { 0.0f };
+
     // CC1 performance resonance and the acoustic feedback path it opens.
     float resonanceTarget_ { 0.0f };
     float resonanceAmount_ { 0.0f };
@@ -885,6 +972,21 @@ private:
     std::int64_t lastNoteOnClock_ { -(1ll << 40) };
     int chordAnchorString_ { 0 };
     int chordWindowSamples_ { 1680 };
+
+    // Where the fretting hand is. The index finger sits at this fret and the
+    // little finger reaches `frettingHandReach` frets above it; open strings
+    // need no finger at all and are always available. The hand only moves when
+    // the note it has been asked for is outside that span, and only on the
+    // first note of a chord, because a chord is one hand shape. It returns to
+    // the nut when the phrase ends.
+    //
+    // Without this the allocator played every note at the lowest fret that
+    // could produce it, which is a good model of first position and of nothing
+    // else: it can never be up the neck, so the sounding length, inharmonicity
+    // and pickup comb geometry that the fret drives were unreachable for most
+    // of the range.
+    float frettingHandPosition_ { 0.0f };
+    int handReturnSamples_ { 72000 };
 
     // Continuous bridge-hand damping: the parameter plus the CC2 pressure.
     float palmMutePressure_ { 0.0f };

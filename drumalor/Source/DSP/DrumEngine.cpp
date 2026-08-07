@@ -431,25 +431,38 @@ std::string_view getCharacterBLabel (Instrument instrument) noexcept
     return getInstrumentMetadata (instrument).characterBLabel;
 }
 
-std::optional<Instrument> instrumentForMidiNote (int midiNote) noexcept
+std::optional<MidiTrigger> midiTriggerForNote (int midiNote) noexcept
 {
     switch (midiNote)
     {
-        case 35: case 36: return Instrument::Kick;
-        case 38: case 40: return Instrument::Snare;
-        case 39: return Instrument::Clap;
-        case 42: case 44: return Instrument::ClosedHat;
-        case 46: return Instrument::OpenHat;
-        case 51: case 53: case 59: return Instrument::Ride;
-        case 49: case 57: return Instrument::Crash;
-        case 41: case 43: case 45: return Instrument::LowTom;
-        case 47: case 48: return Instrument::MidTom;
-        case 50: return Instrument::HighTom;
-        case 70: case 82: return Instrument::Shaker;
-        case 56: return Instrument::Perc1;
-        case 37: case 75: case 76: case 77: return Instrument::Perc2;
+        case 35: case 36: return MidiTrigger { Instrument::Kick, Articulation::Head };
+        case 38: return MidiTrigger { Instrument::Snare, Articulation::Head };
+        // 40 and 37 are General MIDI's Electric Snare and Side Stick, and are
+        // what every electronic kit and every mainstream drum instrument sends
+        // for a rimshot and a cross-stick. They used to be a second name for a
+        // plain snare and a second name for the claves.
+        case 40: return MidiTrigger { Instrument::Snare, Articulation::Rimshot };
+        case 37: return MidiTrigger { Instrument::Snare, Articulation::CrossStick };
+        case 39: return MidiTrigger { Instrument::Clap, Articulation::Head };
+        case 42: case 44: return MidiTrigger { Instrument::ClosedHat, Articulation::Head };
+        case 46: return MidiTrigger { Instrument::OpenHat, Articulation::Head };
+        case 51: case 53: case 59: return MidiTrigger { Instrument::Ride, Articulation::Head };
+        case 49: case 57: return MidiTrigger { Instrument::Crash, Articulation::Head };
+        case 41: case 43: case 45: return MidiTrigger { Instrument::LowTom, Articulation::Head };
+        case 47: case 48: return MidiTrigger { Instrument::MidTom, Articulation::Head };
+        case 50: return MidiTrigger { Instrument::HighTom, Articulation::Head };
+        case 70: case 82: return MidiTrigger { Instrument::Shaker, Articulation::Head };
+        case 56: return MidiTrigger { Instrument::Perc1, Articulation::Head };
+        case 75: case 76: case 77: return MidiTrigger { Instrument::Perc2, Articulation::Head };
         default: return std::nullopt;
     }
+}
+
+std::optional<Instrument> instrumentForMidiNote (int midiNote) noexcept
+{
+    const auto trigger = midiTriggerForNote (midiNote);
+    return trigger.has_value() ? std::optional<Instrument> { trigger->instrument }
+                               : std::nullopt;
 }
 
 float DrumEngine::Biquad::tick (float input) noexcept
@@ -479,6 +492,16 @@ void DrumEngine::Resonator::strike (float amplitude) noexcept
     // would have had. Superposing it leaves whatever the resonator was already
     // ringing with untouched.
     y2 -= amplitude * strikeGain;
+}
+
+void DrumEngine::Resonator::setTension (float relativeFrequencyChange) noexcept
+{
+    // The clamp is the pole's own geometry: a1 is 2 r cos(theta) for some
+    // angle, so it can never leave [-2r, 2r] whatever the linearisation says at
+    // the top of the band. Staying inside it is what keeps the mode a pair of
+    // conjugate poles at radius r rather than two real ones.
+    a1 = std::clamp (nominalA1 + tensionSlope * relativeFrequencyChange,
+                     -poleDiameter, poleDiameter);
 }
 
 void DrumEngine::Resonator::clear() noexcept
@@ -729,6 +752,8 @@ void DrumEngine::reset() noexcept
     triggerCounters_.fill (0);
     componentDrift_.fill (0.0f);
     engineSamples_ = 0;
+    hiHatPedal_ = 0.0f;
+    hiHatPedalActive_ = false;
     metallicBankVoiceCounts_.fill (0);
     metallicBankMask_ = 0u;
     resetMetallicOscillatorBanks();
@@ -737,6 +762,9 @@ void DrumEngine::reset() noexcept
     smoothedOutputGain_ = outputGain_.load (std::memory_order_relaxed);
     smoothedBusDrive_ = busDrive_.load (std::memory_order_relaxed);
     smoothedBusCompression_ = busCompression_.load (std::memory_order_relaxed);
+    smoothedBleed_ = bleed_.load (std::memory_order_relaxed);
+    bleedExcitation_ = 0.0f;
+    configureSympatheticBeds();
     dcInputLeft_ = dcInputRight_ = 0.0f;
     dcOutputLeft_ = dcOutputRight_ = 0.0f;
     masterAdaaPreviousLeft_ = masterAdaaPreviousRight_ = 0.0f;
@@ -786,6 +814,7 @@ void DrumEngine::setInstrumentParameters (Instrument instrument,
 void DrumEngine::setKitParameters (const KitParameters& values) noexcept
 {
     humanise_.store (clampUnit (values.humanise, 0.5f), std::memory_order_relaxed);
+    bleed_.store (clampUnit (values.bleed, 0.0f), std::memory_order_relaxed);
     busDrive_.store (clampUnit (values.busDrive, 0.0f), std::memory_order_relaxed);
     busCompression_.store (clampUnit (values.busCompression, 0.0f),
                            std::memory_order_relaxed);
@@ -1907,6 +1936,9 @@ void DrumEngine::configureResonator (Resonator& resonator, float frequency,
     const float radius = coefficientForTime (decaySeconds, static_cast<float> (sampleRate_));
     resonator.a1 = 2.0f * radius * std::cos (omega);
     resonator.a2 = -radius * radius;
+    resonator.nominalA1 = resonator.a1;
+    resonator.tensionSlope = -2.0f * radius * omega * std::sin (omega);
+    resonator.poleDiameter = 2.0f * radius;
 
     // A two-pole resonator's impulse residue is inputGain / sin (omega).
     // Preserve the existing 48 kHz residue while keeping that ratio constant
@@ -2004,6 +2036,124 @@ void DrumEngine::retireVoice (const Voice& source) noexcept
     *destination = source;
     addBankReference (source.instrument);
     beginFadeToSilence (*destination, retirementFadeMultiplier_);
+}
+
+bool DrumEngine::isHiHat (Instrument instrument) noexcept
+{
+    return instrument == Instrument::ClosedHat || instrument == Instrument::OpenHat;
+}
+
+// How far apart the two plates are, from 0 (clamped) to 1 (free). Before any
+// controller has touched the pedal the two notes are the two endpoints, exactly
+// as they always were; afterwards the pedal decides and the note only chooses
+// which channel strip is playing.
+float DrumEngine::hiHatAperture (Instrument instrument) const noexcept
+{
+    if (! hiHatPedalActive_)
+        return instrument == Instrument::ClosedHat ? 0.0f : 1.0f;
+    return std::clamp (1.0f - hiHatPedal_, 0.0f, 1.0f);
+}
+
+float DrumEngine::getHiHatPedal() const noexcept
+{
+    return hiHatPedalActive_ ? hiHatPedal_ : 0.0f;
+}
+
+void DrumEngine::setHiHatPedal (float position) noexcept
+{
+    if (! std::isfinite (position))
+        return;
+    position = std::clamp (position, 0.0f, 1.0f);
+    const bool wasActive = hiHatPedalActive_;
+    const float previous = wasActive ? hiHatPedal_ : 0.0f;
+    hiHatPedalActive_ = true;
+    hiHatPedal_ = position;
+    const float aperture = 1.0f - position;
+
+    // Closing the pedal on a ringing hat is not a switch being thrown. The two
+    // plates come together over the travel of the foot and the friction between
+    // their faces takes the sound out of the pair as they meet, so a pedal all
+    // the way down cuts a hat in a few milliseconds and one that only half
+    // closes leaves it ringing, shorter and duller than it was. A pedal that
+    // opens again does not undo it: the energy has already gone.
+    for (auto* pool : { &voices_, &retiringVoices_ })
+        for (auto& voice : *pool)
+        {
+            if (! voice.active || ! isHiHat (voice.instrument)
+                || aperture >= voice.hatAperture - 0.02f)
+                continue;
+            beginChoke (voice, 0.004f + 0.36f * aperture);
+            voice.hatAperture = aperture;
+        }
+
+    // A foot coming down hard enough to shut the pair makes its own sound, and
+    // it is the only stroke on a kit that is played without a stick. Its
+    // strength follows the size of the move rather than a clock, so a host that
+    // thins its controller stream changes when the chick lands, never how hard.
+    const float travel = position - previous;
+    if (wasActive && previous < 0.55f && position >= 0.55f && travel > 0.18f)
+        trigger (Instrument::ClosedHat,
+                 std::clamp (0.18f + 1.25f * travel, 0.15f, 1.0f));
+}
+
+bool DrumEngine::isStruckMembrane (Instrument instrument) noexcept
+{
+    switch (instrument)
+    {
+        case Instrument::Kick:
+        case Instrument::Snare:
+        case Instrument::LowTom:
+        case Instrument::MidTom:
+        case Instrument::HighTom:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void DrumEngine::dampRingingMembrane (Instrument instrument, float velocity) noexcept
+{
+    // A stick landing on a head that is still moving does not produce a second
+    // drum. It lands on the drum that is already there, and the contact both
+    // adds the new strike and takes energy out of what it lands on: a hand or a
+    // stick against a vibrating membrane is an absorber, which is why a
+    // drummer's press roll dies away instead of growing, and why a flam is one
+    // event with two attacks rather than two drums a few milliseconds apart.
+    //
+    // The bank is left in place and scaled instead of being cut, so the ring
+    // that survives is the same ring, just smaller - and the new strike is
+    // superposed into it by Resonator::strike(), which was written to add to
+    // whatever state it finds. How much survives follows the new strike: a
+    // ghost note laid on a ringing tom barely touches it, a full stroke very
+    // nearly resets it.
+    //
+    // Only the struck membranes. A cymbal is metres of plate against a stick
+    // tip the size of a fingernail, and a second strike on one really does add.
+    if (! isStruckMembrane (instrument))
+        return;
+
+    const float retained = std::clamp (0.78f - 0.58f * velocity, 0.20f, 0.78f);
+    const auto damp = [instrument, retained] (Voice& voice)
+    {
+        if (! voice.active || voice.instrument != instrument)
+            return;
+        for (auto& resonator : voice.resonators)
+        {
+            resonator.y1 *= retained;
+            resonator.y2 *= retained;
+        }
+        voice.envelope *= retained;
+        voice.auxiliaryEnvelope *= retained;
+        voice.transientEnvelope *= retained;
+        voice.kickStateX *= retained;
+        voice.kickStateY *= retained;
+        voice.modalEnergy *= retained * retained;
+        voice.recentPeak *= retained;
+    };
+    for (auto& voice : voices_)
+        damp (voice);
+    for (auto& voice : retiringVoices_)
+        damp (voice);
 }
 
 void DrumEngine::chokeGroup (int group) noexcept
@@ -2295,11 +2445,13 @@ void DrumEngine::initialiseModalVoice (Voice& voice, const float* ratios, int mo
 
 void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float velocity,
                                   const InstrumentParameters& values, std::uint32_t seed,
-                                  const HitVariation& variation) noexcept
+                                  const HitVariation& variation,
+                                  Articulation articulation) noexcept
 {
     voice = Voice {};
     voice.active = true;
     voice.instrument = instrument;
+    voice.articulation = articulation;
     voice.chokeGroup = std::clamp (values.chokeGroup, 0, chokeGroupCount);
     voice.generation = ++generation_;
     voice.noiseState = seed == 0u ? 1u : seed;
@@ -2333,6 +2485,11 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                                                      static_cast<float> (sampleRate_));
     voice.transientMultiplier = coefficientForTime (0.008f, static_cast<float> (sampleRate_));
     voice.pitchEnvelopeMultiplier = coefficientForTime (0.030f, static_cast<float> (sampleRate_));
+    // Four milliseconds is a couple of periods of the lowest thing a drum head
+    // carries, which is what "short-time average" has to mean for an energy
+    // estimate that is not allowed to follow the waveform itself.
+    voice.tensionSmoothing = 1.0f - std::exp (
+        -1.0f / std::max (1.0f, 0.004f * static_cast<float> (sampleRate_)));
     // Quiet voices retire from their measured output level. This is the hard
     // host-facing ceiling; a forced fade begins shortly before it.
     voice.maximumSamples = maximumVoiceSamples_;
@@ -2429,6 +2586,10 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                            voice.decaySeconds * 1.08f,
                            0.30f + 0.28f * velocity,
                            { 8.0f, 0.015f, 1.5e-6f, 220.0f });
+            // A bass drum head is wide, heavy and slack, but the beater only
+            // ever displaces it by a small fraction of its own radius, so its
+            // tension swing is the smallest of the struck drums.
+            voice.tensionDepth = 0.060f;
 
             // The contact does not only push the head: felt against plastic is
             // a rough, sliding interface, and it rattles the surface far faster
@@ -2465,6 +2626,24 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
 
         case Instrument::Snare:
         {
+            // A drummer's snare is three instruments, and the only difference
+            // between them is where the stick landed and how long it stayed.
+            //
+            // A rimshot is the head and the rim struck together: the tip lands
+            // right against the hoop, where J_m is far from the centre and the
+            // whole circumferential series is fed at once, and the shaft meets
+            // steel, so the contact is the shortest anything in this kit makes.
+            // The head is driven hard, so the wires leave it further and buzz
+            // more, and the hoop itself rings - which is the crack.
+            //
+            // A cross-stick is the opposite: the stick lies flat across the
+            // head with the player's hand resting on it, and the butt is
+            // dropped onto the rim. The hand is a heavy absorber sitting on the
+            // membrane, so the head is gone in a fifth of the time and the
+            // wires never lift off at all. What radiates is the shell, and that
+            // is why a cross-stick is a woody knock rather than a quiet snare.
+            const bool rimshot = articulation == Articulation::Rimshot;
+            const bool crossStick = articulation == Articulation::CrossStick;
             voice.baseFrequency = 185.0f * voice.pitchRatio;
             voice.phaseIncrements[0] = std::min (0.45f, voice.baseFrequency * inverseSampleRate_);
             voice.phaseIncrements[1] = std::min (0.45f, voice.baseFrequency * 1.78f * inverseSampleRate_);
@@ -2475,7 +2654,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // harder. A snare's contact is the shortest in the kit, which is
             // most of why it is the brightest thing in it.
             voice.contactSeconds = (0.00085f - 0.00050f * voice.characterB)
-                * std::pow (std::max (0.08f, velocity), -0.35f);
+                * std::pow (std::max (0.08f, velocity), -0.35f)
+                * (rimshot ? 0.38f : crossStick ? 0.60f : 1.0f);
             voice.contactIncrement = std::min (
                 1.0f, inverseSampleRate_ / std::max (1.0e-5f, voice.contactSeconds));
             voice.contactPhase = 0.0f;
@@ -2490,23 +2670,68 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             head.radius = 0.178f;
             head.shellDepth = 0.140f;
             head.headDensity = 0.30f;
-            head.strikeRadius = 0.36f;
+            // Where the stick landed, as a fraction of the head's radius. This
+            // is the whole articulation: J_m(lambda r/a) decides which modes a
+            // strike can reach, and a hoop strike reaches all of them.
+            head.strikeRadius = rimshot ? 0.93f : crossStick ? 0.80f : 0.36f;
             head.contactSeconds = voice.contactSeconds;
             head.airLoadScale = 0.75f + 0.50f * voice.characterB;
             // Wires resting on the far head damp everything, and a small shallow
             // drum radiates well for its size, so a snare is the shortest-lived
             // head in the kit at every frequency.
+            // A hand resting on a membrane is a far heavier absorber than any
+            // loss inside the film, and it is frequency-independent because it
+            // is contact rather than material, so it goes into the fixed term.
             buildHeadBank (voice, voice.baseFrequency,
-                           head, voice.decaySeconds * 0.62f,
-                           0.38f + 0.34f * voice.characterB,
-                           { 16.0f, 0.030f, 3.0e-6f, 300.0f });
+                           head,
+                           voice.decaySeconds * (crossStick ? 0.14f
+                                                 : rimshot ? 0.72f : 0.62f),
+                           0.38f + 0.34f * voice.characterB
+                               + (rimshot ? 0.30f : 0.0f),
+                           { crossStick ? 92.0f : 16.0f, 0.030f, 3.0e-6f, 300.0f });
+            // A batter head tensioned hard enough to answer a stick has little
+            // room left to stretch, which is why a snare's note barely moves
+            // where a tom's audibly does.
+            voice.tensionDepth = 0.080f;
             configureBandpass (voice.filterA,
                                (1250.0f + 4800.0f * voice.characterB)
                                    * std::pow (voice.pitchRatio, 0.30f) * voice.velocityTimbre,
                                0.65f + 0.45f * voice.characterB);
             configureHighpass (voice.filterB, 700.0f + 1700.0f * voice.characterB, 0.7f);
-            voice.transientMultiplier = coefficientForTime (0.004f + 0.005f * voice.characterB,
-                                                             static_cast<float> (sampleRate_));
+            voice.transientMultiplier = coefficientForTime (
+                (0.004f + 0.005f * voice.characterB)
+                    * (rimshot ? 0.55f : crossStick ? 0.70f : 1.0f),
+                static_cast<float> (sampleRate_));
+
+            // The hoop. A cast or triple-flanged rim struck by a stick shaft is
+            // a short, hard, strongly pitched ring, and it sits an octave and a
+            // half apart between the two strokes because they excite different
+            // parts of it: a rimshot rings the hoop against a driven head, a
+            // cross-stick rings the shell through a dead one.
+            if (rimshot || crossStick)
+            {
+                configureBandpass (voice.filterC,
+                                   (rimshot ? 1750.0f : 720.0f)
+                                       * std::pow (voice.pitchRatio, 0.5f),
+                                   rimshot ? 9.0f : 6.5f);
+                voice.rimLevel = rimshot ? 2.10f : 1.80f;
+            }
+            // A driven head lifts its wires further; a hand-damped one never
+            // lifts them at all, and a cross-stick's body is the shell rather
+            // than the batter head's own note.
+            voice.wireScale = rimshot ? 1.60f : crossStick ? 0.05f : 1.0f;
+            voice.bodyScale = crossStick ? 0.10f : 1.0f;
+            if (crossStick)
+            {
+                voice.envelopeMultiplier = coefficientForTime (
+                    voice.decaySeconds * 0.20f, static_cast<float> (sampleRate_));
+                voice.auxiliaryMultiplier = coefficientForTime (
+                    voice.decaySeconds * 0.16f, static_cast<float> (sampleRate_));
+            }
+            else if (rimshot)
+            {
+                voice.excitationScale *= 1.22f;
+            }
             break;
         }
 
@@ -2542,21 +2767,57 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
         case Instrument::ClosedHat:
         case Instrument::OpenHat:
         {
-            const bool closed = instrument == Instrument::ClosedHat;
+            // The pedal, as one number. Everything that used to be chosen by
+            // which of the two notes arrived is now read off it, and the two
+            // notes are exactly its endpoints - so an untouched pedal, where a
+            // Closed Hat note means nought and an Open Hat note means one,
+            // reproduces both voices sample for sample.
+            //
+            // The blend is guarded at both ends rather than trusted to arrive
+            // there: `open + (closed - open) * 1` is not bit-identical to
+            // `closed` in float, and a hat that changed in the last place of
+            // its decay constant when nobody had touched the pedal would be a
+            // silly thing to ship.
+            voice.hatAperture = hiHatAperture (instrument);
+            const float clamped = 1.0f - voice.hatAperture;
+            const auto pedalBlend = [clamped] (float openValue, float closedValue)
+            {
+                return clamped <= 0.0f ? openValue
+                     : clamped >= 1.0f ? closedValue
+                     : openValue + (closedValue - openValue) * clamped;
+            };
+
+            // How long the pair rings is the pedal's business, and the two
+            // channels' own Decay settings are its endpoints. The interpolation
+            // is geometric because the control is logarithmic in seconds, so
+            // half a pedal is half the travel a listener hears rather than half
+            // the number.
+            const float closedSeconds = decaySecondsFor (
+                Instrument::ClosedHat, snapshotParameters (Instrument::ClosedHat).decay);
+            const float openSeconds = decaySecondsFor (
+                Instrument::OpenHat, snapshotParameters (Instrument::OpenHat).decay);
+            voice.decaySeconds = (clamped >= 1.0f ? closedSeconds
+                                  : clamped <= 0.0f ? openSeconds
+                                  : closedSeconds * std::pow (
+                                        openSeconds / closedSeconds, voice.hatAperture))
+                * variation.decayScale;
+            voice.envelopeMultiplier = coefficientForTime (
+                voice.decaySeconds, static_cast<float> (sampleRate_));
+
             configureMetallicOscillatorBank (
                 instrument, voice.pitchRatio, voice.characterA, false);
             configureHighpass (voice.filterA, 3400.0f + 6500.0f * voice.characterB, 0.70f);
             configureBandpass (voice.filterB,
                                (6500.0f + 4800.0f * voice.characterB) * voice.velocityTimbre,
                                0.85f);
-            voice.transientMultiplier = coefficientForTime (closed ? 0.0025f : 0.006f,
-                                                             static_cast<float> (sampleRate_));
+            voice.transientMultiplier = coefficientForTime (
+                pedalBlend (0.006f, 0.0025f), static_cast<float> (sampleRate_));
             // The very top of a plate goes first. On an open hat that is most
             // of what you hear happen - it starts bright and darkens as it
             // rings - while a closed pair is damped by friction, which takes
             // every partial at much the same rate and leaves far less to hear.
             voice.auxiliaryMultiplier = coefficientForTime (
-                voice.decaySeconds * (closed ? 0.78f : 0.42f),
+                voice.decaySeconds * pedalBlend (0.42f, 0.78f),
                 static_cast<float> (sampleRate_));
 
             // The plates themselves. Closing the pedal clamps them together,
@@ -2571,7 +2832,9 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // why a soft hat is duller and not merely quieter.
             voice.contactSeconds = (0.00042f - 0.00022f * voice.characterA)
                 * std::pow (std::max (0.08f, velocity), -0.35f);
-            voice.baseFrequency = (closed ? 610.0f : 540.0f)
+            // Clamping the pair is a boundary the modes did not have, so the
+            // whole plate stiffens as the pedal comes down.
+            voice.baseFrequency = pedalBlend (540.0f, 610.0f)
                 * std::pow (voice.pitchRatio, 0.86f);
             // How far up the plate a strike gets is the contact again, but on a
             // plate the contact patch is a stick tip against something a
@@ -2587,10 +2850,15 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                 0.00042f / std::max (1.0e-5f, voice.contactSeconds), 0.30f, 1.60f);
             initialiseModalVoice (
                 voice, hatRatios, 12, voice.baseFrequency,
-                voice.decaySeconds * (closed ? 0.85f : 0.70f),
+                voice.decaySeconds * pedalBlend (0.70f, 0.85f),
                 0.10f, 0.60f + 0.14f * voice.characterB + 0.34f * reach,
-                closed ? ModalLoss { 0.86f, 0.10f, 0.04f }
-                       : ModalLoss { 0.55f, 0.30f, 0.15f });
+                // An open plate loses its top first, so its damping climbs
+                // steeply with frequency; a clamped pair is damped by friction
+                // between two faces instead, which takes every partial at much
+                // the same rate. The pedal moves continuously between the two
+                // laws rather than switching between two sounds.
+                ModalLoss { pedalBlend (0.55f, 0.86f), pedalBlend (0.30f, 0.10f),
+                            pedalBlend (0.15f, 0.04f) });
             break;
         }
 
@@ -2699,6 +2967,10 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                            voice.decaySeconds,
                            (0.34f + 0.30f * voice.characterB) * voice.velocityTimbre,
                            { 9.0f, 0.020f, 2.0e-6f, 260.0f });
+            // The tom is where this is loudest, and Skin is the reason: a head
+            // carrying more air is a slacker head, and a slacker head stretches
+            // further for the same blow.
+            voice.tensionDepth = 0.100f + 0.140f * voice.characterB;
 
             const float tomCorner = std::min (
                 { 3400.0f, 2.2f / std::max (0.0002f, voice.contactSeconds),
@@ -2840,7 +3112,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     }
 }
 
-void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
+void DrumEngine::trigger (Instrument instrument, float velocity,
+                          Articulation articulation) noexcept
 {
     if (! validInstrument (instrument) || ! std::isfinite (velocity) || velocity <= 0.0f)
         return;
@@ -2858,6 +3131,9 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
     // Mute groups generalise the hi-hat pedal: any voice can cut the group it
     // belongs to, and the two hats share group A by default.
     chokeGroup (values.chokeGroup);
+    // Before the new voice exists, so the strike lands on whatever this drum is
+    // still doing rather than beside it.
+    dampRingingMembrane (instrument, velocity);
     const auto counter = ++triggerCounters_[index];
     const std::uint32_t seed = hash32 (0x6d2b79f5u
         ^ static_cast<std::uint32_t> ((index + 1u) * 0x9e3779b9u)
@@ -2924,7 +3200,7 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
         retireVoice (voice);
     if (voice.active)
         releaseBankReference (voice.instrument);
-    initialiseVoice (voice, instrument, velocity, values, seed, variation);
+    initialiseVoice (voice, instrument, velocity, values, seed, variation, articulation);
     addBankReference (instrument);
     anyVoiceActive_ = true;
     updateActiveVoiceCount();
@@ -2932,10 +3208,10 @@ void DrumEngine::trigger (Instrument instrument, float velocity) noexcept
 
 bool DrumEngine::triggerMidi (int midiNote, float velocity) noexcept
 {
-    const auto instrument = instrumentForMidiNote (midiNote);
-    if (! instrument.has_value())
+    const auto mapping = midiTriggerForNote (midiNote);
+    if (! mapping.has_value())
         return false;
-    trigger (*instrument, velocity);
+    trigger (mapping->instrument, velocity, mapping->articulation);
     return true;
 }
 
@@ -2952,6 +3228,50 @@ float DrumEngine::advanceContact (Voice& voice) noexcept
     sineAndCosineLookup (voice.contactPhase, sine, cosine);
     voice.contactPhase += voice.contactIncrement;
     return 0.5f * (1.0f - cosine);
+}
+
+void DrumEngine::advanceModalTension (Voice& voice, float bankOutput) noexcept
+{
+    if (voice.tensionDepth <= 0.0f)
+        return;
+
+    // A membrane's restoring force is its tension, and a head that has been
+    // pushed out of its plane is a head that has been stretched, so the whole
+    // bank is sharp while the strike energy is still in it and settles back as
+    // the drum rings out. That is the pitch drop a struck tom has and a
+    // pitch-enveloped oscillator only imitates: it is not a fixed sweep from a
+    // fixed starting note, it follows how hard the drum was actually hit, so a
+    // ghost stroke barely bends at all and an accent bends audibly.
+    //
+    // Avanzini and Marogna's result is that the short-time average of the
+    // tension rise is proportional to the system's energy, which is what this
+    // leaky mean square estimates. It is why the model costs one multiply-add
+    // per sample instead of a nonlinear solve. The bank's internal amplitude is
+    // deliberately almost velocity-independent - the strike is normalised and
+    // the VCA is applied after the voice - so the physical displacement has to
+    // be recovered by scaling with the voice's own velocity here, or a ghost
+    // note would bend exactly as far as an accent.
+    const float displacement = voice.velocity * bankOutput;
+    voice.modalEnergy = flushDenormal (
+        voice.modalEnergy
+        + voice.tensionSmoothing * (displacement * displacement - voice.modalEnergy));
+    // Six per cent is about a semitone, and it is a ceiling rather than an
+    // operating point: a real head that stretched further than that would be
+    // being played with a hammer. It also keeps the linearised coefficient
+    // update well inside the region where it is accurate.
+    const float tension = std::min (0.060f, voice.tensionDepth * voice.modalEnergy);
+
+    // The coefficients are rewritten every sixteenth sample. The estimate moves
+    // on the scale of the strike envelope - tens of milliseconds - so a third of
+    // a millisecond of staleness is inaudible, and it keeps the whole model at a
+    // fraction of the bank's own per-sample cost. The interval is counted in the
+    // voice's own age, so it falls on the same samples at every host block size.
+    if ((voice.ageSamples & 15u) != 0u
+        || std::abs (tension - voice.modalTension) < 1.0e-5f)
+        return;
+    voice.modalTension = tension;
+    for (int mode = 0; mode < voice.modeCount; ++mode)
+        voice.resonators[static_cast<std::size_t> (mode)].setTension (tension);
 }
 
 float DrumEngine::renderKick (Voice& voice) noexcept
@@ -3050,6 +3370,7 @@ float DrumEngine::renderKick (Voice& voice) noexcept
         }
         for (int mode = 0; mode < voice.modeCount; ++mode)
             head += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
+        advanceModalTension (voice, head);
     }
 
     const float skin = voice.filterB.tick (
@@ -3064,7 +3385,8 @@ float DrumEngine::renderKick (Voice& voice) noexcept
 
 float DrumEngine::renderSnare (Voice& voice) noexcept
 {
-    const float body = (0.72f * oscillator (voice, 0) + 0.36f * oscillator (voice, 1))
+    const float body = voice.bodyScale
+        * (0.72f * oscillator (voice, 0) + 0.36f * oscillator (voice, 1))
         * voice.envelope;
     const float noise = nextBandLimitedNoise (voice);
 
@@ -3084,6 +3406,7 @@ float DrumEngine::renderSnare (Voice& voice) noexcept
         }
         for (int mode = 0; mode < voice.modeCount; ++mode)
             headModes += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
+        advanceModalTension (voice, headModes);
     }
 
     // Snare wires are not a linear noise envelope: they only leave the resonant
@@ -3100,10 +3423,18 @@ float DrumEngine::renderSnare (Voice& voice) noexcept
         * (0.30f + 0.70f * rattle);
     const float snap = voice.filterB.tick (noise) * voice.transientEnvelope
         * voice.transientScale * voice.velocityTimbre;
-    const float wireMix = 0.18f + 0.82f * voice.characterA;
+    const float wireMix = (0.18f + 0.82f * voice.characterA) * voice.wireScale;
+    // The hoop is struck, not driven: it takes the contact and then rings on its
+    // own, which is why it is fed the transient rather than the head.
+    const float rim = voice.rimLevel <= 0.0f
+        ? 0.0f
+        : voice.rimLevel * voice.filterC.tick (
+              voice.transientEnvelope * voice.transientScale
+              + 0.22f * noise * voice.transientEnvelope);
     return 0.72f * ((0.62f - 0.38f * voice.characterA) * body
                     + (0.80f - 0.34f * voice.characterA) * headModes
-                    + wireMix * wires + 0.35f * voice.characterB * snap);
+                    + wireMix * wires + 0.35f * voice.characterB * snap
+                    + rim);
 }
 
 float DrumEngine::renderClap (Voice& voice) noexcept
@@ -3245,6 +3576,7 @@ float DrumEngine::renderTom (Voice& voice) noexcept
         }
         for (int mode = 0; mode < voice.modeCount; ++mode)
             membrane += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
+        advanceModalTension (voice, membrane);
     }
 
     return 0.98f * ((0.90f * fundamental + (0.06f + 0.19f * voice.characterB) * shell)
@@ -3385,6 +3717,156 @@ float DrumEngine::renderVoice (Voice& voice) noexcept
     return output;
 }
 
+
+void DrumEngine::configureSympatheticBeds() noexcept
+{
+    // The four things on a kit that answer when something else is struck: the
+    // snare's resonant head with its wires lying on it, and the three toms.
+    // A kick is the only drum that mostly does not - its heads are heavy, its
+    // note is below almost everything else on the kit, and nobody has ever
+    // complained about a bass drum ringing when the snare was hit.
+    static constexpr std::array<Instrument, sympatheticBedCount> instruments {
+        Instrument::Snare, Instrument::LowTom, Instrument::MidTom, Instrument::HighTom
+    };
+    // The snare's resonant head is tuned above its batter, and it is the wires
+    // resting on it that decide the three modes worth carrying. The toms answer
+    // at their own note and its first two membrane partials.
+    static constexpr std::array<float, sympatheticModeCount> snareModes {
+        1.18f, 1.88f, 2.52f
+    };
+    static constexpr std::array<float, sympatheticModeCount> tomModes {
+        1.0f, 1.59f, 2.14f
+    };
+    static constexpr std::array<float, sympatheticBedCount> roots {
+        185.0f, 82.0f, 123.0f, 174.0f
+    };
+
+    for (std::size_t index = 0; index < sympatheticBeds_.size(); ++index)
+    {
+        auto& bed = sympatheticBeds_[index];
+        bed.instrument = instruments[index];
+        bed.hasWires = bed.instrument == Instrument::Snare;
+        bed.noiseState = hash32 (static_cast<std::uint32_t> (index + 1u) * 0x9e3779b9u);
+
+        const auto values = snapshotParameters (bed.instrument);
+        bed.lastPitch = values.pitch;
+        bed.lastDecay = values.decay;
+        const float pan = std::clamp (values.pan, -1.0f, 1.0f);
+        bed.panLeft = constantPowerLeft (pan);
+        bed.panRight = constantPowerRight (pan);
+
+        const float root = roots[index] * std::exp2 (values.pitch / 12.0f);
+        // An undriven head rings for a fraction of a struck one: nothing is
+        // putting energy into it except what the rest of the kit leaks, and on
+        // the snare the wires damp it further.
+        const float seconds = decaySecondsFor (bed.instrument, values.decay)
+            * (bed.hasWires ? 0.30f : 0.45f);
+        const auto& ratios = bed.hasWires ? snareModes : tomModes;
+        bed.modeCount = 0;
+        for (int mode = 0; mode < sympatheticModeCount; ++mode)
+        {
+            const float frequency = root * ratios[static_cast<std::size_t> (mode)];
+            if (frequency >= 0.44f * static_cast<float> (sampleRate_))
+                continue;
+            auto& resonator = bed.resonators[static_cast<std::size_t> (bed.modeCount)];
+            configureResonator (resonator, frequency, seconds);
+            // configureResonator normalises a mode for being struck once. A head
+            // that is driven continuously by a whole kit has to be normalised for
+            // its resonant peak instead, which is inputGain/(1 - r) - a factor of
+            // several hundred at these decay times, and the difference between a
+            // sympathetic bed and a howl.
+            resonator.inputGain *= 1.0f - std::sqrt (std::max (0.0f, -resonator.a2));
+            ++bed.modeCount;
+        }
+
+        // What of the kit actually reaches a head that nobody is hitting: the
+        // low-mid the shells and the floor carry, not the stick noise.
+        configureBandpass (bed.drive, bed.hasWires ? 150.0f : root, 0.45f);
+        if (bed.hasWires)
+            configureBandpass (bed.wires, 4200.0f, 0.55f);
+    }
+}
+
+void DrumEngine::updateSympatheticBeds() noexcept
+{
+    for (auto& bed : sympatheticBeds_)
+    {
+        const auto values = snapshotParameters (bed.instrument);
+        const float pan = std::clamp (values.pan, -1.0f, 1.0f);
+        bed.panLeft = constantPowerLeft (pan);
+        bed.panRight = constantPowerRight (pan);
+        if (values.pitch == bed.lastPitch && values.decay == bed.lastDecay)
+            continue;
+        // Retuning a head clears what it was ringing with, which is what
+        // slackening a lug does anyway.
+        configureSympatheticBeds();
+        return;
+    }
+}
+
+void DrumEngine::clearSympatheticBeds() noexcept
+{
+    // A bed that stops being rendered would otherwise keep whatever it was
+    // ringing with, and hand it back as a burst the next time the control came
+    // off zero - the same stale-state click the bus detector already avoids.
+    // The control's smoother lands exactly on zero, so this runs once per block
+    // while the path is off rather than on every transition.
+    for (auto& bed : sympatheticBeds_)
+    {
+        for (auto& resonator : bed.resonators)
+            resonator.clear();
+        bed.drive.clear();
+        bed.wires.clear();
+    }
+}
+
+void DrumEngine::renderSympatheticBeds (float excitation, float amount,
+                                        float& left, float& right) noexcept
+{
+    for (auto& bed : sympatheticBeds_)
+    {
+        if (bed.modeCount == 0)
+            continue;
+        const float driven = bed.drive.tick (excitation);
+        float displacement = 0.0f;
+        for (int mode = 0; mode < bed.modeCount; ++mode)
+            displacement += bed.resonators[static_cast<std::size_t> (mode)].tick (driven);
+
+        float output = displacement;
+        if (bed.hasWires)
+        {
+            // The same law the struck snare uses: wires only rattle while the
+            // head under them lifts them off their resting contact, and below
+            // that they damp it instead. It is why a kick makes a snare buzz at
+            // all, and why the buzz appears suddenly as the kick gets louder
+            // rather than fading up in proportion to it.
+            std::uint32_t state = bed.noiseState;
+            state ^= state << 13u;
+            state ^= state >> 17u;
+            state ^= state << 5u;
+            bed.noiseState = state == 0u ? 1u : state;
+            const float noise = static_cast<float> (bed.noiseState & 0x00ffffffu)
+                / 8388607.5f - 1.0f;
+            // A struck snare drives its own wires far clear of the head, so
+            // the first-order law renderSnare() uses spends its life in that
+            // law's saturating region. Sympathetic excitation does not: it
+            // lives at the lift-off, where a first-order form has no dead zone
+            // at all and simply tracks the exciter. The squared form does have
+            // one - it falls away as the square below the threshold and
+            // saturates above it - which is why a bled kick's buzz appears as
+            // the kick gets loud instead of following it up from nothing.
+            const float squared = displacement * displacement;
+            constexpr float liftOff = 0.20f * 0.20f;
+            const float rattle = squared / (liftOff + squared);
+            output = 0.30f * displacement + 3.20f * bed.wires.tick (noise) * rattle;
+        }
+
+        const float scaled = std::clamp (0.80f * amount * output, -4.0f, 4.0f);
+        left += scaled * bed.panLeft;
+        right += scaled * bed.panRight;
+    }
+}
+
 void DrumEngine::applyBusStage (float& left, float& right, float driveAmount,
                                 float compressionAmount) noexcept
 {
@@ -3468,6 +3950,7 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
     engineSamples_ += static_cast<std::uint64_t> (numSamples);
 
     updateMetallicBankParameterTargets();
+    updateSympatheticBeds();
 
     // Voice activity can only decrease inside one engine chunk; triggers split
     // processing at their exact event offsets. Collect the audible voices once
@@ -3491,6 +3974,7 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         busDrive_.load (std::memory_order_relaxed), 0.0f);
     const float compressionAmount = clampUnit (
         busCompression_.load (std::memory_order_relaxed), 0.0f);
+    const float bleedAmount = clampUnit (bleed_.load (std::memory_order_relaxed), 0.0f);
     // Refreshed per block, then smoothed into each ringing voice below so
     // channel-strip automation is audible on a tail rather than only on the
     // next hit.
@@ -3504,10 +3988,16 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         mixer.panRight = constantPowerRight (pan);
     }
 
+    // The whole coupling path is skipped, not merely scaled to nothing, while
+    // the control and its smoother are both at zero. A kit with Bleed off is
+    // therefore bit-identical to the engine before it existed, and pays nothing.
+    const bool bleedActive = bleedAmount > 0.0f || smoothedBleed_ > 0.0f;
     const bool busActive = driveAmount > 0.0f || compressionAmount > 0.0f
         || smoothedBusDrive_ > 0.0f || smoothedBusCompression_ > 0.0f;
     if (! busActive)
         resetBusStage();
+    if (! bleedActive)
+        clearSympatheticBeds();
     std::uint64_t silentSamples = 0;
 
     for (int sample = 0; sample < numSamples; ++sample)
@@ -3525,6 +4015,8 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
                 smoothedBusDrive_, driveAmount, gainSmoothing);
             smoothedBusCompression_ = approachTarget (
                 smoothedBusCompression_, compressionAmount, gainSmoothing);
+            smoothedBleed_ = approachTarget (smoothedBleed_, bleedAmount, gainSmoothing);
+            bleedExcitation_ = 0.0f;
             if (left != nullptr)
                 left[sample] = 0.0f;
             if (right != nullptr && right != left)
@@ -3573,6 +4065,21 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
             smoothedBusDrive_, driveAmount, gainSmoothing);
         smoothedBusCompression_ = approachTarget (
             smoothedBusCompression_, compressionAmount, gainSmoothing);
+        smoothedBleed_ = approachTarget (smoothedBleed_, bleedAmount, gainSmoothing);
+
+        // The beds hear the previous sample's dry mix and nothing they added to
+        // it, so the path is strictly feed-forward and cannot ring on itself.
+        if (bleedActive)
+        {
+            const float excitation = bleedExcitation_;
+            bleedExcitation_ = flushDenormal (dryLeft + dryRight);
+            renderSympatheticBeds (excitation, smoothedBleed_, dryLeft, dryRight);
+        }
+        else
+        {
+            bleedExcitation_ = 0.0f;
+        }
+
         float busLeft = dryLeft - dcInputLeft_ + dcCoefficient * dcOutputLeft_;
         float busRight = dryRight - dcInputRight_ + dcCoefficient * dcOutputRight_;
         dcInputLeft_ = flushDenormal (dryLeft);
@@ -3631,8 +4138,21 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
     // With no voice left, the bus sees exact zero: its detector would decay to
     // rest and its gain to unity. Doing that in one step keeps silence free and
     // stops a stale gain-reduction reading from sticking on the editor's meter.
+    //
+    // The sympathetic beds are collapsed for the same reason and at the same
+    // moment. Their excitation is the dry mix, so with no voice they are driven
+    // by exact zero, but unlike the bus they are resonators: whatever they were
+    // ringing with is held rather than decayed, because the silent path stops
+    // clocking them. A choke or a CC 120 that ends the last voice mid-ring
+    // would otherwise park that energy for an arbitrary silence and hand it
+    // back on the next strike, which is precisely the stale burst
+    // clearSympatheticBeds() already exists to prevent when Kit Bleed is
+    // switched off.
     if (! anyVoiceActive_)
+    {
         resetBusStage();
+        clearSympatheticBeds();
+    }
 
     outputLevelLeft_.store (meterPeakLeft_, std::memory_order_relaxed);
     outputLevelRight_.store (meterPeakRight_, std::memory_order_relaxed);

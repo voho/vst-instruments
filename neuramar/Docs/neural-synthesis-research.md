@@ -150,14 +150,22 @@ The non-harmonic branch follows the motivation of
 can represent breath, scrape, bow noise, and attacks more faithfully than one
 global filtered-noise colour. Neuramar adopts only this filterbank motivation:
 it is not an implementation of NoiseBandNet and does not use that project's
-architecture, training procedure, source code, or weights. Its eight Air bands
-have adjacent logarithmic edges from 80 Hz to 16 kHz at the fixed analysis rate.
-A sequential weighted least-squares sinusoid fit first removes the
-pitch-following Core from each waveform frame. Core and Air targets use a
-pitch-adaptive power-of-two aperture targeting four root periods and bounded to
+architecture, training procedure, source code, or weights. Its sixteen Air bands
+have adjacent logarithmic edges from 80 Hz to 16 kHz at the fixed analysis rate,
+0.51 octaves apiece. Eight bands of 1.03 octaves each put a breath formant, a
+scrape peak, and a hiss shelf inside one number; NoiseBandNet's own answer to
+the same problem is 2048 filters, and Alchemy's is a second synthesis engine.
+A joint weighted least-squares sinusoid fit first removes the pitch-following
+Core from each waveform frame. Core and Air targets use a
+pitch-adaptive power-of-two aperture bounded to
 512–4096 samples at the fixed 48 kHz analysis rate, avoiding one fixed 85 ms
-window that would smear short attacks. The 4096-sample ceiling necessarily
-contains fewer than four periods below 46.875 Hz. Bone selection and decay
+window that would smear short attacks. It targets four root periods in the body
+of the sound and two over the first 40 ms: the four-period rule keeps adjacent
+partials' Hann main lobes apart, which is a constraint on a sequential
+projection and not on the joint solve above, so the attack — where the analysis
+grid already places its frames 2.5 ms apart — no longer measures through an
+aperture five times longer than that spacing. The 4096-sample ceiling
+necessarily contains fewer than four periods below 46.875 Hz. Bone selection and decay
 retain a parallel 4096-sample residual for modal frequency resolution. Active
 Bone neighbourhood exclusions scale with the real Hann aperture, not its
 zero-padding, so modal main lobes do not reappear as Air. The remaining
@@ -201,7 +209,22 @@ that the analyser has identified physical eigenmodes.
 4. **Track and factor the sound** — follow a constrained local pitch contour
    around the root; at each frame, use pitch-adaptive weighted cosine/sine least
    squares to estimate harmonic amplitude and phase and subtract the fitted
-   sinusoids from the waveform. The shorter Core/Air branch preserves temporal
+   sinusoids from the waveform. The solve is joint rather than sequential: a
+   single ordered projection pass is the least-squares answer only when the
+   partial bases are orthogonal, and at an aperture of a few fundamental periods
+   adjacent Hann main lobes touch, so each subtraction leaks into its
+   neighbours and a quiet partial beside a loud one absorbs the leakage. The
+   pass is therefore repeated with each partial's current estimate added back
+   before it is re-solved against the others' residual, which is Gauss-Seidel on
+   the joint normal equations and converges to the joint solution without
+   forming the full `2N x 2N` system. Least-squares estimation is the standard
+   method for this precisely because, unlike FFT-peak or analysis-by-synthesis
+   estimation, it tolerates overlapping frequency responses and short apertures;
+   see
+   [Smith, *Spectral Audio Signal Processing*](https://ccrma.stanford.edu/~jos/sasp/Least_Squares_Sinusoidal_Parameter.html).
+   Past about eight periods per aperture the bases are orthogonal to working
+   precision, so the parallel long-window modal analysis keeps a single sweep
+   and the refinement cost is confined to the short apertures that need it. The shorter Core/Air branch preserves temporal
    detail, while a parallel long-window residual supplies modal resolution.
    Score persistent inharmonic peaks there, suppress active modal regions in
    the transient residual, and collect the remaining window-corrected power in
@@ -226,9 +249,9 @@ that the analyser has identified physical eigenmodes.
    file access occurs in the render loop.
 
 The learned state stores model coefficients, quantized trajectory corrections,
-and analysis metadata, not the source recording or a source path. Version 4
-models remain small (about 35 KiB for the current representation) and append one
-stiff-string coefficient to the version-3 layout. The strict decoder retains an
+and analysis metadata, not the source recording or a source path. Version 5
+models remain small (about 41 KiB for the current representation) and widen the
+version-4 body arrays from 8 Air bands and 6 Bone modes to 16 and 12. The strict decoder retains an
 exact zero-correction path for version 2 and an exact zero-stretch path for
 version 3, so a memory saved by any shipped release still renders the way it
 did. Sessions therefore recall the instrument without depending on an external
@@ -288,7 +311,7 @@ Air band.
 - **Core** renders the learned harmonic distribution and bounded source pitch
   contour at the played MIDI pitch.
 - **Air** renders fitted harmonic-subtracted residual-power trajectories through
-  eight overlapping log-spaced biquads, with a decorrelated second realization
+  sixteen overlapping log-spaced biquads, with a decorrelated second realization
   supplying stereo width that cancels exactly in a mono sum. The measured
   residual excludes both active Bone neighbourhoods and the narrowband residue
   left at each subtracted partial, and each fit cell is weighted by how many
@@ -405,13 +428,32 @@ octave errors to destabilize synthesis.
 
 ## Future quality path
 
-The current representation leaves a clean upgrade route: joint rather than
-sequential sinusoidal estimation, confidence-aware residual subtraction,
+The current representation leaves a clean upgrade route:
+confidence-aware residual subtraction,
 continuous peak tracking with robust modal decay fits, a time-varying rather
 than fixed stiff-string coefficient, a more rigorous
-F0-adaptive/minimum-phase envelope, denser or multirate Air filterbanks,
+F0-adaptive/minimum-phase envelope, multirate Air filterbanks,
 mipmapped dynamic wavetables, perceptual multi-resolution losses, an optional
 small legally-clean pitch model, SIMD matrix inference, and a user-trainable
 local prior library. Any upgrade must retain the
 offline/real-time boundary, bounded state decoding, deterministic fallback, and
 model-version migration.
+
+Two items measured in
+[`resynthesis-quality-benchmark.md`](resynthesis-quality-benchmark.md) point at
+the same missing branch. On a fixture whose onset is a short broadband burst,
+the render's T10-T90 attack is 5 ms *shorter* than the source's, and the finest
+spectral resolution scores worse than the coarser ones. Both come from the same
+cause: the burst has nowhere to go except the harmonic branch, whose partials
+are phase-aligned at note-on, so it is reproduced as a sharper click than it
+was. Simionato and Fasciani give transients their own module for exactly this
+reason — an inverse-DCT-shaped impulsive component alongside the sines and the
+noise
+([Frontiers in Signal Processing, 2024](https://www.frontiersin.org/journals/signal-processing/articles/10.3389/frsip.2024.1494864/full)).
+Neuramar has no such branch. That is the clearest structural gap in the current
+factorisation and the natural next one to close.
+
+The other stated limit is velocity. `Touch` applies a fixed excitation-strength
+prior rather than a fitted dynamic response, because one recording contains no
+cross-velocity evidence at all. No amount of analysis recovers it; only a
+multi-velocity import would, and that would change the instrument's premise.

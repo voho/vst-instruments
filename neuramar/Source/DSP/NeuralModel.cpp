@@ -511,7 +511,12 @@ NeuralModel::createRandom(std::uint64_t seed, float strength)
             airEdgeRatio, static_cast<float>(band) + 0.5f);
         model->airBandwidthOctaves_[band] = airWidthOctaves;
 
-        const float distance = (static_cast<float>(band) - 4.1f) / 2.2f;
+        // The generated Air tilt is expressed as a fraction of the band count
+        // so widening the filterbank moves the same spectral shape onto the
+        // denser grid instead of squeezing it into the bottom half.
+        const float position = (static_cast<float>(band) + 0.5f)
+            / static_cast<float>(airBandCount);
+        const float distance = (position - 0.5750f) / 0.2750f;
         const float amplitude = 0.008f
             + 0.010f * std::exp(-0.5f * distance * distance);
         const std::size_t output = harmonicCount + band;
@@ -520,13 +525,16 @@ NeuralModel::createRandom(std::uint64_t seed, float strength)
     }
 
     constexpr std::array<float, boneModeCount> generatedBoneRatios {
-        1.47f, 2.31f, 3.68f, 5.17f, 7.42f, 10.83f
+        1.47f, 2.31f, 3.68f, 5.17f, 7.42f, 10.83f,
+        12.61f, 14.97f, 17.34f, 20.11f, 23.28f, 26.71f
     };
     constexpr std::array<float, boneModeCount> generatedBoneDecays {
-        1.85f, 1.52f, 1.22f, 0.96f, 0.76f, 0.58f
+        1.85f, 1.52f, 1.22f, 0.96f, 0.76f, 0.58f,
+        0.49f, 0.42f, 0.36f, 0.31f, 0.27f, 0.23f
     };
     constexpr std::array<float, boneModeCount> generatedBoneReliabilities {
-        0.72f, 0.63f, 0.54f, 0.46f, 0.37f, 0.29f
+        0.72f, 0.63f, 0.54f, 0.46f, 0.37f, 0.29f,
+        0.24f, 0.20f, 0.17f, 0.14f, 0.11f, 0.09f
     };
     for (std::size_t mode = 0; mode < boneModeCount; ++mode)
     {
@@ -1297,21 +1305,124 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
         && reader.readFloat(metadata.finalLoss)
         && reader.readI32(epochs);
 
-    if (!scalarsRead
-        || !readFloats(reader, metadata.waveformPreview)
-        || !readFloats(reader, model->initialHarmonicPhases_)
-        || !readFloats(reader, model->airCentreFrequenciesHz_)
-        || !readFloats(reader, model->airBandwidthOctaves_)
-        || !readFloats(reader, model->boneFrequencyRatios_)
-        || !readFloats(reader, model->boneDecaySeconds_)
-        || !readFloats(reader, model->boneModeReliabilities_)
-        || !readFloats(reader, model->initialBonePhases_)
-        || !readFloats(reader, model->outputMeans_)
-        || !readFloats(reader, model->outputScales_)
-        || !readFloats(reader, model->inputWeights_)
-        || !readFloats(reader, model->hiddenBiases_)
-        || !readFloats(reader, model->outputWeights_)
-        || !readFloats(reader, model->outputBiases_))
+    // Everything before version 5 stored 8 Air bands and 6 Bone modes, and its
+    // decoder rows are laid out for that. Such a payload is read into
+    // fixed-size legacy buffers and migrated: the harmonic block and the first
+    // eight Air slots keep their index, the six Bone slots move past the added
+    // Air slots, and the added slots are given valid but silent state so the
+    // memory renders exactly as it did.
+    const bool legacyLayout = version < bodyCapacityFormatVersion;
+    bool arraysRead = scalarsRead
+        && readFloats(reader, metadata.waveformPreview)
+        && readFloats(reader, model->initialHarmonicPhases_);
+    if (legacyLayout)
+    {
+        std::array<float, legacyAirBandCount> legacyAirCentres {};
+        std::array<float, legacyAirBandCount> legacyAirWidths {};
+        std::array<float, legacyBoneModeCount> legacyBoneRatios {};
+        std::array<float, legacyBoneModeCount> legacyBoneDecays {};
+        std::array<float, legacyBoneModeCount> legacyBoneReliabilities {};
+        std::array<float, legacyBoneModeCount> legacyBonePhases {};
+        std::array<float, legacyOutputSize> legacyMeans {};
+        std::array<float, legacyOutputSize> legacyScales {};
+        auto legacyWeights = std::make_unique<
+            std::array<float, legacyOutputSize * hiddenSize>>();
+        std::array<float, legacyOutputSize> legacyBiases {};
+        arraysRead = arraysRead
+            && readFloats(reader, legacyAirCentres)
+            && readFloats(reader, legacyAirWidths)
+            && readFloats(reader, legacyBoneRatios)
+            && readFloats(reader, legacyBoneDecays)
+            && readFloats(reader, legacyBoneReliabilities)
+            && readFloats(reader, legacyBonePhases)
+            && readFloats(reader, legacyMeans)
+            && readFloats(reader, legacyScales)
+            && readFloats(reader, model->inputWeights_)
+            && readFloats(reader, model->hiddenBiases_)
+            && readFloats(reader, *legacyWeights)
+            && readFloats(reader, legacyBiases);
+        if (arraysRead)
+        {
+            // The added slots have to satisfy the same validation as a real
+            // band or mode, so they are given a plausible layout and then
+            // decoded as silence: an amplitude output of exp(-16) with no
+            // network contribution, and a Bone reliability of zero, which is
+            // what the renderer tests to decide a mode is inactive.
+            const float airEdgeRatio = std::pow(
+                16000.0f / 80.0f, 1.0f / static_cast<float>(airBandCount));
+            for (std::size_t band = legacyAirBandCount;
+                 band < airBandCount; ++band)
+            {
+                model->airCentreFrequenciesHz_[band] = 80.0f * std::pow(
+                    airEdgeRatio, static_cast<float>(band) + 0.5f);
+                model->airBandwidthOctaves_[band] = std::log2(airEdgeRatio);
+            }
+            for (std::size_t mode = legacyBoneModeCount;
+                 mode < boneModeCount; ++mode)
+            {
+                model->boneFrequencyRatios_[mode] = 1.0f
+                    + static_cast<float>(mode);
+                model->boneDecaySeconds_[mode] = 1.0f;
+                model->boneModeReliabilities_[mode] = 0.0f;
+                model->initialBonePhases_[mode] = 0.0f;
+            }
+            const auto silenceOutput = [&model](std::size_t output)
+            {
+                model->outputMeans_[output] = -16.0f;
+                model->outputScales_[output] = 1.0e-4f;
+                model->outputBiases_[output] = 0.0f;
+                for (std::size_t unit = 0; unit < hiddenSize; ++unit)
+                    model->outputWeights_[output * hiddenSize + unit] = 0.0f;
+            };
+            for (std::size_t band = legacyAirBandCount;
+                 band < airBandCount; ++band)
+                silenceOutput(harmonicCount + band);
+            for (std::size_t mode = legacyBoneModeCount;
+                 mode < boneModeCount; ++mode)
+                silenceOutput(harmonicCount + airBandCount + mode);
+
+            for (std::size_t band = 0; band < legacyAirBandCount; ++band)
+            {
+                model->airCentreFrequenciesHz_[band] = legacyAirCentres[band];
+                model->airBandwidthOctaves_[band] = legacyAirWidths[band];
+            }
+            for (std::size_t mode = 0; mode < legacyBoneModeCount; ++mode)
+            {
+                model->boneFrequencyRatios_[mode] = legacyBoneRatios[mode];
+                model->boneDecaySeconds_[mode] = legacyBoneDecays[mode];
+                model->boneModeReliabilities_[mode]
+                    = legacyBoneReliabilities[mode];
+                model->initialBonePhases_[mode] = legacyBonePhases[mode];
+            }
+            for (std::size_t output = 0; output < legacyOutputSize; ++output)
+            {
+                const std::size_t target = migrateOutputIndex(output);
+                model->outputMeans_[target] = legacyMeans[output];
+                model->outputScales_[target] = legacyScales[output];
+                model->outputBiases_[target] = legacyBiases[output];
+                for (std::size_t unit = 0; unit < hiddenSize; ++unit)
+                    model->outputWeights_[target * hiddenSize + unit]
+                        = (*legacyWeights)[output * hiddenSize + unit];
+            }
+        }
+    }
+    else
+    {
+        arraysRead = arraysRead
+            && readFloats(reader, model->airCentreFrequenciesHz_)
+            && readFloats(reader, model->airBandwidthOctaves_)
+            && readFloats(reader, model->boneFrequencyRatios_)
+            && readFloats(reader, model->boneDecaySeconds_)
+            && readFloats(reader, model->boneModeReliabilities_)
+            && readFloats(reader, model->initialBonePhases_)
+            && readFloats(reader, model->outputMeans_)
+            && readFloats(reader, model->outputScales_)
+            && readFloats(reader, model->inputWeights_)
+            && readFloats(reader, model->hiddenBiases_)
+            && readFloats(reader, model->outputWeights_)
+            && readFloats(reader, model->outputBiases_);
+    }
+    if (!arraysRead)
     {
         setError(error, "Neuramar model payload is truncated or malformed");
         return nullptr;
@@ -1330,10 +1441,26 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
     }
     else
     {
+        const std::size_t storedOutputSize = legacyLayout
+            ? legacyOutputSize : outputSize;
         std::uint32_t keyframeCount = 0;
-        if (!reader.readU32(keyframeCount)
-            || keyframeCount > maximumResidualKeyframes
-            || !readFloats(reader, model->residualScales_))
+        bool headerRead = reader.readU32(keyframeCount)
+            && keyframeCount <= maximumResidualKeyframes;
+        if (headerRead)
+        {
+            for (std::size_t output = 0; output < storedOutputSize; ++output)
+            {
+                float scale = 0.0f;
+                if (!reader.readFloat(scale))
+                {
+                    headerRead = false;
+                    break;
+                }
+                model->residualScales_[legacyLayout
+                    ? migrateOutputIndex(output) : output] = scale;
+            }
+        }
+        if (!headerRead)
         {
             setError(error, "Neuramar residual header is truncated or malformed");
             return nullptr;
@@ -1349,19 +1476,22 @@ NeuralModel::deserialize(std::span<const std::uint8_t> bytes,
         }
         for (std::size_t frame = 0; frame < keyframeCount; ++frame)
         {
-            for (std::size_t output = 0; output < outputSize; ++output)
+            for (std::size_t output = 0; output < storedOutputSize; ++output)
             {
-                if (!reader.readI16(
-                        model->residualValues_[frame * outputSize + output]))
+                std::int16_t value = 0;
+                if (!reader.readI16(value))
                 {
                     setError(error, "Neuramar residual values are truncated");
                     return nullptr;
                 }
+                const std::size_t target = legacyLayout
+                    ? migrateOutputIndex(output) : output;
+                model->residualValues_[frame * outputSize + target] = value;
             }
         }
-        // Version 3 stops here; version 4 appends the stiff-string
-        // coefficient. Anything left over is rejected in both cases.
-        if (version >= currentFormatVersion
+        // Version 3 stops here; versions 4 and 5 append the stiff-string
+        // coefficient. Anything left over is rejected in every case.
+        if (version >= stretchFormatVersion
             && !reader.readFloat(model->inharmonicity_))
         {
             setError(error, "Neuramar inharmonicity field is truncated");

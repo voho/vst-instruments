@@ -169,13 +169,30 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     const auto glideFor = [this](float seconds) noexcept {
         return 1.0f - std::exp(-static_cast<float>(controlPeriod) * inverseSampleRate_ / seconds);
     };
-    formantGlide_[0] = glideFor(0.016f);
-    formantGlide_[1] = glideFor(0.009f);
-    formantGlide_[2] = glideFor(0.005f);
-    formantGlide_[3] = glideFor(0.004f);
-    formantGlide_[4] = glideFor(0.003f);
+    // 16, 9, 5, 4 and 3 ms put a whole vowel change inside 50 ms, which is a
+    // de-zipper rather than an articulation: a sung vowel-to-vowel transition
+    // runs 100-200 ms. The lower formants follow the larger cavity adjustments
+    // and stay the slowest, which is the ordering the constants above already
+    // had. A move of a quarter of the formant's own nominal frequency or more
+    // takes the full time; anything smaller is proportionally quicker.
+    constexpr float slowSeconds[formantCount] { 0.068f, 0.050f, 0.032f, 0.025f, 0.020f };
+    constexpr float fastSeconds[formantCount] { 0.020f, 0.015f, 0.011f, 0.009f, 0.008f };
+    // Reciprocal of a quarter of each formant's nominal frequency, so the
+    // control update scales the distance with a multiply instead of a divide.
+    constexpr float nominalHz[formantCount] { 600.0f, 1500.0f, 2600.0f, 3400.0f, 4500.0f };
+    for (int formant = 0; formant < formantCount; ++formant)
+    {
+        const auto index = static_cast<std::size_t>(formant);
+        formantGlideSlow_[index] = glideFor(slowSeconds[index]);
+        formantGlideFast_[index] = glideFor(fastSeconds[index]);
+        formantSpanScale_[index] = 4.0f / nominalHz[index];
+    }
     jitterSlowCoefficient_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
                                              * inverseSampleRate_ / 0.0095f);
+    // A singer hears the beating and moves onto the just interval; she does not
+    // arrive on it. 90 ms is about how long that adjustment takes.
+    justGlide_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
+                                 * inverseSampleRate_ / 0.090f);
 
     buildTables();
     buildSingerIdentities();
@@ -191,6 +208,7 @@ void VoiceEngine::reset()
     heldCount_ = 0;
     heldNoteCounts_.fill(0);
     legatoPhrase_ = false;
+    intonationRoot_ = -1;
     soundingRoot_ = -1;
     lastRootMidi_ = -1;
     blockParameters_ = snapshotParameters();
@@ -200,7 +218,22 @@ void VoiceEngine::reset()
     smoothedTension_ = blockParameters_.tension;
     smoothedResonance_ = blockParameters_.resonance;
     smoothedFormantShift_ = blockParameters_.formantShift;
+    smoothedNasal_ = clampUnit(blockParameters_.nasal);
     smoothedRoomSize_ = clampUnit(blockParameters_.roomSize);
+    // A host calls prepareToPlay() when the transport or the sample rate moves,
+    // and a controller does not resend its position, so the performance state
+    // returns to the neutral one the host parameters describe.
+    pitchBendSemitones_ = 0.0f;
+    modWheel_ = 1.0f;
+    modWheelMoved_ = false;
+    expression_ = 1.0f;
+    sustainPedal_ = false;
+    sustainedNotes_.fill(0);
+    smoothedDynamics_ = effectiveDynamics(blockParameters_);
+    smoothedExpression_ = expression_;
+    chunkResponse_ = dynamicResponse(smoothedDynamics_);
+    voicedDynamic_ = chunkResponse_.voicedGain;
+    airDynamic_ = chunkResponse_.airGain;
     meterLeft_ = meterRight_ = 0.0f;
     chunkStateValid_ = false;
     // Every cached coefficient below depends on the sample rate, and reset()
@@ -249,6 +282,61 @@ void VoiceEngine::setParameters(const EngineParameters& p)
     atomicParameters_.glide.store(clampUnit(p.glide), std::memory_order_relaxed);
     atomicParameters_.legato.store(p.legato ? 1 : 0, std::memory_order_relaxed);
     atomicParameters_.roomSize.store(clampUnit(p.roomSize), std::memory_order_relaxed);
+    atomicParameters_.dynamics.store(clampUnit(p.dynamics), std::memory_order_relaxed);
+    atomicParameters_.intonation.store(clampUnit(p.intonation), std::memory_order_relaxed);
+    atomicParameters_.nasal.store(clampUnit(p.nasal), std::memory_order_relaxed);
+}
+
+void VoiceEngine::setPitchBend(float semitones) noexcept
+{
+    pitchBendSemitones_ = std::isfinite(semitones)
+        ? std::clamp(semitones, -48.0f, 48.0f) : 0.0f;
+}
+
+void VoiceEngine::setModWheel(float value) noexcept
+{
+    modWheel_ = clampUnit(value);
+    modWheelMoved_ = true;
+}
+
+void VoiceEngine::setExpression(float value) noexcept
+{
+    expression_ = clampUnit(value);
+}
+
+void VoiceEngine::resetControllers() noexcept
+{
+    pitchBendSemitones_ = 0.0f;
+    modWheel_ = 1.0f;
+    modWheelMoved_ = false;
+    expression_ = 1.0f;
+}
+
+void VoiceEngine::setSustainPedal(bool down)
+{
+    if (down == sustainPedal_)
+        return;
+    sustainPedal_ = down;
+    if (down)
+        return;
+
+    // Pedal up. Every deferred note-off is delivered through the ordinary
+    // path, so the held-note stack, the legato fallback and the release all
+    // behave exactly as they would have without the pedal.
+    for (int pitch = 0; pitch < 128; ++pitch)
+    {
+        auto& pending = sustainedNotes_[static_cast<std::size_t>(pitch)];
+        while (pending > 0)
+        {
+            --pending;
+            noteOff(pitch);
+        }
+    }
+}
+
+float VoiceEngine::effectiveDynamics(const EngineParameters& p) const noexcept
+{
+    return modWheelMoved_ ? modWheel_ : clampUnit(p.dynamics);
 }
 
 EngineParameters VoiceEngine::snapshotParameters() const noexcept
@@ -276,6 +364,9 @@ EngineParameters VoiceEngine::snapshotParameters() const noexcept
     p.glide = atomicParameters_.glide.load(std::memory_order_relaxed);
     p.legato = atomicParameters_.legato.load(std::memory_order_relaxed) != 0;
     p.roomSize = atomicParameters_.roomSize.load(std::memory_order_relaxed);
+    p.dynamics = atomicParameters_.dynamics.load(std::memory_order_relaxed);
+    p.intonation = atomicParameters_.intonation.load(std::memory_order_relaxed);
+    p.nasal = atomicParameters_.nasal.load(std::memory_order_relaxed);
     return p;
 }
 
@@ -391,7 +482,14 @@ void VoiceEngine::buildSingerIdentities()
     {
         auto& singer = singers_[static_cast<std::size_t>(i)];
         const std::uint32_t base = 0x9e3779b9u * static_cast<std::uint32_t>(i + 1);
-        singer.detuneCents = 5.6f * hashFloat(base + 1u);
+        // Jers and Ternstrom measured 25-30 cents of dispersion between choir
+        // singers, and listeners tolerate about 14 cents of standard deviation.
+        // A uniform +/-5.6 cents was roughly a quarter of that, which is why
+        // twelve singers read as one thick voice rather than as a section. Two
+        // hashes averaged give a triangular spread, which concentrates the
+        // section near the target the way a real one does rather than spacing
+        // it evenly across the extremes.
+        singer.detuneCents = 12.0f * (hashFloat(base + 1u) + hashFloat(base + 11u));
         singer.anatomy = 0.045f * hashFloat(base + 2u);
         const float position = singerCount > 1 ? 2.0f * static_cast<float>(i) / static_cast<float>(singerCount - 1) - 1.0f : 0.0f;
         singer.pan = std::clamp(0.82f * position + 0.12f * hashFloat(base + 3u), -1.0f, 1.0f);
@@ -399,6 +497,7 @@ void VoiceEngine::buildSingerIdentities()
         singer.vibratoRate = 4.65f + 0.72f * (0.5f + 0.5f * hashFloat(base + 5u));
         singer.vibratoDepth = 0.76f + 0.42f * (0.5f + 0.5f * hashFloat(base + 6u));
         singer.driftIncrement = (0.025f + 0.075f * (0.5f + 0.5f * hashFloat(base + 7u))) * inverseSampleRate_;
+        singer.drift2Increment = (0.011f + 0.033f * (0.5f + 0.5f * hashFloat(base + 12u))) * inverseSampleRate_;
         singer.depthIncrement = (0.018f + 0.042f * (0.5f + 0.5f * hashFloat(base + 8u))) * inverseSampleRate_;
         singer.formantIncrement = (0.009f + 0.025f * (0.5f + 0.5f * hashFloat(base + 9u))) * inverseSampleRate_;
         for (int formant = 0; formant < formantCount; ++formant)
@@ -456,6 +555,18 @@ int VoiceEngine::countActiveVoices() const noexcept
     for (const auto& voice : voices_)
         count += voice.active ? 1 : 0;
     return count;
+}
+
+void VoiceEngine::updateIntonationRoot() noexcept
+{
+    // The bass is what a section tunes to, so the reference is the lowest root
+    // still being held. A releasing voice is on its way out and does not get a
+    // vote, otherwise a chord would keep re-tuning to notes already let go of.
+    int lowest = -1;
+    for (const auto& voice : voices_)
+        if (voice.active && !voice.releasing && (lowest < 0 || voice.rootMidi < lowest))
+            lowest = voice.rootMidi;
+    intonationRoot_ = lowest;
 }
 
 void VoiceEngine::makeRoomFor(int required)
@@ -594,6 +705,13 @@ void VoiceEngine::noteOn(int midiNote, float velocity)
     singersInUse_ = ~0u;
     updateChunkState(p, false);
 
+    // A note lower than anything sounding becomes the reference the rest of the
+    // chord tunes to, and it has to be in place before the voices are built so
+    // they start on the interval rather than gliding onto it.
+    updateIntonationRoot();
+    if (intonationRoot_ < 0 || midiNote < intonationRoot_)
+        intonationRoot_ = midiNote;
+
     const bool hadHeldNote = heldCount_ > 0;
     pushHeldNote(midiNote);
 
@@ -604,6 +722,7 @@ void VoiceEngine::noteOn(int midiNote, float velocity)
     if (p.legato && hadHeldNote && midiNote != soundingRoot_
         && retuneForLegato(midiNote, p))
     {
+        updateIntonationRoot();
         soundingRoot_ = midiNote;
         lastRootMidi_ = midiNote;
         legatoPhrase_ = true;
@@ -638,6 +757,7 @@ void VoiceEngine::noteOn(int midiNote, float velocity)
                         singer, velocity, groupGain, total, glideFromCents, p);
     }
 
+    updateIntonationRoot();
     soundingRoot_ = midiNote;
     lastRootMidi_ = midiNote;
     activeVoiceCount_.store(countActiveVoices(), std::memory_order_relaxed);
@@ -678,6 +798,17 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
 void VoiceEngine::noteOff(int midiNote)
 {
     midiNote = std::clamp(midiNote, 0, 127);
+    if (sustainPedal_)
+    {
+        // The key is treated as still held for as long as the pedal is down,
+        // which is what keeps a legato phrase from falling back to a key the
+        // player has already let go of.
+        auto& pending = sustainedNotes_[static_cast<std::size_t>(midiNote)];
+        if (pending < std::numeric_limits<std::uint16_t>::max())
+            ++pending;
+        return;
+    }
+
     const auto heldState = releaseHeldNote(midiNote);
     // Another controller still holds this pitch, so it keeps sounding.
     if (heldState == HeldNoteState::StillHeld)
@@ -697,6 +828,7 @@ void VoiceEngine::noteOff(int midiNote)
         updateChunkState(p, false);
         if (retuneForLegato(previous, p))
         {
+            updateIntonationRoot();
             soundingRoot_ = previous;
             lastRootMidi_ = previous;
             return;
@@ -708,6 +840,7 @@ void VoiceEngine::noteOff(int midiNote)
     for (auto& voice : voices_)
         if (voice.active && voice.rootMidi == midiNote)
             voice.releasing = true;
+    updateIntonationRoot();
     if (soundingRoot_ == midiNote)
         soundingRoot_ = -1;
 }
@@ -716,7 +849,9 @@ void VoiceEngine::allNotesOff()
 {
     heldCount_ = 0;
     heldNoteCounts_.fill(0);
+    sustainedNotes_.fill(0);
     legatoPhrase_ = false;
+    intonationRoot_ = -1;
     soundingRoot_ = -1;
     for (auto& voice : voices_)
         if (voice.active)
@@ -730,7 +865,9 @@ void VoiceEngine::allSoundOff() noexcept
     clearRoom();
     heldCount_ = 0;
     heldNoteCounts_.fill(0);
+    sustainedNotes_.fill(0);
     legatoPhrase_ = false;
+    intonationRoot_ = -1;
     soundingRoot_ = -1;
     lastRootMidi_ = -1;
     meterLeft_ = meterRight_ = 0.0f;
@@ -756,6 +893,9 @@ void VoiceEngine::silenceVoice(Voice& voice) noexcept
     voice.envelope = 0.0f;
     voice.airEnvelope = 0.0f;
     voice.sourceTilt = 0.0f;
+    voice.nasalX1 = voice.nasalX2 = 0.0f;
+    voice.nasalY1 = voice.nasalY2 = 0.0f;
+    voice.nasal.clear();
     for (auto& resonator : voice.tract)
         resonator.clear();
     for (auto& resonator : voice.early)
@@ -771,11 +911,6 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
 {
     static constexpr float femaleBw[formantCount] { 75.0f, 90.0f, 125.0f, 185.0f, 260.0f };
     static constexpr float maleBw[formantCount] { 68.0f, 82.0f, 112.0f, 165.0f, 235.0f };
-    // A pressed glottis narrows the epilarynx tube, and that lifts the
-    // singer's-formant cluster around F3 and F4 rather than the whole tract.
-    // Tension drives the narrowing; F3 sits closest to the tube's own
-    // resonance, so it gains the most.
-    static constexpr float epilarynxLift[formantCount] { 0.0f, 0.0f, 0.12f, 0.06f, 0.0f };
     // Nothing above the fifth formant is modelled, so the bank is not allowed to
     // starve the top octaves completely on the most closed vowels.
     constexpr float amplitudeFloor = 0.010f;
@@ -788,16 +923,26 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     // chunk. Smooth them here instead.
     const float resonanceTarget = clampUnit(p.resonance);
     const float shiftTarget = std::clamp(p.formantShift, -24.0f, 24.0f);
+    // The dynamic reaches the source tilt and the vibrato depth at the control
+    // rate, so it is smoothed here as well; the two level gains it produces get
+    // a second, per-sample smoother in process().
+    const float dynamicsTarget = effectiveDynamics(p);
+    const float nasalTarget = clampUnit(p.nasal);
     if (!chunkStateValid_)
     {
         smoothedResonance_ = resonanceTarget;
         smoothedFormantShift_ = shiftTarget;
+        smoothedDynamics_ = dynamicsTarget;
+        smoothedNasal_ = nasalTarget;
     }
     else if (advanceSmoothers)
     {
         smoothedResonance_ += chunkGainCoefficient_ * (resonanceTarget - smoothedResonance_);
         smoothedFormantShift_ += chunkGainCoefficient_ * (shiftTarget - smoothedFormantShift_);
+        smoothedDynamics_ += chunkGainCoefficient_ * (dynamicsTarget - smoothedDynamics_);
+        smoothedNasal_ += chunkGainCoefficient_ * (nasalTarget - smoothedNasal_);
     }
+    chunkResponse_ = dynamicResponse(smoothedDynamics_);
 
     std::array<float, formantCount> target {};
     formantsForPresetVowel(male, vowelIndex, target.data());
@@ -811,16 +956,38 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
                 morph * (space[static_cast<std::size_t>(formant)] - target[static_cast<std::size_t>(formant)]);
     }
 
+    // The singer's formant is not an amplitude trim. Narrowing the epilaryngeal
+    // tube clusters F3, F4 and F5 into one reinforced peak at 2.5-3.5 kHz, and
+    // that peak is what lets an unamplified voice carry over an orchestra.
+    // Boosting the amplitude of three formants that stay 700 Hz apart does not
+    // produce a cluster, which is all the 1.1 engine did. Effort strengthens
+    // the configuration as well as tension does, so the dynamic reaches it too.
+    const float epilarynx = clampUnit(smoothedTension_ * (0.40f + 0.60f * smoothedDynamics_));
+    if (epilarynx > 0.0f)
+    {
+        const float clusterHz = male ? 2900.0f : 3200.0f;
+        for (int formant = 2; formant < formantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            target[index] += 0.45f * epilarynx * (clusterHz - target[index]);
+        }
+    }
+
     const float shift = formantShiftRatio(smoothedFormantShift_);
     const float bandwidthScale = (1.18f - 0.30f * smoothedResonance_)
         * (1.0f + 0.12f * smoothedBreath_);
+    // The jaw runs out before the pitch does. Roughly 1.55x the open vowel's
+    // own F1 is as far as it opens, and a tract shortened by the formant shift
+    // reaches proportionally higher.
+    chunkMaxF1_ = (male ? 730.0f : 850.0f) * 1.55f * shift;
 
     // Resolving the tract costs seven exponentials and a five-by-five cascade
     // evaluation, and none of it moves while a note is simply being held. Skip
     // the whole block unless one of its inputs actually changed.
     // The sentinel-zero initial state guarantees the first call resolves.
     bool tractMoved = tractInputs_[formantCount] != shift
-                   || tractInputs_[formantCount + 1] != bandwidthScale;
+                   || tractInputs_[formantCount + 1] != bandwidthScale
+                   || tractInputs_[formantCount + 2] != epilarynx;
     for (int formant = 0; formant < formantCount; ++formant)
         tractMoved = tractMoved
             || tractInputs_[static_cast<std::size_t>(formant)] != target[static_cast<std::size_t>(formant)];
@@ -829,6 +996,7 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     {
         tractInputs_[formantCount] = shift;
         tractInputs_[formantCount + 1] = bandwidthScale;
+        tractInputs_[formantCount + 2] = epilarynx;
         const float maximumBandwidth = 0.25f * static_cast<float>(sampleRate_);
         const float widthScale = bandwidthScale * std::sqrt(shift);
         for (int formant = 0; formant < formantCount; ++formant)
@@ -839,8 +1007,12 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
 
             // Wider formants track a shifted tract so the resonances keep their
             // shape instead of turning needle-thin when the voice is made small.
+            // A narrowed epilarynx damps the cluster less as well as pulling it
+            // together, which is the other half of what makes the peak.
+            const float clusterWidth = formant >= 2 ? 1.0f - 0.30f * epilarynx : 1.0f;
             const float bandwidth = std::clamp(
-                (male ? maleBw[index] : femaleBw[index]) * widthScale, 20.0f, maximumBandwidth);
+                (male ? maleBw[index] : femaleBw[index]) * widthScale * clusterWidth,
+                20.0f, maximumBandwidth);
             chunkBandwidth_[index] = bandwidth;
             const float radius = std::exp(-pi * bandwidth * inverseSampleRate_);
             chunkRadius_[index] = radius;
@@ -871,12 +1043,69 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     for (int formant = 0; formant < formantCount; ++formant)
     {
         const auto index = static_cast<std::size_t>(formant);
-        const float shaped = chunkAmplitude_[index]
-            * (1.0f + epilarynxLift[index] * smoothedTension_);
+        // An open velum turns the mouth into a side branch: the sound leaves
+        // through the nose, so the oral formants stop being the radiator.
+        //
+        // Tension does not appear here any more. It used to add 12% of gain to
+        // F3 and 6% to F4, but three formants that stay 700 Hz apart with a
+        // little more gain each are still three formants. The epilarynx model
+        // above moves their frequencies and bandwidths together instead, which
+        // is the mechanism that actually builds the singer's formant, and the
+        // cascade-derived amplitudes follow from those frequencies.
+        const float shaped = chunkAmplitude_[index] * (1.0f - 0.55f * smoothedNasal_);
         if (!chunkStateValid_)
             chunkFormantGain_[index] = shaped;
         else if (advanceSmoothers)
             chunkFormantGain_[index] += chunkGainCoefficient_ * (shaped - chunkFormantGain_[index]);
+    }
+
+    // The nasal branch. An oral tract alone cannot make an /m/: a parallel bank
+    // of poles has zeros only where its sections happen to cancel, and the
+    // anti-resonance a nasalised sound needs has to be placed. The murmur pole
+    // sits at the nasal cavity's own resonance and the notch where the closed
+    // mouth loads it; both scale with the formant shift like the rest of the
+    // tract, because the nose belongs to the same head.
+    chunkNasalMix_ = smoothedNasal_;
+    chunkNasalActive_ = chunkNasalMix_ > 1.0e-4f;
+    // The nostrils are a smaller and far more damped aperture than the mouth,
+    // so a hum radiates less for the same effort. Without this the murmur pole
+    // alone makes an open velum the loudest thing the instrument does.
+    chunkNasalTrim_ = 1.0f / (1.0f + 2.05f * chunkNasalMix_);
+    if (chunkNasalActive_)
+    {
+        const float nyquistGuard = 0.40f * static_cast<float>(sampleRate_);
+        // Nasal formants are heavily damped, which is most of why a hum reads
+        // as closed rather than as a low vowel.
+        const float murmurHz = std::clamp(280.0f * shift, 40.0f, nyquistGuard);
+        const float murmurRadius = std::exp(-pi * 150.0f * inverseSampleRate_);
+        const auto murmurTrig = sineCosineFromCycles(murmurHz * inverseSampleRate_);
+        chunkNasalA1_ = 2.0f * murmurRadius * murmurTrig.cosine;
+        chunkNasalA2_ = -murmurRadius * murmurRadius;
+        // Opposite polarity to F1, for the same reason adjacent oral formants
+        // alternate: summed with a common sign they cancel in the valley.
+        chunkNasalB0_ = -0.60f * chunkAmplitude_[0] * chunkNasalMix_
+            * formantResonatorGain(murmurRadius, murmurTrig.sine);
+
+        // A pole-zero pair at one frequency, the zeros nearer the unit circle
+        // than the poles. Klatt's bare antiresonator is normalised to unity at
+        // DC, which for a zero this low leaves 48 dB of gain at Nyquist: it
+        // would make a hum the brightest sound the instrument produces. The
+        // matched pole returns the response to unity either side of the notch
+        // instead, so what the branch removes is only the band it names.
+        const float notchHz = std::clamp(950.0f * shift, 60.0f, nyquistGuard);
+        const auto notchTrig = sineCosineFromCycles(notchHz * inverseSampleRate_);
+        const float zeroRadius = std::exp(-pi * 60.0f * inverseSampleRate_);
+        const float poleRadius = std::exp(-pi * 700.0f * inverseSampleRate_);
+        const float zeroA1 = 2.0f * zeroRadius * notchTrig.cosine;
+        const float zeroA2 = -zeroRadius * zeroRadius;
+        chunkNotchA1_ = 2.0f * poleRadius * notchTrig.cosine;
+        chunkNotchA2_ = -poleRadius * poleRadius;
+        // Unity at DC, so the branch places a notch rather than a tilt.
+        const float normalise = (1.0f - chunkNotchA1_ - chunkNotchA2_)
+            / std::max(1.0e-6f, 1.0f - zeroA1 - zeroA2);
+        chunkZeroB0_ = normalise;
+        chunkZeroB1_ = -zeroA1 * normalise;
+        chunkZeroB2_ = -zeroA2 * normalise;
     }
 
     // Two more exponentials that only move when their parameter does.
@@ -926,6 +1155,8 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         auto& singer = singers_[static_cast<std::size_t>(singerIndex)];
         singer.drift = sine(absolutePhase(0.071 + 0.137 * static_cast<double>(singerIndex),
                                           static_cast<double>(singer.driftIncrement)));
+        singer.drift2 = sine(absolutePhase(0.283 + 0.079 * static_cast<double>(singerIndex),
+                                           static_cast<double>(singer.drift2Increment)));
         singer.depthDrift = sine(absolutePhase(0.419 + 0.193 * static_cast<double>(singerIndex),
                                                static_cast<double>(singer.depthIncrement)));
         singer.formantDrift = sine(absolutePhase(0.733 + 0.113 * static_cast<double>(singerIndex),
@@ -965,6 +1196,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
 {
     const auto& singer = singers_[static_cast<std::size_t>(voice.singer)];
     const float singerDrift = singer.drift;
+    const float singerDrift2 = singer.drift2;
     const float depthDrift = singer.depthDrift;
     const float formantDrift = singer.formantDrift;
     const float sharedPitch = sharedPitchDrift_;
@@ -976,7 +1208,8 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     const float vibratoRate = singer.vibratoRate *
         (1.0f + p.humanize * (0.055f * singerDrift + 0.018f * sharedRate));
     const float vibratoDepth = p.vibrato * singer.vibratoDepth *
-        (20.0f + 7.0f * p.humanize * depthDrift) * vibratoFade;
+        (20.0f + 7.0f * p.humanize * depthDrift) * vibratoFade
+        * chunkResponse_.vibratoScale;
     // Integrating the rate keeps the vibrato phase exact for arbitrarily long
     // notes. Recomputing age * rate amplified any rate drift by the note age
     // and lost sub-sample precision once the age exceeded 2^24 samples.
@@ -991,12 +1224,28 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     voice.jitter += (random - voice.jitter) * jitterCoefficient_;
     voice.jitterSlow += (voice.jitter - voice.jitterSlow) * jitterSlowCoefficient_;
     const float jitterCents = p.humanize * (1.15f * voice.jitter + 1.35f * voice.jitterSlow);
+    // An a cappella section tunes its chord to the bass rather than to a
+    // keyboard, and moves onto the interval over about a tenth of a second.
+    const float justTarget = intonationRoot_ >= 0
+        ? clampUnit(p.intonation)
+              * justIntonationOffsetCents(voice.midiNote - intonationRoot_)
+        : 0.0f;
+    if (!voice.controlInitialised)
+        voice.justCents = justTarget;
+    else
+        voice.justCents += justGlide_ * (justTarget - voice.justCents);
+
     const float identityCents = singer.detuneCents * p.humanize;
-    const float wanderCents = p.humanize * (2.1f * singerDrift + 0.75f * sharedPitch);
+    // A section does not sit at fixed offsets: it drifts and recovers, which
+    // is what keeps the dispersion from reading as a chorus setting.
+    const float wanderCents = p.humanize * (4.2f * singerDrift + 2.6f * singerDrift2
+                                            + 0.75f * sharedPitch);
     voice.pitchScoop *= scoopMultiplier_;
     voice.glideCents *= chunkGlideDecay_;
     const float cents = voice.pitchScoop + voice.glideCents + identityCents + wanderCents
-                      + jitterCents + vibratoDepth * sine(voice.vibratoPhase);
+                      + jitterCents + voice.justCents
+                      + vibratoDepth * sine(voice.vibratoPhase)
+                      + 100.0f * pitchBendSemitones_;
     const float frequency = voice.baseFrequency * std::exp2(cents * (1.0f / 1200.0f));
     voice.targetPhaseIncrement = std::clamp(frequency * inverseSampleRate_, 0.0f, 0.48f);
     voice.phaseIncrementStep = (voice.targetPhaseIncrement - voice.phaseIncrement)
@@ -1010,7 +1259,8 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
 
     // Vocal effort changes the source spectral slope far more than it changes
     // level: a soft note is dull as well as quiet.
-    const float effort = std::clamp(0.42f * voice.velocity + 0.58f * p.tension, 0.0f, 1.0f);
+    const float effort = std::clamp((0.42f * voice.velocity + 0.58f * p.tension)
+                                        * chunkResponse_.effortScale, 0.0f, 1.0f);
     if (effort != voice.tiltEffort)
     {
         voice.tiltEffort = effort;
@@ -1029,16 +1279,54 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         + 0.0045f * formantDrift + 0.0022f * sharedFormant);
     const float highAmount = std::max(0.0f, static_cast<float>(voice.midiNote - 69));
     const float upperLimit = 0.465f * static_cast<float>(sampleRate_);
+    // Formant tuning resolves against the note's own pitch rather than the
+    // vibrato-modulated one. A tract that followed the vibrato would keep the
+    // fundamental permanently on the peak and cancel the amplitude modulation
+    // the vibrato is supposed to produce up there.
+    const float tuningFundamental = voice.baseFrequency;
+    float tunedF1 = 0.0f;
     for (int formant = 0; formant < formantCount; ++formant)
     {
         const auto index = static_cast<std::size_t>(formant);
         const float scale = anatomy + p.humanize * singer.formantScale[index];
         const float highTune = 1.0f + highAmount * (formant == 0 ? 0.0032f : (formant == 1 ? 0.00125f : 0.0003f));
-        const float targetHz = chunkFormantHz_[index] * scale * highTune;
-        if (voice.formantHz[index] <= 1.0f)
+        float targetHz = chunkFormantHz_[index] * scale * highTune;
+        if (formant == 0)
+        {
+            const float base = targetHz;
+            targetHz = tunedFirstFormant(base, tuningFundamental, chunkMaxF1_ * scale);
+            tunedF1 = targetHz;
+            // A singer spends the resonance she has just won on efficiency, not
+            // on volume: the strategy exists so the top of the range costs less
+            // breath, not so it arrives ten decibels louder than the middle.
+            // Most of the gain is handed back once F1 has moved by a fifth or
+            // more, and none of it is taken while F1 has not moved at all.
+            const float lift = std::clamp((targetHz / base - 1.0f) * 5.0f, 0.0f, 1.0f);
+            voice.renderGain = voice.amplitudeGain * chunkNasalTrim_ / (1.0f + lift);
+        }
+        else if (formant == 1)
+        {
+            // A tracked F1 that has climbed into F2 would leave the tract with
+            // two coincident lowest resonances. The vowel loses its identity
+            // instead, which is what happens to a real one at that pitch.
+            targetHz = std::max(targetHz, kMinimumFormantSpacing * tunedF1);
+        }
+        const float currentHz = voice.formantHz[index];
+        if (currentHz <= 1.0f)
+        {
             voice.formantHz[index] = targetHz;
+        }
         else
-            voice.formantHz[index] += formantGlide_[index] * (targetHz - voice.formantHz[index]);
+        {
+            // An articulator has a speed, not a deadline: a quarter-frequency
+            // move or more takes the full jaw-and-tongue time, and a small one
+            // settles in a fraction of it.
+            const float span = std::min(1.0f, std::abs(targetHz - currentHz)
+                                                  * formantSpanScale_[index]);
+            const float coefficient = formantGlideFast_[index]
+                + span * (formantGlideSlow_[index] - formantGlideFast_[index]);
+            voice.formantHz[index] = currentHz + coefficient * (targetHz - currentHz);
+        }
 
         const float bounded = std::clamp(voice.formantHz[index], 25.0f, upperLimit);
         const auto trig = sineCosineFromCycles(bounded * inverseSampleRate_);
@@ -1057,6 +1345,11 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
                 * formantResonatorGain(earlyRadius_[index], trig.sine);
         }
     }
+
+    // The nasal tract does not vary with the vowel or with the singer, so the
+    // branch coefficients are resolved once per chunk and only copied here.
+    voice.nasal.a1 = chunkNasalA1_;
+    voice.nasal.b0 = chunkNasalB0_;
 
     const float pan = std::clamp(singer.pan * p.spread * (voice.singer == 0 && p.mode == PerformanceMode::Solo ? 0.18f : 1.0f), -1.0f, 1.0f);
     if (pan != voice.panPosition)
@@ -1193,7 +1486,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     bool alternateCycle = voice.alternateCycle;
     std::uint64_t age = voice.ageSamples;
 
-    const float amplitude = voice.amplitudeGain;
+    float amplitude = voice.renderGain;
     const float onsetMixStep = voice.onsetMixStep;
     const bool releasing = voice.releasing;
 
@@ -1204,6 +1497,10 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     float panLeft = voice.panLeft;
     float panRight = voice.panRight;
     int level = voice.tableLevel;
+    // Chunk-constant, so the branch is free: an oral-only patch pays nothing
+    // for the nasal branch it is not using.
+    const bool nasalActive = chunkNasalActive_;
+    const float nasalMix = chunkNasalMix_;
 
     for (int i = 0; i < count; ++i)
     {
@@ -1225,6 +1522,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             updateVoiceControl(voice, p);
             noiseState = voice.noiseState;
             voice.controlCountdown = controlPeriod;
+            amplitude = voice.renderGain;
             incrementStep = voice.phaseIncrementStep;
             tilt = voice.tiltCoefficient;
             irregularity = voice.irregularity;
@@ -1267,8 +1565,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         // and is shaped by the very same tract as the voiced excitation. That
         // is both more faithful and two resonators per voice cheaper than the
         // separate noise filter the 1.0 engine used.
-        const float breath = breathAt_[static_cast<std::size_t>(i)];
-        const float airDrive = breath * airShape * airEnvelope;
+        const float airDrive = airLevelAt_[static_cast<std::size_t>(i)]
+            * airShape * airEnvelope;
         const float voicedDrive = envelope * voicedScaleAt_[static_cast<std::size_t>(i)]
             * (1.0f + shimmerDepth_ * shimmer);
         // No separate lip-radiation stage: the wavetable is a glottal flow
@@ -1280,7 +1578,26 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         // normal-range fixed point. That keeps the filters out of denormal
         // territory on hosts that do not set flush-to-zero for us, without the
         // per-tick compare-and-select that costs a third of the voice budget.
-        const float source = sourceTilt * voicedDrive + highNoise * airDrive + denormalBias;
+        //
+        // Not const: the nasal branch below mixes its anti-resonance into the
+        // excitation in place.
+        float source = sourceTilt * voicedDrive + highNoise * airDrive + denormalBias;
+
+        // The nasal anti-resonance is in series with the whole tract, so it is
+        // applied to the excitation: one biquad per voice instead of one per
+        // formant, for exactly the same transfer function.
+        if (nasalActive)
+        {
+            const float notched = chunkZeroB0_ * source + chunkZeroB1_ * voice.nasalX1
+                                + chunkZeroB2_ * voice.nasalX2
+                                + chunkNotchA1_ * voice.nasalY1
+                                + chunkNotchA2_ * voice.nasalY2;
+            voice.nasalX2 = voice.nasalX1;
+            voice.nasalX1 = source;
+            voice.nasalY2 = voice.nasalY1;
+            voice.nasalY1 = notched;
+            source += nasalMix * (notched - source);
+        }
 
         float tract = 0.0f;
         onsetMix += onsetMixStep;
@@ -1300,6 +1617,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
                 const auto index = static_cast<std::size_t>(f);
                 full += voice.tract[index].tick(source, chunkA2_[index]);
             }
+            if (nasalActive)
+                full += voice.nasal.tick(source, chunkNasalA2_);
             tract = early + mix * (full - early);
         }
         else
@@ -1313,6 +1632,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
                 const auto index = static_cast<std::size_t>(f);
                 tract += voice.tract[index].tick(source, chunkA2_[index]);
             }
+            if (nasalActive)
+                tract += voice.nasal.tick(source, chunkNasalA2_);
         }
 
         const float output = amplitude * (tractLevel * tract + directAirLevel * highNoise * airDrive);
@@ -1371,6 +1692,7 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
         activeVoices_[static_cast<std::size_t>(activeTotal_++)] = &voice;
         singersInUse_ |= 1u << voice.singer;
     }
+    updateIntonationRoot();
 
     // Once every voice has ended and the room tail has audibly rung out, the
     // block renders exact digital silence. Advance the state that remains
@@ -1391,11 +1713,14 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
         smoothTo(smoothedGain_, blockParameters_.outputGain);
         smoothTo(smoothedBreath_, blockParameters_.breath);
         smoothTo(smoothedTension_, blockParameters_.tension);
+        smoothTo(smoothedExpression_, expression_);
         // Nothing is sounding, so the chunk-rate smoothers can snap straight to
         // their targets. Doing that keeps idle automation independent of how
         // many silent blocks the host happens to send.
         chunkStateValid_ = false;
         updateChunkState(blockParameters_, false);
+        smoothTo(voicedDynamic_, chunkResponse_.voicedGain);
+        smoothTo(airDynamic_, chunkResponse_.airGain);
 
         // The tracked tail is below the silence threshold. Clearing it once
         // prevents an inaudible delayed sample from resurfacing after Room is
@@ -1430,11 +1755,13 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             const auto index = static_cast<std::size_t>(i);
             mixLeft_[index] = 0.0f;
             mixRight_[index] = 0.0f;
-            breathAt_[index] = smoothedBreath_;
-            tensionAt_[index] = smoothedTension_;
-            voicedScaleAt_[index] = 0.88f - 0.24f * smoothedBreath_;
+            airLevelAt_[index] = smoothedBreath_ * airDynamic_;
+            tensionAt_[index] = smoothedTension_ * chunkResponse_.sourceTensionScale;
+            voicedScaleAt_[index] = (0.88f - 0.24f * smoothedBreath_) * voicedDynamic_;
             smoothedBreath_ += parameterSmoothing_ * (blockParameters_.breath - smoothedBreath_);
             smoothedTension_ += parameterSmoothing_ * (blockParameters_.tension - smoothedTension_);
+            voicedDynamic_ += parameterSmoothing_ * (chunkResponse_.voicedGain - voicedDynamic_);
+            airDynamic_ += parameterSmoothing_ * (chunkResponse_.airGain - airDynamic_);
         }
 
         for (int v = 0; v < activeTotal_; ++v)
@@ -1456,16 +1783,20 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             const float dryRight = mixRight_[index];
             smoothedRoom_ += parameterSmoothing_ * (blockParameters_.room - smoothedRoom_);
             smoothedGain_ += parameterSmoothing_ * (blockParameters_.outputGain - smoothedGain_);
+            smoothedExpression_ += parameterSmoothing_ * (expression_ - smoothedExpression_);
 
             float wetLeft = 0.0f;
             float wetRight = 0.0f;
             if (roomAudible)
                 updateRoom(dryLeft, dryRight, wetLeft, wetRight);
 
+            // Expression rides the output stage, after the room, so a swell
+            // shapes the wet tail with the dry signal instead of pumping it.
+            const float gain = smoothedGain_ * smoothedExpression_;
             const float dryScale = 1.0f - 0.12f * smoothedRoom_;
             const float wetScale = 0.72f * smoothedRoom_;
-            const float outLeft = smoothedGain_ * (dryScale * dryLeft + wetScale * wetLeft);
-            const float outRight = smoothedGain_ * (dryScale * dryRight + wetScale * wetRight);
+            const float outLeft = gain * (dryScale * dryLeft + wetScale * wetLeft);
+            const float outRight = gain * (dryScale * dryRight + wetScale * wetRight);
             blockPeakLeft = std::max(blockPeakLeft, std::abs(outLeft));
             blockPeakRight = std::max(blockPeakRight, std::abs(outRight));
 
@@ -1528,6 +1859,7 @@ void VoiceEngine::publishDisplayState(int voiceCount, float blockPeakLeft,
                          std::memory_order_relaxed);
     displayVowelY_.store(anchor.y + morph * (clampUnit(blockParameters_.vowelY) - anchor.y),
                          std::memory_order_relaxed);
+    displayDynamics_.store(smoothedDynamics_, std::memory_order_relaxed);
     activeVoiceCount_.store(voiceCount, std::memory_order_relaxed);
 }
 
@@ -1545,6 +1877,7 @@ EngineDisplayState VoiceEngine::getDisplayState() const noexcept
     state.levelRight = displayLevelRight_.load(std::memory_order_relaxed);
     state.vowelX = displayVowelX_.load(std::memory_order_relaxed);
     state.vowelY = displayVowelY_.load(std::memory_order_relaxed);
+    state.dynamics = displayDynamics_.load(std::memory_order_relaxed);
     state.sampleRate = displaySampleRate_.load(std::memory_order_relaxed);
     state.activeVoices = activeVoiceCount_.load(std::memory_order_relaxed);
     return state;

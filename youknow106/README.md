@@ -19,7 +19,20 @@ control by control in the
 [circuit-modelling research and implementation contract](Docs/circuit-modelling-research.md).
 Every constant still voiced is listed as a standing, LLM-ready research task
 with an explicit evidence gap and required output in
-[open questions](Docs/open-questions.md).
+[open questions](Docs/open-questions.md). Where the project stands against the
+commercial and open JUNO-106 emulations, on criteria that can be checked from
+what those products publish, is in the
+[comparative assessment](Docs/comparative-assessment.md); the
+[best-in-class pass](Docs/best-in-class-plan.md) records the market sweep and
+the measurements behind the most recent round of work.
+
+Its real-time cost was measured and roughly halved in that pass. On one
+2.8 GHz core at 48 kHz, six voices now cost 0.70 CPU seconds per second of
+audio with the chorus off and 1.36 with chorus II and the whole mixer engaged,
+against 1.11 and 2.38 before; with the 4× internal oversampling switched off
+the same chorus patch costs 0.45. The full table, the profile behind it and
+what a one-machine figure can and cannot support are in the comparative
+assessment.
 
 > **Listen first.** Ten [rendered demonstrations](Docs/audio/README.md) cover
 > the classic pad and PWM strings, the 16' bass, the self-oscillating filter,
@@ -118,7 +131,14 @@ with an explicit evidence gap and required output in
   mixer gains dry by `100/47` and wet by `100/39`, putting wet at `47/39` of
   dry (+1.62 dB; the p. 15 designator read places dry on R71/R73 47 kΩ and
   wet on R72/R74 39 kΩ). Those absolute gains occur after the BBDs, so they
-  do not falsely overdrive the delay-line model.
+  do not falsely overdrive the delay-line model. The one measured structural
+  property of the hardware's chorus noise — mode II's floor sitting 3.95 dB
+  above mode I's, on two independent chip populations — has a candidate
+  mechanism behind its own switch: because the mode line changes nothing but
+  the modulation rate, noise proportional to that rate predicts
+  `20·log10(1.6234799) = 4.21 dB` from the instrument's own timing network. It
+  ships **off**, because a prediction landing 0.26 dB from a measurement is a
+  lead and not evidence, and OQ-03's calibrated capture still owns it.
 - **The BBD's physical and numerical aliases are kept separate.** Its clocked
   sample-and-hold still produces the clock-domain images that belong to the
   device. A paper-motivated compact polyBLEP reconstructs only the deterministic
@@ -201,6 +221,7 @@ remain external-validation debts, is the
 | Voice sum, coupling, HPF and common VCA LEVEL | Six card outputs sum through 33 kΩ into 3.3 kΩ feedback (0.1 each). C14 precedes the shared four-position HPF; C12 then feeds the one common uPC1252H2 controlled by stored VCA LEVEL. Service Notes pp. 8 and 15, the ROM-resolved `d=b<<5` code and NEC's −5.9 mV/dB typical constant derive the nominal common-VCA law and C7 settling. | The complete coupled switched-HPF network and its switching memory are approximated; the bass-boost shelf itself is derived from the p. 15 branch (+10.50 dB DC, +1.41 dB high band, 59.41 Hz pole, within 0.016 dB of the exact two-zero/two-pole solve). The ideal 12-bit R-2R transfer assumes division by 4096; R32 now reads unambiguously as 1.5 kΩ in the complete scan, and real resistor/capacitor tolerance, rail error and uPC1252 variation still need an installed-unit sweep. |
 | BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. The mode rates are derived from the JUNO-106 timing network as 0.5532934/0.8982608 Hz. BBD write nonlinearity is fitted to its datasheet test points. At the raw held node, upstream of numerical output reconstruction, the explicit zero-order hold plus fixed per-shift residual coefficient is −3.000 dB versus DC at 12 kHz/40 kHz, or −2.972 dB versus the datasheet's 1 kHz reference. | Sweep endpoints retain a calibrated sibling measurement of the shared clock driver; hiss level/correlation, loaded support impedances and the wet-mute transient are voiced. The emitted waveform is no longer the literal raw rectangle: a deterministic-only polyBLEP after transfer loss reduces host-grid aliases before the tap pole. It is a numerical product mechanism, not MN3009 circuitry, and does not close the open physical transfer questions. Panasonic's low-resolution typical curves at 10/40/100 kHz are real evidence but have not yet been quantitatively extracted or confirmed on an installed unit. Loaded IC6 clipping remains unknown. |
 | VOLUME and output boundary | C17/C20, R54/R57, the nominal-linear 10KB×2 tracks and fixed internal wiper loading are component-derived, with independent left/right capacitor state. | Dual-gang tracking, selector/jack normaling, external loads and headphone transfer remain open. The fixed −18 dBFS RMS mapping and provisional physical reference are product policy, not an analogue circuit claim. |
+| Numerical cost | The implicit cascade takes `tanh` and `ln cosh` from one shared exponential, evaluates each stage's path-start antiderivative once per call rather than once per Newton iteration, and stops iterating when its step reaches single precision's own floor on volt-scale states rather than at an absolute threshold that floor can never cross. Settled per-card constants — the chassis gradient, the chassis-wide warm-up fraction, the counts-to-coefficient chain — leave the per-sample loops. | None of it is a hardware claim, and no constant, level, corner or law moves. The kernels are fenced against the standard library at one float ULP and the solve's residual is bounded independently; the loop-invariant work is bit-identical. The cost figures are in the [comparative assessment](Docs/comparative-assessment.md). |
 | Antialiasing, HQ and safety | These preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, Kaiser half-band decimation flat to 20 kHz at both common host rates, and state-preserving rate changes. For the chorus, BBD-generated aliasing (BGA) means the physical-model images at `k*Fclock ± f`; simulation-generated aliasing (SGA) means the extra folds created by the internal sample grid. The bounded polyBLEP scheduler has 54 slots and uses at most 50 in the tested worst case, including multiple BBD edges in one internal sample. | They have no hardware counterpart. The BBD reconstruction is deterministic-only, leaves noise uncorrected, and clears its grid-specific correction slots on an internal-rate change while physical BBD and RNG state survive. It strongly reduces SGA; it does not preserve every BGA component exactly at LQ, so the measured HQ/LQ limits are reported rather than hidden behind a generic “transparent” claim. The idle-only quality change and short safety fades are product mechanisms. |
 
 The strict [BBD transfer/clock-law
@@ -520,7 +541,10 @@ There are six JUCE-free suites, plus the plug-in suite when JUCE is enabled:
   Runge-Kutta solve of the same ODE at 16x *and* against the closed-form
   `1/(4 − k)`; the note timer against integer division; the cutoff law against
   the instrument's two service calibration anchors; and the delay line against
-  its part's datasheet delay range.
+  its part's datasheet delay range. It also holds the cascade's two elementary
+  functions to one float ULP of the standard library, and bounds the residual
+  the implicit solve leaves behind — measured by quadrature on `std::tanh`,
+  which shares no code with the solver's own divided difference.
 - **`YouKnow106.Engine`** checks what the instrument does when it is played:
   that RANGE transposes by octaves, that the sub is an octave down, that the
   alias floor stays below −55 dB, that the ramp's harmonics follow `1/n`, that a

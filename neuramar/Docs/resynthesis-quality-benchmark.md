@@ -26,12 +26,156 @@ instrument resemblance are therefore reported separately.
 
 ## Measured analytic-fixture results
 
-Source: `Tests/ResynthesisQualityTests.cpp`, run through
-`ctest --test-dir build-dsp`. Every figure below is printed by that binary and
+Source: `Tests/ResynthesisQualityTests.cpp` and `Tests/NeuramarEngineTests.cpp`,
+run through `ctest --test-dir build-dsp`. Every figure below is printed by a test
+binary and
 is reproducible from a clean checkout. The fixtures are analytic, the targets
 are generated independently at every rendered pitch, and the machine was an
 x86-64 Linux container; absolute timings will differ elsewhere, ratios much
 less so.
+
+### Root-note reconstruction
+
+Added in 1.3. This is the measurement the document previously specified and
+never reported: how close the fitted model's render is to the sound that was
+dropped in, at the pitch it was analysed at. Two fixtures are learned, then
+rendered at the source pitch under the frozen `Match` state described below —
+full Imprint, Core, Air, and Bone; Mutation, Orbit, Noise, and spread off;
+neutral tone controls; zero added attack; Body Lock at the preregistered 0.65.
+Onsets are aligned at sample zero, the reference is conditioned the way
+`learn()` conditions it, and one RMS scalar is applied to the render. Metric
+definitions are the ones in *Objective measurements* below.
+
+The `16384/4096` resolution is omitted: its window is 341 ms, which is longer
+than the useful part of either fixture. The three shorter pairs are reported
+individually as required.
+
+The four columns per fixture are the sequential solve this measurement first
+found (a), the joint solve (b), the joint solve with a halved onset aperture
+(c), and the widened body representation (d). Each change is described in its
+own section below.
+
+| Metric, mean over the three resolutions | s/f (a) | s/f (b) | s/f (c) | s/f (d) | n+t (a) | n+t (b) | n+t (c) | n+t (d) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Spectral convergence | 0.0412 | 0.0392 | 0.0365 | **0.0364** | 0.0571 | 0.0594 | 0.0757 | 0.0754 |
+| Log-magnitude MAE | 10.75 dB | 10.76 dB | 10.76 dB | **10.29 dB** | 5.31 dB | 5.33 dB | 5.40 dB | **5.22 dB** |
+| Residual ERB-band power MAE | 5.00 dB | 4.73 dB | 4.69 dB | 5.00 dB | 3.54 dB | 3.54 dB | 3.55 dB | **2.35 dB** |
+| Cumulative-energy MAE, 1/5/10/20/50 ms | 3.16 dB | 3.45 dB | **1.32 dB** | 1.40 dB | 0.87 dB | 1.09 dB | **0.34 dB** | 0.46 dB |
+| Cumulative energy at 1 ms | -12.46 dB | -13.31 dB | **-5.66 dB** | -5.84 dB | -2.96 dB | -3.27 dB | **+1.34 dB** | +1.37 dB |
+| T10-T90 attack-time error | +1 ms | +1 ms | 0 ms | 0 ms | 0 ms | 0 ms | -5 ms | -5 ms |
+
+Per-resolution figures for tree (c), the last state before the body widening:
+
+| Resolution `(window, hop)` | s/f convergence | s/f log MAE | n+t convergence | n+t log MAE |
+| --- | --- | --- | --- | --- |
+| (256, 64) | 0.0578 | 12.06 dB | 0.1558 | 4.96 dB |
+| (1024, 256) | 0.0236 | 8.26 dB | 0.0311 | 4.86 dB |
+| (4096, 1024) | 0.0280 | 11.95 dB | 0.0401 | 6.38 dB |
+
+Three of these numbers are worse than the instrument's documentation implies and
+are recorded here without softening.
+
+The **log-magnitude MAE of 10.75 dB on the source/filter fixture** is the
+largest. That fixture alternates odd and even partial levels by about 25 dB, and
+the log term is evaluated on every bin either signal puts above -80 dB relative
+to the reference peak, so it is dominated by how well the quiet even partials
+and the between-partial floor are reproduced rather than by the loud ones. The
+noise+transient fixture, whose spectrum has no such contrast, scores 5.31 dB on
+the identical metric.
+
+The **residual ERB MAE of 5.00 dB on the source/filter fixture** is worse than
+on the fixture that actually contains noise. That is not a paradox: the
+source/filter fixture is noise-free, so its residual is only analysis leakage
+between the partials, and the render puts a fitted Air layer there. Neuramar
+invents Air on a source that has none. The floor at 60 dB below the loudest
+observed residual cell keeps this from being an artefact of comparing two
+silences.
+
+The **cumulative energy at 1 ms was 12.46 dB too high on the source/filter
+fixture** when this was first measured — the render was louder than the source
+over the first millisecond, converging to -2.75 dB at 5 ms, -0.59 dB at 10 ms
+and under 0.01 dB by 20 ms. The analysis aperture that measures the attack was
+21 ms wide at 220 Hz, so the first frame's amplitudes described an average of
+the first 21 ms and the renderer applied them from sample zero. Halving that
+aperture over the first 40 ms brings it to -5.66 dB; see *Onset aperture* below.
+
+Regression guards on these rows: 0.15 convergence, 13 dB log-magnitude MAE,
+7 dB residual ERB MAE, 2 dB early-energy MAE, and 8 ms attack error. The
+early-energy guard is the one that is tight enough to fail: a four-period
+aperture measures 3.45 dB on the source/filter fixture. The rest are bounds on
+numbers that had never been measured, not acceptance gates. The gates in
+*Proposed target gates* remain targets.
+
+### Onset aperture
+
+Added in 1.3, after the joint solve made it possible. The analysis grid reserves
+48 of its 128 frames for the first 120 ms, 2.5 ms apart, and then measured every
+one of them through a four-period aperture — 21 ms at 220 Hz — so the frame
+spacing described a resolution the measurement did not have. The four-period
+rule exists to keep adjacent partials' Hann main lobes apart, and that is a
+constraint on a sequential projection, not on a joint solve. Frames inside the
+first 40 ms therefore ask for two periods instead of four; the power-of-two
+aperture bank means this is 512 samples rather than 1024 at a mid pitch, and
+unchanged at pitches where four periods already fitted in 512.
+
+| Measurement | four periods | two periods over the first 40 ms |
+| --- | --- | --- |
+| source/filter cumulative energy at 1 ms | -13.31 dB | **-5.66 dB** |
+| source/filter cumulative-energy MAE | 3.45 dB | **1.32 dB** |
+| source/filter spectral convergence | 0.0392 | **0.0365** |
+| source/filter T10-T90 error | +1 ms | **0 ms** |
+| noise+transient cumulative energy at 1 ms | -3.27 dB | **+1.34 dB** |
+| noise+transient cumulative-energy MAE | 1.09 dB | **0.34 dB** |
+| noise+transient spectral convergence | 0.0594 | 0.0757 |
+| noise+transient T10-T90 error | 0 ms | -5 ms |
+| `learn()` on a 1.6 s / 44.1 kHz source | 0.765 s | 0.760 s |
+
+The trade is visible and is recorded rather than argued away. The noise+transient
+fixture's spectral convergence gets worse, and all of that degradation is at the
+`(256, 64)` resolution: 0.1063 to 0.1558, while `(1024, 256)` and `(4096, 1024)`
+move by less than 0.001. That resolution's frames are 5.3 ms long, so it is
+measuring the transient itself — a 3 ms broadband noise burst whose waveform the
+renderer draws an independent realisation of and can never match. The same
+fixture's T10-T90 error moves from 0 to -5 ms: the shorter aperture attributes
+more of the burst to the harmonic branch, whose partials are phase-aligned at
+note-on, so the rendered attack is sharper than the source's rather than softer.
+Applying the shorter aperture over the whole 120 ms dense region instead of the
+first 40 ms did not improve the attack any further and made the same fixture's
+residual ERB MAE worse (3.55 to 3.62 dB), so it is confined to the attack.
+
+### Automatic root detection
+
+Added in 1.3. The one-click protocol below treats automatic root error as a
+headline result and proposes a 98%-correct-semitone gate, and until this was
+added the suite tested four hand-picked cases. The corpus is one 0.62 s fixture
+per analytic source class, each with a known fundamental:
+
+| Class | Fundamental | Detected | MIDI error |
+| --- | --- | --- | --- |
+| Exponential harmonic roll-off | 220.000 Hz | 219.993 Hz | 0 |
+| Roll-off, low register | 61.735 Hz | 61.732 Hz | 0 |
+| Roll-off, high register | 987.767 Hz | 993.628 Hz | 0 |
+| Odd/even with missing fundamental | 146.832 Hz | 146.811 Hz | 0 |
+| Two narrow fixed formants | 110.000 Hz | 110.009 Hz | 0 |
+| Stiff string, `B = 4.0e-4` | 329.628 Hz | 329.687 Hz | 0 |
+| Harmonics plus broadband noise | 196.000 Hz | 196.125 Hz | 0 |
+| Stable 5 Hz / 35-cent vibrato | 261.626 Hz | 261.165 Hz | 0 |
+| Time-moving formant | 174.614 Hz | 174.605 Hz | 0 |
+| Delayed partial onsets, broadband transient | 82.407 Hz | 82.405 Hz | 0 |
+| Saw through a two-octave resonant sweep | 130.813 Hz | 130.813 Hz | 0 |
+| 3:1 phase modulation, index 5.5 | 233.082 Hz | 233.108 Hz | 0 |
+
+Twelve of twelve correct, no octave errors. This step found no defect: it
+converted an untested claim into a measured one and left a regression gate
+behind (0.90 correct-semitone, 0.10 octave-error). That is the honest result and
+it is recorded as such rather than dressed up as a fix.
+
+It is also not the 98% gate. These are analytic fixtures with a defined
+fundamental; the proposed gate is over real recordings, where chords,
+percussion, and unstable pitch have no single right answer, and it remains a
+target. The high-register row is the one worth watching: 993.6 Hz against
+987.8 Hz is 10 cents, comfortably inside the semitone but the largest relative
+error in the set.
 
 ### Held-out source/filter family
 
@@ -42,11 +186,16 @@ between each rendered partial and the independently generated target after
 removing one median level offset; `parity error` is the error in the mean
 odd-minus-even partial level.
 
-| Metric (mean over -24 … +24 st) | 1.0 | 1.1 | 1.2 |
-| --- | --- | --- | --- |
-| Body-Locked shape MAE | 3.495 dB | 2.898 dB | **2.790 dB** |
-| Pitch-following shape MAE (reference) | 6.453 dB | 6.453 dB | 6.453 dB |
-| Excitation parity error | 0.609 dB | 0.898 dB | 1.043 dB |
+| Metric (mean over -24 … +24 st) | 1.0 | 1.1 | 1.2 | 1.3 |
+| --- | --- | --- | --- | --- |
+| Body-Locked shape MAE | 3.495 dB | 2.898 dB | 2.790 dB | **2.714 dB** |
+| Pitch-following shape MAE (reference) | 6.453 dB | 6.453 dB | 6.453 dB | 6.449 dB |
+| Excitation parity error | 0.609 dB | 0.898 dB | 1.043 dB | **0.923 dB** |
+
+The 1.3 column is the joint harmonic solve. Its parity result is the first
+reversal of a three-release drift: 1.1 and 1.2 both traded excitation parity for
+envelope accuracy, and the joint solve recovers 0.120 dB of it while improving
+shape by a further 0.076 dB. See *Joint harmonic estimation* below.
 
 Every one of the ten offsets improved. The largest gains are in the middle of
 the matrix (-7 st: 3.38 → 2.64 dB; +7 st: 2.49 → 1.96 dB; +12 st: 2.06 → 1.69 dB)
@@ -65,6 +214,137 @@ measured immediately before and immediately after the 1.2 render changes, the
 aggregate moved from 2.78976 dB to 2.78975 dB. The 1.1 column is reproduced as
 it was published; the small difference from 1.2 predates this release and was
 not re-derived here.
+
+### Body capacity: 16 Air bands and 12 Bone modes
+
+Added in 1.3, as model format version 5. The Air filterbank was eight bands
+log-spaced from 80 Hz to 16 kHz, which is 1.03 octaves each: a breath formant, a
+scrape peak, and a hiss shelf inside one band are one number. It is now sixteen
+bands at 0.51 octaves. The modal branch was six persistence-scored candidates,
+which cannot describe a struck body; it is now twelve.
+
+| Measurement | 8 bands / 6 modes | 16 bands / 12 modes |
+| --- | --- | --- |
+| noise+transient residual ERB-band power MAE | 3.55 dB | **2.35 dB** |
+| noise+transient log-magnitude MAE | 5.40 dB | **5.22 dB** |
+| source/filter log-magnitude MAE | 10.76 dB | **10.29 dB** |
+| source/filter residual ERB-band power MAE | 4.69 dB | 5.00 dB |
+| Struck-body active-mode recall | 0.60 (capacity bound) | **0.90** |
+| Struck-body active-mode precision | — | 0.90 |
+| Struck-body modal frequency error | — | 8.09 cents |
+| `learn()` on a 1.6 s / 44.1 kHz source | 0.760 s | 0.768 s |
+
+The 1.19 dB fall in residual ERB MAE on the fixture that actually contains noise
+is what this change is for. The source/filter fixture moves 0.31 dB the other
+way, and that is the same finding as before in a new form: that fixture has no
+noise at all, so its residual is analysis leakage, the render fits an Air layer
+to it either way, and a finer filterbank follows the leakage more closely. More
+resolution cannot help a layer that should not be there.
+
+The modal rows come from a new fixture with ten known inharmonic modes at ratios
+between 1.43 and 13.47, learned once and compared against the model's selected
+candidates. Six slots cap recall at 0.6 arithmetically, so the 0.70 guard on
+that row is what holds the modal branch open.
+
+Cost, measured on this container immediately before and after the change so the
+two runs see the same machine load. These are not comparable with the 1.2 column
+of the *Cost* table below, which was taken on an unloaded container.
+
+| Benchmark scenario, 8 s at 48 kHz / 256-sample blocks | 8/6 | 16/12 |
+| --- | --- | --- |
+| Low chord, C1 root, 8 voices | 1.998 s (4.0x) | 2.213 s (3.6x) |
+| Mid chord, C3 root, 8 voices | 1.063 s (7.5x) | 1.219 s (6.6x) |
+| High chord, C6 root, 8 voices | 0.706 s (11.3x) | 0.835 s (9.6x) |
+| High chord with Air and Bone at zero | 0.277 s (28.9x) | 0.287 s (27.9x) |
+| Note-on at C1 | 20.0 us | 19.5 us |
+
+The body layers cost 11% to 18% more per voice; the case with both layers muted
+and the two note-on rows do not move, which is what confirms the cost is in the
+sixteen biquads and twelve oscillators and not somewhere unintended. Model size
+grows from about 35 KiB to about 41 KiB and remains inside the 128 KiB decoder
+bound.
+
+### Voice ceiling
+
+Raised from 8 to 16 in 1.3. The per-voice render path is unchanged, so this is
+additive: the eight-voice benchmark rows do not move, and the sixteen-voice row
+costs what sixteen voices cost.
+
+| Benchmark scenario, 8 s at 48 kHz / 256-sample blocks | 8-voice ceiling | 16-voice ceiling |
+| --- | --- | --- |
+| Low chord, C1 root, 8 voices | 2.213 s (3.6x) | 2.129 s (3.8x) |
+| Mid chord, C3 root, 8 voices | 1.219 s (6.6x) | 1.232 s (6.5x) |
+| High chord, C6 root, 8 voices | 0.835 s (9.6x) | 0.823 s (9.7x) |
+| Mid cluster, C3 root, 16 voices | not renderable | 2.065 s (3.9x) |
+| Note-on at C1 | 19.5 us | 19.7 us |
+
+The eight-voice differences are container-load noise in both directions. The
+sixteen-voice row is 1.7x the eight-voice cost at the same root rather than 2x,
+because the model's control-rate evaluation and its band design are shared work
+that a denser cluster amortises. A twelve-note held cluster — a four-note chord
+added under a sustain pedal while its predecessor still rings — now sounds
+twelve voices instead of stealing four, and that is asserted directly in
+`Tests/NeuramarEngineTests.cpp`.
+
+Versions 2, 3, and 4 keep an exact read path. Their eight bands and six modes
+load into the low slots with their stored centre frequencies and ratios intact;
+the added slots are given a valid layout and decoded as silence — an amplitude
+output of `exp(-16)` with no network contribution, and a Bone reliability of
+zero, which is what the renderer already tests to skip a mode. The decoder rows
+are gathered through one index map, so a stored memory evaluates to the same
+frame it always did. That is asserted directly: a crafted version-4 payload is
+loaded, re-serialised in the current format, reloaded, and compared frame by
+frame against the migrated model.
+
+### Joint harmonic estimation
+
+Added in 1.3. The analysis previously estimated partial 1, subtracted it from
+the waveform frame, estimated partial 2 from what was left, and so on. That is
+only the least-squares answer when the partial bases are orthogonal to each
+other, and at an aperture of a few fundamental periods they are not: a Hann main
+lobe is four bins wide, so an aperture of `P` fundamental periods separates
+adjacent partials by `P/2` main-lobe half-widths. The pitch-adaptive aperture
+targets four periods and rounds up to a power of two, which lands between four
+and eight, so adjacent main lobes touch and each subtraction leaks into its
+neighbours. The damage falls on quiet partials beside loud ones, which is where
+it is most audible.
+
+The pass is now repeated three times with each partial's current estimate added
+back before it is re-solved against the others' residual — Gauss-Seidel on the
+joint normal equations, which converges to the joint least-squares solution
+without forming or factorising the `2N x 2N` system. The first sweep is
+bit-identical to the old behaviour because every estimate it adds back is still
+zero, and only the change in each estimate is written back, so the stored
+residual never accumulates an add/subtract rounding pair.
+
+Refinement is bought only where it is needed. Past about eight periods the bases
+are orthogonal to working precision, so the parallel 4096-sample modal aperture
+— eighteen periods at a mid pitch, and the most expensive frame in the pass —
+keeps its single sweep. Applying refinement there as well cost 2.2x on
+`learn()` and made the noisy fixture's residual ERB MAE *worse* (3.54 → 3.66 dB)
+rather than better, which is what the orthogonality argument predicts.
+
+| Case | sequential | joint |
+| --- | --- | --- |
+| `learn()` on a 1.6 s / 44.1 kHz source | 0.609 s | 0.765 s |
+| Excitation parity error | 1.043 dB | **0.923 dB** |
+| Held-out Body-Locked shape MAE | 2.790 dB | **2.714 dB** |
+| Root spectral convergence, source/filter | 0.0412 | **0.0392** |
+| Root residual ERB MAE, source/filter | 5.00 dB | **4.73 dB** |
+| Root cumulative-energy MAE, source/filter | 3.16 dB | 3.45 dB |
+
+The `learn()` row is this container's own before/after measurement of the same
+scratch fixture, best of three, and is not comparable with the 0.557 s figure
+published for 1.1 on another machine; the pre-change number on this container is
+0.609 s. The 26% increase is bounded and offline.
+
+The one row that moved the wrong way is early cumulative energy, and it moved by
+0.28 dB against a 12.5 dB error that the joint solve did not create. That error
+is the analysis aperture, not the solve: the aperture is 21 ms at 220 Hz, so the
+first frame's amplitudes describe an average of the first 21 ms and the renderer
+applies them from sample zero. Removing the four-period constraint is what the
+joint solve is *for*; shortening the aperture is the next step and is where it
+is expected to pay.
 
 ### Stiff-string partial placement
 
@@ -173,6 +453,15 @@ the new stiff-string estimation pass, which 1.0 did not perform at all. Neither
 row moved in 1.2: the analysis and fit path is offline and was deliberately left
 alone, because only `NeuramarEngine::process()` and `noteOn()` run on the audio
 thread.
+
+The 1.3 movements in both tables are reported in the per-change sections above
+rather than folded into these columns: `learn()` went from 0.609 s to 0.768 s
+across the joint solve, the shortened onset aperture, and the widened body,
+measured on this container before and after each change. The render rows moved
+only with the body widening, and the 1.3 figures for them are in *Body capacity*
+and *Voice ceiling*. They are deliberately not merged into the 1.0/1.1/1.2
+columns, which were taken on an unloaded container and are not comparable with a
+container shared between six concurrent builds.
 
 `Tests/EngineBenchmark.cpp` covers the same render path with a longer musical
 workload. It is built with the suite but not registered with CTest, so it never

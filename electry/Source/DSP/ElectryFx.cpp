@@ -202,6 +202,9 @@ void ElectryFx::GainChannel::reset() noexcept
     ampVoice.reset();
     interstage.reset();
     bias = 0.0f;
+    sag = 0.0f;
+    transformerHighpass.reset();
+    flux.reset();
     for (auto& section : cabinet)
         section.reset();
 }
@@ -252,6 +255,11 @@ void ElectryFx::prepare(double sampleRate)
     // 45 ms on the grid-bias follower: long enough that a held chord shifts the
     // operating point, short enough to recover between chugs.
     biasCoefficient_ = 1.0f - std::exp(-1.0f / (0.045f * oversampledRate_));
+    // The reservoir discharges far faster than it recharges, which is the
+    // whole character of sag: the note blooms, ducks, and comes back.
+    sagAttack_ = 1.0f - std::exp(-1.0f / (0.070f * oversampledRate_));
+    sagRelease_ = 1.0f - std::exp(-1.0f / (0.400f * oversampledRate_));
+    fluxCoefficient_ = transformerFluxCoefficient(oversampledRate_);
 
     for (auto& channel : gain_)
     {
@@ -358,6 +366,9 @@ void ElectryFx::designFilters() noexcept
         // metal rhythm tone wants out of the way.
         channel.ampHighpass.setHighpass(52.0f, 0.80f, rate);
         channel.ampVoice.setPeaking(850.0f, 0.75f, 4.0f, rate);
+        // A transformer passes no DC, and this also keeps the bias drift's
+        // residue out of the flux integrator in front of the core model.
+        channel.transformerHighpass.setHighpass(26.0f, 0.707f, rate);
 
         // Cabinet. A single one-pole - the previous model - has neither the
         // thump, the mid character nor the steep top-end death of a real sealed
@@ -413,6 +424,31 @@ void ElectryFx::setParameters(const FxParameters& parameters) noexcept
     targetParameters_.room = sanitiseMix(parameters.room);
 }
 
+float ElectryFx::transformerFluxCoefficient(float sampleRate) noexcept
+{
+    // The primary-inductance corner. Above it the one-pole is the voltage's
+    // integral normalised - unity at DC, falling as 1/f - so the core's
+    // volt-second limit becomes a level limit that falls with frequency;
+    // below it a transformer cannot hold the flux at all.
+    return std::exp(-twoPi * 45.0f / std::max(sampleRate, 1.0f));
+}
+
+float ElectryFx::transformerCore(OnePole& flux, float input,
+                                 float coefficient) noexcept
+{
+    // A core saturates at a flux limit, and flux is the integral of the
+    // voltage, so the limit is a volt-second one: at the same level the low
+    // end reaches it long before the top does. What the core cannot carry is
+    // subtracted back out, which leaves the stage transparent well above the
+    // corner and compressing and thickening underneath it.
+    constexpr float fluxLimit = 0.55f;
+    constexpr float inverseLimitSquared = 1.0f / (fluxLimit * fluxLimit);
+    const float held = flux.process(input, coefficient);
+    const float carried = held
+        / std::sqrt(1.0f + held * held * inverseLimitSquared);
+    return input - (held - carried);
+}
+
 void ElectryFx::updateDriveConstants() noexcept
 {
     // A pedal's gain range, and two amplifier stages whose drives rise
@@ -465,7 +501,41 @@ float ElectryFx::ampStage(GainChannel& channel, float input) noexcept
     // which is why a cascaded amplifier saturates smoothly instead of
     // accumulating fizz.
     stage = channel.interstage.process(stage, interstageCoefficient_);
-    stage = triode(stage * ampDriveSecond_ + bias) - triode(bias);
+
+    // Supply sag. The second stage stands in for the power stage, so it is
+    // where the rail droop is charged. A loud passage draws current the supply
+    // cannot hold up and the plate voltage falls - real amplifiers measure
+    // around 350 V down to around 250 V within a tenth of a second, recovering
+    // over three to six tenths - so the follower attacks in about 70 ms and
+    // recovers over about 400 ms.
+    //
+    // What the rail sets is the *headroom*, not the gain: `droop * triode(u /
+    // droop)` leaves the small-signal slope exactly where it was and lowers
+    // the ceiling in proportion. That is why a chug blooms and then ducks - the
+    // follower has not caught up when the pick lands - and why a quiet passage
+    // is bit-for-bit what it was without the feature, since a droop of one is
+    // the identity.
+    // What discharges the reservoir is the current the stage draws, which
+    // follows its *output* rather than its grid signal - so the follower reads
+    // the stage's own last sample, not the drive. Bounded at 28%, which is the
+    // 350 V to 250 V a real supply measures.
+    const float droop = 1.0f - 0.28f * channel.sag / (0.30f + channel.sag);
+    stage = droop * (triode(stage * ampDriveSecond_ / droop + bias)
+                     - triode(bias));
+    const float rectified = stage < 0.0f ? -stage : stage;
+    channel.sag += (rectified > channel.sag ? sagAttack_ : sagRelease_)
+                 * (rectified - channel.sag);
+
+    // The output transformer. Its core saturates at a flux limit, and flux is
+    // the integral of the voltage, so the limit is a volt-second one: at the
+    // same level the low end reaches it long before the top does. The one-pole
+    // is that integral normalised - unity at DC, falling as 1/f above the
+    // primary-inductance corner - and the excess the core cannot carry is
+    // subtracted back out, which leaves the stage transparent well above the
+    // corner and compressing and thickening underneath it. The high-pass in
+    // front is the transformer's own inability to pass DC.
+    stage = channel.transformerHighpass.process(stage);
+    stage = transformerCore(channel.flux, stage, fluxCoefficient_);
 
     for (auto& section : channel.cabinet)
         stage = section.process(stage);

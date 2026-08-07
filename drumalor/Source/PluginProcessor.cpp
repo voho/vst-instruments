@@ -168,6 +168,8 @@ DrumalorAudioProcessor::DrumalorAudioProcessor()
     busDriveParameter = parameters.getRawParameterValue (drumalor::parameters::busDrive);
     busCompressionParameter =
         parameters.getRawParameterValue (drumalor::parameters::busCompression);
+    bleedParameter = parameters.getRawParameterValue (drumalor::parameters::bleed);
+    jassert (bleedParameter != nullptr);
     jassert (outputParameter != nullptr);
     jassert (humaniseParameter != nullptr);
     jassert (busDriveParameter != nullptr);
@@ -269,6 +271,11 @@ DrumalorAudioProcessor::createParameterLayout()
             juce::jlimit (0, drumalor::chokeGroupCount,
                           metadata.defaultParameters.chokeGroup)));
     }
+
+    // Appended after everything that existed before it, for the same host
+    // parameter index stability, and bypassed at its 0 % default.
+    result.push_back (makePercentParameter (
+        drumalor::parameters::bleed, "Kit Bleed", 0.0f));
 
     return { result.begin(), result.end() };
 }
@@ -373,7 +380,13 @@ void DrumalorAudioProcessor::dispatchMidiData (const juce::uint8* data,
     else if (kind == 0xb0u && numBytes >= 3)
     {
         const auto controller = data[1] & 0x7fu;
-        if (controller == 120u || controller == 123u)
+        // CC 4 is the hi-hat pedal on every electronic kit: 0 is fully open and
+        // 127 is tightly closed. It arrives here at the controller event's own
+        // sample offset, because processBlock splits the engine's rendering at
+        // every MIDI event, so a pedal move lands where the player put it.
+        if (controller == 4u)
+            engine.setHiHatPedal (static_cast<float> (data[2] & 0x7fu) / 127.0f);
+        else if (controller == 120u || controller == 123u)
             engine.allSoundsOff();
     }
 }
@@ -477,6 +490,7 @@ void DrumalorAudioProcessor::updateEngineParameters() noexcept
     kit.humanise = humaniseParameter->load (std::memory_order_relaxed);
     kit.busDrive = busDriveParameter->load (std::memory_order_relaxed);
     kit.busCompression = busCompressionParameter->load (std::memory_order_relaxed);
+    kit.bleed = bleedParameter->load (std::memory_order_relaxed);
     engine.setKitParameters (kit);
 
     engine.setOutputGain (juce::Decibels::decibelsToGain (

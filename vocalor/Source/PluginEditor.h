@@ -190,8 +190,11 @@ private:
     VocalorKnob breathKnob { "BREATH" };
     VocalorKnob resonanceKnob { "RESONANCE" };
     VocalorKnob tensionKnob { "TENSION" };
+    VocalorKnob nasalKnob { "NASAL" };
     VocalorKnob vibratoKnob { "VIBRATO" };
     VocalorKnob humanizeKnob { "HUMANIZE" };
+    VocalorKnob dynamicsKnob { "DYNAMICS" };
+    VocalorKnob intonationKnob { "INTONATION" };
     VocalorKnob glideKnob { "GLIDE" };
     VocalorKnob spreadKnob { "SPREAD" };
     VocalorKnob roomKnob { "ROOM" };
@@ -216,6 +219,9 @@ private:
     std::unique_ptr<SliderAttachment> tensionAttachment;
     std::unique_ptr<SliderAttachment> vibratoAttachment;
     std::unique_ptr<SliderAttachment> humanizeAttachment;
+    std::unique_ptr<SliderAttachment> nasalAttachment;
+    std::unique_ptr<SliderAttachment> dynamicsAttachment;
+    std::unique_ptr<SliderAttachment> intonationAttachment;
     std::unique_ptr<SliderAttachment> glideAttachment;
     std::unique_ptr<SliderAttachment> spreadAttachment;
     std::unique_ptr<SliderAttachment> roomAttachment;

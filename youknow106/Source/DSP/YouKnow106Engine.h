@@ -153,6 +153,12 @@ struct EngineParameters
     // ships and the frequency-linear hypothesis waits behind this switch for
     // the calibrated capture OQ-01 still requests.
     bool enableChorusHyperbolicSweep { false };
+    // Off by default: the 3.95 dB II-I noise delta measured on two chip
+    // populations is real, and a mechanism proportional to modulation rate
+    // predicts it to 0.26 dB from this instrument's own mode-rate ratio -- but
+    // it remains a candidate until the calibrated same-chain capture OQ-03
+    // asks for confirms or kills it. See Chorus::rateProportionalNoiseGain.
+    bool enableChorusRateNoise { false };
     bool enableElectrolyticC14Nonlinearity { true };
 };
 
@@ -305,6 +311,30 @@ public:
         [[nodiscard]] static float loopGain(float panelPosition) noexcept;
         [[nodiscard]] static float inputCompensation(float feedback) noexcept;
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
+    };
+
+    // The two elementary functions the transconductor cascade runs on, and
+    // the helper they share. Both are functions of the same exponential --
+    // with `e = exp(-2|x|)`, `tanh x = sign(x)(1-e)/(1+e)` and
+    // `ln cosh x = |x| + ln(1+e) - ln 2` -- so evaluating `e` once serves the
+    // pair's transfer and its antiderivative together. That matters because
+    // the implicit solve calls them tens of times per stage per sample: the
+    // filter is 65% of the engine's cost and almost all of that is these two.
+    //
+    // `ln(1+e)` is taken on `[0, 1]` through `2 atanh(e/(2+e))`, whose series
+    // in `s^2` converges quickly there (`s <= 1/3`); the double-precision core
+    // keeps it inside one float ULP of `std::log1p`. These are numerical
+    // kernels, not circuit laws -- they compute the same functions the model
+    // has always used, and `Tests/YouKnow106CircuitTests.cpp` fences their
+    // agreement with the standard library rather than trusting that claim.
+    struct CascadeKernels
+    {
+        [[nodiscard]] static float log1pUnitInterval(float u) noexcept;
+        [[nodiscard]] static float tanh(float x) noexcept;
+        [[nodiscard]] static float lnCosh(float x) noexcept;
+        // Beyond this magnitude tanh is 1 to within half a float ULP, so the
+        // kernel returns the rail rather than exponentiating toward it.
+        static constexpr float tanhRailMagnitude = 10.0f;
     };
 
     // Where the transconductor's own control current stops following the
@@ -984,6 +1014,13 @@ private:
         int lastVoiceMidi { -1 };
         float glideSemitonesPerScan { 0.0f };
         float filterG { 0.05f };
+        // The counts and loop gain `filterG` was last solved for. Both are
+        // compared for exact equality, so this memo cannot return anything
+        // the chain would not have recomputed; a sentinel that no real
+        // count can equal forces the first solve. The internal rate is not
+        // part of the key because a rate change rebuilds voice state.
+        float cutoffChainCounts { -1.0e30f };
+        float cutoffChainFeedback { -1.0e30f };
         // Converter counts and control voltages, before and after the sample
         // and hold's own slew. The staircase the scan writes is smoothed by a
         // real time constant on each hold capacitor, so modulation arrives
@@ -1349,6 +1386,10 @@ private:
     // Deterministic physical circuit state: voice card thermal warmup timer (s)
     // and power supply rail droop (V) under heavy polyphonic loading.
     float thermalWarmupSeconds_ { 0.0f };
+    // 1 - exp(-t/900), advanced once per internal sample beside the timer
+    // above. It is chassis-wide, so recomputing it per voice recomputed the
+    // same number six times.
+    float thermalWarmupFraction_ { 0.0f };
     float powerSupplyDroop_ { 0.0f };
     // Settled once per block beside the converter hold coefficients, because
     // it depends on the internal rate the pending quality switch may just have

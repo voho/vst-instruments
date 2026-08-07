@@ -47,6 +47,12 @@ constexpr float amplitudeFloor = 1.12535175e-7f; // exp(-16)
 constexpr int analysisFrameCount = 128;
 constexpr int onsetAnalysisFrameCount = 48;
 constexpr float denseOnsetSeconds = 0.120f;
+// The dense onset region reserves 48 frames for the first 120 ms, 2.5 ms apart.
+// The attack itself occupies the first third of that, and only there is the
+// halved analysis aperture worth its lost frequency resolution: measured over
+// the whole 120 ms it makes a noisy source's mid-band residual worse without
+// improving the attack any further.
+constexpr float shortApertureSeconds = 0.040f;
 constexpr std::size_t spectrumSize = 4096;
 constexpr int trainingEpochCount = 180;
 constexpr std::size_t airFitCellCount = 48;
@@ -234,7 +240,7 @@ void fft(std::vector<Complex>& values)
 }
 
 [[nodiscard]] std::size_t transientAnalysisWindowSize(
-    float fundamentalHz, double sampleRate) noexcept
+    float fundamentalHz, double sampleRate, double periods = 4.0) noexcept
 {
     if (!(fundamentalHz > 0.0f) || !std::isfinite(fundamentalHz))
         return spectrumSize;
@@ -242,9 +248,13 @@ void fft(std::vector<Complex>& values)
     // Four fundamental periods give the weighted sinusoidal solve enough
     // information while avoiding the fixed 85 ms aperture that used to blur
     // every attack. Power-of-two apertures keep the deterministic analysis
-    // bank bounded to 10.7, 21.3, 42.7, or 85.3 ms at 48 kHz.
+    // bank bounded to 10.7, 21.3, 42.7, or 85.3 ms at 48 kHz. The four-period
+    // rule exists to keep adjacent partials' Hann main lobes apart, which is a
+    // constraint on a sequential projection and not on the joint solve; onset
+    // frames therefore ask for two, which is the shortest aperture the shared
+    // 512-sample floor and the Air fit design bank both support.
     const auto desired = static_cast<std::size_t>(std::ceil(
-        4.0 * sampleRate / static_cast<double>(fundamentalHz)));
+        periods * sampleRate / static_cast<double>(fundamentalHz)));
     std::size_t windowSize = 512;
     while (windowSize < desired && windowSize < spectrumSize)
         windowSize *= 2;
@@ -357,86 +367,136 @@ void fft(std::vector<Complex>& values)
         / (static_cast<float>(spectrumSize)
            * std::max(windowSquareSum, 1.0e-8f));
 
-    // Sequential weighted least-squares projections remove each harmonic from
-    // the actual waveform frame. The 2x2 solve handles the finite/windowed
-    // cosine/sine basis without assuming perfect orthogonality.
+    // Projecting at the stretched partial position is what lets a stiff source
+    // keep clean amplitudes; a harmonic source is unaffected because the ratio
+    // is then exactly the harmonic number.
+    std::array<double, NeuralModel::harmonicCount> partialAngles {};
+    std::size_t partialCount = 0;
     for (std::size_t harmonic = 0;
          harmonic < NeuralModel::harmonicCount; ++harmonic)
     {
-        // Projecting at the stretched partial position is what lets a stiff
-        // source keep clean amplitudes; a harmonic source is unaffected
-        // because the ratio is then exactly the harmonic number.
         const double frequency = static_cast<double>(fundamentalHz)
             * static_cast<double>(stretchedHarmonicRatio(
                 static_cast<float>(harmonic + 1), inharmonicity));
         if (!(frequency > 0.0) || frequency >= 0.48 * sampleRate)
             break;
+        partialAngles[harmonic] = twoPi * frequency / sampleRate;
+        ++partialCount;
+    }
 
-        const double angle = twoPi * frequency / sampleRate;
-        const Complex rotation(static_cast<float>(std::cos(angle)),
-                               static_cast<float>(std::sin(angle)));
-        Complex oscillator = std::polar(
-            1.0f, static_cast<float>(angle * static_cast<double>(start)));
-        double cosineCosine = 0.0;
-        double sineSine = 0.0;
-        double cosineSine = 0.0;
-        double signalCosine = 0.0;
-        double signalSine = 0.0;
-        for (std::size_t index = 0; index < windowSize; ++index)
+    // Weighted least-squares projections remove each partial from the actual
+    // waveform frame. The 2x2 solve handles the finite/windowed cosine/sine
+    // basis without assuming perfect orthogonality, but a single ordered pass
+    // is only correct when the partials are orthogonal to each other as well.
+    // They are not: the aperture is a few fundamental periods, so adjacent
+    // partials' Hann main lobes touch and every subtraction leaks into its
+    // neighbours - worst exactly where it is most audible, on a quiet partial
+    // beside a loud one. Repeating the pass, adding each partial's current
+    // estimate back before re-solving it against the others' residual, is
+    // Gauss-Seidel on the joint normal equations. It converges to the joint
+    // least-squares solution without forming or factorising the full
+    // 2N x 2N system, and the first sweep is bit-identical to the previous
+    // sequential behaviour because every estimate it adds back is still zero.
+    //
+    // Refinement is only bought where it is needed. A Hann main lobe is four
+    // bins wide, so an aperture of P fundamental periods separates adjacent
+    // partials by P/2 main-lobe half-widths: past about eight periods the bases
+    // are orthogonal to working precision and every extra sweep reproduces the
+    // first one at full cost. The parallel 4096-sample modal aperture is
+    // eighteen periods at a mid pitch, and it is also the most expensive frame
+    // in the pass, so it keeps the single sweep it always had.
+    const double windowPeriods = static_cast<double>(windowSize)
+        * static_cast<double>(fundamentalHz) / sampleRate;
+    const int refinementSweeps = windowPeriods < 8.0 ? 3 : 1;
+    std::array<double, NeuralModel::harmonicCount> cosineCoefficients {};
+    std::array<double, NeuralModel::harmonicCount> sineCoefficients {};
+    for (int sweep = 0; sweep < refinementSweeps; ++sweep)
+    {
+        for (std::size_t harmonic = 0; harmonic < partialCount; ++harmonic)
         {
-            const float weight = windows[index];
-            if (weight > 0.0f)
+            const double angle = partialAngles[harmonic];
+            const Complex rotation(static_cast<float>(std::cos(angle)),
+                                   static_cast<float>(std::sin(angle)));
+            Complex oscillator = std::polar(
+                1.0f, static_cast<float>(angle * static_cast<double>(start)));
+            const double previousCosine = cosineCoefficients[harmonic];
+            const double previousSine = sineCoefficients[harmonic];
+            double cosineCosine = 0.0;
+            double sineSine = 0.0;
+            double cosineSine = 0.0;
+            double signalCosine = 0.0;
+            double signalSine = 0.0;
+            for (std::size_t index = 0; index < windowSize; ++index)
             {
-                const double cosine = oscillator.real();
-                const double sine = oscillator.imag();
-                const double value = residual[index];
-                cosineCosine += weight * cosine * cosine;
-                sineSine += weight * sine * sine;
-                cosineSine += weight * cosine * sine;
-                signalCosine += weight * value * cosine;
-                signalSine += weight * value * sine;
+                const float weight = windows[index];
+                if (weight > 0.0f)
+                {
+                    const double cosine = oscillator.real();
+                    const double sine = oscillator.imag();
+                    // Add this partial's own current estimate back without
+                    // writing it: the residual then holds every other partial's
+                    // leftovers, which is what this partial must be solved
+                    // against. Only the change is written back below, so the
+                    // stored residual never accumulates an add/subtract pair.
+                    const double value = static_cast<double>(residual[index])
+                        + previousCosine * cosine + previousSine * sine;
+                    cosineCosine += weight * cosine * cosine;
+                    sineSine += weight * sine * sine;
+                    cosineSine += weight * cosine * sine;
+                    signalCosine += weight * value * cosine;
+                    signalSine += weight * value * sine;
+                }
+                oscillator *= rotation;
             }
-            oscillator *= rotation;
-        }
 
-        const double determinant = cosineCosine * sineSine
-            - cosineSine * cosineSine;
-        if (determinant <= 1.0e-9)
-            continue;
-        double cosineCoefficient = (signalCosine * sineSine
-            - signalSine * cosineSine) / determinant;
-        double sineCoefficient = (signalSine * cosineCosine
-            - signalCosine * cosineSine) / determinant;
-        const double magnitude = std::hypot(cosineCoefficient, sineCoefficient);
-        if (!std::isfinite(magnitude))
-            continue;
-        if (magnitude > 2.0)
-        {
-            const double scale = 2.0 / magnitude;
-            cosineCoefficient *= scale;
-            sineCoefficient *= scale;
-        }
+            const double determinant = cosineCosine * sineSine
+                - cosineSine * cosineSine;
+            if (determinant <= 1.0e-9)
+                continue;
+            double cosineCoefficient = (signalCosine * sineSine
+                - signalSine * cosineSine) / determinant;
+            double sineCoefficient = (signalSine * cosineCosine
+                - signalCosine * cosineSine) / determinant;
+            const double magnitude = std::hypot(cosineCoefficient,
+                                                sineCoefficient);
+            if (!std::isfinite(magnitude))
+                continue;
+            if (magnitude > 2.0)
+            {
+                const double scale = 2.0 / magnitude;
+                cosineCoefficient *= scale;
+                sineCoefficient *= scale;
+            }
 
-        const float amplitude = static_cast<float>(std::hypot(
+            cosineCoefficients[harmonic] = cosineCoefficient;
+            sineCoefficients[harmonic] = sineCoefficient;
+            const double deltaCosine = cosineCoefficient - previousCosine;
+            const double deltaSine = sineCoefficient - previousSine;
+            oscillator = std::polar(
+                1.0f, static_cast<float>(angle * static_cast<double>(start)));
+            for (std::size_t index = 0; index < windowSize; ++index)
+            {
+                if (windows[index] > 0.0f)
+                {
+                    residual[index] -= static_cast<float>(
+                        deltaCosine * oscillator.real()
+                        + deltaSine * oscillator.imag());
+                }
+                oscillator *= rotation;
+            }
+        }
+    }
+
+    for (std::size_t harmonic = 0; harmonic < partialCount; ++harmonic)
+    {
+        const double cosineCoefficient = cosineCoefficients[harmonic];
+        const double sineCoefficient = sineCoefficients[harmonic];
+        result.amplitudes[harmonic] = static_cast<float>(std::hypot(
             cosineCoefficient, sineCoefficient));
-        result.amplitudes[harmonic] = amplitude;
         float sinePhase = static_cast<float>(std::atan2(
             cosineCoefficient, sineCoefficient) / twoPi);
         sinePhase -= std::floor(sinePhase);
         result.sinePhases[harmonic] = sinePhase;
-
-        oscillator = std::polar(
-            1.0f, static_cast<float>(angle * static_cast<double>(start)));
-        for (std::size_t index = 0; index < windowSize; ++index)
-        {
-            if (windows[index] > 0.0f)
-            {
-                residual[index] -= static_cast<float>(
-                    cosineCoefficient * oscillator.real()
-                    + sineCoefficient * oscillator.imag());
-            }
-            oscillator *= rotation;
-        }
     }
 
     for (std::size_t index = 0; index < windowSize; ++index)
@@ -1383,7 +1443,8 @@ void makePreview(const std::vector<float>& sample,
         });
 
     constexpr std::array<float, NeuralModel::boneModeCount> defaults {
-        1.47f, 2.63f, 3.82f, 5.21f, 7.13f, 9.37f
+        1.47f, 2.63f, 3.82f, 5.21f, 7.13f, 9.37f,
+        11.42f, 13.68f, 15.91f, 18.24f, 20.63f, 23.11f
     };
     struct Selected
     {
@@ -2194,8 +2255,15 @@ SampleLearner::LearnResult SampleLearner::learn(
         auto longAnalysis = analyseHarmonicResidual(
             sample, analysisSampleRate, spectra[frameIndex].normalisedTime,
             framePitchHz, stretch.inharmonicity);
+        // The onset region carries 48 of the 128 analysis frames, 2.5 ms apart,
+        // and measuring each of them through a four-period aperture threw that
+        // resolution away: the first frame's amplitudes described an average of
+        // the first 21 ms at a mid pitch and the renderer applied them from
+        // sample zero. Halving the aperture there is what the joint solve buys.
         const auto transientWindow = transientAnalysisWindowSize(
-            framePitchHz, analysisSampleRate);
+            framePitchHz, analysisSampleRate,
+            spectra[frameIndex].timeSeconds < shortApertureSeconds
+                ? 2.0 : 4.0);
         if (transientWindow < spectrumSize)
         {
             auto transientAnalysis = analyseHarmonicResidual(

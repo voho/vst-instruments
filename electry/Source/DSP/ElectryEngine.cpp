@@ -787,6 +787,15 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // A strum's notes reach the engine within one host block; 35 ms is wide
     // enough to group a chord and short enough not to merge separate beats.
     chordWindowSamples_ = std::max(1, static_cast<int>(0.035 * sampleRate_));
+    handReturnSamples_ = std::max(1, static_cast<int>(1.5 * sampleRate_));
+    // The vibrato's phase advances once per control tick, and its depth eases
+    // in over about 90 ms - the time a player takes to land a note before
+    // starting to move on it.
+    vibratoPhaseIncrement_ = static_cast<float>(controlPeriod)
+                           / static_cast<float>(sampleRate_);
+    vibratoOnsetCoefficient_ = 1.0f - std::exp(
+        -static_cast<float>(controlPeriod)
+        / (0.090f * static_cast<float>(sampleRate_)));
 
     // The compliance table lives behind a guarded function-local static (its
     // initializer is not constexpr-able); touch it here so the one-time
@@ -821,6 +830,9 @@ void ElectryEngine::reset()
     sympatheticAppliedBend_ = pitchBendSemitones_;
     appliedBendGlideSeconds_ = -1.0f;
     resonanceAmount_ = resonanceTarget_;
+    vibratoAmount_ = 0.0f;
+    vibratoPhase_ = 0.0f;
+    vibratoSemitones_ = 0.0f;
     feedbackRing_.fill(0.0f);
     feedbackWriteIndex_ = 0;
     feedbackReadIndex_ = 0;
@@ -835,6 +847,7 @@ void ElectryEngine::reset()
     engineClock_ = 0;
     lastNoteOnClock_ = -(1ll << 40);
     chordAnchorString_ = 0;
+    frettingHandPosition_ = 0.0f;
     palmMuteBlend_ = clampf(smoothedParameters_.palmMute + palmMutePressure_,
                             0.0f, 1.0f);
     appliedPalmMute_ = palmMuteBlend_;
@@ -962,6 +975,12 @@ void ElectryEngine::pushAcousticReturn(const float* left, const float* right,
     }
 }
 
+void ElectryEngine::setVibrato(float normalised) noexcept
+{
+    vibratoTarget_ = clampf(std::isfinite(normalised) ? normalised : 0.0f,
+                            0.0f, 1.0f);
+}
+
 void ElectryEngine::setPalmMutePressure(float normalised) noexcept
 {
     palmMutePressure_ = std::isfinite(normalised)
@@ -1022,23 +1041,42 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
     const bool strokeIsUp = picked
         && (pickStyle_ == PickStyle::Up
             || (pickStyle_ == PickStyle::Alternate && alternateNextStrokeIsUp_));
+
+    // Note-ons that arrive inside one chord window belong to the same pick
+    // stroke and to the same hand shape, so both the strum travel below and
+    // the fretting hand read the same flag.
+    const bool newChord = engineClock_ - lastNoteOnClock_
+                        > static_cast<std::int64_t>(chordWindowSamples_);
+
+    // The hand relaxes to the nut when the phrase ends: nothing is held and
+    // no note has arrived for over a second. Without this a figure played high
+    // up would keep pulling a following open-position chord out of position.
+    if (newChord
+        && engineClock_ - lastNoteOnClock_
+               > static_cast<std::int64_t>(handReturnSamples_))
+    {
+        bool anyHeld = false;
+        for (const auto& voice : voices_)
+            anyHeld = anyHeld || (voice.active && voice.keyDown);
+        if (! anyHeld)
+            frettingHandPosition_ = 0.0f;
+    }
+
     const int stringIndex = chooseString(midiNote, playStyle_);
     if (stringIndex < 0)
         return;
 
-    if (picked && pickStyle_ == PickStyle::Alternate)
-        alternateNextStrokeIsUp_ = ! alternateNextStrokeIsUp_;
-
     auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
 
-    // Strum travel. Note-ons that arrive inside one chord window belong to the
-    // same pick stroke; the first of them fixes the edge the pick starts from,
-    // and every later string is offset by the time the pick needs to reach it.
-    // At a zero spread this is exactly the previous simultaneous behaviour.
-    const bool newChord = engineClock_ - lastNoteOnClock_
-                        > static_cast<std::int64_t>(chordWindowSamples_);
+    // Strum travel. The first note of a chord fixes the edge the pick starts
+    // from, and every later string is offset by the time the pick needs to
+    // reach it. At a zero spread this is exactly the previous simultaneous
+    // behaviour.
     if (newChord)
         chordAnchorString_ = stringIndex;
+    updateFrettingHand(
+        midiNote - stringSpecs()[static_cast<std::size_t>(stringIndex)].openMidiNote,
+        newChord);
     lastNoteOnClock_ = engineClock_;
 
     int startDelaySamples = 0;
@@ -1056,11 +1094,21 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
             * stringsCrossed;
     }
 
-    const bool legato = playStyle_ == PlayStyle::Hammer
+    const bool legato = (playStyle_ == PlayStyle::Hammer
+                         || playStyle_ == PlayStyle::Slide)
                      && voice.active
                      && voice.midiNote != midiNote;
+
+    // Advancing the alternate sequence waits until here because a Slide is
+    // only known to be legato once its target string is resolved and found
+    // already sounding. A slide onto a ringing string retargets it and strikes
+    // nothing, so charging it a stroke would leave the next genuinely picked
+    // note on the wrong one - the same reason a hammer never advances it.
+    if (picked && ! legato && pickStyle_ == PickStyle::Alternate)
+        alternateNextStrokeIsUp_ = ! alternateNextStrokeIsUp_;
+
     if (legato)
-        legatoRetarget(voice, midiNote, velocity);
+        legatoRetarget(voice, midiNote, velocity, playStyle_);
     else
         startVoice(voice, midiNote, velocity, playStyle_, strokeIsUp,
                    startDelaySamples);
@@ -1118,11 +1166,13 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
             return s;
 
     // Hammer-on/pull-off continues the closest sounding string when the new
-    // note stays within a reachable stretch of the fretting hand.
-    if (playStyle == PlayStyle::Hammer)
+    // note stays within a reachable stretch of the fretting hand. A slide has
+    // no such limit: the finger stays down and travels, so anything on the
+    // same string is reachable, which is the point of the articulation.
+    if (playStyle == PlayStyle::Hammer || playStyle == PlayStyle::Slide)
     {
         int best = -1;
-        int bestDistance = 10;
+        int bestDistance = playStyle == PlayStyle::Slide ? fretCount + 1 : 10;
         for (int s = 0; s < stringCount; ++s)
         {
             const auto& voice = voices_[static_cast<std::size_t>(s)];
@@ -1139,18 +1189,20 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
             return best;
     }
 
-    // Otherwise prefer the free string that plays the note at the lowest
-    // fret; ties resolve toward the thicker string. This reproduces common
-    // open-position fingerings deterministically.
+    // Otherwise the fretting hand chooses: the free string that puts the note
+    // nearest the fingers, with open strings always available because they
+    // need no finger. Ties resolve toward the thicker string, exactly as they
+    // did under the lowest-fret rule this replaces.
     int best = -1;
-    int bestFret = fretCount + 1;
+    float bestCost = 1.0e30f;
     for (int s = 0; s < stringCount; ++s)
     {
         if (! playable(s) || voices_[static_cast<std::size_t>(s)].active)
             continue;
-        if (fretOn(s) < bestFret)
+        const float cost = frettingCost(fretOn(s));
+        if (cost < bestCost)
         {
-            bestFret = fretOn(s);
+            bestCost = cost;
             best = s;
         }
     }
@@ -1180,6 +1232,54 @@ int ElectryEngine::chooseString(int midiNote, PlayStyle playStyle) const noexcep
         }
     }
     return best;
+}
+
+float ElectryEngine::frettingCost(int fret) const noexcept
+{
+    // An open string costs no finger at all, so in first position it is free -
+    // which is why the open-position chord shapes come out unchanged. Up the
+    // neck it is a decision rather than a convenience: taking it abandons the
+    // hand's position and changes the note's timbre, decay and damping, so its
+    // cost grows with how far the hand has travelled.
+    if (fret <= 0)
+        return 0.25f * frettingHandPosition_;
+
+    const float low = frettingHandPosition_;
+    const float high = low + static_cast<float>(frettingHandReach);
+    if (fret < low)
+    {
+        // The hand pivots forward from the thumb, so reaching back below the
+        // index finger is the more expensive of the two directions.
+        return 1.6f * (low - static_cast<float>(fret));
+    }
+    if (fret > high)
+        return static_cast<float>(fret) - high;
+
+    // Inside the hand's span every note is reachable; the small tilt prefers
+    // the index finger, which breaks ties the way a player's hand does.
+    return 0.05f * (static_cast<float>(fret) - low);
+}
+
+void ElectryEngine::updateFrettingHand(int fret, bool newChord) noexcept
+{
+    // An open string tells the hand nothing, and a chord is one shape: only
+    // the note that opens a chord window is allowed to move the hand, so a
+    // barre or a stretch is fingered from one position instead of dragging
+    // the hand across itself note by note.
+    if (fret < 1 || ! newChord)
+        return;
+
+    const float low = frettingHandPosition_;
+    const float high = low + static_cast<float>(frettingHandReach);
+    if (static_cast<float>(fret) >= low && static_cast<float>(fret) <= high)
+        return;
+
+    // When the hand does shift, it lands with the note under the middle of the
+    // fingers rather than under the index, leaving reach in both directions.
+    constexpr int settleOffset = 2;
+    frettingHandPosition_ = clampf(
+        static_cast<float>(fret - settleOffset), 0.0f,
+        static_cast<float>(fretCount - frettingHandReach));
 }
 
 // ---------------------------------------------------------------------------
@@ -1264,23 +1364,35 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     // bit-for-bit what it was.
     //
     // The two contacts are tracked apart because they sit in different places.
-    // `handT60` is the bridge hand - the Muted and Chug styles and the
-    // continuous pressure - whose loss is tilted with frequency below.
-    // `chokeT60` is the fretting hand's dead-note choke, which is not near the
-    // bridge and stays broadband. They still combine in parallel, so a dead
-    // note played under palm-mute pressure gets both.
+    // `handT60` is the bridge hand - the Palm Mute style and the continuous
+    // pressure - whose loss is tilted with frequency below. `chokeT60` is the
+    // fretting hand's dead-note choke, which is not near the bridge and stays
+    // broadband. They still combine in parallel, so a dead note played under
+    // palm-mute pressure gets both.
     float handT60 = 0.0f;
+    float chokeT60 = 0.0f;
     if (voice.playStyle == PlayStyle::PalmMute)
     {
         handT60 = std::exp(lerp(std::log(2.60f), std::log(0.32f),
                                 parameters.muteDamping));
     }
-    else if (voice.playStyle == PlayStyle::Harmonics)
+    else if (voice.playStyle == PlayStyle::Dead)
     {
-        // The touching finger stays near the node, so the harmonic rings but
-        // not forever.
-        t60 = std::min(t60, 3.8f);
+        // The fretting hand laid across the strings without pressing them to
+        // the fret. It is the whole hand rather than the heel, and it is
+        // nowhere near the bridge, so it takes the fundamental as hard as
+        // everything else - which is the difference between a dead note and a
+        // very tight palm mute, and why the mute's mode-shape relief below
+        // must not reach this term.
+        chokeT60 = 0.030f;
     }
+    // A harmonic used to clamp T60 to 3.8 s here, standing in for the touching
+    // finger. The finger is now in the loop as the node touch it actually is,
+    // and it lifts once the note has formed, so the surviving partials decay
+    // at the string's own rate - which is why a natural harmonic on an open
+    // string outlasts the fretted note rather than dying before it. Measured
+    // on the open A2, the clamp cost the octave partial 16 dB/s of extra loss
+    // that nothing physical was asking for.
 
     // High-frequency decay target relative to the fundamental's decay, at the
     // `fHigh` reference below.
@@ -1406,6 +1518,14 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         handShareForSlope = handRate / std::max(1.0f / t60 + handRate, 1.0e-9f);
         t60 = 1.0f / (1.0f / t60 + handRate / handFundamentalRelief);
         t60High = 1.0f / (1.0f / t60High + handRate * handHighFrequencyTilt);
+    }
+    if (chokeT60 > 0.0f)
+    {
+        // Broadband and in parallel, like every other contact in this model,
+        // so a dead note played under palm-mute pressure gets both.
+        const float chokeRate = 1.0f / chokeT60;
+        t60 = 1.0f / (1.0f / t60 + chokeRate);
+        t60High = 1.0f / (1.0f / t60High + chokeRate);
     }
     t60 = clampf(t60, 0.02f, 26.0f);
     t60High = clampf(t60High, 0.008f, t60);
@@ -1563,9 +1683,22 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     // range - a bar stretches every string, and each string's pitch answers
     // with its own compliance - so a bent chord smears exactly the way a real
     // tremolo bridge smears one.
+    // The bar's share is the string's own elastic compliance; the finger's is
+    // not, because a finger is controlling a pitch rather than a stretch and
+    // adjusts its displacement to reach it. Only fingered strings get it - the
+    // sympathetically ringing ones are configured elsewhere and never see it,
+    // which is exactly what separates a finger from the bar.
+    //
+    // An open string is not fingered either. Nothing is holding it down, so
+    // there is no contact to rock and no way for the hand to raise its pitch;
+    // that is the same distinction the finger-noise term already draws at
+    // fret 0. The bar still reaches it, because the bar stretches the whole
+    // instrument rather than one stopped note.
+    const float vibrato = voice.fret > 0 ? vibratoSemitones_ : 0.0f;
     const float semitones = legatoOffset
                           + pitchBendSemitones_
-                            * bendSensitivity(voice.stringIndex);
+                            * bendSensitivity(voice.stringIndex)
+                          + vibrato;
     const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
                             20.0f, 0.24f * static_cast<float>(sampleRate_));
 
@@ -2040,6 +2173,42 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             noiseCutoff *= 1.35f;
             modalBrightness *= 1.48f;
             break;
+        case PlayStyle::Pinch:
+            // An ordinary pick stroke with the thumb following it in. The pick
+            // itself is unchanged - the pluck position is the player's, not the
+            // style's, because the thumb has to land where the pick did - and
+            // the thumb only adds its own contact scrape.
+            amplitude *= 0.92f;
+            noiseLevel *= 1.15f;
+            noiseCutoff *= 1.10f;
+            modalBrightness *= 1.10f;
+            break;
+        case PlayStyle::Dead:
+            // The pick lands exactly as it would on a ringing note; what
+            // removes the pitch is the hand already on the string, and that
+            // hand also drags a good deal more contact noise out of the
+            // winding and darkens what the pick leaves behind.
+            noiseLevel *= 1.8f;
+            noiseMs *= 1.3f;
+            modalBrightness *= 0.85f;
+            break;
+        case PlayStyle::Slide:
+            // A slide into a sounding string has no attack at all - the finger
+            // is already down and simply moves - so the only thing the note-on
+            // contributes is the friction of the move itself, which is set up
+            // in legatoRetarget(). Starting a phrase on the Slide keyswitch
+            // with nothing to slide from is an ordinary pick stroke, because
+            // that is what a player would have to do.
+            if (legato)
+            {
+                amplitude *= 0.12f;
+                pulseMs *= 1.9f;
+                pulseCutoff *= 0.42f;
+                noiseLevel = 0.0f;
+                plectrumContact = false;
+                modalBrightness *= 0.25f;
+            }
+            break;
     }
 
     // The stroke composes with every picked style: an upstroke palm mute is a
@@ -2108,6 +2277,23 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             displacementGain = 0.30f;
             transientGain = 0.42f;
             break;
+        case PlayStyle::Pinch:
+            displacementGain = 1.35f;
+            transientGain *= 1.20f;
+            break;
+        case PlayStyle::Slide:
+            if (legato)
+            {
+                displacementGain = 0.40f;
+                transientGain = 0.0f;
+            }
+            break;
+        case PlayStyle::Dead:
+            // Almost all edge and almost no sustained displacement: the string
+            // never gets to hold the shape the pick gave it.
+            displacementGain = 1.10f;
+            transientGain *= 1.45f;
+            break;
     }
 
     // The plectrum's edge is the sharpest thing in the attack, so it is what the
@@ -2167,8 +2353,53 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // is what moves a high fretted note toward the hollow, mid-string comb of
     // a real guitar.
     const float fretStretch = std::exp2(static_cast<float>(voice.fret) / 12.0f);
-    voice.excitationCombDelay = clampf(pluckFraction * fretStretch, 0.02f, 0.49f)
-                              * voice.vertical.targetDelay;
+    const float combFraction = clampf(pluckFraction * fretStretch, 0.02f, 0.49f);
+    voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
+
+    // Where the touching hand is, if either hand is touching. The natural
+    // harmonic is the fretting hand on the midpoint node: every odd partial
+    // has an antinode under it and goes, every even one has a node there and
+    // is left exactly alone in magnitude and phase, so the octave is what the
+    // string does rather than a transposition of it.
+    //
+    // The pinch harmonic is the picking hand's thumb catching the string
+    // immediately after the pick, so it touches at the pick's own position -
+    // which is why moving Pick Position toward the neck moves the squeal down
+    // the harmonic series, exactly as moving the hand does on the instrument.
+    // Its depth is one rather than the fretting finger's 0.92 because a thumb
+    // pressed against a string is a much firmer contact, and it stays on the
+    // string far longer, because the mode-shape law gives a contact this close
+    // to the bridge little purchase on the low partials: at a tenth of the
+    // sounding length the fundamental loses about seven per cent of its energy
+    // per round trip where a midpoint touch would take nearly all of it. That
+    // asymmetry is the physics of the technique, not a shortcoming of it.
+    switch (voice.playStyle)
+    {
+        case PlayStyle::Harmonics:
+            voice.touchFraction = 0.5f;
+            voice.touchDepth = 0.92f;
+            voice.touchHoldRemaining = static_cast<int>(0.045 * sampleRate_);
+            voice.touchReleaseStep = 0.92f
+                / std::max(1.0f, 0.080f * sampleRate);
+            break;
+        case PlayStyle::Pinch:
+            voice.touchFraction = combFraction;
+            voice.touchDepth = 1.0f;
+            voice.touchHoldRemaining = static_cast<int>(0.090 * sampleRate_);
+            voice.touchReleaseStep = 1.0f
+                / std::max(1.0f, 0.130f * sampleRate);
+            break;
+        case PlayStyle::Sustain:
+        case PlayStyle::PalmMute:
+        case PlayStyle::Hammer:
+        case PlayStyle::Slide:
+        case PlayStyle::Dead:
+            voice.touchFraction = 0.0f;
+            voice.touchDepth = 0.0f;
+            voice.touchHoldRemaining = 0;
+            voice.touchReleaseStep = 0.0f;
+            break;
+    }
 
     // A plectrum touches the string over a patch, not at a point: half a
     // millimetre of contact for a stiff sharp pick, around a millimetre and a
@@ -2277,10 +2508,10 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     voice.noiseLength = std::max(8, static_cast<int>(noiseMs * 0.001f * sampleRate));
     voice.noiseRemaining = voice.noiseLength;
     voice.releaseNoiseDone = false;
-    updateStyleWeights(voice);
+    updateStyleWeights(voice, legato);
 }
 
-void ElectryEngine::updateStyleWeights(Voice& voice) noexcept
+void ElectryEngine::updateStyleWeights(Voice& voice, bool legato) noexcept
 {
     // Play styles attack the string at different angles, splitting energy
     // differently between the two polarisations, and a perceptual makeup keeps
@@ -2302,6 +2533,26 @@ void ElectryEngine::updateStyleWeights(Voice& voice) noexcept
             break;
         case PlayStyle::Harmonics:
             verticalWeight = 0.86f; horizontalWeight = 0.52f; makeup = 1.34f;
+            break;
+        case PlayStyle::Pinch:
+            // The thumb follows the pick in along the same path, so the split
+            // stays close to a downstroke's; the makeup pays back the energy
+            // the touch takes out of the low partials.
+            verticalWeight = 0.90f; horizontalWeight = 0.46f; makeup = 1.55f;
+            break;
+        case PlayStyle::Slide:
+            // Sliding into a sounding string is a fretting-hand move, so it
+            // takes the fingered split; sliding from nothing is an ordinary
+            // pick and keeps the default one.
+            if (legato)
+            {
+                verticalWeight = 0.95f; horizontalWeight = 0.28f; makeup = 1.20f;
+            }
+            break;
+        case PlayStyle::Dead:
+            // The hand lying across the string flattens the attack into the
+            // plane of the fingerboard.
+            verticalWeight = 0.96f; horizontalWeight = 0.30f; makeup = 1.85f;
             break;
     }
     // The upstroke approaches from below, tilting the attack toward the
@@ -2372,10 +2623,7 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
                                    + (strokeIsUp ? 1 : 0)) * 17)
                               ^ static_cast<std::uint32_t>(noteSequence_ * 2654435761u));
     voice.artifactNoiseState = hash32(voice.noiseState ^ 0xa53c9e17u);
-    // The natural-harmonic touch divides the string at its midpoint node and
-    // sounds the octave above the fretted note.
-    const int harmonicOffset = playStyle == PlayStyle::Harmonics ? 12 : 0;
-    voice.baseFrequency = midiToHz(static_cast<float>(midiNote + harmonicOffset));
+    voice.baseFrequency = midiToHz(static_cast<float>(midiNote));
 
     // Each physical string has a slightly different saddle/bridge rattle.
     // Its variation is seeded by the note sequence, never by wall-clock time,
@@ -2479,13 +2727,15 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
         startExcitation(voice, velocity, false);
 }
 
-void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity) noexcept
+void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
+                                   PlayStyle playStyle) noexcept
 {
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
+    const int fromFret = voice.fret;
     voice.legatoFromFrequency = voice.baseFrequency;
     voice.midiNote = midiNote;
     voice.fret = std::clamp(midiNote - spec.openMidiNote, 0, fretCount);
-    voice.playStyle = PlayStyle::Hammer;
+    voice.playStyle = playStyle;
     voice.strokeIsUp = false;
     voice.baseFrequency = midiToHz(static_cast<float>(midiNote));
     voice.keyDown = true;
@@ -2499,10 +2749,64 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity) n
     voice.artifactCollisionRemaining = 0;
     voice.startDelaySamples = 0;
 
-    // The finger lands over roughly ten milliseconds rather than instantly.
+    // A hammered finger lands over roughly ten milliseconds rather than
+    // instantly. A slide does not land at all: it stays down and travels, so
+    // its duration is a distance divided by a hand speed rather than a fixed
+    // time, and a twelve-fret slide takes six times as long as a two-fret one.
+    // The hand speed follows the Bend Time control - the same travel-time
+    // control the wheel uses - at 8% of it per fret, so the 280 ms default is
+    // 22 ms per fret.
+    const int frets = std::abs(voice.fret - fromFret);
+    float glideSeconds = 0.010f;
+    if (playStyle == PlayStyle::Slide)
+        glideSeconds = clampf(0.08f * smoothedParameters_.bendTimeSeconds
+                                  * static_cast<float>(std::max(frets, 1)),
+                              0.030f, 1.200f);
     voice.legatoBlend = 0.0f;
     voice.legatoIncrement = static_cast<float>(controlPeriod)
-        / (0.010f * static_cast<float>(sampleRate_));
+        / (glideSeconds * static_cast<float>(sampleRate_));
+
+    // The winding drags under the travelling finger. The ridges pass at v / w,
+    // where v is the finger's speed along the string and w the winding pitch,
+    // so a fast slide squeaks high and a slow one low - which is the whole
+    // character of the sound. The position of fret n along the string is
+    // L (1 - 2^(-n/12)) from the nut, so the distance the finger actually
+    // covers shrinks as the slide moves up the neck, exactly as the frets do.
+    voice.slideNoiseAmplitude = 0.0f;
+    voice.slideNoiseLevel = 0.0f;
+    voice.slideShaperHigh.reset();
+    voice.slideShaperLow.reset();
+    if (playStyle == PlayStyle::Slide && frets > 0)
+    {
+        const float openLength = scaleLengthMetres();
+        const float fromPosition = openLength
+            * (1.0f - std::exp2(-static_cast<float>(fromFret) / 12.0f));
+        const float toPosition = openLength
+            * (1.0f - std::exp2(-static_cast<float>(voice.fret) / 12.0f));
+        const float speed = std::abs(toPosition - fromPosition) / glideSeconds;
+
+        // Winding pitch. A real wrap wire runs from about 0.36 mm on a .080 to
+        // about 0.18 mm on a .024, which is far flatter than the string
+        // diameter itself; this linear stand-in reproduces that pair and is a
+        // voicing estimate rather than a measurement. A plain string has no
+        // winding at all, so it drags rather than squeaks.
+        const float gaugeScale = lerp(1.0f, 11.0f / 9.0f,
+                                      smoothedParameters_.stringGauge);
+        const float diameterMm = spec.plainDiameterMm * gaugeScale;
+        const float windingMetres = spec.wound
+            ? 0.001f * (0.100f + 0.130f * diameterMm)
+            : 0.0008f;
+        const float centre = clampf(speed / windingMetres, 200.0f,
+                                    0.40f * static_cast<float>(sampleRate_));
+        voice.slideBandHigh = std::exp(-twoPi * std::min(
+            1.6f * centre, 0.45f * static_cast<float>(sampleRate_))
+            * inverseSampleRate_);
+        voice.slideBandLow = std::exp(-twoPi * 0.6f * centre * inverseSampleRate_);
+        voice.slideNoiseAmplitude = 0.55f
+            * std::pow(smoothedParameters_.fingerNoise, 0.75f)
+            * (spec.wound ? 1.0f : 0.10f)
+            * clampf(speed * 1.6f, 0.0f, 1.4f);
+    }
 
     configureVoiceDamping(voice);
     configureVoicePitch(voice, false);
@@ -2585,6 +2889,13 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.releaseGainTarget = 1.0f;
     voice.releaseGainCoefficient = 0.0f;
     voice.legatoBlend = 1.0f;
+    voice.touchDepth = 0.0f;
+    voice.touchHoldRemaining = 0;
+    voice.touchFraction = 0.0f;
+    voice.slideNoiseAmplitude = 0.0f;
+    voice.slideNoiseLevel = 0.0f;
+    voice.slideShaperHigh.reset();
+    voice.slideShaperLow.reset();
     // Every retained filter state must clear with the voice, or a silenced
     // string could leak residue into a later, otherwise identical render and
     // break the engine's determinism contract.
@@ -2807,8 +3118,25 @@ void ElectryEngine::updateVoiceControl(Voice& voice) noexcept
     }
 
     if (voice.legatoBlend < 1.0f)
+    {
         voice.legatoBlend = clampf(voice.legatoBlend + voice.legatoIncrement,
                                    0.0f, 1.0f);
+        // The friction follows how fast the finger is actually moving, which
+        // is the derivative of the glide's own smoothstep, 6 b (1 - b). It is
+        // therefore zero at both ends and the squeak swells and dies with the
+        // movement instead of switching on and off.
+        if (voice.slideNoiseAmplitude > 0.0f)
+        {
+            const float b = voice.legatoBlend;
+            voice.slideNoiseLevel = voice.slideNoiseAmplitude
+                                  * 6.0f * b * (1.0f - b);
+            if (voice.legatoBlend >= 1.0f)
+            {
+                voice.slideNoiseAmplitude = 0.0f;
+                voice.slideNoiseLevel = 0.0f;
+            }
+        }
+    }
 
     // Strum travel: the pick reaches this string after the programmed offset.
     if (voice.startDelaySamples > 0)
@@ -2848,10 +3176,38 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     auto& vertical = voice.vertical;
     auto& horizontal = voice.horizontal;
 
+    // The touching finger, if there is one. It is held while the note forms
+    // and then lifts: by then the partials it removed have gone and cannot be
+    // re-excited, so releasing it is free and stops paying for two extra
+    // delay reads.
+    if (voice.touchDepth > 0.0f)
+    {
+        if (voice.touchHoldRemaining > 0)
+        {
+            --voice.touchHoldRemaining;
+        }
+        else
+        {
+            voice.touchDepth -= voice.touchReleaseStep;
+            if (voice.touchDepth < 1.0e-4f)
+                voice.touchDepth = 0.0f;
+        }
+    }
+    const float touchWeight = 0.5f * voice.touchDepth;
+    const float touchDelayScale = 1.0f + voice.touchFraction;
+
     // Loop reads and the damping/dispersion chain.
     const auto advanceLoop = [&] (PolarisationLoop& loop, float extraFeedback)
     {
         float sample = loop.readFractional(loop.currentDelay);
+        if (touchWeight > 0.0f)
+        {
+            // (1 - d/2) x(n) + (d/2) x(n - M), written as one blend so the
+            // untouched path stays exactly the same instruction sequence.
+            const float touched = loop.readFractional(
+                loop.currentDelay * touchDelayScale);
+            sample += touchWeight * (touched - sample);
+        }
         sample = loop.dispersion1.process(sample, loop.dispersionLowCoefficient);
         sample = loop.dispersion2.process(sample, loop.dispersionLowCoefficient);
         sample = loop.dispersion3.process(sample, loop.dispersionLowCoefficient);
@@ -2952,6 +3308,19 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
                               * (lowpassed - voice.noiseBandState);
         noiseSample = (lowpassed - voice.noiseBandState)
                     * voice.noiseAmplitude * window * window;
+    }
+
+    // The travelling finger's friction. Two one-poles form a band at the rate
+    // the winding ridges pass under it, so the squeak follows the hand's speed
+    // rather than being a fixed sound; the level follows the glide's own
+    // motion, so it is exactly zero when the finger is still.
+    if (voice.slideNoiseLevel > 0.0f)
+    {
+        const float raw = bipolarNoise(voice.noiseState);
+        const float high = voice.slideShaperHigh.process(raw, voice.slideBandHigh);
+        noiseSample += voice.slideNoiseLevel
+                     * (high - voice.slideShaperLow.process(
+                            high, voice.slideBandLow));
     }
 
     if (voice.excitationPhase == ExcitationPhase::Contact)
@@ -3546,6 +3915,33 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                 / (0.33f * std::max(s.bendTimeSeconds, 0.01f)
                    * static_cast<float>(sampleRate_)));
         }
+        // The fretting hand's vibrato. The depth eases in rather than
+        // switching on, because a player lands the note and then starts to
+        // move; the oscillation is a raised cosine, so its minimum is the
+        // fretted pitch and the note is only ever pushed sharp, which is what
+        // a finger can do to a string and a bar cannot be made to do. One
+        // phase for the whole hand. At zero pressure the offset is exactly
+        // zero and every voice's pitch solve is bit-for-bit what it was.
+        vibratoAmount_ += vibratoOnsetCoefficient_
+                        * (vibratoTarget_ - vibratoAmount_);
+        if (vibratoTarget_ <= 0.0f && vibratoAmount_ < 1.0e-4f)
+        {
+            vibratoAmount_ = 0.0f;
+            vibratoPhase_ = 0.0f;
+            vibratoSemitones_ = 0.0f;
+        }
+        if (vibratoAmount_ > 0.0f)
+        {
+            // A rock finger vibrato runs around 5 Hz and speeds up as the
+            // player leans into it.
+            const float rate = lerp(4.8f, 6.4f, vibratoAmount_);
+            vibratoPhase_ += rate * vibratoPhaseIncrement_;
+            if (vibratoPhase_ >= 1.0f)
+                vibratoPhase_ -= 1.0f;
+            vibratoSemitones_ = vibratoMaximumSemitones * vibratoAmount_ * 0.5f
+                * (1.0f - std::cos(twoPi * vibratoPhase_));
+        }
+
         pitchBendSemitones_ += bendGlideCoefficient_
                              * (pitchBendTarget_ - pitchBendSemitones_);
         if (std::abs(pitchBendSemitones_ - pitchBendTarget_) < 5.0e-4f)

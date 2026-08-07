@@ -20,10 +20,11 @@ percussion voices. Each has its own MIDI mapping, synthesis character, pitch,
 and decay controls.
 
 > **Listen first.** Seven [rendered demonstrations](Docs/audio/README.md) cover
-> the full thirteen-voice kit one hit at a time, programmed grooves with
-> ghost notes, snare velocity dynamics, toms and cymbals, the Humanise control
-> and the kit bus. They are rendered by the shipping engine, so they cannot
-> drift from what the plug-in does.
+> the full thirteen-voice kit one hit at a time, programmed grooves with ghost
+> notes and a bar played on the hi-hat pedal, snare velocity and its three
+> articulations, toms and cymbals, the Humanise control and the kit bus. They
+> are rendered by the shipping engine, so they cannot drift from what the
+> plug-in does.
 
 The project builds three products from one JUCE codebase:
 
@@ -42,8 +43,8 @@ The project builds three products from one JUCE codebase:
 The primary note map follows General MIDI percussion assignments. MIDI velocity
 controls both hit strength and timbre.
 
-Each voice has seven automatable controls, and the kit adds four more, for
-**95 host parameters** in total: 91 voice parameters plus the kit bus.
+Each voice has seven automatable controls, and the kit adds five more, for
+**96 host parameters** in total: 91 voice parameters plus the kit controls.
 
 | Per-voice control | Range | Default |
 | --- | --- | --- |
@@ -58,6 +59,7 @@ Each voice has seven automatable controls, and the kit adds four more, for
 | Kit control | Range | Default |
 | --- | --- | --- |
 | Kit Humanise | 0-100% | 50% |
+| Kit Bleed | 0-100% | 0% |
 | Bus Drive | 0-100% | 0% |
 | Bus Compression | 0-100% | 0% |
 | Output | -24 to +6 dB | -6.0 dB |
@@ -78,9 +80,58 @@ Each voice has seven automatable controls, and the kit adds four more, for
 | Perc 1 | 56 | Cowbell | Ratio | Drive | L12 |
 | Perc 2 | 75 | Claves | Hollow | Click | R12 |
 
-Common kit-layout aliases are accepted too: 35 for Kick; 40 for Snare; 44 for
-Closed Hat; 53 and 59 for Ride; 57 for Crash; 41 and 43 for Low Tom; 48 for Mid
-Tom; 70 for Shaker; and 37, 76, or 77 for Perc 2. Other notes are silent.
+Common kit-layout aliases are accepted too: 35 for Kick; 44 for Closed Hat; 53
+and 59 for Ride; 57 for Crash; 41 and 43 for Low Tom; 48 for Mid Tom; 70 for
+Shaker; and 76 or 77 for Perc 2. Other notes are silent.
+
+**Snare articulations.** The snare answers three notes rather than one, on the
+notes electronic kits and mainstream drum instruments send them on:
+
+| Note | Articulation | What it is |
+| ---: | --- | --- |
+| 38 | Head | The stick on the batter head, a third of the way out |
+| 40 | Rimshot | Head and hoop struck together, right against the rim |
+| 37 | Cross-stick | The stick laid across a hand-damped head, shaft on the hoop |
+
+These are not three samples or three levels of one: they are the same modelled
+drum struck in three places, and the difference follows from the model. The
+rimshot lands at 93 % of the head's radius, where `J_m(lambda r/a)` is far from
+the centre and the whole circumferential series is fed at once, with the
+shortest contact anything in this kit makes, and it drives the head hard enough
+to throw the wires well clear. The cross-stick puts a hand on the membrane -
+a heavy, frequency-independent absorber, so it goes into the fixed loss term
+rather than the material ones - which takes the head down in a seventh of the
+time, keeps the wires on the head, and leaves the hoop as the only thing
+radiating. Measured against a head strike after matching peaks, a rimshot leaves
+a 36 % residual and a cross-stick a 92 % one.
+
+This changes two aliases that earlier versions accepted: note 40 was a second
+name for a plain snare, and note 37 was a second name for Perc 2. Perc 2 keeps
+its primary note 75 and its 76 and 77 aliases.
+
+**Hi-hat pedal (MIDI CC 4).** The hats are a pedal, not two notes. Every
+electronic kit sends pedal position as continuous controller 4, 0 fully open to
+127 tightly closed, and Drumalor treats it as one modelled quantity: how far
+apart the two plates are. That single number sets the pair's stiffness, its
+decay, and which damping law it obeys — an open plate loses its top first, a
+clamped pair is damped by friction between two faces and takes every partial at
+much the same rate — so a half-open hat is genuinely between the two rather than
+a crossfade of them.
+
+The two Closed Hat and Open Hat channel strips remain separate instruments in
+the mixer, with their own character, pitch, level, pan and Decay. Once the pedal
+is live, the note chooses the channel and the pedal decides how open the pair
+is; their two Decay settings become the endpoints, interpolated geometrically.
+Closing the pedal on a ringing hat damps it progressively, over a few
+milliseconds at the bottom of the travel and a third of a second near the top,
+and a foot coming down fast enough to shut the pair produces its own chick with
+no note involved. Lifting the pedal or resting on it is silent.
+
+Until a controller touches it, the pedal does nothing at all: the Closed Hat
+note is exactly a fully closed pair and the Open Hat note exactly a free one, so
+a session that never sends CC 4 renders sample for sample as it always did. That
+identity is a regression contract, not an intention. Resetting the plug-in
+releases the pedal.
 
 **Choke groups** generalise the hi-hat pedal. Any voice can be placed in group
 A, B, or C; triggering it then cuts every sounding voice in the same group with
@@ -174,6 +225,31 @@ The deviations are sized to be heard rather than merely measured — around a si
 of a semitone of pitch at the default, which is roughly where a repeated hit
 stops reading as one recording retriggered.
 
+**Kit Bleed** is the kit hearing itself. A drum that is not being struck is
+still a drum: the snare's resonant head carries a set of wires lying on it and
+answers everything the rest of the kit puts into the air and the floor, and a
+tom's head answers whatever lands near its own note. Toontrack calls that
+leakage "one of the key elements that gives a studio drum recording its sense of
+cohesion and realism"; IK sells it as sympathetic vibration between the kick,
+snare and toms. Drumalor models it rather than mixing it: four undriven heads —
+the snare's and the three toms' — sit permanently in the engine, tuned from
+their own channels' Pitch and Decay, driven by a band-limited copy of the kit's
+own mix, and placed at their own Pan positions.
+
+The snare's is the one that matters. Its wires are gated on the head's
+displacement by a lift-off law rather than a level: below the point where the
+head lifts them off their resting contact there is no buzz at all, and above it
+there is. That is why a bled kick makes a snare buzz suddenly as the kick gets
+loud instead of buzzing a little at every level, and it is the reason a kick and
+a floor tom sound like they are in a room with a snare rather than next to a
+recording of one.
+
+The path is strictly feed-forward: the beds hear the previous sample's dry mix
+and nothing they added to it, so there is no loop to be stable about and no
+dependence on the host's block boundaries. At its 0 % default it is not merely
+scaled to nothing but skipped entirely, so a kit with Bleed off is bit-identical
+to the engine before it existed and pays nothing for it.
+
 **Bus Drive** and **Bus Compression** form a shared output stage after the mix
 and DC blocker. Drive is a gain-matched asymmetric softener with the same
 first-order ADAA used inside the voices, so it adds density and level dependence
@@ -257,6 +333,63 @@ energy hundreds of times faster than a quadrupole. On a drum, the loudest thing
 and the longest thing are opposite questions, and the answer to both is the
 multipole order. A bank whose modes all decay together is a bell.
 
+### A struck head is a stretched head
+
+A membrane's restoring force is its tension, so a head that has been pushed out
+of its plane is a head under more tension than it had at rest, and every mode in
+the bank is sharp while the strike energy is still in it. As the drum rings out
+the tension relaxes and the pitch settles. That is the drop a real tom has, and
+it is not the same thing as a pitch envelope: an envelope always starts from the
+same note and always takes the same time, while a tension bend follows how hard
+the drum was actually hit — a ghost stroke barely moves at all and an accent
+bends audibly.
+
+Avanzini and Marogna's result is that the short-time average of that tension
+rise is approximately proportional to the system's *energy*, which is a quantity
+a modal engine can afford: the whole model is a leaky mean square of the bank's
+own output, scaled by the voice's velocity because the bank's internal amplitude
+is deliberately normalised. It moves each mode by rewriting `a1` around its
+resting value — `2r·cos(ω(1+δ))` is `nominalA1 − 2rω·sin(ω)·δ` to first order,
+which is exact to well under a cent across the six per cent of bend the model
+allows — and never touches `a2`. Since `a2` is `−r²`, the pole radius, and
+therefore the mode's decay time, cannot drift with its amplitude. The
+coefficients are rewritten every sixteenth sample, counted in the voice's own
+age so the update lands on the same samples at every host block size.
+
+The depth follows the drum. A bass drum head is wide and slack but a beater only
+ever displaces it by a small fraction of its radius; a snare batter tensioned
+hard enough to answer a stick has almost no room left to stretch; a tom has the
+most, and **Skin** is the reason — a head carrying more air is a slacker head,
+and a slacker head stretches further for the same blow. Measured at 48 kHz, a
+full-velocity strike's dominant head partial in the first 35 ms sits 96, 30, 134
+and 250 cents above the same partial at a ghost stroke for the Kick and the three
+Toms; on the engine before this model the same four numbers were −73, −69, +15
+and +108 cents, none of which was tension.
+
+### A drum struck twice is still one drum
+
+Striking a head that is still moving does not produce a second drum. The stick
+lands on the drum that is already there, and the contact does two things at
+once: it adds the new strike, and it takes energy out of what it landed on,
+because a stick or a hand against a vibrating membrane is an absorber. That is
+why a press roll dies away instead of growing, and why a flam is one event with
+two attacks rather than two drums a few milliseconds apart.
+
+Re-striking one of the five membrane voices therefore scales the ringing bank's
+modal state and its envelopes rather than leaving them untouched, and the new
+strike is superposed into what is left — `Resonator::strike()` adds to whatever
+state it finds, so this is one head with two impulses in it. How much survives
+follows the new stroke: a ghost note laid on a ringing tom keeps about three
+quarters of it, a full stroke about a fifth. Measured over the 220 ms after the
+second stroke of a 15 ms flam, the result carries less energy than the two
+strokes rendered separately do — which is what two independent drums would give,
+and what the engine used to produce.
+
+The cymbals, hats and percussion voices are deliberately left alone. A cymbal is
+most of a square metre of plate against a stick tip the size of a fingernail, and
+a second strike on one really does add; the regression suite requires that it
+still does.
+
 ### There is a beater, and there is a stick
 
 Contact time follows Hertz: it shortens with impact speed, and with how hard the
@@ -267,6 +400,12 @@ which moves everything else. Above the frequency where a head's modes stop being
 separable there is no series to model, only a band of noise decaying at that
 region's own rate, raised by the contact while the two surfaces are actually
 touching.
+
+The Snare is played in three places rather than one, and the difference between
+them is entirely where the stick landed and how long it stayed. See the
+articulation table above; there is no separate rimshot voice, no separate
+cross-stick sample and no extra parameter, because a strike position and a
+contact time are already what the head bank is built from.
 
 The Snare adds a nonlinear wire model. Real snare wires only rattle while the
 resonant head lifts them off their resting contact and damp it below that
@@ -598,8 +737,8 @@ overview rather than a row of note-on flashes. A stereo bus meter in the header
 shows the output with peak hold, silkscreen marks at -36, -24, -12 and -6 dB,
 and a separate strip that grows leftwards with the bus compressor's gain
 reduction. The Voice Circuit deck holds five knobs plus a horizontal Pan slider
-and the Choke Group selector; the Kit Bus deck holds Humanise, Drive, Comp and
-Output.
+and the Choke Group selector; the Kit Bus deck holds Humanise, Bleed, Drive,
+Comp and Output in a two-column grid.
 
 The presentation mathematics behind all of that - the decibel meter curve and
 its exact inverse, the asymmetric attack/release/peak-hold ballistics, the
@@ -620,6 +759,10 @@ self-contained real-time instrument:
   to reduced aliasing.
 - Pines' [2025 diode-VCA model](https://dafx25.dii.univpm.it/wp-content/uploads/2025/07/DAFx25_paper_44.pdf)
   motivates explicit fixed nonlinearities with variable operating points.
+- Avanzini and Marogna's [energy-estimation approach to tension modulation](https://pubmed.ncbi.nlm.nih.gov/22280712/)
+  motivates driving the membrane banks' pitch bend from a running estimate of
+  the system's energy rather than from a solved nonlinear membrane, which is
+  what makes it affordable inside a thirteen-voice kit.
 - Werner, Abel, and Smith's [physically informed bass-drum analysis](https://dafx.de/paper-archive/2014/dafx14_kurt_james_werner_a_physically_informed%2C_ci.pdf)
   and Germain's [time-varying numerical study](https://www.dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_43.pdf)
   motivate charged state, resonant feedback, changing pitch/loss, and stable
@@ -775,7 +918,38 @@ released gain reduction, and block-partition invariance. Metering is checked for
 attack, release, stereo placement and reset. Membrane contracts require audible
 inharmonic head content at the strike that decays faster than the body, a Skin
 control that actually moves the air loading, a level-dependent snare wire
-rattle, and darker soft hits on all ten velocity-timbred voices. A dedicated
+rattle, and darker soft hits on all ten velocity-timbred voices. A
+tension-modulation contract tracks the dominant head partial of the Kick and all
+three Toms and requires a full-velocity strike to ring sharper than a ghost
+stroke while the strike energy is still in the head, requires the two to settle
+at the same pitch once it has gone, and requires the tail to keep its decay
+range at both ends of Skin - which is what proves the model moves only `a1` and
+leaves the pole radius, and therefore the decay time, alone. An articulation
+contract checks that notes 38, 40 and 37 carry the head, rimshot and cross-stick
+strokes and that no other mapped note carries an articulation, that the rimshot
+engages the wires harder and reaches higher up the head's series than a plain
+stroke, that the cross-stick both silences the wires and rings for well under
+half as long, and that neither of the two nulls against a peak-matched head hit.
+A re-strike contract requires a 15 ms flam on each of the five membranes to
+carry less energy than the two strokes rendered separately, requires a ghost
+stroke to leave more of a ringing head alive than a full one does, requires a
+forty-eight-stroke press roll to stay bounded and to hold well under half as
+many voices as it has strokes, and requires a second ride strike to still add
+rather than being damped as though a plate were a drum head. A hi-hat pedal
+contract requires a fully closed pedal to reproduce the Closed Hat and a fully
+open one the Open Hat sample for sample, requires each of five pedal positions
+to ring shorter than the last and to differ from its neighbour by more than a
+level change, requires closing the pedal on a ringing open hat to damp it and
+shutting it to cut it, requires a fast close to make a foot chick while a lift
+or a rest makes none, and requires reset to release the pedal and nonsense
+controller values to be refused. A kit-bleed contract requires exact bypass at
+zero, requires a kick alone to put energy into the snare's wire band and to put
+more of it in at every higher setting, requires the buzz to lift off a threshold
+rather than track the kick in proportion, requires the result to be independent
+of the host block size, requires a bed that has been switched off to be at rest
+rather than frozen when the control comes back on, and requires an idle kit to
+stay at digital zero however long it idles.
+A dedicated
 efficiency contract proves that a metallic bank frozen behind an unrelated drum
 wakes into exactly the same state as one frozen during silence, and measures
 that adding a hi-hat costs meaningfully more than the same kick alone, which is
@@ -859,9 +1033,10 @@ the VST3 at the highest strictness level:
   "$HOME/Library/Audio/Plug-Ins/VST3/Drumalor.vst3"
 ```
 
-Also exercise all 13 note mappings, velocity extremes, rapid retriggers, the
-open/closed-hat choke, all 91 voice parameters and the four kit controls,
-choke groups, project-state recall, sample-
+Also exercise all 13 note mappings and the snare's three articulation notes,
+velocity extremes, rapid retriggers, a continuous CC 4 hi-hat pedal from an
+electronic kit or a controller lane, the open/closed-hat choke, all 91 voice
+parameters and the five kit controls, choke groups, project-state recall, sample-
 rate changes, and buffer sizes from 32 to 2048 samples in at least two hosts.
 A validator passing does not guarantee musical or host-level correctness.
 

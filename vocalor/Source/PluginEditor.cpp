@@ -711,7 +711,8 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     addAndMakeVisible (scopeDisplay);
 
     for (auto* knob : { &morphKnob, &formantShiftKnob, &breathKnob, &resonanceKnob,
-                        &tensionKnob, &vibratoKnob, &humanizeKnob, &glideKnob,
+                        &tensionKnob, &nasalKnob, &vibratoKnob, &humanizeKnob,
+                        &dynamicsKnob, &intonationKnob, &glideKnob,
                         &spreadKnob, &roomKnob, &roomSizeKnob, &outputKnob })
         addAndMakeVisible (*knob);
 
@@ -762,6 +763,12 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
         processor.parameters, vocalor::parameters::vibrato, vibratoKnob.slider);
     humanizeAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::humanize, humanizeKnob.slider);
+    nasalAttachment = std::make_unique<SliderAttachment> (
+        processor.parameters, vocalor::parameters::nasal, nasalKnob.slider);
+    dynamicsAttachment = std::make_unique<SliderAttachment> (
+        processor.parameters, vocalor::parameters::dynamics, dynamicsKnob.slider);
+    intonationAttachment = std::make_unique<SliderAttachment> (
+        processor.parameters, vocalor::parameters::intonation, intonationKnob.slider);
     glideAttachment = std::make_unique<SliderAttachment> (
         processor.parameters, vocalor::parameters::glide, glideKnob.slider);
     spreadAttachment = std::make_unique<SliderAttachment> (
@@ -811,7 +818,7 @@ VocalorAudioProcessorEditor::VocalorAudioProcessorEditor (VocalorAudioProcessor&
     setResizable (true, true);
     // The vertical floor is set by the fixed panel stack: below 800 px the
     // keyboard deck would push past the bottom of its panel.
-    setResizeLimits (1020, 800, 1720, 1200);
+    setResizeLimits (1120, 800, 1720, 1200);
     setSize (1240, 900);
     startTimerHz (24);
     updateConditionalControls();
@@ -973,14 +980,14 @@ void VocalorAudioProcessorEditor::paint (juce::Graphics& g)
         const char* caption;
     };
     static constexpr Group groups[] = {
-        { 0, 5, accent,      0.022f, "VOICE CHARACTER" },
-        { 5, 1, ultraviolet, 0.020f, "PHRASING" },
-        { 6, 3, accentBlue,  0.020f, "SPACE" },
-        { 9, 1, ultraviolet, 0.026f, "MASTER" }
+        {  0, 6, accent,      0.022f, "VOICE CHARACTER" },
+        {  6, 3, ultraviolet, 0.020f, "PERFORMANCE" },
+        {  9, 3, accentBlue,  0.020f, "SPACE" },
+        { 12, 1, ultraviolet, 0.026f, "MASTER" }
     };
 
     const auto knobRow = layout.knobRow.toFloat();
-    const auto cellWidth = knobRow.getWidth() / 10.0f;
+    const auto cellWidth = knobRow.getWidth() / 13.0f;
     const auto bandTop = static_cast<float> (layout.tonePanel.getY() + 6);
     const auto bandBottom = static_cast<float> (layout.tonePanel.getBottom() - 6);
 
@@ -1047,10 +1054,11 @@ void VocalorAudioProcessorEditor::resized()
     formantShiftKnob.setBounds (morphColumn.reduced (4, 8));
 
     auto knobArea = layout.knobRow;
-    constexpr int knobCount = 10;
+    constexpr int knobCount = 13;
     const auto knobWidth = knobArea.getWidth() / knobCount;
     VocalorKnob* knobs[knobCount] = { &breathKnob, &resonanceKnob, &tensionKnob,
-                                      &vibratoKnob, &humanizeKnob, &glideKnob,
+                                      &nasalKnob, &vibratoKnob, &humanizeKnob,
+                                      &dynamicsKnob, &intonationKnob, &glideKnob,
                                       &spreadKnob, &roomKnob, &roomSizeKnob, &outputKnob };
     for (int i = 0; i < knobCount; ++i)
     {

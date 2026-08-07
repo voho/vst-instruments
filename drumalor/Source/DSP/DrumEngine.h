@@ -28,6 +28,24 @@ enum class Instrument : std::uint8_t
     Count
 };
 
+// How the stick met the drum. A drummer's snare is three instruments, and the
+// difference between them is entirely where the stick landed and how long it
+// stayed: on the head, on the head and the rim together, or laid flat across a
+// hand-damped head with its shaft dropped onto the rim. Every voice accepts the
+// value; only the Snare currently does anything but ignore it.
+enum class Articulation : std::uint8_t
+{
+    Head,
+    Rimshot,
+    CrossStick
+};
+
+struct MidiTrigger
+{
+    Instrument instrument {};
+    Articulation articulation { Articulation::Head };
+};
+
 inline constexpr std::size_t instrumentCount = static_cast<std::size_t> (Instrument::Count);
 inline constexpr double maximumTailSeconds = 8.0;
 // Choke/mute groups A, B and C. Group 0 means the voice never chokes anything.
@@ -58,6 +76,9 @@ struct KitParameters
     // Both bus stages are fully bypassed at 0.
     float busDrive { 0.0f };
     float busCompression { 0.0f };
+    // How much of the kit each drum's neighbours hear. Fully bypassed at 0,
+    // which is the default, so an existing session is unchanged.
+    float bleed { 0.0f };
 };
 
 struct InstrumentMetadata
@@ -78,6 +99,7 @@ struct InstrumentMetadata
 [[nodiscard]] std::string_view getCharacterALabel (Instrument instrument) noexcept;
 [[nodiscard]] std::string_view getCharacterBLabel (Instrument instrument) noexcept;
 [[nodiscard]] std::optional<Instrument> instrumentForMidiNote (int midiNote) noexcept;
+[[nodiscard]] std::optional<MidiTrigger> midiTriggerForNote (int midiNote) noexcept;
 
 class DrumEngine
 {
@@ -90,7 +112,16 @@ public:
                                   const InstrumentParameters& parameters) noexcept;
     void setKitParameters (const KitParameters& parameters) noexcept;
     void setOutputGain (float linearGain) noexcept;
-    void trigger (Instrument instrument, float velocity) noexcept;
+    // Continuous hi-hat pedal position: 0 is fully open, 1 is tightly closed.
+    // Until this is called the two hats behave exactly as they always did, on
+    // their own notes; from the first call onwards the pedal is what decides
+    // how open the pair is and the notes only choose which channel strip plays.
+    // Call it from the same thread that calls trigger(): the plug-in routes
+    // MIDI CC 4 to it at the controller event's own sample offset.
+    void setHiHatPedal (float position) noexcept;
+    [[nodiscard]] float getHiHatPedal() const noexcept;
+    void trigger (Instrument instrument, float velocity,
+                  Articulation articulation = Articulation::Head) noexcept;
     [[nodiscard]] bool triggerMidi (int midiNote, float velocity) noexcept;
     void allSoundsOff() noexcept;
     void process (float* left, float* right, int numSamples) noexcept;
@@ -172,8 +203,21 @@ private:
         float a2 { 0.0f };
         float y1 { 0.0f };
         float y2 { 0.0f };
+        // What a1 is when the head is at rest, how far it moves per unit of
+        // relative frequency change, and the 2r it can never exceed.
+        //
+        // a1 = 2 r cos(omega (1 + delta)) is, to first order in delta,
+        // nominalA1 - 2 r omega sin(omega) delta. A drum head's tension change
+        // is a few per cent, where that linearisation is good to well under a
+        // cent, and it costs one multiply-add instead of a cosine. Only a1
+        // moves: a2 is -r^2 and is left alone, so a mode's decay time cannot
+        // drift with its amplitude the way it would if the pole were retuned.
+        float nominalA1 { 0.0f };
+        float tensionSlope { 0.0f };
+        float poleDiameter { 0.0f };
 
         [[nodiscard]] float tick (float input) noexcept;
+        void setTension (float relativeFrequencyChange) noexcept;
         // Set a mode in motion rather than pushing a sample through it. A
         // struck mode starts at rest and answers A r^n sin(n omega): zero at the
         // instant of contact, rising to A a quarter period later. Driving the
@@ -296,6 +340,7 @@ private:
         bool choking { false };
         bool bandLimitedNoiseReady { false };
         Instrument instrument { Instrument::Kick };
+        Articulation articulation { Articulation::Head };
         int chokeGroup { 0 };
         std::uint64_t generation { 0 };
         std::uint64_t ageSamples { 0 };
@@ -358,6 +403,25 @@ private:
         float bandLimitedNoiseCurrent { 0.0f };
         float bandLimitedNoiseNext { 0.0f };
         float bandLimitedNoisePhase { 0.0f };
+        // Tension modulation of the head bank. A displaced membrane is a
+        // stretched one, so every mode sharpens while the strike energy is
+        // still in the head and settles as it rings out. Zero depth on every
+        // voice whose resonators are not a membrane.
+        float modalEnergy { 0.0f };
+        float modalTension { 0.0f };
+        float tensionDepth { 0.0f };
+        float tensionSmoothing { 1.0f };
+        // What the articulation did to the mix. A rimshot drives the wires
+        // harder and rings the rim; a cross-stick has the player's hand on the
+        // head, so the membrane and the wires are both mostly gone and what is
+        // left is the shell.
+        float bodyScale { 1.0f };
+        float wireScale { 1.0f };
+        float rimLevel { 0.0f };
+        // How open the pair was when this hat was struck. A pedal that closes
+        // further than this damps the voice; one that opens again does not
+        // bring it back, because a hat that has been shut has been shut.
+        float hatAperture { 1.0f };
         float baseFrequency { 100.0f };
         float sweepAmount { 0.0f };
         float panLeft { 0.70710678f };
@@ -378,6 +442,29 @@ private:
         // Only the Ride and Crash use this; every other voice leaves it at its
         // reset state and never ticks it.
         CymbalChannel cymbal {};
+    };
+
+    // A drum that is not being struck is still a drum. The snare's resonant head
+    // carries a set of wires resting on it and answers everything the kit puts
+    // into the air and the floor; a tom's head answers whatever lands near its
+    // own note. Neither is a voice - they exist whether or not their instrument
+    // has been played - so they live here rather than in the voice pool.
+    static constexpr int sympatheticBedCount = 4;
+    static constexpr int sympatheticModeCount = 3;
+
+    struct SympatheticBed
+    {
+        Instrument instrument { Instrument::Snare };
+        bool hasWires { false };
+        int modeCount { 0 };
+        float lastPitch { 0.0f };
+        float lastDecay { 0.5f };
+        float panLeft { 0.70710678f };
+        float panRight { 0.70710678f };
+        std::array<Resonator, sympatheticModeCount> resonators {};
+        Biquad drive {};
+        Biquad wires {};
+        std::uint32_t noiseState { 1u };
     };
 
     struct RelaxationOscillatorBank
@@ -436,7 +523,8 @@ private:
     [[nodiscard]] int findVoiceSlot() const noexcept;
     void initialiseVoice (Voice& voice, Instrument instrument, float velocity,
                           const InstrumentParameters& parameters, std::uint32_t seed,
-                          const HitVariation& variation) noexcept;
+                          const HitVariation& variation,
+                          Articulation articulation) noexcept;
     void initialiseModalVoice (Voice& voice, const float* ratios, int modeCount,
                                float baseFrequency, float decaySeconds,
                                float spread, float brightness,
@@ -463,6 +551,10 @@ private:
     int buildHeadBank (Voice& voice, float fundamental, const HeadGeometry& head,
                        float decaySeconds, float brightness, ModalLoss loss) noexcept;
     void chokeGroup (int group) noexcept;
+    [[nodiscard]] static bool isStruckMembrane (Instrument instrument) noexcept;
+    [[nodiscard]] static bool isHiHat (Instrument instrument) noexcept;
+    [[nodiscard]] float hiHatAperture (Instrument instrument) const noexcept;
+    void dampRingingMembrane (Instrument instrument, float velocity) noexcept;
     void beginChoke (Voice& voice, float seconds) noexcept;
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
     void retireVoice (const Voice& voice) noexcept;
@@ -472,9 +564,15 @@ private:
     void updateActiveVoiceCount() noexcept;
     void applyBusStage (float& left, float& right, float driveAmount,
                         float compressionAmount) noexcept;
+    void configureSympatheticBeds() noexcept;
+    void updateSympatheticBeds() noexcept;
+    void clearSympatheticBeds() noexcept;
+    void renderSympatheticBeds (float excitation, float amount,
+                                float& left, float& right) noexcept;
     void resetBusStage() noexcept;
 
     [[nodiscard]] float advanceContact (Voice& voice) noexcept;
+    void advanceModalTension (Voice& voice, float bankOutput) noexcept;
     [[nodiscard]] float renderVoice (Voice& voice) noexcept;
     [[nodiscard]] float renderKick (Voice& voice) noexcept;
     [[nodiscard]] float renderSnare (Voice& voice) noexcept;
@@ -553,16 +651,23 @@ private:
     std::uint64_t engineSamples_ { 0 };
     std::array<Voice, maxVoices> voices_ {};
     std::array<Voice, retiringVoiceCount> retiringVoices_ {};
+    std::array<SympatheticBed, sympatheticBedCount> sympatheticBeds_ {};
     std::array<RelaxationOscillatorBank, metallicBankCount> metallicBanks_ {};
     std::array<int, metallicBankCount> metallicBankVoiceCounts_ {};
     std::array<float, maximumMetallicDecimatorTaps> metallicDecimatorCoefficients_ {};
     std::array<float, sineTableSize> sineTable_ {};
     std::array<std::atomic<float>, instrumentCount> instrumentLevels_ {};
 
+    // Pedal position and whether a controller has ever set it. Both are only
+    // touched from the trigger/audio path and from reset().
+    float hiHatPedal_ { 0.0f };
+    bool hiHatPedalActive_ { false };
+
     std::atomic<float> outputGain_ { 0.82f };
     std::atomic<float> humanise_ { 0.5f };
     std::atomic<float> busDrive_ { 0.0f };
     std::atomic<float> busCompression_ { 0.0f };
+    std::atomic<float> bleed_ { 0.0f };
     std::atomic<float> outputLevelLeft_ { 0.0f };
     std::atomic<float> outputLevelRight_ { 0.0f };
     std::atomic<float> busGainMeter_ { 1.0f };
@@ -596,6 +701,11 @@ private:
     // of stepping once per block, which used to click on automation.
     float smoothedBusDrive_ { 0.0f };
     float smoothedBusCompression_ { 0.0f };
+    float smoothedBleed_ { 0.0f };
+    // The previous sample's dry mix, before anything the beds added to it. One
+    // sample of delay taken from the mix the beds cannot see makes the whole
+    // path strictly feed-forward, so there is no loop to be stable about.
+    float bleedExcitation_ { 0.0f };
     float dcInputLeft_ { 0.0f };
     float dcInputRight_ { 0.0f };
     float dcOutputLeft_ { 0.0f };

@@ -61,6 +61,78 @@ struct YouKnow106TestAccess
         return output;
     }
 
+    // Worst residual of the four stage equations, evaluated independently of
+    // the solver at the voltages it returned. The stage equation is
+    //   Vn = Vn_prev + 2 gn H avg(tanh; drive_prev -> drive),
+    // with V(-1) = input - k Hfb tanh(V4/Hfb) and gn carrying the stage's own
+    // Early-effect modulation. The path average is taken by midpoint
+    // quadrature on std::tanh, so nothing in this measurement shares code
+    // with the ln cosh divided difference the solver uses.
+    struct CascadeResidual
+    {
+        float worst { 0.0f };       // volts
+        float worstStateMagnitude { 0.0f };
+    };
+
+    static CascadeResidual cascadeWorstResidual(const std::vector<float>& input,
+                                                float g, float feedback)
+    {
+        constexpr float earlyCoefficient =
+            YouKnow106Engine::otaEarlyEffectCoefficient;
+        constexpr float calibration = 0.70f;   // process()'s own default
+        const float H = headroom();
+        const float Hfb = feedbackHeadroom();
+        const float k = std::clamp(feedback, 0.0f, 8.0f);
+        const float gLimited = std::clamp(g, 0.0f, 64.0f);
+
+        Cascade cascade;
+        cascade.reset();
+        CascadeResidual worst;
+        for (float sample : input)
+        {
+            const auto previousState = cascade.state;
+            const auto previousDrive = cascade.driveMemory;
+            cascade.process(sample, g, feedback);
+
+            float previous =
+                sample - k * Hfb * static_cast<float>(
+                    std::tanh(static_cast<double>(cascade.voltage[3] / Hfb)));
+            float magnitude = 0.0f;
+            for (std::size_t stage = 0; stage < 4; ++stage)
+            {
+                const float v = cascade.voltage[stage];
+                const float drive =
+                    (previous - v + cascade.offsetVoltage[stage]) / H;
+                const float earlyMod = 1.0f + earlyCoefficient * calibration
+                    * static_cast<float>(std::tanh(static_cast<double>(v / H)));
+                const float stageG = gLimited * cascade.gScale[stage] * earlyMod;
+
+                // Midpoint quadrature of tanh along the straight drive path.
+                constexpr int quadrature = 256;
+                const double x0 = previousDrive[stage];
+                const double x1 = drive;
+                double average = 0.0;
+                for (int point = 0; point < quadrature; ++point)
+                    average += std::tanh(
+                        x0 + (x1 - x0) * (point + 0.5) / quadrature);
+                average /= quadrature;
+
+                const double residual =
+                    static_cast<double>(v) - static_cast<double>(previousState[stage])
+                    - 2.0 * static_cast<double>(stageG) * static_cast<double>(H)
+                          * average;
+                if (std::abs(residual) > worst.worst)
+                {
+                    worst.worst = static_cast<float>(std::abs(residual));
+                    worst.worstStateMagnitude = std::max(magnitude, std::abs(v));
+                }
+                magnitude = std::max(magnitude, std::abs(v));
+                previous = v;
+            }
+        }
+        return worst;
+    }
+
     static std::array<float, 4> cascadeVoltagesAfterRetime(
         const std::array<float, 4>& voltage,
         float previousG, float nextG) noexcept
@@ -749,6 +821,146 @@ double steadyStatePeak(const std::vector<float>& signal)
 }
 
 // --------------------------------------------------------------------------
+
+void testCascadeKernelsMatchTheStandardLibrary()
+{
+    // The cascade evaluates tanh and ln cosh tens of times per stage per
+    // sample, so both come from one shared exponential rather than from three
+    // separate library calls. That is only allowed to be a speed change: the
+    // functions must still be the functions. Nothing else in this suite would
+    // catch a kernel that drifted a few ULP -- the reference-solve and
+    // service-anchor tests carry decibel and cent tolerances thousands of
+    // times wider -- so the agreement is fenced directly, at one float ULP.
+    using Kernels = YouKnow106Engine::CascadeKernels;
+    constexpr float floatEpsilon = 1.1920929e-7f;
+
+    // ln(1+u) is only ever asked for u = exp(-2|x|), which lands in [0, 1].
+    double worstLog = 0.0;
+    double worstLogAt = 0.0;
+    for (int step = 0; step <= 20000; ++step)
+    {
+        const float u = static_cast<float>(step) / 20000.0f;
+        const double kernel = Kernels::log1pUnitInterval(u);
+        const double library = std::log1p(static_cast<double>(u));
+        const double error = library > 0.0
+            ? std::abs(kernel - library) / library
+            : std::abs(kernel - library);
+        if (error > worstLog)
+        {
+            worstLog = error;
+            worstLogAt = u;
+        }
+    }
+    expect(worstLog <= floatEpsilon,
+           "the log1p kernel is " + std::to_string(worstLog / floatEpsilon)
+               + " float ULP from std::log1p near u="
+               + std::to_string(worstLogAt));
+
+    // The differential pair's drive is (V(n-1) - Vn + offset)/H. The stage
+    // states are clamped inside the solve and H is 6.37 V, so |x| stays well
+    // inside this span; it is swept wider than the model can reach.
+    double worstTanh = 0.0;
+    double worstTanhAt = 0.0;
+    double worstLnCosh = 0.0;
+    double worstLnCoshAt = 0.0;
+    for (int step = -240000; step <= 240000; ++step)
+    {
+        const float x = static_cast<float>(step) / 10000.0f;
+        const double tanhError =
+            std::abs(static_cast<double>(Kernels::tanh(x))
+                     - std::tanh(static_cast<double>(x)));
+        if (tanhError > worstTanh)
+        {
+            worstTanh = tanhError;
+            worstTanhAt = x;
+        }
+
+        // ln cosh is judged on absolute error, because that is what the
+        // divided difference (A(x1) - A(x0))/span actually consumes, and
+        // because the stable |x| + ln(1+e) - ln 2 form cancels near zero:
+        // there the answer is x^2/2 taken as a difference of numbers near
+        // ln 2, so no float implementation of this expression -- including
+        // the std::log1p one this kernel replaced -- resolves it relatively.
+        // The bound is the float grid at the largest term of that sum.
+        const double reference = std::log(std::cosh(static_cast<double>(x)));
+        const double lnCoshError =
+            std::abs(static_cast<double>(Kernels::lnCosh(x)) - reference)
+            / (static_cast<double>(floatEpsilon)
+               * (std::abs(static_cast<double>(x)) + 1.0));
+        if (lnCoshError > worstLnCosh)
+        {
+            worstLnCosh = lnCoshError;
+            worstLnCoshAt = x;
+        }
+
+        // And the claim that actually matters: the shared-exponential kernel
+        // is the library-call form it replaced, to within one ULP of the
+        // result. This is what makes the substitution a speed change.
+        const float magnitude = std::abs(x);
+        const float libraryForm = magnitude
+            + std::log1p(std::exp(-2.0f * magnitude)) - 0.6931471805599453f;
+        expect(std::abs(Kernels::lnCosh(x) - libraryForm)
+                   <= floatEpsilon * (magnitude + 1.0f),
+               "the ln cosh kernel departs from its std::log1p form at x="
+                   + std::to_string(x));
+    }
+    // tanh is bounded by one, so its absolute error is its relative error at
+    // the top of the range and the tighter measure everywhere else.
+    expect(worstTanh <= floatEpsilon,
+           "the tanh kernel is " + std::to_string(worstTanh / floatEpsilon)
+               + " float ULP from std::tanh near x="
+               + std::to_string(worstTanhAt));
+    expect(worstLnCosh <= 1.0,
+           "the ln cosh kernel is " + std::to_string(worstLnCosh)
+               + " float grid steps from log(cosh) near x="
+               + std::to_string(worstLnCoshAt));
+
+    // Beyond the rail the kernel stops exponentiating. That has to be a place
+    // where the exact result is already one to within the float grid.
+    expect(Kernels::tanh(Kernels::tanhRailMagnitude * 1.0001f) == 1.0f,
+           "the tanh kernel does not rail where it says it does");
+    expect(1.0 - std::tanh(static_cast<double>(Kernels::tanhRailMagnitude))
+               < 0.5 * static_cast<double>(floatEpsilon),
+           "the tanh kernel rails before std::tanh has reached one");
+}
+
+void testCascadeSolveStopsWhereItConverges()
+{
+    // The Newton loop's step test is scaled to the states it measures, so it
+    // can be satisfied at all: an absolute 1e-7 on volt-scale capacitor
+    // voltages is below the float grid, which made the loop run its cap
+    // wherever the filter was working. What must not change is the answer, so
+    // this measures the residual of the stage equations at the voltages the
+    // solver returns -- by midpoint quadrature on std::tanh, sharing no code
+    // with the solver's own divided difference.
+    constexpr double sampleRate = 192000.0;
+    constexpr double cutoff = 1500.0;
+    const float g = static_cast<float>(std::tan(pi * cutoff / sampleRate));
+
+    for (double feedback : { 0.0, 2.0, 3.6, 4.4 })
+    {
+        // Hot enough to keep the pairs out of their linear region, which is
+        // where the solve is hardest and where the old threshold guaranteed
+        // the cap was reached.
+        std::vector<float> drive(4096);
+        for (std::size_t index = 0; index < drive.size(); ++index)
+            drive[index] = 3.0f * static_cast<float>(
+                std::sin(2.0 * pi * 220.0 * static_cast<double>(index)
+                         / sampleRate));
+
+        const auto residual = YouKnow106TestAccess::cascadeWorstResidual(
+            drive, g, static_cast<float>(feedback));
+        // The stage equation's own terms are volts; the bound is expressed
+        // against the state the residual is measured on, so it means the same
+        // thing at every drive level.
+        const double bound =
+            2.0e-4 * (1.0 + static_cast<double>(residual.worstStateMagnitude));
+        expect(residual.worst <= bound,
+               "the cascade left a residual of " + std::to_string(residual.worst)
+                   + " V at k=" + std::to_string(feedback)
+                   + ", above the " + std::to_string(bound) + " V bound");
+    }
+}
 
 void testCascadeAgainstReferenceSolve()
 {
@@ -3687,6 +3899,8 @@ int main()
     testOutputSummerIsLinearBelowItsRails();
     testDecimatorProtectsTheTopOfTheBand();
     testFilterDriveMatchesTheDerivedBudget();
+    testCascadeKernelsMatchTheStandardLibrary();
+    testCascadeSolveStopsWhereItConverges();
     testCascadeAgainstReferenceSolve();
     testCascadeOscillationThreshold();
     testCascadeSurvivesAdversarialControl();
