@@ -115,7 +115,7 @@ void layoutKnobRow (juce::Rectangle<int> rowArea,
 }
 
 constexpr std::array<const char*, keyswitchCount> keyswitchLabels {
-    "DN", "UP", "ALT", "SUS", "PM", "H/P", "HARM", "PNCH"
+    "DN", "UP", "ALT", "SUS", "PM", "H/P", "HARM", "PNCH", "SLD"
 };
 
 bool isKeyswitch (int midiNoteNumber) noexcept

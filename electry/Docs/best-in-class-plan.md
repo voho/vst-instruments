@@ -194,7 +194,7 @@ verification is by a test in `Tests/` that fails without the change.
   neck, and the articulation is measurably distinct from both Sustain and
   Harmonics.
 
-- [ ] **4. Slide as a sixth play style.** The finger stays down and travels:
+- [x] **4. Slide as a sixth play style.** The finger stays down and travels:
   the sounding length glides at a constant fret-per-second finger velocity
   rather than over a fixed time, so a two-fret slide is short and a
   twelve-fret slide is long, and the loop state is preserved throughout. While

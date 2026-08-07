@@ -23,6 +23,7 @@ level-matched blind listening.
 | Fret collisions | Bilbao and Torin's energy-balanced string/fretboard collision modeling | The Artifacts path's incidental fret contact: a decaying collision window whose soft limit clips vertical displacement against a velocity-dependent clearance and re-radiates deterministic rattle noise on hard-picked notes | Collision-informed contact behavior in a bounded, stable form; not an FDTD distributed-contact simulation |
 | Pinch harmonic | The same touch model driven by the picking hand; standard descriptions of the technique as a thumb contact immediately after the plectrum | The touch position is the pluck fraction, so Pick Position selects the partial; a firmer (depth 1.0) and longer (90 ms) contact than the fretting finger's, because the mode-shape law gives a near-bridge touch little purchase on the low partials | Node selection by hand position with the technique's own asymmetry between low and high partials preserved; not a model of thumb geometry, pick grip, or the exact contact area |
 | Touch harmonics | The touch-interaction half of Evangelista and Eckerholm's player/instrument models, and the classical mode-shape result that a point contact removes energy as `sin^2(n pi p)` | A one-tap FIR `(1 - d/2) + (d/2) z^-M` with `M = p * period` inside each polarisation loop, which *is* the `sin^2(n pi p)` weighting rather than an approximation of it; unity at a node, `1 - d` at an antinode, magnitude bounded by one at every depth. The natural harmonic touches the midpoint, so the octave is the string's own even series with its own inharmonicity, decay and pickup comb; the finger lifts once the note has formed | An exact first-order point-contact loss condensed into the delay loop, exact in magnitude and phase at the surviving partials whenever the touch sits on a node; not a distributed finger-force contact solve, and not exact at a non-node touch position |
+| Slide | Pakarinen, Puputti, and Välimäki's virtual slide guitar, whose string algorithm carries a parametric model of the tube/string contact noise produced by a wound string's surface ridges | The finger stays down and the sounding length glides at a hand speed in frets per second rather than over a fixed time; the friction is a noise band centred at `v / w`, the hand's speed along the string over the winding pitch, with its level following the derivative of the glide | A time-varying delay length plus a velocity-dependent friction band, with the winding pitch a fitted linear stand-in for real wrap-wire practice; not an energy-compensated time-varying waveguide, and not a measured contact-noise spectrum |
 | Hammer-on and pull-off | Touch/legato interaction models from Evangelista and Eckerholm | Keyswitched legato: a sounding string within reach retargets its delay over about 10 ms while the loop state is preserved, with a soft finger excitation and no plectrum noise | Continuous-state legato with fingered attacks; not a distributed finger-force model |
 | Pickups | Paiva, Pakarinen, and Välimäki's pickup acoustics and modeling; low-frequency pickup nonlinearity measurements (Novak et al.); engineering aperture analyses | Per-string pickup-position combs follow each fret, with the delayed tap weighted 0.60 so the null is 12 dB deep rather than infinite, as a real aperture, two-coil sum and three-dimensional field never cancel exactly; an O(1) fractional rectangular moving average gives the finite aperture's exact sinc response; bounded flux nonlinearity plus shallow string-mass/pole balance is differentiated into induced EMF, guarded ultrasonically, then passed through the loaded coil/tone circuit | The published pickup signal structure (position comb of measured rather than ideal null depth, finite aperture, nonlinear flux, induced voltage, electrical resonance) with datasheet-plausible level calibration; not a magnetic finite-element, per-coil, or capture-fitted model of named pickups |
 | Solid body | Solid-body bridge-admittance and dead-spot literature; geometric estimates | Structural bridge displacement is differentiated before four double-precision, peak-normalised modal resonators and a 4 kHz guard, producing body-induced voltage before the loaded pickup coils; positive real modal conductance across each note's first six partials can only shorten loop T60 | Geometry-informed structural pickup voltage plus passive mode-dependent energy extraction; not undifferentiated acoustic body displacement mixed into pickup voltage, and the mode tables remain voicing estimates rather than measured admittance data |
@@ -44,14 +45,14 @@ level-matched blind listening.
 
 The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
 
-1. MIDI notes 12..19 are two independent banks of latching keyswitches:
+1. MIDI notes 12..20 are two independent banks of latching keyswitches:
    12..14 (C0..D0) latch the picking style - downstroke, upstroke,
-   alternating strokes - and 15..19 (D#0..G0) latch the play style -
-   sustain, palm mute, hammer-on/pull-off, natural harmonic, pinch harmonic.
-   The banks compose, so any of the fifteen combinations is reachable in at
-   most two keyswitches; a hammered note has no plectrum, so it neither takes a
-   stroke colour nor consumes a step of the alternate sequence. Notes 20..27
-   are ignored. Notes 28..86 are playable on eight physical strings in Drop-E
+   alternating strokes - and 15..20 (D#0..G#0) latch the play style -
+   sustain, palm mute, hammer-on/pull-off, natural harmonic, pinch harmonic,
+   slide. The banks compose, so any of the eighteen combinations is reachable
+   in at most two keyswitches; a hammered or slid note has no plectrum, so it
+   neither takes a stroke colour nor consumes a step of the alternate
+   sequence. Notes 21..27 are ignored. Notes 28..86 are playable on eight physical strings in Drop-E
    tuning (E1-B1-E2-A2-D3-G3-B3-E4); a deterministic allocator maps each note,
    preferring a repick of an already-sounding note, then the hammer-on
    continuation of the nearest sounding string, then the free string that costs
@@ -605,6 +606,55 @@ a pinch far better than it survives a natural harmonic, which is what the
 physics says and what the instrument does; the squeal reads as a squeal because
 it is 15 dB up on the fundamental in relative terms and because the amplifier
 that a pinch is normally played through compresses the difference further.
+
+## The slide
+
+Pakarinen, Puputti, and Välimäki's
+[*Virtual Slide Guitar*](https://research.aalto.fi/en/publications/virtual-slide-guitar)
+(Computer Music Journal 32(3), 2008, with the
+[NIME 2008 companion](https://www.nime.org/proceedings/2008/nime2008_049.pdf))
+makes the point Electry's slide is built on: a wound string is not smooth. The
+wrap wire lies in ridges along its surface, and anything dragged along it -
+their slide tube, a fingertip - is excited at the rate those ridges pass under
+the contact. Electry takes that mechanism rather than their energy-compensated
+time-varying waveguide, and takes the finger rather than the tube.
+
+Two things follow. First, the duration of a slide is a distance divided by a
+hand speed, not a time: the finger travels, so a twelve-fret slide takes six
+times as long as a two-fret one. The Bend Time control - the same travel-time
+control the pitch wheel uses - sets 8% of itself per fret, so its 280 ms
+default is 22 ms per fret and the whole control spans a very fast hand to a
+deliberate one. The glide is the existing legato retarget with that duration,
+so the loop state is preserved throughout and the sounding length passes
+through every intermediate fret.
+
+Second, the friction. The position of fret `n` along the string is
+`L (1 - 2^(-n/12))` from the nut, so the distance the hand actually covers
+shrinks as the slide moves up the neck exactly as the fret spacing does; the
+speed is that distance over the glide time. The winding pitch runs from about
+0.36 mm on a .080 to about 0.18 mm on a .024 - much flatter than the string
+diameter itself, because a heavier string is mostly a heavier core - and the
+engine uses a linear stand-in fitted to that pair, which is a voicing estimate
+rather than a measurement. Two one-poles form a band at `v / w`: at a
+twelve-fret slide taken in 190 ms that is around 8 kHz, and at 770 ms around
+2 kHz. The level follows `6 b (1 - b)`, the derivative of the glide's own
+smoothstep, so the squeak swells and dies with the movement and is exactly zero
+when the finger is still.
+
+A plain string has no winding, so its friction is a tenth of a wound string's
+and the band is fixed. The Finger Noise control - the fretting hand's own
+contact level - scales the whole thing and silences it exactly at zero.
+
+The friction is routed like every other contact noise in this engine: a
+one-percent trace into the string and the rest as a local pickup and body
+transient. That matters for how it is measured, and the measurement is worth
+recording because it is the reason the regression suite asserts the band at
+the source rather than at the output. The loaded pickup coil is a second-order
+low-pass at a couple of kilohertz, so it flattens most of the difference
+between a two-kilohertz squeak and an eight-kilohertz one before either
+reaches the output. That is the instrument behaving correctly - a real pickup
+does the same thing to a real squeak - but it means an output-side centroid
+measures the coil rather than the friction.
 
 ## Fret collisions
 
@@ -1485,6 +1535,10 @@ from the frozen state; contrasting construction
 endpoints that both stay in tune; plectrum contact noise in the pre-attack
 window; release noise that appears only after note-off; eight-string
 polyphony with open-position chord mapping, repick reuse, and stealing; a
+slide whose pitch travels through the intermediate semitones rather than
+jumping, whose travel time scales with the interval, whose friction band
+follows the speed of the hand, which is far louder on a wound string than on a
+plain one and exactly absent at a silent Finger Noise control; a
 fretting hand that keeps a lead phrase in one position instead of falling back
 to open strings, leaves the open-position shapes untouched, and relaxes to the
 nut when the phrase ends;

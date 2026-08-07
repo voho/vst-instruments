@@ -205,6 +205,41 @@ struct ElectryEngineTestAccess
         return engine.voices_[static_cast<std::size_t>(stringIndex)].touchFraction;
     }
 
+    // How far through its travel a legato glide is, so the slide's timing can
+    // be read from the glide itself rather than from a delay target that
+    // tension modulation is also moving.
+    static float legatoBlend(const ElectryEngine& engine,
+                             int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)].legatoBlend;
+    }
+
+    // The slide's friction level, so the check that a silent Finger Noise
+    // control means an exactly absent scrape reads the engine rather than the
+    // audio.
+    static float slideNoiseAmplitude(const ElectryEngine& engine,
+                                     int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .slideNoiseAmplitude;
+    }
+
+    // The rate the winding ridges are passing under the finger, recovered from
+    // the one-pole that actually forms the friction band. The engine stores
+    // the coefficient rather than the frequency, so the test inverts the same
+    // relation the engine used.
+    static double slideBandCentreHz(const ElectryEngine& engine,
+                                    int stringIndex) noexcept
+    {
+        const float coefficient = engine
+            .voices_[static_cast<std::size_t>(stringIndex)].slideBandLow;
+        if (coefficient <= 0.0f || coefficient >= 1.0f)
+            return 0.0;
+        return -std::log(static_cast<double>(coefficient))
+             * engine.sampleRate_
+             / (2.0 * 3.14159265358979323846 * 0.6);
+    }
+
     // Where the fretting hand's index finger currently sits, so the allocator
     // checks can assert on the state that drove the choice rather than only on
     // the choice itself.
@@ -1059,9 +1094,9 @@ void testKeyswitchesSelectStylesSilently()
     expect(ElectryEngine::firstKeyswitchNote == 12,
            "keyswitch range does not start at MIDI 12");
     expect(ElectryEngine::pickStyleKeyswitchCount == 3
-               && ElectryEngine::playStyleKeyswitchCount == 5
-               && ElectryEngine::keyswitchCount == 8,
-           "the two keyswitch banks do not expose 3 picking and 5 play styles");
+               && ElectryEngine::playStyleKeyswitchCount == 6
+               && ElectryEngine::keyswitchCount == 9,
+           "the two keyswitch banks do not expose 3 picking and 6 play styles");
     expect(ElectryEngine::firstPlayStyleKeyswitchNote == 15,
            "the play-style bank does not follow the picking bank at MIDI 15");
     expect(ElectryEngine::lowestPlayableNote == 28
@@ -1082,7 +1117,7 @@ void testKeyswitchesSelectStylesSilently()
 
     // Walking every keyswitch leaves the last of each bank latched.
     expect(engine.getCurrentPickStyle() == PickStyle::Alternate
-               && engine.getCurrentPlayStyle() == PlayStyle::Pinch,
+               && engine.getCurrentPlayStyle() == PlayStyle::Slide,
            "walking the keyswitch banks did not latch the last of each");
 
     // The two banks are independent: a play-style switch keeps the picking
@@ -2465,6 +2500,233 @@ void testTouchHarmonics()
            "the harmonic's octave partial does not decay like the same partial "
            "of the picked note (harmonic " + std::to_string(harmonicDecay)
                + " dB, picked " + std::to_string(sustainDecay) + " dB)");
+}
+
+// A slide is a finger that stays down and travels: the sounding length moves
+// continuously, the travel time is a distance divided by a hand speed rather
+// than a fixed number, and the winding drags under the finger the whole way.
+void testSlideArticulation()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // Broadband magnitude-weighted centroid over a log grid. The harmonic-
+    // series centroid used elsewhere cannot see the scrape, which is noise
+    // rather than a partial.
+    const auto broadbandCentroid = [&] (const std::vector<float>& data,
+                                        int start, int length)
+    {
+        double weighted = 0.0;
+        double total = 0.0;
+        for (double frequency = 300.0; frequency < 16000.0; frequency *= 1.09)
+        {
+            const double magnitude = dftMagnitude(data, start, length,
+                                                  sampleRate, frequency);
+            weighted += magnitude * frequency;
+            total += magnitude;
+        }
+        return total > 0.0 ? weighted / total : 0.0;
+    };
+
+    struct Slide
+    {
+        StereoBuffer audio { 1 };
+        int settleSamples { 0 };
+        int stringIndex { -1 };
+        int fret { -1 };
+        float amplitude { 0.0f };
+    };
+
+    const auto renderSlide = [&] (int fromNote, int toNote, float fingerNoise,
+                                  float bendTime)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.bodyResonance = 0.0f;
+        parameters.pickNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.fingerNoise = fingerNoise;
+        parameters.bendTimeSeconds = bendTime;
+        engine.setParameters(parameters);
+        engine.reset();
+
+        engine.noteOn(fromNote, 0.85f);
+        StereoBuffer lead(static_cast<int>(0.30 * sampleRate));
+        renderInto(engine, lead);
+
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(toNote, 0.85f);
+
+        Slide result;
+        result.stringIndex = TestAccess::stringForNote(engine, toNote);
+        result.fret = result.stringIndex >= 0
+            ? TestAccess::snapshot(engine, result.stringIndex).fret : -1;
+        result.amplitude = result.stringIndex >= 0
+            ? TestAccess::slideNoiseAmplitude(engine, result.stringIndex) : 0.0f;
+
+        // Render in short chunks so the moment the glide settles can be read
+        // from the delay target the engine is actually driving: the glide is
+        // monotone, so it has settled once the target stops moving.
+        constexpr int chunk = 64;
+        const int total = static_cast<int>(2.0 * sampleRate);
+        result.audio = StereoBuffer(total);
+        result.settleSamples = total;
+        bool settled = false;
+        for (int at = 0; at < total; at += chunk)
+        {
+            const int samples = std::min(chunk, total - at);
+            engine.process(result.audio.left.data() + at,
+                           result.audio.right.data() + at, samples);
+            if (settled || result.stringIndex < 0)
+                continue;
+            if (TestAccess::legatoBlend(engine, result.stringIndex) >= 1.0f)
+            {
+                result.settleSamples = at + samples;
+                settled = true;
+            }
+        }
+        return result;
+    };
+
+    // A2 open on the wound A string, sliding up to the twelfth fret.
+    const auto longSlide = renderSlide(45, 57, 0.8f, 0.28f);
+    expect(longSlide.stringIndex == 3 && longSlide.fret == 12,
+           "the slide did not stay on the string it started from");
+
+    // The pitch travels: a window in the middle of the slide sits strictly
+    // between the two endpoints rather than at either of them.
+    const double fromHz = midiHz(45);
+    const double toHz = midiHz(57);
+    const int slideStart = static_cast<int>(0.30 * sampleRate);
+    const int midpoint = slideStart + longSlide.settleSamples / 2;
+    const double middle = measureFrequency(
+        longSlide.audio.left, midpoint, static_cast<int>(0.04 * sampleRate),
+        sampleRate, std::sqrt(fromHz * toHz));
+    expect(middle > fromHz * 1.15 && middle < toHz * 0.87,
+           "the slide jumped instead of travelling (mid-slide pitch "
+               + std::to_string(middle) + " Hz between " + std::to_string(fromHz)
+               + " and " + std::to_string(toHz) + ")");
+
+    const double settled = measureFrequency(
+        longSlide.audio.left, slideStart + longSlide.settleSamples
+            + static_cast<int>(0.2 * sampleRate),
+        static_cast<int>(0.5 * sampleRate), sampleRate, toHz);
+    expect(std::abs(centsBetween(settled, toHz)) < 12.0,
+           "the slide did not arrive on its target pitch");
+
+    // The travel time is a distance over a hand speed, so a two-fret slide is
+    // far shorter than a twelve-fret one. A fixed legato time would make them
+    // equal.
+    const auto shortSlide = renderSlide(45, 47, 0.8f, 0.28f);
+    expect(shortSlide.settleSamples * 3 < longSlide.settleSamples,
+           "a two-fret slide took nearly as long as a twelve-fret one (short "
+               + std::to_string(shortSlide.settleSamples) + " samples, long "
+               + std::to_string(longSlide.settleSamples) + ")");
+
+    // The winding drags: the scrape is what Finger Noise controls, and at zero
+    // it is exactly absent rather than merely quiet.
+    const auto silentSlide = renderSlide(45, 57, 0.0f, 0.28f);
+    expect(silentSlide.amplitude == 0.0f,
+           "the slide scrape survived a silent Finger Noise control");
+    expect(longSlide.amplitude > 0.0f, "the slide produced no scrape at all");
+
+    const int frictionStart = slideStart;
+    const int frictionLength = std::max(1024, longSlide.settleSamples);
+    const auto scrapeEnergy = [&] (const Slide& withNoise, const Slide& without)
+    {
+        double sum = 0.0;
+        for (int i = frictionStart; i < frictionStart + frictionLength; ++i)
+        {
+            const double difference =
+                static_cast<double>(withNoise.audio.left[
+                    static_cast<std::size_t>(i)])
+                - static_cast<double>(without.audio.left[
+                    static_cast<std::size_t>(i)]);
+            sum += difference * difference;
+        }
+        return std::sqrt(sum / frictionLength);
+    };
+    const double woundScrape = scrapeEnergy(longSlide, silentSlide);
+
+    // A plain string has no winding, so the same gesture barely makes a sound.
+    const auto plainLoud = renderSlide(64, 71, 0.8f, 0.28f);
+    const auto plainSilent = renderSlide(64, 71, 0.0f, 0.28f);
+    expect(plainLoud.stringIndex == 7,
+           "the plain-string slide did not stay on the top string");
+    double plainSum = 0.0;
+    for (int i = frictionStart; i < frictionStart + frictionLength; ++i)
+    {
+        const double difference =
+            static_cast<double>(plainLoud.audio.left[static_cast<std::size_t>(i)])
+            - static_cast<double>(plainSilent.audio.left[
+                static_cast<std::size_t>(i)]);
+        plainSum += difference * difference;
+    }
+    const double plainScrape = std::sqrt(plainSum / frictionLength);
+    expect(plainScrape < woundScrape * 0.5,
+           "a plain string squeaks as loudly as a wound one (wound "
+               + std::to_string(woundScrape) + ", plain "
+               + std::to_string(plainScrape) + ")");
+
+    // The squeak's pitch is the rate the winding ridges pass under the finger,
+    // so a fast hand squeaks high and a slow one low. This is asserted on the
+    // band the engine actually configures rather than on the rendered audio,
+    // and the reason is worth recording: the loaded pickup coil is a
+    // second-order low-pass at a couple of kilohertz, so it flattens most of
+    // the difference between a two-kilohertz squeak and an eight-kilohertz one
+    // before it reaches the output. That is the instrument behaving correctly -
+    // a real pickup does the same thing to a real squeak - but it means an
+    // output-side centroid measures the coil rather than the friction.
+    const auto bandCentre = [&] (float bendTime)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.fingerNoise = 0.8f;
+        parameters.bendTimeSeconds = bendTime;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.85f);
+        StereoBuffer lead(static_cast<int>(0.30 * sampleRate));
+        renderInto(engine, lead);
+        engine.noteOn(styleKeyswitch(PlayStyle::Slide), 1.0f);
+        engine.noteOn(57, 0.85f);
+        const int stringIndex = TestAccess::stringForNote(engine, 57);
+        return stringIndex >= 0
+            ? TestAccess::slideBandCentreHz(engine, stringIndex) : 0.0;
+    };
+    const double fastCentre = bandCentre(0.20f);
+    const double slowCentre = bandCentre(0.80f);
+    expect(fastCentre > slowCentre * 3.0,
+           "the squeak's band does not follow the speed of the hand (fast "
+               + std::to_string(fastCentre) + " Hz, slow "
+               + std::to_string(slowCentre) + " Hz)");
+
+    // It is audible, though: the same gesture taken at two speeds renders two
+    // different sounds rather than one scaled in time.
+    const auto fastSlide = renderSlide(45, 57, 0.8f, 0.20f);
+    const auto fastSilent = renderSlide(45, 57, 0.0f, 0.20f);
+    const auto slowSlide = renderSlide(45, 57, 0.8f, 0.80f);
+    const auto slowSilent = renderSlide(45, 57, 0.0f, 0.80f);
+    const auto differenceOf = [] (const Slide& a, const Slide& b)
+    {
+        std::vector<float> out(a.audio.left.size(), 0.0f);
+        for (std::size_t i = 0; i < out.size(); ++i)
+            out[i] = a.audio.left[i] - b.audio.left[i];
+        return out;
+    };
+    const auto fastFriction = differenceOf(fastSlide, fastSilent);
+    const auto slowFriction = differenceOf(slowSlide, slowSilent);
+    const double fastCentroid = broadbandCentroid(
+        fastFriction, slideStart, std::max(1024, fastSlide.settleSamples));
+    const double slowCentroid = broadbandCentroid(
+        slowFriction, slideStart, std::max(1024, slowSlide.settleSamples));
+    expect(fastCentroid > 300.0 && slowCentroid > 300.0
+               && std::abs(fastCentroid - slowCentroid) > 150.0,
+           "two slides at different hand speeds produced the same friction "
+           "(fast " + std::to_string(fastCentroid) + " Hz, slow "
+               + std::to_string(slowCentroid) + " Hz)");
 }
 
 // The pinch harmonic is the same touch filter driven by the picking hand:
@@ -4762,6 +5024,7 @@ int main()
     testFrettingHandPosition();
     testTouchHarmonics();
     testPinchHarmonic();
+    testSlideArticulation();
     testSustainPedal();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();

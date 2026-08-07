@@ -173,8 +173,8 @@ private:
         { "DOWN", "UP", "ALTERNATE" }
     };
     ElectryChoiceStrip playStyleStrip {
-        "PLAY STYLE  (KEYSWITCHES D#0..G0)",
-        { "SUSTAIN", "PALM MUTE", "HAMMER", "HARMONIC", "PINCH" }
+        "PLAY STYLE  (KEYSWITCHES D#0..G#0)",
+        { "SUSTAIN", "PALM MUTE", "HAMMER", "HARMONIC", "PINCH", "SLIDE" }
     };
     ElectryChoiceStrip pickupStrip { "PICKUP", { "NECK", "BOTH", "BRIDGE" } };
     ElectryChoiceStrip outputModeStrip { "OUTPUT FIELD", { "MONO", "STEREO" } };

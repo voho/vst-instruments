@@ -20,17 +20,19 @@ enum class PickStyle
 
 // What the hands do to the string: the sustained default, the bridge-hand
 // palm mute, the fretting-hand legato (hammer-on / pull-off), the natural
-// harmonic touch at the midpoint node, or the pinch harmonic, where the
-// picking hand's thumb catches the string at the pick's own position. Latched
-// by its own keyswitch bank, independently of the picking style. New styles
-// are appended, so every existing keyswitch note keeps its meaning.
+// harmonic touch at the midpoint node, the pinch harmonic, where the picking
+// hand's thumb catches the string at the pick's own position, or the slide,
+// where the finger stays down and travels along the string. Latched by its own
+// keyswitch bank, independently of the picking style. New styles are appended,
+// so every existing keyswitch note keeps its meaning.
 enum class PlayStyle
 {
     Sustain,
     PalmMute,
     Hammer,
     Harmonics,
-    Pinch
+    Pinch,
+    Slide
 };
 
 enum class PickupSelector { Neck, Both, Bridge };
@@ -118,15 +120,15 @@ public:
 
     // Keyswitches occupy one contiguous group below the playable range,
     // starting at 12 (C0): first the picking-style bank (Down/Up/Alternate),
-    // then the play-style bank (Sustain/PalmMute/Hammer/Harmonics). The two
-    // banks latch independently, so any of the twelve combinations can be
-    // reached in two keyswitches at most. Notes between the banks and the
-    // playable range (19..27) are ignored.
+    // then the play-style bank (Sustain/PalmMute/Hammer/Harmonics/Pinch/
+    // Slide). The two banks latch independently, so any of the eighteen
+    // combinations can be reached in two keyswitches at most. Notes between
+    // the banks and the playable range (21..27) are ignored.
     static constexpr int firstKeyswitchNote = 12;
     static constexpr int pickStyleKeyswitchCount
         = static_cast<int>(PickStyle::Alternate) + 1;
     static constexpr int playStyleKeyswitchCount
-        = static_cast<int>(PlayStyle::Pinch) + 1;
+        = static_cast<int>(PlayStyle::Slide) + 1;
     static constexpr int keyswitchCount = pickStyleKeyswitchCount
                                         + playStyleKeyswitchCount;
     static constexpr int firstPlayStyleKeyswitchNote
@@ -139,8 +141,8 @@ public:
     // without shifting, so the hand covers `position .. position + reach`.
     static constexpr int frettingHandReach = 4;
 
-    static_assert(keyswitchCount == 8,
-                  "three picking styles and five play styles need one keyswitch each");
+    static_assert(keyswitchCount == 9,
+                  "three picking styles and six play styles need one keyswitch each");
     static_assert(firstKeyswitchNote + keyswitchCount <= lowestPlayableNote,
                   "keyswitches must not overlap the playable range");
 
@@ -633,6 +635,21 @@ private:
         int touchHoldRemaining { 0 };
         float touchReleaseStep { 0.0f };
 
+        // Slide friction. While the finger travels it drags across the wound
+        // string's winding, and the ridges pass under it at v / w, where v is
+        // the finger's speed along the string and w the winding pitch - which
+        // is exactly the squeak a slide makes and why it rises in pitch with
+        // the speed of the hand. Two one-poles form a band there; the level
+        // follows the derivative of the glide's own smoothstep, so the squeak
+        // swells and dies with the movement and is exactly zero when the
+        // finger is still. A plain string has no winding and barely squeaks.
+        float slideNoiseAmplitude { 0.0f };
+        float slideNoiseLevel { 0.0f };
+        float slideBandHigh { 0.5f };
+        float slideBandLow { 0.9f };
+        OnePole slideShaperHigh {};
+        OnePole slideShaperLow {};
+
         // Tension-modulation state (attack pitch glide).
         float energyEnvelope { 0.0f };
         float tensionDepth { 0.0f };
@@ -858,7 +875,7 @@ private:
     void configureVoiceDamping(Voice& voice) noexcept;
     void configureVoicePickups(Voice& voice) noexcept;
     void configureSympatheticString(Voice& voice) noexcept;
-    void updateStyleWeights(Voice& voice) noexcept;
+    void updateStyleWeights(Voice& voice, bool legato = false) noexcept;
     void refreshVoicingIfNeeded() noexcept;
     void configureBody() noexcept;
     void configurePickupFilters() noexcept;
@@ -867,7 +884,8 @@ private:
     void startVoice(Voice& voice, int midiNote, float velocity,
                     PlayStyle playStyle, bool strokeIsUp,
                     int startDelaySamples) noexcept;
-    void legatoRetarget(Voice& voice, int midiNote, float velocity) noexcept;
+    void legatoRetarget(Voice& voice, int midiNote, float velocity,
+                        PlayStyle playStyle) noexcept;
     void beginVoiceRelease(Voice& voice) noexcept;
     void silenceVoice(Voice& voice) noexcept;
     int chooseString(int midiNote, PlayStyle playStyle) const noexcept;

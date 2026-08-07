@@ -107,7 +107,7 @@ std::uint32_t packStringVisual(const StringVisualState& state) noexcept
     // outside this file reads the layout.
     const auto playStyle = static_cast<std::uint32_t>(
         std::clamp(static_cast<int>(state.playStyle), 0,
-                   static_cast<int>(PlayStyle::Pinch)));
+                   static_cast<int>(PlayStyle::Slide)));
     const float level = std::isfinite(state.level)
         ? clampf(state.level, 0.0f, 1.0f) : 0.0f;
     const auto quantised = static_cast<std::uint32_t>(level * 255.0f + 0.5f);

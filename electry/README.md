@@ -83,11 +83,11 @@ that change what it shows.
 
 ## Keyswitches and playable range
 
-MIDI notes 12..19 are two independent banks of latching keyswitches; they
+MIDI notes 12..20 are two independent banks of latching keyswitches; they
 never sound, and each bank keeps its most recent selection for every
 following note until changed. Notes 12..14 (C0..D0) latch how the pick
-moves; notes 15..19 (D#0..G0) latch what the hands do. The two latch
-independently, so any of the fifteen combinations — an up-stroke palm mute,
+moves; notes 15..20 (D#0..G#0) latch what the hands do. The two latch
+independently, so any of the eighteen combinations — an up-stroke palm mute,
 alternate-picked pinch harmonics — is reachable in at most two keyswitches.
 Keyswitch note-offs are ignored. The editor's PICK STROKE and PLAY STYLE
 strips send the same keyswitches and always show the currently latched pair.
@@ -107,8 +107,9 @@ from the playable instrument.
 | 17 | F0 | Hammer-on / pull-off — continues a sounding string legato within a nine-fret reach, fingered attack, no plectrum noise |
 | 18 | F#0 | Natural harmonic — a finger resting on the string's midpoint node, so the octave is what the string does rather than a transposition of it |
 | 19 | G0 | Pinch harmonic — the picking hand's thumb catches the string at the pick's own position, so Pick Position chooses which partial squeals |
+| 20 | G#0 | Slide — the finger stays down and travels; the travel time is a distance over a hand speed, and the winding scrapes under it the whole way |
 
-Notes 20..27 are ignored, and notes 28..86 are playable on a 22-fret,
+Notes 21..27 are ignored, and notes 28..86 are playable on a 22-fret,
 eight-string Drop-E instrument tuned
 E1-B1-E2-A2-D3-G3-B3-E4; notes outside these ranges are ignored. Each note is
 allocated to one of the eight physical strings by a fretting hand that has a
@@ -220,6 +221,18 @@ All Sound Off and All Notes Off.
   seven per cent of its energy per round trip where a midpoint touch takes
   nearly all of it — and that asymmetry is the technique rather than a
   shortcoming of the model.
+- **Slide:** the finger stays down and travels, so the sounding length moves
+  continuously through every intermediate fret and the loop state is preserved
+  the whole way. Its duration is a distance divided by a hand speed rather than
+  a fixed time — the Bend Time control sets 8% of itself per fret, so the
+  280 ms default is 22 ms per fret and a twelve-fret slide takes six times as
+  long as a two-fret one. While the finger moves it drags across the winding,
+  and the ridges pass under it at `v / w`, the hand's speed along the string
+  over the winding pitch, which is exactly why a fast slide squeaks high and a
+  slow one low; the level follows the derivative of the glide, so the squeak
+  swells and dies with the movement and is exactly zero when the finger is
+  still. A plain string has no winding and barely squeaks. The Finger Noise
+  control sets the level and silences it exactly at zero.
 - **Frets:** fretting position drives sounding length, inharmonicity,
   pickup comb geometry, and Fleischer-style dead-spot damping (deeper on
   the bolt-on end of the construction axis). The Artifacts path can open a
