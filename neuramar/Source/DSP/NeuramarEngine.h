@@ -47,7 +47,11 @@ struct EngineParameters
 class NeuramarEngine final
 {
 public:
-    static constexpr int maximumVoices = 8;
+    // Sixteen voices. The per-voice cost is unchanged, so an eight-note
+    // performance renders for exactly what it always did; what the higher
+    // ceiling buys is that a four-note chord under a sustain pedal, or a pad
+    // played over its own release tails, stops stealing.
+    static constexpr int maximumVoices = 16;
 
     NeuramarEngine() noexcept;
 

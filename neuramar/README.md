@@ -170,17 +170,27 @@ end-to-end through a differentiable renderer:
 - a constrained local autocorrelation track can retain sufficiently stable
   bends, slow vibrato, and glide around that root, and drives pitch-tracked
   harmonic-coordinate analysis;
+- the harmonic solve is joint rather than sequential. A single ordered
+  projection pass is the least-squares answer only when the partial bases are
+  orthogonal, and at an aperture of a few fundamental periods adjacent Hann main
+  lobes touch, so each subtraction leaks into its neighbours and a quiet partial
+  beside a loud one absorbs the leakage. Each partial's current estimate is
+  added back before it is re-solved against the others' residual, which
+  converges to the joint solution without forming the full system; past about
+  eight periods per aperture the bases are orthogonal to working precision, so
+  the long modal analysis keeps a single sweep;
 - 128 spectral frames at a fixed 48 kHz analysis rate reserve 48 strictly
   ordered physical-time observations for the first 120 ms, then cover sustain
   and decay; pitch-adaptive 512–4096-sample Hann apertures target four root
-  periods (bounded at the lowest accepted pitches) to retain Core and Air
-  attacks without sacrificing low-note resolution; a parallel 4096-sample
-  residual supplies the steadier evidence used for six persistence-scored Bone
-  candidates;
+  periods in the body of the sound and two over the first 40 ms, so the attack
+  is no longer measured through an aperture five times longer than the frame
+  spacing that exists to resolve it; a parallel 4096-sample
+  residual supplies the steadier evidence used for twelve persistence-scored
+  Bone candidates;
 - residual power, excluding both active Bone neighbourhoods and the narrowband
   residue left at each subtracted partial, is accumulated into 48
   log-frequency cells weighted by how many spectrum bins each one actually
-  observed; a deterministic non-negative solver then fits eight
+  observed; a deterministic non-negative solver then fits sixteen
   overlapping log-spaced Air bands against the analytic power response of the
   same normalized biquads used by the renderer. Excluding a bin from the
   measured power also excludes it from the modelled response, so the fit
@@ -300,7 +310,11 @@ end-to-end through a differentiable renderer:
   state, while controller outputs are forward-interpolated between low-rate
   evaluations so a learned target is reached at the time it describes.
 
-The current engine has a fixed ceiling of eight synthesis voices. It evaluates
+The current engine has a fixed ceiling of sixteen synthesis voices, raised from
+eight so that a chord held under a sustain pedal, or a pad played over its own
+release tails, stops stealing. The per-voice cost did not change, so an
+eight-note performance renders for exactly what it did before; the ceiling is an
+option rather than a cost every performance pays. It evaluates
 the controller, spectral-envelope mapping, and register normalization at control
 rate and interpolates their parameters while the oscillators, filters,
 envelopes, and note handling remain in the audio path.
@@ -344,13 +358,26 @@ The Core/Air split is a local sinusoidal decomposition, not a perfect physical
 source separation. Window boundaries, rapidly moving partials, and inharmonic
 tonal energy can leak into the residual. Bone tracks are compact,
 persistence-scored sinusoidal candidates rather than identified physical
-eigenmodes. Air is an expected-power match through a compact eight-filter bank,
+eigenmodes. Air is an expected-power match through a compact sixteen-filter
+bank,
 not phase-coherent reconstruction of the original residual; its stochastic
 waveform therefore preserves an estimated spectral evolution rather than the
 recording's exact noise realization. Bands that approach the Nyquist limit at a
 low host sample rate are deliberately faded instead of folded onto the edge.
 
-Automatic root search is bounded to 35–2000 Hz. The displayed confidence is an
+**Touch** is a musical control, not a model of the instrument's dynamics. One
+recording contains no evidence about how the source behaves at any velocity
+other than the one that was played, so Touch applies a fixed excitation-strength
+prior — brighter and breathier above a mezzo-forte reference, the opposite below
+it — rather than a fitted velocity response. Reviewers of this class of
+instrument name dynamic response as a specific weakness of one-shot resynthesis,
+and that criticism applies here; the honest position is that the evidence for it
+does not exist in a single note.
+
+Automatic root search is bounded to 35–2000 Hz. Its correct-semitone rate is
+measured on a twelve-item analytic corpus in
+[`Docs/resynthesis-quality-benchmark.md`](Docs/resynthesis-quality-benchmark.md)
+and is not a claim about real recordings. The displayed confidence is an
 average YIN periodicity score, not a calibrated probability and not a direct
 measure of timbre-match quality. The local pitch contour is constrained to four
 semitones around the inferred root, so sufficiently stable bends, slow vibrato,
@@ -361,17 +388,20 @@ unvoiced regions are deliberately bounded.
 
 Host state stores the ordinary parameters, root analysis metadata, display-only
 source filename, a low-resolution waveform preview, and the compact learned
-model in a versioned payload. The current payload is version 4, which appends
-the fitted stiff-string coefficient; version-2 and version-3 memories saved by
-earlier releases still load and render exactly as they did, with the missing
-fields left at their neutral zero values. Sessions saved before Noise, Stretch,
-Formant, Touch, or Register existed restore those controls at the values that
-leave the recalled sound unchanged rather than inheriting whatever the running
-instance happened to hold: for Noise, Stretch, and Formant that is the declared
-default, while Touch and Register restore at 0% instead of the 35% a new
-instance opens with, because only zero adds no velocity colour or key tracking
-to a memory saved without them. One stored value now means something
-different: **Awaken** used to be an exponential time constant,
+model in a versioned payload. The current payload is version 5, which widens the
+body representation from 8 Air bands and 6 Bone modes to 16 and 12; version 4
+appended the fitted stiff-string coefficient. Version-2, version-3, and
+version-4 memories saved by earlier releases still load and render exactly as
+they did: their bands and modes occupy the low slots, the added slots decode as
+silence, and the missing fields stay at their neutral zero values. Sessions
+saved before Noise, Stretch, Formant, Touch, or Register existed restore those
+controls at the values that leave the recalled sound unchanged rather than
+inheriting whatever the running instance happened to hold: for Noise, Stretch,
+and Formant that is the declared default, while Touch and Register restore at
+0% instead of the 35% a new instance opens with, because only zero adds no
+velocity colour or key tracking to a memory saved without them. One stored
+value now means something different: **Awaken** used to be an exponential time
+constant,
 so a saved non-zero setting took roughly 4.6 times its stated seconds to open
 fully. It is now the fade duration itself, and a recalled session will therefore
 open about that much sooner; multiply an old setting by roughly 4.6 to
@@ -469,7 +499,18 @@ the removal of a Bone mode pushed above the audible ceiling (128 dB down, guard
 60 dB), the Awaken fade contract, the bound on the voice-steal fade tail under a
 note-on burst dense enough to steal the same slot inside one fade window, and
 the continuity of that hand-off across every phase of the window (worst
-inter-sample step 0.0124, guard 0.016). Plug-in builds add
+inter-sample step 0.0124, guard 0.016).
+
+It also pins the reconstruction measurements added in 1.3, which compare a
+rendered root note against the fixture that produced it: multi-resolution
+spectral convergence and log-magnitude MAE at three window/hop pairs, ERB-band
+residual power MAE with the harmonic bins excluded, cumulative-energy error at
+1, 5, 10, 20, and 50 ms, and T10-T90 attack-time error, on both a source/filter
+fixture and one combining harmonics, shaped noise, and a broadband transient. A
+struck-body fixture with ten known inharmonic modes reports modal recall,
+precision, and frequency error, and a twelve-item analytic corpus reports the
+automatic root detector's correct-semitone and octave-error rates. Plug-in
+builds add
 processor, parameter, MIDI, editor, and host-state contracts. These regression
 checks complement rather than replace listening, validator, multi-host, and CPU
 profiling passes.

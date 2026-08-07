@@ -43,7 +43,25 @@ constexpr std::array<float, neuramar::NeuralModel::boneModeCount>
 int failures = 0;
 
 constexpr std::size_t modelHeaderBytes = 16;
-constexpr std::size_t version2PayloadBytes = 8 + 12 * 4
+// Every payload before version 5 stored 8 Air bands, 6 Bone modes, and the
+// 79-output decoder that follows from them.
+constexpr std::size_t legacyPitchOutputIndex =
+    neuramar::NeuralModel::legacyOutputSize - 1;
+constexpr std::size_t modelScalarBytes = 8 + 12 * 4;
+constexpr std::size_t version2PayloadBytes = modelScalarBytes
+    + 4 * (neuramar::NeuralModel::previewSize
+        + neuramar::NeuralModel::harmonicCount
+        + 2 * neuramar::NeuralModel::legacyAirBandCount
+        + 4 * neuramar::NeuralModel::legacyBoneModeCount
+        + 2 * neuramar::NeuralModel::legacyOutputSize
+        + neuramar::NeuralModel::hiddenSize * neuramar::NeuralModel::inputSize
+        + neuramar::NeuralModel::hiddenSize
+        + neuramar::NeuralModel::legacyOutputSize
+            * neuramar::NeuralModel::hiddenSize
+        + neuramar::NeuralModel::legacyOutputSize);
+// Where the residual extension starts inside a payload written by the current
+// format. It is no longer the same offset as the version-2 payload length.
+constexpr std::size_t currentBasePayloadBytes = modelScalarBytes
     + 4 * (neuramar::NeuralModel::previewSize
         + neuramar::NeuralModel::harmonicCount
         + 2 * neuramar::NeuralModel::airBandCount
@@ -124,13 +142,66 @@ void refreshModelHeader(std::vector<std::uint8_t>& bytes,
         .subspan(modelHeaderBytes)));
 }
 
+// Rebuilds a genuine version-2 payload out of a current serialization. Before
+// version 5 the body arrays and the decoder rows were narrower, so this cannot
+// be a truncation: the Air and Bone arrays keep their first 8 and 6 entries,
+// and every decoder array is gathered through the same index map the loader
+// uses in reverse.
 [[nodiscard]] std::vector<std::uint8_t> makeVersion2ModelBytes(
     const neuramar::NeuralModel& model)
 {
-    auto bytes = model.serialize();
-    if (bytes.size() < modelHeaderBytes + version2PayloadBytes)
+    using Model = neuramar::NeuralModel;
+    const auto current = model.serialize();
+    const std::size_t prefix = modelHeaderBytes + modelScalarBytes;
+    if (current.size() < prefix)
         return {};
-    bytes.resize(modelHeaderBytes + version2PayloadBytes);
+    std::vector<std::uint8_t> bytes(current.begin(),
+                                    current.begin() + static_cast<
+                                        std::ptrdiff_t>(prefix));
+    std::size_t cursor = prefix;
+    const auto take = [&cursor](std::size_t count)
+    {
+        const std::size_t offset = cursor;
+        cursor += 4 * count;
+        return offset;
+    };
+    const auto copyRun = [&bytes, &current](std::size_t offset,
+                                            std::size_t count)
+    {
+        for (std::size_t index = 0; index < count; ++index)
+            appendLittleFloat(bytes,
+                              readLittleFloat(current, offset + 4 * index));
+    };
+    const auto copyDecoderRun = [&bytes, &current](std::size_t offset,
+                                                   std::size_t stride)
+    {
+        for (std::size_t output = 0; output < Model::legacyOutputSize; ++output)
+        {
+            const std::size_t source = Model::migrateOutputIndex(output)
+                * stride;
+            for (std::size_t element = 0; element < stride; ++element)
+                appendLittleFloat(bytes, readLittleFloat(
+                    current, offset + 4 * (source + element)));
+        }
+    };
+
+    copyRun(take(Model::previewSize), Model::previewSize);
+    copyRun(take(Model::harmonicCount), Model::harmonicCount);
+    copyRun(take(Model::airBandCount), Model::legacyAirBandCount);
+    copyRun(take(Model::airBandCount), Model::legacyAirBandCount);
+    for (int array = 0; array < 4; ++array)
+        copyRun(take(Model::boneModeCount), Model::legacyBoneModeCount);
+    copyDecoderRun(take(Model::outputSize), 1);
+    copyDecoderRun(take(Model::outputSize), 1);
+    copyRun(take(Model::hiddenSize * Model::inputSize),
+            Model::hiddenSize * Model::inputSize);
+    copyRun(take(Model::hiddenSize), Model::hiddenSize);
+    copyDecoderRun(take(Model::outputSize * Model::hiddenSize),
+                   Model::hiddenSize);
+    copyDecoderRun(take(Model::outputSize), 1);
+    if (bytes.size() != modelHeaderBytes + version2PayloadBytes
+        || cursor > current.size())
+        return {};
     refreshModelHeader(bytes, 2);
     return bytes;
 }
@@ -142,23 +213,24 @@ void refreshModelHeader(std::vector<std::uint8_t>& bytes,
     std::uint32_t version = 3, float inharmonicity = 0.0f)
 {
     auto bytes = makeVersion2ModelBytes(model);
+    if (bytes.empty())
+        return {};
     appendLittleU32(bytes, 2);
-    for (std::size_t output = 0; output < neuramar::NeuralModel::outputSize;
-         ++output)
+    for (std::size_t output = 0;
+         output < neuramar::NeuralModel::legacyOutputSize; ++output)
     {
-        appendLittleFloat(bytes,
-            output == neuramar::NeuralModel::pitchOutputIndex
+        appendLittleFloat(bytes, output == legacyPitchOutputIndex
                 ? pitchCorrectionSemitones : 0.0f);
     }
     appendLittleFloat(bytes, 0.0f);
     appendLittleFloat(bytes, 1.0f);
     for (std::size_t frame = 0; frame < 2; ++frame)
     {
-        for (std::size_t output = 0; output < neuramar::NeuralModel::outputSize;
-             ++output)
+        for (std::size_t output = 0;
+             output < neuramar::NeuralModel::legacyOutputSize; ++output)
         {
             appendLittleI16(bytes,
-                frame == 1 && output == neuramar::NeuralModel::pitchOutputIndex
+                frame == 1 && output == legacyPitchOutputIndex
                     ? static_cast<std::int16_t>(32767) : 0);
         }
     }
@@ -1784,19 +1856,19 @@ void testResidualScheduleAndQuality(const LearnedFixture& fixture)
 
     const auto& corrected = *fixture.first.model;
     const auto bytes = corrected.serialize();
-    const std::size_t extension = modelHeaderBytes + version2PayloadBytes;
+    const std::size_t extension = modelHeaderBytes + currentBasePayloadBytes;
     expect(readLittleU32(bytes, 4)
                == neuramar::NeuralModel::currentFormatVersion,
-           "learner did not write the current v4 model format");
+           "learner did not write the current model format");
     const auto keyframeCount = readLittleU32(bytes, extension);
     expect(keyframeCount == 128,
            "learner did not fill the bounded 128-frame residual trajectory");
-    const std::size_t expectedBytes = modelHeaderBytes + version2PayloadBytes
+    const std::size_t expectedBytes = modelHeaderBytes + currentBasePayloadBytes
         + 4 + 4 * neuramar::NeuralModel::outputSize
         + keyframeCount * (4 + 2 * neuramar::NeuralModel::outputSize)
         + 4;
     expect(bytes.size() == expectedBytes && bytes.size() < 128 * 1024,
-           "learned v4 payload escaped its exact bounded layout");
+           "learned payload escaped its exact bounded layout");
     expect(readLittleFloat(bytes, expectedBytes - 4)
                == corrected.inharmonicity(),
            "learned payload did not end with its inharmonicity coefficient");
@@ -2406,7 +2478,7 @@ void testSerialization(const neuramar::NeuralModel& model)
     if (version2)
     {
         const auto migratedBytes = version2->serialize();
-        const auto extension = modelHeaderBytes + version2PayloadBytes;
+        const auto extension = modelHeaderBytes + currentBasePayloadBytes;
         expect(readLittleU32(migratedBytes, 4)
                    == neuramar::NeuralModel::currentFormatVersion
                    && readLittleU32(migratedBytes, extension) == 0,
@@ -2471,7 +2543,7 @@ void testSerialization(const neuramar::NeuralModel& model)
         }
     }
 
-    const std::size_t extension = modelHeaderBytes + version2PayloadBytes;
+    const std::size_t extension = modelHeaderBytes + currentBasePayloadBytes;
     auto excessiveKeyframes = bytes;
     writeLittleU32(excessiveKeyframes, extension, 129);
     refreshModelHeader(excessiveKeyframes,
@@ -2595,10 +2667,26 @@ void testReleaseAndVoiceBound(const neuramar::NeuralModel& model)
     parameters.releaseSeconds = 0.025f;
     engine.setParameters(parameters);
 
-    for (int note = 48; note < 60; ++note)
+    // Four more note-ons than the engine has voices, so the ceiling is what
+    // bounds the count rather than the number of keys held.
+    for (int note = 40; note < 44 + neuramar::NeuramarEngine::maximumVoices;
+         ++note)
         engine.noteOn(note, 0.7f);
     expect(engine.getActiveVoiceCount() == neuramar::NeuramarEngine::maximumVoices,
-           "polyphony was not bounded at eight voices");
+           "polyphony was not bounded at the engine's voice ceiling");
+    engine.allSoundOff();
+
+    // A twelve-note held cluster - a four-note chord under a sustain pedal
+    // while its predecessor still rings - has to sound twelve voices rather
+    // than steal four of them.
+    for (int note = 48; note < 60; ++note)
+        engine.noteOn(note, 0.7f);
+    expect(engine.getActiveVoiceCount() == 12,
+           "a twelve-note held cluster was voice-stolen");
+    engine.allSoundOff();
+    for (int note = 40; note < 44 + neuramar::NeuramarEngine::maximumVoices;
+         ++note)
+        engine.noteOn(note, 0.7f);
     engine.allNotesOff();
     std::vector<float> left(30000, 0.0f);
     std::vector<float> right(30000, 0.0f);
@@ -3039,8 +3127,13 @@ void testVelocityTouch(const neuramar::NeuralModel& model)
     expect(touchedSoft < 0.95 * neutralSoft,
            "Touch did not darken a softer note");
 
-    // Air is uncorrelated with Core, so subtracting the two renders in the
-    // power domain isolates the stochastic layer's own level.
+    // Everything except the Air layer renders identically between these two
+    // passes, so their sample-wise difference is the stochastic layer itself.
+    // Subtracting them in the power domain instead is only valid on average:
+    // Air here is well under 1% of Core, and the sample correlation between two
+    // independent signals over a 0.28 s window is about 1/sqrt(N), which makes
+    // the cross term larger than the quantity being estimated. That estimator
+    // returned a negative Air power on this fixture.
     const auto airOnlyRms = [&](float touch, float velocity)
     {
         auto parameters = cleanCoreParameters();
@@ -3052,14 +3145,13 @@ void testVelocityTouch(const neuramar::NeuralModel& model)
         parameters.air = 0.0f;
         const auto withoutAir = renderWithParameters(
             model, model.rootMidiNote(), velocity, parameters, renderSamples);
-        const double withLevel = segmentRms(withAir, sampleRate, 0.10, 0.38);
-        const double withoutLevel = segmentRms(
-            withoutAir, sampleRate, 0.10, 0.38);
+        std::vector<float> airOnly(withAir.size(), 0.0f);
+        for (std::size_t index = 0; index < airOnly.size(); ++index)
+            airOnly[index] = withAir[index] - withoutAir[index];
         // Remove the plain velocity gain so only the timbral change is left.
         const double gain = velocity
             * (0.72 + 0.28 * std::sqrt(static_cast<double>(velocity)));
-        return std::sqrt(std::max(
-                   withLevel * withLevel - withoutLevel * withoutLevel, 0.0))
+        return segmentRms(airOnly, sampleRate, 0.10, 0.38)
             / std::max(gain, 1.0e-6);
     };
     const double softAir = airOnlyRms(0.9f, 0.25f);
@@ -3188,8 +3280,39 @@ void testLegacyModelStretchCompatibility(const neuramar::NeuralModel& model)
     {
         expect(std::abs(version4->inharmonicity() - 4.5e-4f) < 1.0e-9f,
                "version-4 round trip lost the stiff-string coefficient");
-        expect(version4->serialize() == version4Bytes,
-               "version-4 payload did not survive a byte-exact round trip");
+        // Version 5 widened the body arrays, so a v4 payload no longer
+        // re-serialises to its own bytes. What must survive is the decoded
+        // state: re-reading what the migration wrote has to evaluate
+        // identically to the migrated model at every point on its trajectory.
+        const auto migratedBytes = version4->serialize();
+        expect(readLittleU32(migratedBytes, 4)
+                   == neuramar::NeuralModel::currentFormatVersion,
+               "a migrated version-4 memory was not rewritten in the current "
+               "format");
+        error.clear();
+        auto reloaded = neuramar::NeuralModel::deserialize(migratedBytes,
+                                                           &error);
+        expect(reloaded != nullptr,
+               "a migrated version-4 payload failed to reload: " + error);
+        expect(reloaded == nullptr
+                   || reloaded->serialize() == migratedBytes,
+               "a migrated version-4 payload did not survive a byte-exact "
+               "round trip of its own format");
+        if (reloaded != nullptr)
+        {
+            for (const float time : { 0.0f, 0.13f, 0.37f, 0.61f, 1.0f })
+            {
+                neuramar::SynthesisFrame first;
+                neuramar::SynthesisFrame second;
+                version4->evaluate(time, first);
+                reloaded->evaluate(time, second);
+                expect(first.harmonicAmplitudes == second.harmonicAmplitudes
+                           && first.airAmplitudes == second.airAmplitudes
+                           && first.boneAmplitudes == second.boneAmplitudes
+                           && first.pitchRatio == second.pitchRatio,
+                       "migrating a version-4 memory changed its rendering");
+            }
+        }
     }
 
     const auto outOfRange = makeLinearResidualModelBytes(
@@ -4039,22 +4162,46 @@ void testBoneCeilingIsAnchoredToTheAudibleBand()
 
     const auto ratios = model->boneFrequencyRatios();
     const auto reliabilities = model->boneModeReliabilities();
-    std::size_t topMode = 0;
-    for (std::size_t mode = 0; mode < ratios.size(); ++mode)
-        if (reliabilities[mode] > 0.0f)
-            topMode = mode;
-    expect(topMode > 0, "bone-ceiling fixture has no usable mode pair");
-    if (topMode == 0)
-        return;
-
     constexpr int semitones = 36;
     const int note = std::clamp(model->rootMidiNote() + semitones, 0, 127);
     const double spectralScale = std::exp2(
         static_cast<double>(note - model->rootMidiNote()) / 12.0);
-    const double ultrasonicHz = static_cast<double>(model->rootFrequencyHz())
-        * ratios[topMode] * spectralScale;
-    const double audibleHz = static_cast<double>(model->rootFrequencyHz())
-        * ratios[topMode - 1] * spectralScale;
+    const auto modeFrequency = [&](std::size_t mode)
+    {
+        return static_cast<double>(model->rootFrequencyHz()) * ratios[mode]
+            * spectralScale;
+    };
+
+    // Pick the pair that straddles the ceiling at this transposition rather
+    // than assuming it is the top pair: the memory carries twelve modal slots
+    // and the highest of them lands far above the region under test.
+    std::size_t ultrasonicMode = 0;
+    std::size_t audibleMode = 0;
+    for (std::size_t mode = 1; mode < ratios.size(); ++mode)
+    {
+        if (reliabilities[mode] <= 0.0f)
+            continue;
+        const double frequency = modeFrequency(mode);
+        if (!(frequency > 20000.0 && frequency < 23500.0))
+            continue;
+        for (std::size_t below = mode; below-- > 0;)
+        {
+            if (reliabilities[below] > 0.0f && modeFrequency(below) < 19000.0)
+            {
+                ultrasonicMode = mode;
+                audibleMode = below;
+                break;
+            }
+        }
+        if (ultrasonicMode != 0)
+            break;
+    }
+    expect(ultrasonicMode > 0, "bone-ceiling fixture has no usable mode pair");
+    if (ultrasonicMode == 0)
+        return;
+
+    const double ultrasonicHz = modeFrequency(ultrasonicMode);
+    const double audibleHz = modeFrequency(audibleMode);
     expect(ultrasonicHz > 20000.0 && ultrasonicHz < 23500.0,
            "bone-ceiling fixture no longer straddles the audible ceiling ("
                + std::to_string(ultrasonicHz) + " Hz)");

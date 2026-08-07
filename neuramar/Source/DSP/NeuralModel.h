@@ -29,8 +29,13 @@ namespace neuramar
 struct SynthesisFrame
 {
     static constexpr std::size_t harmonicCount = 64;
-    static constexpr std::size_t airBandCount = 8;
-    static constexpr std::size_t boneModeCount = 6;
+    // Sixteen log-spaced Air bands cover 80 Hz to 16 kHz at 0.51 octaves each.
+    // The previous eight were 1.03 octaves apiece, which put a breath formant,
+    // a scrape peak, and a hiss shelf inside one number.
+    static constexpr std::size_t airBandCount = 16;
+    // Twelve modal candidates. Six could not hold a struck body: a bell or a
+    // tine has more independently decaying partials than that.
+    static constexpr std::size_t boneModeCount = 12;
 
     std::array<float, harmonicCount> harmonicAmplitudes {};
     std::array<float, airBandCount> airAmplitudes {};
@@ -44,11 +49,18 @@ public:
     // Version 2 introduced renderer-matched overlapping Air bands. Version 3
     // adds a bounded, quantised residual trajectory on top of the neural base.
     // Version 4 appends the fitted stiff-string inharmonicity coefficient.
-    // Versions 2 and 3 still load and render exactly as they did, with the
-    // missing fields left at their neutral zero values. Version-1 development
-    // memories used different band semantics and must not be silently rendered
-    // with this engine.
-    static constexpr std::uint32_t currentFormatVersion = 4;
+    // Version 5 widens the body representation from 8 Air bands and 6 Bone
+    // modes to 16 and 12, which changes the decoder's output layout.
+    // Versions 2, 3, and 4 still load and render exactly as they did: their
+    // bands and modes occupy the low slots, the added slots are decoded as
+    // silent, and the missing fields stay at their neutral zero values.
+    // Version-1 development memories used different band semantics and must not
+    // be silently rendered with this engine.
+    static constexpr std::uint32_t currentFormatVersion = 5;
+    // The Air/Bone counts every version before 5 was written with, and the
+    // decoder output size that follows from them.
+    static constexpr std::size_t legacyAirBandCount = 8;
+    static constexpr std::size_t legacyBoneModeCount = 6;
     // A bounded stiff-string coefficient. 0.01 already stretches the 16th
     // partial by roughly eleven semitones, which is far past any ordinary
     // wound string or tine; strongly inharmonic bodies are represented by the
@@ -64,6 +76,23 @@ public:
         + airBandCount + boneModeCount;
     static constexpr std::size_t pitchOutputIndex = amplitudeOutputSize;
     static constexpr std::size_t outputSize = amplitudeOutputSize + 1;
+    static constexpr std::size_t legacyOutputSize = harmonicCount
+        + legacyAirBandCount + legacyBoneModeCount + 1;
+
+    // Where a pre-version-5 decoder output lands in the current layout. The
+    // harmonic block and the first eight Air slots keep their index; the six
+    // Bone slots move past the eight added Air slots; the pitch output moves to
+    // the end.
+    [[nodiscard]] static constexpr std::size_t
+        migrateOutputIndex(std::size_t legacyIndex) noexcept
+    {
+        if (legacyIndex < harmonicCount + legacyAirBandCount)
+            return legacyIndex;
+        if (legacyIndex < harmonicCount + legacyAirBandCount
+                + legacyBoneModeCount)
+            return legacyIndex + (airBandCount - legacyAirBandCount);
+        return pitchOutputIndex;
+    }
 
     struct Metadata
     {
@@ -146,6 +175,8 @@ private:
 
     static constexpr std::uint32_t bandFormatVersion = 2;
     static constexpr std::uint32_t residualFormatVersion = 3;
+    static constexpr std::uint32_t stretchFormatVersion = 4;
+    static constexpr std::uint32_t bodyCapacityFormatVersion = 5;
     static constexpr std::size_t maximumResidualKeyframes = 128;
     static constexpr float maximumResidualScale = 64.0f;
 
