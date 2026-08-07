@@ -3286,6 +3286,64 @@ void testVibratoOnlyMovesFingeredStrings()
            "channel pressure left a fingered string alone");
 }
 
+void testLegatoSlideDoesNotConsumeAPickStroke()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // A slide onto a string that is already sounding retargets it and strikes
+    // nothing, so it must not advance the alternate sequence - the same reason
+    // a hammer-on does not. Charging it a stroke would leave the next note
+    // that really is picked on the wrong one.
+    const auto strokeAfter = [&](bool slideInBetween)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        engine.setParameters(parameters);
+        StereoBuffer buffer(static_cast<int>(0.05 * sampleRate));
+
+        // Latch Alternate picking, then Sustain so the first note is picked.
+        engine.noteOn(ElectryEngine::firstKeyswitchNote
+                          + static_cast<int>(PickStyle::Alternate), 1.0f);
+        engine.noteOn(ElectryEngine::firstPlayStyleKeyswitchNote
+                          + static_cast<int>(PlayStyle::Sustain), 1.0f);
+        engine.noteOn(45, 0.8f);
+        renderInto(engine, buffer);
+
+        if (slideInBetween)
+        {
+            engine.noteOn(ElectryEngine::firstPlayStyleKeyswitchNote
+                              + static_cast<int>(PlayStyle::Slide), 1.0f);
+            // Same string, different pitch: this retargets rather than picks.
+            engine.noteOn(47, 0.8f);
+            renderInto(engine, buffer);
+            engine.noteOn(ElectryEngine::firstPlayStyleKeyswitchNote
+                              + static_cast<int>(PlayStyle::Sustain), 1.0f);
+        }
+
+        // A note far enough away to take a different string, so it is a real
+        // pick rather than another retarget.
+        engine.noteOn(69, 0.8f);
+        renderInto(engine, buffer);
+        std::array<electry::StringVisualState, ElectryEngine::stringCount> strings {};
+        engine.getStringVisualState(strings);
+        for (const auto& string : strings)
+            if (string.sounding && string.midiNote == 69)
+                return string.strokeUp ? 1 : 0;
+        return -1;
+    };
+
+    const int withoutSlide = strokeAfter(false);
+    const int withSlide = strokeAfter(true);
+    expect(withoutSlide >= 0 && withSlide >= 0,
+           "the picked note after the slide never sounded, so its stroke could "
+           "not be read");
+    expect(withSlide == withoutSlide,
+           "a legato slide consumed an alternate pick stroke it never played, "
+           "so the next picked note came out on the wrong stroke");
+}
+
 void testParameterSanitisation()
 {
     constexpr double sampleRate = 48000.0;
@@ -5336,6 +5394,7 @@ int main()
     testDeadNote();
     testSustainPedal();
     testVibratoOnlyMovesFingeredStrings();
+    testLegatoSlideDoesNotConsumeAPickStroke();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();
     testStrumSpread();

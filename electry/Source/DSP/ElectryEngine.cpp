@@ -1066,9 +1066,6 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
     if (stringIndex < 0)
         return;
 
-    if (picked && pickStyle_ == PickStyle::Alternate)
-        alternateNextStrokeIsUp_ = ! alternateNextStrokeIsUp_;
-
     auto& voice = voices_[static_cast<std::size_t>(stringIndex)];
 
     // Strum travel. The first note of a chord fixes the edge the pick starts
@@ -1101,6 +1098,14 @@ void ElectryEngine::noteOn(int midiNote, float velocity)
                          || playStyle_ == PlayStyle::Slide)
                      && voice.active
                      && voice.midiNote != midiNote;
+
+    // Advancing the alternate sequence waits until here because a Slide is
+    // only known to be legato once its target string is resolved and found
+    // already sounding. A slide onto a ringing string retargets it and strikes
+    // nothing, so charging it a stroke would leave the next genuinely picked
+    // note on the wrong one - the same reason a hammer never advances it.
+    if (picked && ! legato && pickStyle_ == PickStyle::Alternate)
+        alternateNextStrokeIsUp_ = ! alternateNextStrokeIsUp_;
 
     if (legato)
         legatoRetarget(voice, midiNote, velocity, playStyle_);
