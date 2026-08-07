@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -305,6 +306,47 @@ double bandPowerInRange (const std::vector<float>& samples,
         filtered.size(), static_cast<std::size_t> (std::ceil (endSeconds * sampleRate)));
     const double rms = rmsInRange (filtered, begin, end);
     return rms * rms;
+}
+
+// The frequency of whatever dominates a band, from interpolated positive-going
+// zero crossings of the band-passed signal. The band-pass is applied twice so
+// neighbouring partials are actually excluded rather than merely tilted, and the
+// answer is the median of the periods rather than their mean, so one irregular
+// crossing near the noise floor cannot move it. Sub-sample crossing positions
+// make this far finer than the frequency resolution of a window this short.
+double dominantFrequencyInBand (const std::vector<float>& samples, double sampleRate,
+                                double lowFrequency, double highFrequency,
+                                double beginSeconds, double endSeconds)
+{
+    auto filtered = filterForAnalysis (samples, sampleRate, lowFrequency, highFrequency);
+    filtered = filterForAnalysis (filtered, sampleRate, lowFrequency, highFrequency);
+    const std::size_t begin = std::min (
+        filtered.size(), static_cast<std::size_t> (std::ceil (beginSeconds * sampleRate)));
+    const std::size_t end = std::min (
+        filtered.size(), static_cast<std::size_t> (std::ceil (endSeconds * sampleRate)));
+
+    std::vector<double> crossings;
+    for (std::size_t sample = begin + 1u; sample < end; ++sample)
+    {
+        const double before = filtered[sample - 1u];
+        const double after = filtered[sample];
+        if (before <= 0.0 && after > 0.0)
+        {
+            const double denominator = after - before;
+            crossings.push_back (static_cast<double> (sample - 1u)
+                                 + (denominator == 0.0 ? 0.0 : -before / denominator));
+        }
+    }
+    if (crossings.size() < 3u)
+        return 0.0;
+
+    std::vector<double> periods;
+    periods.reserve (crossings.size() - 1u);
+    for (std::size_t index = 1; index < crossings.size(); ++index)
+        periods.push_back (crossings[index] - crossings[index - 1u]);
+    std::sort (periods.begin(), periods.end());
+    const double median = periods[periods.size() / 2u];
+    return median > 0.0 ? sampleRate / median : 0.0;
 }
 
 double maximumNormalizedAutocorrelation (const std::vector<float>& samples,
@@ -720,7 +762,7 @@ void testMetadataAndMidiMapping()
     constexpr std::array expectedMappings {
         MidiMapping { 35, drumalor::Instrument::Kick },
         MidiMapping { 36, drumalor::Instrument::Kick },
-        MidiMapping { 37, drumalor::Instrument::Perc2 },
+        MidiMapping { 37, drumalor::Instrument::Snare },
         MidiMapping { 38, drumalor::Instrument::Snare },
         MidiMapping { 39, drumalor::Instrument::Clap },
         MidiMapping { 40, drumalor::Instrument::Snare },
@@ -783,6 +825,45 @@ void testMetadataAndMidiMapping()
     }
     expect (! drumalor::instrumentForMidiNote (-1).has_value(), "negative MIDI note was accepted");
     expect (! drumalor::instrumentForMidiNote (128).has_value(), "out-of-range MIDI note was accepted");
+
+    // The snare's three articulations sit on the notes every electronic kit
+    // and every mainstream drum instrument sends them on. Every other mapped
+    // note is a plain head strike.
+    struct ArticulationMapping
+    {
+        int note;
+        drumalor::Articulation articulation;
+    };
+    constexpr std::array articulationMappings {
+        ArticulationMapping { 38, drumalor::Articulation::Head },
+        ArticulationMapping { 40, drumalor::Articulation::Rimshot },
+        ArticulationMapping { 37, drumalor::Articulation::CrossStick },
+    };
+    for (const auto& mapping : articulationMappings)
+    {
+        const auto actual = drumalor::midiTriggerForNote (mapping.note);
+        expect (actual.has_value() && actual->instrument == drumalor::Instrument::Snare
+                    && actual->articulation == mapping.articulation,
+                "note " + std::to_string (mapping.note)
+                    + " does not carry its snare articulation");
+    }
+    for (int midiNote = 0; midiNote <= 127; ++midiNote)
+    {
+        const auto actual = drumalor::midiTriggerForNote (midiNote);
+        const bool isSnareArticulation = std::any_of (
+            articulationMappings.begin(), articulationMappings.end(),
+            [midiNote] (const ArticulationMapping& mapping)
+            { return mapping.note == midiNote && mapping.articulation
+                         != drumalor::Articulation::Head; });
+        if (actual.has_value() && ! isSnareArticulation)
+            expect (actual->articulation == drumalor::Articulation::Head,
+                    "note " + std::to_string (midiNote)
+                        + " carries an articulation it should not");
+    }
+    expect (! drumalor::midiTriggerForNote (-1).has_value(),
+            "negative MIDI note produced a trigger");
+    expect (! drumalor::midiTriggerForNote (128).has_value(),
+            "out-of-range MIDI note produced a trigger");
 }
 
 void testEveryInstrumentAndSampleRate()
@@ -2956,6 +3037,684 @@ void testMembraneAndVelocityTimbre()
     }
 }
 
+void testMembraneTensionModulation()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // A struck head is a stretched head, so its whole modal bank is sharp while
+    // the strike energy is still in it and settles as the drum rings out. The
+    // signature is that the amount of sharpening follows how hard the drum was
+    // hit: this measures the frequency of whatever dominates each drum's head
+    // region during the first 35 ms at full velocity and at a ghost stroke, and
+    // requires the loud one to be the sharper.
+    //
+    // The floors are per instrument because velocity already moves the early
+    // spectrum for a reason that is not tension - a harder strike has a shorter
+    // Hertzian contact and therefore reaches further up the series, which moves
+    // which partial dominates the window. Measured on the engine immediately
+    // before this model was added, the same four numbers were -73, -69, +15 and
+    // +108 cents; with it they are +96, +30, +134 and +250.
+    struct TensionProbe
+    {
+        drumalor::Instrument instrument;
+        double lowFrequency;
+        double highFrequency;
+        double sharpeningFloorCents;
+        // The drum's own root, before any Pitch offset. The head region above
+        // is a fixed band because it is chosen around the partials a strike
+        // reaches; the settled-pitch check below needs the fundamental itself,
+        // because that is the only thing still ringing that late.
+        double rootFrequency;
+    };
+    const std::array tensionProbes {
+        TensionProbe { drumalor::Instrument::Kick, 130.0, 280.0, 40.0, 0.0 },
+        TensionProbe { drumalor::Instrument::LowTom, 200.0, 400.0, 15.0, 82.0 },
+        TensionProbe { drumalor::Instrument::MidTom, 300.0, 600.0, 80.0, 123.0 },
+        TensionProbe { drumalor::Instrument::HighTom, 420.0, 850.0, 190.0, 174.0 }
+    };
+
+    const auto cents = [] (double first, double second)
+    {
+        return (first <= 0.0 || second <= 0.0) ? 0.0 : 1200.0 * std::log2 (first / second);
+    };
+
+    for (const auto& probe : tensionProbes)
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (probe.instrument));
+        auto values = drumalor::getInstrumentMetadata (probe.instrument).defaultParameters;
+        // Punch at zero leaves the smallest pitch sweep the voice can have, so
+        // what is left in the window is the head rather than the body's own
+        // envelope; a long decay keeps the bank measurable into the tail.
+        values.characterA = 0.0f;
+        values.decay = 0.85f;
+        // At the root, which is where the cent figures quoted above were
+        // measured. This probes the tension model rather than the factory kit,
+        // and the head bands are chosen around specific partials - so letting
+        // the factory Pitch offset move the whole series through fixed bands
+        // would change which partial is being compared and make the floors mean
+        // something else. How the shipped kit is voiced is tested separately.
+        values.pitch = 0.0f;
+        const auto hard = renderMonoHit (sampleRate, probe.instrument, values, 0.60, 1.0f);
+        const auto soft = renderMonoHit (sampleRate, probe.instrument, values, 0.60, 0.12f);
+        expect (std::all_of (hard.begin(), hard.end(),
+                             [] (float value) { return std::isfinite (value); })
+                    && peakInRange (hard, 0, hard.size()) <= 1.001,
+                label + " tension-modulated render was not finite and bounded");
+
+        const double hardEarly = dominantFrequencyInBand (
+            hard, sampleRate, probe.lowFrequency, probe.highFrequency, 0.004, 0.035);
+        const double softEarly = dominantFrequencyInBand (
+            soft, sampleRate, probe.lowFrequency, probe.highFrequency, 0.004, 0.035);
+        const double sharpening = cents (hardEarly, softEarly);
+        expect (sharpening > probe.sharpeningFloorCents,
+                label + " does not sharpen under a hard strike (" + std::to_string (sharpening)
+                    + " cents, floor " + std::to_string (probe.sharpeningFloorCents) + ")");
+
+        // And it is the amplitude that did it, not a detune: once the energy is
+        // gone the loud and the quiet strike ring at the same pitch again. The
+        // Kick is excluded because a ghost stroke leaves its head band entirely
+        // and the estimator then reads its body instead.
+        if (probe.instrument == drumalor::Instrument::Kick)
+            continue;
+        // Measured around the fundamental rather than in the head band above.
+        // A head's upper modes are the first to go, so by 150 ms there is
+        // nothing left inside a band chosen for the partials a strike reaches -
+        // and a zero-crossing estimator handed a band with no signal in it
+        // returns the analysis filter's own ringing, which is a number that
+        // moves with anything and means nothing. The fundamental is what is
+        // still there, so that is what gets asked whether it settled back.
+        const double lateLow = 0.60 * probe.rootFrequency;
+        const double lateHigh = 2.20 * probe.rootFrequency;
+        const double hardLate = dominantFrequencyInBand (
+            hard, sampleRate, lateLow, lateHigh, 0.150, 0.400);
+        const double softLate = dominantFrequencyInBand (
+            soft, sampleRate, lateLow, lateHigh, 0.150, 0.400);
+        expect (std::abs (cents (hardLate, softLate)) < 120.0,
+                label + " settled at different pitches for different strengths ("
+                    + std::to_string (cents (hardLate, softLate)) + " cents)");
+    }
+
+    // The pole radius is deliberately untouched by the model - only a1 moves -
+    // so a bank that is being detuned still decays at exactly the rate its Decay
+    // setting asks for. A tom at either end of the Skin control, which is what
+    // sets its tension depth, must therefore keep its tail inside the same
+    // range rather than being damped or excited by the modulation.
+    for (const float skin : { 0.0f, 1.0f })
+    {
+        auto values = drumalor::getInstrumentMetadata (
+            drumalor::Instrument::MidTom).defaultParameters;
+        values.characterB = skin;
+        const auto samples = renderMonoHit (
+            sampleRate, drumalor::Instrument::MidTom, values, 0.60, 1.0f);
+        const double early = rmsInRange (samples, static_cast<std::size_t> (0.02 * sampleRate),
+                                         static_cast<std::size_t> (0.08 * sampleRate));
+        const double late = rmsInRange (samples, static_cast<std::size_t> (0.30 * sampleRate),
+                                        static_cast<std::size_t> (0.40 * sampleRate));
+        const double decayDecibels = 20.0 * std::log10 (
+            std::max (1.0e-12, late) / std::max (1.0e-12, early));
+        expect (decayDecibels < -6.0 && decayDecibels > -70.0,
+                "Mid Tom tail left its expected decay range at Skin "
+                    + std::to_string (skin) + " (" + std::to_string (decayDecibels) + " dB)");
+    }
+}
+
+void testSnareArticulations()
+{
+    constexpr double sampleRate = 48000.0;
+    const auto defaults = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Snare).defaultParameters;
+
+    const auto renderArticulation = [&] (int midiNote)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.setInstrumentParameters (drumalor::Instrument::Snare, defaults);
+        expect (engine.triggerMidi (midiNote, 0.95f),
+                "the snare articulation note " + std::to_string (midiNote)
+                    + " was not accepted");
+        constexpr int captureSamples = static_cast<int> (0.60 * sampleRate);
+        const auto interleaved = renderInterleaved (
+            engine, captureSamples, defaultBlockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        return mono;
+    };
+
+    const auto head = renderArticulation (38);
+    const auto rimshot = renderArticulation (40);
+    const auto crossStick = renderArticulation (37);
+
+    for (const auto* pair : { &head, &rimshot, &crossStick })
+    {
+        expect (std::all_of (pair->begin(), pair->end(),
+                             [] (float value) { return std::isfinite (value); }),
+                "a snare articulation produced NaN or infinity");
+        expect (peakInRange (*pair, 0, pair->size()) <= 1.001,
+                "a snare articulation exceeded the output safety bound");
+        expect (rmsInRange (*pair, 0, pair->size()) > 1.0e-5,
+                "a snare articulation was silent");
+    }
+
+    // The wires are the difference. A rimshot drives the head hard enough to
+    // throw them well clear; a cross-stick is a hand resting on the head with
+    // the shaft dropped on the hoop, so they never leave it.
+    const auto wireToBody = [&] (const std::vector<float>& samples)
+    {
+        return bandPowerInRange (samples, sampleRate, 1500.0, 9000.0, 0.0, 0.150)
+            / std::max (1.0e-20, bandPowerInRange (
+                samples, sampleRate, 150.0, 700.0, 0.0, 0.150));
+    };
+    const double headWires = wireToBody (head);
+    const double rimshotWires = wireToBody (rimshot);
+    const double crossStickWires = wireToBody (crossStick);
+    expect (rimshotWires > 1.15 * headWires,
+            "a rimshot does not engage the wires harder than a head strike (head/rim "
+                + std::to_string (headWires) + "/" + std::to_string (rimshotWires) + ")");
+    expect (crossStickWires < 0.35 * headWires,
+            "a cross-stick still buzzes the wires (head/cross "
+                + std::to_string (headWires) + "/" + std::to_string (crossStickWires) + ")");
+
+    // A hand on the head is a heavy, frequency-independent absorber, so the
+    // cross-stick is over long before the other two.
+    const auto tailFraction = [&] (const std::vector<float>& samples)
+    {
+        const double early = rmsInRange (samples, 0,
+                                         static_cast<std::size_t> (0.030 * sampleRate));
+        const double late = rmsInRange (samples,
+                                        static_cast<std::size_t> (0.120 * sampleRate),
+                                        static_cast<std::size_t> (0.300 * sampleRate));
+        return late / std::max (1.0e-20, early);
+    };
+    expect (tailFraction (crossStick) < 0.40 * tailFraction (head),
+            "a cross-stick rings as long as a head strike (head/cross "
+                + std::to_string (tailFraction (head)) + "/"
+                + std::to_string (tailFraction (crossStick)) + ")");
+
+    // And the three are genuinely three sounds rather than three levels: after
+    // matching peaks, none of them nulls against another.
+    const auto shapeResidualDecibels = [] (const std::vector<float>& first,
+                                           const std::vector<float>& second)
+    {
+        const double firstPeak = peakInRange (first, 0, first.size());
+        const double secondPeak = peakInRange (second, 0, second.size());
+        std::vector<float> matched (second.size());
+        const auto gain = static_cast<float> (firstPeak / std::max (1.0e-9, secondPeak));
+        for (std::size_t index = 0; index < second.size(); ++index)
+            matched[index] = second[index] * gain;
+        return 20.0 * std::log10 (std::max (1.0e-12,
+            meanAbsoluteDifference (first, matched)
+            / std::max (1.0e-12, meanAbsoluteMagnitude (first))));
+    };
+    // Both are still the same drum with the same wire wash and the same noise
+    // realisation, so a large common component is correct; what is not correct
+    // is a null. Notes 40 and 37 used to be second names for a plain head hit
+    // and for the claves, so this residual was exactly minus infinity for the
+    // rimshot. It now measures -8.8 dB, and the cross-stick -0.7 dB.
+    expect (shapeResidualDecibels (head, rimshot) > -12.0,
+            "a rimshot is a louder head strike rather than a different one ("
+                + std::to_string (shapeResidualDecibels (head, rimshot)) + " dB)");
+    expect (shapeResidualDecibels (head, crossStick) > -6.0,
+            "a cross-stick is a quieter head strike rather than a different one ("
+                + std::to_string (shapeResidualDecibels (head, crossStick)) + " dB)");
+
+    // A rimshot is the shortest contact in the kit against a steel hoop, so it
+    // reaches further up the head's series than a plain stroke does.
+    const auto highToLow = [&] (const std::vector<float>& samples)
+    {
+        return bandPowerInRange (samples, sampleRate, 1200.0, 6000.0, 0.0, 0.040)
+            / std::max (1.0e-20, bandPowerInRange (
+                samples, sampleRate, 150.0, 600.0, 0.0, 0.040));
+    };
+    expect (highToLow (rimshot) > 1.10 * highToLow (head),
+            "a rimshot is not brighter at the strike than a head hit (head/rim "
+                + std::to_string (highToLow (head)) + "/"
+                + std::to_string (highToLow (rimshot)) + ")");
+}
+
+void testReStrikeDamping()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int flamSamples = static_cast<int> (0.015 * sampleRate);
+    constexpr int windowSamples = static_cast<int> (0.220 * sampleRate);
+    constexpr std::array membranes {
+        drumalor::Instrument::Kick, drumalor::Instrument::Snare,
+        drumalor::Instrument::LowTom, drumalor::Instrument::MidTom,
+        drumalor::Instrument::HighTom
+    };
+
+    // Humanise off, so the two strokes of a flam differ only in the noise
+    // realisation their trigger counters draw and the comparison is about
+    // energy rather than about drift.
+    drumalor::KitParameters machine;
+    machine.humanise = 0.0f;
+
+    const auto monoFrom = [] (const std::vector<float>& interleaved)
+    {
+        std::vector<float> mono (interleaved.size() / 2u);
+        for (std::size_t sample = 0; sample < mono.size(); ++sample)
+            mono[sample] = 0.5f * (interleaved[sample * 2u] + interleaved[sample * 2u + 1u]);
+        return mono;
+    };
+
+    for (const auto instrument : membranes)
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (instrument));
+        auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+        // At the root, for the same reason the tension probe is. How much of a
+        // ring is left to absorb fifteen milliseconds later is set by how fast
+        // the drum decays, and a head tuned up decays faster - so the fraction
+        // below is a property of the absorber only if the drum is held still
+        // while it is measured. The snare is the tightest case in the kit: it
+        // is the shortest-lived head, so it has the least ring left to take.
+        defaults.pitch = 0.0f;
+        const auto prepared = [&] ()
+        {
+            auto engine = std::make_unique<drumalor::DrumEngine>();
+            engine->prepare (sampleRate, defaultBlockSize);
+            engine->setInstrumentParameters (instrument, defaults);
+            engine->setKitParameters (machine);
+            return engine;
+        };
+
+        // The first stroke on its own, measured over the window that starts
+        // where the second stroke would have landed.
+        auto first = prepared();
+        first->trigger (instrument, 0.90f);
+        renderInterleaved (*first, flamSamples, defaultBlockSize);
+        const auto firstTail = monoFrom (
+            renderInterleaved (*first, windowSamples, defaultBlockSize));
+
+        // The second stroke on its own, over the same window.
+        auto second = prepared();
+        second->trigger (instrument, 0.90f);
+        const auto secondAlone = monoFrom (
+            renderInterleaved (*second, windowSamples, defaultBlockSize));
+
+        // Both, fifteen milliseconds apart.
+        auto flam = prepared();
+        flam->trigger (instrument, 0.90f);
+        renderInterleaved (*flam, flamSamples, defaultBlockSize);
+        flam->trigger (instrument, 0.90f);
+        const auto flamTail = monoFrom (
+            renderInterleaved (*flam, windowSamples, defaultBlockSize));
+
+        const double firstEnergy = rmsInRange (firstTail, 0, firstTail.size());
+        const double secondEnergy = rmsInRange (secondAlone, 0, secondAlone.size());
+        const double flamEnergy = rmsInRange (flamTail, 0, flamTail.size());
+        expect (firstEnergy > 1.0e-5 && secondEnergy > 1.0e-5,
+                label + " flam probe rendered a silent stroke");
+
+        // Two independent drums would carry the sum of the two energies. One
+        // drum struck twice carries less, because the second contact absorbs
+        // part of what the first one left ringing.
+        const double independent = firstEnergy * firstEnergy
+            + secondEnergy * secondEnergy;
+        const double actual = flamEnergy * flamEnergy;
+        expect (actual < 0.85 * independent,
+                label + " a flam is two independent drums (" + std::to_string (actual)
+                    + " against " + std::to_string (independent) + ")");
+
+        // And the absorber follows the contact: a ghost stroke laid on a
+        // ringing drum barely touches it where a full stroke very nearly
+        // resets it. Subtracting each case's own second stroke, rendered
+        // alone, leaves what survived of the first one.
+        auto ghostAlone = prepared();
+        ghostAlone->trigger (instrument, 0.10f);
+        const auto ghostSecond = monoFrom (
+            renderInterleaved (*ghostAlone, windowSamples, defaultBlockSize));
+        auto ghosted = prepared();
+        ghosted->trigger (instrument, 0.90f);
+        renderInterleaved (*ghosted, flamSamples, defaultBlockSize);
+        ghosted->trigger (instrument, 0.10f);
+        const auto ghostTail = monoFrom (
+            renderInterleaved (*ghosted, windowSamples, defaultBlockSize));
+        const auto survivingEnergy = [] (const std::vector<float>& both,
+                                         const std::vector<float>& secondAloneTail)
+        {
+            const double combined = rmsInRange (both, 0, both.size());
+            const double alone = rmsInRange (secondAloneTail, 0, secondAloneTail.size());
+            return std::max (0.0, combined * combined - alone * alone);
+        };
+        const double survivesGhost = survivingEnergy (ghostTail, ghostSecond);
+        const double survivesFull = survivingEnergy (flamTail, secondAlone);
+        expect (survivesGhost > 1.30 * survivesFull,
+                label + " a ghost stroke damps a ringing head as hard as a full one ("
+                    + std::to_string (survivesGhost) + " against "
+                    + std::to_string (survivesFull) + ")");
+
+        // A press roll has to die away rather than build up, and it must not
+        // consume a voice per stroke.
+        auto roll = prepared();
+        for (int stroke = 0; stroke < 48; ++stroke)
+        {
+            roll->trigger (instrument, 0.75f);
+            const auto segment = renderInterleaved (
+                *roll, static_cast<int> (0.020 * sampleRate), defaultBlockSize);
+            expect (metricsForInterleaved (segment).peak <= 1.001,
+                    label + " a press roll exceeded the output safety bound");
+        }
+        expect (roll->getActiveVoiceCount() <= 20,
+                label + " a press roll left " + std::to_string (roll->getActiveVoiceCount())
+                    + " voices ringing");
+    }
+
+    // A cymbal is metres of plate against a stick tip, so a second strike on
+    // one really does add and must be left alone.
+    auto ride = std::make_unique<drumalor::DrumEngine>();
+    ride->prepare (sampleRate, defaultBlockSize);
+    ride->setKitParameters (machine);
+    ride->trigger (drumalor::Instrument::Ride, 0.90f);
+    renderInterleaved (*ride, flamSamples, defaultBlockSize);
+    const auto singleRide = monoFrom (
+        renderInterleaved (*ride, windowSamples, defaultBlockSize));
+    auto doubleRideEngine = std::make_unique<drumalor::DrumEngine>();
+    doubleRideEngine->prepare (sampleRate, defaultBlockSize);
+    doubleRideEngine->setKitParameters (machine);
+    doubleRideEngine->trigger (drumalor::Instrument::Ride, 0.90f);
+    renderInterleaved (*doubleRideEngine, flamSamples, defaultBlockSize);
+    doubleRideEngine->trigger (drumalor::Instrument::Ride, 0.90f);
+    const auto doubleRide = monoFrom (
+        renderInterleaved (*doubleRideEngine, windowSamples, defaultBlockSize));
+    expect (rmsInRange (doubleRide, 0, doubleRide.size())
+                > 1.30 * rmsInRange (singleRide, 0, singleRide.size()),
+            "a second ride strike was damped as though the plate were a drum head");
+}
+
+void testHiHatPedal()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int captureSamples = static_cast<int> (1.20 * sampleRate);
+
+    const auto renderHat = [&] (drumalor::Instrument instrument,
+                                bool setPedal, float pedal)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        if (setPedal)
+            engine.setHiHatPedal (pedal);
+        engine.trigger (instrument, 0.90f);
+        const auto interleaved = renderInterleaved (
+            engine, captureSamples, defaultBlockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        return mono;
+    };
+
+    // The two notes are the pedal's endpoints, so a session that never sends a
+    // controller has to be reproduced sample for sample by one that parks the
+    // pedal where that note already was.
+    expect (renderHat (drumalor::Instrument::ClosedHat, false, 0.0f)
+                == renderHat (drumalor::Instrument::ClosedHat, true, 1.0f),
+            "a fully closed pedal did not reproduce the Closed Hat exactly");
+    expect (renderHat (drumalor::Instrument::OpenHat, false, 0.0f)
+                == renderHat (drumalor::Instrument::OpenHat, true, 0.0f),
+            "a fully open pedal did not reproduce the Open Hat exactly");
+
+    // And in between it is a pedal rather than a switch: the pair rings for
+    // less and less as the foot comes down, because clamping the plates damps
+    // them by friction between two faces instead of by anything inside the
+    // bronze, and every intermediate position is its own sound rather than one
+    // of the two endpoints faded.
+    constexpr std::array pedalPositions { 0.0f, 0.30f, 0.55f, 0.80f, 1.0f };
+    std::vector<std::vector<float>> pedalRenders;
+    double previousTail = std::numeric_limits<double>::max();
+    for (const float pedal : pedalPositions)
+    {
+        const auto samples = renderHat (drumalor::Instrument::OpenHat, true, pedal);
+        expect (std::all_of (samples.begin(), samples.end(),
+                             [] (float value) { return std::isfinite (value); })
+                    && peakInRange (samples, 0, samples.size()) <= 1.001,
+                "a half-open hat was not finite and bounded");
+
+        const double early = rmsInRange (samples, 0,
+                                         static_cast<std::size_t> (0.020 * sampleRate));
+        const double late = rmsInRange (samples,
+                                        static_cast<std::size_t> (0.100 * sampleRate),
+                                        static_cast<std::size_t> (0.400 * sampleRate));
+        const double tail = late / std::max (1.0e-20, early);
+        expect (tail < previousTail,
+                "closing the pedal to " + std::to_string (pedal)
+                    + " did not shorten the hat (" + std::to_string (tail)
+                    + " against " + std::to_string (previousTail) + ")");
+        previousTail = tail;
+        pedalRenders.push_back (samples);
+    }
+
+    for (std::size_t position = 1; position < pedalRenders.size(); ++position)
+    {
+        const auto& before = pedalRenders[position - 1u];
+        const auto& after = pedalRenders[position];
+        const double beforePeak = peakInRange (before, 0, before.size());
+        const double afterPeak = peakInRange (after, 0, after.size());
+        std::vector<float> matched (after.size());
+        const auto gain = static_cast<float> (beforePeak / std::max (1.0e-9, afterPeak));
+        for (std::size_t index = 0; index < after.size(); ++index)
+            matched[index] = after[index] * gain;
+        const double residual = meanAbsoluteDifference (before, matched)
+            / std::max (1.0e-12, meanAbsoluteMagnitude (before));
+        expect (residual > 0.10,
+                "pedal position " + std::to_string (pedalPositions[position])
+                    + " is a level change rather than its own sound ("
+                    + std::to_string (residual) + ")");
+    }
+
+    // Closing the pedal on a hat that is already ringing has to take it down,
+    // and take it down faster the further the foot goes. The window starts well
+    // after the close so the foot chick a full close makes is not measured as
+    // though it were the hat surviving.
+    const auto closeOnTail = [&] (float pedal)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.setHiHatPedal (0.0f);
+        engine.trigger (drumalor::Instrument::OpenHat, 0.90f);
+        renderInterleaved (engine, static_cast<int> (0.060 * sampleRate), defaultBlockSize);
+        engine.setHiHatPedal (pedal);
+        renderInterleaved (engine, static_cast<int> (0.150 * sampleRate), defaultBlockSize);
+        const auto interleaved = renderInterleaved (
+            engine, static_cast<int> (0.200 * sampleRate), defaultBlockSize);
+        return metricsForInterleaved (interleaved).rms();
+    };
+    const double leftOpen = closeOnTail (0.0f);
+    const double halfClosed = closeOnTail (0.50f);
+    const double shut = closeOnTail (1.0f);
+    expect (halfClosed < 0.85 * leftOpen,
+            "half closing the pedal did not damp a ringing open hat ("
+                + std::to_string (halfClosed) + " against " + std::to_string (leftOpen) + ")");
+    expect (shut < 0.30 * halfClosed,
+            "shutting the pedal did not cut a ringing open hat ("
+                + std::to_string (shut) + " against " + std::to_string (halfClosed) + ")");
+
+    // A foot coming down fast makes its own sound, with no note involved, and a
+    // foot resting on the pedal or lifting off it does not.
+    const auto pedalOnly = [&] (float from, float to)
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.setHiHatPedal (from);
+        renderInterleaved (engine, 512, defaultBlockSize);
+        engine.setHiHatPedal (to);
+        const auto interleaved = renderInterleaved (
+            engine, static_cast<int> (0.250 * sampleRate), defaultBlockSize);
+        return metricsForInterleaved (interleaved);
+    };
+    const auto chick = pedalOnly (0.0f, 1.0f);
+    expect (chick.finite && chick.rms() > 1.0e-4,
+            "a fast pedal close produced no foot chick (" + std::to_string (chick.rms()) + ")");
+    expect (chick.peak <= 1.001, "the foot chick exceeded the output safety bound");
+    const auto lift = pedalOnly (1.0f, 0.0f);
+    expect (lift.rms() < 1.0e-6, "lifting the pedal made a sound");
+    const auto creep = pedalOnly (0.50f, 0.60f);
+    expect (creep.rms() < 1.0e-6, "resting on the pedal made a sound");
+
+    // The pedal is engine state, not a parameter, and reset() has to forget it
+    // so a reopened session starts from the two notes again.
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+    engine.setHiHatPedal (1.0f);
+    expect (engine.getHiHatPedal() > 0.99f, "the pedal did not take a controller value");
+    engine.reset();
+    expect (engine.getHiHatPedal() == 0.0f, "reset did not release the pedal");
+
+    // Nonsense from a controller must not reach the model.
+    engine.setHiHatPedal (0.40f);
+    engine.setHiHatPedal (std::numeric_limits<float>::quiet_NaN());
+    expect (std::abs (engine.getHiHatPedal() - 0.40f) < 1.0e-6f,
+            "a non-finite pedal position was accepted");
+    engine.setHiHatPedal (14.0f);
+    expect (engine.getHiHatPedal() <= 1.0f, "an out-of-range pedal position was accepted");
+}
+
+void testSympatheticKitBleed()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int captureSamples = static_cast<int> (0.70 * sampleRate);
+
+    const auto renderKick = [&] (float bleed, int blockSize)
+    {
+        drumalor::DrumEngine engine;
+        drumalor::KitParameters kit;
+        kit.bleed = bleed;
+        // Set before prepare, exactly as the processor does, so the control's
+        // 20 ms smoother starts settled instead of ramping through the hit.
+        engine.setKitParameters (kit);
+        engine.prepare (sampleRate, blockSize);
+        engine.trigger (drumalor::Instrument::Kick, 1.0f);
+        const auto interleaved = renderInterleaved (engine, captureSamples, blockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        return mono;
+    };
+
+    // At zero the whole coupling path is skipped rather than scaled to nothing,
+    // so a kit with Bleed off has to be bit-identical to the engine before it
+    // existed - which is the same thing as saying the default cannot change a
+    // restored session.
+    const auto dry = renderKick (0.0f, defaultBlockSize);
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.trigger (drumalor::Instrument::Kick, 1.0f);
+        const auto interleaved = renderInterleaved (
+            engine, captureSamples, defaultBlockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        expect (mono == dry, "Kit Bleed at zero is not exactly bypassed");
+    }
+
+    // Above zero, a kick alone has to put energy into the snare's wire band,
+    // which is something a kick alone cannot do without the coupling: there is
+    // nothing in a bass drum at four kilohertz.
+    const auto wireBand = [&] (const std::vector<float>& samples)
+    {
+        return bandPowerInRange (samples, sampleRate, 2500.0, 8000.0, 0.0, 0.500);
+    };
+    const double dryWires = wireBand (dry);
+    double previousWires = dryWires;
+    for (const float bleed : { 0.25f, 0.55f, 1.0f })
+    {
+        const auto wet = renderKick (bleed, defaultBlockSize);
+        expect (std::all_of (wet.begin(), wet.end(),
+                             [] (float value) { return std::isfinite (value); })
+                    && peakInRange (wet, 0, wet.size()) <= 1.001,
+                "Kit Bleed produced unsafe audio at " + std::to_string (bleed));
+        const double wires = wireBand (wet);
+        expect (wires > 1.35 * previousWires,
+                "Kit Bleed at " + std::to_string (bleed)
+                    + " did not buzz the snare wires harder than the setting below it ("
+                    + std::to_string (wires) + " against " + std::to_string (previousWires)
+                    + ")");
+        previousWires = wires;
+    }
+    expect (previousWires > 8.0 * dryWires,
+            "a kick with Kit Bleed at full does not reach the snare wires at all ("
+                + std::to_string (previousWires) + " against " + std::to_string (dryWires)
+                + ")");
+
+    // The wire gate is the same threshold law the struck snare uses, so the
+    // buzz has to appear faster than the kick that causes it grows.
+    const auto wireToKick = [&] (float velocity)
+    {
+        drumalor::DrumEngine engine;
+        drumalor::KitParameters kit;
+        kit.bleed = 1.0f;
+        engine.setKitParameters (kit);
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.trigger (drumalor::Instrument::Kick, velocity);
+        const auto interleaved = renderInterleaved (
+            engine, captureSamples, defaultBlockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        return wireBand (mono)
+            / std::max (1.0e-20, bandPowerInRange (
+                mono, sampleRate, 30.0, 200.0, 0.0, 0.500));
+    };
+    expect (wireToKick (0.25f) < 0.70 * wireToKick (1.0f),
+            "the bled snare wires rattle in proportion to the kick rather than "
+            "lifting off a threshold");
+
+    // The path is strictly feed-forward, so it cannot depend on where the host
+    // put its block boundaries and it cannot ring on itself.
+    expect (renderKick (0.85f, 64) == renderKick (0.85f, 257),
+            "Kit Bleed depends on the host block size");
+
+    // A bed that has been switched off must be at rest rather than frozen, or
+    // it would hand back whatever it was ringing with the next time the control
+    // came off zero.
+    {
+        drumalor::DrumEngine engine;
+        drumalor::KitParameters kit;
+        kit.bleed = 1.0f;
+        engine.setKitParameters (kit);
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.trigger (drumalor::Instrument::Kick, 1.0f);
+        renderMetrics (engine, static_cast<int> (0.20 * sampleRate));
+        kit.bleed = 0.0f;
+        engine.setKitParameters (kit);
+        renderMetrics (engine, static_cast<int> (1.50 * sampleRate));
+        kit.bleed = 1.0f;
+        engine.setKitParameters (kit);
+        const auto revived = renderMetrics (engine, static_cast<int> (0.50 * sampleRate));
+        expect (revived.peak == 0.0,
+                "switching Kit Bleed back on released a frozen bed ("
+                    + std::to_string (revived.peak) + ")");
+    }
+
+    // Nothing to excite it means nothing out of it, however long the kit idles.
+    drumalor::DrumEngine idle;
+    drumalor::KitParameters loud;
+    loud.bleed = 1.0f;
+    idle.setKitParameters (loud);
+    idle.prepare (sampleRate, defaultBlockSize);
+    const auto silence = renderMetrics (idle, static_cast<int> (2.0 * sampleRate));
+    expect (silence.peak == 0.0, "Kit Bleed rang an idle kit");
+}
+
 void testUiPresentationMath()
 {
     using namespace drumalor::ui;
@@ -3317,6 +4076,11 @@ int main()
     testBusAutomationIsClickFree();
     testMetering();
     testMembraneAndVelocityTimbre();
+    testMembraneTensionModulation();
+    testSnareArticulations();
+    testReStrikeDamping();
+    testHiHatPedal();
+    testSympatheticKitBleed();
     testUiPresentationMath();
     testIdleMetallicCostAndDenormalSafety();
     testInvalidValuesAndStressPerformance();

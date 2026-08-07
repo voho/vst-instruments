@@ -921,7 +921,7 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
     addAndMakeVisible (selectedInstrumentLabel);
 
     for (auto* knob : { &characterAKnob, &characterBKnob, &pitchKnob, &decayKnob,
-                        &levelKnob, &humaniseKnob, &busDriveKnob,
+                        &levelKnob, &humaniseKnob, &bleedKnob, &busDriveKnob,
                         &busCompressionKnob, &outputKnob })
         addAndMakeVisible (*knob);
 
@@ -958,11 +958,14 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
     addAndMakeVisible (chokeBox);
 
     humaniseKnob.slider.setDoubleClickReturnValue (true, 0.5);
+    bleedKnob.slider.setDoubleClickReturnValue (true, 0.0);
     busDriveKnob.slider.setDoubleClickReturnValue (true, 0.0);
     busCompressionKnob.slider.setDoubleClickReturnValue (true, 0.0);
 
     humaniseKnob.setLabelText (
         "HUMANISE", "Scale the modelled per-hit analogue variation of the whole kit");
+    bleedKnob.setLabelText (
+        "KIT BLEED", "How much of the kit the snare wires and the tom heads hear");
     busDriveKnob.setLabelText (
         "BUS DRIVE", "Add shared output-bus saturation to the whole kit");
     busCompressionKnob.setLabelText (
@@ -971,6 +974,8 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
     humaniseAttachment = std::make_unique<SliderAttachment> (
         audioProcessor.parameters, drumalor::parameters::humanise,
         humaniseKnob.slider);
+    bleedAttachment = std::make_unique<SliderAttachment> (
+        audioProcessor.parameters, drumalor::parameters::bleed, bleedKnob.slider);
     busDriveAttachment = std::make_unique<SliderAttachment> (
         audioProcessor.parameters, drumalor::parameters::busDrive,
         busDriveKnob.slider);
@@ -981,10 +986,12 @@ DrumalorAudioProcessorEditor::DrumalorAudioProcessorEditor (DrumalorAudioProcess
         audioProcessor.parameters, drumalor::parameters::output, outputKnob.slider);
 
     humaniseKnob.slider.setTextValueSuffix ("%");
+    bleedKnob.slider.setTextValueSuffix ("%");
     busDriveKnob.slider.setTextValueSuffix ("%");
     busCompressionKnob.slider.setTextValueSuffix ("%");
     outputKnob.slider.setTextValueSuffix (" dB");
-    for (auto* knob : { &humaniseKnob, &busDriveKnob, &busCompressionKnob, &outputKnob })
+    for (auto* knob : { &humaniseKnob, &bleedKnob, &busDriveKnob, &busCompressionKnob,
+                        &outputKnob })
     {
         knob->slider.setColour (juce::Slider::rotarySliderFillColourId, colour (trRed));
         knob->slider.setColour (juce::Slider::rotarySliderOutlineColourId,
@@ -1331,19 +1338,25 @@ void DrumalorAudioProcessorEditor::resized()
     panLabel.setBounds (strip.removeFromLeft (juce::jmin (36, strip.getWidth() / 4)));
     panSlider.setBounds (strip);
 
+    // Five kit controls in a two-column grid, so the last row carries one knob
+    // and an empty cell rather than being squeezed into a different shape.
+    constexpr int masterKnobCount = 5;
+    constexpr int masterRowCount = (masterKnobCount + 1) / 2;
     auto master = layout.masterDeck.reduced (8, 6);
     master = master.withSizeKeepingCentre (
-        master.getWidth(), juce::jmin (380, master.getHeight()));
-    auto masterTop = master.removeFromTop (master.getHeight() / 2);
-    auto masterBottom = master;
-    DrumalorKnob* masterKnobs[4] = { &humaniseKnob, &busDriveKnob,
-                                     &busCompressionKnob, &outputKnob };
-    juce::Rectangle<int> masterRows[2] = { masterTop, masterBottom };
-    for (int row = 0; row < 2; ++row)
+        master.getWidth(), juce::jmin (560, master.getHeight()));
+    DrumalorKnob* masterKnobs[masterKnobCount] = {
+        &humaniseKnob, &bleedKnob, &busDriveKnob, &busCompressionKnob, &outputKnob
+    };
+    const auto rowHeight = master.getHeight() / masterRowCount;
+    for (int row = 0; row < masterRowCount; ++row)
     {
-        auto cells = masterRows[row];
+        auto cells = row == masterRowCount - 1
+            ? master : master.removeFromTop (rowHeight);
         const auto half = cells.getWidth() / 2;
-        masterKnobs[row * 2]->setBounds (cells.removeFromLeft (half).reduced (4, 0));
-        masterKnobs[row * 2 + 1]->setBounds (cells.reduced (4, 0));
+        const int first = row * 2;
+        masterKnobs[first]->setBounds (cells.removeFromLeft (half).reduced (4, 0));
+        if (first + 1 < masterKnobCount)
+            masterKnobs[first + 1]->setBounds (cells.reduced (4, 0));
     }
 }

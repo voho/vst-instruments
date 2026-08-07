@@ -14,9 +14,10 @@ inline constexpr auto output = "output";
 inline constexpr auto humanise = "humanise";
 inline constexpr auto busDrive = "busDrive";
 inline constexpr auto busCompression = "busComp";
+inline constexpr auto bleed = "kitBleed";
 
 // Kit-wide controls, in the order they are appended to the layout.
-inline constexpr int kitParameterCount = 4;
+inline constexpr int kitParameterCount = 5;
 
 enum Slot
 {
@@ -125,6 +126,7 @@ private:
     std::atomic<float>* humaniseParameter = nullptr;
     std::atomic<float>* busDriveParameter = nullptr;
     std::atomic<float>* busCompressionParameter = nullptr;
+    std::atomic<float>* bleedParameter = nullptr;
 
     std::array<UiTriggerEvent, uiQueueCapacity> uiTriggerQueue {};
     std::atomic<unsigned> uiWriteIndex { 0 };

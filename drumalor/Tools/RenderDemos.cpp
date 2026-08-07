@@ -159,7 +159,23 @@ public:
         render (gapSeconds);
     }
 
+    // The same thing by raw note number, for the articulations that are a note
+    // rather than a voice.
+    void hitNote (int midiNote, float velocity, double gapSeconds)
+    {
+        if (! engine_->triggerMidi (midiNote, velocity))
+        {
+            std::fprintf (stderr, "the GM note map dropped a demo hit\n");
+            std::abort();
+        }
+        render (gapSeconds);
+    }
+
     void rest (double seconds) { render (seconds); }
+
+    // The hi-hat pedal, exactly as an electronic kit's CC 4 reaches the engine:
+    // 0 is fully open and 1 is tightly closed.
+    void pedal (float position) { engine_->setHiHatPedal (position); }
 
     [[nodiscard]] const std::vector<float>& left() const noexcept { return left_; }
     [[nodiscard]] const std::vector<float>& right() const noexcept { return right_; }
@@ -334,6 +350,33 @@ Take renderRockGroove()
         { Instrument::Crash, crash },
     });
 
+    // Two more bars of the same beat with the foot on the pedal. Every hat here
+    // is the same Open Hat note; what changes is how far apart the plates are,
+    // so the pair opens from tight through half-open and back, and the last
+    // sixteenth of the second bar shuts it with no note at all - the chick is
+    // the foot, not a stroke.
+    take.rest (0.15);
+    const std::string pedalKick  = std::string ("X-------X-------") + "X-------X---X---";
+    const std::string pedalSnare = std::string ("----X-------X---") + "----X-------X---";
+    const std::string pedalHat   = std::string ("x-x-x-x-x-x-x-x-") + "x-x-x-x-x-x-x---";
+    constexpr std::array<float, 16> pedalRamp {{
+        1.00f, 1.00f, 0.82f, 0.82f, 0.64f, 0.64f, 0.46f, 0.46f,
+        0.28f, 0.28f, 0.10f, 0.10f, 0.28f, 0.46f, 0.64f, 0.82f
+    }};
+    for (int bar = 0; bar < 2; ++bar)
+        for (std::size_t index = 0; index < pedalHat.size(); ++index)
+        {
+            take.pedal (pedalRamp[index % pedalRamp.size()]);
+            if (pedalKick[index] != '-')
+                take.strike (Instrument::Kick, velocityForStep (pedalKick[index]));
+            if (pedalSnare[index] != '-')
+                take.strike (Instrument::Snare, velocityForStep (pedalSnare[index]));
+            if (pedalHat[index] != '-')
+                take.strike (Instrument::OpenHat, velocityForStep (pedalHat[index]));
+            take.rest (step);
+        }
+    take.pedal (1.0f);
+
     take.rest (1.6);
     return take;
 }
@@ -364,15 +407,24 @@ Take renderBreakbeat()
     return take;
 }
 
-// MIDI velocity from a ghost stroke to a full accent on the factory snare.
-// Nothing about the timbre is adjusted between hits - velocity drives the
-// struck-timbre filters and the wire content as well as the level.
+// MIDI velocity from a ghost stroke to a full accent on the factory snare, then
+// the same drum's other two articulations. Nothing about the timbre is adjusted
+// between hits - velocity drives the struck-timbre filters and the wire content
+// as well as the level, and the articulations are the same modelled head struck
+// in a different place with a different contact rather than three sounds.
 Take renderSnareVelocity()
 {
     Take take;
     take.rest (0.10);
     for (const float velocity : { 0.08f, 0.20f, 0.33f, 0.46f, 0.60f, 0.74f, 0.87f, 1.0f })
         take.hit (Instrument::Snare, velocity, 0.55);
+    take.rest (0.45);
+
+    // Head, rimshot, cross-stick, twice over, all at the same velocity.
+    for (int repeat = 0; repeat < 2; ++repeat)
+        for (const int note : { 38, 40, 37 })
+            take.hitNote (note, 0.92f, 0.55);
+
     take.rest (1.6);
     return take;
 }
@@ -497,12 +549,13 @@ const std::array<Demo, 7>& demos()
           "All thirteen voices of the factory kit, one hit at a time",
           renderKitVocabulary },
         { "02-rock-groove.wav",
-          "A plain rock beat at 96 BPM with the open hat choked by the closed",
+          "A plain rock beat at 96 BPM, then the same beat played on the hi-hat pedal",
           renderRockGroove },
         { "03-breakbeat-ghost-notes.wav",
           "A busier break at 104 BPM with ghost-note snare", renderBreakbeat },
         { "04-snare-velocity.wav",
-          "One snare from a ghost note to a full accent", renderSnareVelocity },
+          "One snare from a ghost note to a full accent, then its rimshot and cross-stick",
+          renderSnareVelocity },
         { "05-toms-and-cymbals.wav",
           "Ride time, crashes and a descending tom fill", renderTomsAndCymbals },
         { "06-humanise.wav",
