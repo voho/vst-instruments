@@ -157,7 +157,7 @@ each lands with a test in `Tests/` that fails without it.
   rises with Head Material and rises as the drum gets smaller, and the octave
   contract and the reported ideal fundamental are untouched.
 
-- [ ] **2. Delete the shell gain step disguised as saturation.** Closes gap 4a.
+- [x] **2. Delete the shell gain step disguised as saturation.** Closes gap 4a.
   *Verified by*: a test that sweeps Shell Resonance across 0.01 and requires the
   rendered Katsu level to be continuous, which fails by 1.59 dB today.
 

@@ -1227,6 +1227,48 @@ void testTheDrumSoundsLikeADrumAndNotLikeATone()
                 "the stroke ends as a sine");
 }
 
+// Shell Resonance is a continuous control and has to behave like one. It used
+// not to: a shaper sold as saturation sat on the wooden bank's drive behind a
+// gate at 1 %, and because its clamp was never reached and its cubic term was
+// 58 dB down, the only thing it actually did was hand the shell a 1.2x gain the
+// moment the control crossed that gate.
+void testShellResonanceHasNoStepInIt()
+{
+    const auto peakKatsu = [] (float shellResonance)
+    {
+        auto parameters = defaultParameters();
+        parameters.shellResonance = shellResonance;
+        // A Katsu is the stick on the body, so the wooden bank is nearly the
+        // whole of what it produces and a gain step on that bank is measurable
+        // in the finished audio rather than only in the mode table.
+        return strike (parameters, taikor::Articulation::Katsu, 0, 0.9f, 48000.0,
+                       12000)
+            .peak;
+    };
+
+    double previous = peakKatsu (0.0f);
+    expect (previous > 0.0, "a Katsu must sound with the shell control at zero");
+
+    // Fine steps across the gate that used to be there. A quarter of a per cent
+    // of a control that spans nineteen decibels end to end cannot legitimately
+    // move the output by a third of one.
+    for (float shellResonance = 0.0025f; shellResonance <= 0.0501f;
+         shellResonance += 0.0025f)
+    {
+        const auto level = peakKatsu (shellResonance);
+        const auto step = std::abs (20.0 * std::log10 (level / previous));
+        expect (step < 0.3,
+                "Shell Resonance stepped by " + std::to_string (step)
+                    + " dB at " + std::to_string (shellResonance));
+        previous = level;
+    }
+
+    // And the control still has to do its job over its whole range, or the
+    // check above would be satisfied by a control that does nothing at all.
+    expect (peakKatsu (1.0f) > peakKatsu (0.0f) * 2.0,
+            "Shell Resonance must still open the body up across its range");
+}
+
 // A taiko head is a stretched plate rather than an ideal membrane - treated cow
 // skin at about 3.5 GPa, held at a tension far above a drum-kit head's - so its
 // modal ratios are not constants of the geometry. They open out with the mode's
@@ -2902,6 +2944,7 @@ int main()
     testTailsTerminateAndVoicesRetire();
     testVoiceStealingStaysBounded();
     testTheDrumSoundsLikeADrumAndNotLikeATone();
+    testShellResonanceHasNoStepInIt();
     testHeadStiffnessOpensTheModalRatios();
     testTheContinuumFollowsTheHead();
     testEveryParameterSurvivesTheCache();

@@ -2607,14 +2607,18 @@ float TaikoEngine::renderVoice (Voice& voice, float& rightOut) noexcept
     for (int index = 0; index < voice.activeModeCount; ++index)
     {
         auto& mode = voice.modes[static_cast<std::size_t> (index)];
-        float modeDriveInput = excitation * mode.drive;
-        if (! mode.membrane && voice.articulation != Articulation::Bachi && applied_.shellResonance > 0.01f)
-        {
-            // Soft odd-harmonic Zelkova wood shell saturation for rich low-mid body warmth
-            const float x = clampFloat (modeDriveInput * 1.5f, -1.2f, 1.2f);
-            modeDriveInput = (x - 0.04f * x * x * x) * 0.8f;
-        }
-        float value = mode.resonator.tick (modeDriveInput);
+        // The wooden bank is driven linearly, like the head. A shaper used to
+        // sit here, labelled as soft odd-harmonic saturation in the zelkova: a
+        // clamp at +/-1.2 after a 1.5x pre-gain, then x - 0.04 x^3, then 0.8.
+        // None of it did what it said. The largest drive input the shell bank
+        // can be handed is 0.178 - a full-velocity Katsu on the reference drum -
+        // so the clamp was never approached and the cubic term sat 58 dB under
+        // the linear one. What was left was a 1.2x gain gated on Shell
+        // Resonance passing 1 %, which put a 1.6 dB step in the middle of a
+        // continuous control: a Katsu measured -17.57 dBFS at 0.99 % and
+        // -15.98 dBFS at 1.01 %. A drum shell struck by a stick is nowhere near
+        // its elastic limit, so there is nothing here for a saturator to do.
+        float value = mode.resonator.tick (excitation * mode.drive);
         if (mode.membrane)
         {
             membraneLeft += value * mode.micLeft;
