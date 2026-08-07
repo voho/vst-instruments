@@ -83,7 +83,8 @@ struct EngineParameters
 {
     // --- The drum -------------------------------------------------------
     // Head diameter in metres. Sets the membrane radius directly, so it moves
-    // pitch as 1/a while leaving the modal ratios (fixed Bessel zeros) alone.
+    // pitch as 1/a. The modal ratios move too, but only through the head's own
+    // bending stiffness measured against its tension - see stiffnessStretch.
     float headDiameter { 0.95f };
     // Body depth as a fraction of the diameter, 0 -> 0.40, 1 -> 1.30. The
     // enclosed volume is what couples the two heads, so a shallow drum splits
@@ -94,8 +95,11 @@ struct EngineParameters
     // this and the head material together set the pitch.
     float tension { 0.55f };
     // 0 = thin synthetic film, 1 = thick heavy cowhide. Sets the head's areal
-    // density and its internal loss factor at the same time, because both come
-    // from the same piece of material.
+    // density, its internal loss factor and its bending stiffness at once,
+    // because all three come from the same piece of material - and the last of
+    // them goes as the cube of the thickness, so the two ends of this control
+    // are two and a half orders of magnitude apart in how far they open the
+    // modal ratios out.
     float headMaterial { 0.75f };
     // 0 = light laminated ply, 1 = dense carved zelkova. Sets the shell's ring
     // frequencies, their Q, and how much the rim absorbs from the head.
@@ -130,8 +134,9 @@ struct EngineParameters
     // timbre change that comes with it is not separately adjustable because it
     // is not a separate effect: contact time follows impact speed as v^(-1/5).
     float velocityDepth { 0.75f };
-    // Depth of the attack pitch glide. A hard stroke stretches the head, which
-    // raises its tension and drops back as the stroke decays.
+    // Depth of the attack pitch glide, which is the head stretching itself: a
+    // membrane clamped at its rim gets longer when it moves, and a longer head
+    // is a tighter one. At 0 the head is treated as linear.
     float tensionModulation { 0.4f };
     // Level of the broadband contact noise the stick makes on the hide, 0..1.
     float strikeNoise { 0.35f };
@@ -243,6 +248,13 @@ public:
         // Reporting only one of them described whichever mode happened to be
         // chosen rather than the drum.
         float tailSeconds { 1.2f };
+        // How stiff the head is against its own tension: the dimensionless B in
+        // f(lambda) = f_membrane(lambda) * sqrt((1 + B lambda^2)/(1 + B
+        // lambda_0^2)). Zero is an ideal membrane, where every modal ratio is a
+        // constant of the geometry; a thick hide on a small tight drum reaches
+        // the order of 10^-3, which stretches the top of the resolved bank by
+        // well over a semitone.
+        float headStiffnessParameter { 0.0f };
     };
 
     [[nodiscard]] DrumMeasurements measureDrum (int octaveOffset) const noexcept;
@@ -388,6 +400,10 @@ private:
         // frequency the head has been stretched to.
         float radiationPrefactor { 0.0f };
         std::uint8_t circumferentialOrder { 0 };
+        // Which row of the mode table this came from, so a later stroke can
+        // find the mode's shape at its own contact point without the whole
+        // Bessel solve being redone per mode. Membrane modes only.
+        std::uint8_t modeEntry { 0 };
         // log(level / retirement floor), so the lifetime below can be redone
         // from a new decay rate without the whole bank's levels to hand. Zero
         // for a mode that was never audible.
@@ -440,6 +456,33 @@ private:
         float noiseBandState { 0.0f };
         float noiseBandCoefficient { 0.5f };
 
+        // The tack line. A nagado-daiko is byo-uchi: the head is nailed to the
+        // shell with a ring of iron tacks, and each of them holds down its
+        // share of the head's tension. A stroke that catches the hoop lifts the
+        // head against that preload, and where it wins the tack chatters
+        // against the wood. It is a threshold and not a level - below the
+        // preload nothing rattles at all, which is why a firm rim shot has a
+        // metallic edge a light one has no trace of.
+        float tackPreload { 0.0f };      // newtons a stroke has to beat
+        float tackRimGain { 0.0f };      // how much of the stroke reaches the hoop
+        float tackScale { 0.0f };        // level per newton of excess
+        // Its own noise source, not the stroke's. Sharing one would mean that
+        // whether the tacks rattled decided which numbers the hide's contact
+        // noise and the head's continuum were given, so two renders that differ
+        // only in whether a rim shot cleared the preload would differ
+        // everywhere - which makes the rattle impossible to measure and the
+        // rest of the stroke needlessly dependent on it.
+        std::uint32_t tackNoiseState { 1u };
+        // A lifted tack does not go quiet the instant the stick leaves: it
+        // chatters against the wood while the head settles back onto it, which
+        // is a few milliseconds rather than the one the contact lasts.
+        float tackEnvelope { 0.0f };
+        float tackEnvelopeDecay { 0.99f };
+        float tackLowState { 0.0f };
+        float tackHighState { 0.0f };
+        float tackLowCoefficient { 0.5f };
+        float tackHighCoefficient { 0.5f };
+
         // One band of the continuum: noise through a one-pole band-pass, under
         // its own decaying envelope. It belongs to the head, so the hand damps
         // it along with the resolved modes.
@@ -485,8 +528,19 @@ private:
         };
         std::array<ContinuumBand, continuumBandCount> continuum {};
 
-        // Attack pitch glide. The head is stretched by the stroke, so its
-        // tension - and every mode with it - starts sharp and settles.
+        // Attack pitch glide. A membrane held at a fixed rim cannot move
+        // transversely without getting longer, and a longer head is a tighter
+        // one: the tension rises with the square of the displacement, so a
+        // struck head starts sharp and settles as it empties. That is the whole
+        // of the mechanism, and it is why the glide has no clock of its own -
+        // it decays because the head does.
+        //
+        // tensionEnvelope is a peak-following mean square of the membrane
+        // modes' states, which stands in for the head's squared displacement;
+        // tensionDecay is its release per control tick; tensionDepth is
+        // everything in front of it - the head's in-plane stiffness against its
+        // tension, over the radius squared, over the square of the model's
+        // output calibration so that calibration cannot reach the pitch.
         float tensionEnvelope { 0.0f };
         float tensionDecay { 0.999f };
         float tensionDepth { 0.0f };
@@ -595,6 +649,19 @@ private:
         float resonantDensity { 1.2f };
         float waveSpeed { 70.0f };
         float resonantWaveSpeed { 70.0f };
+        // Bending stiffness of each head against its own tension, as the
+        // dimensionless B of stiffnessStretch(). A taiko head is a stretched
+        // plate rather than an ideal membrane, so its modal ratios are not
+        // constants of the geometry: they open out with the mode's order, and
+        // they open out further the smaller and thicker the head is.
+        float stiffnessBatter { 0.0f };
+        float stiffnessResonant { 0.0f };
+        // The head's in-plane stiffness measured against its own tension,
+        // E h / ((1 - nu^2) T). It is the coefficient of (w/a)^2 in the tension
+        // a clamped membrane gains from being displaced, and therefore the only
+        // thing the attack pitch glide needs from the drum: a slack head bends
+        // a long way sharp and a tight one barely moves.
+        float stretchStiffness { 0.0f };
         float headLossFactor { 0.012f };
         // The viscous half of the hide's loss, damping as omega squared where
         // headLossFactor damps as omega. See resolveDrumFor.
@@ -662,6 +729,21 @@ private:
     // strike is heard as a boom and an edge strike as a slap: modes with a
     // circumferential order move the same air in and out and barely radiate.
     [[nodiscard]] static float radiationEfficiency (int order, float ka) noexcept;
+    // What the head's own bending stiffness does to a mode. A membrane under
+    // tension T with flexural rigidity D obeys omega^2 = (T k^2 + D k^4)/sigma,
+    // so the stiff term climbs as the square of the mode's wavenumber and the
+    // modal ratios open out with order - the same mechanism that stretches a
+    // piano's partials, on a head that Ando measured at 3.5 GPa.
+    //
+    // Taken relative to the (0,1) mode rather than applied absolutely, because
+    // a drum is tuned by the pitch it sounds: a player brings the fundamental
+    // back to where it belongs with the ropes or the tacks, and what stiffness
+    // leaves behind afterwards is the spread above it, not a transposition.
+    // That also keeps an octave an octave, which an absolute shift would not:
+    // B falls as the tension rises and as the square of the radius, so the two
+    // halves of the Octave Body transform move it in opposite directions.
+    [[nodiscard]] static float stiffnessStretch (float besselZero,
+                                                 float stiffness) noexcept;
     // Loss into the mounting, which only the lowest modes suffer.
     [[nodiscard]] static float mountingLoss (const DrumState& drum,
                                              float frequency) noexcept;
@@ -722,6 +804,17 @@ private:
                                   float& impedance) noexcept;
     void buildVoiceModes (Voice& voice, const DrumState& drum, const StickState& stick,
                           const StrikeProfile& profile, float extraDamping) noexcept;
+    // A bachi arriving on a head that is already sounding takes energy out of
+    // it. Every stroke after the first on one drum lands on a moving membrane,
+    // and the stick is a mass meeting it: with restitution e it removes
+    // (1 - e^2) of the share of the mode's momentum it can reach, which is set
+    // by its own mass against the mode's and by the mode's shape under the
+    // contact. Nothing else in this instrument couples two strokes together,
+    // and without it a roll is arithmetic - eight identical strokes were
+    // bit-identical to eight copies of one added offline.
+    void dampRingingHeads (int excludedSlot, int octave, const StrikeProfile& profile,
+                           float strikeRadius, const DrumState& drum,
+                           float strikerMass) noexcept;
     void scheduleContacts (Voice& voice, const StrikeProfile& profile,
                            float contactSeconds, float peakForce,
                            float noiseLevel) noexcept;

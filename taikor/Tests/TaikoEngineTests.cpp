@@ -139,6 +139,25 @@ struct TaikoEngineTestAccess
         return result;
     }
 
+    // Every membrane mode of the voice just struck, in hertz and ascending.
+    // Read from the built bank rather than measured from the audio because the
+    // question these answer - where does the head put its modes relative to one
+    // another - is about a ratio between two partials that are forty decibels
+    // apart in level.
+    static std::vector<float> membraneFrequencies (const TaikoEngine& engine)
+    {
+        std::vector<float> result;
+        const auto& voice = engine.voices_[0];
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (mode.membrane)
+                result.push_back (mode.omega / (2.0f * 3.14159265358979f));
+        }
+        std::sort (result.begin(), result.end());
+        return result;
+    }
+
     // The continuum's band-pass corners, which is where a retune of the head
     // shows up: the region is too broad and too short-lived to see it in the
     // summed spectrum.
@@ -149,6 +168,39 @@ struct TaikoEngineTestAccess
         for (const auto& band : voice.continuum)
             if (band.level > 0.0f)
                 result.push_back (band.highCoefficient);
+        return result;
+    }
+
+    // The frequency multiplier the attack glide is currently applying to the
+    // membrane. Read directly because the glide is a few tens of cents on a
+    // partial that is gone in a second, which no window short enough to catch
+    // it can resolve.
+    static float appliedTensionShift (const TaikoEngine& engine, int slot = 0) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t> (slot)].appliedTensionShift;
+    }
+
+    // The tack line as the stroke set it up. Read rather than measured for the
+    // same reason the wooden bank is: the rattle lasts about a millisecond and
+    // shares its band with the head's continuum, so the question of which
+    // numbers it was given cannot be answered from the spectrum.
+    struct TackLine
+    {
+        float preload { 0.0f };
+        float rimGain { 0.0f };
+        float scale { 0.0f };
+        float peakContactForce { 0.0f };
+    };
+
+    static TackLine tackLine (const TaikoEngine& engine, int slot = 0) noexcept
+    {
+        const auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
+        TackLine result;
+        result.preload = voice.tackPreload;
+        result.rimGain = voice.tackRimGain;
+        result.scale = voice.tackScale;
+        result.peakContactForce =
+            voice.contactCount > 0 ? voice.contacts[0].amplitude : 0.0f;
         return result;
     }
 
@@ -1206,6 +1258,574 @@ void testTheDrumSoundsLikeADrumAndNotLikeATone()
         expect (bank[0] < bank[1] * 3.0f,
                 "the lowest mode must not outlive the one above it so far that "
                 "the stroke ends as a sine");
+}
+
+// The complaint players make about every sampled taiko library is the same one:
+// limited dynamics, and loud. A model has no reason to inherit it. The whole
+// instrument used to cover about twenty-two decibels of level from the softest
+// MIDI velocity to the hardest, and the bottom half of the keyboard's velocity
+// range lived inside half a decibel of the floor because the map squared the
+// control before a logarithmic curve, which compresses the bottom rather than
+// expanding it.
+void testTheDynamicRangeReachesFromAGhostStrokeToAFullBlow()
+{
+    auto parameters = defaultParameters();
+    parameters.humanise = 0.0f;
+    parameters.velocityDepth = 1.0f;
+
+    const auto peakAt = [&parameters] (taikor::Articulation articulation, float velocity)
+    {
+        return strike (parameters, articulation, 0, velocity, 48000.0, 24000).peak;
+    };
+
+    for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+    {
+        const auto articulation = static_cast<taikor::Articulation> (index);
+        const auto name = std::string (taikor::getArticulationDisplayName (articulation));
+
+        const auto ghost = peakAt (articulation, 0.02f);
+        const auto full = peakAt (articulation, 1.0f);
+        expect (ghost > 1.0e-6 && std::isfinite (ghost),
+                "a ghost stroke must still sound: " + name);
+
+        const auto span = 20.0 * std::log10 (full / std::max (ghost, 1.0e-12));
+        expect (span > 30.0,
+                "the instrument must cover more than thirty decibels from a ghost "
+                "stroke to a full blow: " + name + " covers "
+                    + std::to_string (span));
+    }
+
+    // And it has to be usable across that range rather than merely wide.
+    // Impact speed is geometric in the control and level goes as a power of
+    // impact speed, so equal steps of MIDI velocity are equal steps of decibels
+    // - which is what an arm does. The squared map made the first fifth of the
+    // range worth a decibel and the last fifth worth ten.
+    std::vector<double> steps;
+    double previous = 20.0 * std::log10 (peakAt (taikor::Articulation::Don, 0.2f));
+    for (float velocity = 0.4f; velocity <= 1.001f; velocity += 0.2f)
+    {
+        const auto level = 20.0 * std::log10 (peakAt (taikor::Articulation::Don, velocity));
+        steps.push_back (level - previous);
+        previous = level;
+    }
+
+    const auto smallest = *std::min_element (steps.begin(), steps.end());
+    const auto largest = *std::max_element (steps.begin(), steps.end());
+    expect (smallest > 0.0, "every step up in velocity must be a step up in level");
+    expect (largest < smallest * 1.8,
+            "equal steps of velocity must be near-equal steps of level: the widest "
+            "is " + std::to_string (largest) + " dB and the narrowest "
+                + std::to_string (smallest));
+
+    // The top of the range has not moved: the map is geometric between the same
+    // two impact speeds it always was, so at full Velocity Depth and full
+    // velocity the stroke is struck at exactly the speed it used to be. What
+    // that has to mean in the output is that the factory level still leaves the
+    // loudest single stroke on the reference drum off the safety limiter, even
+    // with the humanising jitter pushing the impact speed as far as it goes.
+    auto loudest = defaultParameters();
+    loudest.velocityDepth = 1.0f;
+    loudest.humanise = 1.0f;
+    for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+    {
+        const auto articulation = static_cast<taikor::Articulation> (index);
+        const auto rendered = strike (loudest, articulation, 0, 1.0f, 48000.0, 24000);
+        expect (rendered.peak < 0.95,
+                "the loudest single stroke must stay clear of the safety limiter at "
+                "the factory output level: "
+                    + std::string (taikor::getArticulationDisplayName (articulation)));
+    }
+}
+
+// A nagado-daiko is byo-uchi: the head is nailed on with a ring of iron tacks,
+// each holding down its share of the head's tension, and a stroke that catches
+// the hoop hard enough lifts the head against that preload and sets them
+// chattering. What used to be here instead was a fixed 0.08 of broadband noise
+// added to a contact whose amplitude runs to thousands of newtons - 87 dB down,
+// inaudible at every setting, answering to neither the Stick Noise control nor
+// the velocity nor the drum.
+void testTheTackLineRattlesOnlyWhenItIsBeaten()
+{
+    const auto lineFor = [] (taikor::EngineParameters parameters,
+                             taikor::Articulation articulation, float velocity)
+    {
+        parameters.humanise = 0.0f;
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.reset();
+        engine.trigger (articulation, 0, velocity);
+        return taikor::TaikoEngineTestAccess::tackLine (engine);
+    };
+
+    const auto base = defaultParameters();
+
+    // Only the strokes that reach the hoop have a tack line at all. The rest
+    // land on the middle of the hide, which is not nailed to anything.
+    for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+    {
+        const auto articulation = static_cast<taikor::Articulation> (index);
+        const auto line = lineFor (base, articulation, 1.0f);
+        const bool catchesHoop = articulation == taikor::Articulation::DonRim
+                              || articulation == taikor::Articulation::Ka
+                              || articulation == taikor::Articulation::Katsu;
+        expect ((line.scale > 0.0f) == catchesHoop,
+                "only the strokes that catch the hoop may drive the tacks: "
+                    + std::string (taikor::getArticulationDisplayName (articulation)));
+    }
+
+    // And it is contact noise, so the Stick Noise control owns it.
+    auto silent = base;
+    silent.strikeNoise = 0.0f;
+    expect (lineFor (silent, taikor::Articulation::DonRim, 1.0f).scale == 0.0f,
+            "Stick Noise at zero must silence the tacks with the rest of the "
+            "contact noise");
+
+    // The preload is the head's tension carried over one tack's share of the
+    // circumference, so a tighter or a larger head holds its tacks down harder
+    // and takes a harder stroke to rattle.
+    auto slack = base;
+    slack.tension = 0.25f;
+    auto tight = base;
+    tight.tension = 0.85f;
+    auto small = base;
+    small.headDiameter = 0.30f;
+
+    const auto slackLine = lineFor (slack, taikor::Articulation::DonRim, 1.0f);
+    const auto tightLine = lineFor (tight, taikor::Articulation::DonRim, 1.0f);
+    const auto smallLine = lineFor (small, taikor::Articulation::DonRim, 1.0f);
+    expect (tightLine.preload > slackLine.preload * 2.0f,
+            "a tighter head must hold its tacks down harder");
+    expect (smallLine.preload < slackLine.preload || smallLine.preload
+                < tightLine.preload,
+            "a smaller head must carry less tension per tack than a larger one at "
+            "the same tension");
+
+    // The threshold has to be somewhere a player crosses. A light rim shot must
+    // not reach it and a full one must clear it comfortably.
+    const auto quiet = lineFor (base, taikor::Articulation::DonRim, 0.15f);
+    const auto full = lineFor (base, taikor::Articulation::DonRim, 1.0f);
+    expect (quiet.peakContactForce * quiet.rimGain < quiet.preload,
+            "a light rim shot must not lift the head off its tacks at all");
+    expect (full.peakContactForce * full.rimGain > full.preload * 3.0f,
+            "a full rim shot must clear the preload with room to spare");
+
+    // And it must be audible, which is the part the built state cannot show.
+    // The rattle is the one noise source in the instrument that is not
+    // proportional to the force of the stroke - it is proportional to whatever
+    // is left after the preload - so what identifies it is that a rim shot's
+    // high band grows with velocity faster than a centre stroke's does, once
+    // each is measured against its own level.
+    const auto highBandGrowth = [] (taikor::Articulation articulation)
+    {
+        auto parameters = defaultParameters();
+        parameters.humanise = 0.0f;
+
+        const auto measure = [&parameters, articulation] (float velocity)
+        {
+            const auto rendered =
+                strike (parameters, articulation, 0, velocity, 48000.0, 9600);
+            const auto mono = rendered.mono();
+            double band = 0.0;
+            // Over the attack, which is where a millisecond of rattle lives.
+            for (double frequency = 3000.0; frequency < 10000.0; frequency *= 1.03)
+            {
+                const auto magnitude =
+                    binMagnitude (mono, frequency, 48000.0, 0u, 2400u);
+                band += magnitude * magnitude;
+            }
+            // Against the stroke's own level, so this is a shape and not a
+            // restatement of the fact that a hard stroke is louder.
+            return band / std::max (rendered.peak * rendered.peak, 1.0e-18);
+        };
+
+        return 10.0 * std::log10 (measure (0.90f) / std::max (measure (0.15f), 1.0e-30));
+    };
+
+    const auto rimGrowth = highBandGrowth (taikor::Articulation::DonRim);
+    const auto centreGrowth = highBandGrowth (taikor::Articulation::Don);
+    expect (rimGrowth > centreGrowth + 2.0,
+            "a rim shot's high band must open up with velocity faster than a centre "
+            "stroke's, because past the preload the tacks start rattling - it is "
+            "ahead by only " + std::to_string (rimGrowth - centreGrowth) + " dB");
+}
+
+// A drum has one head, and a stroke lands on whatever that head is already
+// doing. Every stroke used to build an independent copy of the modal bank and
+// the voices only summed, so eight identical strokes were bit-identical to
+// eight copies of one stroke added offline - which is exactly the arithmetic a
+// sample library does, and the place a model has no excuse for matching it.
+void testAStrokeLandsOnAHeadThatIsAlreadyMoving()
+{
+    auto parameters = defaultParameters();
+    // Every stroke identical, so the comparison below is against the engine's
+    // own output rather than against a different set of jittered strokes, and
+    // quiet enough that no part of the output stage is doing anything
+    // non-linear to either side of it.
+    parameters.humanise = 0.0f;
+    parameters.drive = 0.0f;
+    parameters.outputGain = 0.02f;
+
+    constexpr int spacing = 3000;   // 62.5 ms, a fast but playable roll
+    constexpr int strokes = 8;
+    constexpr int total = strokes * spacing + 48000;
+
+    // Rendered one sample at a time so a stroke can be placed exactly, which is
+    // what makes the offline superposition below an exact prediction of the old
+    // behaviour rather than an approximation of it.
+    const auto rollOf = [&parameters] (int count)
+    {
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, 1);
+        engine.reset();
+
+        std::vector<float> mono (static_cast<std::size_t> (total));
+        float left = 0.0f;
+        float right = 0.0f;
+        int placed = 0;
+        for (int sample = 0; sample < total; ++sample)
+        {
+            if (placed < count && sample == placed * spacing)
+            {
+                engine.trigger (taikor::Articulation::Don, 0, 0.9f);
+                ++placed;
+            }
+            engine.process (&left, &right, 1);
+            mono[static_cast<std::size_t> (sample)] = 0.5f * (left + right);
+        }
+        return mono;
+    };
+
+    const auto single = rollOf (1);
+    const auto roll = rollOf (strokes);
+
+    std::vector<double> superposed (static_cast<std::size_t> (total), 0.0);
+    for (int stroke = 0; stroke < strokes; ++stroke)
+        for (int sample = stroke * spacing; sample < total; ++sample)
+            superposed[static_cast<std::size_t> (sample)] +=
+                single[static_cast<std::size_t> (sample - stroke * spacing)];
+
+    // Up to the second stroke the two must agree exactly: nothing has landed on
+    // anything yet, and a mechanism that quietly changed a single stroke would
+    // not be this one.
+    double firstStrokeDifference = 0.0;
+    for (int sample = 0; sample < spacing; ++sample)
+        firstStrokeDifference = std::max (
+            firstStrokeDifference,
+            std::abs (superposed[static_cast<std::size_t> (sample)]
+                      - roll[static_cast<std::size_t> (sample)]));
+    expect (firstStrokeDifference < 1.0e-6,
+            "the first stroke of a roll must be untouched by the strokes after it");
+
+    // Measured over what is left once the last stick has come off the head.
+    // Summing the whole take instead measures the eight attacks, which are the
+    // one part of a roll no head damping can touch: they are the blows
+    // themselves. What the mechanism decides is how much of each of them is
+    // still there afterwards, and by the end of eight strokes the first one's
+    // fundamental has been sat on seven times.
+    constexpr int afterLastStroke = strokes * spacing;
+    double engineEnergy = 0.0;
+    double summedEnergy = 0.0;
+    for (int sample = afterLastStroke; sample < total; ++sample)
+    {
+        const double engineSample = roll[static_cast<std::size_t> (sample)];
+        const double summedSample = superposed[static_cast<std::size_t> (sample)];
+        engineEnergy += engineSample * engineSample;
+        summedEnergy += summedSample * summedSample;
+    }
+
+    expect (summedEnergy > 0.0, "the roll produced nothing to measure");
+    const auto shortfall = 10.0 * std::log10 (engineEnergy / std::max (summedEnergy, 1.0e-30));
+    expect (shortfall < -3.0,
+            "what a roll leaves ringing must be well below the same strokes added "
+            "offline, because each stick lands on a head the one before it left "
+            "moving - it is only " + std::to_string (-shortfall) + " dB down");
+
+    // And it has to be one drum. A stroke an octave away is a different
+    // instrument standing beside it and cannot reach this head at all.
+    auto probe = parameters;
+    // Full velocity depth, so the interrupting stroke can be made genuinely
+    // quiet: it has to be measurably weaker than what it is landing on, or the
+    // window below is measuring the new stroke rather than the old one.
+    probe.velocityDepth = 1.0f;
+
+    const auto acrossDrums = [&probe] (int interruptingOctave)
+    {
+        taikor::TaikoEngine engine;
+        engine.setParameters (probe);
+        engine.prepare (48000.0, 1);
+        engine.reset();
+
+        std::vector<float> mono (static_cast<std::size_t> (total));
+        float left = 0.0f;
+        float right = 0.0f;
+        engine.trigger (taikor::Articulation::Don, 0, 1.0f);
+        for (int sample = 0; sample < total; ++sample)
+        {
+            // A Tsu lands near the middle, where the fundamental is. An octave
+            // below the playable range means no second stroke at all.
+            if (sample == 12000 && interruptingOctave >= taikor::lowestOctaveOffset)
+                engine.trigger (taikor::Articulation::Tsu, interruptingOctave, 0.02f);
+            engine.process (&left, &right, 1);
+            mono[static_cast<std::size_t> (sample)] = 0.5f * (left + right);
+        }
+        return mono;
+    };
+
+    const auto reported = taikor::TaikoEngine::measure (probe, 0);
+    // Half a second after the interruption and later, so the ghost stroke's own
+    // attack is long gone and what is left in this band is the first stroke's
+    // fundamental.
+    const auto remaining = [&reported] (const std::vector<float>& samples)
+    {
+        return binMagnitude (samples, reported.loadedFundamentalHz, 48000.0, 24000u,
+                             44000u);
+    };
+
+    const auto interrupted = remaining (acrossDrums (0));
+    const auto untouched = remaining (acrossDrums (2));
+    expect (untouched > 0.0, "the drum must still be ringing to measure");
+    expect (interrupted < untouched * 0.85,
+            "a ghost stroke on the same drum must take a real bite out of what is "
+            "still ringing there");
+    // The control: the same ghost stroke on the drum an octave up leaves the
+    // first one exactly where it was, because it is not the same head.
+    const auto undisturbed = remaining (acrossDrums (-99));
+    expect (std::abs (untouched - undisturbed) < undisturbed * 0.02,
+            "a stroke on a different drum must not damp this one");
+}
+
+// The attack pitch glide is the head stretching itself. A membrane clamped at
+// its rim cannot move without getting longer, and a longer head is a tighter
+// one, so the tension rises with the square of the displacement. Everything
+// that follows from that had to be true and was not: the glide used to be a
+// fixed 115 ms envelope whose depth read the impact speed and nothing else -
+// not the tension it was fighting, not the size of the head, not the material -
+// with a term on top of it that scaled with the engine's own output
+// calibration.
+void testTheAttackGlideComesFromTheHead()
+{
+    // The largest frequency multiplier the glide reaches over the first third
+    // of a second, which is where the head is moving enough to matter.
+    const auto peakGlide = [] (taikor::EngineParameters parameters,
+                               taikor::Articulation articulation, float velocity)
+    {
+        parameters.humanise = 0.0f;
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, 64);
+        engine.reset();
+        engine.trigger (articulation, 0, velocity);
+
+        std::array<float, 64> left {};
+        std::array<float, 64> right {};
+        float worst = 1.0f;
+        for (int block = 0; block < 250; ++block)
+        {
+            engine.process (left.data(), right.data(), 64);
+            worst = std::max (worst,
+                              taikor::TaikoEngineTestAccess::appliedTensionShift (engine));
+        }
+        return worst;
+    };
+
+    const auto base = defaultParameters();
+
+    auto full = base;
+    full.tensionModulation = 1.0f;
+    const auto hard = peakGlide (full, taikor::Articulation::Don, 1.0f);
+    const auto soft = peakGlide (full, taikor::Articulation::Don, 0.25f);
+
+    expect (hard > 1.002f,
+            "a hard stroke must bend the head sharp");
+    // Against the excess over unity, because these are frequency multipliers
+    // and the claim is about how far the head was pushed, not about the pitch
+    // it settles back to.
+    expect (hard - 1.0f > (soft - 1.0f) * 3.0f,
+            "the glide must follow how far the head is actually pushed, so a hard "
+            "stroke must bend markedly further than a light one");
+
+    // Off entirely at zero, with no residue. The control is a depth on a
+    // physical term, so zero has to mean the head is treated as linear.
+    auto none = base;
+    none.tensionModulation = 0.0f;
+    const auto silentGlide = peakGlide (none, taikor::Articulation::Don, 1.0f);
+    expect (std::abs (silentGlide - 1.0f) < 1.0e-6f,
+            "with Tension Mod at zero nothing may bend the head");
+
+    // The claim the old envelope could not make. The fractional tension a
+    // displacement buys goes as the head's in-plane stiffness over the tension
+    // it already has, and the displacement a given blow produces falls with the
+    // tension too, so a tight head bends very much less than a slack one. On a
+    // real drum this is the difference between an o-daiko, which audibly bends
+    // on every hard stroke, and a shime-daiko, which does not.
+    auto slack = full;
+    slack.tension = 0.25f;
+    auto tight = full;
+    tight.tension = 0.85f;
+
+    const auto slackGlide = peakGlide (slack, taikor::Articulation::Don, 1.0f);
+    const auto tightGlide = peakGlide (tight, taikor::Articulation::Don, 1.0f);
+    expect (slackGlide - 1.0f > (tightGlide - 1.0f) * 3.0f,
+            "a slack head must bend far further than a tight one struck the same way");
+
+    // And it has to be the head doing it. A Katsu is the stick on the wooden
+    // body: it puts very little into the membrane, so it must stretch it very
+    // little, without that having to be written down anywhere as a rule.
+    const auto shellGlide = peakGlide (full, taikor::Articulation::Katsu, 1.0f);
+    expect (shellGlide - 1.0f < (hard - 1.0f) * 0.25f,
+            "a stroke on the shell must barely stretch the head");
+}
+
+// Shell Resonance is a continuous control and has to behave like one. It used
+// not to: a shaper sold as saturation sat on the wooden bank's drive behind a
+// gate at 1 %, and because its clamp was never reached and its cubic term was
+// 58 dB down, the only thing it actually did was hand the shell a 1.2x gain the
+// moment the control crossed that gate.
+void testShellResonanceHasNoStepInIt()
+{
+    const auto peakKatsu = [] (float shellResonance)
+    {
+        auto parameters = defaultParameters();
+        parameters.shellResonance = shellResonance;
+        // A Katsu is the stick on the body, so the wooden bank is nearly the
+        // whole of what it produces and a gain step on that bank is measurable
+        // in the finished audio rather than only in the mode table.
+        return strike (parameters, taikor::Articulation::Katsu, 0, 0.9f, 48000.0,
+                       12000)
+            .peak;
+    };
+
+    double previous = peakKatsu (0.0f);
+    expect (previous > 0.0, "a Katsu must sound with the shell control at zero");
+
+    // Fine steps across the gate that used to be there. A quarter of a per cent
+    // of a control that spans nineteen decibels end to end cannot legitimately
+    // move the output by a third of one.
+    for (float shellResonance = 0.0025f; shellResonance <= 0.0501f;
+         shellResonance += 0.0025f)
+    {
+        const auto level = peakKatsu (shellResonance);
+        const auto step = std::abs (20.0 * std::log10 (level / previous));
+        expect (step < 0.3,
+                "Shell Resonance stepped by " + std::to_string (step)
+                    + " dB at " + std::to_string (shellResonance));
+        previous = level;
+    }
+
+    // And the control still has to do its job over its whole range, or the
+    // check above would be satisfied by a control that does nothing at all.
+    expect (peakKatsu (1.0f) > peakKatsu (0.0f) * 2.0,
+            "Shell Resonance must still open the body up across its range");
+}
+
+// A taiko head is a stretched plate rather than an ideal membrane - treated cow
+// skin at about 3.5 GPa, held at a tension far above a drum-kit head's - so its
+// modal ratios are not constants of the geometry. They open out with the mode's
+// order, and they open out further the smaller and the thicker the head is,
+// which is most of what separates a shime-daiko's spectrum from an odaiko's.
+void testHeadStiffnessOpensTheModalRatios()
+{
+    const auto base = defaultParameters();
+
+    // Head Material is thickness as well as density, and the flexural rigidity
+    // goes as the cube of thickness, so the two ends of that control are two
+    // and a half orders of magnitude apart in stiffness rather than a few per
+    // cent. A thin synthetic film really is an ideal membrane.
+    auto film = base;
+    film.headMaterial = 0.0f;
+    auto hide = base;
+    hide.headMaterial = 1.0f;
+
+    const auto filmStiffness =
+        taikor::TaikoEngine::measure (film, 0).headStiffnessParameter;
+    const auto hideStiffness =
+        taikor::TaikoEngine::measure (hide, 0).headStiffnessParameter;
+
+    expect (filmStiffness > 0.0f && std::isfinite (filmStiffness),
+            "the head's stiffness must be a positive finite number");
+    expect (hideStiffness > filmStiffness * 100.0f,
+            "a thick hide must be at least two orders of magnitude stiffer than a "
+            "thin film against the same tension");
+
+    // The tuning may not move. The stretch is taken relative to the (0,1) mode
+    // precisely so that the pitch a player tunes the drum to stays a membrane
+    // frequency however stiff the head is; if it did not, an octave would stop
+    // being an octave, because the stiffness parameter falls with tension and
+    // with the square of the radius and the two halves of the Octave Body
+    // transform move it in opposite directions.
+    for (const float material : { 0.0f, 0.5f, 1.0f })
+        for (const int octave : { -2, 0, 3 })
+        {
+            auto tuned = base;
+            tuned.headMaterial = material;
+            const auto measured = taikor::TaikoEngine::measure (tuned, octave);
+            const auto membrane = measured.waveSpeedMetresPerSecond * 2.4048255577f
+                                / (2.0f * 3.14159265358979f * measured.radiusMetres);
+            expect (std::abs (measured.idealFundamentalHz - membrane)
+                        < membrane * 1.0e-4f,
+                    "the drum's tuning must stay an ideal membrane frequency however "
+                    "stiff the head is");
+        }
+
+    // And the claim that actually needs the physics: how far the top of the
+    // resolved bank sits above the drum's own fundamental has to depend on the
+    // head's stiffness against its tension.
+    //
+    // Head Tension is the control that isolates it. It moves the stiffness
+    // parameter as 1/T and leaves the air load - which depends only on the
+    // areal density and the radius - exactly where it was, so the ratio below
+    // can only move through the stiffness term. Measured against the reported
+    // ideal fundamental rather than against the lowest mode the bank built,
+    // because that one is the lower branch of the cavity pair and the air
+    // spring behind it does not scale with the head's tension at all.
+    const auto topModeRatio = [&] (float tension)
+    {
+        auto parameters = base;
+        parameters.tension = tension;
+
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.trigger (taikor::Articulation::Don, 0, 0.9f);
+
+        const auto modes = taikor::TaikoEngineTestAccess::membraneFrequencies (engine);
+        const auto measured = taikor::TaikoEngine::measure (parameters, 0);
+        expect (! modes.empty() && measured.idealFundamentalHz > 0.0f,
+                "the head must build a modal bank to measure");
+        return modes.empty() ? 0.0 : modes.back() / measured.idealFundamentalHz;
+    };
+
+    const auto slack = topModeRatio (0.2f);
+    const auto tight = topModeRatio (0.9f);
+
+    expect (slack > 0.0 && tight > 0.0, "the modal ratio measurement failed to run");
+    expect (slack > tight * 1.02,
+            "a slack head must spread its upper modes further above its fundamental "
+            "than a tight one, because stiffness matters more the less tension there "
+            "is to compete with it");
+
+    // Nothing reachable from the controls may make the head's stiffness
+    // meaningless. The corners are a tiny thick head at no tension and a huge
+    // thin one at full tension, which is where the ratio D/(T a^2) is largest
+    // and smallest.
+    for (const float diameter : { 0.15f, 1.80f })
+        for (const float material : { 0.0f, 1.0f })
+            for (const float tension : { 0.0f, 1.0f })
+                for (const int octave : { taikor::lowestOctaveOffset,
+                                          taikor::highestOctaveOffset })
+                {
+                    auto hostile = base;
+                    hostile.headDiameter = diameter;
+                    hostile.headMaterial = material;
+                    hostile.tension = tension;
+                    const auto stiffness = taikor::TaikoEngine::measure (hostile, octave)
+                                               .headStiffnessParameter;
+                    expect (std::isfinite (stiffness) && stiffness >= 0.0f,
+                            "the head's stiffness must stay finite everywhere the "
+                            "controls can reach");
+                }
 }
 
 // The head's continuum belongs to the head, so everything that happens to the
@@ -2752,6 +3372,12 @@ int main()
     testTailsTerminateAndVoicesRetire();
     testVoiceStealingStaysBounded();
     testTheDrumSoundsLikeADrumAndNotLikeATone();
+    testShellResonanceHasNoStepInIt();
+    testAStrokeLandsOnAHeadThatIsAlreadyMoving();
+    testTheTackLineRattlesOnlyWhenItIsBeaten();
+    testTheDynamicRangeReachesFromAGhostStrokeToAFullBlow();
+    testTheAttackGlideComesFromTheHead();
+    testHeadStiffnessOpensTheModalRatios();
     testTheContinuumFollowsTheHead();
     testEveryParameterSurvivesTheCache();
     testRadiationEfficiencyStaysFinite();

@@ -255,10 +255,12 @@ TaikorAudioProcessor::createParameterLayout()
     result.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { ids::output, 1 }, "Output",
         // The loudest stroke the instrument can make - a full-velocity rim
-        // shot on the largest drum - sits about 23 dB above unity, so this
+        // shot on the largest drum - sits about 22 dB above unity, so this
         // default is chosen to leave everything short of that one extreme
         // just under full scale rather than to make a middling stroke as
-        // loud as possible.
+        // loud as possible. A ghost stroke is about thirty-four decibels
+        // below a full blow on the same drum, which is the range the model
+        // actually covers.
         juce::NormalisableRange<float> { -24.0f, 6.0f, 0.1f }, -20.0f,
         juce::AudioParameterFloatAttributes()
             .withLabel ("dB")
