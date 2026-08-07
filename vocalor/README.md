@@ -44,7 +44,7 @@ The project builds three products from one JUCE codebase:
 
 ## Interface and controls
 
-Vocalor exposes 21 automatable host parameters. Every parameter keeps its
+Vocalor exposes 22 automatable host parameters. Every parameter keeps its
 identifier, range, default, and host ordering, so existing sessions and any
 automation written against them recall in place.
 
@@ -79,6 +79,7 @@ different singer count.
 | `glide` | Glide | 0 – 100 % | 0 % | 1.1 |
 | `roomSize` | Room size | 0 – 100 % | 50 % | 1.1 |
 | `dynamics` | Dynamics | 0 – 100 % | 100 % | 1.2 |
+| `intonation` | Just intonation | 0 – 100 % | 0 % | 1.2 |
 
 The top row selects the voice profile, the performance mode, the chord quality,
 and the vowel anchor. **Ensemble size** renders exactly that many independently
@@ -184,6 +185,22 @@ like a tract rather than like five independent peaking filters:
   32 dB. Cascade-derived amplitudes are also why a front vowel now sounds
   front: F2 and F3 of /i/ are carried nearly as strongly as F1 instead of
   sitting 22 dB below it.
+
+**Intonation.** An a cappella ensemble does not sing equal temperament. It
+narrows the major third and widens the minor one until the overtones align,
+which is the "ring" of a locked chord. Chord mode stacked equal-tempered
+semitones, so a one-finger triad beat where a real section locks. **Just
+intonation** blends each sounding voice from equal temperament toward the
+five-limit interval it makes with the lowest sounding root: 13.7 cents narrow
+for the major third, 15.6 wide for the minor, 2.0 wide for the fifth. The
+octave is left alone, because it is the same either way.
+
+It applies to played polyphony as well as to chord mode, and the reference
+follows the bass: play the third and the fifth first and add the root
+underneath, and the two upper voices re-tune onto it. They do not snap — the
+adjustment glides over about 90 ms, which is roughly how long a singer takes to
+hear the beating and move. The control defaults to 0 %, so a session written
+before it existed recalls in equal temperament.
 
 **Formant tuning.** A speech tract keeps F1 where the vowel puts it; a singer
 cannot. Once the fundamental climbs past F1 the whole spectrum sits above the

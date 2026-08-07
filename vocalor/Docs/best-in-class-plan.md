@@ -204,9 +204,11 @@ opens on something playable.
   A4. The correct statement is the one now verified — nothing moves while the
   fundamental is below F1, whatever pitch that happens to be.
 
-- [ ] **3. Just-intonation ensemble tuning.** Add an `intonation` parameter that
-  blends chord-mode and ensemble tuning from equal temperament toward just
-  intervals referred to the sounding root. Closes gap 3. *Verified:* at full
+- [x] **3. Just-intonation ensemble tuning.** Add an `intonation` parameter that
+  blends every sounding voice from equal temperament toward the just
+  interval it makes with the lowest sounding root. This covers played polyphony
+  as well as chord mode, which is the more valuable half and was not in the plan
+  as first written. Closes gap 3. *Verified:* at full
   just, chord-mode voices must measure 386.3 cents for the major third, 315.6
   for the minor third and 702.0 for the fifth, within a cent; at zero they must
   measure exactly the equal-tempered intervals they do today.

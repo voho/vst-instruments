@@ -86,6 +86,19 @@ struct DynamicResponse
     configuration a mouth has; F2 is pushed clear instead. */
 inline constexpr float kMinimumFormantSpacing = 1.40f;
 
+/** Cents by which the just interval departs from its equal-tempered neighbour.
+
+    An a cappella ensemble does not sing equal temperament. It narrows the major
+    third and widens the minor one until the overtones align, which is the
+    "ring" of a locked chord and the thing a keyboard-tuned choir patch cannot
+    produce. The table is five-limit: 5:4 for the major third (13.7 cents
+    narrow), 6:5 for the minor (15.6 wide), 3:2 for the fifth (2.0 wide).
+
+    @c semitonesAboveRoot may be any integer, positive or negative; only its
+    pitch class matters, because an octave is just either way.
+*/
+[[nodiscard]] float justIntonationOffsetCents (int semitonesAboveRoot) noexcept;
+
 /** Portamento time in seconds for the normalised glide parameter. */
 [[nodiscard]] float glideTimeSeconds (float glide) noexcept;
 

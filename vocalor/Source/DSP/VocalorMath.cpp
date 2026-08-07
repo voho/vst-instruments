@@ -173,6 +173,18 @@ float tunedFirstFormant (float baseHz, float fundamentalHz, float ceilingHz) noe
     return baseHz + engagement * (target - baseHz);
 }
 
+float justIntonationOffsetCents (int semitonesAboveRoot) noexcept
+{
+    // just - equal, in cents, for 16:15, 9:8, 6:5, 5:4, 4:3, 45:32, 3:2, 8:5,
+    // 5:3, 16:9 and 15:8. The unison and the octave are the same either way.
+    static constexpr float offsets[12] = {
+          0.000f,  11.731f,   3.910f,  15.641f, -13.686f,  -1.955f,
+         -9.776f,   1.955f,  13.686f, -15.641f,  -3.910f, -11.731f
+    };
+    const int pitchClass = ((semitonesAboveRoot % 12) + 12) % 12;
+    return offsets[static_cast<std::size_t> (pitchClass)];
+}
+
 float glideTimeSeconds (float glide) noexcept
 {
     // Perceptually even: a small knob movement near zero stays snappy.

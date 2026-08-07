@@ -87,6 +87,7 @@ VocalorAudioProcessor::VocalorAudioProcessor()
     parameterPointers.glide        = parameters.getRawParameterValue (glide);
     parameterPointers.roomSize     = parameters.getRawParameterValue (roomSize);
     parameterPointers.dynamics     = parameters.getRawParameterValue (dynamics);
+    parameterPointers.intonation   = parameters.getRawParameterValue (intonation);
 
     jassert (parameterPointers.profile != nullptr && parameterPointers.output != nullptr);
     jassert (parameterPointers.vowelMorph != nullptr && parameterPointers.roomSize != nullptr);
@@ -169,6 +170,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
     // recalls at the level it was written at; the mod wheel takes it over the
     // first time it moves.
     addPercent (dynamics, "Dynamics", 1.0f);
+    addPercent (intonation, "Just intonation", 0.0f);
 
     return { result.begin(), result.end() };
 }
@@ -328,6 +330,7 @@ void VocalorAudioProcessor::updateEngineParameters() noexcept
     next.glide = parameterPointers.glide->load (std::memory_order_relaxed);
     next.roomSize = parameterPointers.roomSize->load (std::memory_order_relaxed);
     next.dynamics = parameterPointers.dynamics->load (std::memory_order_relaxed);
+    next.intonation = parameterPointers.intonation->load (std::memory_order_relaxed);
     engine.setParameters (next);
 }
 

@@ -43,6 +43,9 @@ struct EngineParameters
     // it has moved, so a controller that never sends CC 1 leaves the host
     // parameter in charge. 1.0 reproduces the 1.1 behaviour exactly.
     float dynamics { 1.0f };
+    // Blend from equal temperament (0) to just intervals referred to the lowest
+    // sounding note (1). 0 reproduces the 1.1 behaviour exactly.
+    float intonation { 0.0f };
 };
 
 /** Lock-free snapshot of what the engine is currently doing, for the editor. */
@@ -148,6 +151,7 @@ private:
         std::atomic<int> legato { 0 };
         std::atomic<float> roomSize { 0.5f };
         std::atomic<float> dynamics { 1.0f };
+        std::atomic<float> intonation { 0.0f };
     };
 
     struct Resonator
@@ -231,6 +235,10 @@ private:
         float airShape { 1.0f };
         float pitchScoop { 0.0f };
         float glideCents { 0.0f };
+        // Distance from equal temperament this voice is currently singing, in
+        // cents. A singer does not snap onto a just interval; she hears the
+        // beating and adjusts, so this glides to its target.
+        float justCents { 0.0f };
         float jitter { 0.0f };
         float jitterSlow { 0.0f };
         float shimmer { 0.0f };
@@ -277,6 +285,7 @@ private:
     enum class HeldNoteState { NotHeld, StillHeld, Released };
     HeldNoteState releaseHeldNote(int midiNote) noexcept;
     int countActiveVoices() const noexcept;
+    void updateIntonationRoot() noexcept;
     float glottalPair(int level, float phase, float tension) const noexcept;
     float sine(float phase) const noexcept;
     SineCosine sineCosineFromCycles(float cycles) const noexcept;
@@ -332,6 +341,9 @@ private:
     float controlGlide_ { 0.0f };
     std::array<float, formantCount> formantGlide_ {};
     float lipZeroCoefficient_ { 0.0f };
+    // Control-rate coefficient for the intonation adjustment, expressed as a
+    // time constant so a singer takes the same time to settle at every rate.
+    float justGlide_ { 0.0f };
     float jitterCoefficient_ { 0.0f };
     float jitterSlowCoefficient_ { 0.0f };
     // A noise-driven one-pole's output variance is c / (2 - c), so once c comes
@@ -412,6 +424,9 @@ private:
     // the note-off fallback still has to hand those voices back to the key
     // underneath -- they were never started for the pitch being released.
     bool legatoPhrase_ { false };
+    // Lowest sounding root, which is the note the rest of the chord tunes to.
+    // -1 when nothing is sounding.
+    int intonationRoot_ { -1 };
     int soundingRoot_ { -1 };
     int lastRootMidi_ { -1 };
 

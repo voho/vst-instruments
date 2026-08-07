@@ -104,6 +104,18 @@ struct VoiceEngineTestAccess
 
     static int heldNoteCount(const VoiceEngine& engine) noexcept { return engine.heldCount_; }
 
+    /** Sounding frequency of the first held voice on @c midiNote, in Hz, or 0
+        if that note is not sounding. Chord mode puts every member of the triad
+        on a different sounding note behind one root, so this is what the
+        intonation of an interval has to be measured from. */
+    static float frequencyForNote(const VoiceEngine& engine, int midiNote) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing && voice.midiNote == midiNote)
+                return voice.phaseIncrement * static_cast<float>(engine.sampleRate_);
+        return 0.0f;
+    }
+
     /** The formant targets of the first sounding voice, after the per-singer
         anatomy and the pitch-dependent tuning the chunk targets know nothing
         about. Zeroes if nothing is sounding. */
@@ -1678,6 +1690,131 @@ void testSingerFormantAndLipZero()
            "Singer's Formant tension render exceeded amplitude guardrail");
 }
 
+/** An a cappella ensemble tunes its chord to the bass, not to a keyboard.
+
+    Chord mode stacked equal-tempered semitones, so a one-finger triad beat
+    where a real section locks. The intonation control blends toward five-limit
+    just intervals referred to the lowest sounding root, and has to reach them
+    to within a cent or it is only a detune.
+*/
+void testJustIntonation()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    // The table itself, against the interval ratios it claims to realise.
+    const auto centsForRatio = [] (double ratio, int equalSemitones)
+    {
+        return 1200.0 * std::log2 (ratio) - 100.0 * equalSemitones;
+    };
+    const std::array<std::pair<int, double>, 6> ratios {{
+        { 3, 6.0 / 5.0 }, { 4, 5.0 / 4.0 }, { 5, 4.0 / 3.0 },
+        { 7, 3.0 / 2.0 }, { 8, 8.0 / 5.0 }, { 9, 5.0 / 3.0 }
+    }};
+    for (const auto& entry : ratios)
+        expect (std::abs (vocalor::justIntonationOffsetCents (entry.first)
+                          - centsForRatio (entry.second, entry.first)) < 0.01,
+                "the just offset for " + std::to_string (entry.first)
+                    + " semitones does not match its ratio");
+    expect (vocalor::justIntonationOffsetCents (0) == 0.0f
+                && vocalor::justIntonationOffsetCents (12) == 0.0f
+                && vocalor::justIntonationOffsetCents (-12) == 0.0f,
+            "the octave is not left alone by the intonation table");
+
+    const auto intervalCents = [] (float lower, float upper)
+    {
+        return 1200.0 * std::log2 (static_cast<double> (upper)
+                                   / std::max (static_cast<double> (lower), 1.0e-9));
+    };
+
+    // Chord mode, both qualities, measured from the rendered oscillators.
+    for (const int quality : { 0, 1 })
+    {
+        const int third = quality == 0 ? 4 : 3;
+        for (const float amount : { 0.0f, 1.0f })
+        {
+            vocalor::VoiceEngine engine;
+            engine.prepare (sampleRate, blockSize);
+            engine.reset();
+            auto parameters = steadyParameters();
+            parameters.mode = vocalor::PerformanceMode::Chord;
+            parameters.chordQuality = static_cast<vocalor::ChordQuality> (quality);
+            parameters.intonation = amount;
+            engine.setParameters (parameters);
+            engine.noteOn (60, 0.80f);
+            render (engine, static_cast<int> (sampleRate * 0.8));
+
+            const auto root = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 60);
+            const auto thirdHz = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 60 + third);
+            const auto fifthHz = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 67);
+            expect (root > 0.0f && thirdHz > 0.0f && fifthHz > 0.0f,
+                    "chord mode did not sound the root, the third and the fifth");
+
+            const auto expectedThird = 100.0 * third
+                + amount * vocalor::justIntonationOffsetCents (third);
+            const auto expectedFifth = 700.0
+                + amount * vocalor::justIntonationOffsetCents (7);
+            expect (std::abs (intervalCents (root, thirdHz) - expectedThird) < 1.0,
+                    "the chord third did not land on its target interval");
+            expect (std::abs (intervalCents (root, fifthHz) - expectedFifth) < 1.0,
+                    "the chord fifth did not land on its target interval");
+        }
+    }
+
+    // Played polyphonically the reference is the bass, so the same triad locks
+    // whether it is one key in chord mode or three keys in solo mode.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.intonation = 1.0f;
+        engine.setParameters (parameters);
+        // Deliberately out of order: the bass arrives last and the section has
+        // to re-tune to it rather than to whatever was pressed first.
+        engine.noteOn (64, 0.80f);
+        engine.noteOn (67, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.2));
+        engine.noteOn (60, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.8));
+
+        const auto root = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 60);
+        const auto third = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 64);
+        const auto fifth = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 67);
+        expect (std::abs (intervalCents (root, third) - 386.314) < 1.0,
+                "a polyphonic major third did not re-tune to the bass that arrived after it");
+        expect (std::abs (intervalCents (root, fifth) - 701.955) < 1.0,
+                "a polyphonic fifth did not re-tune to the bass that arrived after it");
+    }
+
+    // The adjustment is a singer moving onto the interval, not a step.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.intonation = 0.0f;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        engine.noteOn (64, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.6));
+        const auto equal = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 64);
+
+        parameters.intonation = 1.0f;
+        engine.setParameters (parameters);
+        render (engine, 512);
+        const auto partway = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 64);
+        render (engine, static_cast<int> (sampleRate * 0.8));
+        const auto settled = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 64);
+
+        const auto total = std::abs (intervalCents (equal, settled));
+        expect (total > 12.0, "the intonation control did not move the third at all");
+        expect (std::abs (intervalCents (equal, partway)) < 0.5 * total,
+                "the intonation adjustment stepped instead of gliding");
+        expect (std::abs (intervalCents (equal, partway)) > 0.0,
+                "the intonation adjustment never started");
+    }
+}
+
 /** A singer does not keep a speech tract when the fundamental climbs past its
     lowest resonance; she opens the jaw and takes F1 up with the pitch.
 
@@ -1997,6 +2134,7 @@ int main()
     testSingerFormantAndLipZero();
     testPerformanceExpression();
     testFormantTuningAtHighPitch();
+    testJustIntonation();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();

@@ -177,6 +177,10 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     lipZeroCoefficient_ = std::exp(-twoPi * 120.0f * inverseSampleRate_);
     jitterSlowCoefficient_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
                                              * inverseSampleRate_ / 0.0095f);
+    // A singer hears the beating and moves onto the just interval; she does not
+    // arrive on it. 90 ms is about how long that adjustment takes.
+    justGlide_ = 1.0f - std::exp(-static_cast<float>(controlPeriod)
+                                 * inverseSampleRate_ / 0.090f);
 
     buildTables();
     buildSingerIdentities();
@@ -192,6 +196,7 @@ void VoiceEngine::reset()
     heldCount_ = 0;
     heldNoteCounts_.fill(0);
     legatoPhrase_ = false;
+    intonationRoot_ = -1;
     soundingRoot_ = -1;
     lastRootMidi_ = -1;
     blockParameters_ = snapshotParameters();
@@ -265,6 +270,7 @@ void VoiceEngine::setParameters(const EngineParameters& p)
     atomicParameters_.legato.store(p.legato ? 1 : 0, std::memory_order_relaxed);
     atomicParameters_.roomSize.store(clampUnit(p.roomSize), std::memory_order_relaxed);
     atomicParameters_.dynamics.store(clampUnit(p.dynamics), std::memory_order_relaxed);
+    atomicParameters_.intonation.store(clampUnit(p.intonation), std::memory_order_relaxed);
 }
 
 void VoiceEngine::setPitchBend(float semitones) noexcept
@@ -345,6 +351,7 @@ EngineParameters VoiceEngine::snapshotParameters() const noexcept
     p.legato = atomicParameters_.legato.load(std::memory_order_relaxed) != 0;
     p.roomSize = atomicParameters_.roomSize.load(std::memory_order_relaxed);
     p.dynamics = atomicParameters_.dynamics.load(std::memory_order_relaxed);
+    p.intonation = atomicParameters_.intonation.load(std::memory_order_relaxed);
     return p;
 }
 
@@ -527,6 +534,18 @@ int VoiceEngine::countActiveVoices() const noexcept
     return count;
 }
 
+void VoiceEngine::updateIntonationRoot() noexcept
+{
+    // The bass is what a section tunes to, so the reference is the lowest root
+    // still being held. A releasing voice is on its way out and does not get a
+    // vote, otherwise a chord would keep re-tuning to notes already let go of.
+    int lowest = -1;
+    for (const auto& voice : voices_)
+        if (voice.active && !voice.releasing && (lowest < 0 || voice.rootMidi < lowest))
+            lowest = voice.rootMidi;
+    intonationRoot_ = lowest;
+}
+
 void VoiceEngine::makeRoomFor(int required)
 {
     int free = 0;
@@ -663,6 +682,13 @@ void VoiceEngine::noteOn(int midiNote, float velocity)
     singersInUse_ = ~0u;
     updateChunkState(p, false);
 
+    // A note lower than anything sounding becomes the reference the rest of the
+    // chord tunes to, and it has to be in place before the voices are built so
+    // they start on the interval rather than gliding onto it.
+    updateIntonationRoot();
+    if (intonationRoot_ < 0 || midiNote < intonationRoot_)
+        intonationRoot_ = midiNote;
+
     const bool hadHeldNote = heldCount_ > 0;
     pushHeldNote(midiNote);
 
@@ -673,6 +699,7 @@ void VoiceEngine::noteOn(int midiNote, float velocity)
     if (p.legato && hadHeldNote && midiNote != soundingRoot_
         && retuneForLegato(midiNote, p))
     {
+        updateIntonationRoot();
         soundingRoot_ = midiNote;
         lastRootMidi_ = midiNote;
         legatoPhrase_ = true;
@@ -707,6 +734,7 @@ void VoiceEngine::noteOn(int midiNote, float velocity)
                         singer, velocity, groupGain, total, glideFromCents, p);
     }
 
+    updateIntonationRoot();
     soundingRoot_ = midiNote;
     lastRootMidi_ = midiNote;
     activeVoiceCount_.store(countActiveVoices(), std::memory_order_relaxed);
@@ -777,6 +805,7 @@ void VoiceEngine::noteOff(int midiNote)
         updateChunkState(p, false);
         if (retuneForLegato(previous, p))
         {
+            updateIntonationRoot();
             soundingRoot_ = previous;
             lastRootMidi_ = previous;
             return;
@@ -788,6 +817,7 @@ void VoiceEngine::noteOff(int midiNote)
     for (auto& voice : voices_)
         if (voice.active && voice.rootMidi == midiNote)
             voice.releasing = true;
+    updateIntonationRoot();
     if (soundingRoot_ == midiNote)
         soundingRoot_ = -1;
 }
@@ -798,6 +828,7 @@ void VoiceEngine::allNotesOff()
     heldNoteCounts_.fill(0);
     sustainedNotes_.fill(0);
     legatoPhrase_ = false;
+    intonationRoot_ = -1;
     soundingRoot_ = -1;
     for (auto& voice : voices_)
         if (voice.active)
@@ -813,6 +844,7 @@ void VoiceEngine::allSoundOff() noexcept
     heldNoteCounts_.fill(0);
     sustainedNotes_.fill(0);
     legatoPhrase_ = false;
+    intonationRoot_ = -1;
     soundingRoot_ = -1;
     lastRootMidi_ = -1;
     meterLeft_ = meterRight_ = 0.0f;
@@ -1081,12 +1113,24 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     voice.jitter += (random - voice.jitter) * jitterCoefficient_;
     voice.jitterSlow += (voice.jitter - voice.jitterSlow) * jitterSlowCoefficient_;
     const float jitterCents = p.humanize * (1.15f * voice.jitter + 1.35f * voice.jitterSlow);
+    // An a cappella section tunes its chord to the bass rather than to a
+    // keyboard, and moves onto the interval over about a tenth of a second.
+    const float justTarget = intonationRoot_ >= 0
+        ? clampUnit(p.intonation)
+              * justIntonationOffsetCents(voice.midiNote - intonationRoot_)
+        : 0.0f;
+    if (!voice.controlInitialised)
+        voice.justCents = justTarget;
+    else
+        voice.justCents += justGlide_ * (justTarget - voice.justCents);
+
     const float identityCents = singer.detuneCents * p.humanize;
     const float wanderCents = p.humanize * (2.1f * singerDrift + 0.75f * sharedPitch);
     voice.pitchScoop *= scoopMultiplier_;
     voice.glideCents *= chunkGlideDecay_;
     const float cents = voice.pitchScoop + voice.glideCents + identityCents + wanderCents
-                      + jitterCents + vibratoDepth * sine(voice.vibratoPhase)
+                      + jitterCents + voice.justCents
+                      + vibratoDepth * sine(voice.vibratoPhase)
                       + 100.0f * pitchBendSemitones_;
     const float frequency = voice.baseFrequency * std::exp2(cents * (1.0f / 1200.0f));
     voice.targetPhaseIncrement = std::clamp(frequency * inverseSampleRate_, 0.0f, 0.48f);
@@ -1483,6 +1527,7 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
         activeVoices_[static_cast<std::size_t>(activeTotal_++)] = &voice;
         singersInUse_ |= 1u << voice.singer;
     }
+    updateIntonationRoot();
 
     // Once every voice has ended and the room tail has audibly rung out, the
     // block renders exact digital silence. Advance the state that remains

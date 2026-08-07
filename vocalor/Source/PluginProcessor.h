@@ -33,6 +33,7 @@ inline constexpr auto glide        = "glide";
 inline constexpr auto roomSize     = "roomSize";
 // Added in 1.2, appended for the same reason.
 inline constexpr auto dynamics     = "dynamics";
+inline constexpr auto intonation   = "intonation";
 } // namespace vocalor::parameters
 
 /** Pitch-bend range in semitones. Fixed rather than negotiated over RPN 0:
@@ -118,6 +119,7 @@ private:
         std::atomic<float>* glide = nullptr;
         std::atomic<float>* roomSize = nullptr;
         std::atomic<float>* dynamics = nullptr;
+        std::atomic<float>* intonation = nullptr;
     } parameterPointers;
 
     struct UiMidiEvent
