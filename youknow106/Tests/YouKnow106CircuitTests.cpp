@@ -2338,6 +2338,61 @@ void testChorusNoiseComponents()
     expect(masterSilencesEverything,
            "noiseScale no longer mutes every declared chorus-noise component");
 
+    // Including the heterodyne clock bleed, which the loop above cannot reach:
+    // it passes the default sixth argument, so enableClockBleed is false.
+    // A revision scaled the bleed by max(noiseScale, 0.1f), leaving a tenth of
+    // it alive at zero and contradicting this class's own contract.
+    Chorus bleedMuted;
+    bleedMuted.prepare(sampleRate);
+    YouKnow106TestAccess::configureOptionalChorusNoise(
+        bleedMuted, 0.01f, 0.4f, 0.01f, 50.0f, 0.01f, 1.0f);
+    bool bleedIsMutedToo = true;
+    for (int index = 0; index < 2048; ++index)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        bleedMuted.process(0.0f, ChorusMode::Two, 0.0f, left, right, true);
+        bleedIsMutedToo = bleedIsMutedToo && left == 0.0f && right == 0.0f;
+    }
+    expect(bleedIsMutedToo,
+           "the Chorus Noise master no longer defeats the clock bleed");
+
+    // The bleed and the optional clock-spur hypothesis are separate mechanisms
+    // at the same modulated clock. They kept one phase accumulator between
+    // them, so enabling both advanced it twice a sample and doubled each
+    // tone's frequency. Enabling the bleed must not move the spur.
+    const auto spurOnly = [&](bool withBleed) {
+        Chorus chorus;
+        chorus.prepare(sampleRate);
+        YouKnow106TestAccess::configureOptionalChorusNoise(
+            chorus, 0.0f, 0.0f, 0.0f, 50.0f, 0.02f, 1.0f);
+        std::vector<float> captured(1024);
+        for (std::size_t index = 0; index < captured.size(); ++index)
+        {
+            float left = 0.0f;
+            float right = 0.0f;
+            chorus.process(0.0f, ChorusMode::Two, 1.0f, left, right, withBleed);
+            // Subtract the bleed's own contribution by taking the difference
+            // of the two channels, which the spur and bleed both drive but
+            // with independent clocks -- any doubling shows as a mismatch.
+            captured[index] = left;
+        }
+        return captured;
+    };
+    const auto withoutBleed = spurOnly(false);
+    const auto withBleed = spurOnly(true);
+    double spurDrift = 0.0;
+    for (std::size_t index = 0; index < withoutBleed.size(); ++index)
+        spurDrift = std::max(spurDrift,
+                             std::abs(static_cast<double>(withBleed[index])
+                                    - static_cast<double>(withoutBleed[index])));
+    // The bleed itself is 0.005 at full scale, so anything much beyond that
+    // means the spur's own frequency moved rather than a tone being added.
+    expect(spurDrift < 0.02,
+           "enabling the clock bleed displaced the optional clock spur by "
+               + std::to_string(spurDrift)
+               + ", so the two are sharing a phase accumulator again");
+
     // The common layer is built from one common and one orthogonal seeded
     // process. rho=+1 duplicates channels exactly; rho=-1 changes only sign.
     constexpr std::size_t syntheticLength = 2048;
@@ -2492,9 +2547,11 @@ void testChorusBypassStateAndWetMuteTiming()
     }
 
     // Remove only the mute-gain difference through the test seam. The wet
-    // output capacitor legitimately evolved against 22 kOhm while bypassed
-    // rather than 22 kOhm || 47 kOhm while connected, so the resumed samples
-    // are no longer bit-identical. Their small error energy still proves the
+    // output capacitor legitimately evolved against 22 kOhm alone while
+    // bypassed (R103/R81) rather than 22 kOhm || 39 kOhm while connected
+    // (IC6's wet input R72/R74 loading the same node), so the resumed samples
+    // are no longer bit-identical. 47 kOhm is the *dry* leg R71/R73 and is the
+    // retired mirror of this assignment -- it must not reappear here. Their small error energy still proves the
     // BBDs, main support filters and modulation oscillator kept running.
     YouKnow106TestAccess::setChorusWetGain(
         bypassedForComparison,
@@ -3313,6 +3370,30 @@ void testSupportFilterCornersLandWhereAsked()
         expectNear(gainAt(23461.38, chain.idealSourceTapPoleG, 192000.0f),
                    0.70710678, 0.005,
                    "the BBD tap-summing pole is not at its nominal corner");
+    }
+    {
+        // The tap pole is the one corner in this chain above Nyquist at the
+        // rates the engine runs without oversampling, so onePoleG's 0.45
+        // ceiling relocates it there -- 19.845 kHz at 44.1 kHz, 21.600 kHz at
+        // 48 kHz. It cannot be restored (tan() inverts past fs/2) and the
+        // ceiling measures better in the top octave than either a higher one
+        // or a matched-z coefficient, so this fixture pins the deviation
+        // rather than forbidding it: the whole point is that it is known.
+        for (const float rate : { 44100.0f, 48000.0f })
+        {
+            expectNear(Chorus::onePoleG(23461.38f, rate),
+                       Chorus::onePoleG(rate * 0.45f, rate), 1.0e-9,
+                       "the non-oversampled BBD tap pole stopped clamping to "
+                       "0.45 fs, so its realised corner moved silently");
+        }
+        // ...and that the oversampled path carries the settled corner exactly.
+        for (const float rate : { 176400.0f, 192000.0f })
+        {
+            expect(Chorus::onePoleG(23461.38f, rate)
+                       < Chorus::onePoleG(rate * 0.45f, rate),
+                   "the oversampled BBD tap pole is being clamped, which would "
+                   "move a settled corner at the engine's own internal rate");
+        }
     }
 
     const auto measureCorner = [&gainAt](float requested, float sampleRate) {

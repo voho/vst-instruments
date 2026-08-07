@@ -286,6 +286,20 @@ float Chorus::onePoleG(float cutoffHz, float sampleRate) noexcept
     // The wet coupling pole is at 15.9 Hz, so the old 20 Hz defensive floor
     // silently moved a real component value. A small positive floor still
     // protects tan() from invalid callers without voicing the circuit.
+    //
+    // The 0.45 ceiling is load-bearing, not defensive: tan() turns negative
+    // past fs/2 and would invert the recursion. It engages on exactly one
+    // corner, the 23.46 kHz tap pole, and only with oversampling off -- at
+    // 44.1 kHz it renders 19.845 kHz and at 48 kHz 21.600 kHz. That pole is
+    // genuinely above Nyquist at those rates, so it cannot be restored, and
+    // measurement says this ceiling is already the best available one-pole:
+    // against the analogue response at 44.1 kHz the error at 5/10/15/20 kHz
+    // is +0.18/+0.64/+1.14/-0.97 dB here, against +0.19/+0.72/+1.47/+2.18 dB
+    // for a 0.49 ceiling and +0.19/+0.72/+1.47/+2.11 dB for a matched-z
+    // coefficient. Raising it to approach pass-through is both less accurate
+    // in the top octave and less stable -- the state pole walks from -0.73
+    // toward -1. Recorded so the deviation is known rather than silent; the
+    // oversampled path (176.4/192 kHz) carries the settled corner exactly.
     const float limited = std::clamp(cutoffHz, 0.1f, sampleRate * 0.45f);
     const float g = std::tan(3.14159265358979324f * limited / sampleRate);
     return g / (1.0f + g);
@@ -628,6 +642,8 @@ void Chorus::reset(bool preserveLfoPhase) noexcept
     humPhase_ = 0.0;
     clockSpurPhaseA_ = 0.0;
     clockSpurPhaseB_ = 0.0;
+    optionalSpurPhaseA_ = 0.0;
+    optionalSpurPhaseB_ = 0.0;
     // A patch loaded with the effect switched on is not a player reaching for
     // the button: there is nothing to glide from. The first sample after a
     // reset takes the mode as it stands, and only changes made afterwards
@@ -742,7 +758,12 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
         clockSpurPhaseB_ += static_cast<double>(clockB) * inverseSampleRate_;
         clockSpurPhaseA_ -= std::floor(clockSpurPhaseA_);
         clockSpurPhaseB_ -= std::floor(clockSpurPhaseB_);
-        const float bleedScale = 0.005f * std::max(noiseScale, 0.1f);
+        // Scaled by the one Chorus Noise master with no floor. A revision
+        // clamped this to `max(noiseScale, 0.1f)`, which left a tenth of the
+        // bleed tone alive at noiseScale 0 and broke this class's own
+        // contract -- process() documents 0.0 as removing every declared
+        // chorus-noise component, and the bleed is one of them.
+        const float bleedScale = 0.005f * noiseScale;
         const float heterodyneBleedA = bleedScale * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseA_));
         const float heterodyneBleedB = bleedScale * static_cast<float>(std::sin(2.0 * 3.14159265358979323846 * clockSpurPhaseB_));
         wetA += heterodyneBleedA;
@@ -784,16 +805,20 @@ void Chorus::process(float input, ChorusMode mode, float noiseScale,
 
         if (optionalNoise_.clockSpurAmplitude != 0.0f)
         {
-            // Each candidate spur follows its own modulated BBD clock.  The
-            // harmonic and post-line insertion level are disabled hypotheses,
-            // not claims about a measured unit.
+            // Each candidate spur follows its own modulated BBD clock, on its
+            // own accumulator.  The harmonic and post-line insertion level are
+            // disabled hypotheses, not claims about a measured unit.
+            // `deterministicToneStep` advances the phase it is handed, and the
+            // heterodyne bleed above already advances clockSpurPhaseA_/B_ by
+            // the same clock: sharing them made each tone run at twice its
+            // intended frequency whenever both were enabled together.
             optionalA += optionalNoise_.clockSpurAmplitude
                 * deterministicToneStep(
-                    clockSpurPhaseA_, clockA * optionalNoise_.clockSpurHarmonic,
+                    optionalSpurPhaseA_, clockA * optionalNoise_.clockSpurHarmonic,
                     sampleRate_);
             optionalB += optionalNoise_.clockSpurAmplitude
                 * deterministicToneStep(
-                    clockSpurPhaseB_, clockB * optionalNoise_.clockSpurHarmonic,
+                    optionalSpurPhaseB_, clockB * optionalNoise_.clockSpurHarmonic,
                     sampleRate_);
         }
 

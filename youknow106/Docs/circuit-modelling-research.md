@@ -156,7 +156,9 @@ The authoritative implementation is `Source/DSP/YouKnow106Engine.cpp` and
    divide-by-two produce step residuals, the sub's edge at the reset's
    start. The ramp and pulse carry the compensation voltage's momentary
    amplitude error; saw, pulse, sub and the shared noise sum at the mixing
-   node in volts.
+   node in volts, and C56/C50 AC-couple that node into the voice module so no
+   mixer DC — chiefly the pulse's duty-dependent mean — reaches the filter or
+   the VCA behind it.
 5. In each active voice, the 122x input attenuator and the named voiced
    resonance compatibility profile feed the four transconductor filter stages;
    its circuit-shaped nonlinear return keeps the model bounded. None of that
@@ -241,7 +243,9 @@ open question, it is named in its entry.
 
    The earlier model's history is kept for the record: SUB/NOISE legs were first counted only above zero (a 2.95 dB step on a continuous control, since held under 0.5 dB by `Tests/YouKnow106EngineTests.cpp::testMixerLevelIsContinuousInSubAndNoise`), the loading was once gated by Unit Character (inverting polarity above 1.8), and until 2026-08-07 the phantom switchable pulse leg attenuated any both-waveforms patch by 1.76 dB relative to a plain saw patch. A plain saw patch keeps its established absolute level throughout.
 
-   What the page does **not** yet establish is the loaded level budget — the WAVE output's source impedance, the exact role of the 33 kΩ/39 kΩ chain toward the saw on/off rail, and the noise leg's value are unresolved in the available scan — so the relative source amplitudes and the 0.40 coordinate stay voiced under **OQ-15**.
+   **C56/C50 ship as of 2026-08-07.** The coupling this entry has named since the p. 13 read is now in the signal path: each voice's summed WAVE node reaches pin 1 VCF IN through a 10 µF NP capacitor, so no mixer DC reaches the filter core or the voice VCA behind it. It matters most for the pulse, whose comparator mean walks with duty — 6 V·(2d − 1), or 5.4 V at 95 % — and which the cascade (carrying no DC-blocking term of its own) had been passing into the VCA multiply, leaving a note-on thump that *grew* about 10 dB as PWM deepened. With the capacitor the trend reverses (−22.5 → −37.0 dB across depth 0 → 1) and the steady AC level is unchanged: a thump removal, not a tone change. The capacitance is the designator-level read; the resistance it works against is **not** — the same pass re-roles R99/R102 33 kΩ as the sub-emitter DC bridge — so the 33 kΩ shipped here is a voiced stand-in by analogy with C14/R39 and C12/R36, and any plausible 10–100 kΩ termination puts the corner between 0.16 and 1.6 Hz, far below the lowest note. Fenced by `Tests/YouKnow106EngineTests.cpp::testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca`.
+
+   What the page does **not** yet establish is the loaded level budget — the WAVE output's source impedance and the exact termination of the summed node are unresolved in the available scan — so the relative source amplitudes and the 0.40 coordinate stay voiced under **OQ-15**. (The 33 kΩ/39 kΩ chain is no longer among the unknowns: the 2026-08-07 complete-scan pass killed the "toward the saw on/off rail" reading — the MC5534's own pin 17 carries the saw gate — and resolved the pair into the 33 kΩ sub-emitter bridge and the 39 kΩ noise leg.)
 
 5. **BBD transfer-loss clock law — corrected** *(replaced 2026-08-06)*:
    `transferLossStep` runs once per modeled BBD shift (one fCP period). A fixed discrete-time

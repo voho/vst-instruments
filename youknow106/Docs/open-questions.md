@@ -452,7 +452,22 @@ the absolute pole track the clock while preserving response versus normalized
 `f/Fclock`. At the raw node before numerical reconstruction, together with the
 explicit held output it gives −3.000 dB versus DC at 40 kHz clock/12 kHz signal,
 or −2.972 dB against the datasheet's 1 kHz reference. The 0.028 dB residual is
-documented rather than given an inaudible retune. The former additional factor
+documented rather than given an inaudible retune.
+
+*Scoped 2026-08-07 (doc↔code audit pass): those two figures are the **analytic
+law** — full-period hold times one pole per shift — and that is what the
+circuit fixture asserts, by driving `transferLossStep` on a synthetic 40 kHz
+grid against an analytic aperture. `processClockedCore` was never entered by
+it. Measured through the shipped render path at the 176.4 kHz default internal
+rate, the raw held node reads about −3.15 dB versus DC; the ≈0.13 dB residual
+is the linear interpolator that places the host-grid input on the clock edge
+(`YouKnow106Chorus.cpp`, `atEdge`), which is open future work already recorded
+in `circuit-modelling-research.md`, not a bandwidth claim about the part. That
+interpolation loss is strongly rate-dependent — at 12 kHz it averages 0.11 dB
+on a 192 kHz grid, 0.45 dB on 96 kHz and 1.81 dB on 48 kHz — so it is another
+reason the non-oversampled path is a compromise rather than an equivalent. No
+constant moves: `transferSmear` stays 0.8654743 and the raw node stays inside
+the recorded [−4.355, −1.33] dB cross-reading guard band.* The former additional factor
 `1+(clock−26000)·1.5e−6` double-counted
 that scaling: it gave −2.757 dB versus DC, or −2.732 dB versus 1 kHz, and swept
 the normalized 0.3-cycle response from about
@@ -969,11 +984,26 @@ rail at the generator ("0: saw ON" at Tr24/R148 47 kΩ), PULSE by the −0.8 V
 comparator hold, SUB by its collector supply, NOISE by the level OTA. The
 node's loading is therefore one configuration-independent constant absorbed
 by `filterInputAttenuation` and the output reference; the earlier
-four-switchable-100 kΩ-legs Thévenin model is superseded. Still open here:
-the WAVE output's source impedance, the exact termination and role of the
-33 kΩ/39 kΩ (R102/R103, R99/R98) chain toward the saw on/off rail, the
-noise leg's value (the assumed per-voice 100 kΩ was NOT verified in the
-scan), and the loaded level budget those would close. Provenance note: the
+four-switchable-100 kΩ-legs Thévenin model is superseded.
+
+*Narrowed again 2026-08-07 by the complete-scan pass below, which resolves
+the 33 kΩ/39 kΩ chain this paragraph used to list as one unknown: the
+"chain toward the saw on/off rail" reading is **dead** — the MC5534's own
+pin 17 carries the saw gate — and the pair separates into R99/R102 33 kΩ,
+a DC bridge from the sub switch emitter to the WAVE line in parallel with
+D5/D6, and R98/R103 39 kΩ, the noise leg, traced to the NOISE SIG rail at
+the noise circuit's output corner (one crossing below junction-dot
+certainty at 300 dpi). The unverified per-voice 100 kΩ assumption is
+retired with it.*
+
+Still open here: the WAVE output's source impedance, the exact termination
+of the summed node, and the loaded level budget those would close — the
+33 kΩ bridge and the 39 kΩ leg cannot be converted into the model's level
+budget until that impedance is measured. **C56/C50 are no longer among the
+unimplemented parts:** the per-voice module-input coupling ships as of
+2026-08-07 (see the implementation note under the complete-scan pass), with
+its capacitance read and the resistance it works against still voiced.
+Provenance note: the
 KR-106 "measured sub/pulse ratio 1.51" recorded by the 2026-08-06 mining
 pass could not be re-located in that project's current tree (its own engine
 mixes sub at 0.67 against 0.5 waves, ratio 1.34, as engine constants, not
@@ -2639,6 +2669,17 @@ genuine 14 kHz row belongs to an older edition at Vi = 1.8 Vrms. The
 anchor stands.* The 10 kHz curve's knee and tail (ν > 0.45) exceed
 every candidate composite by 0.7–1.6 dB and are quarantined; the 106's
 23.9 kHz minimum clock keeps ν ≤ 0.42, outside the region.
+*Corrected 2026-08-07 (doc↔code audit pass): 23.9 kHz was the **JUNO-60**
+sweep's minimum (128/5.35 ms), and this containment claim was never recomputed
+when the 106's own 1.4–6.4 ms sweep was promoted the same day. The shipped
+minimum clock is **20.0 kHz** — this task's own status row already says so —
+against which ν = 0.45 falls at 9 kHz, inside the band the pre-BBD chain still
+passes (its poles are 7.23, 9.69 and 10.38 kHz). The model therefore does enter
+the quarantined normalised region at the slow end of the sweep. This does not
+move `transferSmear`, which is a fixed per-shift coefficient rather than a fit
+to these curves; what it removes is the claim that the datasheet's typical
+family could validate the model everywhere the sweep goes. It cannot, at the
+bottom of the range.*
 
 **One decisive falsifier is named for hardware:** a single tracked
 through-BBD sweep at a fixed ~40 kHz clock out to ~18 kHz. A raw-node
@@ -2811,6 +2852,57 @@ changed. This is a numerical product mechanism in the same class as the
 BBD host-grid polyBLEP: it removes simulation-grid artefacts the analogue
 instrument never had, and it neither resolves nor claims any OQ.
 
+### OQ-15 — the module-input coupling ships (2026-08-07, doc↔code audit pass)
+
+**Work mode:** analysis of supplied evidence plus measurement of the shipping
+algorithms. **No hardware was measured.** A subsystem-by-subsystem audit of the
+engine against this queue found the p. 13 mixer read only half-consumed: the
+renderer's own comment named `C56/C50 10 µF NP` as the coupling between the
+summed WAVE node and pin 1 VCF IN, and the signal path did not have it. The
+summed node went to `filterInputAttenuation` unblocked, and the transconductor
+cascade carries no DC-blocking term, so mixer DC reached the voice VCA and was
+multiplied by the envelope there.
+
+The pulse carries the most of it. The comparator's output is a duty-asymmetric
+square, so its mean walks with PWM: at the 95 % duty the hold's 0.6 V endpoint
+reaches, mean = 6 V·(2d − 1) = 5.4 V at the node, or 2.16 V after the 0.40
+source coordinate. Measured on the shipping engine — pulse only, MIDI 48,
+manual PWM, envelope VCA, 50 ms boxcar peak after note-on against the settled
+sustain peak — the note-on thump **rose** with PWM depth:
+
+| PWM depth | before | after (coupling settled) |
+|---|---|---|
+| 0.0 | −22.6 dB | −22.5 dB |
+| 0.3 | −17.2 dB | −25.6 dB |
+| 0.6 | −14.5 dB | −30.6 dB |
+| 1.0 | −12.7 dB | −37.0 dB |
+
+A step that grows 10 dB as PWM deepens is not a step this instrument makes.
+With the capacitor in place the trend reverses and the steady AC level is
+essentially unchanged, so this is a thump removal, not a tone change.
+
+**What is settled and what is not.** The capacitor is a designator-level read
+and its position is settled; the resistance it works against is **not**. The
+same complete-scan pass re-roles R99/R102 33 kΩ as the sub-emitter DC bridge,
+so it is not this pole's load, and the node's termination is exactly the
+measurement OQ-15 still wants. The shipped 33 kΩ is therefore a **voiced**
+stand-in taken by analogy with the two settled 10 µF NP / 33 kΩ couplings
+downstream (C14/R39, C12/R36), and the choice barely matters: every plausible
+10–100 kΩ termination lands the corner between 0.16 and 1.6 Hz, far below the
+lowest note. The audible content is the DC block itself, not the corner.
+
+Two consequences recorded rather than smoothed over. A 10 µF/33 kΩ coupling
+has a 330 ms time constant, so a **cold engine spends about 1 s charging each
+card's capacitor to the standing duty offset** — a power-on transient the real
+instrument also has, and the reason the fixture below warms up before it
+measures. And the fixture that guarded the C17/C20 tail across an HQ rebuild
+had been leaning on the very DC this capacitor removes: a single voice's
+residual now reads 0.0025 against its 0.005 guard, so it moves to a six-card
+chord at full VCA LEVEL, which leaves 0.026 by a mechanism the circuit does
+have — each card's own 0.48 Hz coupling passing the note-on duty step, six
+summed. `testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca` pins the corner
+and asserts the thump falls monotonically as PWM deepens.
+
 ### OQ-03 — a numerical lead on the unexplained 3.95 dB mode delta
 
 Recorded as a lead, not a mechanism. The structural II−I noise delta —
@@ -2976,9 +3068,14 @@ compensation factor 0.2749 does not reproduce from its own equation
   hot resonant case (`testCascadeDeniesTheFoldback`); the tighter figure
   arrives without a measurement and the fence is unchanged.
 - **OQ-05 "Linear model; ±12 V swing limit into R_L ≥ 2 kΩ".** Both halves
-  misdescribe the current state: the shipped IC6 stage is not linear — it
-  is the rail-bound algebraic clip (13.5 V, exponent 8) with antiderivative
-  antialiasing — and no ±12 V bound is recorded anywhere in this project.
+  misdescribe the current state: the shipped IC6 stage is not linear — it is
+  the rail-bound algebraic clip (13.5 V, exponent 8), evaluated per sample on
+  the internal oversampled grid with no antialiasing, because antiderivative
+  antialiasing was built at this node and **measured as not audible** (no
+  measurable aliasing at the rail, +3 dB or +6 dB in; recorded above under the
+  2026-08-06 evidence search). The engine's only antiderivative machinery is
+  the VCF cascade's Newton solve. And no ±12 V bound is recorded anywhere in
+  this project.
   The pair reads like a 4558-family guaranteed-minimum output-swing row,
   but it arrives uncited; if a sourced TA75558S specification row is later
   produced it belongs in OQ-05's protocol as a datasheet bound, never as

@@ -308,7 +308,7 @@ public:
     };
 
     // Where the transconductor's own control current stops following the
-    // anti-log converter. An IR3109 teardown reports the internal control
+    // anti-log converter. An AS3109 teardown reports the internal control
     // current saturating at 700 uA, which is a pole near 64 kHz on this
     // circuit's C = 240 pF / R = 68 kOhm test condition -- the physical origin
     // of the upper knee, and consistent with Roland's published 50 kHz top.
@@ -496,7 +496,19 @@ public:
     // separate question and is not assumed here.
     struct VoiceVcaControlLaw
     {
-        // Provisional 150 mV onset on the converter's 10 V span.
+        // 150 mV of envelope travel above the control rail's anchored
+        // operating point, normalised on the converter's 10 V span.
+        // Service Notes pp. 18-19 adjust VR34 (10KB) for +0.25...+0.27 V at
+        // TP7 with the D/A forced to 0 V, and p. 13 puts VR34's injection
+        // through R126/R127 into distribution amplifier IC27b, whose output
+        // is TP7 and feeds the VCA-group demux IC26 -- so the per-voice VCA
+        // control rail already stands at about +0.26 V at envelope zero. The
+        // reconstruction's ~150 mV no-current region was measured from the CV
+        // input on a calibrated unit, i.e. on top of that trimmed standoff,
+        // which is the coordinate this constant is expressed in. The standoff
+        // is anchored; the 150 mV itself remains the surviving voiced free
+        // parameter and OQ-19's sweep owns it. Do not add the +0.26 V again
+        // as a separate offset -- it is already the adjusted state.
         static constexpr float turnOn = 0.015f;
         // Ideal-BJT kT/q at room temperature on that same span; compatibility
         // approximation, not a measured BA662/Juno knee.
@@ -577,6 +589,11 @@ public:
     // IC5/uPC1252H2 follows the switched HPF through the manufacturer's
     // application input network: C12 10 uF bipolar and R36 33 kOhm.
     [[nodiscard]] static float commonVcaInputCouplingCornerHz() noexcept;
+    // C56/C50 10 uF NP, the per-voice coupling from the summed WAVE node into
+    // the voice module's pin 1 VCF IN (module board p. 13). The capacitor is a
+    // designator-level read; the resistance it works against is not, so the
+    // corner itself is voiced -- see the constant's note in the .cpp.
+    [[nodiscard]] static float moduleCouplingCornerHz() noexcept;
     // The shared noise generator's own support circuit, module board p. 13:
     // Tr21's collector noise crosses C42 1 uF into the BA662 level OTA's
     // 4.7 kOhm input bias (high-pass), and the OTA's output is loaded by
@@ -624,8 +641,18 @@ private:
     static constexpr float rampResetSeconds = 2.2e-6f;
     static constexpr float rampAmplitudeVolts = 12.0f;
 
-    // Four-pole transconductor cascade. Small-signal pole per stage is
-    // wc = Ig / (2 Vt C) with C = 240 pF; the suites solve the same ODE.
+    // Four-pole transconductor cascade. The 560/68560 divider below is inside
+    // the part, so each differential pair sees an attenuated copy of the stage
+    // difference and the small-signal pole in module-node coordinates is
+    //
+    //     wc = Ig * stageAttenuation / (2 Vt C)  with C = 240 pF,
+    //
+    // equivalently wc = Ig / (C H) with H = 2 Vt / stageAttenuation = 6.37 V,
+    // the pair's linear span referred to the node and the coordinate the
+    // solver actually runs in. Dropping the divider here states a pole 122x
+    // too high -- it would put the 700 uA saturation at 8.9 MHz instead of the
+    // 64 kHz asserted against vcfControlSaturationHz below. The suites solve
+    // the same ODE.
     static constexpr float thermalVoltage = 0.026f;
     static constexpr float poleCapacitorFarads = 240.0e-12f;
     // Each stage attenuates its differential input by 560 / (68000 + 560)
@@ -995,6 +1022,10 @@ private:
         Envelope envelope {};
         Dco dco {};
         OtaCascade filter {};
+        // C56/C50, the per-voice module-input coupling. It stands between the
+        // summed WAVE node and pin 1 VCF IN, so no mixer DC reaches the
+        // filter core or the voice VCA behind it.
+        HighPass moduleCoupling {};
     };
 
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
@@ -1291,6 +1322,9 @@ private:
     // is why they live here and carry no per-voice dispersion.
     HighPass voiceBusCoupling_ {};
     float voiceBusCouplingG_ { 0.0001f };
+    // Shared by all six cards: one part number, one nominal corner. The state
+    // is per voice because each card has its own capacitor.
+    float moduleCouplingG_ { 0.0001f };
     HighPass highPass_ {};
     float highPassG_ { 0.01f };
     float highPassShelf_ { 1.0f };

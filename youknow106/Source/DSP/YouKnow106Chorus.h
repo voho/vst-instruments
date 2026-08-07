@@ -419,8 +419,14 @@ private:
     std::uint32_t commonNoiseState_ { 0xd1b54a35u };
     std::uint32_t orthogonalNoiseState_ { 0x94d049bbu };
     double humPhase_ { 0.0 };
+    // The heterodyne clock bleed's own accumulators.
     double clockSpurPhaseA_ { 0.0 };
     double clockSpurPhaseB_ { 0.0 };
+    // The optional clock-spur hypothesis keeps separate ones: both mechanisms
+    // run at the same modulated clock, so sharing a phase advanced it twice
+    // per sample and doubled each tone's frequency when both were enabled.
+    double optionalSpurPhaseA_ { 0.0 };
+    double optionalSpurPhaseB_ { 0.0 };
     // Whether the glided settings have a starting point yet.
     bool primed_ { false };
 };

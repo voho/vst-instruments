@@ -47,6 +47,25 @@ constexpr float noiseOtaLoadResistanceOhms = 330000.0f;   // R79
 constexpr float voiceBusCouplingCapacitanceF = 10.0e-6f;
 constexpr float voiceBusCouplingResistanceOhms = 33000.0f;
 
+// Per-voice module-input coupling, module board p. 13: the summed WAVE node
+// reaches the voice module's pin 1 VCF IN only through C56/C50 10 uF NP. The
+// topology is settled -- the 2026-08-07 designator read lists this capacitor
+// with the rest of the mixer node -- and it is why no mixer DC can reach the
+// filter core or the voice VCA behind it.
+//
+// The capacitor is the read part; the resistance it works against is not.
+// R99/R102 33 kOhm is *not* this pole's load -- the same p. 13 pass re-roles
+// it as a DC bridge from the sub switch emitter to the WAVE line, in parallel
+// with D5/D6 -- and the node's termination, together with the WAVE output's
+// source impedance, is exactly OQ-15's remaining measurement. 33 kOhm is
+// therefore a voiced stand-in, taken by analogy with the two settled
+// 10 uF NP / 33 kOhm couplings downstream (C14/R39 and C12/R36), and what
+// this pole does is insensitive to the choice: every plausible 10-100 kOhm
+// termination lands the corner between 0.16 and 1.6 Hz, far below the lowest
+// note either way. The audible content is the DC block itself, not the corner.
+constexpr float moduleCouplingCapacitanceF = 10.0e-6f;      // C56 / C50
+constexpr float moduleCouplingResistanceOhms = 33000.0f;    // voiced, OQ-15
+
 // Manufacturer application input for IC5/uPC1252H2, populated by Roland as
 // C12 10 uF NP followed by R36 33 kOhm.
 constexpr float commonVcaInputCapacitanceF = 10.0e-6f;
@@ -991,6 +1010,12 @@ float YouKnow106Engine::commonVcaInputCouplingCornerHz() noexcept
                    * commonVcaInputResistanceOhms);
 }
 
+float YouKnow106Engine::moduleCouplingCornerHz() noexcept
+{
+    return 1.0f / (twoPi * moduleCouplingCapacitanceF
+                   * moduleCouplingResistanceOhms);
+}
+
 float YouKnow106Engine::noiseSourceHighPassHz() noexcept
 {
     return 1.0f / (twoPi * noiseCouplingCapacitanceF * noiseCouplingLoadOhms);
@@ -1815,6 +1840,8 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
         std::sqrt(oversampledRate_ / noiseReferenceRateHz));
     voiceBusCouplingG_ = std::tan(
         pi * voiceBusCouplingCornerHz() * inverseOversampledRate_);
+    moduleCouplingG_ = std::tan(
+        pi * moduleCouplingCornerHz() * inverseOversampledRate_);
     commonVcaInputCouplingG_ = std::tan(
         pi * commonVcaInputCouplingCornerHz() * inverseOversampledRate_);
     noiseSourceHighPassG_ = std::tan(
@@ -2025,6 +2052,7 @@ void YouKnow106Engine::reset()
         voice = Voice {};
         voice.dco.reset();
         voice.filter.reset();
+        voice.moduleCoupling.reset();
         voice.envelope.reset();
     }
     for (int index = 0; index < maxVoices; ++index)
@@ -2537,6 +2565,7 @@ void YouKnow106Engine::silenceVoice(Voice& voice) noexcept
         voice.dco.reset();
         voice.pulseDutyPrimed = false;
         voice.filter.reset();
+        voice.moduleCoupling.reset();
         voice.noiseState = hash32(
             static_cast<std::uint32_t>(voice.cardIndex) * 2246822519u + 1u) | 1u;
     }
@@ -3516,10 +3545,24 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
              * (2.0f / 16777215.0f) - 1.0f) * filterNoiseVolts;
 
     // --- Filter, amplifier -------------------------------------------------
-    // No high-pass here. The schematic puts it on the jack board, downstream of
-    // the summing amplifier, so it is one shared stage after all six voices
-    // rather than a leg inside each -- see the mix.
-    const float filterInput = mixed * filterInputAttenuation
+    // C56/C50 stand between the summed WAVE node and pin 1 VCF IN, so the
+    // module -- and the voice VCA behind it -- never see the mixer's DC. An
+    // enabled pulse carries the largest of it: the comparator's output is a
+    // duty-asymmetric square, so its mean walks with PWM (at the 95 % duty the
+    // hold's 0.6 V endpoint reaches, mean = 6 V * (2d - 1) = 5.4 V at the
+    // node). Passed straight through, that DC would multiply by the envelope
+    // in the voice VCA and leave an envelope-shaped thump that got *louder*
+    // with PWM depth -- a step the instrument does not make.
+    //
+    // The panel HPF is a different stage and stays where it is: the schematic
+    // puts it on the jack board, downstream of the summing amplifier, so it is
+    // one shared stage after all six voices rather than a leg inside each --
+    // see the mix.
+    const float coupled = voice.moduleCoupling.process(
+        mixed, moduleCouplingG_, 0.0f, 1.0f);
+    // The microscopic card excitation is injected at the filter input, after
+    // the source coordinate scale, so it stays outside this capacitor (OQ-16).
+    const float filterInput = coupled * filterInputAttenuation
                             * voice.inputCompensation
                             + microscopicNoise * noiseRateScale_;
     // Physical thermal warmup curve: V_t(T) = k * T / q from 25°C to 40°C
