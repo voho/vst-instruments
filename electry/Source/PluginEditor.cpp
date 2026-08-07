@@ -863,7 +863,7 @@ ElectryAudioProcessorEditor::ElectryAudioProcessorEditor (ElectryAudioProcessor&
     addAndMakeVisible (editionLabel);
 
     keyboardHintLabel.setText (
-        "Oxblood keys latch the two banks: C0..D0 the pick stroke, D#0..F#0 the play style - any combination. Bone and ebony keys play the Drop-E 8-string range E1..D6.",
+        "Oxblood keys latch the two banks: C0..D0 the pick stroke, D#0..A0 the play style - any combination. Bone and ebony keys play the Drop-E 8-string range E1..D6.",
         juce::dontSendNotification);
     keyboardHintLabel.setFont (juce::FontOptions (11.0f));
     keyboardHintLabel.setColour (juce::Label::textColourId, colours::dimText);
