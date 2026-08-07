@@ -3095,6 +3095,124 @@ void testHiHatPedal()
     expect (engine.getHiHatPedal() <= 1.0f, "an out-of-range pedal position was accepted");
 }
 
+void testSympatheticKitBleed()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int captureSamples = static_cast<int> (0.70 * sampleRate);
+
+    const auto renderKick = [&] (float bleed, int blockSize)
+    {
+        drumalor::DrumEngine engine;
+        drumalor::KitParameters kit;
+        kit.bleed = bleed;
+        // Set before prepare, exactly as the processor does, so the control's
+        // 20 ms smoother starts settled instead of ramping through the hit.
+        engine.setKitParameters (kit);
+        engine.prepare (sampleRate, blockSize);
+        engine.trigger (drumalor::Instrument::Kick, 1.0f);
+        const auto interleaved = renderInterleaved (engine, captureSamples, blockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        return mono;
+    };
+
+    // At zero the whole coupling path is skipped rather than scaled to nothing,
+    // so a kit with Bleed off has to be bit-identical to the engine before it
+    // existed - which is the same thing as saying the default cannot change a
+    // restored session.
+    const auto dry = renderKick (0.0f, defaultBlockSize);
+    {
+        drumalor::DrumEngine engine;
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.trigger (drumalor::Instrument::Kick, 1.0f);
+        const auto interleaved = renderInterleaved (
+            engine, captureSamples, defaultBlockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        expect (mono == dry, "Kit Bleed at zero is not exactly bypassed");
+    }
+
+    // Above zero, a kick alone has to put energy into the snare's wire band,
+    // which is something a kick alone cannot do without the coupling: there is
+    // nothing in a bass drum at four kilohertz.
+    const auto wireBand = [&] (const std::vector<float>& samples)
+    {
+        return bandPowerInRange (samples, sampleRate, 2500.0, 8000.0, 0.0, 0.500);
+    };
+    const double dryWires = wireBand (dry);
+    double previousWires = dryWires;
+    for (const float bleed : { 0.25f, 0.55f, 1.0f })
+    {
+        const auto wet = renderKick (bleed, defaultBlockSize);
+        expect (std::all_of (wet.begin(), wet.end(),
+                             [] (float value) { return std::isfinite (value); })
+                    && peakInRange (wet, 0, wet.size()) <= 1.001,
+                "Kit Bleed produced unsafe audio at " + std::to_string (bleed));
+        const double wires = wireBand (wet);
+        expect (wires > 1.35 * previousWires,
+                "Kit Bleed at " + std::to_string (bleed)
+                    + " did not buzz the snare wires harder than the setting below it ("
+                    + std::to_string (wires) + " against " + std::to_string (previousWires)
+                    + ")");
+        previousWires = wires;
+    }
+    expect (previousWires > 8.0 * dryWires,
+            "a kick with Kit Bleed at full does not reach the snare wires at all ("
+                + std::to_string (previousWires) + " against " + std::to_string (dryWires)
+                + ")");
+
+    // The wire gate is the same threshold law the struck snare uses, so the
+    // buzz has to appear faster than the kick that causes it grows.
+    const auto wireToKick = [&] (float velocity)
+    {
+        drumalor::DrumEngine engine;
+        drumalor::KitParameters kit;
+        kit.bleed = 1.0f;
+        engine.setKitParameters (kit);
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.trigger (drumalor::Instrument::Kick, velocity);
+        const auto interleaved = renderInterleaved (
+            engine, captureSamples, defaultBlockSize);
+        std::vector<float> mono (static_cast<std::size_t> (captureSamples));
+        for (int sample = 0; sample < captureSamples; ++sample)
+        {
+            const auto index = static_cast<std::size_t> (sample) * 2u;
+            mono[static_cast<std::size_t> (sample)] = 0.5f
+                * (interleaved[index] + interleaved[index + 1u]);
+        }
+        return wireBand (mono)
+            / std::max (1.0e-20, bandPowerInRange (
+                mono, sampleRate, 30.0, 200.0, 0.0, 0.500));
+    };
+    expect (wireToKick (0.25f) < 0.70 * wireToKick (1.0f),
+            "the bled snare wires rattle in proportion to the kick rather than "
+            "lifting off a threshold");
+
+    // The path is strictly feed-forward, so it cannot depend on where the host
+    // put its block boundaries and it cannot ring on itself.
+    expect (renderKick (0.85f, 64) == renderKick (0.85f, 257),
+            "Kit Bleed depends on the host block size");
+
+    // Nothing to excite it means nothing out of it, however long the kit idles.
+    drumalor::DrumEngine idle;
+    drumalor::KitParameters loud;
+    loud.bleed = 1.0f;
+    idle.setKitParameters (loud);
+    idle.prepare (sampleRate, defaultBlockSize);
+    const auto silence = renderMetrics (idle, static_cast<int> (2.0 * sampleRate));
+    expect (silence.peak == 0.0, "Kit Bleed rang an idle kit");
+}
+
 void testUiPresentationMath()
 {
     using namespace drumalor::ui;
@@ -3457,6 +3575,7 @@ int main()
     testSnareArticulations();
     testReStrikeDamping();
     testHiHatPedal();
+    testSympatheticKitBleed();
     testUiPresentationMath();
     testIdleMetallicCostAndDenormalSafety();
     testInvalidValuesAndStressPerformance();

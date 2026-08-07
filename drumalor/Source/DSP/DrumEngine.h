@@ -76,6 +76,9 @@ struct KitParameters
     // Both bus stages are fully bypassed at 0.
     float busDrive { 0.0f };
     float busCompression { 0.0f };
+    // How much of the kit each drum's neighbours hear. Fully bypassed at 0,
+    // which is the default, so an existing session is unchanged.
+    float bleed { 0.0f };
 };
 
 struct InstrumentMetadata
@@ -328,6 +331,29 @@ private:
         Biquad filterC {};
     };
 
+    // A drum that is not being struck is still a drum. The snare's resonant head
+    // carries a set of wires resting on it and answers everything the kit puts
+    // into the air and the floor; a tom's head answers whatever lands near its
+    // own note. Neither is a voice - they exist whether or not their instrument
+    // has been played - so they live here rather than in the voice pool.
+    static constexpr int sympatheticBedCount = 4;
+    static constexpr int sympatheticModeCount = 3;
+
+    struct SympatheticBed
+    {
+        Instrument instrument { Instrument::Snare };
+        bool hasWires { false };
+        int modeCount { 0 };
+        float lastPitch { 0.0f };
+        float lastDecay { 0.5f };
+        float panLeft { 0.70710678f };
+        float panRight { 0.70710678f };
+        std::array<Resonator, sympatheticModeCount> resonators {};
+        Biquad drive {};
+        Biquad wires {};
+        std::uint32_t noiseState { 1u };
+    };
+
     struct RelaxationOscillatorBank
     {
         Instrument instrument { Instrument::ClosedHat };
@@ -425,6 +451,10 @@ private:
     void updateActiveVoiceCount() noexcept;
     void applyBusStage (float& left, float& right, float driveAmount,
                         float compressionAmount) noexcept;
+    void configureSympatheticBeds() noexcept;
+    void updateSympatheticBeds() noexcept;
+    void renderSympatheticBeds (float excitation, float amount,
+                                float& left, float& right) noexcept;
     void resetBusStage() noexcept;
 
     [[nodiscard]] float advanceContact (Voice& voice) noexcept;
@@ -483,6 +513,7 @@ private:
     std::array<float, instrumentCount> componentDrift_ {};
     std::array<Voice, maxVoices> voices_ {};
     std::array<Voice, retiringVoiceCount> retiringVoices_ {};
+    std::array<SympatheticBed, sympatheticBedCount> sympatheticBeds_ {};
     std::array<RelaxationOscillatorBank, metallicBankCount> metallicBanks_ {};
     std::array<int, metallicBankCount> metallicBankVoiceCounts_ {};
     std::array<float, maximumMetallicDecimatorTaps> metallicDecimatorCoefficients_ {};
@@ -498,6 +529,7 @@ private:
     std::atomic<float> humanise_ { 0.5f };
     std::atomic<float> busDrive_ { 0.0f };
     std::atomic<float> busCompression_ { 0.0f };
+    std::atomic<float> bleed_ { 0.0f };
     std::atomic<float> outputLevelLeft_ { 0.0f };
     std::atomic<float> outputLevelRight_ { 0.0f };
     std::atomic<float> busGainMeter_ { 1.0f };
@@ -533,6 +565,11 @@ private:
     // of stepping once per block, which used to click on automation.
     float smoothedBusDrive_ { 0.0f };
     float smoothedBusCompression_ { 0.0f };
+    float smoothedBleed_ { 0.0f };
+    // The previous sample's dry mix, before anything the beds added to it. One
+    // sample of delay taken from the mix the beds cannot see makes the whole
+    // path strictly feed-forward, so there is no loop to be stable about.
+    float bleedExcitation_ { 0.0f };
     float dcInputLeft_ { 0.0f };
     float dcInputRight_ { 0.0f };
     float dcOutputLeft_ { 0.0f };

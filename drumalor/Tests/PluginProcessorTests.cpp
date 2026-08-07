@@ -88,7 +88,7 @@ void testParameterLayoutAndDefaults()
         drumalor::instrumentCount * drumalor::parameters::count
         + static_cast<std::size_t> (drumalor::parameters::kitParameterCount);
     expect (processor.getParameters().size() == static_cast<int> (expectedParameterCount),
-            "processor parameter count is not 13 * 7 voice controls plus 4 kit controls");
+            "processor parameter count is not 13 * 7 voice controls plus 5 kit controls");
 
     std::set<std::string> parameterIds;
     for (std::size_t index = 0; index < drumalor::instrumentCount; ++index)
@@ -154,8 +154,12 @@ void testParameterLayoutAndDefaults()
     expect (approximatelyEqual (
                 parameterValue (processor, drumalor::parameters::busCompression), 0.0f),
             "the bus compressor does not default to bypassed");
+    expect (approximatelyEqual (
+                parameterValue (processor, drumalor::parameters::bleed), 0.0f),
+            "Kit Bleed does not default to bypassed");
     for (const auto* id : { drumalor::parameters::humanise, drumalor::parameters::busDrive,
-                            drumalor::parameters::busCompression })
+                            drumalor::parameters::busCompression,
+                            drumalor::parameters::bleed })
     {
         expect (processor.parameters.getParameter (id) != nullptr,
                 std::string ("APVTS does not contain ") + id);
@@ -319,6 +323,56 @@ void testNewParametersAffectTheEngine()
     expect (processor.getBusGain() < 0.95f,
             "the bus compression parameter did not reach the engine");
     setParameterValue (processor, drumalor::parameters::busCompression, 0.0f);
+
+    // Kit Bleed has to reach the engine and put the kick into the snare's wire
+    // band, which is a thing a kick alone cannot do: there is nothing in a bass
+    // drum at four kilohertz. The high-pass is written out here rather than
+    // taken from a module so the check depends on nothing but arithmetic.
+    const auto kickWireEnergy = [&processor, &flush] ()
+    {
+        flush();
+        juce::AudioBuffer<float> audio;
+        juce::MidiBuffer midi;
+        juce::MidiBuffer none;
+        midi.addEvent (juce::MidiMessage::noteOn (
+                           1, drumalor::getStandardMidiNote (drumalor::Instrument::Kick),
+                           static_cast<juce::uint8> (127)),
+                       0);
+
+        constexpr double pi = 3.14159265358979323846;
+        const double omega = 2.0 * pi * 2500.0 / sampleRate;
+        const double cosine = std::cos (omega);
+        const double alpha = std::sin (omega) / (2.0 * std::sqrt (0.5));
+        const double inverseA0 = 1.0 / (1.0 + alpha);
+        const double b0 = 0.5 * (1.0 + cosine) * inverseA0;
+        const double b1 = -(1.0 + cosine) * inverseA0;
+        const double b2 = b0;
+        const double a1 = -2.0 * cosine * inverseA0;
+        const double a2 = (1.0 - alpha) * inverseA0;
+        double z1 = 0.0;
+        double z2 = 0.0;
+
+        double energy = 0.0;
+        for (int block = 0; block < 12; ++block)
+        {
+            render (processor, audio, block == 0 ? midi : none);
+            for (int sample = 0; sample < blockSize; ++sample)
+            {
+                const double input = audio.getSample (0, sample);
+                const double output = b0 * input + z1;
+                z1 = b1 * input - a1 * output + z2;
+                z2 = b2 * input - a2 * output;
+                energy += output * output;
+            }
+        }
+        return energy;
+    };
+    const auto dryWireEnergy = kickWireEnergy();
+    setParameterValue (processor, drumalor::parameters::bleed, 1.0f);
+    const auto bledWireEnergy = kickWireEnergy();
+    expect (bledWireEnergy > 4.0 * dryWireEnergy,
+            "the Kit Bleed parameter did not reach the engine");
+    setParameterValue (processor, drumalor::parameters::bleed, 0.0f);
 
     // Metering must be published for the editor.
     expect (processor.getOutputLevel (0) > 1.0e-4f

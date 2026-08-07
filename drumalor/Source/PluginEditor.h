@@ -164,6 +164,8 @@ private:
 
     DrumalorKnob humaniseKnob { "HUMANISE", DrumalorKnob::ValueStyle::Percent,
                                 DrumalorKnob::VisualRole::Master };
+    DrumalorKnob bleedKnob { "KIT BLEED", DrumalorKnob::ValueStyle::Percent,
+                             DrumalorKnob::VisualRole::Master };
     DrumalorKnob busDriveKnob { "BUS DRIVE", DrumalorKnob::ValueStyle::Percent,
                                 DrumalorKnob::VisualRole::Master };
     DrumalorKnob busCompressionKnob { "BUS COMP", DrumalorKnob::ValueStyle::Percent,
@@ -179,6 +181,7 @@ private:
     std::unique_ptr<SliderAttachment> panAttachment;
     std::unique_ptr<ComboBoxAttachment> chokeAttachment;
     std::unique_ptr<SliderAttachment> humaniseAttachment;
+    std::unique_ptr<SliderAttachment> bleedAttachment;
     std::unique_ptr<SliderAttachment> busDriveAttachment;
     std::unique_ptr<SliderAttachment> busCompressionAttachment;
     std::unique_ptr<SliderAttachment> outputAttachment;

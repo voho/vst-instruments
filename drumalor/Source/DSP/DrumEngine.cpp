@@ -603,6 +603,9 @@ void DrumEngine::reset() noexcept
     smoothedOutputGain_ = outputGain_.load (std::memory_order_relaxed);
     smoothedBusDrive_ = busDrive_.load (std::memory_order_relaxed);
     smoothedBusCompression_ = busCompression_.load (std::memory_order_relaxed);
+    smoothedBleed_ = bleed_.load (std::memory_order_relaxed);
+    bleedExcitation_ = 0.0f;
+    configureSympatheticBeds();
     dcInputLeft_ = dcInputRight_ = 0.0f;
     dcOutputLeft_ = dcOutputRight_ = 0.0f;
     masterAdaaPreviousLeft_ = masterAdaaPreviousRight_ = 0.0f;
@@ -652,6 +655,7 @@ void DrumEngine::setInstrumentParameters (Instrument instrument,
 void DrumEngine::setKitParameters (const KitParameters& values) noexcept
 {
     humanise_.store (clampUnit (values.humanise, 0.5f), std::memory_order_relaxed);
+    bleed_.store (clampUnit (values.bleed, 0.0f), std::memory_order_relaxed);
     busDrive_.store (clampUnit (values.busDrive, 0.0f), std::memory_order_relaxed);
     busCompression_.store (clampUnit (values.busCompression, 0.0f),
                            std::memory_order_relaxed);
@@ -3231,6 +3235,140 @@ float DrumEngine::renderVoice (Voice& voice) noexcept
     return output;
 }
 
+
+void DrumEngine::configureSympatheticBeds() noexcept
+{
+    // The four things on a kit that answer when something else is struck: the
+    // snare's resonant head with its wires lying on it, and the three toms.
+    // A kick is the only drum that mostly does not - its heads are heavy, its
+    // note is below almost everything else on the kit, and nobody has ever
+    // complained about a bass drum ringing when the snare was hit.
+    static constexpr std::array<Instrument, sympatheticBedCount> instruments {
+        Instrument::Snare, Instrument::LowTom, Instrument::MidTom, Instrument::HighTom
+    };
+    // The snare's resonant head is tuned above its batter, and it is the wires
+    // resting on it that decide the three modes worth carrying. The toms answer
+    // at their own note and its first two membrane partials.
+    static constexpr std::array<float, sympatheticModeCount> snareModes {
+        1.18f, 1.88f, 2.52f
+    };
+    static constexpr std::array<float, sympatheticModeCount> tomModes {
+        1.0f, 1.59f, 2.14f
+    };
+    static constexpr std::array<float, sympatheticBedCount> roots {
+        185.0f, 82.0f, 123.0f, 174.0f
+    };
+
+    for (std::size_t index = 0; index < sympatheticBeds_.size(); ++index)
+    {
+        auto& bed = sympatheticBeds_[index];
+        bed.instrument = instruments[index];
+        bed.hasWires = bed.instrument == Instrument::Snare;
+        bed.noiseState = hash32 (static_cast<std::uint32_t> (index + 1u) * 0x9e3779b9u);
+
+        const auto values = snapshotParameters (bed.instrument);
+        bed.lastPitch = values.pitch;
+        bed.lastDecay = values.decay;
+        const float pan = std::clamp (values.pan, -1.0f, 1.0f);
+        bed.panLeft = constantPowerLeft (pan);
+        bed.panRight = constantPowerRight (pan);
+
+        const float root = roots[index] * std::exp2 (values.pitch / 12.0f);
+        // An undriven head rings for a fraction of a struck one: nothing is
+        // putting energy into it except what the rest of the kit leaks, and on
+        // the snare the wires damp it further.
+        const float seconds = decaySecondsFor (bed.instrument, values.decay)
+            * (bed.hasWires ? 0.30f : 0.45f);
+        const auto& ratios = bed.hasWires ? snareModes : tomModes;
+        bed.modeCount = 0;
+        for (int mode = 0; mode < sympatheticModeCount; ++mode)
+        {
+            const float frequency = root * ratios[static_cast<std::size_t> (mode)];
+            if (frequency >= 0.44f * static_cast<float> (sampleRate_))
+                continue;
+            auto& resonator = bed.resonators[static_cast<std::size_t> (bed.modeCount)];
+            configureResonator (resonator, frequency, seconds);
+            // configureResonator normalises a mode for being struck once. A head
+            // that is driven continuously by a whole kit has to be normalised for
+            // its resonant peak instead, which is inputGain/(1 - r) - a factor of
+            // several hundred at these decay times, and the difference between a
+            // sympathetic bed and a howl.
+            resonator.inputGain *= 1.0f - std::sqrt (std::max (0.0f, -resonator.a2));
+            ++bed.modeCount;
+        }
+
+        // What of the kit actually reaches a head that nobody is hitting: the
+        // low-mid the shells and the floor carry, not the stick noise.
+        configureBandpass (bed.drive, bed.hasWires ? 150.0f : root, 0.45f);
+        if (bed.hasWires)
+            configureBandpass (bed.wires, 4200.0f, 0.55f);
+    }
+}
+
+void DrumEngine::updateSympatheticBeds() noexcept
+{
+    for (auto& bed : sympatheticBeds_)
+    {
+        const auto values = snapshotParameters (bed.instrument);
+        const float pan = std::clamp (values.pan, -1.0f, 1.0f);
+        bed.panLeft = constantPowerLeft (pan);
+        bed.panRight = constantPowerRight (pan);
+        if (values.pitch == bed.lastPitch && values.decay == bed.lastDecay)
+            continue;
+        // Retuning a head clears what it was ringing with, which is what
+        // slackening a lug does anyway.
+        configureSympatheticBeds();
+        return;
+    }
+}
+
+void DrumEngine::renderSympatheticBeds (float excitation, float amount,
+                                        float& left, float& right) noexcept
+{
+    for (auto& bed : sympatheticBeds_)
+    {
+        if (bed.modeCount == 0)
+            continue;
+        const float driven = bed.drive.tick (excitation);
+        float displacement = 0.0f;
+        for (int mode = 0; mode < bed.modeCount; ++mode)
+            displacement += bed.resonators[static_cast<std::size_t> (mode)].tick (driven);
+
+        float output = displacement;
+        if (bed.hasWires)
+        {
+            // The same law the struck snare uses: wires only rattle while the
+            // head under them lifts them off their resting contact, and below
+            // that they damp it instead. It is why a kick makes a snare buzz at
+            // all, and why the buzz appears suddenly as the kick gets louder
+            // rather than fading up in proportion to it.
+            std::uint32_t state = bed.noiseState;
+            state ^= state << 13u;
+            state ^= state >> 17u;
+            state ^= state << 5u;
+            bed.noiseState = state == 0u ? 1u : state;
+            const float noise = static_cast<float> (bed.noiseState & 0x00ffffffu)
+                / 8388607.5f - 1.0f;
+            // A struck snare drives its own wires far clear of the head, so
+            // the first-order law renderSnare() uses spends its life in that
+            // law's saturating region. Sympathetic excitation does not: it
+            // lives at the lift-off, where a first-order form has no dead zone
+            // at all and simply tracks the exciter. The squared form does have
+            // one - it falls away as the square below the threshold and
+            // saturates above it - which is why a bled kick's buzz appears as
+            // the kick gets loud instead of following it up from nothing.
+            const float squared = displacement * displacement;
+            constexpr float liftOff = 0.20f * 0.20f;
+            const float rattle = squared / (liftOff + squared);
+            output = 0.30f * displacement + 3.20f * bed.wires.tick (noise) * rattle;
+        }
+
+        const float scaled = std::clamp (0.80f * amount * output, -4.0f, 4.0f);
+        left += scaled * bed.panLeft;
+        right += scaled * bed.panRight;
+    }
+}
+
 void DrumEngine::applyBusStage (float& left, float& right, float driveAmount,
                                 float compressionAmount) noexcept
 {
@@ -3310,6 +3448,7 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         prepare (sampleRate_, std::max (maxBlockSize_, numSamples));
 
     updateMetallicBankParameterTargets();
+    updateSympatheticBeds();
 
     // Voice activity can only decrease inside one engine chunk; triggers split
     // processing at their exact event offsets. Collect the audible voices once
@@ -3333,6 +3472,7 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         busDrive_.load (std::memory_order_relaxed), 0.0f);
     const float compressionAmount = clampUnit (
         busCompression_.load (std::memory_order_relaxed), 0.0f);
+    const float bleedAmount = clampUnit (bleed_.load (std::memory_order_relaxed), 0.0f);
     // Refreshed per block, then smoothed into each ringing voice below so
     // channel-strip automation is audible on a tail rather than only on the
     // next hit.
@@ -3346,6 +3486,10 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
         mixer.panRight = constantPowerRight (pan);
     }
 
+    // The whole coupling path is skipped, not merely scaled to nothing, while
+    // the control and its smoother are both at zero. A kit with Bleed off is
+    // therefore bit-identical to the engine before it existed, and pays nothing.
+    const bool bleedActive = bleedAmount > 0.0f || smoothedBleed_ > 0.0f;
     const bool busActive = driveAmount > 0.0f || compressionAmount > 0.0f
         || smoothedBusDrive_ > 0.0f || smoothedBusCompression_ > 0.0f;
     if (! busActive)
@@ -3367,6 +3511,8 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
                 smoothedBusDrive_, driveAmount, gainSmoothing);
             smoothedBusCompression_ = approachTarget (
                 smoothedBusCompression_, compressionAmount, gainSmoothing);
+            smoothedBleed_ = approachTarget (smoothedBleed_, bleedAmount, gainSmoothing);
+            bleedExcitation_ = 0.0f;
             if (left != nullptr)
                 left[sample] = 0.0f;
             if (right != nullptr && right != left)
@@ -3415,6 +3561,21 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
             smoothedBusDrive_, driveAmount, gainSmoothing);
         smoothedBusCompression_ = approachTarget (
             smoothedBusCompression_, compressionAmount, gainSmoothing);
+        smoothedBleed_ = approachTarget (smoothedBleed_, bleedAmount, gainSmoothing);
+
+        // The beds hear the previous sample's dry mix and nothing they added to
+        // it, so the path is strictly feed-forward and cannot ring on itself.
+        if (bleedActive)
+        {
+            const float excitation = bleedExcitation_;
+            bleedExcitation_ = flushDenormal (dryLeft + dryRight);
+            renderSympatheticBeds (excitation, smoothedBleed_, dryLeft, dryRight);
+        }
+        else
+        {
+            bleedExcitation_ = 0.0f;
+        }
+
         float busLeft = dryLeft - dcInputLeft_ + dcCoefficient * dcOutputLeft_;
         float busRight = dryRight - dcInputRight_ + dcCoefficient * dcOutputRight_;
         dcInputLeft_ = flushDenormal (dryLeft);

@@ -43,8 +43,8 @@ The project builds three products from one JUCE codebase:
 The primary note map follows General MIDI percussion assignments. MIDI velocity
 controls both hit strength and timbre.
 
-Each voice has seven automatable controls, and the kit adds four more, for
-**95 host parameters** in total: 91 voice parameters plus the kit bus.
+Each voice has seven automatable controls, and the kit adds five more, for
+**96 host parameters** in total: 91 voice parameters plus the kit controls.
 
 | Per-voice control | Range | Default |
 | --- | --- | --- |
@@ -59,6 +59,7 @@ Each voice has seven automatable controls, and the kit adds four more, for
 | Kit control | Range | Default |
 | --- | --- | --- |
 | Kit Humanise | 0-100% | 50% |
+| Kit Bleed | 0-100% | 0% |
 | Bus Drive | 0-100% | 0% |
 | Bus Compression | 0-100% | 0% |
 | Output | -24 to +6 dB | -6.0 dB |
@@ -165,6 +166,31 @@ copy of the last; at 100% the drift is twice as wide. The 50% default is
 numerically identical to the fixed depth the engine always had, and the
 underlying drift sequence is untouched by the control, so a kit remains exactly
 reproducible after reset at any setting.
+
+**Kit Bleed** is the kit hearing itself. A drum that is not being struck is
+still a drum: the snare's resonant head carries a set of wires lying on it and
+answers everything the rest of the kit puts into the air and the floor, and a
+tom's head answers whatever lands near its own note. Toontrack calls that
+leakage "one of the key elements that gives a studio drum recording its sense of
+cohesion and realism"; IK sells it as sympathetic vibration between the kick,
+snare and toms. Drumalor models it rather than mixing it: four undriven heads —
+the snare's and the three toms' — sit permanently in the engine, tuned from
+their own channels' Pitch and Decay, driven by a band-limited copy of the kit's
+own mix, and placed at their own Pan positions.
+
+The snare's is the one that matters. Its wires are gated on the head's
+displacement by a lift-off law rather than a level: below the point where the
+head lifts them off their resting contact there is no buzz at all, and above it
+there is. That is why a bled kick makes a snare buzz suddenly as the kick gets
+loud instead of buzzing a little at every level, and it is the reason a kick and
+a floor tom sound like they are in a room with a snare rather than next to a
+recording of one.
+
+The path is strictly feed-forward: the beds hear the previous sample's dry mix
+and nothing they added to it, so there is no loop to be stable about and no
+dependence on the host's block boundaries. At its 0 % default it is not merely
+scaled to nothing but skipped entirely, so a kit with Bleed off is bit-identical
+to the engine before it existed and pays nothing for it.
 
 **Bus Drive** and **Bus Compression** form a shared output stage after the mix
 and DC blocker. Drive is a gain-matched asymmetric softener with the same
@@ -548,8 +574,8 @@ overview rather than a row of note-on flashes. A stereo bus meter in the header
 shows the output with peak hold, silkscreen marks at -36, -24, -12 and -6 dB,
 and a separate strip that grows leftwards with the bus compressor's gain
 reduction. The Voice Circuit deck holds five knobs plus a horizontal Pan slider
-and the Choke Group selector; the Kit Bus deck holds Humanise, Drive, Comp and
-Output.
+and the Choke Group selector; the Kit Bus deck holds Humanise, Bleed, Drive,
+Comp and Output in a two-column grid.
 
 The presentation mathematics behind all of that - the decibel meter curve and
 its exact inverse, the asymmetric attack/release/peak-hold ballistics, the
@@ -723,7 +749,12 @@ to ring shorter than the last and to differ from its neighbour by more than a
 level change, requires closing the pedal on a ringing open hat to damp it and
 shutting it to cut it, requires a fast close to make a foot chick while a lift
 or a rest makes none, and requires reset to release the pedal and nonsense
-controller values to be refused.
+controller values to be refused. A kit-bleed contract requires exact bypass at
+zero, requires a kick alone to put energy into the snare's wire band and to put
+more of it in at every higher setting, requires the buzz to lift off a threshold
+rather than track the kick in proportion, requires the result to be independent
+of the host block size, and requires an idle kit to stay at digital zero however
+long it idles.
 A dedicated
 efficiency contract proves that a metallic bank frozen behind an unrelated drum
 wakes into exactly the same state as one frozen during silence, and measures
@@ -811,7 +842,7 @@ the VST3 at the highest strictness level:
 Also exercise all 13 note mappings and the snare's three articulation notes,
 velocity extremes, rapid retriggers, a continuous CC 4 hi-hat pedal from an
 electronic kit or a controller lane, the open/closed-hat choke, all 91 voice
-parameters and the four kit controls, choke groups, project-state recall, sample-
+parameters and the five kit controls, choke groups, project-state recall, sample-
 rate changes, and buffer sizes from 32 to 2048 samples in at least two hosts.
 A validator passing does not guarantee musical or host-level correctness.
 

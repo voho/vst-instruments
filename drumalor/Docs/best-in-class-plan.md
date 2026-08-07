@@ -237,16 +237,27 @@ regression suite green.
   decision that could only be justified by ear, so the contract asserts what is
   actually modelled instead.
 
-- [ ] **6. The kit hears itself.** A persistent snare bed - the resonant head
+- [x] **6. The kit hears itself.** A persistent snare bed - the resonant head
   and its wires - driven by a one-sample-delayed copy of the kit mix, gated on
   the bed's own displacement by the same contact law `renderSnare()` uses, plus
   sympathetic ring in the tom shells. Exposed as one kit control, `Kit Bleed`,
   defaulting to zero so every existing session and every existing contract is
   bit-identical.
-  *Closes gap 3.* Verified by: at zero the output is bit-identical to the
-  current engine; above zero a kick alone produces measurable energy in the
-  snare's wire band that a kick alone cannot produce today; the path is strictly
-  feed-forward and stays bounded at every rate and block partitioning.
+  *Closes gap 3.* Landed, with the wire law changed from what the plan assumed.
+  A struck snare drives its own wires far clear of the head, so the first-order
+  gate `renderSnare()` uses spends its life in that law's saturating region;
+  sympathetic excitation instead lives at the lift-off, where a first-order form
+  has no dead zone at all and simply tracks the exciter in proportion. The bed
+  therefore uses the squared form, which does have one. Verified by a contract
+  that Bleed at zero is bit-identical to the engine before it, that a kick alone
+  reaches the snare's wire band and reaches it harder at every higher setting,
+  that a quarter-velocity kick's buzz-to-kick ratio is under seven tenths of a
+  full one's - which a proportional law cannot produce - that the result is
+  independent of the host block size, and that an idle kit stays at digital
+  zero. Its resonators also needed renormalising: `configureResonator()` scales
+  a mode for being struck once, and a head driven continuously by a whole kit
+  needs its resonant peak normalised instead, which is a factor of several
+  hundred at these decay times and was the difference between a bed and a howl.
 
 ## Claims boundary
 
