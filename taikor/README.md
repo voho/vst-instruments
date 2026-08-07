@@ -523,11 +523,21 @@ than merely higher.
 ### What is not modelled
 
 The room, the player's body, the stand, and the far head's own radiation into
-the space behind the drum. Two constants are calibrated rather than derived —
-the overall depth of radiation damping, and how efficiently the shell reaches
-the microphones — because both depend on how the drum is mounted, which this
-model does not describe. Everything about how those terms *vary* with size,
-material and stroke is computed.
+the space behind the drum. The enclosed air is a lumped spring rather than a
+column, which is exact only below the body's first axial resonance — 212 Hz on
+the factory drum, and between 139 and 451 Hz across Body Depth, so the
+assumption gives out inside the drum's own range.
+
+Six constants are calibrated rather than derived, and each of them sets the
+*depth* of a term whose shape is computed: the overall level of radiation
+damping and how efficiently the shell, the sticks and the airborne click reach
+the microphones — all four of which depend on how the drum is mounted and where
+the player is standing, neither of which this model describes; the weight of the
+head's high-frequency continuum against its resolved bank; and the shape factor
+of the attack pitch glide, which stands in for the difference between the modal
+states the engine has and the mean square slope the tension rise depends on.
+Everything about how those terms *vary* with size, material, position and stroke
+is computed.
 
 ## Interface
 
@@ -582,8 +592,12 @@ ctest --test-dir build-dsp --output-on-failure
 The JUCE-free suite covers the stroke vocabulary and MIDI mapping, the octave
 contract at every Octave Body setting, all eight strokes at five sample rates,
 sample-rate and block-size invariance, bit-exact determinism, the velocity and
-contact-time laws, every physical control's effect on the solved drum *and* on
-the rendered audio, the close pair's decorrelation and mono compatibility, tail
+contact-time laws, the instrument's dynamic range and the evenness of its
+velocity response, the head's bending stiffness and the modal ratios it opens
+out, the attack glide's dependence on the head rather than on a clock, the tack
+line's threshold, what one stroke takes out of a head another stroke left
+ringing, every physical control's effect on the solved drum *and* on the
+rendered audio, the close pair's decorrelation and mono compatibility, tail
 termination and exact idle silence, voice stealing, hostile input, and the
 presentation mathematics the editor draws with. It also smoke-tests the
 demonstration renderer.
@@ -670,6 +684,7 @@ Tests/PluginProcessorTests.cpp  JUCE processor and editor contract tests
 Tools/RenderDemos.cpp       Renders the committed demonstration WAVs
 ThirdParty/                 Vendored JUCE licence text, staged into every package
 Docs/audio/                 Twenty-three rendered demonstrations and their manifest
+Docs/best-in-class-plan.md  Competitive landscape, gap analysis and the work it drove
 Presets/                    Preset guidance and drum-building reference
 scripts/                    macOS build and packaging helpers
 ```

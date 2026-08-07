@@ -77,13 +77,14 @@ struct ArticulationMetadata
 // the physical drum, the second how it is struck, and the third the close pair
 // of microphones in front of it. Nothing here is a voicing preset: each field
 // feeds a term of the model, so the defaults describe one specific drum - a
-// 55 cm nagado-daiko with a thick cowhide head on a heavy zelkova shell,
+// 95 cm o-daiko with a thick cowhide head on a heavy zelkova shell,
 // struck with a medium-hard oak bachi - rather than the midpoint of every axis.
 struct EngineParameters
 {
     // --- The drum -------------------------------------------------------
     // Head diameter in metres. Sets the membrane radius directly, so it moves
-    // pitch as 1/a while leaving the modal ratios (fixed Bessel zeros) alone.
+    // pitch as 1/a. The modal ratios move too, but only through the head's own
+    // bending stiffness measured against its tension - see stiffnessStretch.
     float headDiameter { 0.95f };
     // Body depth as a fraction of the diameter, 0 -> 0.40, 1 -> 1.30. The
     // enclosed volume is what couples the two heads, so a shallow drum splits
@@ -94,8 +95,11 @@ struct EngineParameters
     // this and the head material together set the pitch.
     float tension { 0.55f };
     // 0 = thin synthetic film, 1 = thick heavy cowhide. Sets the head's areal
-    // density and its internal loss factor at the same time, because both come
-    // from the same piece of material.
+    // density, its internal loss factor and its bending stiffness at once,
+    // because all three come from the same piece of material - and the last of
+    // them goes as the cube of the thickness, so the two ends of this control
+    // are two and a half orders of magnitude apart in how far they open the
+    // modal ratios out.
     float headMaterial { 0.75f };
     // 0 = light laminated ply, 1 = dense carved zelkova. Sets the shell's ring
     // frequencies, their Q, and how much the rim absorbs from the head.
@@ -130,8 +134,9 @@ struct EngineParameters
     // timbre change that comes with it is not separately adjustable because it
     // is not a separate effect: contact time follows impact speed as v^(-1/5).
     float velocityDepth { 0.75f };
-    // Depth of the attack pitch glide. A hard stroke stretches the head, which
-    // raises its tension and drops back as the stroke decays.
+    // Depth of the attack pitch glide, which is the head stretching itself: a
+    // membrane clamped at its rim gets longer when it moves, and a longer head
+    // is a tighter one. At 0 the head is treated as linear.
     float tensionModulation { 0.4f };
     // Level of the broadband contact noise the stick makes on the hide, 0..1.
     float strikeNoise { 0.35f };

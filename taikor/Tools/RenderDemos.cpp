@@ -198,8 +198,9 @@ private:
     std::vector<float> right_;
 };
 
-// The drum the parameter defaults describe: a 55 cm nagado-daiko with a thick
-// cowhide head on a heavy zelkova shell.
+// The drum the parameter defaults describe: a 95 cm o-daiko with a thick
+// cowhide head on a heavy zelkova shell. The instrument opens on the big drum
+// because the big drum is the point of a taiko; the nagado sits an octave up.
 //
 // The output gain is well below the plug-in's own default because a rim shot on
 // a small drum is loud enough to reach the engine's safety limiter, and a demo
