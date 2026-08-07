@@ -176,7 +176,19 @@ component — ≈5 dB of band deviation in the floor-dominated 4–8 kHz
 region — is the metric rewarding agreement with the recording chain,
 which an undocumented lossy chain cannot convert into a fidelity claim
 about the instrument in either direction. The genuine residual is the
-small (≈1–2 dB, mixed-direction) low/mid-band difference. Pitch is
+small (≈1–2 dB, mixed-direction) low/mid-band difference.
+
+One further axis was benchmarked to close the set: **technical rendering
+cleanliness**, measured on an identical bright-open-filter stress render
+(16′ C5 saw, cutoff maximum, resonance 0.6, chorus off, 44.1 kHz host)
+through both engines. Result: parity — worst inharmonic line −67.3 dBc
+on both, total inharmonic energy −53.3 vs −52.5 dBc, the visible
+near-carrier sidebands being each engine's own per-voice drift
+mechanism, not aliasing. Recorded as measured rather than escalated:
+hunting progressively adversarial corners until one engine loses would
+be motivated measurement. The standing difference on this axis is
+verification, not the number — YouKnow106's worst-case fold-back is
+deterministically fenced in its suite; no competitor fences theirs. Pitch is
 essentially exact on both. The axes this material cannot measure — scan
 stepping, BBD clock behaviour, alias floors, and every deterministically
 fenced anchor — remain where the two projects genuinely differ, per the
