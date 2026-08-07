@@ -4138,8 +4138,21 @@ void DrumEngine::process (float* left, float* right, int numSamples) noexcept
     // With no voice left, the bus sees exact zero: its detector would decay to
     // rest and its gain to unity. Doing that in one step keeps silence free and
     // stops a stale gain-reduction reading from sticking on the editor's meter.
+    //
+    // The sympathetic beds are collapsed for the same reason and at the same
+    // moment. Their excitation is the dry mix, so with no voice they are driven
+    // by exact zero, but unlike the bus they are resonators: whatever they were
+    // ringing with is held rather than decayed, because the silent path stops
+    // clocking them. A choke or a CC 120 that ends the last voice mid-ring
+    // would otherwise park that energy for an arbitrary silence and hand it
+    // back on the next strike, which is precisely the stale burst
+    // clearSympatheticBeds() already exists to prevent when Kit Bleed is
+    // switched off.
     if (! anyVoiceActive_)
+    {
         resetBusStage();
+        clearSympatheticBeds();
+    }
 
     outputLevelLeft_.store (meterPeakLeft_, std::memory_order_relaxed);
     outputLevelRight_.store (meterPeakRight_, std::memory_order_relaxed);

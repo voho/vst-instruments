@@ -3705,6 +3705,86 @@ void testSympatheticKitBleed()
                     + std::to_string (revived.peak) + ")");
     }
 
+    // The same must hold when the voices end rather than the control: a panic
+    // chokes every voice in four milliseconds, which is far shorter than the
+    // beds ring, so the engine reaches its silent path with them still holding
+    // energy. Frozen there, that energy would be handed back at the next
+    // strike however long the kit had been quiet.
+    {
+        drumalor::DrumEngine engine;
+        drumalor::KitParameters kit;
+        kit.bleed = 1.0f;
+        engine.setKitParameters (kit);
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.trigger (drumalor::Instrument::Snare, 1.0f);
+        renderMetrics (engine, static_cast<int> (0.10 * sampleRate));
+        engine.allSoundsOff();
+        // Past the four-millisecond choke, so every voice has retired and the
+        // engine is running its silent path.
+        renderMetrics (engine, static_cast<int> (0.50 * sampleRate));
+        const auto quiet = renderMetrics (engine, static_cast<int> (2.00 * sampleRate));
+        expect (quiet.peak == 0.0,
+                "a panic left the sympathetic beds ringing into the silence ("
+                    + std::to_string (quiet.peak) + ")");
+    }
+
+    // Whether the beds are at rest, rather than merely inaudible while nothing
+    // clocks them, is what the next strike reveals. Parked bed energy is
+    // released the moment rendering resumes, and each bed is panned to its own
+    // instrument's position, so it arrives as a stereo difference. A centred
+    // kick's first samples are symmetric to within a few times 1e-8 - the
+    // engine's own float noise - long before its stereo field develops, which
+    // makes that onset the one window where a bed's contribution is not buried
+    // under the drum's.
+    //
+    // Measured over the first five samples: 5.4e-08 with the beds cleared,
+    // 2.8e-04 with them parked, against 5.2e-08 for the same kick struck on a
+    // kit that has never played. The bound sits between those, far enough above
+    // the float noise to be stable and far enough below the artefact to catch
+    // it at any block size.
+    {
+        const auto onsetAsymmetry = [&] (drumalor::DrumEngine& engine)
+        {
+            std::vector<float> left (static_cast<std::size_t> (defaultBlockSize));
+            std::vector<float> right (static_cast<std::size_t> (defaultBlockSize));
+            engine.process (left.data(), right.data(), defaultBlockSize);
+            double worst = 0.0;
+            for (std::size_t sample = 0; sample < 5u; ++sample)
+                worst = std::max (worst,
+                                  std::abs (static_cast<double> (left[sample])
+                                            - static_cast<double> (right[sample])));
+            return worst;
+        };
+
+        drumalor::DrumEngine engine;
+        drumalor::KitParameters kit;
+        kit.bleed = 1.0f;
+        engine.setKitParameters (kit);
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.trigger (drumalor::Instrument::Snare, 1.0f);
+        renderMetrics (engine, static_cast<int> (0.10 * sampleRate));
+        engine.allSoundsOff();
+        renderMetrics (engine, static_cast<int> (2.00 * sampleRate));
+        engine.trigger (drumalor::Instrument::Kick, 0.30f);
+        const double panicked = onsetAsymmetry (engine);
+
+        drumalor::DrumEngine fresh;
+        fresh.setKitParameters (kit);
+        fresh.prepare (sampleRate, defaultBlockSize);
+        fresh.trigger (drumalor::Instrument::Kick, 0.30f);
+        const double never = onsetAsymmetry (fresh);
+
+        expect (never < 1.0e-6,
+                "a kick struck from rest does not start stereo-symmetric, so "
+                "this bound cannot detect a parked bed ("
+                    + std::to_string (never) + ")");
+        expect (panicked < 1.0e-6,
+                "the silent path parked sympathetic bed energy: a kick struck "
+                "two seconds after a panic opens with a stereo difference the "
+                "same kick from rest does not have ("
+                    + std::to_string (panicked) + ")");
+    }
+
     // Nothing to excite it means nothing out of it, however long the kit idles.
     drumalor::DrumEngine idle;
     drumalor::KitParameters loud;
