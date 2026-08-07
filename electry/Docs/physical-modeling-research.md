@@ -34,6 +34,7 @@ level-matched blind listening.
 | Fretting hand | Ordinary left-hand kinematics; the position/reach/fretting-mode controls the sampled field exposes (Orange Tree Samples' floating fret position, Impact Soundworks' Set Hand and Fretting Mode) | A floating hand position with a four-fret reach above the index finger drives string allocation through a fret-distance cost; open strings are free at the nut and progressively expensive as the hand travels; the hand shifts only when the note is out of reach and only at the start of a chord, and relaxes to the nut when the phrase ends | A single-position hand with a fixed reach and a deterministic cost; not a fingering solver, a chord recogniser, or a model of alternative fingerings for a whole phrase |
 | Strum travel | Ordinary plectrum kinematics | Note-ons inside a 35 ms window are treated as one stroke; the first string fixes the edge the pick starts from and every further string's excitation is delayed by the travel time per string crossed | Constant-velocity pick travel across the string plane; not a model of pick angle, chord voicing, or the player's hand position |
 | Pitch-wheel bar | The elastic string-tension relation `dF/F = dT/2T` with `dT = E A dl/l` (Fletcher and Rossing) applied to a whole-bridge stretch, as a vibrato bar applies it | The wheel stretches every string - fingered and sympathetically ringing alike - over a nominal +/-2 semitone range; each string's share follows its elastic core stiffness against its tension (which reduces to core-fraction squared over open frequency squared for one scale length), compressed toward the two-to-one spread measured on real tremolo bridges and normalised so the most compliant string spans the full range; the strings travel over the Bend Time glide rather than snapping | The documented per-string compliance direction with a voiced compression exponent; not a model of a specific bridge's geometry, spring balance, or friction |
+| Fretting-hand vibrato | The same elastic tension relation the bar uses, applied by one finger rather than by the whole bridge; ordinary rock vibrato practice for the rate and depth | Channel pressure drives a shared 4.8-6.4 Hz raised-cosine offset of up to 40 cents on the fingered strings only, easing in over 90 ms and never going below the fretted pitch | The documented asymmetry and locality of a fingered vibrato against a bar's; not a model of finger force, string displacement geometry, or a per-string bend |
 | Amplifier feedback | Acoustic guitar-to-amplifier feedback practice: a loudspeaker's pressure field re-excites the strings, and each string answers at its own resonances | The host pushes its previous processed block back as a bounded mono acoustic return with one block of latency (the air path); a soft-clipped, gain-scaled copy drives the string loops and the sympathetic bus, scaled by the CC1 resonance, the Resonance Depth parameter and the rig's acoustic loudness derived from the amplifier controls, so a distorted tone at full wheel regenerates while a dry DI never can; every element of the loop is bounded, so the howl saturates instead of growing | A one-block-latent, level-gated, saturating regeneration path; not a room acoustics, speaker directivity, or standing-wave model |
 | Controllable artifacts | The same touch/collision literature plus bridge-hardware behavior | An exactly bypassable deterministic path combines a bridge-hardware modal bank driven through the selected pickup mix, incidental fret contact on hard-picked notes, and per-string saddle rattle, all driven by played energy. It is mechanical hardware noise, distinct from the sympathetic string coupling above | Plausible procedural imperfection with bounded feed-forward resonators; not measured hardware-noise statistics |
 | Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
@@ -696,6 +697,41 @@ parameter, the same travel-time control the keyswitch finger bends used
 before the wheel replaced them. The compression exponent is a voicing
 decision; the compliance ordering and the full-range normalisation are the
 documented mechanism.
+
+## The fretting hand's vibrato
+
+The pitch wheel is a bar: it stretches every string, the sympathetically
+ringing ones included, and each answers with its own elastic compliance.
+Channel pressure is the other gesture, and it is a different one in three
+measurable ways rather than in degree.
+
+It is **local**. A finger moves the string it is on, so the vibrato reaches
+only the fingered voices; the bridge-coupled strings are configured from the
+wheel alone and never see it. The regression suite pins both halves of that -
+a coupled open low E whose delay target does not move under full pressure, and
+the same fixture under a full wheel where it moves by more than a sample, so
+the first check is proving something.
+
+It is **one-sided**. A fretting finger raises a string's tension by pushing it
+across the fingerboard; it cannot lower the tension below what the fret sets.
+The oscillation is therefore a raised cosine, `d (1 - cos)/2`, whose minimum is
+the fretted pitch rather than its mean, and the note is only ever pushed sharp.
+A symmetric vibrato would be a bar's, or a violinist's.
+
+It is **equal in semitones**, deliberately, where the bar's is not. A bar
+stretches every string by the same length and each string answers with its own
+`dF/F = dT/2T`; a finger is aiming at a pitch and adjusts its displacement
+until it gets there. Compliance-weighting a fingered vibrato would make the
+low strings wobble more than the high ones, which is not what a hand does.
+
+The depth is 40 cents at full pressure and the rate runs 4.8 to 6.4 Hz, faster
+as the player leans in. Both are ordinary rock-vibrato values rather than
+derived ones, and are labelled as voicing. The depth eases in with a 90 ms time
+constant, because a player lands a note before starting to move on it; the
+suite measures that the first 60 ms carries less than 40% of the settled
+movement. At zero pressure the offset is exactly zero and the render is
+bit-for-bit identical to one from an engine whose pressure control was never
+touched.
 
 ## Amplifier feedback through the acoustic return
 
@@ -1542,7 +1578,11 @@ plain one and exactly absent at a silent Finger Noise control; a
 fretting hand that keeps a lead phrase in one position instead of falling back
 to open strings, leaves the open-position shapes untouched, and relaxes to the
 nut when the phrase ends;
-pitch-wheel travel and sustain-pedal hold; hostile parameter and performance
+pitch-wheel travel and sustain-pedal hold; a
+fretting-hand vibrato at the modelled depth and rate that is sharp of the fret
+and never flat of it, eases in rather than switching on, leaves the
+bridge-coupled strings alone where the bar moves them, and is a bit-exact no-op
+at zero pressure; hostile parameter and performance
 input safety; and a portable CPU ceiling with the eight-string render ratio
 printed on every run in worst-case Stereo, maximum Body Resonance, and maximum
 Artifacts mode. Mono is checked sample-for-sample dual mono; Stereo tests pin

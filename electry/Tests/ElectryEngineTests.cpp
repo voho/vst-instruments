@@ -2502,6 +2502,183 @@ void testTouchHarmonics()
                + " dB, picked " + std::to_string(sustainDecay) + " dB)");
 }
 
+// Channel pressure is the fretting hand leaning into the string it is holding.
+// A finger is not the bar: it moves only what it is fingering, it can push a
+// string sharp and cannot pull it below the fret, and it takes a moment to
+// start.
+void testFrettingHandVibrato()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // Track the sounding delay target, which is what the vibrato actually
+    // drives; the audio follows it, and it is sampled far more cheaply and
+    // precisely than a frequency estimate on a moving tone.
+    struct Trace
+    {
+        std::vector<float> target;
+        int stringIndex { -1 };
+    };
+    const auto traceOf = [&] (float pressure, double seconds)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.85f);
+        engine.setVibrato(pressure);
+
+        Trace trace;
+        trace.stringIndex = TestAccess::stringForNote(engine, 45);
+        constexpr int chunk = 32;
+        const int total = static_cast<int>(seconds * sampleRate);
+        StereoBuffer scratch(chunk);
+        for (int at = 0; at < total; at += chunk)
+        {
+            engine.process(scratch.left.data(), scratch.right.data(), chunk);
+            trace.target.push_back(
+                trace.stringIndex >= 0
+                    ? TestAccess::snapshot(engine,
+                                           trace.stringIndex).verticalDelayTarget
+                    : 0.0f);
+        }
+        return trace;
+    };
+
+    const auto still = traceOf(0.0f, 1.6);
+    const auto moving = traceOf(1.0f, 1.6);
+    expect(still.stringIndex == 3 && moving.stringIndex == 3,
+           "the vibrato fixture did not land on the open A string");
+
+    // Zero pressure is an exact no-op: the same score with the control never
+    // touched renders bit-for-bit the same audio.
+    {
+        ElectryEngine untouched;
+        untouched.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 0.0f;
+        untouched.setParameters(parameters);
+        untouched.reset();
+        untouched.noteOn(45, 0.85f);
+        StereoBuffer withoutControl(static_cast<int>(0.6 * sampleRate));
+        renderInto(untouched, withoutControl);
+
+        ElectryEngine silenced;
+        silenced.prepare(sampleRate, 512);
+        silenced.setParameters(parameters);
+        silenced.reset();
+        silenced.noteOn(45, 0.85f);
+        silenced.setVibrato(0.0f);
+        StereoBuffer withSilentControl(static_cast<int>(0.6 * sampleRate));
+        renderInto(silenced, withSilentControl);
+
+        bool identical = true;
+        for (std::size_t i = 0; i < withoutControl.left.size(); ++i)
+            identical = identical
+                && withoutControl.left[i] == withSilentControl.left[i];
+        expect(identical, "a silent pressure control is not a bit-exact no-op");
+    }
+
+    // The string's own tension modulation is relaxing the delay target the
+    // whole time, so the vibrato is measured against the same note without it
+    // rather than against a constant. The ratio removes the trend exactly:
+    // both renders are the same note at the same velocity.
+    std::vector<double> ratio;
+    ratio.reserve(moving.target.size());
+    for (std::size_t i = 0; i < std::min(moving.target.size(),
+                                         still.target.size()); ++i)
+        ratio.push_back(still.target[i] > 0.0f
+            ? static_cast<double>(moving.target[i]) / still.target[i] : 1.0);
+
+    // The note is pushed sharp and never flat: a shorter delay is a higher
+    // pitch, so the ratio never rises above one.
+    const std::size_t settled = ratio.size() / 2;
+    double highest = 0.0;
+    double lowest = 1.0e9;
+    double mean = 0.0;
+    for (std::size_t i = settled; i < ratio.size(); ++i)
+    {
+        highest = std::max(highest, ratio[i]);
+        lowest = std::min(lowest, ratio[i]);
+        mean += ratio[i];
+    }
+    mean /= static_cast<double>(ratio.size() - settled);
+    expect(highest <= 1.0002,
+           "the fretting-hand vibrato pulled the string flat of the fret "
+           "(highest ratio " + std::to_string(highest) + ")");
+    expect(mean < 0.9995,
+           "the vibrato is centred on the fretted pitch rather than sharp of "
+           "it (mean ratio " + std::to_string(mean) + ")");
+
+    // Its depth is the modelled one: a shorter delay by 2^(-cents/1200).
+    const double depthCents = 1200.0 * std::log2(1.0 / lowest);
+    expect(depthCents > 25.0 && depthCents < 55.0,
+           "the vibrato depth is not the modelled 40 cents ("
+               + std::to_string(depthCents) + " cents)");
+
+    // It oscillates at a player's rate rather than drifting: count how often
+    // the trace crosses its own midpoint over the settled window.
+    const double midpoint = 0.5 * (highest + lowest);
+    int crossings = 0;
+    for (std::size_t i = settled + 1; i < ratio.size(); ++i)
+        if ((ratio[i - 1] < midpoint) != (ratio[i] < midpoint))
+            ++crossings;
+    const double windowSeconds = static_cast<double>(ratio.size() - settled)
+                               * 32.0 / sampleRate;
+    const double rate = 0.5 * crossings / windowSeconds;
+    expect(rate > 4.0 && rate < 8.0,
+           "the vibrato rate is not a player's ("
+               + std::to_string(rate) + " Hz)");
+
+    // The onset is real: the first 60 ms carries far less movement than the
+    // settled part, because a player lands the note before starting to move.
+    double earlySpread = 0.0;
+    const std::size_t earlyEnd = static_cast<std::size_t>(
+        0.06 * sampleRate / 32.0);
+    for (std::size_t i = 0; i < std::min(earlyEnd, ratio.size()); ++i)
+        earlySpread = std::max(earlySpread, std::abs(ratio[i] - 1.0));
+    expect(earlySpread < 0.4 * (1.0 - lowest),
+           "the vibrato started instantly instead of easing in (early "
+               + std::to_string(earlySpread) + ", settled "
+               + std::to_string(1.0 - lowest) + ")");
+
+    // A finger is not the bar: the sympathetically ringing strings must not
+    // move, where the wheel moves them. Compared on the coupled ring left by a
+    // picked note with the coupling wide open.
+    const auto coupledRing = [&] (bool useWheel, bool useVibrato)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.artifactAmount = 0.0f;
+        parameters.sympatheticAmount = 1.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(45, 0.9f);
+        StereoBuffer lead(static_cast<int>(0.25 * sampleRate));
+        renderInto(engine, lead);
+        if (useWheel)
+            engine.setPitchBend(1.0f);
+        if (useVibrato)
+            engine.setVibrato(1.0f);
+        // Read the coupled open low E's own loop: only the bar retunes it.
+        StereoBuffer settle(static_cast<int>(0.6 * sampleRate));
+        renderInto(engine, settle);
+        return TestAccess::snapshot(engine, 0).verticalDelayTarget;
+    };
+    const float restingCoupled = coupledRing(false, false);
+    const float vibratoCoupled = coupledRing(false, true);
+    const float barCoupled = coupledRing(true, false);
+    expect(std::abs(vibratoCoupled - restingCoupled) < 1.0e-3f,
+           "the fretting-hand vibrato bent a string nobody is fingering");
+    expect(std::abs(barCoupled - restingCoupled) > 1.0f,
+           "the bar fixture did not bend the coupled string, so the "
+           "comparison above proves nothing");
+}
+
 // A slide is a finger that stays down and travels: the sounding length moves
 // continuously, the travel time is a distance divided by a hand speed rather
 // than a fixed number, and the winding drags under the finger the whole way.
@@ -5025,6 +5202,7 @@ int main()
     testTouchHarmonics();
     testPinchHarmonic();
     testSlideArticulation();
+    testFrettingHandVibrato();
     testSustainPedal();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();

@@ -165,6 +165,13 @@ public:
     // MIDI CC2 adds continuous bridge-hand damping on top of the Palm Mute
     // parameter, so a phrase can be muted and opened without automation.
     void setPalmMutePressure(float normalised) noexcept;
+    // Channel pressure is the fretting hand leaning into a string it is
+    // already holding: a vibrato. It is a finger rather than the bar the
+    // pitch wheel models, so it moves only the strings that are being
+    // fingered, leaves the sympathetically ringing ones alone, and is
+    // upward-biased, because a finger can raise a string's tension and cannot
+    // lower it below the fret. Zero pressure is an exact no-op.
+    void setVibrato(float normalised) noexcept;
     void setSustainPedal(bool down) noexcept;
     // The acoustic return path: what the loudspeaker is playing back at the
     // guitar, typically the previous block of the amplified output. The
@@ -932,6 +939,23 @@ private:
     float appliedBendGlideSeconds_ { -1.0f };
     // The wheel position the sympathetic strings were last retuned to.
     float sympatheticAppliedBend_ { 0.0f };
+    // Fretting-hand vibrato from channel pressure. One hand, so one shared
+    // phase across every fingered string; upward-biased, so its minimum is the
+    // fretted pitch rather than its mean; and smoothed with an onset time
+    // constant, because a player lands the note before starting the vibrato.
+    // Its depth is deliberately expressed in equal semitones rather than
+    // through the per-string elastic compliance the wheel's bar uses: a bar
+    // stretches every string by the same length and each answers differently,
+    // while a finger is controlling a pitch and adjusts its own displacement
+    // to get it.
+    static constexpr float vibratoMaximumSemitones = 0.40f;
+    float vibratoTarget_ { 0.0f };
+    float vibratoAmount_ { 0.0f };
+    float vibratoOnsetCoefficient_ { 0.02f };
+    float vibratoPhase_ { 0.0f };
+    float vibratoPhaseIncrement_ { 0.0f };
+    float vibratoSemitones_ { 0.0f };
+
     // CC1 performance resonance and the acoustic feedback path it opens.
     float resonanceTarget_ { 0.0f };
     float resonanceAmount_ { 0.0f };

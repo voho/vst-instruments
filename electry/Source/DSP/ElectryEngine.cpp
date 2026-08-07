@@ -790,6 +790,14 @@ void ElectryEngine::prepare(double sampleRate, int maxBlockSize)
     // enough to group a chord and short enough not to merge separate beats.
     chordWindowSamples_ = std::max(1, static_cast<int>(0.035 * sampleRate_));
     handReturnSamples_ = std::max(1, static_cast<int>(1.5 * sampleRate_));
+    // The vibrato's phase advances once per control tick, and its depth eases
+    // in over about 90 ms - the time a player takes to land a note before
+    // starting to move on it.
+    vibratoPhaseIncrement_ = static_cast<float>(controlPeriod)
+                           / static_cast<float>(sampleRate_);
+    vibratoOnsetCoefficient_ = 1.0f - std::exp(
+        -static_cast<float>(controlPeriod)
+        / (0.090f * static_cast<float>(sampleRate_)));
 
     // The compliance table lives behind a guarded function-local static (its
     // initializer is not constexpr-able); touch it here so the one-time
@@ -824,6 +832,9 @@ void ElectryEngine::reset()
     sympatheticAppliedBend_ = pitchBendSemitones_;
     appliedBendGlideSeconds_ = -1.0f;
     resonanceAmount_ = resonanceTarget_;
+    vibratoAmount_ = 0.0f;
+    vibratoPhase_ = 0.0f;
+    vibratoSemitones_ = 0.0f;
     feedbackRing_.fill(0.0f);
     feedbackWriteIndex_ = 0;
     feedbackReadIndex_ = 0;
@@ -964,6 +975,12 @@ void ElectryEngine::pushAcousticReturn(const float* left, const float* right,
             feedbackReadIndex_ = (feedbackReadIndex_ + 1)
                                & (feedbackRingSize - 1);
     }
+}
+
+void ElectryEngine::setVibrato(float normalised) noexcept
+{
+    vibratoTarget_ = clampf(std::isfinite(normalised) ? normalised : 0.0f,
+                            0.0f, 1.0f);
 }
 
 void ElectryEngine::setPalmMutePressure(float normalised) noexcept
@@ -1643,9 +1660,15 @@ void ElectryEngine::configureVoicePitch(Voice& voice, bool forceDelayJump) noexc
     // range - a bar stretches every string, and each string's pitch answers
     // with its own compliance - so a bent chord smears exactly the way a real
     // tremolo bridge smears one.
+    // The bar's share is the string's own elastic compliance; the finger's is
+    // not, because a finger is controlling a pitch rather than a stretch and
+    // adjusts its displacement to reach it. Only fingered strings get it - the
+    // sympathetically ringing ones are configured elsewhere and never see it,
+    // which is exactly what separates a finger from the bar.
     const float semitones = legatoOffset
                           + pitchBendSemitones_
-                            * bendSensitivity(voice.stringIndex);
+                            * bendSensitivity(voice.stringIndex)
+                          + vibratoSemitones_;
     const float f0 = clampf(voice.baseFrequency * std::exp2(semitones / 12.0f),
                             20.0f, 0.24f * static_cast<float>(sampleRate_));
 
@@ -3844,6 +3867,33 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                 / (0.33f * std::max(s.bendTimeSeconds, 0.01f)
                    * static_cast<float>(sampleRate_)));
         }
+        // The fretting hand's vibrato. The depth eases in rather than
+        // switching on, because a player lands the note and then starts to
+        // move; the oscillation is a raised cosine, so its minimum is the
+        // fretted pitch and the note is only ever pushed sharp, which is what
+        // a finger can do to a string and a bar cannot be made to do. One
+        // phase for the whole hand. At zero pressure the offset is exactly
+        // zero and every voice's pitch solve is bit-for-bit what it was.
+        vibratoAmount_ += vibratoOnsetCoefficient_
+                        * (vibratoTarget_ - vibratoAmount_);
+        if (vibratoTarget_ <= 0.0f && vibratoAmount_ < 1.0e-4f)
+        {
+            vibratoAmount_ = 0.0f;
+            vibratoPhase_ = 0.0f;
+            vibratoSemitones_ = 0.0f;
+        }
+        if (vibratoAmount_ > 0.0f)
+        {
+            // A rock finger vibrato runs around 5 Hz and speeds up as the
+            // player leans into it.
+            const float rate = lerp(4.8f, 6.4f, vibratoAmount_);
+            vibratoPhase_ += rate * vibratoPhaseIncrement_;
+            if (vibratoPhase_ >= 1.0f)
+                vibratoPhase_ -= 1.0f;
+            vibratoSemitones_ = vibratoMaximumSemitones * vibratoAmount_ * 0.5f
+                * (1.0f - std::cos(twoPi * vibratoPhase_));
+        }
+
         pitchBendSemitones_ += bendGlideCoefficient_
                              * (pitchBendTarget_ - pitchBendSemitones_);
         if (std::abs(pitchBendSemitones_ - pitchBendTarget_) < 5.0e-4f)

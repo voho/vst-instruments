@@ -209,7 +209,7 @@ verification is by a test in `Tests/` that fails without the change.
   and far quieter on plain ones; and the slide is silent when Pick Noise is at
   zero.
 
-- [ ] **5. Fretting-hand vibrato on channel aftertouch.** Aftertouch is the
+- [x] **5. Fretting-hand vibrato on channel aftertouch.** Aftertouch is the
   finger's pressure on the string it is already holding. It drives a vibrato
   that is (a) applied only to fingered strings, never to the sympathetically
   ringing ones - which is exactly what distinguishes a finger from the bar the
