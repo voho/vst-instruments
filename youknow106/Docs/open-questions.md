@@ -2876,11 +2876,26 @@ Genuine model observations that survived adjudication, recorded as leads
   and ±6 Hz vibrato sidebands match; A63 reproduces the square-plus-sub
   voicing "to within a few dB everywhere the MP3 can measure".
 
+The same pipeline was then run symmetrically against **KR-106's engine**
+rendering the identical patches at the identical keys — the field's one
+benchmarkable competitor. The two models measure comparably close to the
+real unit on this material; YouKnow106 is closer on harmonic-stack
+accuracy in 5 of 9 valid cases and clearly closer on the two cleanest
+(A15 2.23 vs 5.39, A38 2.95 vs 6.29 dB RMS), KR-106 closer on broadband
+band envelopes in 9 of 10. **One hypothesis was tested and refuted, and
+is recorded so it is not retried:** the conjecture that KR's band
+advantage came from its missing chorus-hiss model flattering the
+MP3-floored reference — a hiss-muted re-render did not close the gap.
+The band-envelope gap on this material therefore stands unexplained and
+joins the upper-mid darkness lead above as material for the calibrated
+captures.
+
 The published comparison page carries every clip, spectrogram pair, band
-overlay, metric and caveat. The CNCD sample-CD corpus (327 uncompressed
-real-106 WAVs, including a 70-file stepped-cutoff bass series) was also
-retrieved and remains unconsumed — the stepped series is close to a
-filter-characterisation dataset and is the natural next A/B target.
+overlay, metric, the head-to-head table and every caveat. The CNCD
+sample-CD corpus (327 uncompressed real-106 WAVs, including a 70-file
+stepped-cutoff bass series) was also retrieved and remains unconsumed —
+the stepped series is close to a filter-characterisation dataset and is
+the natural next A/B target.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 

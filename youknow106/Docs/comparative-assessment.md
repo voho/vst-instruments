@@ -154,6 +154,30 @@ What this scoreboard is not: a full-instrument null test. That requires
 the calibrated same-chain captures the queue specifies, and no product on
 the market has published one either.
 
+### Measured head-to-head against KR-106 (2026-08-07)
+
+The one competitor that can be benchmarked symmetrically was: KR-106's
+engine rendered the identical ten factory patches at the identical keys,
+and its output went through the byte-identical adjudicated pipeline
+against the same real-hardware demo segments. Read straight: **the two
+models measure comparably close to the real unit on this material —
+neither separates beyond the material's own noise.** YouKnow106 is closer
+on harmonic-stack accuracy in 5 of 9 valid cases and clearly closer on
+the two comparisons the adjudication rated cleanest (A15: 2.23 vs
+5.39 dB RMS; A38: 2.95 vs 6.29); KR-106 reads closer on broadband band
+envelopes in 9 of 10 (means 9.65 vs 10.64 dB). A control experiment
+tested whether YouKnow106's modelled chorus hiss — which KR-106 omits —
+explained the band gap against the MP3-floored reference: re-rendering
+with the hiss muted did *not* close it, so that hypothesis is **refuted
+and recorded**, and the band result stands as measured. Pitch is
+essentially exact on both. The axes this material cannot measure — scan
+stepping, BBD clock behaviour, alias floors, and every deterministically
+fenced anchor — remain where the two projects genuinely differ, per the
+comparison above; and on the cutoff law KR-106 ships the measured table
+as a lookup, so that axis matches by construction on their side and by
+derivation on this one. Full tables, clips and caveats live on the
+published comparison page.
+
 ## Market-presence note
 
 Public attention in the open field is inverted relative to fidelity: the
