@@ -432,9 +432,28 @@ The current representation leaves a clean upgrade route:
 confidence-aware residual subtraction,
 continuous peak tracking with robust modal decay fits, a time-varying rather
 than fixed stiff-string coefficient, a more rigorous
-F0-adaptive/minimum-phase envelope, denser or multirate Air filterbanks,
+F0-adaptive/minimum-phase envelope, multirate Air filterbanks,
 mipmapped dynamic wavetables, perceptual multi-resolution losses, an optional
 small legally-clean pitch model, SIMD matrix inference, and a user-trainable
 local prior library. Any upgrade must retain the
 offline/real-time boundary, bounded state decoding, deterministic fallback, and
 model-version migration.
+
+Two items measured in
+[`resynthesis-quality-benchmark.md`](resynthesis-quality-benchmark.md) point at
+the same missing branch. On a fixture whose onset is a short broadband burst,
+the render's T10-T90 attack is 5 ms *shorter* than the source's, and the finest
+spectral resolution scores worse than the coarser ones. Both come from the same
+cause: the burst has nowhere to go except the harmonic branch, whose partials
+are phase-aligned at note-on, so it is reproduced as a sharper click than it
+was. Simionato and Fasciani give transients their own module for exactly this
+reason — an inverse-DCT-shaped impulsive component alongside the sines and the
+noise
+([Frontiers in Signal Processing, 2024](https://www.frontiersin.org/journals/signal-processing/articles/10.3389/frsip.2024.1494864/full)).
+Neuramar has no such branch. That is the clearest structural gap in the current
+factorisation and the natural next one to close.
+
+The other stated limit is velocity. `Touch` applies a fixed excitation-strength
+prior rather than a fitted dynamic response, because one recording contains no
+cross-velocity evidence at all. No amount of analysis recovers it; only a
+multi-velocity import would, and that would change the instrument's premise.

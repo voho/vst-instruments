@@ -320,11 +320,47 @@ Each step is a single commit, green before it lands.
   7.* *Verified by:* the rate is printed and guarded; any detector change is
   justified by a case that fails without it.
 
-- [ ] **7. Reconcile the documentation with the measurements.**
+- [x] **7. Reconcile the documentation with the measurements.** *Landed.*
   `README.md`, `neural-synthesis-research.md`, and
   `resynthesis-quality-benchmark.md` updated so every behavioural claim matches
   a measured number or is explicitly marked as a target. Gap 8 (velocity) is
-  written down as a stated limit rather than left implied.
+  written down as a stated limit rather than left implied, and the missing
+  transient branch is named in the research document as the clearest remaining
+  structural gap, with the two measurements that expose it.
+
+## What this closed, and what it did not
+
+Measured deltas across the seven steps, all from
+[`resynthesis-quality-benchmark.md`](resynthesis-quality-benchmark.md):
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| Root-note reconstruction | not measured at all | six metrics on two fixtures, guarded |
+| Residual ERB-band power MAE, noisy fixture | 3.54 dB | **2.35 dB** |
+| Log-magnitude MAE, source/filter | 10.75 dB | **10.29 dB** |
+| Cumulative energy at 1 ms, source/filter | -12.46 dB | **-5.84 dB** |
+| Cumulative-energy MAE, noisy fixture | 0.87 dB | **0.46 dB** |
+| Excitation parity error | 1.043 dB | **0.923 dB** |
+| Held-out Body-Locked shape MAE | 2.790 dB | **2.713 dB** |
+| Modal recall on ten known modes | 0.60 (capacity bound) | **0.90** |
+| Automatic root, twelve analytic classes | not measured | 12/12, no octave errors |
+| Voice ceiling | 8 | **16** |
+| `learn()` on a 1.6 s / 44.1 kHz source | 0.609 s | 0.768 s |
+
+Three things got worse and are not hidden. The noise+transient fixture's
+spectral convergence rose from 0.0571 to 0.0754, entirely at the `(256, 64)`
+resolution that measures the transient itself; its T10-T90 attack error moved
+from 0 to -5 ms; and the noise-free source/filter fixture's residual ERB MAE
+rose from 5.00 to a matching 5.00 by way of 4.69, because a finer filterbank
+follows invented Air more closely than a coarse one does. All three have the
+same root cause and the same answer, which this work did not attempt: there is
+no transient branch, so an impulsive onset is reproduced by phase-aligned
+harmonics. That is written up in
+[`neural-synthesis-research.md`](neural-synthesis-research.md) as the next
+structural step.
+
+`learn()` costs 26% more. It is offline, bounded, and still far inside the
+benchmark's proposed ten-second import gate.
 
 ## Deliberately not attempted
 

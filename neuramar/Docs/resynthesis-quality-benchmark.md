@@ -454,6 +454,15 @@ row moved in 1.2: the analysis and fit path is offline and was deliberately left
 alone, because only `NeuramarEngine::process()` and `noteOn()` run on the audio
 thread.
 
+The 1.3 movements in both tables are reported in the per-change sections above
+rather than folded into these columns: `learn()` went from 0.609 s to 0.768 s
+across the joint solve, the shortened onset aperture, and the widened body,
+measured on this container before and after each change. The render rows moved
+only with the body widening, and the 1.3 figures for them are in *Body capacity*
+and *Voice ceiling*. They are deliberately not merged into the 1.0/1.1/1.2
+columns, which were taken on an unloaded container and are not comparable with a
+container shared between six concurrent builds.
+
 `Tests/EngineBenchmark.cpp` covers the same render path with a longer musical
 workload. It is built with the suite but not registered with CTest, so it never
 gates a build on wall time.

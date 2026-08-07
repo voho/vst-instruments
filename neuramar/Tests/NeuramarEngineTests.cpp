@@ -1859,7 +1859,7 @@ void testResidualScheduleAndQuality(const LearnedFixture& fixture)
     const std::size_t extension = modelHeaderBytes + currentBasePayloadBytes;
     expect(readLittleU32(bytes, 4)
                == neuramar::NeuralModel::currentFormatVersion,
-           "learner did not write the current v4 model format");
+           "learner did not write the current model format");
     const auto keyframeCount = readLittleU32(bytes, extension);
     expect(keyframeCount == 128,
            "learner did not fill the bounded 128-frame residual trajectory");
@@ -1868,7 +1868,7 @@ void testResidualScheduleAndQuality(const LearnedFixture& fixture)
         + keyframeCount * (4 + 2 * neuramar::NeuralModel::outputSize)
         + 4;
     expect(bytes.size() == expectedBytes && bytes.size() < 128 * 1024,
-           "learned v4 payload escaped its exact bounded layout");
+           "learned payload escaped its exact bounded layout");
     expect(readLittleFloat(bytes, expectedBytes - 4)
                == corrected.inharmonicity(),
            "learned payload did not end with its inharmonicity coefficient");

@@ -7,7 +7,9 @@ sample is user content and is not part of this repository.
 The host-state contract stores the ordinary sound controls (17 host parameters
 in version 1.1), root-note metadata, display-only source name and waveform
 preview, and the versioned compact model needed to reproduce the instrument.
-The current model payload is version 4; version-2 and version-3 payloads written
+The current model payload is version 5, which widens the body representation
+from 8 Air bands and 6 Bone modes to 16 and 12; version-2, version-3, and
+version-4 payloads written
 by earlier releases still load and render unchanged, and controls added after a
 session was saved are restored at their defaults rather than inheriting whatever
 the running instance held. It does not package or redistribute the

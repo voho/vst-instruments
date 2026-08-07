@@ -365,7 +365,19 @@ waveform therefore preserves an estimated spectral evolution rather than the
 recording's exact noise realization. Bands that approach the Nyquist limit at a
 low host sample rate are deliberately faded instead of folded onto the edge.
 
-Automatic root search is bounded to 35–2000 Hz. The displayed confidence is an
+**Touch** is a musical control, not a model of the instrument's dynamics. One
+recording contains no evidence about how the source behaves at any velocity
+other than the one that was played, so Touch applies a fixed excitation-strength
+prior — brighter and breathier above a mezzo-forte reference, the opposite below
+it — rather than a fitted velocity response. Reviewers of this class of
+instrument name dynamic response as a specific weakness of one-shot resynthesis,
+and that criticism applies here; the honest position is that the evidence for it
+does not exist in a single note.
+
+Automatic root search is bounded to 35–2000 Hz. Its correct-semitone rate is
+measured on a twelve-item analytic corpus in
+[`Docs/resynthesis-quality-benchmark.md`](Docs/resynthesis-quality-benchmark.md)
+and is not a claim about real recordings. The displayed confidence is an
 average YIN periodicity score, not a calibrated probability and not a direct
 measure of timbre-match quality. The local pitch contour is constrained to four
 semitones around the inferred root, so sufficiently stable bends, slow vibrato,
@@ -481,7 +493,18 @@ the removal of a Bone mode pushed above the audible ceiling (128 dB down, guard
 60 dB), the Awaken fade contract, the bound on the voice-steal fade tail under a
 note-on burst dense enough to steal the same slot inside one fade window, and
 the continuity of that hand-off across every phase of the window (worst
-inter-sample step 0.0124, guard 0.016). Plug-in builds add
+inter-sample step 0.0124, guard 0.016).
+
+It also pins the reconstruction measurements added in 1.3, which compare a
+rendered root note against the fixture that produced it: multi-resolution
+spectral convergence and log-magnitude MAE at three window/hop pairs, ERB-band
+residual power MAE with the harmonic bins excluded, cumulative-energy error at
+1, 5, 10, 20, and 50 ms, and T10-T90 attack-time error, on both a source/filter
+fixture and one combining harmonics, shaped noise, and a broadband transient. A
+struck-body fixture with ten known inharmonic modes reports modal recall,
+precision, and frequency error, and a twelve-item analytic corpus reports the
+automatic root detector's correct-semitone and octave-error rates. Plug-in
+builds add
 processor, parameter, MIDI, editor, and host-state contracts. These regression
 checks complement rather than replace listening, validator, multi-host, and CPU
 profiling passes.
