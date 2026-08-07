@@ -22,9 +22,11 @@ enum class PickStyle
 // palm mute, the fretting-hand legato (hammer-on / pull-off), the natural
 // harmonic touch at the midpoint node, the pinch harmonic, where the picking
 // hand's thumb catches the string at the pick's own position, or the slide,
-// where the finger stays down and travels along the string. Latched by its own
-// keyswitch bank, independently of the picking style. New styles are appended,
-// so every existing keyswitch note keeps its meaning.
+// where the finger stays down and travels along the string, or the dead note,
+// where the fretting hand rests across the strings without stopping them so the
+// pick makes its attack and no pitch survives. Latched by its own keyswitch
+// bank, independently of the picking style. New styles are appended, so every
+// existing keyswitch note keeps its meaning.
 enum class PlayStyle
 {
     Sustain,
@@ -32,7 +34,8 @@ enum class PlayStyle
     Hammer,
     Harmonics,
     Pinch,
-    Slide
+    Slide,
+    Dead
 };
 
 enum class PickupSelector { Neck, Both, Bridge };
@@ -121,14 +124,14 @@ public:
     // Keyswitches occupy one contiguous group below the playable range,
     // starting at 12 (C0): first the picking-style bank (Down/Up/Alternate),
     // then the play-style bank (Sustain/PalmMute/Hammer/Harmonics/Pinch/
-    // Slide). The two banks latch independently, so any of the eighteen
+    // Slide/Dead). The two banks latch independently, so any of the twenty-one
     // combinations can be reached in two keyswitches at most. Notes between
-    // the banks and the playable range (21..27) are ignored.
+    // the banks and the playable range (22..27) are ignored.
     static constexpr int firstKeyswitchNote = 12;
     static constexpr int pickStyleKeyswitchCount
         = static_cast<int>(PickStyle::Alternate) + 1;
     static constexpr int playStyleKeyswitchCount
-        = static_cast<int>(PlayStyle::Slide) + 1;
+        = static_cast<int>(PlayStyle::Dead) + 1;
     static constexpr int keyswitchCount = pickStyleKeyswitchCount
                                         + playStyleKeyswitchCount;
     static constexpr int firstPlayStyleKeyswitchNote
@@ -141,8 +144,8 @@ public:
     // without shifting, so the hand covers `position .. position + reach`.
     static constexpr int frettingHandReach = 4;
 
-    static_assert(keyswitchCount == 9,
-                  "three picking styles and six play styles need one keyswitch each");
+    static_assert(keyswitchCount == 10,
+                  "three picking styles and seven play styles need one keyswitch each");
     static_assert(firstKeyswitchNote + keyswitchCount <= lowestPlayableNote,
                   "keyswitches must not overlap the playable range");
 

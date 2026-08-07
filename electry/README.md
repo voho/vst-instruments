@@ -83,11 +83,11 @@ that change what it shows.
 
 ## Keyswitches and playable range
 
-MIDI notes 12..20 are two independent banks of latching keyswitches; they
+MIDI notes 12..21 are two independent banks of latching keyswitches; they
 never sound, and each bank keeps its most recent selection for every
 following note until changed. Notes 12..14 (C0..D0) latch how the pick
-moves; notes 15..20 (D#0..G#0) latch what the hands do. The two latch
-independently, so any of the eighteen combinations — an up-stroke palm mute,
+moves; notes 15..21 (D#0..A0) latch what the hands do. The two latch
+independently, so any of the twenty-one combinations — an up-stroke palm mute,
 alternate-picked pinch harmonics — is reachable in at most two keyswitches.
 Keyswitch note-offs are ignored. The editor's PICK STROKE and PLAY STYLE
 strips send the same keyswitches and always show the currently latched pair.
@@ -108,8 +108,9 @@ from the playable instrument.
 | 18 | F#0 | Natural harmonic — a finger resting on the string's midpoint node, so the octave is what the string does rather than a transposition of it |
 | 19 | G0 | Pinch harmonic — the picking hand's thumb catches the string at the pick's own position, so Pick Position chooses which partial squeals |
 | 20 | G#0 | Slide — the finger stays down and travels; the travel time is a distance over a hand speed, and the winding scrapes under it the whole way |
+| 21 | A0 | Dead note — the fretting hand lies across the strings without pressing them to the fret, so the pick lands normally and no pitch survives |
 
-Notes 21..27 are ignored, and notes 28..86 are playable on a 22-fret,
+Notes 22..27 are ignored, and notes 28..86 are playable on a 22-fret,
 eight-string Drop-E instrument tuned
 E1-B1-E2-A2-D3-G3-B3-E4; notes outside these ranges are ignored. Each note is
 allocated to one of the eight physical strings by a fretting hand that has a
@@ -326,6 +327,16 @@ All Sound Off and All Notes Off.
   CC 1 resonance raises the coupling live toward total and opens the
   amplifier-feedback path described under the keyswitch section, so the same
   mechanism spans a polite studio ring to a howling wall of amp.
+- **Dead notes:** the fretting hand laid across the strings without pressing
+  them to a fret. It is the whole hand rather than the heel and it is nowhere
+  near the bridge, so unlike the palm mute it is broadband — it takes the
+  fundamental as hard as everything else, which is the difference between a
+  dead note and a very tight mute. It is a loss inside the loop rather than a
+  gate on the output, so the pick lands at the same level (within 1.1 dB of an
+  ordinarily picked note's peak) and the note then decays through its own
+  solved filter; nothing of the fretted pitch survives 150 ms, 40 dB or more
+  below the same partial of the picked note. It combines in parallel with the
+  bridge hand, so a dead note played under palm-mute pressure gets both.
 - **Bridge-hand damping:** the heel of the hand is an absorber, so its
   loss is added to the string's own rather than rescaling it: the decay rates
   sum, which is to say the reciprocals of the decay times do. That is what makes

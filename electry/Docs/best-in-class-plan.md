@@ -238,7 +238,7 @@ verification is by a test in `Tests/` that fails without the change.
   1 kHz for the same input level; the alias floor stays under the existing
   -60 dB bound; and the bit-exact dry bypass at zero amp is unchanged.
 
-- [ ] **7. Dead notes as a seventh play style.** A fully damped percussive
+- [x] **7. Dead notes as a seventh play style.** A fully damped percussive
   stroke: the fretting hand rests on the strings without stopping them, so the
   pick produces the attack and the noise of a real stroke with no sounding
   pitch. Modelled as the existing bridge-hand absorber taken past the point

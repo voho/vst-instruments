@@ -1360,16 +1360,27 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
     // bit-for-bit what it was.
     //
     // The two contacts are tracked apart because they sit in different places.
-    // `handT60` is the bridge hand - the Muted and Chug styles and the
-    // continuous pressure - whose loss is tilted with frequency below.
-    // `chokeT60` is the fretting hand's dead-note choke, which is not near the
-    // bridge and stays broadband. They still combine in parallel, so a dead
-    // note played under palm-mute pressure gets both.
+    // `handT60` is the bridge hand - the Palm Mute style and the continuous
+    // pressure - whose loss is tilted with frequency below. `chokeT60` is the
+    // fretting hand's dead-note choke, which is not near the bridge and stays
+    // broadband. They still combine in parallel, so a dead note played under
+    // palm-mute pressure gets both.
     float handT60 = 0.0f;
+    float chokeT60 = 0.0f;
     if (voice.playStyle == PlayStyle::PalmMute)
     {
         handT60 = std::exp(lerp(std::log(2.60f), std::log(0.32f),
                                 parameters.muteDamping));
+    }
+    else if (voice.playStyle == PlayStyle::Dead)
+    {
+        // The fretting hand laid across the strings without pressing them to
+        // the fret. It is the whole hand rather than the heel, and it is
+        // nowhere near the bridge, so it takes the fundamental as hard as
+        // everything else - which is the difference between a dead note and a
+        // very tight palm mute, and why the mute's mode-shape relief below
+        // must not reach this term.
+        chokeT60 = 0.030f;
     }
     // A harmonic used to clamp T60 to 3.8 s here, standing in for the touching
     // finger. The finger is now in the loop as the node touch it actually is,
@@ -1503,6 +1514,14 @@ void ElectryEngine::configureVoiceDamping(Voice& voice) noexcept
         handShareForSlope = handRate / std::max(1.0f / t60 + handRate, 1.0e-9f);
         t60 = 1.0f / (1.0f / t60 + handRate / handFundamentalRelief);
         t60High = 1.0f / (1.0f / t60High + handRate * handHighFrequencyTilt);
+    }
+    if (chokeT60 > 0.0f)
+    {
+        // Broadband and in parallel, like every other contact in this model,
+        // so a dead note played under palm-mute pressure gets both.
+        const float chokeRate = 1.0f / chokeT60;
+        t60 = 1.0f / (1.0f / t60 + chokeRate);
+        t60High = 1.0f / (1.0f / t60High + chokeRate);
     }
     t60 = clampf(t60, 0.02f, 26.0f);
     t60High = clampf(t60High, 0.008f, t60);
@@ -2154,6 +2173,15 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
             noiseCutoff *= 1.10f;
             modalBrightness *= 1.10f;
             break;
+        case PlayStyle::Dead:
+            // The pick lands exactly as it would on a ringing note; what
+            // removes the pitch is the hand already on the string, and that
+            // hand also drags a good deal more contact noise out of the
+            // winding and darkens what the pick leaves behind.
+            noiseLevel *= 1.8f;
+            noiseMs *= 1.3f;
+            modalBrightness *= 0.85f;
+            break;
         case PlayStyle::Slide:
             // A slide into a sounding string has no attack at all - the finger
             // is already down and simply moves - so the only thing the note-on
@@ -2249,6 +2277,12 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                 displacementGain = 0.40f;
                 transientGain = 0.0f;
             }
+            break;
+        case PlayStyle::Dead:
+            // Almost all edge and almost no sustained displacement: the string
+            // never gets to hold the shape the pick gave it.
+            displacementGain = 1.10f;
+            transientGain *= 1.45f;
             break;
     }
 
@@ -2349,6 +2383,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
         case PlayStyle::PalmMute:
         case PlayStyle::Hammer:
         case PlayStyle::Slide:
+        case PlayStyle::Dead:
             voice.touchFraction = 0.0f;
             voice.touchDepth = 0.0f;
             voice.touchHoldRemaining = 0;
@@ -2503,6 +2538,11 @@ void ElectryEngine::updateStyleWeights(Voice& voice, bool legato) noexcept
             {
                 verticalWeight = 0.95f; horizontalWeight = 0.28f; makeup = 1.20f;
             }
+            break;
+        case PlayStyle::Dead:
+            // The hand lying across the string flattens the attack into the
+            // plane of the fingerboard.
+            verticalWeight = 0.96f; horizontalWeight = 0.30f; makeup = 1.85f;
             break;
     }
     // The upstroke approaches from below, tilting the attack toward the

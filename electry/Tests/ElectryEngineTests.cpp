@@ -1094,9 +1094,9 @@ void testKeyswitchesSelectStylesSilently()
     expect(ElectryEngine::firstKeyswitchNote == 12,
            "keyswitch range does not start at MIDI 12");
     expect(ElectryEngine::pickStyleKeyswitchCount == 3
-               && ElectryEngine::playStyleKeyswitchCount == 6
-               && ElectryEngine::keyswitchCount == 9,
-           "the two keyswitch banks do not expose 3 picking and 6 play styles");
+               && ElectryEngine::playStyleKeyswitchCount == 7
+               && ElectryEngine::keyswitchCount == 10,
+           "the two keyswitch banks do not expose 3 picking and 7 play styles");
     expect(ElectryEngine::firstPlayStyleKeyswitchNote == 15,
            "the play-style bank does not follow the picking bank at MIDI 15");
     expect(ElectryEngine::lowestPlayableNote == 28
@@ -1117,7 +1117,7 @@ void testKeyswitchesSelectStylesSilently()
 
     // Walking every keyswitch leaves the last of each bank latched.
     expect(engine.getCurrentPickStyle() == PickStyle::Alternate
-               && engine.getCurrentPlayStyle() == PlayStyle::Slide,
+               && engine.getCurrentPlayStyle() == PlayStyle::Dead,
            "walking the keyswitch banks did not latch the last of each");
 
     // The two banks are independent: a play-style switch keeps the picking
@@ -2500,6 +2500,83 @@ void testTouchHarmonics()
            "the harmonic's octave partial does not decay like the same partial "
            "of the picked note (harmonic " + std::to_string(harmonicDecay)
                + " dB, picked " + std::to_string(sustainDecay) + " dB)");
+}
+
+// A dead note is a real pick stroke with the fretting hand lying across the
+// strings: the attack is a picked attack, and no pitch survives it. It is
+// modelled as that hand's own broadband loss in the loop, not as a gate on the
+// output, which is why the attack is untouched.
+void testDeadNote()
+{
+    constexpr double sampleRate = 48000.0;
+    ElectryEngine engine;
+    engine.prepare(sampleRate, 512);
+    EngineParameters parameters;
+    parameters.artifactAmount = 0.0f;
+    parameters.bodyResonance = 0.0f;
+    engine.setParameters(parameters);
+
+    const int note = 45;
+    const double f0 = midiHz(note);
+    const auto picked = renderNote(engine, sampleRate, note, 0.85f,
+                                   PlayStyle::Sustain, 1.0);
+    const auto dead = renderNote(engine, sampleRate, note, 0.85f,
+                                 PlayStyle::Dead, 1.0);
+
+    // The pick lands exactly as hard: what is different is what happens after
+    // it, so the first twenty milliseconds are within a few decibels.
+    const int attackEnd = static_cast<int>(0.020 * sampleRate);
+    const double pickedAttack = peakAbs(picked.left, 0, attackEnd);
+    const double deadAttack = peakAbs(dead.left, 0, attackEnd);
+    const double attackGap = decibels(deadAttack / std::max(pickedAttack, 1e-15));
+    std::cerr << "PROBE dead attack " << attackGap << " dB\n";
+    expect(std::abs(attackGap) < 4.0,
+           "a dead note does not land like a picked one ("
+               + std::to_string(attackGap) + " dB)");
+
+    // And then it is over. Nothing of the fretted pitch is left after 150 ms.
+    const int tailStart = static_cast<int>(0.15 * sampleRate);
+    const int tailLength = static_cast<int>(0.25 * sampleRate);
+    double worstPartial = -300.0;
+    for (int partial = 1; partial <= 8; ++partial)
+    {
+        const double frequency = f0 * partial;
+        if (frequency > 6000.0)
+            break;
+        const double deadMagnitude = dftMagnitude(dead.left, tailStart,
+                                                  tailLength, sampleRate,
+                                                  frequency);
+        const double pickedMagnitude = dftMagnitude(picked.left, tailStart,
+                                                    tailLength, sampleRate,
+                                                    frequency);
+        worstPartial = std::max(worstPartial,
+                                decibels(deadMagnitude
+                                         / std::max(pickedMagnitude, 1e-15)));
+    }
+    expect(worstPartial < -40.0,
+           "a partial of the fretted pitch survived the dead note ("
+               + std::to_string(worstPartial) + " dB against the picked note)");
+
+    const double deadTail = rmsInRange(dead.left, tailStart,
+                                       tailStart + tailLength);
+    const double pickedTail = rmsInRange(picked.left, tailStart,
+                                         tailStart + tailLength);
+    expect(deadTail < pickedTail * 0.02,
+           "a dead note kept ringing ("
+               + std::to_string(decibels(deadTail
+                                         / std::max(pickedTail, 1e-15)))
+               + " dB against the picked note)");
+
+    // It is the hand rather than a gate: the loop's own solved decay carries
+    // it, so the note is still decaying rather than being cut off. Measured
+    // between two early windows, which a gate would make identical.
+    const double early = rmsInRange(dead.left, attackEnd,
+                                    static_cast<int>(0.040 * sampleRate));
+    const double later = rmsInRange(dead.left,
+                                    static_cast<int>(0.060 * sampleRate),
+                                    static_cast<int>(0.090 * sampleRate));
+    expect(later < early * 0.5 && later > 0.0,
+           "the dead note does not decay through its own loop");
 }
 
 // Channel pressure is the fretting hand leaning into the string it is holding.
@@ -5203,6 +5280,7 @@ int main()
     testPinchHarmonic();
     testSlideArticulation();
     testFrettingHandVibrato();
+    testDeadNote();
     testSustainPedal();
     testSympatheticBridgeCoupling();
     testPalmMuteContinuum();

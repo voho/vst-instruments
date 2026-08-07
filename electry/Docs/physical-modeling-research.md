@@ -30,6 +30,7 @@ level-matched blind listening.
 | Construction controls | Solid-body material/geometry contrasts, humbucker vs single-coil construction, set-neck vs bolt-on, and modern extended-range scale practice | Wood, size, shape, construction, and pickup type interpolate between contrasting reference voicings; scale length spans 25.5 to 28 inches for Drop-E | Parametrized construction and extended-range voicing; not a licensed or capture-verified reproduction of a named instrument |
 | Play noise | Handling-noise observations in the virtual slide guitar work of Pakarinen, Puputti, and Välimäki | Deterministic seeded plectrum scrape, finger contact, and release damping noise, band-shaped per string (wound vs plain) and split between a one-percent string trace and local pickup/body paths | Procedural, deterministic contact noise consistent with the documented mechanisms; not convolved recordings or measured contact-noise spectra |
 | Sympathetic string coupling | Bank and Karjalainen's passive admittance modeling and the sympathetic-string literature | The plucked strings' bridge force drives a one-sample-delayed bus; every string that is not being fingered runs its own single-polarisation waveguide at its open pitch, with a loop filter solved from the same pair of decay targets a played string of the same steel gets - the high-frequency one backed off toward the fundamental's wherever the pair would ask the loop for a gain above unity, so the fundamental's target is never the one given up - exact fundamental phase compensation and bridge pickup tap. Only played voices write to the bus and only idle voices read it | A one-directional (loss-only from the driver's point of view) slice of bridge coupling, provably acyclic and therefore unconditionally stable; not a shared multiport bridge scattering junction with mutual re-radiation |
+| Dead note | The same additive-loss contact model as the bridge hand, applied by the fretting hand instead | A broadband 30 ms loss added in parallel to the string's own at both fitted points, with none of the palm mute's mode-shape relief or loss band, because this contact is nowhere near the bridge and is the whole hand rather than its heel | A contact loss inside the loop, so the pick's attack is untouched and the note decays through its own solved filter; not a gate, and not a model of hand pressure or coverage |
 | Bridge-hand damping | Palm-muting practice, the same decay-targeted loop design, and dry muted power-chord reference recordings for the depths | The hand is an absorber whose loss adds to the string's own in parallel, so decay rates sum at each fitted frequency independently; the raw hand rate is multiplied by three at the high reference and divided by twenty-two at the fundamental, an effective 66:1 ratio between the two fitted points, because a contact near the bridge removes far more energy from high modes than from a fundamental that barely moves there; a relief that large only works paired with a band of loss centred on five times the fundamental, which removes the harmonics the longer tail would otherwise let ring - alone, each of the two is worse than neither; the Palm Mute style (whose depth the Mute Damp control spans from a loose half-mute to a tight chug) and the continuous pressure are one absorber at different depths and combine the same way, re-solving the same loop filters and the analytic phase compensation so the note stays in tune; the coupled strings are damped and starved with it | Progressive contact damping as an additive loss with reference-calibrated depths and a bounded, conservative frequency tilt, applied identically to every play style; not a distributed hand/string contact solve or a resolved mode-shape weighting |
 | Fretting hand | Ordinary left-hand kinematics; the position/reach/fretting-mode controls the sampled field exposes (Orange Tree Samples' floating fret position, Impact Soundworks' Set Hand and Fretting Mode) | A floating hand position with a four-fret reach above the index finger drives string allocation through a fret-distance cost; open strings are free at the nut and progressively expensive as the hand travels; the hand shifts only when the note is out of reach and only at the start of a chord, and relaxes to the nut when the phrase ends | A single-position hand with a fixed reach and a deterministic cost; not a fingering solver, a chord recogniser, or a model of alternative fingerings for a whole phrase |
 | Strum travel | Ordinary plectrum kinematics | Note-ons inside a 35 ms window are treated as one stroke; the first string fixes the edge the pick starts from and every further string's excitation is delayed by the travel time per string crossed | Constant-velocity pick travel across the string plane; not a model of pick angle, chord voicing, or the player's hand position |
@@ -46,14 +47,14 @@ level-matched blind listening.
 
 The authoritative implementation is `Source/DSP/ElectryEngine.cpp`:
 
-1. MIDI notes 12..20 are two independent banks of latching keyswitches:
+1. MIDI notes 12..21 are two independent banks of latching keyswitches:
    12..14 (C0..D0) latch the picking style - downstroke, upstroke,
-   alternating strokes - and 15..20 (D#0..G#0) latch the play style -
+   alternating strokes - and 15..21 (D#0..A0) latch the play style -
    sustain, palm mute, hammer-on/pull-off, natural harmonic, pinch harmonic,
-   slide. The banks compose, so any of the eighteen combinations is reachable
-   in at most two keyswitches; a hammered or slid note has no plectrum, so it
-   neither takes a stroke colour nor consumes a step of the alternate
-   sequence. Notes 21..27 are ignored. Notes 28..86 are playable on eight physical strings in Drop-E
+   slide, dead note. The banks compose, so any of the twenty-one combinations
+   is reachable in at most two keyswitches; a hammered or slid note has no
+   plectrum, so it neither takes a stroke colour nor consumes a step of the
+   alternate sequence. Notes 22..27 are ignored. Notes 28..86 are playable on eight physical strings in Drop-E
    tuning (E1-B1-E2-A2-D3-G3-B3-E4); a deterministic allocator maps each note,
    preferring a repick of an already-sounding note, then the hammer-on
    continuation of the nearest sounding string, then the free string that costs
@@ -423,6 +424,30 @@ rather than as a gain after the fact. The one-pole is re-bisected against the
 new decay targets and the loop delay subtracts the new analytic phase delay at
 the fundamental, so a heavily muted string sounds the played pitch instead of
 drifting sharp as a naive extra damping filter would make it.
+
+## The dead note
+
+The bridge hand and the fretting hand are two different contacts in two
+different places, and Electry keeps them apart for the reason the palm-mute
+work established: where a contact sits decides which modes it can take energy
+from. The heel of the bridge hand rests a tenth of the sounding length from the
+saddle, where the fundamental barely moves, which is why its loss is relieved
+by a factor of twenty-two at the fundamental and multiplied by three at the
+high fitted point. The fretting hand laid flat across the strings is neither
+near the bridge nor a single point: it takes the fundamental as hard as it
+takes everything else.
+
+So the dead note is a broadband 30 ms loss added in parallel with the string's
+own at both fitted points, with none of the mute's relief and none of its loss
+band. Being a loss in the loop rather than a gate on the output matters twice
+over. The pick's attack is untouched - a dead note's peak sits within 1.1 dB of
+the same note picked open - and the note then decays through the loop filter
+the ordinary solve produced for it, so it is still falling rather than being
+cut. Nothing of the fretted pitch is left after 150 ms: every partial through
+the eighth sits more than 40 dB under the same partial of the picked note.
+
+The two contacts combine in parallel with each other as everything else in this
+model does, so a dead note played under palm-mute pressure gets both.
 
 ## Strum travel
 
@@ -1617,7 +1642,9 @@ click-free stereo-field opening; exact digital silence from an untouched
 engine, a subnormal-free ring-out that reaches exact zero, and a clean wake
 from the frozen state; contrasting construction
 endpoints that both stay in tune; plectrum contact noise in the pre-attack
-window; release noise that appears only after note-off; eight-string
+window; release noise that appears only after note-off; a dead note that lands like a
+picked one, leaves no partial of the fretted pitch after 150 ms, and decays
+through its own loop rather than being gated; eight-string
 polyphony with open-position chord mapping, repick reuse, and stealing; a
 slide whose pitch travels through the intermediate semitones rather than
 jumping, whose travel time scales with the interval, whose friction band
