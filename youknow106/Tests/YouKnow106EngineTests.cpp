@@ -4623,6 +4623,76 @@ void testPanelLayout()
            "the folded panel width disagrees with the editor contract");
 }
 
+// Cost of rendering `seconds` of a patch, as a multiple of realtime, taking
+// the fastest of three passes so one descheduled run cannot decide a fence.
+double realtimeCost(const EngineParameters& parameters, int notes,
+                    double sampleRate, double seconds)
+{
+    YouKnow106Engine engine;
+    engine.prepare(sampleRate, blockSize, true);
+    engine.setParameters(parameters);
+    for (int note = 0; note < notes; ++note)
+        engine.noteOn(48 + note * 4, 1.0f);
+
+    std::vector<float> left(static_cast<std::size_t>(blockSize));
+    std::vector<float> right(static_cast<std::size_t>(blockSize));
+    // Past the attack and the modulation delay, so every pass measures the
+    // same steady state.
+    for (int block = 0; block < 40; ++block)
+        engine.process(left.data(), right.data(), blockSize);
+
+    const int total = static_cast<int>(sampleRate * seconds);
+    double best = std::numeric_limits<double>::max();
+    for (int pass = 0; pass < 3; ++pass)
+    {
+        const auto started = std::chrono::steady_clock::now();
+        int done = 0;
+        while (done < total)
+        {
+            const int count = std::min(blockSize, total - done);
+            engine.process(left.data(), right.data(), count);
+            done += count;
+        }
+        const std::chrono::duration<double> elapsed =
+            std::chrono::steady_clock::now() - started;
+        best = std::min(best, elapsed.count()
+                                  / (static_cast<double>(total) / sampleRate));
+    }
+    return best;
+}
+
+void testResonanceDoesNotMultiplyTheSolveCost()
+{
+    // A ratio, not a time, because a wall-clock ceiling only says how fast the
+    // machine running the suite is. What this fences is a property of the
+    // solver: the implicit cascade must not cost several times more to run at
+    // high resonance than at low, which is what happens when its convergence
+    // test cannot be satisfied and every hot sample runs the iteration cap.
+    //
+    // Measured on one 2.8 GHz core at 48 kHz/HQ before the step test was
+    // scaled to the volts it measures: 2.21, 2.24, 2.23. After: 1.31, 1.30,
+    // 1.32. Both patches drive the same six cards through the same path and
+    // differ only in RESONANCE, so the ratio is the solver's own.
+    constexpr double sampleRate = 48000.0;
+    auto parameters = plainPatch();
+    parameters.chorus = ChorusMode::Off;
+    // Not the reference patch's fully-open filter: this has to be a setting
+    // where the cascade is actually integrating a musical pole.
+    parameters.cutoff = 0.62f;
+
+    parameters.resonance = 0.10f;
+    const double plain = realtimeCost(parameters, 6, sampleRate, 1.0);
+    parameters.resonance = 0.95f;
+    const double resonant = realtimeCost(parameters, 6, sampleRate, 1.0);
+
+    expect(plain > 0.0, "the plain benchmark patch did not run");
+    const double ratio = resonant / plain;
+    expect(ratio < 1.7,
+           "resonance 0.95 costs " + std::to_string(ratio)
+               + "x what resonance 0.10 costs; the cascade solve is running "
+                 "its iteration cap");
+}
+
 void testCpuBudget()
 {
     // Not a benchmark of the host, just a guard against a change that makes the
@@ -4744,6 +4814,7 @@ int main()
     testPairedSwitchModes();
     testNoLabelIsTruncated();
     testPanelLayout();
+    testResonanceDoesNotMultiplyTheSolveCost();
     testCpuBudget();
 
     if (failures != 0)

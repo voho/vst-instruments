@@ -61,6 +61,78 @@ struct YouKnow106TestAccess
         return output;
     }
 
+    // Worst residual of the four stage equations, evaluated independently of
+    // the solver at the voltages it returned. The stage equation is
+    //   Vn = Vn_prev + 2 gn H avg(tanh; drive_prev -> drive),
+    // with V(-1) = input - k Hfb tanh(V4/Hfb) and gn carrying the stage's own
+    // Early-effect modulation. The path average is taken by midpoint
+    // quadrature on std::tanh, so nothing in this measurement shares code
+    // with the ln cosh divided difference the solver uses.
+    struct CascadeResidual
+    {
+        float worst { 0.0f };       // volts
+        float worstStateMagnitude { 0.0f };
+    };
+
+    static CascadeResidual cascadeWorstResidual(const std::vector<float>& input,
+                                                float g, float feedback)
+    {
+        constexpr float earlyCoefficient =
+            YouKnow106Engine::otaEarlyEffectCoefficient;
+        constexpr float calibration = 0.70f;   // process()'s own default
+        const float H = headroom();
+        const float Hfb = feedbackHeadroom();
+        const float k = std::clamp(feedback, 0.0f, 8.0f);
+        const float gLimited = std::clamp(g, 0.0f, 64.0f);
+
+        Cascade cascade;
+        cascade.reset();
+        CascadeResidual worst;
+        for (float sample : input)
+        {
+            const auto previousState = cascade.state;
+            const auto previousDrive = cascade.driveMemory;
+            cascade.process(sample, g, feedback);
+
+            float previous =
+                sample - k * Hfb * static_cast<float>(
+                    std::tanh(static_cast<double>(cascade.voltage[3] / Hfb)));
+            float magnitude = 0.0f;
+            for (std::size_t stage = 0; stage < 4; ++stage)
+            {
+                const float v = cascade.voltage[stage];
+                const float drive =
+                    (previous - v + cascade.offsetVoltage[stage]) / H;
+                const float earlyMod = 1.0f + earlyCoefficient * calibration
+                    * static_cast<float>(std::tanh(static_cast<double>(v / H)));
+                const float stageG = gLimited * cascade.gScale[stage] * earlyMod;
+
+                // Midpoint quadrature of tanh along the straight drive path.
+                constexpr int quadrature = 256;
+                const double x0 = previousDrive[stage];
+                const double x1 = drive;
+                double average = 0.0;
+                for (int point = 0; point < quadrature; ++point)
+                    average += std::tanh(
+                        x0 + (x1 - x0) * (point + 0.5) / quadrature);
+                average /= quadrature;
+
+                const double residual =
+                    static_cast<double>(v) - static_cast<double>(previousState[stage])
+                    - 2.0 * static_cast<double>(stageG) * static_cast<double>(H)
+                          * average;
+                if (std::abs(residual) > worst.worst)
+                {
+                    worst.worst = static_cast<float>(std::abs(residual));
+                    worst.worstStateMagnitude = std::max(magnitude, std::abs(v));
+                }
+                magnitude = std::max(magnitude, std::abs(v));
+                previous = v;
+            }
+        }
+        return worst;
+    }
+
     static std::array<float, 4> cascadeVoltagesAfterRetime(
         const std::array<float, 4>& voltage,
         float previousG, float nextG) noexcept
@@ -850,6 +922,44 @@ void testCascadeKernelsMatchTheStandardLibrary()
     expect(1.0 - std::tanh(static_cast<double>(Kernels::tanhRailMagnitude))
                < 0.5 * static_cast<double>(floatEpsilon),
            "the tanh kernel rails before std::tanh has reached one");
+}
+
+void testCascadeSolveStopsWhereItConverges()
+{
+    // The Newton loop's step test is scaled to the states it measures, so it
+    // can be satisfied at all: an absolute 1e-7 on volt-scale capacitor
+    // voltages is below the float grid, which made the loop run its cap
+    // wherever the filter was working. What must not change is the answer, so
+    // this measures the residual of the stage equations at the voltages the
+    // solver returns -- by midpoint quadrature on std::tanh, sharing no code
+    // with the solver's own divided difference.
+    constexpr double sampleRate = 192000.0;
+    constexpr double cutoff = 1500.0;
+    const float g = static_cast<float>(std::tan(pi * cutoff / sampleRate));
+
+    for (double feedback : { 0.0, 2.0, 3.6, 4.4 })
+    {
+        // Hot enough to keep the pairs out of their linear region, which is
+        // where the solve is hardest and where the old threshold guaranteed
+        // the cap was reached.
+        std::vector<float> drive(4096);
+        for (std::size_t index = 0; index < drive.size(); ++index)
+            drive[index] = 3.0f * static_cast<float>(
+                std::sin(2.0 * pi * 220.0 * static_cast<double>(index)
+                         / sampleRate));
+
+        const auto residual = YouKnow106TestAccess::cascadeWorstResidual(
+            drive, g, static_cast<float>(feedback));
+        // The stage equation's own terms are volts; the bound is expressed
+        // against the state the residual is measured on, so it means the same
+        // thing at every drive level.
+        const double bound =
+            2.0e-4 * (1.0 + static_cast<double>(residual.worstStateMagnitude));
+        expect(residual.worst <= bound,
+               "the cascade left a residual of " + std::to_string(residual.worst)
+                   + " V at k=" + std::to_string(feedback)
+                   + ", above the " + std::to_string(bound) + " V bound");
+    }
 }
 
 void testCascadeAgainstReferenceSolve()
@@ -3790,6 +3900,7 @@ int main()
     testDecimatorProtectsTheTopOfTheBand();
     testFilterDriveMatchesTheDerivedBudget();
     testCascadeKernelsMatchTheStandardLibrary();
+    testCascadeSolveStopsWhereItConverges();
     testCascadeAgainstReferenceSolve();
     testCascadeOscillationThreshold();
     testCascadeSurvivesAdversarialControl();

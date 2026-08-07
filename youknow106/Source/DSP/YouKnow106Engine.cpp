@@ -1633,6 +1633,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
         const float scale = a[3] / denominator;
 
         float largest = 0.0f;
+        float magnitude = 0.0f;
         for (int n = 0; n < 4; ++n)
         {
             const float delta = std::clamp(
@@ -1640,9 +1641,24 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
                 -32.0f, 32.0f);
             voltage[static_cast<std::size_t>(n)] -= delta;
             largest = std::max(largest, std::abs(delta));
+            magnitude = std::max(magnitude,
+                                 std::abs(voltage[static_cast<std::size_t>(n)]));
         }
 
-        if (largest < 1.0e-7f)
+        // Scaled to the states the step is measured against, because these
+        // are volts and single precision cannot resolve an absolute 1e-7 on
+        // them. With the former fixed threshold the test was unsatisfiable
+        // wherever the cascade was working: instrumented, the loop ran its
+        // full cap on 7.99 calls in 8 at resonance 0.95 and 6.22 in 8 with
+        // chorus engaged, against 2.86 on a quiet patch -- not because it had
+        // not converged, but because it could not say so. Its remaining step
+        // at the cap measured a mean of 5.1e-5 V on states averaging 1.7 V,
+        // several iterations after the iteration reached its own round-off
+        // floor of about 1e-6 relative. This threshold sits on that floor, so
+        // the loop now stops where it converges. The cap below is unchanged,
+        // so the worst-case residual cannot grow: a step that has not met
+        // this bound still gets every iteration it used to get.
+        if (largest < 1.0e-6f * (1.0f + magnitude))
             break;
     }
 
