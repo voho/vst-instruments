@@ -224,7 +224,7 @@ verification is by a test in `Tests/` that fails without the change.
   unaffected while the wheel does affect it, zero aftertouch is a bit-exact
   no-op, and the onset delay is measurable.
 
-- [ ] **6. Amplifier power stage: supply sag and output transformer.** Add the
+- [x] **6. Amplifier power stage: supply sag and output transformer.** Add the
   back half of the amplifier inside the existing oversampled domain. Sag: a
   rectified follower on the power-stage drive lowers the stage's headroom with
   a fast attack and a 400 ms recovery, so a hard chug ducks and blooms and a

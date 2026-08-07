@@ -439,6 +439,22 @@ every platform rather than only inside a host.
   crosses at full slew, which radiates far more high-order content than the
   saturation itself. Asymmetry — and the even-order harmonics that come with it
   — comes from the operating point, which is where a real stage's comes from.
+- **Power stage.** The back half of the amplifier, inside the same oversampled
+  domain. The supply sags: the current the stage draws follows its own output,
+  a follower tracks that with a 70 ms attack and a 400 ms recovery, and the
+  rail droops by up to 28% — the 350 V to 250 V a real supply measures. What
+  the rail sets is the headroom rather than the gain, so the stage is
+  `droop * triode(u / droop)`: the small-signal slope is untouched and the
+  ceiling falls in proportion, which is why a held chug blooms and then ducks
+  by 1.2 dB while a quiet passage ducks by 0.2, and why the level comes back
+  during a rest. The output transformer follows: a core saturates at a flux
+  limit and flux is the integral of the voltage, so the limit is a volt-second
+  limit and the low end reaches it first. A one-pole at the 45 Hz
+  primary-inductance corner is that integral normalised, what the core cannot
+  carry is subtracted back out, and a second-order high-pass in front is the
+  transformer's own inability to pass DC. Measured at the stage, a full-level
+  tone distorts at −25 dB at 48 Hz, −71 dB at 480 Hz and −131 dB at 4.8 kHz,
+  and a tone 24 dB quieter distorts 41 dB less at 48 Hz.
 - **Cabinet.** A second-order high-pass at the box frequency, a low-mid thump,
   a scooped boxy region, a presence peak, and a fourth-order Butterworth
   roll-off from 5 kHz, all inside the oversampled domain so the

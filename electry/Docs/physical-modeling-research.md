@@ -40,7 +40,7 @@ level-matched blind listening.
 | Audible-work culling | Standard realtime-DSP practice | A pickup faded out by the selector is skipped entirely; Mono runs one shared coil/DC/decimation chain and mirrors it; damping-only control moves reuse the existing dispersion fit; the whole engine freezes to exact zero once nothing vibrates and the shared path is below -120 dBFS | Removal of inaudible arithmetic with the audible result unchanged; not a quality/latency trade |
 | Oversampling | Standard nonlinear-audio antialiasing practice | The complete physical, body, collision, and nonlinear pickup path runs at 2x for host rates through 96 kHz, followed by a fixed 63-tap halfband FIR; higher-rate hosts run 1x | Genuine internal oversampling and filtered decimation, not a quality label applied to a native-rate nonlinear stage |
 | Output field | Phase-coherent divided/hex pickup practice | Mono is the conventional summed DI. Stereo weights each modeled string by its physical lateral position, keeps shared body modes centered, uses linked output limiting and independent matched decimation, and folds coherently to mono | A virtual divided-pickup string field with no time or phase widening; not room, amplifier, cabinet, chorus, or acoustic stereo |
-| Amplifier and cabinet | Pakarinen and Yeh's review of vacuum-tube amplifier modeling; standard antialiasing practice for cascaded nonlinear stages; sealed-guitar-cabinet response measurements; extended-range metal rhythm practice for the voicing | Two cascaded smooth triode ceilings driven off a standing grid bias with a level-tracking bias drift and an interstage Miller roll-off, a tight input coupling network, and a five-section cabinet (box high-pass, low-mid thump, scooped mid, presence peak, fourth-order roll-off), all inside a 4x oversampled domain reached through Kaiser-windowed halfband stages designed at prepare time | Structurally motivated static-nonlinearity amplifier voicing with genuine oversampling and a filter-modelled cabinet; not a circuit-solved (Wave Digital or nodal state-space) amplifier, a measured impulse response, or a model of any named amplifier or speaker |
+| Amplifier and cabinet | Pakarinen and Yeh's review of vacuum-tube amplifier modeling; published supply-sag behaviour (a plate rail falling from around 350 V to around 250 V within 100 ms and recovering over 300-600 ms); transformer core saturation as a volt-second limit; standard antialiasing practice for cascaded nonlinear stages; sealed-guitar-cabinet response measurements; extended-range metal rhythm practice for the voicing | Two cascaded smooth triode ceilings driven off a standing grid bias with a level-tracking bias drift and an interstage Miller roll-off, a tight input coupling network, a power stage whose supply droops by up to 28% under its own output current with a 70 ms attack and a 400 ms recovery and whose rail sets the headroom rather than the gain, an output transformer modelled as a normalised flux integral with the excess the core cannot carry subtracted back out, and a five-section cabinet (box high-pass, low-mid thump, scooped mid, presence peak, fourth-order roll-off), all inside a 4x oversampled domain reached through Kaiser-windowed halfband stages designed at prepare time | Structurally motivated static-nonlinearity amplifier voicing with genuine oversampling and a filter-modelled cabinet; not a circuit-solved (Wave Digital or nodal state-space) amplifier, a measured impulse response, or a model of any named amplifier or speaker |
 
 ## Implemented signal path
 
@@ -973,10 +973,58 @@ route with genuine oversampling rather than the circuit-solved route:
   disengagement are crossfaded, and the suite bounds the largest sample step
   across both transitions against the dry and settled-wet slew.
 
+- **Power stage.** Two preamp triode ceilings into a filter cabinet is the
+  front half of an amplifier, and the two mechanisms that make a real one
+  answer to how hard a part is played both live in the back half.
+
+  *Supply sag.* The current the output stage draws follows its own output, not
+  its grid signal, so the follower reads the stage's own last sample. It
+  attacks in 70 ms and recovers over 400 ms - a reservoir discharges far faster
+  than it recharges, which is the whole character of the effect - and the rail
+  droops by up to 28%, the 350 V to 250 V a real supply measures. What the rail
+  sets is the *headroom*, not the gain, so the stage is
+  `droop * triode(u / droop)`: the transfer curve is scaled uniformly in both
+  axes, the small-signal slope is exactly unchanged, and the ceiling falls in
+  proportion. Measured on a held 375 Hz tone, a loud passage ducks 1.16 dB
+  between 16 ms and 640 ms in while a quiet one ducks 0.22, and the level
+  returns within 1.1 dB after a second and a half of rest. A droop of one is
+  the identity, so a quiet passage is bit-for-bit what it was.
+
+  *Output transformer.* A core saturates at a flux limit, and flux is the
+  integral of the voltage, so the limit is a volt-second limit: at the same
+  level the low end reaches it long before the top does. A one-pole at the
+  45 Hz primary-inductance corner is that integral normalised - unity at DC,
+  falling as 1/f above it - and the excess the core cannot carry is subtracted
+  back out, which leaves the stage transparent well above the corner and
+  compressing and thickening underneath it. A second-order high-pass at 26 Hz
+  in front is the transformer's own inability to pass DC, and it also keeps the
+  bias drift's residue out of the flux.
+
+  The transformer is measured at the stage rather than at the chain's output,
+  and the reason is worth recording because it is a real limit on what an
+  output-side measurement can say here. The cabinet's second-order high-pass at
+  the box frequency shapes a low tone and its harmonics so differently from a
+  mid tone and its own that a distortion figure taken after it is worth about
+  nine decibels of bias in the effect's own direction - more than the effect
+  measured through it. At the stage the picture is unambiguous: a full-level
+  tone distorts at -25.3 dB at 48 Hz, -71.5 dB at 480 Hz and -130.9 dB at
+  4.8 kHz, a fall of about 46 dB per decade that is the cubic-in-flux law seen
+  directly, and a tone 24 dB quieter distorts 41 dB less at 48 Hz.
+
+  The alias floor pays for the sag, because a drooping rail pushes the stage's
+  argument further into saturation: the amplifier at full drive moves from
+  -86 dB to -69 dB, still comfortably inside the suite's -60 dB bound. The
+  alias fixture itself needed lengthening, and that is worth naming as a
+  measurement error rather than a model one: with the two settling passes it
+  used before, the 0.7% of sag still converging inside the analysed window
+  smeared enough energy off the harmonic bins to read as a -37 dB alias floor
+  that was not aliasing at all.
+
 What is deliberately not claimed: no circuit is solved (no Wave Digital
-Filters, no nodal state-space, no K-method), there is no power-supply sag or
-output-transformer model, the cabinet is not a measured impulse response, and
-none of it is a model of any named amplifier or speaker.
+Filters, no nodal state-space, no K-method), the power stage is a behavioural
+model of sag and core saturation rather than a solved supply or a measured
+transformer, the cabinet is not a measured impulse response, and none of it is
+a model of any named amplifier or speaker.
 
 ## Voicing against a reference recording
 
@@ -1602,7 +1650,11 @@ The amplifier chain has its own suite: halfband unity DC gain, the -6 dB
 halfband symmetry point, passband ripple and stopband rejection; a bit-exact
 dry bypass with every control at zero and an audible effect from each control
 on its own at 100%; the alias floor of the pedal, the amplifier, and the two
-stacked, at two input levels; each of the cabinet's five voicing features
+stacked, at two input levels; a supply that droops on a loud sustained passage
+and far less on a quiet one, develops over its modelled time constant and
+recovers during a rest; an output transformer whose distortion falls about
+46 dB per decade of frequency and 41 dB for 24 dB of level, measured at the
+stage rather than through the cabinet; each of the cabinet's five voicing features
 relative to 1 kHz; loudness bounds across the whole amp travel and every
 combination of the gain and compressor controls on a rendered Drop-E rhythm
 figure, dry and palm muted; the lead delay's first repeat at 360 ms with a
