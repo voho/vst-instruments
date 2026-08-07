@@ -154,8 +154,8 @@ inline constexpr float keyboardCardWidth = 358.0f;
 // deck could not give its knob legends their full width. They move to the
 // utility bar beside the help text, where they are still one click away and
 // stop competing with the instrument for surface.
-inline constexpr float operationsBarX = 720.0f;
-inline constexpr float operationsBarWidth = 388.0f;
+inline constexpr float operationsBarX = 640.0f;
+inline constexpr float operationsBarWidth = 468.0f;
 
 // The patch picker lives in the masthead, while contextual explanations live
 // below the keys instead of obscuring the panel in a floating mouse tooltip.

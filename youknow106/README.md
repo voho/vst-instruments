@@ -439,7 +439,8 @@ select A11..A88 and 64..127 select B11..B88, including every row and column in
 both 64-tone groups. Incoming Program Changes are consumed rather than echoed.
 YouKnow106 does not transmit performance data or Program Changes; that
 reference-keyboard behavior is distinct from patch-selection receive. The
-compact editor deliberately exposes no patch-dump transmit control.
+compact editor deliberately exposes no live patch-dump transmit control;
+patch files move through the utility bar's LOAD and SAVE keys instead.
 
 ### System exclusive
 
@@ -458,6 +459,15 @@ Outgoing patch construction and the bounded processor handoff remain tested for
 integration use, but no transmit operation competes with the synthesis controls
 on the editor. Messages from other manufacturers, other opcodes, and bodies of
 the wrong length are ignored rather than partially applied.
+
+Patch files carry the same messages. The utility bar's LOAD key — or dropping
+a `.syx` file anywhere on the editor — applies the first patch dump the file
+holds, exactly as if it had arrived over MIDI, and SAVE writes the current
+tone as one hardware-valid dump on the channel the last incoming SysEx used.
+A file holding a whole bank applies its first patch: with one edit buffer and
+no user bank, applying all 128 in order would silently keep only the last.
+Performance controls stay out of the file, exactly as they stay out of the
+hardware's tone memory.
 
 The layout is the instrument's: sixteen continuous controls at 0..127, then two
 packed switch bytes. `Source/DSP/YouKnow106SysEx.h` is JUCE-free, so the suite

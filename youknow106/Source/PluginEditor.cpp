@@ -1057,9 +1057,28 @@ void YouKnow106ContextHelp::showFor (juce::Component* component,
 
 void YouKnow106ContextHelp::showIdle()
 {
+    if (noticeExpiresAt != 0)
+    {
+        if (juce::Time::getMillisecondCounter() < noticeExpiresAt)
+        {
+            setContent (noticeTitle, noticeText, {});
+            return;
+        }
+        noticeExpiresAt = 0;
+    }
+
     setContent ("HELP",
                 "Hover a control to read what it does and what it is set to.",
                 {});
+}
+
+void YouKnow106ContextHelp::showNotice (juce::String title, juce::String text)
+{
+    constexpr juce::uint32 noticeMilliseconds = 6000;
+    noticeTitle = std::move (title);
+    noticeText = std::move (text);
+    noticeExpiresAt = juce::Time::getMillisecondCounter() + noticeMilliseconds;
+    setContent (noticeTitle, noticeText, {});
 }
 
 void YouKnow106ContextHelp::setContent (juce::String title, juce::String text,
@@ -1387,6 +1406,10 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     nameButton (randomize10Button);
     nameButton (randomize50Button);
     nameButton (resetButton);
+    syxLoadButton.setName ("Load patch file");
+    syxLoadButton.setTitle ("Load patch file");
+    syxSaveButton.setName ("Save patch file");
+    syxSaveButton.setTitle ("Save patch file");
 
     hqButton.setClickingTogglesState (true);
     hqButton.getProperties().set (secondaryStyleProperty, true);
@@ -1430,11 +1453,32 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
     resetButton.onClick = [this] { selectProgram (0); };
     addAndMakeVisible (resetButton);
 
+    // The hardware moves patches over its tape and MIDI jacks; here the same
+    // dumps travel as .syx files. LOAD and SAVE speak the instrument's own
+    // F0 41 30 patch message, so files round-trip with real units and with
+    // any librarian that talks to them.
+    syxLoadButton.setTooltip (
+        "Loads a .syx patch dump and applies its tone to the panel, exactly "
+        "like receiving the dump over MIDI. A file holding a whole bank "
+        "applies its first patch. You can also drop a .syx file anywhere on "
+        "the instrument.");
+    syxLoadButton.onClick = [this] { chooseAndImportPatchFile(); };
+    addAndMakeVisible (syxLoadButton);
+
+    syxSaveButton.setTooltip (
+        "Saves the current tone as a hardware-compatible .syx patch dump. "
+        "Volume, the benders, portamento, the assign mode and the plug-in "
+        "extensions are performance controls and are not stored, exactly as "
+        "on the hardware.");
+    syxSaveButton.onClick = [this] { chooseAndExportPatchFile(); };
+    addAndMakeVisible (syxSaveButton);
+
     // Service actions are momentary utilities, not synth modes. Give them the
-    // compact key treatment so they do not carry five misleading unlit lamps
-    // or compete with the controls above the keyboard.
-    for (auto* button : { &panicButton, &resetButton, &randomize1Button,
-                          &randomize10Button, &randomize50Button })
+    // compact key treatment so they do not carry misleading unlit lamps or
+    // compete with the controls above the keyboard.
+    for (auto* button : { &syxLoadButton, &syxSaveButton, &panicButton,
+                          &resetButton, &randomize1Button, &randomize10Button,
+                          &randomize50Button })
         button->getProperties().set (compactStyleProperty, true);
 }
 
@@ -1557,6 +1601,124 @@ void YouKnow106AudioProcessorEditor::refreshPresetBar()
     presetEditedLabel.setVisible (edited);
     presetPrevButton.setEnabled (program > 0);
     presetNextButton.setEnabled (program < audioProcessor.getNumPrograms() - 1);
+}
+
+bool YouKnow106AudioProcessorEditor::isInterestedInFileDrag (
+    const juce::StringArray& files)
+{
+    for (const auto& path : files)
+        if (path.endsWithIgnoreCase (".syx"))
+            return true;
+    return false;
+}
+
+void YouKnow106AudioProcessorEditor::filesDropped (const juce::StringArray& files,
+                                                   int, int)
+{
+    for (const auto& path : files)
+    {
+        if (path.endsWithIgnoreCase (".syx"))
+        {
+            importPatchFile (juce::File (path));
+            return;
+        }
+    }
+}
+
+void YouKnow106AudioProcessorEditor::chooseAndImportPatchFile()
+{
+    sysExFileChooser = std::make_unique<juce::FileChooser> (
+        "Load a JUNO-106 patch dump", juce::File(), "*.syx");
+    sysExFileChooser->launchAsync (
+        juce::FileBrowserComponent::openMode
+            | juce::FileBrowserComponent::canSelectFiles,
+        [safe = SafePointer (this)] (const juce::FileChooser& chooser)
+        {
+            if (safe == nullptr)
+                return;
+            const auto file = chooser.getResult();
+            if (file != juce::File())
+                safe->importPatchFile (file);
+        });
+}
+
+void YouKnow106AudioProcessorEditor::chooseAndExportPatchFile()
+{
+    const auto programName = audioProcessor.getProgramName (
+        audioProcessor.getCurrentProgram());
+    const auto defaultFile =
+        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+            .getChildFile (juce::File::createLegalFileName (programName)
+                           + ".syx");
+    sysExFileChooser = std::make_unique<juce::FileChooser> (
+        "Save the current tone as a patch dump", defaultFile, "*.syx");
+    sysExFileChooser->launchAsync (
+        juce::FileBrowserComponent::saveMode
+            | juce::FileBrowserComponent::canSelectFiles
+            | juce::FileBrowserComponent::warnAboutOverwriting,
+        [safe = SafePointer (this)] (const juce::FileChooser& chooser)
+        {
+            if (safe == nullptr)
+                return;
+            auto file = chooser.getResult();
+            if (file == juce::File())
+                return;
+            if (file.getFileExtension().isEmpty())
+                file = file.withFileExtension ("syx");
+            safe->exportPatchFile (file);
+        });
+}
+
+void YouKnow106AudioProcessorEditor::importPatchFile (const juce::File& file)
+{
+    // A complete 128-patch bank dump is under 3 kB. The bound only refuses
+    // files that cannot possibly be MIDI dumps, not large multi-gear archives.
+    constexpr juce::int64 maximumSysExFileBytes = 1 << 20;
+    juce::MemoryBlock bytes;
+    if (!file.existsAsFile() || file.getSize() > maximumSysExFileBytes
+        || !file.loadFileAsData (bytes))
+    {
+        contextHelp.showNotice (
+            "LOAD", "Could not read \"" + file.getFileName() + "\".");
+        return;
+    }
+
+    int patchesFound = 0;
+    if (audioProcessor.importPatchSysExBytes (bytes.getData(), bytes.getSize(),
+                                              patchesFound))
+    {
+        contextHelp.showNotice (
+            "LOAD",
+            patchesFound > 1
+                ? "Applied the first of " + juce::String (patchesFound)
+                      + " patches in \"" + file.getFileName() + "\"."
+                : "Applied the patch from \"" + file.getFileName() + "\".");
+        return;
+    }
+
+    contextHelp.showNotice (
+        "LOAD", "No JUNO-106 patch dump in \"" + file.getFileName() + "\".");
+}
+
+void YouKnow106AudioProcessorEditor::exportPatchFile (const juce::File& file)
+{
+    const auto message = audioProcessor.currentPatchAsSysEx (
+        audioProcessor.sysExMidiChannel());
+    if (message.getRawDataSize() == 0
+        || !file.replaceWithData (message.getRawData(),
+                                  static_cast<std::size_t> (
+                                      message.getRawDataSize())))
+    {
+        contextHelp.showNotice (
+            "SAVE", "Could not write \"" + file.getFileName() + "\".");
+        return;
+    }
+
+    contextHelp.showNotice (
+        "SAVE",
+        "Saved the current tone as \"" + file.getFileName()
+            + "\". Performance controls travel with the session, not the "
+              "patch, as on the hardware.");
 }
 
 void YouKnow106AudioProcessorEditor::attachSlider (juce::Slider& slider,
@@ -2025,17 +2187,19 @@ void YouKnow106AudioProcessorEditor::resized()
     }
 
     // The service keys sit on the utility bar beside the help text rather than
-    // on the instrument surface. SEND is intentionally not a front-panel
-    // operation; the processor can retain its hardware-dump plumbing without
-    // making this instrument editor a librarian.
-    constexpr float operationPitch = panel::operationsBarWidth / 5.0f;
+    // on the instrument surface. Patch-file LOAD/SAVE live here too: moving
+    // dumps in and out is the tape jacks' job, not the front panel's, so the
+    // instrument surface still carries no librarian. Live MIDI SEND remains
+    // intentionally absent; the processor keeps that plumbing for the wire.
+    constexpr float operationPitch = panel::operationsBarWidth / 7.0f;
     constexpr float operationWidth = operationPitch - 4.0f;
     const float operationTop = panel::panelHeight + panel::keyboardHeight
                              + panel::helpStripGap + 6.0f;
-    juce::Button* operationButtons[] = { &panicButton, &resetButton,
+    juce::Button* operationButtons[] = { &syxLoadButton, &syxSaveButton,
+                                         &panicButton, &resetButton,
                                          &randomize1Button, &randomize10Button,
                                          &randomize50Button };
-    for (int index = 0; index < 5; ++index)
+    for (int index = 0; index < 7; ++index)
         operationButtons[index]->setBounds (
             scaled (panel::operationsBarX
                         + operationPitch * static_cast<float> (index),

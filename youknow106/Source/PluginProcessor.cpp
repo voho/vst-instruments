@@ -1761,6 +1761,57 @@ juce::MidiMessage YouKnow106AudioProcessor::currentPatchAsSysEx (int channel) co
                                                   static_cast<int> (written) - 2);
 }
 
+// Message thread. A .syx file is the live stream written to disk, so it gets
+// the live stream's parser: scan each F0..F7 span and let readPatchMessage
+// keep its exact framing rules. Only the first patch is applied -- with one
+// edit buffer and no user bank, applying a whole bank file in order would
+// silently keep nothing but its last patch -- but every patch is counted so
+// the editor can say what the file actually held.
+bool YouKnow106AudioProcessor::importPatchSysExBytes (const void* data,
+                                                      std::size_t size,
+                                                      int& patchesFound)
+{
+    patchesFound = 0;
+    const auto* bytes = static_cast<const std::uint8_t*> (data);
+    if (bytes == nullptr)
+        return false;
+
+    bool applied = false;
+    std::size_t index = 0;
+    while (index < size)
+    {
+        if (bytes[index] != 0xf0)
+        {
+            ++index;
+            continue;
+        }
+
+        std::size_t end = index + 1;
+        while (end < size && bytes[end] != 0xf7)
+            ++end;
+        if (end == size)
+            break;
+
+        youknow106::sysex::Patch patch {};
+        int channel = 0;
+        if (youknow106::sysex::readPatchMessage (bytes + index, end - index + 1,
+                                                 patch, channel))
+        {
+            ++patchesFound;
+            if (!applied)
+            {
+                // Mirror the live path: remember the dump's channel so later
+                // exports and replies speak it back.
+                sysExChannel.store (channel, std::memory_order_relaxed);
+                applyPatch (patch);
+                applied = true;
+            }
+        }
+        index = end + 1;
+    }
+    return applied;
+}
+
 // Audio thread. Claims the next slot, fills it, then publishes it. A slot is
 // only written while its `ready` flag is clear, so the message thread is never
 // reading the event this is writing.

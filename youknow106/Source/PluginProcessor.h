@@ -93,6 +93,18 @@ public:
     youknow106::sysex::Patch currentPatch() const;
     // The current patch as a system-exclusive message the hardware would accept.
     juce::MidiMessage currentPatchAsSysEx (int channel) const;
+    // Message thread. Scans a .syx file image for the instrument's own
+    // F0 41 30 0n patch dumps, applies the first and counts every one the
+    // file carries. Anything else in the stream -- other makers, other
+    // opcodes, single-parameter messages -- is passed over, exactly as the
+    // live MIDI path passes it over.
+    bool importPatchSysExBytes (const void* data, std::size_t size,
+                                int& patchesFound);
+    // The channel incoming SysEx last spoke on; exports answer on it.
+    int sysExMidiChannel() const noexcept
+    {
+        return sysExChannel.load (std::memory_order_relaxed);
+    }
 
     void getStateInformation (juce::MemoryBlock& destinationData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
