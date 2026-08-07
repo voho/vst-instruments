@@ -167,6 +167,37 @@ struct YouKnow106TestAccess
         engine.sharedVca_ = state;
     }
 
+    static void setPwmHeld(YouKnow106Engine& engine, float state) noexcept
+    {
+        engine.pwmVoltsFirstPole_ = state;
+        engine.pwmVolts_ = state;
+    }
+
+    static constexpr float pwmFirstPoleSeconds() noexcept
+    {
+        return YouKnow106Engine::pwmHoldFirstPoleSeconds;
+    }
+
+    static constexpr float pwmSecondPoleSeconds() noexcept
+    {
+        return YouKnow106Engine::pwmHoldSecondPoleSeconds;
+    }
+
+    static constexpr float subSlewSeconds() noexcept
+    {
+        return YouKnow106Engine::subHoldSlewSeconds;
+    }
+
+    static float subHeld(const YouKnow106Engine& engine) noexcept
+    {
+        return engine.subCv_;
+    }
+
+    static void setSubHeld(YouKnow106Engine& engine, float state) noexcept
+    {
+        engine.subCv_ = state;
+    }
+
     static bool assignmentPending(const YouKnow106Engine& engine) noexcept
     {
         return engine.assignmentRescanPending_;
@@ -1670,9 +1701,11 @@ void testPulseOffPinsComparatorWithoutResettingTheDco()
     // Card 6 has a deterministic negative comparator trim. During re-enable,
     // the shared base CV therefore crosses zero before that card stops being
     // pinned high. Its audible gate must follow the card comparator, not the
-    // already-positive shared base value.
+    // already-positive shared base value. The shared CV climbs out of -0.8 V
+    // through the R117/C62 and R116/C63 smoothing poles, so the crossing sits
+    // several milliseconds after the write; search a window that covers it.
     bool sawPerCardOffsetWindow = false;
-    for (int sample = 0; sample < 256; ++sample)
+    for (int sample = 0; sample < 2048; ++sample)
     {
         renderExact(engine, 1);
         if (YouKnow106TestAccess::pwmHeld(engine) > 0.0f
@@ -2846,6 +2879,79 @@ void testCommonVcaHoldUsesJackBoardC7TimeConstant()
                        : "common-VCA C7 slew misses one time constant at 1x");
         expectNear(expected, oneTau, 1.0e-4,
                    "common-VCA one-tau fixture is not one time constant");
+    }
+}
+
+void testPwmHoldCrossesItsTwoSmoothingPoles()
+{
+    // The PWM hold reaches the comparators through R117/C62 and then R116/C63
+    // around IC17a. A step from a discharged network must follow the two-pole
+    // cascade those components fix -- independently of the engine's internal
+    // oversampling rate -- rather than the retired single compatibility pole.
+    constexpr double sampleRate = 48000.0;
+    const double tauFirst = YouKnow106TestAccess::pwmFirstPoleSeconds();
+    const double tauSecond = YouKnow106TestAccess::pwmSecondPoleSeconds();
+    const int hostSamples =
+        static_cast<int>(std::lround(tauFirst * sampleRate));
+
+    for (const bool oversampling : { false, true })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, oversampling);
+        auto parameters = plainPatch();
+        parameters.pulseEnabled = true;
+        parameters.pwmSource = PwmSource::Manual;
+        parameters.pwmDepth = 0.5f;
+        engine.setParameters(parameters);
+        const double target = YouKnow106TestAccess::pwmTarget(engine);
+        expect(target > 0.0, "manual PWM fixture has no positive target");
+        YouKnow106TestAccess::setPwmHeld(engine, 0.0f);
+
+        renderExact(engine, hostSamples);
+        const double elapsed = hostSamples / sampleRate;
+        const double expected = target
+            * (1.0
+               - (tauFirst * std::exp(-elapsed / tauFirst)
+                  - tauSecond * std::exp(-elapsed / tauSecond))
+                     / (tauFirst - tauSecond));
+        expectNear(YouKnow106TestAccess::pwmHeld(engine), expected,
+                   5.0e-3 * target,
+                   oversampling
+                       ? "PWM two-pole smoothing changed at 4x processing"
+                       : "PWM smoothing does not follow the R117/C62 and "
+                         "R116/C63 cascade");
+    }
+}
+
+void testSubHoldUsesItsR11C1TimeConstant()
+{
+    // The stored SUB level reaches its mixer OTA through R11 1 kOhm into C1
+    // 10 uF: one 10 ms pole. A one-time-constant step must reach 1-exp(-1)
+    // regardless of the internal processing rate.
+    constexpr double sampleRate = 48000.0;
+    const double oneTau = 1.0 - std::exp(-1.0);
+    const double tau = YouKnow106TestAccess::subSlewSeconds();
+    const int hostSamples = static_cast<int>(std::lround(tau * sampleRate));
+
+    for (const bool oversampling : { false, true })
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, oversampling);
+        auto parameters = plainPatch();
+        parameters.subLevel = 1.0f;
+        engine.setParameters(parameters);
+        const double target = YouKnow106TestAccess::subTarget(engine);
+        expect(target > 0.0, "sub fixture has no positive target");
+        YouKnow106TestAccess::setSubHeld(engine, 0.0f);
+
+        renderExact(engine, hostSamples);
+        const double elapsed = hostSamples / sampleRate;
+        const double expected = target * (1.0 - std::exp(-elapsed / tau));
+        expectNear(YouKnow106TestAccess::subHeld(engine), expected, 2.0e-5,
+                   oversampling ? "SUB R11/C1 slew changed at 4x processing"
+                                : "SUB slew misses its R11/C1 time constant");
+        expectNear(expected / target, oneTau, 1.0e-4,
+                   "SUB one-tau fixture is not one time constant");
     }
 }
 
@@ -4510,6 +4616,8 @@ int main()
     testRetriggerDoesNotTouchVcaHoldBeforeConverterScan();
     testSilentVoiceDoesNotInventUnmeasuredVcaFeedthrough();
     testCommonVcaHoldUsesJackBoardC7TimeConstant();
+    testPwmHoldCrossesItsTwoSmoothingPoles();
+    testSubHoldUsesItsR11C1TimeConstant();
     testPortamentoRateFollowsItsControl();
     testOscillatorSurvivesMoreThanOneCyclePerSample();
     testModulationDelayRearmsForANewPhrase();

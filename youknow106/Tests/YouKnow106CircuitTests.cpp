@@ -35,6 +35,21 @@ struct YouKnow106TestAccess
             loopHeadroomVolts;
     }
 
+    static constexpr float pwmFirstPoleSeconds() noexcept
+    {
+        return YouKnow106Engine::pwmHoldFirstPoleSeconds;
+    }
+
+    static constexpr float pwmSecondPoleSeconds() noexcept
+    {
+        return YouKnow106Engine::pwmHoldSecondPoleSeconds;
+    }
+
+    static constexpr float subHoldSlewSeconds() noexcept
+    {
+        return YouKnow106Engine::subHoldSlewSeconds;
+    }
+
     static std::vector<float> renderCascade(const std::vector<float>& input,
                                             float g, float feedback)
     {
@@ -1319,6 +1334,21 @@ void testPulseWidthAndHighPassLaws()
             YouKnow106Engine::pwmControlVolts(depth));
         expect(duty > 0.0f && duty < 1.0f, "pulse reaches a rail");
     }
+
+    // The held PWM CV reaches the comparators through its p. 13 smoothing
+    // chain -- R117 100 kOhm into C62 47 nF, then R116 560 kOhm with C63
+    // 4.7 nF around IC17a -- and the stored SUB level crosses R11 1 kOhm into
+    // C1 10 uF ahead of the R9/R10 inverter. The shipped time constants must
+    // stay the products of those anchored designators.
+    expectNear(YouKnow106TestAccess::pwmFirstPoleSeconds(),
+               100.0e3 * 47.0e-9, 1.0e-9,
+               "PWM first smoothing pole is not R117 * C62");
+    expectNear(YouKnow106TestAccess::pwmSecondPoleSeconds(),
+               560.0e3 * 4.7e-9, 1.0e-9,
+               "PWM second smoothing pole is not R116 * C63");
+    expectNear(YouKnow106TestAccess::subHoldSlewSeconds(),
+               1.0e3 * 10.0e-6, 1.0e-9,
+               "SUB hold slew is not R11 * C1");
 
     // The per-card comparator offset is calibrated to leave a 48% to 52% duty
     // window across the six voices, so the voltage the engine draws against has

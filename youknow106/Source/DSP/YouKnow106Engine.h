@@ -689,15 +689,32 @@ private:
     static constexpr float vcfBenderCounts = 4064.0f;
     // Hold-capacitor slew after the converter. VCF and voice-VCA use the
     // supported 522/687 us values; the common VCA derives its separate value
-    // from C7 and its loaded jack-board resistor network. The remaining nodes
-    // retain compatibility values behind separate names so a measured
-    // destination can be replaced without silently changing the others.
+    // from C7 and its loaded jack-board resistor network. PWM and SUB derive
+    // theirs from p. 13's designator-complete post-hold smoothing networks
+    // (OQ-07): the PWM hold reaches the comparators through R117/C62 and then
+    // R116/C63 around IC17a -- two cascaded poles -- and the stored SUB level
+    // reaches its mixer OTA through R11 into C1 ahead of the R9/R10 inverter.
+    // Both networks settle to their held value, so the calibrated DC laws are
+    // untouched; what they add is the lag the hardware's PWM LFO and level
+    // staircase actually cross. The remaining nodes retain compatibility
+    // values behind separate names so a measured destination can be replaced
+    // without silently changing the others.
     static constexpr float vcfHoldSlewSeconds = 522.0e-6f;
     static constexpr float voiceVcaHoldSlewSeconds = 687.0e-6f;
+    static constexpr float pwmSmoothingR117Ohms = 100.0e3f;
+    static constexpr float pwmSmoothingC62Farads = 47.0e-9f;
+    static constexpr float pwmSmoothingR116Ohms = 560.0e3f;
+    static constexpr float pwmSmoothingC63Farads = 4.7e-9f;
+    static constexpr float pwmHoldFirstPoleSeconds =         // 4.7 ms
+        pwmSmoothingR117Ohms * pwmSmoothingC62Farads;
+    static constexpr float pwmHoldSecondPoleSeconds =        // 2.632 ms
+        pwmSmoothingR116Ohms * pwmSmoothingC63Farads;
+    static constexpr float subSmoothingR11Ohms = 1.0e3f;
+    static constexpr float subSmoothingC1Farads = 10.0e-6f;
+    static constexpr float subHoldSlewSeconds =              // 10 ms
+        subSmoothingR11Ohms * subSmoothingC1Farads;
     static constexpr float dcoHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float resonanceHoldSlewSecondsVoiced = 522.0e-6f;
-    static constexpr float pwmHoldSlewSecondsVoiced = 522.0e-6f;
-    static constexpr float subHoldSlewSecondsVoiced = 522.0e-6f;
     static constexpr float noiseHoldSlewSecondsVoiced = 522.0e-6f;
     // The shared white-noise generator and each card's microscopic filter
     // excitation represent continuous-time noise densities.  Their discrete
@@ -1195,7 +1212,12 @@ private:
     // The service timing chart routes exactly one hold each to PWM, sub level
     // and noise level. Every voice card consumes these shared voltages, while
     // its downstream comparator and level errors remain card-specific.
+    // The PWM hold crosses two smoothing poles on its way to the comparators
+    // -- R117/C62, then R116/C63 around IC17a -- so it carries the R117/C62
+    // node as a second continuous state between the target and the value the
+    // cards see.
     float pwmVoltsTarget_ { 6.0f };
+    float pwmVoltsFirstPole_ { 6.0f };
     float pwmVolts_ { 6.0f };
     float subCvTarget_ { 0.0f };
     float subCv_ { 0.0f };

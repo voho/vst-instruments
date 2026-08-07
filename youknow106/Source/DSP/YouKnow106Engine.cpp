@@ -1985,6 +1985,7 @@ void YouKnow106Engine::reset()
     updateSharedScan(activeParameters_, lfoValue_);
     resonanceCv_ = resonanceCvTarget_;
     sharedVca_ = sharedVcaTarget_;
+    pwmVoltsFirstPole_ = pwmVoltsTarget_;
     pwmVolts_ = pwmVoltsTarget_;
     subCv_ = subCvTarget_;
     noiseCv_ = noiseCvTarget_;
@@ -2125,6 +2126,7 @@ void YouKnow106Engine::setParameters(const EngineParameters& parameters)
         updateSharedScan(next, lfoValue_);
         resonanceCv_ = resonanceCvTarget_;
         sharedVca_ = sharedVcaTarget_;
+        pwmVoltsFirstPole_ = pwmVoltsTarget_;
         pwmVolts_ = pwmVoltsTarget_;
         subCv_ = subCvTarget_;
         noiseCv_ = noiseCvTarget_;
@@ -3587,8 +3589,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     }
 
     // Each converter destination owns a separately named hold network. VCF,
-    // voice VCA and common VCA are evidence-backed; the other constants remain
-    // isolated compatibility policies until their RCs are established.
+    // voice VCA, common VCA, PWM and SUB are evidence-backed; DCO, resonance
+    // and noise remain isolated compatibility policies until their RCs are
+    // established.
     const auto slewFor = [this](float seconds) {
         return 1.0f - std::exp(-inverseOversampledRate_ / seconds);
     };
@@ -3597,8 +3600,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
     const float dcoSlew = slewFor(dcoHoldSlewSecondsVoiced);
     const float resonanceSlew = slewFor(resonanceHoldSlewSecondsVoiced);
     const float commonVcaSlew = slewFor(commonVcaHoldTimeConstantSeconds());
-    const float pwmSlew = slewFor(pwmHoldSlewSecondsVoiced);
-    const float subSlew = slewFor(subHoldSlewSecondsVoiced);
+    const float pwmSlewFirst = slewFor(pwmHoldFirstPoleSeconds);
+    const float pwmSlewSecond = slewFor(pwmHoldSecondPoleSeconds);
+    const float subSlew = slewFor(subHoldSlewSeconds);
     const float noiseSlew = slewFor(noiseHoldSlewSecondsVoiced);
     voiceEnergyFollower_ = slewFor(voiceEnergyFollowerSeconds);
     const float outputGlide =
@@ -3673,7 +3677,9 @@ void YouKnow106Engine::process(float* left, float* right, int numSamples)
                 (resonanceCvTarget_ - resonanceCv_) * resonanceSlew;
             sharedVca_ +=
                 (sharedVcaTarget_ - sharedVca_) * commonVcaSlew;
-            pwmVolts_ += (pwmVoltsTarget_ - pwmVolts_) * pwmSlew;
+            pwmVoltsFirstPole_ +=
+                (pwmVoltsTarget_ - pwmVoltsFirstPole_) * pwmSlewFirst;
+            pwmVolts_ += (pwmVoltsFirstPole_ - pwmVolts_) * pwmSlewSecond;
             subCv_ += (subCvTarget_ - subCv_) * subSlew;
             noiseCv_ += (noiseCvTarget_ - noiseCv_) * noiseSlew;
             thermalWarmupSeconds_ += static_cast<float>(inverseOversampledRate_);

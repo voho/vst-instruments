@@ -88,7 +88,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P2 | 04 | Loaded post-BBD support transfer, the output-stage reading that reproduces the digitised typical Gi–fi family (two-phase tap summing candidate), and emitter-follower output impedance | Component topology with the 106's own p. 15 capacitor codes now read at designator level, provisional ideal-source poles, the fixed per-shift residual coefficient anchored to the guaranteed-minimum 40 kHz/12 kHz row, and the digitised 10/40/100 kHz typical family (which the current hold-plus-pole framework cannot reach at low clocks — recorded 2026-08-07) |
 | P0 | 05 | TA75558S IC6 and High-output clipping swing versus frequency and load | IC6 identity, linear resistor gains and ±15 V rails |
 | Dependency | 06 | Physical `Vref_rms` for a declared High-output/load condition | Final -18 dBFS RMS mapping, floating output and no-limiter policy |
-| P1 | 07 | Acquisition/tracking behaviour, droop and loading of every converter hold | Hold ownership, 4.2 ms pass, VCF 522 µs and voice-VCA 687 µs anchors, and the designator-complete inventory: all 23 holds are 0.01 µF (p. 13 ".01×7/.01×8"), with per-destination post-hold smoothing networks read in full (2026-08-07) |
+| P1 | 07 | Acquisition/tracking behaviour, droop and loading of every converter hold | Hold ownership, 4.2 ms pass, VCF 522 µs and voice-VCA 687 µs anchors, and the designator-complete inventory: all 23 holds are 0.01 µF (p. 13 ".01×7/.01×8"), with per-destination post-hold smoothing networks read in full (2026-08-07); the PWM (R117/C62 then R116/C63) and SUB (R11/C1) networks ship as derived slews |
 | P1 | 08 | Exact intra-pass timestamps/branches and the physical state forced by a changed-pitch write | Ordinal 23-write queue and normalized compatibility scheduler |
 | P1 | 09 | Resonance DAC/control voltage to loop gain, compensation and oscillation correction | BA662/IR3109 topology, 4.8 Vpp service trim, shared hold, exact B-2 byte-to-DAC mapping, and the netlist-verified compensation mechanism (lineage divider values recorded, unpromoted) |
 | P3 | 10 | Post-calibration six-card and multi-unit residual distributions and thermal drift | Zero-spread nominal policy and optional deterministic Unit Character |
@@ -576,9 +576,15 @@ the VCF hold family and 687 µs for the per-voice ENV/GATE VCA hold family are
 existing component-derived anchors. The common stored VCA LEVEL path has a
 separately derived post-S/H pole: p. 15's R30 2.2 kΩ, C7 10 µF NP, R32
 1.5 kΩ, R31
-47 Ω and R165 15 kΩ derive `Rth=908.249 Ω` and `τ=9.08249 ms`. Extending
-any of those three known constants to every other destination remains
-provisional.
+47 Ω and R165 15 kΩ derive `Rth=908.249 Ω` and `τ=9.08249 ms`. The p. 13
+read (2026-08-07) made the per-destination post-hold smoothing inventory
+designator-complete, and its two outright-fixed networks now ship as
+derived constants: the PWM hold reaches the comparators through R117
+100 kΩ/C62 47 nF and then R116 560 kΩ/C63 4.7 nF around IC17a — two
+cascaded poles, 4.7 ms and 2.632 ms — and the stored SUB level crosses
+R11 1 kΩ into C1 10 µF, one 10 ms pole, ahead of the R9/R10 inverter.
+DCO, RESONANCE and NOISE retain their labelled 522 µs compatibility
+defaults.
 
 Two model questions now depend on this task, both added 2026-08-06:
 
@@ -2394,6 +2400,14 @@ modelled). The mux parts are 4051s with IC26 on ±15 V behind IC25 (7407)
 level shifting, "(except TC4051)" noted as a parts restriction. This gives
 OQ-07 its designator-complete acquisition-network inventory; the in-window
 tracking behaviour and droop measurements remain open.
+
+The two networks the read fixed outright are consumed (2026-08-07): the
+engine now slews the PWM hold through the R117/C62 then R116/C63 cascade
+(4.7 ms and 2.632 ms) and the SUB hold through R11/C1's 10 ms pole,
+replacing their 522 µs voiced compatibility defaults. Both networks settle
+to the held value, so the calibrated DC laws are untouched; what changed
+is the lag the PWM LFO and the level staircase cross on their way to the
+cards. DCO, RESONANCE and NOISE keep their labelled 522 µs defaults.
 
 ### OQ-03/OQ-01 — Gearspace provenance corrected and the noise floors sourced
 
