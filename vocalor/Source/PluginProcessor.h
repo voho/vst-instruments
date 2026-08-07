@@ -38,10 +38,13 @@ inline constexpr auto intonation   = "intonation";
 inline constexpr auto nasal        = "nasal";
 } // namespace vocalor::parameters
 
+namespace vocalor
+{
 /** Pitch-bend range in semitones. Fixed rather than negotiated over RPN 0:
     hosts and controllers overwhelmingly assume two semitones for an
     instrument that does not advertise otherwise. */
 inline constexpr float kPitchBendSemitones = 2.0f;
+} // namespace vocalor
 
 class VocalorAudioProcessorEditor;
 

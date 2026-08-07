@@ -426,6 +426,22 @@ small DC bias on the tract excitation rather than a per-tick compare, which is
 worth about a third of the per-voice budget on its own, and the room network
 clears itself once its tail is provably inaudible.
 
+**What 1.2 costs.** The table above predates it and has not been re-measured,
+because the offline benchmark that produced it is not in this repository. What
+can be compared is the test suite's own twelve-singer 96 kHz render, which runs
+the same harness on both engines: best of three, 493.6 ns/sample before against
+500.5 after, or about 1.4 % — the difference is close to the run-to-run spread.
+
+That is deliberate. The dynamic response is resolved once per chunk and its two
+gains are folded into the per-sample voiced and aspiration level arrays that
+already existed, so the render loop is unchanged. Formant tuning and the
+epilarynx cluster are control-rate arithmetic and the efficiency trim is folded
+into a per-voice gain the loop already reads. Coarticulation added a multiply
+against a precomputed reciprocal rather than a division. The nasal branch is the
+one addition that costs per-sample work — a biquad and a resonator per voice —
+and it is skipped entirely on a chunk-constant branch while the velum is closed,
+which is its default.
+
 ## Requirements
 
 - macOS 11 or newer for running the built products

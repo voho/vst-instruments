@@ -58,7 +58,13 @@ void addMissingParameterDefaults (
         state.appendChild (parameterState, nullptr);
     }
 }
-const juce::Identifier programProperty { "vocalorProgram" };
+// Function-local like the identifiers above it, so the string pool is never
+// touched during static initialisation.
+const juce::Identifier& programProperty()
+{
+    static const juce::Identifier identifier { "vocalorProgram" };
+    return identifier;
+}
 } // namespace
 
 VocalorAudioProcessor::VocalorAudioProcessor()
@@ -446,7 +452,7 @@ void VocalorAudioProcessor::getStateInformation (juce::MemoryBlock& destinationD
     auto state = parameters.copyState();
     // Saved alongside the parameters so a restored session can tell the host
     // which program it is on without the host having to re-apply it.
-    state.setProperty (programProperty, currentProgram, nullptr);
+    state.setProperty (programProperty(), currentProgram, nullptr);
     if (const auto xml = state.createXml())
         copyXmlToBinary (*xml, destinationData);
 }
@@ -457,10 +463,10 @@ void VocalorAudioProcessor::setStateInformation (const void* data, int sizeInByt
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
     {
         auto restoredState = juce::ValueTree::fromXml (*xml);
-        if (restoredState.hasProperty (programProperty))
+        if (restoredState.hasProperty (programProperty()))
             currentProgram = juce::jlimit (
                 0, juce::jmax (0, vocalor::factoryPresetCount() - 1),
-                static_cast<int> (restoredState.getProperty (programProperty)));
+                static_cast<int> (restoredState.getProperty (programProperty())));
         addMissingParameterDefaults (restoredState, parameters, getParameters());
         parameters.replaceState (restoredState);
         requestPanic();
