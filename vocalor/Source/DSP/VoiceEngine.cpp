@@ -957,6 +957,23 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
                 morph * (space[static_cast<std::size_t>(formant)] - target[static_cast<std::size_t>(formant)]);
     }
 
+    // The singer's formant is not an amplitude trim. Narrowing the epilaryngeal
+    // tube clusters F3, F4 and F5 into one reinforced peak at 2.5-3.5 kHz, and
+    // that peak is what lets an unamplified voice carry over an orchestra.
+    // Boosting the amplitude of three formants that stay 700 Hz apart does not
+    // produce a cluster, which is all the 1.1 engine did. Effort strengthens
+    // the configuration as well as tension does, so the dynamic reaches it too.
+    const float epilarynx = clampUnit(smoothedTension_ * (0.40f + 0.60f * smoothedDynamics_));
+    if (epilarynx > 0.0f)
+    {
+        const float clusterHz = male ? 2900.0f : 3200.0f;
+        for (int formant = 2; formant < formantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t>(formant);
+            target[index] += 0.45f * epilarynx * (clusterHz - target[index]);
+        }
+    }
+
     const float shift = formantShiftRatio(smoothedFormantShift_);
     const float bandwidthScale = (1.18f - 0.30f * smoothedResonance_)
         * (1.0f + 0.12f * smoothedBreath_);
@@ -970,7 +987,8 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     // the whole block unless one of its inputs actually changed.
     // The sentinel-zero initial state guarantees the first call resolves.
     bool tractMoved = tractInputs_[formantCount] != shift
-                   || tractInputs_[formantCount + 1] != bandwidthScale;
+                   || tractInputs_[formantCount + 1] != bandwidthScale
+                   || tractInputs_[formantCount + 2] != epilarynx;
     for (int formant = 0; formant < formantCount; ++formant)
         tractMoved = tractMoved
             || tractInputs_[static_cast<std::size_t>(formant)] != target[static_cast<std::size_t>(formant)];
@@ -979,6 +997,7 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     {
         tractInputs_[formantCount] = shift;
         tractInputs_[formantCount + 1] = bandwidthScale;
+        tractInputs_[formantCount + 2] = epilarynx;
         const float maximumBandwidth = 0.25f * static_cast<float>(sampleRate_);
         const float widthScale = bandwidthScale * std::sqrt(shift);
         for (int formant = 0; formant < formantCount; ++formant)
@@ -989,8 +1008,12 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
 
             // Wider formants track a shifted tract so the resonances keep their
             // shape instead of turning needle-thin when the voice is made small.
+            // A narrowed epilarynx damps the cluster less as well as pulling it
+            // together, which is the other half of what makes the peak.
+            const float clusterWidth = formant >= 2 ? 1.0f - 0.30f * epilarynx : 1.0f;
             const float bandwidth = std::clamp(
-                (male ? maleBw[index] : femaleBw[index]) * widthScale, 20.0f, maximumBandwidth);
+                (male ? maleBw[index] : femaleBw[index]) * widthScale * clusterWidth,
+                20.0f, maximumBandwidth);
             chunkBandwidth_[index] = bandwidth;
             const float radius = std::exp(-pi * bandwidth * inverseSampleRate_);
             chunkRadius_[index] = radius;
@@ -1021,12 +1044,9 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     for (int formant = 0; formant < formantCount; ++formant)
     {
         const auto index = static_cast<std::size_t>(formant);
-        // Tension presses the singer's-formant region (F3 & F4) a little harder.
-        const float epilarynxBoost = (formant == 2 ? 0.12f * smoothedTension_ : (formant == 3 ? 0.06f * smoothedTension_ : 0.0f));
         // An open velum turns the mouth into a side branch: the sound leaves
         // through the nose, so the oral formants stop being the radiator.
-        const float shaped = chunkAmplitude_[index] * (1.0f + epilarynxBoost)
-            * (1.0f - 0.55f * smoothedNasal_);
+        const float shaped = chunkAmplitude_[index] * (1.0f - 0.55f * smoothedNasal_);
         if (!chunkStateValid_)
             chunkFormantGain_[index] = shaped;
         else if (advanceSmoothers)

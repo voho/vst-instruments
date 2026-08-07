@@ -388,7 +388,7 @@ private:
     // Vowel targets, formant shift and bandwidth scale the tract was last
     // resolved from. Resolving it costs more than the whole rest of the chunk
     // update, and on a sustained note none of these inputs move.
-    std::array<float, formantCount + 2> tractInputs_ {};
+    std::array<float, formantCount + 3> tractInputs_ {};
     std::array<float, formantCount> chunkAmplitude_ {};
     // Highest F1 the jaw reaches for this profile and tract length. Formant
     // tuning stops here rather than following the pitch indefinitely.

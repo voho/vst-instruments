@@ -187,6 +187,20 @@ like a tract rather than like five independent peaking filters:
   front: F2 and F3 of /i/ are carried nearly as strongly as F1 instead of
   sitting 22 dB below it.
 
+**Singer's formant.** Vocal tension used to raise the amplitude of F3 by 12 %
+and of F4 by 6 % and leave them where they were. Three formants 700 Hz apart
+with a little more gain each are still three formants: the spectral peak at
+2.5 – 3.5 kHz that lets an unamplified voice carry over an orchestra comes from
+narrowing the epilaryngeal tube until F3, F4 and F5 collapse into one. Tension
+now does that — it pulls the three upper formants toward a profile-dependent
+cluster centre (2.9 kHz male, 3.2 kHz female, scaled with the formant shift like
+the rest of the tract) and narrows their bandwidths together. Vocal effort
+strengthens the same configuration, so the dynamic reaches it as well.
+
+On a held male D3 the F3-to-F5 span closes from 1860 Hz to 1065 Hz as Tension
+goes from 0 to 95 %, and the share of the output between 2.05 and 4 kHz rises
+8.8 dB. At Tension 0 the upper formants sit exactly where the vowel puts them.
+
 **Coarticulation.** A vowel change is a jaw and a tongue moving. The formant
 glides ran on 16, 9, 5, 4 and 3 ms time constants, which put a whole vowel
 switch inside about 50 ms — a de-zipper rather than an articulation, where a

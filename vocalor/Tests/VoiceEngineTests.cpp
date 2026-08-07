@@ -672,6 +672,10 @@ void testVowelMorphAndFormantShift()
     morphed.setParameters (full);
     morphed.noteOn (60, 0.8f);
     const auto morphedAudio = render (morphed, 8192);
+    // The epilarynx cluster reads the tension smoother, so the tract is only
+    // comparable between engines once that smoother has settled in both.
+    render (reference, static_cast<int> (sampleRate * 0.3));
+    render (morphed, static_cast<int> (sampleRate * 0.3));
     const auto anchorFormants = vocalor::VoiceEngineTestAccess::chunkFormants (reference);
     const auto morphFormants = vocalor::VoiceEngineTestAccess::chunkFormants (morphed);
     expect (morphedAudio.finite && morphedAudio.rms() > 1.0e-6,
@@ -703,7 +707,7 @@ void testVowelMorphAndFormantShift()
     up.formantShift = 7.0f;
     shiftedEngine.setParameters (up);
     shiftedEngine.noteOn (60, 0.8f);
-    const auto shiftedAudio = render (shiftedEngine, 8192);
+    const auto shiftedAudio = render (shiftedEngine, static_cast<int> (sampleRate * 0.4));
     const auto shiftedFormants = vocalor::VoiceEngineTestAccess::chunkFormants (shiftedEngine);
     const auto ratio = vocalor::formantShiftRatio (7.0f);
     for (int i = 0; i < vocalor::kFormantCount; ++i)
@@ -1702,6 +1706,75 @@ void testSingerFormantAndLipZero()
            "Singer's Formant tension render exceeded amplitude guardrail");
 }
 
+/** The singer's formant is a cluster, not a boost.
+
+    The 1.1 engine raised F3 by 12 % and F4 by 6 % of Tension and left them
+    where they were. Three formants 700 Hz apart with slightly more gain each
+    are still three formants; the peak that lets an unamplified voice carry over
+    an orchestra comes from narrowing the epilaryngeal tube until F3, F4 and F5
+    collapse into one.
+*/
+void testSingersFormantCluster()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr double fundamental = 146.832;   // D3, so the comb resolves the peak
+
+    const auto probe = [] (float tension, std::array<float, vocalor::kFormantCount>& formants)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.profile = vocalor::VoiceProfile::Male;
+        parameters.tension = tension;
+        engine.setParameters (parameters);
+        engine.noteOn (50, 0.80f);
+        renderMono (engine, static_cast<int> (sampleRate * 0.6));
+        const auto samples = renderMono (engine, static_cast<int> (sampleRate * 0.6));
+        formants = vocalor::VoiceEngineTestAccess::chunkFormants (engine);
+
+        const auto energy = [&samples] (int first, int last)
+        {
+            double total = 0.0;
+            for (int harmonic = first; harmonic <= last; ++harmonic)
+            {
+                const auto magnitude = harmonicMagnitude (
+                    samples, fundamental * harmonic, sampleRate);
+                total += magnitude * magnitude;
+            }
+            return total;
+        };
+        // 2.05-4.0 kHz against everything from the fundamental to 6 kHz.
+        return energy (14, 27) / std::max (energy (1, 41), 1.0e-18);
+    };
+
+    std::array<float, vocalor::kFormantCount> relaxed {};
+    std::array<float, vocalor::kFormantCount> pressed {};
+    const auto relaxedRatio = probe (0.0f, relaxed);
+    const auto pressedRatio = probe (0.95f, pressed);
+
+    const auto relaxedSpan = relaxed[4] - relaxed[2];
+    const auto pressedSpan = pressed[4] - pressed[2];
+    const auto ringDb = 10.0 * std::log10 (std::max (pressedRatio, 1.0e-18)
+                                           / std::max (relaxedRatio, 1.0e-18));
+    std::cout << "epilarynx: F3-F5 span " << std::fixed << std::setprecision (0)
+              << relaxedSpan << " -> " << pressedSpan << " Hz, 2.05-4 kHz share "
+              << std::setprecision (1) << ringDb << " dB\n";
+
+    // At rest the tract has to be exactly the vowel it always was: the male
+    // open anchor is F3 2440, F4 3250, F5 4300.
+    expect (std::abs (relaxed[2] - 2440.0f) < 1.0f && std::abs (relaxed[3] - 3250.0f) < 1.0f
+                && std::abs (relaxed[4] - 4300.0f) < 1.0f,
+            "a relaxed larynx no longer leaves the vowel's own upper formants alone");
+
+    expect (pressedSpan < 0.72f * relaxedSpan,
+            "the upper formants did not cluster: this is still an amplitude boost");
+    expect (pressed[2] > relaxed[2] && pressed[4] < relaxed[4],
+            "the cluster did not close from both sides toward the epilarynx resonance");
+    expect (ringDb > 3.0,
+            "clustering the upper formants did not put energy where a voice carries");
+}
+
 /** A vowel change is a jaw and a tongue moving, not a de-zipper.
 
     The 1.1 formant glides ran on 16, 9, 5, 4 and 3 ms time constants, so a
@@ -2430,6 +2503,7 @@ int main()
     testEnsembleDispersion();
     testNasalBranch();
     testCoarticulationTiming();
+    testSingersFormantCluster();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();

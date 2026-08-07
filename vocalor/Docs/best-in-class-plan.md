@@ -245,7 +245,7 @@ opens on something playable.
   a stated window per formant, with F2 measurably slower than F1; a small vowel
   move must still settle quickly; the existing zipper-free guarantee must hold.
 
-- [ ] **7. Singer's-formant cluster.** Replace the F3/F4 amplitude trim with an
+- [x] **7. Singer's-formant cluster.** Replace the F3/F4 amplitude trim with an
   epilarynx model that pulls F3, F4 and F5 toward a profile-dependent cluster
   centre as tension and effort rise, narrowing their bandwidths together. Closes
   gap 7. *Verified:* at high tension the spacing between F3 and F5 must contract
