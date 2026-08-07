@@ -153,9 +153,18 @@ each lands with a test in `Tests/` that fails without it.
   Ando 2009). The stretch is taken relative to the (0,1) mode, because a drum is
   tuned by the pitch it sounds: what stiffness leaves behind after tuning is the
   spread above the fundamental, not an overall transposition. Closes gap 1.
-  *Verified by*: the ratio of the highest resolved membrane mode to the lowest
-  rises with Head Material and rises as the drum gets smaller, and the octave
-  contract and the reported ideal fundamental are untouched.
+  *Verified by*: Head Tension is the control that isolates the effect, because
+  it moves the stiffness parameter as 1/T and leaves the air load - which
+  depends only on areal density and radius - exactly where it was. The highest
+  resolved membrane mode must therefore sit further above the drum's ideal
+  fundamental on a slack head than on a tight one, which is not true of an ideal
+  membrane at all. Head Material must move the reported stiffness parameter by
+  two orders of magnitude, that parameter must stay finite at every corner of
+  the controls, and the reported ideal fundamental must remain exactly a
+  membrane frequency so the octave contract is untouched. The first draft of
+  this plan proposed testing it against Head Material directly; that is
+  confounded, because a thin film is loaded far more heavily by the air than a
+  thick hide and the air moves the same ratio the other way.
 
 - [x] **2. Delete the shell gain step disguised as saturation.** Closes gap 4a.
   *Verified by*: a test that sweeps Shell Resonance across 0.01 and requires the
@@ -194,15 +203,17 @@ each lands with a test in `Tests/` that fails without it.
   an octave away takes none.
 
 - [x] **5. Give the tack line a real voice.** Replace the inaudible chatter with
-  byō rattle that scales with the rim contact force and with the Stick Noise
-  control, band-limited around the tacks' own ring rather than added broadband.
+  byō rattle: a threshold in the force a stroke has to beat before it lifts the
+  head off its tacks, the excess above it as the drive, a band around the nail's
+  own ring rather than broadband noise, its own noise source so it cannot shift
+  the hide's, and a few milliseconds of chatter while the head settles back.
   Closes gap 4b.
   *Verified by*: the preload must rise with Head Tension and with Head
   Diameter; a light rim shot must not reach it and a full one must clear it
   threefold; Stick Noise 0 must silence it; only the strokes that reach the hoop
   may have it at all; and in the rendered audio a rim shot's high band must open
   up with velocity at least 2 dB faster than a centre stroke's, once each is
-  measured against its own level - it is 5.0 dB ahead with the tacks and 2.3 dB
+  measured against its own level - it is 5.3 dB ahead with the tacks and 2.3 dB
   behind without them. The level itself is checked in the built state rather
   than in the spectrum, for the reason the wooden bank already is: the rattle
   lasts about a millisecond and shares its band with the head's continuum.
@@ -242,6 +253,17 @@ algorithmic reverb bolted to the output would not be part of the model and would
 not be defensible next to the rest of the instrument. The near-field pair stays
 the whole of the microphone story.
 
+**A press roll solved from the bounce rather than written down.** The Buzz
+stroke's contact schedule is a hand-written train: a first gap of 19 ms
+shrinking by 0.82 per bounce, an amplitude shrinking by 0.72, neither of them
+reading the impact speed, the bachi or the drum. Replacing it with the bounce of
+a pressed stick needs the press force and the bounce restitution, and the model
+has neither: the restitution it does carry, 0.42, is the impulsive figure for a
+bachi meeting a head and collapses the roll inside twenty milliseconds, which is
+not a buzz. Deriving it would mean inventing two constants to replace two
+constants, which is not an improvement in honesty, so the schedule is left as it
+is and named for what it is.
+
 **The enclosed air as a distributed column.** The cavity is a lumped spring,
 `ρc²/L`, which is only valid below the body's first axial air resonance —
 `c/2L` is 212 Hz on the factory drum and moves from 139 Hz to 451 Hz across Body
@@ -250,6 +272,13 @@ turns the two-by-two axisymmetric eigenproblem into a three-by-three with the
 air column as its own degree of freedom, and touches the render path, the
 readout and the tail sweep together. It is the best remaining physics in this
 instrument and it is too large to land safely alongside the six steps above.
+
+**Documentation.** A final commit reconciles the prose with the model: the
+factory drum is a 95 cm ō-daiko rather than the 55 cm nagado three files still
+described, the head's modal ratios are no longer constants of the geometry, the
+loudest stroke sits about eighteen decibels above unity rather than the 9.7 the
+processor's own comment claimed, and the list of calibrated constants in the
+README named two of the six the engine actually carries.
 
 **Demonstration audio.** Steps 1, 3, 4 and 6 all move levels, so the committed
 takes under `Docs/audio/` and the level table in their manifest are stale until
