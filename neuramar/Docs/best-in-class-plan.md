@@ -293,7 +293,11 @@ Each step is a single commit, green before it lands.
   known inharmonic modes reports active-mode recall and frequency error; the
   legacy-compatibility serialization tests are extended to cover the migration.
 
-- [ ] **5. Raise polyphony to sixteen voices.**
+- [x] **5. Raise polyphony to sixteen voices.** *Landed.* The eight-voice
+  benchmark rows are unchanged, so this costs nothing to an eight-note
+  performance; the new sixteen-voice row costs 1.7x the eight-voice figure at
+  the same root. A twelve-note held cluster now sounds twelve voices instead of
+  stealing four, and that is asserted rather than assumed.
   `NeuramarEngine::maximumVoices` from 8 to 16, with the voice-steal, pan
   refresh, and fade-tail paths re-measured under the higher count. *Closes gap
   6.* *Verified by:* the existing voice-ceiling, steal-tail-bound, and

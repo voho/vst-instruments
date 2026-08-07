@@ -230,6 +230,28 @@ sixteen biquads and twelve oscillators and not somewhere unintended. Model size
 grows from about 35 KiB to about 41 KiB and remains inside the 128 KiB decoder
 bound.
 
+### Voice ceiling
+
+Raised from 8 to 16 in 1.3. The per-voice render path is unchanged, so this is
+additive: the eight-voice benchmark rows do not move, and the sixteen-voice row
+costs what sixteen voices cost.
+
+| Benchmark scenario, 8 s at 48 kHz / 256-sample blocks | 8-voice ceiling | 16-voice ceiling |
+| --- | --- | --- |
+| Low chord, C1 root, 8 voices | 2.213 s (3.6x) | 2.129 s (3.8x) |
+| Mid chord, C3 root, 8 voices | 1.219 s (6.6x) | 1.232 s (6.5x) |
+| High chord, C6 root, 8 voices | 0.835 s (9.6x) | 0.823 s (9.7x) |
+| Mid cluster, C3 root, 16 voices | not renderable | 2.065 s (3.9x) |
+| Note-on at C1 | 19.5 us | 19.7 us |
+
+The eight-voice differences are container-load noise in both directions. The
+sixteen-voice row is 1.7x the eight-voice cost at the same root rather than 2x,
+because the model's control-rate evaluation and its band design are shared work
+that a denser cluster amortises. A twelve-note held cluster — a four-note chord
+added under a sustain pedal while its predecessor still rings — now sounds
+twelve voices instead of stealing four, and that is asserted directly in
+`Tests/NeuramarEngineTests.cpp`.
+
 Versions 2, 3, and 4 keep an exact read path. Their eight bands and six modes
 load into the low slots with their stored centre frequencies and ratios intact;
 the added slots are given a valid layout and decoded as silence — an amplitude

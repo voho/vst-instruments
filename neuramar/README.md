@@ -310,7 +310,11 @@ end-to-end through a differentiable renderer:
   state, while controller outputs are forward-interpolated between low-rate
   evaluations so a learned target is reached at the time it describes.
 
-The current engine has a fixed ceiling of eight synthesis voices. It evaluates
+The current engine has a fixed ceiling of sixteen synthesis voices, raised from
+eight so that a chord held under a sustain pedal, or a pad played over its own
+release tails, stops stealing. The per-voice cost did not change, so an
+eight-note performance renders for exactly what it did before; the ceiling is an
+option rather than a cost every performance pays. It evaluates
 the controller, spectral-envelope mapping, and register normalization at control
 rate and interpolates their parameters while the oscillators, filters,
 envelopes, and note handling remain in the audio path.

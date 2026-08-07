@@ -2667,10 +2667,26 @@ void testReleaseAndVoiceBound(const neuramar::NeuralModel& model)
     parameters.releaseSeconds = 0.025f;
     engine.setParameters(parameters);
 
-    for (int note = 48; note < 60; ++note)
+    // Four more note-ons than the engine has voices, so the ceiling is what
+    // bounds the count rather than the number of keys held.
+    for (int note = 40; note < 44 + neuramar::NeuramarEngine::maximumVoices;
+         ++note)
         engine.noteOn(note, 0.7f);
     expect(engine.getActiveVoiceCount() == neuramar::NeuramarEngine::maximumVoices,
-           "polyphony was not bounded at eight voices");
+           "polyphony was not bounded at the engine's voice ceiling");
+    engine.allSoundOff();
+
+    // A twelve-note held cluster - a four-note chord under a sustain pedal
+    // while its predecessor still rings - has to sound twelve voices rather
+    // than steal four of them.
+    for (int note = 48; note < 60; ++note)
+        engine.noteOn(note, 0.7f);
+    expect(engine.getActiveVoiceCount() == 12,
+           "a twelve-note held cluster was voice-stolen");
+    engine.allSoundOff();
+    for (int note = 40; note < 44 + neuramar::NeuramarEngine::maximumVoices;
+         ++note)
+        engine.noteOn(note, 0.7f);
     engine.allNotesOff();
     std::vector<float> left(30000, 0.0f);
     std::vector<float> right(30000, 0.0f);
