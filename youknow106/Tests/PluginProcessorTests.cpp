@@ -1788,17 +1788,34 @@ void testOrderedSysExAffectsAudioWithoutTheMessageThread()
     expect (peak > 0.001f, "ordered SysEx regression rendered silence");
     // Re-sending the same parameter set at two MIDI sample boundaries can
     // move a smoothed coefficient by a few float ulps compared with preparing
-    // it once up front. That bounded transient is separate from the large tone
-    // error this catches; once APVTS has reflected both events the paths must
-    // converge exactly again.
+    // it once up front.
     expect (differenceBeforeReflection < 2.0e-5f,
             "ordered SysEx did not affect DSP at its sample "
                 "(max difference "
                 + std::to_string (differenceBeforeReflection) + ")");
-    expect (differenceAfterReflection < 1.0e-6f,
+    // The two paths do NOT reconverge bit-exactly, and an earlier revision of
+    // this fixture asserted that they must. Arriving mid-block is not the same
+    // as having been there since prepareToPlay: the engine models the
+    // hardware's converter/DCO write, so an instance that takes the dump at
+    // sample 0 keeps a permanent free-running phase offset against one prepared
+    // with the same values up front. Measured, that offset does not decay --
+    // it sits flat around -82 dB of peak out to 1.9 s of render -- and
+    // suppressing only the two SysEx events drops the difference to exactly
+    // zero, which is what identifies the mid-block write as its source rather
+    // than any parameter mismatch.
+    //
+    // What this fixture actually guards is that later reflection does not
+    // revert the *tone*, and that failure is four orders of magnitude larger:
+    // forcing pulse back off after reflection measures 0.991 of peak
+    // (-0.1 dB) against this residual's 8.3e-5 (-81.6 dB). The bound below
+    // sits between them with roughly 20 dB of margin above the residual and
+    // 60 dB below a real reversion. The byte-exact patch comparison at block 5
+    // above remains the primary, exact guard against reversion.
+    expect (differenceAfterReflection < 1.0e-3f * peak,
             "later host reflection reverted the ordered SysEx tone "
                 "(max difference "
-                + std::to_string (differenceAfterReflection) + ")");
+                + std::to_string (differenceAfterReflection)
+                + " against peak " + std::to_string (peak) + ")");
 
     midiDriven.releaseResources();
     reference.releaseResources();
