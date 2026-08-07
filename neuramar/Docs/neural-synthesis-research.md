@@ -152,8 +152,8 @@ global filtered-noise colour. Neuramar adopts only this filterbank motivation:
 it is not an implementation of NoiseBandNet and does not use that project's
 architecture, training procedure, source code, or weights. Its eight Air bands
 have adjacent logarithmic edges from 80 Hz to 16 kHz at the fixed analysis rate.
-A sequential weighted least-squares sinusoid fit first removes the
-pitch-following Core from each waveform frame. Core and Air targets use a
+A joint weighted least-squares sinusoid fit first removes the pitch-following
+Core from each waveform frame. Core and Air targets use a
 pitch-adaptive power-of-two aperture targeting four root periods and bounded to
 512–4096 samples at the fixed 48 kHz analysis rate, avoiding one fixed 85 ms
 window that would smear short attacks. The 4096-sample ceiling necessarily
@@ -201,7 +201,22 @@ that the analyser has identified physical eigenmodes.
 4. **Track and factor the sound** — follow a constrained local pitch contour
    around the root; at each frame, use pitch-adaptive weighted cosine/sine least
    squares to estimate harmonic amplitude and phase and subtract the fitted
-   sinusoids from the waveform. The shorter Core/Air branch preserves temporal
+   sinusoids from the waveform. The solve is joint rather than sequential: a
+   single ordered projection pass is the least-squares answer only when the
+   partial bases are orthogonal, and at an aperture of a few fundamental periods
+   adjacent Hann main lobes touch, so each subtraction leaks into its
+   neighbours and a quiet partial beside a loud one absorbs the leakage. The
+   pass is therefore repeated with each partial's current estimate added back
+   before it is re-solved against the others' residual, which is Gauss-Seidel on
+   the joint normal equations and converges to the joint solution without
+   forming the full `2N x 2N` system. Least-squares estimation is the standard
+   method for this precisely because, unlike FFT-peak or analysis-by-synthesis
+   estimation, it tolerates overlapping frequency responses and short apertures;
+   see
+   [Smith, *Spectral Audio Signal Processing*](https://ccrma.stanford.edu/~jos/sasp/Least_Squares_Sinusoidal_Parameter.html).
+   Past about eight periods per aperture the bases are orthogonal to working
+   precision, so the parallel long-window modal analysis keeps a single sweep
+   and the refinement cost is confined to the short apertures that need it. The shorter Core/Air branch preserves temporal
    detail, while a parallel long-window residual supplies modal resolution.
    Score persistent inharmonic peaks there, suppress active modal regions in
    the transient residual, and collect the remaining window-corrected power in
@@ -405,8 +420,8 @@ octave errors to destabilize synthesis.
 
 ## Future quality path
 
-The current representation leaves a clean upgrade route: joint rather than
-sequential sinusoidal estimation, confidence-aware residual subtraction,
+The current representation leaves a clean upgrade route:
+confidence-aware residual subtraction,
 continuous peak tracking with robust modal decay fits, a time-varying rather
 than fixed stiff-string coefficient, a more rigorous
 F0-adaptive/minimum-phase envelope, denser or multirate Air filterbanks,

@@ -236,7 +236,14 @@ Each step is a single commit, green before it lands.
   by:* the numbers are printed by the test binary and pinned by regression
   guards; the benchmark document gains a measured-results table.
 
-- [ ] **2. Make the harmonic solve joint.**
+- [x] **2. Make the harmonic solve joint.** *Landed.* Parity error 1.043 →
+  0.923 dB, held-out shape 2.790 → 2.714 dB, root convergence 0.0412 → 0.0392,
+  root residual ERB 5.00 → 4.73 dB, `learn()` 0.609 → 0.765 s. Refinement is
+  applied only to apertures shorter than eight fundamental periods; applying it
+  to the long modal aperture as well cost 2.2x on `learn()` and made the noisy
+  fixture *worse*, which is what the orthogonality argument predicts. Early
+  cumulative energy moved 0.28 dB the wrong way against a 12.5 dB aperture
+  error the solve did not create — that is step 3's target.
   Replace the single sequential pass in `analyseHarmonicResidual()` with
   Gauss-Seidel refinement over the partials: after the first pass, add each
   partial's contribution back into the residual, re-solve its 2x2 normal

@@ -50,13 +50,16 @@ The `16384/4096` resolution is omitted: its window is 341 ms, which is longer
 than the useful part of either fixture. The three shorter pairs are reported
 individually as required.
 
-| Metric, mean over the three resolutions | source/filter | noise+transient |
-| --- | --- | --- |
-| Spectral convergence | 0.0412 | 0.0571 |
-| Log-magnitude MAE | 10.75 dB | 5.31 dB |
-| Residual ERB-band power MAE | 5.00 dB | 3.54 dB |
-| Cumulative-energy MAE, 1/5/10/20/50 ms | 3.16 dB | 0.87 dB |
-| T10-T90 attack-time error | +1 ms | 0 ms |
+| Metric, mean over the three resolutions | source/filter 1.3.0 | source/filter 1.3.1 | noise+transient 1.3.0 | noise+transient 1.3.1 |
+| --- | --- | --- | --- | --- |
+| Spectral convergence | 0.0412 | **0.0392** | 0.0571 | 0.0594 |
+| Log-magnitude MAE | 10.75 dB | 10.76 dB | 5.31 dB | 5.33 dB |
+| Residual ERB-band power MAE | 5.00 dB | **4.73 dB** | 3.54 dB | 3.54 dB |
+| Cumulative-energy MAE, 1/5/10/20/50 ms | 3.16 dB | 3.45 dB | 0.87 dB | 1.09 dB |
+| T10-T90 attack-time error | +1 ms | +1 ms | 0 ms | 0 ms |
+
+The 1.3.0 column is the sequential harmonic solve; 1.3.1 is the joint one
+described below. The per-resolution table that follows is the 1.3.0 measurement.
 
 | Resolution `(window, hop)` | source/filter convergence | source/filter log MAE | noise+transient convergence | noise+transient log MAE |
 | --- | --- | --- | --- | --- |
@@ -106,11 +109,16 @@ between each rendered partial and the independently generated target after
 removing one median level offset; `parity error` is the error in the mean
 odd-minus-even partial level.
 
-| Metric (mean over -24 … +24 st) | 1.0 | 1.1 | 1.2 |
-| --- | --- | --- | --- |
-| Body-Locked shape MAE | 3.495 dB | 2.898 dB | **2.790 dB** |
-| Pitch-following shape MAE (reference) | 6.453 dB | 6.453 dB | 6.453 dB |
-| Excitation parity error | 0.609 dB | 0.898 dB | 1.043 dB |
+| Metric (mean over -24 … +24 st) | 1.0 | 1.1 | 1.2 | 1.3 |
+| --- | --- | --- | --- | --- |
+| Body-Locked shape MAE | 3.495 dB | 2.898 dB | 2.790 dB | **2.714 dB** |
+| Pitch-following shape MAE (reference) | 6.453 dB | 6.453 dB | 6.453 dB | 6.449 dB |
+| Excitation parity error | 0.609 dB | 0.898 dB | 1.043 dB | **0.923 dB** |
+
+The 1.3 column is the joint harmonic solve. Its parity result is the first
+reversal of a three-release drift: 1.1 and 1.2 both traded excitation parity for
+envelope accuracy, and the joint solve recovers 0.120 dB of it while improving
+shape by a further 0.076 dB. See *Joint harmonic estimation* below.
 
 Every one of the ten offsets improved. The largest gains are in the middle of
 the matrix (-7 st: 3.38 → 2.64 dB; +7 st: 2.49 → 1.96 dB; +12 st: 2.06 → 1.69 dB)
@@ -129,6 +137,56 @@ measured immediately before and immediately after the 1.2 render changes, the
 aggregate moved from 2.78976 dB to 2.78975 dB. The 1.1 column is reproduced as
 it was published; the small difference from 1.2 predates this release and was
 not re-derived here.
+
+### Joint harmonic estimation
+
+Added in 1.3. The analysis previously estimated partial 1, subtracted it from
+the waveform frame, estimated partial 2 from what was left, and so on. That is
+only the least-squares answer when the partial bases are orthogonal to each
+other, and at an aperture of a few fundamental periods they are not: a Hann main
+lobe is four bins wide, so an aperture of `P` fundamental periods separates
+adjacent partials by `P/2` main-lobe half-widths. The pitch-adaptive aperture
+targets four periods and rounds up to a power of two, which lands between four
+and eight, so adjacent main lobes touch and each subtraction leaks into its
+neighbours. The damage falls on quiet partials beside loud ones, which is where
+it is most audible.
+
+The pass is now repeated three times with each partial's current estimate added
+back before it is re-solved against the others' residual — Gauss-Seidel on the
+joint normal equations, which converges to the joint least-squares solution
+without forming or factorising the `2N x 2N` system. The first sweep is
+bit-identical to the old behaviour because every estimate it adds back is still
+zero, and only the change in each estimate is written back, so the stored
+residual never accumulates an add/subtract rounding pair.
+
+Refinement is bought only where it is needed. Past about eight periods the bases
+are orthogonal to working precision, so the parallel 4096-sample modal aperture
+— eighteen periods at a mid pitch, and the most expensive frame in the pass —
+keeps its single sweep. Applying refinement there as well cost 2.2x on
+`learn()` and made the noisy fixture's residual ERB MAE *worse* (3.54 → 3.66 dB)
+rather than better, which is what the orthogonality argument predicts.
+
+| Case | sequential | joint |
+| --- | --- | --- |
+| `learn()` on a 1.6 s / 44.1 kHz source | 0.609 s | 0.765 s |
+| Excitation parity error | 1.043 dB | **0.923 dB** |
+| Held-out Body-Locked shape MAE | 2.790 dB | **2.714 dB** |
+| Root spectral convergence, source/filter | 0.0412 | **0.0392** |
+| Root residual ERB MAE, source/filter | 5.00 dB | **4.73 dB** |
+| Root cumulative-energy MAE, source/filter | 3.16 dB | 3.45 dB |
+
+The `learn()` row is this container's own before/after measurement of the same
+scratch fixture, best of three, and is not comparable with the 0.557 s figure
+published for 1.1 on another machine; the pre-change number on this container is
+0.609 s. The 26% increase is bounded and offline.
+
+The one row that moved the wrong way is early cumulative energy, and it moved by
+0.28 dB against a 12.5 dB error that the joint solve did not create. That error
+is the analysis aperture, not the solve: the aperture is 21 ms at 220 Hz, so the
+first frame's amplitudes describe an average of the first 21 ms and the renderer
+applies them from sample zero. Removing the four-period constraint is what the
+joint solve is *for*; shortening the aperture is the next step and is where it
+is expected to pay.
 
 ### Stiff-string partial placement
 

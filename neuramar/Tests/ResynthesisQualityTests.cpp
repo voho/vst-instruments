@@ -271,7 +271,13 @@ void testHeldOutSourceFilterFamily()
     expect(lockedShape < 0.72 * followingShape,
            "source/filter factorization did not materially improve held-out "
            "register shape over pitch-following synthesis");
-    expect(lockedParity < 3.5,
+    // 1.0 dB is below what a single ordered projection pass can reach on this
+    // fixture. Its even partials sit about 25 dB under their neighbours, so
+    // they absorb whatever the sequential subtraction of the loud odd partial
+    // leaves behind: that pass measured 1.043 dB here, and the joint
+    // Gauss-Seidel refinement measures 0.923 dB. The guard exists to keep the
+    // solve joint, not as an acceptance gate.
+    expect(lockedParity < 1.0,
            "Body Lock did not preserve harmonic-index excitation character "
            "across held-out notes (parity error "
                + std::to_string(lockedParity) + " dB)");
