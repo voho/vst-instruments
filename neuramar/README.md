@@ -185,12 +185,12 @@ end-to-end through a differentiable renderer:
   periods in the body of the sound and two over the first 40 ms, so the attack
   is no longer measured through an aperture five times longer than the frame
   spacing that exists to resolve it; a parallel 4096-sample
-  residual supplies the steadier evidence used for six persistence-scored Bone
-  candidates;
+  residual supplies the steadier evidence used for twelve persistence-scored
+  Bone candidates;
 - residual power, excluding both active Bone neighbourhoods and the narrowband
   residue left at each subtracted partial, is accumulated into 48
   log-frequency cells weighted by how many spectrum bins each one actually
-  observed; a deterministic non-negative solver then fits eight
+  observed; a deterministic non-negative solver then fits sixteen
   overlapping log-spaced Air bands against the analytic power response of the
   same normalized biquads used by the renderer. Excluding a bin from the
   measured power also excludes it from the modelled response, so the fit
@@ -354,7 +354,8 @@ The Core/Air split is a local sinusoidal decomposition, not a perfect physical
 source separation. Window boundaries, rapidly moving partials, and inharmonic
 tonal energy can leak into the residual. Bone tracks are compact,
 persistence-scored sinusoidal candidates rather than identified physical
-eigenmodes. Air is an expected-power match through a compact eight-filter bank,
+eigenmodes. Air is an expected-power match through a compact sixteen-filter
+bank,
 not phase-coherent reconstruction of the original residual; its stochastic
 waveform therefore preserves an estimated spectral evolution rather than the
 recording's exact noise realization. Bands that approach the Nyquist limit at a
@@ -371,10 +372,12 @@ unvoiced regions are deliberately bounded.
 
 Host state stores the ordinary parameters, root analysis metadata, display-only
 source filename, a low-resolution waveform preview, and the compact learned
-model in a versioned payload. The current payload is version 4, which appends
-the fitted stiff-string coefficient; version-2 and version-3 memories saved by
-earlier releases still load and render exactly as they did, with the missing
-fields left at their neutral zero values. Sessions saved before Noise, Stretch,
+model in a versioned payload. The current payload is version 5, which widens the
+body representation from 8 Air bands and 6 Bone modes to 16 and 12; version 4
+appended the fitted stiff-string coefficient. Version-2, version-3, and
+version-4 memories saved by earlier releases still load and render exactly as
+they did: their bands and modes occupy the low slots, the added slots decode as
+silence, and the missing fields stay at their neutral zero values. Sessions saved before Noise, Stretch,
 Formant, or Touch existed restore those controls at their defaults rather than
 inheriting whatever the running instance happened to hold. One stored value now
 means something different: **Awaken** used to be an exponential time constant,

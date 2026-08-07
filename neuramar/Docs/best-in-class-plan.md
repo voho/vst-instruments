@@ -273,7 +273,17 @@ Each step is a single commit, green before it lands.
   solve does not hold up at the shorter aperture; that finding is recorded here
   either way.
 
-- [ ] **4. Raise the body representation: 16 Air bands and 12 Bone modes.**
+- [x] **4. Raise the body representation: 16 Air bands and 12 Bone modes.**
+  *Landed as model format version 5.* Residual ERB-band power MAE on the fixture
+  that actually contains noise 3.55 → 2.35 dB; log-magnitude MAE 5.40 → 5.22 dB
+  there and 10.76 → 10.29 dB on the source/filter fixture; a new struck-body
+  fixture with ten known inharmonic modes reports 0.90 recall, 0.90 precision,
+  and 8.09 cents mean frequency error where six slots capped recall at 0.60.
+  The noise-free fixture's residual ERB MAE moves 0.31 dB the wrong way, for the
+  same reason it was already the worst of the two: the render fits an Air layer
+  to a source that has none, and a finer filterbank follows that leakage more
+  closely. Cost is 11–18% on the body layers per voice; the muted-layer and
+  note-on benchmark rows do not move.
   Air moves from 8 to 16 log-spaced bands (1.03 to 0.51 octaves each) and Bone
   from 6 to 12 persistence-scored candidates, in one model format bump to
   version 5. Versions 2–4 keep an exact legacy read path: their 8 bands and 6

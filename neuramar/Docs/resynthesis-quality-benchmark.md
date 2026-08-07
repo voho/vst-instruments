@@ -50,20 +50,21 @@ The `16384/4096` resolution is omitted: its window is 341 ms, which is longer
 than the useful part of either fixture. The three shorter pairs are reported
 individually as required.
 
-The three columns per fixture are the sequential solve this measurement first
-found (a), the joint solve (b), and the joint solve with a halved onset aperture
-(c). Both changes are described in their own sections below.
+The four columns per fixture are the sequential solve this measurement first
+found (a), the joint solve (b), the joint solve with a halved onset aperture
+(c), and the widened body representation (d). Each change is described in its
+own section below.
 
-| Metric, mean over the three resolutions | s/f (a) | s/f (b) | s/f (c) | n+t (a) | n+t (b) | n+t (c) |
-| --- | --- | --- | --- | --- | --- | --- |
-| Spectral convergence | 0.0412 | 0.0392 | **0.0365** | 0.0571 | 0.0594 | 0.0757 |
-| Log-magnitude MAE | 10.75 dB | 10.76 dB | 10.76 dB | 5.31 dB | 5.33 dB | 5.40 dB |
-| Residual ERB-band power MAE | 5.00 dB | **4.73 dB** | 4.69 dB | 3.54 dB | 3.54 dB | 3.55 dB |
-| Cumulative-energy MAE, 1/5/10/20/50 ms | 3.16 dB | 3.45 dB | **1.32 dB** | 0.87 dB | 1.09 dB | **0.34 dB** |
-| Cumulative energy at 1 ms | -12.46 dB | -13.31 dB | **-5.66 dB** | -2.96 dB | -3.27 dB | **+1.34 dB** |
-| T10-T90 attack-time error | +1 ms | +1 ms | 0 ms | 0 ms | 0 ms | -5 ms |
+| Metric, mean over the three resolutions | s/f (a) | s/f (b) | s/f (c) | s/f (d) | n+t (a) | n+t (b) | n+t (c) | n+t (d) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Spectral convergence | 0.0412 | 0.0392 | 0.0365 | **0.0364** | 0.0571 | 0.0594 | 0.0757 | 0.0754 |
+| Log-magnitude MAE | 10.75 dB | 10.76 dB | 10.76 dB | **10.29 dB** | 5.31 dB | 5.33 dB | 5.40 dB | **5.22 dB** |
+| Residual ERB-band power MAE | 5.00 dB | 4.73 dB | 4.69 dB | 5.00 dB | 3.54 dB | 3.54 dB | 3.55 dB | **2.35 dB** |
+| Cumulative-energy MAE, 1/5/10/20/50 ms | 3.16 dB | 3.45 dB | **1.32 dB** | 1.40 dB | 0.87 dB | 1.09 dB | **0.34 dB** | 0.46 dB |
+| Cumulative energy at 1 ms | -12.46 dB | -13.31 dB | **-5.66 dB** | -5.84 dB | -2.96 dB | -3.27 dB | **+1.34 dB** | +1.37 dB |
+| T10-T90 attack-time error | +1 ms | +1 ms | 0 ms | 0 ms | 0 ms | 0 ms | -5 ms | -5 ms |
 
-Per-resolution figures for the current tree (c):
+Per-resolution figures for tree (c), the last state before the body widening:
 
 | Resolution `(window, hop)` | s/f convergence | s/f log MAE | n+t convergence | n+t log MAE |
 | --- | --- | --- | --- | --- |
@@ -179,6 +180,65 @@ measured immediately before and immediately after the 1.2 render changes, the
 aggregate moved from 2.78976 dB to 2.78975 dB. The 1.1 column is reproduced as
 it was published; the small difference from 1.2 predates this release and was
 not re-derived here.
+
+### Body capacity: 16 Air bands and 12 Bone modes
+
+Added in 1.3, as model format version 5. The Air filterbank was eight bands
+log-spaced from 80 Hz to 16 kHz, which is 1.03 octaves each: a breath formant, a
+scrape peak, and a hiss shelf inside one band are one number. It is now sixteen
+bands at 0.51 octaves. The modal branch was six persistence-scored candidates,
+which cannot describe a struck body; it is now twelve.
+
+| Measurement | 8 bands / 6 modes | 16 bands / 12 modes |
+| --- | --- | --- |
+| noise+transient residual ERB-band power MAE | 3.55 dB | **2.35 dB** |
+| noise+transient log-magnitude MAE | 5.40 dB | **5.22 dB** |
+| source/filter log-magnitude MAE | 10.76 dB | **10.29 dB** |
+| source/filter residual ERB-band power MAE | 4.69 dB | 5.00 dB |
+| Struck-body active-mode recall | 0.60 (capacity bound) | **0.90** |
+| Struck-body active-mode precision | — | 0.90 |
+| Struck-body modal frequency error | — | 8.09 cents |
+| `learn()` on a 1.6 s / 44.1 kHz source | 0.760 s | 0.768 s |
+
+The 1.19 dB fall in residual ERB MAE on the fixture that actually contains noise
+is what this change is for. The source/filter fixture moves 0.31 dB the other
+way, and that is the same finding as before in a new form: that fixture has no
+noise at all, so its residual is analysis leakage, the render fits an Air layer
+to it either way, and a finer filterbank follows the leakage more closely. More
+resolution cannot help a layer that should not be there.
+
+The modal rows come from a new fixture with ten known inharmonic modes at ratios
+between 1.43 and 13.47, learned once and compared against the model's selected
+candidates. Six slots cap recall at 0.6 arithmetically, so the 0.70 guard on
+that row is what holds the modal branch open.
+
+Cost, measured on this container immediately before and after the change so the
+two runs see the same machine load. These are not comparable with the 1.2 column
+of the *Cost* table below, which was taken on an unloaded container.
+
+| Benchmark scenario, 8 s at 48 kHz / 256-sample blocks | 8/6 | 16/12 |
+| --- | --- | --- |
+| Low chord, C1 root, 8 voices | 1.998 s (4.0x) | 2.213 s (3.6x) |
+| Mid chord, C3 root, 8 voices | 1.063 s (7.5x) | 1.219 s (6.6x) |
+| High chord, C6 root, 8 voices | 0.706 s (11.3x) | 0.835 s (9.6x) |
+| High chord with Air and Bone at zero | 0.277 s (28.9x) | 0.287 s (27.9x) |
+| Note-on at C1 | 20.0 us | 19.5 us |
+
+The body layers cost 11% to 18% more per voice; the case with both layers muted
+and the two note-on rows do not move, which is what confirms the cost is in the
+sixteen biquads and twelve oscillators and not somewhere unintended. Model size
+grows from about 35 KiB to about 41 KiB and remains inside the 128 KiB decoder
+bound.
+
+Versions 2, 3, and 4 keep an exact read path. Their eight bands and six modes
+load into the low slots with their stored centre frequencies and ratios intact;
+the added slots are given a valid layout and decoded as silence — an amplitude
+output of `exp(-16)` with no network contribution, and a Bone reliability of
+zero, which is what the renderer already tests to skip a mode. The decoder rows
+are gathered through one index map, so a stored memory evaluates to the same
+frame it always did. That is asserted directly: a crafted version-4 payload is
+loaded, re-serialised in the current format, reloaded, and compared frame by
+frame against the migrated model.
 
 ### Joint harmonic estimation
 

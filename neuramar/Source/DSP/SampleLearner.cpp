@@ -1444,7 +1444,8 @@ void makePreview(const std::vector<float>& sample,
         });
 
     constexpr std::array<float, NeuralModel::boneModeCount> defaults {
-        1.47f, 2.63f, 3.82f, 5.21f, 7.13f, 9.37f
+        1.47f, 2.63f, 3.82f, 5.21f, 7.13f, 9.37f,
+        11.42f, 13.68f, 15.91f, 18.24f, 20.63f, 23.11f
     };
     struct Selected
     {

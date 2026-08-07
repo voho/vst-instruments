@@ -150,8 +150,11 @@ The non-harmonic branch follows the motivation of
 can represent breath, scrape, bow noise, and attacks more faithfully than one
 global filtered-noise colour. Neuramar adopts only this filterbank motivation:
 it is not an implementation of NoiseBandNet and does not use that project's
-architecture, training procedure, source code, or weights. Its eight Air bands
-have adjacent logarithmic edges from 80 Hz to 16 kHz at the fixed analysis rate.
+architecture, training procedure, source code, or weights. Its sixteen Air bands
+have adjacent logarithmic edges from 80 Hz to 16 kHz at the fixed analysis rate,
+0.51 octaves apiece. Eight bands of 1.03 octaves each put a breath formant, a
+scrape peak, and a hiss shelf inside one number; NoiseBandNet's own answer to
+the same problem is 2048 filters, and Alchemy's is a second synthesis engine.
 A joint weighted least-squares sinusoid fit first removes the pitch-following
 Core from each waveform frame. Core and Air targets use a
 pitch-adaptive power-of-two aperture bounded to
@@ -246,9 +249,9 @@ that the analyser has identified physical eigenmodes.
    file access occurs in the render loop.
 
 The learned state stores model coefficients, quantized trajectory corrections,
-and analysis metadata, not the source recording or a source path. Version 4
-models remain small (about 35 KiB for the current representation) and append one
-stiff-string coefficient to the version-3 layout. The strict decoder retains an
+and analysis metadata, not the source recording or a source path. Version 5
+models remain small (about 41 KiB for the current representation) and widen the
+version-4 body arrays from 8 Air bands and 6 Bone modes to 16 and 12. The strict decoder retains an
 exact zero-correction path for version 2 and an exact zero-stretch path for
 version 3, so a memory saved by any shipped release still renders the way it
 did. Sessions therefore recall the instrument without depending on an external
@@ -308,7 +311,7 @@ Air band.
 - **Core** renders the learned harmonic distribution and bounded source pitch
   contour at the played MIDI pitch.
 - **Air** renders fitted harmonic-subtracted residual-power trajectories through
-  eight overlapping log-spaced biquads, with a decorrelated second realization
+  sixteen overlapping log-spaced biquads, with a decorrelated second realization
   supplying stereo width that cancels exactly in a mono sum. The measured
   residual excludes both active Bone neighbourhoods and the narrowband residue
   left at each subtracted partial, and each fit cell is weighted by how many

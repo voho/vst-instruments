@@ -985,6 +985,133 @@ void testRootNoteReconstruction()
                    + std::to_string(score.attackErrorMs) + " ms)");
     }
 }
+
+// Analytic ground-truth item 7: a struck body whose inharmonic modes are known
+// exactly. The benchmark asks for active-mode precision and recall and for
+// peak-frequency error in cents; this is that measurement, and it is also what
+// bounds the modal branch's capacity, because a slot that does not exist cannot
+// recall a mode.
+constexpr std::array<double, 10> knownModeRatios {
+    1.43, 2.37, 3.61, 4.55, 5.49, 6.72, 8.31, 9.58, 11.24, 13.47
+};
+
+[[nodiscard]] std::vector<float> makeStruckBodyNote(double fundamentalHz,
+                                                    double durationSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(durationSeconds * sampleRate));
+    std::vector<float> signal(sampleCount, 0.0f);
+    for (std::size_t index = 0; index < sampleCount; ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.0025);
+        // A clear harmonic series so the root stays identifiable, and ten
+        // long-ringing inharmonic modes on top of it.
+        double value = 0.0;
+        for (int harmonic = 1; harmonic <= 10; ++harmonic)
+        {
+            const double number = static_cast<double>(harmonic);
+            const double weight = harmonic == 1 ? 2.4 : 1.0;
+            value += weight * std::pow(number, -1.15)
+                * std::exp(-time * (0.55 + 0.10 * number))
+                * std::sin(2.0 * pi * fundamentalHz * number * time
+                           + 0.23 * number);
+        }
+        for (std::size_t mode = 0; mode < knownModeRatios.size(); ++mode)
+        {
+            const double ratio = knownModeRatios[mode];
+            const double frequency = fundamentalHz * ratio;
+            if (frequency >= 0.42 * sampleRate)
+                continue;
+            value += 0.10 * std::exp(-time * (0.55 + 0.045 * ratio))
+                * std::sin(2.0 * pi * frequency * time
+                           + 0.61 * static_cast<double>(mode + 1));
+        }
+        signal[index] = static_cast<float>(0.22 * attack * value);
+    }
+    return signal;
+}
+
+void testStruckBodyModalRecall()
+{
+    const auto source = makeStruckBodyNote(rootFrequencyHz, 1.30);
+    const auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+    expect(static_cast<bool>(learned),
+           "struck-body fixture failed to learn: " + learned.error);
+    if (!learned)
+        return;
+
+    const double detectedRoot = static_cast<double>(
+        learned.model->rootFrequencyHz());
+    std::cout << "Struck-body detected root: " << detectedRoot << " Hz\n";
+    expect(std::abs(detectedRoot / rootFrequencyHz - 1.0) < 0.02,
+           "struck-body fixture root was identified incorrectly");
+
+    const auto ratios = learned.model->boneFrequencyRatios();
+    const auto reliabilities = learned.model->boneModeReliabilities();
+    std::size_t activeSlots = 0;
+    for (std::size_t mode = 0; mode < ratios.size(); ++mode)
+        if (reliabilities[mode] > 0.0f)
+            ++activeSlots;
+
+    std::size_t recalled = 0;
+    std::size_t matchedSlots = 0;
+    double centsErrorSum = 0.0;
+    std::vector<bool> slotMatched(ratios.size(), false);
+    for (const double expected : knownModeRatios)
+    {
+        double bestCents = 1.0e9;
+        std::size_t bestSlot = ratios.size();
+        for (std::size_t mode = 0; mode < ratios.size(); ++mode)
+        {
+            if (reliabilities[mode] <= 0.0f)
+                continue;
+            const double cents = std::abs(1200.0 * std::log2(
+                static_cast<double>(ratios[mode]) / expected));
+            if (cents < bestCents)
+            {
+                bestCents = cents;
+                bestSlot = mode;
+            }
+        }
+        // A quarter tone is generous as an identity test and still far tighter
+        // than the 0.22-ratio spacing the selector enforces between slots.
+        if (bestSlot < ratios.size() && bestCents < 50.0)
+        {
+            ++recalled;
+            centsErrorSum += bestCents;
+            if (!slotMatched[bestSlot])
+            {
+                slotMatched[bestSlot] = true;
+                ++matchedSlots;
+            }
+        }
+    }
+
+    const double recall = static_cast<double>(recalled)
+        / static_cast<double>(knownModeRatios.size());
+    const double precision = activeSlots > 0
+        ? static_cast<double>(matchedSlots) / static_cast<double>(activeSlots)
+        : 0.0;
+    const double meanCents = recalled > 0
+        ? centsErrorSum / static_cast<double>(recalled) : 0.0;
+    std::cout << "Struck-body modal result: " << activeSlots
+              << " active slots, recall " << recall << ", precision "
+              << precision << ", mean frequency error " << meanCents
+              << " cents\n";
+
+    // Six slots cap recall at 0.6 by construction, so this guard is what keeps
+    // the modal branch wide enough to describe a struck body.
+    expect(recall >= 0.70,
+           "the modal branch recalled too few of the fixture's known modes ("
+               + std::to_string(recall) + ")");
+    expect(precision >= 0.70,
+           "the modal branch spent too many slots on modes the fixture does "
+           "not have (precision " + std::to_string(precision) + ")");
+    expect(meanCents < 25.0,
+           "recalled modal frequencies missed their known positions ("
+               + std::to_string(meanCents) + " cents)");
+}
 } // namespace
 
 int main()
@@ -992,6 +1119,7 @@ int main()
     testHeldOutSourceFilterFamily();
     testStiffStringPartialPlacement();
     testRootNoteReconstruction();
+    testStruckBodyModalRecall();
     if (failures != 0)
     {
         std::cerr << failures << " Neuramar quality benchmark(s) failed\n";
