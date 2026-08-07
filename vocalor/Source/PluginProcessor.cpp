@@ -88,6 +88,7 @@ VocalorAudioProcessor::VocalorAudioProcessor()
     parameterPointers.roomSize     = parameters.getRawParameterValue (roomSize);
     parameterPointers.dynamics     = parameters.getRawParameterValue (dynamics);
     parameterPointers.intonation   = parameters.getRawParameterValue (intonation);
+    parameterPointers.nasal        = parameters.getRawParameterValue (nasal);
 
     jassert (parameterPointers.profile != nullptr && parameterPointers.output != nullptr);
     jassert (parameterPointers.vowelMorph != nullptr && parameterPointers.roomSize != nullptr);
@@ -171,6 +172,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
     // first time it moves.
     addPercent (dynamics, "Dynamics", 1.0f);
     addPercent (intonation, "Just intonation", 0.0f);
+    addPercent (nasal, "Nasality", 0.0f);
 
     return { result.begin(), result.end() };
 }
@@ -331,6 +333,7 @@ void VocalorAudioProcessor::updateEngineParameters() noexcept
     next.roomSize = parameterPointers.roomSize->load (std::memory_order_relaxed);
     next.dynamics = parameterPointers.dynamics->load (std::memory_order_relaxed);
     next.intonation = parameterPointers.intonation->load (std::memory_order_relaxed);
+    next.nasal = parameterPointers.nasal->load (std::memory_order_relaxed);
     engine.setParameters (next);
 }
 

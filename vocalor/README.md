@@ -44,7 +44,7 @@ The project builds three products from one JUCE codebase:
 
 ## Interface and controls
 
-Vocalor exposes 22 automatable host parameters. Every parameter keeps its
+Vocalor exposes 23 automatable host parameters. Every parameter keeps its
 identifier, range, default, and host ordering, so existing sessions and any
 automation written against them recall in place.
 
@@ -80,6 +80,7 @@ different singer count.
 | `roomSize` | Room size | 0 – 100 % | 50 % | 1.1 |
 | `dynamics` | Dynamics | 0 – 100 % | 100 % | 1.2 |
 | `intonation` | Just intonation | 0 – 100 % | 0 % | 1.2 |
+| `nasal` | Nasality | 0 – 100 % | 0 % | 1.2 |
 
 The top row selects the voice profile, the performance mode, the chord quality,
 and the vowel anchor. **Ensemble size** renders exactly that many independently
@@ -185,6 +186,28 @@ like a tract rather than like five independent peaking filters:
   32 dB. Cascade-derived amplitudes are also why a front vowel now sounds
   front: F2 and F3 of /i/ are carried nearly as strongly as F1 instead of
   sitting 22 dB below it.
+
+**Nasal branch.** A parallel bank of poles does have zeros, but they land
+wherever its sections happen to cancel; there is no way to place one. That ruled
+out the nasal branch, and therefore ruled out a hum — the most common choir
+colour after "ah". **Nasality** opens the velum: it adds a murmur pole at the
+nasal cavity's own resonance (280 Hz, heavily damped at 150 Hz of bandwidth),
+places a notch at 950 Hz where the closed mouth loads the tract, and drops the
+oral formants to 45 %, because a closed mouth is a side branch rather than the
+radiator. Both frequencies scale with the formant shift, since the nose belongs
+to the same head as the tract.
+
+The notch is a matched pole-zero pair rather than Klatt's bare antiresonator.
+That antiresonator is normalised to unity at DC, which for a zero this low
+leaves 48 dB of gain at Nyquist and would make a hum the brightest sound the
+instrument produces; the matched pole returns the response to unity either side
+of the notch, so the branch removes only the band it names. A trim for the
+nostrils — a far smaller and more damped aperture than an open mouth — keeps the
+control from doubling as a fader.
+
+Measured on a held male A2 with the velum fully open: 880 – 1100 Hz falls
+27.8 dB, 220 – 330 Hz rises 7.5 dB, 1.65 – 2.2 kHz falls 11.2 dB, and the
+overall level moves 0.1 dB.
 
 **Intonation.** An a cappella ensemble does not sing equal temperament. It
 narrows the major third and widens the minor one until the overtones align,

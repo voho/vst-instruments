@@ -46,6 +46,9 @@ struct EngineParameters
     // Blend from equal temperament (0) to just intervals referred to the lowest
     // sounding note (1). 0 reproduces the 1.1 behaviour exactly.
     float intonation { 0.0f };
+    // Velum coupling: 0 is a closed velum and the purely oral tract the engine
+    // has always had, 1 is a closed-mouth hum. 0 reproduces 1.1 exactly.
+    float nasal { 0.0f };
 };
 
 /** Lock-free snapshot of what the engine is currently doing, for the editor. */
@@ -152,6 +155,7 @@ private:
         std::atomic<float> roomSize { 0.5f };
         std::atomic<float> dynamics { 1.0f };
         std::atomic<float> intonation { 0.0f };
+        std::atomic<float> nasal { 0.0f };
     };
 
     struct Resonator
@@ -264,6 +268,14 @@ private:
         float onsetMix { 0.0f };
         float onsetMixStep { 1.0f };
         float lastLipSource { 0.0f };
+        // Nasal branch state: the two-sample memory of the series
+        // anti-resonator, and the nasal cavity's own pole in parallel with the
+        // oral formants.
+        float nasalX1 { 0.0f };
+        float nasalX2 { 0.0f };
+        float nasalY1 { 0.0f };
+        float nasalY2 { 0.0f };
+        Resonator nasal {};
         std::array<float, formantCount> formantHz {};
         std::array<Resonator, formantCount> tract {};
         std::array<Resonator, 2> early {};
@@ -376,6 +388,20 @@ private:
     // Highest F1 the jaw reaches for this profile and tract length. Formant
     // tuning stops here rather than following the pitch indefinitely.
     float chunkMaxF1_ { 1300.0f };
+    // The nasal branch, resolved once per chunk: the nasal tract does not vary
+    // with the vowel or with the singer, so every voice shares its coefficients
+    // and pays only for its own two-sample state.
+    float chunkNasalMix_ { 0.0f };
+    float chunkNasalA1_ { 0.0f };
+    float chunkNasalA2_ { 0.0f };
+    float chunkNasalB0_ { 0.0f };
+    float chunkZeroB0_ { 1.0f };
+    float chunkZeroB1_ { 0.0f };
+    float chunkZeroB2_ { 0.0f };
+    float chunkNotchA1_ { 0.0f };
+    float chunkNotchA2_ { 0.0f };
+    float chunkNasalTrim_ { 1.0f };
+    bool chunkNasalActive_ { false };
     float jitterHumanize_ { -1.0f };
     float glideAmount_ { -1.0f };
     // Dynamic response resolved once per chunk. The two gains it carries are
@@ -402,6 +428,7 @@ private:
     // cannot be smoothed after the fact, so they are smoothed before use.
     float smoothedResonance_ { 0.72f };
     float smoothedFormantShift_ { 0.0f };
+    float smoothedNasal_ { 0.0f };
     float smoothedDynamics_ { 1.0f };
     float smoothedExpression_ { 1.0f };
     float roomEnvelope_ { 0.0f };

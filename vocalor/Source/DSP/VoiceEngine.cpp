@@ -206,6 +206,7 @@ void VoiceEngine::reset()
     smoothedTension_ = blockParameters_.tension;
     smoothedResonance_ = blockParameters_.resonance;
     smoothedFormantShift_ = blockParameters_.formantShift;
+    smoothedNasal_ = clampUnit(blockParameters_.nasal);
     smoothedRoomSize_ = clampUnit(blockParameters_.roomSize);
     // A host calls prepareToPlay() when the transport or the sample rate moves,
     // and a controller does not resend its position, so the performance state
@@ -271,6 +272,7 @@ void VoiceEngine::setParameters(const EngineParameters& p)
     atomicParameters_.roomSize.store(clampUnit(p.roomSize), std::memory_order_relaxed);
     atomicParameters_.dynamics.store(clampUnit(p.dynamics), std::memory_order_relaxed);
     atomicParameters_.intonation.store(clampUnit(p.intonation), std::memory_order_relaxed);
+    atomicParameters_.nasal.store(clampUnit(p.nasal), std::memory_order_relaxed);
 }
 
 void VoiceEngine::setPitchBend(float semitones) noexcept
@@ -352,6 +354,7 @@ EngineParameters VoiceEngine::snapshotParameters() const noexcept
     p.roomSize = atomicParameters_.roomSize.load(std::memory_order_relaxed);
     p.dynamics = atomicParameters_.dynamics.load(std::memory_order_relaxed);
     p.intonation = atomicParameters_.intonation.load(std::memory_order_relaxed);
+    p.nasal = atomicParameters_.nasal.load(std::memory_order_relaxed);
     return p;
 }
 
@@ -878,6 +881,9 @@ void VoiceEngine::silenceVoice(Voice& voice) noexcept
     voice.envelope = 0.0f;
     voice.airEnvelope = 0.0f;
     voice.sourceTilt = 0.0f;
+    voice.nasalX1 = voice.nasalX2 = 0.0f;
+    voice.nasalY1 = voice.nasalY2 = 0.0f;
+    voice.nasal.clear();
     for (auto& resonator : voice.tract)
         resonator.clear();
     for (auto& resonator : voice.early)
@@ -909,17 +915,20 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     // rate, so it is smoothed here as well; the two level gains it produces get
     // a second, per-sample smoother in process().
     const float dynamicsTarget = effectiveDynamics(p);
+    const float nasalTarget = clampUnit(p.nasal);
     if (!chunkStateValid_)
     {
         smoothedResonance_ = resonanceTarget;
         smoothedFormantShift_ = shiftTarget;
         smoothedDynamics_ = dynamicsTarget;
+        smoothedNasal_ = nasalTarget;
     }
     else if (advanceSmoothers)
     {
         smoothedResonance_ += chunkGainCoefficient_ * (resonanceTarget - smoothedResonance_);
         smoothedFormantShift_ += chunkGainCoefficient_ * (shiftTarget - smoothedFormantShift_);
         smoothedDynamics_ += chunkGainCoefficient_ * (dynamicsTarget - smoothedDynamics_);
+        smoothedNasal_ += chunkGainCoefficient_ * (nasalTarget - smoothedNasal_);
     }
     chunkResponse_ = dynamicResponse(smoothedDynamics_);
 
@@ -1001,11 +1010,63 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
         const auto index = static_cast<std::size_t>(formant);
         // Tension presses the singer's-formant region (F3 & F4) a little harder.
         const float epilarynxBoost = (formant == 2 ? 0.12f * smoothedTension_ : (formant == 3 ? 0.06f * smoothedTension_ : 0.0f));
-        const float shaped = chunkAmplitude_[index] * (1.0f + epilarynxBoost);
+        // An open velum turns the mouth into a side branch: the sound leaves
+        // through the nose, so the oral formants stop being the radiator.
+        const float shaped = chunkAmplitude_[index] * (1.0f + epilarynxBoost)
+            * (1.0f - 0.55f * smoothedNasal_);
         if (!chunkStateValid_)
             chunkFormantGain_[index] = shaped;
         else if (advanceSmoothers)
             chunkFormantGain_[index] += chunkGainCoefficient_ * (shaped - chunkFormantGain_[index]);
+    }
+
+    // The nasal branch. An oral tract alone cannot make an /m/: a parallel bank
+    // of poles has zeros only where its sections happen to cancel, and the
+    // anti-resonance a nasalised sound needs has to be placed. The murmur pole
+    // sits at the nasal cavity's own resonance and the notch where the closed
+    // mouth loads it; both scale with the formant shift like the rest of the
+    // tract, because the nose belongs to the same head.
+    chunkNasalMix_ = smoothedNasal_;
+    chunkNasalActive_ = chunkNasalMix_ > 1.0e-4f;
+    // The nostrils are a smaller and far more damped aperture than the mouth,
+    // so a hum radiates less for the same effort. Without this the murmur pole
+    // alone makes an open velum the loudest thing the instrument does.
+    chunkNasalTrim_ = 1.0f / (1.0f + 2.05f * chunkNasalMix_);
+    if (chunkNasalActive_)
+    {
+        const float nyquistGuard = 0.40f * static_cast<float>(sampleRate_);
+        // Nasal formants are heavily damped, which is most of why a hum reads
+        // as closed rather than as a low vowel.
+        const float murmurHz = std::clamp(280.0f * shift, 40.0f, nyquistGuard);
+        const float murmurRadius = std::exp(-pi * 150.0f * inverseSampleRate_);
+        const auto murmurTrig = sineCosineFromCycles(murmurHz * inverseSampleRate_);
+        chunkNasalA1_ = 2.0f * murmurRadius * murmurTrig.cosine;
+        chunkNasalA2_ = -murmurRadius * murmurRadius;
+        // Opposite polarity to F1, for the same reason adjacent oral formants
+        // alternate: summed with a common sign they cancel in the valley.
+        chunkNasalB0_ = -0.60f * chunkAmplitude_[0] * chunkNasalMix_
+            * formantResonatorGain(murmurRadius, murmurTrig.sine);
+
+        // A pole-zero pair at one frequency, the zeros nearer the unit circle
+        // than the poles. Klatt's bare antiresonator is normalised to unity at
+        // DC, which for a zero this low leaves 48 dB of gain at Nyquist: it
+        // would make a hum the brightest sound the instrument produces. The
+        // matched pole returns the response to unity either side of the notch
+        // instead, so what the branch removes is only the band it names.
+        const float notchHz = std::clamp(950.0f * shift, 60.0f, nyquistGuard);
+        const auto notchTrig = sineCosineFromCycles(notchHz * inverseSampleRate_);
+        const float zeroRadius = std::exp(-pi * 60.0f * inverseSampleRate_);
+        const float poleRadius = std::exp(-pi * 700.0f * inverseSampleRate_);
+        const float zeroA1 = 2.0f * zeroRadius * notchTrig.cosine;
+        const float zeroA2 = -zeroRadius * zeroRadius;
+        chunkNotchA1_ = 2.0f * poleRadius * notchTrig.cosine;
+        chunkNotchA2_ = -poleRadius * poleRadius;
+        // Unity at DC, so the branch places a notch rather than a tilt.
+        const float normalise = (1.0f - chunkNotchA1_ - chunkNotchA2_)
+            / std::max(1.0e-6f, 1.0f - zeroA1 - zeroA2);
+        chunkZeroB0_ = normalise;
+        chunkZeroB1_ = -zeroA1 * normalise;
+        chunkZeroB2_ = -zeroA2 * normalise;
     }
 
     // Two more exponentials that only move when their parameter does.
@@ -1202,7 +1263,7 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
             // Most of the gain is handed back once F1 has moved by a fifth or
             // more, and none of it is taken while F1 has not moved at all.
             const float lift = std::clamp((targetHz / base - 1.0f) * 5.0f, 0.0f, 1.0f);
-            voice.renderGain = voice.amplitudeGain / (1.0f + lift);
+            voice.renderGain = voice.amplitudeGain * chunkNasalTrim_ / (1.0f + lift);
         }
         else if (formant == 1)
         {
@@ -1233,6 +1294,11 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
                 * formantResonatorGain(earlyRadius_[index], trig.sine);
         }
     }
+
+    // The nasal tract does not vary with the vowel or with the singer, so the
+    // branch coefficients are resolved once per chunk and only copied here.
+    voice.nasal.a1 = chunkNasalA1_;
+    voice.nasal.b0 = chunkNasalB0_;
 
     const float pan = std::clamp(singer.pan * p.spread * (voice.singer == 0 && p.mode == PerformanceMode::Solo ? 0.18f : 1.0f), -1.0f, 1.0f);
     if (pan != voice.panPosition)
@@ -1380,6 +1446,10 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     float panLeft = voice.panLeft;
     float panRight = voice.panRight;
     int level = voice.tableLevel;
+    // Chunk-constant, so the branch is free: an oral-only patch pays nothing
+    // for the nasal branch it is not using.
+    const bool nasalActive = chunkNasalActive_;
+    const float nasalMix = chunkNasalMix_;
 
     for (int i = 0; i < count; ++i)
     {
@@ -1449,8 +1519,24 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         const float voicedDrive = envelope * voicedScaleAt_[static_cast<std::size_t>(i)]
             * (1.0f + shimmerDepth_ * shimmer);
         const float rawSource = sourceTilt * voicedDrive + highNoise * airDrive + denormalBias;
-        const float source = rawSource - 0.20f * lipZeroCoefficient_ * voice.lastLipSource;
+        float source = rawSource - 0.20f * lipZeroCoefficient_ * voice.lastLipSource;
         voice.lastLipSource = rawSource;
+
+        // The nasal anti-resonance is in series with the whole tract, so it is
+        // applied to the excitation: one biquad per voice instead of one per
+        // formant, for exactly the same transfer function.
+        if (nasalActive)
+        {
+            const float notched = chunkZeroB0_ * source + chunkZeroB1_ * voice.nasalX1
+                                + chunkZeroB2_ * voice.nasalX2
+                                + chunkNotchA1_ * voice.nasalY1
+                                + chunkNotchA2_ * voice.nasalY2;
+            voice.nasalX2 = voice.nasalX1;
+            voice.nasalX1 = source;
+            voice.nasalY2 = voice.nasalY1;
+            voice.nasalY1 = notched;
+            source += nasalMix * (notched - source);
+        }
 
         float tract = 0.0f;
         onsetMix += onsetMixStep;
@@ -1470,6 +1556,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
                 const auto index = static_cast<std::size_t>(f);
                 full += voice.tract[index].tick(source, chunkA2_[index]);
             }
+            if (nasalActive)
+                full += voice.nasal.tick(source, chunkNasalA2_);
             tract = early + mix * (full - early);
         }
         else
@@ -1483,6 +1571,8 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
                 const auto index = static_cast<std::size_t>(f);
                 tract += voice.tract[index].tick(source, chunkA2_[index]);
             }
+            if (nasalActive)
+                tract += voice.nasal.tick(source, chunkNasalA2_);
         }
 
         const float output = amplitude * (tractLevel * tract + directAirLevel * highNoise * airDrive);

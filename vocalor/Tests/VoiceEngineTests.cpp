@@ -1702,6 +1702,111 @@ void testSingerFormantAndLipZero()
            "Singer's Formant tension render exceeded amplitude guardrail");
 }
 
+/** A parallel bank of poles cannot be asked for an /m/.
+
+    Its transfer function does have zeros, but they land wherever the sections
+    happen to cancel; there is no way to place one. That rules out the nasal
+    branch, and a hum is the most common choir colour after "ah". The branch
+    adds a murmur pole at the nasal cavity's own resonance and a placed
+    anti-resonance where the closed mouth loads it.
+*/
+void testNasalBranch()
+{
+    constexpr auto sampleRate = 48000.0;
+    // A low note so the harmonic comb resolves both bands. A2 puts harmonics at
+    // 220 and 330 Hz across the murmur pole, and at 880, 990 and 1100 across
+    // the anti-resonance.
+    constexpr double fundamental = 110.0;
+
+    struct Bands { double low; double notch; double peak; double total; };
+    const auto bandsAt = [] (float nasal)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.profile = vocalor::VoiceProfile::Male;
+        parameters.nasal = nasal;
+        engine.setParameters (parameters);
+        engine.noteOn (45, 0.85f);
+        renderMono (engine, static_cast<int> (sampleRate * 0.5));
+        const auto samples = renderMono (engine, static_cast<int> (sampleRate * 0.5));
+
+        const auto energy = [&samples] (int first, int last)
+        {
+            double total = 0.0;
+            for (int harmonic = first; harmonic <= last; ++harmonic)
+            {
+                const auto magnitude = harmonicMagnitude (
+                    samples, fundamental * harmonic, sampleRate);
+                total += magnitude * magnitude;
+            }
+            return std::sqrt (total);
+        };
+        // 220-330 Hz across the murmur, 880-1100 across the zero, and
+        // 1650-2200 well above it as a control that the branch is not simply a
+        // low-pass filter with a nicer name.
+        double sumOfSquares = 0.0;
+        for (const auto value : samples)
+            sumOfSquares += static_cast<double> (value) * value;
+        return Bands { energy (2, 3), energy (8, 10), energy (15, 20),
+                       std::sqrt (sumOfSquares / std::max<std::size_t> (samples.size(), 1)) };
+    };
+
+    const auto oral = bandsAt (0.0f);
+    const auto hummed = bandsAt (1.0f);
+    const auto half = bandsAt (0.5f);
+    const auto drop = [] (double before, double after)
+    {
+        return 20.0 * std::log10 (std::max (before, 1.0e-12) / std::max (after, 1.0e-12));
+    };
+
+    const auto notchDrop = drop (oral.notch, hummed.notch);
+    const auto lowDrop = drop (oral.low, hummed.low);
+    const auto highDrop = drop (oral.peak, hummed.peak);
+    const auto totalDrop = drop (oral.total, hummed.total);
+    std::cout << "velum fully open: 880-1100 Hz " << std::fixed << std::setprecision (1)
+              << notchDrop << " dB, 220-330 Hz " << lowDrop << " dB, 1.65-2.2 kHz "
+              << highDrop << " dB, overall " << totalDrop << " dB\n";
+
+    expect (notchDrop > 20.0,
+            "the nasal branch did not place an anti-resonance where the mouth loads it");
+    expect (lowDrop < -3.0,
+            "the murmur pole did not carry the band an /m/ radiates in");
+    expect (highDrop > 4.0 && highDrop < notchDrop - 8.0,
+            "a hum has to be duller than the vowel without being a low-pass filter");
+    // The velum is a timbre control. An /m/ radiates from a smaller and more
+    // damped aperture than an open mouth, and the branch has to account for
+    // that rather than arriving as the loudest thing the instrument does.
+    expect (std::abs (totalDrop) < 4.0,
+            "opening the velum worked as a volume control");
+
+    // A half-open velum has to land between the two, not snap to one of them.
+    const auto halfDrop = drop (oral.notch, half.notch);
+    expect (halfDrop > 1.0 && halfDrop < notchDrop - 1.0,
+            "the velum coupling is a switch rather than a continuous control");
+
+    // Every coupling has to stay finite and bounded, including through a jump.
+    for (const float amount : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = makeParameters (1, 0, 0, 0);
+        parameters.choirSize = 6;
+        parameters.nasal = amount;
+        engine.setParameters (parameters);
+        engine.noteOn (52, 0.9f);
+        const auto held = render (engine, static_cast<int> (sampleRate * 0.3));
+        parameters.nasal = 1.0f - amount;
+        engine.setParameters (parameters);
+        const auto moved = render (engine, static_cast<int> (sampleRate * 0.3));
+        expect (held.finite && moved.finite && moved.peak < 16.0,
+                "the nasal branch destabilised at coupling "
+                    + std::to_string (static_cast<int> (amount * 100.0f)) + " %");
+    }
+}
+
 /** Twelve singers have to disperse like twelve singers.
 
     The 1.1 engine gave each singer a uniform +/-5.6 cents of static detune,
@@ -2228,6 +2333,7 @@ int main()
     testFormantTuningAtHighPitch();
     testJustIntonation();
     testEnsembleDispersion();
+    testNasalBranch();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();

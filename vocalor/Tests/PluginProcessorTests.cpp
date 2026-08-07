@@ -210,8 +210,8 @@ void testParameterLayoutIsStable()
     auto& state = processor.parameters;
     using namespace vocalor::parameters;
 
-    expect (processor.getParameters().size() == 22,
-            "the published parameter count is no longer 22");
+    expect (processor.getParameters().size() == 23,
+            "the published parameter count is no longer 23");
 
     // Version-1 identifiers and defaults are part of the saved session format.
     // Changing any of them would silently alter existing projects.
@@ -237,7 +237,9 @@ void testParameterLayoutIsStable()
                 std::string ("default for the new parameter ") + entry.id + " is not neutral");
 
     // Version-1.2 additions carry the same obligation.
-    const Expected versionOnePointTwo[] = { { dynamics, 1.0f }, { intonation, 0.0f } };
+    const Expected versionOnePointTwo[] = {
+        { dynamics, 1.0f }, { intonation, 0.0f }, { nasal, 0.0f }
+    };
     for (const auto& entry : versionOnePointTwo)
         expect (nearly (denormalisedDefault (state, entry.id), entry.value, 0.002f),
                 std::string ("default for the new parameter ") + entry.id + " is not neutral");
@@ -254,7 +256,7 @@ void testParameterLayoutIsStable()
     }
 
     for (const char* id : { vowelX, vowelY, vowelMorph, glide, roomSize, dynamics,
-                            intonation })
+                            intonation, nasal })
     {
         if (auto* parameter = state.getParameter (id))
         {

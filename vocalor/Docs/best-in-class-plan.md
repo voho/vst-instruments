@@ -229,7 +229,7 @@ opens on something playable.
   drift must be bounded over a long render; the per-singer offsets must not be
   constant over time.
 
-- [ ] **5. Nasal branch.** Add a velum-coupling parameter that inserts a nasal
+- [x] **5. Nasal branch.** Add a velum-coupling parameter that inserts a nasal
   pole near 280 Hz and a placed zero between it and F1, with the zero position
   distinguishing /m/ from /n/, and damps F1 as the velum opens. This is what
   turns Vocalor's "ah" into a hum. Closes gap 5. *Verified:* the tract magnitude
