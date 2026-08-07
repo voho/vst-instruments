@@ -393,12 +393,12 @@ envelope and no time constant anywhere in it. The glide ends when the head has
 stopped moving, so it decays at the head's own rate rather than on a clock.
 
 Everything follows from that without being written down separately. A hard
-stroke bends further than a light one because it pushes the head further —
-about fifty cents against three at the factory setting. A slack head bends far
+stroke bends further than a light one because it pushes the head further — about
+fifty-five cents against a couple at the factory setting. A slack head bends far
 more than a tight one, because the tension a given displacement adds is measured
-against the tension already there: at a quarter of the tension range the same
-stroke bends four times as far. A Katsu barely bends the head at all, because a
-stick on the shell hardly moves the hide. And the depth is computed after the
+against the tension already there: the same full stroke bends about 140 cents at
+a quarter of the tension range and about 15 at four fifths of it. A Katsu barely
+bends the head at all, because a stick on the shell hardly moves the hide. And the depth is computed after the
 model's one output-level calibration has been divided out, so that constant
 cannot reach the drum's pitch.
 
