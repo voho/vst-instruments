@@ -85,7 +85,7 @@ unmodelled interaction and switching memory of the complete HPF network.
 | P0 | 01 | Hardware confirmation of the derived 0.5533/0.8983 Hz rates (TP4 capture), a *calibrated* original-unit sweep capture, and whether the clock is period- or frequency-linear in its CV | Two-line topology, mode controls, the integrator-plus-comparator LFO and its straight triangle, the 1.6234799 mode-rate ratio, the summing-node β = 33/47 and C3 = 0.1 µF (netlist-corroborated), the derived rate scale, and the shipped 1.4–6.4 ms sweep — third-party-scoped on a designator-faithful p. 15 build with genuine MN3009s against a real 106 (2026-08-07), superseding the sibling JUNO-60 capture |
 | P2 | 02 | Installed-unit common-VCA endpoint, component/rail/IC variation and residual error against the nominal law | The complete nominal path: `d=b<<5`, ideal R-2R `/4096`, p. 8's +4 to −6 V span, p. 15 R30/C7/R32/R31/R165 network, NEC's −5.9 mV/dB typical law, and C7's 9.08249 ms constant |
 | P0 | 03 | Calibrated chorus noise PSD, SNR, spurs and stereo correlation (a capture with a reference tone; the −47.97/−44.01 dBFS floors have a declared but uncalibrated chain) | No-compander topology, the need for a wet-line noise model, the sourced heduhl floors and the structural 3.95 dB I→II delta on both chip populations (provenance corrected 2026-08-07) |
-| P2 | 04 | Loaded post-BBD support transfer, the output-stage reading that reproduces the digitised typical Gi–fi family (two-phase tap summing candidate), and emitter-follower output impedance | Component topology with the 106's own p. 15 capacitor codes now read at designator level, provisional ideal-source poles, the fixed per-shift residual coefficient anchored to the guaranteed-minimum 40 kHz/12 kHz row, and the digitised 10/40/100 kHz typical family (which the current hold-plus-pole framework cannot reach at low clocks — recorded 2026-08-07) |
+| P2 | 04 | Loaded post-BBD support transfer (tap-pole candidates 11.9/15.1/22.2 kHz vs the shipped ideal-source 23.46 kHz), the Gi–fi fixture reading (tracked vs broadband — one tracked ~40 kHz sweep decides, and with it the typical-part residual coefficient inside its recorded [−4.355, −1.33] dB span at 40 k/12 k), the EC-row edition identity, and emitter-follower source loading | Component topology with the 106's own p. 15 capacitor codes read at designator level; the two-phase OUT1/OUT2 composite solved as a full-period hold, confirming the shipped shift/hold/polyBLEP structure (2026-08-07); the fixed per-shift residual coefficient anchored to the guaranteed-minimum 40 kHz/12 kHz row, inside every candidate reading's band; Rs ≈ 3.70 kΩ summed-output source impedance and ≈ +1.10 dB intrinsic gain derived from the Gi–RL panel; the digitised 10/40/100 kHz typical family with its self-contradiction between panels recorded |
 | P0 | 05 | TA75558S IC6 and High-output clipping swing versus frequency and load | IC6 identity, linear resistor gains and ±15 V rails |
 | Dependency | 06 | Physical `Vref_rms` for a declared High-output/load condition | Final -18 dBFS RMS mapping, floating output and no-limiter policy |
 | P1 | 07 | Acquisition/tracking behaviour, droop and loading of every converter hold | Hold ownership, 4.2 ms pass, VCF 522 µs and voice-VCA 687 µs anchors, and the designator-complete inventory: all 23 holds are 0.01 µF (p. 13 ".01×7/.01×8"), with per-destination post-hold smoothing networks read in full (2026-08-07); the PWM (R117/C62 then R116/C63) and SUB (R11/C1) networks ship as derived slews |
@@ -417,7 +417,10 @@ Resolve the effective loaded transfer after each BBD. The chief uncertainty is
 the tap-summing pole: the present nominal
 first-order model uses `(3.3 kΩ || 47 kΩ) × 2.2 nF`, or 23.46 kHz, while
 treating the active MN3009 output as ideal. The MN3009 datasheet does not
-specify the needed output impedance. Service Notes p. 15 identifies the two
+specify the needed output impedance directly — the 2026-08-07 solve derives
+Rs ≈ 3.70 kΩ for the summed pair from the Gi–RL panel, leaving the per-leg
+topology ambiguous (loaded-pole candidates 11.9/15.1/22.2 kHz; see the
+session record). Service Notes p. 15 identifies the two
 branches as IC8 with R118/R119, R117 and C45, and IC10 with R111/R112, R110 and
 C48; alternating active taps make the loaded circuit time-varying. The later
 7.234/11.315 Hz C28/C25 coupling calculations likewise omit the driving
@@ -2446,7 +2449,12 @@ hold-plus-single-pole framework at any coefficient** — at fcp = 10 kHz the
 alone is already −4.3 dB, so matching the typical family needs a different
 output-stage reading (the two-phase OUT1/OUT2 summing the 3.3 kΩ tap pair
 implements, whose composite response must be solved against these curves
-before anything ships). Also extracted: the full THD–Vi curve (minimum
+before anything ships). *Both consequences are superseded in part by the
+same-day output-stage solve recorded below: (a)'s direction turns out to
+depend on an unresolved fixture reading, and (b) dissolves — the two-phase
+composite is itself a full-period hold, the shipped framework is
+confirmed, and the >Nyquist points belong to the measurement plane, not to
+a different sampling structure.* Also extracted: the full THD–Vi curve (minimum
 0.42% near 0.8 Vrms, 2.5% at ≈1.97 Vrms — the EC table's "2.5% at
 1.5 Vrms" is a minimum-swing guarantee, and its "0.3% typ" disagrees with
 the same sheet's typical curve reading 0.43%, recorded as the datasheet's
@@ -2518,6 +2526,91 @@ list) are absent from both obtained copies; a complete scan would close
 the remaining component-value ambiguities (the noise-mixer leg value, the
 33 kΩ/39 kΩ saw-rail chain, R22's node in the boost branch).
 
+## OQ-04 output-stage solve — 2026-08-07 (two-phase composite derived; no retune ships)
+
+**Work mode:** analysis of supplied evidence plus datasheet evidence
+search. **No hardware was measured.** The MN3009 datasheet was retrieved
+from two mirrors and its Gi–fi page independently re-digitised at 600 dpi
+(13 points across all three curves, including the drawn tails the earlier
+record does not contain). Three independent derivations — sampled-data
+first-principles, circuit-first, and fixture-first — were fitted
+numerically and then adjudicated by re-running all three composite models
+against the full trace and against the datasheet's other panels.
+
+**The device mechanism is closed, unanimously.** The input gate admits one
+packet per full clock period — a bucket can only pour into an empty
+neighbour, so a two-phase line physically cannot sample at 2·fcp — and the
+datasheet's own circuit diagram places OUT1/OUT2 as source followers on
+the adjacent stages 257/258, which present the *same* sample on
+complementary half-cycles. The equal 3.3 kΩ tap pair therefore
+reconstructs a full-period zero-order hold; the half-period stagger
+cancels the complementary clock pedestals and buys no bandwidth. The
+shipped structure — one shift per clock period, one held value, polyBLEP
+reconstruction, a single per-shift residual pole — is thereby positively
+confirmed, and the digitisation pass's consequence (b) is withdrawn as an
+indictment of the framework: the 10 kHz curve's smooth continuation past
+fi/fcp = 0.5 is legitimate in the measurement plane, where the staircase's
+image lines genuinely exist, and says nothing about the sampling
+structure. Alternative readings (an effective 2·fcp staircase, half-period
+return-to-zero pairs, unequal tap weights, tilted or drooping hold
+windows, clock-scaled inefficiency) were each constructed and numerically
+falsified against the 13-point trace.
+
+**The typical-part parameter extraction does not close, because the scan
+contradicts itself.** A tracked/coherent reading of the Gi–fi family —
+sinc × essentially-zero charge-recycling dispersion × one absolute
+~65 kHz bench pole — reproduces the drawn in-band shape (rms 0.295 dB
+over the usable ν ≤ 0.45 band) but is falsified by the Gi–fcp panel,
+which is drawn flat down to fcp = 1 kHz at fi = 1 kHz, where a tracked
+reading demands an undrawn sinc plunge. A broadband-meter reading — the
+staircase's image power restores the hold's sinc by Parseval, leaving the
+charge-transfer law to set the −3 dB points — hits the three −3 dB
+anchors but misses the drawn −1 dB points by 0.4–1.2 dB (the small-ε
+charge-transfer shape forces −1 dB at ν = 0.186 where the curve draws
+0.280) and is symmetric about ν = 0.5 where the drawn tails fall
+monotonically to −4.6 dB. Each reading is falsified by a different panel
+of the same low-resolution scan; all three curves terminate exactly on
+the −4 dB gridline, so drafting idealisation is a live possibility.
+Consequences recorded, not resolved: the typical-part raw held node at
+40 kHz clock / 12 kHz signal spans −1.33 dB (tracked) to ≈−3.45 dB
+(broadband); consequence (a)'s "conservative by ~0.4 octave" holds only
+under the tracked reading and *reverses* under the broadband one (shipped
+≈0.4 dB brighter than typical). `transferSmear = 0.8654743` — the
+guaranteed-minimum anchor, −3.000 dB at 40 kHz/12 kHz — lies inside every
+reading's band and ships unchanged; the suites now also fence the
+cross-reading guard band [−4.355, −1.33] dB at that point so any future
+retune must confront this record.
+
+**New anchored numbers, recorded against the task.** The Gi–RL panel's
+0 dB crossing at 27.5 kΩ, joined with the +0.78 dB flat band at
+RL = 100 kΩ, solves to a summed-output source impedance Rs ≈ 3.70 kΩ
+(3.60–3.79 across the 27–28 kΩ reading) and an intrinsic follower gain of
+≈ +1.10 dB — the first concrete answer to this task's "the MN3009
+datasheet does not specify the needed output impedance". Both are
+datasheet-fixture figures: the +0.78 dB flat gain and every absolute
+bench pole must never ship. De-embedding Rs into the 106's own
+3.3 kΩ/47 kΩ/2.2 nF node is topology-ambiguous — is 3.70 kΩ the pair or
+one follower, and do both legs load the node continuously? — giving
+loaded tap-pole candidates 11.88 kHz (single active leg, Rs + 3.3 kΩ),
+15.07 kHz (pair-valued Rs, both legs), and 22.21 kHz (per-follower Rs,
+both legs, within 0.08 dB of shipped across the wet band) against the
+shipped ideal-source 23.46 kHz. Recorded for the task's declared
+MNA/wet-sweep route; no silent retune.
+
+**Also recorded:** an EC-row edition discrepancy — the retrieved scan
+prints "fi 14 kHz max, 3 dB down" where the repo's record reads "fi min
+12 kHz"; the anchoring edition's row identity must be re-verified before
+any future retune. The 10 kHz curve's knee and tail (ν > 0.45) exceed
+every candidate composite by 0.7–1.6 dB and are quarantined; the 106's
+23.9 kHz minimum clock keeps ν ≤ 0.42, outside the region.
+
+**One decisive falsifier is named for hardware:** a single tracked
+through-BBD sweep at a fixed ~40 kHz clock out to ~18 kHz. A raw-node
+reading near −1.3 dB at ν = 0.3 confirms the tracked reading and a
+typical part with almost no recycling dispersion; ≈−3.4 dB confirms the
+broadband one. Either result collapses the typical `transferSmear` span
+and settles consequence (a)'s direction.
+
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
 - **Chorus modes:** the JUNO-106 has Off, I and II. Its owner's manual says I
@@ -2564,11 +2657,15 @@ the remaining component-value ambiguities (the noise-mixer leg value, the
   oscillator. IC2a inverts it once for the second line, so the antiphase pair
   is one waveform and its negative, not two oscillators.
 - **Chorus mode-rate ratio:** 1.6234799, this instrument's own, from the mode
-  switch's T-network — JFET Tr1 *shorts* R3 2.2 MΩ, giving effective timing
-  resistances of 6.4352941 MΩ (mode I, slower) and 3.9638889 MΩ (mode II).
-  Earlier notes describing R3 as a series resistor that mode I bypasses were
-  wrong about the mechanism while right about the numbers. Do not reintroduce
-  the JUNO-60's own 1.682 ratio. Only the absolute scale remains OQ-01.
+  switch's T-network — R4 680 kΩ runs from the R5/R8 junction to JFET Tr1's
+  drain and R3 2.2 MΩ is Tr1's gate-source bleed, so the junction reaches
+  ground through R4 alone while Tr1 conducts (mode I) and through R4 + R3
+  while it does not — giving effective timing resistances of 6.4352941 MΩ
+  (mode I, slower) and 3.9638889 MΩ (mode II). Earlier notes had Tr1
+  shorting R3 itself; the p. 15 original-page read relabelled the legs
+  without moving a number. Do not reintroduce the JUNO-60's own 1.682
+  ratio. The absolute scale is likewise derived from this circuit; OQ-01
+  keeps only its hardware confirmation.
 - **Mains ripple:** not modelled, by derivation rather than for want of
   evidence. Service Notes p. 16 gives 3300 µF per rail behind a 0.25 A
   secondary and M5230L regulators, so what reaches a card is on the order of
@@ -2586,6 +2683,9 @@ the remaining component-value ambiguities (the noise-mixer leg value, the
   host-grid reconstruction is a resolved numerical product mechanism: it acts
   after transfer loss and before the tap pole, leaves physical BBD/RNG state and
   noise unchanged, and clears only its grid-specific slots at a rate change.
+  The two-phase OUT1/OUT2 pair presents one sample per clock period — the
+  2026-08-07 solve confirmed the composite is a full-period hold — so it must
+  not be modelled as a 2·fcp output stage.
   OQ-04 still owns real MN3009 normalized response and BGA across multiple
   clocks and emitter-follower source loading, including the loaded tap-summing
   transfer; OQ-03 owns stochastic noise and OQ-20 owns TR11/TR12 on-resistance,

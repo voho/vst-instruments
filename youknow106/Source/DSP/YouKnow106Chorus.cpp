@@ -17,6 +17,14 @@ namespace
 // advances once per modeled BBD shift (one fCP period), so a fixed coefficient
 // already makes the pole's absolute frequency follow the clock. Scaling it
 // again from clockHz would change the normalized response and double-count it.
+//
+// The 2026-08-07 two-phase output-stage solve confirmed this hold-plus-
+// residual-pole structure outright -- OUT1/OUT2 present the same sample on
+// complementary half-cycles, so their sum is a full-period hold -- but left
+// the typical part's coefficient an unresolved span, because the datasheet's
+// Gi-fi and Gi-fcp panels contradict each other about what the curves
+// measure. The guaranteed-minimum anchor below sits inside every candidate
+// reading's band and stands; the suites fence the cross-reading guard band.
 constexpr float transferSmear = 0.8654743f;
 
 // Static transfer of the delay line, referred to the model's signal scale
@@ -88,10 +96,11 @@ constexpr float wetMixerInputOhms = 39000.0f;            // R72 / R74
 // The output's fifth pole is the BBD tap-summing node: either active output
 // reaches C45/C48 2.2 nF through 3.3 kOhm, and R117/R110 47 kOhm returns the
 // node to ground. Treating the active BBD output as an ideal source gives
-// (3.3 kOhm || 47 kOhm) against 2.2 nF, or 23.46138 kHz. The MN3009 datasheet does
-// not specify output impedance, so this is deliberately a first-order nominal
-// model, not a claim that a real unit's pole lands to the hertz. A full MNA or
-// wet-only sweep should replace it when one is available.
+// (3.3 kOhm || 47 kOhm) against 2.2 nF, or 23.46138 kHz. The datasheet's
+// Gi-RL panel now bounds the summed-output source impedance near 3.7 kOhm,
+// which would put the loaded pole at 11.9-22.2 kHz depending on how the two
+// follower legs share the node -- recorded against OQ-04, whose declared MNA
+// or wet-only sweep route decides it rather than a silent retune here.
 //
 // The reconstruction corners below equal the anti-alias corners because the
 // 106's own p. 15 scan reads them so at designator level (2026-08-07):

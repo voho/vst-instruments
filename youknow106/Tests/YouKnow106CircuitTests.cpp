@@ -2561,6 +2561,17 @@ void testBucketBrigadeDatasheetAnchors()
     // minimum-bandwidth row, too small to justify a second inaudible retune.
     expectNear(20.0 * std::log10(gainAtTwelveKhz / gainAtOneKhz), -3.0, 0.03,
                "charge-transfer response misses the 1 kHz-referenced anchor");
+
+    // The 2026-08-07 two-phase output-stage solve left the typical part's
+    // coefficient a span, because the datasheet's own panels contradict each
+    // other about what the Gi-fi curves measure: the tracked reading puts
+    // the raw held node at -1.33 dB here, the broadband reading near
+    // -3.45 dB, and the guaranteed-minimum bound at -4.355 dB. Any future
+    // retune must land inside that cross-reading band and confront the
+    // session record before moving the anchor above.
+    const double heldDecibels = 20.0 * std::log10(gainAtTwelveKhz);
+    expect(heldDecibels > -4.355 && heldDecibels < -1.33,
+           "raw held node left the cross-reading guard band at 40 kHz / 12 kHz");
 }
 
 void testBbdOutputPolyBlepReferenceAndBounds()
