@@ -2785,6 +2785,25 @@ changed. This is a numerical product mechanism in the same class as the
 BBD host-grid polyBLEP: it removes simulation-grid artefacts the analogue
 instrument never had, and it neither resolves nor claims any OQ.
 
+### OQ-03 — a numerical lead on the unexplained 3.95 dB mode delta
+
+Recorded as a lead, not a mechanism. The structural II−I noise delta —
+3.95 dB on Panasonic parts and 3.95 dB again on Xvive parts — sits
+0.26 dB from the mode-rate ratio expressed in amplitude:
+`20·log10(1.6234799) = 4.21 dB`. The settled topology gives the two modes
+identical sweep depth and clock range; the *only* thing the mode line
+changes is the modulation rate. A noise mechanism proportional to
+modulation rate (equivalently to the sweep's slope `d(delay)/dt`, which
+mode II raises by exactly 1.6235) would therefore reproduce the measured
+delta to within the measurement's plausible uncertainty and would be
+chip-population-independent — matching the delta's strongest recorded
+property. This does not conflict with the earlier rejection of a
+sweep-depth or level difference between the modes; it names a
+rate-proportional candidate the requested calibrated capture could
+confirm or kill (a same-chain capture at a third, artificial rate would
+separate rate-proportional noise from mode-switch-network noise
+directly).
+
 ### Pages read for the record, without model consequence
 
 The PARTS LIST (pp. 3–4) itemises no discrete resistors — only arrays
