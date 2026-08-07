@@ -152,19 +152,29 @@ modelling one.
 Each step is one commit, self-contained, with the JUCE-free DSP build and its
 regression suite green.
 
-- [ ] **1. The strike lands somewhere.** Make the strike position a per-hit
-  modelled quantity instead of a per-instrument literal. Nominal position stays
-  where it is, so a default kit is unchanged; on top of it, velocity moves the
-  stroke (harder strokes land nearer the middle, ghost strokes nearer the edge,
-  which is what players do and what makes an accent *fuller* rather than only
-  louder and brighter), and Humanise scatters it per hit. Because the position
-  enters through `J_m(lambda r/a)`, this changes which modes each strike feeds,
-  not a filter corner.
-  *Closes gaps 1 and 4.* Verified by: a contract that the ratio of off-axis
-  (m > 0) to axisymmetric band energy varies hit to hit in proportion to
-  Humanise and is exactly constant at Humanise 0; and that a hard strike carries
-  more axisymmetric energy than a soft one beyond what the existing brightness
-  tilt accounts for.
+- [x] **1. Withdrawn: strike position as a humanisation and velocity axis.**
+  Planned as a per-hit strike position moved by velocity and scattered by
+  Humanise. Built, measured, and dropped, because the measurement did not
+  support it. On a level-matched null test between a full-velocity and a
+  quarter-velocity strike, moving the aim across the whole realistic range a
+  drummer covers - from `r/a = 0.14` at an accent to `0.54` at a ghost stroke -
+  changed the residual by 1.5 dB on the Snare and by 0.2 dB or less on the Kick
+  and all three Toms, against a residual of about -8 dB that the existing
+  velocity terms already produce. Per-hit scatter at Humanise 1.0 moved the
+  hit-to-hit residual by 0.1 to 0.4 dB against the -10 dB the other six
+  deviations already reach.
+  The reason is structural rather than a tuning failure: `buildHeadBank()`
+  normalises the bank's gains to a constant sum and then tilts them by
+  `ratio^(-0.8)` and weights them by radiated efficiency, so three or four
+  low-order modes carry almost all of the bank's energy - and those are exactly
+  the modes whose `J_m(lambda r/a)` is least sensitive to `r`, because near the
+  centre a mode of order `m` scales as `r^m`. The strike position therefore
+  redistributes energy almost entirely among modes that are already 20 dB down.
+  Making it audible would mean re-voicing the bank's tilt and radiation
+  weighting, which is a change that could only be justified by ear, so it is not
+  made here. The mechanism itself is kept and used where the position change is
+  large enough to matter on its own: a rimshot lands at the rim, and that is
+  step 3.
 
 - [ ] **2. Tension modulation on the whole membrane bank.** Carry an energy
   estimate for each head bank and detune every mode by a bounded, energy
@@ -175,15 +185,7 @@ regression suite green.
   body glides downward during the note, and the size of that glide grows with
   velocity - a difference that is exactly zero on the engine as it stands.
 
-- [ ] **3. A stick landing on a moving head takes energy out of it.** When a
-  membrane voice is struck while a voice of the same instrument is still
-  ringing, remove a velocity-scaled share of the ringing bank's modal state and
-  envelopes instead of letting two independent drums sum.
-  *Closes gap 6.* Verified by: two strikes 15 ms apart peak below the sum of the
-  same two strikes rendered in isolation, single hits stay bit-identical, and a
-  fast roll stays bounded.
-
-- [ ] **4. Snare rimshot and cross-stick.** Add articulations to the trigger
+- [ ] **3. Snare rimshot and cross-stick.** Add articulations to the trigger
   path and map them to the standard notes: 38 head, 40 rimshot, 37 cross-stick.
   A rimshot is the same snare struck at 0.92 of the radius with the shortest
   contact in the kit and the wires fully engaged; a cross-stick is a stick laid
@@ -192,6 +194,14 @@ regression suite green.
   *Closes gap 7.* Verified by: the three articulations are distinguishable by
   measured band balance and decay, the rimshot is brighter and shorter, and the
   cross-stick carries far less wire noise; plus the mapping contract.
+
+- [ ] **4. A stick landing on a moving head takes energy out of it.** When a
+  membrane voice is struck while a voice of the same instrument is still
+  ringing, remove a velocity-scaled share of the ringing bank's modal state and
+  envelopes instead of letting two independent drums sum.
+  *Closes gap 6.* Verified by: two strikes 15 ms apart peak below the sum of the
+  same two strikes rendered in isolation, single hits stay bit-identical, and a
+  fast roll stays bounded.
 
 - [ ] **5. A hi-hat pedal that is a pedal.** A continuous aperture drives the
   plate model: clamping raises the stiffness and replaces the plate's own
