@@ -72,10 +72,10 @@ renders, process CPU time:
 
 | Scenario | Cost, × realtime |
 |---|---|
-| Idle — no key held, six cards running behind closed VCAs | **1.42** |
-| Six voices, chorus off, resonance 0.10 | **1.12** |
-| Six voices, chorus II, saw+pulse+sub+noise, resonance 0.70 | **2.35** |
-| Six voices, chorus off, resonance 0.95 | **3.64** |
+| Idle — no key held, six cards running behind closed VCAs | **1.40** |
+| Six voices, chorus off, resonance 0.10 | **1.11** |
+| Six voices, chorus II, saw+pulse+sub+noise, resonance 0.70 | **2.38** |
+| Six voices, chorus off, resonance 0.95 | **3.96** |
 
 Read straight: **the engine did not run in real time on that machine in any
 configuration, and it cost more with no key held than with six sounding.**
@@ -158,10 +158,15 @@ commit.
   beside the timer it derives from, the cutoff chain is recomputed only when its
   inputs actually change, and the comparator event buffer is no longer
   value-initialised.
-  *Verified by:* a new engine-suite fixture proving the cutoff cache is
-  transparent — a render with the cache exercised must be bit-identical to the
-  same render with every input perturbed to defeat it — and by the existing
-  thermal, drift and Unit Character tests.
+  *Verified by:* output that is bit-identical to the previous commit — an FNV
+  lock over four rendered scenarios matches exactly — plus
+  `testQualityChangeRefreshesTheFilterCoefficient`, which holds the one
+  invariant the memo introduces: a card whose holds have settled must not keep
+  integrating on the old grid's pole after a quality change. **Recorded
+  honestly:** that fixture passes on the pre-change engine too, because until
+  the memo existed there was nothing for it to catch. A bit-identical change
+  has no behaviour to fail on; the fence's job is to keep the invariant from
+  here on, and the cost reduction is a measurement, not an assertion.
 
 - [x] **5. Model the rate-proportional chorus-noise mechanism behind its own
   switch.** *Closes:* §2.3. A named, off-by-default `enableChorusRateNoise`
@@ -179,7 +184,43 @@ commit.
   the solver measurements as model-internal evidence and attaches the chorus
   switch to OQ-03; the README states the new cost and the new switch.
 
-## 4. What this pass deliberately does not do
+## 4. Result
+
+Same machine, same harness, the four scenarios of §2.2 rendered back to back
+by the pre-pass and post-pass engines:
+
+| Scenario | Before | After | Change |
+|---|---|---|---|
+| Idle, six cards behind closed VCAs | 1.398 | **0.852** | −39% |
+| Six voices, chorus off, resonance 0.10 | 1.105 | **0.699** | −37% |
+| Six voices, chorus II, full mixer, resonance 0.70 | 2.376 | **1.361** | −43% |
+| Six voices, chorus off, resonance 0.95 | 3.960 | **1.395** | −65% |
+
+Stated exactly: the figures are CPU seconds per second of audio, so under 1.0
+is faster than realtime. Two of the four scenarios crossed that line and two
+did not. **Idle and ordinary six-voice playing now run in real time on this
+machine and did not before; the chorus-engaged and near-oscillation cases are
+still above it, at 1.36 and 1.40 against 2.38 and 3.96.** With the 4×
+oversampling switched off the six-voice chorus patch costs 0.45. The
+sixteen-voice extension — nearly three times the polyphony the hardware has —
+costs 4.10, down from 7.7.
+
+Two things that figure is not. It is not a claim about any other machine: this
+is one contended 2.8 GHz core, and the honest use of it is the before/after
+ratio on identical hardware, not an absolute product spec. And it is not a
+comparison with a competitor, because no vendor publishes a measurement
+condition — the CPU reports in §1 are user impressions, not benchmarks. What
+the suite fences is correspondingly a *ratio*, not a time.
+
+Steps 2 and 3 change the last bits of the rendered samples; steps 4 and 5's
+default position do not. The measured difference from the pre-pass engine is
+−102 dB RMS relative to signal on a plain six-voice patch and −95 dB on a full
+chorus patch. On a self-oscillating patch it is −20 dB, which is what a limit
+cycle does when its phase is perturbed at all: its amplitude and frequency
+stay on the 4.83 Vpp / 248.0 Hz service anchors, which is what the suite
+fences and what the instrument is calibrated against.
+
+## 5. What this pass deliberately does not do
 
 - **It closes no open question.** Every P0 row still needs the calibrated
   captures the queue specifies.

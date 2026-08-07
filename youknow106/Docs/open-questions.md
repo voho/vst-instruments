@@ -394,6 +394,23 @@ No compander exists in this circuit, so a noise model is structurally required,
 but the current per-line floor is voiced. A noise voltage without a same-path
 reference tone, bandwidth and weighting does not establish SNR.
 
+*Implementation note, 2026-08-07:* the rate-proportional candidate for the
+measured 3.95 dB II−I delta, named under the 2026-08-07 numerical lead below,
+now ships as `enableChorusRateNoise` — **off by default**. Engaged, it scales
+each line's own random floor with its modulation rate referenced to mode I, so
+mode I's floor is untouched and mode II rises by
+`20·log10(1.6234799) = 4.2089 dB`; the rendered idle floor measures 4.2225 dB
+over six whole modulation cycles. It changes nothing in the shipped sound and
+closes nothing: it makes the hypothesis testable so the capture below can
+confirm or kill it, and the discriminating capture is **a third, artificial
+modulation rate on the same chain**, which separates rate-proportional noise
+from mode-switch-network noise directly. A useful measurement caution came out
+of building it: each line writes one noise sample per bucket edge, so its
+instantaneous floor rides the swept clock, and a fixed measurement window that
+is not a whole number of modulation cycles reads mode II 0.69 dB hot with no
+mechanism present at all. Any capture compared against this model must average
+over whole cycles.
+
 ### Needed output (for LLM)
 
 - Raw tone and noise captures from the same stated probe point for Off, I and
@@ -3111,6 +3128,64 @@ and is not imported in either direction.
 
 No model change, no class change, no queue change. The queue's 20 open
 questions plus the OQ-06 dependency stand exactly as written above.
+
+## Best-in-class pass — 2026-08-07 (real-time cost measured; no OQ touched)
+
+**Work mode:** competitive evidence search plus measurement of the shipping
+algorithms. **No hardware was measured, and no task below is advanced or
+closed.** It is recorded here because the queue is where this project keeps its
+measurements, and because three of these are model-internal facts a future
+reader would otherwise rediscover. The full write-up is
+[the plan](best-in-class-plan.md).
+
+A refreshed market sweep found the fidelity picture unchanged and one axis
+missing from the comparative assessment entirely: **real-time cost**, which
+this market does separate products on. Measured at 48 kHz/HQ on one 2.8 GHz
+core, the engine did not run in real time in any configuration — 1.398×
+realtime with no key held, 2.376× on a six-voice chorus patch, 3.960× at
+resonance 0.95 — and cost more idle than sounding.
+
+### Model-internal measurements from that pass
+
+- **The four-stage implicit solve is 65% of the whole engine's cost**, and
+  almost all of that is libm. At resonance 0.95 it evaluated roughly 69
+  `tanhf`, 33 `expf` and 33 `log1pf` per filter step per voice, 1.15 M steps a
+  second.
+- **The Newton loop's convergence test was unsatisfiable wherever the filter
+  was working.** It compared an absolute `1.0e-7` against a step on capacitor
+  voltages of several volts, which single precision resolves to about 6e-7, so
+  the loop ran its eight-iteration cap: instrumented, 7.99 iterations of 8 at
+  resonance 0.95, 6.22 with chorus engaged, 2.86 on a quiet patch. Raising the
+  cap to 32 raised the average to 27.0, confirming the test — not the problem —
+  was what the loop could not satisfy. The step remaining at the cap measured a
+  mean of **5.1e-5 V, worst 9.5e-4 V, on states averaging 1.7 V**: the
+  iteration was already at its own round-off floor several iterations before it
+  stopped. This corrects the earlier "more Newton iterations" entry under
+  *Model-internal measurements* above, which recorded the cap as reached
+  "10–22% of the time under hot resonant input" — on the settings that define
+  this instrument it was reached essentially always.
+- **A candidate for OQ-03's 3.95 dB mode delta was implemented and measured.**
+  See the OQ-03 implementation note. One measurement caution came with it: each
+  line writes one noise sample per bucket edge, so its instantaneous floor
+  rides the swept clock, and a window that is not a whole number of modulation
+  cycles reads mode II 0.69 dB hot with no mechanism present at all.
+
+### Acted on, without touching a calibrated constant
+
+`tanh` and `ln cosh` now come from one shared exponential and the path-start
+antiderivative left the Newton loop; the convergence test is scaled to the
+volts it measures; four pieces of loop-invariant per-card work left the
+per-sample loops. Cost, same harness back to back: idle 1.398 → **0.852**, six
+voices 1.105 → **0.699**, six voices with chorus II and the full mixer 2.376 →
+**1.361**, resonance 0.95 3.960 → **1.395**. The difference from the pre-pass
+engine is −102 dB RMS relative to signal on a plain six-voice patch and −95 dB
+on a full chorus patch; on a self-oscillating patch it is −20 dB, a limit
+cycle's phase rather than its amplitude or frequency, both of which stay on the
+4.83 Vpp / 248.0 Hz service anchors.
+
+None of this is hardware evidence and none of it is a claim about the
+instrument. The queue's 20 open questions plus the OQ-06 dependency stand
+exactly as written above.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
