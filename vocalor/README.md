@@ -10,19 +10,21 @@ service while rendering audio.
 
 > **Listen first.** Nine [rendered demonstrations](Docs/audio/README.md) cover
 > a solo legato phrase, the preset vowels on both voice profiles, the vowel
-> space and formant shift on held notes, the twelve-singer ensemble, chord
-> mode, choir dynamics, tension and breath, and the room at both sizes. They
-> are rendered by the shipping engine, so they cannot drift from what the
-> plug-in does.
+> space and formant shift on held notes, the twelve-singer ensemble, chord mode
+> locking onto just intervals, a choir swelled on the Dynamics control, tension
+> and breath closing into a hum, and the room at both sizes. They are rendered
+> by the shipping engine, so they cannot drift from what the plug-in does.
 
 ![Vocalor Standalone instrument interface](Docs/screenshots/vocalor-standalone.png)
 
 The screenshot above was captured from the 1.0 Standalone application and shows
-the previous layout. The 1.1 editor keeps the same visual language and adds the
-vowel-space pad, the live vocal-tract analyser with output meters, and the
-phrasing and room-geometry controls described below; it has not been
-re-captured because the screenshots can only be produced from a macOS build.
-The VST3 and Audio Unit use the same resizable JUCE editor.
+the previous layout. The 1.1 editor added the vowel-space pad, the live
+vocal-tract analyser with output meters, and the phrasing and room-geometry
+controls; 1.2 adds Dynamics, Intonation and Nasal to the same row and regroups
+it into voice character, performance, space and master. The visual language is
+unchanged. It has not been re-captured because the screenshots can only be
+produced from a macOS build. The VST3 and Audio Unit use the same resizable
+JUCE editor.
 
 The interface remains fully resolution-independent: the layered hardware knobs,
 choice states, panel depth, vowel pad, response curve, and complete vocal-range
@@ -44,7 +46,7 @@ The project builds three products from one JUCE codebase:
 
 ## Interface and controls
 
-Vocalor exposes 20 automatable host parameters. Every parameter keeps its
+Vocalor exposes 23 automatable host parameters. Every parameter keeps its
 identifier, range, default, and host ordering, so existing sessions and any
 automation written against them recall in place.
 
@@ -78,6 +80,9 @@ different singer count.
 | `formantShift` | Formant shift | −12 – +12 st | 0 st | 1.1 |
 | `glide` | Glide | 0 – 100 % | 0 % | 1.1 |
 | `roomSize` | Room size | 0 – 100 % | 50 % | 1.1 |
+| `dynamics` | Dynamics | 0 – 100 % | 100 % | 1.2 |
+| `intonation` | Just intonation | 0 – 100 % | 0 % | 1.2 |
+| `nasal` | Nasality | 0 – 100 % | 0 % | 1.2 |
 
 The top row selects the voice profile, the performance mode, the chord quality,
 and the vowel anchor. **Ensemble size** renders exactly that many independently
@@ -98,11 +103,66 @@ to the pad, the **vocal-tract response** display draws the live magnitude
 response of the five formant resonators of a sounding voice on a logarithmic
 axis, marks F1 to F5, and carries the stereo output meters.
 
-Ten continuous controls shape **Breath**, **Resonance**, **Tension**,
-**Vibrato**, **Humanize**, **Glide**, **Spread**, **Room**, room **Size**, and
-the **Output** level. The status display reports active voices and sample rate,
-the Panic button mutes immediately, and the on-screen keyboard is also mapped to
-the computer keys shown above it.
+Thirteen continuous controls fill the bottom row in four groups. **Voice
+character** holds **Breath**, **Resonance**, **Tension**, **Nasal**,
+**Vibrato** and **Humanize**; **performance** holds **Dynamics**,
+**Intonation** and **Glide**; **space** holds **Spread**, **Room** and room
+**Size**; and **master** holds the **Output** level. The status display reports
+active voices and sample rate, the Panic button mutes immediately, and the
+on-screen keyboard is also mapped to the computer keys shown above it. The
+editor's minimum width rose from 1020 to 1120 px with the three added knobs, so
+that a cell still holds the value box under its dial.
+
+## Factory presets
+
+Vocalor ships twelve factory programs, published through the host's own program
+interface: Audio Unit factory presets in Logic, the program list in a VST3 host.
+Program 0 is the shipping default sound, so a host that opens on the first
+program opens on what the plug-in opens on. The rest cover the solo voice
+(intimate, pressed, legato, breath), the ensembles (bass choir, cathedral,
+closed-mouth hum, small voices, morph pad) and the chord modes (locked major
+chorale, airy minor pad).
+
+The table itself lives in
+[`Source/DSP/Presets.cpp`](Source/DSP/Presets.cpp), inside the JUCE-free core
+rather than in the processor, so the DSP test suite renders every one of them
+and checks that each is finite, audible, bounded, releases fully, and carries no
+value the engine would clamp away. See
+[`Presets/README.md`](Presets/README.md) for the full list.
+
+## Performance expression
+
+Vocalor 1.1 responded to note-on, note-off, and CC 120/123 and discarded every
+other MIDI message, pitch bend included. The whole dynamic response of a note
+was decided by its note-on velocity and never moved again. 1.2 adds the
+continuous performance inputs the instrument is actually played from:
+
+| Message | Effect |
+| --- | --- |
+| Pitch bend | ±2 semitones on every sounding and subsequent voice |
+| CC 1 (mod wheel) | Dynamics |
+| Channel pressure | Dynamics — the same control, so a controller with only one of the two is fully expressive |
+| CC 11 (expression) | Output trim, applied after the room so a swell shapes the tail with the dry signal |
+| CC 64 (sustain) | Holds note-offs; pedal-up delivers each of them through the ordinary release path |
+| CC 121 | Lifts the pedal and returns bend, wheel and expression to neutral |
+| CC 120 / CC 123 | All sound off / all notes off, as before |
+
+**Dynamics** is the control the instrument is meant to be played from, and it is
+not a fader. Falling from full to empty it takes 18.1 dB off the voiced source
+but only 7.2 dB off the aspiration, so a soft note is proportionally breathier;
+it lowers the vocal effort, which drops the source tilt corner and therefore
+dulls the note; it relaxes the glottal pulse toward the lax prototype, which is
+a change in the pulse shape rather than a filter over a fixed one; and it
+narrows the vibrato. Measured on a held middle C, dropping the dynamic from 100 %
+to 30 % costs 10.9 dB at the fundamental and 13.9 dB across 2.4 – 4.7 kHz: the
+presence band falls 3 dB further than the level does. The test suite asserts
+that difference, because a dynamic that moved both by the same amount would be
+an output trim wearing a different name.
+
+The `dynamics` host parameter owns the level until a mod wheel or channel
+pressure message arrives; from the first such message the controller owns it,
+and CC 121 hands it back. A session that predates 1.2 recalls with the parameter
+at 100 %, which is exactly the 1.1 behaviour.
 
 ## Sound engine
 
@@ -124,12 +184,12 @@ and every formant target is resolved once per 64-sample chunk and then shaped
 per voice by that singer's tract-length and per-formant dispersion, by
 note-dependent formant tuning, and by the shared ensemble drift.
 
-Each formant then glides to that target on its own time constant, from 16 ms at
-F1 down to 3 ms at F5, because the articulators that set them differ in mass:
-the jaw carrying F1 cannot change a vowel as quickly as the tongue tip and
-larynx that set the formants above it. Tension additionally lifts F3 and F4
-alone, modelling the narrowed epilarynx tube that produces the singer's formant,
-rather than brightening the whole tract.
+Each formant then glides to that target on its own timescale, because the
+articulators that set them differ in mass: the jaw carrying F1 cannot change a
+vowel as quickly as the tongue tip and larynx that set the formants above it.
+Tension narrows the epilarynx tube, which clusters the upper formants into the
+singer's formant rather than brightening the whole tract. **Coarticulation** and
+**Singer's formant** below give both mechanisms and their measurements.
 
 Radiation from the lips is not a separate stage. The excitation is already a
 glottal flow *derivative*, and differentiating the flow is precisely what lip
@@ -160,6 +220,103 @@ like a tract rather than like five independent peaking filters:
   32 dB. Cascade-derived amplitudes are also why a front vowel now sounds
   front: F2 and F3 of /i/ are carried nearly as strongly as F1 instead of
   sitting 22 dB below it.
+
+**Singer's formant.** Vocal tension used to raise the amplitude of F3 by 12 %
+and of F4 by 6 % and leave them where they were. Three formants 700 Hz apart
+with a little more gain each are still three formants: the spectral peak at
+2.5 – 3.5 kHz that lets an unamplified voice carry over an orchestra comes from
+narrowing the epilaryngeal tube until F3, F4 and F5 collapse into one. Tension
+now does that — it pulls the three upper formants toward a profile-dependent
+cluster centre (2.9 kHz male, 3.2 kHz female, scaled with the formant shift like
+the rest of the tract) and narrows their bandwidths together. Vocal effort
+strengthens the same configuration, so the dynamic reaches it as well.
+
+On a held male D3 the F3-to-F5 span closes from 1860 Hz to 1065 Hz as Tension
+goes from 0 to 95 %, and the share of the output between 2.05 and 4 kHz rises
+8.8 dB. At Tension 0 the upper formants sit exactly where the vowel puts them.
+
+**Coarticulation.** A vowel change is a jaw and a tongue moving. The formant
+glides ran on 16, 9, 5, 4 and 3 ms time constants, which put a whole vowel
+switch inside about 50 ms — a de-zipper rather than an articulation, where a
+sung vowel-to-vowel transition runs 100 – 200 ms. Each formant now has a speed
+rather than a deadline: a move of a quarter of that formant's own nominal
+frequency or more takes the full jaw-and-tongue time, and anything smaller is
+proportionally quicker, so the transition also accelerates as it closes on the
+target instead of crawling into it. The lower formants stay the slowest, since
+they follow the larger cavity adjustments.
+
+Stepping the pad from the close-front corner to the open one on a held A3 gives
+10 – 90 % rise times of 117 ms for F1, 92 ms for F2, 28 ms for F3 and 21 ms for
+F4. F3 and F4 are quicker because their targets move 500 and 250 Hz where F1
+moves 540 and F2 1570 — a small adjustment is a small adjustment. A 6 % pad
+nudge takes F1 45 ms rather than the full 117.
+
+**Nasal branch.** A parallel bank of poles does have zeros, but they land
+wherever its sections happen to cancel; there is no way to place one. That ruled
+out the nasal branch, and therefore ruled out a hum — the most common choir
+colour after "ah". **Nasality** opens the velum: it adds a murmur pole at the
+nasal cavity's own resonance (280 Hz, heavily damped at 150 Hz of bandwidth),
+places a notch at 950 Hz where the closed mouth loads the tract, and drops the
+oral formants to 45 %, because a closed mouth is a side branch rather than the
+radiator. Both frequencies scale with the formant shift, since the nose belongs
+to the same head as the tract.
+
+The notch is a matched pole-zero pair rather than Klatt's bare antiresonator.
+That antiresonator is normalised to unity at DC, which for a zero this low
+leaves 48 dB of gain at Nyquist and would make a hum the brightest sound the
+instrument produces; the matched pole returns the response to unity either side
+of the notch, so the branch removes only the band it names. A trim for the
+nostrils — a far smaller and more damped aperture than an open mouth — keeps the
+control from doubling as a fader.
+
+Measured on a held male A2 with the velum fully open: 880 – 1100 Hz falls
+27.8 dB, 220 – 330 Hz rises 7.5 dB, 1.65 – 2.2 kHz falls 11.2 dB, and the
+overall level moves 0.1 dB.
+
+**Intonation.** An a cappella ensemble does not sing equal temperament. It
+narrows the major third and widens the minor one until the overtones align,
+which is the "ring" of a locked chord. Chord mode stacked equal-tempered
+semitones, so a one-finger triad beat where a real section locks. **Just
+intonation** blends each sounding voice from equal temperament toward the
+five-limit interval it makes with the lowest sounding root: 13.7 cents narrow
+for the major third, 15.6 wide for the minor, 2.0 wide for the fifth. The
+octave is left alone, because it is the same either way.
+
+It applies to played polyphony as well as to chord mode, and the reference
+follows the bass: play the third and the fifth first and add the root
+underneath, and the two upper voices re-tune onto it. They do not snap — the
+adjustment glides over about 90 ms, which is roughly how long a singer takes to
+hear the beating and move. The control defaults to 0 %, so a session written
+before it existed recalls in equal temperament.
+
+**Formant tuning.** A speech tract keeps F1 where the vowel puts it; a singer
+cannot. Once the fundamental climbs past F1 the whole spectrum sits above the
+lowest resonance, the radiated power collapses and the timbre breaks, which is
+why sopranos open the jaw and take F1 up with the pitch. The 1.1 engine raised
+F1 by a flat 0.32 % per semitone above A4, so a female OOH at C6 kept F1 at
+367 Hz with the fundamental at 1047 Hz. The engine now resolves F1 per voice
+against that voice's own pitch: below the fundamental the vowel is returned
+untouched, the strategy fades in as the fundamental comes up on F1 and is
+complete 15 % above it, and F1 stops at the highest one that jaw reaches
+(1.55 × the profile's open vowel, scaled with the formant shift, because a
+shortened tract reaches proportionally higher). F2 is pushed clear of a tracked
+F1 rather than being crossed by it, which is why a soprano's vowels lose their
+identity at the top — as real ones do.
+
+Two things follow, both asserted by the test suite:
+
+- **The vowel no longer decides whether the top octave exists.** At C6 the
+  close anchor measured 25.1 dB below the open one and 20.1 dB below itself at
+  C4. It now measures 7.0 dB below the open anchor and 0.8 dB *above* itself at
+  C4. The residual is the cascade amplitude weighting, which is still resolved
+  once per chunk for the untuned tract and therefore still knows the close vowel
+  by its speech formants.
+- **The resonance it wins is spent on efficiency, not on volume.** Putting the
+  fundamental exactly on F1 is worth 7 – 12 dB, which would leave the top octave
+  shouting over the middle. A singer uses that to reduce subglottal pressure
+  instead, so the voice gain is trimmed in proportion to how far F1 actually had
+  to move: nothing while F1 has not moved, and 6 dB once it has moved by a fifth
+  or more.
 
 **Resonance** sets the formant bandwidths and nothing else. Because narrower
 formants make the cascade peakier, it now widens the contrast between the
@@ -205,6 +362,25 @@ spectral balance, breath, and timing rather than sharing a perfectly periodic
 LFO. Pitch jitter runs through two nested smoothers for a 1/f-like spectrum, and
 ensemble and chord modes instantiate independent singers, preventing the
 phase-locked oscillator sound common to simple choir patches.
+
+**Ensemble dispersion.** How far apart twelve singers sit is what separates a
+section from one thick voice, and Vocalor's section used to be far too tight.
+Each singer carried a uniform ±5.6 cents of static detune — 3.2 cents of
+standard deviation for the distribution it drew from, and 4.4 cents measured
+across the twelve identities at full Humanize. Jers and Ternström measured
+25 – 30 cents of dispersion between real choir singers, and listeners were
+reported to tolerate 14 cents of standard deviation, so the section was running
+at roughly a third of what it was allowed and a quarter of what a real one does.
+
+The static detune is now drawn from a triangular distribution — two hashes
+averaged, which concentrates the section near the target rather than spacing it
+evenly across the extremes, as a real one does — and each singer carries two
+incommensurate slow wanders instead of one, so the section never returns to the
+same relative configuration. Twelve singers now measure 12.6 cents of standard
+deviation at full Humanize and the largest singer moves 10.4 cents over nine
+seconds. Humanize is the dial between the two: at zero the section is perfectly
+locked, at its 52 % default it sits at about 6 cents, and at full it is a
+rehearsal room.
 
 **Room.** The four-tap cross-coupled network reads through interpolated,
 slowly modulated taps that break up the metallic ringing a static comb produces
@@ -260,6 +436,22 @@ The recursive filter states are kept out of denormal range by a vanishingly
 small DC bias on the tract excitation rather than a per-tick compare, which is
 worth about a third of the per-voice budget on its own, and the room network
 clears itself once its tail is provably inaudible.
+
+**What 1.2 costs.** The table above predates it and has not been re-measured,
+because the offline benchmark that produced it is not in this repository. What
+can be compared is the test suite's own twelve-singer 96 kHz render, which runs
+the same harness on both engines: best of three, 493.6 ns/sample before against
+500.5 after, or about 1.4 % — the difference is close to the run-to-run spread.
+
+That is deliberate. The dynamic response is resolved once per chunk and its two
+gains are folded into the per-sample voiced and aspiration level arrays that
+already existed, so the render loop is unchanged. Formant tuning and the
+epilarynx cluster are control-rate arithmetic and the efficiency trim is folded
+into a per-voice gain the loop already reads. Coarticulation added a multiply
+against a precomputed reciprocal rather than a division. The nasal branch is the
+one addition that costs per-sample work — a biquad and a resonator per voice —
+and it is skipped entirely on a chunk-constant branch while the velum is closed,
+which is its default.
 
 ## Requirements
 
@@ -352,9 +544,42 @@ onset stage must measure the same peak gain as the main tract it crossfades
 into, despite running wider bandwidths; the bank must not cancel between F1 and
 F2 at any of three vowel corners; an ensemble of *n* must render *n* singers; and
 a resonance or formant-shift jump must glide the pole radii rather than step
-them. This catches regressions; it is not a substitute for listening tests, host
+them.
+
+Everything 1.2 adds is asserted numerically rather than described, because each
+of these controls is one that could easily have been a fader instead:
+
+- the dynamic must roll the 2.4 – 4.7 kHz band off by more than it drops the
+  fundamental, and must raise the aspiration-to-voiced ratio as it falls; a
+  ±2 semitone bend must produce the ±2 semitone frequency ratio; the sustain
+  pedal must hold a note through its note-off and release it on pedal-up;
+  expression must reproduce the same render at half the amplitude sample for
+  sample; and the mod wheel must take the dynamic over for good the first time
+  it moves
+- F1 must track the fundamental once the fundamental passes it, stop at the
+  jaw's ceiling, and leave the vowel alone below that; the level at C6 must
+  neither collapse against C4 nor shout over it
+- the just intervals must measure their own ratios to within a cent, in chord
+  mode and in played polyphony, and must re-tune when a bass arrives after them,
+  gliding rather than stepping
+- twelve singers must disperse inside the band real choirs measure, lock
+  perfectly at zero Humanize, and drift without running away
+- the nasal branch must cut its own band by 20 dB or more, raise the murmur
+  band, leave the overall level alone, and stay stable at every coupling
+- a full vowel step must produce 10 – 90 % formant rise times inside a stated
+  window, ordered by the cavity that carries each formant, and a small step must
+  settle in a fraction of the time
+- the epilarynx must contract the F3-to-F5 span and raise the 2 – 4 kHz share,
+  and must leave the vowel's own upper formants alone at rest
+- every factory preset must carry values the engine does not clamp away, render
+  finite, audible, bounded audio on a held note and a held interval, and release
+  fully
+
+This catches regressions; it is not a substitute for listening tests, host
 automation tests, or profiling on the oldest supported Mac. The suite also
-smoke-tests the demonstration renderer.
+smoke-tests the demonstration renderer. The JUCE-side test, which builds only on
+macOS, additionally covers the new MIDI messages reaching the engine and the
+factory bank reaching the host parameters.
 
 ## Regenerate the demonstration audio
 
@@ -479,7 +704,8 @@ Source/PluginEditor.*    Keyboard and editor UI
 Tools/RenderDemos.cpp    Renders the committed demonstration WAVs
 Docs/                    Rendered demonstrations, screenshots, documentation
 Tests/                   JUCE-free DSP regression tests
-Presets/                 Preset guidance and future factory presets
+Source/DSP/Presets.cpp   Factory preset table, rendered by the test suite
+Presets/                 Factory preset documentation
 scripts/                 macOS build and release helpers
 ```
 

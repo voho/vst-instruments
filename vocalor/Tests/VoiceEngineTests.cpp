@@ -1,3 +1,4 @@
+#include "DSP/Presets.h"
 #include "DSP/VocalorMath.h"
 #include "DSP/VoiceEngine.h"
 
@@ -10,6 +11,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -103,6 +105,55 @@ struct VoiceEngineTestAccess
     }
 
     static int heldNoteCount(const VoiceEngine& engine) noexcept { return engine.heldCount_; }
+
+    /** Sounding frequency of every held voice, in Hz. An ensemble puts twelve
+        of them on one note, and how far apart they sit is what separates a
+        section from one thick voice. */
+    static std::vector<float> soundingFrequencies(const VoiceEngine& engine)
+    {
+        std::vector<float> result;
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                result.push_back(voice.phaseIncrement * static_cast<float>(engine.sampleRate_));
+        return result;
+    }
+
+    /** Sounding frequency of the first held voice on @c midiNote, in Hz, or 0
+        if that note is not sounding. Chord mode puts every member of the triad
+        on a different sounding note behind one root, so this is what the
+        intonation of an interval has to be measured from. */
+    static float frequencyForNote(const VoiceEngine& engine, int midiNote) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing && voice.midiNote == midiNote)
+                return voice.phaseIncrement * static_cast<float>(engine.sampleRate_);
+        return 0.0f;
+    }
+
+    /** The formant targets of the first sounding voice, after the per-singer
+        anatomy and the pitch-dependent tuning the chunk targets know nothing
+        about. Zeroes if nothing is sounding. */
+    static std::array<float, kFormantCount> voiceFormants(const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+        {
+            if (! voice.active || voice.releasing)
+                continue;
+            std::array<float, kFormantCount> result {};
+            for (int i = 0; i < kFormantCount; ++i)
+                result[static_cast<std::size_t>(i)] = voice.formantHz[static_cast<std::size_t>(i)];
+            return result;
+        }
+        return {};
+    }
+
+    /** The two per-sample level scalars the dynamic reaches, as the render loop
+        sees them: the voiced drive and the aspiration drive. Their ratio is the
+        breath-to-voice balance, which has to rise as the dynamic falls. */
+    static std::array<float, 3> dynamicDrives(const VoiceEngine& engine) noexcept
+    {
+        return { engine.voicedScaleAt_[0], engine.airLevelAt_[0], engine.smoothedDynamics_ };
+    }
 
     /** Peak magnitude of F1 and F2 in the onset stage and in the main tract,
         each evaluated at its own pole angle, read straight out of the live
@@ -623,6 +674,10 @@ void testVowelMorphAndFormantShift()
     morphed.setParameters (full);
     morphed.noteOn (60, 0.8f);
     const auto morphedAudio = render (morphed, 8192);
+    // The epilarynx cluster reads the tension smoother, so the tract is only
+    // comparable between engines once that smoother has settled in both.
+    render (reference, static_cast<int> (sampleRate * 0.3));
+    render (morphed, static_cast<int> (sampleRate * 0.3));
     const auto anchorFormants = vocalor::VoiceEngineTestAccess::chunkFormants (reference);
     const auto morphFormants = vocalor::VoiceEngineTestAccess::chunkFormants (morphed);
     expect (morphedAudio.finite && morphedAudio.rms() > 1.0e-6,
@@ -654,7 +709,7 @@ void testVowelMorphAndFormantShift()
     up.formantShift = 7.0f;
     shiftedEngine.setParameters (up);
     shiftedEngine.noteOn (60, 0.8f);
-    const auto shiftedAudio = render (shiftedEngine, 8192);
+    const auto shiftedAudio = render (shiftedEngine, static_cast<int> (sampleRate * 0.4));
     const auto shiftedFormants = vocalor::VoiceEngineTestAccess::chunkFormants (shiftedEngine);
     const auto ratio = vocalor::formantShiftRatio (7.0f);
     for (int i = 0; i < vocalor::kFormantCount; ++i)
@@ -1648,122 +1703,6 @@ vocalor::EngineParameters makeReferenceParameters()
     return parameters;
 }
 
-/** Tension models a narrowing epilarynx tube, which lifts the singer's-formant
-    cluster at F3 and F4. It must lift only that cluster: the formants that
-    carry the vowel identity belong to the vowel, not to the phonation mode. */
-void testEpilarynxLiftTracksTension()
-{
-    constexpr auto sampleRate = 48000.0;
-
-    const auto gainsAtTension = [](float tension)
-    {
-        vocalor::VoiceEngine engine;
-        engine.prepare (sampleRate, blockSize);
-        engine.reset();
-
-        auto parameters = makeReferenceParameters();
-        parameters.tension = tension;
-        engine.setParameters (parameters);
-        engine.noteOn (60, 0.85f);
-        render (engine, static_cast<int> (sampleRate * 0.5));
-        return engine.getDisplayState().formantGain;
-    };
-
-    const auto lax = gainsAtTension (0.05f);
-    const auto pressed = gainsAtTension (0.95f);
-
-    // 0.12 and 0.06 of lift per unit tension, over a 0.90 span of it.
-    expect (pressed[2] > lax[2] * 1.07f,
-            "F3 did not gain with tension, so the singer's formant is not being pressed");
-    expect (pressed[3] > lax[3] * 1.03f,
-            "F4 did not gain with tension, so the singer's formant is only one resonance wide");
-
-    for (const int formant : { 0, 1, 4 })
-    {
-        const auto index = static_cast<std::size_t> (formant);
-        expect (std::abs (pressed[index] - lax[index]) <= 1.0e-4f * lax[index],
-                "tension moved F" + std::to_string (formant + 1)
-                    + ", which carries the vowel rather than the singer's formant");
-    }
-}
-
-/** Formants reach a new vowel target on per-articulator time constants. The jaw
-    that sets F1 is a heavier articulator than the tongue tip and larynx that set
-    the formants above it, so a step in the vowel target has to arrive at F1
-    distinctly later than at F5. Collapsing them back onto one shared glide is
-    the regression this guards. */
-void testArticulatorGlideOrdering()
-{
-    constexpr auto sampleRate = 48000.0;
-    vocalor::VoiceEngine engine;
-    engine.prepare (sampleRate, blockSize);
-    engine.reset();
-
-    auto parameters = makeReferenceParameters();
-    parameters.vowelMorph = 1.0f;
-    parameters.vowelX = 0.05f;   // a back vowel
-    parameters.vowelY = 0.5f;
-    engine.setParameters (parameters);
-    engine.noteOn (60, 0.85f);
-    render (engine, static_cast<int> (sampleRate * 0.6));
-
-    const auto before = engine.getDisplayState().formantHz;
-
-    parameters.vowelX = 0.95f;   // step to a front vowel
-    engine.setParameters (parameters);
-
-    // Trace the trajectory in 1 ms steps, then let it settle for the endpoint.
-    constexpr int traceSteps = 40;
-    const auto stepSamples = static_cast<int> (sampleRate * 0.001);
-    std::vector<std::array<float, vocalor::kFormantCount>> trace;
-    trace.reserve (traceSteps);
-    for (int step = 0; step < traceSteps; ++step)
-    {
-        render (engine, stepSamples);
-        trace.push_back (engine.getDisplayState().formantHz);
-    }
-    render (engine, static_cast<int> (sampleRate * 1.0));
-    const auto settled = engine.getDisplayState().formantHz;
-
-    std::array<double, vocalor::kFormantCount> riseMs {};
-    for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
-    {
-        const auto index = static_cast<std::size_t> (formant);
-        const double start = before[index];
-        const double end = settled[index];
-        expect (std::abs (end - start) > 1.0,
-                "F" + std::to_string (formant + 1)
-                    + " did not move at all, so its glide cannot be timed");
-
-        const double threshold = start + 0.632 * (end - start);
-        riseMs[index] = -1.0;
-        for (std::size_t step = 0; step < trace.size(); ++step)
-        {
-            const double value = trace[step][index];
-            if (end > start ? value >= threshold : value <= threshold)
-            {
-                riseMs[index] = 1000.0 * static_cast<double> (step + 1)
-                              * stepSamples / sampleRate;
-                break;
-            }
-        }
-        expect (riseMs[index] > 0.0,
-                "F" + std::to_string (formant + 1)
-                    + " had not covered 63% of its vowel step within 40 ms");
-    }
-
-    for (int formant = 0; formant + 1 < vocalor::kFormantCount; ++formant)
-    {
-        const auto index = static_cast<std::size_t> (formant);
-        expect (riseMs[index] > riseMs[index + 1],
-                "F" + std::to_string (formant + 1) + " did not glide slower than F"
-                    + std::to_string (formant + 2)
-                    + ", so the formants are not tracking articulator inertia");
-    }
-    expect (riseMs[0] >= 3.0 * riseMs[vocalor::kFormantCount - 1],
-            "the jaw and the larynx are gliding at nearly the same speed");
-}
-
 /** The tract level is calibrated so a solo AAH at the default settings lands at
     a known level, and the whole voice is expressed in time constants and corner
     frequencies so that level does not depend on the sample rate.
@@ -1801,6 +1740,853 @@ void testSourceLevelCalibration()
                     + std::to_string (toleranceDb) + " dB");
     }
 }
+
+/** Every factory preset has to be playable.
+
+    The table lives in the JUCE-free core precisely so this can be checked here:
+    a preset that renders silence, clips, or carries a value the engine clamps
+    away is a defect the suite finds rather than one a player does.
+*/
+void testFactoryPresets()
+{
+    constexpr auto sampleRate = 48000.0;
+    const auto count = vocalor::factoryPresetCount();
+    expect (count >= 8, "the factory bank is too small to open a session on");
+
+    std::set<std::string> names;
+    for (int index = 0; index < count; ++index)
+    {
+        const auto& preset = vocalor::factoryPreset (index);
+        const std::string name = preset.name != nullptr ? preset.name : "";
+        expect (! name.empty(), "factory preset " + std::to_string (index) + " has no name");
+        expect (names.insert (name).second, "two factory presets share the name " + name);
+
+        // Nothing may be silently clamped away: what the table says is what the
+        // engine gets.
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (preset.parameters);
+
+        const auto& wanted = preset.parameters;
+        expect (wanted.choirSize >= 2 && wanted.choirSize <= 12,
+                name + " asks for a singer count the engine cannot render exactly");
+        expect (wanted.formantShift >= -12.0f && wanted.formantShift <= 12.0f,
+                name + " asks for a formant shift outside the published range");
+        expect (wanted.outputGain > 0.0f && wanted.outputGain <= 2.0f,
+                name + " asks for an output gain outside the published range");
+        for (const float unit : { wanted.breath, wanted.resonance, wanted.vibrato,
+                                  wanted.humanize, wanted.spread, wanted.tension,
+                                  wanted.room, wanted.vowelX, wanted.vowelY,
+                                  wanted.vowelMorph, wanted.glide, wanted.roomSize,
+                                  wanted.dynamics, wanted.intonation, wanted.nasal })
+            expect (unit >= 0.0f && unit <= 1.0f,
+                    name + " carries a normalised value outside 0..1");
+
+        // A held note and a held triad, because chord and choir presets take
+        // different paths through the allocator.
+        engine.noteOn (57, 0.85f);
+        engine.noteOn (64, 0.85f);
+        const auto held = render (engine, static_cast<int> (sampleRate * 0.6));
+        expect (held.finite, name + " produced a NaN or an infinity");
+        expect (held.rms() > 1.0e-5, name + " rendered silence");
+        expect (held.peak < 4.0, name + " exceeded the amplitude guardrail");
+
+        engine.noteOff (57);
+        engine.noteOff (64);
+        const auto tail = render (engine, static_cast<int> (sampleRate * 4.0));
+        expect (tail.finite, name + " produced invalid audio during its release");
+        expect (engine.getActiveVoiceCount() == 0, name + " never finished releasing");
+    }
+}
+
+/** The singer's formant is a cluster, not a boost.
+
+    The 1.1 engine raised F3 by 12 % and F4 by 6 % of Tension and left them
+    where they were. Three formants 700 Hz apart with slightly more gain each
+    are still three formants; the peak that lets an unamplified voice carry over
+    an orchestra comes from narrowing the epilaryngeal tube until F3, F4 and F5
+    collapse into one.
+*/
+void testSingersFormantCluster()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr double fundamental = 146.832;   // D3, so the comb resolves the peak
+
+    const auto probe = [] (float tension, std::array<float, vocalor::kFormantCount>& formants)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.profile = vocalor::VoiceProfile::Male;
+        parameters.tension = tension;
+        engine.setParameters (parameters);
+        engine.noteOn (50, 0.80f);
+        renderMono (engine, static_cast<int> (sampleRate * 0.6));
+        const auto samples = renderMono (engine, static_cast<int> (sampleRate * 0.6));
+        formants = vocalor::VoiceEngineTestAccess::chunkFormants (engine);
+
+        const auto energy = [&samples] (int first, int last)
+        {
+            double total = 0.0;
+            for (int harmonic = first; harmonic <= last; ++harmonic)
+            {
+                const auto magnitude = harmonicMagnitude (
+                    samples, fundamental * harmonic, sampleRate);
+                total += magnitude * magnitude;
+            }
+            return total;
+        };
+        // 2.05-4.0 kHz against everything from the fundamental to 6 kHz.
+        return energy (14, 27) / std::max (energy (1, 41), 1.0e-18);
+    };
+
+    std::array<float, vocalor::kFormantCount> relaxed {};
+    std::array<float, vocalor::kFormantCount> pressed {};
+    const auto relaxedRatio = probe (0.0f, relaxed);
+    const auto pressedRatio = probe (0.95f, pressed);
+
+    const auto relaxedSpan = relaxed[4] - relaxed[2];
+    const auto pressedSpan = pressed[4] - pressed[2];
+    const auto ringDb = 10.0 * std::log10 (std::max (pressedRatio, 1.0e-18)
+                                           / std::max (relaxedRatio, 1.0e-18));
+    std::cout << "epilarynx: F3-F5 span " << std::fixed << std::setprecision (0)
+              << relaxedSpan << " -> " << pressedSpan << " Hz, 2.05-4 kHz share "
+              << std::setprecision (1) << ringDb << " dB\n";
+
+    // At rest the tract has to be exactly the vowel it always was: the male
+    // open anchor is F3 2440, F4 3250, F5 4300.
+    expect (std::abs (relaxed[2] - 2440.0f) < 1.0f && std::abs (relaxed[3] - 3250.0f) < 1.0f
+                && std::abs (relaxed[4] - 4300.0f) < 1.0f,
+            "a relaxed larynx no longer leaves the vowel's own upper formants alone");
+
+    expect (pressedSpan < 0.72f * relaxedSpan,
+            "the upper formants did not cluster: this is still an amplitude boost");
+    expect (pressed[2] > relaxed[2] && pressed[4] < relaxed[4],
+            "the cluster did not close from both sides toward the epilarynx resonance");
+    expect (ringDb > 3.0,
+            "clustering the upper formants did not put energy where a voice carries");
+
+    // Narrowing the epilarynx is a phonation mode, not a vowel change. F1 and
+    // F2 carry the vowel's identity and belong to the vowel, so the epilarynx
+    // must not touch them however hard the glottis is pressed.
+    for (const int formant : { 0, 1 })
+    {
+        const auto index = static_cast<std::size_t> (formant);
+        expect (std::abs (pressed[index] - relaxed[index]) <= 1.0e-3f * relaxed[index],
+                "tension moved F" + std::to_string (formant + 1)
+                    + ", which carries the vowel rather than the singer's formant");
+    }
+}
+
+/** A vowel change is a jaw and a tongue moving, not a de-zipper.
+
+    The 1.1 formant glides ran on 16, 9, 5, 4 and 3 ms time constants, so a
+    vowel switch was over in about 50 ms; a sung vowel-to-vowel transition runs
+    100-200. The engine had the mechanism for coarticulation and used it to stop
+    clicks.
+*/
+void testCoarticulationTiming()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    /** 10-90 % rise time of each formant, in milliseconds, after the pad is
+        stepped from @c fromX,@c fromY to @c toX,@c toY on a held note. */
+    const auto riseTimes = [] (float fromX, float fromY, float toX, float toY)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.vowelMorph = 1.0f;
+        parameters.vowelX = fromX;
+        parameters.vowelY = fromY;
+        engine.setParameters (parameters);
+        engine.noteOn (57, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.4));
+
+        const auto start = vocalor::VoiceEngineTestAccess::voiceFormants (engine);
+        parameters.vowelX = toX;
+        parameters.vowelY = toY;
+        engine.setParameters (parameters);
+
+        // Settle first so the destination is measured, not guessed.
+        std::array<std::array<float, vocalor::kFormantCount>, 400> trace {};
+        constexpr int step = 64;
+        for (std::size_t frame = 0; frame < trace.size(); ++frame)
+        {
+            render (engine, step);
+            trace[frame] = vocalor::VoiceEngineTestAccess::voiceFormants (engine);
+        }
+        const auto finish = trace.back();
+
+        std::array<double, vocalor::kFormantCount> milliseconds {};
+        for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+        {
+            const auto index = static_cast<std::size_t> (formant);
+            const auto span = finish[index] - start[index];
+            if (std::abs (span) < 1.0f)
+                continue;
+
+            double tenth = -1.0;
+            double ninetieth = -1.0;
+            for (std::size_t frame = 0; frame < trace.size(); ++frame)
+            {
+                const auto progress = (trace[frame][index] - start[index]) / span;
+                const auto at = 1000.0 * static_cast<double> ((frame + 1) * step) / sampleRate;
+                if (tenth < 0.0 && progress >= 0.10)
+                    tenth = at;
+                if (ninetieth < 0.0 && progress >= 0.90)
+                {
+                    ninetieth = at;
+                    break;
+                }
+            }
+            milliseconds[index] = (tenth >= 0.0 && ninetieth >= 0.0) ? ninetieth - tenth : -1.0;
+        }
+        return milliseconds;
+    };
+
+    // Close front to open: the largest move the pad offers.
+    const auto large = riseTimes (1.0f, 0.0f, 0.5f, 1.0f);
+    std::cout << "vowel step /i/ -> /a/, 10-90 % rise: " << std::fixed << std::setprecision (0);
+    for (int formant = 0; formant < vocalor::kFormantCount; ++formant)
+        std::cout << ' ' << (formant + 1) << ':' << large[static_cast<std::size_t> (formant)] << "ms";
+    std::cout << '\n';
+
+    // F1 and F2 make the large moves here: 310 -> 850 Hz and 2790 -> 1220. F3
+    // moves 500 Hz and F4 only 250, and F5 is the same 4950 Hz for both these
+    // vowels, so only the first three carry a timing claim at all.
+    expect (large[0] > 80.0 && large[0] < 260.0,
+            "F1 did not move on a jaw's timescale after a full vowel step");
+    expect (large[1] > 55.0 && large[1] < 220.0,
+            "F2 did not move on a tongue's timescale after a full vowel step");
+    expect (large[0] > large[1] && large[1] > large[2],
+            "the formants no longer move in order of the cavity that carries them");
+    expect (large[2] > 12.0,
+            "F3 still switches as fast as a de-zipper on a 500 Hz move");
+    // The jaw is a heavier articulator than the larynx by enough that the two
+    // must not read as one shared glide. Collapsing every formant back onto a
+    // single time constant is the regression this separation guards.
+    expect (large[0] >= 3.0 * large[3],
+            "the jaw and the larynx are gliding at nearly the same speed");
+
+    // A small move is a small adjustment, not the same journey done slowly.
+    const auto small = riseTimes (0.5f, 1.0f, 0.56f, 0.94f);
+    std::cout << "small vowel step, F1 10-90 % rise: " << small[0] << "ms\n";
+    expect (small[0] > 0.0 && small[0] < 0.6 * large[0],
+            "a small vowel move took as long as a full one: the transition has a "
+            "deadline rather than a speed");
+}
+
+/** A parallel bank of poles cannot be asked for an /m/.
+
+    Its transfer function does have zeros, but they land wherever the sections
+    happen to cancel; there is no way to place one. That rules out the nasal
+    branch, and a hum is the most common choir colour after "ah". The branch
+    adds a murmur pole at the nasal cavity's own resonance and a placed
+    anti-resonance where the closed mouth loads it.
+*/
+void testNasalBranch()
+{
+    constexpr auto sampleRate = 48000.0;
+    // A low note so the harmonic comb resolves both bands. A2 puts harmonics at
+    // 220 and 330 Hz across the murmur pole, and at 880, 990 and 1100 across
+    // the anti-resonance.
+    constexpr double fundamental = 110.0;
+
+    struct Bands { double low; double notch; double peak; double total; };
+    const auto bandsAt = [] (float nasal)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.profile = vocalor::VoiceProfile::Male;
+        parameters.nasal = nasal;
+        engine.setParameters (parameters);
+        engine.noteOn (45, 0.85f);
+        renderMono (engine, static_cast<int> (sampleRate * 0.5));
+        const auto samples = renderMono (engine, static_cast<int> (sampleRate * 0.5));
+
+        const auto energy = [&samples] (int first, int last)
+        {
+            double total = 0.0;
+            for (int harmonic = first; harmonic <= last; ++harmonic)
+            {
+                const auto magnitude = harmonicMagnitude (
+                    samples, fundamental * harmonic, sampleRate);
+                total += magnitude * magnitude;
+            }
+            return std::sqrt (total);
+        };
+        // 220-330 Hz across the murmur, 880-1100 across the zero, and
+        // 1650-2200 well above it as a control that the branch is not simply a
+        // low-pass filter with a nicer name.
+        double sumOfSquares = 0.0;
+        for (const auto value : samples)
+            sumOfSquares += static_cast<double> (value) * value;
+        return Bands { energy (2, 3), energy (8, 10), energy (15, 20),
+                       std::sqrt (sumOfSquares / std::max<std::size_t> (samples.size(), 1)) };
+    };
+
+    const auto oral = bandsAt (0.0f);
+    const auto hummed = bandsAt (1.0f);
+    const auto half = bandsAt (0.5f);
+    const auto drop = [] (double before, double after)
+    {
+        return 20.0 * std::log10 (std::max (before, 1.0e-12) / std::max (after, 1.0e-12));
+    };
+
+    const auto notchDrop = drop (oral.notch, hummed.notch);
+    const auto lowDrop = drop (oral.low, hummed.low);
+    const auto highDrop = drop (oral.peak, hummed.peak);
+    const auto totalDrop = drop (oral.total, hummed.total);
+    std::cout << "velum fully open: 880-1100 Hz " << std::fixed << std::setprecision (1)
+              << notchDrop << " dB, 220-330 Hz " << lowDrop << " dB, 1.65-2.2 kHz "
+              << highDrop << " dB, overall " << totalDrop << " dB\n";
+
+    expect (notchDrop > 20.0,
+            "the nasal branch did not place an anti-resonance where the mouth loads it");
+    expect (lowDrop < -3.0,
+            "the murmur pole did not carry the band an /m/ radiates in");
+    expect (highDrop > 4.0 && highDrop < notchDrop - 8.0,
+            "a hum has to be duller than the vowel without being a low-pass filter");
+    // The velum is a timbre control. An /m/ radiates from a smaller and more
+    // damped aperture than an open mouth, and the branch has to account for
+    // that rather than arriving as the loudest thing the instrument does.
+    expect (std::abs (totalDrop) < 4.0,
+            "opening the velum worked as a volume control");
+
+    // A half-open velum has to land between the two, not snap to one of them.
+    const auto halfDrop = drop (oral.notch, half.notch);
+    expect (halfDrop > 1.0 && halfDrop < notchDrop - 1.0,
+            "the velum coupling is a switch rather than a continuous control");
+
+    // Every coupling has to stay finite and bounded, including through a jump.
+    for (const float amount : { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f })
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = makeParameters (1, 0, 0, 0);
+        parameters.choirSize = 6;
+        parameters.nasal = amount;
+        engine.setParameters (parameters);
+        engine.noteOn (52, 0.9f);
+        const auto held = render (engine, static_cast<int> (sampleRate * 0.3));
+        parameters.nasal = 1.0f - amount;
+        engine.setParameters (parameters);
+        const auto moved = render (engine, static_cast<int> (sampleRate * 0.3));
+        expect (held.finite && moved.finite && moved.peak < 16.0,
+                "the nasal branch destabilised at coupling "
+                    + std::to_string (static_cast<int> (amount * 100.0f)) + " %");
+    }
+}
+
+/** Twelve singers have to disperse like twelve singers.
+
+    The 1.1 engine gave each singer a uniform +/-5.6 cents of static detune,
+    about 3.2 cents of standard deviation at full Humanize. Jers and Ternstrom
+    measured 25-30 cents of dispersion between real choir singers, and listeners
+    were reported to tolerate 14 cents of standard deviation; a quarter of the
+    tolerance is why twelve voices could still read as one thick one.
+*/
+void testEnsembleDispersion()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    const auto dispersionCents = [] (float humanize, int renderSamples,
+                                     std::vector<float>& offsets)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.mode = vocalor::PerformanceMode::Choir;
+        parameters.choirSize = 12;
+        parameters.humanize = humanize;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        render (engine, renderSamples);
+
+        const auto sounding = vocalor::VoiceEngineTestAccess::soundingFrequencies (engine);
+        offsets.clear();
+        if (sounding.size() < 2)
+            return 0.0;
+
+        double mean = 0.0;
+        for (const auto frequency : sounding)
+            mean += 1200.0 * std::log2 (std::max (static_cast<double> (frequency), 1.0e-9));
+        mean /= static_cast<double> (sounding.size());
+
+        double sumOfSquares = 0.0;
+        for (const auto frequency : sounding)
+        {
+            const auto cents = 1200.0 * std::log2 (std::max (static_cast<double> (frequency), 1.0e-9))
+                             - mean;
+            offsets.push_back (static_cast<float> (cents));
+            sumOfSquares += cents * cents;
+        }
+        return std::sqrt (sumOfSquares / static_cast<double> (sounding.size()));
+    };
+
+    std::vector<float> early;
+    std::vector<float> late;
+    std::vector<float> tight;
+
+    const auto spread = dispersionCents (1.0f, static_cast<int> (sampleRate * 1.0), early);
+    std::cout << "12-singer pitch dispersion at full Humanize: " << std::fixed
+              << std::setprecision (1) << spread << " cents\n";
+    expect (early.size() == 12, "the dispersion probe did not find twelve singers");
+    // The measured band is 10-15 cents of standard deviation between section
+    // colleagues; anything under 6 is a studio overdub, anything over 20 is out
+    // of tune rather than human.
+    expect (spread > 8.0 && spread < 18.0,
+            "the ensemble dispersion is not in the range measured for real choirs");
+
+    // Humanize is the dial from a studio unison to a rehearsal room, so at zero
+    // the section has to be perfectly locked.
+    expect (dispersionCents (0.0f, static_cast<int> (sampleRate * 1.0), tight) < 0.05,
+            "the ensemble was not perfectly in tune with Humanize at zero");
+
+    // The offsets are not fixed: a section drifts and recovers.
+    dispersionCents (1.0f, static_cast<int> (sampleRate * 9.0), late);
+    expect (late.size() == early.size(), "the late dispersion probe lost singers");
+    double largestMove = 0.0;
+    for (std::size_t i = 0; i < late.size(); ++i)
+        largestMove = std::max (largestMove,
+                                std::abs (static_cast<double> (late[i] - early[i])));
+    std::cout << "largest singer drift over nine seconds: " << largestMove << " cents\n";
+    expect (largestMove > 1.5,
+            "the per-singer offsets are frozen: the section does not drift at all");
+    expect (largestMove < 40.0,
+            "the per-singer drift is unbounded rather than a wander around the target");
+}
+
+/** An a cappella ensemble tunes its chord to the bass, not to a keyboard.
+
+    Chord mode stacked equal-tempered semitones, so a one-finger triad beat
+    where a real section locks. The intonation control blends toward five-limit
+    just intervals referred to the lowest sounding root, and has to reach them
+    to within a cent or it is only a detune.
+*/
+void testJustIntonation()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    // The table itself, against the interval ratios it claims to realise.
+    const auto centsForRatio = [] (double ratio, int equalSemitones)
+    {
+        return 1200.0 * std::log2 (ratio) - 100.0 * equalSemitones;
+    };
+    const std::array<std::pair<int, double>, 6> ratios {{
+        { 3, 6.0 / 5.0 }, { 4, 5.0 / 4.0 }, { 5, 4.0 / 3.0 },
+        { 7, 3.0 / 2.0 }, { 8, 8.0 / 5.0 }, { 9, 5.0 / 3.0 }
+    }};
+    for (const auto& entry : ratios)
+        expect (std::abs (vocalor::justIntonationOffsetCents (entry.first)
+                          - centsForRatio (entry.second, entry.first)) < 0.01,
+                "the just offset for " + std::to_string (entry.first)
+                    + " semitones does not match its ratio");
+    expect (vocalor::justIntonationOffsetCents (0) == 0.0f
+                && vocalor::justIntonationOffsetCents (12) == 0.0f
+                && vocalor::justIntonationOffsetCents (-12) == 0.0f,
+            "the octave is not left alone by the intonation table");
+
+    const auto intervalCents = [] (float lower, float upper)
+    {
+        return 1200.0 * std::log2 (static_cast<double> (upper)
+                                   / std::max (static_cast<double> (lower), 1.0e-9));
+    };
+
+    // Chord mode, both qualities, measured from the rendered oscillators.
+    for (const int quality : { 0, 1 })
+    {
+        const int third = quality == 0 ? 4 : 3;
+        for (const float amount : { 0.0f, 1.0f })
+        {
+            vocalor::VoiceEngine engine;
+            engine.prepare (sampleRate, blockSize);
+            engine.reset();
+            auto parameters = steadyParameters();
+            parameters.mode = vocalor::PerformanceMode::Chord;
+            parameters.chordQuality = static_cast<vocalor::ChordQuality> (quality);
+            parameters.intonation = amount;
+            engine.setParameters (parameters);
+            engine.noteOn (60, 0.80f);
+            render (engine, static_cast<int> (sampleRate * 0.8));
+
+            const auto root = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 60);
+            const auto thirdHz = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 60 + third);
+            const auto fifthHz = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 67);
+            expect (root > 0.0f && thirdHz > 0.0f && fifthHz > 0.0f,
+                    "chord mode did not sound the root, the third and the fifth");
+
+            const auto expectedThird = 100.0 * third
+                + amount * vocalor::justIntonationOffsetCents (third);
+            const auto expectedFifth = 700.0
+                + amount * vocalor::justIntonationOffsetCents (7);
+            expect (std::abs (intervalCents (root, thirdHz) - expectedThird) < 1.0,
+                    "the chord third did not land on its target interval");
+            expect (std::abs (intervalCents (root, fifthHz) - expectedFifth) < 1.0,
+                    "the chord fifth did not land on its target interval");
+        }
+    }
+
+    // Played polyphonically the reference is the bass, so the same triad locks
+    // whether it is one key in chord mode or three keys in solo mode.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.intonation = 1.0f;
+        engine.setParameters (parameters);
+        // Deliberately out of order: the bass arrives last and the section has
+        // to re-tune to it rather than to whatever was pressed first.
+        engine.noteOn (64, 0.80f);
+        engine.noteOn (67, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.2));
+        engine.noteOn (60, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.8));
+
+        const auto root = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 60);
+        const auto third = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 64);
+        const auto fifth = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 67);
+        expect (std::abs (intervalCents (root, third) - 386.314) < 1.0,
+                "a polyphonic major third did not re-tune to the bass that arrived after it");
+        expect (std::abs (intervalCents (root, fifth) - 701.955) < 1.0,
+                "a polyphonic fifth did not re-tune to the bass that arrived after it");
+    }
+
+    // The adjustment is a singer moving onto the interval, not a step.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.intonation = 0.0f;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        engine.noteOn (64, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.6));
+        const auto equal = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 64);
+
+        parameters.intonation = 1.0f;
+        engine.setParameters (parameters);
+        render (engine, 512);
+        const auto partway = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 64);
+        render (engine, static_cast<int> (sampleRate * 0.8));
+        const auto settled = vocalor::VoiceEngineTestAccess::frequencyForNote (engine, 64);
+
+        const auto total = std::abs (intervalCents (equal, settled));
+        expect (total > 12.0, "the intonation control did not move the third at all");
+        expect (std::abs (intervalCents (equal, partway)) < 0.5 * total,
+                "the intonation adjustment stepped instead of gliding");
+        expect (std::abs (intervalCents (equal, partway)) > 0.0,
+                "the intonation adjustment never started");
+    }
+}
+
+/** A singer does not keep a speech tract when the fundamental climbs past its
+    lowest resonance; she opens the jaw and takes F1 up with the pitch.
+
+    The 1.1 engine raised F1 by a flat 0.32 % per semitone above A4, so a female
+    /u/ at C6 kept F1 at 367 Hz with the fundamental at 1047 Hz — the whole
+    spectrum above the lowest resonance, which is the configuration the soprano
+    literature describes as a remarkable loss of acoustic energy.
+*/
+void testFormantTuningAtHighPitch()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    const auto formantsFor = [] (int midiNote, int vowel)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.vowel = static_cast<vocalor::Vowel> (vowel);
+        engine.setParameters (parameters);
+        engine.noteOn (midiNote, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.5));
+        return vocalor::VoiceEngineTestAccess::voiceFormants (engine);
+    };
+
+    const auto levelFor = [] (int midiNote, int vowel)
+    {
+        auto parameters = steadyParameters();
+        parameters.vowel = static_cast<vocalor::Vowel> (vowel);
+        return steadyLevelDb (sampleRate, parameters, midiNote);
+    };
+
+    // Middle C on the open anchor is a long way below F1: nothing may move.
+    const auto low = formantsFor (60, 0);
+    expect (std::abs (low[0] - 850.0f) < 1.0f,
+            "the open vowel's F1 moved at a pitch nowhere near it");
+
+    // C6 on the close-back anchor is the case the strategy exists for.
+    constexpr float c6 = 1046.502f;
+    const auto high = formantsFor (84, 1);
+    std::cout << "C6 /u/: F1 " << std::fixed << std::setprecision (1) << high[0]
+              << " Hz against f0 " << c6 << " Hz, F2 " << high[1] << " Hz\n";
+    expect (high[0] > 0.95f * c6,
+            "F1 did not follow the fundamental once the fundamental passed it");
+    expect (high[0] < 1.45f * c6,
+            "F1 overshot the fundamental instead of tuning to it");
+    expect (high[1] > 1.20f * high[0],
+            "F2 was not kept clear of the tracked F1");
+
+    // The ceiling is physiological: the jaw runs out before the pitch does.
+    const auto extreme = formantsFor (96, 1);
+    expect (extreme[0] < 1400.0f,
+            "F1 tracked past any jaw opening a singer actually has");
+
+    // What it buys. With a fixed tract the vowel decides how much of the top
+    // octave survives; with the strategy in place both vowels put a resonance
+    // on the fundamental, so the choice of vowel costs far less.
+    const auto openHigh = levelFor (84, 0);
+    const auto closeHigh = levelFor (84, 1);
+    std::cout << "C6 open vs close vowel level: " << std::setprecision (2)
+              << openHigh << " dB vs " << closeHigh << " dB\n";
+    // 25.1 dB before. The residual is the cascade amplitude weighting, which is
+    // still resolved once per chunk for the untuned tract and so still knows
+    // the close vowel by its speech formants; that is a real, stated limit.
+    expect (std::abs (openHigh - closeHigh) < 8.0,
+            "the vowel choice still decides whether the top octave is audible");
+
+    // ... and the top octave must not simply collapse against the middle.
+    const auto openMid = levelFor (60, 0);
+    const auto closeMid = levelFor (60, 1);
+    std::cout << "C4 open vs close vowel level: " << openMid << " dB vs "
+              << closeMid << " dB\n";
+    // -20.1 dB before: the top octave of a close vowel was simply gone.
+    expect (closeHigh - closeMid > -3.0,
+            "a close vowel still loses the top octave against the middle");
+    // ... and the resonance it wins must not make the top octave shout either.
+    expect (closeHigh - closeMid < 6.0,
+            "formant tuning spent its resonance gain on volume instead of effort");
+}
+
+/** Continuous performance expression.
+
+    The 1.1 engine froze the entire dynamic response of a note at note-on and
+    had no pitch bend, mod wheel, expression pedal or sustain pedal at all. The
+    dynamic added here is not a fader: it has to move the source spectrum and
+    the breath-to-voice balance by more than it moves the level, or it is only
+    an output trim wearing a different name.
+*/
+void testPerformanceExpression()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr double fundamental = 261.6255653;
+
+    // The response curve is exactly inert at its default, which is what lets
+    // every other test in this file keep its 1.1 expectations.
+    const auto full = vocalor::dynamicResponse (1.0f);
+    expect (full.voicedGain == 1.0f && full.airGain == 1.0f && full.effortScale == 1.0f
+                && full.sourceTensionScale == 1.0f && full.vibratoScale == 1.0f,
+            "the dynamic response is not inert at its full setting");
+
+    const auto empty = vocalor::dynamicResponse (0.0f);
+    expect (std::abs (empty.voicedGain - 0.125f) < 1.0e-6f,
+            "an empty dynamic is not 18 dB down on the voiced source");
+    expect (empty.airGain > 3.0f * empty.voicedGain,
+            "aspiration falls as fast as the voiced source at a low dynamic");
+
+    float previousGain = -1.0f;
+    bool monotonic = true;
+    for (int step = 0; step <= 10; ++step)
+    {
+        const auto response = vocalor::dynamicResponse (0.1f * static_cast<float> (step));
+        monotonic = monotonic && response.voicedGain > previousGain
+                              && response.effortScale > 0.0f;
+        previousGain = response.voicedGain;
+    }
+    expect (monotonic, "the dynamic level is not monotonic in its control");
+
+    // A soft note has to be duller, not merely quieter.
+    const auto spectrumAt = [] (float dynamics)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.breath = 0.30f;
+        parameters.dynamics = dynamics;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        renderMono (engine, static_cast<int> (sampleRate * 0.5));
+        const auto samples = renderMono (engine, static_cast<int> (sampleRate * 0.5));
+
+        double high = 0.0;
+        for (int harmonic = 9; harmonic <= 18; ++harmonic)
+        {
+            const auto magnitude = harmonicMagnitude (
+                samples, fundamental * harmonic, sampleRate);
+            high += magnitude * magnitude;
+        }
+        return std::array<double, 2> {
+            harmonicMagnitude (samples, fundamental, sampleRate), std::sqrt (high) };
+    };
+
+    const auto loudSpectrum = spectrumAt (1.0f);
+    const auto softSpectrum = spectrumAt (0.30f);
+    const auto toDb = [] (double loud, double soft)
+    {
+        return 20.0 * std::log10 (std::max (loud, 1.0e-12) / std::max (soft, 1.0e-12));
+    };
+    const auto fundamentalDrop = toDb (loudSpectrum[0], softSpectrum[0]);
+    const auto bandDrop = toDb (loudSpectrum[1], softSpectrum[1]);
+    std::cout << "dynamic 1.0 -> 0.3: fundamental " << std::fixed << std::setprecision (2)
+              << fundamentalDrop << " dB, 2.4-4.7 kHz " << bandDrop << " dB\n";
+    expect (fundamentalDrop > 8.0 && fundamentalDrop < 18.0,
+            "the dynamic did not move the level by a plausible amount");
+    expect (bandDrop - fundamentalDrop > 2.2,
+            "the dynamic is a fader: it did not roll the source spectrum off as it fell");
+
+    // ... and proportionally breathier, measured where the render loop reads it.
+    const auto breathBalanceAt = [] (float dynamics)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.breath = 0.40f;
+        parameters.dynamics = dynamics;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.5));
+        const auto drives = vocalor::VoiceEngineTestAccess::dynamicDrives (engine);
+        return static_cast<double> (drives[1])
+             / std::max (static_cast<double> (drives[0]), 1.0e-9);
+    };
+    expect (breathBalanceAt (0.30f) > 2.0 * breathBalanceAt (1.0f),
+            "a soft note is not proportionally breathier than a loud one");
+
+    // Pitch bend, on a note that is already sounding.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (steadyParameters());
+        engine.noteOn (60, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.6));
+        const auto unbent = static_cast<double> (
+            vocalor::VoiceEngineTestAccess::frequencyForRoot (engine, 60));
+        expect (unbent > 255.0 && unbent < 268.0,
+                "the unbent reference note was not near middle C");
+
+        engine.setPitchBend (2.0f);
+        render (engine, static_cast<int> (sampleRate * 0.2));
+        const auto up = static_cast<double> (
+            vocalor::VoiceEngineTestAccess::frequencyForRoot (engine, 60));
+        expect (std::abs (up / unbent - std::exp2 (2.0 / 12.0)) < 0.002,
+                "a two-semitone bend did not produce the two-semitone frequency ratio");
+
+        engine.setPitchBend (-12.0f);
+        render (engine, static_cast<int> (sampleRate * 0.2));
+        const auto down = static_cast<double> (
+            vocalor::VoiceEngineTestAccess::frequencyForRoot (engine, 60));
+        expect (std::abs (down / unbent - 0.5) < 0.002,
+                "an octave bend down did not halve the frequency");
+
+        // A non-finite bend must not reach the oscillator.
+        engine.setPitchBend (std::numeric_limits<float>::quiet_NaN());
+        const auto recovered = render (engine, static_cast<int> (sampleRate * 0.2));
+        expect (recovered.finite, "a non-finite pitch bend produced non-finite audio");
+    }
+
+    // Sustain pedal: a note-off arriving under a held pedal is deferred, not
+    // dropped, and pedal-up delivers it through the ordinary release path.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (steadyParameters());
+        engine.noteOn (60, 0.80f);
+        render (engine, blockSize);
+        engine.setSustainPedal (true);
+        engine.noteOff (60);
+        render (engine, static_cast<int> (sampleRate * 0.3));
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (engine) == 60,
+                "the sustain pedal did not hold a note through its note-off");
+
+        engine.setSustainPedal (false);
+        render (engine, static_cast<int> (sampleRate * 0.05));
+        expect (vocalor::VoiceEngineTestAccess::soundingMidiNote (engine) == -1,
+                "releasing the sustain pedal did not release the note it was holding");
+        const auto tail = render (engine, static_cast<int> (sampleRate * 3.0));
+        expect (tail.finite && engine.getActiveVoiceCount() == 0,
+                "the note the pedal released never finished its release");
+    }
+
+    // Expression is a level trim and nothing else: half expression has to be
+    // the same render at half the amplitude, sample for sample.
+    {
+        const auto renderAt = [] (float expression)
+        {
+            vocalor::VoiceEngine engine;
+            engine.prepare (sampleRate, blockSize);
+            engine.reset();
+            engine.setParameters (steadyParameters());
+            engine.setExpression (expression);
+            engine.noteOn (60, 0.80f);
+            renderMono (engine, static_cast<int> (sampleRate * 0.4));
+            return renderMono (engine, static_cast<int> (sampleRate * 0.4));
+        };
+
+        const auto loud = renderAt (1.0f);
+        const auto soft = renderAt (0.5f);
+        double peak = 0.0;
+        double worst = 0.0;
+        for (std::size_t i = 0; i < loud.size(); ++i)
+        {
+            peak = std::max (peak, std::abs (static_cast<double> (loud[i])));
+            worst = std::max (worst, std::abs (static_cast<double> (soft[i])
+                                               - 0.5 * static_cast<double> (loud[i])));
+        }
+        expect (peak > 1.0e-4, "the expression reference render was silent");
+        expect (worst < 1.0e-4 * peak,
+                "expression changed the sound rather than only its level");
+    }
+
+    // The mod wheel takes the dynamic over for good the first time it moves.
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.dynamics = 1.0f;
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.2));
+        const auto ownedBy = [&engine]
+        {
+            return vocalor::VoiceEngineTestAccess::dynamicDrives (engine)[2];
+        };
+        expect (std::abs (ownedBy() - 1.0f) < 1.0e-3f,
+                "the host dynamic parameter did not own the level before the wheel moved");
+
+        engine.setModWheel (0.25f);
+        render (engine, static_cast<int> (sampleRate * 0.4));
+        expect (std::abs (ownedBy() - 0.25f) < 0.01f,
+                "the mod wheel did not take over the dynamic level");
+
+        parameters.dynamics = 0.90f;
+        engine.setParameters (parameters);
+        render (engine, static_cast<int> (sampleRate * 0.4));
+        expect (std::abs (ownedBy() - 0.25f) < 0.01f,
+                "the host parameter overrode the mod wheel after the wheel had moved");
+
+        engine.resetControllers();
+        render (engine, static_cast<int> (sampleRate * 0.4));
+        expect (std::abs (ownedBy() - 0.90f) < 0.01f,
+                "resetting the controllers did not hand the dynamic back to the host");
+    }
+}
 } // namespace
 
 int main()
@@ -1820,9 +2606,15 @@ int main()
     testParallelFormantBank();
     testEnsembleSizeIsExact();
     testTractCoefficientSmoothing();
-    testEpilarynxLiftTracksTension();
-    testArticulatorGlideOrdering();
     testSourceLevelCalibration();
+    testPerformanceExpression();
+    testFormantTuningAtHighPitch();
+    testJustIntonation();
+    testEnsembleDispersion();
+    testNasalBranch();
+    testCoarticulationTiming();
+    testSingersFormantCluster();
+    testFactoryPresets();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();
