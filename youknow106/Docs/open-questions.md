@@ -1635,6 +1635,18 @@ calibration anchor, and the 63-cent base gap and the measured 3.46–3.49 agains
 the model's 3.50 octaves per 1000 codes are the same statement seen from two
 ends. Only the knee moved.
 
+*Full-curve comparison, 2026-08-07:* the shipping law was re-computed at
+every one of the table's 4096 codes (measurements cited as facts, the
+comparison re-derived independently). Nominal model: musical core
+100 Hz–8 kHz within ±20 cents at 10.3 cents RMS, audible band 19.7 cents
+RMS, +0.4 cents at the 248 Hz anchor; the extremes carry the deliberate
+base/slope trade above, and part of the residual is the card's raw slope,
+which its own WIDTH trim absorbs in service. At Unit Character 1.0 the
+local bit-boundary steps render −0.44/+27.49/−0.27 cents against the
+card's measured −0.50/+27.49/−0.33 — the mid-sweep step class to under
+0.1 cent. Recorded in the
+[comparative assessment](comparative-assessment.md) scoreboard.
+
 ### OQ-07 / OQ-18 — the R-2R carry non-linearity is real and was removed
 
 The same measured table documents excess steps at the bit boundaries of

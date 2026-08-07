@@ -129,6 +129,31 @@ Arturia "grainier", and split irreconcilably on Cherry — a reminder that
 undocumented listening consensus is unstable evidence, which is exactly
 why this project's claims are tied to documents and tests instead.
 
+## Measured proximity — the scoreboard that exists today
+
+Dimension 2 is not empty while the queue's captures are awaited: several
+of the model's laws can be, and now have been, checked against hardware
+measurements that already exist. Each row names its hardware truth and its
+verification; "fenced" means a deterministic test fails if the model
+drifts off the value.
+
+| Law | Hardware truth | Model | Status |
+|---|---|---|---|
+| VCF cutoff, full range | A real 106 voice card's measured DAC→Hz curve (93 measured codes, log-interpolated to 4096, gain-calibrated at the service anchor; third-party, GPL — measurements cited as facts, comparison re-derived) | Shipping law re-computed at every code (2026-08-07): **musical core 100 Hz–8 kHz within ±20 cents, RMS 10.3 cents** at nominal; audible-band RMS 19.7 cents; extremes carry the recorded deliberate base/slope trade pinned to Roland's own 248 Hz anchor (+0.4 cents there). Part of the residual is the card's raw slope, which its own WIDTH trim absorbs in service | Measured against one real card |
+| VCF R-2R carry steps | The same card's bit-boundary steps: −0.50/+27.49/−0.33 cents locally at codes 1024/2048/3072 | −0.44/+27.49/−0.27 cents at Unit Character 1.0 — **the audible mid-sweep step class reproduced to under 0.1 cent** | Measured; carry constants sourced from this data |
+| Self-oscillation endpoint | Service ADJUSTMENT: 4.8 Vpp sine at 248 Hz, every card | 4.83 Vpp at 248.0 Hz | Anchored, fenced |
+| Key tracking | Service WIDTH anchor: C6 self-oscillates at 992 Hz = exactly two octaves over C4's 248 Hz | Exactly 4×, end-to-end through the converter path | Anchored, fenced |
+| PWM duty windows | Service: 48–52% at PWM 50, 93–97% at PWM 10 | Inside both windows | Anchored, fenced |
+| Chorus mode rates | A 106-chorus clone's scope readings 0.537/0.879 Hz; owner's manual "about 0.5/0.8" | Derived 0.5533/0.8983 Hz from the 106's own timing network (−3.0%/−2.2% vs the scope) | Derived, corroborated |
+| Chorus sweep | 1.4–6.4 ms scoped on a designator-faithful build with genuine MN3009s, called identical against the measurer's real 106 | Shipped endpoints | Third-party measured |
+| BBD transfer | MN3009 EC row: −3 dB at 12 kHz, 40 kHz clock (edition-verified 2026-08-07) | −3.000 dB at the anchor | Anchored, fenced with a cross-reading guard band |
+| Digital laws | Hash-identified A-5/B-2 firmware behaviour | Byte-exact envelope/LFO/delay/portamento fixtures | ROM-resolved, fenced |
+| Chorus noise delta | Measured 3.95 dB II−I on two chip populations | Not yet modelled; a rate-proportional candidate mechanism (4.21 dB predicted) is recorded against OQ-03 | Open, honestly |
+
+What this scoreboard is not: a full-instrument null test. That requires
+the calibrated same-chain captures the queue specifies, and no product on
+the market has published one either.
+
 ## Market-presence note
 
 Public attention in the open field is inverted relative to fidelity: the
@@ -158,5 +183,8 @@ or open, documents a hardware-evidence chain of comparable depth, fences
 its claims with deterministic tests, or models the combination of the
 scanned control system, timer-quantised DCOs, firmware-exact modulation
 laws, bucket-clocked BBD chorus and derived output network that this
-project does.** Fidelity coverage is checkable and is a matter of record
-above; perceptual superiority is not claimed.
+project does — and where hardware measurements exist today, the model has
+been run against them and the residuals published above, a scoreboard no
+competitor publishes at all.** Fidelity coverage and measured proximity to
+the evidence in hand are matters of record; perceptual superiority is not
+claimed.
