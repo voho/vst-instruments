@@ -838,8 +838,9 @@ void testEditorRendering()
         }
         expect (padCount == static_cast<int> (drumalor::instrumentCount),
                 "editor did not lay out all 13 drum pads");
-        // Five per-voice knobs plus the four kit-bus knobs.
-        expect (knobBounds.size() == 9u, "editor did not lay out all nine knobs");
+        // Five per-voice knobs plus the five kit-bus knobs: Humanise, Kit
+        // Bleed, Bus Drive, Bus Comp and Master Output.
+        expect (knobBounds.size() == 10u, "editor did not lay out all ten knobs");
         for (std::size_t first = 0; first < knobBounds.size(); ++first)
             for (std::size_t second = first + 1u; second < knobBounds.size(); ++second)
                 expect (! knobBounds[first].intersects (knobBounds[second]),
