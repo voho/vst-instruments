@@ -205,13 +205,17 @@ regression suite green.
   voice: a strike position and a contact time are what the head bank is already
   built from.
 
-- [ ] **4. A stick landing on a moving head takes energy out of it.** When a
+- [x] **4. A stick landing on a moving head takes energy out of it.** When a
   membrane voice is struck while a voice of the same instrument is still
   ringing, remove a velocity-scaled share of the ringing bank's modal state and
   envelopes instead of letting two independent drums sum.
-  *Closes gap 6.* Verified by: two strikes 15 ms apart peak below the sum of the
-  same two strikes rendered in isolation, single hits stay bit-identical, and a
-  fast roll stays bounded.
+  *Closes gap 6.* Landed. Verified by a contract that a 15 ms flam on each of
+  the five membranes carries less energy over the following 220 ms than the two
+  strokes rendered separately do, that a ghost stroke leaves more of the ringing
+  head alive than a full stroke does, that a forty-eight-stroke press roll stays
+  bounded and holds well under half as many voices as it has strokes, and that a
+  second ride strike still adds - a cymbal is not a drum head and is deliberately
+  left out of this.
 
 - [ ] **5. A hi-hat pedal that is a pedal.** A continuous aperture drives the
   plate model: clamping raises the stiffness and replaces the plate's own

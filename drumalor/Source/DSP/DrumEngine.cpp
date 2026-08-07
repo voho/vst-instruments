@@ -1494,6 +1494,66 @@ void DrumEngine::retireVoice (const Voice& source) noexcept
     beginFadeToSilence (*destination, retirementFadeMultiplier_);
 }
 
+bool DrumEngine::isStruckMembrane (Instrument instrument) noexcept
+{
+    switch (instrument)
+    {
+        case Instrument::Kick:
+        case Instrument::Snare:
+        case Instrument::LowTom:
+        case Instrument::MidTom:
+        case Instrument::HighTom:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void DrumEngine::dampRingingMembrane (Instrument instrument, float velocity) noexcept
+{
+    // A stick landing on a head that is still moving does not produce a second
+    // drum. It lands on the drum that is already there, and the contact both
+    // adds the new strike and takes energy out of what it lands on: a hand or a
+    // stick against a vibrating membrane is an absorber, which is why a
+    // drummer's press roll dies away instead of growing, and why a flam is one
+    // event with two attacks rather than two drums a few milliseconds apart.
+    //
+    // The bank is left in place and scaled instead of being cut, so the ring
+    // that survives is the same ring, just smaller - and the new strike is
+    // superposed into it by Resonator::strike(), which was written to add to
+    // whatever state it finds. How much survives follows the new strike: a
+    // ghost note laid on a ringing tom barely touches it, a full stroke very
+    // nearly resets it.
+    //
+    // Only the struck membranes. A cymbal is metres of plate against a stick
+    // tip the size of a fingernail, and a second strike on one really does add.
+    if (! isStruckMembrane (instrument))
+        return;
+
+    const float retained = std::clamp (0.78f - 0.58f * velocity, 0.20f, 0.78f);
+    const auto damp = [instrument, retained] (Voice& voice)
+    {
+        if (! voice.active || voice.instrument != instrument)
+            return;
+        for (auto& resonator : voice.resonators)
+        {
+            resonator.y1 *= retained;
+            resonator.y2 *= retained;
+        }
+        voice.envelope *= retained;
+        voice.auxiliaryEnvelope *= retained;
+        voice.transientEnvelope *= retained;
+        voice.kickStateX *= retained;
+        voice.kickStateY *= retained;
+        voice.modalEnergy *= retained * retained;
+        voice.recentPeak *= retained;
+    };
+    for (auto& voice : voices_)
+        damp (voice);
+    for (auto& voice : retiringVoices_)
+        damp (voice);
+}
+
 void DrumEngine::chokeGroup (int group) noexcept
 {
     if (group <= 0)
@@ -2443,6 +2503,9 @@ void DrumEngine::trigger (Instrument instrument, float velocity,
     // Mute groups generalise the hi-hat pedal: any voice can cut the group it
     // belongs to, and the two hats share group A by default.
     chokeGroup (values.chokeGroup);
+    // Before the new voice exists, so the strike lands on whatever this drum is
+    // still doing rather than beside it.
+    dampRingingMembrane (instrument, velocity);
     const auto counter = ++triggerCounters_[index];
     const std::uint32_t seed = hash32 (0x6d2b79f5u
         ^ static_cast<std::uint32_t> ((index + 1u) * 0x9e3779b9u)

@@ -257,6 +257,30 @@ and 250 cents above the same partial at a ghost stroke for the Kick and the thre
 Toms; on the engine before this model the same four numbers were −73, −69, +15
 and +108 cents, none of which was tension.
 
+### A drum struck twice is still one drum
+
+Striking a head that is still moving does not produce a second drum. The stick
+lands on the drum that is already there, and the contact does two things at
+once: it adds the new strike, and it takes energy out of what it landed on,
+because a stick or a hand against a vibrating membrane is an absorber. That is
+why a press roll dies away instead of growing, and why a flam is one event with
+two attacks rather than two drums a few milliseconds apart.
+
+Re-striking one of the five membrane voices therefore scales the ringing bank's
+modal state and its envelopes rather than leaving them untouched, and the new
+strike is superposed into what is left — `Resonator::strike()` adds to whatever
+state it finds, so this is one head with two impulses in it. How much survives
+follows the new stroke: a ghost note laid on a ringing tom keeps about three
+quarters of it, a full stroke about a fifth. Measured over the 220 ms after the
+second stroke of a 15 ms flam, the result carries less energy than the two
+strokes rendered separately do — which is what two independent drums would give,
+and what the engine used to produce.
+
+The cymbals, hats and percussion voices are deliberately left alone. A cymbal is
+most of a square metre of plate against a stick tip the size of a fingernail, and
+a second strike on one really does add; the regression suite requires that it
+still does.
+
 ### There is a beater, and there is a stick
 
 Contact time follows Hertz: it shortens with impact speed, and with how hard the
@@ -662,6 +686,12 @@ strokes and that no other mapped note carries an articulation, that the rimshot
 engages the wires harder and reaches higher up the head's series than a plain
 stroke, that the cross-stick both silences the wires and rings for well under
 half as long, and that neither of the two nulls against a peak-matched head hit.
+A re-strike contract requires a 15 ms flam on each of the five membranes to
+carry less energy than the two strokes rendered separately, requires a ghost
+stroke to leave more of a ringing head alive than a full one does, requires a
+forty-eight-stroke press roll to stay bounded and to hold well under half as
+many voices as it has strokes, and requires a second ride strike to still add
+rather than being damped as though a plate were a drum head.
 A dedicated
 efficiency contract proves that a metallic bank frozen behind an unrelated drum
 wakes into exactly the same state as one frozen during silence, and measures

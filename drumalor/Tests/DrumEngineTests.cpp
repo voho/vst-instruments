@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -2802,6 +2803,148 @@ void testSnareArticulations()
                 + std::to_string (highToLow (rimshot)) + ")");
 }
 
+void testReStrikeDamping()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int flamSamples = static_cast<int> (0.015 * sampleRate);
+    constexpr int windowSamples = static_cast<int> (0.220 * sampleRate);
+    constexpr std::array membranes {
+        drumalor::Instrument::Kick, drumalor::Instrument::Snare,
+        drumalor::Instrument::LowTom, drumalor::Instrument::MidTom,
+        drumalor::Instrument::HighTom
+    };
+
+    // Humanise off, so the two strokes of a flam differ only in the noise
+    // realisation their trigger counters draw and the comparison is about
+    // energy rather than about drift.
+    drumalor::KitParameters machine;
+    machine.humanise = 0.0f;
+
+    const auto monoFrom = [] (const std::vector<float>& interleaved)
+    {
+        std::vector<float> mono (interleaved.size() / 2u);
+        for (std::size_t sample = 0; sample < mono.size(); ++sample)
+            mono[sample] = 0.5f * (interleaved[sample * 2u] + interleaved[sample * 2u + 1u]);
+        return mono;
+    };
+
+    for (const auto instrument : membranes)
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (instrument));
+        const auto defaults = drumalor::getInstrumentMetadata (instrument).defaultParameters;
+        const auto prepared = [&] ()
+        {
+            auto engine = std::make_unique<drumalor::DrumEngine>();
+            engine->prepare (sampleRate, defaultBlockSize);
+            engine->setInstrumentParameters (instrument, defaults);
+            engine->setKitParameters (machine);
+            return engine;
+        };
+
+        // The first stroke on its own, measured over the window that starts
+        // where the second stroke would have landed.
+        auto first = prepared();
+        first->trigger (instrument, 0.90f);
+        renderInterleaved (*first, flamSamples, defaultBlockSize);
+        const auto firstTail = monoFrom (
+            renderInterleaved (*first, windowSamples, defaultBlockSize));
+
+        // The second stroke on its own, over the same window.
+        auto second = prepared();
+        second->trigger (instrument, 0.90f);
+        const auto secondAlone = monoFrom (
+            renderInterleaved (*second, windowSamples, defaultBlockSize));
+
+        // Both, fifteen milliseconds apart.
+        auto flam = prepared();
+        flam->trigger (instrument, 0.90f);
+        renderInterleaved (*flam, flamSamples, defaultBlockSize);
+        flam->trigger (instrument, 0.90f);
+        const auto flamTail = monoFrom (
+            renderInterleaved (*flam, windowSamples, defaultBlockSize));
+
+        const double firstEnergy = rmsInRange (firstTail, 0, firstTail.size());
+        const double secondEnergy = rmsInRange (secondAlone, 0, secondAlone.size());
+        const double flamEnergy = rmsInRange (flamTail, 0, flamTail.size());
+        expect (firstEnergy > 1.0e-5 && secondEnergy > 1.0e-5,
+                label + " flam probe rendered a silent stroke");
+
+        // Two independent drums would carry the sum of the two energies. One
+        // drum struck twice carries less, because the second contact absorbs
+        // part of what the first one left ringing.
+        const double independent = firstEnergy * firstEnergy
+            + secondEnergy * secondEnergy;
+        const double actual = flamEnergy * flamEnergy;
+        expect (actual < 0.85 * independent,
+                label + " a flam is two independent drums (" + std::to_string (actual)
+                    + " against " + std::to_string (independent) + ")");
+
+        // And the absorber follows the contact: a ghost stroke laid on a
+        // ringing drum barely touches it where a full stroke very nearly
+        // resets it. Subtracting each case's own second stroke, rendered
+        // alone, leaves what survived of the first one.
+        auto ghostAlone = prepared();
+        ghostAlone->trigger (instrument, 0.10f);
+        const auto ghostSecond = monoFrom (
+            renderInterleaved (*ghostAlone, windowSamples, defaultBlockSize));
+        auto ghosted = prepared();
+        ghosted->trigger (instrument, 0.90f);
+        renderInterleaved (*ghosted, flamSamples, defaultBlockSize);
+        ghosted->trigger (instrument, 0.10f);
+        const auto ghostTail = monoFrom (
+            renderInterleaved (*ghosted, windowSamples, defaultBlockSize));
+        const auto survivingEnergy = [] (const std::vector<float>& both,
+                                         const std::vector<float>& secondAloneTail)
+        {
+            const double combined = rmsInRange (both, 0, both.size());
+            const double alone = rmsInRange (secondAloneTail, 0, secondAloneTail.size());
+            return std::max (0.0, combined * combined - alone * alone);
+        };
+        const double survivesGhost = survivingEnergy (ghostTail, ghostSecond);
+        const double survivesFull = survivingEnergy (flamTail, secondAlone);
+        expect (survivesGhost > 1.30 * survivesFull,
+                label + " a ghost stroke damps a ringing head as hard as a full one ("
+                    + std::to_string (survivesGhost) + " against "
+                    + std::to_string (survivesFull) + ")");
+
+        // A press roll has to die away rather than build up, and it must not
+        // consume a voice per stroke.
+        auto roll = prepared();
+        for (int stroke = 0; stroke < 48; ++stroke)
+        {
+            roll->trigger (instrument, 0.75f);
+            const auto segment = renderInterleaved (
+                *roll, static_cast<int> (0.020 * sampleRate), defaultBlockSize);
+            expect (metricsForInterleaved (segment).peak <= 1.001,
+                    label + " a press roll exceeded the output safety bound");
+        }
+        expect (roll->getActiveVoiceCount() <= 20,
+                label + " a press roll left " + std::to_string (roll->getActiveVoiceCount())
+                    + " voices ringing");
+    }
+
+    // A cymbal is metres of plate against a stick tip, so a second strike on
+    // one really does add and must be left alone.
+    auto ride = std::make_unique<drumalor::DrumEngine>();
+    ride->prepare (sampleRate, defaultBlockSize);
+    ride->setKitParameters (machine);
+    ride->trigger (drumalor::Instrument::Ride, 0.90f);
+    renderInterleaved (*ride, flamSamples, defaultBlockSize);
+    const auto singleRide = monoFrom (
+        renderInterleaved (*ride, windowSamples, defaultBlockSize));
+    auto doubleRideEngine = std::make_unique<drumalor::DrumEngine>();
+    doubleRideEngine->prepare (sampleRate, defaultBlockSize);
+    doubleRideEngine->setKitParameters (machine);
+    doubleRideEngine->trigger (drumalor::Instrument::Ride, 0.90f);
+    renderInterleaved (*doubleRideEngine, flamSamples, defaultBlockSize);
+    doubleRideEngine->trigger (drumalor::Instrument::Ride, 0.90f);
+    const auto doubleRide = monoFrom (
+        renderInterleaved (*doubleRideEngine, windowSamples, defaultBlockSize));
+    expect (rmsInRange (doubleRide, 0, doubleRide.size())
+                > 1.30 * rmsInRange (singleRide, 0, singleRide.size()),
+            "a second ride strike was damped as though the plate were a drum head");
+}
+
 void testUiPresentationMath()
 {
     using namespace drumalor::ui;
@@ -3162,6 +3305,7 @@ int main()
     testMembraneAndVelocityTimbre();
     testMembraneTensionModulation();
     testSnareArticulations();
+    testReStrikeDamping();
     testUiPresentationMath();
     testIdleMetallicCostAndDenormalSafety();
     testInvalidValuesAndStressPerformance();

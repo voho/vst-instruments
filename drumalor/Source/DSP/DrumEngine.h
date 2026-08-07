@@ -400,6 +400,8 @@ private:
     int buildHeadBank (Voice& voice, float fundamental, const HeadGeometry& head,
                        float decaySeconds, float brightness, ModalLoss loss) noexcept;
     void chokeGroup (int group) noexcept;
+    [[nodiscard]] static bool isStruckMembrane (Instrument instrument) noexcept;
+    void dampRingingMembrane (Instrument instrument, float velocity) noexcept;
     void beginChoke (Voice& voice, float seconds) noexcept;
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
     void retireVoice (const Voice& voice) noexcept;
