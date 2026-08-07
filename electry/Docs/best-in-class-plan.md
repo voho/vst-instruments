@@ -248,12 +248,55 @@ verification is by a test in `Tests/` that fails without the change.
   survives above a stated floor after the attack window; the attack itself is
   as loud as a picked note; and the note is over inside 150 ms.
 
-- [ ] **8. Documentation and demonstration audio.** `README.md` and
+- [x] **8. Documentation and demonstration audio.** `README.md` and
   `Docs/physical-modeling-research.md` updated for every behaviour above, with
   the new claims placed in the claims-boundary table and the new references
   cited. Demonstration takes added for the new articulations.
 
-## Progress
+## Outcome
 
-Steps are ticked above as they land. Anything measured along the way that
-bounds what the model can claim is recorded here.
+All eight steps landed. Four things measured during the work bound what the
+model can now claim, and belong here rather than in a commit message.
+
+**The gap analysis's first example was wrong, and is corrected above.** The
+original draft claimed a G barre chord at the third fret came out as open
+strings. It does not: on this instrument that allocation is the open G shape,
+which is a perfectly good voicing. The real defect is that the lowest-fret rule
+has no memory at all, and the corrected example - the descending lead phrase
+that drops onto an open string in the middle of a fifth-position line - was
+measured on the shipping engine before the fix and is the case the regression
+test now pins.
+
+**The touch harmonic is exact only at exact node positions.** At `p = 1/k` the
+touch filter is unity in magnitude and phase at every surviving partial, so the
+harmonic series above the node is untouched - that is the whole reason this
+implementation beats a transpose. At an arbitrary `p`, which is what the pinch
+harmonic uses, no partial is perfectly preserved and the surviving one carries a
+little extra loss and phase. That is physically right, but it means the pinch
+harmonic's pitch is a function of the Pick Position control and is not
+equal-tempered. It is left that way rather than quantised to the nearest node.
+
+**Two effects had to be measured at the stage rather than at the output, and
+both for the same reason.** The slide's friction band and the output
+transformer's core saturation are both shaped so heavily by what follows them -
+the loaded pickup coil in one case, the cabinet's box high-pass in the other -
+that an output-side measurement measures the filter instead of the effect. Both
+are asserted at the stage, and the reason is written into the research contract
+next to each.
+
+**Cost.** Measured with the suite's own `testCpuGuardrail`, best of five runs on
+the same machine, against the sources at the plan commit: the default
+Bridge + Mono eight-string render moved from 0.179x to 0.189x realtime and the
+worst-case Both + Stereo from 0.220x to 0.221x. Run-to-run spread on this
+machine is around 10%, so the honest statement is that the worst case is inside
+the noise and the default configuration costs a few per cent. The per-sample
+additions are three float comparisons per voice - the node touch, its decay, and
+the slide's friction - all of which are false for an ordinary note, and moving
+the new per-voice fields to the end of the voice struct rather than into the
+middle of it was worth about half of what they cost. The vibrato adds nothing
+per sample; it re-crosses the dispersion fit's 6-cent quantum a few times per
+cycle, which is the same path a pitch-wheel glide already takes and cheaper. The
+amplifier's power stage is two one-poles, a follower and one bounded
+nonlinearity inside a block that is skipped outright when the amp control is at
+zero, and its measured cost is the alias floor rather than the clock: the
+amplifier at full drive moves from -86 dB to -69 dB against a -60 dB bound.

@@ -1532,6 +1532,21 @@ declared:
 - **Inlined hot primitives.** The fractional delay read, the aperture window and
   the noise generator are defined in the header so they inline into the render
   loop instead of costing a call six times per string per sample.
+- **Articulations that cost nothing when they are not playing.** The node
+  touch's two extra delay taps run only while a finger or thumb is on the
+  string, and the finger lifts once the note has formed rather than staying
+  down for the note's length. The slide's friction band is generated only while
+  the finger is moving and its amplitude is cleared the moment the glide
+  settles. The vibrato adds nothing per sample at all; it moves the same delay
+  target the wheel does, at a fraction of the wheel's excursion. What is left is
+  three float comparisons per voice per rendered sample, all of them false for
+  an ordinary note. Measured best of five against the sources before this work,
+  the default Bridge + Mono eight-string render moved from 0.179x to 0.189x
+  realtime and the worst-case Both + Stereo from 0.220x to 0.221x, against a
+  run-to-run spread on the same machine of around ten per cent - so the worst
+  case is inside the noise and the default costs a few per cent. Moving the new
+  per-voice fields to the end of the voice struct rather than into the middle of
+  it was worth about half of that.
 
 Measured with an eight-string Drop-E chord held for two seconds, best of five
 runs, comparing 1.0 and 1.1 sources built identically: the default

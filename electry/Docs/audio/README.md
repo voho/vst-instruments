@@ -1,10 +1,17 @@
 # Electry demonstration audio
 
 Fourteen rendered examples of what Electry produces: its full playable range,
-the twelve combinations of the independent picking-style and play-style
-keyswitch banks, the guitar-build and pickup axes, the pitch-wheel bar and the
+every combination of the independent picking-style and play-style keyswitch
+banks, the guitar-build and pickup axes, the pitch-wheel bar and the
 resonance-wheel amplifier feedback, and the Drop-E metal rhythm and lead tones
 through the built-in amplifier chain.
+
+Two of the takes were extended when the play-style bank grew from four
+articulations to seven. `03-play-styles.wav` walks the whole bank, so it now
+also carries the pinch harmonic, slides of two and twelve frets, and dead
+notes; `06-lead-amp-delay-room.wav` gained a slid entry into a note held with
+the fretting hand's vibrato and a pinch harmonic before its natural-harmonic
+and feedback close. The file count is unchanged.
 
 Every file here is rendered by `Tools/RenderDemos.cpp` from the shipping
 JUCE-free signal path — `ElectryEngine` into `ElectryFx`, the same code the

@@ -3,8 +3,13 @@
 Electry is an original, physically modeled dry electric guitar instrument.
 Eight string voices run dual-polarisation waveguide loops with physically
 derived stiffness dispersion, decay-targeted damping, tension-modulation
-pitch glide, a pitch wheel that bends every string like a vibrato bar,
-a resonance wheel that can push a distorted tone into self-sustaining
+pitch glide, a fretting hand with a position and a reach that decides where
+each note is played, a point-touch model that produces natural and pinch
+harmonics as the string's own mode shapes rather than as transpositions,
+slides whose length is a distance over a hand speed and whose squeak is the
+winding passing under the finger, a pitch wheel that bends every string like a
+vibrato bar, channel pressure that is the fretting hand's own one-sided
+vibrato, a resonance wheel that can push a distorted tone into self-sustaining
 amplifier feedback, one-way bridge coupling into
 the strings you are *not* fingering, and a published pickup signal
 structure (position comb, finite magnetic aperture, nonlinear flux, induced
@@ -18,9 +23,10 @@ a capture-accurate clone of any one instrument.
 
 The compact FX panel provides a distortion pedal, an amplifier and modelled
 cabinet, compression, lead delay, and a stereo room; every effect defaults to a
-true 0% dry setting, and the two clipping stages run inside a 4x oversampled
-domain so a high-gain metal tone saturates instead of folding its own harmonics
-back into the guitar band. Mono is the authentic summed dry DI; Stereo is a
+true 0% dry setting, and the two clipping stages, the power supply's sag and the
+output transformer's core all run inside a 4x oversampled domain so a high-gain
+metal tone saturates instead of folding its own harmonics back into the guitar
+band. Mono is the authentic summed dry DI; Stereo is a
 phase-coherent divided-pickup view of the eight physical strings, not an effect
 or delay. Both are also ready for the amp simulation of your choice. Material,
 body, pickup, and construction controls span deliberately contrasting
@@ -31,10 +37,11 @@ modern 28-inch baritone/8-string build.
 
 ## Hear it
 
-Fourteen rendered examples — the full playable range, the pick-stroke and
-play-style combinations, the guitar-build and pickup axes, the
-pitch-wheel bar and resonance-wheel feedback, and the Drop-E rhythm and lead
-tones dry and through the amplifier — are committed under
+Fourteen rendered examples — the full playable range, every pick-stroke and
+play-style combination including the pinch harmonic, the slide and the dead
+note, the guitar-build and pickup axes, the pitch-wheel bar, the fretting
+hand's vibrato and the resonance-wheel feedback, and the Drop-E rhythm and
+lead tones dry and through the amplifier — are committed under
 [`Docs/audio/`](Docs/audio/README.md), with the score for each one in
 `Tools/RenderDemos.cpp`. They are produced by the shipping JUCE-free signal
 path, so they cannot drift away from what the plug-in sounds like, and they are
@@ -392,7 +399,12 @@ All Sound Off and All Notes Off.
   removes the last division from the pickup path. Together those took the
   eight-string render at 96 kHz from 0.190x to 0.166x realtime worst case
   (Both + Stereo), 0.146x to 0.129x at the default Bridge + Mono, and a
-  full-throw wheel glide on the same chord from 0.210x to 0.172x. A pickup the
+  full-throw wheel glide on the same chord from 0.210x to 0.172x. The seven
+  play styles added since cost three float comparisons per voice per sample -
+  the node touch, its decay, and the slide's friction - all of which are false
+  for an ordinary note: measured best of five against the same fixture, the
+  default configuration moved about five per cent and the worst case stayed
+  inside the run-to-run spread. A pickup the
   selector has
   faded out is skipped outright, including its two fractional reads, aperture
   window, flux polynomial and induced-EMF guard. Mono runs one shared coil, DC
