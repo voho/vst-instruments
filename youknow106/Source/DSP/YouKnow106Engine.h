@@ -307,6 +307,30 @@ public:
         [[nodiscard]] static float frequencyTrim(float feedback) noexcept;
     };
 
+    // The two elementary functions the transconductor cascade runs on, and
+    // the helper they share. Both are functions of the same exponential --
+    // with `e = exp(-2|x|)`, `tanh x = sign(x)(1-e)/(1+e)` and
+    // `ln cosh x = |x| + ln(1+e) - ln 2` -- so evaluating `e` once serves the
+    // pair's transfer and its antiderivative together. That matters because
+    // the implicit solve calls them tens of times per stage per sample: the
+    // filter is 65% of the engine's cost and almost all of that is these two.
+    //
+    // `ln(1+e)` is taken on `[0, 1]` through `2 atanh(e/(2+e))`, whose series
+    // in `s^2` converges quickly there (`s <= 1/3`); the double-precision core
+    // keeps it inside one float ULP of `std::log1p`. These are numerical
+    // kernels, not circuit laws -- they compute the same functions the model
+    // has always used, and `Tests/YouKnow106CircuitTests.cpp` fences their
+    // agreement with the standard library rather than trusting that claim.
+    struct CascadeKernels
+    {
+        [[nodiscard]] static float log1pUnitInterval(float u) noexcept;
+        [[nodiscard]] static float tanh(float x) noexcept;
+        [[nodiscard]] static float lnCosh(float x) noexcept;
+        // Beyond this magnitude tanh is 1 to within half a float ULP, so the
+        // kernel returns the rail rather than exponentiating toward it.
+        static constexpr float tanhRailMagnitude = 10.0f;
+    };
+
     // Where the transconductor's own control current stops following the
     // anti-log converter. An AS3109 teardown reports the internal control
     // current saturating at 700 uA, which is a pole near 64 kHz on this

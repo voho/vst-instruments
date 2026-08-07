@@ -1442,32 +1442,82 @@ void YouKnow106Engine::OtaCascade::retime(float previousG,
     state = voltage;
 }
 
-// The pair's instantaneous transfer is tanh; its antiderivative ln(cosh)
-// gives the exact average of tanh along a straight drive path, which is what
-// one step of the integrator physically consumes. Written out stably: for
-// large |x|, ln(cosh x) -> |x| - ln 2.
-static inline float tanhAntiderivative(float x) noexcept
+// ln(1+u) on [0, 1] through 2 atanh(u/(2+u)). The substitution puts the
+// series argument at s <= 1/3, where seven terms are already below the float
+// grid; the double-precision core is what keeps the result inside one ULP of
+// std::log1p at both ends of the interval.
+float YouKnow106Engine::CascadeKernels::log1pUnitInterval(float uf) noexcept
+{
+    const double u = static_cast<double>(uf);
+    const double s = u / (2.0 + u);
+    const double s2 = s * s;
+    const double series = 1.0 + s2 * (1.0 / 3.0
+                          + s2 * (0.2 + s2 * (1.0 / 7.0
+                          + s2 * (1.0 / 9.0 + s2 * (1.0 / 11.0 + s2 / 13.0)))));
+    return static_cast<float>(2.0 * s * series);
+}
+
+// tanh and ln cosh from one exponential. Kept together so the two can never
+// be evaluated from different roundings of the same e.
+static inline void tanhAndLnCosh(float x, float& tanhOut,
+                                 float& lnCoshOut) noexcept
 {
     const float magnitude = std::abs(x);
-    return magnitude + std::log1p(std::exp(-2.0f * magnitude))
+    const float e = std::exp(-2.0f * magnitude);
+    lnCoshOut = magnitude
+              + YouKnow106Engine::CascadeKernels::log1pUnitInterval(e)
+              - 0.6931471805599453f;
+    const double eWide = static_cast<double>(e);
+    const double t = (1.0 - eWide) / (1.0 + eWide);
+    tanhOut = static_cast<float>(x < 0.0f ? -t : t);
+}
+
+// The pair's instantaneous transfer.
+float YouKnow106Engine::CascadeKernels::tanh(float x) noexcept
+{
+    const float magnitude = std::abs(x);
+    if (magnitude > tanhRailMagnitude)
+        return x < 0.0f ? -1.0f : 1.0f;
+    const double e = static_cast<double>(std::exp(-2.0f * magnitude));
+    const double t = (1.0 - e) / (1.0 + e);
+    return static_cast<float>(x < 0.0f ? -t : t);
+}
+
+// The same identity, expressed as one call for the callers that need only
+// the amplifier's antiderivative.
+
+// Its antiderivative, which gives the exact average of tanh along a straight
+// drive path -- what one step of the integrator physically consumes. Written
+// out stably: for large |x|, ln(cosh x) -> |x| - ln 2.
+float YouKnow106Engine::CascadeKernels::lnCosh(float x) noexcept
+{
+    const float magnitude = std::abs(x);
+    return magnitude + log1pUnitInterval(std::exp(-2.0f * magnitude))
          - 0.6931471805599453f;
 }
 
 // Average of tanh from x0 to x1, and its derivative with respect to x1. The
 // short-path branch is the midpoint rule the divided difference converges to.
-static inline void tanhPathAverage(float x1, float x0, float& average,
-                                   float& slope) noexcept
+// `lnCoshAtX0` is the antiderivative at the carried path start: it is fixed
+// for the whole solve, so the caller evaluates it once per stage instead of
+// once per Newton iteration.
+static inline void tanhPathAverage(float x1, float x0, float lnCoshAtX0,
+                                   float& average, float& slope) noexcept
 {
     const float span = x1 - x0;
     if (std::abs(span) < 1.0e-3f)
     {
-        const float t = std::tanh(0.5f * (x1 + x0));
+        const float t =
+            YouKnow106Engine::CascadeKernels::tanh(0.5f * (x1 + x0));
         average = t;
         slope = 0.5f * (1.0f - t * t);
         return;
     }
-    average = (tanhAntiderivative(x1) - tanhAntiderivative(x0)) / span;
-    slope = (std::tanh(x1) - average) / span;
+    float tanhAtX1 = 0.0f;
+    float lnCoshAtX1 = 0.0f;
+    tanhAndLnCosh(x1, tanhAtX1, lnCoshAtX1);
+    average = (lnCoshAtX1 - lnCoshAtX0) / span;
+    slope = (tanhAtX1 - average) / span;
 }
 
 // One implicitly integrated step of the four transconductor stages with the
@@ -1510,16 +1560,27 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
     std::array<float, 4> residual {};
     std::array<float, 4> drive {};
 
+    // The antiderivative at each stage's carried path start. It depends only
+    // on driveMemory, which this call does not move, so it belongs outside
+    // the Newton loop -- inside it, every iteration paid for the same four
+    // exponentials again.
+    std::array<float, 4> pathStart {};
+    for (int n = 0; n < 4; ++n)
+        pathStart[static_cast<std::size_t>(n)] =
+            CascadeKernels::lnCosh(driveMemory[static_cast<std::size_t>(n)]);
+
     for (int iteration = 0; iteration < maximumIterations; ++iteration)
     {
-        const float feedbackTanh = std::tanh(voltage[3] / feedbackHeadroom);
+        const float feedbackTanh =
+            CascadeKernels::tanh(voltage[3] / feedbackHeadroom);
         const float feedbackSech2 = 1.0f - feedbackTanh * feedbackTanh;
         float previous = input - k * feedbackHeadroom * feedbackTanh;
         for (int n = 0; n < 4; ++n)
         {
             const float earlyMod = (enableEarlyEffect && calibration > 0.0f)
                 ? (1.0f + otaEarlyEffectCoefficient * calibration
-                       * std::tanh(voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
+                       * CascadeKernels::tanh(
+                             voltage[static_cast<std::size_t>(n)] * inverseHeadroom))
                 : 1.0f;
             const float stageG = gLimited * gScale[static_cast<std::size_t>(n)]
                                * earlyMod;
@@ -1529,6 +1590,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
             float pathAverage = 0.0f;
             float pathSlope = 0.0f;
             tanhPathAverage(x, driveMemory[static_cast<std::size_t>(n)],
+                            pathStart[static_cast<std::size_t>(n)],
                             pathAverage, pathSlope);
             // The 2 restores the full step: the trapezoidal g carries the
             // half that used to pair with the endpoint average.
@@ -1587,7 +1649,8 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
     // Re-evaluate the drives at the converged voltages so the carried path
     // start is exactly consistent with the carried charge.
     {
-        const float feedbackTanh = std::tanh(voltage[3] / feedbackHeadroom);
+        const float feedbackTanh =
+            CascadeKernels::tanh(voltage[3] / feedbackHeadroom);
         float previous = input - k * feedbackHeadroom * feedbackTanh;
         for (int n = 0; n < 4; ++n)
         {

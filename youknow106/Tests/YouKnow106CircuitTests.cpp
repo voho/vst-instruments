@@ -750,6 +750,108 @@ double steadyStatePeak(const std::vector<float>& signal)
 
 // --------------------------------------------------------------------------
 
+void testCascadeKernelsMatchTheStandardLibrary()
+{
+    // The cascade evaluates tanh and ln cosh tens of times per stage per
+    // sample, so both come from one shared exponential rather than from three
+    // separate library calls. That is only allowed to be a speed change: the
+    // functions must still be the functions. Nothing else in this suite would
+    // catch a kernel that drifted a few ULP -- the reference-solve and
+    // service-anchor tests carry decibel and cent tolerances thousands of
+    // times wider -- so the agreement is fenced directly, at one float ULP.
+    using Kernels = YouKnow106Engine::CascadeKernels;
+    constexpr float floatEpsilon = 1.1920929e-7f;
+
+    // ln(1+u) is only ever asked for u = exp(-2|x|), which lands in [0, 1].
+    double worstLog = 0.0;
+    double worstLogAt = 0.0;
+    for (int step = 0; step <= 20000; ++step)
+    {
+        const float u = static_cast<float>(step) / 20000.0f;
+        const double kernel = Kernels::log1pUnitInterval(u);
+        const double library = std::log1p(static_cast<double>(u));
+        const double error = library > 0.0
+            ? std::abs(kernel - library) / library
+            : std::abs(kernel - library);
+        if (error > worstLog)
+        {
+            worstLog = error;
+            worstLogAt = u;
+        }
+    }
+    expect(worstLog <= floatEpsilon,
+           "the log1p kernel is " + std::to_string(worstLog / floatEpsilon)
+               + " float ULP from std::log1p near u="
+               + std::to_string(worstLogAt));
+
+    // The differential pair's drive is (V(n-1) - Vn + offset)/H. The stage
+    // states are clamped inside the solve and H is 6.37 V, so |x| stays well
+    // inside this span; it is swept wider than the model can reach.
+    double worstTanh = 0.0;
+    double worstTanhAt = 0.0;
+    double worstLnCosh = 0.0;
+    double worstLnCoshAt = 0.0;
+    for (int step = -240000; step <= 240000; ++step)
+    {
+        const float x = static_cast<float>(step) / 10000.0f;
+        const double tanhError =
+            std::abs(static_cast<double>(Kernels::tanh(x))
+                     - std::tanh(static_cast<double>(x)));
+        if (tanhError > worstTanh)
+        {
+            worstTanh = tanhError;
+            worstTanhAt = x;
+        }
+
+        // ln cosh is judged on absolute error, because that is what the
+        // divided difference (A(x1) - A(x0))/span actually consumes, and
+        // because the stable |x| + ln(1+e) - ln 2 form cancels near zero:
+        // there the answer is x^2/2 taken as a difference of numbers near
+        // ln 2, so no float implementation of this expression -- including
+        // the std::log1p one this kernel replaced -- resolves it relatively.
+        // The bound is the float grid at the largest term of that sum.
+        const double reference = std::log(std::cosh(static_cast<double>(x)));
+        const double lnCoshError =
+            std::abs(static_cast<double>(Kernels::lnCosh(x)) - reference)
+            / (static_cast<double>(floatEpsilon)
+               * (std::abs(static_cast<double>(x)) + 1.0));
+        if (lnCoshError > worstLnCosh)
+        {
+            worstLnCosh = lnCoshError;
+            worstLnCoshAt = x;
+        }
+
+        // And the claim that actually matters: the shared-exponential kernel
+        // is the library-call form it replaced, to within one ULP of the
+        // result. This is what makes the substitution a speed change.
+        const float magnitude = std::abs(x);
+        const float libraryForm = magnitude
+            + std::log1p(std::exp(-2.0f * magnitude)) - 0.6931471805599453f;
+        expect(std::abs(Kernels::lnCosh(x) - libraryForm)
+                   <= floatEpsilon * (magnitude + 1.0f),
+               "the ln cosh kernel departs from its std::log1p form at x="
+                   + std::to_string(x));
+    }
+    // tanh is bounded by one, so its absolute error is its relative error at
+    // the top of the range and the tighter measure everywhere else.
+    expect(worstTanh <= floatEpsilon,
+           "the tanh kernel is " + std::to_string(worstTanh / floatEpsilon)
+               + " float ULP from std::tanh near x="
+               + std::to_string(worstTanhAt));
+    expect(worstLnCosh <= 1.0,
+           "the ln cosh kernel is " + std::to_string(worstLnCosh)
+               + " float grid steps from log(cosh) near x="
+               + std::to_string(worstLnCoshAt));
+
+    // Beyond the rail the kernel stops exponentiating. That has to be a place
+    // where the exact result is already one to within the float grid.
+    expect(Kernels::tanh(Kernels::tanhRailMagnitude * 1.0001f) == 1.0f,
+           "the tanh kernel does not rail where it says it does");
+    expect(1.0 - std::tanh(static_cast<double>(Kernels::tanhRailMagnitude))
+               < 0.5 * static_cast<double>(floatEpsilon),
+           "the tanh kernel rails before std::tanh has reached one");
+}
+
 void testCascadeAgainstReferenceSolve()
 {
     constexpr double sampleRate = 192000.0;
@@ -3687,6 +3789,7 @@ int main()
     testOutputSummerIsLinearBelowItsRails();
     testDecimatorProtectsTheTopOfTheBand();
     testFilterDriveMatchesTheDerivedBudget();
+    testCascadeKernelsMatchTheStandardLibrary();
     testCascadeAgainstReferenceSolve();
     testCascadeOscillationThreshold();
     testCascadeSurvivesAdversarialControl();
