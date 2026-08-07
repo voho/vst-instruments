@@ -1399,42 +1399,73 @@ void YouKnow106Engine::OtaCascade::reset() noexcept
 {
     state.fill(0.0f);
     voltage.fill(0.0f);
+    driveMemory.fill(0.0f);
 }
 
 void YouKnow106Engine::OtaCascade::retime(float previousG,
                                           float nextG) noexcept
 {
-    if (!(previousG > 0.0f) || !std::isfinite(previousG)
-        || !(nextG >= 0.0f) || !std::isfinite(nextG))
-    {
-        // With no usable derivative history, retaining charge is still less
-        // destructive than clearing a continuously powered voice card.
-        state = voltage;
-        return;
-    }
-
-    // After a trapezoidal step, state - voltage is g times the derivative at
-    // that physical capacitor. A live HQ change alters dt (and therefore g),
-    // not the capacitor voltage or transconductance. Preserve the derivative
-    // by scaling only that carry into the new timestep.
-    const float ratio = nextG / previousG;
-    for (std::size_t stage = 0; stage < state.size(); ++stage)
-        state[stage] = voltage[stage]
-                     + (state[stage] - voltage[stage]) * ratio;
+    // A live HQ change alters dt (and therefore g), not the capacitor
+    // voltages or the transconductance. Both carried states survive a rate
+    // change untouched: `state` is a physical capacitor voltage, and
+    // `driveMemory` is the pair drive at the previous step's endpoint --
+    // dimensionless, so it needs no re-expression on the new grid. The
+    // earlier trapezoidal carry had to be rescaled here; the path-average
+    // form has nothing to rescale.
+    (void) previousG;
+    (void) nextG;
+    state = voltage;
 }
 
-// One trapezoidally integrated step of the four transconductor stages with the
+// The pair's instantaneous transfer is tanh; its antiderivative ln(cosh)
+// gives the exact average of tanh along a straight drive path, which is what
+// one step of the integrator physically consumes. Written out stably: for
+// large |x|, ln(cosh x) -> |x| - ln 2.
+static inline float tanhAntiderivative(float x) noexcept
+{
+    const float magnitude = std::abs(x);
+    return magnitude + std::log1p(std::exp(-2.0f * magnitude))
+         - 0.6931471805599453f;
+}
+
+// Average of tanh from x0 to x1, and its derivative with respect to x1. The
+// short-path branch is the midpoint rule the divided difference converges to.
+static inline void tanhPathAverage(float x1, float x0, float& average,
+                                   float& slope) noexcept
+{
+    const float span = x1 - x0;
+    if (std::abs(span) < 1.0e-3f)
+    {
+        const float t = std::tanh(0.5f * (x1 + x0));
+        average = t;
+        slope = 0.5f * (1.0f - t * t);
+        return;
+    }
+    average = (tanhAntiderivative(x1) - tanhAntiderivative(x0)) / span;
+    slope = (std::tanh(x1) - average) / span;
+}
+
+// One implicitly integrated step of the four transconductor stages with the
 // inverting resonance return closed around them. The unknowns are the four
 // stage voltages; the Jacobian is lower bidiagonal apart from a single corner
 // term contributed by the feedback, so the Newton step is solved directly
 // rather than with a general linear solver.
 //
-// Stage equation: Vn = s_n + g * H * tanh((V_{n-1} - V_n) / H), with
-// H = 2 Vt / attenuation, the differential pair's linear span referred to the
-// stage input, and V_0 = input - k * fb(V_4). The compatibility profile uses
-// a circuit-shaped nonlinear return, fb(V) = Hfb * tanh(V / Hfb), so its loop
-// remains bounded. The selected divider and headroom are part of that voiced
-// profile, not a measured code-to-loop transfer.
+// Stage equation: Vn = Vn_prev + 2 g * H * avg(tanh; x_prev -> x), with
+// x = (V_{n-1} - V_n + offset) / H, H = 2 Vt / attenuation the differential
+// pair's linear span referred to the stage input, and V_0 = input - k *
+// fb(V_4). The average of tanh along the straight drive path from the
+// previous step's endpoint is the integral the trapezoid approximates by its
+// endpoints; taking it exactly (the divided difference of ln cosh) changes
+// nothing the endpoints already got right -- the linear response and the
+// self-oscillation limit cycle are measured identical -- but denies the tanh
+// set the spectral fold-back the analogue cascade never had: the hot
+// bright-resonant in-band alias floor drops 11.5 dB. The compatibility
+// profile uses a circuit-shaped nonlinear return, fb(V) = Hfb * tanh(V /
+// Hfb), so its loop remains bounded; the return stays an endpoint evaluation
+// because V4 arrives already band-limited by the fourth pole. The selected
+// divider and headroom are part of that voiced profile, not a measured
+// code-to-loop transfer.
 float YouKnow106Engine::OtaCascade::process(float input, float g,
                                             float feedback,
                                             float headroom,
@@ -1452,6 +1483,7 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
     std::array<float, 4> selfDerivative {};
     std::array<float, 4> previousDerivative {};
     std::array<float, 4> residual {};
+    std::array<float, 4> drive {};
 
     for (int iteration = 0; iteration < maximumIterations; ++iteration)
     {
@@ -1468,13 +1500,21 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
                                * earlyMod;
             const float x = (previous - voltage[static_cast<std::size_t>(n)]
                              + offsetVoltage[static_cast<std::size_t>(n)]) * inverseHeadroom;
-            const float t = std::tanh(x);
-            const float sech2 = 1.0f - t * t;
+            drive[static_cast<std::size_t>(n)] = x;
+            float pathAverage = 0.0f;
+            float pathSlope = 0.0f;
+            tanhPathAverage(x, driveMemory[static_cast<std::size_t>(n)],
+                            pathAverage, pathSlope);
+            // The 2 restores the full step: the trapezoidal g carries the
+            // half that used to pair with the endpoint average.
             residual[static_cast<std::size_t>(n)] =
                 voltage[static_cast<std::size_t>(n)]
-                - state[static_cast<std::size_t>(n)] - stageG * headroom * t;
-            selfDerivative[static_cast<std::size_t>(n)] = 1.0f + stageG * sech2;
-            previousDerivative[static_cast<std::size_t>(n)] = -stageG * sech2;
+                - state[static_cast<std::size_t>(n)]
+                - 2.0f * stageG * headroom * pathAverage;
+            selfDerivative[static_cast<std::size_t>(n)] =
+                1.0f + 2.0f * stageG * pathSlope;
+            previousDerivative[static_cast<std::size_t>(n)] =
+                -2.0f * stageG * pathSlope;
             previous = voltage[static_cast<std::size_t>(n)];
         }
 
@@ -1519,16 +1559,35 @@ float YouKnow106Engine::OtaCascade::process(float input, float g,
             break;
     }
 
+    // Re-evaluate the drives at the converged voltages so the carried path
+    // start is exactly consistent with the carried charge.
+    {
+        const float feedbackTanh = std::tanh(voltage[3] / feedbackHeadroom);
+        float previous = input - k * feedbackHeadroom * feedbackTanh;
+        for (int n = 0; n < 4; ++n)
+        {
+            drive[static_cast<std::size_t>(n)] =
+                (previous - voltage[static_cast<std::size_t>(n)]
+                 + offsetVoltage[static_cast<std::size_t>(n)]) * inverseHeadroom;
+            previous = voltage[static_cast<std::size_t>(n)];
+        }
+    }
+
     for (int n = 0; n < 4; ++n)
     {
-        // Trapezoidal carry: s_next = 2 V - s.
+        // Carry the converged step: the capacitor voltage becomes the next
+        // step's integration origin, and the converged drive becomes the next
+        // path's starting point.
         state[static_cast<std::size_t>(n)] =
-            2.0f * voltage[static_cast<std::size_t>(n)]
-            - state[static_cast<std::size_t>(n)];
-        if (!std::isfinite(state[static_cast<std::size_t>(n)]))
+            voltage[static_cast<std::size_t>(n)];
+        driveMemory[static_cast<std::size_t>(n)] =
+            drive[static_cast<std::size_t>(n)];
+        if (!std::isfinite(state[static_cast<std::size_t>(n)])
+            || !std::isfinite(driveMemory[static_cast<std::size_t>(n)]))
         {
             state[static_cast<std::size_t>(n)] = 0.0f;
             voltage[static_cast<std::size_t>(n)] = 0.0f;
+            driveMemory[static_cast<std::size_t>(n)] = 0.0f;
         }
     }
 

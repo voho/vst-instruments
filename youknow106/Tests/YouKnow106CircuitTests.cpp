@@ -61,23 +61,53 @@ struct YouKnow106TestAccess
         return output;
     }
 
-    static std::array<float, 4> cascadeDerivativeAfterRetime(
+    static std::array<float, 4> cascadeVoltagesAfterRetime(
         const std::array<float, 4>& voltage,
-        const std::array<float, 4>& derivative,
         float previousG, float nextG) noexcept
     {
         Cascade cascade;
         cascade.voltage = voltage;
-        for (std::size_t stage = 0; stage < cascade.state.size(); ++stage)
-            cascade.state[stage] = voltage[stage]
-                                 + previousG * derivative[stage];
+        cascade.state = voltage;
         cascade.retime(previousG, nextG);
+        return cascade.voltage;
+    }
 
-        std::array<float, 4> realised {};
-        for (std::size_t stage = 0; stage < realised.size(); ++stage)
-            realised[stage] = (cascade.state[stage] - cascade.voltage[stage])
-                            / nextG;
-        return realised;
+    static float cascadeRetimeStepError(float previousG, float nextG)
+    {
+        // Settle under a DC drive at one grid, change grids, and report how
+        // far the next output steps from the settled value.
+        Cascade cascade;
+        cascade.reset();
+        float settled = 0.0f;
+        for (int index = 0; index < 20000; ++index)
+            settled = cascade.process(0.5f, previousG, 0.0f);
+        cascade.retime(previousG, nextG);
+        return std::abs(cascade.process(0.5f, nextG, 0.0f) - settled);
+    }
+
+    static float cascadeIdentityRetimeError()
+    {
+        // Two cascades share a transient history; one takes an identity
+        // retime mid-ring. If the carried states fully describe the filter,
+        // the pair must stay bit-identical afterwards.
+        Cascade a;
+        Cascade b;
+        a.reset();
+        b.reset();
+        constexpr float g = 0.05f;
+        for (int index = 0; index < 64; ++index)
+        {
+            const float x = index == 0 ? 1.0f : 0.0f;
+            a.process(x, g, 3.0f);
+            b.process(x, g, 3.0f);
+        }
+        b.retime(g, g);
+        float worst = 0.0f;
+        for (int index = 0; index < 256; ++index)
+            worst = std::max(worst,
+                             std::abs(a.process(0.0f, g, 3.0f)
+                                      - b.process(0.0f, g, 3.0f)));
+        return worst;
     }
 
     // The decimation kernel as built, so the suite can measure the transfer
@@ -765,17 +795,27 @@ void testCascadeAgainstReferenceSolve()
         }
     }
 
-    // Changing HQ changes dt, not a voice card's capacitor charge or physical
-    // derivative. The trapezoidal carry must be re-expressed on the new grid
-    // rather than reused as though its old g had the new units.
+    // Changing HQ changes dt, not a voice card's capacitor charge or drive
+    // history. The path-average form carries a physical voltage and a
+    // dimensionless drive, both invariant on the new grid, so a retime must
+    // leave every capacitor voltage exactly in place, a settled cascade must
+    // not step when the grid changes under it, and an identity retime must
+    // be invisible.
     constexpr std::array voltage { 0.25f, -0.5f, 0.75f, -1.0f };
-    constexpr std::array derivative { 0.125f, -0.25f, 0.5f, -0.75f };
-    const auto retimed = YouKnow106TestAccess::cascadeDerivativeAfterRetime(
-        voltage, derivative, 0.03125f, 0.125f);
-    for (std::size_t stage = 0; stage < derivative.size(); ++stage)
-        expectNear(retimed[stage], derivative[stage], 2.0e-6,
-                   "HQ retiming changed OTA stage derivative "
+    const auto kept = YouKnow106TestAccess::cascadeVoltagesAfterRetime(
+        voltage, 0.03125f, 0.125f);
+    for (std::size_t stage = 0; stage < voltage.size(); ++stage)
+        expectNear(kept[stage], voltage[stage], 0.0,
+                   "HQ retiming disturbed OTA capacitor charge "
                        + std::to_string(stage));
+    expect(YouKnow106TestAccess::cascadeRetimeStepError(0.03125f, 0.125f)
+               < 1.0e-5f,
+           "a settled cascade stepped when the numerical grid refined");
+    expect(YouKnow106TestAccess::cascadeRetimeStepError(0.125f, 0.03125f)
+               < 1.0e-5f,
+           "a settled cascade stepped when the numerical grid coarsened");
+    expect(YouKnow106TestAccess::cascadeIdentityRetimeError() == 0.0f,
+           "an identity retime altered the cascade");
 }
 
 void testCascadeOscillationThreshold()
@@ -826,6 +866,73 @@ void testCascadeSurvivesAdversarialControl()
         finite = finite && std::isfinite(value) && std::abs(value) < 1.0e4f;
     }
     expect(finite, "cascade diverged under an adversarial control sweep");
+}
+
+void testCascadeDeniesTheFoldback()
+{
+    // The analogue cascade cannot fold energy back into the audio band; a
+    // sampled tanh set can. The recorded hot case -- a full-level
+    // C6-register saw into a 16 kHz cutoff at strong resonance on the
+    // 192 kHz internal grid -- measured discrete in-band lines at
+    // 192 kHz - n*f0 near -55 dBc under endpoint evaluation. The
+    // path-average step must hold every such line below -60 dBc while the
+    // reference-solve and oscillation tests above pin the linear behaviour
+    // it must not change.
+    constexpr double sampleRate = 192000.0;
+    constexpr double fundamental = 1046.502;
+    constexpr float amplitude = 2.4f;
+    const float g = static_cast<float>(std::tan(pi * 16000.0 / sampleRate));
+    constexpr float feedback = 3.8f;
+
+    constexpr std::size_t settle = std::size_t { 1 } << 15;
+    constexpr std::size_t capture = std::size_t { 1 } << 17;
+    const int harmonics = static_cast<int>(0.5 * sampleRate / fundamental);
+    std::vector<float> input(settle + capture);
+    for (std::size_t index = 0; index < input.size(); ++index)
+    {
+        double sum = 0.0;
+        const double phase =
+            2.0 * pi * fundamental * static_cast<double>(index) / sampleRate;
+        for (int h = 1; h <= harmonics; ++h)
+            sum += std::sin(h * phase) / h;
+        input[index] = amplitude * static_cast<float>(sum * 2.0 / pi);
+    }
+    const auto output = YouKnow106TestAccess::renderCascade(input, g, feedback);
+
+    // Windowed single-bin magnitude; Blackman-Harris keeps the saw's own
+    // harmonics from leaking into the measured alias lines.
+    const auto magnitudeAt = [&] (double frequency) {
+        double re = 0.0;
+        double im = 0.0;
+        for (std::size_t index = 0; index < capture; ++index)
+        {
+            const double window = 0.35875
+                - 0.48829 * std::cos(2.0 * pi * index / (capture - 1))
+                + 0.14128 * std::cos(4.0 * pi * index / (capture - 1))
+                - 0.01168 * std::cos(6.0 * pi * index / (capture - 1));
+            const double phase = 2.0 * pi * frequency
+                * static_cast<double>(settle + index) / sampleRate;
+            const double value =
+                window * static_cast<double>(output[settle + index]);
+            re += value * std::cos(phase);
+            im += value * std::sin(phase);
+        }
+        return std::sqrt(re * re + im * im);
+    };
+
+    const double reference = magnitudeAt(fundamental);
+    expect(reference > 0.0, "the alias fixture lost its fundamental");
+    double worstDb = -300.0;
+    for (int n = 165; n <= 201; ++n)
+    {
+        const double alias = std::abs(sampleRate - n * fundamental);
+        if (alias < 20.0 || alias > 20000.0)
+            continue;
+        worstDb = std::max(worstDb,
+                           20.0 * std::log10(magnitudeAt(alias) / reference));
+    }
+    expect(worstDb < -60.0,
+           "a folded tanh line rose above -60 dBc in the hot resonant case");
 }
 
 void testNoteTimerLaw()
@@ -3502,6 +3609,7 @@ int main()
     testCascadeAgainstReferenceSolve();
     testCascadeOscillationThreshold();
     testCascadeSurvivesAdversarialControl();
+    testCascadeDeniesTheFoldback();
     testNoteTimerLaw();
     testCutoffControlLaw();
     testStoredControlDigitalVectors();

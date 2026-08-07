@@ -828,9 +828,20 @@ private:
     // together as one implicit system.
     struct OtaCascade
     {
+        // Capacitor voltage after the previous completed step. The update
+        // integrates each stage from here, so a numerical-rate change leaves
+        // every physical charge untouched.
         std::array<float, 4> state {};
         std::array<float, 4> voltage {};
         std::array<float, 4> offsetVoltage {};
+        // The previous step's converged differential-pair drive, in the
+        // pair's own dimensionless coordinate. Each step averages the pair's
+        // tanh along the straight path from this value to the new drive --
+        // the exact integral the trapezoid approximates by its endpoints --
+        // which leaves the linear response and the self-oscillation limit
+        // cycle bit-identical while denying the tanh set the fold-back the
+        // analogue circuit never had.
+        std::array<float, 4> driveMemory {};
         // Each stage integrates into its own 240 pF capacitor, so each pole
         // sits where that capacitor's tolerance puts it. Unity is the
         // calibrated nominal model, where all four coincide.
