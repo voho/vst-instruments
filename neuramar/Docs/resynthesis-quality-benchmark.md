@@ -26,12 +26,76 @@ instrument resemblance are therefore reported separately.
 
 ## Measured analytic-fixture results
 
-Source: `Tests/ResynthesisQualityTests.cpp`, run through
-`ctest --test-dir build-dsp`. Every figure below is printed by that binary and
+Source: `Tests/ResynthesisQualityTests.cpp` and `Tests/NeuramarEngineTests.cpp`,
+run through `ctest --test-dir build-dsp`. Every figure below is printed by a test
+binary and
 is reproducible from a clean checkout. The fixtures are analytic, the targets
 are generated independently at every rendered pitch, and the machine was an
 x86-64 Linux container; absolute timings will differ elsewhere, ratios much
 less so.
+
+### Root-note reconstruction
+
+Added in 1.3. This is the measurement the document previously specified and
+never reported: how close the fitted model's render is to the sound that was
+dropped in, at the pitch it was analysed at. Two fixtures are learned, then
+rendered at the source pitch under the frozen `Match` state described below —
+full Imprint, Core, Air, and Bone; Mutation, Orbit, Noise, and spread off;
+neutral tone controls; zero added attack; Body Lock at the preregistered 0.65.
+Onsets are aligned at sample zero, the reference is conditioned the way
+`learn()` conditions it, and one RMS scalar is applied to the render. Metric
+definitions are the ones in *Objective measurements* below.
+
+The `16384/4096` resolution is omitted: its window is 341 ms, which is longer
+than the useful part of either fixture. The three shorter pairs are reported
+individually as required.
+
+| Metric, mean over the three resolutions | source/filter | noise+transient |
+| --- | --- | --- |
+| Spectral convergence | 0.0412 | 0.0571 |
+| Log-magnitude MAE | 10.75 dB | 5.31 dB |
+| Residual ERB-band power MAE | 5.00 dB | 3.54 dB |
+| Cumulative-energy MAE, 1/5/10/20/50 ms | 3.16 dB | 0.87 dB |
+| T10-T90 attack-time error | +1 ms | 0 ms |
+
+| Resolution `(window, hop)` | source/filter convergence | source/filter log MAE | noise+transient convergence | noise+transient log MAE |
+| --- | --- | --- | --- | --- |
+| (256, 64) | 0.0715 | 11.95 dB | 0.0994 | 4.75 dB |
+| (1024, 256) | 0.0240 | 8.25 dB | 0.0317 | 4.81 dB |
+| (4096, 1024) | 0.0280 | 12.03 dB | 0.0402 | 6.37 dB |
+
+Three of these numbers are worse than the instrument's documentation implies and
+are recorded here without softening.
+
+The **log-magnitude MAE of 10.75 dB on the source/filter fixture** is the
+largest. That fixture alternates odd and even partial levels by about 25 dB, and
+the log term is evaluated on every bin either signal puts above -80 dB relative
+to the reference peak, so it is dominated by how well the quiet even partials
+and the between-partial floor are reproduced rather than by the loud ones. The
+noise+transient fixture, whose spectrum has no such contrast, scores 5.31 dB on
+the identical metric.
+
+The **residual ERB MAE of 5.00 dB on the source/filter fixture** is worse than
+on the fixture that actually contains noise. That is not a paradox: the
+source/filter fixture is noise-free, so its residual is only analysis leakage
+between the partials, and the render puts a fitted Air layer there. Neuramar
+invents Air on a source that has none. The floor at 60 dB below the loudest
+observed residual cell keeps this from being an artefact of comparing two
+silences.
+
+The **cumulative energy at 1 ms is 12.46 dB too high on the source/filter
+fixture** — the render is louder than the source over the first millisecond,
+converging to -2.75 dB at 5 ms, -0.59 dB at 10 ms and under 0.01 dB by 20 ms.
+The learned onset phases start every partial together, and the analysis aperture
+that measures the attack is 21 ms wide at 220 Hz, so the first frame's
+amplitudes describe an average of the first 21 ms rather than the first
+millisecond. This is the transient gap named in
+[`best-in-class-plan.md`](best-in-class-plan.md), quantified.
+
+Regression guards on these rows are deliberately loose: 0.15 convergence,
+13 dB log-magnitude MAE, 7 dB residual ERB MAE, 5 dB early-energy MAE, and 6 ms
+attack error. They are bounds on numbers that had never been measured, not
+acceptance gates. The gates in *Proposed target gates* remain targets.
 
 ### Held-out source/filter family
 

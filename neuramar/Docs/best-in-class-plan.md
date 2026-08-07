@@ -217,7 +217,13 @@ strands. Neither should regress.
 
 Each step is a single commit, green before it lands.
 
-- [ ] **1. Measure resynthesis fidelity against the source.**
+- [x] **1. Measure resynthesis fidelity against the source.** *Landed.* The
+  first measurement found three things worth recording: log-magnitude MAE of
+  10.75 dB on the source/filter fixture, a residual ERB MAE that is *worse*
+  (5.00 dB) on the noise-free fixture than on the noisy one (3.54 dB) because
+  the render fits an Air layer to a source that has none, and 12.46 dB too much
+  energy in the first millisecond of the attack. See the benchmark document's
+  *Root-note reconstruction* section.
   Extend `Tests/ResynthesisQualityTests.cpp` with a root-note reconstruction
   harness: render the learned model at the source pitch under the frozen
   `Match` state, align the onset, apply one RMS scalar, and report
