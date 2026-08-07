@@ -50,22 +50,26 @@ The `16384/4096` resolution is omitted: its window is 341 ms, which is longer
 than the useful part of either fixture. The three shorter pairs are reported
 individually as required.
 
-| Metric, mean over the three resolutions | source/filter 1.3.0 | source/filter 1.3.1 | noise+transient 1.3.0 | noise+transient 1.3.1 |
-| --- | --- | --- | --- | --- |
-| Spectral convergence | 0.0412 | **0.0392** | 0.0571 | 0.0594 |
-| Log-magnitude MAE | 10.75 dB | 10.76 dB | 5.31 dB | 5.33 dB |
-| Residual ERB-band power MAE | 5.00 dB | **4.73 dB** | 3.54 dB | 3.54 dB |
-| Cumulative-energy MAE, 1/5/10/20/50 ms | 3.16 dB | 3.45 dB | 0.87 dB | 1.09 dB |
-| T10-T90 attack-time error | +1 ms | +1 ms | 0 ms | 0 ms |
+The three columns per fixture are the sequential solve this measurement first
+found (a), the joint solve (b), and the joint solve with a halved onset aperture
+(c). Both changes are described in their own sections below.
 
-The 1.3.0 column is the sequential harmonic solve; 1.3.1 is the joint one
-described below. The per-resolution table that follows is the 1.3.0 measurement.
+| Metric, mean over the three resolutions | s/f (a) | s/f (b) | s/f (c) | n+t (a) | n+t (b) | n+t (c) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Spectral convergence | 0.0412 | 0.0392 | **0.0365** | 0.0571 | 0.0594 | 0.0757 |
+| Log-magnitude MAE | 10.75 dB | 10.76 dB | 10.76 dB | 5.31 dB | 5.33 dB | 5.40 dB |
+| Residual ERB-band power MAE | 5.00 dB | **4.73 dB** | 4.69 dB | 3.54 dB | 3.54 dB | 3.55 dB |
+| Cumulative-energy MAE, 1/5/10/20/50 ms | 3.16 dB | 3.45 dB | **1.32 dB** | 0.87 dB | 1.09 dB | **0.34 dB** |
+| Cumulative energy at 1 ms | -12.46 dB | -13.31 dB | **-5.66 dB** | -2.96 dB | -3.27 dB | **+1.34 dB** |
+| T10-T90 attack-time error | +1 ms | +1 ms | 0 ms | 0 ms | 0 ms | -5 ms |
 
-| Resolution `(window, hop)` | source/filter convergence | source/filter log MAE | noise+transient convergence | noise+transient log MAE |
+Per-resolution figures for the current tree (c):
+
+| Resolution `(window, hop)` | s/f convergence | s/f log MAE | n+t convergence | n+t log MAE |
 | --- | --- | --- | --- | --- |
-| (256, 64) | 0.0715 | 11.95 dB | 0.0994 | 4.75 dB |
-| (1024, 256) | 0.0240 | 8.25 dB | 0.0317 | 4.81 dB |
-| (4096, 1024) | 0.0280 | 12.03 dB | 0.0402 | 6.37 dB |
+| (256, 64) | 0.0578 | 12.06 dB | 0.1558 | 4.96 dB |
+| (1024, 256) | 0.0236 | 8.26 dB | 0.0311 | 4.86 dB |
+| (4096, 1024) | 0.0280 | 11.95 dB | 0.0401 | 6.38 dB |
 
 Three of these numbers are worse than the instrument's documentation implies and
 are recorded here without softening.
@@ -86,19 +90,57 @@ invents Air on a source that has none. The floor at 60 dB below the loudest
 observed residual cell keeps this from being an artefact of comparing two
 silences.
 
-The **cumulative energy at 1 ms is 12.46 dB too high on the source/filter
-fixture** — the render is louder than the source over the first millisecond,
-converging to -2.75 dB at 5 ms, -0.59 dB at 10 ms and under 0.01 dB by 20 ms.
-The learned onset phases start every partial together, and the analysis aperture
-that measures the attack is 21 ms wide at 220 Hz, so the first frame's
-amplitudes describe an average of the first 21 ms rather than the first
-millisecond. This is the transient gap named in
-[`best-in-class-plan.md`](best-in-class-plan.md), quantified.
+The **cumulative energy at 1 ms was 12.46 dB too high on the source/filter
+fixture** when this was first measured — the render was louder than the source
+over the first millisecond, converging to -2.75 dB at 5 ms, -0.59 dB at 10 ms
+and under 0.01 dB by 20 ms. The analysis aperture that measures the attack was
+21 ms wide at 220 Hz, so the first frame's amplitudes described an average of
+the first 21 ms and the renderer applied them from sample zero. Halving that
+aperture over the first 40 ms brings it to -5.66 dB; see *Onset aperture* below.
 
-Regression guards on these rows are deliberately loose: 0.15 convergence,
-13 dB log-magnitude MAE, 7 dB residual ERB MAE, 5 dB early-energy MAE, and 6 ms
-attack error. They are bounds on numbers that had never been measured, not
-acceptance gates. The gates in *Proposed target gates* remain targets.
+Regression guards on these rows: 0.15 convergence, 13 dB log-magnitude MAE,
+7 dB residual ERB MAE, 2 dB early-energy MAE, and 8 ms attack error. The
+early-energy guard is the one that is tight enough to fail: a four-period
+aperture measures 3.45 dB on the source/filter fixture. The rest are bounds on
+numbers that had never been measured, not acceptance gates. The gates in
+*Proposed target gates* remain targets.
+
+### Onset aperture
+
+Added in 1.3, after the joint solve made it possible. The analysis grid reserves
+48 of its 128 frames for the first 120 ms, 2.5 ms apart, and then measured every
+one of them through a four-period aperture — 21 ms at 220 Hz — so the frame
+spacing described a resolution the measurement did not have. The four-period
+rule exists to keep adjacent partials' Hann main lobes apart, and that is a
+constraint on a sequential projection, not on a joint solve. Frames inside the
+first 40 ms therefore ask for two periods instead of four; the power-of-two
+aperture bank means this is 512 samples rather than 1024 at a mid pitch, and
+unchanged at pitches where four periods already fitted in 512.
+
+| Measurement | four periods | two periods over the first 40 ms |
+| --- | --- | --- |
+| source/filter cumulative energy at 1 ms | -13.31 dB | **-5.66 dB** |
+| source/filter cumulative-energy MAE | 3.45 dB | **1.32 dB** |
+| source/filter spectral convergence | 0.0392 | **0.0365** |
+| source/filter T10-T90 error | +1 ms | **0 ms** |
+| noise+transient cumulative energy at 1 ms | -3.27 dB | **+1.34 dB** |
+| noise+transient cumulative-energy MAE | 1.09 dB | **0.34 dB** |
+| noise+transient spectral convergence | 0.0594 | 0.0757 |
+| noise+transient T10-T90 error | 0 ms | -5 ms |
+| `learn()` on a 1.6 s / 44.1 kHz source | 0.765 s | 0.760 s |
+
+The trade is visible and is recorded rather than argued away. The noise+transient
+fixture's spectral convergence gets worse, and all of that degradation is at the
+`(256, 64)` resolution: 0.1063 to 0.1558, while `(1024, 256)` and `(4096, 1024)`
+move by less than 0.001. That resolution's frames are 5.3 ms long, so it is
+measuring the transient itself — a 3 ms broadband noise burst whose waveform the
+renderer draws an independent realisation of and can never match. The same
+fixture's T10-T90 error moves from 0 to -5 ms: the shorter aperture attributes
+more of the burst to the harmonic branch, whose partials are phase-aligned at
+note-on, so the rendered attack is sharper than the source's rather than softer.
+Applying the shorter aperture over the whole 120 ms dense region instead of the
+first 40 ms did not improve the attack any further and made the same fixture's
+residual ERB MAE worse (3.55 to 3.62 dB), so it is confined to the attack.
 
 ### Held-out source/filter family
 

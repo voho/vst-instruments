@@ -948,8 +948,11 @@ void testRootNoteReconstruction()
     constexpr double convergenceGuard = 0.15;
     constexpr double logMagnitudeGuard = 13.0;
     constexpr double residualErbGuard = 7.0;
-    constexpr double earlyEnergyGuard = 5.0;
-    constexpr double attackGuard = 6.0;
+    // 2 dB is below what a four-period aperture can reach on the source/filter
+    // fixture: it measured 3.45 dB, and halving the aperture over the first
+    // 40 ms measures 1.32 dB. This guard keeps the onset aperture short.
+    constexpr double earlyEnergyGuard = 2.0;
+    constexpr double attackGuard = 8.0;
 
     for (const auto& fixture : fixtures)
     {

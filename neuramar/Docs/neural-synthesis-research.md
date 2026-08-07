@@ -154,10 +154,15 @@ architecture, training procedure, source code, or weights. Its eight Air bands
 have adjacent logarithmic edges from 80 Hz to 16 kHz at the fixed analysis rate.
 A joint weighted least-squares sinusoid fit first removes the pitch-following
 Core from each waveform frame. Core and Air targets use a
-pitch-adaptive power-of-two aperture targeting four root periods and bounded to
+pitch-adaptive power-of-two aperture bounded to
 512–4096 samples at the fixed 48 kHz analysis rate, avoiding one fixed 85 ms
-window that would smear short attacks. The 4096-sample ceiling necessarily
-contains fewer than four periods below 46.875 Hz. Bone selection and decay
+window that would smear short attacks. It targets four root periods in the body
+of the sound and two over the first 40 ms: the four-period rule keeps adjacent
+partials' Hann main lobes apart, which is a constraint on a sequential
+projection and not on the joint solve above, so the attack — where the analysis
+grid already places its frames 2.5 ms apart — no longer measures through an
+aperture five times longer than that spacing. The 4096-sample ceiling
+necessarily contains fewer than four periods below 46.875 Hz. Bone selection and decay
 retain a parallel 4096-sample residual for modal frequency resolution. Active
 Bone neighbourhood exclusions scale with the real Hann aperture, not its
 zero-padding, so modal main lobes do not reappear as Air. The remaining

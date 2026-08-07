@@ -253,7 +253,17 @@ Each step is a single commit, green before it lands.
   *Closes gap 2.* *Verified by:* excitation parity error and log-magnitude MAE
   in step 1's harness both fall; `learn()` cost is re-measured and reported.
 
-- [ ] **3. Shorten the analysis aperture now that the solve is joint.**
+- [x] **3. Shorten the analysis aperture now that the solve is joint.**
+  *Landed.* Frames inside the first 40 ms ask for two root periods instead of
+  four. Source/filter cumulative energy at 1 ms 13.31 → 5.66 dB, its
+  cumulative-energy MAE 3.45 → 1.32 dB, its spectral convergence 0.0392 →
+  0.0365, its T10-T90 error +1 → 0 ms; the noise+transient fixture's
+  cumulative-energy MAE 1.09 → 0.34 dB. The trade is real and recorded: that
+  fixture's spectral convergence rises 0.0594 → 0.0757, all of it at the
+  `(256, 64)` resolution whose 5.3 ms frames are measuring a broadband noise
+  burst the renderer draws its own realisation of, and its T10-T90 error moves
+  to -5 ms because more of the burst is attributed to the phase-aligned
+  harmonic branch.
   The four-period rule exists only to keep adjacent partial main lobes apart,
   which a joint solve no longer requires. Reduce the aperture for frames inside
   the dense onset region, keeping the long aperture for sustain, and keep the

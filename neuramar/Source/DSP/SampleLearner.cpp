@@ -48,6 +48,12 @@ constexpr float amplitudeFloor = 1.12535175e-7f; // exp(-16)
 constexpr int analysisFrameCount = 128;
 constexpr int onsetAnalysisFrameCount = 48;
 constexpr float denseOnsetSeconds = 0.120f;
+// The dense onset region reserves 48 frames for the first 120 ms, 2.5 ms apart.
+// The attack itself occupies the first third of that, and only there is the
+// halved analysis aperture worth its lost frequency resolution: measured over
+// the whole 120 ms it makes a noisy source's mid-band residual worse without
+// improving the attack any further.
+constexpr float shortApertureSeconds = 0.040f;
 constexpr std::size_t spectrumSize = 4096;
 constexpr int trainingEpochCount = 180;
 constexpr std::size_t airFitCellCount = 48;
@@ -235,7 +241,7 @@ void fft(std::vector<Complex>& values)
 }
 
 [[nodiscard]] std::size_t transientAnalysisWindowSize(
-    float fundamentalHz, double sampleRate) noexcept
+    float fundamentalHz, double sampleRate, double periods = 4.0) noexcept
 {
     if (!(fundamentalHz > 0.0f) || !std::isfinite(fundamentalHz))
         return spectrumSize;
@@ -243,9 +249,13 @@ void fft(std::vector<Complex>& values)
     // Four fundamental periods give the weighted sinusoidal solve enough
     // information while avoiding the fixed 85 ms aperture that used to blur
     // every attack. Power-of-two apertures keep the deterministic analysis
-    // bank bounded to 10.7, 21.3, 42.7, or 85.3 ms at 48 kHz.
+    // bank bounded to 10.7, 21.3, 42.7, or 85.3 ms at 48 kHz. The four-period
+    // rule exists to keep adjacent partials' Hann main lobes apart, which is a
+    // constraint on a sequential projection and not on the joint solve; onset
+    // frames therefore ask for two, which is the shortest aperture the shared
+    // 512-sample floor and the Air fit design bank both support.
     const auto desired = static_cast<std::size_t>(std::ceil(
-        4.0 * sampleRate / static_cast<double>(fundamentalHz)));
+        periods * sampleRate / static_cast<double>(fundamentalHz)));
     std::size_t windowSize = 512;
     while (windowSize < desired && windowSize < spectrumSize)
         windowSize *= 2;
@@ -2246,8 +2256,15 @@ SampleLearner::LearnResult SampleLearner::learn(
         auto longAnalysis = analyseHarmonicResidual(
             sample, analysisSampleRate, spectra[frameIndex].normalisedTime,
             framePitchHz, stretch.inharmonicity);
+        // The onset region carries 48 of the 128 analysis frames, 2.5 ms apart,
+        // and measuring each of them through a four-period aperture threw that
+        // resolution away: the first frame's amplitudes described an average of
+        // the first 21 ms at a mid pitch and the renderer applied them from
+        // sample zero. Halving the aperture there is what the joint solve buys.
         const auto transientWindow = transientAnalysisWindowSize(
-            framePitchHz, analysisSampleRate);
+            framePitchHz, analysisSampleRate,
+            spectra[frameIndex].timeSeconds < shortApertureSeconds
+                ? 2.0 : 4.0);
         if (transientWindow < spectrumSize)
         {
             auto transientAnalysis = analyseHarmonicResidual(

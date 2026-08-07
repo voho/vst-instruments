@@ -170,11 +170,21 @@ end-to-end through a differentiable renderer:
 - a constrained local autocorrelation track can retain sufficiently stable
   bends, slow vibrato, and glide around that root, and drives pitch-tracked
   harmonic-coordinate analysis;
+- the harmonic solve is joint rather than sequential. A single ordered
+  projection pass is the least-squares answer only when the partial bases are
+  orthogonal, and at an aperture of a few fundamental periods adjacent Hann main
+  lobes touch, so each subtraction leaks into its neighbours and a quiet partial
+  beside a loud one absorbs the leakage. Each partial's current estimate is
+  added back before it is re-solved against the others' residual, which
+  converges to the joint solution without forming the full system; past about
+  eight periods per aperture the bases are orthogonal to working precision, so
+  the long modal analysis keeps a single sweep;
 - 128 spectral frames at a fixed 48 kHz analysis rate reserve 48 strictly
   ordered physical-time observations for the first 120 ms, then cover sustain
   and decay; pitch-adaptive 512–4096-sample Hann apertures target four root
-  periods (bounded at the lowest accepted pitches) to retain Core and Air
-  attacks without sacrificing low-note resolution; a parallel 4096-sample
+  periods in the body of the sound and two over the first 40 ms, so the attack
+  is no longer measured through an aperture five times longer than the frame
+  spacing that exists to resolve it; a parallel 4096-sample
   residual supplies the steadier evidence used for six persistence-scored Bone
   candidates;
 - residual power, excluding both active Bone neighbourhoods and the narrowband
