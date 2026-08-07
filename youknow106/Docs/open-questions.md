@@ -1909,7 +1909,7 @@ regions:
 |---|---|---|---|
 | **OQ-01** | p. 15, JACK BOARD | *Now confirmation rather than discovery:* the 2026-08-06 netlist pass closed β (summing node, 33/47) and C3 (0.1 µF) from the sister board's clone, and the rates ship as **derived**. The page read still independently confirms both against Roland's own print — and gains one line from the same pass: **which IC6 input resistor carries the wet return** (R71/R73 side), because the clone wires wet through 39 kΩ and dry through 47 kΩ, the mirror of this project's anchored reading, a 3.24 dB question if the transcription swapped them | original-page confirmation of an already-derived scale; a wet/dry balance check worth 3.24 dB if wrong |
 | **OQ-02 — read complete** | p. 8 converter chart and p. 15 jack board | `d=b<<5`, +4/−6 V, R30 2.2 kΩ, C7 10 µF NP, R32 1.5 kΩ, R31 47 Ω and R165 15 kΩ | Nominal VCA LEVEL from **voiced** to **derived**: `−16.3196647+0.165581014·b` dB and `τ=9.08249 ms`; only installed variation remains. This replaces the shipping cubic, which was 6.9 dB out at mid-slider across all 128 factory patches |
-| **OQ-04** | chorus support chain | the capacitor codes behind `YouKnow106Chorus.cpp:73-83`, **read separately for the input and output sides** | wet-path bandwidth; the chain is −12 dB at 10 kHz where the MN3009 alone is ~−3 dB, and the reconstruction sections currently *assume* the input sections' part values rather than reading their own |
+| **OQ-04 — read complete** | chorus support chain | the capacitor codes behind `YouKnow106Chorus.cpp`'s support-filter block, **read separately for the input and output sides** | wet-path bandwidth; the chain is −12 dB at 10 kHz where the MN3009 alone is ~−3 dB. *Closed 2026-08-07:* the original-page pass read the 106's own p. 15 at designator level on both sides — pre-BBD C33 820 pF/C31 680 pF then C34 1.8 nF/C32 270 pF, and per output line C37/C35, C38/C36, C42/C40, C43/C41 — so the reconstruction sections no longer *assume* the input sections' values; the corner set is **106-anchored** and OQ-04 keeps only the loaded/time-varying transfer |
 
 For OQ-01 the schematic read is a single yes/no, and the arithmetic has already
 decided which answer is consistent:
@@ -2302,6 +2302,25 @@ OTA's gm cancels: `slope = (67.7/17.0)·(4.7/68) = 0.275` input boost per
 unit loop gain, against the shipping voiced
 `inputCompensationPerFeedback = 0.2296` — about 20% above it (equivalently,
 the shipping value sits 17% below), same linear-in-k form.
+
+**Which coordinate that 0.275 lives in matters**, because a different — also
+correct — reading of the same netlist yields a number 14.5× larger and must
+not be swapped in. Solving the stage-1 node with ideal elements at DC gives
+`V₄ ∝ (68k/4.7k)·(1 + 0.2752·K)·V_in/(1 + K)` with `K = 68k·gm_r/67.7` the
+loop gain. *Output-referred*, the compensation term is `K·(67.7/17)·V_in ≈
+3.982·K·V_in` — in the ratio of the two OTA terms the shared injection
+transfer cancels entirely. But the engine's coefficient is defined as a
+multiplier on the **direct input path** (`filterInput = mixed ·
+filterInputAttenuation · inputCompensation`), and that path — V_in through
+the 4.7 kΩ into the same node — carries gain 68 k/4.7 k with no
+transconductance in it, so the boost relative to it is
+`(67.7/17)·(4.7/68) = 0.27525` per unit loop gain. A future OQ-09 refit of
+`inputCompensationPerFeedback` therefore compares against **0.27525**;
+**3.98235** is the output-referred added-term ratio, a different quantity,
+and the two differ by exactly 68/4.7 = 14.47. Both OTA terms and the direct
+path share stage 1's dynamics, so the ratio — and the static multiplier form
+the engine uses — is frequency-independent for ideal elements.
+
 Also read from the same netlist: the loop's limiting mechanism is OTA
 saturation alone (no clipping diodes anywhere in the reconstruction), and
 the first stage's gain structure (−68 k/4.7 k rather than a passive
