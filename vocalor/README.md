@@ -185,6 +185,35 @@ like a tract rather than like five independent peaking filters:
   front: F2 and F3 of /i/ are carried nearly as strongly as F1 instead of
   sitting 22 dB below it.
 
+**Formant tuning.** A speech tract keeps F1 where the vowel puts it; a singer
+cannot. Once the fundamental climbs past F1 the whole spectrum sits above the
+lowest resonance, the radiated power collapses and the timbre breaks, which is
+why sopranos open the jaw and take F1 up with the pitch. The 1.1 engine raised
+F1 by a flat 0.32 % per semitone above A4, so a female OOH at C6 kept F1 at
+367 Hz with the fundamental at 1047 Hz. The engine now resolves F1 per voice
+against that voice's own pitch: below the fundamental the vowel is returned
+untouched, the strategy fades in as the fundamental comes up on F1 and is
+complete 15 % above it, and F1 stops at the highest one that jaw reaches
+(1.55 × the profile's open vowel, scaled with the formant shift, because a
+shortened tract reaches proportionally higher). F2 is pushed clear of a tracked
+F1 rather than being crossed by it, which is why a soprano's vowels lose their
+identity at the top — as real ones do.
+
+Two things follow, both asserted by the test suite:
+
+- **The vowel no longer decides whether the top octave exists.** At C6 the
+  close anchor measured 25.1 dB below the open one and 20.1 dB below itself at
+  C4. It now measures 7.0 dB below the open anchor and 0.8 dB *above* itself at
+  C4. The residual is the cascade amplitude weighting, which is still resolved
+  once per chunk for the untuned tract and therefore still knows the close vowel
+  by its speech formants.
+- **The resonance it wins is spent on efficiency, not on volume.** Putting the
+  fundamental exactly on F1 is worth 7 – 12 dB, which would leave the top octave
+  shouting over the middle. A singer uses that to reduce subglottal pressure
+  instead, so the voice gain is trimmed in proportion to how far F1 actually had
+  to move: nothing while F1 has not moved, and 6 dB once it has moved by a fifth
+  or more.
+
 **Resonance** sets the formant bandwidths and nothing else. Because narrower
 formants make the cascade peakier, it now widens the contrast between the
 formant amplitudes instead of simply raising the output level.

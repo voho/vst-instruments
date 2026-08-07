@@ -55,6 +55,12 @@ float clampUnit (float value) noexcept
         return 0.0f;
     return std::clamp (value, 0.0f, 1.0f);
 }
+
+float smoothStep (float value) noexcept
+{
+    value = clampUnit (value);
+    return value * value * (3.0f - 2.0f * value);
+}
 } // namespace
 
 VowelPoint cardinalVowelPosition (int index) noexcept
@@ -150,6 +156,21 @@ DynamicResponse dynamicResponse (float dynamics) noexcept
     response.sourceTensionScale = 1.0f - 0.75f * below;
     response.vibratoScale = 1.0f - 0.55f * below;
     return response;
+}
+
+float tunedFirstFormant (float baseHz, float fundamentalHz, float ceilingHz) noexcept
+{
+    if (! (baseHz > 0.0f) || ! std::isfinite (fundamentalHz) || ! (fundamentalHz > 0.0f))
+        return baseHz;
+
+    // Never below the vowel's own F1: this is a strategy for a fundamental that
+    // has climbed too high, not a general retuning.
+    const float ceiling = std::max (baseHz, std::isfinite (ceilingHz) ? ceilingHz : baseHz);
+    const float target = std::min (ceiling, std::max (baseHz, fundamentalHz));
+    // Fully engaged by the time the fundamental is 15 % above F1, absent below
+    // 20 % under it, and smooth between so the tract never steps into it.
+    const float engagement = smoothStep ((fundamentalHz / baseHz - 0.80f) / 0.35f);
+    return baseHz + engagement * (target - baseHz);
 }
 
 float glideTimeSeconds (float glide) noexcept

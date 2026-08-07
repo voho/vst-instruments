@@ -64,6 +64,28 @@ struct DynamicResponse
 /** Resolves the dynamic response for a normalised dynamic level 0..1. */
 [[nodiscard]] DynamicResponse dynamicResponse (float dynamics) noexcept;
 
+/** First formant after the singer's own resonance strategy.
+
+    A speech tract keeps F1 where the vowel puts it. A singer cannot: once the
+    fundamental climbs past F1 the whole spectrum sits above the lowest
+    resonance, the radiated power collapses and the timbre breaks. The measured
+    response is to open the jaw and take F1 up with the pitch, which puts a
+    resonance back on the fundamental at the cost of the vowel's identity --
+    which is why sopranos are hard to understand at the top of the range.
+
+    @c baseHz is the vowel's own F1, @c fundamentalHz the note being sung, and
+    @c ceilingHz the highest F1 that jaw actually reaches. The strategy engages
+    as the fundamental comes up on F1 and is complete a little above it; below
+    that the vowel is returned unchanged.
+*/
+[[nodiscard]] float tunedFirstFormant (float baseHz, float fundamentalHz,
+                                       float ceilingHz) noexcept;
+
+/** Smallest F2/F1 ratio any real vowel presents. A tracked F1 that climbs into
+    F2 would be a tract with two coincident lowest resonances, which is not a
+    configuration a mouth has; F2 is pushed clear instead. */
+inline constexpr float kMinimumFormantSpacing = 1.40f;
+
 /** Portamento time in seconds for the normalised glide parameter. */
 [[nodiscard]] float glideTimeSeconds (float glide) noexcept;
 

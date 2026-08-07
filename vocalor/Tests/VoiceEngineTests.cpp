@@ -104,6 +104,23 @@ struct VoiceEngineTestAccess
 
     static int heldNoteCount(const VoiceEngine& engine) noexcept { return engine.heldCount_; }
 
+    /** The formant targets of the first sounding voice, after the per-singer
+        anatomy and the pitch-dependent tuning the chunk targets know nothing
+        about. Zeroes if nothing is sounding. */
+    static std::array<float, kFormantCount> voiceFormants(const VoiceEngine& engine) noexcept
+    {
+        for (const auto& voice : engine.voices_)
+        {
+            if (! voice.active || voice.releasing)
+                continue;
+            std::array<float, kFormantCount> result {};
+            for (int i = 0; i < kFormantCount; ++i)
+                result[static_cast<std::size_t>(i)] = voice.formantHz[static_cast<std::size_t>(i)];
+            return result;
+        }
+        return {};
+    }
+
     /** The two per-sample level scalars the dynamic reaches, as the render loop
         sees them: the voiced drive and the aspiration drive. Their ratio is the
         breath-to-voice balance, which has to rise as the dynamic falls. */
@@ -1661,6 +1678,86 @@ void testSingerFormantAndLipZero()
            "Singer's Formant tension render exceeded amplitude guardrail");
 }
 
+/** A singer does not keep a speech tract when the fundamental climbs past its
+    lowest resonance; she opens the jaw and takes F1 up with the pitch.
+
+    The 1.1 engine raised F1 by a flat 0.32 % per semitone above A4, so a female
+    /u/ at C6 kept F1 at 367 Hz with the fundamental at 1047 Hz — the whole
+    spectrum above the lowest resonance, which is the configuration the soprano
+    literature describes as a remarkable loss of acoustic energy.
+*/
+void testFormantTuningAtHighPitch()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    const auto formantsFor = [] (int midiNote, int vowel)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = steadyParameters();
+        parameters.vowel = static_cast<vocalor::Vowel> (vowel);
+        engine.setParameters (parameters);
+        engine.noteOn (midiNote, 0.80f);
+        render (engine, static_cast<int> (sampleRate * 0.5));
+        return vocalor::VoiceEngineTestAccess::voiceFormants (engine);
+    };
+
+    const auto levelFor = [] (int midiNote, int vowel)
+    {
+        auto parameters = steadyParameters();
+        parameters.vowel = static_cast<vocalor::Vowel> (vowel);
+        return steadyLevelDb (sampleRate, parameters, midiNote);
+    };
+
+    // Middle C on the open anchor is a long way below F1: nothing may move.
+    const auto low = formantsFor (60, 0);
+    expect (std::abs (low[0] - 850.0f) < 1.0f,
+            "the open vowel's F1 moved at a pitch nowhere near it");
+
+    // C6 on the close-back anchor is the case the strategy exists for.
+    constexpr float c6 = 1046.502f;
+    const auto high = formantsFor (84, 1);
+    std::cout << "C6 /u/: F1 " << std::fixed << std::setprecision (1) << high[0]
+              << " Hz against f0 " << c6 << " Hz, F2 " << high[1] << " Hz\n";
+    expect (high[0] > 0.95f * c6,
+            "F1 did not follow the fundamental once the fundamental passed it");
+    expect (high[0] < 1.45f * c6,
+            "F1 overshot the fundamental instead of tuning to it");
+    expect (high[1] > 1.20f * high[0],
+            "F2 was not kept clear of the tracked F1");
+
+    // The ceiling is physiological: the jaw runs out before the pitch does.
+    const auto extreme = formantsFor (96, 1);
+    expect (extreme[0] < 1400.0f,
+            "F1 tracked past any jaw opening a singer actually has");
+
+    // What it buys. With a fixed tract the vowel decides how much of the top
+    // octave survives; with the strategy in place both vowels put a resonance
+    // on the fundamental, so the choice of vowel costs far less.
+    const auto openHigh = levelFor (84, 0);
+    const auto closeHigh = levelFor (84, 1);
+    std::cout << "C6 open vs close vowel level: " << std::setprecision (2)
+              << openHigh << " dB vs " << closeHigh << " dB\n";
+    // 25.1 dB before. The residual is the cascade amplitude weighting, which is
+    // still resolved once per chunk for the untuned tract and so still knows
+    // the close vowel by its speech formants; that is a real, stated limit.
+    expect (std::abs (openHigh - closeHigh) < 8.0,
+            "the vowel choice still decides whether the top octave is audible");
+
+    // ... and the top octave must not simply collapse against the middle.
+    const auto openMid = levelFor (60, 0);
+    const auto closeMid = levelFor (60, 1);
+    std::cout << "C4 open vs close vowel level: " << openMid << " dB vs "
+              << closeMid << " dB\n";
+    // -20.1 dB before: the top octave of a close vowel was simply gone.
+    expect (closeHigh - closeMid > -3.0,
+            "a close vowel still loses the top octave against the middle");
+    // ... and the resonance it wins must not make the top octave shout either.
+    expect (closeHigh - closeMid < 6.0,
+            "formant tuning spent its resonance gain on volume instead of effort");
+}
+
 /** Continuous performance expression.
 
     The 1.1 engine froze the entire dynamic response of a note at note-on and
@@ -1899,6 +1996,7 @@ int main()
     testTractCoefficientSmoothing();
     testSingerFormantAndLipZero();
     testPerformanceExpression();
+    testFormantTuningAtHighPitch();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();

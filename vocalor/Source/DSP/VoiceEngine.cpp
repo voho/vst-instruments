@@ -898,6 +898,10 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     const float shift = formantShiftRatio(smoothedFormantShift_);
     const float bandwidthScale = (1.18f - 0.30f * smoothedResonance_)
         * (1.0f + 0.12f * smoothedBreath_);
+    // The jaw runs out before the pitch does. Roughly 1.55x the open vowel's
+    // own F1 is as far as it opens, and a tract shortened by the formant shift
+    // reaches proportionally higher.
+    chunkMaxF1_ = (male ? 730.0f : 850.0f) * 1.55f * shift;
 
     // Resolving the tract costs seven exponentials and a five-by-five cascade
     // evaluation, and none of it moves while a note is simply being held. Skip
@@ -1117,12 +1121,38 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         + 0.0045f * formantDrift + 0.0022f * sharedFormant);
     const float highAmount = std::max(0.0f, static_cast<float>(voice.midiNote - 69));
     const float upperLimit = 0.465f * static_cast<float>(sampleRate_);
+    // Formant tuning resolves against the note's own pitch rather than the
+    // vibrato-modulated one. A tract that followed the vibrato would keep the
+    // fundamental permanently on the peak and cancel the amplitude modulation
+    // the vibrato is supposed to produce up there.
+    const float tuningFundamental = voice.baseFrequency;
+    float tunedF1 = 0.0f;
     for (int formant = 0; formant < formantCount; ++formant)
     {
         const auto index = static_cast<std::size_t>(formant);
         const float scale = anatomy + p.humanize * singer.formantScale[index];
         const float highTune = 1.0f + highAmount * (formant == 0 ? 0.0032f : (formant == 1 ? 0.00125f : 0.0003f));
-        const float targetHz = chunkFormantHz_[index] * scale * highTune;
+        float targetHz = chunkFormantHz_[index] * scale * highTune;
+        if (formant == 0)
+        {
+            const float base = targetHz;
+            targetHz = tunedFirstFormant(base, tuningFundamental, chunkMaxF1_ * scale);
+            tunedF1 = targetHz;
+            // A singer spends the resonance she has just won on efficiency, not
+            // on volume: the strategy exists so the top of the range costs less
+            // breath, not so it arrives ten decibels louder than the middle.
+            // Most of the gain is handed back once F1 has moved by a fifth or
+            // more, and none of it is taken while F1 has not moved at all.
+            const float lift = std::clamp((targetHz / base - 1.0f) * 5.0f, 0.0f, 1.0f);
+            voice.renderGain = voice.amplitudeGain / (1.0f + lift);
+        }
+        else if (formant == 1)
+        {
+            // A tracked F1 that has climbed into F2 would leave the tract with
+            // two coincident lowest resonances. The vowel loses its identity
+            // instead, which is what happens to a real one at that pitch.
+            targetHz = std::max(targetHz, kMinimumFormantSpacing * tunedF1);
+        }
         if (voice.formantHz[index] <= 1.0f)
             voice.formantHz[index] = targetHz;
         else
@@ -1281,7 +1311,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     bool alternateCycle = voice.alternateCycle;
     std::uint64_t age = voice.ageSamples;
 
-    const float amplitude = voice.amplitudeGain;
+    float amplitude = voice.renderGain;
     const float onsetMixStep = voice.onsetMixStep;
     const bool releasing = voice.releasing;
 
@@ -1313,6 +1343,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             updateVoiceControl(voice, p);
             noiseState = voice.noiseState;
             voice.controlCountdown = controlPeriod;
+            amplitude = voice.renderGain;
             incrementStep = voice.phaseIncrementStep;
             tilt = voice.tiltCoefficient;
             irregularity = voice.irregularity;

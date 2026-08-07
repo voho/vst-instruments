@@ -218,6 +218,9 @@ private:
         float vibratoPhase { 0.0f };
         float velocity { 0.0f };
         float amplitudeGain { 0.0f };
+        // amplitudeGain after the formant-tuning efficiency trim. The render
+        // loop reads this one, so the trim costs nothing per sample.
+        float renderGain { 0.0f };
         float phase { 0.0f };
         float phaseIncrement { 0.0f };
         float targetPhaseIncrement { 0.0f };
@@ -353,6 +356,9 @@ private:
     // update, and on a sustained note none of these inputs move.
     std::array<float, formantCount + 2> tractInputs_ {};
     std::array<float, formantCount> chunkAmplitude_ {};
+    // Highest F1 the jaw reaches for this profile and tract length. Formant
+    // tuning stops here rather than following the pitch indefinitely.
+    float chunkMaxF1_ { 1300.0f };
     float jitterHumanize_ { -1.0f };
     float glideAmount_ { -1.0f };
     // Dynamic response resolved once per chunk. The two gains it carries are

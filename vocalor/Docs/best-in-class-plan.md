@@ -184,14 +184,25 @@ opens on something playable.
   that leaves the spectrum alone; every default must reproduce the 1.1 render
   sample-for-sample.
 
-- [ ] **2. Formant tuning at high pitch.** Replace the flat 0.32 %/semitone F1
-  ramp with a resonance strategy: when the fundamental approaches F1, F1 is
-  drawn up to track it, blended in over the region where a singer actually
-  begins to modify. F2 gets a smaller companion rise on close vowels. Closes
-  gap 2. *Verified:* across the top octave F1 must stay at or above the
-  fundamental once f0 passes the unmodified F1; the rendered level and
-  first-harmonic magnitude at C6 must no longer collapse relative to C4; nothing
-  below A4 may move at all.
+- [x] **2. Formant tuning at high pitch.** Add a resonance strategy on top of
+  the 0.32 %/semitone ramp: when the fundamental approaches F1, F1 is drawn up
+  to track it, blended in over the region where a singer actually begins to
+  modify, and stopped at the highest F1 that jaw reaches. Closes gap 2.
+  *Verified:* F1 must track the fundamental once the fundamental passes it and
+  must stop at the ceiling; the level at C6 must neither collapse against C4 nor
+  shout over it; nothing may move while the fundamental is still below F1.
+
+  Two things in the plan as written turned out to be wrong once measured, and
+  are recorded here rather than quietly dropped. **"F2 gets a smaller companion
+  rise on close vowels"** is backwards: opening the jaw *lowers* F2 on a front
+  vowel. What F2 actually needs is a floor, because a tracked F1 otherwise
+  climbs straight through it — at C6 the close anchor's F1 lands at 1047 Hz and
+  its F2 sits at 815. F2 is held at 1.4 × F1 instead, which is the tightest
+  spacing any real vowel presents, and the vowel loses its identity as a real
+  one does up there. **"Nothing below A4 may move at all"** is also wrong: a
+  female /u/ has F1 at 350 Hz, so the fundamental passes it at F4, well below
+  A4. The correct statement is the one now verified — nothing moves while the
+  fundamental is below F1, whatever pitch that happens to be.
 
 - [ ] **3. Just-intonation ensemble tuning.** Add an `intonation` parameter that
   blends chord-mode and ensemble tuning from equal temperament toward just
