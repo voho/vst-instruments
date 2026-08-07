@@ -2892,10 +2892,15 @@ captures.
 
 The published comparison page carries every clip, spectrogram pair, band
 overlay, metric, the head-to-head table and every caveat. The CNCD
-sample-CD corpus (327 uncompressed real-106 WAVs, including a 70-file
-stepped-cutoff bass series) was also retrieved and remains unconsumed —
-the stepped series is close to a filter-characterisation dataset and is
-the natural next A/B target.
+sample-CD corpus (327 uncompressed real-106 WAVs) was also retrieved;
+its 70-file bass set was inspected file-by-file and is **not** the
+stepped-cutoff characterisation series its archive description suggests —
+fundamentals scatter across 29–99 Hz and spectral centroids across
+48–1425 Hz with no monotonic march, so it is a heterogeneous patch
+collection with undocumented settings. It remains the only lossless
+real-106 audio in hand (usable for noise-floor and qualitative checks),
+but a controlled filter characterisation still requires the queue's
+calibrated captures.
 
 ## Settled guardrails — do not reopen without contradictory primary evidence
 
