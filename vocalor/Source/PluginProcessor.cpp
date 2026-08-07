@@ -58,6 +58,7 @@ void addMissingParameterDefaults (
         state.appendChild (parameterState, nullptr);
     }
 }
+const juce::Identifier programProperty { "vocalorProgram" };
 } // namespace
 
 VocalorAudioProcessor::VocalorAudioProcessor()
@@ -175,6 +176,63 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalorAudioProcessor::creat
     addPercent (nasal, "Nasality", 0.0f);
 
     return { result.begin(), result.end() };
+}
+
+void VocalorAudioProcessor::setCurrentProgram (int index)
+{
+    using namespace vocalor::parameters;
+
+    const auto count = vocalor::factoryPresetCount();
+    if (count <= 0)
+        return;
+
+    // Re-asserting the program already in force is a no-op. A host restores a
+    // session by setting the stored program and then replacing the parameter
+    // state, in either order; without this guard the program write would
+    // overwrite whatever the player had edited away from that preset.
+    const auto bounded = juce::jlimit (0, count - 1, index);
+    if (bounded == currentProgram)
+        return;
+
+    currentProgram = bounded;
+    const auto& values = vocalor::factoryPreset (currentProgram).parameters;
+
+    const auto write = [this] (const char* id, float denormalised)
+    {
+        if (auto* parameter = parameters.getParameter (id))
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 (denormalised));
+    };
+
+    write (profile, values.profile == vocalor::VoiceProfile::Male ? 1.0f : 0.0f);
+    write (mode, values.mode == vocalor::PerformanceMode::Choir
+                     ? 1.0f : (values.mode == vocalor::PerformanceMode::Chord ? 2.0f : 0.0f));
+    write (vowel, values.vowel == vocalor::Vowel::Ooh
+                      ? 1.0f : (values.vowel == vocalor::Vowel::Uuh ? 2.0f : 0.0f));
+    write (chordQuality, values.chordQuality == vocalor::ChordQuality::Minor ? 1.0f : 0.0f);
+    write (choirSize, static_cast<float> (values.choirSize));
+    write (breath, values.breath);
+    write (resonance, values.resonance);
+    write (vibrato, values.vibrato);
+    write (humanize, values.humanize);
+    write (spread, values.spread);
+    write (tension, values.tension);
+    write (room, values.room);
+    // The engine takes a linear gain; the host parameter publishes decibels.
+    write (output, juce::Decibels::gainToDecibels (values.outputGain, -24.0f));
+    write (legato, values.legato ? 1.0f : 0.0f);
+    write (vowelX, values.vowelX);
+    write (vowelY, values.vowelY);
+    write (vowelMorph, values.vowelMorph);
+    write (formantShift, values.formantShift);
+    write (glide, values.glide);
+    write (roomSize, values.roomSize);
+    write (dynamics, values.dynamics);
+    write (intonation, values.intonation);
+    write (nasal, values.nasal);
+
+    // A program change can move every control at once, so the sounding voices
+    // are stopped rather than left to glide through the whole change.
+    requestPanic();
 }
 
 void VocalorAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -385,7 +443,11 @@ void VocalorAudioProcessor::dispatchUiMidiEvents() noexcept
 
 void VocalorAudioProcessor::getStateInformation (juce::MemoryBlock& destinationData)
 {
-    if (const auto xml = parameters.copyState().createXml())
+    auto state = parameters.copyState();
+    // Saved alongside the parameters so a restored session can tell the host
+    // which program it is on without the host having to re-apply it.
+    state.setProperty (programProperty, currentProgram, nullptr);
+    if (const auto xml = state.createXml())
         copyXmlToBinary (*xml, destinationData);
 }
 
@@ -395,6 +457,10 @@ void VocalorAudioProcessor::setStateInformation (const void* data, int sizeInByt
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
     {
         auto restoredState = juce::ValueTree::fromXml (*xml);
+        if (restoredState.hasProperty (programProperty))
+            currentProgram = juce::jlimit (
+                0, juce::jmax (0, vocalor::factoryPresetCount() - 1),
+                static_cast<int> (restoredState.getProperty (programProperty)));
         addMissingParameterDefaults (restoredState, parameters, getParameters());
         parameters.replaceState (restoredState);
         requestPanic();

@@ -107,6 +107,23 @@ the **Output** level. The status display reports active voices and sample rate,
 the Panic button mutes immediately, and the on-screen keyboard is also mapped to
 the computer keys shown above it.
 
+## Factory presets
+
+Vocalor ships twelve factory programs, published through the host's own program
+interface: Audio Unit factory presets in Logic, the program list in a VST3 host.
+Program 0 is the shipping default sound, so a host that opens on the first
+program opens on what the plug-in opens on. The rest cover the solo voice
+(intimate, pressed, legato, breath), the ensembles (bass choir, cathedral,
+closed-mouth hum, small voices, morph pad) and the chord modes (locked major
+chorale, airy minor pad).
+
+The table itself lives in
+[`Source/DSP/Presets.cpp`](Source/DSP/Presets.cpp), inside the JUCE-free core
+rather than in the processor, so the DSP test suite renders every one of them
+and checks that each is finite, audible, bounded, releases fully, and carries no
+value the engine would clamp away. See
+[`Presets/README.md`](Presets/README.md) for the full list.
+
 ## Performance expression
 
 Vocalor 1.1 responded to note-on, note-off, and CC 120/123 and discarded every
@@ -621,7 +638,8 @@ Source/PluginEditor.*    Keyboard and editor UI
 Tools/RenderDemos.cpp    Renders the committed demonstration WAVs
 Docs/                    Rendered demonstrations, screenshots, documentation
 Tests/                   JUCE-free DSP regression tests
-Presets/                 Preset guidance and future factory presets
+Source/DSP/Presets.cpp   Factory preset table, rendered by the test suite
+Presets/                 Factory preset documentation
 scripts/                 macOS build and release helpers
 ```
 

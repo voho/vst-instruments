@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include "DSP/Presets.h"
 #include "DSP/VoiceEngine.h"
 
 #include <array>
@@ -67,10 +68,16 @@ public:
     // setting keeps ringing after it, so the advertised tail has headroom.
     double getTailLengthSeconds() const override { return 6.0; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
+    // Factory programs. The table itself lives in the JUCE-free core so the DSP
+    // suite can render every one of them; all this layer does is write those
+    // engine parameters into the host parameters that publish them.
+    int getNumPrograms() override { return vocalor::factoryPresetCount(); }
+    int getCurrentProgram() override { return currentProgram; }
+    void setCurrentProgram (int index) override;
+    const juce::String getProgramName (int index) override
+    {
+        return juce::String (vocalor::factoryPresetName (index));
+    }
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock& destinationData) override;
@@ -150,6 +157,7 @@ private:
     std::atomic<bool> engineReady { false };
     std::atomic<int> activeVoiceCount { 0 };
     std::atomic<double> displaySampleRate { 0.0 };
+    int currentProgram = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VocalorAudioProcessor)
 };

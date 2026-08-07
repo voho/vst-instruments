@@ -276,6 +276,59 @@ void testParameterLayoutIsStable()
         expect (false, "legato is not an AudioParameterChoice");
 }
 
+/** The factory bank has to reach the host, and a program change has to be the
+    only thing that overwrites the parameters. */
+void testFactoryProgramsReachTheParameters()
+{
+    VocalorAudioProcessor processor;
+    using namespace vocalor::parameters;
+
+    const auto count = vocalor::factoryPresetCount();
+    expect (processor.getNumPrograms() == count,
+            "the processor does not publish the factory bank");
+    expect (processor.getCurrentProgram() == 0,
+            "the processor did not open on the first program");
+
+    for (int index = 0; index < count; ++index)
+        expect (processor.getProgramName (index)
+                    == juce::String (vocalor::factoryPresetName (index)),
+                "program " + std::to_string (index) + " reported the wrong name");
+
+    // Selecting a program writes its engine parameters into the host ones.
+    const int hum = [count]
+    {
+        for (int index = 0; index < count; ++index)
+            if (vocalor::factoryPreset (index).parameters.nasal > 0.5f)
+                return index;
+        return -1;
+    }();
+    expect (hum > 0, "the factory bank has no preset that opens the velum");
+
+    if (hum > 0)
+    {
+        processor.setCurrentProgram (hum);
+        expect (processor.getCurrentProgram() == hum,
+                "the processor did not adopt the selected program");
+        const auto& values = vocalor::factoryPreset (hum).parameters;
+        if (auto* parameter = processor.parameters.getParameter (nasal))
+            expect (nearly (parameter->convertFrom0to1 (parameter->getValue()),
+                            values.nasal, 0.01f),
+                    "selecting a program did not write its nasality");
+        if (auto* parameter = processor.parameters.getParameter (breath))
+            expect (nearly (parameter->convertFrom0to1 (parameter->getValue()),
+                            values.breath, 0.01f),
+                    "selecting a program did not write its breath");
+
+        // Re-asserting the program in force must leave an edit alone: this is
+        // the path a host takes when it restores a session.
+        setDenormalised (processor.parameters, breath, 0.11f);
+        processor.setCurrentProgram (hum);
+        if (auto* parameter = processor.parameters.getParameter (breath))
+            expect (nearly (parameter->convertFrom0to1 (parameter->getValue()), 0.11f, 0.01f),
+                    "re-asserting the current program overwrote an edited parameter");
+    }
+}
+
 /** The 1.2 MIDI performance messages have to reach the engine at all: the 1.1
     processor parsed note-on, note-off and CC 120/123 and silently discarded
     every other message, pitch bend included. */
@@ -671,6 +724,7 @@ int main()
     testMidiAllNotesOffKeepsRelease();
     testParameterLayoutIsStable();
     testPerformanceMidiReachesTheEngine();
+    testFactoryProgramsReachTheParameters();
     testVowelPadIsInaudibleAtZeroMorph();
     testNewParametersReachTheEngine();
     testLegatoKeepsASingleVoice();

@@ -38,10 +38,12 @@ include(CTest)
 
 set(VOCALOR_DSP_SOURCES
     Source/DSP/VoiceEngine.cpp
-    Source/DSP/VocalorMath.cpp)
+    Source/DSP/VocalorMath.cpp
+    Source/DSP/Presets.cpp)
 set(VOCALOR_DSP_HEADERS
     Source/DSP/VoiceEngine.h
-    Source/DSP/VocalorMath.h)
+    Source/DSP/VocalorMath.h
+    Source/DSP/Presets.h)
 
 add_library(VocalorDSP STATIC
     ${VOCALOR_DSP_SOURCES}

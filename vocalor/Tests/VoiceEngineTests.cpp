@@ -1,3 +1,4 @@
+#include "DSP/Presets.h"
 #include "DSP/VocalorMath.h"
 #include "DSP/VoiceEngine.h"
 
@@ -10,6 +11,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -1706,6 +1708,65 @@ void testSingerFormantAndLipZero()
            "Singer's Formant tension render exceeded amplitude guardrail");
 }
 
+/** Every factory preset has to be playable.
+
+    The table lives in the JUCE-free core precisely so this can be checked here:
+    a preset that renders silence, clips, or carries a value the engine clamps
+    away is a defect the suite finds rather than one a player does.
+*/
+void testFactoryPresets()
+{
+    constexpr auto sampleRate = 48000.0;
+    const auto count = vocalor::factoryPresetCount();
+    expect (count >= 8, "the factory bank is too small to open a session on");
+
+    std::set<std::string> names;
+    for (int index = 0; index < count; ++index)
+    {
+        const auto& preset = vocalor::factoryPreset (index);
+        const std::string name = preset.name != nullptr ? preset.name : "";
+        expect (! name.empty(), "factory preset " + std::to_string (index) + " has no name");
+        expect (names.insert (name).second, "two factory presets share the name " + name);
+
+        // Nothing may be silently clamped away: what the table says is what the
+        // engine gets.
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (preset.parameters);
+
+        const auto& wanted = preset.parameters;
+        expect (wanted.choirSize >= 2 && wanted.choirSize <= 12,
+                name + " asks for a singer count the engine cannot render exactly");
+        expect (wanted.formantShift >= -12.0f && wanted.formantShift <= 12.0f,
+                name + " asks for a formant shift outside the published range");
+        expect (wanted.outputGain > 0.0f && wanted.outputGain <= 2.0f,
+                name + " asks for an output gain outside the published range");
+        for (const float unit : { wanted.breath, wanted.resonance, wanted.vibrato,
+                                  wanted.humanize, wanted.spread, wanted.tension,
+                                  wanted.room, wanted.vowelX, wanted.vowelY,
+                                  wanted.vowelMorph, wanted.glide, wanted.roomSize,
+                                  wanted.dynamics, wanted.intonation, wanted.nasal })
+            expect (unit >= 0.0f && unit <= 1.0f,
+                    name + " carries a normalised value outside 0..1");
+
+        // A held note and a held triad, because chord and choir presets take
+        // different paths through the allocator.
+        engine.noteOn (57, 0.85f);
+        engine.noteOn (64, 0.85f);
+        const auto held = render (engine, static_cast<int> (sampleRate * 0.6));
+        expect (held.finite, name + " produced a NaN or an infinity");
+        expect (held.rms() > 1.0e-5, name + " rendered silence");
+        expect (held.peak < 4.0, name + " exceeded the amplitude guardrail");
+
+        engine.noteOff (57);
+        engine.noteOff (64);
+        const auto tail = render (engine, static_cast<int> (sampleRate * 4.0));
+        expect (tail.finite, name + " produced invalid audio during its release");
+        expect (engine.getActiveVoiceCount() == 0, name + " never finished releasing");
+    }
+}
+
 /** The singer's formant is a cluster, not a boost.
 
     The 1.1 engine raised F3 by 12 % and F4 by 6 % of Tension and left them
@@ -2504,6 +2565,7 @@ int main()
     testNasalBranch();
     testCoarticulationTiming();
     testSingersFormantCluster();
+    testFactoryPresets();
     testDenormalAndNaNSafety();
     testParameterSmoothingHasNoZipper();
     testDisplayStateTracksTheEngine();

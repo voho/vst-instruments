@@ -253,11 +253,15 @@ opens on something playable.
   total by a stated amount; at zero tension the formants must sit where they do
   today.
 
-- [ ] **8. Factory presets.** Put a named preset table in the JUCE-free core so
+- [x] **8. Factory presets.** Put a named preset table in the JUCE-free core so
   it is testable there, and expose it through the processor's program interface.
-  Closes gap 8. *Verified:* every preset must round-trip through
-  `EngineParameters`, and every preset must render finite, audible, bounded
-  audio on a held note.
+  Closes gap 8. *Verified:* every preset must carry values the engine does not clamp
+  away, must render finite, audible, bounded audio on a held note and a held
+  interval, and must release fully; the processor must publish the bank, write a
+  selected program into its host parameters, and treat a re-assertion of the
+  program already in force as a no-op, because that is the write a host makes
+  while restoring a session and it would otherwise overwrite the player's
+  edits.
 
 ## Deliberately not done
 
