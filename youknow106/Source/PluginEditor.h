@@ -27,6 +27,9 @@ public:
                                bool isHighlighted, bool isDown) override;
     void drawButtonText (juce::Graphics&, juce::TextButton&,
                          bool isHighlighted, bool isDown) override;
+    void drawComboBox (juce::Graphics&, int width, int height,
+                       bool isButtonDown, int buttonX, int buttonY,
+                       int buttonW, int buttonH, juce::ComboBox&) override;
     void drawLabel (juce::Graphics&, juce::Label&) override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
 };
