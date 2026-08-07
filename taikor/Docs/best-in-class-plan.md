@@ -146,7 +146,7 @@ that, and the one modelled competitor does not describe its model at all.
 Each step is a single commit. The DSP suite must be green before each one, and
 each lands with a test in `Tests/` that fails without it.
 
-- [ ] **1. Solve the head as a stiff membrane.** Add the bending term to the
+- [x] **1. Solve the head as a stiff membrane.** Add the bending term to the
   membrane's dispersion relation, `ω² = (T k² + D k⁴)/σ` with
   `D = E h³ / 12(1−ν²)`, the hide's thickness `h = σ/ρ` and its Young's modulus
   interpolated from 4.0 GPa (thin synthetic film) to 3.5 GPa (treated cowhide,

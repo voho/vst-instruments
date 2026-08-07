@@ -243,6 +243,13 @@ public:
         // Reporting only one of them described whichever mode happened to be
         // chosen rather than the drum.
         float tailSeconds { 1.2f };
+        // How stiff the head is against its own tension: the dimensionless B in
+        // f(lambda) = f_membrane(lambda) * sqrt((1 + B lambda^2)/(1 + B
+        // lambda_0^2)). Zero is an ideal membrane, where every modal ratio is a
+        // constant of the geometry; a thick hide on a small tight drum reaches
+        // the order of 10^-3, which stretches the top of the resolved bank by
+        // well over a semitone.
+        float headStiffnessParameter { 0.0f };
     };
 
     [[nodiscard]] DrumMeasurements measureDrum (int octaveOffset) const noexcept;
@@ -595,6 +602,13 @@ private:
         float resonantDensity { 1.2f };
         float waveSpeed { 70.0f };
         float resonantWaveSpeed { 70.0f };
+        // Bending stiffness of each head against its own tension, as the
+        // dimensionless B of stiffnessStretch(). A taiko head is a stretched
+        // plate rather than an ideal membrane, so its modal ratios are not
+        // constants of the geometry: they open out with the mode's order, and
+        // they open out further the smaller and thicker the head is.
+        float stiffnessBatter { 0.0f };
+        float stiffnessResonant { 0.0f };
         float headLossFactor { 0.012f };
         // The viscous half of the hide's loss, damping as omega squared where
         // headLossFactor damps as omega. See resolveDrumFor.
@@ -662,6 +676,21 @@ private:
     // strike is heard as a boom and an edge strike as a slap: modes with a
     // circumferential order move the same air in and out and barely radiate.
     [[nodiscard]] static float radiationEfficiency (int order, float ka) noexcept;
+    // What the head's own bending stiffness does to a mode. A membrane under
+    // tension T with flexural rigidity D obeys omega^2 = (T k^2 + D k^4)/sigma,
+    // so the stiff term climbs as the square of the mode's wavenumber and the
+    // modal ratios open out with order - the same mechanism that stretches a
+    // piano's partials, on a head that Ando measured at 3.5 GPa.
+    //
+    // Taken relative to the (0,1) mode rather than applied absolutely, because
+    // a drum is tuned by the pitch it sounds: a player brings the fundamental
+    // back to where it belongs with the ropes or the tacks, and what stiffness
+    // leaves behind afterwards is the spread above it, not a transposition.
+    // That also keeps an octave an octave, which an absolute shift would not:
+    // B falls as the tension rises and as the square of the radius, so the two
+    // halves of the Octave Body transform move it in opposite directions.
+    [[nodiscard]] static float stiffnessStretch (float besselZero,
+                                                 float stiffness) noexcept;
     // Loss into the mounting, which only the lowest modes suffer.
     [[nodiscard]] static float mountingLoss (const DrumState& drum,
                                              float frequency) noexcept;

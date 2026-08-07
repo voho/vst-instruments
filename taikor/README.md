@@ -113,10 +113,10 @@ a voicing offset.
 
 | Control | Range | Default | What it changes |
 | --- | --- | --- | --- |
-| Head Diameter | 15–180 cm | 95 cm | The membrane radius. Pitch moves as 1/a; the modal *ratios* are fixed by the Bessel zeros and do not move at all. The default is an ō-daiko, so the instrument opens on its heaviest voice rather than asking you to go and find it |
+| Head Diameter | 15–180 cm | 95 cm | The membrane radius. Pitch moves as 1/a, and the modal ratios open out as the drum gets smaller because the head's own stiffness stops being negligible. The default is an ō-daiko, so the instrument opens on its heaviest voice rather than asking you to go and find it |
 | Body Depth | 0–100 % | 50 % | Enclosed volume. A shallow body is a stiffer air spring, so it splits the two heads further apart |
-| Head Tension | 0–100 % | 55 % | 1.2–22 kN/m. Wave speed is √(T/σ) |
-| Head Material | 0–100 % | 75 % | Thin synthetic film → thick cowhide. Sets areal density *and* internal loss, because both come from the same hide |
+| Head Tension | 0–100 % | 55 % | 1.2–22 kN/m. Wave speed is √(T/σ), and the tension is also what the head's stiffness has to compete with, so a slack head is more inharmonic than a tight one |
+| Head Material | 0–100 % | 75 % | Thin synthetic film → thick cowhide. Sets areal density, internal loss *and* bending stiffness, because all three come from the same piece of material |
 | Shell Material | 0–100 % | 80 % | Light laminated ply → dense carved zelkova. Moves the body's ring modes, their Q, and how much the rim absorbs |
 | Resonant Head | 0–100 % | 50 % | Far head's tension relative to the batter head, 0.85×–1.15× |
 | Air Coupling | 0–100 % | 85 % | How strongly the enclosed air ties the two heads together |
@@ -161,9 +161,34 @@ safety limiter at the factory setting.
 A circular membrane of radius *a* under tension *T* with areal density *σ* has
 modes at *f(m,n) = c·λ(m,n) / 2πa*, where *c = √(T/σ)* and *λ(m,n)* is the *n*-th
 zero of the Bessel function *J(m)*. Taikor runs twenty such modes — four
-axisymmetric and sixteen with a circumferential order — and the ratios between
-them are fixed constants of the geometry, which is why size and tension move the
-whole drum together and only the air changes its shape.
+axisymmetric and sixteen with a circumferential order.
+
+A taiko head is not that membrane, though, and the difference is audible. It is
+chemically treated cowhide with a Young's modulus around 3.5 GPa, several
+tenths of a millimetre thick, held at a tension far above a drum-kit head's — a
+*stretched plate*, in the acoustics literature, rather than an ideal membrane.
+A plate resists bending as well as stretching, and bending adds a term in the
+fourth power of the wavenumber to *ω²*: *ω² = (T k² + D k⁴)/σ*, with the
+flexural rigidity *D = E h³ / 12(1 − ν²)*. So the ratios between the modes are
+not constants of the geometry. They open out with the mode's order, and they
+open out further the smaller the drum and the thicker its hide.
+
+That single term is most of what separates a shime-daiko's spectrum from an
+ō-daiko's. On the factory drum two octaves down, the top of the resolved bank
+sits about ten cents above where an ideal membrane would put it; at the
+reference, thirty; three octaves up, close to a hundred and fifty. Head Material
+moves it as hard again, because it is thickness as well as density and *D* goes
+as the cube of thickness: a thin synthetic film is an ideal membrane to within
+half a cent, and a thick hide stretches its top mode by well over a semitone.
+
+The stretch is taken relative to the *(0,1)* mode rather than applied
+absolutely, because a drum is tuned by the pitch it sounds. A player brings the
+fundamental back where it belongs with the ropes or the tacks, and what
+stiffness leaves behind afterwards is the spread above it. That is also what
+keeps an octave an octave: the stiffness parameter falls as the tension rises
+and as the square of the radius, so the two halves of the Octave Body transform
+move it in opposite directions and an absolute shift would put the keyboard out
+of tune with itself.
 
 No stroke lands on the geometric centre, because every mode with a
 circumferential order has *J(m)(0) = 0* and a strike at radius zero drives the

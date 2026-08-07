@@ -23,6 +23,24 @@ constexpr float soundSpeed = 343.0f;
 constexpr float minimumArealDensity = 0.30f;
 constexpr float maximumArealDensity = 1.60f;
 
+// The head as a material rather than as an areal density, which is what its
+// bending stiffness needs. Ando's measurements of nagado-daiko diaphragms put
+// chemically treated cow skin at about 3.5 GPa and conclude that a taiko head
+// has to be treated as a stretched plate - a stiff membrane - rather than as an
+// ideal one. A synthetic film is a little stiffer per unit volume and a great
+// deal denser, so the thickness that carries the same areal density is far
+// smaller; since the flexural rigidity goes as the cube of that thickness, the
+// two ends of Head Material are three hundred times apart in stiffness even
+// though their moduli are within fifteen per cent of each other.
+constexpr float filmModulus = 4.0e9f;    // biaxially oriented polyester
+constexpr float hideModulus = 3.5e9f;    // treated cow skin
+constexpr float filmDensity = 1390.0f;   // kg/m^3
+constexpr float hideDensity = 1000.0f;   // kg/m^3
+constexpr float headPoisson = 0.30f;
+// The (0,1) Bessel zero squared, which is the reference the stiffness stretch
+// below is taken against.
+constexpr float fundamentalZeroSquared = 5.7831859629467f;
+
 // Head tension in N/m. A tacked taiko head is under enormous tension compared
 // with a drum-kit head, which is why it sits so far above its own diameter.
 constexpr float minimumTension = 1200.0f;
@@ -391,6 +409,17 @@ double TaikoEngine::besselJ (int order, double x) noexcept
     }
 
     return sum;
+}
+
+float TaikoEngine::stiffnessStretch (float besselZero, float stiffness) noexcept
+{
+    if (! (stiffness > 0.0f))
+        return 1.0f;
+
+    const float squared = besselZero * besselZero;
+    const float numerator = 1.0f + stiffness * squared;
+    const float denominator = 1.0f + stiffness * fundamentalZeroSquared;
+    return std::sqrt (numerator / denominator);
 }
 
 // Loss into the shell, the hoops and the stand. Steeply low-pass in frequency:
@@ -854,6 +883,30 @@ TaikoEngine::DrumState TaikoEngine::resolveDrumFor (const EngineParameters& raw,
     drum.waveSpeed = std::sqrt (drum.tension / drum.batterDensity);
     drum.resonantWaveSpeed = std::sqrt (drum.resonantTension / drum.resonantDensity);
 
+    // The head's bending stiffness, which is what makes a taiko head a
+    // stretched plate rather than an ideal membrane. Head Material already sets
+    // the areal density; dividing by the material's own volumetric density
+    // recovers the thickness the hide actually has, and the flexural rigidity
+    // D = E h^3 / 12(1 - nu^2) follows. It is stored as the dimensionless
+    // D / (T a^2), because that is the only combination the mode frequencies
+    // depend on - and it is a comparison between the head's stiffness and its
+    // tension, which is exactly the ratio Ando's eigenvalue tables are indexed
+    // by.
+    //
+    // The far head is cut from the same hide and is a touch lighter, so it is
+    // thinner in the same proportion and its rigidity falls as the cube of it.
+    const float headDensity = lerp (filmDensity, hideDensity, applied.headMaterial);
+    const float headModulus = lerp (filmModulus, hideModulus, applied.headMaterial);
+    const float thickness = drum.batterDensity / headDensity;
+    const float rigidity = headModulus * thickness * thickness * thickness
+                         / (12.0f * (1.0f - headPoisson * headPoisson));
+    const float radiusSquared = drum.radius * drum.radius;
+    const float densityRatio = drum.resonantDensity / drum.batterDensity;
+
+    drum.stiffnessBatter = rigidity / (drum.tension * radiusSquared);
+    drum.stiffnessResonant = rigidity * densityRatio * densityRatio * densityRatio
+                           / (drum.resonantTension * radiusSquared);
+
     // Hysteretic loss in the head material. A thick hide loses more per cycle
     // than a thin film; the damping control scales what the material gives.
     //
@@ -1268,12 +1321,19 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
         const int order = entry.circumferentialOrder;
         const auto lambda = static_cast<float> (entry.besselZero);
 
-        // Ideal membrane modes: f = c * lambda / (2 pi a). The ratios are set
-        // by the Bessel zeros alone, so tension and size move the whole set
-        // together and only the air changes its shape.
-        const float idealBatter = drum.waveSpeed * lambda / (2.0f * piFloat * radius);
+        // Membrane modes: f = c * lambda / (2 pi a), opened out by the head's
+        // own bending stiffness. The Bessel zeros set the wavenumbers, and
+        // stiffness adds a term in the fourth power of the wavenumber to
+        // omega^2, so the ratios are no longer constants of the geometry: they
+        // spread with the mode's order, and they spread further the smaller and
+        // the thicker the head is. Taken relative to the (0,1) mode, so the
+        // pitch the drum is tuned to does not move and only the spread above it
+        // does.
+        const float idealBatter = drum.waveSpeed * lambda / (2.0f * piFloat * radius)
+                                * stiffnessStretch (lambda, drum.stiffnessBatter);
         const float idealResonant =
-            drum.resonantWaveSpeed * lambda / (2.0f * piFloat * radius);
+            drum.resonantWaveSpeed * lambda / (2.0f * piFloat * radius)
+            * stiffnessStretch (lambda, drum.stiffnessResonant);
 
         // Air hanging off the head as added mass. Modes with a high radial or
         // circumferential order shift less air per unit of displacement, so
@@ -2200,6 +2260,16 @@ bool TaikoEngine::triggerMidi (int midiNote, float velocity) noexcept
     return true;
 }
 
+// Every membrane mode is moved by the same factor, which is exact for an ideal
+// membrane and a first-order approximation once the head has bending stiffness
+// and a cavity behind it: neither the stiff term nor the air spring scales with
+// the head's tension, so a mode that owes part of its frequency to them should
+// move slightly less than the fundamental does. The residue is small over the
+// gestures that use this - the attack glide is under a tenth of a semitone of
+// tension and the wheel is two - and correcting it exactly would mean carrying
+// the tension, stiffness and cavity shares of every mode separately through a
+// path that already has to keep the retirement sort, the deadline and the fade
+// consistent with each other.
 void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
 {
     const auto rate = static_cast<float> (sampleRate_);
@@ -2873,6 +2943,12 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
     result.tensionNewtonsPerMetre = drum.tension;
     result.arealDensityKgPerSquareMetre = drum.batterDensity;
     result.waveSpeedMetresPerSecond = drum.waveSpeed;
+    result.headStiffnessParameter = drum.stiffnessBatter;
+    // No stiffness stretch on either of these: the stretch is taken relative to
+    // the (0,1) mode and this is the (0,1) mode, so it is unity by
+    // construction. That is the whole point of normalising it there - the pitch
+    // the drum is tuned to is a membrane frequency however stiff the head is,
+    // and only the modes above it move.
     result.idealFundamentalHz =
         drum.waveSpeed * lambda / (2.0f * piFloat * drum.radius);
 
@@ -2991,7 +3067,8 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
             // the batter head's own mode, air-loaded and damped.
             const auto order = static_cast<float> (radial.circumferentialOrder);
             const float ideal =
-                drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
+                drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
+                * stiffnessStretch (radialLambda, drum.stiffnessBatter);
             const float shape =
                 (2.4048f / radialLambda) / (1.0f + 0.6f * order);
             const float load = 1.0f / std::sqrt (
@@ -3018,9 +3095,11 @@ TaikoEngine::DrumMeasurements TaikoEngine::measure (const EngineParameters& para
         }
 
         const float radialBatter =
-            drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
+            drum.waveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
+            * stiffnessStretch (radialLambda, drum.stiffnessBatter);
         const float radialResonant =
-            drum.resonantWaveSpeed * radialLambda / (2.0f * piFloat * drum.radius);
+            drum.resonantWaveSpeed * radialLambda / (2.0f * piFloat * drum.radius)
+            * stiffnessStretch (radialLambda, drum.stiffnessResonant);
 
         // The air load falls off with the mode's own order exactly as it does
         // where the modes are built: a mode with nodal rings shifts far less

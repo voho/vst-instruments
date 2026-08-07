@@ -139,6 +139,25 @@ struct TaikoEngineTestAccess
         return result;
     }
 
+    // Every membrane mode of the voice just struck, in hertz and ascending.
+    // Read from the built bank rather than measured from the audio because the
+    // question these answer - where does the head put its modes relative to one
+    // another - is about a ratio between two partials that are forty decibels
+    // apart in level.
+    static std::vector<float> membraneFrequencies (const TaikoEngine& engine)
+    {
+        std::vector<float> result;
+        const auto& voice = engine.voices_[0];
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (mode.membrane)
+                result.push_back (mode.omega / (2.0f * 3.14159265358979f));
+        }
+        std::sort (result.begin(), result.end());
+        return result;
+    }
+
     // The continuum's band-pass corners, which is where a retune of the head
     // shows up: the region is too broad and too short-lived to see it in the
     // summed spectrum.
@@ -1206,6 +1225,114 @@ void testTheDrumSoundsLikeADrumAndNotLikeATone()
         expect (bank[0] < bank[1] * 3.0f,
                 "the lowest mode must not outlive the one above it so far that "
                 "the stroke ends as a sine");
+}
+
+// A taiko head is a stretched plate rather than an ideal membrane - treated cow
+// skin at about 3.5 GPa, held at a tension far above a drum-kit head's - so its
+// modal ratios are not constants of the geometry. They open out with the mode's
+// order, and they open out further the smaller and the thicker the head is,
+// which is most of what separates a shime-daiko's spectrum from an odaiko's.
+void testHeadStiffnessOpensTheModalRatios()
+{
+    const auto base = defaultParameters();
+
+    // Head Material is thickness as well as density, and the flexural rigidity
+    // goes as the cube of thickness, so the two ends of that control are two
+    // and a half orders of magnitude apart in stiffness rather than a few per
+    // cent. A thin synthetic film really is an ideal membrane.
+    auto film = base;
+    film.headMaterial = 0.0f;
+    auto hide = base;
+    hide.headMaterial = 1.0f;
+
+    const auto filmStiffness =
+        taikor::TaikoEngine::measure (film, 0).headStiffnessParameter;
+    const auto hideStiffness =
+        taikor::TaikoEngine::measure (hide, 0).headStiffnessParameter;
+
+    expect (filmStiffness > 0.0f && std::isfinite (filmStiffness),
+            "the head's stiffness must be a positive finite number");
+    expect (hideStiffness > filmStiffness * 100.0f,
+            "a thick hide must be at least two orders of magnitude stiffer than a "
+            "thin film against the same tension");
+
+    // The tuning may not move. The stretch is taken relative to the (0,1) mode
+    // precisely so that the pitch a player tunes the drum to stays a membrane
+    // frequency however stiff the head is; if it did not, an octave would stop
+    // being an octave, because the stiffness parameter falls with tension and
+    // with the square of the radius and the two halves of the Octave Body
+    // transform move it in opposite directions.
+    for (const float material : { 0.0f, 0.5f, 1.0f })
+        for (const int octave : { -2, 0, 3 })
+        {
+            auto tuned = base;
+            tuned.headMaterial = material;
+            const auto measured = taikor::TaikoEngine::measure (tuned, octave);
+            const auto membrane = measured.waveSpeedMetresPerSecond * 2.4048255577f
+                                / (2.0f * 3.14159265358979f * measured.radiusMetres);
+            expect (std::abs (measured.idealFundamentalHz - membrane)
+                        < membrane * 1.0e-4f,
+                    "the drum's tuning must stay an ideal membrane frequency however "
+                    "stiff the head is");
+        }
+
+    // And the claim that actually needs the physics: how far the top of the
+    // resolved bank sits above the drum's own fundamental has to depend on the
+    // head's stiffness against its tension.
+    //
+    // Head Tension is the control that isolates it. It moves the stiffness
+    // parameter as 1/T and leaves the air load - which depends only on the
+    // areal density and the radius - exactly where it was, so the ratio below
+    // can only move through the stiffness term. Measured against the reported
+    // ideal fundamental rather than against the lowest mode the bank built,
+    // because that one is the lower branch of the cavity pair and the air
+    // spring behind it does not scale with the head's tension at all.
+    const auto topModeRatio = [&] (float tension)
+    {
+        auto parameters = base;
+        parameters.tension = tension;
+
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.trigger (taikor::Articulation::Don, 0, 0.9f);
+
+        const auto modes = taikor::TaikoEngineTestAccess::membraneFrequencies (engine);
+        const auto measured = taikor::TaikoEngine::measure (parameters, 0);
+        expect (! modes.empty() && measured.idealFundamentalHz > 0.0f,
+                "the head must build a modal bank to measure");
+        return modes.empty() ? 0.0 : modes.back() / measured.idealFundamentalHz;
+    };
+
+    const auto slack = topModeRatio (0.2f);
+    const auto tight = topModeRatio (0.9f);
+
+    expect (slack > 0.0 && tight > 0.0, "the modal ratio measurement failed to run");
+    expect (slack > tight * 1.02,
+            "a slack head must spread its upper modes further above its fundamental "
+            "than a tight one, because stiffness matters more the less tension there "
+            "is to compete with it");
+
+    // Nothing reachable from the controls may make the head's stiffness
+    // meaningless. The corners are a tiny thick head at no tension and a huge
+    // thin one at full tension, which is where the ratio D/(T a^2) is largest
+    // and smallest.
+    for (const float diameter : { 0.15f, 1.80f })
+        for (const float material : { 0.0f, 1.0f })
+            for (const float tension : { 0.0f, 1.0f })
+                for (const int octave : { taikor::lowestOctaveOffset,
+                                          taikor::highestOctaveOffset })
+                {
+                    auto hostile = base;
+                    hostile.headDiameter = diameter;
+                    hostile.headMaterial = material;
+                    hostile.tension = tension;
+                    const auto stiffness = taikor::TaikoEngine::measure (hostile, octave)
+                                               .headStiffnessParameter;
+                    expect (std::isfinite (stiffness) && stiffness >= 0.0f,
+                            "the head's stiffness must stay finite everywhere the "
+                            "controls can reach");
+                }
 }
 
 // The head's continuum belongs to the head, so everything that happens to the
@@ -2775,6 +2902,7 @@ int main()
     testTailsTerminateAndVoicesRetire();
     testVoiceStealingStaysBounded();
     testTheDrumSoundsLikeADrumAndNotLikeATone();
+    testHeadStiffnessOpensTheModalRatios();
     testTheContinuumFollowsTheHead();
     testEveryParameterSurvivesTheCache();
     testRadiationEfficiencyStaysFinite();
