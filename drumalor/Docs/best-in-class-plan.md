@@ -259,6 +259,34 @@ regression suite green.
   needs its resonant peak normalised instead, which is a factor of several
   hundred at these decay times and was the difference between a bed and a howl.
 
+## Where that leaves it
+
+Five of the six planned steps landed and one was withdrawn after being built and
+measured. Against the gap list above: gaps 2, 3, 5, 6 and 7 are closed, gap 1 is
+the withdrawn step, and gap 4 falls with it — Humanise still moves parameters
+rather than the strike, and the measurement in step 1 is the reason.
+
+What that buys against the field. The hi-hat is a pedal rather than two notes,
+which is the single most-cited difference between a top-tier drum instrument and
+the rest, and it is a continuous plate model rather than a crossfade between two
+recordings. The snare has the three articulations a drummer plays, on the notes
+an electronic kit sends, derived from strike position and contact time rather
+than from three sample sets. The kit is coupled: a kick buzzes the snare wires
+through a lift-off gate, and the toms answer near their own notes. The membranes
+bend under a hard strike and settle as they ring, following energy rather than a
+fixed envelope. And a re-struck head is one head with two impulses in it rather
+than two drums, so flams and press rolls behave.
+
+What is still missing, honestly. There is no room or overhead path, which is a
+real difference from every commercial competitor and the largest remaining one;
+a synthesised early-reflection network derived from the kit's own pan geometry
+is defensible under the no-assets rule and is the obvious next pass. There is no
+velocity-curve control. Strike position remains a constant per drum outside the
+snare's articulations, and making it worth exposing would mean re-voicing the
+head bank's spectral tilt and radiation weighting so its upper modes carry
+enough energy for the position to matter — a change that can only be judged by
+ear, and therefore one for a listening session rather than a contract.
+
 ## Claims boundary
 
 These are behavioural models with named mechanisms, not calibrated captures.
