@@ -477,6 +477,16 @@ void DrumEngine::Resonator::strike (float amplitude) noexcept
     y2 -= amplitude * strikeGain;
 }
 
+void DrumEngine::Resonator::setTension (float relativeFrequencyChange) noexcept
+{
+    // The clamp is the pole's own geometry: a1 is 2 r cos(theta) for some
+    // angle, so it can never leave [-2r, 2r] whatever the linearisation says at
+    // the top of the band. Staying inside it is what keeps the mode a pair of
+    // conjugate poles at radius r rather than two real ones.
+    a1 = std::clamp (nominalA1 + tensionSlope * relativeFrequencyChange,
+                     -poleDiameter, poleDiameter);
+}
+
 void DrumEngine::Resonator::clear() noexcept
 {
     y1 = y2 = 0.0f;
@@ -1369,6 +1379,9 @@ void DrumEngine::configureResonator (Resonator& resonator, float frequency,
     const float radius = coefficientForTime (decaySeconds, static_cast<float> (sampleRate_));
     resonator.a1 = 2.0f * radius * std::cos (omega);
     resonator.a2 = -radius * radius;
+    resonator.nominalA1 = resonator.a1;
+    resonator.tensionSlope = -2.0f * radius * omega * std::sin (omega);
+    resonator.poleDiameter = 2.0f * radius;
 
     // A two-pole resonator's impulse residue is inputGain / sin (omega).
     // Preserve the existing 48 kHz residue while keeping that ratio constant
@@ -1795,6 +1808,11 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                                                      static_cast<float> (sampleRate_));
     voice.transientMultiplier = coefficientForTime (0.008f, static_cast<float> (sampleRate_));
     voice.pitchEnvelopeMultiplier = coefficientForTime (0.030f, static_cast<float> (sampleRate_));
+    // Four milliseconds is a couple of periods of the lowest thing a drum head
+    // carries, which is what "short-time average" has to mean for an energy
+    // estimate that is not allowed to follow the waveform itself.
+    voice.tensionSmoothing = 1.0f - std::exp (
+        -1.0f / std::max (1.0f, 0.004f * static_cast<float> (sampleRate_)));
     // Quiet voices retire from their measured output level. This is the hard
     // host-facing ceiling; a forced fade begins shortly before it.
     voice.maximumSamples = maximumVoiceSamples_;
@@ -1901,6 +1919,10 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                            voice.decaySeconds * 1.08f,
                            0.30f + 0.28f * velocity,
                            { 8.0f, 0.015f, 1.5e-6f, 220.0f });
+            // A bass drum head is wide, heavy and slack, but the beater only
+            // ever displaces it by a small fraction of its own radius, so its
+            // tension swing is the smallest of the struck drums.
+            voice.tensionDepth = 0.060f;
 
             // The contact does not only push the head: felt against plastic is
             // a rough, sliding interface, and it rattles the surface far faster
@@ -1972,6 +1994,10 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                            head, voice.decaySeconds * 0.62f,
                            0.38f + 0.34f * voice.characterB,
                            { 16.0f, 0.030f, 3.0e-6f, 300.0f });
+            // A batter head tensioned hard enough to answer a stick has little
+            // room left to stretch, which is why a snare's note barely moves
+            // where a tom's audibly does.
+            voice.tensionDepth = 0.080f;
             configureBandpass (voice.filterA,
                                (1250.0f + 4800.0f * voice.characterB)
                                    * std::pow (voice.pitchRatio, 0.30f) * voice.velocityTimbre,
@@ -2178,6 +2204,10 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                            voice.decaySeconds,
                            (0.34f + 0.30f * voice.characterB) * voice.velocityTimbre,
                            { 9.0f, 0.020f, 2.0e-6f, 260.0f });
+            // The tom is where this is loudest, and Skin is the reason: a head
+            // carrying more air is a slacker head, and a slacker head stretches
+            // further for the same blow.
+            voice.tensionDepth = 0.100f + 0.140f * voice.characterB;
 
             const float tomCorner = std::min (
                 { 3400.0f, 2.2f / std::max (0.0002f, voice.contactSeconds),
@@ -2414,6 +2444,50 @@ float DrumEngine::advanceContact (Voice& voice) noexcept
     return 0.5f * (1.0f - cosine);
 }
 
+void DrumEngine::advanceModalTension (Voice& voice, float bankOutput) noexcept
+{
+    if (voice.tensionDepth <= 0.0f)
+        return;
+
+    // A membrane's restoring force is its tension, and a head that has been
+    // pushed out of its plane is a head that has been stretched, so the whole
+    // bank is sharp while the strike energy is still in it and settles back as
+    // the drum rings out. That is the pitch drop a struck tom has and a
+    // pitch-enveloped oscillator only imitates: it is not a fixed sweep from a
+    // fixed starting note, it follows how hard the drum was actually hit, so a
+    // ghost stroke barely bends at all and an accent bends audibly.
+    //
+    // Avanzini and Marogna's result is that the short-time average of the
+    // tension rise is proportional to the system's energy, which is what this
+    // leaky mean square estimates. It is why the model costs one multiply-add
+    // per sample instead of a nonlinear solve. The bank's internal amplitude is
+    // deliberately almost velocity-independent - the strike is normalised and
+    // the VCA is applied after the voice - so the physical displacement has to
+    // be recovered by scaling with the voice's own velocity here, or a ghost
+    // note would bend exactly as far as an accent.
+    const float displacement = voice.velocity * bankOutput;
+    voice.modalEnergy = flushDenormal (
+        voice.modalEnergy
+        + voice.tensionSmoothing * (displacement * displacement - voice.modalEnergy));
+    // Six per cent is about a semitone, and it is a ceiling rather than an
+    // operating point: a real head that stretched further than that would be
+    // being played with a hammer. It also keeps the linearised coefficient
+    // update well inside the region where it is accurate.
+    const float tension = std::min (0.060f, voice.tensionDepth * voice.modalEnergy);
+
+    // The coefficients are rewritten every sixteenth sample. The estimate moves
+    // on the scale of the strike envelope - tens of milliseconds - so a third of
+    // a millisecond of staleness is inaudible, and it keeps the whole model at a
+    // fraction of the bank's own per-sample cost. The interval is counted in the
+    // voice's own age, so it falls on the same samples at every host block size.
+    if ((voice.ageSamples & 15u) != 0u
+        || std::abs (tension - voice.modalTension) < 1.0e-5f)
+        return;
+    voice.modalTension = tension;
+    for (int mode = 0; mode < voice.modeCount; ++mode)
+        voice.resonators[static_cast<std::size_t> (mode)].setTension (tension);
+}
+
 float DrumEngine::renderKick (Voice& voice) noexcept
 {
     // Stable time-varying energy-state resonator. Unlike directly changing a
@@ -2510,6 +2584,7 @@ float DrumEngine::renderKick (Voice& voice) noexcept
         }
         for (int mode = 0; mode < voice.modeCount; ++mode)
             head += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
+        advanceModalTension (voice, head);
     }
 
     const float skin = voice.filterB.tick (
@@ -2544,6 +2619,7 @@ float DrumEngine::renderSnare (Voice& voice) noexcept
         }
         for (int mode = 0; mode < voice.modeCount; ++mode)
             headModes += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
+        advanceModalTension (voice, headModes);
     }
 
     // Snare wires are not a linear noise envelope: they only leave the resonant
@@ -2763,6 +2839,7 @@ float DrumEngine::renderTom (Voice& voice) noexcept
         }
         for (int mode = 0; mode < voice.modeCount; ++mode)
             membrane += voice.resonators[static_cast<std::size_t> (mode)].tick (0.0f);
+        advanceModalTension (voice, membrane);
     }
 
     return 0.98f * ((0.90f * fundamental + (0.06f + 0.19f * voice.characterB) * shell)

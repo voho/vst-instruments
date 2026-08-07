@@ -152,8 +152,21 @@ private:
         float a2 { 0.0f };
         float y1 { 0.0f };
         float y2 { 0.0f };
+        // What a1 is when the head is at rest, how far it moves per unit of
+        // relative frequency change, and the 2r it can never exceed.
+        //
+        // a1 = 2 r cos(omega (1 + delta)) is, to first order in delta,
+        // nominalA1 - 2 r omega sin(omega) delta. A drum head's tension change
+        // is a few per cent, where that linearisation is good to well under a
+        // cent, and it costs one multiply-add instead of a cosine. Only a1
+        // moves: a2 is -r^2 and is left alone, so a mode's decay time cannot
+        // drift with its amplitude the way it would if the pole were retuned.
+        float nominalA1 { 0.0f };
+        float tensionSlope { 0.0f };
+        float poleDiameter { 0.0f };
 
         [[nodiscard]] float tick (float input) noexcept;
+        void setTension (float relativeFrequencyChange) noexcept;
         // Set a mode in motion rather than pushing a sample through it. A
         // struck mode starts at rest and answers A r^n sin(n omega): zero at the
         // instant of contact, rising to A a quarter period later. Driving the
@@ -245,6 +258,14 @@ private:
         float bandLimitedNoiseCurrent { 0.0f };
         float bandLimitedNoiseNext { 0.0f };
         float bandLimitedNoisePhase { 0.0f };
+        // Tension modulation of the head bank. A displaced membrane is a
+        // stretched one, so every mode sharpens while the strike energy is
+        // still in the head and settles as it rings out. Zero depth on every
+        // voice whose resonators are not a membrane.
+        float modalEnergy { 0.0f };
+        float modalTension { 0.0f };
+        float tensionDepth { 0.0f };
+        float tensionSmoothing { 1.0f };
         float cymbalClockPhase { 1.0f };
         float cymbalPcmValue { 0.0f };
         float cymbalPcmReconstructed { 0.0f };
@@ -362,6 +383,7 @@ private:
     void resetBusStage() noexcept;
 
     [[nodiscard]] float advanceContact (Voice& voice) noexcept;
+    void advanceModalTension (Voice& voice, float bankOutput) noexcept;
     [[nodiscard]] float renderVoice (Voice& voice) noexcept;
     [[nodiscard]] float renderKick (Voice& voice) noexcept;
     [[nodiscard]] float renderSnare (Voice& voice) noexcept;

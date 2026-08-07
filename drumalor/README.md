@@ -199,6 +199,39 @@ energy hundreds of times faster than a quadrupole. On a drum, the loudest thing
 and the longest thing are opposite questions, and the answer to both is the
 multipole order. A bank whose modes all decay together is a bell.
 
+### A struck head is a stretched head
+
+A membrane's restoring force is its tension, so a head that has been pushed out
+of its plane is a head under more tension than it had at rest, and every mode in
+the bank is sharp while the strike energy is still in it. As the drum rings out
+the tension relaxes and the pitch settles. That is the drop a real tom has, and
+it is not the same thing as a pitch envelope: an envelope always starts from the
+same note and always takes the same time, while a tension bend follows how hard
+the drum was actually hit — a ghost stroke barely moves at all and an accent
+bends audibly.
+
+Avanzini and Marogna's result is that the short-time average of that tension
+rise is approximately proportional to the system's *energy*, which is a quantity
+a modal engine can afford: the whole model is a leaky mean square of the bank's
+own output, scaled by the voice's velocity because the bank's internal amplitude
+is deliberately normalised. It moves each mode by rewriting `a1` around its
+resting value — `2r·cos(ω(1+δ))` is `nominalA1 − 2rω·sin(ω)·δ` to first order,
+which is exact to well under a cent across the six per cent of bend the model
+allows — and never touches `a2`. Since `a2` is `−r²`, the pole radius, and
+therefore the mode's decay time, cannot drift with its amplitude. The
+coefficients are rewritten every sixteenth sample, counted in the voice's own
+age so the update lands on the same samples at every host block size.
+
+The depth follows the drum. A bass drum head is wide and slack but a beater only
+ever displaces it by a small fraction of its radius; a snare batter tensioned
+hard enough to answer a stick has almost no room left to stretch; a tom has the
+most, and **Skin** is the reason — a head carrying more air is a slacker head,
+and a slacker head stretches further for the same blow. Measured at 48 kHz, a
+full-velocity strike's dominant head partial in the first 35 ms sits 96, 30, 134
+and 250 cents above the same partial at a ghost stroke for the Kick and the three
+Toms; on the engine before this model the same four numbers were −73, −69, +15
+and +108 cents, none of which was tension.
+
 ### There is a beater, and there is a stick
 
 Contact time follows Hertz: it shortens with impact speed, and with how hard the
@@ -457,6 +490,10 @@ self-contained real-time instrument:
   to reduced aliasing.
 - Pines' [2025 diode-VCA model](https://dafx25.dii.univpm.it/wp-content/uploads/2025/07/DAFx25_paper_44.pdf)
   motivates explicit fixed nonlinearities with variable operating points.
+- Avanzini and Marogna's [energy-estimation approach to tension modulation](https://pubmed.ncbi.nlm.nih.gov/22280712/)
+  motivates driving the membrane banks' pitch bend from a running estimate of
+  the system's energy rather than from a solved nonlinear membrane, which is
+  what makes it affordable inside a thirteen-voice kit.
 - Werner, Abel, and Smith's [physically informed bass-drum analysis](https://dafx.de/paper-archive/2014/dafx14_kurt_james_werner_a_physically_informed%2C_ci.pdf)
   and Germain's [time-varying numerical study](https://www.dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_43.pdf)
   motivate charged state, resonant feedback, changing pitch/loss, and stable
@@ -582,7 +619,13 @@ released gain reduction, and block-partition invariance. Metering is checked for
 attack, release, stereo placement and reset. Membrane contracts require audible
 inharmonic head content at the strike that decays faster than the body, a Skin
 control that actually moves the air loading, a level-dependent snare wire
-rattle, and darker soft hits on all ten velocity-timbred voices. A dedicated
+rattle, and darker soft hits on all ten velocity-timbred voices. A
+tension-modulation contract tracks the dominant head partial of the Kick and all
+three Toms and requires a full-velocity strike to ring sharper than a ghost
+stroke while the strike energy is still in the head, requires the two to settle
+at the same pitch once it has gone, and requires the tail to keep its decay
+range at both ends of Skin - which is what proves the model moves only `a1` and
+leaves the pole radius, and therefore the decay time, alone. A dedicated
 efficiency contract proves that a metallic bank frozen behind an unrelated drum
 wakes into exactly the same state as one frozen during silence, and measures
 that adding a hi-hat costs meaningfully more than the same kick alone, which is

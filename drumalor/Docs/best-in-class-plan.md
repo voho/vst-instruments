@@ -176,14 +176,18 @@ regression suite green.
   large enough to matter on its own: a rimshot lands at the rim, and that is
   step 3.
 
-- [ ] **2. Tension modulation on the whole membrane bank.** Carry an energy
+- [x] **2. Tension modulation on the whole membrane bank.** Carry an energy
   estimate for each head bank and detune every mode by a bounded, energy
   proportional amount, following Avanzini and Marogna. Implemented as a
   first-order update of each resonator's `a1` around its nominal value, which
   leaves the pole radius, and therefore the decay time, exactly untouched.
-  *Closes gap 5.* Verified by: the dominant partial in a band above the Kick's
-  body glides downward during the note, and the size of that glide grows with
-  velocity - a difference that is exactly zero on the engine as it stands.
+  *Closes gap 5.* Landed. Verified by a contract that tracks the dominant head
+  partial of the Kick and all three Toms: at full velocity it sits 96, 30, 134
+  and 250 cents above the same partial at a ghost stroke, where the engine
+  immediately before this model measured -73, -69, +15 and +108 cents, none of
+  which was tension. The toms are additionally required to settle at the same
+  pitch once the energy has gone, and to hold their decay range at both ends of
+  Skin, which is what proves only `a1` moves.
 
 - [ ] **3. Snare rimshot and cross-stick.** Add articulations to the trigger
   path and map them to the standard notes: 38 head, 40 rimshot, 37 cross-stick.

@@ -307,6 +307,47 @@ double bandPowerInRange (const std::vector<float>& samples,
     return rms * rms;
 }
 
+// The frequency of whatever dominates a band, from interpolated positive-going
+// zero crossings of the band-passed signal. The band-pass is applied twice so
+// neighbouring partials are actually excluded rather than merely tilted, and the
+// answer is the median of the periods rather than their mean, so one irregular
+// crossing near the noise floor cannot move it. Sub-sample crossing positions
+// make this far finer than the frequency resolution of a window this short.
+double dominantFrequencyInBand (const std::vector<float>& samples, double sampleRate,
+                                double lowFrequency, double highFrequency,
+                                double beginSeconds, double endSeconds)
+{
+    auto filtered = filterForAnalysis (samples, sampleRate, lowFrequency, highFrequency);
+    filtered = filterForAnalysis (filtered, sampleRate, lowFrequency, highFrequency);
+    const std::size_t begin = std::min (
+        filtered.size(), static_cast<std::size_t> (std::ceil (beginSeconds * sampleRate)));
+    const std::size_t end = std::min (
+        filtered.size(), static_cast<std::size_t> (std::ceil (endSeconds * sampleRate)));
+
+    std::vector<double> crossings;
+    for (std::size_t sample = begin + 1u; sample < end; ++sample)
+    {
+        const double before = filtered[sample - 1u];
+        const double after = filtered[sample];
+        if (before <= 0.0 && after > 0.0)
+        {
+            const double denominator = after - before;
+            crossings.push_back (static_cast<double> (sample - 1u)
+                                 + (denominator == 0.0 ? 0.0 : -before / denominator));
+        }
+    }
+    if (crossings.size() < 3u)
+        return 0.0;
+
+    std::vector<double> periods;
+    periods.reserve (crossings.size() - 1u);
+    for (std::size_t index = 1; index < crossings.size(); ++index)
+        periods.push_back (crossings[index] - crossings[index - 1u]);
+    std::sort (periods.begin(), periods.end());
+    const double median = periods[periods.size() / 2u];
+    return median > 0.0 ? sampleRate / median : 0.0;
+}
+
 double maximumNormalizedAutocorrelation (const std::vector<float>& samples,
                                          double sampleRate,
                                          double beginSeconds,
@@ -2504,6 +2545,106 @@ void testMembraneAndVelocityTimbre()
     }
 }
 
+void testMembraneTensionModulation()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // A struck head is a stretched head, so its whole modal bank is sharp while
+    // the strike energy is still in it and settles as the drum rings out. The
+    // signature is that the amount of sharpening follows how hard the drum was
+    // hit: this measures the frequency of whatever dominates each drum's head
+    // region during the first 35 ms at full velocity and at a ghost stroke, and
+    // requires the loud one to be the sharper.
+    //
+    // The floors are per instrument because velocity already moves the early
+    // spectrum for a reason that is not tension - a harder strike has a shorter
+    // Hertzian contact and therefore reaches further up the series, which moves
+    // which partial dominates the window. Measured on the engine immediately
+    // before this model was added, the same four numbers were -73, -69, +15 and
+    // +108 cents; with it they are +96, +30, +134 and +250.
+    struct TensionProbe
+    {
+        drumalor::Instrument instrument;
+        double lowFrequency;
+        double highFrequency;
+        double sharpeningFloorCents;
+    };
+    const std::array tensionProbes {
+        TensionProbe { drumalor::Instrument::Kick, 130.0, 280.0, 40.0 },
+        TensionProbe { drumalor::Instrument::LowTom, 200.0, 400.0, 15.0 },
+        TensionProbe { drumalor::Instrument::MidTom, 300.0, 600.0, 80.0 },
+        TensionProbe { drumalor::Instrument::HighTom, 420.0, 850.0, 190.0 }
+    };
+
+    const auto cents = [] (double first, double second)
+    {
+        return (first <= 0.0 || second <= 0.0) ? 0.0 : 1200.0 * std::log2 (first / second);
+    };
+
+    for (const auto& probe : tensionProbes)
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (probe.instrument));
+        auto values = drumalor::getInstrumentMetadata (probe.instrument).defaultParameters;
+        // Punch at zero leaves the smallest pitch sweep the voice can have, so
+        // what is left in the window is the head rather than the body's own
+        // envelope; a long decay keeps the bank measurable into the tail.
+        values.characterA = 0.0f;
+        values.decay = 0.85f;
+        const auto hard = renderMonoHit (sampleRate, probe.instrument, values, 0.60, 1.0f);
+        const auto soft = renderMonoHit (sampleRate, probe.instrument, values, 0.60, 0.12f);
+        expect (std::all_of (hard.begin(), hard.end(),
+                             [] (float value) { return std::isfinite (value); })
+                    && peakInRange (hard, 0, hard.size()) <= 1.001,
+                label + " tension-modulated render was not finite and bounded");
+
+        const double hardEarly = dominantFrequencyInBand (
+            hard, sampleRate, probe.lowFrequency, probe.highFrequency, 0.004, 0.035);
+        const double softEarly = dominantFrequencyInBand (
+            soft, sampleRate, probe.lowFrequency, probe.highFrequency, 0.004, 0.035);
+        const double sharpening = cents (hardEarly, softEarly);
+        expect (sharpening > probe.sharpeningFloorCents,
+                label + " does not sharpen under a hard strike (" + std::to_string (sharpening)
+                    + " cents, floor " + std::to_string (probe.sharpeningFloorCents) + ")");
+
+        // And it is the amplitude that did it, not a detune: once the energy is
+        // gone the loud and the quiet strike ring at the same pitch again. The
+        // Kick is excluded because a ghost stroke leaves its head band entirely
+        // and the estimator then reads its body instead.
+        if (probe.instrument == drumalor::Instrument::Kick)
+            continue;
+        const double hardLate = dominantFrequencyInBand (
+            hard, sampleRate, probe.lowFrequency, probe.highFrequency, 0.150, 0.400);
+        const double softLate = dominantFrequencyInBand (
+            soft, sampleRate, probe.lowFrequency, probe.highFrequency, 0.150, 0.400);
+        expect (std::abs (cents (hardLate, softLate)) < 120.0,
+                label + " settled at different pitches for different strengths ("
+                    + std::to_string (cents (hardLate, softLate)) + " cents)");
+    }
+
+    // The pole radius is deliberately untouched by the model - only a1 moves -
+    // so a bank that is being detuned still decays at exactly the rate its Decay
+    // setting asks for. A tom at either end of the Skin control, which is what
+    // sets its tension depth, must therefore keep its tail inside the same
+    // range rather than being damped or excited by the modulation.
+    for (const float skin : { 0.0f, 1.0f })
+    {
+        auto values = drumalor::getInstrumentMetadata (
+            drumalor::Instrument::MidTom).defaultParameters;
+        values.characterB = skin;
+        const auto samples = renderMonoHit (
+            sampleRate, drumalor::Instrument::MidTom, values, 0.60, 1.0f);
+        const double early = rmsInRange (samples, static_cast<std::size_t> (0.02 * sampleRate),
+                                         static_cast<std::size_t> (0.08 * sampleRate));
+        const double late = rmsInRange (samples, static_cast<std::size_t> (0.30 * sampleRate),
+                                        static_cast<std::size_t> (0.40 * sampleRate));
+        const double decayDecibels = 20.0 * std::log10 (
+            std::max (1.0e-12, late) / std::max (1.0e-12, early));
+        expect (decayDecibels < -6.0 && decayDecibels > -70.0,
+                "Mid Tom tail left its expected decay range at Skin "
+                    + std::to_string (skin) + " (" + std::to_string (decayDecibels) + " dB)");
+    }
+}
+
 void testUiPresentationMath()
 {
     using namespace drumalor::ui;
@@ -2862,6 +3003,7 @@ int main()
     testBusAutomationIsClickFree();
     testMetering();
     testMembraneAndVelocityTimbre();
+    testMembraneTensionModulation();
     testUiPresentationMath();
     testIdleMetallicCostAndDenormalSafety();
     testInvalidValuesAndStressPerformance();
