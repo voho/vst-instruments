@@ -14,8 +14,9 @@ falls out of the same solve.
 
 > **Listen first.** Twenty-five [rendered demonstrations](Docs/audio/README.md)
 > cover the four strokes, the four drums, the whole sixteen-note grid and every
-> physical control swept across its range. They are rendered by the shipping
-> engine, so they cannot drift from what the plug-in does.
+> physical control swept across its range. They are the engine's own output
+> rather than a recording of it, and the renderer rewrites their level table as
+> it goes, so the manifest describes the audio beside it.
 
 The project builds three products from one JUCE codebase:
 
@@ -115,7 +116,10 @@ These are not four presets. Each one is a strike position, a contact stiffness
 and a mute state fed into the same model. A Ka is bright because striking the
 head at 0.91 of its radius drives the modes that have a circumferential order
 and barely moves the axisymmetric ones — which is exactly why it is bright on a
-real taiko.
+real taiko. On one axis they are presets, and it is worth naming: a stroke's own
+loudness is a trim applied after the contact has been solved, so it moves the
+level without moving the shorter, brighter contact that level would have come
+with.
 
 There were eight. **Su** was a light Don, and velocity already covers it —
 33 dB of it at full Velocity Depth. **Katsu** (bachi on the bare shell),
@@ -139,8 +143,10 @@ that; it is not a limitation a model has any reason to inherit.
 
 **MIDI CC1** lays a hand on the head. It damps whatever is still ringing, and
 it goes on damping while it is held — so a stroke played with the hand down is
-a muted stroke, exactly as it would be on the real drum. Release the wheel and
-the head is open again. **The pitch wheel** presses the head, which raises its
+a muted stroke. Release the wheel and the head is open again. It shortens the
+drum without darkening it, which is not the whole of what a real hand does; that
+limit is measured below under what is not modelled.
+**The pitch wheel** presses the head, which raises its
 tension and bends the drum sharp; a stroke that is already ringing bends with
 it rather than waiting for the next one.
 
@@ -304,9 +310,11 @@ Where the column passes its own quarter-wave the stiffness reaches zero and the
 two heads stop being tied together at all. Above that the air is mass-like
 rather than stiff, which is a real thing this model has nowhere to put, so the
 answer there is the one an open body already gets: one axisymmetric mode,
-reported twice. It takes a body shorter than a quarter of its head's own
-wavelength to reach — a 20 cm shell tuned to several kilohertz — so no drum
-with a taiko's proportions is near it, but the controls will build one that is.
+reported twice. It takes a body longer than half its head's own wavelength to
+reach, which is the same thing as the half column passing its quarter-wave — an
+8 cm body under a head at three and a half kilohertz, whose half wavelength is
+4.9 cm — so no drum with a taiko's proportions is near it, but the controls will
+build one that is.
 
 Because the breathing mode is the one that radiates, it is also the one that
 empties first — on the default drum it is gone in about half a second while the
@@ -370,13 +378,14 @@ What sets its weight is the head's own modal receptance — the velocity a unit
 force gets out of the drum — observed through the same microphone factor the
 resolved modes are observed through. That is a property of the drum and of
 nothing else, so the region sits at the same level whatever clock the host is
-running: across 44.1, 48, 96 and 192 kHz the 4–10 kHz band of a Don holds to
-within a decibel. Weighed instead against a resonator's per-sample integration
-gain, which carries a *1/rate* because a resonator accumulates a force over a
-sample period and a variance-normalised noise band accumulates nothing, the
-whole region lost six decibels for every doubling of the host's clock — eight
-decibels of it between 48 and 192 kHz — and a session moved from 48 kHz to
-96 kHz was a different instrument.
+running: across 44.1, 48, 96 and 192 kHz the 4–10 kHz band of a Don holds within
+0.93 dB, read under a window that does not leak the drum's own bottom two
+octaves into a band that has almost nothing in it. Weighed instead against a
+resonator's per-sample integration gain, which carries a *1/rate* because a
+resonator accumulates a force over a sample period and a variance-normalised
+noise band accumulates nothing, the same band falls 6.1 dB between 48 and 96 kHz
+and 11.1 dB between 48 and 192 — 12.3 dB across the four rates — and a session
+moved from 48 kHz to 96 kHz is a different instrument.
 
 It has to stay in its place, though, and its place is much smaller than it
 looks. Left too loud it does not sit above the resolved bank, it buries it: the
@@ -588,9 +597,11 @@ those modes hardest — come out of phase.
 
 Up to and including the default 50 % width — everything the microphones actually
 captured — no stroke ever inverts, anywhere in the microphone range: the worst
-case across all four strokes, both microphone controls fully swept, is a
-correlation of about +0.08, which is a decorrelated pair rather than an
-out-of-phase one. The regression suite sweeps that whole space. Past 50 % the
+case over the four strokes on all four drums, both microphone controls swept in
+tenths, is a correlation of +0.19 — a Ka on the shime with the pair right down
+on the head and fully opened — which is a decorrelated pair rather than an
+out-of-phase one. The regression suite sweeps that space on the ō-daiko, at
+every stroke and at both ends of both controls, and it reaches +0.31 there. Past 50 % the
 width control exaggerates the side signal beyond the measurement, and with the
 pair close in and fully opened that can push strokes out of phase — the same
 thing that happens when a real wide spaced pair is pushed through a widener, and
@@ -628,7 +639,12 @@ one of those a drum whose air column has passed its quarter-wave or whose
 geometry has run into a clamp.
 
 What is solved is the drum's own lowest mode, and only that. The breathing
-branch above it is not an octave, and this does not make it one.
+branch above it is not an octave, and this does not make it one. Neither is the
+loudest partial: fifty milliseconds after a full Don the strongest thing between
+8 and 900 Hz steps 229 / 1183 / 1197 cents up the four drums, because on the
+ō-daiko it is a 90 Hz mode with a circumferential order rather than either
+branch of the axisymmetric pair. The top two boundaries are octaves; the bottom
+one measures which mode won.
 
 ### What is not modelled
 
@@ -645,6 +661,20 @@ exchange with the walls gives the cavity a loss factor around 1e-4, which is
 three orders of magnitude under what radiation is already taking out of the same
 mode, so modelling it would change nothing anyone could hear.
 
+The column is solved once per drum, on the branch of the lowest axisymmetric
+pair that changes the body's volume, and every axisymmetric mode above that pair
+then reads the answer — so those modes get a column evaluated at a frequency
+that is not theirs. Solving each pair on its own factor instead moves the
+second, third and fourth of them by 8.0, 3.6 and 1.0 cents on the ō-daiko, and
+leaves the pair the keyboard is tuned by exactly where it is.
+
+The hand CC1 lays on the head is a level rather than a damper. It multiplies
+every membrane mode and every continuum band by the same envelope, so at CC1 = 1
+it takes 10.1 dB out of 50–150 Hz and 11.5 dB out of 4–10 kHz — 1.4 dB of tilt
+over seven octaves. The mute a Tsu carries is the physical one by contrast: it
+feeds the head's own loss terms instead, and tilts 6.2 dB across the same bands.
+Two mechanisms sit side by side and only one of them is a damper.
+
 Above the resolved bank the microphones have a level and not a shape. The
 near-field and proximity terms that make the pair decorrelate are computed per
 mode, and the continuum sits above the modes, so it takes the distance law of
@@ -660,12 +690,13 @@ sitting unreachable. Building it back for the striker is cheap in modes and
 expensive in level, because what a bachi is worth against the drum it is hitting
 was only ever pinned by how the stick-against-stick stroke sounded.
 
-Five constants are calibrated rather than derived, and each of them sets the
+Six constants are calibrated rather than derived, and each of them sets the
 *depth* of a term whose shape is computed: the overall level of radiation
-damping and how efficiently the shell and the airborne click reach the
-microphones — all three of which depend on how the drum is mounted and where the
-player is standing, neither of which this model describes; the weight of the
-head's high-frequency continuum against its resolved bank, which is a time in
+damping, and how efficiently the shell, the airborne click and a lifted tack
+reach the microphones — the first three of those turn on how the drum is mounted
+and where the player is standing, neither of which this model describes, and the
+fourth on the radiating efficiency of a 6 mm iron head against wood; the weight
+of the head's high-frequency continuum against its resolved bank, which is a time in
 seconds because what it multiplies is the head's receptance; and the shape
 factor of the attack pitch glide, which stands in for the difference between the
 modal states the engine has and the mean square slope the tension rise depends

@@ -3255,17 +3255,17 @@ void testMembraneTensionModulation()
     // were admitted. This estimator reads which partial dominates a band, so a
     // bank with more modes in it - and with a pair where each of the loudest
     // m > 0 modes used to be - reads a different mixture. On the split bank the
-    // four numbers are +32, +9, +128 and +175 cents with the tension model and
-    // -63, -83, +9 and +488 without it, so the floors below sit between those
-    // two on the first three drums.
+    // four numbers are +31.9, +9.0, +128.0 and +174.7 cents with the tension
+    // model and -63.1, -101.4, +143.1 and +44.2 with it disabled, so the floors
+    // below sit between those two on the Kick, the Low Tom and the High Tom.
     //
-    // The High Tom is the exception and its floor is not a test of the tension
-    // model any more: without the model it reads *higher*, because its 420 to
-    // 850 Hz band now holds nine modes including two split pairs and which of
+    // The Mid Tom is the exception and its floor is not a test of the tension
+    // model any more: without the model it reads *higher*, because its 300 to
+    // 600 Hz band now holds several modes including split pairs and which of
     // them wins the window is set by contact time rather than by tension. What
     // its floor still asserts is that a hard strike reads well over a semitone
     // sharper than a ghost stroke in that band, which is true and worth keeping;
-    // the tension model itself is tested on the three drums above it and by the
+    // the tension model itself is tested on the other three drums and by the
     // settled-pitch clause below.
     struct TensionProbe
     {
@@ -3282,7 +3282,7 @@ void testMembraneTensionModulation()
     const std::array tensionProbes {
         TensionProbe { drumalor::Instrument::Kick, 130.0, 280.0, 15.0, 0.0 },
         // Zero rather than a positive floor, because the Low Tom's own margin
-        // is what it is: +9 cents with the model against -83 without it.
+        // is what it is: +9 cents with the model against -101 without it.
         TensionProbe { drumalor::Instrument::LowTom, 200.0, 400.0, 0.0, 82.0 },
         TensionProbe { drumalor::Instrument::MidTom, 300.0, 600.0, 70.0, 123.0 },
         TensionProbe { drumalor::Instrument::HighTom, 420.0, 850.0, 120.0, 174.0 }
@@ -3611,7 +3611,7 @@ void testMembraneModeSplitting()
         // is in the mechanism rather than in the implementation: the mode is
         // 60 dB down in under two beat periods on three of these four drums, so
         // no estimator of the rate has more than two cycles to work with. The
-        // unsplit engine misses by 15 to 64 per cent, which is what this has to
+        // unsplit engine misses by 15 to 66 per cent, which is what this has to
         // separate, and it does.
         expect (rateError <= 0.20,
                 label + " tail beat is not at the rate its own mode split implies ("

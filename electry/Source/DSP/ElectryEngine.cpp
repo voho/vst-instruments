@@ -117,6 +117,41 @@ constexpr float handDipQ = 0.70f;
 // which is the sustain the string's own fitted T60 was always asking for.
 constexpr float polarisationCouplingPerRoundTrip = 0.04f;
 
+// Bridge coupling between the strings that are actually being played.
+//
+// Every string terminates on the same saddle, whose mechanical admittance is
+// finite, so the saddle velocity driven by the summed string forces drives
+// every *other* string back. The engine already sums those forces into
+// `sympatheticBus_` and already publishes them one sample late; this is the
+// gain at which a played string reads that bus. It is a separate number from
+// the `0.0045 * effectiveSympathetic` the *unfingered* strings read it at.
+// That path is acyclic - only played voices write it, only idle voices read
+// it - so it is stable at any gain. This one closes the loop, and its gain is
+// bounded by a spectral radius rather than by taste.
+//
+// The one-sample publication delay makes the closed network an explicit Jacobi
+// iteration on a matrix whose diagonal is exactly zero, because every voice
+// subtracts its own contribution before reading, and whose off-diagonal
+// entries are `g H_j`, where `H_j` is the transfer from an injection into
+// string j's loop to that string's own output. At that string's resonance
+// `|H_j| = 1 / (1 - G_j)`, and *not* the round-trip gain `G_j`: an expression
+// written in `G_j` alone certifies gains that diverge in simulation. The
+// coherent common mode drives all N - 1 other strings in phase, so the row-sum
+// norm
+//
+//     (N - 1) * g * max_j 1 / (1 - G_j)  <=  bridgeCouplingRowSumBound
+//
+// is what has to hold, with 12 dB of margin at 0.25. It is not left as a
+// calibration hope: solveBridgeCoupling() caps the gain by exactly that
+// inequality every time the active set or the loop gains move, so the bound is
+// structural at every parameter setting rather than only at the ones a test
+// happens to sweep. An eight-string open chord runs loop gains from 0.993686
+// to 0.998289, so `max_j 1/(1 - G_j)` is 584 there and the bound permits
+// 6.1e-5; the nominal gain is that value, and the cap takes over wherever the
+// strings are set to ring longer than that.
+constexpr float bridgeCouplingGain = 6.0e-5f;
+constexpr float bridgeCouplingRowSumBound = 0.25f;
+
 // The strum. Three constants, all of them about the wrist rather than the
 // string.
 //
@@ -972,6 +1007,10 @@ void ElectryEngine::reset()
         + resonanceLift * (1.0f - smoothedParameters_.sympatheticAmount);
     sympatheticGain_ = 0.0045f * effectiveSympathetic;
     sympatheticInjection_ = sympatheticGain_ * (1.0f - palmMuteBlend_);
+    bridgeCouplingNominal_ = bridgeCouplingGain * effectiveSympathetic
+                           * (1.0f - palmMuteBlend_);
+    bridgeCouplingInjection_ = 0.0f;
+    bridgeCouplingRowSum_ = 0.0f;
     sympatheticHandGain_ = 1.0f;
     sympatheticHandGainTarget_ = 1.0f;
     sympatheticHandMute_ = -1.0f;
@@ -3253,6 +3292,7 @@ void ElectryEngine::silenceVoice(Voice& voice) noexcept
     voice.artifactCollisionLength = 0;
     voice.energyEnvelope = 0.0f;
     voice.outputEnergy = 0.0f;
+    voice.busContribution = 0.0f;
     voice.displayLevel = 0.0f;
     voice.startDelaySamples = 0;
     voice.releaseGain = 1.0f;
@@ -3788,6 +3828,31 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
         horizontalTotal += 0.35f * handStarved;
     }
 
+    // The saddle this string terminates on is shared and is not rigid. The
+    // other played strings' summed force moves it, and a moving termination
+    // drives this string - which is why a chord sounds like one instrument
+    // rather than six of them, and why a power chord's low interval blooms.
+    //
+    // `busContribution` is this voice's own share of the bus from the previous
+    // sample and is subtracted before the read, so the coupling matrix has an
+    // exactly zero diagonal. Without that a single note would drive itself
+    // through the bus, which is not string coupling at all but a second copy
+    // of its own bridge termination - already carried by `bodyConductance`
+    // and `bodyLossFactor`, and with every decay time, T60 and timbre
+    // calibration in the instrument sitting downstream of it.
+    //
+    // The same weights appear on the way in as on the way out: `bridgeForce`
+    // below reads the two polarisations 0.5/0.5, so the saddle drives them
+    // 0.5/0.5, which is what reciprocity of a passive mechanical junction
+    // requires. Folding the two halves into the gain leaves one multiply.
+    if (bridgeCouplingInjection_ != 0.0f)
+    {
+        const float others = sympatheticBusDelayed_ - voice.busContribution;
+        const float saddle = bridgeCouplingInjection_ * others;
+        verticalTotal += saddle;
+        horizontalTotal += saddle;
+    }
+
     vertical.line[static_cast<std::size_t>(vertical.writeIndex
                                            & (delayLineSize - 1))] = verticalTotal;
     horizontal.line[static_cast<std::size_t>(horizontal.writeIndex
@@ -3942,11 +4007,14 @@ void ElectryEngine::renderVoice(Voice& voice, RenderSums& sums) noexcept
     }
 
     // The bridge passes string vibration and playing noise into the body, and
-    // the same bridge force drives the sympathetic coupling bus. Only voices
-    // that are being played write to the bus; the coupled strings only read
-    // it, so the coupling graph is acyclic and unconditionally stable.
+    // the same bridge force drives the sympathetic coupling bus. Every voice
+    // writes to the bus; the unfingered strings read all of it and the played
+    // strings read it minus their own share, recorded here for the next
+    // sample. The graph is no longer acyclic, so the played strings' gain is
+    // held under an explicit spectral-radius bound in solveBridgeCoupling().
     const float bridgeForce = 0.5f * (verticalTotal + horizontalTotal);
     sympatheticBus_ += bridgeForce;
+    voice.busContribution = bridgeForce;
     sums.body += bridgeForce + 1.6f * noiseSample;
     if (voice.palmImpactVel > 0.0001f)
     {
@@ -4233,6 +4301,12 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
                 * (sympatheticHandGainTarget_ - sympatheticHandGain_);
             sympatheticInjection_ = sympatheticGain_
                 * std::max(0.0f, 1.0f - handMute);
+            // The same hand lies across the strings that are being played, and
+            // it lies on them at the saddle, which is exactly where the shared
+            // bridge delivers this coupling. So the played strings' share of
+            // the bus is starved by the same factor the idle strings' share is.
+            bridgeCouplingNominal_ = bridgeCouplingGain * effectiveSympathetic
+                * std::max(0.0f, 1.0f - handMute);
             // A far steeper law than the bridge-bus injection above: feedback
             // is a regenerating loop, so any residue above the loop's
             // regeneration threshold climbs back to a full howl no matter how
@@ -4249,6 +4323,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         else
         {
             sympatheticInjection_ = 0.0f;
+            bridgeCouplingNominal_ = 0.0f;
             feedbackHandScale_ = 1.0f;
         }
 
@@ -4686,6 +4761,43 @@ void ElectryEngine::updateActiveVoiceCount() noexcept
     }
     activeVoiceCount_ = count;
     sympatheticStringCount_ = sympathetic;
+    solveBridgeCoupling();
+}
+
+void ElectryEngine::solveBridgeCoupling() noexcept
+{
+    // With fewer than two voices sounding there is no other string to couple
+    // to: the bus is this voice's own contribution and `bus - own` is exactly
+    // zero, so the gain is irrelevant and the bound is trivially met.
+    if (bridgeCouplingNominal_ <= 0.0f || activeVoiceCount_ < 2)
+    {
+        bridgeCouplingInjection_ = 0.0f;
+        bridgeCouplingRowSum_ = 0.0f;
+        return;
+    }
+
+    // The worst loop in the chord decides the bound, because the common mode
+    // reaches all of them. Both polarisations are read: they carry separate
+    // gains and the injection enters both.
+    float worstAmplification = 1.0f;
+    for (const auto& voice : voices_)
+    {
+        if (! voice.active)
+            continue;
+        for (const float gain : { voice.vertical.loopGain,
+                                  voice.horizontal.loopGain })
+        {
+            const float headroom = std::max(1.0f - gain, 1.0e-6f);
+            worstAmplification = std::max(worstAmplification, 1.0f / headroom);
+        }
+    }
+
+    const float others = static_cast<float>(activeVoiceCount_ - 1);
+    const float ceiling = bridgeCouplingRowSumBound
+                        / (others * worstAmplification);
+    bridgeCouplingInjection_ = std::min(bridgeCouplingNominal_, ceiling);
+    bridgeCouplingRowSum_ = others * bridgeCouplingInjection_
+                          * worstAmplification;
 }
 
 int ElectryEngine::getActiveVoiceCount() const noexcept

@@ -158,6 +158,11 @@ void VoiceEngine::prepare(double sampleRate, int maxBlockSize)
     roomBaseDelay_ = { delayFor(0.0297f), delayFor(0.0371f),
                        delayFor(0.0411f), delayFor(0.0437f) };
     roomDelay_ = roomBaseDelay_;
+    // A metre of air, in samples. Everything about the section's geometry is
+    // stated in metres and seconds, so the room is the same room at every rate.
+    placementMetresToSamples_ = static_cast<float>(sampleRate_) / speedOfSoundMetres;
+    placementSpread_ = -1.0f;
+    placementScale_ = -1.0f;
     chunkGainCoefficient_ = 1.0f - std::exp(-static_cast<float>(chunkSize)
                                             * inverseSampleRate_ / 0.020f);
 
@@ -577,7 +582,26 @@ void VoiceEngine::buildSingerIdentities()
         singer.anatomy = 0.045f * hashFloat(base + 2u);
         const float position = singerCount > 1 ? 2.0f * static_cast<float>(i) / static_cast<float>(singerCount - 1) - 1.0f : 0.0f;
         singer.pan = std::clamp(0.82f * position + 0.12f * hashFloat(base + 3u), -1.0f, 1.0f);
-        singer.onsetOffset = std::max(0.0f, 0.009f + 0.009f * hashFloat(base + 4u));
+        // Habitual asynchrony, seeded across the entry window rather than drawn
+        // from a hash: the section's dispersion is a stated quantity, and
+        // twelve independent draws deliver it only on average. The stride
+        // scrambles the order so the section does not enter left to right --
+        // the singer index also sets the pan -- and being coprime with
+        // singerCount it spreads a four-singer choir across the window too.
+        // The window is inset by the per-note jitter at both ends so no
+        // singer's draw is clipped against zero, which would have left the
+        // earliest entry identical on repeats.
+        const int entrySlot = (entryOrderStride * i) % singerCount;
+        const int releaseSlot = (releaseOrderStride * i) % singerCount;
+        const float grid = singerCount > 1
+            ? static_cast<float>(entrySlot) / static_cast<float>(singerCount - 1) : 0.0f;
+        const float releaseGrid = singerCount > 1
+            ? static_cast<float>(releaseSlot) / static_cast<float>(singerCount - 1) : 0.0f;
+        singer.entryOffset = entryJitterSeconds
+            + (entryWindowSeconds - 2.0f * entryJitterSeconds) * grid;
+        singer.releaseOffset = releaseJitterSeconds
+            + (releaseWindowSeconds - 2.0f * releaseJitterSeconds) * releaseGrid;
+        singer.releaseTendency = releaseTendencySpread * hashFloat(base + 13u);
         // Sundberg's definition and the 2022 systematic review both put a sung
         // vibrato at 5-7 Hz. The 4.65-5.37 Hz the identities used to be seeded
         // across is below that band at every point of it, which is a tremble
@@ -597,6 +621,51 @@ void VoiceEngine::buildSingerIdentities()
             singer.formantScale[static_cast<std::size_t>(formant)] =
                 depth * hashFloat(base + 16u + static_cast<std::uint32_t>(formant));
         }
+    }
+
+    // Depth. The draw picks the order and the range fixes the spread, the same
+    // way step 7 seeded the entry offsets: twelve independent draws over
+    // 1.5-6 m realise only 2.6-4.2 m of the 4.5 m the geometry claims, and the
+    // whole point of the range is the 13.1 ms of arrival difference across it.
+    // Identity 0 takes the front: Solo sings on it, and the applied delays are
+    // referred to the nearest singer, so a soloist keeps her zero latency.
+    std::array<float, singerCount> draw {};
+    for (int i = 0; i < singerCount; ++i)
+        draw[static_cast<std::size_t>(i)] =
+            hashFloat(0x9e3779b9u * static_cast<std::uint32_t>(i + 1) + 4u);
+
+    const float span = farSingerMetres - nearSingerMetres - 2.0f * singerDepthJitterMetres;
+    for (int i = 0; i < singerCount; ++i)
+    {
+        int slot = 0;
+        if (i > 0)
+        {
+            slot = 1;
+            for (int j = 1; j < singerCount; ++j)
+                if (j != i && draw[static_cast<std::size_t>(j)] < draw[static_cast<std::size_t>(i)])
+                    ++slot;
+        }
+        auto& singer = singers_[static_cast<std::size_t>(i)];
+        const std::uint32_t base = 0x9e3779b9u * static_cast<std::uint32_t>(i + 1);
+        const float grid = singerCount > 1
+            ? static_cast<float>(slot) / static_cast<float>(singerCount - 1) : 0.0f;
+        // The grid is inset by the jitter at both ends, so the ranking still
+        // orders the section in depth and identity 0 is still the nearest.
+        singer.distanceMetres = nearSingerMetres + singerDepthJitterMetres + span * grid
+                              + singerDepthJitterMetres * hashFloat(base + 20u);
+    }
+
+    // Referred to the nearest singer, less half the receiver spacing so the
+    // near ear of the nearest singer is still a positive delay.
+    placementReferenceMetres_ = singers_[0].distanceMetres - 0.5f * receiverSpacingMetres;
+    distanceNormalisation_[0] = 1.0f;
+    double inverseSquares = 0.0;
+    for (int n = 1; n <= singerCount; ++n)
+    {
+        const double distance = static_cast<double>(singers_[static_cast<std::size_t>(n - 1)].distanceMetres);
+        inverseSquares += 1.0 / (distance * distance);
+        distanceNormalisation_[static_cast<std::size_t>(n)] =
+            static_cast<float>(std::sqrt(static_cast<double>(n) / inverseSquares));
     }
 }
 
@@ -835,7 +904,13 @@ void VoiceEngine::noteOn(int midiNote, float velocity)
         ? std::clamp(100.0f * static_cast<float>(lastRootMidi_ - midiNote), -2400.0f, 2400.0f)
         : 0.0f;
     const float modeTrim = total == 1 ? 0.88f : (p.mode == PerformanceMode::Chord ? 0.61f : 0.72f);
-    const float groupGain = modeTrim / std::sqrt(static_cast<float>(total));
+    // The direct path costs each singer 1/r, so the section's total direct
+    // power would follow wherever the twelve distances happened to fall. The
+    // normalisation puts it back where it was: the placement decides who is in
+    // front, not how loud a section of this size is. A soloist is the n = 1
+    // case, where it is exactly her own distance and the level is unchanged.
+    const float groupGain = modeTrim * distanceNormalisation_[static_cast<std::size_t>(std::clamp(total, 1, singerCount))]
+                          / std::sqrt(static_cast<float>(total));
     for (int singer = 0; singer < total; ++singer)
     {
         const int slot = findFreeVoice();
@@ -870,13 +945,28 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
     voice.velocityGain = velocity * (0.67f + 0.33f * std::sqrt(velocity));
     voice.amplitudeGain = groupGain * voice.velocityGain;
     voice.glideCents = glideFromCents;
-    voice.vibratoPhase = wrapPhase(0.173f * static_cast<float>(singerIndex % singerCount));
     voice.noiseState = hash32(static_cast<std::uint32_t>(generation_) ^
                               static_cast<std::uint32_t>(rootMidi * 977 + singerIndex * 131));
     voice.phase = 0.5f + 0.12f * hashFloat(voice.noiseState + 17u);
+    // The vibrato was seeded at a fixed phase per singer, so twelve singers
+    // arrived in the same relative configuration on every repeat of a note and
+    // beat against each other identically. It is drawn from the note's own hash
+    // instead: the render is still a pure function of the note sequence, which
+    // a stateful random walk would have cost.
+    voice.vibratoPhase = wrapPhase(0.5f + 0.5f * hashFloat(voice.noiseState + 29u));
     const auto& singer = singers_[static_cast<std::size_t>(voice.singer)];
-    const float delay = singerTotal == 1 ? 0.0f : singer.onsetOffset * p.humanize;
+    // Habitual offset plus this attempt's own draw. A soloist has nobody to be
+    // out of time with, so a single voice keeps entering and leaving on the
+    // beat; Humanize scales the whole gesture, so at 0 the section is exact.
+    const float ensembleHumanize = singerTotal == 1 ? 0.0f : p.humanize;
+    const float delay = ensembleHumanize
+        * (singer.entryOffset + entryJitterSeconds * hashFloat(voice.noiseState + 41u));
     voice.delaySamples = std::max(0, static_cast<int>(delay * static_cast<float>(sampleRate_)));
+    const float releaseDelay = ensembleHumanize
+        * (singer.releaseOffset + releaseJitterSeconds * hashFloat(voice.noiseState + 43u));
+    voice.releaseDelaySamples = std::max(0, static_cast<int>(releaseDelay * static_cast<float>(sampleRate_)));
+    voice.releaseTimeScale = std::max(0.25f, 1.0f + ensembleHumanize
+        * (singer.releaseTendency + releaseNoteSpread * hashFloat(voice.noiseState + 47u)));
     voice.pitchScoop = -(7.0f + 19.0f * (0.5f + 0.5f * hashFloat(voice.noiseState + 23u))) * (0.25f + 0.75f * p.humanize);
     voice.controlCountdown = 0;
     updateVoiceControl(voice, p);
@@ -981,6 +1071,7 @@ void VoiceEngine::allSoundOff() noexcept
     for (auto& voice : voices_)
         silenceVoice(voice);
     clearRoom();
+    clearPlacement();
     heldCount_ = 0;
     heldNoteCounts_.fill(0);
     sustainedNotes_.fill(0);
@@ -1023,6 +1114,11 @@ void VoiceEngine::silenceVoice(Voice& voice) noexcept
 float VoiceEngine::midiToHz(int midiNote) noexcept
 {
     return 440.0f * std::exp2((static_cast<float>(midiNote) - 69.0f) / 12.0f);
+}
+
+float VoiceEngine::sectionReleaseSeconds(float humanize) noexcept
+{
+    return 0.105f + 0.19f * clampUnit(humanize);
 }
 
 void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmoothers)
@@ -1302,6 +1398,7 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
     roomFeedback_ = std::clamp(0.62f + 0.14f * smoothedRoom_
                                    + 0.28f * (smoothedRoomSize_ - 0.5f),
                                0.30f, 0.94f);
+    updatePlacement(p);
     chunkStateValid_ = true;
 }
 
@@ -1434,6 +1531,16 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         const float attackSeconds = std::clamp(0.0034f / attackDrive, 0.0020f, 0.120f);
         voice.attackCoefficient = 1.0f - std::exp(-inverseSampleRate_ / attackSeconds);
     }
+    // The decay is the singer's, not the section's: the release time constant
+    // is how fast her own subglottal pressure falls once the larynx stops.
+    // Cached on the Humanize it was resolved for, so a sustained note pays for
+    // the exponential once rather than at every control update.
+    if (p.humanize != voice.releaseHumanize)
+    {
+        voice.releaseHumanize = p.humanize;
+        voice.releaseCoefficient = std::exp(-inverseSampleRate_
+            / (sectionReleaseSeconds(p.humanize) * voice.releaseTimeScale));
+    }
     // The same gesture reaches the source-tension ramp: a hard attack is a
     // pressed one that starts close to its adducted target, a soft one starts
     // abducted and has further to travel. The shipped depth is the value at the
@@ -1445,8 +1552,10 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     voice.irregularity = voice.midiNote < 52
         ? (1.0f - p.tension) * p.humanize * 0.035f : 0.0f;
     // The offset's area gesture. It is a no-op on a held note, where the
-    // target and the state are both 1.
-    voice.abduction += abductionCoefficient_ * (voice.abductionTarget - voice.abduction);
+    // target and the state are both 1, and it waits out the singer's own
+    // release delay: the folds move when she lets go, not when the key does.
+    if (voice.releaseDelaySamples <= 0)
+        voice.abduction += abductionCoefficient_ * (voice.abductionTarget - voice.abduction);
     // The pitch-synchronous window moves the noise about inside the period; it
     // must not change how much of it there is. Its mean square depends on the
     // source tension, so the compensating gain is resolved here, at the control
@@ -1526,26 +1635,11 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
     voice.nasal.a1 = chunkNasalA1_;
     voice.nasal.b0 = chunkNasalB0_;
 
-    const float pan = std::clamp(singer.pan * p.spread * (voice.singer == 0 && p.mode == PerformanceMode::Solo ? 0.18f : 1.0f), -1.0f, 1.0f);
-    if (pan != voice.panPosition)
-    {
-        voice.panPosition = pan;
-        voice.panTargetLeft = std::sqrt(0.5f * (1.0f - pan));
-        voice.panTargetRight = std::sqrt(0.5f * (1.0f + pan));
-    }
-    if (!voice.controlInitialised)
-    {
-        voice.panLeft = voice.panTargetLeft;
-        voice.panRight = voice.panTargetRight;
-        voice.controlInitialised = true;
-    }
-    else
-    {
-        // Glide like the formant targets so a spread automation jump cannot
-        // step the pan gains audibly at the control rate.
-        voice.panLeft += controlGlide_ * (voice.panTargetLeft - voice.panLeft);
-        voice.panRight += controlGlide_ * (voice.panTargetRight - voice.panRight);
-    }
+    // A voice no longer carries a pan. Where it is heard from belongs to the
+    // singer, not to the note, and it is resolved once per chunk in
+    // updatePlacement() for the identity rather than once per control period
+    // for every voice that shares her.
+    voice.controlInitialised = true;
 }
 
 float VoiceEngine::glottalPair(int level, float phase, float tension) const noexcept
@@ -1658,8 +1752,192 @@ void VoiceEngine::updateRoom(float inputLeft, float inputRight,
     wetRight = right - roomLowCutRight_;
 }
 
+void VoiceEngine::updatePlacement(const EngineParameters& p) noexcept
+{
+    const float scale = roomSizeScale(smoothedRoomSize_);
+    const float spread = clampUnit(p.spread);
+    const bool solo = p.mode == PerformanceMode::Solo;
+    if (spread == placementSpread_ && scale == placementScale_ && solo == placementSolo_
+        && placementReflectionDepth_ == placementReflectionResolved_)
+        return;
+    placementSpread_ = spread;
+    placementScale_ = scale;
+    placementSolo_ = solo;
+    placementReflectionResolved_ = placementReflectionDepth_;
+
+    // The shoebox. Only the surfaces move with Size; where the singers stand
+    // does not, which is what keeps the direct-path delays fixed.
+    const float halfWidth = roomHalfWidthMetres * scale;
+    const float ceiling = roomCeilingMetres * scale;
+    const float floor = roomFloorMetres * scale;
+
+    constexpr float degreesToRadians = 3.14159265f / 180.0f;
+    const float axisSine = std::sin(receiverAxisDegrees * degreesToRadians);
+    const float axisCosine = std::cos(receiverAxisDegrees * degreesToRadians);
+    const float maximumDelay = static_cast<float>(placementBufferSize) - 4.0f;
+    const float depth = placementReflectionDepth_;
+    float longest = 0.0f;
+
+    for (int index = 0; index < singerCount; ++index)
+    {
+        const auto& singer = singers_[static_cast<std::size_t>(index)];
+        const float radius = singer.distanceMetres;
+        // A soloist stands in front of the listener rather than at her section
+        // position, which is the narrowing the pan law used to apply.
+        const float narrowing = (index == 0 && solo) ? 0.18f : 1.0f;
+        const float azimuth = sectionAzimuthDegrees * degreesToRadians
+                            * std::clamp(singer.pan * spread * narrowing, -1.0f, 1.0f);
+        const float sourceX = radius * std::sin(azimuth);
+        const float sourceY = radius * std::cos(azimuth);
+
+        // The source and its four first-order images: the two side walls
+        // mirror it in x, the floor and the ceiling in z.
+        const std::array<std::array<float, 4>, placementTapCount> sources {{
+            { sourceX, sourceY, 0.0f, 1.0f },
+            { -2.0f * halfWidth - sourceX, sourceY, 0.0f, wallReflectance * depth },
+            { 2.0f * halfWidth - sourceX, sourceY, 0.0f, wallReflectance * depth },
+            { sourceX, sourceY, -2.0f * floor, floorReflectance * depth },
+            { sourceX, sourceY, 2.0f * ceiling, wallReflectance * depth }
+        }};
+
+        auto& wholes = placementWhole_[static_cast<std::size_t>(index)];
+        auto& allpass = placementAllpass_[static_cast<std::size_t>(index)];
+        auto& gains = placementGain_[static_cast<std::size_t>(index)];
+        std::array<float, 2> direct {};
+        for (int ear = 0; ear < 2; ++ear)
+        {
+            const float side = ear == 0 ? -1.0f : 1.0f;
+            const float receiverX = 0.5f * side * receiverSpacingMetres;
+            // Cardioid, pointed out to the side at the pair's half-angle.
+            const float axisX = side * axisSine;
+            const float axisY = axisCosine;
+            for (int tap = 0; tap < placementTapCount; ++tap)
+            {
+                const auto& source = sources[static_cast<std::size_t>(tap)];
+                const float dx = source[0] - receiverX;
+                const float dy = source[1];
+                const float dz = source[2];
+                const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+                const float inverse = 1.0f / std::max(distance, 0.05f);
+                // 0.5 + 0.5 cos of the angle between the arrival and the
+                // capsule axis, written on the direction cosines so no inverse
+                // trigonometry is needed.
+                const float pattern = 0.5f + 0.5f * (axisX * dx + axisY * dy) * inverse;
+                const auto slot = static_cast<std::size_t>(ear * placementTapCount + tap);
+                gains[slot] = placementTrim_ * source[3] * pattern * inverse;
+                const float delay = std::clamp(
+                    (distance - placementReferenceMetres_) * placementMetresToSamples_,
+                    1.0f, maximumDelay);
+                // The fraction is kept in [0.5, 1.5) by borrowing one whole
+                // sample, which is where a first-order allpass has its shortest
+                // transient and its least group-delay dispersion.
+                const int whole = static_cast<int>(delay - 0.5f);
+                const float fraction = delay - static_cast<float>(whole);
+                wholes[slot] = whole;
+                allpass[slot] = (1.0f - fraction) / (1.0f + fraction);
+                longest = std::max(longest, delay);
+                if (tap == 0)
+                    direct[static_cast<std::size_t>(ear)] = delay;
+            }
+        }
+        // When this singer is heard, in samples: the mean of the two receivers'
+        // direct-path delays, which is what an ear measures and what the
+        // ensemble's timing contract is written on.
+        placementDirectSamples_[static_cast<std::size_t>(index)] = 0.5f * (direct[0] + direct[1]);
+    }
+
+    placementMaximumSamples_ = static_cast<int>(longest) + 2;
+}
+
+void VoiceEngine::renderPlacement(int count) noexcept
+{
+    // One tap: an integer read and a first-order allpass for the fraction.
+    // y[n] = a (x[n] - y[n-1]) + x[n-1], where x[n-1] is simply the next sample
+    // down the same line, so the tap costs two loads and has unit magnitude at
+    // every frequency.
+    const auto read = [](const float* line, int write, int whole, float coefficient,
+                         float& state) noexcept
+    {
+        int index = write - whole;
+        if (index < 0)
+            index += placementBufferSize;
+        int previous = index - 1;
+        if (previous < 0)
+            previous += placementBufferSize;
+        state = coefficient * (line[index] - state) + line[previous];
+        return state;
+    };
+
+    for (int singer = 0; singer < singerCount; ++singer)
+    {
+        const auto index = static_cast<std::size_t>(singer);
+        const bool sounding = (singersInUse_ & (1u << singer)) != 0u;
+        if (sounding)
+            placementHold_[index] = placementMaximumSamples_ + chunkSize;
+        float* const line = placementLine_.data() + index * placementBufferSize;
+        const float* const bus = singerMix_[index].data();
+        int write = placementWriteIndex_;
+
+        if (placementHold_[index] <= 0)
+        {
+            // Nothing of this singer is left in her line. Keep writing so the
+            // span the taps could reach stays zero, and skip the ten reads.
+            for (int i = 0; i < count; ++i)
+            {
+                line[write] = bus[static_cast<std::size_t>(i)];
+                write = (write + 1) & placementBufferMask;
+            }
+            continue;
+        }
+
+        const auto& wholes = placementWhole_[index];
+        const auto& allpass = placementAllpass_[index];
+        auto& state = placementAllpassState_[index];
+        const auto& gains = placementGain_[index];
+        for (int i = 0; i < count; ++i)
+        {
+            line[write] = bus[static_cast<std::size_t>(i)];
+            const float directLeft = read(line, write, wholes[0], allpass[0], state[0]) * gains[0];
+            const float directRight = read(line, write, wholes[5], allpass[5], state[5]) * gains[5];
+            float earlyLeft = 0.0f;
+            float earlyRight = 0.0f;
+            for (int tap = 1; tap < placementTapCount; ++tap)
+            {
+                const auto slot = static_cast<std::size_t>(tap);
+                const auto mirror = slot + placementTapCount;
+                earlyLeft += read(line, write, wholes[slot], allpass[slot], state[slot]) * gains[slot];
+                earlyRight += read(line, write, wholes[mirror], allpass[mirror], state[mirror])
+                            * gains[mirror];
+            }
+            const auto sample = static_cast<std::size_t>(i);
+            mixLeft_[sample] += directLeft;
+            mixRight_[sample] += directRight;
+            earlyLeft_[sample] += earlyLeft;
+            earlyRight_[sample] += earlyRight;
+            write = (write + 1) & placementBufferMask;
+        }
+
+        if (!sounding)
+            placementHold_[index] = std::max(0, placementHold_[index] - count);
+    }
+
+    placementWriteIndex_ = (placementWriteIndex_ + count) & placementBufferMask;
+}
+
+void VoiceEngine::clearPlacement() noexcept
+{
+    placementLine_.fill(0.0f);
+    placementWriteIndex_ = 0;
+    placementHold_.fill(0);
+    for (auto& state : placementAllpassState_)
+        state.fill(0.0f);
+    for (auto& bus : singerMix_)
+        bus.fill(0.0f);
+}
+
 void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count)
 {
+    float* const singerBus = singerMix_[static_cast<std::size_t>(voice.singer)].data();
     float phase = voice.phase;
     float phaseIncrement = voice.phaseIncrement;
     float envelope = voice.envelope;
@@ -1696,10 +1974,9 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     float vibratoGain = voice.vibratoGain;
     float vibratoGainStep = voice.vibratoGainStep;
     float attack = voice.attackCoefficient;
+    float release = voice.releaseCoefficient;
     float irregularity = voice.irregularity;
     float airShape = voice.airShape;
-    float panLeft = voice.panLeft;
-    float panRight = voice.panRight;
     int level = voice.tableLevel;
     // Chunk-constant, so the branch is free: an oral-only patch pays nothing
     // for the nasal branch it is not using.
@@ -1732,13 +2009,12 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             tilt = voice.tiltCoefficient;
             irregularity = voice.irregularity;
             airShape = voice.airShape;
-            panLeft = voice.panLeft;
-            panRight = voice.panRight;
             level = voice.tableLevel;
             tensionSag = voice.tensionSag;
             airModulation = aspirationModulationDepth_;
             presence = voice.presence;
             attack = voice.attackCoefficient;
+            release = voice.releaseCoefficient;
             vibratoGainStep = voice.vibratoGainStep;
         }
 
@@ -1751,18 +2027,22 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             alternateCycle = !alternateCycle;
         }
 
-        if (releasing)
+        if (releasing && voice.releaseDelaySamples <= 0)
         {
             // Both components are driven by the same decaying subglottal
             // pressure, so once the larynx stops moving they fall together.
             // What separates them at an offset is the area gesture, which
             // rides on airShape at the control rate; the squared envelope
             // this replaced made every note die cleaner than it lived.
-            envelope *= releaseMultiplier_;
-            airEnvelope *= releaseMultiplier_;
+            envelope *= release;
+            airEnvelope *= release;
         }
         else
         {
+            // Either the note is held, or it is one of the twelve that has not
+            // let go yet. Both keep singing.
+            if (releasing)
+                --voice.releaseDelaySamples;
             envelope += (1.0f - envelope) * attack;
             airEnvelope += (1.0f - airEnvelope) * airAttackCoefficient_;
         }
@@ -1856,8 +2136,10 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             tract += voice.nasal.tick(source, chunkNasalA2_);
 
         const float output = amplitude * (tractLevel * tract + directAirLevel * highNoise * airDrive);
-        mixLeft_[static_cast<std::size_t>(i)] += output * panLeft;
-        mixRight_[static_cast<std::size_t>(i)] += output * panRight;
+        // Into the singer's own bus, not into the stereo mix: the voices that
+        // share an identity are one source standing in one place, and where
+        // that place is is the placement stage's business.
+        singerBus[static_cast<std::size_t>(i)] += output;
         ++age;
 
         if (releasing && envelope < 0.00008f && airEnvelope < 0.00008f)
@@ -1893,7 +2175,6 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
         prepare(sampleRate_, std::max(maxBlockSize_, numSamples));
 
     blockParameters_ = snapshotParameters();
-    releaseMultiplier_ = std::exp(-inverseSampleRate_ / (0.105f + 0.19f * blockParameters_.humanize));
     // shimmerScale_ renormalises the smoother's output for the sample rate;
     // folding it in here keeps the per-sample loop untouched.
     shimmerDepth_ = 0.026f * blockParameters_.humanize * shimmerScale_;
@@ -1916,7 +2197,10 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
     // Once every voice has ended and the room tail has audibly rung out, the
     // block renders exact digital silence. Advance the state that remains
     // observable at the next note without paying the full per-sample cost.
-    if (activeTotal_ == 0 && roomEnvelope_ < 1.0e-9f)
+    bool placementHolding = false;
+    for (const auto hold : placementHold_)
+        placementHolding = placementHolding || hold > 0;
+    if (activeTotal_ == 0 && roomEnvelope_ < 1.0e-9f && !placementHolding)
     {
         samplePosition_ += static_cast<std::uint64_t>(numSamples);
 
@@ -1974,6 +2258,8 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             const auto index = static_cast<std::size_t>(i);
             mixLeft_[index] = 0.0f;
             mixRight_[index] = 0.0f;
+            earlyLeft_[index] = 0.0f;
+            earlyRight_[index] = 0.0f;
             airLevelAt_[index] = smoothedBreath_ * airDynamic_;
             tensionAt_[index] = smoothedTension_ * chunkResponse_.sourceTensionScale;
             voicedScaleAt_[index] = (0.88f - 0.24f * smoothedBreath_) * voicedDynamic_;
@@ -1983,12 +2269,21 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             airDynamic_ += parameterSmoothing_ * (chunkResponse_.airGain - airDynamic_);
         }
 
+        // Each singer's bus carries only what her own voices put there this
+        // chunk; an identity that is not sounding is already silent.
+        for (int singer = 0; singer < singerCount; ++singer)
+            if ((singersInUse_ & (1u << singer)) != 0u)
+                std::fill(singerMix_[static_cast<std::size_t>(singer)].begin(),
+                          singerMix_[static_cast<std::size_t>(singer)].begin() + count, 0.0f);
+
         for (int v = 0; v < activeTotal_; ++v)
         {
             Voice& voice = *activeVoices_[static_cast<std::size_t>(v)];
             if (voice.active) // may have finished releasing in an earlier chunk
                 renderVoice(voice, blockParameters_, count);
         }
+
+        renderPlacement(count);
 
         const bool roomAudible = smoothedRoom_ > 1.0e-4f || blockParameters_.room > 1.0e-4f
                               || roomEnvelope_ > 1.0e-9f;
@@ -2007,15 +2302,23 @@ void VoiceEngine::process(float* left, float* right, int numSamples)
             float wetLeft = 0.0f;
             float wetRight = 0.0f;
             if (roomAudible)
-                updateRoom(dryLeft, dryRight, wetLeft, wetRight);
+                updateRoom(placementSendGain_ * earlyLeft_[index],
+                           placementSendGain_ * earlyRight_[index], wetLeft, wetRight);
 
             // Expression rides the output stage, after the room, so a swell
             // shapes the wet tail with the dry signal instead of pumping it.
             const float gain = smoothedGain_ * smoothedExpression_;
             const float dryScale = 1.0f - 0.12f * smoothedRoom_;
             const float wetScale = 0.72f * smoothedRoom_;
-            const float outLeft = gain * (dryScale * dryLeft + wetScale * wetLeft);
-            const float outRight = gain * (dryScale * dryRight + wetScale * wetRight);
+            // The image field is room sound, so it rides the same Room control
+            // as the tail. Where a singer stands -- her arrival time, her level
+            // and the section's depth -- is geometry and is always on; how much
+            // of the room comes back is the knob the player has always had, and
+            // Room 0 has always been dry.
+            const float outLeft = gain * (dryScale * dryLeft
+                                          + wetScale * (earlyLeft_[index] + wetLeft));
+            const float outRight = gain * (dryScale * dryRight
+                                           + wetScale * (earlyRight_[index] + wetRight));
             blockPeakLeft = std::max(blockPeakLeft, std::abs(outLeft));
             blockPeakRight = std::max(blockPeakRight, std::abs(outRight));
 

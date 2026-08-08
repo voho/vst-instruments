@@ -1541,10 +1541,13 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   reads a different mixture: its four sharpening figures go from +96/+30/+134/
   +250 cents to **+32/+9/+128/+175**, and the floors move from 40/15/80/190 to
   **15/0/70/120**. Measured with the tension model disabled on the same split
-  bank the four numbers are −63, −83, +9 and **+488**, so the floors still sit
-  between the two on the Kick, the Low Tom and the Mid Tom — but on the High Tom
-  they no longer do. That drum's 420–850 Hz band now holds nine modes including
-  two split pairs, and which of them wins the window is set by contact time
+  bank the four numbers are **−63.1, −101.4, +143.1 and +44.2** — corrected on
+  verification, 2026-08-08, from the −63, −83, +9 and +488 this note first
+  carried; only the Kick's figure reproduced, and the conclusion drawn from the
+  other three was drawn the wrong way round. The floors sit between the two on
+  the Kick, the Low Tom and the **High** Tom — but on the **Mid** Tom they do
+  not. That drum's 300–600 Hz band now holds several modes including split
+  pairs, and which of them wins the window is set by contact time
   rather than by tension, so its clause has been kept for what it does still
   assert and relabelled as such. `testSympatheticKitBleed` asked for the kick to
   reach the snare's wire band at eight times its dry level; the coupling is
@@ -1756,7 +1759,7 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   its first 60 ms **1.30 dB** under note 49's; note 55, **6.28 dB** and
   **1.51 dB** under. Channel aftertouch 127 on a crash 100 ms old takes the
   60 ms window starting 30 ms later to **exact digital zero**, 281.6 dB below
-  the unchoked one; aftertouch 48 lands **14.78 dB** under the ring and 266.8 dB
+  the unchoked one; aftertouch 48 lands **14.77 dB** under the ring and 266.9 dB
   over the grab. CC 88 0 and 127 ahead of velocity byte 64 on note 49 give peaks
   **0.112 dB** apart in the right order, against the contract's 0.02 dB. The
   pedal: no move **−45.68 dB** in the 150–400 ms window, CC 4 held at 76
@@ -1791,6 +1794,79 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   carries 52 and 55, and its articulation table is no longer snare-only. That is
   the behaviour this step exists to change, and nothing else in the suite needed
   touching.
+
+  *Re-verified on implementation, 2026-08-08.* The mechanism, the contract and
+  every figure in the note above were checked against the engine rather than
+  read off it, with a scratch harness whose band analysis is a Hann-windowed
+  DFT rather than the suite's analysis biquads, so agreement is evidence and
+  not a tautology.
+
+  The revert was built and run. Reverting all six use sites — notes 44 and 53
+  back to `Articulation::Head`, 52 and 55 back to `nullopt`, `velocityFromMidi`
+  discarding its low seven bits, both `applyAftertouch` overloads reaching no
+  voice, `setHiHatPedal` re-deriving nothing in either direction, one cymbal
+  voicing for every articulation and no blunt contact on the hat's circuit
+  source — fails the suite **22 times**, and the failures are gap 10 itself,
+  printed by the contract: note 44 against note 42 at **0.000 dB** with the
+  chick's 8–16 kHz share at **1.000×** the stick's, note 53 against note 51 at
+  **0.000 dB** with both decays at 0.455 s, notes 52 and 55 triggering nothing
+  and landing **281.56 dB** under note 49, channel aftertouch 127 taking
+  **0.000 dB** off a ringing crash, CC 88 0 against 127 giving **0.000 dB**, and
+  a foot coming off a damped hat changing it by **0.000 dB**. Restoring the file
+  puts it back byte for byte (md5 `c83d6eea…` before and after) and the suite is
+  green at 2/2.
+
+  The intermediate engine correction 2 above rests on was built as well: the
+  friction released when the foot comes up, but the ringing voice's decay law
+  left where it was. It reads **8.015 dB** against the contract's 12, which is
+  the note's 8.0 dB confirmed to three figures and the guard doing exactly the
+  discriminating the correction claims for it.
+
+  Every measured figure in this note reproduces with the contract's own
+  estimator: chick residual **6.594 dB** and 8–16 kHz ratio **0.0545×**; bell
+  residual **8.026 dB** with decays **0.705 s against 0.455 s**; note 52
+  **5.158 dB** and **−1.297 dB**, note 55 **6.276 dB** and **−1.512 dB**, with
+  note 55 at **6.988 dB** over the first 600 ms — correction 4's own example,
+  exact; the choke at **exact digital zero**, 281.56 dB down, with aftertouch 48
+  at −14.77 and +266.85 dB and the polyphonic form bit-identical to the channel
+  form; CC 88 at **0.1120 dB** with the folded full-velocity note **0.0676 dB**
+  low; and the pedal at **−45.68 / −155.97 / −61.10 dB**, 94.87 dB above the
+  held close and 15.42 dB below no move at all.
+
+  **The residuals are estimator-specific, and by more than this section's
+  standing caution predicts.** The same renders through the DFT harness give
+  **15.94 dB** for the chick, **11.87** for the bell, **8.12** for the china and
+  **9.41** for the splash, against 6.59, 8.03, 5.16 and 6.28 through the suite's
+  chain, and the chick's 8–16 kHz ratio reads **0.0024×** rather than 0.0545×.
+  The cause is that a third-octave band built from one 2-pole high-pass and one
+  2-pole low-pass has skirts far wider than the band, so a loud neighbour leaks
+  into every measurement and compresses the differences between them. Nothing
+  here changes: every clause passes on both estimators, and on the sharper one
+  it passes with more room. But no decibel in this note should be quoted without
+  the estimator it was taken with, which is the caution at the head of this
+  section arrived at from a second direction.
+
+  Sample-rate independence, which is on the *what must not regress* list, was
+  checked on the four new notes because three of them move the 909 clock. As a
+  level-matched third-octave residual over the first 250 ms against the same
+  note at 48 kHz, notes 44, 52, 53 and 55 read **0.16–0.60 dB** at 44.1 and
+  96 kHz where notes 49 and 51 read **0.49–2.01 dB** — the new notes agree
+  across rates better than the two they are variants of, as the note says. The
+  clock bound is arithmetic and holds: a crash's nominal 31 kHz at the splash's
+  1.40× is 43.4 kHz and a ride's 30 kHz at the bell's 1.46× is 43.8 kHz, both
+  under a 44.1 kHz host's one-address-per-sample ceiling, where the 1.62× the
+  note says was rejected would have asked for 50.2 kHz.
+
+  **One figure in the step text is corrected.** Its pre-step pedal reading "no
+  pedal move −44.10 dB" does not reproduce: with the contract's own window
+  (300 Hz–16 kHz, 150–400 ms) and its note 46 at v = 0.90 it reads
+  **−45.68 dB**. That render calls no code this step added — no pedal message is
+  sent in it — so the 1.58 dB is a difference between harnesses rather than a
+  change in the engine, and the engine's own reading is the one above. The
+  paragraph's other three figures are for a *full* close, which is the clause
+  the step then rejected, and they do reproduce: full close held **−300 dB**,
+  full close then open **−300 dB**. A full close leaves nothing to release,
+  which is the step's own argument for rewriting the clause, confirmed.
 
 ### Considered and not planned
 
@@ -2046,9 +2122,12 @@ detail; this is the list.
   should put them back.
 - **Four step texts carried figures their own mechanism does not produce.**
   Step 3's render-side numbers came from an FFT harness and read 6.34 dB rather
-  than 10.7 on the estimator the suite actually uses, and its claim that
-  `testDeepAnalogKickContract` would not see the change is false — that contract
-  renders at v = 0.95, where the replaced term read 0.9932 and not 1. Step 4's
+  than 10.7 on the estimator the suite actually uses — 6.55 dB re-measured with
+  step 4 in the tree, which is the figure the shipping engine gives — and its
+  claim that `testDeepAnalogKickContract` would not see the change is false —
+  that contract renders at v = 0.95, where the replaced term read
+  `0.84 + 0.16 · 0.9423 = 0.9908` and not 1, so the sweep there is 0.93 %
+  deeper than it was. Step 4's
   m = 1 frequencies were the ideal Bessel ratios before air loading, 10 % low on
   the Kick and within two hertz of a *drawn sine* on the three toms, and its
   prescribed analysis chain cannot see the beat at all. Step 5's "much shorter,
@@ -2114,8 +2193,10 @@ landed it. Beyond that:
 - The membrane half of the kit was re-voiced by −33.4 to −19.5 dB and both
   cymbals by the contact tilt. Levels hold to 0.17 dB and every quality bound is
   green, but a null figure is not a listening test and the demonstration takes
-  in `Docs/audio/` were rendered by an earlier engine. Both want a listening
-  session before release.
+  in `Docs/audio/` were rendered by an earlier engine — measured, all seven
+  differ from what the shipping engine renders now, and their rendered peaks
+  have moved by up to 1.4 dB. Both want a listening session before release, and
+  the takes want a re-render.
 - The four lines added to `dispatchMidiData` are unverified by compilation:
   the JUCE-free build does not include the plug-in and no JUCE checkout was
   available. Every mechanism they call is in the DSP layer and under test, but
@@ -2125,6 +2206,112 @@ landed it. Beyond that:
   CC 16/18, and no sustained brush sweep. Independent batter and resonant head
   tension is now the strongest single candidate for the next pass, and step 4
   has just taken the bank's spare slots it would need.
+
+### Closing the pass — 2026-08-08
+
+The section above was written step by step as each one landed. This is the pass
+read once with all of it in the tree, the suite run and the instrument's own
+documentation brought level with the engine.
+
+`ctest` is green at 2/2 — `Drumalor.DrumEngine` in 21.1 s and
+`Drumalor.RenderDemos` in its smoke form — with `testCymbalContactTime`,
+`testMembraneGlideFollowsTheStrike`, `testMembraneModeSplitting` and
+`testMidiSurfaceContract` added by this pass and `testMembraneTensionModulation`,
+`testSympatheticKitBleed`, `testMetadataAndMidiMapping` and
+`testCymbalQualityContract` recalibrated, superseded or repaired by it.
+
+**Against what the pass set out to do.** Seven steps were proposed, two
+withdrawn in review, five carried into implementation, four landed and one was
+struck after being built. The metallic half got the two things it was written
+for — a stick on both cymbals, and the four notes and three messages a kit
+sends — and the membrane half got both of its: a glide whose depth is the blow,
+and tails that warble because every mode above the first is now the two modes it
+physically is. What it did not get is the hi-hat, which is the step that was
+struck; the pass leaves that voice exactly as it found it and leaves a
+measurement in place of a mechanism.
+
+**Where the implementation round differed from the record above.** Three
+additions to the list already given.
+
+- **Steps 3, 4 and 5 were verified rather than built.** Each was already present
+  in the working tree — mechanism, contract, shipped-note and ticked checkbox,
+  with the suite green — when it came up to be implemented, and none of them was
+  rewritten to claim authorship. What was done instead was the work that earns
+  the tick: the pre-step engine was rebuilt by reverting the use sites, the gap
+  it addresses reproduced on it, the contract run against it to watch it fail in
+  the number of places the note claims (five for step 3, ten for step 4,
+  twenty-two for step 5), the file restored and checked byte for byte, and every
+  figure in the note re-measured against a second harness rather than read off
+  the test. Step 4 was additionally checked against an instrumented copy of
+  `buildHeadBank` printing the bank it emits, and against a beat detector of a
+  different design from the contract's. Step 2 is the exception in the other
+  direction: it arrived with its scaffolding in place but its three use sites
+  replaced by pass-throughs and its contract already failing, so that step was
+  finished rather than checked.
+- **Nine more figures were corrected on implementation**, all in the step
+  entries above: five in step 4 (the Snare's split is 2.412 %, the band a
+  1.5–2.5 % split reaches is 1.3–6.4 Hz, the unsplit engine's rate error spans
+  15–66 %, the unsplit High Tom's beat depth is 7.14 dB, and the level held
+  across the re-voicing is 0.17 dB), three in step 3 (the High Tom's ghost glide
+  is 5.16 % of its accent, the Kick term step 3 replaced read 0.9908 and made
+  that contract's sweep 0.93 % deeper, and a revert built against the tree as it
+  now stands reads 3.318 dB rather than the test's stored 3.461) and one in
+  step 5 (the pre-step pedal window reads −45.68 dB, not −44.10, which is a
+  difference between harnesses and not a change in the engine). Step 3's
+  render-side statistics also moved because step 4 landed after they were taken:
+  the Kick's early band balance now falls 6.55 dB rather than 6.34 at a ghost
+  stroke and reads 4.131 dB at an accent on both engines, and the same statistic
+  moves 1.79–1.81 dB on the three Toms rather than the 1.5–1.6 first recorded.
+  Its test constants are deliberately left at the pre-step-4 readings, which
+  they still clear by 0.47 dB and 0.69 dB, because re-cutting them against a
+  tree containing step 4 would date them to the wrong engine.
+- **Two measurement cautions were established rather than assumed.** A beat this
+  slow cannot be read with a wide band: at 15 Hz from the tom centres a detector
+  is still admitting the shell oscillator, which is 7.5 dB louder than the mode,
+  and every wide-band chain tried here returned 1.4–2.0 Hz on every drum
+  regardless of what the bank was doing. And the level-matched third-octave
+  residual this pass measures its MIDI surface in is estimator-specific by
+  6–9 dB: the same four renders read 6.59, 8.03, 5.16 and 6.28 dB through the
+  suite's analysis biquads and 15.94, 11.87, 8.12 and 9.41 dB through a
+  Hann-windowed DFT, because a third-octave band built from one 2-pole
+  high-pass and one 2-pole low-pass has skirts far wider than the band. Every
+  clause passes on both, and with more room on the sharper one. That is the
+  caution at the head of this section reached from a second direction, and it
+  applies to every decibel of that kind quoted anywhere in this document.
+
+**What the documentation now says.** `README.md` describes the instrument as it
+behaves with this pass in it: the four new notes and their voicings, the MIDI
+messages beyond note-on in a table beside the control tables, the split mode
+pairs and what the slot increase cost, the glide's depth, the stick on both
+cymbals, and — for the step that was struck — the hi-hat's own measurement
+rather than a fix. Three figures in it were corrected against what shipped: the
+Snare's split, the level held across the membrane re-voicing and the Kick's
+early band balance. Two claims were narrowed to what is measured — what velocity
+does to a hat, which is about 2 dB and is bounded by the circuit under the
+plate bank, and the demonstration takes, which the README had described as
+unable to drift from the engine.
+
+**What is outstanding, and is not a defect of the engine.** The seven
+demonstration takes in `Docs/audio/` predate this pass: rendered to a scratch
+directory and compared, all seven differ from what the shipping engine produces
+now, and the rendered peaks in that directory's own table have moved by 0.1 to
+1.4 dB, the largest on the toms-and-cymbals take. They are re-rendered by
+`Tools/RenderDemos.cpp` in one command, which also rewrites the table, and that
+is a release step rather than a step in this pass — the audio is committed
+evidence and re-rendering it belongs with the listening session the re-voicing
+already needs.
+
+The other outstanding item is the one the list above already names: the four
+lines this pass added to `dispatchMidiData` have never been compiled here,
+because the JUCE-free build does not include the plug-in. Everything they call
+is in the DSP layer and under contract; the wiring itself is not.
+
+Beyond those two, nothing in this pass is waiting on anything. Every claim above
+is carried either by a contract in `Tests/DrumEngineTests.cpp` or by a figure in
+the step that landed it, and the four things the pass could not establish — the
+hi-hat's brightening, Perc 1's velocity, the cymbals' isolated repeat identity,
+and whether any of the re-voicing is an improvement to a listener — are written
+down as open rather than as closed.
 
 [^ikn-namm2026]: IK Multimedia news, NAMM 2026 announcement (TONEX, ARC, iLoud; no MODO DRUM news). <https://www.ikmultimedia.com/news/?item_id=18953>
 [^sd3-notes]: Toontrack, Superior Drummer 3 release notes (3.4.3, 17 February 2026; 3.4.4, 26 March 2026). <https://www.toontrack.com/release-notes/superior-drummer-3/>

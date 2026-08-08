@@ -123,6 +123,108 @@ private:
     static constexpr int controlPeriod = 16;
     static constexpr int heldNoteCapacity = 24;
 
+    // How loose the section is in time. A choral entry is twelve people
+    // reacting to one cue, and an ensemble's asynchrony splits into a stable
+    // per-singer mean -- her habitual anticipation or lag, which is a property
+    // of the singer -- and a trial-to-trial variability around it, which is a
+    // property of the attempt. The engine had only the first and drew it from
+    // twelve independent hashes, so every repeat was identical and the section
+    // ended up with whatever dispersion those twelve draws happened to give.
+    //
+    // The habitual offsets are now seeded across the window instead of drawn:
+    // how far a section is spread is a design decision, so it is stated rather
+    // than left to a lottery. The window is the binding constraint. Onset
+    // asynchrony measured over a whole piece runs 30-50 ms, which is an upper
+    // bound rather than a target for a single attack, and step 8's propagation
+    // delays will add up to 13 ms of their own on top; 38 ms of entry window
+    // keeps the two together inside 55 ms at the ear. Within that window the
+    // trial-to-trial term is what the ceiling can afford rather than what the
+    // synchronisation literature would suggest: variance adds in quadrature
+    // while the span adds linearly, so an even split between the two would put
+    // the section's population standard deviation at 4.3 ms in its worst case
+    // against the 8 ms floor. +/-2.5 ms is what fits.
+    static constexpr float entryWindowSeconds = 0.038f;
+    static constexpr float entryJitterSeconds = 0.0025f;
+    // Cut-offs are raggeder than entries, and the same two terms describe them.
+    // The habitual order is seeded on a different stride from the entry order:
+    // an ictus and a cut-off are different gestures, and a singer's tendency on
+    // one does not predict her tendency on the other.
+    static constexpr float releaseWindowSeconds = 0.055f;
+    static constexpr float releaseJitterSeconds = 0.005f;
+    // Spread of the release time constant itself, as a fraction. How fast the
+    // subglottal pressure falls once the larynx stops is breath support, so
+    // most of it belongs to the singer; how much breath is left belongs to the
+    // note.
+    static constexpr float releaseTendencySpread = 0.10f;
+    static constexpr float releaseNoteSpread = 0.02f;
+    // Strides used to seed the two habitual orders across the twelve
+    // identities. Both are coprime with singerCount, so every prefix of the
+    // section -- a choir of four as much as a choir of twelve -- is spread
+    // across the window rather than bunched at one end of it, and neither order
+    // tracks the pan position the singer index also sets.
+    static constexpr int entryOrderStride = 5;
+    static constexpr int releaseOrderStride = 7;
+
+    // Where the section stands and where it is heard from. The singers are no
+    // longer mono points split by a pan law: each identity is a position in a
+    // shoebox, and everything about how it reaches the listener -- arrival
+    // time, level, early-reflection pattern and how wet it sounds -- falls out
+    // of that position rather than being drawn.
+    //
+    // Depth. 1.5 m is the front of a section and 6 m the back of a large one,
+    // which is 13.1 ms of arrival difference across the twelve: the
+    // decorrelation an intensity pan cannot produce, because a pan applies the
+    // same signal to both outputs and only a time difference makes them
+    // different. The twelve are drawn from the identity hash and then ranked
+    // onto the range, for the reason step 7 seeded the entry offsets rather
+    // than drawing them: how deep a section stands is a design decision, and
+    // twelve independent draws realise it only on average -- measured, they
+    // span 2.6-4.2 m of the 4.5 m the geometry claims. The jitter breaks the
+    // lattice the ranking would otherwise leave, which would comb the section's
+    // summed arrival at 1/(1.19 ms) = 840 Hz.
+    static constexpr float speedOfSoundMetres = 343.0f;
+    static constexpr float nearSingerMetres = 1.5f;
+    static constexpr float farSingerMetres = 6.0f;
+    static constexpr float singerDepthJitterMetres = 0.18f;
+    // Identity 0 takes the nearest position. Solo mode sings on identity 0, and
+    // the applied delays are referred to the nearest singer -- a choice of time
+    // origin, which leaves every relative arrival exact -- so a soloist keeps
+    // the zero latency a keyboard instrument is played with.
+    // How wide the section stands, as a half-angle. The azimuth is the pan
+    // position the identity already carries, scaled by Spread.
+    static constexpr float sectionAzimuthDegrees = 50.0f;
+    // The listener is a near-coincident pair: 17 cm apart, capsules at +/-55
+    // degrees, cardioid. ORTF, because it carries both cues -- the time
+    // difference that decorrelates the top of the band and the level
+    // difference that keeps the centre stable and the sum mono-compatible.
+    static constexpr float receiverSpacingMetres = 0.17f;
+    static constexpr float receiverAxisDegrees = 55.0f;
+    // The shoebox, at roomSizeScale() = 1 (Size 50 %). The listener plane sits
+    // 1.55 m above the floor and the ceiling 4.2 m above it, so the floor is
+    // the near surface and the first reflection, which is what a room in front
+    // of a choir actually does.
+    static constexpr float roomHalfWidthMetres = 3.6f;
+    static constexpr float roomCeilingMetres = 4.2f;
+    static constexpr float roomFloorMetres = 1.55f;
+    // Pressure reflectance of the four surfaces. Plaster and wood absorb
+    // roughly a quarter to a third of the incident energy at speech
+    // frequencies; the floor under a choir is the hardest surface in the room.
+    static constexpr float wallReflectance = 0.52f;
+    static constexpr float floorReflectance = 0.62f;
+    // One delay line per singer identity, not per voice: twelve voices can
+    // share an identity -- two simultaneous roots in Choir/12 put 24 voices on
+    // twelve identities -- and a singer standing in one place is one position,
+    // so the voices that share her are summed before the delay. 8192 samples is
+    // 170 ms at 48 kHz and 43 ms at 192 kHz, which covers every image path the
+    // geometry produces up to 96 kHz; above that the longest side-wall image in
+    // the largest room clamps, exactly as roomDelay_ already clamps.
+    static constexpr int placementBufferSize = 8192;
+    static constexpr int placementBufferMask = placementBufferSize - 1;
+    // Direct path plus first-order images in the two side walls, the floor and
+    // the ceiling, each resolved to both receivers.
+    static constexpr int placementTapCount = 5;
+    static constexpr int placementReadCount = 2 * placementTapCount;
+
     // Voices are rendered voice-major over runs of this many samples. Chunk
     // boundaries are aligned to absolute sample positions, so nothing the
     // engine renders depends on how the host splits a buffer.
@@ -194,7 +296,24 @@ private:
         float detuneCents { 0.0f };
         float anatomy { 0.0f };
         float pan { 0.0f };
-        float onsetOffset { 0.0f };
+        // Where this singer stands, in metres from the listener. Drawn once
+        // here and never again: twelve identities carry ninety-six voices
+        // between them, so a distance latched at note-on would either drag a
+        // sounding note's delay line to the new note's draw -- which is a pitch
+        // shifter -- or render the new note at the old note's position. Spread
+        // and Size move the azimuth and the image geometry; this does not move
+        // at all.
+        float distanceMetres { 3.0f };
+        // Habitual asynchrony: how far behind the cue this singer tends to
+        // enter, and how far behind a cut-off she tends to let go, in seconds
+        // at Humanize 1. Every note adds its own draw around these; see
+        // buildSingerIdentities().
+        float entryOffset { 0.0f };
+        float releaseOffset { 0.0f };
+        // How far this singer's release time constant sits from the section's,
+        // as a fraction of it. Breath support and lung recoil are anatomy, so
+        // this belongs to the identity rather than to the note.
+        float releaseTendency { 0.0f };
         float vibratoRate { 5.1f };
         float vibratoDepth { 1.0f };
         // Sampled once per chunk, not once per voice control update: every
@@ -226,6 +345,10 @@ private:
         int singer { 0 };
         int tableLevel { 0 };
         int delaySamples { 0 };
+        // How long after the common note-off this singer actually lets go. The
+        // voice is already `releasing` while it counts down -- it is on its way
+        // out and can be stolen -- but its envelope has not started to fall.
+        int releaseDelaySamples { 0 };
         int controlCountdown { 0 };
         std::uint64_t generation { 0 };
         std::uint32_t noiseState { 1u };
@@ -290,6 +413,16 @@ private:
         // note is sung, not by how loose the take is.
         float attackCoefficient { 0.0f };
         float attackDrive { -1.0f };
+        // Per-voice release. The decay used to be one engine-wide coefficient
+        // applied on the same sample to every voice, so twelve people let go
+        // together however loosely they came in. releaseTimeScale is this
+        // note's own time constant as a fraction of the section's, drawn at
+        // note-on from the singer's breath support and the note's own hash;
+        // releaseCoefficient is the per-sample multiplier it resolves to, and
+        // releaseHumanize caches the setting it was resolved for.
+        float releaseTimeScale { 1.0f };
+        float releaseCoefficient { 0.0f };
+        float releaseHumanize { -1.0f };
         // How far below the block's tension this note's glottal source starts.
         // sourceTensionRampDepth_ is the value at the reference velocity; a
         // hard attack begins closer to its adducted target and a soft one
@@ -299,13 +432,8 @@ private:
         // coefficients cost an exp2, an exp and two square roots. Cache the
         // input so a sustained note pays for them once.
         float tiltEffort { -1.0f };
-        float panPosition { -2.0f };
         float irregularity { 0.0f };
         float baseFrequency { 261.63f };
-        float panLeft { 0.7071f };
-        float panRight { 0.7071f };
-        float panTargetLeft { 0.7071f };
-        float panTargetRight { 0.7071f };
         // Nasal branch state: the two-sample memory of the series
         // anti-resonator, and the nasal cavity's own pole in parallel with the
         // oral formants.
@@ -349,9 +477,20 @@ private:
     static float randomBipolar(std::uint32_t& state) noexcept;
     void updateRoom(float inputLeft, float inputRight, float& wetLeft, float& wetRight) noexcept;
     void clearRoom() noexcept;
+    /** Resolve the twelve positions into delays and gains. Runs at the chunk
+        rate and only when Spread, Size or the mode have actually moved. */
+    void updatePlacement(const EngineParameters& parameters) noexcept;
+    /** Run the section's positions over @c count samples: sum each identity's
+        voices into its own delay line, then read the direct path and the four
+        first-order images at both receivers. */
+    void renderPlacement(int count) noexcept;
+    void clearPlacement() noexcept;
     void publishDisplayState(int voiceCount, float blockPeakLeft, float blockPeakRight,
                              int numSamples) noexcept;
     static float midiToHz(int midiNote) noexcept;
+    /** The section's nominal release time constant, in seconds. Each voice
+        scales it by its own releaseTimeScale. */
+    static float sectionReleaseSeconds(float humanize) noexcept;
 
     AtomicParameters atomicParameters_ {};
     EngineParameters blockParameters_ {};
@@ -383,6 +522,22 @@ private:
     int activeTotal_ { 0 };
     std::array<float, chunkSize> mixLeft_ {};
     std::array<float, chunkSize> mixRight_ {};
+    // What each singer emits, before her position is applied. A voice no longer
+    // pans itself into the mix: it adds itself to the identity it belongs to,
+    // and the placement stage below turns that one signal into a direct arrival
+    // and four reflections at two receivers.
+    std::array<std::array<float, chunkSize>, singerCount> singerMix_ {};
+    // The section's first-order image field, kept apart from the direct sound
+    // for two reasons. It is what the recirculating network is fed -- the tail
+    // is excited by the room's own early reflections rather than by the
+    // already-mixed stereo pair, so it inherits the section's geometry, and the
+    // send carries no 1/r of its own, which is what makes a singer at the back
+    // wetter than one at the front. And it is scaled by Room on its way into
+    // the dry path, because an early reflection is the room: where a singer
+    // stands is geometry and is always on, but how much of the room comes back
+    // is the control the player has always had, and Room 0 has always been dry.
+    std::array<float, chunkSize> earlyLeft_ {};
+    std::array<float, chunkSize> earlyRight_ {};
     // Aspiration level and voiced level per sample. The dynamic gains are
     // folded into these two arrays rather than applied separately, so the
     // render loop costs exactly what it did before the dynamic existed.
@@ -395,7 +550,6 @@ private:
     // by how hard it is sung, so it lives on the voice.
     float parameterSmoothing_ { 0.0f };
     float airAttackCoefficient_ { 0.0f };
-    float releaseMultiplier_ { 0.0f };
     // How fast the offset's glottal-area gesture completes, at the control
     // rate. A laryngeal abduction or adduction gesture runs its excursion in
     // 50-100 ms, so a one-pole at 50 ms is 86 % of the way there at 100 ms.
@@ -577,6 +731,65 @@ private:
     float roomLowCutCoefficient_ { 0.01f };
     float roomDampingCoefficient_ { 0.28f };
     float smoothedRoomSize_ { 0.5f };
+
+    // One mono delay line per singer identity, laid out end to end.
+    std::array<float, singerCount * placementBufferSize> placementLine_ {};
+    int placementWriteIndex_ { 0 };
+    // Ten reads per singer: five taps at each of the two receivers, ear 0 in
+    // [0, 5) and ear 1 in [5, 10). Tap 0 is the direct path.
+    //
+    // A tap is an integer read plus a first-order allpass for the fraction, not
+    // a linear interpolation between two samples. A linear interpolator is a
+    // lowpass whose depth follows the fraction -- at a half-sample offset it is
+    // 6 dB down at Nyquist and 2.6 dB down at half of it -- and the direct path
+    // now carries every singer through one. Measured on the aspiration fold, a
+    // fractional linear read took the glottal window's peak-to-trough from
+    // 8.38 dB to 7.15 dB and moved its peak out of the open phase, which is the
+    // top of the band being thrown away rather than anything about the source.
+    // The allpass has exactly unit magnitude at every frequency and costs the
+    // same two loads, because x[n-1] is the next sample down the same line.
+    std::array<std::array<int, placementReadCount>, singerCount> placementWhole_ {};
+    std::array<std::array<float, placementReadCount>, singerCount> placementAllpass_ {};
+    std::array<std::array<float, placementReadCount>, singerCount> placementAllpassState_ {};
+    std::array<std::array<float, placementReadCount>, singerCount> placementGain_ {};
+    // The direct-path delay actually applied, in samples, per identity. This is
+    // the geometric r/c less the nearest singer's, which is a choice of time
+    // origin: every relative arrival is exact and the section costs the player
+    // no latency it would not have had.
+    std::array<float, singerCount> placementDirectSamples_ {};
+    // How much longer the taps stay readable after an identity stops sounding,
+    // in samples. Its line still holds up to a reflection's worth of tail.
+    std::array<int, singerCount> placementHold_ {};
+    // Section level against singer count: sqrt(n / sum of 1/r^2 over the first
+    // n identities), so putting the section in depth redistributes it rather
+    // than changing how loud it is. n = 1 leaves a soloist bit-identical.
+    std::array<float, singerCount + 1> distanceNormalisation_ {};
+    float placementReferenceMetres_ { 1.5f };
+    float placementMetresToSamples_ { 140.0f };
+    // Spread, room scale and solo-narrowing the taps were last resolved from.
+    // None of them moves on a sustained note.
+    float placementSpread_ { -1.0f };
+    float placementScale_ { -1.0f };
+    bool placementSolo_ { false };
+    int placementMaximumSamples_ { 0 };
+    // On-axis trim: the reference distance and the pair's cardioid gain in one
+    // constant. 0.845 is what makes a single voice render at exactly the level
+    // testSourceLevelCalibration pins it at, so putting the singers in a room
+    // leaves the source's absolute calibration alone.
+    float placementTrim_ { 0.845f };
+    // How hard the image field drives the recirculating network. The network's
+    // input is now the reflections rather than the stereo mix, and the
+    // reflections are about 9 dB quieter than the mix was, so the send makes
+    // that back: 2.84 puts the tail at the same absolute level it had before,
+    // measured as the RMS of (Room 100 % minus the same render with the send
+    // muted) against the RMS of the Room 0 % render.
+    float placementSendGain_ { 2.84f };
+    // How much of the first-order image field is rendered. 1 is the geometry.
+    // Not const: the tests force it to zero to measure a property of the source
+    // -- the aspiration's glottal window is a fact about the glottis, and a
+    // room fills the closed phase whatever the glottis did.
+    float placementReflectionDepth_ { 1.0f };
+    float placementReflectionResolved_ { -1.0f };
 
     float meterLeft_ { 0.0f };
     float meterRight_ { 0.0f };

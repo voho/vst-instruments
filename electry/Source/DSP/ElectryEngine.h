@@ -842,6 +842,12 @@ private:
         // extra memory and cannot form a feedback loop: only voices with
         // `active` set drive the bridge bus, and only inactive voices read it.
         bool sympatheticReady { false };
+        // What this voice added to the bridge bus on the previous sample. A
+        // played voice reads the bus *minus* this, so it never drives itself:
+        // its own bridge termination is already carried by `bodyConductance`
+        // and `bodyLossFactor`, and injecting it a second time would retune
+        // every decay time in the instrument instead of coupling anything.
+        float busContribution { 0.0f };
         DelayTap sympatheticPickupTap {};
         float sympatheticPreviousFlux { 0.0f };
         float sympatheticEnergy { 0.0f };
@@ -1025,6 +1031,9 @@ private:
     // internal sample; zero whenever the resonance feedback path is closed.
     [[nodiscard]] StereoSample renderInternalSample(float acousticIn) noexcept;
     void updateActiveVoiceCount() noexcept;
+    // Re-solves the played-string bridge coupling against the row-sum bound.
+    // Called wherever the active set or the loop gains can have moved.
+    void solveBridgeCoupling() noexcept;
     [[nodiscard]] float deadSpotFactor(int stringIndex, int fret) const noexcept;
     [[nodiscard]] float scaleLengthMetres() const noexcept;
 
@@ -1139,6 +1148,16 @@ private:
     float sympatheticHandGainTarget_ { 1.0f };
     float sympatheticHandMute_ { -1.0f };
     bool sympatheticActive_ { false };
+
+    // The same bus read by the strings that *are* being played, which closes
+    // the coupling graph. `bridgeCouplingNominal_` is what the controls ask
+    // for; `bridgeCouplingInjection_` is what survives the row-sum bound, and
+    // `bridgeCouplingRowSum_` is that bound's left-hand side as it currently
+    // stands, kept so the stability contract can be read at the seam rather
+    // than recomputed from constants.
+    float bridgeCouplingNominal_ { 0.0f };
+    float bridgeCouplingInjection_ { 0.0f };
+    float bridgeCouplingRowSum_ { 0.0f };
 
     // Acoustic feedback from the amplified output back into the strings. The
     // host pushes its previous processed block through pushAcousticReturn();

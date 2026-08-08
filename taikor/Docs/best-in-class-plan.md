@@ -989,6 +989,20 @@ leaving three. All five rejects are recorded with the rest below.
   the Mic Distance guard all pass on the unfixed engine, which is what they were
   written to do — they are there to catch a fix that overshoots, not to detect
   the defect.
+  *Revert re-run on the shipping tree, after steps 4 and 5 and the four-by-four
+  grid.* It still bites, and harder: taking the `rate` factor back out of
+  `membranePeak` at both accumulation sites and putting
+  `continuumCalibration` back to `26.0f` fails **three** clauses rather than two,
+  the third being the Hann-windowed one step 4 added. The spreads are no longer
+  the ones taken here, because the drums are not the same drums: 4–10 kHz reads
+  −53.6311 / −54.7593 / −60.8324 / −65.8944 dB across 44.1 / 48 / 96 / 192 kHz,
+  a spread of **12.26 dB** rather than 8.73 (48 kHz to 96 kHz alone is 6.07),
+  the Hann-windowed spread is **13.68 dB** against its 1.5 dB clause, and
+  400 Hz–16 kHz is **7.54 dB** against 1.5. On the shipping engine the same four
+  readings are −54.1934 / −54.7593 / −56.5948 / −56.7029, a rectangular spread of
+  2.51 dB and a Hann-windowed one of 0.9329. The test's own comment carries the
+  re-taken figures; the 8.73 above is left as the number this step was measured
+  against.
   **One hazard handed forward to step 2.** The 48 kHz level clause pins a
   literal, −54.7339 dB, on a render at the factory Tension Mod of 0.4, and step
   2 changes what the glide does to exactly this band. Measured so that the next
@@ -1168,8 +1182,10 @@ leaving three. All five rejects are recorded with the rest below.
   and not to the floor — with the factor floored at zero the two branches meet
   and stop, and over 16200 configurations the breathing mode is reported below
   the fundamental **exactly zero times**. 2130 of the 16200 land on the floor,
-  every one of them a body shorter than a quarter of its own head's wavelength
-  (a 20 cm shell tuned to 3.5 kHz, and the like). `testOctavesRaisePitch`
+  every one of them a body *longer* than half its own head's wavelength — the
+  same statement as the half column having passed its quarter-wave, and the
+  opposite way round from how this sentence first read (an 8 cm body under a
+  head at 3.5 kHz, whose half wavelength is 4.9 cm). `testOctavesRaisePitch`
   measures at the factory body, where the factor is 0.75 to 0.89 across the
   whole keyboard, and passed unchanged. One correction to the step's own corner:
   at Body Depth 0, Head Material 0, Octave Body 0, Air Coupling 0.2, octave +3
@@ -2308,6 +2324,68 @@ direction; the ghost-to-full span and the factory rim shot's peak were re-taken;
 and the stick-on-stick section still called the Bachi stroke the twelfth of
 twelve. What is *not* in the README is anything about a striker that rings or a
 glide that sprays, because neither shipped.
+
+**Everything above this paragraph was written before the 4x4 playing grid
+landed, and this block re-takes what the grid moved.** None of the three landed
+steps changed in the source; what changed under them is the keyboard they are
+measured on, and each of the three was re-verified end to end on the shipping
+tree rather than carried over — the mechanisms read out of the source, the
+figures reproduced with scratch programs linked against `TaikorDSP`, and every
+revert re-run. The per-step entries above carry those notes in full. The suite is
+green on the tree this documentation was written against (2 tests, 23.1 s).
+
+- *The revert counts.* Step 1 still fails two assertions. Step 4 fails
+  **thirteen**: the twelve in its own test, plus one literal in step 5's test
+  that was taken with the column in place, which is collateral rather than a
+  second discriminator. Step 5 fails **thirty-two**, thirteen of them in its own
+  test and the other nineteen in the cavity test and the four-drums test, which
+  measure the drums it puts on the keys.
+- *The breathing branch, and a claim that does not survive.* "The column still
+  widens every one of the five octave steps" was true of a keyboard made by
+  rescaling one drum. It is not true of four instruments. On the four drums the
+  branch steps **759.6 / 956.6 / 1181.8** cents; with the column replaced by the
+  lumped spring on the same drums it steps **768.9 / 964.3 / 1134.0**, so the
+  column narrows the bottom two boundaries and widens the top one. The old
+  argument was that a lumped spring stiffens as 1/L while a scaled drum grows in
+  every dimension at once, and four drums whose bodies run 0.81, 0.66, 0.50 and
+  0.21 m at 0.85, 1.20, 1.25 and 0.70 diameters are not a scaling, so it does not
+  point one way any more. What survives is the statement gap 7 needs, and it
+  survives at either stiffness: the branch is not an octave. The test asserts the
+  three literals and that the steps rise, and records why it no longer asserts
+  the comparison.
+- *The keyboard's scan.* 25,920 configurations of eight controls crossed with
+  four octaves, 103,680 octave readings: worst **+50.9 cents** and **99** outside
+  ±20, against 4213.2 cents and 66,926 on the reverted engine. The grid section
+  below scans the same claim on a different grid and reads 43,740 boundaries,
+  worst 56.2 cents, 81 outside ±20. Both are the shipping tree.
+- *The cavity's scan* is 10,800 configurations rather than 16,200, the cavity's
+  whole authority over the lower branch measures 1.95 %, and the rendered
+  breathing mode moves from the lumped spring's 88.522 Hz to the column's 84.484.
+  The four drums' column factors are 0.868 / 0.782 / 0.611 / 0.740, the okedo
+  being the softest because it is the longest body in the family relative to its
+  head.
+- *Cost.* A cache refresh is four drums rather than six octaves: **143.1 µs**
+  against 10.6 reverted.
+- *Two entries in "what did not move" name a keyboard that is gone.* The striker
+  does not ring on the **four** strokes of the grid, and the free-free bar model
+  it would have used was deleted with the stick-on-stick stroke, so gap 6 now
+  needs the model built again as well as calibrated. Everything else in that
+  list — CC1, Mic Distance's missing tilt, the articulation level trim, Strike
+  Position's dead travel — is exactly as open as it was.
+- *Three README corrections this section did not predict, each measured here.*
+  The list of calibrated constants said five and the engine carries six: the
+  radiating efficiency of a lifted tack was missing, and it is in the same role
+  as the airborne click's. The worst left-right correlation the README quoted
+  over the microphone controls was +0.08; re-measured here over the four strokes
+  on all four drums, with Stereo Width, Mic Distance and Mic Spread swept in
+  tenths, it is **+0.19** — a Ka on the shime with the pair down on the head and
+  fully opened. The suite's own coarser sweep, which reads octave 0 only, reaches
+  +0.31 and asserts nothing inverts and that the sweep gets below +0.5.
+  And the Mic Distance sweep, which step 1 measured at 17.23 and 13.53 dB
+  before step 4 moved the drum under it, now reads **17.62 dB** at 400–1200 Hz
+  and **13.62 dB** at 4–10 kHz, so backing the pair off leaves the top of the
+  drum four decibels brighter relative to itself rather than the 3.71 dB step 1
+  recorded.
 
 ## The 4x4 playing grid — 2026-08-08
 

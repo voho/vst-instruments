@@ -806,7 +806,13 @@ list, not to the previous pass's.
    **What that -40 dB is made of was established in preflight, and it is mostly
    not the shared path.** With `pickNoise`, `fingerNoise` and `releaseNoise` at
    zero the same residual drops to **-65.4 dB at velocity 0.02, -62.0 at 0.20
-   and -53.8 at 0.90** (`pf_additivity`). The missing 25 dB is the per-note
+   and -53.8 at 0.90** (`pf_additivity`). *(Step 2 moved this measurement by 30
+   to 65 dB and step 7 struck the assertion that rested on it. The per-attack
+   stroke draws are seeded from the note counter, so the second note of a pair
+   is struck differently than it is when rendered alone: on the shipped engine
+   the same three residuals read **-22.4, -22.3 and -22.7 dB**, and freezing the
+   four draws restores -87.9, -70.3 and -54.7 dB. The excitation, not the shared
+   path, is now the larger term.)* The missing 25 dB is the per-note
    noise seed: `startExcitation` seeds it from `noteSequence_` (:2619-2625),
    which advances per note-on, so the second note of a pair is seeded
    differently than it is when rendered alone. What remains - the shared body
@@ -1614,10 +1620,16 @@ engine first, and the measured baseline is quoted next to it.
      the acceleration and jitter did to their shape; measured total over the
      200 strums is 0.99988 to 1.00000 of `7 x spread`, the shortfall being
      integer truncation. The knob therefore states the *mean* crossing time.
-     A chord that spans fewer than eight strings is spread slightly wider per
-     string than the knob says - 1.208 times it on the first crossing, 0.700
-     on the last - because the pick has not finished speeding up. That is the
-     mechanism, not an error.
+     A chord that spans fewer than eight strings does not get the knob's value
+     per string: the nominal crossings run 1.208, 1.115, 1.041, 0.980, 0.928,
+     0.884, 0.845 times it, so a short chord at the edge the stroke starts from
+     is spread wider and one at the far end is spread narrower, because the
+     pick is still speeding up. That is the mechanism, not an error.
+     *Corrected on re-measurement*: this read "1.208 times it on the first
+     crossing, 0.700 on the last", which took the last gap's ratio to the
+     *first* gap - the 0.70 the acceleration is solved for - as though it were
+     its ratio to the knob. Normalised to seven crossings the last one is
+     0.845 of the knob, and only the first four of the seven are above it.
   4. **The pre-roll is charged to single notes as well.** A note-on cannot
      know whether the rest of a chord is still coming, so `R` is charged
      whenever Strum Spread is non-zero, including on a note that turns out to
@@ -1704,7 +1716,7 @@ engine first, and the measured baseline is quoted next to it.
   at least 150 dB below the peak. Without those, this step's own headline number
   can be met by an artefact.
 
-- [ ] **7. The strings share a bridge.** Let active voices read the coupling bus
+- [x] **7. The strings share a bridge.** Let active voices read the coupling bus
   they already write - **minus their own contribution to it**. Every string
   terminates on one saddle whose mechanical admittance is finite, so the saddle
   velocity driven by the summed string forces drives every *other* string back;
@@ -1726,7 +1738,12 @@ engine first, and the measured baseline is quoted next to it.
   voice reads must be `sympatheticBusDelayed_` minus that voice's own
   contribution from the previous sample, which costs one extra per-voice float
   and is the difference between this step being a coupling and being a
-  recalibration of the entire string model.
+  recalibration of the entire string model. *Corrected on implementation*: the
+  subtraction is provably exact rather than approximately so. A lone voice is
+  the only contributor to the bus, so `bus - own` is identically zero, and a
+  single note renders **bit-identical** to the pre-step engine at every setting
+  of the control including 1.0 - not the "within 0.05 dB" the verification
+  below asks for.
 
   The one-sample delay makes this an explicit Jacobi iteration, so the acyclic
   guarantee is replaced by an explicit spectral-radius bound. **The bound this
@@ -1738,8 +1755,13 @@ engine first, and the measured baseline is quoted next to it.
   itself - and off-diagonal entries `g H_j`, where `H_j` is the transfer from
   an injection into string `j`'s loop to that string's own output, which at the
   string's resonance is `|H_j| = 1 / (1 - G_j)` and **not** the round-trip gain
-  `G_j`. The coherent common mode drives all `N - 1` other strings in phase, so
-  the safe bound is the row-sum norm
+  `G_j`. (*Corrected on implementation*: the entry was written with the source
+  string's index. Row `i` of `x = M x + b` is `x_i = H_i (e_i + g sum_{j != i}
+  x_j)`, so the amplification in an entry is the **receiving** string's, not the
+  source's. The row-sum form below is unaffected, because it takes the maximum
+  over the strings either way; per-string gains would be the sharper reading of
+  it and are not what ships.) The coherent common mode drives all `N - 1` other
+  strings in phase, so the safe bound is the row-sum norm
 
       (N - 1) * g * max_j 1/(1 - G_j)  <=  0.25
 
@@ -1775,41 +1797,72 @@ engine first, and the measured baseline is quoted next to it.
   the per-note noise seed.
   **First**, on a chord that fingers all eight open strings (28, 35, 40, 45,
   50, 55, 59, 64), the render at `sympatheticAmount = 0.20` differs from the
-  render at `sympatheticAmount = 0` by a relative L2 of **at or above -20 dB**
-  over 0-1.5 s. Today those two renders are **bit-identical**, difference
+  render at `sympatheticAmount = 0` by a relative L2 of **at or above -66 dB**
+  over 0-1.5 s, and at `sympatheticAmount = 1.0` by **at or above -56 dB**.
+  (*Corrected on implementation from -20 dB, which this step's own stability
+  bound puts 30 dB out of reach.* The bound caps the injection gain at 3.6e-5
+  on this voicing; the difference is exactly linear in that gain and at the cap
+  it measures -50.51 dB. Reaching -20 dB needs `g = 1.1e-3`, and a direct
+  render diverges between 6.0e-4 and 8.0e-4. See *What actually shipped* below.) Today those two renders are **bit-identical**, difference
   exactly zero (`pf_chordref`), because with every voice active there is no
   inactive string left to ring and `sympatheticAmount` has no path at all. That
   is the case this step exists to close, and it is the assertion no
   implementation can pass without closing it.
-  Then, at `sympatheticAmount = 0.20`, notes 40 and 47 rendered separately and
-  together give `||AB - (A+B)|| / ||A+B||` **at or above -26 dB** over 0-1.5 s
-  at velocities 0.02, 0.20 and 0.90 (today **-37.8, -37.9 and -38.0 dB** with
-  the noise controls at zero, and -36.1, -36.0 and -36.1 dB with them at their
-  defaults - **not** the -68.2/-72.0/-56.4 dB first recorded, which were
-  measured on a decayed 10-12 s window and on `sympatheticAmount = 0`).
+  ~~Then, at `sympatheticAmount = 0.20`, notes 40 and 47 rendered separately
+  and together give `||AB - (A+B)|| / ||A+B||` at or above -26 dB over 0-1.5 s
+  at velocities 0.02, 0.20 and 0.90 (today -37.8, -37.9 and -38.0 dB with the
+  noise controls at zero).~~ *Struck on implementation: it already passes, and
+  not for a reason this step owns.* Measured on the shipping engine with the
+  noise controls at zero it reads **-22.4, -22.3 and -22.7 dB**. Step 2 landed
+  between preflight and this step, and its per-attack stroke draw is seeded
+  from the note counter, so the second note of a pair is struck differently
+  than it is when rendered alone: with the four draws frozen the same residual
+  reads -87.9, -70.3 and -54.7 dB. The stroke draw is 30 to 65 dB of that
+  residual and the coupling moves it by 0.3 dB. Every comparison this step is
+  verified by is therefore the *same* voicing at two coupling settings, where
+  the seeds are identical by construction. What replaces this assertion is the
+  control sweep: the eight-string difference above must grow strictly with
+  `sympatheticAmount` across 0.05, 0.20 and 0.50.
   The coupling is lossy rather than regenerative: the residual `AB - (A+B)`
   falls by **at least 20 dB in RMS** from the 0-1.5 s window to the 10-12 s
   window (today 31.9 to 33.8 dB, `pf_late`), and an eight-string chord at full
-  velocity and maximum Resonance has **strictly lower RMS in each successive
-  1 s window** over a 30 s render, which stays finite and inside the existing
-  output bound. The bound of the previous paragraph is asserted directly at the
+  velocity and maximum Resonance stays finite and inside the existing output
+  bound over a 30 s render, falls by **at least 70 dB** from its first 1 s
+  window to its last, and has **no 1 s window rising by more than 0.5 dB** on
+  the one before it. (*Corrected on implementation from "strictly lower RMS in
+  each successive 1 s window", which fails on the unmodified engine*: it
+  already rises three times over this render, by up to 0.429 dB, because eight
+  detuned decays beat against one another. The shipped engine rises three times
+  by up to 0.411 dB and falls 72.57 dB against 72.60 dB before, so the bar is
+  that the coupling adds no regeneration, not that a sum of eight decays is
+  monotone.) The bound of the previous paragraph is asserted directly at the
   voice seam: `(N - 1) * g * max_j 1/(1 - G_j)` over the active voices, with
   `g` and each `loopGain` read through the existing snapshot, is **at or below
   0.25** at every setting the test sweeps, including maximum Resonance with
   eight strings fingered.
-  **A single note renders within 0.05 dB of today's, band by band and in T60,
-  at `sympatheticAmount = 0.20` and again at `sympatheticAmount = 1.0`** -
+  **A single note's own loop is bit-unchanged at `sympatheticAmount = 0.20`
+  and again at `sympatheticAmount = 1.0`** (tightened on implementation from
+  "within 0.05 dB, band by band and in T60": it reproduces exactly, and the
+  test reads the voice's own energy follower rather than the output, because
+  the output also carries the seven idle strings, which legitimately do move
+  with the control) -
   which is the assertion that catches the self-term and without which this step
   can silently retune the whole instrument. With one voice active the bus is
   that voice's own contribution, so `bus - own` is exactly zero and the
   injection must be exactly zero; the maximum setting is included because that
   is where an unsubtracted self-term is largest, and the shipping 0.20 alone is
   too small a gain to show it.
-  **Off is off**: at `sympatheticAmount = 0` the two-note additivity residual
-  stays within **0.1 dB** of its shipping values, -37.8, -37.9 and -38.0 dB at
-  the three velocities with the noise controls at zero, so the new path
-  contributes nothing at zero. And the alias floor above 12 kHz stays **at
-  least 150 dB** below the spectral peak (today 155.1 dB).
+  **Off is off**: at `sympatheticAmount = 0` the eight-string chord is
+  **bit-identical** to the pre-step engine's and the seam reports an injection
+  gain and a row-sum norm of exactly zero, so the new path contributes nothing
+  at zero. (Tightened on implementation from "the two-note additivity residual
+  stays within 0.1 dB of -37.8, -37.9 and -38.0 dB": those baselines no longer
+  reproduce, for the reason given two paragraphs up, and bit-identity is both
+  exact and free to assert.) And the alias floor above 12 kHz stays **at
+  least 150 dB** below the spectral peak (today **151.31 dB** on this test's own
+  grid rather than the 155.1 dB recorded - the figure moves several decibels
+  with the frequency grid, as the struck step 6 also found; the shipped engine
+  reads 158.61 dB).
 
   **What preflight corrected here, and why.** The first assertion read "on a
   chord that fingers all eight strings, `||chord - sum of the eight singles|| /
@@ -1841,6 +1894,87 @@ engine first, and the measured baseline is quoted next to it.
   because the coupled content outlives the direct note, which is what coupling
   does. The absolute residual decay above tests the property it was reaching
   for.
+
+  *What actually shipped*: the mechanism exactly as written, and one number
+  that could not be.
+
+  Two constants (`ElectryEngine.cpp:120-153`), one per-voice float
+  (`Voice::busContribution`, `ElectryEngine.h:850`), and a solver
+  (`solveBridgeCoupling`, `ElectryEngine.cpp:4767`). Every voice now records the
+  bridge force it contributed to the bus; a played voice adds
+  `bridgeCouplingInjection_ * (sympatheticBusDelayed_ - busContribution)` to
+  both of its polarisations at the same 0.5/0.5 weights `bridgeForce` reads
+  them out at, which is what reciprocity of a passive junction requires. At
+  `sympatheticAmount = 0` the gain is exactly zero, nothing is added, and the
+  eight-string chord is bit-identical to the pre-step engine's. Palm-mute
+  pressure starves the played strings' share of the bus by the same factor it
+  already starves the idle strings' share, because the same hand lies on the
+  played strings and lies on them at the saddle. The whole change is one
+  subtract, one multiply and two adds per voice per sample; the CPU guardrail
+  is unmoved.
+
+  1. **The stability bound is structural, not a calibration.**
+     `solveBridgeCoupling()` runs wherever the active set or the loop gains can
+     have moved - the control tick and every note-on - and caps the gain at
+     `0.25 / ((N - 1) max_i 1/(1 - G_i))` over the voices that are actually
+     sounding. The row-sum norm is therefore at or below 0.25 at every
+     parameter setting rather than only at the ones the test sweeps; the worst
+     the test's own sweep sees is **0.225**. The nominal gain below the cap is
+     `6.0e-5 * effectiveSympathetic * (1 - handMute)`, 6.0e-5 being what the
+     bound permits at the loop gains this document already measured
+     (0.993686 to 0.998289, `max_i 1/(1 - G_i) = 584`). The cap binds above
+     about `sympatheticAmount = 0.7`, so the control scales the coupling over
+     its useful range and the bound takes the top of it.
+
+  2. **The audible headline is 30 dB smaller than the step predicted, and the
+     bound is why.** The all-eight-fingered chord against the same chord at
+     Resonance 0 measures **-72.14 dB at 0.05, -60.09 dB at 0.20, -52.09 dB at
+     0.50 and -50.51 dB at 1.0**, all of them exactly zero - `-3016 dB`, the
+     test's floor - before the step. The difference is exactly linear in the
+     injection gain, so the -20 dB the step asked for needs `g = 1.1e-3`, which
+     is 31 times the cap. It is not that the cap is timid: rendering the same
+     chord with the cap lifted, the engine **diverges between `g = 6.0e-4` and
+     `g = 8.0e-4`** - so -20 dB of coupling is 3 dB *past* the point where this
+     network stops being a filter, and no bound at all would buy it. The
+     row-sum norm is conservative by 25.7 dB against that measured edge where
+     it intends 12 dB, which is what an infinity norm costs on a bank of
+     detuned high-Q resonators, and it is kept because it is the bound this
+     step is verified against.
+
+     What this buys is a structural absence closed rather than a loud effect:
+     the chord that leaves nothing open had *no* coupling path, and now has one
+     that scales with the control and grows in the tail, where it belongs
+     (-45.25 dB over 10-12 s at 0.20 and -35.65 dB at 1.0, against -60.09 and
+     -50.51 dB over 0-1.5 s). Whether that is worth a step is a fair question;
+     it is recorded here rather than argued away.
+
+  3. **The self-term subtraction is exact.** A single note renders
+     **bit-identical** to the pre-step engine at `sympatheticAmount` 0, 0.20 and
+     1.0 - with one voice sounding the bus is that voice's own contribution and
+     `bus - own` is identically zero, and the solver additionally returns zero
+     below two active voices. The test asserts it on the voice's own energy
+     follower, which nothing but that voice's two loops can reach, rather than
+     on the output, which also carries the seven idle strings.
+
+  4. **Three of the step's own assertions were corrected against measurement**,
+     each marked in place above: the two-note additivity bound already passes
+     (step 2's stroke draw, not this step, is 30 to 65 dB of that residual);
+     "strictly lower RMS in each successive 1 s window" already fails on the
+     unmodified engine, which rises three times by up to 0.429 dB; and the
+     alias floor's stated 155.1 dB reads 151.31 dB on this test's grid. The
+     shipped engine's alias floor is **158.61 dB** below the peak, 7.3 dB
+     *better* than before the step, because the injection is one more lossy
+     path into loops that already low-pass.
+
+  5. **The matrix index in the derivation was wrong** and is corrected in
+     place: the off-diagonal entry carries the receiving string's
+     amplification, not the source's. The row-sum form is unaffected. Using
+     per-string gains would be the sharper reading and would buy roughly 6 dB
+     at maximum Resonance; it is not what ships, because the step's bound and
+     its seam assertion are both written with a single `g`.
+
+  6. **`electry/README.md` is not touched**, per the instruction; nothing in it
+     describes this path.
 
 ### Considered and not planned
 
@@ -1928,6 +2062,36 @@ engine first, and the measured baseline is quoted next to it.
   the list above as a true statement about the engine: tension modulation is
   wired up, calibrated about fifty times too small, and peaks a fifth of a
   second late.
+
+  *Re-measured on a rebuild of the struck implementation.* The baseline
+  reproduces: note 40 at velocity 1.0 with `velocityAmount = 1.0` peaks at
+  **0.1575 cents**, at velocity 0.25 at **0.0156**, a ratio of 10.13, and the
+  gauge ratio reads **0.4760**. Rebuilt, the recalibration peaks at **7.55
+  cents at 83.3 ms** - the two-pole smoothing this entry describes, so the peak
+  time lands where (c) says it does - and reads **5.13 cents at 400 ms**, which
+  is **68 per cent** of its own peak against a contract of 1.5 cents. Point (d)
+  reproduces by family rather than by tally: at the derived depth the suite
+  fails fourteen pinned partials, the chord balance, four octave bands, the
+  alias floor at **139.4 dB**, the velocity brightening, step 2's repeat bound
+  and the palm-mute pitch check, and at a quarter of it eleven partials and the
+  alias floor at **148.0 dB** against the 148.4 stated. The exact tally at full
+  depth depends on which smoothing variant is built; the failures do not. One
+  measurement is added: at a **sixteenth** of the derived depth - a 0.473-cent
+  peak, only 2.6 times what ships - six pinned partials and four octave bands
+  still fail, so the ceiling step 3's table leaves for an attack pitch move
+  sits between **0.18 and 0.47 cents**, a factor of at least thirteen below
+  this step's own 6-cent floor.
+
+  *Corrected on re-measurement.* The three alias-under-vibrato figures in (b)
+  do not reproduce as stated. On the unmodified engine, same fretted chord and
+  same window, the metric reads **156.4 dB** with the vibrato at rest, **87.9
+  dB** at half channel pressure and **84.3 dB** at full; the coarser frequency
+  grid the original probe steps reads 142.5, 85.2 and 82.2 dB. The stated
+  162.1, 88.7 and 90.6 match neither, and the at-rest value alone moves 14 dB
+  with the analysis grid, so these decibels are a property of the estimator as
+  much as of the signal. The point (b) rests on is unchanged and does not
+  depend on the grid: the shipping vibrato costs this metric **60 to 70 dB**
+  however it is read, and full pressure is worse than half rather than better.
 
 - **Fretted intonation: the fret-1-sharp residual a saddle setback leaves
   behind. Scheduled as step 4, struck under review because its own physics does
@@ -2053,3 +2217,218 @@ engine first, and the measured baseline is quoted next to it.
   not spend effort on forum consensus. If it is ever pursued, Zollner's
   *Physik der Elektrogitarre* chapters 3-5 are the primary source and must be
   read directly.
+
+### Outcome
+
+Six of the seven scheduled steps landed. Step 6 was struck under review and is
+above under "considered and not planned", next to the fretted-intonation step
+that was struck before the list was finalised - so of the eight changes this
+pass was drafted with, two did not survive their own arithmetic. Six tests were
+added (`testVelocityDynamicRange`, `testPickingHandVariation`,
+`testHumbuckerTwoCoilNotch`, `testVibratoIsAHandNotAnLfo`,
+`testStrumTravelFollowsStroke`, `testFingeredStringsShareTheBridge`) and four
+existing ones were moved, restated or partly retired in place
+(`testVelocityExpression`, `testPinchHarmonic`, `testFrettingHandVibrato`,
+`testStrumSpread`). Every step's revert proof was executed rather than argued:
+the change was taken back out of the source by hand - never with git - the
+assertions were watched failing with their baselines printed, and the source was
+restored and re-verified. `testDeterminism` still renders bit-exact, because
+every quantity this pass adds is a pure function of the note index and the
+string, so "identical MIDI always renders identical audio" survives a pass whose
+whole subject is variation.
+
+**What moved, in the figures the suite now pins.** Velocity spans **5.218 dB ->
+18.175 dB** across the MIDI range and **1.487 -> 3.508 dB** across the top half
+of the keyboard, monotone where the shipping engine turned over above v=110.
+Two identical note-ons twelve seconds apart differ by **-84.61 -> -16.51 dB**
+over their first 150 ms, with peak spread **0.0120 -> 2.493 dB** and attack
+centroid spread **0.380 -> 17.15 Hz**. The humbucker's first notch moves from
+**5507.7 to 3046.1 Hz** on string 2 and from **7351.4 to 4065.8 Hz** on string
+3, at a **12.00 dB** dip where a single rectangular window had nothing there to
+dip. The vibrato's period deviation goes **0.0533% -> 14.18%**, its per-cycle
+peak spread **0.00011 -> 25.12 cents**, the fraction of each cycle above half
+its own peak **0.4997 -> 0.3641**, a double stop's phase separation **0 ->
+0.1903 cycles**, and the depth at a tenth of the onset **20.665% -> 1.851%** of
+settled. A split-block chord that sounded in host arrival order both ways
+(0/20/40 ms) now sounds in stroke order - **20.000/34.667/48.094 ms** on the
+downstroke, the exact reverse on the upstroke, identical from either arrival
+order - in gaps that compress from 14.667 to 10.052 ms across eight strings. And
+an all-eight-fingered chord, which was **bit-identical** at every Resonance
+setting because it left no idle string to ring, now differs from Resonance 0 by
+**-60.09 dB** at the 20% default and **-50.51 dB** at maximum, growing to -45.25
+and -35.65 dB over 10-12 s.
+
+**Where reality differed from the plan.** Each is recorded in full in its own
+step; this is the list, so that no reader has to reconstruct it.
+
+1. **Step 1.** The 4.0 dB upper-half assertion is unreachable - freezing the
+   contact spectrum outright measures 4.630 dB, which leaves 0.63 dB for any
+   surviving brightness dependence - and it was lowered to 3.0 dB rather than
+   moving the shipped `s = 0.80` off the value the pick geometry gives.
+   Monotonicity turned out to be a second biting assertion, not the regression
+   guard the step called it. The attack band ratio moves 3.431 dB on the
+   shipping engine by the test's own method, not the 2.28 dB the gap list
+   recorded, so that bound ships with 0.57 dB of headroom against the
+   *unmodified* engine. And (b) shipped as a split of `effortCurve` into
+   `effort` and `releaseRate` rather than as a compression of one field.
+2. **Step 2.** The contact-force sigma ships at 0.6 dB, not 0.8, because the
+   contact-patch draw already carries 0.43 dB of level on its own; the bound on
+   the audible outcome was kept and the calibration gave way. The -24 to -8 dB
+   band is scored on the mean of the successive pairs plus a per-pair ceiling,
+   because independent draws occasionally land close and a hard floor would
+   assert that no two strokes in a run may ever resemble each other. Three
+   baselines and one piece of arithmetic in the step text were corrected on
+   measurement: the 12 s twelfth pair, the 500 ms trajectory's first pair, the
+   centroid estimator, and the comb's 3.4% - which is 5.3%.
+3. **Step 3.** The two coils need one position comb, not two: the pair factors
+   exactly into the existing centre-anchored comb, so the change costs one
+   fractional read rather than a second comb, and the "second-order thickening"
+   the step promised does not exist. The notch ships as a 12 dB dip rather than
+   a null, on the same evidence `pickupCombDepth` already carried. The 4 dB
+   per-octave-band bound is in direct conflict with the step it guards - the
+   misplaced null sat inside one of the bands it measures - and was retired and
+   replaced by three bounds that measure the property it was written to protect.
+4. **Step 4.** Vibrato Depth is the nominal excursion rather than a ceiling, so
+   the per-cycle draw reaches 1.45x it. The onset ramp is 258 ms, chosen so the
+   90% time is unchanged at 207 ms. The pressure-to-depth curve became a
+   `smoothStep` along with the onset. The phase-separation assertion is scored
+   on the mean, for the same reason step 2's band is. The step's 49.2% baseline
+   for a raised cosine is 49.97%. `testFrettingHandVibrato`'s depth ceiling went
+   55 to 60 cents. The finger's phase is seeded at note-on and deliberately not
+   re-seeded by a legato retarget. **The depth-rate coupling was not reversed**:
+   the step's own condition was that the reversal ships with a citation, no
+   citation is obtainable from this machine, so the existing coupling stands and
+   the two rate assertions stay held back.
+5. **Step 5.** The per-gap jitter the step specified would have erased the
+   compression it exists to add - adjacent crossings differ by only 3 to 8% - so
+   the variation moved to where the physics puts it: the wrist's acceleration is
+   drawn once per chord at sigma 15% and the per-crossing draw at 0.5% is what
+   is left over. The travel is normalised *after* the draws, which makes Strum
+   Spread the mean crossing time rather than the per-string one; the shape
+   1.208 ... 0.845 of the knob was corrected on re-measurement from a figure
+   that had confused the last gap's ratio to the first with its ratio to the
+   knob. The pre-roll is charged to single notes too, because a note-on cannot
+   know whether the rest of a chord is still coming. Two `testStrumSpread`
+   assertions were restated to `R` and one - the uniform-ramp comparison - was
+   retired, because it asserted exactly what this step replaces.
+6. **Step 6 was struck**, after being implemented and measured. The physics
+   reproduces - 8.96 cents at 26.2 ms at the derived depth, and 8.1 cents when
+   the worked example's own 3 mm geometry is scaled back onto it - and three of
+   its four verification contracts are unreachable: the 400 ms relaxation asks a
+   bloom that decays with the string to lose 7.6 dB while the string loses
+   3.5 dB; the alias contract measures the spectral purity of a *static*
+   instrument, and the vibrato the instrument already ships costs it 60 to
+   70 dB; and the 30 ms peak sits inside two round trips of the loop. The fourth
+   is the real blocker: the depth that meets the headline band breaks five
+   existing tests, and even a sixteenth of it - a 0.473-cent peak, 2.6 times
+   what ships - still fails six pinned partials and four octave bands. The
+   ceiling the installed regression tables leave for an attack pitch move is
+   between 0.18 and 0.47 cents, a factor of at least thirteen below the step's
+   own 6-cent floor.
+7. **Step 7.** The headline -20 dB is unreachable by 30 dB, and the stability
+   bound is only half the reason: the difference is exactly linear in the
+   injection gain, and rendering the same chord with the cap lifted, the network
+   **diverges** between g = 6.0e-4 and 8.0e-4 - so -20 dB of coupling is 3 dB
+   past the point where this network stops being a filter, and no bound at all
+   would buy it. The assertion was lowered to bars that are still exactly zero
+   on the unmodified engine, a control sweep was added so no fixed perturbation
+   satisfies it, and the bound was kept at 0.25 and made structural rather than
+   weakened to chase the number. The two-note additivity assertion was struck
+   because step 2, not this step, owns 30 to 65 dB of that residual. "Strictly
+   lower RMS in each successive 1 s window" fails on the unmodified engine,
+   which rises three times by up to 0.429 dB. Two contracts were tightened
+   instead: the self-term subtraction and the off state are both bit-exact
+   rather than approximate. And the matrix index in the derivation carried the
+   source string's amplification where it is the receiving string's.
+
+**What can now be claimed, and what cannot.**
+
+**Velocity spans 18.175 dB, and a guitarist spans 25 to 30.** The instrument is
+no longer a 5 dB trim, but the shipping default is not the whole story either:
+the exponent form means Velocity Response above 85% reaches further, and the top
+half of the keyboard still moves only 3.508 dB. What the suite supports is that
+written accents, ghost notes and crescendi now render as different loudnesses -
+not that a played instrument's dynamic range has been matched.
+
+**The stroke-to-stroke magnitudes are a calibration, and are documented as
+one.** No measurement of picking-hand repeatability was found for any of the
+four draws; what the round-robin literature documents is the presence of the
+variation, not its size. The 0.6 dB force sigma is the one number that was
+fitted, and it was fitted to the audible outcome the step bounds rather than to
+a source. The figures that *are* measurements are the outcomes: 2.493 dB of peak
+spread, 17.15 Hz of centroid spread, -16.51 dB between successive strokes.
+
+**The humbucker's notch is corrected; the rebalance that came with it is a
+voicing change.** The bands the change brightens are very quiet - on note 40 the
+4-8 kHz band sits 121 dB below the sub-500 Hz band before and 113 dB after - and
+the audible verdict is the chord measurement, where the pickup comes out
+**0.858 dB darker** than it was. The single coil is untouched to 0.0078 dB
+against a 0.2 dB bound, so the type control still spans the two pickups it
+always did. The coil pair costs 1.9 dB of alias floor (156.676 -> 154.793 dB),
+which step 7 then returned with interest.
+
+**The vibrato is a hand, but one of its calibrations is unresolved and its depth
+is not a host control.** Whether a wider vibrato is faster or slower was never
+measured here and no citation is obtainable, so the existing depth-rate coupling
+stands and the two rate assertions are held back. And `vibratoDepth` is an
+engine parameter only: a thirtieth knob would fail `PluginProcessorTests`'
+29-knob and 31-parameter assertions and the obvious ID is already taken by
+Resonance Depth, so the plug-in runs at the 40 cents it has always had. **The
+31-parameter contract is unchanged by this pass**, and nothing in it needs a
+session migration.
+
+**The strum's realism costs 20 ms of latency wherever Strum Spread is
+non-zero.** It is charged to every note, chord or not, because a note-on cannot
+know whether the rest of a chord is still coming, and it is what buys onsets
+that depend on neither the order the host sent the chord in nor its buffer size.
+Chords whose note-ons are spread wider than 20 ms still travel from their first
+arrival, which is the stated limit of the mechanism. At the shipping default of
+0 ms nothing is charged and the engine is bit-unchanged.
+
+**The played-string bridge coupling closes a structural absence rather than
+delivering a loud effect.** -60.09 dB at the shipping Resonance is what the
+stability bound permits, and the bound is conservative by 25.7 dB against the
+measured divergence edge where it intends 12 dB - which is what an infinity norm
+costs on a bank of detuned high-Q resonators. Per-string gains would be the
+sharper reading and would buy roughly 6 dB at maximum Resonance; they are not
+what ships. What can be claimed is that the chord which leaves nothing open now
+has a coupling path at all, that it scales with the control, and that it grows
+in the tail. Whether it is *audible* is not something this pass measured, and it
+is recorded that way rather than argued away.
+
+**Two measured defects remain deliberately unscheduled**, and the gap list keeps
+them as true statements about the engine: fretted intonation (gap 4), whose own
+geometry produces 0.295 cents where its test asserted 2 to 8, and the attack
+pitch bloom (gap 7), which stays wired up, about fifty times too small and
+peaking 184 ms late. Three more - the pitch-wheel glide's exponential, the
+dispersion re-fit's bursts under a String Gauge or Scale Length sweep, and the
+single hard-coded note-off damping - are unchanged and still carry the original
+audit's confidence rather than this section's.
+
+**The blocker for the next pass is measurement, not modelling.** Step 6 died on
+the suite's own instrumentation: six tests score fixed frequency bins, and an
+instrument whose regression tables pin sixteen partials to 0.2 dB in fixed bins
+is not allowed to move its pitch during an attack. Per-partial pitch tracking is
+the prerequisite for any future attack-pitch work, and it is cheaper than the
+step it blocks.
+
+**Cost.** No new realtime ratio was measured this pass. The per-sample additions
+are one fractional read per pickup per voice for the humbucker's second coil,
+and one subtract, one multiply and two adds per voice for the played-string
+bridge injection; everything else - the per-attack draws, the per-cycle vibrato
+draws, the per-chord strum solve, the coupling-gain solve - runs at note-on, at
+a cycle boundary or at the control tick. `testCpuGuardrail` passes unchanged.
+The visible cost is the suite's own runtime, about 40 s before the pass and
+about 65 s after, because `testPickingHandVariation` renders 294 s of audio to
+get its strokes 12 s apart and `testFingeredStringsShareTheBridge` renders about
+100 s for its 30 s stability check and its 10-12 s decay windows.
+
+**`README.md` is where steps 1 and 7 left it, and the documentation pass that
+closes this section brought it up to date**: the single-axis reading of the
+velocity response, the one-way coupling
+and acyclic-stability claims, the single wide humbucker aperture, the strum
+whose first string fired immediately, and the "hard attacks start audibly sharp"
+reading of the tension modulation are all corrected there against the figures
+above, and the picking hand's variation, the two-coil humbucker, the vibrato and
+the strum's travel are described at the same depth as the mechanisms around
+them. Step 6's behaviour is not described there, because step 6 did not ship.

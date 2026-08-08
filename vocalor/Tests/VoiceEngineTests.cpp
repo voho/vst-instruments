@@ -14,12 +14,18 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace vocalor
 {
 struct VoiceEngineTestAccess
 {
+    /** The engine's render chunk, in samples. Chunk boundaries are aligned to
+        absolute sample positions, so a buffer split on a multiple of it renders
+        the same chunks a single block would have rendered. */
+    static constexpr int chunkSize = VoiceEngine::chunkSize;
+
     static std::array<float, 4> smoothedParameters(const VoiceEngine& engine) noexcept
     {
         return { engine.smoothedRoom_, engine.smoothedGain_,
@@ -197,6 +203,130 @@ struct VoiceEngineTestAccess
         engine.aspirationModulationDepth_ = depth;
     }
 
+    /** How much of the first-order image field the placement renders. 1 is the
+        geometry; 0 leaves the direct paths alone and takes the room away, which
+        is how a property of the source is measured once the source is standing
+        in a room. */
+    static void setPlacementReflectionDepth (VoiceEngine& engine, float depth) noexcept
+    {
+        engine.placementReflectionDepth_ = depth;
+        engine.placementSpread_ = -1.0f;   // force the taps to be resolved again
+    }
+
+    /** Where the twelve singers stand, in metres. Drawn once in
+        buildSingerIdentities() and never again. */
+    static std::vector<float> singerDistances (const VoiceEngine& engine)
+    {
+        std::vector<float> result;
+        for (const auto& singer : engine.singers_)
+            result.push_back (singer.distanceMetres);
+        return result;
+    }
+
+    /** The direct-path delay actually applied to each identity, in samples:
+        the mean of the two receivers' arrival times. Referred to the nearest
+        singer, so identity 0 -- the one Solo sings on -- costs no latency. */
+    static std::vector<float> directDelaySamples (const VoiceEngine& engine)
+    {
+        std::vector<float> result;
+        for (const auto value : engine.placementDirectSamples_)
+            result.push_back (value);
+        return result;
+    }
+
+    /** The direct gain of each identity at the left receiver, which is the 1/r
+        the geometry gives it. */
+    static std::vector<float> directGains (const VoiceEngine& engine)
+    {
+        std::vector<float> result;
+        for (const auto& gains : engine.placementGain_)
+            result.push_back (gains[0]);
+        return result;
+    }
+
+    /** Drives one unit sample into a named singer's placement input, every
+        voice silent, and returns what reaches the listener: her direct arrival,
+        her four first-order images and the tail they excite, summed to mono.
+        The image sources are per singer and sit upstream of the recirculating
+        network, so an impulse pushed into updateRoom would observe only the
+        shared four-tap tail -- the path this fixture exists to measure is the
+        one that injection point skips. */
+    static std::vector<float> placementImpulse (VoiceEngine& engine, int singerIndex,
+                                                int samples)
+    {
+        engine.singersInUse_ = 1u << singerIndex;
+        const float dryScale = 1.0f - 0.12f * engine.smoothedRoom_;
+        const float wetScale = 0.72f * engine.smoothedRoom_;
+        std::vector<float> result;
+        result.reserve (static_cast<std::size_t> (samples));
+        bool first = true;
+        while (static_cast<int> (result.size()) < samples)
+        {
+            const int count = std::min (VoiceEngine::chunkSize,
+                                        samples - static_cast<int> (result.size()));
+            for (auto& bus : engine.singerMix_)
+                bus.fill (0.0f);
+            if (first)
+                engine.singerMix_[static_cast<std::size_t> (singerIndex)][0] = 1.0f;
+            for (int i = 0; i < count; ++i)
+            {
+                const auto index = static_cast<std::size_t> (i);
+                engine.mixLeft_[index] = engine.mixRight_[index] = 0.0f;
+                engine.earlyLeft_[index] = engine.earlyRight_[index] = 0.0f;
+            }
+            engine.renderPlacement (count);
+            for (int i = 0; i < count; ++i)
+            {
+                const auto index = static_cast<std::size_t> (i);
+                float wetLeft = 0.0f;
+                float wetRight = 0.0f;
+                engine.updateRoom (engine.placementSendGain_ * engine.earlyLeft_[index],
+                                   engine.placementSendGain_ * engine.earlyRight_[index],
+                                   wetLeft, wetRight);
+                const float left = dryScale * engine.mixLeft_[index]
+                                 + wetScale * (engine.earlyLeft_[index] + wetLeft);
+                const float right = dryScale * engine.mixRight_[index]
+                                  + wetScale * (engine.earlyRight_[index] + wetRight);
+                result.push_back (0.5f * (left + right));
+            }
+            first = false;
+        }
+        return result;
+    }
+
+    /** The recirculating network's own impulse response, mono: a unit sample
+        straight into updateRoom with nothing else running.
+
+        This is the fixture a reverberation time has to be read on. The
+        placement impulse above carries the direct arrival, and the direct
+        arrival is 7.5 dB above everything the room does with it, so a Schroeder
+        integral of that response measures the direct-to-reverberant ratio
+        rather than a decay: it reads 0.051 s at Size 50 % / Room 50 % against
+        the 0.231 s the network actually rings for. */
+    static std::vector<float> roomImpulse (VoiceEngine& engine, int samples)
+    {
+        std::vector<float> result (static_cast<std::size_t> (samples), 0.0f);
+        float wetLeft = 0.0f;
+        float wetRight = 0.0f;
+        engine.updateRoom (1.0f, 1.0f, wetLeft, wetRight);
+        result[0] = 0.5f * (wetLeft + wetRight);
+        for (std::size_t i = 1; i < result.size(); ++i)
+        {
+            engine.updateRoom (0.0f, 0.0f, wetLeft, wetRight);
+            result[i] = 0.5f * (wetLeft + wetRight);
+        }
+        return result;
+    }
+
+    /** How hard the first-order image field drives the recirculating network.
+        Muting it separates the tail from the images inside one render, which is
+        what the wet/dry contract is written on: the tail has to stay where it
+        was, and the images are the sound this step adds. */
+    static void setPlacementSendGain (VoiceEngine& engine, float gain) noexcept
+    {
+        engine.placementSendGain_ = gain;
+    }
+
     /** Reseeds the sounding voice's noise stream mid-note. Rendering the same
         note twice with only this differing isolates the aspiration by
         difference: at Humanize 0 the stream drives no jitter and no shimmer, so
@@ -233,6 +363,72 @@ struct VoiceEngineTestAccess
         std::vector<float> result;
         for (const auto& singer : engine.singers_)
             result.push_back(singer.vibratoRate);
+        return result;
+    }
+
+    /** The entry delay of every held voice, in samples, ordered by singer
+        identity rather than by voice slot so repeats of the same note can be
+        compared entry by entry. */
+    static std::vector<int> entryDelays (const VoiceEngine& engine)
+    {
+        std::vector<std::pair<int, int>> byIdentity;
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                byIdentity.emplace_back (voice.singer, voice.delaySamples);
+        std::sort (byIdentity.begin(), byIdentity.end());
+        std::vector<int> result;
+        for (const auto& entry : byIdentity)
+            result.push_back (entry.second);
+        return result;
+    }
+
+    /** When each held voice is actually heard, in samples: its entry delay plus
+        the time its direct path takes to reach the listener. The second term is
+        step 8's, and is zero until the singers have positions; the timing
+        contract is written on the sum because that is what an ear measures. */
+    static std::vector<float> audibleOnsets (const VoiceEngine& engine)
+    {
+        std::vector<std::pair<int, float>> byIdentity;
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                byIdentity.emplace_back (voice.singer,
+                                         static_cast<float> (voice.delaySamples)
+                                             + engine.placementDirectSamples_
+                                                   [static_cast<std::size_t> (voice.singer)]);
+        std::sort (byIdentity.begin(), byIdentity.end(),
+                   [] (const auto& a, const auto& b) { return a.first < b.first; });
+        std::vector<float> result;
+        for (const auto& entry : byIdentity)
+            result.push_back (entry.second);
+        return result;
+    }
+
+    /** The vibrato phase of every held voice, ordered by singer identity. */
+    static std::vector<float> vibratoPhases (const VoiceEngine& engine)
+    {
+        std::vector<std::pair<int, float>> byIdentity;
+        for (const auto& voice : engine.voices_)
+            if (voice.active && ! voice.releasing)
+                byIdentity.emplace_back (voice.singer, voice.vibratoPhase);
+        std::sort (byIdentity.begin(), byIdentity.end(),
+                   [] (const auto& a, const auto& b) { return a.first < b.first; });
+        std::vector<float> result;
+        for (const auto& entry : byIdentity)
+            result.push_back (entry.second);
+        return result;
+    }
+
+    /** The voiced envelope of every voice, indexed by singer identity, with a
+        negative entry where that identity is not sounding. A twelve-voice mix
+        cannot be resolved back into twelve envelopes, so this is the seam the
+        release stagger is measured at. */
+    static std::array<float, 12> envelopesBySinger (const VoiceEngine& engine) noexcept
+    {
+        std::array<float, 12> result {};
+        result.fill (-1.0f);
+        for (const auto& voice : engine.voices_)
+            if (voice.active)
+                result[static_cast<std::size_t> (voice.singer)] = voice.envelope;
         return result;
     }
 
@@ -932,28 +1128,73 @@ void testGlideAndLegato()
             "a legato phrase left voices hanging after the final release");
 }
 
-/** Renders a note, releases it, and keeps rendering long enough for the room to
-    be the only thing left. Shared by the geometry and the tail-length checks. */
-std::vector<float> renderRoomProbe (float size, float room)
+/** The room's impulse response as heard from one singer's position: a unit
+    sample into her placement input, every voice silent, captured through her
+    direct path, her four first-order images and the tail they excite. */
+std::vector<float> placementImpulseResponse (const vocalor::EngineParameters& parameters,
+                                             int singerIndex, double seconds)
 {
     constexpr auto sampleRate = 48000.0;
     vocalor::VoiceEngine engine;
     engine.prepare (sampleRate, blockSize);
     engine.reset();
-    auto parameters = makeParameters (0, 0, 0, 0);
-    parameters.breath = 0.0f;
-    parameters.vibrato = 0.0f;
-    parameters.humanize = 0.0f;
-    parameters.room = room;
-    parameters.roomSize = size;
     engine.setParameters (parameters);
-    engine.noteOn (60, 0.9f);
+    // Rendering silence still advances every smoother to its target, which is
+    // what the taps and the room coefficients are resolved from.
+    render (engine, static_cast<int> (sampleRate * 1.0));
+    return vocalor::VoiceEngineTestAccess::placementImpulse (
+        engine, singerIndex, static_cast<int> (sampleRate * seconds));
+}
 
-    auto result = renderMono (engine, static_cast<int> (sampleRate * 0.5));
-    engine.noteOff (60);
-    const auto tail = renderMono (engine, static_cast<int> (sampleRate * 1.7));
-    result.insert (result.end(), tail.begin(), tail.end());
-    return result;
+/** The recirculating network's own impulse response, with the taps and the
+    feedback resolved from @c parameters. A reverberation time is a property of
+    the tail, and the placement response above is dominated by the direct
+    arrival, so the two are not interchangeable: measured, Schroeder T20 reads
+    0.051 s on the placement response at Size 50 % / Room 50 % and 0.231 s
+    here. */
+std::vector<float> roomOnlyImpulseResponse (const vocalor::EngineParameters& parameters,
+                                            double seconds)
+{
+    constexpr auto sampleRate = 48000.0;
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, blockSize);
+    engine.reset();
+    engine.setParameters (parameters);
+    render (engine, static_cast<int> (sampleRate * 2.0));
+    return vocalor::VoiceEngineTestAccess::roomImpulse (
+        engine, static_cast<int> (sampleRate * seconds));
+}
+
+/** RT60 by Schroeder backward integration of @c response, extrapolated from the
+    -5 dB to -25 dB span (T20). Negative if the decay never reaches -25 dB. */
+double schroederRt60 (const std::vector<float>& response, double sampleRate)
+{
+    std::vector<double> energy (response.size());
+    double sum = 0.0;
+    for (int i = static_cast<int> (response.size()) - 1; i >= 0; --i)
+    {
+        const auto index = static_cast<std::size_t> (i);
+        sum += static_cast<double> (response[index]) * response[index];
+        energy[index] = sum;
+    }
+    if (energy[0] <= 0.0)
+        return -1.0;
+    int at5 = -1;
+    int at25 = -1;
+    for (std::size_t i = 0; i < energy.size(); ++i)
+    {
+        const auto db = 10.0 * std::log10 (std::max (energy[i], 1.0e-300) / energy[0]);
+        if (at5 < 0 && db <= -5.0)
+            at5 = static_cast<int> (i);
+        if (db <= -25.0)
+        {
+            at25 = static_cast<int> (i);
+            break;
+        }
+    }
+    if (at5 < 0 || at25 <= at5)
+        return -1.0;
+    return 3.0 * static_cast<double> (at25 - at5) / sampleRate;
 }
 
 void testRoomSizeGeometry()
@@ -991,33 +1232,45 @@ void testRoomSizeGeometry()
 
     const auto neutralArrival = firstDivergence (neutral, wide);
     const auto tightArrival = firstDivergence (tight, neutral);
-    const auto expectedNeutral = 0.0297 * sampleRate * vocalor::roomSizeScale (0.5f);
+    // The size-dependent tap that arrives first is no longer the recirculating
+    // network's shortest delay but the nearest singer's floor image. Identity 0
+    // stands 1.700 m away and the floor is 1.55 m below the listener plane at
+    // Size 50 %, so the image path is sqrt(1.700^2 + 3.100^2) = 3.536 m; the
+    // taps are referred to 1.615 m, which puts the divergence at 268.8 samples
+    // -- 5.60 ms, against the 29.7 ms the four-tap network used to take.
+    const auto expectedNeutral = 268.8;
 
     expect (neutralArrival > 0 && tightArrival > 0,
             "changing the room size did not change the rendered audio at all");
+    std::cout << "room geometry: first size-dependent arrival " << neutralArrival
+              << " samples at Size 50 %, " << tightArrival << " at Size 5 %\n";
     expect (std::abs (static_cast<double> (neutralArrival) - expectedNeutral)
                 < expectedNeutral * 0.12,
-            "the default room size no longer reproduces the historical tap geometry");
+            "the default room size no longer puts its first image where the geometry says");
     expect (tightArrival < neutralArrival,
             "a smaller room did not bring its first reflection forward");
 
-    // What the size control has to buy musically is a longer tail, so measure
-    // the reflected signal on its own: rendering the same note with the room
-    // fully wet and fully dry and subtracting leaves nothing but the room.
-    const auto reflectedTail = [] (float size)
+    // What the size control has to buy musically is a longer tail. Subtracting
+    // a dry render from a wet one no longer isolates it -- Size also moves the
+    // image field, which is louder in a small room because its surfaces are
+    // nearer -- so the decay is measured on the recirculating network's own
+    // impulse response. Not on the placement response: that one carries the
+    // direct arrival, which sits 7.5 dB above everything the room does with it,
+    // so its Schroeder integral reads the direct-to-reverberant ratio rather
+    // than a decay (0.084 s at Size 5 % against 0.116 s at Size 95 %, a ratio
+    // of 1.4 where the tail's own is 9.4).
+    const auto decayFor = [] (float size)
     {
-        const auto withRoom = renderRoomProbe (size, 1.0f);
-        const auto withoutRoom = renderRoomProbe (size, 0.0f);
-        const auto first = static_cast<std::size_t> (sampleRate * 1.4);
-        double sum = 0.0;
-        for (std::size_t i = first; i < withRoom.size(); ++i)
-        {
-            const auto value = static_cast<double> (withRoom[i]) - withoutRoom[i];
-            sum += value * value;
-        }
-        return sum;
+        auto parameters = makeParameters (0, 0, 0, 0);
+        parameters.room = 1.0f;
+        parameters.roomSize = size;
+        return schroederRt60 (roomOnlyImpulseResponse (parameters, 6.0), sampleRate);
     };
-    expect (reflectedTail (0.95f) > reflectedTail (0.05f) * 100.0,
+    const auto wideDecay = decayFor (0.95f);
+    const auto tightDecay = decayFor (0.05f);
+    std::cout << "room RT60: " << std::fixed << std::setprecision (3) << tightDecay
+              << " s at Size 5 %, " << wideDecay << " s at Size 95 %\n";
+    expect (tightDecay > 0.0 && wideDecay > tightDecay * 3.0,
             "a larger room did not ring for noticeably longer");
 
     // The tail still has to end, and the engine has to release its voices.
@@ -1036,6 +1289,457 @@ void testRoomSizeGeometry()
     expect (engine.getActiveVoiceCount() == 0, "a large room kept voices alive");
     const auto silence = render (engine, static_cast<int> (sampleRate * 0.2));
     expect (silence.peak == 0.0, "the maximum-size room tail never rang out");
+}
+
+/** One two-pole bandpass, geometric centre and Q from the band edges. */
+struct BandFilter
+{
+    double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+    double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
+
+    BandFilter (double low, double high, double sampleRate)
+    {
+        const auto centre = std::sqrt (low * high);
+        const auto q = centre / (high - low);
+        const auto omega = 2.0 * 3.14159265358979323846 * centre / sampleRate;
+        const auto alpha = std::sin (omega) / (2.0 * q);
+        const auto a0 = 1.0 + alpha;
+        b0 = alpha / a0;
+        b1 = 0.0;
+        b2 = -alpha / a0;
+        a1 = -2.0 * std::cos (omega) / a0;
+        a2 = (1.0 - alpha) / a0;
+    }
+
+    double process (double x) noexcept
+    {
+        const auto y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1; x1 = x; y2 = y1; y1 = y;
+        return y;
+    }
+};
+
+/** Normalised L/R correlation inside one band, over [from, to). The filters run
+    from sample zero so their own transient is out of the window. */
+double bandCorrelation (const std::vector<float>& left, const std::vector<float>& right,
+                        double low, double high, int from, int to)
+{
+    constexpr auto sampleRate = 48000.0;
+    BandFilter filterLeft (low, high, sampleRate);
+    BandFilter filterRight (low, high, sampleRate);
+    double product = 0.0;
+    double squareLeft = 0.0;
+    double squareRight = 0.0;
+    for (int i = 0; i < to; ++i)
+    {
+        const auto a = filterLeft.process (left[static_cast<std::size_t> (i)]);
+        const auto b = filterRight.process (right[static_cast<std::size_t> (i)]);
+        if (i < from)
+            continue;
+        product += a * b;
+        squareLeft += a * a;
+        squareRight += b * b;
+    }
+    return product / std::sqrt (std::max (squareLeft * squareRight, 1.0e-30));
+}
+
+struct StereoRender
+{
+    std::vector<float> left, right;
+};
+
+StereoRender renderStereo (vocalor::VoiceEngine& engine, int samples)
+{
+    StereoRender out;
+    out.left.resize (static_cast<std::size_t> (samples), 0.0f);
+    out.right.resize (static_cast<std::size_t> (samples), 0.0f);
+    std::vector<float> left (blockSize, 0.0f);
+    std::vector<float> right (blockSize, 0.0f);
+    for (int rendered = 0; rendered < samples;)
+    {
+        const auto count = std::min (blockSize, samples - rendered);
+        engine.process (left.data(), right.data(), count);
+        for (int i = 0; i < count; ++i)
+        {
+            out.left[static_cast<std::size_t> (rendered + i)] = left[static_cast<std::size_t> (i)];
+            out.right[static_cast<std::size_t> (rendered + i)] = right[static_cast<std::size_t> (i)];
+        }
+        rendered += count;
+    }
+    return out;
+}
+
+/** Choir/12 at Spread 100 %, Humanize 100 %, Vibrato 60 %, holding C4. Room is
+    a parameter because the same measurement has to be repeated at Room 50 % to
+    show the placement and not the reverb is what decorrelated the output. */
+vocalor::EngineParameters placementParameters (float room)
+{
+    auto parameters = makeParameters (2, 0, 0, 0);
+    parameters.choirSize = 12;
+    parameters.spread = 1.0f;
+    parameters.humanize = 1.0f;
+    parameters.vibrato = 0.6f;
+    parameters.room = room;
+    parameters.roomSize = 0.5f;
+    return parameters;
+}
+
+std::array<double, 4> placementCorrelations (float room)
+{
+    constexpr auto sampleRate = 48000.0;
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, blockSize);
+    engine.reset();
+    engine.setParameters (placementParameters (room));
+    engine.noteOn (60, 0.85f);
+    const auto audio = renderStereo (engine, static_cast<int> (sampleRate * 4.0));
+    const auto from = static_cast<int> (sampleRate * 1.0);
+    const auto to = static_cast<int> (sampleRate * 4.0);
+    return { bandCorrelation (audio.left, audio.right, 150.0, 400.0, from, to),
+             bandCorrelation (audio.left, audio.right, 400.0, 1200.0, from, to),
+             bandCorrelation (audio.left, audio.right, 1200.0, 3000.0, from, to),
+             bandCorrelation (audio.left, audio.right, 3000.0, 8000.0, from, to) };
+}
+
+/** Twelve singers are twelve positions in a room, not twelve pan values. A pan
+    law applies the same signal to both outputs at two levels, so the two
+    outputs stay correlated however wide it is set -- measured on this fixture
+    with the placement replaced by the sqrt pan law it supersedes, 0.954 /
+    0.958 / 0.971 / 0.970 across the four bands, flat to 0.017 across five
+    octaves. (The audit published 0.876 / 0.887 / 0.881 / 0.882 on the pre-step
+    build itself; the shape is the same and the reading is 0.09 higher because
+    the reconstruction does not carry the pan glide.) A position gives each
+    singer her own arrival time, and only a time difference makes two channels
+    different. */
+void testSingerPlacement()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr auto speedOfSound = 343.0;
+
+    // Room pinned at 0: the audit left it unstated, and a step that rebuilds
+    // the room could make the reverb a confound even though it is not one today.
+    const auto dry = placementCorrelations (0.0f);
+    const auto half = placementCorrelations (0.5f);
+    std::cout << std::fixed << std::setprecision (4)
+              << "placement correlation, Room 0:    " << dry[0] << " " << dry[1] << " "
+              << dry[2] << " " << dry[3] << "\n"
+              << "placement correlation, Room 50 %: " << half[0] << " " << half[1] << " "
+              << half[2] << " " << half[3] << "\n";
+
+    expect (dry[2] < 0.60, "the 1200-3000 Hz band is still as correlated as a pan law leaves it");
+    expect (dry[3] < 0.70, "the 3000-8000 Hz band is still as correlated as a pan law leaves it");
+    // A pan law is frequency-blind, so its correlation is the same at 200 Hz as
+    // at 5 kHz. A geometry is not: a 13 ms spread of arrival times decorrelates
+    // the top of the band long before it touches the bottom.
+    expect (dry[0] - dry[3] > 0.10,
+            "the section's correlation is still flat with frequency, which is a pan and not a room");
+    for (std::size_t band = 0; band < dry.size(); ++band)
+        expect (std::abs (dry[band] - half[band]) < 0.05,
+                "adding reverb moved the correlation, so the reverb and not the placement did it");
+
+    // The geometry itself. A correlation figure alone does not tell a room from
+    // any other decorrelator.
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, blockSize);
+    engine.reset();
+    engine.setParameters (placementParameters (0.0f));
+    render (engine, blockSize);
+
+    const auto distances = vocalor::VoiceEngineTestAccess::singerDistances (engine);
+    const auto delays = vocalor::VoiceEngineTestAccess::directDelaySamples (engine);
+    expect (distances.size() == 12 && delays.size() == 12,
+            "the section no longer has twelve positions");
+
+    auto nearest = 0.0;
+    auto farthest = 0.0;
+    auto shortest = 1.0e9;
+    auto longest = -1.0e9;
+    for (std::size_t i = 0; i < distances.size(); ++i)
+    {
+        const auto arrival = 1000.0 * distances[i] / speedOfSound;
+        shortest = std::min (shortest, arrival);
+        longest = std::max (longest, arrival);
+        if (nearest == 0.0 || distances[i] < nearest)
+            nearest = static_cast<double> (distances[i]);
+        farthest = std::max (farthest, static_cast<double> (distances[i]));
+    }
+    std::cout << std::setprecision (3) << "singer arrival times: " << shortest << "-"
+              << longest << " ms (span " << longest - shortest << " ms), "
+              << nearest << "-" << farthest << " m\n";
+    // 1.5-6 m at 343 m/s. The delays actually applied are these less the
+    // nearest singer's, which is a choice of time origin and leaves every
+    // relative arrival exact; the geometry is what has to sit in the range.
+    expect (shortest > 4.4 && longest < 17.5,
+            "the section no longer stands between 1.5 and 6 m from the listener");
+    expect (longest - shortest > 8.0,
+            "the section has no depth: every singer arrives at nearly the same time");
+
+    // 1/r, read at Spread 0. At any other spread the direct gain also carries
+    // the receivers' cardioid pattern, which is a direction and not a distance.
+    vocalor::VoiceEngine centred;
+    centred.prepare (sampleRate, blockSize);
+    centred.reset();
+    auto centredParameters = placementParameters (0.0f);
+    centredParameters.spread = 0.0f;
+    centred.setParameters (centredParameters);
+    render (centred, blockSize);
+    const auto centredDistances = vocalor::VoiceEngineTestAccess::singerDistances (centred);
+    const auto gains = vocalor::VoiceEngineTestAccess::directGains (centred);
+    auto worstError = 0.0;
+    for (std::size_t i = 0; i < gains.size(); ++i)
+        for (std::size_t j = 0; j < gains.size(); ++j)
+        {
+            const auto measured = 20.0 * std::log10 (gains[i] / gains[j]);
+            const auto law = 20.0 * std::log10 (centredDistances[j] / centredDistances[i]);
+            worstError = std::max (worstError, std::abs (measured - law));
+        }
+    std::cout << "direct level against 1/r: worst pairwise error " << worstError << " dB\n";
+    expect (worstError < 0.5,
+            "the direct level does not follow 1/r, so depth is a spread control and not a distance");
+
+    // The distances do not move. A distance is a delay, and a delay that
+    // follows a knob is a pitch shifter; twelve delay lines shared by up to
+    // ninety-six voices make a per-note distance impossible as well as unwise.
+    engine.noteOn (60, 0.85f);
+    render (engine, static_cast<int> (sampleRate * 0.5));
+    const auto afterFirst = vocalor::VoiceEngineTestAccess::directDelaySamples (engine);
+    engine.noteOn (67, 0.85f);
+    render (engine, static_cast<int> (sampleRate * 0.5));
+    const auto afterSecond = vocalor::VoiceEngineTestAccess::directDelaySamples (engine);
+    expect (afterFirst == afterSecond,
+            "a second note-on moved the singers, which is a pitch shift on every note already sounding");
+
+    auto swept = placementParameters (0.0f);
+    for (int step = 0; step <= 20; ++step)
+    {
+        swept.spread = static_cast<float> (step) / 20.0f;
+        swept.roomSize = static_cast<float> (step) / 20.0f;
+        engine.setParameters (swept);
+        render (engine, static_cast<int> (sampleRate * 0.05));
+    }
+    expect (afterFirst == vocalor::VoiceEngineTestAccess::directDelaySamples (engine),
+            "sweeping Spread or Size moved the direct-path delays");
+
+    // And nothing bends. A per-note distance on a shared line moves it by up to
+    // 13.1 ms inside one control period, which is what this bound catches.
+    vocalor::VoiceEngine solo;
+    solo.prepare (sampleRate, blockSize);
+    solo.reset();
+    auto soloParameters = placementParameters (0.0f);
+    soloParameters.mode = vocalor::PerformanceMode::Solo;
+    soloParameters.humanize = 0.0f;
+    soloParameters.vibrato = 0.0f;
+    soloParameters.spread = 0.0f;
+    soloParameters.roomSize = 0.0f;
+    solo.setParameters (soloParameters);
+    solo.noteOn (60, 0.85f);
+    render (solo, static_cast<int> (sampleRate * 0.5));
+    const auto before = vocalor::VoiceEngineTestAccess::soundingFrequencies (solo);
+    expect (! before.empty(), "the soloist stopped sounding before the sweep");
+    auto worstCents = 0.0;
+    constexpr int sweepSteps = 100;
+    for (int step = 0; step <= sweepSteps; ++step)
+    {
+        soloParameters.spread = static_cast<float> (step) / static_cast<float> (sweepSteps);
+        soloParameters.roomSize = static_cast<float> (step) / static_cast<float> (sweepSteps);
+        solo.setParameters (soloParameters);
+        render (solo, static_cast<int> (sampleRate * 1.0 / sweepSteps));
+        const auto now = vocalor::VoiceEngineTestAccess::soundingFrequencies (solo);
+        for (std::size_t i = 0; i < std::min (now.size(), before.size()); ++i)
+            worstCents = std::max (worstCents,
+                                   std::abs (1200.0 * std::log2 (now[i] / before[i])));
+    }
+    std::cout << std::setprecision (4) << "Solo pitch through a Spread/Size sweep: worst "
+              << worstCents << " cents\n";
+    expect (worstCents < 1.0,
+            "sweeping Spread or Size bent the pitch, so a delay is following a knob");
+}
+
+/** The arrivals in one singer's impulse response after the direct wavefront has
+    passed, measured from her own direct arrival. An early reflection is early
+    relative to the direct sound, and the direct sound now has a delay of its
+    own. The threshold is relative to the loudest arrival in that same
+    post-direct window rather than to the response's peak: the peak is the
+    direct sound, which sits 20-30 dB above every image, and on the pre-step
+    build -- where the response starts at the first tap of the recirculating
+    network and there is no direct sound in it at all -- the two readings are
+    the same number. */
+struct EarlyArrivals
+{
+    double directMs = 0.0;
+    std::vector<double> times;
+};
+
+EarlyArrivals earlyArrivals (const std::vector<float>& response, double windowMs,
+                             double threshold)
+{
+    constexpr auto sampleRate = 48000.0;
+    EarlyArrivals result;
+    const auto span = static_cast<int> (sampleRate * 0.08);
+    auto peak = 0.0;
+    for (int i = 0; i < span; ++i)
+        peak = std::max (peak, std::abs (static_cast<double> (response[static_cast<std::size_t> (i)])));
+    auto direct = 0;
+    for (int i = 0; i < span; ++i)
+        if (std::abs (static_cast<double> (response[static_cast<std::size_t> (i)])) > 0.02 * peak)
+        {
+            direct = i;
+            break;
+        }
+    result.directMs = 1000.0 * direct / sampleRate;
+    // The two receivers are 0.17 m apart, so both direct arrivals land inside
+    // 0.496 ms of each other by construction; the count starts after both.
+    const auto first = direct + static_cast<int> (std::ceil (sampleRate * 0.17 / 343.0));
+    const auto last = direct + static_cast<int> (sampleRate * windowMs / 1000.0);
+    auto windowPeak = 0.0;
+    for (int i = first; i < last; ++i)
+        windowPeak = std::max (windowPeak,
+                               std::abs (static_cast<double> (response[static_cast<std::size_t> (i)])));
+    for (int i = first + 1; i + 1 < last; ++i)
+    {
+        const auto a = std::abs (static_cast<double> (response[static_cast<std::size_t> (i - 1)]));
+        const auto b = std::abs (static_cast<double> (response[static_cast<std::size_t> (i)]));
+        const auto c = std::abs (static_cast<double> (response[static_cast<std::size_t> (i + 1)]));
+        if (b > a && b >= c && b > threshold * windowPeak)
+            result.times.push_back (1000.0 * (i - direct) / sampleRate);
+    }
+    return result;
+}
+
+/** What the recirculating network alone could never give the instrument: an
+    early-reflection pattern that belongs to a singer rather than to the mix.
+
+    Before this step the first thing to arrive after the direct sound was the
+    shortest tap of the shared four-tap network, at 29.67 ms at Size 50 % and
+    60.81 ms on Cathedral Ensemble, with two local peaks before 40 ms at Size
+    50 % and none at all on Cathedral -- and it was the same pattern for every
+    singer, because there was only one network. Those figures are read on the
+    network's own response, which is where they had to be read: with no singer
+    path there was nothing between the glottis and the tail to inject into. */
+void testRoomEarlyReflections()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    auto neutral = makeParameters (2, 0, 0, 0);
+    neutral.choirSize = 12;
+    neutral.spread = 1.0f;
+    neutral.room = 1.0f;
+    neutral.roomSize = 0.5f;
+
+    const auto nearResponse = placementImpulseResponse (neutral, 0, 0.5);
+    const auto farResponse = placementImpulseResponse (neutral, 11, 0.5);
+    const auto nearEarly = earlyArrivals (nearResponse, 40.0, 0.05);
+    const auto farEarly = earlyArrivals (farResponse, 40.0, 0.05);
+
+    std::cout << std::fixed << std::setprecision (3)
+              << "Size 50 %, singer 0: direct at " << nearEarly.directMs
+              << " ms, " << nearEarly.times.size() << " arrivals in the next 40 ms, first at "
+              << (nearEarly.times.empty() ? -1.0 : nearEarly.times.front()) << " ms\n"
+              << "Size 50 %, singer 11: direct at " << farEarly.directMs
+              << " ms, " << farEarly.times.size() << " arrivals in the next 40 ms, first at "
+              << (farEarly.times.empty() ? -1.0 : farEarly.times.front()) << " ms\n";
+
+    expect (! nearEarly.times.empty() && nearEarly.times.front() < 15.0,
+            "the first reflection at Size 50 % still arrives too late to be an early reflection");
+    // Four first-order images at two receivers is eight arrivals, and at Size
+    // 50 % all four surfaces are inside the 40 ms window.
+    expect (nearEarly.times.size() >= 8,
+            "the section's early-reflection pattern is still as sparse as the four-tap network");
+
+    // A shared tap set gives every singer the same pattern, which is the state
+    // this step is leaving.
+    auto different = 0;
+    for (std::size_t i = 0; i < 4 && i < nearEarly.times.size() && i < farEarly.times.size(); ++i)
+        if (std::abs (nearEarly.times[i] - farEarly.times[i]) > 1.0)
+            ++different;
+    expect (different >= 3,
+            "the nearest and the farthest singer hear the same early reflections");
+
+    // Cathedral Ensemble: Size 95 %, so the room is nearly twice as big and its
+    // surfaces are correspondingly further away.
+    vocalor::EngineParameters cathedral {};
+    auto found = false;
+    for (int i = 0; i < vocalor::factoryPresetCount(); ++i)
+        if (std::string (vocalor::factoryPresetName (i)) == "Cathedral Ensemble")
+        {
+            cathedral = vocalor::factoryPreset (i).parameters;
+            found = true;
+        }
+    expect (found, "the Cathedral Ensemble preset is gone");
+    const auto cathedralEarly = earlyArrivals (placementImpulseResponse (cathedral, 0, 0.5),
+                                               40.0, 0.05);
+    std::cout << "Cathedral, singer 0: direct at " << cathedralEarly.directMs << " ms, "
+              << cathedralEarly.times.size() << " arrivals in the next 40 ms, first at "
+              << (cathedralEarly.times.empty() ? -1.0 : cathedralEarly.times.front()) << " ms\n";
+    expect (! cathedralEarly.times.empty() && cathedralEarly.times.front() < 25.0,
+            "Cathedral Ensemble still has nothing between the direct sound and its tail");
+    // Only the floor and the near side wall are inside 40 ms at this size: the
+    // ceiling image of the nearest singer is a 46.8 ms path. Three arrivals is
+    // what the geometry can put there, against none before this step.
+    expect (cathedralEarly.times.size() >= 3,
+            "Cathedral Ensemble's early field is still empty");
+
+    // The tail itself must not have moved. RT60 is read on the recirculating
+    // network's own response, not on the placement response: the direct arrival
+    // dominates the latter and its Schroeder integral measures the
+    // direct-to-reverberant ratio instead of a decay.
+    auto neutralTail = makeParameters (0, 0, 0, 0);
+    neutralTail.room = 0.5f;
+    neutralTail.roomSize = 0.5f;
+    const auto neutralRt60 = schroederRt60 (roomOnlyImpulseResponse (neutralTail, 6.0), sampleRate);
+    const auto cathedralRt60 = schroederRt60 (roomOnlyImpulseResponse (cathedral, 8.0), sampleRate);
+    std::cout << "RT60 (Schroeder T20): " << neutralRt60 << " s at Size 50 % / Room 50 %, "
+              << cathedralRt60 << " s on Cathedral Ensemble\n";
+    expect (std::abs (neutralRt60 - 0.231) < 0.231 * 0.15,
+            "the recirculating tail no longer rings for as long as it did at Size 50 %");
+    expect (std::abs (cathedralRt60 - 0.847) < 0.847 * 0.15,
+            "the recirculating tail no longer rings for as long as it did on Cathedral Ensemble");
+
+    // Wet/dry balance: this is a geometry change and not a new reverb, so the
+    // tail has to sit where it sat. The image field is measured out of the way
+    // by muting the send, because the images themselves are room sound this
+    // step adds on purpose: with them in, Room 100 % minus Room 0 % reads
+    // -8.37 dB against the -15.00 dB the pan-law build gives, and the 6.6 dB
+    // between the two is the early field rather than a louder reverb.
+    const auto tailRatio = [] (bool muteSend)
+    {
+        const auto renderAt = [muteSend] (float room)
+        {
+            vocalor::VoiceEngine engine;
+            engine.prepare (sampleRate, blockSize);
+            engine.reset();
+            engine.setParameters (placementParameters (room));
+            if (muteSend)
+                vocalor::VoiceEngineTestAccess::setPlacementSendGain (engine, 0.0f);
+            engine.noteOn (60, 0.85f);
+            return renderStereo (engine, static_cast<int> (sampleRate * 4.0));
+        };
+        return renderAt (1.0f);
+    };
+    vocalor::VoiceEngine dryEngine;
+    dryEngine.prepare (sampleRate, blockSize);
+    dryEngine.reset();
+    dryEngine.setParameters (placementParameters (0.0f));
+    dryEngine.noteOn (60, 0.85f);
+    const auto dryRender = renderStereo (dryEngine, static_cast<int> (sampleRate * 4.0));
+    const auto wetRender = tailRatio (false);
+    const auto imagesOnly = tailRatio (true);
+    auto tailEnergy = 0.0;
+    auto dryEnergy = 0.0;
+    for (int i = static_cast<int> (sampleRate * 1.0); i < static_cast<int> (sampleRate * 4.0); ++i)
+    {
+        const auto index = static_cast<std::size_t> (i);
+        const auto tailLeft = wetRender.left[index] - imagesOnly.left[index];
+        const auto tailRight = wetRender.right[index] - imagesOnly.right[index];
+        tailEnergy += tailLeft * tailLeft + tailRight * tailRight;
+        dryEnergy += static_cast<double> (dryRender.left[index]) * dryRender.left[index]
+                   + static_cast<double> (dryRender.right[index]) * dryRender.right[index];
+    }
+    const auto tailDb = 10.0 * std::log10 (tailEnergy / std::max (dryEnergy, 1.0e-30));
+    std::cout << "recirculating tail against the dry render: " << tailDb
+              << " dB (pan-law build -15.00 dB)\n";
+    expect (std::abs (tailDb - (-15.00)) < 1.0,
+            "the recirculating tail changed level, so this is a new reverb and not a geometry");
 }
 
 void testDenormalAndNaNSafety()
@@ -1832,13 +2536,23 @@ void testFactoryPresets()
     // at full velocity and full dynamic. Measured on the shipping engine: two
     // notes held at 57 and 64 at velocity 0.85, 1 s of stereo RMS from t = 0.6 s
     // at 48 kHz.
+    //
+    // This is a pin on one chord, not a level calibration: the same presets
+    // move 1.6-12.5 dB across the twelve two-note chords the bank was measured
+    // over, because how coherently a section sums depends on the notes it is
+    // singing. Once the ensemble's entry timing is redrawn at every note that
+    // pin becomes a draw as well. Closed Mouth Hum and Small Voices moved 1.95
+    // and 0.74 dB here while their means over twelve chords moved 0.05 and
+    // 0.38 dB, so those two figures were re-measured rather than trimmed back:
+    // an outputGain that restored this chord would have left both presets up
+    // to 1.9 dB wrong on every other one.
     struct Level { const char* name; double db; };
     constexpr std::array<Level, 12> shipped { {
         { "Init Soprano", -19.04 }, { "Intimate Alto", -25.06 },
         { "Pressed Tenor", -20.28 }, { "Legato Soloist", -25.41 },
         { "Breath And Air", -29.81 }, { "Warm Bass Choir", -20.98 },
-        { "Cathedral Ensemble", -22.85 }, { "Closed Mouth Hum", -34.88 },
-        { "Small Voices", -24.72 }, { "Vowel Morph Pad", -27.79 },
+        { "Cathedral Ensemble", -22.85 }, { "Closed Mouth Hum", -32.90 },
+        { "Small Voices", -23.60 }, { "Vowel Morph Pad", -27.79 },
         { "Locked Major Chorale", -26.34 }, { "Airy Minor Pad", -29.62 } } };
 
     for (const auto& entry : shipped)
@@ -2070,20 +2784,20 @@ void testOnsetSpectrum()
 
     // The tract is present from sample zero. With the source ramp switched out
     // nothing is left to develop but the envelope, so the band the singer's
-    // formant sits in has to arrive with the note. Measured 2.79 dB, against
+    // formant sits in has to arrive with the note. Measured 2.71 dB, against
     // 17.68 dB for the two-formant onset stage this replaces.
     expect (offDeficit <= 3.5,
             "the upper formants are still missing from the attack");
 
     // And the gap stays closed once the source ramp is doing its work.
-    // Measured 0.57 dB.
+    // Measured 0.44 dB.
     expect (onDeficit <= 8.0,
             "the source-tension ramp reopened the singer's-formant gap at the onset");
 
     // The ramp is doing the remaining work. A lax fold configuration is an
     // abducted one, so the note has to speak with more aspiration per unit of
     // voiced output than the same note started at the block's tension.
-    // Measured 5.62 dB.
+    // Measured 5.56 dB.
     expect (onAir - offAir >= 3.0,
             "the source-tension ramp does not make the onset breathier than a note "
             "started at the block's tension");
@@ -2102,7 +2816,7 @@ void testOnsetSpectrum()
     }
 
     // Direction test only: the aspiration-to-voiced ratio falls across the
-    // onset rather than rising. Measured 26.20 -> 11.43 -> 3.59 dB above the
+    // onset rather than rising. Measured 25.73 -> 12.27 -> 4.79 dB above the
     // sustain share.
     const auto airEarly = share (rampOn, 10.0, 5000.0, 18000.0);
     const auto airMiddle = share (rampOn, 70.0, 5000.0, 18000.0);
@@ -2119,7 +2833,7 @@ void testOnsetSpectrum()
     // shipped with is a third of the way up the intended envelope rather than
     // ahead of it. 1 ms is under a quarter of that time constant and under a
     // third of a glottal period at C4. Measured, the narrowest of these
-    // eighteen is 28.44 dB.
+    // eighteen is 40.03 dB.
     struct Entry { int midi; vocalor::VoiceProfile profile; const char* name; };
     for (const auto entry : { Entry { 50, vocalor::VoiceProfile::Male, "male D3" },
                               Entry { 60, vocalor::VoiceProfile::Female, "female C4" },
@@ -2358,7 +3072,9 @@ void testVelocityShapesOnset()
                           - vocalor::VoiceEngineTestAccess::sourceTensionRampDepth (untouched))
                 <= 0.01f,
             "the reference velocity no longer resolves to the engine's own ramp depth");
-    expect (softSag >= 1.3f * hardSag,
+    // The positivity term is not redundant: a ramp shipped at depth zero makes
+    // all three sags zero, and a bare ratio is satisfied by 0 >= 0.
+    expect (hardSag > 0.0f && softSag >= 1.3f * hardSag,
             "velocity does not reach the source-tension ramp: a soft attack is "
             "slow but not lax");
 
@@ -2541,7 +3257,11 @@ void testReleaseAerodynamics()
         return result;
     };
 
-    // Aspirate offset. Measured +9.93 dB, against -12.53 dB before this step.
+    // Aspirate offset. Measured +9.56 dB, against -12.91 dB with the gesture
+    // reverted. (The pair read +9.93 and -12.53 dB when this step landed; step
+    // 5's pitch-synchronous window rides the same airShape the abduction
+    // multiplies, so it moved both ends of the ratio and left the size of the
+    // effect the same to 0.05 dB.)
     const auto aspirate = offsetAt (1.00f, 0.15f);
     expect (aspirate.after300 - aspirate.sounding >= 6.0,
             "a breathy, lax note still gets cleaner as it dies instead of breathier");
@@ -2550,7 +3270,10 @@ void testReleaseAerodynamics()
     // the Breath range the 5-18 kHz band is not purely air, and the voiced
     // floor -- the wavetable's own harmonics, 82.30 dB down at Breath 0.00 --
     // overtakes the aspiration inside the release. At Breath 0.28 the margin
-    // over that floor is 35.01 dB. Measured -7.65 dB.
+    // over that floor is 35.01 dB. Measured -6.21 dB. What this bound catches is
+    // an abduction gesture applied blind to the adduction the note was in: with
+    // abductionTarget forced to 4 for every note the pressed leg reads
+    // +13.25 dB and this assertion fails.
     const auto glottal = offsetAt (0.28f, 0.90f);
     expect (glottal.after300 - glottal.sounding <= 2.0,
             "a pressed note no longer stops cleanly");
@@ -2623,7 +3346,15 @@ void testAspirationIsPitchSynchronous()
             parameters.spread = 0.0f;
             engine.setParameters (parameters);
             vocalor::VoiceEngineTestAccess::setAspirationModulationDepth (engine, depth);
+            // The glottal window is a fact about the glottis. A room fills the
+            // closed phase with the open phase's reflections whatever the
+            // glottis did -- measured, the shipping geometry takes the
+            // closed-phase margin from 4.22 dB to 0.65 dB at Room 1 -- so the
+            // image field is switched out here for the same reason Humanize is.
+            vocalor::VoiceEngineTestAccess::setPlacementReflectionDepth (engine, 0.0f);
             engine.noteOn (60, 0.85f);
+            const auto propagation =
+                vocalor::VoiceEngineTestAccess::directDelaySamples (engine)[0];
 
             std::vector<float> left (foldBlock, 0.0f);
             std::vector<float> right (foldBlock, 0.0f);
@@ -2642,8 +3373,13 @@ void testAspirationIsPitchSynchronous()
                     for (int j = 0; j < foldBlock; ++j)
                     {
                         // The render loop advances the phase before it uses it,
-                        // so sample j sits at phase + (j + 1) increments.
-                        float value = state[0] + state[1] * static_cast<float> (j + 1);
+                        // so sample j sits at phase + (j + 1) increments. The
+                        // singer stands 1.7 m away, so what leaves her glottis
+                        // at that phase reaches the listener 12 samples later:
+                        // the fold is against the glottis, not against the
+                        // microphone, so the propagation delay comes back out.
+                        float value = state[0]
+                                    + state[1] * (static_cast<float> (j + 1) - propagation);
                         value -= std::floor (value);
                         phase->push_back (value);
                     }
@@ -2722,16 +3458,19 @@ void testAspirationIsPitchSynchronous()
               << " dB below the full signal\n";
 
     // Without the window the fold is flat by construction, not by measurement:
-    // 0.26 dB is the estimator's own floor from folding a finite noise record,
+    // 0.27 dB is the estimator's own floor from folding a finite noise record,
     // and it is what the assertion below has to beat.
     expect (span (stationaryBins) <= 1.0,
             "the aspiration fold's own estimator floor is no longer flat");
 
     // The window is the glottal flow, which is zero while the folds are closed;
     // what fills the closed phase at the output is the tract ringing on from
-    // the open phase. Measured 8.39 dB. It is pitch-dependent for that reason:
-    // the same measurement reads 9.99 dB at C3 and 4.81 dB at C5, where one
+    // the open phase. Measured 8.35 dB. It is pitch-dependent for that reason:
+    // the same measurement reads 9.96 dB at C3 and 4.84 dB at C5, where one
     // period is shorter than the tract's own ring time, so the note is pinned.
+    // It is also tension-dependent, at 9.73 dB at the engine's default 0.48,
+    // where the glottis is open for less of the cycle, so the tension is
+    // pinned too. This is the tightest bound in the test: 0.35 dB of margin.
     expect (span (modulatedBins) >= 8.0,
             "the aspiration carries no glottal-cycle modulation");
 
@@ -2753,15 +3492,17 @@ void testAspirationIsPitchSynchronous()
     const auto closedMargin = modulatedBins[peakBin]
         - 10.0 * std::log10 (closedEnergy / static_cast<double> (bins - 19));
     std::cout << "aspiration closed-phase margin: " << closedMargin << " dB\n";
-    // Measured 4.33 dB, against 0.19 dB with the window switched out.
+    // Measured 4.32 dB, against 0.19 dB with the window switched out, where the
+    // peak bin lands at phase 0.646 and the assertion above passes by luck.
     expect (closedMargin >= 3.5,
             "the aspiration is not extinguished while the folds are closed");
 
     // This moves the noise about inside the period. It must not change how much
     // noise there is -- which is why the window is normalised to unit mean
     // square and its crossfade renormalised at the control rate, since a
-    // mid-tension crossfade of the two prototypes otherwise loses up to 1.18 dB.
-    // Measured 0.01 dB.
+    // mid-tension crossfade of the two prototypes otherwise loses 0.96 dB here
+    // and 1.17 dB at the engine's default tension, both measured by forcing
+    // aspirationWindowGain() to 1. Measured with it in: 0.01 dB at either.
     const auto levelChange = 20.0 * std::log10 (rms (modulated) / rms (stationary));
     expect (std::abs (levelChange) < 1.0,
             "the glottal window changed the aspiration level instead of its distribution");
@@ -2773,6 +3514,9 @@ void testAspirationIsPitchSynchronous()
     std::cout << "aspiration at Breath 0.28: "
               << 20.0 * std::log10 (rms (defaultBreath) / std::sqrt (2.0) / defaultBreath.fullRms)
               << " dB below the full signal, peak-to-trough " << span (defaultBins) << " dB\n";
+    // 8.14 dB, so this bound has 0.14 dB of margin: the aspiration is 41 dB
+    // down here and the difference trick is measuring it against a much louder
+    // voiced signal, so the fold's own floor is a larger share of the span.
     expect (span (defaultBins) >= 8.0,
             "the glottal window does not reach the default patch");
 }
@@ -3229,7 +3973,7 @@ void testVibratoRateAndExtent()
     slope swing on the same cycle, and both notes are chosen because the passive
     contribution alone still does not reach 1 dB at either of them once the
     extent is a real one: with the laryngeal modulation forced out but the new
-    extent in force it reads 0.51 dB at C5 and 0.67 dB at C6.
+    extent in force it reads 0.76 dB at C5 and 0.80 dB at C6.
 */
 void testVibratoAmplitude()
 {
@@ -3313,6 +4057,355 @@ void testVibratoAmplitude()
                 "the amplitude modulation is not tied to the vibrato extent: "
                 "it is present with the vibrato switched off");
     }
+}
+
+/** A choral entry is twelve people reacting to one cue, and no two attacks of
+    the same chord are the same attack.
+
+    The engine drew the twelve entry offsets once in prepare() and reset the
+    twelve vibrato phases to 0.173 x singer index, so three identical note-ons
+    produced the same twelve delays to the sample -- 856, 365, 618, 719, 826,
+    663, 775, 380, 329, 308, 464, 741 -- and the same twelve phases to four
+    decimals. The scatter those carried was a 4.098 ms population standard
+    deviation about a 12.229 mean, spanning 6.42-17.83 ms.
+
+    Both are now drawn per note from voice.noiseState, which is a hash of the
+    generation, the root and the singer index, so the render is still a pure
+    function of the note sequence: two engines given the same notes still
+    render identically however the host slices its buffers.
+
+    The window is asserted two-sided. An unbounded floor on a scatter parameter
+    is how an instrument acquires a flam, and the contract is written on the
+    audible onset -- the entry delay plus the time the singer's direct path
+    takes, which is zero until step 8 gives the singers positions -- rather than
+    on the entry-delay field, so an implementation cannot sit inside the window
+    on the field and still put two voices 68 ms apart at the ear.
+*/
+void testEnsembleTimingIsRedrawn()
+{
+    constexpr auto sampleRate = 48000.0;
+    auto parameters = makeParameters (1, 0, 0, 0);   // Choir
+    parameters.choirSize = 12;
+    parameters.humanize = 1.0f;
+
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, blockSize);
+    engine.reset();
+    engine.setParameters (parameters);
+
+    std::array<std::vector<int>, 3> delays;
+    std::array<std::vector<float>, 3> phases;
+    for (int take = 0; take < 3; ++take)
+    {
+        engine.noteOn (60, 0.8f);
+        delays[static_cast<std::size_t> (take)]
+            = vocalor::VoiceEngineTestAccess::entryDelays (engine);
+        phases[static_cast<std::size_t> (take)]
+            = vocalor::VoiceEngineTestAccess::vibratoPhases (engine);
+        // Read before rendering: the entry delay is a countdown, and half a
+        // second later every voice has spent it.
+        const auto onsets = vocalor::VoiceEngineTestAccess::audibleOnsets (engine);
+        render (engine, static_cast<int> (sampleRate * 0.5));
+
+        expect (onsets.size() == 12,
+                "the twelve-singer choir did not put twelve voices on the note");
+        if (onsets.size() != 12)
+            return;
+
+        double mean = 0.0;
+        for (const auto value : onsets)
+            mean += static_cast<double> (value);
+        mean /= static_cast<double> (onsets.size());
+        double square = 0.0;
+        for (const auto value : onsets)
+            square += (static_cast<double> (value) - mean) * (static_cast<double> (value) - mean);
+        // Population, not sample: the bounds below are drawn against the
+        // population estimator, which reads 4.098 ms on the twelve values the
+        // engine used to produce where the sample estimator reads 4.280.
+        const auto deviationMs = 1000.0 * std::sqrt (square / static_cast<double> (onsets.size()))
+                               / sampleRate;
+        const auto earliest = *std::min_element (onsets.begin(), onsets.end());
+        const auto latest = *std::max_element (onsets.begin(), onsets.end());
+        const auto spanMs = 1000.0 * static_cast<double> (latest - earliest) / sampleRate;
+
+        std::cout << "ensemble entry take " << take << ": population sd "
+                  << std::fixed << std::setprecision (3) << deviationMs
+                  << " ms, span " << std::setprecision (2) << spanMs << " ms\n";
+
+        expect (deviationMs > 8.0 && deviationMs < 18.0,
+                "take " + std::to_string (take) + " scattered the ensemble entry by "
+                    + std::to_string (deviationMs)
+                    + " ms, outside the 8-18 ms the section is voiced for");
+        expect (spanMs <= 55.0,
+                "take " + std::to_string (take) + " left a voice "
+                    + std::to_string (spanMs) + " ms behind the earliest, which is a flam");
+        // The entry spread on its own has to leave room for step 8's
+        // propagation delays, which add up to 13.1 ms of their own on top and
+        // whose extremes can land on the same singer as the entry's.
+        const auto& entries = delays[static_cast<std::size_t> (take)];
+        const auto entrySpanMs =
+            1000.0 * static_cast<double> (*std::max_element (entries.begin(), entries.end())
+                                          - *std::min_element (entries.begin(), entries.end()))
+            / sampleRate;
+        expect (entrySpanMs < 40.0,
+                "take " + std::to_string (take) + " spent " + std::to_string (entrySpanMs)
+                    + " ms of entry spread, leaving nothing for the propagation delay");
+    }
+
+    int closestDelay = std::numeric_limits<int>::max();
+    float closestPhase = 1.0f;
+    for (std::size_t a = 0; a < delays.size(); ++a)
+    {
+        for (std::size_t b = a + 1; b < delays.size(); ++b)
+        {
+            expect (delays[a] != delays[b],
+                    "two repeats of the same note produced the same twelve entry delays");
+            expect (phases[a] != phases[b],
+                    "two repeats of the same note produced the same twelve vibrato phases");
+            for (std::size_t i = 0; i < delays[a].size() && i < delays[b].size(); ++i)
+            {
+                closestDelay = std::min (closestDelay, std::abs (delays[a][i] - delays[b][i]));
+                float apart = std::abs (phases[a][i] - phases[b][i]);
+                if (apart > 0.5f)
+                    apart = 1.0f - apart;
+                closestPhase = std::min (closestPhase, apart);
+            }
+        }
+    }
+    std::cout << "ensemble entry redraw: closest pair of entries " << closestDelay
+              << " samples apart, closest pair of phases " << std::setprecision (5)
+              << closestPhase << " cycle apart\n";
+    expect (closestDelay > 1,
+            "a singer entered within one sample of where she entered on a previous take");
+    expect (closestPhase > 0.001f,
+            "a singer began her vibrato within 0.001 cycle of a previous take");
+
+    // Placement will be a room rather than a performer, so it is not scaled by
+    // Humanize and the audible onsets stay spread at 0 once step 8 lands. The
+    // entry-delay field itself must be exactly zero.
+    parameters.humanize = 0.0f;
+    vocalor::VoiceEngine exact;
+    exact.prepare (sampleRate, blockSize);
+    exact.reset();
+    exact.setParameters (parameters);
+    exact.noteOn (60, 0.8f);
+    for (const auto delay : vocalor::VoiceEngineTestAccess::entryDelays (exact))
+        expect (delay == 0, "Humanize 0 no longer puts the whole section on the beat");
+}
+
+/** ... and it lets go the same way.
+
+    releaseMultiplier_ was one engine-wide coefficient applied on the same
+    sample to every voice, so a chord that entered loosely stopped as one: every
+    voice crossed -40 dB of its own note-off level within 0 ms of every other.
+    A cut-off is a cue like an entry, so it gets the same treatment -- a
+    habitual per-singer lag plus this attempt's own draw -- and the decay time
+    constant becomes the singer's own, because how fast subglottal pressure
+    falls once the larynx stops is breath support rather than a section
+    property.
+
+    A twelve-voice mix cannot be resolved back into twelve envelopes, so the
+    seam is each voice's own envelope field, polled once per control period, and
+    -40 dB is measured against that voice's value at the note-off sample.
+*/
+void testReleaseStagger()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr int poll = 16;   // one control period
+
+    const auto spreadAt = [&] (float humanize)
+    {
+        auto parameters = makeParameters (1, 0, 0, 0);   // Choir
+        parameters.choirSize = 12;
+        parameters.humanize = humanize;
+
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        engine.setParameters (parameters);
+        engine.noteOn (60, 0.8f);
+        render (engine, static_cast<int> (sampleRate * 1.0));
+
+        const auto atNoteOff = vocalor::VoiceEngineTestAccess::envelopesBySinger (engine);
+        engine.noteOff (60);
+
+        std::array<double, 12> crossed {};
+        crossed.fill (-1.0);
+        std::vector<float> left (poll, 0.0f);
+        std::vector<float> right (poll, 0.0f);
+        for (int step = 1; step <= static_cast<int> (sampleRate * 2.5) / poll; ++step)
+        {
+            std::fill (left.begin(), left.end(), 0.0f);
+            std::fill (right.begin(), right.end(), 0.0f);
+            engine.process (left.data(), right.data(), poll);
+            const auto now = vocalor::VoiceEngineTestAccess::envelopesBySinger (engine);
+            const auto milliseconds = 1000.0 * static_cast<double> (step) * poll / sampleRate;
+            for (std::size_t i = 0; i < crossed.size(); ++i)
+                if (atNoteOff[i] > 0.0f && crossed[i] < 0.0
+                    && (now[i] < 0.0f || now[i] < 0.01f * atNoteOff[i]))
+                    crossed[i] = milliseconds;
+        }
+
+        double earliest = 1.0e9;
+        double latest = -1.0e9;
+        int resolved = 0;
+        for (std::size_t i = 0; i < crossed.size(); ++i)
+        {
+            if (atNoteOff[i] <= 0.0f)
+                continue;
+            expect (crossed[i] >= 0.0,
+                    "a voice never fell 40 dB below its note-off level");
+            if (crossed[i] < 0.0)
+                continue;
+            ++resolved;
+            earliest = std::min (earliest, crossed[i]);
+            latest = std::max (latest, crossed[i]);
+        }
+        expect (resolved == 12, "the twelve-singer choir did not release twelve voices");
+        return resolved == 12 ? latest - earliest : 0.0;
+    };
+
+    const auto loose = spreadAt (1.0f);
+    const auto exact = spreadAt (0.0f);
+    std::cout << "release stagger: " << std::fixed << std::setprecision (1) << loose
+              << " ms at Humanize 1.0, " << exact << " ms at Humanize 0\n";
+
+    expect (loose >= 80.0,
+            "the section still lets go together: " + std::to_string (loose)
+                + " ms between the first and the last voice to fall 40 dB");
+    expect (loose <= 400.0,
+            "the release is staggered by " + std::to_string (loose)
+                + " ms, which is a straggler rather than a decrescendo");
+    expect (exact == 0.0,
+            "the release stagger is not scaled by Humanize: it is still "
+                + std::to_string (exact) + " ms with the take exact");
+}
+
+/** The redraw has to come out of the note, not out of the engine's history.
+
+    Redrawing the entry timing at every note is only free because the draw is a
+    hash of generation, root and singer index: the render stays a pure function
+    of the note sequence, so two hosts that slice the same performance into
+    different buffers still get the same section. A stateful random walk would
+    have bought the same dispersion and cost that, and the failure would have
+    been silent -- the instrument would still sound like a choir, it would just
+    sound like a different choir on every render of the same project.
+
+    So the property is asserted where it can be seen: the twelve entry delays,
+    the twelve vibrato phases and the samples themselves, across two engines
+    given the same notes and across four buffer sizes. A split on a multiple of
+    the 64-sample render chunk is bit-exact, because chunk boundaries are
+    aligned to absolute sample positions rather than to the buffer. A split that
+    lands inside a chunk carries a residual -- 1.3e-6 peak here, against 1.8e-6
+    on the engine before this step, so it is older than the redraw and slightly
+    smaller after it -- and the draws stay bit-exact through those too, which is
+    what decides whether it is the same section singing.
+*/
+void testTimingRedrawIsDeterministic()
+{
+    constexpr auto sampleRate = 48000.0;
+    struct Take
+    {
+        std::vector<float> audio;
+        std::array<std::vector<int>, 2> delays;
+        std::array<std::vector<float>, 2> phases;
+    };
+
+    // One performance -- a note, a release, and a second note on the same key
+    // so the redraw happens inside the render rather than before it -- rendered
+    // in buffers of `block`.
+    const auto perform = [&] (int block)
+    {
+        auto parameters = makeParameters (1, 0, 0, 0);   // Choir
+        parameters.choirSize = 12;
+        parameters.humanize = 1.0f;
+
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, 512);
+        engine.reset();
+        engine.setParameters (parameters);
+
+        Take take;
+        std::vector<float> left (static_cast<std::size_t> (block), 0.0f);
+        std::vector<float> right (static_cast<std::size_t> (block), 0.0f);
+        const auto run = [&] (int samples)
+        {
+            for (int done = 0; done < samples;)
+            {
+                const int count = std::min (block, samples - done);
+                std::fill (left.begin(), left.end(), 0.0f);
+                std::fill (right.begin(), right.end(), 0.0f);
+                engine.process (left.data(), right.data(), count);
+                for (int i = 0; i < count; ++i)
+                {
+                    take.audio.push_back (left[static_cast<std::size_t> (i)]);
+                    take.audio.push_back (right[static_cast<std::size_t> (i)]);
+                }
+                done += count;
+            }
+        };
+
+        engine.noteOn (60, 0.8f);
+        take.delays[0] = vocalor::VoiceEngineTestAccess::entryDelays (engine);
+        take.phases[0] = vocalor::VoiceEngineTestAccess::vibratoPhases (engine);
+        run (12000);
+        engine.noteOff (60);
+        run (6000);
+        engine.noteOn (60, 0.8f);
+        take.delays[1] = vocalor::VoiceEngineTestAccess::entryDelays (engine);
+        take.phases[1] = vocalor::VoiceEngineTestAccess::vibratoPhases (engine);
+        run (12000);
+        return take;
+    };
+
+    const auto reference = perform (24000);
+    const auto sameSequence = perform (24000);
+    expect (sameSequence.audio == reference.audio,
+            "two engines given the same note sequence did not render identically");
+    // The two notes must differ from each other -- otherwise the redraw is not
+    // happening and the rest of this test is trivially satisfied.
+    expect (reference.delays[0] != reference.delays[1],
+            "the second note reused the first note's twelve entry delays");
+
+    double worstSubChunk = 0.0;
+    for (const int block : { 1, 17, 64, 512 })
+    {
+        const auto split = perform (block);
+        expect (split.audio.size() == reference.audio.size(),
+                "a split render produced a different number of samples");
+        for (int note = 0; note < 2; ++note)
+        {
+            expect (split.delays[static_cast<std::size_t> (note)]
+                        == reference.delays[static_cast<std::size_t> (note)],
+                    "buffers of " + std::to_string (block)
+                        + " samples drew different entry delays on note "
+                        + std::to_string (note));
+            expect (split.phases[static_cast<std::size_t> (note)]
+                        == reference.phases[static_cast<std::size_t> (note)],
+                    "buffers of " + std::to_string (block)
+                        + " samples drew different vibrato phases on note "
+                        + std::to_string (note));
+        }
+
+        double worst = 0.0;
+        for (std::size_t i = 0; i < std::min (split.audio.size(), reference.audio.size()); ++i)
+            worst = std::max (worst, std::abs (static_cast<double> (split.audio[i])
+                                               - static_cast<double> (reference.audio[i])));
+        if (block % vocalor::VoiceEngineTestAccess::chunkSize == 0)
+            expect (worst == 0.0,
+                    "buffers of " + std::to_string (block)
+                        + " samples did not reproduce a single-block render bit for bit: "
+                        + std::to_string (worst));
+        else
+            worstSubChunk = std::max (worstSubChunk, worst);
+    }
+
+    std::cout << "timing redraw: buffer-split residual " << std::scientific
+              << std::setprecision (2) << worstSubChunk
+              << " peak on sub-chunk splits\n" << std::defaultfloat;
+    expect (worstSubChunk < 1.0e-4,
+            "sub-chunk buffer splits moved the render by " + std::to_string (worstSubChunk)
+                + ", far past the residual a chunk boundary explains");
 }
 
 /** An a cappella ensemble tunes its chord to the bass, not to a keyboard.
@@ -3754,6 +4847,8 @@ int main()
     testVowelMorphAndFormantShift();
     testGlideAndLegato();
     testRoomSizeGeometry();
+    testSingerPlacement();
+    testRoomEarlyReflections();
     testSampleRateInvariance();
     testHumanisationDepthIsRateInvariant();
     testTractLevelStability();
@@ -3765,6 +4860,9 @@ int main()
     testFormantTuningAtHighPitch();
     testJustIntonation();
     testEnsembleDispersion();
+    testEnsembleTimingIsRedrawn();
+    testReleaseStagger();
+    testTimingRedrawIsDeterministic();
     testVibratoRateAndExtent();
     testVibratoAmplitude();
     testNasalBranch();

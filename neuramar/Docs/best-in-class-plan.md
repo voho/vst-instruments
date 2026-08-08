@@ -1461,6 +1461,17 @@ planned*.
   of 0.75 and a partial-8 excess of **23.13 dB** on a source with no
   frequency-dependent decay at all — which is what the step predicted that
   control was for.
+  *Re-measured after steps 5 and 6 landed.* Every figure above still holds on
+  today's build except the two retirement brackets, which step 5 moved: it
+  divides partial 1's release time constant by the same `r^p` clock rate scale,
+  so the release runs faster the further above the root the key is and the
+  slow-side clamp has more to hold back. With the clamp the four falls are
+  **111.1, 110.5, 95.8 and 102.6 dB** — Air then Bone at root+24, then at
+  root+51 — so the bracket is 96 to 111 dB rather than 107 to 112 dB, still far
+  clear of the 60 dB bound. Dropping only the clamp still fails those four
+  assertions and nothing else, now at **40.3 dB** and **9.6 dB** for Air and
+  **57.3 dB** and **21.4 dB** for Bone. The margin the clamp buys at root+51 is
+  therefore wider than when it was written, not narrower.
   Cost: `setModel()` goes from **133.5 us to 421.4 us** per swap here, all of
   it the fit's 64 decoder evaluations. It is a one-off on a model swap, which
   already fades every sounding voice out, and the render path is unchanged for
@@ -1567,8 +1578,11 @@ planned*.
   — step 4's figure, not 0.6480 s.) It also bites on a reversed one: multiplying the time
   constant by `r^p` instead of dividing puts the ratios at 0.354 and 1.68, on the
   wrong side of both windows. (Built and run: **0.361** and **1.669**, and that
-  build additionally fails all four of step 4's retirement assertions, because a
-  release 2.83 times *longer* at MIDI 81 never retires inside the render.) The
+  build additionally fails step 4's two retirement assertions — one per key, at
+  root+24 and root+51 — because a release 2.83 times *longer* at MIDI 81 never
+  retires inside the render. The count is two rather than the four this note
+  first recorded: a failed retirement `continue`s past that key's four
+  layer-fall assertions, so the four never evaluate.) The
   `p = 0` control fixture must hold both release
   ratios within [0.95, 1.05].
   *Contract corrected in preflight.* This step said "apply the same `r^p` to the
@@ -1721,7 +1735,8 @@ planned*.
   *What actually shipped*: the mechanism is exactly the one written above and
   the two edits are small. `noteOn()` at
   `NeuramarEngine.cpp:805-809` sets `voice.velocity = clamp(velocity + 0.75 *
-  mutation * mutationOffset, 0.05, 1.0)` and computes `velocityGain` from the
+  mutation * mutationOffset, min(velocity, 0.05), 1.0)` and computes
+  `velocityGain` from the
   jittered value, so everything downstream — `velocityGain`, `touchTilt` and
   `touchAirGain` in `updateVoiceControl()` — reads one velocity. The
   read-position term is gone from `effectiveTime` at `:1078-1087`, which is now
@@ -1756,6 +1771,20 @@ planned*.
   the point of the step, and it is worth stating plainly because it is the one
   change in this pass a listener notices without playing a second note: a
   repeated note is no longer the same note.
+  **5. The clamp's lower bound is `min(velocity, 0.05)`, not the flat 0.05 this
+  note first recorded.** *(Correction made on audit; the engine has always had
+  the shipped form, and its own comment at `:800-811` gives the reason. The
+  figure below is measured, not the comment's.)* The 0.05 floor exists to stop
+  the perturbation driving a note to silence, so it belongs to the
+  perturbation, not to the velocity. Applied as a flat bound it also raises
+  every velocity that was already under it, whether or not anything had been
+  added, and that breaks the one guarantee the step promises to preserve: at
+  Mutation 0, where nothing may change, a flat 0.05 renders MIDI velocity 1 at
+  **-33.97 dBFS** against the correct **-50.45 dBFS**, a **16.49 dB** rise the
+  player never asked for, and it flattens velocity 0.02 onto the same level, so
+  the bottom of the velocity range disappears. Flooring at the note's own
+  velocity when that is already below the bound leaves a soft note alone and
+  still stops the perturbation pushing anything under one.
   Suite green, 3/3 ctest suites in 53.8 s; the NeuralEngine suite grows 30.2 s
   to 34.7 s, which is the added learn.
 
@@ -1838,10 +1867,15 @@ every step needed its contract corrected against a measurement.
   `(point/63)^1.24` of the duration recovers 0.735 at 0.004. Its memory estimate
   was also wrong arithmetic — 36 KB across sixteen voices for two arrays, not
   73 KB for one — and its retirement assertion measures the whole isolated
-  layer rather than the slowest single band, which moves the without-clamp
-  numbers from 30.9 / 5.8 dB to 42.5 / 22.7 dB for Air and 59.4 / 29.0 dB for
-  Bone against a 60 dB bound. That last case clears by 0.6 dB, which is the
-  thinnest margin any assertion in this pass carries.
+  layer rather than the slowest single band, which moved the without-clamp
+  numbers as the step landed from 30.9 / 5.8 dB to 42.5 / 22.7 dB for Air and
+  59.4 / 29.0 dB for Bone against a 60 dB bound. Step 5 then moved them again,
+  and the shipped figures are the re-measured ones: dropping the clamp alone
+  now leaves 40.3 / 9.6 dB for Air and 57.3 / 21.4 dB for Bone at root+24 and
+  root+51, so the assertion that bites by the smallest margin in this pass is
+  Bone at root+24, by 2.7 dB. With the clamp in place the same four falls
+  measure 111.1 / 110.5 / 95.8 / 102.6 dB, a wider margin than the step
+  recorded rather than a narrower one.
 - **Step 5's largest claim was false and is struck**, twice over. The step and
   gap 8 both scoped the whole change to Orbit-off playing on the ground that
   "at the shipping defaults this step changes no decay at all". It does. The
@@ -1920,9 +1954,9 @@ every step needed its contract corrected against a measurement.
   the strongest candidate for the next pass.
 - One suite guard is thin and was thin before this pass:
   `testHighRegisterRenderThroughput` asserts a realtime factor above 8.0 and
-  measures 9.07 to 10.16x on a clean four-core box, so it fails under concurrent
-  load. The fixture it uses fits `p = 0.0000000`, so none of this pass's added
-  arithmetic runs in it.
+  measures 9.07 to 10.60x across runs on a clean four-core box, so it fails
+  under concurrent load. The fixture it uses fits `p = 0.0000000`, so none of
+  this pass's added arithmetic runs in it.
 - Line references throughout this section are to the file as it stood when each
   step landed, and drift as later steps add code above them.
 
@@ -1938,8 +1972,62 @@ size of the strike variation, and the free-decay exponent applied to a damper �
 are named as priors in its limitations section, and the render-side guards
 above are listed alongside the reconstruction measurements the first pass added.
 No number in the README is written that is not either measured in this section
-or guarded by an assertion in the suite. Suite green at the close: 3/3 ctest
-suites in 53.5 s, the NeuralEngine suite at 34.4 s.
+or guarded by an assertion in the suite.
+
+A second sweep over the README, made after all six steps had landed, found six
+more places where it was behind the engine. They are listed because the shape of
+each one is the useful part: one is a step's own note going stale under a later
+step, two are corrections this section had already recorded and the README had
+not picked up, one is a guard described from the wrong keys, one is drift in
+figures nothing in this pass claims to have moved, and one was never stated at
+all.
+
+- **The retirement claim.** The README carried step 4's "the retirement
+  decision does not move: a note released at Dissolve 0.65 s retires 0.6507 s
+  later at every key". Step 5 divides the fundamental's release time constant by
+  `r^p`, so the release — and with it the retirement, which is taken on the
+  fundamental — key-tracks. The README now gives 0.6507 s at the root and says
+  that above the root a voice clears sooner, in the proportion the measured
+  release ratio of 2.772 at root+24 gives.
+- **The scope of the key-tracked clock.** The README defended key-tracking with
+  the two T20 ratios alone, which are measured at Orbit 0. That is the same
+  Orbit-off scoping this section strikes as step 5's largest false claim, so the
+  Orbit-on figure is now in the README as well: 20.7 dB of key-to-key spread in
+  the fall from 0.10 s to 1.00 s, against 3.0 dB before. The comment above
+  `testDecayKeyTracking` said the same struck thing, in the same words, and also
+  described the loop read as a ping-pong that step 3 had already deleted; it now
+  records why Orbit 0 is the measurement rather than the scope.
+- **The full-keyboard Air-to-Core spread.** *What got worse* above records that
+  step 1 widened it from 8.89 dB to 11.41 dB by no longer masking the Air
+  filterbank's edge taper. That belongs in the README too, next to the 12-72
+  improvement it sits behind, and is now there with the Formant -24 st control
+  that shows the residual is the taper.
+- **A guard described from the wrong keys.** The README said the release-drop
+  ratios are guarded two octaves either side of the root. `testDecayKeyTracking`
+  measures them at MIDI 45, 57 and 81 — an octave below and two above — which is
+  what the predicted 0.595 and 2.83 are computed from. The T20 ratios are the
+  ones two octaves either side.
+- **Four render-path figures the README quoted have drifted** — three of them
+  from the 1.2 table in the benchmark document, plus the voice-steal hand-off
+  step, which that table does not carry. All four are still far inside their
+  guards, and this pass did not determine which change moved them: worst
+  partial deviation across the five
+  sample rates 0.078 to 0.093 dB, worst Air+Bone layer power deviation 0.126 to
+  0.239 dB, the ceiling-driven Bone mode 128.3 to 124.6 dB down, and the
+  voice-steal hand-off's worst inter-sample step 0.0124 to 0.0142 against a
+  0.016 guard. The README now quotes what the binary prints and says so;
+  `Docs/resynthesis-quality-benchmark.md` keeps the 1.2 column, which is what
+  that table is for.
+- **The vibrato duration boundary**, which *Considered and not planned* names as
+  the correct interim action for the 128-frame grid, is now stated in the
+  README's limitations: about two samples per cycle of a 5.9 Hz vibrato on a
+  5.6 s source and none on a 10 s one, so retained slow vibrato is a claim about
+  short sources. The one cost this pass adds outside the render path — a model
+  swap going from 134 to 421 us for the two fits it now carries — is stated in
+  the README's engine section, next to the voice ceiling.
+
+Suite green at the close: 3/3 ctest suites in 52.7 s, the NeuralEngine suite at
+33.4 s.
 
 ### Considered and not planned
 

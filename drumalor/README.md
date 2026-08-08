@@ -23,8 +23,8 @@ and decay controls.
 > the full thirteen-voice kit one hit at a time, programmed grooves with ghost
 > notes and a bar played on the hi-hat pedal, snare velocity and its three
 > articulations, toms and cymbals, the Humanise control and the kit bus. They
-> are rendered by the shipping engine, so they cannot drift from what the
-> plug-in does.
+> are rendered from the shipping signal path by the repository's own renderer
+> rather than drawn by hand, and are re-rendered whenever the engine moves.
 
 The project builds three products from one JUCE codebase:
 
@@ -154,6 +154,27 @@ notes 52 and 55 leave 5.16 and 6.28 dB against note 49 while staying within
 1.30 and 1.51 dB of its first 60 ms, so neither is a quiet cymbal pretending to
 be a different one.
 
+Every residual quoted for these four notes is the difference between two renders
+after their levels are matched, taken over third-octave bands and restricted to
+the bands within 40 dB of the loudest, measured with the analysis filters the
+regression suite itself uses. Those bands have skirts far wider than the band,
+so a loud neighbour leaks into every reading and compresses the differences: the
+same four renders through a windowed transform read 15.9, 11.9, 8.1 and 9.4 dB.
+Each articulation clears its contract on either estimator and by more on the
+sharper one, but no decibel of this kind means anything without the estimator
+that produced it.
+
+**Beyond note-on.** The rest of the MIDI surface a kit sends is answered too,
+at each event's own sample offset, and each entry is described below:
+
+| Message | What it does |
+| --- | --- |
+| CC 4 | Hi-hat pedal position: 0 fully open, 127 tightly closed |
+| CC 88 | High-resolution velocity: the low seven bits of the next note-on's velocity |
+| Channel aftertouch | Chokes every cymbal that is still ringing, progressively with pressure |
+| Polyphonic aftertouch | Chokes only the cymbal the note it names is playing |
+| CC 120, CC 123 | All sound off and all notes off, which also drops any held CC 88 prefix |
+
 **Cymbal choke (aftertouch).** Pressure on a pad chokes ringing bronze, in both
 the conventions a kit sends it: channel aftertouch takes every cymbal that is
 still sounding, and polyphonic aftertouch takes only the cymbal its note plays.
@@ -162,7 +183,7 @@ It is a grab and not a switch, so it damps over a time constant of
 area in contact and the force behind it rise as the hand closes, so what it
 removes per cycle goes roughly as the square of the pressure. Full pressure on a
 ringing crash takes the window 30 ms later to digital zero; half pressure leaves
-it 14.78 dB under the unchoked ring and far above the full grab. Pressure 0 does
+it 14.77 dB under the unchoked ring and far above the full grab. Pressure 0 does
 nothing at all, because that is what a controller sends when the hand comes off
 and nothing here can put a cymbal back.
 
@@ -440,9 +461,12 @@ How far apart is a property of the drum rather than of anybody's playing — a
 key was turned once and the head has been that shape ever since — so the split
 is hashed from the instrument index and reproduces after a reset: 2.438 % on the
 Kick, 1.941 % on the Low Tom, 2.128 % on the Mid Tom, 1.821 % on the High Tom
-and 2.052 % on the Snare, which put the four measurable m = 1 beats at 2.1, 2.5,
-4.6 and 4.7 Hz. Each member gets its own decay from its own frequency, and the
-pair is driven at `cos(m·phi)` and `sin(m·phi)` for a strike at azimuth `phi`.
+and 2.412 % on the Snare, which put the four measurable m = 1 beats at 2.1, 2.5,
+4.6 and 4.7 Hz. The four m = 1 modes those beats are measured on — the Kick's
+and the three Toms' — sit at 86.19, 131.33, 214.51 and 255.60 Hz, which is where
+air loading leaves them rather than where the ideal Bessel ratio puts them, and
+each pair is emitted around its own centre. Each member
+gets its own decay from its own frequency, and the pair is driven at `cos(m·phi)` and `sin(m·phi)` for a strike at azimuth `phi`.
 Those two square to one, so the pair carries exactly the energy the single mode
 carried: what changes is that the energy now arrives at two frequencies instead
 of one.
@@ -462,8 +486,9 @@ moves every membrane by a best-gain null of −46.3 dB (Kick), −22.5 (Snare),
 −26.4 (Low Tom), −28.0 (Mid Tom) and −27.9 (High Tom), the splitting alone by
 −34.0, −21.8, −27.1, −27.0 and −27.9, and the two together — which is what
 ships — by −33.4, −19.5, −22.5, −23.9 and −24.6 dB, with each voice's level
-unchanged to within 0.13 dB. It is a small, real re-voicing of the membrane half
-of the kit rather than an addition on top of it.
+unchanged to within 0.17 dB: that figure is the Snare, and the other four hold
+to 0.03 dB. It is a small, real re-voicing of the membrane half of the kit
+rather than an addition on top of it.
 
 ### Damping follows radiation
 
@@ -535,9 +560,16 @@ v = 1.00 glide is unchanged to every digit at 25.607 semitones (Kick), 10.660,
 10.353 and 9.795 (the three Toms), while the v = 0.08 glide falls from
 23.473/10.571/10.264/9.692 to 0.291, 0.444, 0.443 and 0.505 semitones — 1.1 to
 5.1 % of the accent's. Both strengths still settle on the same note, within
-0.011 cents. On the render, the Kick's window from 4 to 25 ms moves 6.34 dB of
-band balance away from the sweep's upper region at a ghost stroke and does not
-move at all at an accent.
+0.011 cents. On the render, the Kick's window from 4 to 25 ms moves 6.55 dB of
+band balance away from the sweep's upper region at a ghost stroke — 3.318 to
+−3.228 dB of the energy above the settled fundamental over the energy around it,
+read with the same second-order analysis pair the suite's other band assertions
+use — and does not move at all at an accent, where it reads 4.131 dB either way.
+The window opens at 4 ms rather than at the strike because the beater's contact
+click is broadband and belongs to neither band; including it costs about a
+decibel of the separation. The same statistic moves 1.8 dB on each of the three
+Toms, where the head bank and the skin noise dominate the first 25 ms, which is
+why the contract carries it on the Kick alone.
 
 This is a redistribution and not a reduction: the sweep keeps its full depth
 where it always had it and gives up only what a soft stroke never had the energy
@@ -635,6 +667,19 @@ one band leaving rather than the top of the voice outlasting anything: the three
 bands above 6 kHz hold their share to within 2.3 dB across a ring that spans
 87 dB of level.
 
+The same split bounds what velocity can do to a hat. A harder stick has a
+shorter contact, which reaches further up the plate, so velocity tilts the plate
+bank and moves the band-pass on the strike layer, and a soft hat is duller as
+well as quieter. But the free-running circuit under it answers the accent's
+level and not its speed, and that circuit is three quarters of a closed hat and
+four fifths of an open one, so the whole-voice figure is about 2 dB of the
+8–16 kHz over 2–6 kHz balance on the Closed Hat and about 2.6 dB on the Open
+Hat across the playable range, against
+the 3.1 and 3.8 dB the cymbals move. Widening it means setting a corner on the
+circuit source from the strike, which re-voices both hats in every stroke they
+make, so it is a change to be judged by ear rather than measured into a
+contract, and it is not in the engine.
+
 Ride and Crash are the two voices where the instrument and the circuit want the
 same thing. A real cymbal's high partials radiate best and its own nonlinear
 coupling drains them downward, so the shimmer goes first and the low-mid roar is
@@ -665,8 +710,8 @@ behind an unrelated drum wakes into the same state as one frozen during silence.
 The same reasoning retires each voice's modal bank once it has rung down past
 -150 dB, far below the -100 dB at which the voice already counts as silent.
 Together these remove most of the engine's fixed cost: a kit without hats or
-cymbals stops paying for five metallic circuits, and long cymbal tails stop
-paying for twelve resonators they can no longer excite.
+cymbals stops paying for five metallic circuits, and long tails stop paying for
+a modal bank they can no longer excite.
 
 Measured on one Linux x86-64 machine, rendering 45 seconds of 16th-note patterns
 at 48 kHz in 128-sample blocks, comparing the 1.0 and 1.1 engines back to back
@@ -1007,7 +1052,14 @@ self-contained real-time instrument:
 - Avanzini and Marogna's [energy-estimation approach to tension modulation](https://pubmed.ncbi.nlm.nih.gov/22280712/)
   motivates driving the membrane banks' pitch bend from a running estimate of
   the system's energy rather than from a solved nonlinear membrane, which is
-  what makes it affordable inside a thirteen-voice kit.
+  what makes it affordable inside a thirteen-voice kit. The same argument sets
+  how deep the drawn pitch sweep goes: the depth is the square of what the
+  strike leaves in the head, latched at note-on rather than followed.
+- Worland's [normal modes of a drumhead under non-uniform tension](https://pubs.aip.org/asa/jasa/article/127/1/525/793705/)
+  is why every mode above the first is emitted as the two modes it physically
+  is. Ordinary lug-tension variation is enough to lift the degeneracy, and two
+  close frequencies sounding together are the warble a drummer tunes out with a
+  key.
 - Werner, Abel, and Smith's [physically informed bass-drum analysis](https://dafx.de/paper-archive/2014/dafx14_kurt_james_werner_a_physically_informed%2C_ci.pdf)
   and Germain's [time-varying numerical study](https://www.dafx.de/paper-archive/2021/proceedings/papers/DAFx20in21_paper_43.pdf)
   motivate charged state, resonant feedback, changing pitch/loss, and stable

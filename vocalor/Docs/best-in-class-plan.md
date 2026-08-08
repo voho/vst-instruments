@@ -961,7 +961,21 @@ have been built at all as written.
   One documentation debt is left deliberately: `README.md:543` still says "the
   onset stage must measure the same peak gain as the main tract it crossfades
   into", describing a stage and a test that no longer exist. The README is owned
-  elsewhere in this pass and was not edited here.
+  elsewhere in this pass and was not edited here. **Closed: the line is gone and
+  the README now carries the onset, the offset, the vibrato and the placement.**
+
+  *Re-measured on the finished pass, 2026-08-08.* Three of this step's shipped
+  figures moved once steps 3, 7 and 8 landed behind it, all in the same
+  direction and all for the same reason — step 8's direct path now sits between
+  the glottis and every measurement, and each of its taps is an integer read
+  plus a first-order allpass. The 10–35 ms deficit reads **2.71 dB** with the
+  ramp forced out against the 2.79 recorded above and **0.44 dB** with it in
+  against 0.57, and the aspiration differential reads **5.56 dB** against 5.62,
+  against a 3.0 dB bound. Every assertion holds with more margin than it
+  shipped with, and the *pre-step* baseline is untouched, so nothing about what
+  the step was worth has changed. The six click figures in the paragraph below
+  are on the 2 ms / 18 dB protocol step 2 replaced; the shipped bound is 1 ms
+  at 24 dB and the narrowest of its eighteen legs now reads 40.03 dB.
 
 - [x] **2. Make the dynamic controls command a singer's range and shape the
   onset.** Three changes to the same mechanism. Velocity must set the envelope
@@ -1197,7 +1211,51 @@ have been built at all as written.
   those three figures are **30.0 dB**, **19.68 dB and 43.47 dB**, and 23.8 dB
   further; the same passage's claim that the test suite asserts the difference
   is still true. Nothing in the README describes the attack time, so the
-  per-voice envelope adds no debt of its own.
+  per-voice envelope adds no debt of its own. **Closed: the README now publishes
+  30.0 dB, the 33 dB broadband span, the two-shelf mechanism, the 1.52 ratio and
+  its Breath 0.00 caveat, and an attack section.**
+
+  *Re-measured on the finished pass, 2026-08-08.* Four shipped figures moved
+  once steps 3, 7 and 8 landed behind this one, for the same reason step 1's
+  did — the placement direct path is now between the source and every
+  measurement. The four-period rise reads **9.25 ms** at velocity 1.00 and
+  **86.40 ms** at 0.10, a factor of 9.34, against 8.91 / 92.16 and 10.35 above;
+  full Humanize takes the accented attack to **23.23 ms** against 23.53. Both
+  assertion windows (6–14 ms and 45–120 ms) still hold and the 2.5× ratio bound
+  holds with 3.7× of margin. The presence ratio prints **1.52** on both legs
+  against 1.526 / 1.527, and the broadband span **33.19 / 33.02 / 32.37 dB** at
+  Breath 0.00 / 0.28 / 0.60 against 33.19 / 33.04 / 32.41. The re-anchored click
+  bound's narrowest leg is **40.03 dB** against the 28.44 recorded above, which
+  is the placement trim rather than a change in the attack.
+
+  *Verified independently, 2026-08-08.* A fifth figure moved with them and the
+  documentation debt paragraph above still quotes the old one:
+  `testPerformanceExpression` prints **19.71 dB at the fundamental and 39.32 dB
+  across 2.4–4.7 kHz** for a drop from Dynamics 1.00 to 0.30, against the
+  19.68 and 43.47 recorded there, so the presence band falls **19.6 dB**
+  further rather than 23.8. The README publishes the re-measured pair, so only
+  this document was out of date. All four of this step's engine changes were
+  reverted by hand and rebuilt: the per-block attack constant fails all three
+  rise assertions (19.68 / 20.92 ms, ratio 1.06), removing the presence shelves
+  fails both ratio legs at 1.07 and 1.13 and nine preset levels, reverting the
+  voiced exponent to `exp2(-3.00 · below)` fails the span at 21.24 dB and five
+  preset levels, and dropping the velocity term from `voice.tensionSag` fails
+  the sag assertion at 0.60 / 0.60 / 0.60. That last assertion was a bare ratio
+  (`softSag >= 1.3 · hardSag`) and therefore also passed with the ramp depth
+  shipped at zero, where all three sags are 0; it now requires `hardSag > 0`
+  as well. Step 1's aspiration differential already failed on that build, so
+  the suite never let a zero-depth ramp through, but the sag leg no longer
+  reads as covering it when it does not.
+
+  **The Breath And Air trim is not the one recorded above.** It ships at
+  `outputGain` **2.000** — the published maximum — with Dynamics 0.34, not the
+  1.951 this note and the comment in `Presets.cpp` both give, because steps 3, 7
+  and 8 each moved the bank again and this preset had already spent its
+  headroom. It renders −30.45 dB against the −29.81 it is pinned at, inside the
+  1.0 dB window by 0.36 dB and the only preset in the bank that is not inside it
+  by more than half a decibel. **It cannot absorb another level change**, and
+  that is the binding constraint on any future step that lowers a breathy patch.
+  The other eleven land within 0.01 dB of their pins.
 
 - [x] **3. Put the vibrato in the measured band and give it the amplitude
   modulation it is missing.** Reseed `singer.vibratoRate` across 5.6–7.0 Hz,
@@ -1345,6 +1403,17 @@ have been built at all as written.
      is 1.23 dB, so it is the extent and not the modulation. The other eleven
      move between −0.07 and +0.59 dB and were left alone.
 
+  *Re-measured on the finished pass, 2026-08-08.* Two figures here are not what
+  shipped. The laryngeal modulation reads **2.994 dB at C5 and 3.163 dB at C6**
+  against the 2.815 and 3.048 recorded above, against a 1.0 dB bound and a
+  0.002 dB floor at Vibrato 0 — step 8's placement landed behind this step and
+  its direct path carries the modulation too. The rate and extent legs are
+  unchanged to the digit: 5.719 Hz and ±108.6 cents solo, 5.719–6.842 Hz and
+  ±27.8 to ±40.0 cents across the section. And Cathedral Ensemble's re-trim
+  ships at `outputGain` **0.563**, not the 0.553 recorded above; steps 7 and 8
+  each moved how coherently twelve singers sum in a large room, and the preset
+  is pinned at −22.85 dB, which it now hits exactly.
+
 - [x] **4. Let the air outlive the voice at an aspirate offset.** Replace
   `airReleaseMultiplier_ = releaseMultiplier_ * releaseMultiplier_`
   (`VoiceEngine.cpp:1677`) with a coefficient derived from the adduction the
@@ -1440,6 +1509,25 @@ have been built at all as written.
      ns/sample across three `testRoughPerformance` runs, since the gesture is
      control-rate and the render loop lost a coefficient rather than gaining
      one.
+
+  *Re-verified after step 5 landed*: the step was found already implemented and
+  ticked, so this pass over it re-measured rather than rebuilt. Both assertions
+  still bite, proved by rebuilding the two counterfactuals rather than by
+  reading the figures above. Reverting the engine — `airEnvelope *= release *
+  release` restored and `abductionTarget` forced to 1 — puts the aspirate leg at
+  **−12.91 dB** and fails the 6 dB assertion; the adduction-blind gesture
+  (`abductionTarget` forced to 4 for every note) puts the pressed leg at
+  **+13.25 dB** and fails the 2 dB one. Three of the figures above have moved
+  because step 5's pitch-synchronous aspiration window sits on the same
+  `airShape` this step's `abduction` multiplies, and it changes the air term at
+  both ends of the ratio: the aspirate leg reads **+9.56 dB** against the
+  +9.93 recorded here, the pressed leg **−6.21 dB** against −7.65, and the
+  adduction-blind control **+13.25 dB** against +11.81. The pre-change baseline
+  moves the same way, −12.53 → **−12.91 dB**, so the size of the effect is
+  unchanged to 0.05 dB; only the engine it is measured on is later. Tails are
+  2.1 s on both legs, unchanged, and the assertion margins are 3.56 and 8.21 dB.
+  The figures in `testReleaseAerodynamics`' comments were updated to the
+  re-measured pair; the ones above are left as they read when the step landed.
 
 - [x] **5. Modulate the aspiration with the glottal cycle.** *(Keeps its number,
   but builds last, after steps 7 and 8: the mechanism is right and cheap, and
@@ -1578,14 +1666,82 @@ have been built at all as written.
   aspiration as noise injected at the glottis and scaled by the square root of
   the sample rate, with no mention of a temporal envelope. It is not wrong, but
   it is now the interesting half of the paragraph that is missing. A later agent
-  owns the README.
+  owns the README. **Closed: the aspiration section now carries the window, its
+  renormalisation and the honest sizing on both Breath settings.**
+
+  *Independently re-verified, 2026-08-08.* The step was already implemented,
+  tested and ticked when this agent opened it; what follows is an audit rather
+  than an implementation, and it changed no engine code. The mechanism in the
+  tree is the one the step names — `glottalFlowTable_` built from the same two
+  Liljencrants-Fant prototypes as the source (`VoiceEngine.cpp:512-551`), read
+  once per sample and applied before the pre-emphasis (`:2083-2086`), with the
+  crossfade renormalised at the control rate (`:1566-1568`, `:555-566`).
+
+  Three things were checked by measurement rather than by reading.
+
+  1. **The gap reproduces on a reverted build.** With the window taken back out
+     — `turbulence = noise` and `airShape` without `aspirationWindowGain()` —
+     the fold is flat at **0.27 dB** and the isolated aspiration is
+     **28.16 dB** below the full signal at Breath 1.00 and **41.08 dB** below at
+     the 0.28 default, against the 28.15 and 41.07 dB recorded above and the
+     12.92 dB gap between them exactly. Gap 14's "zero by construction" is
+     confirmed as construction: the flat fold is the estimator's floor.
+  2. **The test bites.** On that same reverted build three of its four
+     assertions fail — peak-to-trough 0.27 dB against the 8 dB bound, closed-
+     phase margin 0.19 dB against 3.5, and the Breath 0.28 leg 0.26 dB against
+     8 — and the peak-phase assertion passes on a peak bin at phase 0.646,
+     which is deviation 4's reason for pairing it, observed rather than
+     asserted.
+  3. **The renormalisation is load-bearing, as deviation 2 says.** Forcing
+     `aspirationWindowGain()` to 1 makes the window cost **0.96 dB** at the
+     test's Tension 0.30 and **1.17 dB** at the engine's default 0.48, so the
+     step written the obvious way would graze its own 1.0 dB contract where it
+     measures and fail it where the instrument ships. With the closed form in,
+     the level change is **0.01 dB** at both.
+
+  Two corrections to the record, both small and both in the same direction.
+  Every fold figure above is now **0.03–0.04 dB smaller** than when it was
+  written: 8.39 → **8.35** dB at C4, 8.17 → **8.14** at Breath 0.28, 9.99 →
+  **9.96** at C3, 4.81 → **4.84** at C5 (this one larger, the same drift with
+  the sign the spans have there), 9.76 → **9.73** at Tension 0.48, 4.33 →
+  **4.32** dB of closed-phase margin, and the estimator floor 0.26 → **0.27**.
+  Nothing in this step moved; step 8's placement stage is in flight in the same
+  tree, and its direct path is the one thing between the glottis and this
+  measurement that has changed. The drift is a tenth of the tightest bound and
+  the test carries the re-measured values.
+
+  **The Breath 0.28 leg now has 0.14 dB of margin**, against 0.35 dB on the
+  pinned C4 leg. It was not relaxed — it passes, and quietly widening a bound
+  to buy headroom against a step still being written would hide exactly the
+  thing worth watching — but whoever finishes step 8 should know that a further
+  0.15 dB of the same drift fails `testAspirationIsPitchSynchronous` for
+  reasons that have nothing to do with the aspiration.
+
+  The per-sample cost could not be re-measured. Four cores are shared with five
+  other instruments today: five runs of `testRoughPerformance` give a minimum of
+  870.1 ns/sample with the window and 874.9 without, on a 111 ns spread, against
+  the 717.5 and 693.9 recorded above. The +25 ns/sample figure is inside today's
+  noise in both directions, so it is neither confirmed nor contradicted.
+
+  *One clause of this step's contract was never testable, corrected on the
+  final verification pass, 2026-08-08.* "The engine's alias floor assertions
+  must still pass" and "the alias floor assertions pass unchanged" name
+  something the suite does not contain: `Tests/VoiceEngineTests.cpp` has no
+  alias, Nyquist or inharmonic-energy assertion anywhere in its 273 checks, and
+  the 88.9–98.1 dBc figures the *What must not regress* section publishes were
+  measured with scratch programs in the previous pass rather than asserted. So
+  the clause was satisfied vacuously, not by evidence. The window multiplies
+  the noise stream and leaves the voiced wavetable path untouched, which is why
+  nothing showed; but any later step that puts a per-sample product on the
+  *voiced* path has no assertion standing behind that constraint, and adding
+  one is the honest way to close it.
 
 - [ ] ~~**6. Disengage the epilaryngeal cluster above the soprano crossover.**~~
   **Struck in review.** Moved to "considered and not planned" below with the
   four reasons it failed. The gap is real; the step was not buildable as
   specified and its test could not have passed.
 
-- [ ] **7. Redraw the ensemble's timing at every note, and stagger the
+- [x] **7. Redraw the ensemble's timing at every note, and stagger the
   release.** Onset asynchrony is the loudest cue that a choir is people, and
   today it is a table of twelve constants drawn in `prepare()`. Draw the entry
   delay and the initial vibrato phase from `voice.noiseState` instead, which is
@@ -1671,7 +1827,194 @@ have been built at all as written.
   must render bit-identically, and 1/17/512-sample splits must reproduce a
   single-block render.
 
-- [ ] **8. Place the singers in the room instead of panning them into it.**
+  *What actually shipped*: both halves, in one commit. Every baseline the step
+  publishes reproduced to the digit — the twelve entries at 856, 365, 618, 719,
+  826, 663, 775, 380, 329, 308, 464, 741 samples on all three takes, a 4.098 ms
+  population standard deviation (4.280 sample) about a 12.229 ms mean spanning
+  6.42–17.83 ms, the twelve phases at 0.173 × singer index, and a 0.0 ms
+  release spread — so nothing in the step text needed correcting. Five things
+  came out differently from how the step describes them.
+
+  **1. THE HABITUAL OFFSETS ARE SEEDED, NOT DRAWN, AND THE CEILING DECIDES THE
+  SPLIT BETWEEN THE TWO TERMS.** An ensemble's asynchrony splits into a stable
+  per-singer mean and a trial-to-trial variability around it. The engine had
+  only the first, which is why every repeat was identical; the obvious reading
+  of the step is to keep drawing the first from a hash, widen it, and add the
+  second. Neither half of that survives measurement. *Drawing* the habitual
+  term wastes the budget: today's twelve hashes realise a population standard
+  deviation of only 0.455 of the window they are drawn over against 0.577 for
+  an ideal uniform, so reaching 10 ms of scatter that way needs a 45 ms window
+  and puts the *mean* entry 31 ms behind the key with the earliest voice at
+  16 ms — audible latency in exchange for dispersion the section never gets.
+  The twelve habitual offsets are therefore seeded across the window on a grid
+  (singer *i* takes slot `5i mod 12`, coprime so a choir of four is spread over
+  the window rather than bunched, and so entry order does not track the pan
+  position the singer index also sets), the window is inset by the jitter at
+  both ends so no draw is clipped against zero, and the earliest singer enters
+  on the beat. And the *split* is set by the ceiling rather than by the
+  literature: sensorimotor-synchronisation variability is comparable to the
+  between-performer spread, which would put half the variance in each, but
+  variance adds in quadrature while the span adds linearly, so at a fixed span
+  the trial-to-trial term buys standard deviation at a punitive rate. Measured
+  over 73 roots × 64 takes, at a span budget of 38–39 ms:
+
+  | habitual window | per-note jitter | worst-case population sd | worst span |
+  |---|---|---|---|
+  | 39 ms | ±1.5 ms | 10.55 ms | 38.96 ms |
+  | 38 ms | ±2.5 ms | 9.14 ms | 37.94 ms |
+  | 36 ms | ±4.0 ms | 6.96 ms | 35.90 ms |
+  | 24 ms | ±13 ms (even variance split) | 4.29 ms | 36.98 ms |
+
+  The even split fails the step's own 8 ms floor by a factor of two. What ships
+  is a 38 ms window with a ±2.5 ms per-note draw. Over all 128 MIDI roots and
+  64 takes each the population standard deviation stays inside 8.915–11.848 ms
+  and the span never exceeds 37.90 ms, so both the 8–18 ms window and the 40 ms
+  entry budget step 8 needs hold for every note the instrument can be given, not
+  only for the one the test plays.
+
+  **2. THE ">1 SAMPLE" REDRAW ASSERTION IS A PROPERTY OF TWELVE QUANTISED
+  DRAWS, AND IT IS NOT FREE.** Two independent draws from a ±2.5 ms jitter land
+  within one sample of each other about 1.2 % of the time (measured: 38 582 of
+  3 096 576 corresponding pairs over 128 roots × 64 takes), so the assertion is
+  a statement about the shipped bank rather than a guarantee for every root. On
+  the three takes the test plays the closest pair of entries is 6 samples apart
+  and the closest pair of vibrato phases 0.0183 cycle — both clear, and both
+  recorded here so a future change that trips the assertion can be told from a
+  future change that breaks the mechanism. The phase assertion is on circular
+  distance; a raw difference would have counted 0.999 as "different".
+
+  **3. THE PRESET-LEVEL PIN BECAME A DRAW, AND THE BANK WAS NOT RE-TRIMMED.**
+  Step 2's `testFactoryPresets` pins each preset's level on one chord — two
+  notes at 57 and 64 — and step 7 makes how coherently a section sums on that
+  chord a per-note draw. Closed Mouth Hum moved +1.95 dB there and Small
+  Voices +0.74 dB, both past the 1.0 dB window. Measured over twelve two-note
+  chords instead of one, the same two presets moved +0.05 and +0.38 dB, and the
+  bank's natural chord-to-chord spread is 1.6–12.5 dB, so the pin was never a
+  level calibration: an `outputGain` re-trim that restored this chord would
+  have left both presets up to 1.9 dB wrong on every other one. The two pinned
+  figures are re-measured (−34.88 → −32.90 and −24.72 → −23.60) and the test
+  says why. Isolated, the shift is the entry timing and not the vibrato-phase
+  redraw: with the phases held at 0.173 × singer index and only the delays
+  changed, Closed Mouth Hum still reads −32.95 dB.
+
+  **4. THE STEP'S "PER-VOICE RELEASE TIME CONSTANT" IS THE SINGER'S, NOT THE
+  NOTE'S, AND ONE ENGINE-WIDE COEFFICIENT HAD TO GO.** `releaseMultiplier_` is
+  deleted; each voice carries its own `releaseCoefficient`, resolved from the
+  section's nominal time constant and a `releaseTimeScale` latched at note-on
+  (±10 % from the singer's breath support, ±2 % from how much breath this note
+  has left, both scaled by Humanize). The release *start* delay gets the same
+  habitual-plus-draw treatment as the entry over a 55 ms window, seeded on a
+  different stride because an ictus and a cut-off are different gestures. A
+  soloist is exempt from all three, exactly as she is from the entry delay, so
+  `testReleaseCompletes` is bit-unchanged. Shipped: 189.7 ms between the first
+  and the last voice to fall 40 dB at Humanize 1.0 in Choir/12, 154.7–228.0 ms
+  across roots 36–84, and exactly 0.0 ms at Humanize 0. The longest tail at
+  Humanize 1.0 is 3.05 s against 2.8 s before.
+
+  **5. STEP 4'S OFFSET GESTURE HAD TO LEARN TO WAIT.** Not named anywhere in
+  step 7. `voice.abduction` relaxes onto the abduction latched at the note-off
+  on a 50 ms one-pole; with a release start delay of up to 55 ms in front of
+  it, the breath gesture would have run to completion before the singer let go.
+  It is now gated on the same countdown: the folds move when she does.
+
+  Nothing else in the suite moved. Buffer-split invariance is unchanged —
+  64/128/512-sample splits reproduce a single-block render bit for bit, and the
+  1- and 17-sample splits differ by 1.6e−6 against 2.2e−6 on the engine steps
+  1-5 left behind, so the sub-chunk residual is pre-existing and slightly smaller.
+  Per-sample cost is below this machine's noise floor: the minimum of eight
+  `testRoughPerformance` runs is 715.7 ns/sample with the change against
+  696.9 ns/sample without, on a machine whose repeats of one binary spread
+  697–1054 ns/sample. The change adds one predictable compare per sample inside
+  a branch that already existed, one float compare per control update, and
+  three hashes per note-on.
+
+  Documentation debt, left deliberately because a later agent owns the README:
+  `README.md:360-364` lists "timing" among the things each singer varies and
+  `README.md:366-383` gives the ensemble-dispersion argument entirely in cents.
+  Neither is now wrong, but the section is missing its timing half — the entry
+  scatter is 4.098 → 9–12 ms of population standard deviation, redrawn at every
+  note, and the release is staggered by about 190 ms where it used to be exact.
+  **Closed: the README has an *Ensemble timing* section carrying the seeded
+  window, the per-note draw, the release stagger and the audible-onset sweep,
+  and its buffer-split claim is corrected to name the 64-sample chunk and the
+  1.30e−6 sub-chunk residual rather than claiming bit-identity at every buffer
+  size.**
+
+  *Re-verified after step 8's placement landed, and one missing test added
+  (2026-08-08)*: the step was found already implemented and ticked, so this pass
+  re-measured rather than rebuilt, and closed the one part of its verification
+  contract the suite did not carry.
+
+  **1. The gap reproduces exactly, proved by actually reverting the engine.**
+  With the habitual offsets drawn again from `0.018 × hashFloat(base + 4)`, the
+  jitter and the release stagger removed and the vibrato phase pinned back to
+  `0.173 × singer index`, the twelve entries read 856, 365, 618, 719, 826, 663,
+  775, 380, 329, 308, 464, 741 samples on all three takes — the published
+  baseline to the sample — at a 4.098 ms population standard deviation
+  (4.280 sample) about a 12.229 ms mean spanning 6.417–17.833 ms, with a 0.0 ms
+  release spread. That build fails 14 checks on top of the room check §5
+  names: all three takes at 6.945 ms against the 8–18 ms window, all three
+  pairwise redraw comparisons on both delays and phases, the closest-pair
+  assertions at 0 samples and 0.00000 cycle, the release stagger at 0.000 ms,
+  the new test of §4 on the second note, and `testFactoryPresets` on Vowel Morph
+  Pad (−30.08 dB against the −27.79 it is pinned at).
+
+  **2. The entry-delay sweep reproduces to the digit; the contract quantity has
+  moved because step 8 is in the tree.** Over 128 roots × 64 takes the
+  entry-delay field still gives 8.915–11.848 ms of population standard deviation
+  and a worst span of 37.896 ms at root 68, exactly as recorded above. The
+  assertion is on the audible onset, though, and the placement direct paths are
+  now live: the same sweep reads **10.033–13.127 ms** of population standard
+  deviation and a worst span of **42.526 ms**, still at root 68. Every bound
+  holds with margin — 2.03 ms under the 8 ms floor, 4.87 ms over the 18 ms
+  ceiling and 12.47 ms under the 55 ms span ceiling — so the preflight
+  correction's promise, that the ceiling binds the sum rather than the field, is
+  now measured rather than assumed. At the root the test plays it prints
+  12.166 / 11.341 / 12.099 ms where the entry delays alone are
+  10.943 / 10.067 / 10.544 ms; the twelve direct paths span 12.2–563.7 samples
+  (0.25–11.7 ms).
+
+  **3. "154.7–228.0 ms across roots 36–84" is protocol-dependent and should be
+  read as a range, not a figure.** The release draw is per note-on and keyed on
+  `generation_`, so whether the sweep reuses one engine or prepares a fresh one
+  per root changes every draw in it. Measured today: **153.7–237.3 ms** with one
+  engine reused and the test's own 2.5 s polling horizon, **145.3–251.0 ms**
+  with a fresh engine per root and a 4 s horizon. Both are comfortably inside
+  the 80–400 ms the test asserts, and the pinned root-60 figure, 189.7 ms, is
+  unchanged. The 3.05 s tail figure is not reproducible without the audibility
+  threshold it was measured at and is left as recorded rather than contradicted.
+
+  **4. The buffer-split half of the contract was never in the suite, and now
+  is.** The step requires that "two engines prepared identically and given the
+  same note sequence must render bit-identically" and that split renders
+  reproduce a single-block one — the whole argument for drawing from
+  `voice.noiseState` rather than from a random walk. Nothing asserted it on the
+  redraw. `testIdleStateAdvancementAndAutomation` compares one note after idle
+  at Room 0 across 1- and 383-sample buffers, which is the engine's chunk
+  alignment rather than the draw, and no test rendered a *second* note-on inside
+  a render at all. `testTimingRedrawIsDeterministic` does: a note, a release, a
+  tail and a second note on the same key, rendered at 24000, 1, 17, 64 and 512
+  samples per buffer, comparing the twelve entry delays, the twelve vibrato
+  phases and every sample against the single-block reference, plus two engines
+  given the same sequence. It bites twice over — with the draws taken from a
+  process-global stateful walk instead of the note hash it fails 20 checks
+  (every delay and phase comparison at every buffer size, the bit-exactness at
+  64 and 512 at 0.241 and 0.258 peak difference, the sub-chunk bound at 0.244,
+  and the two-engine check), and under the plain revert of §1 it fails on "the
+  second note reused the first note's twelve entry delays". Measured: buffers
+  that are multiples of the **64-sample
+  render chunk** (not the 16-sample control period — the shipped note's
+  "64/128/512" is exactly that multiple) are bit-exact; buffers that land inside
+  a chunk carry a 1.30e−6 peak residual against **1.82e−6** on the reverted
+  engine, so it is older than the redraw and slightly smaller after it, which is
+  the direction the shipped note reports on its own signal.
+
+  **5. The suite's one failing check is not this step's.** `Vocalor.VoiceEngine`
+  fails "a larger room did not ring for noticeably longer" — step 8's assertion
+  on step 8's half-landed placement — before this pass touched anything and
+  after it finished, with identical numbers. It was left alone.
+
+- [x] **8. Place the singers in the room instead of panning them into it.**
   Every singer is a mono point split by a sqrt pan law and then summed into a
   shared four-tap network fed with the already-mixed stereo pair, which is why
   the L/R correlation is 0.88 and flat across five octaves and why the pan law
@@ -1775,21 +2118,380 @@ have been built at all as written.
   50 % and under 25 ms on the Cathedral Ensemble preset (today 29.67 and
   60.81 ms), with at least 8 distinct local peaks above 10 % of the window peak
   in the first 40 ms — **today 2 at Size 50 % and 0 on Cathedral**, not zero at
-  both. Repeated for singers 0 and 11, the first four reflection arrivals must
-  differ between the two by more than 1 ms in at least three of the four: a
-  shared tap set gives every singer the same pattern, which is the state this
-  step is leaving.
+  both. ~~At least 8 on Cathedral too.~~ **Struck in implementation: at Size
+  95 % the ceiling image of the nearest singer is a 46.8 ms path, so only two
+  of the four surfaces are inside the window and the geometry can put at most
+  four arrivals there. Measured 4 for the nearest singer and 3–7 across the
+  twelve, against 0 before the step; the bound on Cathedral is 3.** ~~Above
+  10 % of the window peak.~~ **Corrected in implementation: the window peak is
+  now the direct arrival, 20–30 dB above every image, and against it the same
+  rule counts 1 peak on an engine that has eight. The threshold is taken
+  against the loudest arrival after the direct wavefront has passed at both
+  receivers — the same number on the pre-step response, which contains no
+  direct sound at all — and set at 5 %, where Size 50 % reads 9 rather than
+  exactly 8.** Repeated for singers 0 and 11, the first four reflection
+  arrivals must differ between the two by more than 1 ms in at least three of
+  the four: a shared tap set gives every singer the same pattern, which is the
+  state this step is leaving.
   RT60 must stay within 15 % of **0.231 s at Size 50 % / Room 50 % and 0.847 s
   on Cathedral, measured by Schroeder backward integration of that impulse
   response with T20 extrapolated** — the audit's 0.29 s and 1.17 s name no
   method and do not reproduce under this one, and a tolerance without a method
-  is not an assertion. Wet/dry balance within 1.0 dB, so this is a geometry
-  change and not a new reverb — and that needs a method too, or it is the same
-  kind of bare tolerance: the ratio of the RMS of (Room 100 % render minus
-  Room 0 % render) to the RMS of the Room 0 % render, Choir/12 held C4 at Size
-  50 %, 3 s from t = 1.0 s, must land within 1.0 dB of the value the same
-  measurement returns on the pre-step build. `testRoomSizeGeometry` must be
-  updated to the new tap set rather than deleted.
+  is not an assertion. ~~Of that impulse response.~~ **Corrected in
+  implementation: not the placement response. It carries the direct arrival,
+  which sits 7.5 dB above everything the room does with it, so its Schroeder
+  integral reads the direct-to-reverberant ratio and not a decay — 0.051 s at
+  Size 50 % / Room 50 % and 0.043 s on Cathedral. The published figures are
+  measured on the recirculating network's own response and reproduce there:
+  0.231 s exactly and 0.817 s, the latter 3.5 % under 0.847 and inside the
+  15 %. So does the rest of the baseline in this paragraph.** Wet/dry balance
+  within 1.0 dB, so this is a geometry change and not a new reverb — and that
+  needs a method too, or it is the same kind of bare tolerance: ~~the ratio of
+  the RMS of (Room 100 % render minus Room 0 % render) to the RMS of the
+  Room 0 % render~~, Choir/12 held C4 at Size 50 %, 3 s from t = 1.0 s, must
+  land within 1.0 dB of the value the same measurement returns on the pre-step
+  build. **Corrected in implementation: Room 100 % minus Room 0 % now contains
+  the first-order image field, because the image field rides the Room control
+  by design, and it reads −8.37 dB against −14.995 dB on the pan-law build. The
+  quantity the assertion exists to protect is the tail, so the send is muted
+  inside one render and the tail measured alone: −15.497 dB against −14.995,
+  0.50 dB apart.** `testRoomSizeGeometry` must be updated to the new tap set
+  rather than deleted.
+
+  *What actually shipped*: the mechanism, exactly as the step and its preflight
+  correction describe it, plus the two tests the step names and one repair to
+  `testRoomSizeGeometry`. The engine side was already in the tree when this
+  step was opened — the fourth agent in a row to find its step half-landed —
+  and it was audited against the step text rather than re-authored: twelve
+  per-identity delay lines (`placementLine_`, 8192 samples each), a direct path
+  plus four first-order images resolved to two ORTF cardioids
+  (`updatePlacement`, `VoiceEngine.cpp:1755`), the distance drawn once in
+  `buildSingerIdentities()` and ranked onto 1.5–6 m, the recirculating network
+  fed from the image sum through `placementSendGain_ = 2.84` rather than from
+  the stereo mix, and the sqrt pan law gone. What the engine did **not** have
+  was `testSingerPlacement` or `testRoomEarlyReflections`, and its one landed
+  assertion was red. Both tests are now in the suite and both were seen to fail
+  against a reverted engine.
+
+  Shipped measurements. L/R correlation on the step's fixture, Room 0:
+  **0.5179 / 0.2643 / 0.2322 / 0.2325** across 150–400, 400–1200, 1200–3000 and
+  3000–8000 Hz, against **0.9543 / 0.9578 / 0.9710 / 0.9702** with the pan law
+  back in — 1200–3000 Hz clears its 0.60 bound by 0.37, 3000–8000 Hz clears
+  0.70 by 0.47, and the band spread is 0.2854 against a required 0.10 and a
+  pan-law reading of −0.0159. Room 50 % moves no band by more than 0.0396.
+  Geometry: the twelve arrival times are **4.955–16.448 ms** (1.700–5.642 m),
+  spanning 11.493 ms; the worst pairwise departure from 1/r is **0.174 dB**;
+  the twelve applied delays are bit-identical across a second note-on on a live
+  root and across a Spread/Size sweep; a soloist's pitch moves **0.0047 cents**
+  through a 1 s Spread/Size sweep. Early field at Size 50 %: the first
+  reflection arrives **5.458 ms** after the direct sound with **9** arrivals in
+  the next 40 ms, against 29.67 ms and 2; on Cathedral Ensemble **14.333 ms**
+  and **4**, against 60.81 ms and 0. Singers 0 and 11 differ by more than 1 ms
+  in all four of their first four arrivals. Per-sample cost, minimum of seven
+  isolated runs of the same 96 kHz twelve-singer render: **476.8 ns/sample**
+  with the placement against **379.7 ns/sample** with it bypassed, +97.1 ns and
+  +25.6 %, against the step's written obligation to rework the path past
+  965 ns/sample. Five things came out other than as written.
+
+  1. **RT60 cannot be read on the placement impulse response, and the step's
+     own published figures are not measured on it.** The preflight moved the
+     early-reflection fixture from `updateRoom` to a singer's placement input —
+     correctly, and for the reason it gives — and then carried the RT60
+     assertion across with it on the argument that "before this step the singer
+     path does not exist and the two injection points are the same sample".
+     They are not. The placement response carries the direct arrival, and the
+     direct arrival sits 7.5 dB above everything the room does with it, so a
+     Schroeder integral of that response measures the direct-to-reverberant
+     ratio rather than a decay: it reads **0.051 s** at Size 50 % / Room 50 %
+     and **0.043 s** on Cathedral, against the 0.231 s and 0.847 s the step
+     asserts. On the recirculating network's own response the step's figures
+     reproduce to the digit — **0.231 s** exactly at Size 50 % / Room 50 % and
+     **0.817 s** on Cathedral, 3.5 % under the published 0.847 and inside the
+     15 % window. So does the whole pre-step baseline: 1426 samples to the
+     first size-dependent arrival at Size 50 % is 29.71 ms against the
+     published 29.67, with exactly two peaks before 40 ms and none on
+     Cathedral. The assertion is written on the network's response, and a new
+     `VoiceEngineTestAccess::roomImpulse` drives it.
+  2. **`testRoomSizeGeometry` was red on arrival and the fixture was the
+     reason.** Its decay assertion — a large room must ring more than three
+     times as long as a small one — had been rewritten onto the placement
+     response and read 0.084 s at Size 5 % against 0.116 s at Size 95 %, a
+     ratio of 1.38 against the 3.0 it demands. It was measuring the direct
+     sound. On the network's own response the same two sizes read **0.099 s and
+     0.929 s**, a ratio of 9.4. The assertion encoded a real behaviour that
+     nothing in this step supersedes; only the fixture moved. This is the
+     failure the step-4, step-5 and step-7 agents each reported inheriting.
+  3. **The wet/dry contract is a statement about the tail, and the literal
+     measurement can no longer carry it.** "Room 100 % render minus Room 0 %
+     render" now includes the first-order image field, because the image field
+     rides the Room control by design — it is room sound. Measured on the
+     step's own fixture that ratio is **−8.37 dB** against **−14.995 dB** on
+     the pan-law build: 6.6 dB apart, six times the 1.0 dB the step allows, and
+     every decibel of it is the feature. What the assertion exists to protect
+     is that the reverb did not get louder, so the test mutes the send inside
+     one render and measures the tail alone: **−15.497 dB** against −14.995,
+     **0.50 dB** apart. That also independently confirms the shipped
+     `placementSendGain_ = 2.84`, whose comment claims exactly this
+     calibration.
+  4. **"At least 8 early peaks on Cathedral Ensemble" is geometrically
+     impossible and is struck; three is what the room can put there.** At Size
+     95 % the shoebox is nearly twice the size it is at Size 50 %, so its
+     surfaces are correspondingly further away: for the nearest singer the
+     ceiling image is a 46.8 ms path and the far side wall later still, leaving
+     only the floor and the near side wall inside the 40 ms window. Measured
+     across all twelve identities, Cathedral gives 3–7 arrivals and the nearest
+     singer gives 4; Size 50 %, where all four surfaces are inside the window,
+     gives 7–12 and the nearest singer gives 9. The step's 8 is asserted where
+     it is reachable and replaced by 3 where it is not — against 0 before the
+     step, which is what the assertion has to bite on.
+  5. **The peak threshold had to be re-referred, and doing so leaves the
+     pre-step reading unchanged.** "Above 10 % of the window peak" was written
+     when the window peak was the loudest reflection, because the pre-step
+     response has no direct sound in it at all. Post-step the window peak is
+     the direct arrival, 20–30 dB above every image, and the same rule counts
+     **1** peak at Size 50 % on an engine that has eight. The threshold is
+     therefore taken against the loudest arrival *after* the direct wavefront
+     has passed — after both receivers, which are 0.17 m apart and so 0.496 ms
+     at most — which is the same number on the pre-step response and the right
+     one on this. It is also Room-independent, since direct and images ride
+     different scalings and the metric divides one image by another: the counts
+     are identical at Room 50 % and Room 100 %. The bound is set at 5 % rather
+     than 10 %, where Size 50 % reads 9 instead of exactly 8, so the assertion
+     is not one marginal peak away from flapping; at the step's literal 10 % it
+     reads 8.
+
+  Nothing else in the suite moved. `testRoughPerformance` still passes its 20×
+  guardrail; on the shared box it prints 916.6 ns/sample, which is the box and
+  not the engine — the same run printed 932.3 ns/sample before this step's test
+  work, and step 5 recorded the same instrument at 870 ns/sample against a
+  717.5 ns reference. The isolated back-to-back figures above are the ones to
+  read. No README debt: the README publishes no correlation, placement or
+  early-reflection figures. **The README now publishes all three**, because the
+  placement is the largest single thing this pass changed about how the
+  instrument sounds and the section that described the room described a network
+  the singers no longer go through.
+
+### What the second pass measured
+
+Every figure below is printed by the DSP test suite on the finished pass and can
+be re-checked by running it, so this table supersedes any figure in a step note
+that was measured before the steps behind it landed. "Before" is the engine this
+section was written against, except where a row says otherwise. Gap numbers are
+the ones in *Where the engine actually stands*.
+
+| Gap | Before | After |
+| --- | --- | --- |
+| 9. 2 – 3.3 kHz share at t = 10 – 35 ms, male D3 | 17.68 dB under its own sustain | 2.71 dB with the source ramp forced out, 0.44 dB as shipped |
+| 9. 5 – 18 kHz share at t = 10 – 35 ms | no source gesture existed | 5.56 dB above the same render with the ramp forced out |
+| 11. Four-period 10 – 90 % rise, velocity 1.00 / 0.10, Humanize 0 | 16.62 / 16.68 ms | 9.25 / 86.40 ms, a factor of 9.34 |
+| 11. 2 – 5 kHz dB per dB of 150 – 800 Hz, velocity leg / Dynamics leg | 1.066 / 1.222 | 1.52 / 1.52, at Breath 0.00 |
+| 21. Broadband dynamic span, Breath 0.00 / 0.28 / 0.60 | 18.10 / 18.10 / 18.09 dB | 33.19 / 33.02 / 32.37 dB |
+| 10. Solo vibrato at Vibrato 100 % | 4.711 Hz, ±21.7 cents | 5.719 Hz, ±108.6 cents |
+| 10. Twelve section rates and extents | 4.711 – 5.289 Hz, ±15.4 – ±22.2 cents | 5.719 – 6.842 Hz, ±27.8 – ±40.0 cents |
+| 10. Envelope modulation at the singer's own vibrato rate, C5 / C6 | 0.100 / 0.221 dB | 2.994 / 3.163 dB |
+| 13. Air-to-voiced ratio 300 ms after note-off, Breath 1.00 / Tension 0.15 | 12.91 dB *below* the sounding value | 9.56 dB above it |
+| 13. The same at Breath 0.28 / Tension 0.90 | 12.58 dB below | 6.21 dB below — a pressed note still stops cleanly |
+| 14. Isolated aspiration folded on the glottal period, C4 / Breath 1.00 | 0.27 dB, which is the estimator's floor | 8.35 dB peak to trough, peak at phase 0.396, 4.32 dB of closed-phase margin |
+| 12. Twelve entry delays over three identical note-ons | identical to the sample every time | no delay and no phase repeated; closest pair 6 samples and 0.018 cycle |
+| 12. Audible-onset scatter at Humanize 1.0 | 4.098 ms population sd | 11.34 – 12.17 ms over three takes, 10.03 – 13.13 ms over 128 roots × 64 takes |
+| 12. Release spread, first to last voice 40 dB down | 0.0 ms | 189.7 ms at Humanize 1.0, still 0.0 ms at Humanize 0 |
+| 17. First reflection after the direct sound, Size 50 % / Cathedral | 29.67 / 60.81 ms, with 2 / 0 peaks in the first 40 ms | 5.458 / 14.333 ms, with 9 / 4 arrivals |
+| 17. RT60 of the recirculating network, Size 5 % / Size 95 % | 0.099 / 0.929 s | unchanged — this pass does not touch the tail |
+| 18. L/R correlation, 1200 – 3000 / 3000 – 8000 Hz | 0.9710 / 0.9702 | 0.2322 / 0.2325 |
+| 18. Spread of that correlation across five octaves | −0.0159 | 0.2854 |
+| 18. Twelve direct arrivals | one shared pan law, no arrival difference at all | 4.955 – 16.448 ms (1.700 – 5.642 m), 1/r to within 0.174 dB |
+
+Three rows need their protocol stated. The **correlation "before"** is a hand-built
+pan-law revert of the shipping engine, not the pre-pass build: reconstructing
+that needs a header that no longer exists in the tree, and the audit's
+0.8758 / 0.8867 / 0.8811 / 0.8816 could not be reproduced. The shape reproduces —
+flat to 0.017 across five octaves against the audit's 0.0058 — and the reading is
+about 0.09 higher because the reconstruction does not carry the per-voice pan
+glide. The **audible-onset scatter** is the entry delay plus the singer's
+direct-path delay, which is the quantity the ear gets; the entry-delay field
+alone reads 8.915 – 11.848 ms over the same sweep. And the **aspirate release
+"before"** is a reverted build of the engine steps 1, 2, 3 and 5 left behind
+rather than of the pre-pass engine, because step 5's aspiration window rides the
+same `airShape` step 4's gesture multiplies; it reads −12.91 dB where the
+pre-pass engine read −12.53. The pressed leg's −12.58 dB is on the earlier
+engine. The size of the effect is the same to 0.05 dB either way. Two further
+rows carry a "before" from the engine an earlier step left behind rather than
+from the pre-pass one, because the step that measured them ran second: the
+four-period rise (16.62 / 16.68 ms after step 1, against 17.9 ms pre-pass on the
+same envelope, and 32.79 ms on the 2 ms envelope the audit used) and the vibrato
+amplitude (0.100 / 0.221 dB after step 2). Neither changes the direction or the
+order of magnitude of the result.
+
+**What the pass set out to do, and what it did.** It set out to fix the parts of
+a note that are not the steady state — the attack, the release, the repeat and
+the room — and to answer a competitor whose owners name per-singer spatial
+placement as the thing no other library gets close to. Seven of the eight steps
+landed. Gaps 9, 10, 11, 12, 13, 14, 17, 18 and 21 are closed and asserted; gap
+23 is struck and moved below with its four reasons; gaps 15, 16, 19, 20 and 22
+were never in scope for this pass and are still open.
+
+**Where reality differed from the plan.** Each of these is written out at its
+step; this is the index.
+
+1. **Step 1's third assertion was backwards and unachievable at any depth.** It
+   required a lax onset to *widen* the 2000 – 3300 Hz deficit. The onset is
+   duller in absolute terms, but the deficit normalises to 100 – 900 Hz and the
+   ramp takes 5.6 dB out of the denominator, so the deficit falls at every depth
+   tried. The cause is a property of `glottalPair` nothing in the document named:
+   the two prototypes are crossfaded in the *time* domain and return at
+   different instants, so harmonics cancel at intermediate tensions. Replaced by
+   the same physiology measured as a differential.
+2. **Step 2's 1.6 dB-per-dB presence ratio is a filter-order fact, not a tuning
+   target.** One first-order stage caps the ratio near 1.44 and measures 1.29;
+   two cascaded shelves reach 1.52 with the broadband span at 33 dB. Reaching
+   1.6 needs a third stage — 18 dB/octave of source slope where the literature
+   supports about 12. The threshold shipped at 1.40 and the measurement is
+   pinned at Breath 0.00, because at the shipping Breath the aspiration owns the
+   band once the voiced gain has fallen 30 dB.
+3. **Step 2's preset re-trim is twelve presets, not five**, because the source
+   slope follows velocity and the suite renders at velocity 0.85. Breath And Air
+   could not be recovered by output gain alone.
+4. **Step 1's click bound could not survive step 2 and was re-anchored.** An
+   18 dB bound at 2 ms and a 6 – 14 ms accented rise are directly incompatible:
+   no time constant satisfies both. The window is 1 ms at 24 dB, swept over
+   three velocities as well as two tensions.
+5. **Step 3's section ceiling is a limit, not a scale, and is approached rather
+   than reached.** Read as a scale it would have done nothing for the seven
+   non-Solo presets it exists to rescue. Choir and Chord read 36.0 cents at the
+   top of the knob rather than 40. The "30 – 45 % region lands near ±20 – 25
+   cents" is only reachable at the top of that region: no curve steep enough to
+   reach ±100 at 100 % is flat enough to hold a fifteen-point span in a
+   five-cent window.
+6. **Step 3's modulation drives the presence shelf rather than the tilt corner**,
+   which is where Sundberg's 2:1 falls out for one multiply, and it had to be
+   ramped across the control period rather than stepped.
+7. **Step 4's single air-release coefficient cannot reach the step's own 6 dB**
+   without holding a voice for four to five seconds. The offset ships as a
+   glottal-area gesture on a coefficient shared with the voice, which is the
+   aerodynamics the step's own prose named.
+8. **Step 5's second peak "at the sharp closure" is not expressible at audio
+   rates** and its sizing is in none of the cited sources; and the crossfade's
+   renormalisation is load-bearing — without it the window costs 0.96 – 1.17 dB
+   and fails the step's own 1.0 dB contract at the shipping default.
+9. **Step 7's habitual offsets are seeded, not drawn.** Twelve independent draws
+   realise 0.455 of an ideal uniform's spread, so drawing the scatter the step
+   asks for would have put the mean entry 31 ms behind the key. The even
+   variance split the literature suggests fails the step's own 8 ms floor by a
+   factor of two, because variance adds in quadrature while the span adds
+   linearly.
+10. **Step 8's RT60 assertion is measured on the wrong response, and that is why
+    the suite was red for most of the pass.** The placement response carries the
+    direct arrival 7.5 dB above everything the room does with it, so a Schroeder
+    integral of it reads a direct-to-reverberant ratio, not a decay. On the
+    recirculating network's own response the step's published figures reproduce
+    exactly. The same fixture error had been applied to `testRoomSizeGeometry`,
+    which the step-4, step-5 and step-7 agents each reported inheriting red.
+11. **Four of the eight steps were found already implemented and ticked.** Steps
+    4, 5, 7 and 8 were in the tree when their agents opened them, and the brief
+    each was given did not say so. Those agents audited the mechanism against the
+    step text, reproduced the gap by actually reverting the engine, proved the
+    tests bite, and corrected the record; step 7 and step 8 also built the tests
+    their steps' verification contracts named and the suite did not carry. That
+    is recorded here rather than smoothed over, because it is the reason several
+    steps' shipped notes are dated after the code they describe.
+
+**Struck, and why.**
+
+- **Step 6 in full** — disengaging the epilaryngeal cluster above the soprano
+  crossover. Struck in review, moved below with four reasons: its test could not
+  have passed, its baseline figures were a male D3's, it does not implement the
+  bandwidth finding it cites, and it breaks the peak-normalisation this pass
+  pins. The gap is real and comes back as its own step.
+- **Step 1's "the ramp-on deficit must exceed the ramp-off deficit by 1.5 dB"** —
+  unachievable at any depth, for the reason above.
+- **The audit's "5 – 18 kHz aspiration share must be at least 4 dB above its
+  sustain value"** — it passes with no ramp written at all.
+- **Step 3's "Choir and Chord reach ±40"** — read as a scale it rescues nothing;
+  shipped as a soft limit that reads 36.0.
+- **Step 7's onset-envelope correlation assertion** — not a stable statistic:
+  four repeats measured against the first give 0.857, 0.656 and 0.785, straddling
+  the proposed threshold.
+- **Step 8's "at least 8 early peaks on Cathedral Ensemble"** — geometrically
+  impossible; at Size 95 % only two of the four surfaces are inside a 40 ms
+  window. Asserted at 3 there and at 8 where it is reachable.
+- **Step 8's "above 10 % of the window peak"** — written when the window peak was
+  the loudest reflection; post-step it is the direct arrival, 20 – 30 dB above
+  every image.
+- **Step 8's literal wet/dry ratio** — "Room 100 % minus Room 0 %" now contains
+  the image field, which rides the Room control by design. Replaced by muting the
+  send inside one render and measuring the tail alone.
+
+**What can and cannot be claimed.** Every claim below is traceable to a printed
+figure in the suite; everything the pass cannot support is here too.
+
+- The dynamic covers **33 dB** broadband and moves the presence band **1.52 dB
+  per dB** of level. It is **not** Sundberg's 2:1, and the ratio is measured with
+  the breath closed: at the shipping Breath 0.28 the same measurement reads about
+  1.0, because the aspiration — which loses only 7.2 dB — is most of the
+  2 – 5 kHz band once the voiced gain has fallen 30 dB. Read on the harmonics
+  themselves, which reject that noise, the source still behaves at the shipping
+  Breath: `testPerformanceExpression` measures 19.71 dB at the fundamental
+  against 39.32 dB over harmonics 9 – 18 for Dynamics 1.00 → 0.30 at Breath 0.30.
+  Both statements are true and they are about different quantities.
+- The tract is complete from the first sample and the onset is a source gesture.
+  The click bound is **1 ms at 24 dB**, not a statement about the first 2 ms, and
+  the narrowest of its eighteen legs is 40.03 dB.
+- The vibrato sits in the measured band at every identity and carries about 3 dB
+  of amplitude modulation at its own rate. The **extent curve is a design
+  decision stated as one**: `100 × knob^1.75`, fixed by the engine's own default
+  rather than derived, and the section limit is approached at 36.0 cents rather
+  than reached at 40.
+- The release is an aspirate offset on breathy, lax notes and a glottal one on
+  pressed notes, from the same gesture, without lengthening the tail. The two
+  legs are Breath 1.00 / Tension 0.15 and Breath 0.28 / Tension 0.90; nothing is
+  claimed about the space between them.
+- The aspiration is pitch-synchronous, and it is a **breathy-patch feature**:
+  28.15 dB below the full signal at Breath 1.00 and 41.07 dB below at the 28 %
+  default. Its Breath 0.28 leg has **0.14 dB of margin** against an 8.0 dB bound
+  that is not in the step text, and a further 0.15 dB of drift from anywhere in
+  the signal path fails `testAspirationIsPitchSynchronous` for reasons that have
+  nothing to do with the aspiration.
+- The ensemble is redrawn at every note and its entries and releases are
+  scattered, deterministically. **Buffer-split invariance is exact at multiples
+  of the 64-sample render chunk**, not at every buffer size: sub-chunk splits
+  carry a 1.30e−6 peak residual, which is pre-existing (1.82e−6 before step 7)
+  and is a property of the chunk boundary rather than of the draws.
+- The singers are placed rather than panned, with their own early reflections and
+  a 1/r law good to 0.174 dB. The **early field is four first-order images**, not
+  a diffuse early field: on Cathedral the nearest singer gets four arrivals in
+  40 ms because the geometry cannot put more there. The tail is the same
+  recirculating network it was, within 0.5 dB.
+- **Breath And Air is out of headroom.** It ships at the published `outputGain`
+  maximum of 2.000 with its Dynamics already raised, and still renders 0.64 dB
+  under the level it was voiced at. Any future step that lowers a breathy patch
+  has nowhere to put the difference.
+- **Per-sample costs are per-change isolated measurements**, each taken back to
+  back on the same box with and without that one change: +13 ns for the onset
+  ramp, +43.6 ns for the presence shelves, about +25 ns for the aspiration
+  window, below the noise floor for the vibrato modulation, and +97.1 ns
+  (+25.6 %) for the placement. **Absolute figures are not comparable between
+  steps**: four cores are shared with five other instruments and the same binary
+  spreads 697 – 1054 ns/sample between runs. The 20× guardrail passes throughout
+  and proves nothing on its own, which is why the obligation was written with a
+  number attached.
+- **Formant dispersion was deliberately not widened.** Ternström and Sundberg
+  report smaller inter-subject formant scatter in singing than in speech, so the
+  ensemble win this pass took is in timing and space, not in more vowel scatter.
+- **The singer's-formant cluster is still applied at every pitch** (gap 23), and
+  no band-share measurement can prove it was ever disengaged, because Tension
+  also drives the source tilt corner and that alone is worth 8.99 dB of the C6
+  rise. This is the largest known acoustic inaccuracy the pass leaves behind and
+  it is deliberately left, with its reasons, below.
+- **The committed demonstration WAVs were not re-rendered against the finished
+  engine.** `VocalorRenderDemos` is deterministic and rewrites the level table in
+  `Docs/audio/README.md` in place, so regenerating them is a single command, but
+  it was not run here: the tool overwrites the committed audio, and the per-fix
+  preview takes under `Docs/audio/*-fixes/` are frozen review evidence that must
+  not be re-rendered at all. Whoever ships this should regenerate the nine
+  demonstrations and nothing else.
+- **Nothing here is a listening test.** No vendor in this category publishes one
+  and no controlled comparison of choir plug-ins exists, so every claim above is
+  a measurement and none of them is a claim about preference.
 
 ### Considered and not planned
 

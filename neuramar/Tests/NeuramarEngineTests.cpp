@@ -4880,8 +4880,9 @@ void testReleaseDarkensTail()
     // to be at least as fast or it is still sounding when its own voice is
     // cleared. That is not an exotic case: f_1 is the *played* fundamental
     // while the Air centres are the model's own fixed grid and the Bone centres
-    // are rootFrequencyHz * ratio, so at root+24 three of sixteen Air bands sit
-    // below the fundamental and at root+51 twelve of sixteen do.
+    // are rootFrequencyHz * ratio, so three of the sixteen Air bands sit below
+    // the fundamental at the root note itself, seven of sixteen at root+24 and
+    // twelve of sixteen at root+51.
     neuramar::EngineParameters bodyParameters = parameters;
     bodyParameters.bodyLock = 1.0f;
     bodyParameters.registerTilt = 0.0f;
@@ -4999,9 +5000,13 @@ void testReleaseDarkensTail()
 // model clock should run at r^p and the release time constant should be divided
 // by the same number.
 //
-// Everything below is measured with Orbit at 0. At the shipping defaults the
-// clock ping-pongs inside the loop region and no note decays past it at any
-// key, so this is scoped to Orbit-off playing by construction.
+// Everything below is measured with Orbit at 0, because a decay is the cleanest
+// place to read the clock rate off. That is a choice of measurement, not the
+// scope of the change: Orbit is a time blend, so part of the read position is
+// still the one-shot clock at any setting below 1, and at Orbit 1 the scale
+// decides how soon a note reaches its sustain region. The fall from 0.10 s to
+// 1.00 s across MIDI 33 / 57 / 81 spreads 2.95 / 2.96 / 3.01 dB with the scale
+// forced to 1 and 34.1 / 31.1 / 20.7 dB with it live, at Orbit 0 / 0.15 / 1.
 void testDecayKeyTracking()
 {
     constexpr double sampleRate = 48000.0;

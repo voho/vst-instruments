@@ -110,6 +110,31 @@ struct ElectryEngineTestAccess
         return engine.channelsLinked_;
     }
 
+    // The played strings' share of the bridge bus: the gain each voice reads
+    // the others' summed force at, and the row-sum norm that bounds it. Read
+    // off the engine rather than recomputed, so the stability contract is
+    // asserted on the number that actually runs.
+    static float bridgeCouplingGain(const ElectryEngine& engine) noexcept
+    {
+        return engine.bridgeCouplingInjection_;
+    }
+
+    static float bridgeCouplingRowSum(const ElectryEngine& engine) noexcept
+    {
+        return engine.bridgeCouplingRowSum_;
+    }
+
+    // The slow follower on a played voice's *own* two loop outputs. Nothing
+    // any other string does reaches it, so it is the exact place to look for
+    // an unsubtracted self-term: a voice that drives itself through the bridge
+    // bus changes this, and a voice that drives only the others does not.
+    static float voiceLoopEnergy(const ElectryEngine& engine,
+                                 int stringIndex) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(stringIndex)]
+            .energyEnvelope;
+    }
+
     // The hand's loss dip sits inside the feedback loop, so its magnitude must
     // never exceed one at any frequency. Read from the live voice rather than
     // recomputed, so the check is on what actually runs.
@@ -2421,6 +2446,10 @@ void testVelocityExpression()
     // level were the same curve. What the bound still catches is the
     // degenerate case - freezing the release rate outright reads 0.996, i.e. a
     // harder stroke that arrives darker.
+    //
+    // The 7.3% is the figure this read when the velocity work landed; the
+    // humbucker's coil pair moved it to 6.7% two steps later, which is the
+    // ratio the shipped engine measures on this fixture.
     expect(highCentroid > lowCentroid * 1.05,
            "velocity does not brighten the attack (low "
                + std::to_string(lowCentroid) + " Hz, high "
@@ -6454,6 +6483,307 @@ void testCoupledStringKeepsItsFundamentalDecayTarget()
            "the coupled bank contributes nothing at String Age 1.0");
 }
 
+// ---------------------------------------------------------------------------
+// The strings share a bridge: the strings that are being *played* read the
+// coupling bus too, minus their own contribution to it.
+// ---------------------------------------------------------------------------
+//
+// Until this shipped the bus was written only by played voices and read only
+// by idle ones, so a voicing that fingers all eight strings had no coupling
+// path at all: the same chord rendered at Resonance 0.20 and at 0 was
+// bit-identical. That is the case this test leads with, and it is the one no
+// implementation can pass without closing the loop.
+//
+// Everything here pins `pickNoise`, `fingerNoise` and `releaseNoise` at zero.
+// Not for the reason the plan first gave - the per-note noise seed - but for a
+// larger one measured on this engine: the per-attack stroke draw seeded from
+// the note counter moves a two-note render 30 to 65 dB away from the sum of
+// its two single-note renders, which swamps any coupling term. Every
+// comparison below is therefore the *same* voicing at two coupling settings,
+// where the seeds are identical by construction.
+void testFingeredStringsShareTheBridge()
+{
+    constexpr double sampleRate = 48000.0;
+    const std::vector<int> allEight { 28, 35, 40, 45, 50, 55, 59, 64 };
+
+    const auto renderChord = [&] (const std::vector<int>& notes, float velocity,
+                                  float sympathetic, float resonanceDepth,
+                                  double seconds)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.sympatheticAmount = sympathetic;
+        parameters.resonanceDepth = resonanceDepth;
+        parameters.artifactAmount = 0.0f;
+        parameters.strumSpreadSeconds = 0.0f;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        for (const int note : notes)
+            engine.noteOn(note, velocity);
+        StereoBuffer buffer(static_cast<int>(seconds * sampleRate));
+        renderInto(engine, buffer);
+        return buffer;
+    };
+
+    // Relative L2 of one render against another, in decibels, over a window.
+    const auto relativeDb = [] (const std::vector<float>& a,
+                                const std::vector<float>& b,
+                                int start, int end)
+    {
+        double difference = 0.0;
+        double reference = 0.0;
+        for (int i = start; i < end; ++i)
+        {
+            const double delta = static_cast<double>(a[static_cast<std::size_t>(i)])
+                               - static_cast<double>(b[static_cast<std::size_t>(i)]);
+            difference += delta * delta;
+            reference += static_cast<double>(b[static_cast<std::size_t>(i)])
+                       * static_cast<double>(b[static_cast<std::size_t>(i)]);
+        }
+        if (reference <= 0.0)
+            return 0.0;
+        return 10.0 * std::log10(std::max(difference, 1.0e-300) / reference);
+    };
+
+    const int firstWindow = static_cast<int>(1.5 * sampleRate);
+
+    // 1. The voicing that leaves nothing open now hears itself. Both figures
+    //    are exactly zero difference - minus infinity - without the step.
+    const auto chordOff = renderChord(allEight, 0.90f, 0.0f, 0.0f, 12.2);
+    expect(allFinite(chordOff), "the uncoupled eight-string chord is not finite");
+    const auto chordDefault = renderChord(allEight, 0.90f, 0.20f, 0.0f, 12.2);
+    const auto chordFull = renderChord(allEight, 0.90f, 1.00f, 0.0f, 12.2);
+    expect(allFinite(chordDefault) && allFinite(chordFull),
+           "the coupled eight-string chord is not finite");
+
+    const double defaultDb = relativeDb(chordDefault.left, chordOff.left,
+                                        0, firstWindow);
+    const double fullDb = relativeDb(chordFull.left, chordOff.left,
+                                     0, firstWindow);
+    expect(defaultDb >= -66.0,
+           "an all-eight-fingered chord at Resonance 0.20 does not differ from "
+           "the same chord at 0 (" + std::to_string(defaultDb) + " dB)");
+    expect(fullDb >= -56.0,
+           "an all-eight-fingered chord at full Resonance does not differ from "
+           "the same chord at 0 (" + std::to_string(fullDb) + " dB)");
+
+    // 2. The control scales it, rather than switching a fixed amount on.
+    const auto chordLow = renderChord(allEight, 0.90f, 0.05f, 0.0f, 12.2);
+    const auto chordHalf = renderChord(allEight, 0.90f, 0.50f, 0.0f, 12.2);
+    const double lowDb = relativeDb(chordLow.left, chordOff.left, 0, firstWindow);
+    const double halfDb = relativeDb(chordHalf.left, chordOff.left, 0, firstWindow);
+    expect(lowDb < defaultDb && defaultDb < halfDb,
+           "the coupling does not grow with the Resonance control ("
+               + std::to_string(lowDb) + " -> " + std::to_string(defaultDb)
+               + " -> " + std::to_string(halfDb) + " dB)");
+    std::cout << "PROBE all-eight-fingered chord against the same chord at"
+                 " Resonance 0: " << lowDb << " dB at 0.05, " << defaultDb
+              << " dB at 0.20, " << halfDb << " dB at 0.50, " << fullDb
+              << " dB at 1.0 (exactly zero difference before the step)\n";
+
+    // 3. The coupling is lossy, not regenerative. Its own residual has to die
+    //    away faster than the chord does, in absolute terms.
+    const auto residualRms = [&] (const StereoBuffer& coupled, int start, int end)
+    {
+        double sum = 0.0;
+        for (int i = start; i < end; ++i)
+        {
+            const double delta =
+                static_cast<double>(coupled.left[static_cast<std::size_t>(i)])
+                - static_cast<double>(chordOff.left[static_cast<std::size_t>(i)]);
+            sum += delta * delta;
+        }
+        return std::sqrt(sum / static_cast<double>(end - start));
+    };
+    for (const auto* coupled : { &chordDefault, &chordFull })
+    {
+        const double early = residualRms(*coupled, 0, firstWindow);
+        const double late = residualRms(*coupled,
+                                        static_cast<int>(10.0 * sampleRate),
+                                        static_cast<int>(12.0 * sampleRate));
+        expect(early > 0.0, "the coupling contributes no residual at all");
+        const double fall = 20.0 * std::log10(early / std::max(late, 1.0e-30));
+        expect(fall >= 20.0,
+               "the coupled residual does not decay away ("
+                   + std::to_string(fall) + " dB from 0-1.5 s to 10-12 s)");
+        std::cout << "PROBE coupled residual falls " << fall
+                  << " dB from 0-1.5 s to 10-12 s\n";
+    }
+
+    // 4. Thirty seconds of eight strings at full velocity and maximum
+    //    Resonance: bounded, and falling. Strict monotonicity over successive
+    //    1 s windows is *not* asserted - the uncoupled engine already breaks it
+    //    three times over this render, by up to 0.43 dB, so the bar is that the
+    //    coupling does not add regeneration on top of that.
+    const auto longChord = renderChord(allEight, 1.0f, 1.0f, 1.0f, 30.0);
+    expect(allFinite(longChord), "thirty seconds of maximum coupling is not finite");
+    expect(peakAbs(longChord.left) < 3.05f && peakAbs(longChord.right) < 3.05f,
+           "maximum played-string coupling escaped the output guard");
+    double previousWindow = 0.0;
+    double worstRise = 0.0;
+    for (int second = 0; second < 30; ++second)
+    {
+        const double windowRms = rmsInRange(
+            longChord.left, static_cast<int>(second * sampleRate),
+            static_cast<int>((second + 1) * sampleRate));
+        if (second > 0 && windowRms > previousWindow)
+            worstRise = std::max(worstRise,
+                                 20.0 * std::log10(windowRms / previousWindow));
+        previousWindow = windowRms;
+    }
+    expect(worstRise <= 0.5,
+           "a 1 s window of the maximum-coupling chord grew by "
+               + std::to_string(worstRise) + " dB");
+    const double firstSecond = rmsInRange(longChord.left, 0,
+                                          static_cast<int>(sampleRate));
+    const double lastSecond = rmsInRange(longChord.left,
+                                         static_cast<int>(29.0 * sampleRate),
+                                         static_cast<int>(30.0 * sampleRate));
+    const double thirtySecondFall =
+        20.0 * std::log10(firstSecond / std::max(lastSecond, 1.0e-30));
+    expect(thirtySecondFall >= 70.0,
+           "the maximum-coupling chord did not decay over thirty seconds");
+    std::cout << "PROBE thirty seconds of maximum coupling: worst 1 s rise "
+              << worstRise << " dB, total fall " << thirtySecondFall << " dB\n";
+
+    // 5. The spectral-radius bound, read at the seam. The coupling matrix has
+    //    a zero diagonal and off-diagonal entries g/(1 - G_i), so the row-sum
+    //    norm is (N - 1) g max_i 1/(1 - G_i); it is held at or below 0.25 by
+    //    construction, at every setting, and is checked here against the loop
+    //    gains the voices are actually running.
+    double worstRowSum = 0.0;
+    for (const float sympathetic : { 0.05f, 0.20f, 0.50f, 1.0f })
+        for (const float resonance : { 0.0f, 1.0f })
+            for (const float mute : { 0.0f, 0.5f })
+            {
+                ElectryEngine engine;
+                engine.prepare(sampleRate, 512);
+                EngineParameters parameters;
+                parameters.sympatheticAmount = sympathetic;
+                parameters.resonanceDepth = resonance;
+                parameters.palmMute = mute;
+                parameters.artifactAmount = 0.0f;
+                parameters.strumSpreadSeconds = 0.0f;
+                engine.setParameters(parameters);
+                engine.reset();
+                for (const int note : allEight)
+                    engine.noteOn(note, 1.0f);
+                StereoBuffer settle(static_cast<int>(0.5 * sampleRate));
+                renderInto(engine, settle);
+
+                int active = 0;
+                double worstAmplification = 1.0;
+                for (int stringIndex = 0;
+                     stringIndex < ElectryEngine::stringCount; ++stringIndex)
+                {
+                    const auto snapshot = TestAccess::snapshot(engine, stringIndex);
+                    if (! snapshot.active)
+                        continue;
+                    ++active;
+                    worstAmplification = std::max(
+                        worstAmplification,
+                        1.0 / std::max(1.0 - snapshot.loopGain, 1.0e-6));
+                }
+                const double gain = TestAccess::bridgeCouplingGain(engine);
+                const double rowSum = static_cast<double>(active - 1) * gain
+                                    * worstAmplification;
+                expect(rowSum <= 0.25,
+                       "the played-string coupling exceeded its row-sum bound ("
+                           + std::to_string(rowSum) + " at Resonance "
+                           + std::to_string(sympathetic) + ")");
+                expect(TestAccess::bridgeCouplingRowSum(engine) <= 0.25f,
+                       "the engine's own row-sum norm exceeded 0.25");
+                expect(gain > 0.0 || mute >= 1.0f,
+                       "the played strings read no coupling at all");
+                worstRowSum = std::max(worstRowSum, rowSum);
+            }
+    std::cout << "PROBE worst played-string coupling row-sum norm over the "
+                 "sweep: " << worstRowSum << " against a bound of 0.25\n";
+
+    // 6. The self-term. With one voice sounding, the bus *is* that voice's own
+    //    contribution, so `bus - own` is exactly zero and the injection must be
+    //    exactly zero however far the control is pushed. The check is on the
+    //    voice's own loop energy rather than on the output, because the output
+    //    also carries the seven idle strings ringing sympathetically, which
+    //    legitimately do move with the control. A voice that drove itself
+    //    through the bus would change its own loop - and every decay time, T60
+    //    and timbre calibration in the instrument sits downstream of that.
+    const auto singleNoteLoopEnergy = [&] (float sympathetic)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.sympatheticAmount = sympathetic;
+        parameters.artifactAmount = 0.0f;
+        parameters.strumSpreadSeconds = 0.0f;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(40, 0.90f);
+        StereoBuffer buffer(static_cast<int>(2.0 * sampleRate));
+        renderInto(engine, buffer);
+        const int stringIndex = TestAccess::stringForNote(engine, 40);
+        expect(stringIndex >= 0, "the single note did not sound");
+        expect(TestAccess::bridgeCouplingGain(engine) == 0.0f,
+               "a lone voice was given a non-zero share of the bridge bus");
+        return TestAccess::voiceLoopEnergy(engine, stringIndex);
+    };
+    const float loopEnergyOff = singleNoteLoopEnergy(0.0f);
+    expect(loopEnergyOff > 0.0f, "the single note left no loop energy to read");
+    expect(singleNoteLoopEnergy(0.20f) == loopEnergyOff,
+           "a single note's own loop moved with the Resonance control at 0.20");
+    expect(singleNoteLoopEnergy(1.0f) == loopEnergyOff,
+           "a single note's own loop moved with the Resonance control at 1.0");
+
+    // 7. Off is off, and the top end stays clean. The new path is a broadband
+    //    injection into eight high-Q loops, which is exactly the shape that
+    //    folds energy back above Nyquist if it is unbounded.
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.sympatheticAmount = 0.0f;
+        parameters.artifactAmount = 0.0f;
+        parameters.strumSpreadSeconds = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        for (const int note : allEight)
+            engine.noteOn(note, 1.0f);
+        StereoBuffer settle(static_cast<int>(0.5 * sampleRate));
+        renderInto(engine, settle);
+        expect(TestAccess::bridgeCouplingGain(engine) == 0.0f
+                   && TestAccess::bridgeCouplingRowSum(engine) == 0.0f,
+               "the played-string coupling is not exactly zero at Resonance 0");
+    }
+
+    const auto aliasing = renderChord(allEight, 1.0f, 1.0f, 1.0f, 2.0);
+    const int aliasStart = static_cast<int>(0.2 * sampleRate);
+    const int aliasLength = static_cast<int>(1.0 * sampleRate);
+    double spectralPeak = 0.0;
+    for (double frequency = 60.0; frequency < 8000.0; frequency *= 1.01)
+        spectralPeak = std::max(spectralPeak,
+                                dftMagnitude(aliasing.left, aliasStart,
+                                             aliasLength, sampleRate, frequency));
+    double aliasPeak = 0.0;
+    for (double frequency = 12000.0; frequency < 23000.0; frequency *= 1.005)
+        aliasPeak = std::max(aliasPeak,
+                             dftMagnitude(aliasing.left, aliasStart,
+                                          aliasLength, sampleRate, frequency));
+    const double aliasFloorDb =
+        20.0 * std::log10(spectralPeak / std::max(aliasPeak, 1.0e-30));
+    expect(aliasFloorDb >= 150.0,
+           "played-string coupling raised the alias floor to "
+               + std::to_string(aliasFloorDb) + " dB below the peak");
+    std::cout << "PROBE alias floor with played-string coupling at maximum: "
+              << aliasFloorDb << " dB below the spectral peak\n";
+}
+
 void testIdleFreezeAndDenormalSafety()
 {
     constexpr double sampleRate = 48000.0;
@@ -6704,6 +7034,7 @@ int main()
     testPolarisationCouplingIsPerRoundTrip();
     testCoupledStringLosesItsTopEndLikeAPlayedString();
     testCoupledStringKeepsItsFundamentalDecayTarget();
+    testFingeredStringsShareTheBridge();
     testParameterSanitisation();
     testCpuGuardrail();
 

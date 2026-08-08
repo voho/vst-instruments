@@ -261,8 +261,9 @@ rather than because their gap was unreal. Numbers that did not reproduce were
 replaced with what was measured, and three verifications that could not have
 failed before their own change were rewritten. Corrected figures are marked
 **[re-measured 2026-08-08]** wherever they appear, and the surviving steps have
-been renumbered 1–6; nothing is ticked, because implementation is the next
-phase.
+been renumbered 1–6; nothing was ticked at review time, because implementation
+was the next phase. All six have since landed — section 11 records what they
+achieved and where they departed from this text.
 
 ### 6. What changed in the field since the pass above
 
@@ -722,6 +723,12 @@ the +108.9 cents being measured. The law evaluation above is exact and needs no
 divisor, so it is what gap 1 now rests on. A real IR3109 four-pole with a
 resonance return keeps its pole where the CV puts it. Audibility: obvious.
 
+*[Closed 2026-08-08 by step 2. The correction is now the reciprocal of the
+droop the cascade's own limit cycle imposes on itself, and is identically 1
+below the oscillation threshold, so every cent figure in this gap now reads
+0.00 — checked as a pure function across all 128 panel bytes and at the render
+seam at three converter codes.]*
+
 **Gap 2 — Solo Unison is a fixed comb filter, not a stack.**
 `Source/DSP/YouKnow106Engine.cpp:626-642` (`converterEventPhases`,
 `phases[ordinal] = ordinal/23`) with the six consecutive `Pitch` entries at
@@ -805,6 +812,11 @@ and this is the tell that survives every other fidelity gain. Audibility: clear.
    1.5 Vrms. Landing the model exactly on a guaranteed worst case is a choice
    inside that bracket, not a derivation from it.
 
+*[Closed 2026-08-08 by step 4, inside that bracket and at its
+guaranteed-maximum end: the recovered A-weighted wet line is 0.19978 mVrms (I)
+and 0.20016 mVrms (II) and the idle floor moved with it, −63.44 → −77.83 dBFS
+at the pinned controls.]*
+
 **Gap 4 — LFO DELAY gates the DCO and VCF modulation but not PWM.**
 `Source/DSP/YouKnow106Engine.cpp:3214-3226` (`performConverterWrite`,
 `case ConverterDestination::Pwm` reads the raw `lfoValue_`) against `:3201-3237`
@@ -832,6 +844,12 @@ called with the raw `lfoValue_` from two places
 (`Source/DSP/YouKnow106Engine.cpp:2189` and `:2330`), both of which have to
 change with it.
 
+*[Closed 2026-08-08 by step 1; all four sites now carry the gated product, so
+the duty span 50 ms into the note is 0.0000 at a fixed 0.7250 and the idle
+prime lands on +3.300000 V. The 83 ms span this gap records, 0.3496, is
+superseded by the step's own 0.3575 on the same window — a probing offset in a
+figure that only ever argued for measuring over a full LFO period.]*
+
 **Gap 5 — the velocity extension moves level only; the spectrum is
 bit-identical across the whole dynamic range.**
 `Source/DSP/YouKnow106Engine.cpp:3137-3143` (`updateVoiceVcaTarget`,
@@ -853,6 +871,18 @@ over a 10 Hz grid from 20 Hz to 8 kHz. On that estimator the centroid reads
 grid; the invariance, not the value, is the finding). The level span at
 velocityDepth 1.0 is **14.65 dB**: −41.58 / −33.11 / −26.93 dBFS at velocity
 0.2 / 0.5 / 1.0. Audibility: clear (when the extension is used).
+
+*[Closed 2026-08-08 by step 6; velocity now scales the ENV amount into the VCF
+as well as the amplifier control, so the rendered corner moves 4062 cents
+across the dynamic range. Re-measured once more on the pre-step-6 engine while
+the revert proof was standing: on the same estimator the centroid reads
+**238.2694 / 238.2690 / 238.2693 Hz** and the level span **14.53 dB**. The
+invariance is unchanged — 0.0004 Hz across velocity and across velocityDepth —
+but the absolute centroid has moved 2.5 Hz since this row was written, because
+steps 2 and 3 landed between. The three levels read −38.83 / −30.46 /
+−24.30 dBFS, 2.6-2.7 dB above the row's, on an RMS taken over the same
+32768-sample window as the spectrum; the row does not state its own RMS
+window.]*
 
 **Gap 6 — there is no AC coupling between the filter output and the VCA input,
 so the model manufactures DC and then multiplies it by the envelope.**
@@ -1003,6 +1033,11 @@ Character 1.0 readings and a fixture at any other Character is asserting a
 different law. Audibility: inaudible-but-structural, plus a 1.0-2.5% headroom
 error that is real on hot patches.
 
+*[Closed 2026-08-08 by step 5. The accumulator is a `double`, so the law runs
+to completion: 26.988573 / 29.252031 / 34.481808 °C at 128 / 300 / 900 s and
+6.568748 V of headroom, identically at 44.1, 48, 96 and 192 kHz and in both
+quality settings, with the cross-configuration spread inside 0.01 °C.]*
+
 **Gap 9 -- the four-position HPF keeps one shared first-order state and
 reinterprets it at the switch.**
 `Source/DSP/YouKnow106Engine.h:917-927` (`struct HighPass`, one `double state`)
@@ -1138,7 +1173,7 @@ Two asked for "a reference render" of an engine that will not exist after the
 step lands. Each step below carries a *Contract corrected in preflight* note
 recording what was wrong. Corrected figures are marked **[re-measured
 2026-08-07 preflight]** or **[measured 2026-08-07 preflight]**. No engine change
-was made; nothing is ticked.
+was made in preflight; nothing was ticked then.
 
 - [x] **1. Gate the PWM converter write with the LFO delay envelope.** The
   firmware computes one LFO value and one delay level, and the delay scales the
@@ -1397,7 +1432,7 @@ was made; nothing is ticked.
   quantity anywhere in the prediction. The threshold falls out of the same
   balance at a loop gain of **exactly 4**, which is the profile's own
   `nominalOscillationFeedback`, so the correction is identically 1 up to panel
-  byte 114 and first departs from it at byte 115 by 13.4 cents.
+  byte 114 and first departs from it at byte 115 by 13.2 cents.
 
   **`maximumFeedback` was re-solved, as point 1 requires, and it moved:
   4.51 → 4.504.** With the correction derived there is one free constant and
@@ -1585,6 +1620,16 @@ was made; nothing is ticked.
   | 0.00 | 0.5043 | +0.042769 V | −0.000032 V | −42.49 dB | −54.59 dB |
   | 0.50 | 0.7224 | +0.024291 V | −0.000167 V | −25.10 dB | −28.53 dB |
   | 1.00 | 0.9436 | +0.029799 V | −0.000120 V | −17.55 dB | −30.25 dB |
+
+  Those six pin 9 figures were taken before step 5 landed, and step 5 moved
+  them in their last digit: the warm-up accumulator feeds the OTA headroom the
+  cascade is solved with, so making it a `double` changes the eight rendered
+  seconds of this fixture by a few parts in 10⁵. On the shipped tree the same
+  fixture reads **+0.042768 / +0.024289 / +0.029798 V** before the coupling and
+  **−0.000033 / −0.000166 / −0.000118 V** after it [verified 2026-08-08 by
+  reverting each step in turn]. Nothing else in the row moves — the four
+  sub-20 Hz figures are unchanged to the digit — and no assertion is anywhere
+  near either version of these numbers.
 
   The DC falls by a factor of 145 to 1340, and the duty-driven spread in the
   audible measure falls from 24.9 dB to 26.1 dB — that is, it does *not* fall,
@@ -1862,7 +1907,7 @@ Restored, the full run is green: 6/6, 224.8 s.
 
   No existing test needed changing; the whole suite is green (6/6, 243 s).
 
-- [ ] **6. Route the velocity extension through the envelope's own path to the
+- [x] **6. Route the velocity extension through the envelope's own path to the
   filter.** Velocity stays an extension — the hardware has none, `velocityDepth`
   stays at 0 by default, and the faithful default render stays bit-identical —
   but when a player turns it up it must do what a dynamics control does. Rather
@@ -1890,16 +1935,22 @@ Restored, the full run is green: 6/6, 224.8 s.
      t = 0.3 s on a stated estimator — a 10 Hz grid from 20 Hz to 8 kHz — the
      fraction of energy **at or above 1 kHz** rises monotonically with velocity
      and spans **at least 30 dB** across the three. Today it is identical at all
-     three velocities, a span of 0.00 dB; with the routing in place the measured
-     fraction is **−82.55 / −54.15 / −16.28 dB**, a span of **66.27 dB**
-     [measured 2026-08-07 preflight by driving `envDepth` to `0.30 · velocity`,
-     which is exactly what the proposed mechanism computes at
-     `velocityDepth = 1.0`].
+     three velocities, a span of 0.0001 dB; with the routing in place the
+     measured fraction is **−83.62 / −54.31 / −16.33 dB**, a span of
+     **67.29 dB** [measured 2026-08-08 on the shipped engine; the preflight's
+     −82.55 / −54.15 / −16.28 dB came from driving `envDepth` to
+     `0.30 · velocity`, which quantises the *scaled* value to a stored panel
+     byte where the shipped mechanism scales the byte the panel already
+     stored].
   2. **the seam one.** The corner the render actually uses,
      `atan(voice.filterG) · internalRate / π`, read at t = 0.3 s, rises
-     monotonically and spans at least 3000 cents: **196.57 / 460.50 /
-     1995.00 Hz**, a span of 4004 cents, against **1995.00 Hz at all three
-     today**.
+     monotonically and spans at least 3000 cents: **189.97 / 458.19 /
+     1985.03 Hz**, a span of 4062 cents, against **1985.03 Hz at all three
+     today** [measured 2026-08-08 on the shipped engine; the preflight's
+     196.57 / 460.50 / 1995.00 Hz was taken before step 2 removed the fitted
+     `frequencyTrim`, which sat +8.7 cents high at RESONANCE 0.30 — between the
+     +3.32 cents step 2 records for panel 0.20 and the +116.25 cents it records
+     for panel 0.80 — and which shifts all three corners alike].
   3. **the faithfulness one.** At `velocityDepth = 0.0` the render is
      bit-identical to a reference. That reference has to be **built**: there is
      no FNV render lock in the CTest suites — the `fnv1a64` hashes the original
@@ -1925,6 +1976,65 @@ Restored, the full run is green: 6/6, 224.8 s.
   at every velocity, and the high-band energy fraction it measures is monotone
   by construction of the mechanism with a 66 dB margin instead of a 69 Hz one.
   The envelope and Unit Character, previously unstated, are now pinned.
+
+  *What actually shipped, 2026-08-08.* The step as written, in one term. The
+  ENV-into-VCF sum in `updateVoiceVcfTarget`
+  (`Source/DSP/YouKnow106Engine.cpp:3381`) is now
+  `envelopeSign · byte7(envDepth) · vcfEnvelopeCounts · envelope ·
+  velocityGain(parameters, voice)`, reading the same
+  `velocityGain = 1 − velocityDepth·(1 − velocity)` the amplifier reads four
+  lines further down. No new constant, no new curve, no new call: the
+  extension multiplies what the stored panel byte asks for, exactly as it
+  already multiplies the amplifier's own control.
+
+  Three notes on what the change is made of.
+
+  1. **The multiply sits after the panel quantisation, not before.** The
+     preflight simulated the mechanism by driving `envDepth` to
+     `0.30 · velocity`, which sends the *scaled* value through
+     `storedControlByte`; the shipped term scales the byte the firmware
+     already stored. The two differ wherever the scaled value rounds to a
+     different byte — at velocity 0.2, `byte7(0.06) = 8/127` against
+     `byte7(0.30) · 0.2 = 0.0598`, a 5.3 % deeper envelope — which is the whole
+     of the 196.57 Hz / 189.97 Hz difference in assertion (2) beyond the
+     +8.7 cents step 2 removed. Scaling the stored byte is the right one: the
+     panel byte is what the firmware wrote, and the extension is downstream of
+     the firmware.
+  2. **Assertion (1)'s monotonicity clause does not bite on its own.** On the
+     reverted engine the three high-band fractions are ordered — by
+     0.000018 dB of float noise. The span clause is what fails, and it fails by
+     the full 30 dB. Recorded because a future edit that keeps only the
+     monotonicity clause would keep a test that cannot fail.
+  3. **The faithfulness assertion is proved rather than hashed.** The step
+     asked for a hard-coded FNV render lock captured from the pre-change
+     engine. `velocityGain` has two exact identities — it is exactly `1.0f`
+     when `velocityDepth` is 0 whatever the velocity, and exactly `1.0f` at
+     velocity 1.0 whatever the depth — so the fixture renders the two
+     equalities directly on a patch that runs saw, pulse, sub, noise, key
+     follow, the filter, the amplifier and chorus I, and asserts a maximum
+     difference of exactly 0.0. That proves the same property the hash would
+     have, without freezing a constant about this machine's libm.
+
+  Measured on the shipped engine, at the fixture the contract names
+  (max difference 0.0 on all three bit-exactness renders, peak 0.7676):
+
+  | | high-band fraction at velocity 0.2 / 0.5 / 1.0 | span | corner at velocity 0.2 / 0.5 / 1.0 | span |
+  |---|---|---|---|---|
+  | routed | −83.62 / −54.31 / −16.33 dB | 67.29 dB | 189.97 / 458.19 / 1985.03 Hz | 4062 cents |
+  | reverted | −16.3311 / −16.3311 / −16.3310 dB | 0.0001 dB | 1985.03 Hz at all three | 0 cents |
+
+  Gap 5's own numbers, re-measured on the reverted engine: on its fixture
+  (CUTOFF 0.50, ENV 0.40, RESONANCE 0.30) the centroid reads
+  **238.2694 / 238.2690 / 238.2693 Hz** at velocity 0.2 / 0.5 / 1.0 and
+  **238.2694 Hz** at every velocity at `velocityDepth = 0.0` — invariant to
+  0.0004 Hz, which is the gap's finding, reproduced. The absolute value is
+  238.27 Hz rather than the 240.75 Hz the gap records, because steps 2 and 3
+  have since moved the corner and the coupling under it; the level span is
+  **14.53 dB** against the recorded 14.65 dB, on an RMS taken over the same
+  32768-sample window as the spectrum, a window the gap text does not state for
+  its own figures.
+
+  No existing test needed changing; the whole suite is green (6/6, 241.97 s).
 
 ### 9. Considered and not planned
 
@@ -2089,11 +2199,23 @@ name are real and a later pass will want the reasoning rather than the idea.
 - **It does not chase the upper-mid darkness lead.** That is still OQ-15/OQ-18
   work. The 270 pF and 40 kHz contradictions above point at the same region and
   are recorded, not acted on.
-- **It does not address real-time cost, and step 2 makes it materially worse.**
-  Section 4's after-column stands; a six-voice chorus-off render re-measured on
-  this box costs 1.354x realtime, consistent with it. None of the six steps
-  makes that better. Step 3 adds one first-order section per voice, which is
-  small. **Step 2 is not small**, and the original's "very slightly worse" is
+- **It does not address real-time cost.** Section 4's after-column stands; a
+  six-voice chorus-off render re-measured on this box costs 1.354x realtime,
+  consistent with it. None of the six steps makes that better. Step 3 adds one
+  first-order section per voice, which is small.
+
+  **[corrected 2026-08-08, on implementation.]** The rest of this bullet
+  predicted that step 2 would be expensive, and it was written against an
+  implementation that did not ship. It is kept because the measurement behind
+  it is sound and the fence it names is the right one; what did not happen is
+  the cost. The shipped correction is a pure function of loop gain, tabulated
+  once in `prepare()`, so the memo below survives untouched and `testCpuBudget`
+  moves 1.2455x → 1.2543x realtime, inside the run-to-run spread. Step 3's
+  own measurement is 1.2351x → 1.2442x, and step 5's one double add is
+  likewise inside the spread. The pass costs, in total, less than this box's
+  own noise. The prediction as written:
+
+  **Step 2 is not small**, and the original's "very slightly worse" is
   withdrawn: making the frequency trim a function of a running amplitude
   estimate defeats the exact-equality `filterG` memo at
   `Source/DSP/YouKnow106Engine.cpp:3290-3298`, and re-running the chain that
@@ -2108,3 +2230,156 @@ name are real and a later pass will want the reasoning rather than the idea.
   from the shared bus that would have bought nothing audible.
 - **It adds no demo take.** The renderer still writes ten, and the frozen
   per-fix previews under `Docs/audio/` stay frozen.
+
+### 11. Result
+
+All six surviving steps landed, each with a fixture that was proved to fail by
+a real revert and a real rebuild rather than by argument, and the suite is
+green at the close of the pass: **6/6, 245.38 s** (Engine 229.92, Circuit 6.96,
+SysEx 0.01, RenderDemos 0.56, AuditFactoryPresets 7.93,
+RealismComparisonContract 0.01). The pass set out to remove mechanisms that
+mis-shape the output rather than to add any, and that is what it did. One
+constant left the engine — the fitted `frequencyTrimAmount` — and the only
+quantities that arrived are C59's two component values, one of them a
+designator read and the other voiced inside a stated bracket, and the three
+published terms of the chorus-noise derivation: a datasheet row, the model's
+own node coordinate, and a transfer measured from the model's own filters.
+Step 2's derivation added nothing at all; its inputs were already in the
+profile. Steps 1, 5 and 6 changed no constant of any kind.
+
+| Step | Measurand | Before | After |
+|---|---|---|---|
+| 1. LFO DELAY gates PWM | duty span over 200 ms at t = 0.05 s, DELAY 1.0 | 0.4166 | **0.0000**, duty pinned at 0.7250 |
+| 2. Derived frequency trim | corner lift at resonance panel 0.50 / 0.80 | +32.24 / +116.25 cents | **0.00 / 0.00 cents** |
+| 2. Derived frequency trim | rendered limit cycle | 4.83 Vp-p at 248.0 Hz (fitted) | **4.8009 Vp-p at 247.90 Hz** (predicted) |
+| 3. C59 into the VCA input | pin 9 mean at duty 0.9436 | +0.029799 V | **−0.000120 V** |
+| 3. C59 into the VCA input | sub-20 Hz peak against RMS, duty 0.9436 | −17.55 dB | **−30.25 dB** |
+| 4. MN3009 noise row | wet line, A-weighted | 1.0488 mVrms | **0.19978 / 0.20016 mVrms** (I / II) |
+| 4. MN3009 noise row | idle output floor at the pinned controls | −63.44 dBFS | **−77.83 dBFS** |
+| 5. Warm-up clock | modelled chassis at 900 s, Character 1.0 | frozen at 26.99 °C (HQ on), 31.51 °C (HQ off) | **34.481808 °C at every rate and quality** |
+| 6. Velocity into the VCF | rendered corner at velocity 0.2 / 0.5 / 1.0 | 1985.03 Hz at all three | **189.97 / 458.19 / 1985.03 Hz** |
+
+Stated as behaviour rather than as numbers: RESONANCE is no longer a second
+CUTOFF slider; the voice amplifier no longer multiplies the filter's own DC, so
+a deep-PWM patch no longer thumps as it opens; the chorus hiss sits on its
+part's datasheet row instead of 14.4 dB above it; the quality switch no longer
+decides how warm the modelled chassis gets; LFO DELAY holds the pulse width
+with the vibrato and the filter sweep; and the velocity extension is a dynamics
+control rather than a second output trim.
+
+**Where reality differed from the plan.**
+
+1. **Step 2 shipped as a closed-form solve, not a running amplitude follower.**
+   At a limit cycle the amplitude is not an independent variable — harmonic
+   balance fixes it from the loop gain that sustains it — so the correction is a
+   pure function of `voice.feedback`, tabulated once. That is the one departure
+   from a step's letter in the whole pass, and it took the pass's only predicted
+   cost with it: section 10's +18.4 % did not arrive, because the `filterG` memo
+   was never defeated. It also declines to cancel *signal*-driven droop, which
+   no anchor asks for and which is genuine modelled nonlinearity.
+2. **Step 2's own point 2 was wrong and is corrected in place.** It claimed a
+   physically honest evaluation under-delivers by 3x and that only a mismatched
+   referral reaches the anchor. That is true of a single node and false of the
+   mechanism: the node it evaluated is the least driven of four, and carrying
+   all four on the stage headroom with the return on its own supplies
+   +202.4 cents with no referral. Two smaller figures went with it —
+   `loopHeadroomVolts` is 3.4667 V, not 3.520, and the feedback term is 9.40 V,
+   not ~9.5 V.
+3. **`maximumFeedback` moved, 4.51 → 4.504, and the rendered limit cycle moved
+   with it.** The step required the pair be re-solved. With one anchor derived
+   the other is alone, so the 4.83 Vp-p the joint fit had settled for was no
+   longer a necessary compromise. Every published figure that quoted 4.83 Vp-p
+   at 248.0 Hz now reads 4.80 Vp-p at 247.9 Hz.
+4. **Step 3's audible measure did not fall the way the gap implied, and the
+   shipped note says so.** The duty-driven spread in sub-20 Hz excursion goes
+   from 24.9 dB to 26.1 dB — it does not fall, because at wide duty the residual
+   becomes the attack ramp, which has a duty dependence of its own. What the
+   capacitor delivers, and all it was asked to deliver, is the offset: under
+   0.2 mV at every duty, down by a factor of 145 to 1340.
+5. **Step 6's two headline figures moved from the preflight's**, for two
+   identified reasons rather than one: the shipped term scales the panel byte
+   the firmware already stored where the preflight simulated it by scaling the
+   value before quantisation (5.3 % at velocity 0.2), and step 2 had by then
+   removed the +8.7 cents the fitted trim added at RESONANCE 0.30. Its
+   assertion (3) is also proved rather than hashed — `velocityGain` has two
+   exact identities, which is stronger than freezing a constant about one
+   machine's libm.
+6. **Gap 8's per-rate table was wrong at 96 kHz and 192 kHz**, and the two rows
+   are struck in place: HQ picks the factor that *reaches* the minimum HQ rate,
+   so 48, 96 and 192 kHz with HQ on all run the engine at 192 kHz internal and
+   freeze identically. The axis the defect ran along is the quality switch, not
+   the host rate.
+7. **Two parentheticals moved by less than they are quoted to.** Step 1's 83 ms
+   illustration reads 0.3575 / 0.4129 under the fixture's own harness against
+   the 0.3574 / 0.4130 recorded in preflight, a one-sample probing offset; gap
+   4's older 0.3496 for the same window predates both and is superseded by the
+   step's own re-measurement. Step 5's frozen headroom is 6.408747673 V, which
+   prints as either 6.408747 or 6.408748 depending on the format. Neither was
+   churned through the document.
+8. **Four of the six steps were found already implemented in the tree by the
+   agent assigned to them.** Rather than re-author existing work or claim
+   authorship of it, each did the thing that cannot be faked — a real revert, a
+   real rebuild, and the captured failures, plus an independent measurement
+   harness sharing no code with the fixture. The revert proofs in steps 3, 4, 5
+   and 6 are therefore verification *of* the change rather than by its author,
+   which is the stronger reading of them, and step 6's agent additionally found
+   the plan work missing and did it.
+
+**What was struck, and what was not attempted.** Nothing was struck during
+implementation; the two struck steps were struck in the 2026-08-08 adversarial
+review and are recorded in section 9 with the measurements that removed them —
+the DCO pitch-write restart, because it answers OQ-08's question with a guess
+and because its own criterion already passed, and the four-legged high-pass,
+because this project's own OQ-21 adjudication puts the multiplexer on the
+source side and the residual it would remove settles in under a millisecond at
+−20 to −46 dB. Section 9's other entries stayed where they were. One of them
+carried a documentation debt this pass now pays: the polyphonic rail sag
+(0.104 cents across the whole one-to-six-voice load change) and the TA75558S
+slew limiter (−171.48 dB when switched off) are modelled, enabled and
+measurably inert, and the README ledger says so plainly instead of leaving two
+advertised mechanisms doing nothing.
+
+**Honest bounds on what can now be claimed.**
+
+- **No open question is closed.** OQ-09 still owns the panel-to-loop-gain shape
+  and the input compensation; OQ-19 still owns the BA662 transfer and the pin-9
+  load; OQ-03 still owns the calibrated stereo capture; OQ-08, OQ-16 and OQ-21
+  are untouched. What step 2 closed is the *wart* OQ-09 had recorded against
+  the fitted trim, which is a different and smaller thing.
+- **Two of the six rest on a voiced quantity inside a declared bracket.** C59
+  works against a voiced 33 kΩ, bracketed 33–100 kΩ (4.82–1.59 Hz), and the
+  chorus noise level sits at the guaranteed-maximum end of the datasheet's own
+  10.5 dB bracket. Both brackets are published in the header, in the research
+  contract and in the README; neither was narrowed by this pass.
+- **Step 1 is internal consistency, not an anchored routing.** No source in
+  tree states whether the hardware's DELAY reaches PWM. What is settled is that
+  the engine used to contradict itself, including its own LFO display.
+- **The derived frequency correction is a property of this cascade, not a
+  measurement of an IR3109.** It reconciles the model with both service anchors
+  at once and predicts the 248 Hz endpoint to 0.67 cents, which is evidence
+  that the derivation is the right one for this model. The finding it exposes —
+  that a real card apparently does not droop where this cascade droops
+  203 cents — is filed to OQ-09 and not acted on.
+- **Nothing was fitted to a recording or to a competitor.** KR-106's 1.59 Hz
+  post-VCF DC blocker corroborates step 3's bracket after the fact; it did not
+  select the constant. Step 4's target is a datasheet row for a part the model
+  already anchors twice over.
+- **The cost table above this section stands.** The three steps that could have
+  cost anything per sample measure 1.2351 → 1.2442, 1.2455 → 1.2543 and no
+  measurable change on `testCpuBudget`'s patch, each inside this box's
+  run-to-run spread. The fixture's 5.0x ceiling — a runaway guard, not a
+  performance target — was not moved, and the measured ratios are published in
+  the steps rather than folded into it. The one-off cost step 2 does add, the
+  2.4 ms table solve, is warmed in `prepare()` so no audio callback pays it.
+- **No hardware was measured in this pass**, no demo take was added, and the
+  frozen per-fix previews under `Docs/audio/` were not re-rendered.
+
+**Documents trued up with the code.** The README's sound-engine sections carry
+the six changes and the numbers that shipped; `Docs/circuit-modelling-research.md`
+rows 64 (LFO to PWM), 73 (oscillation frequency correction), 75 (voice-module
+VCA and C59), 92 (chorus noise) and 99 (velocity) state the new mechanisms with
+their evidence class; `Docs/open-questions.md` records the closures inside
+OQ-03, OQ-09 and OQ-19 without claiming the questions themselves. Gaps 1, 3, 4,
+5, 6 and 8 in section 7 carry closure notes naming the step that closed them.
+Gap 2 does not, and must not: its step was struck, so Solo Unison is still the
+uniform comb this section measured, and gaps 7, 9 and 10 stand as recorded.

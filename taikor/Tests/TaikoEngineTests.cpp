@@ -209,27 +209,6 @@ struct TaikoEngineTestAccess
             band.level = 0.0f;
     }
 
-    // Silence the wooden half of a voice's bank on a voice that has already
-    // been triggered - the drum's shell for the seven strokes that touch the
-    // drum, the pair of sticks for the eighth - leaving the head, the continuum
-    // and the airborne click alone. There is no way to ask how much of a stroke
-    // a modal bank is actually worth through the public interface, and the
-    // question decides whether a calibration constant is pinned by anything.
-    //
-    // Safe after `trigger` and before the first block for the same reason
-    // silenceContinuum is: `drive` is written once when the voice is built and
-    // read at excitation time, and nothing a later contact does moves it.
-    static void silenceWoodenBank (TaikoEngine& engine, int slot = 0) noexcept
-    {
-        auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
-        for (int index = 0; index < voice.modeCount; ++index)
-        {
-            auto& mode = voice.modes[static_cast<std::size_t> (index)];
-            if (! mode.membrane)
-                mode.drive = 0.0f;
-        }
-    }
-
     // The frequency multiplier the attack glide is currently applying to the
     // membrane. Read directly because the glide is a few tens of cents on a
     // partial that is gone in a second, which no window short enough to catch
@@ -1201,7 +1180,10 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
 
     // Where the cavity is shortest against the wavelength the correction has to
     // be nearly nothing: a shallow body at the top of the keyboard was already
-    // an air spring. Eight per cent and not three, because it is 0.941 there.
+    // an air spring. Twelve per cent and not the three this was drafted with,
+    // because on the shime at Body Depth 0 - a 12 cm column under a head at
+    // 498 Hz - the factor is 0.9020. It was 0.941 on the drum that sat at this
+    // octave before step 5 and the four-by-four grid changed which drum that is.
     // Every literal below that is taken at an octave other than the reference
     // one was re-taken when step 5 landed, because step 5 changed which drum
     // sits at those octaves: the octave transform is now solved against the
@@ -1325,7 +1307,7 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
     // step, which was the same drum with a lumped spring in it; they are now the
     // same drum with a lumped spring in it under step 5's keyboard, measured by
     // forcing the column factor to one. The worst of the five moves 0.086 %,
-    // and the largest anywhere in the scan clause below is unchanged at 1.95 %.
+    // and the largest anywhere in the scan clause below is 1.9085 %.
     {
         struct Corner
         {
@@ -1476,9 +1458,11 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
                             }
 
         expect (total == 10800, "the cavity scan did not cover what it says it does");
-        // Every one that lands on the floor is a body shorter than a quarter of
-        // the wavelength of its own head - a 20 cm shell tuned to three and a
-        // half kilohertz, and the like. None of them is a taiko, and the point
+        // Every one that lands on the floor is a body longer than half the
+        // wavelength of its own head, which is the same statement as its half
+        // column having passed its quarter-wave: an 8 cm body under a head at
+        // three and a half kilohertz, whose half wavelength is 4.9 cm, and the
+        // like. None of them is a taiko, and the point
         // of recording the count is that a change which quietly decoupled the
         // instrument would move it.
         expect (decoupled > 0 && decoupled < total / 4,
@@ -1487,8 +1471,8 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
                 + std::to_string (total));
         expect (smallest <= 0.0f,
                 "nothing in the scan reaches the floor any more");
-        // The cavity's entire authority over the lower branch, measured at 1.95
-        // %. It bounds what this step can do to that branch, whatever else
+        // The cavity's entire authority over the lower branch, measured at
+        // 1.9085 %. It bounds what this step can do to that branch, whatever else
         // changes, which is what step 5 needs to be able to rely on.
         expect (worstLowerBranch < 0.025f,
                 "the cavity moved the lower branch further than it ever did");
@@ -1881,10 +1865,15 @@ void testTheContinuumDoesNotDependOnTheSampleRate()
     };
 
     // Three decibels rather than one because the click and contact-noise path
-    // has a rate dependence of its own that this is not about: a Bachi, which
-    // carries no continuum at all, moves 2.11 dB in this band by 96 kHz and
-    // 5.51 dB by 192 kHz. What is being asserted is that the continuum has
-    // stopped contributing one. Before the fix the spread here was 8.73 dB.
+    // has a rate dependence of its own that this is not about: the Bachi
+    // stroke, which carried no continuum at all and has since been retired with
+    // the stick-on-stick model, moved 2.11 dB in this band by 96 kHz and 5.51 dB
+    // by 192 kHz. What is being asserted is that the continuum has stopped
+    // contributing one. Re-taken on the shipping tree by removing the rate
+    // factor from membranePeak: the spread here is then 12.26 dB, and 48 kHz to
+    // 96 kHz alone is 6.07 dB. It read 8.73 dB when this step landed, on a tree
+    // whose drums the cavity solve and the four-by-four grid have since
+    // changed.
     //
     // It was two decibels when this step landed, against a measured 1.54, and
     // step 4 - which moves the drum's own tuning and nothing about the

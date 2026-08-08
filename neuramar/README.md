@@ -262,10 +262,18 @@ end-to-end through a differentiable renderer:
   centres are frozen and nothing else can touch it, and the isolated Bone
   layer's moved 23.3 dB. Air and Bone are measured independently of the Core in
   analysis and are left independent of it here, so the same two spreads are
-  0.36 dB and 0.00 dB, and the Air-to-Core balance over MIDI 12–72 at the
-  shipping defaults is 1.5 dB where it was 7.8 dB. The level flatness above
-  holds up to about MIDI 96, where the compensation reaches its 4x ceiling and
-  the top of the keyboard fades instead;
+  0.36 dB and 0.00 dB — what is left on the Air side is not a register effect
+  but the independent noise realization each note draws, whose windowed level
+  differs by about that much — and the Air-to-Core balance over MIDI 12–72 at
+  the shipping defaults is 1.5 dB where it was 7.8 dB. Above about MIDI 72 the
+  top of the sixteen Air bands crosses the filterbank's own edge fade and is
+  deliberately attenuated, so the same balance measured across the whole
+  keyboard is wider than it was, 11.4 dB against 8.9 dB: the compensation
+  climbing toward its ceiling at those notes had been masking the taper rather
+  than correcting it, and pulling every band centre back into range with Formant
+  -24 st leaves 0.35 dB. The level flatness above holds up to about MIDI 96,
+  where the compensation reaches its 4x ceiling and the top of the keyboard
+  fades instead;
 - **Register** applies a key-tracked spectral tilt that is deliberately left out
   of that reference, so it changes tone without changing level;
 - each Air filter is normalized to unit expected RMS for its noise input, and a
@@ -314,8 +322,12 @@ end-to-end through a differentiable renderer:
   `exp(-((f_k/f_1)^p - 1) t / tau_rel(1))`, folded into the control-rate
   amplitude ramp rather than into the per-sample loop. The fundamental's own
   factor is identically one, so the panel's number keeps its meaning and the
-  retirement decision does not move: a note released at Dissolve 0.65 s retires
-  0.6507 s later at every key. On a source whose partials decay as
+  voice still retires on its own fundamental rather than on whichever slot the
+  release happens to hold up longest: a note released at Dissolve 0.65 s at the
+  root retires 0.6507 s later. Above the root it retires sooner, because the
+  fundamental's own release is key-tracked by the paragraph below: on a source
+  fitting `p = 0.75` a note two octaves up releases 2.77 times faster, so it
+  clears in about that fraction of the time. On a source whose partials decay as
   `tau_h = tau_1 h^-0.75` the fit recovers 0.747, partial 8 loses 22.9 dB more
   than partial 1 over 40 ms of release where it lost 0.0005 dB before, and the
   tail's spectral centroid 150 ms after note-off sits 46.9% below the held
@@ -336,11 +348,18 @@ end-to-end through a differentiable renderer:
   at the bottom, the way the source's own partials do. On a fixture decaying as
   `tau_h = tau_1 h^-0.75`, the time to fall 20 dB two octaves up is 0.357 times
   the root's against a predicted `4^-0.75 = 0.354`, and two octaves down 2.94
-  times against 2.83, where both were within 4% of the root's before. The model
+  times against 2.83, where both were within 4% of the root's before. Those two
+  figures are measured with Orbit off, where a note runs to the end of its
+  memory; with Orbit on the same scale decides how soon a note reaches its
+  sustain region instead, which is not the smaller effect of the two — how far
+  a note has fallen one second in, measured from its own level at 0.10 s,
+  spreads 20.7 dB across MIDI 33 to 81 where it spread 3.0 dB before. The model
   clock is the engine's only time variable, so the learned onset and any
   learned pitch contour key-track with it — a struck string does speak faster
-  at the top of its compass, and a learned vibrato survives the fit only on a
-  source dying fast enough that the vibrato is over before it is heard. At
+  at the top of its compass, and a learned vibrato only key-tracks on a source
+  dying fast enough to fit a non-zero exponent at all, which a driven source,
+  where a player's vibrato lives, is not: it fits exactly zero and stays on the
+  absolute clock. At
   `p = 0` the scale is exactly one and every one of these expressions is
   bit-identical to the previous build;
 - **Orbit** reads its loop region forward only. The read position wraps from
@@ -416,7 +435,11 @@ eight-note performance renders for exactly what it did before; the ceiling is an
 option rather than a cost every performance pays. It evaluates
 the controller, spectral-envelope mapping, and register normalization at control
 rate and interpolates their parameters while the oscillators, filters,
-envelopes, and note handling remain in the audio path.
+envelopes, and note handling remain in the audio path. Publishing a memory costs
+more than it used to, because the damping exponent and the Orbit region's level
+slope are both fitted there rather than per note: a model swap goes from 134 to
+421 microseconds, on an operation that already fades every sounding voice out
+and that leaves the render path for held notes untouched.
 
 The representation is deliberately structured rather than a raw-waveform
 generator. Explicit pitch and oscillator priors make one-note extrapolation
@@ -518,7 +541,12 @@ average YIN periodicity score, not a calibrated probability and not a direct
 measure of timbre-match quality. The local pitch contour is constrained to four
 semitones around the inferred root, so sufficiently stable bends, slow vibrato,
 and glide can be learned, while broad sweeps, octave jumps, fast modulation, and
-unvoiced regions are deliberately bounded.
+unvoiced regions are deliberately bounded. That contour rides the same 128-frame
+trajectory grid as everything else, whose last frames sit about 1.55% of the
+post-onset span apart, so how much of a slow vibrato survives depends on how
+long the source is: a 5.9 Hz vibrato gets about two samples per cycle on a
+5.6-second source and is unrepresentable on a ten-second one. Retained vibrato
+is a claim about short sources.
 
 ## State, privacy, and presets
 
@@ -629,13 +657,15 @@ render-path measurements reported in
 [`Docs/resynthesis-quality-benchmark.md`](Docs/resynthesis-quality-benchmark.md):
 the worst spectral line below the played fundamental (-108 dB relative to the
 rendered signal, guard -85 dB), partial-level agreement across 44.1, 48, 88.2,
-96, and 192 kHz for the root and for root+12 and root+24 (0.08 dB, guard
-0.35 dB), Air and Bone layer power across those rates (0.13 dB, guard 1.0 dB),
-the removal of a Bone mode pushed above the audible ceiling (128 dB down, guard
+96, and 192 kHz for the root and for root+12 and root+24 (0.09 dB, guard
+0.35 dB), Air and Bone layer power across those rates (0.24 dB, guard 1.0 dB),
+the removal of a Bone mode pushed above the audible ceiling (125 dB down, guard
 60 dB), the Awaken fade contract, the bound on the voice-steal fade tail under a
 note-on burst dense enough to steal the same slot inside one fade window, and
 the continuity of that hand-off across every phase of the window (worst
-inter-sample step 0.0124, guard 0.016).
+inter-sample step 0.0142, guard 0.016). Those measured figures are what the
+binary prints today; the render-path table in that document records the 1.2
+release's, three of which have since drifted inside their guards.
 
 It also pins the reconstruction measurements added in 1.3, which compare a
 rendered root note against the fixture that produced it: multi-resolution
@@ -665,10 +695,11 @@ increasing over partials 1, 2, 4, and 8, on the tail's centroid against the
 held note's, and on no isolated Air or Bone layer outliving its own voice at
 root+24 or root+51 — with a frequency-independent control fixture that must fit
 `p` below 0.10 and show no excess, which is what a hard-coded exponent fails.
-Decay key-tracking is guarded on the T20 ratios and the release-drop ratios two
-octaves either side of the root against the source's own fitted damping law,
-again with a control fixture whose held ratios must stay within 10% and whose
-released ratios within 5% of pitch-invariant. And
+Decay key-tracking is guarded on the T20 ratios two octaves either side of the
+root and on the release-drop ratios an octave below it and two above, in both
+cases against the source's own fitted damping law, again with a control fixture
+whose held ratios must stay within 10% and whose released ratios within 5% of
+pitch-invariant. And
 twelve repeated notes are guarded on peak-level standard deviation inside a
 two-sided 0.45–1.10 dB window, on transient retention, on peak-to-centroid rank
 correlation at 0.9, and on exact determinism at Mutation 0. Plug-in
