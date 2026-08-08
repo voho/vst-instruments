@@ -2022,7 +2022,7 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
   `frequencyTrimAmount` is deleted. The correction is now derived from the
   cascade's own harmonic balance — the sinusoidal-input describing function of
   `tanh` on the four stage pairs at their own `2Vt/stageAttenuation` headroom
-  and on the resonance return at its own `2Vt·67.7`, solved for the limit
+  and on the resonance return at its own `2Vt·(100/1.5)` = 3.4667 V, solved for the limit
   cycle each loop gain sustains — so it is identically **1** below the
   oscillation threshold, which the same balance places at a loop gain of
   exactly 4, the profile's own `nominalOscillationFeedback`. That removes the
@@ -2040,6 +2040,24 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
   code-to-frequency table — which is what a cancelled droop is supposed to
   deliver. What OQ-09's measured family still owns is the *shape* of
   `loopGain()` and `inputCompensation()` between the ends.
+
+  *One finding this raised, filed here and not acted on.* Those two readings
+  of 248 Hz agreeing is equivalent to saying the real card's self-oscillation
+  does **not** sit flat of its own small-signal corner, while this cascade's
+  sits 203 cents flat of it. A four-pole loop oscillating at its own corner
+  carries √2 more amplitude at every step back towards the input, so the model
+  drives its first stage to `a = 1.01` on a 6.37 V headroom while its output
+  is only at 2.40 V peak. Either the hardware's limit cycle really is that
+  undrooped — in which case something upstream is too compressed, the stage
+  headroom or the internal amplitudes it implies — or the two 248 Hz readings
+  are not the same measurement, the service trim being read on an oscillating
+  card and the table on a swept one. Nothing in tree settles it. The
+  correction is right either way, because it is exactly what reconciles the
+  model with both anchors at once; what is open is whether the droop it
+  cancels should have been that large. The measured
+  response-versus-resonance family this task asks for would settle it, since
+  it fixes the corner at each resonance setting independently of either
+  endpoint.
 
 - **The VCF WIDTH anchor is asserted.** `BANK 3, hold C6 → 992 Hz` against
   `hold C4 → 248 Hz` is exactly two octaves of cutoff for two octaves of

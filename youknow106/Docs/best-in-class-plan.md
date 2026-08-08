@@ -1197,7 +1197,7 @@ was made; nothing is ticked.
   the 0.3574 and 0.4130 recorded above — a one-sample probing offset, which
   argues for the 200 ms window either way.
 
-- [ ] **2. Drive the resonance frequency trim from the cascade's own
+- [x] **2. Drive the resonance frequency trim from the cascade's own
   limit-cycle amplitude instead of from loop gain.** The droop this trim
   cancels is the describing-function gain of the stage `tanh` at large drive:
   for a sinusoid of amplitude `A` into `tanh(v/H)`, the first-harmonic gain is
@@ -1238,6 +1238,21 @@ was made; nothing is ticked.
      pairing it shipped** and, if it is a mismatched referral or if no pairing
      reproduces the anchor, file that as a finding against OQ-09 rather than
      absorb it into a scale factor.
+
+     **[re-measured 2026-08-08, on implementation.]** Both halves of this are
+     right about a *single-node* account and wrong about the mechanism. The
+     shortfall is not a missing scale factor, it is the other three stages.
+     A four-pole loop oscillating at its own corner carries `√2` more amplitude
+     at every step back towards the input, so the four drives measured on the
+     engine at the anchor are `a = 1.014 / 0.715 / 0.514 / 0.377` on the *stage*
+     headroom — the fourth is the one this note evaluated, and it is the least
+     driven of the four. Carrying all four, with the resonance return on its own
+     headroom setting the amplitude, the derivation supplies **+202.4 cents**
+     against the shipping fit's +203.3, with no mismatched referral anywhere.
+     Two smaller corrections: `loopHeadroomVolts` is `2 × 0.026 × (100/1.5)` =
+     **3.4667 V**, not 3.520, because the header keeps the unloaded divider form,
+     so the fourth stage's return-referred drive is `a = 0.696`; and the ~9.5 V
+     feedback term reproduces at **9.40 V**.
   3. **"Pinned by the anchor" overstates the anchor.**
      `testSelfOscillationMatchesTheServiceTrim`
      (`Tests/YouKnow106EngineTests.cpp:4125-4210`) fences 248 Hz to **±4 Hz**
@@ -1260,6 +1275,18 @@ was made; nothing is ticked.
   names is the **wrong** fence to watch — both patches rise together and the
   ratio barely moves; `testCpuBudget`'s absolute ceiling is the one at risk.
 
+  **[re-measured 2026-08-08, on implementation.]** The cost did not arrive,
+  because the amplitude never became a running estimate. At a limit cycle the
+  amplitude is not free: harmonic balance fixes it from the loop gain that
+  sustains it, so the correction stays a pure function of `voice.feedback`,
+  the memo's existing key, and nothing in the audio path changed. Measured on
+  the same box with the `testCpuBudget` patch: **1.2455x realtime before,
+  1.2543x after** (best of three, two warm passes), and the
+  resonant-over-plain ratio 2.2345 before, 2.2376 after — both differences
+  inside the run-to-run spread of this shared box. The one new cost is the
+  2.4 ms solve that fills the table, which happens once and is warmed in
+  `prepare()` so no audio callback pays for it; a warm call is 9 ns.
+
   *Verified by*: **(a)** a new circuit-suite pure-function assertion that
   `vcfEffectiveCutoffHz(counts, k)` returns the same frequency for
   `k = loopGain(0.00 / 0.30 / 0.50 / 0.70 / 0.80)` to within **±10 cents** at
@@ -1273,6 +1300,8 @@ was made; nothing is ticked.
   pure-function form needs no divisor and fails today by exactly +0.0 / +8.76 /
   +32.24 / +80.17 / +116.25 cents. **(b)** the existing self-oscillation fixture
   still asserting 4.83 Vpp at 248.0 Hz inside its published ±0.48 V / ±4 Hz.
+  [The fixture's own targets are 4.8 Vpp and 248.0 Hz; 4.83 was what the
+  superseded joint solve rendered. It now renders 4.80 — see below.]
   **(c)** an engine-suite assertion at the **render seam**, so that a law
   corrected in the pure function but never wired into audio still fails: with a
   note held, every source off, Unit Character 0.0 and CUTOFF fixed, the corner
@@ -1301,6 +1330,104 @@ was made; nothing is ticked.
   swing the fix does not touch. The replacement measures the corner itself at
   the seam the render consumes, where at fixed CUTOFF and Unit Character 0.0
   nothing but `frequencyTrim` couples RESONANCE to `filterG`.
+
+  *What actually shipped, 2026-08-08.* The mechanism as written; the
+  *implementation* of it is a closed-form solve rather than a running
+  follower, for the reason under the cost note above, and that is the one
+  departure from the step's letter. Every baseline figure the contract asserts
+  reproduced to the digit on the unchanged engine before anything was touched:
+  the pure law spreads +0.00 / +8.76 / +32.24 / +80.17 / +116.25 cents across
+  panel 0.00 / 0.30 / 0.50 / 0.70 / 0.80, and the render seam spreads
+  +0.00 / +8.70 / +32.91 / +80.42 / +117.53 at code 6272 and
+  +0.00 / +8.55 / +32.33 / +78.96 / +115.36 at code 11520.
+
+  **The pairing shipped, which point 2 obliges the step to report.** Both, on
+  their own headrooms, with no referral across them. The four stage
+  differential pairs compress on `otaHeadroomVolts = 2·V_t/stageAttenuation =
+  6.3663 V` and set the *frequency*; the resonance return compresses on
+  `loopHeadroomVolts = 2·V_t·(100/1.5) = 3.4667 V` and sets the *amplitude*.
+  The four stage drives are solved rather than assumed, from the loop's own
+  structure: at the oscillation point each pole contributes −45° and 1/√2, so
+  the node amplitudes rise by √2 per stage walking back towards the input and
+  the drive at stage *n* is `|V_n|·(D/N_n)/H`. That is a three-line harmonic
+  balance —
+  `Σ atan(D/N_n) = π` for the frequency, `k·N_fb·Π(1+(D/N_n)²)^(−1/2) = 1` for
+  the amplitude — parameterised by amplitude so there is no outer root-find,
+  and resampled onto a uniform grid in loop gain. `N` itself is tabulated: 512
+  entries of `(2/πa)∫₀^π tanh(a sin t) sin t dt` by Simpson over the
+  integrand's own quarter period, continued above `a = 8` by its own `4/(πa)`
+  asymptote.
+
+  **It reproduces the engine's own limit cycle, which is the evidence that the
+  derivation is the right one.** At `k = 4.51` the balance predicts a droop of
+  **0.88968** and a 4.849 Vpp limit cycle; the rendered cascade measures
+  **0.88915** and 4.828 Vpp — 1.04 cents and 0.4% apart, with no fitted
+  quantity anywhere in the prediction. The threshold falls out of the same
+  balance at a loop gain of **exactly 4**, which is the profile's own
+  `nominalOscillationFeedback`, so the correction is identically 1 up to panel
+  byte 114 and first departs from it at byte 115 by 13.4 cents.
+
+  **`maximumFeedback` was re-solved, as point 1 requires, and it moved:
+  4.51 → 4.504.** With the correction derived there is one free constant and
+  it answers to the amplitude anchor alone, so the 4.83 Vpp the joint solve
+  had settled for is no longer a necessary compromise: the model now renders
+  **4.8009 Vp-p**. The 248 Hz anchor is then a *prediction*, and it lands at
+  **247.90 Hz** — 0.67 cents under, against a fence of ±4 Hz. Point 3 is
+  respected in the strongest possible way: the anchor did not select the
+  implementation, because it no longer selects anything. Swept across the
+  whole oscillating range — the panel byte grid above travel 0.9, which is
+  linear in `k` — the rendered frequency reads 248.05 / 248.01 / 248.01 /
+  247.95 / 247.88 Hz at `k` = 4.309 / 4.349 / 4.390 / 4.470 / 4.510, inside
+  ±0.81 cents everywhere, where before the change only the one fitted point
+  was on the anchor. That sweep is what identifies `maximumFeedback` from the
+  amplitude alone: 4.6417 Vpp at `k` = 4.470 and 4.8283 at 4.510 put 4.80 Vpp
+  at **4.504**, which renders 4.8009 Vp-p at 247.90 Hz. The VCF WIDTH anchor
+  is unmoved at 1.99749 octaves.
+
+  One constant left the header — `frequencyTrimAmount = 0.098f`, deleted and
+  not re-tuned — and `maximumFeedback` is republished at 4.504f. No constant
+  was added — the derivation's inputs are `otaHeadroomVolts`,
+  `loopHeadroomVolts` and `nominalOscillationFeedback`, all of which the
+  profile already carried. `Docs/circuit-modelling-research.md`'s oscillation
+  frequency-correction row and OQ-09's status in `Docs/open-questions.md` are
+  updated: the wart OQ-09 recorded is closed, and it did not need the measured
+  family OQ-09 asks for.
+
+  **One finding, recorded and not acted on.** The correction is now exactly
+  what makes the model's *oscillating* frequency agree with its own
+  *small-signal* control law, and the evidence says both should read 248 Hz at
+  code 6272 — the service self-oscillation trim, and OQ-18's measured
+  code-to-frequency table taken at resonance 0. Those two agreeing is
+  equivalent to the real card's oscillation not drooping where this cascade
+  droops by 203 cents. Either the hardware's limit cycle really is that
+  undrooped, in which case something upstream of the correction is too
+  compressed — the 6.37 V stage headroom, or the `√2`-per-stage internal
+  amplitudes it implies — or the two 248 Hz readings are not the same
+  measurement. Nothing in tree settles it, no step here touches it, and the
+  correction is right either way, because it is what reconciles the model with
+  both anchors at once. It belongs in OQ-09's queue beside the shipping
+  `inputCompensationPerFeedback`, and it is filed there.
+
+  *Tests:* `testResonanceLeavesTheCornerAloneBelowOscillation` in
+  `Tests/YouKnow106CircuitTests.cpp` for (a), and
+  `testResonanceDoesNotMoveTheRenderedCorner` in
+  `Tests/YouKnow106EngineTests.cpp` for (c). (b) is
+  `testSelfOscillationMatchesTheServiceTrim`, unchanged and still inside its
+  published ±0.48 V / ±4 Hz. The circuit test also sweeps all 128 panel bytes
+  below the threshold rather than the contract's five points, and fences the
+  correction's continuity across the threshold, since a table has a join a
+  closed form does not. *Proved to bite:* with the fitted quadratic and
+  `maximumFeedback = 4.51f` put back, the circuit suite fails 12 checks —
+  `resonance panel 0.800000 moves the cutoff law at 6272.000000 counts (got
+  116.24, expected 0 +/- 10)`, `the frequency correction is not identically
+  one below the oscillation threshold: panel byte 114 lifts the corner by
+  160.659227 cents`, and `the frequency correction steps discontinuously as
+  the cascade starts to oscillate (got 161.931, expected 0 +/- 1)` — and the
+  engine suite fails 9, `resonance 0.800000 moves the rendered corner at
+  converter code 6272 (got 117.526, expected 0 +/- 10)` among them, which is
+  the preflight's recorded +117.53 to the digit. Nothing else in either suite
+  fails on the reverted build, which is what makes those 21 the new tests'
+  own. Full CTest run after restoring the change: **6/6 passed, 214.79 s**.
 
 - [ ] **3. Put C59 between the filter output and the VCA input.** Roland draws
   module pin 3 VCF OUT → **C59 1 µF/50 V NP** → the VR27/R108 network → pin 9

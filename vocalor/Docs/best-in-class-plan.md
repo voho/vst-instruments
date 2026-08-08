@@ -1195,7 +1195,7 @@ have been built at all as written.
   is still true. Nothing in the README describes the attack time, so the
   per-voice envelope adds no debt of its own.
 
-- [ ] **3. Put the vibrato in the measured band and give it the amplitude
+- [x] **3. Put the vibrato in the measured band and give it the amplitude
   modulation it is missing.** Reseed `singer.vibratoRate` across 5.6–7.0 Hz,
   which is the band Sundberg's definition and the 2022 systematic review both
   give ([*The Role of Vibrato in Group
@@ -1204,10 +1204,13 @@ have been built at all as written.
   "an extent of about ±1 semitone" — at Vibrato 100 %, but make the ceiling
   mode-dependent, because the same review records that "vibrato extent tended
   to be higher in solo singing compared to group singing" and twelve singers at
-  solo extent smear: Solo reaches ±100 cents, Choir and Chord reach ±40. Then
-  add the modulation the model is missing. Sundberg names three amplitude
-  sources in vibrato and the engine has only the passive one — harmonics
-  sweeping static formant skirts, which measures 0.084 dB at C5. The laryngeal
+  solo extent smear: Solo reaches ±100 cents, ~~Choir and Chord reach ±40~~
+  **shipped: Choir and Chord approach ±40 and read ±36.0 at Vibrato 100 %,
+  because the ceiling is a soft limit on a common curve rather than a scale —
+  see note 1 below**. Then add the modulation the model is missing. Sundberg
+  names three amplitude sources in vibrato and the engine has only the passive
+  one — harmonics sweeping static formant skirts, which measures ~~0.084~~
+  **0.100** dB at C5. The laryngeal
   one is an oscillation of subglottal pressure and glottal configuration on the
   same cycle ([*Laryngeal-Level Amplitude Modulation in
   Vibrato*](https://www.sciencedirect.com/science/article/abs/pii/S0892199707000689)),
@@ -1223,7 +1226,9 @@ have been built at all as written.
   0.26, 0.44, 0.46, 0.18, 0.30, 0.42, 0.28, 0.30, 0.40, 0.32 and 0.34, so every
   preset except Legato Soloist sits at or below 0.44 and re-dialling is not the
   cheaper of the two options. Reshape the curve so the 30–45 % region lands
-  near ±20–25 cents, and state the reshaped mapping in the commit.
+  near ±20–25 cents, and state the reshaped mapping in the commit. **Shipped as
+  `100 × knob^1.75` cents; only the 38–46 % end of that region reaches 20–25,
+  for the reason in note 2 below.**
   *Verified by*: `testVibratoRateAndExtent` — held C4, Humanize 0, Vibrato
   100 %, Dynamics 1.00, rendered in 16-sample blocks so the pitch track can be
   read at the control rate. **Preflight correction: the measurement seam is
@@ -1258,11 +1263,83 @@ have been built at all as written.
   envelope, is an extremum dominated by shimmer and jitter; it is what produced
   the phantom "0.37 dB with vibrato off", and it is replaced by the **magnitude
   of the envelope's component at the singer's own vibrato rate**. Measured on a
-  held C5 that is 0.001 dB at Vibrato 0 and **0.084 dB at Vibrato 100 %** (C6:
-  0.001 and 0.210 dB). Require at least **1.0 dB at C5 and at C6** at Vibrato
+  held C5 that is 0.001 dB at Vibrato 0 and ~~**0.084 dB at Vibrato 100 %**
+  (C6: 0.001 and 0.210 dB)~~ **0.100 dB at Vibrato 100 % (C6: 0.001 and
+  0.221 dB), re-measured against a stated envelope: the figure moves with the
+  follower's time constant and the step names neither. The test pins a
+  rectified one-pole at 10 ms**. Require at least **1.0 dB at C5 and at C6** at
+  Vibrato
   100 %, and at most 0.05 dB at Vibrato 0 — with a rate-selective metric the
   vibrato-off value is a true zero, so the "modulation is tied to the extent"
   intent is now actually testable.
+
+  *What actually shipped*: all three changes, in one commit, plus one preset
+  re-trim they forced. `singer.vibratoRate` is seeded from `5.6 + 1.4 u` and
+  the twelve identities land on 5.719–6.842 Hz. The extent is a new
+  `vibratoExtentCents()` in `VocalorMath.cpp`, resolved once per chunk into
+  `chunkVibratoCents_` and scaled per voice by the identity depth. The
+  laryngeal modulation is `voice.vibratoGain`, a linear depth of 0.0020 per
+  cent of the extent in force, ramped across the control period and applied to
+  the voiced drive and to the presence shelf. Five things came out other than
+  as written.
+
+  1. **The section ceiling is a limit, not a scale, and it is approached rather
+     than reached.** Written as a scale — extent = ceiling × f(knob) — the step
+     does nothing for the seven non-Solo presets it is meant to rescue: at
+     Vibrato 42 % a Choir preset would go from 8.4 to 8.8 cents, still under
+     the ten below which gap 10 says a vibrato reads as unsteadiness. What
+     ships is the literal physiology instead: a section member sings the
+     gesture she would sing alone until it is wider than the section tolerates,
+     so the same knob position means the same thing in every mode up to the
+     limit. A hard `min` would kill the top 40 % of the knob in Choir, so the
+     limit is a hyperbolic soft limiter with its knee at half of it — exact
+     below the knee, C1 at it, asymptotic above. Choir and Chord therefore read
+     **36.0 cents at Vibrato 100 %**, not 40, and 27.8–40.0 after the identity
+     depth. Solo is unlimited and reads 100 cents, 108.6 on singer 0.
+  2. **The reshaped mapping is `100 × knob^1.75` cents**, with the exponent
+     fixed by requiring the engine's own default (42 %) to land at 21.9 cents.
+     The step's target — "the 30–45 % region lands near ±20–25 cents" — is only
+     reachable at the top of that region: no curve steep enough to reach ±100
+     at 100 % is flat enough to hold a fifteen-point span inside a five-cent
+     window. Shipped, in cents before the identity depth: 18 % → 4.97,
+     26 % → 9.47, 28 % → 10.78, 30 % → 12.16, 32 % → 13.61, 34 % → 15.14,
+     38 % → 18.39, 40 % → 20.12, 42 % → 21.91 (21.75 in a section),
+     44 % → 23.77 (23.17), 46 % → 25.69 (24.43), 100 % → 100 (36.0). Preset 0
+     at 38 % reads 19.97 cents once singer 0's depth is in. The identity's own
+     depth wander goes from a fixed ±7 cents on ±20 to a proportional ±35 %,
+     which is the same ratio at the setting it was drawn for.
+  3. **The modulation drives the presence shelf, not the tilt corner.** Moving
+     `tiltCoefficient` costs an `exp` in every control update; the shelf gain
+     step 2 installed is already the note's own broadband gain, and Sundberg's
+     2:1 falls out of multiplying it by the same factor as the amplitude — the
+     band above the corner moves twice as many decibels as the fundamental for
+     one multiply and no transcendental. The vibrato sine is the one the pitch
+     already computes, so the control update gains nothing but a multiply and a
+     subtract. The gain is **ramped across the control period rather than
+     stepped**: a 6 Hz modulation applied as a control-rate staircase leaves
+     0.25 % steps at 3 kHz, which is a permanent −58 dB sideband either side of
+     every partial on a sustained note. Cost is below this machine's noise
+     floor — eight runs of `testRoughPerformance` give a minimum of 688.4
+     ns/sample with the change and 690.6 without.
+  4. **The published amplitude baseline is envelope-dependent and reads
+     0.100 / 0.221 dB, not 0.084 / 0.210.** The step names the metric but not
+     the follower. On the engine step 2 left behind, a rectified one-pole at a
+     10 ms time constant gives 0.100 dB at C5 and 0.221 at C6; at 20 ms it
+     gives 0.090 and 0.198. The test pins 10 ms. The floor at Vibrato 0
+     reproduces exactly at 0.001 dB. What matters for the assertion survived
+     the correction: with the new extent in force but the laryngeal modulation
+     forced out, C5 and C6 read **0.51 and 0.67 dB** — both still under the
+     1.0 dB bound, so the assertion bites on the modulation rather than on the
+     wider extent. C4 would not have worked: its passive contribution alone is
+     3.30 dB, because a ±108 cent excursion sweeps the harmonics across a
+     tuned F1. Shipped, C5 and C6 read 2.815 and 3.048 dB.
+  5. **Cathedral Ensemble needed re-trimming, `outputGain` 0.482 → 0.553.**
+     Twelve singers on a 21.7-cent vibrato in a 0.95-size room at Room 0.74 sum
+     less coherently than twelve on an 8.4-cent one, and the preset lost
+     1.19 dB of ensemble buildup — past the 1.0 dB window step 2's preset-level
+     assertion pins. Measured with the laryngeal modulation forced out the drop
+     is 1.23 dB, so it is the extent and not the modulation. The other eleven
+     move between −0.07 and +0.59 dB and were left alone.
 
 - [ ] **4. Let the air outlive the voice at an aspirate offset.** Replace
   `airReleaseMultiplier_ = releaseMultiplier_ * releaseMultiplier_`

@@ -1387,18 +1387,29 @@ void testResonanceLeavesTheCornerAloneBelowOscillation()
     }
 
     // And at every panel byte the slider can actually take, not merely at the
-    // five sampled above.
+    // five sampled above. Reported as the worst byte rather than one failure
+    // per byte, because a fitted correction fails all of them at once.
+    int worstByte = -1;
+    double worstCents = 0.0;
     for (int byte = 0; byte <= 127; ++byte)
     {
         const float panel = static_cast<float>(byte) / 127.0f;
         const float k = Profile::loopGain(panel);
         if (k > Profile::nominalOscillationFeedback)
             break;
-        expect(Profile::frequencyTrim(k) == 1.0f,
-               "the frequency correction is not identically one at panel byte "
-                   + std::to_string(byte) + ", where the cascade does not "
-                     "oscillate");
+        const double cents =
+            1200.0 * std::log2(static_cast<double>(Profile::frequencyTrim(k)));
+        if (std::abs(cents) > std::abs(worstCents))
+        {
+            worstCents = cents;
+            worstByte = byte;
+        }
     }
+    expect(worstByte < 0,
+           "the frequency correction is not identically one below the "
+           "oscillation threshold: panel byte " + std::to_string(worstByte)
+               + " lifts the corner by " + std::to_string(worstCents)
+               + " cents");
 
     // Four identical one-poles carry 45 degrees and 1/sqrt(2) each at their
     // own corner, so the loop closes at a gain of exactly four: that is where
