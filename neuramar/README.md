@@ -126,14 +126,14 @@ Neuramar exposes 18 host parameters: sixteen continuous front-panel controls,
 | **Touch** | 0–100%; sets how much MIDI velocity shapes timbre as well as level. Harder notes become brighter and breathier; at 0% velocity only sets level. |
 | **Register** | -100% to +100%; key tracking. Positive values darken notes played above the learned root and open up notes played below it, the way an acoustic instrument's spectrum changes across its compass; negative values invert that. It changes tone, not level. |
 | **Gravity** | -100% to +100%; tilts the reconstructed spectrum from darker to brighter. |
-| **Memory** | 0.25x–4.00x; changes how quickly a note travels through the learned time evolution. |
-| **Mutation** | 0–100%; adds bounded, voice-local movement around the learned character. |
+| **Memory** | 0.25x–4.00x; changes how quickly a note travels through the learned time evolution. It multiplies the same clock the fitted damping law key-tracks, so it scales a note's evolution relative to whatever its own key already gives it. |
+| **Mutation** | 0–100%; varies how hard each note is struck, and adds bounded, voice-local movement around the learned character. Twelve identical note-ons at the shipping 12% spread a standard deviation of 0.61 dB in peak level, and brightness follows level the way it does on a harder strike. At 0% two identical note-ons are bit-identical. |
 | **Noise** | 0–100%; sends smooth voice-local randomness through the neural time/Fourier input coordinate, making the model wander through its own learned or generated behaviour. It does not add an audio-noise layer. |
 | **Awaken** | 0–2 s; at zero, preserves the learned attack. Above zero it adds a performance fade-in that takes exactly the stated time, end to end, and leaves the note at full level from then on. |
-| **Dissolve** | 20 ms–8 s; shapes the performance release. |
-| **Horizon** | 0–100%; widens voices across the stereo field and gives the Air layer a decorrelated second realization, which cancels exactly in a mono sum. |
+| **Dissolve** | 20 ms–8 s; sets how long the played fundamental takes to fall silent after note-off. Higher slots fall faster, following the damping law fitted from the source, so the tail darkens as it dies, and the whole release key-tracks with the same law — on a source that fits it, a note two octaves up dissolves about 2.8 times faster than the root. A source with no frequency-dependent decay releases every slot together at every key, exactly as before. |
+| **Horizon** | 0–100%; widens voices across the stereo field by pitch — two octaves either side of the corrected root reaches the edge of the image — and gives the Air layer a decorrelated second realization, which cancels exactly in a mono sum. At 0% the output is exactly mono. |
 | **Output** | -24 to +6 dB; sets the final level. |
-| **Orbit** | Revisits a stable learned region while a note remains held. |
+| **Orbit** | Switch, on by default; holds a sounding note inside a stable learned region instead of letting it run to the end of the memory. The region is read forward only, each pass starting a different distance into it and its own level trend divided out, so the sustain keeps moving without pumping and without repeating. |
 | **Root correction** | Shifts the inferred source root from -12 to +12 semitones without retraining. |
 
 **Randomize** creates a model when the pool is empty or varies the current
@@ -250,9 +250,22 @@ end-to-end through a differentiable renderer:
   outside the learned envelope toward silence. The register reference covers
   only as many partials as the played note actually renders: measuring against
   the model's full bank asks a high note to make up energy that cannot exist
-  past the anti-alias limit, a demand that grows without bound. Core, Air, and
-  Bone all take the same compensation, so the balance between the three layers
-  is the source's at every point on the keyboard;
+  past the anti-alias limit, a demand that grows without bound. The
+  compensation is applied to the Core and to nothing else. It does not scale
+  the Core, it *normalizes* it — after the multiply the Core's power is the
+  reference, which barely depends on the played note — so putting the same
+  factor on an un-normalized layer makes the noise-to-tone ratio a function of
+  the Core's own rendering artefacts, the anti-alias taper and the Body-Locked
+  envelope running out of observed range included. Measured on a fixture with a
+  strong noise bed, that is exactly what it did: the isolated Air layer's own
+  level moved 23.4 dB across MIDI 12–108 at full Body Lock, where its band
+  centres are frozen and nothing else can touch it, and the isolated Bone
+  layer's moved 23.3 dB. Air and Bone are measured independently of the Core in
+  analysis and are left independent of it here, so the same two spreads are
+  0.36 dB and 0.00 dB, and the Air-to-Core balance over MIDI 12–72 at the
+  shipping defaults is 1.5 dB where it was 7.8 dB. The level flatness above
+  holds up to about MIDI 96, where the compensation reaches its 4x ceiling and
+  the top of the keyboard fades instead;
 - **Register** applies a key-tracked spectral tilt that is deliberately left out
   of that reference, so it changes tone without changing level;
 - each Air filter is normalized to unit expected RMS for its noise input, and a
@@ -261,9 +274,23 @@ end-to-end through a differentiable renderer:
   to the top of the audible band as well as to the host Nyquist, so a memory
   keeps the same audible top octave at 44.1 kHz as at 96 kHz instead of losing
   it at one rate and rendering it purely ultrasonically at the other;
-- stereo placement is ramped like every other control-rate target, so adding or
-  removing a chord note glides the remaining voices into their new positions
-  instead of stepping them; Output carries its own smoother because it is the
+- a voice is placed in the stereo image by its own pitch, fixed at note-on and
+  never revised for as long as it sounds: two octaves either side of the
+  corrected root reaches the edge of the image, scaled by Horizon. On a piano,
+  harp, marimba, or guitar the sounding elements are laid out monotonically in
+  pitch across the width of the radiating body, and a string that is already
+  vibrating does not move when another one is struck; both properties follow
+  from placing a voice by its note rather than by its rank among whatever else
+  happens to be sounding. A held note's own fundamental stays within 0.0002 dB
+  of where it started when a second key is struck, and the same three notes
+  played in the six possible orders give stereo images agreeing to -147 dB
+  relative — which is the floating-point summation floor for voices summed in
+  slot order, not a residual placement difference. Only the root note is
+  centred, and the per-note pan jitter is applied inside the Horizon multiply,
+  so Horizon 0 is exactly mono at any Mutation. Placement is still ramped like
+  every other control-rate target, so automating Horizon glides sounding voices
+  into their new positions instead of stepping them; Output carries its own
+  smoother because it is the
   one control applied straight to the summed signal; and the voice-steal tail is
   windowed with a raised cosine rather than a linear ramp, which removes the
   corner that a frozen last sample would otherwise leave at both ends. A slot
@@ -279,6 +306,61 @@ end-to-end through a differentiable renderer:
 - **Awaken** advances a position rather than driving a one-pole, so its stated
   seconds are the whole fade and not an exponential time constant, and the fade
   has zero slope at both ends rather than its steepest slope at the note-on;
+- **Dissolve** damps by frequency instead of fading the summed output. When a
+  memory is published, the exponent `p` in `tau(f) = tau_1 (f/f_1)^-p` is
+  least-squares fitted from the model's own per-partial decay trajectories and
+  bounded to `[0, 1.5]`; each rendered slot then carries the *excess*
+  attenuation it owes over the played fundamental,
+  `exp(-((f_k/f_1)^p - 1) t / tau_rel(1))`, folded into the control-rate
+  amplitude ramp rather than into the per-sample loop. The fundamental's own
+  factor is identically one, so the panel's number keeps its meaning and the
+  retirement decision does not move: a note released at Dissolve 0.65 s retires
+  0.6507 s later at every key. On a source whose partials decay as
+  `tau_h = tau_1 h^-0.75` the fit recovers 0.747, partial 8 loses 22.9 dB more
+  than partial 1 over 40 ms of release where it lost 0.0005 dB before, and the
+  tail's spectral centroid 150 ms after note-off sits 46.9% below the held
+  note's. The rate ratio is clamped to at most 12x so a badly conditioned fit
+  cannot brickwall the top of the spectrum, and clamped to at least 1x so that
+  no Air band or Bone mode below the played fundamental outlives the voice
+  built on it — at MIDI 108 at full Body Lock twelve of the sixteen Air bands
+  sit below the played fundamental, so that case is routine rather than exotic.
+  A held voice pays nothing for any of it, and a source that shows no
+  frequency-dependent decay fits `p = 0` and renders bit-identically to the
+  uniform release every earlier build had;
+- the learned time trajectory is key-tracked by that same fitted exponent: a
+  note played at transposition ratio `r` advances the model clock at `r^p`,
+  clamped to `[0.25, 4]`, and Dissolve's time constants are divided by it. `p`
+  is a statement about frequency rather than about harmonic number, so a note
+  whose fundamental is `f_1 r` has a consistent decay time `tau_1 r^-p`: a
+  struck or plucked memory rings shorter at the top of the keyboard and longer
+  at the bottom, the way the source's own partials do. On a fixture decaying as
+  `tau_h = tau_1 h^-0.75`, the time to fall 20 dB two octaves up is 0.357 times
+  the root's against a predicted `4^-0.75 = 0.354`, and two octaves down 2.94
+  times against 2.83, where both were within 4% of the root's before. The model
+  clock is the engine's only time variable, so the learned onset and any
+  learned pitch contour key-track with it — a struck string does speak faster
+  at the top of its compass, and a learned vibrato survives the fit only on a
+  source dying fast enough that the vibrato is over before it is heard. At
+  `p = 0` the scale is exactly one and every one of these expressions is
+  bit-identical to the previous build;
+- **Orbit** reads its loop region forward only. The read position wraps from
+  the region's end back to its start, and each pass begins 0.618 of the loop
+  length further in — the golden-ratio advance is the one that maximizes the
+  smallest gap between successive wrap offsets, so no short lag ever lines up —
+  while the region's own mean log-level slope, fitted once per published
+  memory, is divided back out in proportion to how much of the read position
+  Orbit is supplying. Nothing plays backwards: reversing a decaying trajectory
+  is a negative-damping segment, and no passive resonator re-energizes itself.
+  The wrap needs no crossfade of its own, because it is a step in the
+  control-rate amplitude targets and the existing one-control-period ramp is
+  already the equal-gain blend between the old target and the new one. Held for
+  six seconds on a decaying fixture, the sustain's level spread falls from
+  2.49 dB to 0.02 dB and its largest frame-to-frame rise from 0.51 dB to
+  0.02 dB, while its spectral centroid still moves 7.3% of its own mean and its
+  centroid autocorrelation at the loop length falls from 0.88 to 0.32 — steady
+  in trend, still moving in detail, and no longer repeating. Detrending rather
+  than flattening is what keeps any tremolo, breath pulsing, or beating the
+  loop region carries;
 - the final output uses the host's floating-point headroom and remains linear
   at ordinary operating levels; only a pathological ±7.95 guard is
   retained, avoiding the folded high-register harmonics produced by an
@@ -287,6 +369,23 @@ end-to-end through a differentiable renderer:
   reference the harmonic tilt leans brighter and more of the learned Air is let
   through, below it the opposite. At zero the response is the pure amplitude
   behaviour every earlier build had;
+- **Mutation**'s note-to-note variation travels through that same excitation
+  path. The voice's own velocity is jittered by `0.75 * mutation * offset` at
+  note-on, before the velocity gain is computed from it and before the Touch
+  tilt and Air terms read it, so what differs between two nominally identical
+  strikes is the energy delivered and the correlated level, tilt, and Air
+  variation follow from one number rather than being drawn separately. Twelve
+  identical note-ons at the shipping Mutation of 12% spread a standard
+  deviation of 0.61 dB in peak over a 1.79 dB range, against 0.06 dB over
+  0.18 dB before, and their peak levels and spectral centroids rank-correlate
+  at 1.00 with the loudest take 2.0% brighter than the quietest — which a
+  per-take output gain, the obvious alternative, does not produce. Nothing
+  per-voice displaces the model read position: the start-time offset that used
+  to supply this variation bought it by skipping into the attack, moving a
+  take's first 10 ms relative to its own peak by 0.52 dB where varying the
+  strike moves it 0.07 dB. The per-voice detune, harmonic-amplitude variation,
+  and Air re-seed are unchanged, and at Mutation 0 two identical note-ons are
+  still bit-identical;
 - **Formant** divides the Body-Locked envelope lookup coordinate by the shift
   and multiplies the Air and Bone centre frequencies by it, so the resonant body
   moves in absolute frequency while the played pitch does not move at all;
@@ -373,6 +472,43 @@ it — rather than a fitted velocity response. Reviewers of this class of
 instrument name dynamic response as a specific weakness of one-shot resynthesis,
 and that criticism applies here; the honest position is that the evidence for it
 does not exist in a single note.
+
+Mutation's strike-to-strike variation is deterministic and drawn from the voice
+identity, not measured: one recording contains one strike, so its *size* is a
+prior chosen to land inside the 1.5–3 dB peak variation a hand-struck acoustic
+instrument shows, while only its *coupling* — that level, spectral tilt, and
+Air content move together — is a physical claim. One practical consequence: at
+a non-zero Mutation the velocity a voice renders is the played velocity plus up
+to ±0.09 at the shipping setting, so anything measuring the nominal
+velocity-to-level curve has to set Mutation to zero first.
+
+The frequency-dependent release and the key-tracked decay both rest on one
+number, the exponent `p` fitted from the source's own *free* decay. Applying a
+free-decay exponent to a damper is an analogy, not a derivation. What the fit
+defends is the direction and the rough size, taken from the sound the user
+dropped in rather than from a drawn curve, together with an exact-zero answer
+whenever the evidence is not there — and it is absent more often than present.
+A sustained or driven source has no free decay to fit and returns exactly zero;
+so does a source whose partials all decay together. A source carrying a
+sustained broadband noise bed cannot be fitted at all, because its fast
+partials floor on the noise instead of on their own decay: adding a strong
+high-passed noise bed to a `tau_h = tau_1 h^-0.75` fixture recovers a negative
+exponent at a residual of 0.51 and the fit declines. A breathy or bowed memory
+therefore keeps the uniform release and the pitch-invariant decay of every
+earlier build, and that is the honest answer rather than a defect. At least six
+partials must each lose 6 dB inside their own fit window before any answer is
+accepted.
+
+Two more render behaviours are priors rather than measurements, and are worth
+naming as such. Placing a voice in the stereo image by its pitch reproduces how
+a piano, harp, marimba, or guitar lays its sounding elements out across the
+width of its radiating body; a single recording says nothing about the width or
+the layout of the body it came from, so the mapping is a musical choice and the
+two-octave span is a chosen constant. And the Orbit sustain is invented, not
+recorded: a source that stopped carries no evidence about what it would have
+done had it kept going. What Orbit can defend is that its sustain moves
+forward, does not pump, and does not repeat — all three measured — not that it
+is what the instrument would have done.
 
 Automatic root search is bounded to 35–2000 Hz. Its correct-semitone rate is
 measured on a twelve-item analytic corpus in
@@ -509,7 +645,33 @@ residual power MAE with the harmonic bins excluded, cumulative-energy error at
 fixture and one combining harmonics, shaped noise, and a broadband transient. A
 struck-body fixture with ten known inharmonic modes reports modal recall,
 precision, and frequency error, and a twelve-item analytic corpus reports the
-automatic root detector's correct-semitone and octave-error rates. Plug-in
+automatic root detector's correct-semitone and octave-error rates.
+
+The render behaviours that stand in for a physical mechanism are pinned the
+same way, each on a fixture built for it and each with a control alongside that
+must stay put. The isolated Air and Bone layers' own level spread across
+MIDI 12–108 at full Body Lock is guarded at 1.0 dB (measured 0.36 dB and
+0.00 dB) and the Air-to-Core balance over MIDI 12–72 at the shipping defaults
+at 3.0 dB (1.51 dB), with the Core's own spread guarded separately so the
+normalization itself cannot be deleted unnoticed. A held note's stereo position
+while another key is struck is guarded at 0.05 dB (0.0002 dB), the agreement of
+the same chord played in six note orders at -120 dB (-147 dB), and Horizon 0 at
+1e-7 (exactly zero). A six-second Orbit sustain is guarded on level spread,
+largest frame-to-frame rise, spectral-centroid movement, and centroid
+autocorrelation at one and two loop lengths, so that neither a frozen clock nor
+a wrap from a fixed point can pass. The release is guarded on partial 8's
+excess over partial 1 inside a two-sided 15–30 dB window, on the excess
+increasing over partials 1, 2, 4, and 8, on the tail's centroid against the
+held note's, and on no isolated Air or Bone layer outliving its own voice at
+root+24 or root+51 — with a frequency-independent control fixture that must fit
+`p` below 0.10 and show no excess, which is what a hard-coded exponent fails.
+Decay key-tracking is guarded on the T20 ratios and the release-drop ratios two
+octaves either side of the root against the source's own fitted damping law,
+again with a control fixture whose held ratios must stay within 10% and whose
+released ratios within 5% of pitch-invariant. And
+twelve repeated notes are guarded on peak-level standard deviation inside a
+two-sided 0.45–1.10 dB window, on transient retention, on peak-to-centroid rank
+correlation at 0.9, and on exact determinism at Mutation 0. Plug-in
 builds add
 processor, parameter, MIDI, editor, and host-state contracts. These regression
 checks complement rather than replace listening, validator, multi-host, and CPU

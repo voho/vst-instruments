@@ -197,6 +197,12 @@ private:
         float airSideGain { 0.0f };
         float airSideGainStep { 0.0f };
         float transpositionRatio { 1.0f };
+        // r^p, the rate at which this key replays the learned trajectory, and
+        // the per-sample envelope factor that key-tracks Dissolve by the same
+        // law. Both are exactly the untracked value at the root note and on
+        // any source that fits p = 0.
+        float clockRateScale { 1.0f };
+        float releaseMultiplier { 1.0f };
         float pitchRatio { 1.0f };
         float pitchRatioStep { 0.0f };
         float lastLeft { 0.0f };

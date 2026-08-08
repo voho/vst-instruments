@@ -600,8 +600,14 @@ void NeuramarEngine::buildReleaseShape(
     voice.releaseShapeSeconds = releaseSeconds;
     // Dissolve is a duration to the retirement level, not a time constant, so
     // partial 1's time constant is that duration divided by the number of
-    // nepers between unity and retirement.
-    const float slowestTau = releaseSeconds / -std::log(retirementLevel);
+    // nepers between unity and retirement - and then divided by the clock rate
+    // scale, because the release is key-tracked by the same r^p the model
+    // clock is. The excess every other slot owes is measured against that
+    // key-tracked fundamental, so the whole release moves together and the
+    // ratio between two slots stays a property of the source rather than of
+    // the key.
+    const float slowestTau = releaseSeconds
+        / std::max(voice.clockRateScale, 1.0e-4f) / -std::log(retirementLevel);
     const float frameSeconds = static_cast<float>(controlPeriod_)
         / static_cast<float>(sampleRate_);
     const float fundamental = std::max(renderedFundamentalHz, 1.0f);
@@ -778,7 +784,29 @@ void NeuramarEngine::noteOn(int midiNote, float velocity) noexcept
     }
     selected->mutationOffset = 2.0f
         * static_cast<float>(voiceHash & 0xffffu) / 65535.0f - 1.0f;
-    selected->velocityGain = velocity * (0.72f + 0.28f * std::sqrt(velocity));
+    // What differs between two nominally identical hand strikes is the energy
+    // delivered, so Mutation varies the excitation strength and lets every
+    // consequence of a harder or softer strike follow from it. On a real
+    // instrument level and brightness co-vary, because a harder strike shortens
+    // the contact time and pushes the excitation spectrum's corner up; that
+    // coupling already exists here in the Touch path, so writing the jitter
+    // into the voice's own velocity - before velocityGain below and before
+    // touchTilt and touchAirGain read it in updateVoiceControl() - reproduces
+    // the correlated level, tilt and Air variation without drawing anything
+    // new. The alternative, a per-take output gain, would move level alone and
+    // leave the timbre of a hard strike identical to a soft one.
+    //
+    // 0.75 is set by the acceptance target rather than chosen freely. With
+    // velocityGain = v(0.72 + 0.28*sqrt(v)) a draw of +/-0.09 about the
+    // reference velocity spans about 2.2 dB end to end, and a uniform draw of
+    // that width has a standard deviation near 0.64 dB, which is the middle of
+    // the 1.5-3 dB peak variation a hand-struck acoustic instrument shows. At
+    // 0.55 the same arithmetic lands at 1.6 dB end to end, under that floor.
+    selected->velocity = std::clamp(
+        selected->velocity + 0.75f * mutationAmount * selected->mutationOffset,
+        0.05f, 1.0f);
+    selected->velocityGain = selected->velocity
+        * (0.72f + 0.28f * std::sqrt(selected->velocity));
     // These sinusoidal variation shapes depend only on the voice identity, so
     // one evaluation at note-on replaces the same 72 sines every control frame
     // in the reference-target and Air paths.
@@ -941,6 +969,62 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     voice.transpositionRatio = std::clamp(basicRatio * mutationDetune,
                                           0.0078125f, 128.0f);
 
+    // Key-track the model clock. Without this every learned trajectory
+    // replays in absolute seconds at every key, so a plucked or struck memory
+    // rings for very nearly the source's wall-clock duration two octaves up:
+    // T20(81)/T20(57) measures 0.978 where the source's own damping law
+    // predicts 0.354.
+    //
+    // The law is the one fitDampingExponent() already fitted:
+    // tau(f) = tau_1 (f/f_1)^-p is a statement about *frequency*, not about
+    // harmonic number, so a note played at transposition ratio r has
+    // fundamental f_1 r and the consistent decay time tau_1 r^-p. A decay time
+    // is the reciprocal of a rate, so the clock that replays the trajectory
+    // runs r^p times faster, clamped to a factor of four either way so a
+    // badly-conditioned fit can neither make a high note vanish before it
+    // sounds nor stretch a low one into a drone. At the root r is exactly 1
+    // and the render is bit-identical, and a source that fits p = 0 keeps a
+    // pitch-invariant decay at every key - which is the whole reason the
+    // exponent is fitted from the sound the user dropped in rather than drawn.
+    //
+    // This clock is the engine's only time variable, so key-tracking it also
+    // key-tracks the learned onset and any learned pitch contour. That is
+    // accepted deliberately, not overlooked, and the reason is measured. A
+    // player's vibrato lives on a *driven* source, and a driven source has no
+    // free decay to fit: the sustained fixture with a 5 Hz, 0.35 semitone
+    // vibrato fits p = 0.00000 exactly and is left on the absolute clock. The
+    // fit only survives on a source that is genuinely dying, and the faster it
+    // dies the more it survives - the tau_1 = 0.9 s decaying fixture with the
+    // same vibrato also fits p = 0, and the tau_1 = 0.20 s one fits 0.79 but
+    // has fallen 20 dB in about 0.16 s at MIDI 81, which is roughly two cycles
+    // of the 14 Hz its 5 Hz vibrato would become. The alternative - a second,
+    // un-tracked clock for the pitch trajectory - costs a second decoder
+    // evaluation per control frame, 3.26 us here, or 1.3% of a core at
+    // sixteen voices, to move something that is over before it is heard.
+    // Key-tracking the onset needs no apology at all: a struck string does
+    // speak faster at the top of its compass.
+    voice.clockRateScale = dampingExponent_ > 0.0f
+        ? std::clamp(std::pow(voice.transpositionRatio, dampingExponent_),
+                     0.25f, 4.0f)
+        : 1.0f;
+    // Dissolve is key-tracked by the same law, so the top of the keyboard also
+    // damps faster than the bottom. tau_rel(1) = releaseSeconds * r^-p is the
+    // tau_1 r^-p the clock rate above is derived from; the direction is easy
+    // to get backwards, and multiplying the time constant by r^p instead of
+    // dividing puts every key on the wrong side of the root. Partial 1 is what
+    // the audio loop's single release scalar carries, and buildReleaseShape()
+    // takes the same scale so the excess each other slot owes is measured
+    // against the key-tracked fundamental rather than the panel's number.
+    //
+    // The rate has to be per voice, so it moves here from the one number the
+    // block used to build. The only consequence is that a Dissolve automated
+    // mid-note now reaches the envelope at the next control frame rather than
+    // the next block, which is at most 4 ms on a parameter whose smallest
+    // setting is 5 ms.
+    voice.releaseMultiplier = std::exp(
+        std::log(retirementLevel) * inverseSampleRate_ * voice.clockRateScale
+        / std::max(parameters.releaseSeconds, 0.005f));
+
     const float duration = std::max(model.metadata_.durationSeconds, 0.001f);
     // Except for the first sounding sample, predict one control interval
     // ahead. The per-sample ramp then arrives at that target at the time it
@@ -948,6 +1032,7 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     const double evaluationModelTime = voice.modelTimeSeconds
         + (firstControlFrame ? 0.0
             : static_cast<double>(parameters.evolutionRate
+                * voice.clockRateScale
                 * static_cast<float>(controlPeriod_ - 1)) / sampleRate_);
     const float loopStart = std::clamp(model.metadata_.loopStartSeconds,
                                        0.0f, duration);
@@ -990,9 +1075,15 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             std::fmod(elapsed, length) + passOffset, length);
         orbitTime = loopStart + loopOffsetSeconds;
     }
+    // Mutation used to add a per-voice start-time offset here. It bought its
+    // variation by deleting transient: the clamp below is one-sided over the
+    // first mutation * |offset| * 0.018 * duration seconds, so a positive
+    // offset skipped into the attack and a negative one did nothing, and the
+    // first 10 ms of a take relative to its own peak moved almost 1 dB between
+    // takes at the shipping Mutation. Excitation strength varies at note-on
+    // instead; nothing per-voice displaces the read position.
     const float effectiveTime = static_cast<float>(std::clamp(
-        oneShotTime + parameters.orbit * (orbitTime - oneShotTime)
-            + parameters.mutation * voice.mutationOffset * 0.018 * duration,
+        oneShotTime + parameters.orbit * (orbitTime - oneShotTime),
         0.0, static_cast<double>(duration)));
     // Divide out the loop region's own level trend, in proportion to how much
     // of the read position Orbit is actually supplying. The region falls
@@ -1546,9 +1637,9 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
     const float attackStep = parameters.attackSeconds <= 0.0f
         ? 1.0f
         : inverseSampleRate_ / parameters.attackSeconds;
-    const float releaseMultiplier = std::exp(
-        std::log(retirementLevel) * inverseSampleRate_
-        / std::max(parameters.releaseSeconds, 0.005f));
+    // The release rate is key-tracked, so it is no longer one number for the
+    // whole block: each voice carries its own, built by updateVoiceControl()
+    // from the same r^p that scales its model clock.
 
     // With no model, no sounding voice, and no click-fade remnant, every
     // output sample is exactly zero: skip the loop and write silence.
@@ -1618,7 +1709,7 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
 
                 if (voice.releasing)
                 {
-                    voice.envelope *= releaseMultiplier;
+                    voice.envelope *= voice.releaseMultiplier;
                 }
                 else
                 {
@@ -1725,7 +1816,18 @@ void NeuramarEngine::process(float* left, float* right, int numSamples) noexcept
                 voice.lastRight = voiceSample * voice.panRight - sideSample;
                 outputLeft += voice.lastLeft;
                 outputRight += voice.lastRight;
-                voice.modelTimeSeconds += static_cast<double>(parameters.evolutionRate)
+                // Key-tracked: r^p times the panel's rate, so the learned
+                // trajectory plays out in the time the source's own damping
+                // law says this key should take. The trajectory still freezes
+                // at t = duration, so a high note reaches the frozen final
+                // frame r^p times sooner in wall-clock and then holds it - but
+                // it holds the *same* frame, at the same level relative to its
+                // own onset, so the sustain floor a note settles on is
+                // unchanged by this and only arrives when the note has already
+                // died to it. On the decay fixture MIDI 81 reaches the freeze
+                // at 0.458 s, well past its own 0.243 s T20.
+                voice.modelTimeSeconds += static_cast<double>(
+                        parameters.evolutionRate * voice.clockRateScale)
                     / sampleRate_;
                 ++voice.renderedSampleCount;
 

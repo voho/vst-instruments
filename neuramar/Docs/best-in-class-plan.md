@@ -747,10 +747,25 @@ source whose per-partial decay follows `tau(f) = tau_1 (f/f_1)^-0.75` predicts
 0.354 and 2.83. Against Järveläinen and Tolonen's 75%-140% tolerance window that
 is 276% of correct going up and 37% going down. Two qualifications the original
 statement lacked. It is not exactly 1.00 — the register path leaves a residual
-5% tilt of its own. And **at the shipping defaults this gap does not manifest at
+5% tilt of its own. ~~And **at the shipping defaults this gap does not manifest at
 all**: Orbit is on, so the model clock ping-pongs inside the loop and the note
 never decays past the loop region at any key. Gap 8 is a defect of Orbit-off
-playing, and any fix for it lands on top of whatever gap 3's fix leaves behind.
+playing~~ — that qualification is wrong and step 5 struck it. Orbit is a time
+blend, `oneShotTime + orbit * (orbitTime - oneShotTime)`, so at any setting below
+1 part of the read position is still the one-shot clock and the note decays
+through its trajectory at every key. At the `EngineParameters` default of Orbit
+0.15 the *decay* fixture falls 38.27 / 38.43 / 38.40 dB between 0.10 s and
+1.00 s at MIDI 33 / 57 / 81, which is 0.16 dB of spread across five octaves where
+key-tracking by the source's own damping law gives 14.69 / 38.43 / 41.45 dB, a
+spread of 26.8 dB (step 5, landed).
+Step 5 also called 0.15 "the plug-in's own default", and it is not: 0.15 is the
+`EngineParameters` struct default a host-free caller gets, while the plug-in's
+Orbit is the bool this gap records, defaulting to `true` and mapped to
+`orbit = 1.0`. The conclusion survives the correction — see the re-measurement
+under step 5, which finds the fall across MIDI 33 / 57 / 81 spreading 3.01 dB
+before this pass and 20.7 dB after it at Orbit 1 as well. The gap manifests at
+both defaults, by a different mechanism at each, and any fix for it
+lands on top of whatever gap 3's fix leaves behind.
 The uniform per-voice release of gap 1 compounds it.
 
 **Gap 9. Every note on the keyboard is made exactly equally loud.**
@@ -1258,7 +1273,10 @@ planned*.
   defect of Orbit-off playing" because the fold kept a held note inside the loop
   region forever, and a forward wrap keeps it there just the same, so nothing
   about that gap has moved. What changed for step 5 is only that the clock it
-  key-tracks now traverses rather than ping-pongs.
+  key-tracks now traverses rather than ping-pongs. (Step 5 then struck the
+  qualification itself, on a different ground: it is true at Orbit 1 and the
+  shipping default is Orbit 0.15, where 85% of the read position is still the
+  one-shot clock. See gap 8.)
 
 - [x] **4. Damp the release by frequency, using the source's own damping law as
   the shape.** Release is one scalar on the summed output
@@ -1450,11 +1468,12 @@ planned*.
   move within run-to-run noise. Suite green, 3/3 ctest suites in 49.0 s; the
   NeuralEngine suite grows 27.0 s to 30.2 s, which is the three added learns.
 
-- [ ] **5. Key-track the model clock by the same fitted damping exponent.**
+- [x] **5. Key-track the model clock by the same fitted damping exponent.**
   `NeuramarEngine.cpp:1379` advances the model clock at `evolutionRate /
   sampleRate_` with no transposition term, so with Orbit off a plucked or struck
   memory rings for very nearly the source's wall-clock duration at every key:
-  `T20(81)/T20(57)` is 0.978 and `T20(33)/T20(57)` is 1.054. Step 4 fits `p` from
+  `T20(81)/T20(57)` is 0.978 and `T20(33)/T20(57)` is 1.054. (On the fixture the
+  test builds those reproduce as **0.974** and **1.038**.) Step 4 fits `p` from
   the source's own partials in `tau(f) = tau_1 (f/f_1)^-p`; that is a statement
   about frequency rather than about harmonic number, so a note played at
   transposition ratio `r` has fundamental `f_1 r` and a consistent decay time
@@ -1474,10 +1493,41 @@ planned*.
   key-tracks the learned onset and any learned vibrato: a 5 Hz source vibrato
   becomes 14 Hz two octaves up at `p = 0.75`, which is not what a player does, and
   the step needs either a separate un-tracked clock for the pitch trajectory or an
-  explicit decision to accept it. At the shipping defaults **this step changes no
+  explicit decision to accept it. ~~At the shipping defaults **this step changes no
   decay at all** — Orbit is on, the clock ping-pongs inside the loop, and the only
   audible effect is that the gap-3 pumping runs 2.83 times faster two octaves up —
-  so it must land after step 3 and its value is scoped to Orbit-off playing. And
+  so it must land after step 3 and its value is scoped to Orbit-off playing.~~
+  **That is wrong, and it is the largest correction this step needed: a note
+  does decay through its trajectory at the defaults, at every key.** Orbit is a
+  time blend, `oneShotTime + orbit * (orbitTime - oneShotTime)`, so at any
+  setting below 1 part of the read position is still the one-shot clock.
+  Measured on the *decay* fixture at the `EngineParameters` default of Orbit
+  0.15, the
+  fall from 0.10 s to 1.00 s is **38.27 / 38.43 / 38.40 dB** at MIDI 33 / 57 / 81
+  before this change — 0.16 dB of spread across five octaves — and
+  **14.69 / 38.43 / 41.45 dB** after. The step does still have to land after step
+  3, but its value is not scoped to Orbit-off playing.
+  *Corrected in the closing pass.* This note called 0.15 "the plug-in's own
+  default", conflating two different numbers. 0.15 is the `EngineParameters`
+  struct default, which is what a host-free caller — the tests, the benchmark,
+  `RenderDemos` — gets. The *plug-in's* Orbit is a bool defaulting to `true`
+  and mapped to `orbit = 1.0` (`PluginProcessor.cpp:244`, `:452`), exactly as
+  gap 3 records it. The step's conclusion survives, and was re-measured at all
+  three settings on the shipped engine against a scratch build with
+  `voice.clockRateScale` forced to `1.0f`, taking the played fundamental's
+  10 ms-half-window sinusoid amplitude at 0.10 s and 1.00 s on the same
+  `tau_1 = 0.20 s` fixture (fitted `p` 0.735). The fall at MIDI 33 / 57 / 81
+  goes **36.63 / 39.09 / 39.58 dB** to **10.11 / 39.09 / 44.24 dB** at Orbit 0,
+  **35.37 / 37.85 / 38.34 dB** to **10.11 / 37.85 / 41.24 dB** at Orbit 0.15,
+  and **28.28 / 30.80 / 31.28 dB** to **10.11 / 30.80 / 23.24 dB** at Orbit 1 —
+  a spread across five octaves of **2.95 / 2.96 / 3.01 dB** before and
+  **34.1 / 31.1 / 20.7 dB** after. (These differ from the 38.27 / 38.43 / 38.40
+  recorded above because the estimator differs, not the engine.) At Orbit 1 the
+  ordering is deliberately not monotonic: a high note reaches its loop region
+  sooner and then sustains inside it, so there key-tracking changes *when* a
+  note stops decaying rather than how far it falls. The step is audible at the
+  plug-in's default as well as at the struct default, by a different mechanism
+  at each. And
   the trajectory freezes at `t = duration`, so a high note reaches the frozen
   final frame `r^p` times sooner and then holds it indefinitely; the step should
   say what happens there. Closes gap 8; depends on steps 3 and 4. *Verified by*:
@@ -1492,8 +1542,10 @@ planned*.
   `t = duration` — 0.565 s of real time at MIDI 81 — and the frozen tail flattens
   the fit. T20 stays inside the un-frozen span. It asserts `T20(81)/T20(57)` lies
   in [0.28, 0.45] against a predicted `4^-0.75 = 0.354` (a scratch build measures
-  0.359; today 0.978) and `T20(33)/T20(57)` in [2.2, 3.6] against a predicted
-  2.83 (scratch build 3.076; today 1.054). A second fixture with
+  0.359; shipped **0.357**; today 0.978, **0.974** on this fixture) and
+  `T20(33)/T20(57)` in [2.2, 3.6] against a predicted
+  2.83 (scratch build 3.076; shipped **2.941**; today 1.054, **1.038** on this
+  fixture). A second fixture with
   frequency-independent decay must keep both ratios within [0.90, 1.10], which
   fails on any implementation that key-tracks by a constant rather than by the
   fitted exponent.
@@ -1509,9 +1561,15 @@ planned*.
   MIDI 45, -6.153 dB at 57 and -6.154 dB at 81, ratios 1.000 and 1.004, and a
   retirement
   0.6480 s after note-off at every key, so the assertion bites hard on a
-  missing implementation. It also bites on a reversed one: multiplying the time
+  missing implementation. (Re-measured on the fixture the test builds:
+  **-6.165, -6.154, -6.154 dB**, so `drop(81)/drop(57)` is **1.000** and
+  `drop(45)/drop(57)` is **1.002**, and retirement is **0.6507 s** at every key
+  — step 4's figure, not 0.6480 s.) It also bites on a reversed one: multiplying the time
   constant by `r^p` instead of dividing puts the ratios at 0.354 and 1.68, on the
-  wrong side of both windows. The `p = 0` control fixture must hold both release
+  wrong side of both windows. (Built and run: **0.361** and **1.669**, and that
+  build additionally fails all four of step 4's retirement assertions, because a
+  release 2.83 times *longer* at MIDI 81 never retires inside the render.) The
+  `p = 0` control fixture must hold both release
   ratios within [0.95, 1.05].
   *Contract corrected in preflight.* This step said "apply the same `r^p` to the
   release time constant", which for `p > 0` and a note above the root
@@ -1520,15 +1578,84 @@ planned*.
   not catch it, because they exercise the model trajectory of a held note and
   never release one. The mechanism and the missing release assertion are both
   fixed above.
+  *What actually shipped*: the mechanism exactly as specified — `r^p` multiplies
+  the model clock, and the release time constant is divided by it — plus explicit
+  answers to the three costs the step said had to be decided before it landed,
+  and one correction to the step's own claim about the shipping defaults.
+  **One scale carries both halves.** `updateVoiceControl()`
+  (`NeuramarEngine.cpp:950-1004`) computes
+  `voice.clockRateScale = clamp(transpositionRatio^p, 0.25, 4)` once per control
+  frame, from `voice.transpositionRatio` — the ratio actually played, including
+  Mutation's detune — and everything else reads it: the render loop's clock
+  advance (`:1791-1803`), the one-control-period lookahead the evaluation time
+  already used, the per-voice envelope release factor, and
+  `buildReleaseShape()`'s `slowestTau`. At `p = 0` the scale is the literal
+  `1.0f` and every one of those expressions is bit-identical to the previous
+  build, which matters more than it sounds: the shared `learnFixture()` every
+  other test in the suite renders through fits **p = 0.0000000**, so the whole
+  suite outside this step's own two fixtures is untouched by construction.
+  **The block-rate release multiplier became a per-voice one.** Key-tracking
+  Dissolve means two keys held together release at different rates, so the single
+  `releaseMultiplier` that `process()` built once per block is gone and each voice
+  carries its own. The only behavioural consequence beyond the intended one is
+  that a Dissolve automated mid-note now reaches the envelope at the next control
+  frame rather than the next block — at most 4 ms, on a parameter whose smallest
+  setting is 5 ms.
+  **Cost 1, the shared clock, is accepted deliberately, and the reason is
+  measured rather than asserted.** Key-tracking the only time variable also
+  key-tracks the learned onset and the learned pitch contour. Key-tracking the
+  onset needs no apology — a struck string does speak faster at the top of its
+  compass. Vibrato is the real objection, and it turns out to be very largely
+  self-limiting: a player's vibrato lives on a *driven* source, and a driven
+  source has no free decay to fit. The *sustained* fixture carrying a 5 Hz,
+  0.35 semitone vibrato fits **p = 0.00000** exactly and stays on the absolute
+  clock; so does the same vibrato on a `tau_1 = 0.9 s` decaying fixture. The one
+  case that does key-track is the `tau_1 = 0.20 s` decaying fixture with vibrato,
+  which fits **0.79** and records **0.282 semitones** of contour — and that note
+  has fallen 20 dB in about 0.16 s at MIDI 81, which is roughly two cycles of the
+  14 Hz its 5 Hz vibrato becomes. The alternative the step offered, a second un-tracked
+  clock for the pitch trajectory, costs a second decoder evaluation per control
+  frame: **3.26 us** here, **1.3% of one core** at sixteen voices, to move
+  something that is over before it is heard. Declined, with the numbers recorded
+  so the next pass does not re-derive them.
+  **Cost 3, the freeze, needed no mechanism.** A high note does reach the frozen
+  final frame `r^p` times sooner in wall-clock, but it reaches the *same* frame,
+  at the same level relative to its own onset, so the floor a held note settles
+  on is unchanged by this step and only arrives once the note has already died to
+  it. On the decay fixture MIDI 81 reaches the freeze at 0.458 s against its own
+  0.243 s T20. At Orbit 1 the same thing shows as a level: every key settled at
+  -47.9 / -47.7 / -47.7 dB before this change and settles at the same levels
+  after, reached at different times.
+  Measured before and after on the `tau_1 = 0.20 s`, `p = 0.75` fixture at
+  Orbit 0: T20 goes **0.478 / 0.461 / 0.449 s** at MIDI 33 / 57 / 81 to
+  **1.355 / 0.461 / 0.165 s**, so `T20(81)/T20(57)` goes **0.974 -> 0.357**
+  against 0.354 predicted and `T20(33)/T20(57)` **1.038 -> 2.941** against 2.83;
+  the release-only drop over 0.32 to 0.36 s goes
+  **6.165 / 6.154 / 6.154 dB** at MIDI 45 / 57 / 81 to
+  **3.711 / 6.154 / 17.057 dB**, so the ratios go **1.000 -> 2.772** against 2.83
+  and **1.002 -> 0.603** against 0.595. The `p = 0` control holds
+  **0.9999 / 0.9948** held and **1.000 / 1.004** released, before and after
+  alike. Reverting the scale to 1 and rerunning fails exactly four assertions —
+  the two held ratios at 0.974 and 1.038 and the two release ratios at 1.000 and
+  1.002 — while the fitted-exponent assertion and all four control assertions
+  correctly still pass, which is what they are for.
+  Cost: the added arithmetic is one `pow()` and one `exp()` per voice per control
+  frame, about 4000 of each per second at full polyphony. A sixteen-voice held
+  chord at the defaults measures 36.2-39.4% of real time across repeated runs
+  both before and after, so the change is inside the run-to-run noise.
+  `setModel()` is untouched — this step adds no fit of its own. Suite green,
+  3/3 ctest suites; the NeuralEngine suite grows by the two added learns.
 
-- [ ] **6. Vary excitation strength between notes instead of skipping into the
+- [x] **6. Vary excitation strength between notes instead of skipping into the
   attack.** Delete the start-time offset at `NeuramarEngine.cpp:731-734`, whose
   clamp to `[0, duration]` makes it one-sided over the first
   `mutation * |offset| * 0.018 * duration` seconds — at most 2.6 ms at Mutation
   0.12 — so the mechanism buys its variation by deleting transient: first-10 ms
   energy relative to each take's own peak spreads 0.624 dB at Mutation 0.12 and
   1.231 dB at Mutation 0.50. Route the per-note variation through excitation
-  strength instead: add `dv = 0.55 * mutation * mutationOffset` to
+  strength instead: add `dv = 0.75 * mutation * mutationOffset` (shipped
+  coefficient; the draft's 0.55 is the one the arithmetic two sentences below
+  rejects) to
   `voice.velocity` at note-on, before `velocityGain` is computed at `:519` and
   therefore before the Touch terms at `:770-774` read it, clamped to keep velocity
   in [0.05, 1.0]. What differs between two nominally identical hand strikes is the
@@ -1550,9 +1677,15 @@ planned*.
   `mutationOffset` — actually advances, and asserts that the standard deviation of
   the twelve peak levels lies in [0.45, 1.10] dB, which corresponds to a 1.5-3.5 dB
   expected range for a uniform draw and is the robust form of that gate; today the
-  standard deviation is 0.26 dB and the range 0.823 dB. It asserts that every
+  standard deviation is 0.26 dB and the range 0.823 dB. (On the fixture the test
+  builds those reproduce as **0.057 dB** and **0.176 dB**; the shape is the same
+  and the size is smaller, because this fixture's peak is a 4 ms noise burst that
+  a 2.6 ms read-position offset barely moves.) It asserts that every
   take's first-10 ms energy relative to its own peak is within 0.5 dB of the
   Mutation-0 render's, so no take loses transient, against 0.624 dB spread today.
+  (Shipped as **0.30 dB**: on this fixture the read-position offset moves a take
+  **0.515 dB**, so a 0.5 dB gate separates the two mechanisms by 3%, and
+  excitation-strength variation leaves **0.066 dB**.)
   And it asserts that at Mutation 0 twelve takes are bit-identical, which they are
   today and which any replacement mechanism must preserve. A fourth assertion is
   what makes the step's physical claim testable rather than decorative: the same
@@ -1563,12 +1696,18 @@ planned*.
   number. Routing the jitter through `voice.velocity` produces it by
   construction, because `velocityGain` at `:519` and `touchTilt` at `:770-774`
   are both monotone in the same velocity; a per-take output gain, which passes
-  all three of the assertions above, produces exactly zero of it. The 1% floor is
+  all three of the assertions above, produces exactly zero of it. (Measured on a
+  scratch build that jitters `velocityGain` alone and leaves `voice.velocity`
+  nominal: rank correlation **0.455** and a centroid rise of **0.046%**, so it
+  fails both coupling assertions and neither of the other three. Not exactly
+  zero because the Air re-seed still differs between takes.) The 1% floor is
   conservative: scaling gap 7's measured +26.2% centroid movement for a velocity
   span of 0.95 down to the +/-0.066 this jitter draws at Mutation 0.12 predicts
   about 3.6%, or about 5% at a coefficient of 0.75, and the exact figure is
   fixture-dependent and has to be re-measured on the *percussive* fixture the
-  test builds. The `|mean - median|`
+  test builds. (It measures **1.98%** there, so the prediction was optimistic by
+  a factor of about 2.5 and the 1% floor is the right size, not a formality.)
+  The `|mean - median|`
   assertion proposed in the first draft is dropped: it is 0.015 dB today at
   Mutation 0.12 and 0.119 dB at Mutation 0.50, so it passes before the change and
   proves nothing. The peak distribution is not measurably bimodal.
@@ -1579,6 +1718,228 @@ planned*.
   0.0 dB there. The step's whole argument is that the variation must travel
   through the excitation path so level and timbre move together, and nothing
   tested that. The rank-correlation assertion does.
+  *What actually shipped*: the mechanism is exactly the one written above and
+  the two edits are small. `noteOn()` at
+  `NeuramarEngine.cpp:805-809` sets `voice.velocity = clamp(velocity + 0.75 *
+  mutation * mutationOffset, 0.05, 1.0)` and computes `velocityGain` from the
+  jittered value, so everything downstream — `velocityGain`, `touchTilt` and
+  `touchAirGain` in `updateVoiceControl()` — reads one velocity. The
+  read-position term is gone from `effectiveTime` at `:1078-1087`, which is now
+  `clamp(oneShotTime + orbit * (orbitTime - oneShotTime), 0, duration)`.
+  Nothing else changed; no new state, no new per-sample or per-frame work.
+  Four things to record.
+  **1. The coefficient is 0.75, not 0.55, and the gate is *also* stated as a
+  standard deviation.** The step offered the two as alternatives. Taking only
+  the second would have shipped a mechanism whose own arithmetic lands under the
+  1.5 dB acoustic floor, so both were taken: at 0.75 the draw is `+/-0.09` at
+  Mutation 0.12 and the twelve takes measure a standard deviation of
+  **0.613 dB** and a range of **1.79 dB**, against 0.057 dB and 0.176 dB before.
+  **2. The transient bound tightened from 0.5 dB to 0.30 dB**, for the reason
+  recorded inline: 0.5 dB is only 3% away from what the mechanism this replaces
+  measures on the fixture the test builds, and the shipped engine measures
+  0.066 dB, so the tighter bound has more than fourfold headroom on the side
+  that has to pass and 1.7-fold on the side that has to fail.
+  **3. Reverting both edits and rerunning fails three of the four assertions**:
+  the peak standard deviation at **0.057 dB** against a floor of 0.45, the
+  transient departure at **0.515 dB** against 0.30, and the rank correlation at
+  **0.783** against 0.9. The determinism assertion correctly still passes on
+  the reverted engine, which is what it is for. The centroid-rise assertion also
+  passes on it, at 1.559%: the read-position offset does move timbre, it just
+  does not move it *with* level. That assertion's job is to fail the per-take
+  output gain, and it does, at 0.046%.
+  **4. Mutation now moves level at the shipping default, which it barely did
+  before.** At the plug-in's own Mutation of 0.12 the figures are the ones in
+  note 1; at 0.10, the `EngineParameters` struct default a host-free caller
+  gets, twelve takes measure a peak standard deviation of **0.507 dB** over a
+  range of **1.484 dB** against **0.049 dB** over **0.158 dB** before, and the
+  transient spread over the same twelve falls **0.863 dB to 0.130 dB**. That is
+  the point of the step, and it is worth stating plainly because it is the one
+  change in this pass a listener notices without playing a second note: a
+  repeated note is no longer the same note.
+  Suite green, 3/3 ctest suites in 53.8 s; the NeuralEngine suite grows 30.2 s
+  to 34.7 s, which is the added learn.
+
+### What this closed, and what it did not
+
+Six steps planned, six landed, each with a revert proof built and run rather
+than argued. Measured deltas, all from the step notes above and all on the
+fixture the corresponding test builds:
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| Isolated Air layer level spread, MIDI 12-108 at Body Lock 1 | 23.36 dB | **0.36 dB** |
+| Isolated Bone layer level spread, same | 23.26 dB | **0.000 dB** |
+| Air-to-Core balance, MIDI 12-72 at shipping defaults | 7.82 dB | **1.51 dB** |
+| Held note's own fundamental when a second key is struck | 5.75 dB | **0.0002 dB** |
+| Same three notes in six note orders | -6.14 dB | **-146.88 dB** |
+| Channel difference at Spread 0, Mutation 0.12 | 1.7e-3 | **exactly 0** |
+| Orbit sustain level spread, t in [2, 6] s, *decay* fixture | 2.49 dB | **0.02 dB** |
+| Largest frame-to-frame rise in that sustain | 0.51 dB | **0.02 dB** |
+| Centroid autocorrelation at `loopLength` / `2*loopLength` | 0.88 / 0.86 | **0.32 / 0.01** |
+| Orbit sustain level spread, *percussive* fixture | 4.68 dB | **0.03 dB** |
+| Partial 8's release excess over partial 1, 40 ms | 0.0005 dB | **22.89 dB** |
+| Released tail's centroid against the held note's, 150 ms | -0.17% | **46.93%** |
+| `T20(81)/T20(57)`, `p = 0.75` fixture (predicts 0.354) | 0.974 | **0.357** |
+| `T20(33)/T20(57)` (predicts 2.83) | 1.038 | **2.941** |
+| Release `drop(81)/drop(57)` (predicts 2.83) | 1.000 | **2.772** |
+| Release `drop(45)/drop(57)` (predicts 0.595) | 1.002 | **0.603** |
+| Twelve identical notes, peak standard deviation, Mutation 0.12 | 0.057 dB | **0.613 dB** |
+| Transient departure across those twelve takes | 0.515 dB | **0.066 dB** |
+| Peak-to-centroid rank correlation across them | 0.783 | **1.000** |
+| `setModel()` per model swap | 133.5 us | 421.4 us |
+| NeuralEngine suite wall time | 27.0 s | 34.3 s |
+
+Gaps 1, 2, 3, 4, 6 and 8 are closed. Gaps 5, 7, 9, 10, 11, 12 and 13 are open.
+Gaps 5, 9, 11, 12 and 13 each have an entry under *Considered and not planned*
+saying why. Gap 10 has none and is simply not addressed: below about MIDI 30 the
+instrument still gets brighter as it is played lower, because the Register tilt
+is a power law in harmonic *index* and a low note has four times as many
+indices to climb. Gap 7 has none either, and the reason is that re-measurement
+made it much less severe than it was first written — at the shipping Touch,
+velocity 0.05 to 1.00 moves the spectral centroid +26.2% on the *sustained*
+fixture, not the +5.5% first recorded — so a later pass should not plan against
+the old number.
+
+**Where reality differed from the plan.** Every step landed its mechanism, and
+every step needed its contract corrected against a measurement.
+
+- The **Body Lock 1 gate in step 1** could not be the Air-to-Core ratio the step
+  wrote. On the fixture the test builds the Core is not flat at Body Lock 1: it
+  spreads 2.98 dB across MIDI 12-108 because `registerGain` pins at its 4.0
+  ceiling on MIDI 96 and 108, which is gap 9 and untouched here. The gate is on
+  the isolated Air level instead, which is the quantity `registerGain` actually
+  moves. Step 1's Core guard likewise became an absolute bound rather than a
+  before-and-after comparison, because a test cannot see the pre-change build.
+- **Step 1's 9.0 dB shipping-defaults bound was struck outright, and the
+  direction of the claim behind it was wrong.** Over the full keyboard this
+  change makes the Air-to-Core spread *worse*, 8.89 dB to 11.41 dB, because two
+  errors were partially cancelling: above about MIDI 72 the top of the Air band
+  set crosses the filterbank's 18 kHz edge fade and is legitimately attenuated,
+  and `registerGain` climbing to its ceiling at those same notes was masking
+  that. Pulling every centre back into range with Formant -24 st gives 0.354 dB
+  over the same range, so the residual is entirely the edge taper. The gate is
+  restated over MIDI 12-72.
+- **Step 2 needed no engine work.** It was already implemented and ticked when
+  the step was opened; the pass audited every clause of its contract against the
+  source, reproduced gap 6's baseline, and ran the revert proof rather than
+  trusting the recorded numbers. The revert is a reconstruction from the step's
+  own description of the deleted code, not a byte-exact historical revert.
+- **Step 3's autocorrelation gate had to be stated on the magnitude.** At lag
+  `loopLength` the shipping engine measures -0.881, because `loopLength` is half
+  the old ping-pong period and therefore the trough; written signed, the gate
+  would have passed the very engine it exists to fail. Its centroid also had to
+  be magnitude-weighted rather than power-weighted, which is the file's existing
+  convention: squaring hands almost the whole weight to partial 1 and leaves the
+  "still moving" assertion 0.5% from its bound for no reason.
+- **Step 4's exponent fit needed a warped scan the step did not name.** A
+  uniform 64-point scan recovers `p = 0.703` at a residual of 0.056 on the
+  `tau_1 = 0.20 s` fixture step 5 uses, which would have left step 5's
+  `0.75 +/- 0.10` assertion 0.047 from its bound; placing the points at
+  `(point/63)^1.24` of the duration recovers 0.735 at 0.004. Its memory estimate
+  was also wrong arithmetic — 36 KB across sixteen voices for two arrays, not
+  73 KB for one — and its retirement assertion measures the whole isolated
+  layer rather than the slowest single band, which moves the without-clamp
+  numbers from 30.9 / 5.8 dB to 42.5 / 22.7 dB for Air and 59.4 / 29.0 dB for
+  Bone against a 60 dB bound. That last case clears by 0.6 dB, which is the
+  thinnest margin any assertion in this pass carries.
+- **Step 5's largest claim was false and is struck**, twice over. The step and
+  gap 8 both scoped the whole change to Orbit-off playing on the ground that
+  "at the shipping defaults this step changes no decay at all". It does. The
+  correction itself then needed correcting: 0.15 is the `EngineParameters`
+  struct default, not the plug-in's, whose Orbit is a bool defaulting to on and
+  mapped to 1.0. Re-measured on the shipped engine against a scratch build with
+  `clockRateScale` forced to 1, the fall from 0.10 s to 1.00 s across
+  MIDI 33 / 57 / 81 spreads 2.95 / 2.96 / 3.01 dB before this pass and
+  34.1 / 31.1 / 20.7 dB after, at Orbit 0 / 0.15 / 1 respectively. The step is
+  audible at both defaults, by a different mechanism at each: below Orbit 1 it
+  changes how fast a note decays, and at Orbit 1 it changes when a note reaches
+  its sustain loop.
+- **Step 5's release direction was inverted in the step text** and caught in
+  preflight: `r^p` is a clock rate, so it multiplies the clock and *divides* the
+  time constant. The built reversed implementation measures 0.361 and 1.669
+  where the correct one measures 2.772 and 0.603, and additionally fails two of
+  step 4's retirement assertions.
+- **Step 6 shipped a coefficient of 0.75, not the draft's 0.55**, and stated its
+  gate as a standard deviation as well. The step offered those as alternatives;
+  taking only the second would have shipped a mechanism whose own arithmetic
+  lands under the 1.5 dB floor its acceptance test names. Its transient bound
+  also tightened from 0.5 dB to 0.30 dB, because 0.5 dB separates the two
+  mechanisms by 3% on the fixture the test builds.
+- Two steps were struck before the pass began, on re-measurement, and are kept
+  with their measurements under *Considered and not planned*: band-limiting the
+  register reference, and giving each Bone mode its own fitted decay.
+
+**What got worse, or cost something.**
+
+- `setModel()` goes from 133.5 us to 421.4 us per model swap, all of it the 32
+  decoder evaluations step 3's loop-slope fit adds and the 64 step 4's exponent
+  fit adds. It runs on the audio thread, but only on a swap, which already fades
+  every sounding voice out; the render path for held notes is unchanged and the
+  benchmark's six scenarios move inside run-to-run noise. The scan point counts
+  are the only knob if a later pass wants that back.
+- The Air-to-Core spread over the *full* keyboard at the shipping defaults rose,
+  as above. It is not a regression the step introduced so much as one it stopped
+  masking, but it is worse than before and is not hidden.
+- Two 284-float per-voice arrays, 36 KB across sixteen voices.
+- Two documented behaviours changed rather than improved. A single note is no
+  longer always centred — only the root note is, or any note at Horizon 0 — and
+  a Dissolve automated mid-release now reaches the envelope at the next control
+  frame rather than the next block, at most 4 ms.
+- At a non-zero Mutation the instrument's velocity response carries a per-note
+  jitter of up to +/-0.09 at the shipping setting, so anything measuring the
+  nominal velocity-to-level curve has to set Mutation to zero.
+
+**The honest bounds on what can now be claimed.**
+
+- Half this pass rests on one number. Steps 4 and 5 both key off the exponent
+  `p` fitted from the source's *free* decay, and applying a free-decay exponent
+  to a damper is an analogy rather than a derivation. What the fit defends is
+  the direction and the rough size, taken from the dropped-in sound rather than
+  from a drawn curve, plus an exact-zero answer when the evidence is absent —
+  and it is absent often. A sustained or driven source fits exactly zero, turned
+  away by the six-partial gate. A source carrying a sustained broadband noise
+  bed cannot be fitted at all: its fast partials floor on the noise rather than
+  on their own decay, recovering `p = -0.27` at a residual of 0.51, and the
+  residual gate declines. A breathy or bowed memory therefore gets nothing from
+  steps 4 and 5 and keeps the previous build's behaviour exactly.
+- The 0.36 dB of Air spread that survives step 1 at Body Lock 1 is not a
+  register effect. At Mutation 0 the sixteen Air noise seeds are still drawn
+  from `mixHash(midiNote)`, so every note gets an independent noise realisation
+  and its windowed RMS differs by about that much.
+- The stereo law is a prior, not a measurement. A single recording says nothing
+  about the width or the layout of the body it came from; the pitch mapping and
+  its 24-semitone span are chosen. What is measured is that a held note does not
+  move and that note order no longer changes the image.
+- The Orbit sustain is invented. A source that stopped carries no evidence about
+  what it would have done had it kept going. What Orbit can defend is that its
+  sustain runs forward, does not pump and does not repeat, all three measured.
+- Gap 9 is the visible residual inside this pass's own fixtures rather than a
+  separate topic: `registerGain` pinned at its 4.0 ceiling from MIDI 96 up is
+  what puts 2.98 dB of Core spread into step 1's Body Lock 1 measurement and up
+  to 21.2 dB of level fade across MIDI 12-108 on a formant-rich source. It is
+  the strongest candidate for the next pass.
+- One suite guard is thin and was thin before this pass:
+  `testHighRegisterRenderThroughput` asserts a realtime factor above 8.0 and
+  measures 9.07 to 10.16x on a clean four-core box, so it fails under concurrent
+  load. The fixture it uses fits `p = 0.0000000`, so none of this pass's added
+  arithmetic runs in it.
+- Line references throughout this section are to the file as it stood when each
+  step landed, and drift as later steps add code above them.
+
+This pass carried no documentation step of its own, so the reconciliation was
+done at the end instead. `README.md` now describes the register compensation as
+applying to the Core alone (it stated the inverted claim, that all three layers
+take the same compensation, which step 1 disproved by 23 dB), describes stereo
+placement by pitch rather than the chord-rank glide it promised, and gains
+engine sections and controls-table entries for the frequency-dependent release,
+the key-tracked clock, the forward Orbit sustain, and Mutation as a
+strike-strength control. The priors this pass introduced — the stereo law, the
+size of the strike variation, and the free-decay exponent applied to a damper —
+are named as priors in its limitations section, and the render-side guards
+above are listed alongside the reconstruction measurements the first pass added.
+No number in the README is written that is not either measured in this section
+or guarded by an assertion in the suite. Suite green at the close: 3/3 ctest
+suites in 53.5 s, the NeuralEngine suite at 34.4 s.
 
 ### Considered and not planned
 
