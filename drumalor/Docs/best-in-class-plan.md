@@ -374,14 +374,64 @@ believed without one.
 
 ### What changed in the field
 
+**Backfill note, 2026-08-08.** The first version of this subsection was written
+with a search budget that ran out partway, and it checked only two of the six
+products the plan names. This revision completes the sweep and adds the
+reviewer, forum and literature material that was missing. Everything below is
+still second-hand — see the method note at the end of the subsection, which has
+grown rather than shrunk. **No step changed as a result.** The reasoning for
+that is stated at *What none of this changes*, below, including for the two
+findings that came closest to forcing a change.
+
 The bar in modelled acoustic drums has not moved. There is no MODO DRUM 2 —
 IK's NAMM 2026 announcement covers TONEX, ARC and iLoud with no drum news, and
-the shipping line is still 1.5 plus the Custom Shop tiers.[^ikn-namm2026] There
-is no Superior Drummer 4: Toontrack's release notes show 3.4.3 on 17 February
-2026 and 3.4.4 on 26 March 2026, both maintenance releases, and a March 2026
-forum thread asking when 4 is coming has no answer.[^sd3-notes][^sd4-thread]
-Both of these are absences, reported as absences. The gaps the first pass closed
-are still gaps in the field.
+the shipping line is still 1.5 plus the Custom Shop and SE tiers.[^ikn-namm2026]
+That 1.5 is the February 2022 release, and search surfaced no 1.6 and no
+later engine revision in the four years since; the only structural change is
+packaging, in that the modelling engine now has a free tier, MODO DRUM CS, with
+one kit.[^modo-still15] There is no Superior Drummer 4: Toontrack's release
+notes show 3.4.3 on 17 February 2026 and 3.4.4 on 26 March 2026, both
+maintenance releases, and a March 2026 forum thread asking when 4 is coming has
+no answer.[^sd3-notes][^sd4-thread] Toontrack's 2026 output is library rather
+than engine — Dry EZX in February, Drumopolis SDX in March, Beat Machine EZX in
+April, Drumology EZX in May, all expansions for the existing 3.x
+products.[^sd3-expansions] Both of these are absences, reported as absences. The
+gaps the first pass closed are still gaps in the field.
+
+**The rest of the named field, checked one at a time.** This is the part the
+previous version of this subsection never did.
+
+- **AAS Chromaphone 3.** No version 4 found. AAS's 2026 activity on it is sound
+  packs for the existing engine — Organix, June 2026, for Chromaphone 3 and AAS
+  Player.[^chromaphone-organix] Nothing found contradicts the plan's description
+  of the resonator set, the coupled mode or the CPU complaint, but none of those
+  was independently re-checked this pass either.
+- **Sonic Charge Microtonic.** Still sold, still actively listed in 2026. The
+  latest version search surfaced is 3.3.4; there is no 3.4 and no
+  successor.[^microtonic-dl] This is the most stable competitor in the plan: it
+  has not needed to move.
+- **D16.** The one part of the named field that has genuinely moved, and it
+  moved on the drum-machine side. **PunchBox 2** shipped in June 2026 with a new
+  processing engine, a wavetable engine for the kick generator, an advanced
+  editor with multi-stage envelopes, and per-layer routing to separate DAW
+  outputs; a 2.0.1 maintenance release followed in July 2026.[^d16-punchbox2]
+  Nepheton and Drumazon had already crossed to version 2 before this plan was
+  written — Drumazon 2 on 9 September 2023, Nepheton 2 in December
+  2023[^d16-drumazon2][^d16-nepheton2] — which means the plan's paragraph naming
+  "D16's Nepheton/Drumazon/Punchbox" has been describing the previous generation
+  of all three. That is a documentation error in the first pass rather than a
+  change in the field, and it is corrected here. Reviewer verdicts on Drumazon 2
+  are the strongest in this whole sweep: search-result content has reviewers
+  saying it was "basically indistinguishable from a real 909" in testing. That
+  is the standard the circuit half of Drumalor is measured against.
+- **Physical Audio Modus.** Still shipping, still the research end. Modus,
+  Tetrad and Preparation were updated together on 27 November 2025 to add
+  MTS-ESP support and resizable interfaces; Tetrad's own last version reported
+  is 1.1.5, from 29 September 2025.[^pa-latest] Both changes are host-integration
+  work rather than model work — a tuning standard and a resizable window. Modus
+  is listed at $99 with MPE, external-audio drive into the plate model, and over
+  120 presets.[^pa-modus] Nothing in that suggests the nonlinear collision
+  behaviour the plan cites has been superseded.
 
 The pressure has arrived from below instead. Tiagolr's RipplerX (February 2025)
 is a free, open-source modal resonator plugin with twelve resonator models, up
@@ -391,7 +441,46 @@ total. Bitwig Studio 5.3 (February 2025) bundled 25 drum devices free to
 existing owners, including 808- and 909-derived families built from oscillator
 banks, FM and physical models — which erodes exactly the synthesised
 drum-machine ground Drumalor's relaxation-oscillator banks and circuit output
-stages serve best.[^bitwig53] The defensible half is the acoustic half.
+stages serve best.[^bitwig53] That erosion continued through 2026 on three more
+fronts. Steinberg's Groove Agent 6 (February 2026, listed at €159) added
+layering and replacement for kicks, snares and toms in its Acoustic Agent along
+with 47 new acoustic kit pieces.[^ga6] Okay Synthesizer's Bingo (February 2026,
+$99) is a hybrid drum machine with nineteen synthesis engines and per-step
+parameter locks, and is the plugin KVR's 2026 drum-synthesis thread names most
+often.[^bingo][^kvr-drumsynth2026] And BeatForge is a REX player and drum
+machine whose kit is, on its own description, entirely synthesised — "30+
+circuit-modeled drum synths", a full 808 kit "modelled from the circuit", no
+samples anywhere.[^beatforge][^kvr-drumsynth2026] A sample-free, circuit-modelled
+drum machine is precisely Drumalor's own claim on that half of the market, now
+made by someone else. One further entrant answers the repetition problem from a
+third direction entirely: Fazertone's Neural Drumkit generates its drum sounds
+from a trained model running offline, with velocity variations interpolated
+rather than layered.[^neuraldrum] It is not a competitor on method — trained
+weights are outside this document's claims boundary — but it is a competitor for
+the same sentence in a buyer's head, which is "this one does not repeat itself".
+
+**The competitor the previous pass missed is in the acoustic half, and it is
+free.** CHAIR — the Center for Haptic Audio Interaction Research — ships a
+family of single-instrument physical models with no samples in them. EXC!TE
+SNARE DRUM (July 2021) is free with a Pro tier at $19.99, and models snares of
+different sizes with tip hardness, rimshots and an adjustable snare
+rattle.[^chair-snare] EXC!TE CYMBAL (2023) is free with a Pro tier at €25, built
+on a waveguide resonator, and exposes **Hit Position**, Tip Hardness, Bell
+Intensity, Tuning, Decay and Damping, with the MIDI-triggered values adjustable
+through a probability curve.[^chair-cymbal] Reviewers describe it in search-result
+content as realistic enough to make you double-take that it is a physical model
+and "not in any way sampled".[^chair-cymbal-bpb][^chair-cymbal-cdm]
+
+That matters here more than anything else in this sweep, for three reasons. It
+is the counter-example to the claim that a modelled cymbal cannot be made to
+sound right, which is the claim this pass's withdrawal of the cymbal plate rests
+against. It exposes a strike-position control **on a cymbal**, which is the axis
+the first pass measured as inaudible on membranes and never tested on a plate.
+And it makes per-hit variation an explicit, user-facing probability curve rather
+than a hidden humanisation — the same idea as Drumalor's Humanise, sold as a
+feature. None of it is new since the previous pass; it is old, free, and was
+simply not found. The defensible half is still the acoustic half, but it is
+narrower than the previous version of this subsection said.
 
 Three things in the acoustic half are newly specific.
 
@@ -422,16 +511,29 @@ Three things in the acoustic half are newly specific.
   already emits a real modelled chick on a fast close. Notes 52 and 55 are
   silent.
 
-Two smaller competitive facts. High-resolution velocity is now marketed:
-Sound Magic's Supreme Drums Blue (February 2026) advertises up to 65,536
-velocity layers over MIDI 2.0, and MIDI 1.0's own High Resolution Velocity
+Two smaller competitive facts, both of which this pass can now state more
+precisely. High-resolution velocity is now marketed: Sound Magic's Supreme Drums
+Blue (February 2026) advertises up to 65,536 velocity layers over MIDI 2.0 from
+what it calls a hybrid modelling engine, with a Physics Section covering head
+and shell material, diameter, depth, tension, tuning and resonance, and 93 GB of
+source material reduced to a 670 MB install; under MIDI 1.0 it falls back to 127
+layers on the snare.[^supreme-blue] MIDI 1.0's own High Resolution Velocity
 Prefix (CC 88 ahead of the note-on, supplying the low seven bits) has existed
-since about 2010.[^supreme-blue][^hires-vel] Drumalor divides `data[2] & 0x7f`
-by 127 and discards the rest, which is the one claim a continuous engine should
-be winning outright. And Iconic Instruments' Detroit Drums (June 2026) makes a
-continuous hi-hat pedal and a per-drum Dampening control its headline
-features[^detroit] — the pedal is already Drumalor's, by a better method, but
-damping-as-distinct-from-decay is a control it does not expose.
+since about 2010.[^hires-vel] Drumalor divides `data[2] & 0x7f` by 127 and
+discards the rest, which is the one claim a continuous engine should be winning
+outright. Supreme Drums Blue is worth naming twice, because a 93-GB-to-670-MB
+reduction with a parameterised physics section is the sampled camp advancing
+onto the modelled camp's ground — a *parameterised* instrument, sold on the same
+controls MODO DRUM sells, arrived at from the other direction. Search returned
+product announcements for it and no independent review, so how well it works is
+not established here.
+
+And Iconic Instruments' Detroit Drums (June 2026) makes a continuous hi-hat
+pedal and a per-drum Dampening control its headline features[^detroit] — the
+pedal is already Drumalor's, and by a better method, which the detail now
+confirms: Detroit Drums' pedal sweeps *between samples*, with six levels of
+hi-hat openness underneath it, where Drumalor's is one continuous plate model.
+Damping-as-distinct-from-decay remains a control Drumalor does not expose.
 
 Sustained brush sweeps remain the category's unsolved articulation: practitioner
 threads describe the sweep being truncated by the hit and note that swirls do
@@ -440,6 +542,90 @@ topic.[^brush-sweeps][^brush-toontrack] Nothing shipped in the last year answers
 it. It is also the one articulation a sample library cannot answer in principle
 and a modal engine gets nearly free, and it is out of reach here only because
 the engine has no concept of a held note.
+
+**What 2025–2026 reviewers and forum regulars say separates the best-sounding
+option.** Four positions recur, and they are consistent across the three venues
+the plan tracks.
+
+- **The sampled benchmark has not been displaced, and modelling is still framed
+  as a supplement.** VI-Control's 2026 drum-plugin thread lands on Superior
+  Drummer 3 and BFD3 as the realism benchmark for acoustic work.[^vic-2026]
+  Gearspace's MODO DRUM comparison thread is blunter: as a primary drum
+  instrument MODO is "not in the same league" as Superior Drummer, useful for
+  layering, with its cymbals and snares named as the weakest parts.[^gs-modo-vs]
+  This is the field's standing verdict on modelling as a method, and it is the
+  verdict Drumalor exists to contest.
+- **The most-cited reason a modelled kit sounds wrong is the room, not the
+  drum.** The same Gearspace thread carries the complaint that MODO's "room
+  sounds for the drums are just a reverb, and not having a true room capture
+  just gives it an unrealistic sound"; Sound On Sound's review describes the
+  room as convolution ambience in nine flavours whose impulses cannot be
+  replaced with the user's own, and reviewers add that it blunts
+  transients.[^gs-modo-vs][^modo-room] This is the single strongest
+  corroboration in the sweep of something the first pass already wrote down:
+  "there is no room or overhead path, which is a real difference from every
+  commercial competitor and the largest remaining one." It also sharpens the
+  next pass's brief. A convolution room is what the modelled competitor already
+  ships and is criticised for; a synthesised early-reflection network has to
+  beat that, not match it.
+- **The forums' own explanation for why the modelled acoustic field is nearly
+  empty singles out exactly the two voices this pass leaves unmodelled.** KVR's
+  long-running physically-modelled-drums threads hold that kick and toms are
+  tractable, that snare and cymbals are "really complex", and that modelling a
+  hi-hat is "borderline impossible".[^kvr-pm-hard] Drumalor has a modelled
+  snare with three articulations and a modelled continuous hi-hat plate pair
+  already; it has no cymbal plate. Read against this pass, that is a statement
+  about where the remaining credit is, not about whether the pass is ordered
+  right.
+- **The complaints against the sampled benchmark are cost, weight and
+  workflow — not sound.** The recurring gripes about Superior Drummer 3 in
+  2026 write-ups are the 230 GB install, the SSD it demands, the CPU and RAM
+  load, the price, and a learning curve for simple parts.[^sd3-gripes] None of
+  these is a sound-quality complaint, and all of them are structural advantages
+  of a synthesis engine that ships no assets. That asymmetry — they win on
+  sound, we win on everything else — is stable, and it is the reason the plan's
+  effort belongs on sound.
+
+**Two capabilities that are table stakes among competitors and are not in this
+pass.** Both are recorded rather than acted on, and the reason is given.
+
+- **Positional sensing over MIDI CC 16.** It is supported across the top tier:
+  Addictive Drums has a dedicated CCpos Snare stroke type that blends an open
+  centre hit with a shallow edge hit and defaults to CC 16; Superior Drummer
+  reads CC 16 for snare and ride; MODO DRUM maps snare position to CC 16 and
+  toms to CC 18.[^possense][^modo-cc16] Drumalor discards it. This is the
+  clearest case in the sweep of a capability every competitor has — but it is
+  not an oversight. The first pass built strike position, measured it, and
+  withdrew it: across the whole realistic aim range it moved a level-matched
+  residual by 1.5 dB on the Snare and 0.2 dB or less on the Kick and toms,
+  because `buildHeadBank()` normalises to a constant gain sum and then tilts by
+  `ratio^(-0.8)`, so the modes that dominate are the ones least sensitive to
+  `r`. Wiring CC 16 to a mechanism measured as inaudible would buy a bullet
+  point and no sound. The honest form of this gap is the one the first pass
+  already recorded — it needs the bank's spectral tilt re-voiced, judged by ear
+  — and that is a listening session, not a step.
+- **MIDI 2.0.** The MIDI Association's February 2026 status update reports a
+  Drum Performance Profile targeted for Q2 2026, Windows 11 shipping MIDI
+  Services, and work with Apple, Avid, Bitwig, Steinberg and JUCE on bridging
+  MIDI 2.0 devices into AU/AAX/CLAP/VST.[^midi2-drum] Step 5 already takes the
+  MIDI 1.0 route to the same end, CC 88 high-resolution velocity, which works
+  today on hardware that exists. Whether the Drum Profile actually shipped in
+  Q2 2026 is not established — see the unverified list.
+
+**What none of this changes.** The five steps stand as reviewed, in the order
+reviewed, with no additions, no removals and no reordering. Measured against the
+bar for touching them: no step chases a property the category has abandoned —
+continuous pedals, articulation depth, per-hit variation and velocity resolution
+are all things competitors were still advertising as headline features in 2026;
+no step is misprioritised against what buyers complain about, since the
+complaints are cymbals, playability, room and cost, and this pass spends three
+of its five steps on cymbals and the hat; and the one capability every
+competitor has that this engine lacks — CC 16 positional sensing — already has a
+measurement against it. Two findings came close to forcing a change and did not:
+CHAIR's free modelled cymbal weakens the implicit argument behind withdrawing
+the cymbal plate, and the room complaint against MODO sharpens the next pass's
+brief. Both are arguments about *the pass after this one*. Neither is a reason
+to reopen a step list that has already been measured.
 
 Literature this pass draws on, none of it cited by the first pass:
 
@@ -470,13 +656,79 @@ Literature this pass draws on, none of it cited by the first pass:
   accuracy over 20 participants, which is the strongest published listening-test
   result in this field. Their decay finding is not acted on here, for the reason
   recorded below.
+- V. Zheleznov, S. Bilbao, A. Wright and S. King, *Learning nonlinear dynamics in
+  physical modelling synthesis using neural ordinary differential equations*,
+  DAFx25 (Ancona, September 2025): a modal decomposition keeps the analytic
+  linear solution per mode while a neural network carries the nonlinear part,
+  with the physical parameters still directly accessible after training rather
+  than hidden behind an encoder. Its worked case is high-amplitude string
+  vibration, whose audible consequences are named as pitch glide and a
+  brightness that depends on striking amplitude — which is step 3 and step 2 of
+  this pass, arrived at by fitting instead of by
+  deriving.[^zheleznov][^zheleznov-code] Recorded as the field's current
+  alternative method, not as a proposal: it introduces trained weights, which
+  the claims boundary of this document excludes.
+- R. Diaz, R. Constanzo and M. Sandler, *nlm: real-time non-linear modal
+  synthesis in Max* (arXiv, March 2026; accepted to PdMaxCon25): open-source C++
+  externals doing real-time nonlinear modal synthesis for strings, membranes
+  **and plates**, with loadable custom modal data.[^nlm] Relevant here as
+  evidence that real-time nonlinear modal plates are now shipping as working
+  code rather than only as papers — which is the withdrawn cymbal plate's
+  feasibility question, answered in the affirmative by someone else.
 
-A method note, because it affects how these citations should be treated. This
-box's egress proxy blocked direct fetches of most publisher domains, so the
-quotations behind the claims above come from search-result content rather than
-from pages opened directly. The URLs, DOIs and volume numbers are as reported
-there. Anything that becomes load-bearing in the README should be re-verified
-against the primary source before it is written down as fact.
+**Method note, and what remains unverified.** This is the most important
+paragraph in the subsection and it should not be summarised away. This box's
+egress policy blocks direct fetches of every publisher domain, so **no page
+cited anywhere in this subsection was opened.** Every quotation, date, version
+number, price and figure above comes from search-result content — snippets and
+generated summaries quoting those pages — and is reported as such. Nothing here
+should be described as having been read. The URLs, DOIs and volume numbers are
+as reported by search. Anything that becomes load-bearing in the README, in
+marketing copy, or in a comparison claim must be re-verified against the primary
+source first.
+
+Specifically unverified, stated as absences rather than as soft claims:
+
+- **No price in this subsection is confirmed.** MODO DRUM in particular came
+  back inconsistently — one retailer listing near $200, another entry point near
+  $50, with tiering and permanent discounting making it unclear which is the
+  product the plan compares against. The "about £250" in the plan's opening
+  section was not re-verified and may be stale. The same caution applies to the
+  Chromaphone, Microtonic, Modus, Bingo, Groove Agent 6, Supreme Drums Blue and
+  CHAIR Pro figures: all are single-source, all are second-hand, several were
+  introductory or promotional, and none was seen on a vendor page.
+- **BeatForge has no established release date, version or price.** It surfaced
+  through a forum mention and its own site description. Its "no samples,
+  everything modelled from the circuit" claim is the developer's own marketing,
+  repeated here as a claim and not as a finding. Nobody has measured it.
+- **Whether the MIDI 2.0 Drum Performance Profile actually shipped in Q2 2026 is
+  unknown.** The Q2 2026 target was reported in a February 2026 status update —
+  that is a plan, and this document is being written in August 2026 with no
+  confirmation either way.
+- **There is no published listening test, blind comparison or measurement
+  shootout in this field from 2025 or 2026.** Searching for one specifically
+  returned only editorial buyer's-guide comparisons — which do not control
+  level, do not blind the listener and do not report a statistic — and generic
+  ABX tooling. The strongest listening-test result in the field remains Kirby
+  and Sandler's 2021 AB test at 50 % accuracy over 20 participants, and that
+  figure too is second-hand here. Any claim of the form "Drumalor sounds closer
+  than X" has nothing external to lean on and would have to be established
+  in-house.
+- **Reviewer positions are aggregated, not sampled.** The quoted forum lines
+  come from summaries of long threads. They are consistent across venues, which
+  is why they are reported, but no post was read in context, no date was
+  attached to an individual post, and a minority position inside those threads
+  would not have surfaced. Treat them as the shape of an opinion, not as its
+  distribution.
+- **CHAIR's Exc!te plugins have not been heard.** The "double-take" verdict is a
+  reviewer's, relayed through search. Before the cymbal-plate question is
+  reopened on the strength of it, someone should install the free version and
+  listen — which costs nothing and would replace the whole of this bullet with
+  first-hand evidence.
+- **Not re-checked at all**, for budget rather than for policy: XLN Addictive
+  Drums' and GetGood Drums' 2026 activity, BFD3's status under InMusic, and
+  whether any of the named competitors changed their hi-hat or cymbal modelling
+  in a point release that was not announced.
 
 ### Where the engine actually stands
 
@@ -1079,3 +1331,35 @@ nobody can pass is a contract nobody will keep.
 [^zhao-rossing]: H. Zhao, T. D. Rossing, *Modes of vibration and sound radiation from a snare drum*, JASA 85(S1), 1989. <https://pubs.aip.org/asa/jasa/article/85/S1/S33/730120/>
 [^torin-bilbao]: A. Torin, S. Bilbao, *Numerical experiments with non-linear double membrane drums*, and the related *Nonlinear effects in drum membranes*. <https://www.semanticscholar.org/paper/Numerical-Experiments-with-Non-linear-Double-Drums-Torin-Bilbao/0db492504b1e481808833d6feced95ab7eb25c40>
 [^modo-cc16]: IK Multimedia forum, MODO DRUM positional sensing over MIDI CC (CC 16 snare play position, CC 18 toms play position, mapped on the MAPPING page). <https://cgi.ikmultimedia.com/viewtopic.php?t=25553>
+
+Added by the 2026-08-08 backfill pass. All of these were reached through search
+result content only; none of the pages was opened. See the method note.
+
+[^modo-still15]: IK Multimedia, MODO DRUM 1.5 release announcement (February 2022; three added kits, M1 support), and the MODO DRUM product page describing the Custom Shop and SE tiers. <https://www.ikmultimedia.com/news/?id=ReleaseModoDrum1point5/>
+[^sd3-expansions]: Toontrack 2026 expansion releases for EZdrummer 3 and Superior Drummer 3 — Dry EZX (February 2026), and subsequent SDX/EZX titles reported through the same channel. <https://www.kvraudio.com/news/toontrack-releases-dry-ezx-for-ezdrummer-3-and-superior-drummer-66072>
+[^chromaphone-organix]: KVR Audio news, *Applied Acoustics Systems releases Organix for Chromaphone 3 and AAS Player* (2026) — sound-pack activity on the existing engine, with no version 4 announced. <https://www.kvraudio.com/news/applied-acoustics-systems-releases-organix-for-chromaphone-3-and-aas-player-67223>
+[^microtonic-dl]: Sonic Charge download page; latest Microtonic version reported by search is 3.3.4. <https://soniccharge.com/download>
+[^d16-punchbox2]: KVR Audio news, *D16 Group releases PunchBox 2* (June 2026), and Synth Anatomy's report of the same release (new engine, wavetable kick generator, multi-stage envelopes, per-layer outputs; 2.0.1 follow-up in July 2026). <https://www.kvraudio.com/news/d16-group-releases-punchbox-2-bass-drum-synthesizer-plugin-67345> and <https://synthanatomy.com/2026/06/d16-group-punchbox-2-kick-drum-synth-plugin-gets-a-powerful-makeover.html>
+[^d16-drumazon2]: MusicTech, *D16's Drumazon 2 is a revamped 909 remake 17 years in the making* (released 9 September 2023). <https://musictech.com/news/gear/d16-group-drumazon-2/>
+[^d16-nepheton2]: KVR Audio news, *D16 Group releases Nepheton 2* (December 2023). <https://www.kvraudio.com/news/d16-group-releases-nepheton-2-with-intro-offer-59473>
+[^pa-latest]: Physical Audio, *Latest* — Modus, Tetrad and Preparation updated 27 November 2025 with MTS-ESP support and resizable UIs. <https://physicalaudio.co.uk/latest/>
+[^pa-modus]: KVR Audio product entry for Physical Audio Modus (MPE, external audio into Plates mode, 120+ presets; $99 list as reported by search). <https://www.kvraudio.com/product/modus-by-physical-audio>
+[^ga6]: Sound On Sound, *Steinberg unveil Groove Agent 6* (February 2026) — Acoustic Agent layering and replacement, 47 new acoustic kit pieces. <https://www.soundonsound.com/news/steinberg-unveil-groove-agent-6>
+[^bingo]: Synth Anatomy, *Okay Synthesizer Bingo: a fun drum machine plugin with a hybrid engine* (February 2026). <https://synthanatomy.com/2026/02/okay-synthesizer-bingo-a-fun-drum-machine-plugin-with-a-hybrid-engine.html>
+[^beatforge]: BeatForge product site — REX player, drum machine and step sequencer with circuit-modelled 808/909 kits and no samples. Developer's own description; no independent report found. <https://beatforge.nl/>
+[^kvr-drumsynth2026]: KVR Audio, *Drum synthesis plugins — where are we at in 2026?* <https://www.kvraudio.com/forum/viewtopic.php?t=628146>
+[^neuraldrum]: Fazertone, Neural Drumkit — offline generative drum-sound model with interpolated velocity variations, free Lite tier. <https://www.fazertone.com/plugin/neuraldrumkit>
+[^chair-snare]: CHAIR (Center for Haptic Audio Interaction Research), EXC!TE SNARE DRUM — free physically modelled snare, Pro tier at $19.99. <https://www.chair.audio/product/excite_snare_drum/>
+[^chair-cymbal]: CHAIR, EXC!TE CYMBAL — free physically modelled cymbal on a waveguide resonator, with Hit Position, Tip Hardness, Bell Intensity, Tuning, Decay and Damping, and a probability curve on MIDI-triggered values; Pro tier at €25. <https://www.chair.audio/product/excte-cymbal/>
+[^chair-cymbal-bpb]: Bedroom Producers Blog, *Exc!te Cymbal is a free ultra-realistic physically-modeled cymbal plugin*. <https://bedroomproducersblog.com/2023/05/12/chair-audio-excite-cymbal/>
+[^chair-cymbal-cdm]: CDM, *Get an ultra-realistic modeled cymbal plug-in for free: CHAIR EXC!TE CYMBAL*. <https://cdm.link/free-modeled-cymbal-plugin/>
+[^vic-2026]: VI-Control, *Drum plugins in 2026*. <https://vi-control.net/community/threads/drum-plugins-in-2026.170649/>
+[^gs-modo-vs]: Gearspace, *How good is IK Multimedia's MODO DRUM compared to other drum VSTs?* — "not in the same league" as Superior Drummer as a primary instrument, cymbals and snares named as weakest, and the room "just a reverb". <https://gearspace.com/board/music-computers/1387018-how-good-ik-multimedias-modo-drum-compared-other-drum-vsts.html>
+[^modo-room]: Sound On Sound, *IK Multimedia MODO Drum*, page 2 — the room as convolution ambience in nine flavours, with impulses that cannot be replaced by the user's own. <https://www.soundonsound.com/reviews/ik-multimedia-modo-drum?page=2>
+[^kvr-pm-hard]: KVR Audio, *Physically modelled drum plugins?* — kick and toms tractable, snare and cymbals "really complex", hi-hat "borderline impossible". <https://www.kvraudio.com/forum/viewtopic.php?t=581899>
+[^sd3-gripes]: 2026 write-ups of Superior Drummer 3 recording the standing complaints: 230 GB install, SSD and CPU/RAM demands, price, and learning curve. <https://blog.dubspot.com/plugins/superior-drummer-3>
+[^possense]: XLN Audio support, MIDI mapping — the CCpos Snare stroke type blending an open centre hit with a shallow edge hit, defaulting to CC 16. <https://support.xlnaudio.com/hc/en-us/articles/16593408783389-MIDI-Mapping-Window>
+[^midi2-drum]: MIDI.org, *The state of MIDI 2.0: high-resolution performance and the rise of profiles* (update, February 2026) — Drum Performance Profile targeted for Q2 2026. Target date only; shipment not confirmed. <https://midi.org/the-state-of-midi-2-0-high-resolution-performance-and-the-rise-of-profiles-update-feb-2026>
+[^zheleznov]: V. Zheleznov, S. Bilbao, A. Wright, S. King, *Learning Nonlinear Dynamics in Physical Modelling Synthesis using Neural Ordinary Differential Equations*, DAFx25, Ancona, September 2025. <https://arxiv.org/abs/2505.10511>
+[^zheleznov-code]: Accompanying code repository for the DAFx25 paper. <https://github.com/victorzheleznov/dafx25>
+[^nlm]: R. Diaz, R. Constanzo, M. Sandler, *nlm: Real-Time Non-linear Modal Synthesis in Max*, arXiv, March 2026; accepted to PdMaxCon25. Source at <https://github.com/rodrigodzf/nlm>. <https://arxiv.org/abs/2603.10240>

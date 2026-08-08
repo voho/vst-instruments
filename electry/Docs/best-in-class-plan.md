@@ -331,57 +331,180 @@ in the list below as a measured fact that is deliberately unscheduled.
 ### What changed in the field
 
 **Method caveat, which bounds everything in this subsection.** Every `WebFetch`
-from this machine was refused by the egress proxy, for every domain tried. All
-of the evidence below comes from web-search result summaries, which quote page
-content but are second-hand. No paper or product page was read in full. Numbers
-taken from these summaries are flagged where they would need verifying before
-being implemented against.
+from this machine is refused by the egress proxy, for every publisher domain
+tried. That is an organisation policy denial rather than a transient failure, and
+it was not worked around. All of the evidence below comes from web-search result
+summaries, which quote page content but are second-hand. **No product page,
+manual, changelog, forum thread, review or paper was opened and read in this
+session, and no audio from any competing product was heard.** Every version
+number, date and price below is a *reported* figure, attributed to the search
+result that carried it, not a verified one; where two summaries disagreed, both
+readings are given rather than one being picked. Nothing here is safe to
+implement against without opening the source first. This subsection is a survey
+of what the field is *saying*, and it is used below only to confirm or refute
+priorities - never as a measurement.
 
-**The category has not moved, and that is the most useful finding.** There is no
-IK Multimedia MODO GUITAR: searching turns up MODO BASS and MODO DRUMS plus a
-2017 thread of users asking for a guitar version
-([VI-Control](https://vi-control.net/community/threads/modo-guitar.63047/)).
-There is no Shreddage 4; the line is still Jupiter, Hydra, Serpent, Rogue and
-Stratus ([Impact Soundworks](https://impactsoundworks.com/products/category/guitar-bass/)).
-Orange Tree's flagship is still described as the fifth generation of the
-Evolution engine, the same generation the previous pass surveyed
-([Orange Tree](https://www.orangetreesamples.com/products/evolution-electric-guitar-stratosphere)).
-The physically-modelled wing of this category remains one product. Electry is
-not racing a moving target, which argues for spending this pass on the
-distance between a model and a recording rather than on articulation counts,
-where the previous pass reached parity.
+**The category moved once since the previous pass, and only once.** Prominy
+released **V-METAL 2**, the successor to its 2011 metal instrument. Its own news
+feed carries a pre-order announcement and an availability announcement
+([Prominy](https://prominy.com/2025/12/05/2978/),
+[Prominy](https://prominy.com/2025/12/22/3008/)), whose URL dates put release at
+the end of December 2025; one trade write-up summarised it instead as a January
+2026 launch, so the exact date is not settled here. Reported specification: an
+ESP Alexi Blacky with EMG humbuckers, "over 22 GB / 47,000+ samples", Kontakt
+Player rather than full Kontakt, an MSRP of $299 with a $149.50 upgrade, built-in
+amp and effect simulation with "250+ presets", chord-recognising key switching,
+polyphonic controls named Strum/Arpeggio Key, String Skip and Forced
+Hammer-On/Pull-Off, and new articulations listed as moving harmonics, rake and
+tempo-synced tremolo
+([KVR news](https://www.kvraudio.com/news/prominy-announces-v-metal-2---virtual-electric-guitar-for-kontakt-player-65612),
+[VI-Control](https://vi-control.net/community/threads/prominy-v-metal-2-now-available.168652/)).
+Nothing in that list is a mechanism Electry lacks the physics for; it is a larger
+sample set and a deeper performance script, which is the direction the sampled
+wing has been moving for fifteen years.
 
-**The published criticism of that one product is uniformity, stated more
-sharply than "too clean".** Owner and forum discussion of Strum GS-2 says
-"there's a clear uniformity to GS-2's sound that sets it apart from samples and
-the real thing, and attempts to counter this in the editing interface couldn't
-fully dispel the uniformity", and "users have noted that the GS-2 sounds very
-synthetic"
+**And the first published reaction to it is a usability complaint, not a tonal
+one.** A user review dated May 2026 on KVR's V-METAL 2 page reports that the
+original V-METAL remained the most realistic-sounding metal guitar library to
+that reviewer, that V-METAL 2 is "over-engineered to a dizzying degree", and that
+after two weeks the reviewer went back to version 1
+([KVR](https://www.kvraudio.com/product/v-metal-2-by-prominy/reviews)). One
+person's post, summarised, and weighted accordingly - but it is the only
+published response to the field's one new product that this session found, and
+it says the marginal return on more articulations and more switching has gone
+negative for at least one buyer.
+
+**Everything else in the surveyed set is where the previous pass left it.**
+Prominy's *SC Electric Guitar 2* is still current and its most recent public
+update appears to be ver. 2.0.5c, described as fixing Kontakt 8 multi handling
+and a bridge-mute noise bug on inactive pickups
+([Prominy](https://prominy.com/2024/09/27/1807/)); the original *SC Electric
+Guitar* is now labelled "Discontinued / End of support"
+([Prominy](https://prominy.com/products/sc-electric-guitar/)). There is still no
+Shreddage 4: Impact Soundworks' visible 2026 activity is maintenance posts in
+January and February and TACT default-tuning tweaks
+([Impact Soundworks](https://impactsoundworks.com/category/news/updates/)), plus
+a free Kontakt Player edition of Shreddage 3 Stratus
+([Impact Soundworks](https://impactsoundworks.com/product/shreddage-3-stratus-free-kp/)).
+Orange Tree ships engine updates rather than a new engine generation - 1.2.0
+adding custom tunings, pick-position variance and separate slide ranges, 1.3.0
+adding Polybend and reverbs
+([Orange Tree](https://www.orangetreesamples.com/blog/evolution-engine-120-update-released),
+[Orange Tree](https://www.orangetreesamples.com/blog/evolution-engine-130-update)).
+Three-Body's *Heavier7Strings* is reported still at v1.7.0, the March 2024 VST3
+and Universal Binary release, with a vendor-forum thread of users asking about a
+2.0 that has not been announced
+([KVR news](https://www.kvraudio.com/news/three-body-technology-updates-heavier7strings-to-v1-7-0---vst3-support-and-mac-universal-binary-60385),
+[Three-Body forum](https://forums.threebodytech.com/viewtopic.php?t=1747)).
+MusicLab's line is at 6 - *RealStrat 6* reported released 2022-08-01, pairing the
+original model with an "Elite" set sampled from each of three Stratocaster
+pickups individually, and *RealGuitar 6* built the same way
+([MusicLab](https://www.musiclab.com/products/realstrat/info.html),
+[Sound On Sound](https://www.soundonsound.com/reviews/musiclab-real-guitar-series-6));
+no 2025-26 version change for *RealLPC* surfaced. AAS has shipped sound packs for
+*Strum GS-2*, not a new version - the last program update found is v2.2.2 for
+VST3 - and its 2025 development went to *Multiphonics CV-3* instead
+([KVR news](https://www.kvraudio.com/news/aas-updates-strum-gs-2-to-v2-2-2---vst3-support-plus-fixes-and-enhancements-41971),
+[AAS](https://www.applied-acoustics.com/press/aas-multiphonics-cv-3-announcement-namm-2025-press-release/)).
+There is still no MODO GUITAR; IK's visible 2026 releases are ARC ON EAR firmware
+and the ReSing vocal platform.
+
+**The previous pass's "the modelled wing is one product" was too strong, and the
+correction does not change the conclusion.** Xhun Audio's *IronAxe* is a
+long-standing physically modelled electric guitar - buildable Stratocaster or
+Telecaster, pickup type/number/position, plectrum hardness, pluck point anywhere
+along the string, plus modelled stompboxes and cabinets - and KVR carries a
+thread of buyers weighing it directly against Strum GS-2
+([KVR](https://www.kvraudio.com/product/ironaxe-by-xhun-audio),
+[KVR](https://www.kvraudio.com/forum/viewtopic.php?t=533727)). And there is one
+genuinely new modelled entrant: **Guitar AG**, posted to KVR's instruments forum
+in May 2026 as a free, open-source VST3 physically modelled electric guitar whose
+stated goals are a clean DI tone for use with external amp sims, MPE support,
+"guitar-like six-string allocation", interpretation of hammer-ons, pull-offs and
+tapping, and a simple amp-feedback model
+([KVR](https://www.kvraudio.com/forum/viewtopic.php?p=9238226)). That feature
+list is close enough to Electry's architecture to be worth watching, and it is
+known here *only* from a forum post summary: no version, no licence, no review,
+no audio. What has not changed is the commercially serious part of the picture -
+Strum GS-2 is still the only mainstream sample-free guitar, and it has not moved.
+
+**The platform most of the field runs on is in insolvency.** Native Instruments
+entered preliminary insolvency in January 2026 and formal proceedings in March,
+with a court-appointed administrator and an active M&A process; reporting says
+products remain on sale and development has not stopped
+([MusicRadar](https://www.musicradar.com/music-tech/native-instruments-has-been-placed-in-preliminary-insolvency),
+[Synth Anatomy](https://synthanatomy.com/2026/03/native-instruments-gmbh-is-preliminary-insolvency-according-to-official-docs.html)).
+Prominy, Impact Soundworks, Orange Tree and Ample all ship as Kontakt libraries.
+This is recorded because it is a real structural fact about the competition, not
+because Electry should act on it: a standalone plugin with no runtime dependency
+is simply not exposed to it.
+
+**What 2025-26 reviewers and forum owners say separates the best from the rest.**
+Three things recur, and all three are about the player rather than the tone.
+First, *string and position choice* - the objection raised against modelled
+instruments in a 2026 KVR Guitars thread is that nothing yet "convincingly models
+the many different ways a real player can produce the same note on different
+strings and positions"
+([KVR](https://www.kvraudio.com/forum/viewtopic.php?p=9220986)), and the property
+Orange Tree owners and reviewers single out is the engine choosing strings "based
+on what is logical for an actual guitarist to play", with a settable neck
+position
+([KVR](https://www.kvraudio.com/product/evolution-strawberry-by-orange-tree-samples),
+[Pro Audio Garden](https://proaudiogarden.com/review-evolution-electric-guitar-strawberry/)).
+This is the gap the previous pass closed, and it is still the field's headline
+discriminator. Second, *noise*: pick noise, fret noise and release noise appear
+as named, separately adjustable controls across the sampled field
+([MusicLab RealEight listing](https://www.jrrshop.com/musiclab-realeight.html)),
+and their absence is what reviewers reach for when they explain why an instrument
+fails - coverage of UJAM's *Carbon*, which Sound On Sound rated 4/5, carries
+critics noting that the guitars "lack fret noises, making them always sound too
+clean"
+([Sound On Sound](https://www.soundonsound.com/reviews/ujam-virtual-guitarist-carbon),
+[VI-Control](https://vi-control.net/community/threads/ujam-virtual-guitar-review-carbon-silk-amber-sparkle-iron.86980/)).
+Third, *decay and repetition*: the sharpest complaint aimed at a well-liked
+sampled library on KVR is that "the strumming sounds fake and unrealistic (mainly
+because of unrealistic decay of strummed notes)"
+([KVR](https://www.kvraudio.com/forum/viewtopic.php?t=398959)), and 2026 round-up
+coverage treats round-robin as having "largely solved" the machine-gun problem -
+i.e. per-stroke variation is now assumed, not advertised.
+
+**The criticism of the modelled wing is unchanged and has hardened into buying
+advice.** Alongside the uniformity quotes the previous pass recorded - "there's a
+clear uniformity to GS-2's sound that sets it apart from samples and the real
+thing", and attempts to counter it in the editing interface "couldn't fully
+dispel" it - forum consensus now routes around the instrument by use case:
+Strum GS "tends to sound very precise and perfect, so if you prefer a more
+realistic guitar sound, stick with the sampled guitar instruments", rhythm
+"is what GS-2 is really made for", and users are told to "use a sampled guitar
+for lead stuff"
 ([KVR](https://www.kvraudio.com/forum/viewtopic.php?t=549064),
-[Sweetwater](https://www.sweetwater.com/store/detail/StrumGS2--applied-acoustics-systems-strum-gs-2-virtual-guitar/reviews)).
-The sampled field spends its entire round-robin budget on the countermeasure,
-and states the rationale plainly: "A real guitarist never hits two chords with
-the exact same force, so adding this subtle randomization simulates the human
-element and prevents the 'machine-gun effect' where every strum sounds
-identical"
+[MusicRadar](https://www.musicradar.com/reviews/tech/applied-acoustics-systems-strum-gs-2-626643)).
+That is a worse verdict than "too clean". It says the modelled instrument is not
+merely less convincing but has been assigned a narrower job, and that exposed
+single lines - where every stroke is heard on its own - are where it loses.
+Electry's README advertises the property that produces exactly this: "Identical
+MIDI always renders identical audio." Determinism and uniformity are separable,
+and this pass separates them: every new variation is drawn from the existing
+per-note counter, so renders stay bit-reproducible while consecutive strokes stop
+being clones. The sampled field states the rationale for the countermeasure
+plainly - "A real guitarist never hits two chords with the exact same force, so
+adding this subtle randomization simulates the human element and prevents the
+'machine-gun effect' where every strum sounds identical"
 ([MusicRadar](https://www.musicradar.com/tuition/tech/how-to-avoid-the-machine-gun-effect-using-round-robin-sampling-632302)).
-Electry's README advertises the opposite as a property: "Identical MIDI always
-renders identical audio." Determinism and uniformity are separable, and this
-pass separates them: every new variation is drawn from the existing per-note
-counter, so renders stay bit-reproducible while consecutive strokes stop being
-clones.
 
-**Competitors ship a rig where Electry ships a knob.** Ample's guitars carry
-"7 classic amp heads ... paired with 8 guitar cabinets, each captured with 8
-microphones" ([Ample Sound](https://www.amplesound.net/en/pro-pd.asp?id=1));
-Evolution Stratosphere has "selectable guitar cab sizes with several microphone
-options and mic placement choices"
+**Competitors ship a rig where Electry ships a knob.** Unchanged, and now with
+one more data point: Ample's guitars carry "7 classic amp heads ... paired with 8
+guitar cabinets, each captured with 8 microphones"
+([Ample Sound](https://www.amplesound.net/en/pro-pd.asp?id=1)); Evolution
+Stratosphere has "selectable guitar cab sizes with several microphone options and
+mic placement choices"
 ([Orange Tree](https://www.orangetreesamples.com/products/evolution-electric-guitar-stratosphere));
 Heavier7Strings' rack has 31 modules
-([Three-Body Technology](https://www.threebodytech.com/en/products/heavier7strings)).
-Electry has one 0-100% amplifier control, a fixed six-section cabinet filter,
-and no tone stack at all. This is a real gap and it is deliberately not
-addressed here; see "considered and not planned".
+([Three-Body Technology](https://www.threebodytech.com/en/products/heavier7strings));
+and V-METAL 2 launches with a reported 250+ amp and effect presets. Electry has
+one 0-100% amplifier control, a fixed six-section cabinet filter, and no tone
+stack at all. This is a real gap and it is deliberately not addressed here; see
+"considered and not planned".
 
 **Vibrato and release noises are scored articulations.** Stratosphere advertises
 "various vibrato styles ... from classic vibrato to rock and metal vibrato with
@@ -390,6 +513,14 @@ adjustable depth/speed"; Shreddage 3 documents release articulations that
 and other noises"
 ([Impact Soundworks](https://impactsoundworks.com/docs/Shreddage%203%20Stratus%20Free%20Manual.pdf)).
 Electry's vibrato is one fixed 4.8-6.4 Hz, 40-cent shape with no user control.
+Step 4 addresses the vibrato half. The noise half is covered by the deferred
+position-shift and release-squeak item under "considered and not planned", and
+this session's research **strengthens the case for it**: the fret-noise controls
+above are table stakes across the sampled field, and reviewers name their absence
+as a direct cause of the "too clean" verdict this pass exists to attack. That
+item is already recorded as cut for budget and as the first candidate after the
+amplifier; nothing found here justifies re-opening a reviewed step list to
+promote it, but the reason it is worth doing is now external as well as internal.
 
 **A calibration error found by reading published measurement against the
 source.** Helmuth Lemme's pickup measurements put the humbucker's two-point
@@ -400,17 +531,71 @@ qualitatively at
 Electry models the humbucker as a single 21 mm rectangular spatial window, which
 first nulls at c/W rather than c/2d - most of an octave too high. Step 3 below.
 
-**Absences, recorded as absences.** No published listening test or measurement
-comparing virtual electric guitars against each other or against recordings was
-found. No 2026 retail price could be verified. MODO BASS 2's tuning controls
-could not be checked before the research session's search budget ran out, so the
-per-string tuning idea below is scoped on Electry's architecture alone. And the
-one experimental study found on the pickup magnet's effect on the string reports
-"no observable effects on the string's vibration that could be interpreted as
-having a damping effect"
+**One open question from the previous pass is now answered, and it narrows a
+deferred idea rather than scheduling it.** MODO BASS 2's tuning controls: any of
+its basses can be made four-, five- or six-string, and a DROP option lowers the
+lowest string one tone (E to D, or B to A on the five- and six-string setups),
+alongside string gauge, age, construction, scale length and action; what it does
+*not* offer, according to owner discussion, is arbitrary per-string tuning
+([IK Multimedia](https://www.ikmultimedia.com/products/modobass2/),
+[MusicTech](https://musictech.com/reviews/plug-ins/ik-multimedia-modo-bass-2-review/)).
+So the closest structural relative to Electry ships string count and a single
+canned drop, not a tuning matrix. The per-string tuning idea under "considered
+and not planned" keeps its scope for that reason, not for want of research.
+
+**What none of this changes: the step list.** The steps below were measured and
+adversarially reviewed, and this research neither strikes nor reorders any of
+them. It corroborates them: uniformity is still the published charge against the
+modelled wing (steps 1, 2 and 5), per-stroke variation is now assumed rather than
+advertised in the sampled wing (step 2), vibrato depth and style are exposed
+controls everywhere else (step 4), and the discriminator the field names first -
+which string and which position - is the one the previous pass already built.
+Nothing found points at a property the category has abandoned, and no capability
+that every competitor ships and reviewers treat as table stakes is missing from
+the list except the fret-noise routing discussed above, which stays deferred.
+
+**Absences, recorded as absences.** No published listening test, measurement or
+shootout comparing virtual electric guitars against each other or against
+recordings was found - again. The perceptual-evaluation literature that does
+exist is methodological or aimed elsewhere (webMUSHRA and BS.1116 procedures,
+perceptual thresholds for acoustic-guitar model parameters, amplifier-modelling
+similarity tests), and the same-MIDI comparisons that exist are vendor-published
+between a vendor's own instruments; experienced users on the forums argue such
+comparisons are misleading anyway, because each instrument needs its own settings
+and tone to be heard fairly. The one experimental study found on the pickup
+magnet's effect on the string reports "no observable effects on the string's
+vibration that could be interpreted as having a damping effect"
 ([Academia](https://www.academia.edu/42961860/The_Effects_of_a_Magnetic_Pickup_on_the_Vibration_Response_of_an_Electric_Guitar_String)),
-so the widely repeated "Strat-itis kills sustain" claim is **not** implemented
-and should not be, on current evidence.
+so the widely repeated "Strat-itis kills sustain" claim is **not** implemented and
+should not be, on current evidence.
+
+**Still unverifiable after this pass, and why.** The binding reason for all of it
+is the same: pages could not be opened, only searched.
+
+- **Current list prices.** No 2026 price for SC Electric Guitar 2, Strum GS-2,
+  Heavier7Strings or RealLPC was established. Two figures did appear in
+  summaries - $149 for Shreddage 3 Stratus (reported as $119 for the guitar plus
+  a $30 Shreddage 3 licence) and $299 MSRP for V-METAL 2 - and both are recorded
+  as *reported*, not confirmed. A Prominy summer sale of up to 40% off running to
+  31 August 2026 was also reported, which means any price seen now is a
+  promotional one.
+- **V-METAL 2's exact release date**, where Prominy's own dated news posts and a
+  trade write-up disagree, and its 22 GB / 47,000-sample figure, which comes from
+  press coverage rather than from the product page.
+- **Evolution Engine version history.** 1.3.0 appears to be current and a July
+  2025 date was reported for it, but no changelog was read, and whether the
+  "fifth generation" framing the previous pass recorded maps onto that version
+  numbering is unknown.
+- **Guitar AG entirely.** One forum-post summary: no version, no licence, no
+  independent review, and no audio heard. Whether it is a serious instrument or a
+  weekend project cannot be told from here.
+- **IronAxe's current state** - whether it is still developed and sold, at what
+  version, and how it is regarded now rather than in the threads that surfaced.
+- **Silent updates.** Absence of news is not absence of change. Heavier7Strings
+  and RealLPC may have shipped maintenance releases that generated no coverage.
+- **How any of it sounds.** No competing product was heard this session. Every
+  qualitative judgement above is a report of someone else's listening, and the
+  V-METAL 2 verdict in particular rests on a single summarised user post.
 
 ### Where the engine actually stands
 
@@ -1088,9 +1273,15 @@ engine first, and the measured baseline is quoted next to it.
   architecture - every voice already solves its decay targets, dispersion fit
   and compliance from an open frequency - and it would let one engine cover
   standard six-string and drop-D territory it cannot reach at all. It is a
-  feature axis rather than a realism one, and the research session's search
-  budget ran out before MODO BASS 2's tuning controls could be checked, so it is
-  not scoped yet.
+  feature axis rather than a realism one, and it is still not scoped - but the
+  reason has changed. MODO BASS 2's tuning controls have since been checked (see
+  "What changed in the field"): the closest structural relative to Electry ships
+  a selectable four-, five- or six-string count and a single DROP switch that
+  lowers the lowest string one tone, not an arbitrary per-string tuning matrix.
+  So the competitive case for a full matrix is weaker than assumed, and the
+  cheap, well-precedented subset - string count plus one drop - is what a future
+  pass should scope first. Reported from search summaries only; no product page
+  was read.
 - **Cable capacitance and volume-pot loading.** The pickup's resonance is set by
   the total capacitance hanging off it, most of which is the cable (commonly
   300-700 pF), and its height by the volume pot, tone pot and amplifier input
