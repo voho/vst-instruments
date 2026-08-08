@@ -3017,6 +3017,75 @@ void testFrettingHandVibrato()
     expect(still.stringIndex == 3 && moving.stringIndex == 3,
            "the vibrato fixture did not land on the open A string");
 
+    // Vibrato Depth has to reach the engine while it is playing, not only at
+    // the next reset. A host automating it, or any caller moving it through
+    // setParameters() after prepare(), is the ordinary case rather than the
+    // exotic one: the control tick propagates every other continuous
+    // parameter, and this one was left off that list when the fretting hand
+    // was added, so the depth stayed at whatever the last reset latched.
+    //
+    // The comparison is differential because depth 0 is not silence: the
+    // excursion is lerp(0.10, 1.10, depth) semitones, so a note at depth 0
+    // still moves about 10 cents. Two engines are reset identically at depth
+    // 0 and only one is raised afterwards, so the single difference between
+    // them is the propagation this guards.
+    {
+        const auto excursionCents = [&] (bool raiseAfterReset)
+        {
+            ElectryEngine engine;
+            engine.prepare(sampleRate, 512);
+            EngineParameters parameters;
+            parameters.artifactAmount = 0.0f;
+            parameters.sympatheticAmount = 0.0f;
+            parameters.vibratoDepth = 0.0f;
+            engine.setParameters(parameters);
+            engine.reset();
+
+            if (raiseAfterReset)
+            {
+                parameters.vibratoDepth = 1.0f;
+                engine.setParameters(parameters);
+            }
+
+            engine.noteOn(47, 0.85f);
+            engine.setVibrato(1.0f);
+
+            const int stringIndex = TestAccess::stringForNote(engine, 47);
+            constexpr int chunk = 32;
+            const int total = static_cast<int>(1.6 * sampleRate);
+            StereoBuffer scratch(chunk);
+            std::vector<float> target;
+            for (int at = 0; at < total; at += chunk)
+            {
+                engine.process(scratch.left.data(), scratch.right.data(),
+                               chunk);
+                target.push_back(
+                    TestAccess::snapshot(engine,
+                                         stringIndex).verticalDelayTarget);
+            }
+
+            double highest = 0.0;
+            double lowest = 1.0e9;
+            const std::size_t settled = target.size() / 2;
+            for (std::size_t i = settled; i < target.size(); ++i)
+            {
+                highest = std::max(highest,
+                                   static_cast<double>(target[i]));
+                lowest = std::min(lowest, static_cast<double>(target[i]));
+            }
+            return 1200.0 * std::log2(highest / lowest);
+        };
+
+        const double latched = excursionCents(false);
+        const double raised = excursionCents(true);
+        expect(raised > latched * 2.0,
+               "Vibrato Depth raised after reset never reached the engine: the "
+               "held note moved " + std::to_string(raised)
+                   + " cents against " + std::to_string(latched)
+                   + " cents with the control left alone, so the parameter is "
+                     "dead until the next reset");
+    }
+
     // Zero pressure is an exact no-op: the same score with the control never
     // touched renders bit-for-bit the same audio.
     {

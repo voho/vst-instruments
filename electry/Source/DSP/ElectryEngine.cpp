@@ -3970,6 +3970,7 @@ ElectryEngine::StereoSample ElectryEngine::renderInternalSample(
         smoothTowards(s.sympatheticAmount, t.sympatheticAmount);
         smoothTowards(s.palmMute, t.palmMute);
         smoothTowards(s.resonanceDepth, t.resonanceDepth);
+        smoothTowards(s.vibratoDepth, t.vibratoDepth);
         s.strumSpreadSeconds = t.strumSpreadSeconds;
         s.bendTimeSeconds = t.bendTimeSeconds;
         s.pickupSelector = t.pickupSelector;
