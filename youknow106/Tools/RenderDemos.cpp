@@ -313,9 +313,9 @@ Take renderChorusPad()
     return take;
 }
 
-// Pulse-width-modulated strings in chorus II. The current compatibility model
-// sends the LFO to PWM without the pitch/filter delay envelope; that firmware
-// lead remains provenance-pending rather than an original-unit claim.
+// Pulse-width-modulated strings in chorus II. The compatibility model sends
+// the same delay-gated LFO value to PWM, pitch and filter modulation; whether
+// the original instrument's delay reaches PWM remains provenance-pending.
 Take renderPwmStrings()
 {
     auto parameters = plainPanel();
