@@ -3896,6 +3896,46 @@ void testHighRegisterRenderThroughput(const neuramar::NeuralModel& model)
 // the layer balance. Each layer is isolated by subtracting a render that
 // differs from the full one in exactly one parameter, so the difference is that
 // layer and nothing else.
+// Mutation at zero has to be behaviour-preserving, and the velocity response
+// has to keep working at the bottom of its range. The perturbation's own floor
+// was being applied to the velocity itself, so every note under 0.05 arrived at
+// 0.05 whether or not anything had been added to it - MIDI velocity 1 and MIDI
+// velocity 6 rendered identically, 16.5 dB louder than the response asks for.
+void testSoftVelocitiesSurviveMutationFloor()
+{
+    auto model = neuramar::NeuralModel::createRandom(4242u, 1.0f);
+    neuramar::NeuramarEngine engine;
+    engine.prepare(48000.0, 128);
+    engine.setModel(model.get());
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.mutation = 0.0f;
+    parameters.attackSeconds = 0.0f;
+    parameters.outputGain = 1.0f;
+    engine.setParameters(parameters);
+
+    const auto peakOf = [&] (float velocity)
+    {
+        const auto audio = renderNoteAtVelocity(engine, 60, velocity, 12000);
+        float peak = 0.0f;
+        for (const auto sample : audio)
+            peak = std::max(peak, std::abs(sample));
+        return peak;
+    };
+
+    // MIDI velocity 1 and MIDI velocity 6, both under the old floor.
+    const float quietest = peakOf(1.0f / 127.0f);
+    const float louder = peakOf(6.0f / 127.0f);
+    expect(quietest > 0.0f && louder > 0.0f,
+           "a soft note rendered silence");
+    const double separation = 20.0 * std::log10(louder / quietest);
+    expect(separation > 3.0,
+           "two velocities below the mutation floor render at the same level ("
+               + std::to_string(separation)
+               + " dB apart), so the floor is being applied to the velocity "
+                 "rather than to the perturbation");
+}
+
 void testRegisterLayerBalance()
 {
     constexpr double sampleRate = 48000.0;
@@ -6072,6 +6112,7 @@ int main()
     testBodyLayersAreSampleRateInvariant();
     testBoneCeilingIsAnchoredToTheAudibleBand();
     testKeyboardLevelFlatness();
+    testSoftVelocitiesSurviveMutationFloor();
     testRegisterLayerBalance();
     testInputValidationAndCancellation();
     testAirFilterNormalisation();

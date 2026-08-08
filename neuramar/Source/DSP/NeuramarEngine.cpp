@@ -802,9 +802,18 @@ void NeuramarEngine::noteOn(int midiNote, float velocity) noexcept
     // that width has a standard deviation near 0.64 dB, which is the middle of
     // the 1.5-3 dB peak variation a hand-struck acoustic instrument shows. At
     // 0.55 the same arithmetic lands at 1.6 dB end to end, under that floor.
+    // The 0.05 floor is here to stop the perturbation driving a note to
+    // silence, so it belongs to the perturbation rather than to the velocity.
+    // Applied unconditionally it raised every velocity under 0.05 whether or
+    // not anything had been added: MIDI velocity 1 arrived as 0.05, which is
+    // 16.5 dB of velocityGain the player never asked for, and Mutation at zero
+    // stopped being behaviour-preserving. Floor at the note's own velocity
+    // when that is already below the bound, so a soft note keeps its level and
+    // the perturbation still cannot push it under one.
+    const float perturbed = selected->velocity
+                          + 0.75f * mutationAmount * selected->mutationOffset;
     selected->velocity = std::clamp(
-        selected->velocity + 0.75f * mutationAmount * selected->mutationOffset,
-        0.05f, 1.0f);
+        perturbed, std::min(selected->velocity, 0.05f), 1.0f);
     selected->velocityGain = selected->velocity
         * (0.72f + 0.28f * std::sqrt(selected->velocity));
     // These sinusoidal variation shapes depend only on the voice identity, so
