@@ -1282,7 +1282,7 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   10.660 / 10.571 (99.17 %), Mid Tom 10.353 / 10.264 (99.14 %), High Tom
   9.795 / 9.692 (98.94 %). After: the v = 1.00 figures are unchanged to every
   digit and the v = 0.08 figures are **0.291** (1.14 %), **0.444** (4.17 %),
-  **0.443** (4.28 %) and **0.505** (5.05 %) semitones. Both strengths still
+  **0.443** (4.28 %) and **0.505** (5.16 %) semitones. Both strengths still
   settle on the same note: 0.011 cents apart on the Kick, 0.003 on the Low Tom
   and nothing at all on the other two, against a clause allowing 5. The three
   glide figures the step quotes from preflight's own trace — 25.728, 10.440,
@@ -1292,7 +1292,8 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   `testMembraneGlideFollowsTheStrike` in `Tests/DrumEngineTests.cpp`. Reverting
   the two use sites and leaving everything else in place fails it five times:
   four ghost-stroke clauses at 91.67, 99.17, 99.14 and 98.94 % against a ceiling
-  of 35, and the Kick's band balance at 3.461 dB against a required −2.539.
+  of 35, and the Kick's band balance — 3.318 dB when the revert is built against
+  the tree as it now stands — against a required −2.539.
   Two things the step text got wrong, both corrected here. The **render-side
   figures are not reachable by the repository's own band estimator**. The step
   quotes the Kick's early band balance moving from 0.04 to −10.70 dB, measured
@@ -1310,10 +1311,35 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   clause stays on the Kick alone. And `testDeepAnalogKickContract` **does** see
   this change, contrary to the last sentence of the verification above: it
   renders at v = 0.95, where the depth is saturated at 1.0 but the term it
-  replaced read 0.84 + 0.16 · 0.9578 = 0.9932, so the Kick's sweep there is
-  0.68 % deeper than before. Sample for sample the largest difference that
-  makes is 23.2 dB below the render's own peak at v = 0.95 and 14.6 dB below it
-  at v = 0.85. The contract stays green, as does the whole rest of the suite.
+  replaced read 0.84 + 0.16 · 0.9423 = 0.9908 — the 0.9423 is `accentVoltage`
+  at v = 0.95, which is what `voice.velocity` holds — so the Kick's sweep there
+  is **0.93 %** deeper than before. Sample for sample the largest difference
+  that makes is 23.1 dB below the render's own peak at v = 0.95 and 14.5 dB
+  below it at v = 0.85. The contract stays green, as does the whole rest of the
+  suite.
+  *Re-verified on implementation, 2026-08-08*, with steps 4 and 5 also in the
+  tree. The revert was built rather than assumed: `renderTom` back to
+  `1 + sweepAmount · pitchEnvelope` and `renderKick` back to
+  `triggerSweep = 0.84 + 0.16 · voice.velocity`, which reproduces the ghost
+  strokes this step was written against to every digit quoted above — 91.670,
+  99.170, 99.144 and 98.944 % — and fails
+  `testMembraneGlideFollowsTheStrike` exactly five times and nothing else in
+  the suite. The traced figures are unchanged by the two steps that landed
+  after this note was written, because the trace is the oscillator rather than
+  the render; the render-side ones moved, because the Kick's head bank now goes
+  through a split `buildHeadBank`. Measured today, the Kick's early band
+  balance is **4.131 dB** at v = 1.00 on both engines and **3.318 → −3.228 dB**
+  at v = 0.08, a fall of **6.55 dB** rather than 6.34; with the window opened at
+  0 ms instead of 4 it is 3.369 → −2.088, a fall of 5.46 dB, so the contact
+  click still costs about a decibel of the separation. On the three Toms the
+  same statistic moves **1.79 to 1.81 dB**, a little above the 0.3–1.7 dB the
+  step predicted and still a quarter of the Kick's, so the clause stays on the
+  Kick alone. The test's stored constants (4.163 and 3.461 dB) are the
+  pre-step-4 readings and are left as they are: they hold with 0.47 dB and
+  0.69 dB of margin, and re-cutting them against a tree that already contains
+  step 4 would date them to the wrong engine. The bit-identity claims hold as
+  written — Kick renders are bit-identical at v = 1.00, and the three Toms at
+  v = 1.00, 0.95 and 0.85.
 
 - [x] **4. Split the degenerate mode pairs, and let Humanise move the strike
   azimuth.** Every m > 0 mode of an ideal circular head is a doubly degenerate
