@@ -140,6 +140,27 @@ float coefficientForTime (float seconds, float sampleRate) noexcept
     return std::exp (minusSixtyDb / std::max (1.0f, seconds * sampleRate));
 }
 
+// MIDI velocity as the analogue front end sees it. Named because two things
+// need it: the voice being built, and the strike depth below, which has to
+// evaluate the same two curves at a velocity that is not the one being played.
+float accentVoltage (float velocity) noexcept
+{
+    return velocity * (0.68f + 0.32f * std::sqrt (velocity));
+}
+
+float excitationScaleFor (float velocity) noexcept
+{
+    return 0.74f + 0.26f * std::sqrt (velocity);
+}
+
+// Where the drawn pitch sweep is fully used. A head is stiff because it is
+// stretched, so the amount the pitch bends follows the energy the strike put
+// into it (Avanzini and Marogna) rather than the panel knob alone - but a knob
+// that only reached its marked value on a velocity-127 hit would be a knob
+// nobody could set, so the depth saturates a little below the top of the range
+// and every accent keeps the sweep it has today.
+constexpr float sweepSaturationVelocity = 0.85f;
+
 // Ascending series for J_m. Every argument this engine asks for is a Bessel
 // zero times a fraction of the head's radius, so nothing above about four ever
 // reaches it and a dozen terms are accurate past float precision. Note-on only:
@@ -842,6 +863,11 @@ float DrumEngine::getInstrumentLevel (Instrument instrument) const noexcept
 float DrumEngine::getBusGain() const noexcept
 {
     return busGainMeter_.load (std::memory_order_relaxed);
+}
+
+float DrumEngine::getNewestVoicePitchHz() const noexcept
+{
+    return newestVoicePitch_.load (std::memory_order_relaxed);
 }
 
 InstrumentParameters DrumEngine::snapshotParameters (Instrument instrument) const noexcept
@@ -2267,13 +2293,23 @@ void DrumEngine::updateActiveVoiceCount() noexcept
     // to be tracked inside the per-sample loop.
     int count = 0;
     std::array<float, instrumentCount> levels {};
-    const auto observe = [&count, &levels] (const Voice& voice)
+    // The same pass carries the newest voice's drawn pitch out to the same
+    // place. Voices are numbered as they are triggered, so the newest sounding
+    // one is the highest generation in either pool.
+    std::uint64_t newestGeneration = 0u;
+    float newestPitch = 0.0f;
+    const auto observe = [&count, &levels, &newestGeneration, &newestPitch] (const Voice& voice)
     {
         if (! voice.active)
             return;
         ++count;
         auto& level = levels[indexFor (voice.instrument)];
         level = std::max (level, voice.recentPeak * voice.chokeGain);
+        if (voice.generation >= newestGeneration)
+        {
+            newestGeneration = voice.generation;
+            newestPitch = voice.oscillatorFrequency;
+        }
     };
     for (const auto& voice : voices_)
         observe (voice);
@@ -2282,6 +2318,7 @@ void DrumEngine::updateActiveVoiceCount() noexcept
     for (std::size_t index = 0; index < instrumentCount; ++index)
         instrumentLevels_[index].store (levels[index], std::memory_order_relaxed);
     activeVoiceCount_.store (count, std::memory_order_relaxed);
+    newestVoicePitch_.store (newestPitch, std::memory_order_relaxed);
 }
 
 int DrumEngine::getActiveVoiceCount() const noexcept
@@ -2534,7 +2571,7 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     voice.chokeGroup = std::clamp (values.chokeGroup, 0, chokeGroupCount);
     voice.generation = ++generation_;
     voice.noiseState = seed == 0u ? 1u : seed;
-    voice.velocity = velocity * (0.68f + 0.32f * std::sqrt (velocity));
+    voice.velocity = accentVoltage (velocity);
     voice.recentPeak = voice.velocity;
     voice.characterA = std::clamp (values.characterA + variation.characterAOffset,
                                    0.0f, 1.0f);
@@ -2547,7 +2584,25 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     // Treat MIDI velocity as trigger/accent voltage as well as final VCA
     // loudness. The deliberately narrow range preserves the established gain
     // curve while making hard hits inject more energy into the physical core.
-    voice.excitationScale = 0.74f + 0.26f * std::sqrt (velocity);
+    voice.excitationScale = excitationScaleFor (velocity);
+
+    // How much of the drawn sweep this strike gets, latched here rather than
+    // followed. The displacement the strike leaves in the head is the accent
+    // voltage times the excitation scale - the same product the modal bank is
+    // struck with - and the energy stored in a stretched head goes as the
+    // square of it, so that square, normalized at the saturation velocity, is
+    // the depth. voice.modalEnergy is deliberately not used: it is a follower,
+    // two orders of magnitude below its own peak at the strike sample, still
+    // holding 0.19 % of it at 60 ms where the pitch envelope is at 0.025 %, so
+    // driving the sweep with it would start the note at settled pitch, bend it
+    // upward over the first two milliseconds and leave eleven cents of residual
+    // bend on the Kick against one and a half. The shape of the sweep is the
+    // pitch envelope's, unchanged; only its depth is the strike's.
+    const float saturationAmplitude = accentVoltage (sweepSaturationVelocity)
+        * excitationScaleFor (sweepSaturationVelocity);
+    const float strikeAmplitude = voice.velocity * voice.excitationScale;
+    voice.strikeDepth = std::min (1.0f, (strikeAmplitude * strikeAmplitude)
+        / (saturationAmplitude * saturationAmplitude));
     // A softly struck head, cymbal or shaker radiates a darker spectrum than a
     // hard strike, because less energy reaches the high, heavily damped modes.
     // The curve is unity at full velocity, so the loud end of the existing
@@ -3366,14 +3421,20 @@ float DrumEngine::renderKick (Voice& voice) noexcept
         1.5f, 1.27323954f * std::sqrt (
             voice.kickStateX * voice.kickStateX
             + voice.kickStateY * voice.kickStateY));
-    const float triggerSweep = 0.84f + 0.16f * voice.velocity;
     const float amplitudePitch = 1.0f
         + 0.016f * voice.characterB * stateMagnitude;
+    // Punch draws the sweep; the beater decides how much of it this hit uses.
+    // The former trigger-voltage term here spanned 0.84 to 1.00 over the whole
+    // velocity range, which is a hundredth of the sweep it multiplied, so a
+    // ghost stroke and an accent glided the same fourth-and-a-half. It read
+    // exactly 1.00 at full velocity, which is what strikeDepth reads at and
+    // above its saturation velocity, so a hard hit is unchanged to the bit.
     const float frequency = std::clamp (
         voice.baseFrequency
-            * (1.0f + voice.sweepAmount * triggerSweep * voice.pitchEnvelope)
+            * (1.0f + voice.sweepAmount * voice.strikeDepth * voice.pitchEnvelope)
             * amplitudePitch,
         4.0f, 0.18f * static_cast<float> (sampleRate_));
+    voice.oscillatorFrequency = frequency;
 
     const float angle = twoPi * frequency * inverseSampleRate_;
     const float angleSquared = angle * angle;
@@ -3625,9 +3686,13 @@ float DrumEngine::renderTom (Voice& voice) noexcept
     const float tension = 1.0f
         + (0.006f + 0.052f * voice.characterB) * voice.excitationScale
               * voice.envelope * voice.envelope;
+    // The drawn sweep beside it had no strike term at all, so its depth is now
+    // the strike's as well: same shape, same ceiling, but only an accent
+    // reaches the top of it.
     const float frequency = voice.baseFrequency
-        * (1.0f + voice.sweepAmount * voice.pitchEnvelope)
+        * (1.0f + voice.sweepAmount * voice.strikeDepth * voice.pitchEnvelope)
         * tension;
+    voice.oscillatorFrequency = frequency;
     voice.phaseIncrements[0] = std::min (0.45f, frequency * inverseSampleRate_);
     const float fundamental = oscillator (voice, 0);
     const float shell = oscillator (voice, 1);

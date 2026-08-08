@@ -4279,6 +4279,249 @@ void testLoopRegionAvoidsTheAttack(const LearnedFixture& fixture)
                + std::to_string(end - start) + ")");
 }
 
+// Thirty-two partials whose decay times follow tau(h) = tau_1 h^-0.75, which is
+// the frequency-dependent damping a real string has. The loop region the
+// learner picks out of it still falls 2.7 dB across its own length, so it is
+// the fixture that shows what reading that region round and round does to the
+// level.
+[[nodiscard]] std::vector<float> makeDecayingPartialSample(
+    double sampleRate, double fundamentalHz, double durationSeconds,
+    double firstPartialTauSeconds)
+{
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.004);
+        double value = 0.0;
+        for (int partial = 1; partial <= 32; ++partial)
+        {
+            const double number = static_cast<double>(partial);
+            const double tau = firstPartialTauSeconds * std::pow(number, -0.75);
+            value += std::pow(number, -1.2) * std::exp(-time / tau)
+                * std::sin(2.0 * pi * fundamentalHz * number * time
+                           + 0.37 * number);
+        }
+        sample[index] = static_cast<float>(0.55 * attack * value);
+    }
+    return sample;
+}
+
+// Magnitude-weighted spectral centroid of one analysis frame, taken over the
+// partials of the played fundamental with a Hann window across exactly the
+// frame. It is deliberately not measured through windowedSinusoidAmplitude(),
+// whose 40 ms half-window would smear four frames of this length together.
+// Magnitude weighting rather than power weighting is what keeps the measure
+// sensitive: squaring hands almost the whole weight to partial 1 on a source
+// with this rolloff, and the centroid then barely moves however much the upper
+// spectrum does.
+[[nodiscard]] double frameCentroidHz(const std::vector<float>& signal,
+                                     double sampleRate, std::size_t first,
+                                     std::size_t count, double fundamentalHz,
+                                     int partialCount)
+{
+    double weighted = 0.0;
+    double total = 0.0;
+    const double denominator = static_cast<double>(count - 1);
+    for (int partial = 1; partial <= partialCount; ++partial)
+    {
+        const double frequency = fundamentalHz * static_cast<double>(partial);
+        if (frequency >= 0.45 * sampleRate)
+            break;
+        double cosineSum = 0.0;
+        double sineSum = 0.0;
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const double window = 0.5 - 0.5 * std::cos(
+                2.0 * pi * static_cast<double>(index) / denominator);
+            const double angle = 2.0 * pi * frequency
+                * static_cast<double>(first + index) / sampleRate;
+            const double value = window * signal[first + index];
+            cosineSum += value * std::cos(angle);
+            sineSum += value * std::sin(angle);
+        }
+        const double magnitude = std::hypot(cosineSum, sineSum);
+        weighted += frequency * magnitude;
+        total += magnitude;
+    }
+    return weighted / std::max(total, 1.0e-30);
+}
+
+// Normalised autocorrelation of a mean-removed sequence at one lag.
+[[nodiscard]] double autocorrelationAtLag(const std::vector<double>& values,
+                                          std::size_t lag)
+{
+    if (lag == 0 || lag >= values.size())
+        return 0.0;
+    double mean = 0.0;
+    for (const double value : values)
+        mean += value;
+    mean /= static_cast<double>(values.size());
+    double product = 0.0;
+    double energy = 0.0;
+    for (std::size_t index = 0; index < values.size(); ++index)
+    {
+        const double centred = values[index] - mean;
+        energy += centred * centred;
+        if (index + lag < values.size())
+            product += centred * (values[index + lag] - mean);
+    }
+    return energy > 0.0 ? product / energy : 0.0;
+}
+
+// A held note under Orbit has to be a sustain: level-continuous, still moving,
+// and not a loop. The triangle fold this replaced played every second leg
+// backwards - a negative-damping segment no passive resonator can produce -
+// and repeated exactly at twice the loop length.
+//
+// Air and Bone are muted because the Air noise stream blurs the envelope and
+// what is under test is the trajectory, not the noise. The analysis frame is a
+// whole number of played-fundamental periods: at 20 ms, which is 4.4 periods of
+// 220 Hz, the frame RMS ripples 0.335 dB peak to peak on a perfectly stationary
+// render and no correct implementation could meet the rise bound below.
+void testOrbitSustainIsNotPeriodic()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double fundamentalHz = 220.01;
+    const auto source = makeDecayingPartialSample(
+        sampleRate, fundamentalHz, 1.6, 0.9);
+    const auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+    expect(static_cast<bool>(learned),
+           "the Orbit sustain fixture failed to learn: " + learned.error);
+    if (!learned.model)
+        return;
+    const auto& metadata = learned.model->metadata();
+    const double loopLength = std::max(
+        static_cast<double>(metadata.loopEndSeconds - metadata.loopStartSeconds),
+        1.0e-3);
+
+    neuramar::EngineParameters parameters;
+    parameters.imprint = 1.0f;
+    parameters.bodyLock = 0.52f;
+    parameters.air = 0.0f;
+    parameters.bone = 0.0f;
+    parameters.brightness = 0.5f;
+    parameters.evolutionRate = 1.0f;
+    parameters.orbit = 1.0f;
+    parameters.mutation = 0.12f;
+    parameters.attackSeconds = 0.0f;
+    parameters.releaseSeconds = 0.65f;
+    parameters.spread = 0.0f;
+    parameters.outputGain = 0.72f;
+    const auto rendered = renderWithParameters(
+        *learned.model, metadata.rootMidiNote, 0.8f, parameters,
+        static_cast<int>(std::llround(6.5 * sampleRate)));
+
+    const double frameSeconds = 11.0 / fundamentalHz;
+    const auto frameSamples = static_cast<std::size_t>(
+        std::llround(frameSeconds * sampleRate));
+    std::vector<double> frameDb;
+    std::vector<double> frameCentroid;
+    for (double time = 2.0; time + frameSeconds <= 6.0 + 1.0e-9;
+         time += frameSeconds)
+    {
+        const auto first = static_cast<std::size_t>(
+            std::llround(time * sampleRate));
+        if (first + frameSamples > rendered.size())
+            break;
+        double power = 0.0;
+        for (std::size_t index = 0; index < frameSamples; ++index)
+            power += static_cast<double>(rendered[first + index])
+                * rendered[first + index];
+        frameDb.push_back(10.0 * std::log10(std::max(
+            power / static_cast<double>(frameSamples), 1.0e-30)));
+        frameCentroid.push_back(frameCentroidHz(
+            rendered, sampleRate, first, frameSamples, fundamentalHz, 24));
+    }
+    expect(frameDb.size() > 60,
+           "the Orbit sustain analysis produced too few frames ("
+               + std::to_string(frameDb.size()) + ")");
+    if (frameDb.size() <= 60)
+        return;
+
+    double lowestDb = frameDb.front();
+    double highestDb = frameDb.front();
+    double largestRiseDb = 0.0;
+    for (std::size_t index = 0; index < frameDb.size(); ++index)
+    {
+        lowestDb = std::min(lowestDb, frameDb[index]);
+        highestDb = std::max(highestDb, frameDb[index]);
+        if (index > 0)
+            largestRiseDb = std::max(largestRiseDb,
+                                     frameDb[index] - frameDb[index - 1]);
+    }
+    double centroidMean = 0.0;
+    for (const double value : frameCentroid)
+        centroidMean += value;
+    centroidMean /= static_cast<double>(frameCentroid.size());
+    const double centroidSpread =
+        *std::max_element(frameCentroid.begin(), frameCentroid.end())
+        - *std::min_element(frameCentroid.begin(), frameCentroid.end());
+    const double centroidSpreadPercent = 100.0 * centroidSpread
+        / std::max(centroidMean, 1.0e-9);
+    const auto forwardLag = static_cast<std::size_t>(
+        std::llround(loopLength / frameSeconds));
+    const auto pingPongLag = static_cast<std::size_t>(
+        std::llround(2.0 * loopLength / frameSeconds));
+    const double forwardCorrelation = std::abs(
+        autocorrelationAtLag(frameCentroid, forwardLag));
+    const double pingPongCorrelation = std::abs(
+        autocorrelationAtLag(frameCentroid, pingPongLag));
+
+    std::cout << "Orbit sustain diagnostics: loop " << loopLength
+              << " s, level spread " << (highestDb - lowestDb)
+              << " dB, largest frame rise " << largestRiseDb
+              << " dB, centroid " << centroidMean << " Hz spreading "
+              << centroidSpreadPercent << "% of its mean, centroid "
+              << "autocorrelation " << forwardCorrelation << " at the loop "
+              << "length and " << pingPongCorrelation
+              << " at twice it\n";
+
+    // The primary gate. A ping-pong fold pumps this fixture 2.49 dB and a
+    // percussive one 4.68 dB, indefinitely. An autocorrelation of the level
+    // cannot be the primary gate: once the pumping is gone the envelope is
+    // near-constant and a mean-removed autocorrelation of it is 0/0.
+    expect(highestDb - lowestDb < 1.5,
+           "a held note under Orbit pumped its level by "
+               + std::to_string(highestDb - lowestDb)
+               + " dB over t in [2, 6] s");
+    // No leg runs backwards. On a monotonically decaying trajectory a reversed
+    // leg is a rising one, and this is the direct test for it: 0.51 dB today,
+    // and exactly 0.00 dB for a frozen model clock.
+    expect(largestRiseDb < 0.25,
+           "the Orbit sustain rose "
+               + std::to_string(largestRiseDb)
+               + " dB between consecutive frames, so part of the learned "
+                 "trajectory is being read backwards");
+    // Level-continuous must not become frozen. A clock parked at loopEnd
+    // passes both bounds above with room to spare - 0.00014 dB of spread and
+    // 3.7e-6 dB of rise - and collapses the centroid to 0.0001% of its own
+    // mean.
+    expect(centroidSpreadPercent > 1.0,
+           "the Orbit sustain stopped moving: its per-frame spectral centroid "
+               "spread only "
+               + std::to_string(centroidSpreadPercent)
+               + "% of its mean, so the model clock is not traversing the "
+                 "loop region");
+    // And it must not repeat. Both lags are needed: the old fold is caught at
+    // twice the loop length, and a forward wrap from a fixed point - exactly
+    // periodic at the loop length - is caught only by the first. The magnitude
+    // is what counts, because a trajectory that repeats at twice a lag is
+    // strongly anti-correlated at the lag itself. Detrending does not touch
+    // the centroid, which is why the non-repetition test lives here rather
+    // than on the level.
+    expect(forwardCorrelation < 0.60,
+           "the Orbit sustain repeated at the loop length (centroid "
+               "autocorrelation "
+               + std::to_string(forwardCorrelation) + ")");
+    expect(pingPongCorrelation < 0.60,
+           "the Orbit sustain repeated at twice the loop length (centroid "
+               "autocorrelation "
+               + std::to_string(pingPongCorrelation) + ")");
+}
+
 void testRoughPerformance(const neuramar::NeuralModel& model)
 {
     neuramar::NeuramarEngine engine;
@@ -4928,6 +5171,7 @@ int main()
     testEvolvingAirColour();
     testTransientAirResolution();
     testInharmonicPartialSeries();
+    testOrbitSustainIsNotPeriodic();
     testFormantShift();
     testResamplerAccuracyAndCost();
     if (fixture.first.model)

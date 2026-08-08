@@ -230,6 +230,8 @@ private:
     void refreshHarmonicStretch(float inharmonicity) noexcept;
     void updateVoiceControl(Voice& voice, const NeuralModel& model,
                             const EngineParameters& parameters) noexcept;
+    [[nodiscard]] static float fitLoopLevelSlope(
+        const NeuralModel& model) noexcept;
     [[nodiscard]] static float nextNoise(std::uint32_t& state) noexcept;
     void beginFadeTail(std::size_t voiceIndex) noexcept;
 
@@ -247,6 +249,13 @@ private:
     // coefficient actually changes, never per voice and never per sample.
     std::array<float, renderedHarmonicCount> harmonicStretchRatio_ {};
     float cachedInharmonicity_ { -1.0f };
+    // Mean log-amplitude slope of the published model across its own loop
+    // region, in nepers per second of model time, fitted once per model by
+    // setModel(). Orbit divides it out so that a wrap from loopEnd back to
+    // loopStart is level-continuous. Only the trend is removed: whatever
+    // tremolo, breath pulsing or beating the region carries is a residual
+    // about this line and survives untouched.
+    float loopLevelSlopePerSecond_ { 0.0f };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };
     // Core anti-alias fade constants for coreNyquistGain(), precomputed so the

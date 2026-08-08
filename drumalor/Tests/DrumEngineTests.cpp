@@ -3336,6 +3336,173 @@ void testMembraneTensionModulation()
     }
 }
 
+// One hit, rendered a sample at a time so the engine's published oscillator
+// pitch is a per-sample trace of the drawn sweep rather than a block-rate
+// sample of it. The audio comes back with it, because both clauses below are
+// about the same strike.
+struct MembraneGlide
+{
+    std::vector<float> mono;
+    double peakHz { 0.0 };
+    double settledHz { 0.0 };
+    double glideSemitones { 0.0 };
+};
+
+MembraneGlide renderMembraneGlide (double sampleRate,
+                                   drumalor::Instrument instrument,
+                                   const drumalor::InstrumentParameters& parameters,
+                                   double durationSeconds,
+                                   float velocity)
+{
+    drumalor::DrumEngine engine;
+    engine.prepare (sampleRate, defaultBlockSize);
+    engine.setInstrumentParameters (instrument, parameters);
+    engine.trigger (instrument, velocity);
+    const auto sampleCount = static_cast<std::size_t> (
+        std::ceil (durationSeconds * sampleRate));
+    // By 150 ms every pitch envelope in this test is at least 60 dB down, so
+    // whatever the oscillator is still running at from there on is the note's
+    // settled pitch. The median rather than the mean, and positive samples
+    // only: a ghost stroke on a High Tom retires inside the window and a
+    // retired voice publishes zero rather than a pitch.
+    const auto settledFrom = static_cast<std::size_t> (0.150 * sampleRate);
+    MembraneGlide result;
+    result.mono.resize (sampleCount);
+    std::vector<double> settledCandidates;
+    for (std::size_t sample = 0; sample < sampleCount; ++sample)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        engine.process (&left, &right, 1);
+        result.mono[sample] = 0.5f * (left + right);
+        const auto pitch = static_cast<double> (engine.getNewestVoicePitchHz());
+        result.peakHz = std::max (result.peakHz, pitch);
+        if (sample >= settledFrom && pitch > 0.0)
+            settledCandidates.push_back (pitch);
+    }
+    std::sort (settledCandidates.begin(), settledCandidates.end());
+    if (! settledCandidates.empty())
+        result.settledHz = settledCandidates[settledCandidates.size() / 2];
+    if (result.peakHz > 0.0 && result.settledHz > 0.0)
+        result.glideSemitones = 12.0 * std::log2 (result.peakHz / result.settledHz);
+    return result;
+}
+
+void testMembraneGlideFollowsTheStrike()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // A head is stiff because it is stretched, so how far the pitch bends has
+    // to follow the energy the strike put into the drum rather than the panel
+    // setting alone. This measures the oscillator's own frequency rather than
+    // an analysis of the render, because the sweep collapses inside one period
+    // of the settled note - the Kick's pitch envelope is at 1/e in 7.2 ms
+    // against a settled period of 20.4 ms - and any zero-crossing estimator of
+    // the output averages over exactly that interval. Built and swept before
+    // this contract was written, such an estimator reads 1.5 to 7.9 semitones
+    // on the Kick where the oscillator is doing 25.6, and moving its corner up
+    // to chase the traced figure only makes it unstable: the Low Tom jumps
+    // from 0.46 to 12.0 semitones between analysis corners of 220 and 300 Hz.
+    struct GlideProbe
+    {
+        drumalor::Instrument instrument;
+        // Traced on the engine immediately before the strike-depth latch was
+        // added, at the same defaults and the same estimator as below.
+        double presentGlideSemitones;
+    };
+    constexpr std::array glideProbes {
+        GlideProbe { drumalor::Instrument::Kick, 25.607 },
+        GlideProbe { drumalor::Instrument::LowTom, 10.660 },
+        GlideProbe { drumalor::Instrument::MidTom, 10.353 },
+        GlideProbe { drumalor::Instrument::HighTom, 9.795 }
+    };
+
+    for (const auto& probe : glideProbes)
+    {
+        const std::string label (drumalor::getInstrumentDisplayName (probe.instrument));
+        const auto values = drumalor::getInstrumentMetadata (
+            probe.instrument).defaultParameters;
+        const auto accent = renderMembraneGlide (
+            sampleRate, probe.instrument, values, 0.60, 1.00f);
+        const auto ghost = renderMembraneGlide (
+            sampleRate, probe.instrument, values, 0.60, 0.08f);
+
+        expect (accent.settledHz > 0.0 && ghost.settledHz > 0.0,
+                label + " published no settled oscillator pitch for the glide to be"
+                    " measured against");
+        expect (accent.glideSemitones > 1.0,
+                label + " has no drawn pitch sweep at full velocity ("
+                    + std::to_string (accent.glideSemitones) + " semitones)");
+
+        // A redistribution rather than a reduction: an accent keeps every cent
+        // of the sweep the Punch knob draws.
+        const double drift = 100.0
+            * (accent.glideSemitones - probe.presentGlideSemitones)
+            / probe.presentGlideSemitones;
+        expect (std::abs (drift) < 15.0,
+                label + " moved the full-velocity glide (" + std::to_string (accent.glideSemitones)
+                    + " semitones against " + std::to_string (probe.presentGlideSemitones)
+                    + ", " + std::to_string (drift) + " %)");
+
+        // And a ghost stroke barely bends at all. Before the latch these four
+        // read 91.7, 99.2, 99.1 and 99.0 per cent of their own accent.
+        const double share = 100.0 * ghost.glideSemitones / accent.glideSemitones;
+        expect (share < 35.0,
+                label + " glides as far on a ghost stroke as on an accent ("
+                    + std::to_string (ghost.glideSemitones) + " against "
+                    + std::to_string (accent.glideSemitones) + " semitones, "
+                    + std::to_string (share) + " %)");
+
+        // It is the depth that follows the strike, not the destination: both
+        // strengths settle on the same note.
+        const double settledCents = 1200.0 * std::log2 (ghost.settledHz / accent.settledHz);
+        expect (std::abs (settledCents) < 5.0,
+                label + " settled at a different pitch for a ghost stroke ("
+                    + std::to_string (settledCents) + " cents)");
+    }
+
+    // And the same thing on the render, on the Kick, where the early window is
+    // the swept oscillator and very little else. The balance is the energy
+    // between 1.8 and 5 times the settled fundamental over the energy between
+    // 0.6 and 1.4 times it: at full depth the note spends that window above the
+    // upper band edge, and with the depth withdrawn it starts where it ends.
+    // The window opens at 4 ms rather than 0, as the membrane band tests above
+    // do, because the beater's own contact click is broadband and belongs to
+    // neither band. On the three Toms the same change moves this statistic by
+    // only 1.5 to 1.6 dB - the head bank and the skin noise dominate their
+    // first 25 ms even though the render itself fully decorrelates - so only
+    // the Kick carries the clause.
+    const auto kickValues = drumalor::getInstrumentMetadata (
+        drumalor::Instrument::Kick).defaultParameters;
+    const auto kickAccent = renderMembraneGlide (
+        sampleRate, drumalor::Instrument::Kick, kickValues, 0.60, 1.00f);
+    const auto kickGhost = renderMembraneGlide (
+        sampleRate, drumalor::Instrument::Kick, kickValues, 0.60, 0.08f);
+    const double fundamental = kickAccent.settledHz;
+    const auto earlyBalanceDecibels = [&] (const std::vector<float>& mono)
+    {
+        const double swept = bandPowerInRange (
+            mono, sampleRate, 1.8 * fundamental, 5.0 * fundamental, 0.004, 0.025);
+        const double settled = bandPowerInRange (
+            mono, sampleRate, 0.6 * fundamental, 1.4 * fundamental, 0.004, 0.025);
+        return 10.0 * std::log10 (std::max (1.0e-20, swept)
+                                  / std::max (1.0e-20, settled));
+    };
+    // Both measured on the engine immediately before the latch was added.
+    constexpr double presentAccentBalance = 4.163;
+    constexpr double presentGhostBalance = 3.461;
+    const double accentBalance = earlyBalanceDecibels (kickAccent.mono);
+    const double ghostBalance = earlyBalanceDecibels (kickGhost.mono);
+    expect (std::abs (accentBalance - presentAccentBalance) < 0.5,
+            "the Kick's early band balance moved at full velocity ("
+                + std::to_string (accentBalance) + " dB against "
+                + std::to_string (presentAccentBalance) + ")");
+    expect (ghostBalance < presentGhostBalance - 6.0,
+            "a ghost stroke on the Kick still spends its first 25 ms above the"
+            " settled fundamental (" + std::to_string (ghostBalance) + " dB against "
+                + std::to_string (presentGhostBalance) + " before the latch)");
+}
+
 void testSnareArticulations()
 {
     constexpr double sampleRate = 48000.0;
@@ -4336,6 +4503,7 @@ int main()
     testMetering();
     testMembraneAndVelocityTimbre();
     testMembraneTensionModulation();
+    testMembraneGlideFollowsTheStrike();
     testSnareArticulations();
     testReStrikeDamping();
     testHiHatPedal();

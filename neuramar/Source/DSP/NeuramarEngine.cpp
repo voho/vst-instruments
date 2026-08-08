@@ -363,7 +363,73 @@ void NeuramarEngine::setModel(const NeuralModel* immutableModel) noexcept
         initialPhaseCos_[harmonic] = std::cos(angle);
         initialPhaseSin_[harmonic] = std::sin(angle);
     }
+    loopLevelSlopePerSecond_ = fitLoopLevelSlope(*immutableModel);
     model_.store(immutableModel, std::memory_order_release);
+}
+
+// Least-squares slope of the model's own log amplitude across the loop region.
+// A learned loop is a stable region, not a stationary one: it still carries the
+// source's overall decay, so reading it forward and wrapping back to its start
+// steps the level up by exactly this trend on every pass. Fitting the trend and
+// dividing it out is what makes the wrap continuous. Fitting a *line in log
+// amplitude* rather than replacing the level with the region's mean is the
+// whole point: a mean hold would also delete the tremolo, breath pulsing and
+// beating the region carries, and those are the residuals about this line.
+float NeuramarEngine::fitLoopLevelSlope(const NeuralModel& model) noexcept
+{
+    const float duration = std::max(model.metadata_.durationSeconds, 0.001f);
+    const float loopStart = std::clamp(model.metadata_.loopStartSeconds,
+                                       0.0f, duration);
+    const float loopEnd = std::clamp(model.metadata_.loopEndSeconds,
+                                     loopStart + 0.001f, duration);
+    const float loopLength = std::max(loopEnd - loopStart, 0.001f);
+    // setModel() runs on the audio thread, so the fit is budgeted rather than
+    // generous. The trajectory being fitted is a smooth decoder output, not
+    // sampled data, so 32 points land within 0.03% of a 256-point fit on every
+    // fixture that has a trend at all, and within 0.002 dB of correction across
+    // the loop on models whose loop region is already flat. They are about
+    // 120 us of decoder evaluation, against roughly 250 us that a model swap
+    // already spends clearing its voices and rebuilding the onset-phase table.
+    constexpr int fitPoints = 32;
+    double sumTime = 0.0;
+    double sumLevel = 0.0;
+    double sumTimeSquared = 0.0;
+    double sumTimeLevel = 0.0;
+    for (int point = 0; point < fitPoints; ++point)
+    {
+        const float offsetSeconds = loopLength
+            * (static_cast<float>(point) / static_cast<float>(fitPoints - 1));
+        SynthesisFrame frame;
+        model.evaluate((loopStart + offsetSeconds) / duration, frame);
+        double power = 0.0;
+        for (const float amplitude : frame.harmonicAmplitudes)
+            power += static_cast<double>(amplitude) * amplitude;
+        for (const float amplitude : frame.airAmplitudes)
+            power += static_cast<double>(amplitude) * amplitude;
+        for (const float amplitude : frame.boneAmplitudes)
+            power += static_cast<double>(amplitude) * amplitude;
+        const double level = 0.5 * std::log(std::max(power, 1.0e-24));
+        const double time = static_cast<double>(offsetSeconds);
+        sumTime += time;
+        sumLevel += level;
+        sumTimeSquared += time * time;
+        sumTimeLevel += time * level;
+    }
+    constexpr double count = static_cast<double>(fitPoints);
+    const double denominator = count * sumTimeSquared - sumTime * sumTime;
+    if (!(denominator > 0.0))
+        return 0.0;
+    const double slope = (count * sumTimeLevel - sumTime * sumLevel)
+        / denominator;
+    if (!std::isfinite(slope))
+        return 0.0;
+    // A safety limit, not a routine constraint: the correction applied across
+    // one pass is bounded to 12 dB either way, so a pathological loop region
+    // cannot turn into a large gain. The learned loops measured here need
+    // between 0.04 dB and 9.5 dB, so the bound is a guard rather than
+    // something a real memory runs into.
+    const double limit = (12.0 / 8.685889638) / static_cast<double>(loopLength);
+    return static_cast<float>(std::clamp(slope, -limit, limit));
 }
 
 void NeuramarEngine::setParameters(const EngineParameters& parameters) noexcept
@@ -694,18 +760,55 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     const float loopLength = std::max(loopEnd - loopStart, 0.001f);
     const double oneShotTime = std::min(evaluationModelTime,
                                         static_cast<double>(duration));
+    // Orbit reads the loop region forward only. The triangle fold this
+    // replaced played every second leg backwards, which turns a decaying
+    // trajectory into a rising one - a negative-damping segment, the one thing
+    // a passive resonator cannot produce - and made a held note exactly
+    // periodic at twice the loop length.
+    //
+    // Successive passes start from a different point in the region, advanced by
+    // (phi - 1) of the loop length each time. The golden ratio is the advance
+    // that maximises the smallest gap between successive offsets, so no short
+    // lag ever lines up and the sustain is quasi-periodic rather than periodic.
+    //
+    // No crossfade is written here. Every wrap is a step in the control-rate
+    // amplitude *targets*, and the ramp below already walks each amplitude
+    // linearly from its old value to its new one over one control period. That
+    // is an equal-gain crossfade of one control period, which is the correct
+    // weighting: voice.harmonicPhases advance from phaseStep alone and never
+    // consult the model clock, so both sides of a wrap drive the same
+    // oscillators at the same phases and are perfectly correlated. Equal-power
+    // weights of 1/sqrt(2) would raise the level 3.01 dB at the midpoint of
+    // every wrap, which is a wrap-rate pumping artefact of exactly the kind
+    // this exists to remove.
+    constexpr double goldenAdvance = 0.6180339887498949;
     double orbitTime = evaluationModelTime;
+    double loopOffsetSeconds = 0.0;
     if (orbitTime > loopStart)
     {
-        const double cycle = std::fmod(orbitTime - loopStart,
-                                       2.0 * static_cast<double>(loopLength));
-        orbitTime = loopStart + (cycle <= loopLength
-            ? cycle : 2.0 * static_cast<double>(loopLength) - cycle);
+        const double length = static_cast<double>(loopLength);
+        const double elapsed = orbitTime - loopStart;
+        const double passOffset = std::fmod(
+            std::floor(elapsed / length) * goldenAdvance, 1.0) * length;
+        loopOffsetSeconds = std::fmod(
+            std::fmod(elapsed, length) + passOffset, length);
+        orbitTime = loopStart + loopOffsetSeconds;
     }
     const float effectiveTime = static_cast<float>(std::clamp(
         oneShotTime + parameters.orbit * (orbitTime - oneShotTime)
             + parameters.mutation * voice.mutationOffset * 0.018 * duration,
         0.0, static_cast<double>(duration)));
+    // Divide out the loop region's own level trend, in proportion to how much
+    // of the read position Orbit is actually supplying. The region falls
+    // 2.7 dB across its length on the decay fixture, so without this every
+    // wrap would step the level back up by that much - which is the pumping,
+    // not a property of the source. Detrending leaves the fine structure
+    // alone, and is the only form of level correction the parameter can
+    // express: Orbit is a time blend, oneShotTime + orbit * (orbitTime -
+    // oneShotTime), and a level hold is not expressible inside it.
+    const float loopDetrendGain = std::exp(
+        -loopLevelSlopePerSecond_ * parameters.orbit
+        * static_cast<float>(loopOffsetSeconds));
 
     SynthesisFrame frame;
     const float normalisedTime = effectiveTime / duration;
@@ -734,6 +837,19 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
     else
     {
         model.evaluate(normalisedTime, frame);
+    }
+    // Applying the detrend to the decoded frame, rather than to the finished
+    // targets, keeps it out of the register compensation: that gain is a ratio
+    // of two powers taken from this same frame, so both sides move together and
+    // it is left exactly where it was.
+    if (loopDetrendGain != 1.0f)
+    {
+        for (float& amplitude : frame.harmonicAmplitudes)
+            amplitude *= loopDetrendGain;
+        for (float& amplitude : frame.airAmplitudes)
+            amplitude *= loopDetrendGain;
+        for (float& amplitude : frame.boneAmplitudes)
+            amplitude *= loopDetrendGain;
     }
 
     // Touch turns MIDI velocity into an excitation strength rather than a

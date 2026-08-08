@@ -1103,7 +1103,7 @@ planned*.
   voices across the stereo field, which is still true but no longer says what
   decides where a voice lands. No engine step owns either line.
 
-- [ ] **3. Make Orbit a forward, level-continuous, non-repeating sustain.**
+- [x] **3. Make Orbit a forward, level-continuous, non-repeating sustain.**
   The triangle fold at `NeuramarEngine.cpp:723-734` gives a held note an envelope
   autocorrelation of 0.979 at one ping-pong period and 0.992 at two, 2.99 dB of
   level pumping on a decaying fixture and 4.68 dB on a percussive one that never
@@ -1144,8 +1144,9 @@ planned*.
   trajectory, not the noise — takes a short-time RMS envelope over frames of a
   **whole number of played-fundamental periods** (11 periods, 50.0 ms at the
   220 Hz fixture), and asserts over t in [2, 6] s that the envelope's
-  **peak-to-peak spread is below 1.5 dB**, against 2.56 dB today at that frame
-  length and 4.68 dB on the percussive fixture. That bound, not
+  **peak-to-peak spread is below 1.5 dB**, against 2.49 dB today at that frame
+  length (2.56 dB in preflight, on a fixture whose partial rolloff differed) and
+  4.68 dB on the percussive fixture. That bound, not
   an autocorrelation, is the primary gate, because it is the one that stays
   well-posed after the fix: a normalised autocorrelation of a mean-removed
   near-constant envelope is 0/0, and the shipping engine already scores above 0.98
@@ -1153,15 +1154,17 @@ planned*.
   metric proposed in the first draft cannot tell a pumping sustain from a steady
   one. Three supporting assertions. The largest rise between consecutive frames
   after t = 2 s must be below 0.25 dB, which is a direct test that no leg runs
-  backwards on a monotonically decaying trajectory: today it is 0.52 dB, and a
+  backwards on a monotonically decaying trajectory: today it is 0.51 dB, and a
   frozen model clock — the stationary control — gives exactly 0.00 dB. The
   sustain must still be **moving**: the per-frame spectral centroid over the same
   span must have a peak-to-peak spread of at least 1% of its own mean, which is
-  3.35% for the traversing clock today and 0.002% for a frozen one. And the
+  8.26% for the traversing clock today with the magnitude-weighted centroid the
+  test uses (3.35% in preflight, on a differently defined centroid) and 0.0001%
+  for a frozen one. And the
   sustain must not **repeat**: the normalised autocorrelation of the mean-removed
   per-frame centroid must be below 0.60 both at the new forward period
   `loopLength` and at the old ping-pong period `2 * loopLength`, against 0.88 and
-  0.86 today.
+  0.86 today — as **magnitudes**, see the shipping note below.
   *Contract corrected in preflight.* Three things were wrong, all measured on the
   shipping engine by a scratch program against a decay fixture (32 partials,
   `tau_1` 0.9 s, `p` 0.75, root 220.01 Hz at MIDI 57, learned loop
@@ -1182,6 +1185,80 @@ planned*.
   was stated only at `2 * loopLength`, which the golden-ratio advance is not the
   only way to defeat; testing `loopLength` as well is what makes the advance
   load-bearing.
+  *What actually shipped*: both halves of the mechanism, as specified, plus one
+  correction to the contract and one to the metric.
+  **The wrap is stateless and the crossfade is the one that was already there.**
+  `NeuramarEngine.cpp:784-796` replaces the triangle fold with
+  `loopOffset = fmod(fmod(elapsed, L) + fmod(floor(elapsed / L) * 0.618034, 1) * L, L)`,
+  which reads the region forward only and starts each pass 0.618 of the loop
+  length further in. No crossfade code was written, because the step's own
+  reading of `:1126-1128` is right: every wrap is a step in the control-rate
+  amplitude *targets*, and the existing ramp already walks each amplitude
+  linearly from its old value to its new one over one control period, which is
+  an equal-gain crossfade of one control period. Nothing was added that could
+  make it equal-power.
+  **The detrend is fitted once per model, on the whole decoded frame.**
+  `setModel()` calls a new `fitLoopLevelSlope()` (`:370-433`) that least-squares
+  fits the slope of `log` total frame amplitude — harmonics, Air and Bone
+  together — over 32 points across the loop region, and
+  `updateVoiceControl()` multiplies the decoded frame by
+  `exp(-slope * orbit * loopOffset)`. Applying it to the *frame* rather than to
+  the finished targets is what keeps it out of the register compensation:
+  `registerGain` is a ratio of two powers taken from the same frame, so both
+  sides move together and it is left exactly where it was. Scaling by
+  `parameters.orbit` is what makes Orbit 0 bit-identical to the old engine. The
+  fitted slope is -1.137 nepers/s on the decay fixture, which is **-2.74 dB
+  across the loop region** — that trend is the pumping, and it is the whole of
+  it. The slope is clamped so the correction across one pass cannot exceed
+  12 dB; the five fixtures measured need 0.04 to 9.5 dB.
+  **The autocorrelation gate is on the magnitude, not the signed value.** At lag
+  `loopLength` the shipping engine measures **-0.881**, not +0.88: `loopLength`
+  is half the ping-pong period, so it is the trough, and the preflight figure was
+  its magnitude. Stated signed, the gate at that lag would have passed the very
+  engine it exists to fail. `testOrbitSustainIsNotPeriodic` takes `|r|` at both
+  lags.
+  **The centroid is magnitude-weighted, not power-weighted.** Squaring hands
+  almost the whole weight to partial 1 on a source with this rolloff: the
+  power-weighted centroid sits at 228.6 Hz and moves only 1.53% of its own mean
+  where the magnitude-weighted one sits at 291.2 Hz and moves 7.30%, against a
+  1% floor. The power-weighted form would have left that assertion 0.5% from its
+  bound for no reason. It is also measured over exactly the analysis frame
+  rather than through the file's `windowedSinusoidAmplitude()`, whose fixed
+  40 ms half-window would smear four frames of this length together.
+  The test builds its own fixture, `makeDecayingPartialSample`: 32 partials at
+  220.01 Hz falling as `h^-1.2` with `tau(h) = 0.9 h^-0.75` s, 1.6 s long. The
+  learner reproduces the numbers this step was planned against exactly — root
+  220.021 Hz at MIDI 57, loop [1.0082, 1.2859] s, `loopLength` 0.2777 s. Over
+  t in [2, 6] s at 11-period (50.0 ms) frames, the four gates go
+  **2.491 -> 0.024 dB** of level spread (bound 1.5), **0.505 -> 0.021 dB** of
+  largest frame-to-frame rise (bound 0.25), **8.26% -> 7.30%** of centroid
+  spread (floor 1.0), and **0.882 -> 0.324** and **0.862 -> 0.014** of centroid
+  autocorrelation at `loopLength` and `2 * loopLength` (bound 0.60). A
+  percussive fixture — 12 partials, `tau(h) = 0.30 h^-0.8`, plus a 4 ms noise
+  burst — measures 0.033 dB of level spread and 0.027 dB of largest rise after
+  the change, against the 4.68 dB recorded for the fold under gap 3.
+  Reverting both halves and rerunning fails four of the five assertions at
+  2.491 dB, 0.505 dB, 0.882 and 0.862; the "still moving" assertion correctly
+  passes, since the old engine does move. Each half is load-bearing on its own.
+  Restoring the forward wrap but leaving the detrend out fails only the two
+  level assertions, at 2.169 dB and 2.151 dB — the 2.15 dB rise is the wrap step
+  itself, larger than anything the fold produced. Restoring the detrend but
+  leaving the triangle fold in fails only the two autocorrelation assertions, at
+  0.882 and 0.862, with the level flat at 0.019 dB. And a forward wrap from a
+  *fixed* point — the golden advance set to zero — fails both autocorrelation
+  assertions at 0.693 and 0.837, which is what makes the advance itself
+  load-bearing rather than decorative. The stationary control was run too: a
+  clock frozen at `loopEnd` measures 0.00014 dB of level spread and 3.7e-6 dB of
+  largest rise at the 11-period frame — which is the direct confirmation that
+  the whole-period frame length makes the 0.25 dB rise bound well-posed — and is
+  caught by the "still moving" gate at 0.0001% of centroid spread and by the
+  `loopLength` autocorrelation at 0.746. Suite green, 3/3 ctest suites in
+  46.0 s.
+  Gap 8's qualification still holds after this change. It was recorded as "a
+  defect of Orbit-off playing" because the fold kept a held note inside the loop
+  region forever, and a forward wrap keeps it there just the same, so nothing
+  about that gap has moved. What changed for step 5 is only that the clock it
+  key-tracks now traverses rather than ping-pongs.
 
 - [ ] **4. Damp the release by frequency, using the source's own damping law as
   the shape.** Release is one scalar on the summed output

@@ -136,6 +136,15 @@ public:
     // Linear gain currently applied by the bus compressor; 1.0 means no
     // reduction and the stage may be bypassed entirely.
     [[nodiscard]] float getBusGain() const noexcept;
+    // What the drawn oscillator of the most recently triggered voice was
+    // running at, in hertz, over the last processed sample; zero when the
+    // newest voice does not have one. Published with the meters above and read
+    // the same way. It exists because the pitch sweep on a membrane collapses
+    // inside one period of the settled note - the Kick's envelope is at 1/e in
+    // 7.2 ms against a settled period of 20.4 ms - so no estimator of the
+    // rendered output can see the sweep, and the only honest way to assert what
+    // the sweep does is to ask the oscillator.
+    [[nodiscard]] float getNewestVoicePitchHz() const noexcept;
 
 private:
     static constexpr int maxVoices = 64;
@@ -442,6 +451,17 @@ private:
         float hatAperture { 1.0f };
         float baseFrequency { 100.0f };
         float sweepAmount { 0.0f };
+        // How much of the drawn sweep this strike is allowed to use. Latched at
+        // note-on from the energy the strike put into the drum, because a head
+        // is stiff only because it is stretched, so a ghost stroke bends the
+        // pitch hardly at all where an accent bends it a fourth. Unity for
+        // everything at or above the velocity where it saturates, which leaves
+        // every accent exactly where it was.
+        float strikeDepth { 1.0f };
+        // What the drawn oscillator ran at over the last rendered sample, in
+        // hertz. Written by the voices that have one and read only by the
+        // metering pass; nothing in the audio path consumes it.
+        float oscillatorFrequency { 0.0f };
         float panLeft { 0.70710678f };
         float panRight { 0.70710678f };
         std::array<float, oscillatorCount> phases {};
@@ -693,6 +713,7 @@ private:
     std::atomic<float> outputLevelLeft_ { 0.0f };
     std::atomic<float> outputLevelRight_ { 0.0f };
     std::atomic<float> busGainMeter_ { 1.0f };
+    std::atomic<float> newestVoicePitch_ { 0.0f };
     std::atomic<int> activeVoiceCount_ { 0 };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };

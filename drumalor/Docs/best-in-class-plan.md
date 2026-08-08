@@ -1152,7 +1152,7 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   0.20, Crash air share between 0.25 and 0.80 — chosen to hold both with the
   contact tilt and without it, and both are green on either engine.
 
-- [ ] **3. Make the membrane glide's depth follow the strike.** A head is stiff
+- [x] **3. Make the membrane glide's depth follow the strike.** A head is stiff
   because it is stretched, so the pitch rise follows the energy actually in the
   drum — Avanzini and Marogna's result, which the engine already estimates as
   `voice.modalEnergy` for the bank and, on oscillator 0 itself, as
@@ -1248,6 +1248,61 @@ pass this? — and failed the one only implementation asks: can a right one? Ste
   an oscillator trace while prescribing an estimator that reads three to
   thirteen times lower, so the ±15 % clause could not be met by any
   implementation.
+  *What actually shipped*: the step as written. `strikeDepth` is
+  `min(1, (accent voltage · excitation scale)² / (the same product at v = 0.85)²)`,
+  latched in `initialiseVoice` beside the two curves it is built from, which
+  are now named functions — `accentVoltage` and `excitationScaleFor` — so the
+  reference cannot drift out of step with the values it normalizes. The square
+  is the energy: the displacement the strike leaves in the head is the accent
+  voltage times the excitation scale, which is the same product the modal bank
+  is struck with, and the energy stored in a stretched head goes as the square
+  of it. It multiplies the drawn sweep in both places: in `renderTom`, where
+  there was no strike term at all, and in `renderKick`, where it **replaces**
+  the former `triggerSweep`. The unclamped ratio is 1 at v = 0.85 by
+  construction and 1.517 at v = 1.00, so everything from the saturation
+  velocity up reads exactly `1.0f` and the multiplication is exact: the three
+  Toms are bit-identical to the previous engine at v = 1.00, 0.95 and 0.85, and
+  the Kick is bit-identical at v = 1.00.
+  Measured at 48 kHz, Humanise 0, on the trace the step's accessor publishes —
+  `getNewestVoicePitchHz()`, the newest voice's oscillator-0 frequency over the
+  last rendered sample, carried out with the meters — read as the peak of the
+  trace over the median of its positive samples from 150 ms on. Before: Kick
+  **25.607** semitones at v = 1.00 and **23.473** at v = 0.08 (91.67 %), Low Tom
+  10.660 / 10.571 (99.17 %), Mid Tom 10.353 / 10.264 (99.14 %), High Tom
+  9.795 / 9.692 (98.94 %). After: the v = 1.00 figures are unchanged to every
+  digit and the v = 0.08 figures are **0.291** (1.14 %), **0.444** (4.17 %),
+  **0.443** (4.28 %) and **0.505** (5.05 %) semitones. Both strengths still
+  settle on the same note: 0.011 cents apart on the Kick, 0.003 on the Low Tom
+  and nothing at all on the other two, against a clause allowing 5. The three
+  glide figures the step quotes from preflight's own trace — 25.728, 10.440,
+  10.484, 9.934 — reproduce here as 25.607, 10.660, 10.353, 9.795, a difference
+  of 0.5 to 2.1 % that is the settled-pitch window, not the engine; the test
+  carries the figures its own estimator reads. The contract is
+  `testMembraneGlideFollowsTheStrike` in `Tests/DrumEngineTests.cpp`. Reverting
+  the two use sites and leaving everything else in place fails it five times:
+  four ghost-stroke clauses at 91.67, 99.17, 99.14 and 98.94 % against a ceiling
+  of 35, and the Kick's band balance at 3.461 dB against a required −2.539.
+  Two things the step text got wrong, both corrected here. The **render-side
+  figures are not reachable by the repository's own band estimator**. The step
+  quotes the Kick's early band balance moving from 0.04 to −10.70 dB, measured
+  on the section's FFT harness; the test uses `bandPowerInRange`, the
+  second-order analysis pair every other band assertion in this suite uses, and
+  it reads **3.461 → −2.883 dB**, a fall of **6.34 dB**, against an accent that
+  does not move at all (4.163 dB on both engines). The clause the step asks for
+  — a fall of at least 6 dB at v = 0.08, and within 0.5 dB at v = 1.00 — is met,
+  but only with the window opened at 4 ms rather than 0: the beater's contact
+  click is broadband and belongs to neither band, and including it costs a
+  decibel of the separation (3.499 → −1.836, a fall of 5.34 dB). Four
+  milliseconds is where the membrane band tests above already start, for the
+  same reason. On the three Toms the same change moves the same statistic by
+  **1.5 to 1.6 dB**, which is inside the 0.3–1.7 dB the step predicted, so the
+  clause stays on the Kick alone. And `testDeepAnalogKickContract` **does** see
+  this change, contrary to the last sentence of the verification above: it
+  renders at v = 0.95, where the depth is saturated at 1.0 but the term it
+  replaced read 0.84 + 0.16 · 0.9578 = 0.9932, so the Kick's sweep there is
+  0.68 % deeper than before. Sample for sample the largest difference that
+  makes is 23.2 dB below the render's own peak at v = 0.95 and 14.6 dB below it
+  at v = 0.85. The contract stays green, as does the whole rest of the suite.
 
 - [ ] **4. Split the degenerate mode pairs, and let Humanise move the strike
   azimuth.** Every m > 0 mode of an ideal circular head is a doubly degenerate
