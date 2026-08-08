@@ -10,27 +10,23 @@
 namespace taikor
 {
 
-// The strokes of the kumi-daiko vocabulary, one per pitch class. An
-// octave of the keyboard is therefore a complete stick technique, and the
-// octave number alone chooses the drum's pitch: higher octave, higher drum.
-// Eight strokes, and each of them is a different thing done to the drum rather
-// than a different amount of the same thing. There were twelve, and four of
-// them were duplicates: measured as band levels normalised to their own loudest
-// band, Do sat 1.3 dB from Don, Kara 1.3 dB from Don Rim, Flam 1.8 dB from Do
-// and Ko 3.0 dB from Buzz - differences no listener can name, on keys a player
-// has to remember. What is left is one stroke per mechanism: the middle of the
-// head, the middle with a hand on it, a light touch further out, the edge, the
-// hoop, the shell, a roll, and the sticks alone.
+// The strokes of the kumi-daiko vocabulary, one per pitch class, four to a
+// drum. An octave of the keyboard is one drum and its four bottom semitones are
+// the four things a player does to it, so the whole instrument is a 4x4 grid:
+// four drums down the keyboard, four strokes across each of them.
+//
+// Four strokes, and each is a different mechanism rather than a different
+// amount of the same one: the middle of the head, the edge out by the tacks,
+// the middle with a hand on it, and the head and the hoop together. There were
+// eight, and the four that went were either duplicates or specialities - Su is
+// a light Don and velocity already covers it; Katsu, Buzz and Bachi are one
+// technique each and none of them is a drum stroke a grid has to spend a key on.
 enum class Articulation : std::uint8_t
 {
     Don,     // C  - full open stroke, a hand's width in from the middle
-    Tsu,     // C# - damped centre, the free hand resting on the head
-    Su,      // D  - ghost stroke, light and well out from the middle
-    DonRim,  // D# - head and hoop struck together
-    Ka,      // E  - out on the head near the tacks, thin and cutting
-    Katsu,   // F  - bachi on the wooden shell
-    Buzz,    // F# - press roll
-    Bachi,   // G  - stick against stick, no drum at all
+    Ka,      // C# - out on the head near the tacks, thin and cutting
+    Tsu,     // D  - damped centre, the free hand resting on the head
+    DonRim,  // D# - head and hoop struck together, the loud accent
     Count
 };
 
@@ -41,16 +37,16 @@ inline constexpr std::size_t articulationCount =
 // damping, so the host is told to keep the tail alive that long.
 inline constexpr double maximumTailSeconds = 12.0;
 
-// Playable range: six octaves, C1..B6. The octave containing `referenceNote`
-// plays the drum at exactly the size and tension the parameters describe;
-// every octave above or below rescales the physical model (see EngineParameters
-// ::octaveBody), so the whole taiko family from odaiko to shime-daiko sits
-// under the hands at once.
-inline constexpr int lowestPlayableNote = 24;   // C1
+// Playable range: four octaves, C3..B6, one drum per octave. Each octave is a
+// different instrument of the taiko family rather than the same drum rescaled -
+// see getDrumDescription - and the four strokes sit on the bottom four
+// semitones of each. Everything else is silent.
+inline constexpr int lowestPlayableNote = 48;   // C3
 inline constexpr int highestPlayableNote = 95;  // B6
 inline constexpr int referenceNote = 48;        // C3
-inline constexpr int lowestOctaveOffset = -2;
+inline constexpr int lowestOctaveOffset = 0;
 inline constexpr int highestOctaveOffset = 3;
+inline constexpr int drumCount = highestOctaveOffset - lowestOctaveOffset + 1;
 
 struct ArticulationMetadata
 {
@@ -72,6 +68,38 @@ struct ArticulationMetadata
 [[nodiscard]] std::optional<Articulation> articulationForMidiNote (int midiNote) noexcept;
 [[nodiscard]] std::optional<int> octaveOffsetForMidiNote (int midiNote) noexcept;
 [[nodiscard]] int midiNoteFor (Articulation articulation, int octaveOffset) noexcept;
+
+// One of the four drums the keyboard lays out, described as the instrument it
+// is rather than as a size. Every field here is a physical property of a real
+// member of the taiko family - what it is built out of, how deep its body is,
+// how thick its hide is and how hard that hide is pulled - so the four octaves
+// are four instruments and not one instrument at four scales. A rescaling
+// cannot change a ratio, and these drums differ in their ratios: see
+// Docs/best-in-class-plan.md for the measured spread.
+//
+// The four control fields are in the same units EngineParameters uses, so the
+// player's own controls can be carried across the family as a trim on them
+// (see TaikoEngine::parametersForOctave).
+struct DrumDescription
+{
+    std::string_view displayName;
+    std::string_view slug;
+    // What the drum is, in one line, for the octave strip's tooltip.
+    std::string_view summary;
+    // Head diameter in metres, as the instrument is actually built.
+    float headDiameterMetres { 0.95f };
+    // Body depth, head tension, head material and shell material in control
+    // units. See drumDescriptionTable in TaikoEngine.cpp for where each number
+    // comes from.
+    float bodyDepth { 0.5f };
+    float tension { 0.55f };
+    float headMaterial { 0.75f };
+    float shellMaterial { 0.8f };
+};
+
+// The drum an octave plays. Out-of-range offsets are clamped, so this is always
+// safe to call with whatever a host sent.
+[[nodiscard]] const DrumDescription& getDrumDescription (int octaveOffset) noexcept;
 
 // Every control the player has over the instrument. The first block describes
 // the physical drum, the second how it is struck, and the third the close pair
@@ -143,13 +171,19 @@ struct EngineParameters
     // Per-stroke variation in position, angle, impact speed and contact time.
     // 0 makes every stroke of a given articulation identical.
     float humanise { 0.4f };
-    // How an octave of transposition is realised physically, 0..1. At 0 the
-    // drum keeps its size and only the head tension changes, which is the same
-    // drum tuned up. At 1 the drum's diameter halves per octave and the tension
-    // is left alone, which is a genuinely smaller drum: its cavity coupling,
-    // air loading and radiation do not scale with it, so it sounds smaller
-    // rather than merely higher.
-    float octaveBody { 0.7f };
+    // What an octave up the keyboard actually changes, 0..1. At 0 the drum
+    // described by the controls above is simply retuned - same head, same body,
+    // same hide, more tension - which is one drum played four times. At 1 each
+    // octave is its own instrument: the o-daiko, the chu-daiko, the okedo-daiko
+    // and the shime-daiko of getDrumDescription, each with its own diameter,
+    // body depth, hide thickness, tension and shell. In between, the drum is
+    // blended from one towards the other.
+    //
+    // It also chooses how the residual tuning is taken, because the four drums
+    // are real instruments and do not land on exact octaves by themselves: at 0
+    // that residual is head tension, at 1 it is the drum's size. Both are how a
+    // drum is actually brought to pitch, and at 1 it is a couple of per cent.
+    float octaveBody { 1.0f };
 
     // --- The microphones ------------------------------------------------
     // Distance of the close pair from the batter head, 0 -> 3 cm, 1 -> 40 cm.
@@ -310,13 +344,6 @@ private:
     // above about three hundred hertz at all.
     static constexpr int continuumBandCount = 5;
 
-    // Free-free bending modes of one bachi, used by the stick-on-stick stroke.
-    // It borrows the shell's slots in the bank because the two never sound
-    // together, but it is a separate count so that changing one bank's size
-    // cannot silently resize the other.
-    static constexpr int stickResonatorCount = 6;
-    static_assert (stickResonatorCount <= shellResonatorCount,
-                   "the stick bank shares the shell's slots in Voice::modes");
     // Contact solves and mode retirement run on this stride rather than per
     // sample. 32 samples is 0.67 ms at 48 kHz, well under the shortest glide.
     static constexpr int controlPeriod = 32;
@@ -636,15 +663,9 @@ private:
         // Rim contribution: a shot that catches the hoop as well as the head.
         float rimGain { 0.0f };
         // Shell mode retune, used by the strokes that catch the hoop to shorten
-        // the body's ring. Ignored when the bank is not the drum's body.
+        // the body's ring.
         float shellFrequencyScale { 1.0f };
         float shellDecayScale { 1.0f };
-        // Whether this stroke's resonant bank is the drum's own body. The
-        // stick-on-stick stroke rings two pieces of wood that never touch the
-        // drum, so it reads a StickState instead and no drum control - the
-        // shell's material, the head's diameter, its depth or its tension - may
-        // reach it.
-        bool usesDrumBody { true };
     };
 
     // The physical drum, resolved from the parameters for one octave. Every
@@ -706,29 +727,6 @@ private:
         // a mode is long enough to move them.
         float mountLoss { 0.0f };
         float mountCorner { 80.0f };
-    };
-
-    // A pair of bachi, for the stroke that claps them together and never
-    // touches the drum. It is deliberately a separate structure from DrumState
-    // and is resolved by a function that cannot see one: the stick's pitch is a
-    // property of the stick, and reading it off the drum's body made Shell
-    // Material, Head Diameter and Body Depth all retune the click.
-    struct StickState
-    {
-        std::array<float, stickResonatorCount> frequencies {};
-        std::array<float, stickResonatorCount> decays {};
-        // Effective mass of one stick in a bending mode, the analogue of
-        // DrumState::shellModalMass.
-        float modalMass { 0.08f };
-        // Reduced mass of the collision. Two equal sticks meeting each other
-        // give m/2, which is what sets the impulse.
-        float strikerMass { 0.04f };
-        // Resistive driving-point impedance of the bar at its first bending
-        // mode, the analogue of the membrane's 8*sqrt(T*sigma): the floor on
-        // how quickly the two sticks can separate.
-        float impedance { 300.0f };
-        // Projected side area of the cylinder, which is what pushes air.
-        float radiatingArea { 0.01f };
     };
 
     [[nodiscard]] static EngineParameters sanitise (
@@ -829,6 +827,12 @@ private:
     [[nodiscard]] static AxisymmetricPair solveAxisymmetricPair (
         const DrumState& drum) noexcept;
 
+    // The drum an octave is built from: the player's controls carried across
+    // the family by whichever of the four instruments this octave plays, with
+    // Octave Body choosing how much of that instrument is taken. At octave 0,
+    // and at Octave Body 0 anywhere, this is the parameter block unchanged.
+    [[nodiscard]] static EngineParameters parametersForOctave (
+        const EngineParameters& applied, int octaveOffset) noexcept;
     // Resolving a drum depends only on the parameter block, the wheel and the
     // octave, so it is static and the instance method simply supplies its own.
     [[nodiscard]] static DrumState resolveDrumFor (const EngineParameters& parameters,
@@ -846,11 +850,6 @@ private:
                                      float tensionPitchFactor,
                                      DrumState& drum) noexcept;
     [[nodiscard]] DrumState resolveDrum (int octaveOffset) const noexcept;
-    // The pair of sticks. Takes the parameter block rather than a DrumState on
-    // purpose: it reads only the hardness control and the octave, so no drum
-    // control can reach the stick-on-stick stroke through it.
-    [[nodiscard]] static StickState resolveStickFor (const EngineParameters& parameters,
-                                                     int octaveOffset) noexcept;
     // Hertz impact, returning the contact duration in seconds and the peak
     // force. Contact time follows impact speed as v^(-1/5) and is floored by
     // the struck body's own resistive impedance, because the stick cannot leave
@@ -864,7 +863,7 @@ private:
     // The striking mass and the head's resistive impedance for a drum stroke.
     static void drumContactTerms (const DrumState& drum, float& strikerMass,
                                   float& impedance) noexcept;
-    void buildVoiceModes (Voice& voice, const DrumState& drum, const StickState& stick,
+    void buildVoiceModes (Voice& voice, const DrumState& drum,
                           const StrikeProfile& profile, float extraDamping) noexcept;
     // A bachi arriving on a head that is already sounding takes energy out of
     // it. Every stroke after the first on one drum lands on a moving membrane,
@@ -898,14 +897,11 @@ private:
     EngineParameters applied_ {};
 
     std::array<Voice, maxVoices> voices_ {};
-    // One resolved drum per playable octave. Strokes are common and the solve
-    // involves a Bessel series and an eigen-decomposition per mode, so it is
-    // done once per parameter change rather than once per stroke.
-    std::array<DrumState, highestOctaveOffset - lowestOctaveOffset + 1> drumCache_ {};
-    // One pair of sticks per octave, cached alongside the drums. Smaller drums
-    // are played with smaller sticks, which is the only thing the octave does
-    // to them.
-    std::array<StickState, highestOctaveOffset - lowestOctaveOffset + 1> stickCache_ {};
+    // One resolved drum per playable octave - which is now one per instrument
+    // of the family. Strokes are common and the solve involves a Bessel series
+    // and an eigen-decomposition per mode, so it is done once per parameter
+    // change rather than once per stroke.
+    std::array<DrumState, drumCount> drumCache_ {};
     bool drumCacheValid_ { false };
     // The wheel position the cache was built at. Comparing against this rather
     // than against the per-sample increment matters at high sample rates, where

@@ -45,20 +45,21 @@ struct TaikoEngineTestAccess
 
     static constexpr float delayCeiling = TaikoEngine::directLineSize - 4;
 
-    static std::uint32_t lastContactStart (const TaikoEngine& engine) noexcept
+    // The sample the last scheduled contact of a stroke finishes on.
+    static std::uint32_t lastContactEnd (const TaikoEngine& engine) noexcept
     {
         const auto& voice = engine.voices_[0];
-        return voice.contactCount > 0
-            ? voice.contacts[static_cast<std::size_t> (voice.contactCount - 1)].startSample
-            : 0u;
+        if (voice.contactCount <= 0)
+            return 0u;
+        const auto& last =
+            voice.contacts[static_cast<std::size_t> (voice.contactCount - 1)];
+        return last.startSample + last.lengthSamples;
     }
 
-    // The wooden half of a voice's bank: the drum's shell for eleven of the
-    // strokes, the pair of sticks for the twelfth. Read from the built voice
-    // rather than measured from the audio, because the question these answer -
-    // does a drum control reach the stick? - is about which numbers were used,
-    // and a spectral measurement of a click that lasts forty milliseconds
-    // cannot resolve it.
+    // The wooden half of a voice's bank: the drum's shell. Read from the built
+    // voice rather than measured from the audio, because the questions these
+    // answer are about which numbers were used and no surviving stroke lets the
+    // body dominate the finished sound.
     static std::vector<float> woodFrequencies (const TaikoEngine& engine,
                                                int slot = 0)
     {
@@ -73,17 +74,37 @@ struct TaikoEngineTestAccess
         return result;
     }
 
-    static std::vector<float> woodDecays (const TaikoEngine& engine, int slot = 0)
+    // The resonator poles of one half of a voice's bank, as the render loop
+    // will actually run them. This is where a retune shows up: the glide leaves
+    // mode.omega alone and carries its shift in the coefficients, so a test that
+    // asks whether something was retuned has to read the coefficients.
+    static std::vector<double> poles (const TaikoEngine& engine, bool membrane,
+                                      int slot = 0)
     {
-        std::vector<float> result;
+        std::vector<double> result;
+        const auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            const auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (mode.membrane == membrane)
+                result.push_back (mode.resonator.a1);
+        }
+        return result;
+    }
+
+    // Total drive of the wooden bank, which is the quantity Shell Resonance
+    // sets and therefore the one a step in that control would appear in.
+    static double woodDrive (const TaikoEngine& engine, int slot = 0) noexcept
+    {
+        double total = 0.0;
         const auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
         for (int index = 0; index < voice.modeCount; ++index)
         {
             const auto& mode = voice.modes[static_cast<std::size_t> (index)];
             if (! mode.membrane)
-                result.push_back (mode.decayRate);
+                total += std::abs (static_cast<double> (mode.drive));
         }
-        return result;
+        return total;
     }
 
     // Which voice each of a run of strokes landed in, and how loud each slot
@@ -186,6 +207,27 @@ struct TaikoEngineTestAccess
     {
         for (auto& band : engine.voices_[static_cast<std::size_t> (slot)].continuum)
             band.level = 0.0f;
+    }
+
+    // Silence the wooden half of a voice's bank on a voice that has already
+    // been triggered - the drum's shell for the seven strokes that touch the
+    // drum, the pair of sticks for the eighth - leaving the head, the continuum
+    // and the airborne click alone. There is no way to ask how much of a stroke
+    // a modal bank is actually worth through the public interface, and the
+    // question decides whether a calibration constant is pinned by anything.
+    //
+    // Safe after `trigger` and before the first block for the same reason
+    // silenceContinuum is: `drive` is written once when the voice is built and
+    // read at excitation time, and nothing a later contact does moves it.
+    static void silenceWoodenBank (TaikoEngine& engine, int slot = 0) noexcept
+    {
+        auto& voice = engine.voices_[static_cast<std::size_t> (slot)];
+        for (int index = 0; index < voice.modeCount; ++index)
+        {
+            auto& mode = voice.modes[static_cast<std::size_t> (index)];
+            if (! mode.membrane)
+                mode.drive = 0.0f;
+        }
     }
 
     // The frequency multiplier the attack glide is currently applying to the
@@ -767,6 +809,361 @@ void testOctavesRaisePitch()
     }
 }
 
+// The playing grid is four drums by four strokes, and everything else on the
+// keyboard is silent. Sixteen notes, C3 to D#6, and no accidents around the
+// edges of them: a pitch class cast straight into the articulation enum would
+// have let the eight keys above each drum play a Don, and an octave offset taken
+// from a note below the range would have indexed the drum table off its front.
+void testTheGridIsFourByFourAndTheRestIsSilent()
+{
+    expect (taikor::articulationCount == 4u, "the grid is four strokes wide");
+    expect (taikor::drumCount == 4, "the grid is four drums deep");
+    expect (taikor::lowestPlayableNote == 48 && taikor::highestPlayableNote == 95,
+            "the grid occupies C3 to B6");
+
+    // The stroke order the keyboard promises: C, C#, D, D#.
+    const taikor::Articulation order[4] = {
+        taikor::Articulation::Don, taikor::Articulation::Ka,
+        taikor::Articulation::Tsu, taikor::Articulation::DonRim
+    };
+    for (int index = 0; index < 4; ++index)
+        expect (static_cast<int> (order[index]) == index,
+                "the bottom four semitones of an octave are Don, Ka, Tsu, Don Rim");
+
+    // Every note on the keyboard, not only the playable ones. Sixteen of the
+    // hundred and twenty-eight sound, they are exactly the ones the three
+    // mapping functions agree on, and the rest are silent in the audio and not
+    // merely absent from the map.
+    int sounding = 0;
+    for (int note = 0; note < 128; ++note)
+    {
+        const auto articulation = taikor::articulationForMidiNote (note);
+        const auto octave = taikor::octaveOffsetForMidiNote (note);
+        const bool inGrid = note >= taikor::lowestPlayableNote
+                         && note <= taikor::highestPlayableNote
+                         && note % 12 < 4;
+
+        expect (articulation.has_value() == inGrid,
+                "note " + std::to_string (note) + " is mapped to a stroke exactly "
+                "when it is one of the sixteen");
+        expect (octave.has_value() == (note >= taikor::lowestPlayableNote
+                                       && note <= taikor::highestPlayableNote),
+                "note " + std::to_string (note) + " disagrees with the octave map");
+
+        if (articulation.has_value() && octave.has_value())
+        {
+            ++sounding;
+            expect (*octave >= taikor::lowestOctaveOffset
+                        && *octave <= taikor::highestOctaveOffset,
+                    "note " + std::to_string (note) + " left the drum table");
+            expect (taikor::midiNoteFor (*articulation, *octave) == note,
+                    "note " + std::to_string (note) + " does not round-trip");
+        }
+
+        taikor::TaikoEngine engine;
+        engine.setParameters (defaultParameters());
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.reset();
+        const bool accepted = engine.triggerMidi (note, 0.95f);
+        expect (accepted == inGrid,
+                "note " + std::to_string (note) + " was accepted when it is not "
+                "part of the grid");
+
+        const auto rendered = render (engine, 9600);
+        if (inGrid)
+            expect (rendered.peak > 1.0e-4,
+                    "grid note " + std::to_string (note) + " produced no audio");
+        else
+            expect (rendered.peak == 0.0,
+                    "note " + std::to_string (note) + " is off the grid and must "
+                    "be exactly silent");
+    }
+
+    expect (sounding == 16, "the grid must have exactly sixteen playable notes");
+}
+
+// The four octaves are four instruments of the taiko family, not one drum at
+// four sizes. That is the whole point of the change, so it is asserted in the
+// form that a rescaling cannot satisfy: the drums have to be the sizes the
+// family actually comes in, their heads have to be different hides, their bodies
+// have to be different shapes, and the dimensionless quantities a listener hears
+// - how far the enclosed air pushes the second axisymmetric branch above the
+// first, how far the head's own stiffness opens the modal ratios out, how many
+// cycles the drum rings for - have to be different numbers on each of them.
+//
+// A similarity transform of one drum into another preserves every one of those
+// ratios by construction. So does the octave transform that used to make this
+// keyboard, to the extent that it is one. An implementation that went back to
+// rescaling a single drum fails the first clause on the diameters, the second on
+// the hide, and the third on all four proportions at once.
+void testTheFourDrumsAreFourInstruments()
+{
+    const auto parameters = defaultParameters();
+
+    // What the four instruments are, as the drum table states them. The
+    // diameters are the family's own: a 3-shaku o-daiko, a 1.8-shaku
+    // nagado-daiko, a standing okedo and a tsuke-shime.
+    struct Built
+    {
+        float diameterMetres;
+        float depthOverDiameter;
+        float arealDensity;
+    };
+    const Built built[4] = {
+        { 0.95f, 0.850f, 1.0529f },
+        { 0.55f, 1.200f, 0.7800f },
+        { 0.40f, 1.250f, 0.5500f },
+        { 0.30f, 0.700f, 0.4500f },
+    };
+
+    struct Signature
+    {
+        float depthOverDiameter;
+        float breathingOverFundamental;
+        float stiffness;
+        float ringCycles;
+        float arealDensity;
+    };
+    std::array<Signature, 4> signatures {};
+
+    float previousFundamental = 0.0f;
+
+    for (int octave = taikor::lowestOctaveOffset; octave <= taikor::highestOctaveOffset;
+         ++octave)
+    {
+        const auto index = static_cast<std::size_t> (octave - taikor::lowestOctaveOffset);
+        const auto reported = taikor::TaikoEngine::measure (parameters, octave);
+        const auto& drum = taikor::getDrumDescription (octave);
+        const auto where =
+            " (" + std::string (drum.displayName) + ")";
+
+        expect (drum.headDiameterMetres == built[index].diameterMetres,
+                "the drum table no longer describes the instrument it names" + where);
+
+        // The drum as resolved has to be the drum as built, to within the
+        // tuning the keyboard asks of it. That residual is taken as size at the
+        // factory Octave Body, and it is under half a per cent on every one of
+        // the four - which is what makes it honest to call the table's numbers
+        // the instrument's own.
+        const auto diameter = 2.0f * reported.radiusMetres;
+        expect (std::abs (diameter - built[index].diameterMetres)
+                    < built[index].diameterMetres * 0.02f,
+                "the resolved drum is not the size the table says it is: "
+                    + std::to_string (diameter) + " m" + where);
+
+        const auto depthRatio = reported.depthMetres / diameter;
+        expect (std::abs (depthRatio - built[index].depthOverDiameter) < 0.02f,
+                "the resolved body is not the shape the table says it is: "
+                    + std::to_string (depthRatio) + where);
+
+        expect (std::abs (reported.arealDensityKgPerSquareMetre
+                          - built[index].arealDensity)
+                    < built[index].arealDensity * 0.01f,
+                "the head is not the hide the table says it is: "
+                    + std::to_string (reported.arealDensityKgPerSquareMetre)
+                    + " kg/m^2" + where);
+
+        // Four different fundamentals, and an octave apart, because the
+        // keyboard has to stay a keyboard however different the drums are.
+        expect (reported.loadedFundamentalHz > 20.0f,
+                "every drum of the grid must have an audible fundamental" + where);
+        if (previousFundamental > 0.0f)
+        {
+            const auto cents =
+                1200.0f * std::log2 (reported.loadedFundamentalHz / previousFundamental);
+            expect (std::abs (cents - 1200.0f) < 20.0f,
+                    "the step onto this drum is " + std::to_string (cents)
+                        + " cents" + where);
+        }
+        previousFundamental = reported.loadedFundamentalHz;
+
+        signatures[index] = {
+            depthRatio,
+            reported.breathingModeHz / reported.loadedFundamentalHz,
+            reported.headStiffnessParameter,
+            reported.tailSeconds * reported.loadedFundamentalHz,
+            reported.arealDensityKgPerSquareMetre
+        };
+    }
+
+    // And the part a rescaling cannot produce. Every one of these is
+    // dimensionless, so halving a drum and quadrupling its tension - or any
+    // mixture of the two, which is the whole of what the octave transform can
+    // do - leaves all of them exactly where they were. Measured on the four
+    // drums:
+    //
+    //   depth / diameter          0.850 / 1.200 / 1.250 / 0.700
+    //   breathing / fundamental   1.658 / 1.285 / 1.117 / 1.105
+    //   head stiffness B (x1e4)   2.186 / 2.405 / 0.898 / 0.449
+    //   ring, in cycles           169 / 251 / 295 / 780
+    //   hide, kg/m^2              1.053 / 0.780 / 0.550 / 0.450
+    //
+    // The o-daiko and the chu-daiko are the closest pair in the modal ratios,
+    // because both are thick tacked cowhide, and they are a long way apart in
+    // the shape of their bodies. The okedo and the shime are the closest pair in
+    // how far the air splits their pair, and they are a factor of two apart in
+    // the head's own stiffness. So the clause is stated as: every pair of drums
+    // has to differ by a tenth in at least one of the four ratios, and by a
+    // a sixth in the hide, which is not a ratio at all but a statement about
+    // what the head is made of.
+    for (std::size_t a = 0; a < signatures.size(); ++a)
+        for (std::size_t b = a + 1; b < signatures.size(); ++b)
+        {
+            const auto& first = signatures[a];
+            const auto& second = signatures[b];
+            const auto where =
+                " (" + std::string (taikor::getDrumDescription (static_cast<int> (a)).displayName)
+                + " against "
+                + std::string (taikor::getDrumDescription (static_cast<int> (b)).displayName)
+                + ")";
+
+            const auto apart = [] (float x, float y)
+            {
+                const auto larger = std::max (std::abs (x), std::abs (y));
+                return larger > 0.0f ? std::abs (x - y) / larger : 0.0f;
+            };
+
+            const auto worst = std::max ({ apart (first.depthOverDiameter,
+                                                  second.depthOverDiameter),
+                                           apart (first.breathingOverFundamental,
+                                                  second.breathingOverFundamental),
+                                           apart (first.stiffness, second.stiffness),
+                                           apart (first.ringCycles, second.ringCycles) });
+
+            expect (worst > 0.10f,
+                    "two drums of the grid differ only in pitch, which is a "
+                    "rescaling and not a family: worst dimensionless difference "
+                        + std::to_string (worst) + where);
+            // The closest pair of hides is the okedo's and the shime's, at
+            // 0.550 and 0.450 kg/m^2 - eighteen per cent, and the two thinnest
+            // heads in the family.
+            expect (apart (first.arealDensity, second.arealDensity) > 0.15f,
+                    "two drums of the grid are headed with the same hide" + where);
+        }
+
+    // Finally the audio, because everything above reads measure() and an
+    // implementation that changed the readout alone would pass the lot. Struck
+    // dead centre, where every mode with a circumferential order is nodal and
+    // the axisymmetric pair is the whole of the drum.
+    auto centred = parameters;
+    centred.strikePosition = -1.0f;
+    centred.humanise = 0.0f;
+    centred.tensionModulation = 0.0f;
+
+    double previousSounded = 0.0;
+    for (int octave = taikor::lowestOctaveOffset; octave <= taikor::highestOctaveOffset;
+         ++octave)
+    {
+        const auto reported = taikor::TaikoEngine::measure (centred, octave);
+        const auto mono =
+            strike (centred, taikor::Articulation::Don, octave, 0.9f, 48000.0, 36000)
+                .mono();
+        const auto sounded = dominantFrequency (
+            mono, 48000.0, reported.loadedFundamentalHz * 0.88,
+            reported.loadedFundamentalHz * 1.12, reported.loadedFundamentalHz * 0.002,
+            2400u, 2400u + 24000u);
+
+        expect (std::abs (sounded - reported.loadedFundamentalHz)
+                    < reported.loadedFundamentalHz * 0.02,
+                "drum " + std::to_string (octave) + " does not sound where it says "
+                "it does: " + std::to_string (sounded) + " against "
+                    + std::to_string (reported.loadedFundamentalHz));
+        if (previousSounded > 0.0)
+            expect (sounded > previousSounded * 1.8,
+                    "the four drums must sound four different fundamentals");
+        previousSounded = sounded;
+    }
+}
+
+// The four strokes have to be four different things done to the drum rather
+// than four levels of one thing. Measured as the spectrum each one produces,
+// normalised to its own loudest band so that level cannot stand in for timbre,
+// and - for the pair that is deliberately the same strike with and without a
+// hand on the head - as how long what is left goes on sounding.
+void testTheFourStrokesAreMutuallyDistinct()
+{
+    auto parameters = defaultParameters();
+    parameters.humanise = 0.0f;
+
+    // Octave bands from the o-daiko's fundamental up to the top of the head's
+    // continuum, which is the whole of what the instrument produces.
+    constexpr int bandCount = 8;
+    const auto signatureOf = [&parameters] (taikor::Articulation articulation)
+    {
+        const auto mono =
+            strike (parameters, articulation, 0, 0.92f, 48000.0, 48000).mono();
+
+        std::array<double, bandCount> bands {};
+        double loudest = 1.0e-30;
+        for (int band = 0; band < bandCount; ++band)
+        {
+            const double low = 45.0 * std::pow (2.0, band);
+            bands[static_cast<std::size_t> (band)] =
+                bandLevelDb (mono, 48000.0, low, low * 2.0);
+            loudest = std::max (loudest, bands[static_cast<std::size_t> (band)]);
+        }
+        for (auto& band : bands)
+            band -= loudest;
+        return bands;
+    };
+
+    std::array<std::array<double, bandCount>, taikor::articulationCount> signatures {};
+    for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+        signatures[index] = signatureOf (static_cast<taikor::Articulation> (index));
+
+    // Six pairs. The threshold is deliberately far above what a listener can
+    // name: three decibels of difference somewhere in the spectrum, on curves
+    // that have already had their own level divided out.
+    for (std::size_t a = 0; a < taikor::articulationCount; ++a)
+        for (std::size_t b = a + 1; b < taikor::articulationCount; ++b)
+        {
+            double worst = 0.0;
+            for (int band = 0; band < bandCount; ++band)
+                worst = std::max (worst,
+                                  std::abs (signatures[a][static_cast<std::size_t> (band)]
+                                            - signatures[b][static_cast<std::size_t> (band)]));
+
+            const auto where =
+                " ("
+                + std::string (taikor::getArticulationDisplayName (
+                      static_cast<taikor::Articulation> (a)))
+                + " against "
+                + std::string (taikor::getArticulationDisplayName (
+                      static_cast<taikor::Articulation> (b)))
+                + ")";
+            expect (worst > 3.0,
+                    "two strokes of the grid have the same spectrum to within "
+                        + std::to_string (worst) + " dB" + where);
+        }
+
+    // And the pair that is the same strike with and without the free hand on
+    // the head parts company in time rather than in the spectrum, so it is
+    // asserted there as well. This is the clause a set of four gain-staged
+    // copies of one stroke would fail.
+    const auto open =
+        strike (parameters, taikor::Articulation::Don, 0, 0.92f, 48000.0, 96000);
+    const auto damped =
+        strike (parameters, taikor::Articulation::Tsu, 0, 0.92f, 48000.0, 96000);
+    expect (decayTime (damped.mono(), 48000.0, -40.0)
+                < decayTime (open.mono(), 48000.0, -40.0) * 0.7,
+            "Tsu is a Don with a hand on the head and must sustain far less");
+
+    // The two that land out by the tacks part company by mechanism: only one of
+    // them catches the hoop, so only one of them lifts the tack line.
+    const auto tackScale = [&parameters] (taikor::Articulation articulation)
+    {
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.reset();
+        engine.trigger (articulation, 0, 1.0f);
+        return taikor::TaikoEngineTestAccess::tackLine (engine).rimGain;
+    };
+    expect (tackScale (taikor::Articulation::DonRim)
+                > tackScale (taikor::Articulation::Ka) * 2.0,
+            "a rim shot must reach the hoop far harder than an edge stroke");
+}
+
 // The enclosed air used to be a spring of infinite extent. rho c^2 / L is the
 // omega -> 0 limit of a cavity, and this drum runs out of that limit inside its
 // own range: c/2L is 212 Hz at the factory body and 139 Hz at the deepest one,
@@ -820,58 +1217,61 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
         shallow.bodyDepth = 0.0f;
         const auto reported = measure (shallow, 3);
 
-        expect (std::abs (reported.cavityStiffnessFactor - 1.0f) < 0.08f,
+        expect (std::abs (reported.cavityStiffnessFactor - 1.0f) < 0.12f,
                 "a body short against the wavelength stopped being an air spring");
-        // And its breathing mode must barely move. 458.2408 Hz is what a lumped
-        // spring gives on this drum; the column gives 455.7300, which is 0.55 %.
-        expect (std::abs (reported.breathingModeHz - 458.2408f) < 458.2408f * 0.01f,
-                "a short cavity's breathing mode moved by more than one per cent, "
-                "so the correction is reaching where there is nothing to correct");
+        // And its breathing mode must barely move. 497.5883 Hz is what a lumped
+        // spring gives on this drum; the column gives 489.5489, which is 1.6 %.
+        expect (std::abs (reported.breathingModeHz - 497.5883f) < 497.5883f * 0.025f,
+                "a short cavity's breathing mode moved by more than two and a "
+                "half per cent, so the correction is reaching where there is "
+                "nothing to correct");
     }
 
     // And where the body is long against it the correction has to be large.
-    // Both of these are the o-daiko end of the keyboard, which is the whole
-    // point: the biggest drums stop being air springs with a hide attached.
+    // Both of these are a real body of the family rather than a rescaling of
+    // one, which is what makes the point: an okedo-daiko is a tub a quarter
+    // longer than it is wide, and a tub that long stops being an air spring
+    // with a hide on it.
     {
-        const auto deepFactory = measure (defaultParameters(), -2);
-        expect (deepFactory.cavityStiffnessFactor < 0.82f,
-                "the cavity did not soften at the bottom of the keyboard");
-        // 48.8434 Hz with the lumped spring, 44.0626 with the column: 9.8 %.
-        expect (deepFactory.breathingModeHz < 48.8434f * 0.91f,
-                "the breathing mode at octave -2 did not come down by nine per cent");
+        const auto okedo = measure (defaultParameters(), 2);
+        expect (okedo.cavityStiffnessFactor < 0.65f,
+                "the cavity did not soften inside the deepest-bodied drum of the "
+                "family");
+        // 239.7540 Hz with the lumped spring, 226.6850 with the column: 5.5 %.
+        expect (okedo.breathingModeHz < 239.7540f * 0.95f,
+                "the okedo's breathing mode did not come down by five per cent");
 
         auto deepest = defaultParameters();
         deepest.bodyDepth = 1.0f;
-        const auto deepBody = measure (deepest, -2);
-        expect (deepBody.cavityStiffnessFactor < 0.72f,
+        const auto deepBody = measure (deepest, 3);
+        expect (deepBody.cavityStiffnessFactor < 0.40f,
                 "the deepest body's cavity did not soften");
-        // 40.1941 Hz with the lumped spring, 34.5117 with the column: 14.1 %.
-        expect (deepBody.breathingModeHz < 40.1941f * 0.86f,
+        // 442.0600 Hz with the lumped spring, 423.0660 with the column: 4.3 %.
+        expect (deepBody.breathingModeHz < 442.0600f * 0.96f,
                 "the breathing mode at the deepest body did not come down by "
-                "fourteen per cent");
+                "four per cent");
     }
 
-    // The musical consequence, and the one worth having: the breathing branch's
-    // octave steps, which are nearer a fourth than an octave at the bottom
-    // because the cavity was a spring whose stiffness went as 1/L while the drum
-    // it was inside grew in every dimension at once. Every one of the five has
-    // to widen.
+    // The musical consequence. The keyboard is an octave in the drum's own
+    // lowest mode and it is not an octave in the breathing branch, because the
+    // branch above the fundamental is lifted by an air column whose length is a
+    // property of each instrument rather than of a scaling. Measured on the four
+    // drums: 759.6 / 956.6 / 1181.8 cents.
     //
-    // Re-taken when step 5 landed, and the reason is worth stating because the
-    // floors went down rather than up. Step 5 applies less of the octave
-    // transform than the old keyboard did - it applies as much as puts the
-    // *sounding* pitch an octave away - so the breathing branch, which used to
-    // be dragged along by a full octave of transform, now moves less: the five
-    // steps read 508.7 / 610.8 / 775.8 / 956.1 / 1093.7 cents where before step
-    // 5 they read 582.4 / 682.8 / 859.5 / 1038.5 / 1153.1. That is a keyboard
-    // change and not a cavity change, and this test's own claim is untouched by
-    // it: measured on the same drums with the column replaced by the lumped
-    // spring it replaced, the five steps are 451.0 / 570.2 / 747.8 / 936.7 /
-    // 1078.8, so the column still widens every one of the five. The breathing
-    // branch's octave is a separate and larger failure than the fundamental's,
-    // it is recorded as such under gap 7, and neither step closes it.
+    // This block used to say that the column widens every boundary against the
+    // lumped spring it replaced, and that reasoning was about a family made by
+    // rescaling one drum - a lumped spring stiffens as 1/L while a scaled drum
+    // grows in every dimension at once. The four drums are not a scaling: their
+    // bodies run 0.81, 0.66, 0.50 and 0.21 m, and their proportions run 0.85,
+    // 1.20, 1.25 and 0.70 diameters, so the column argument does not point one
+    // way any more. Measured with the column replaced by the lumped spring the
+    // same three steps are 768.9 / 964.3 / 1134.0, so the column narrows the
+    // bottom two and widens the top one - which is the drums' own proportions
+    // and not a defect. What is asserted is what is still a property of the
+    // instrument rather than of an argument: the steps rise, none of them is an
+    // octave, and they sit where they are recorded.
     {
-        const float floors[5] = { 500.0f, 600.0f, 765.0f, 945.0f, 1080.0f };
+        const float recorded[3] = { 759.6f, 956.6f, 1181.8f };
         float previous = 0.0f;
 
         for (int octave = taikor::lowestOctaveOffset;
@@ -884,10 +1284,14 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
                     static_cast<std::size_t> (octave - taikor::lowestOctaveOffset - 1);
                 const float cents =
                     1200.0f * std::log2 (reported.breathingModeHz / previous);
-                expect (cents > floors[index],
+                expect (std::abs (cents - recorded[index]) < 25.0f,
                         "the breathing branch's step into octave "
-                            + std::to_string (octave) + " is only "
-                            + std::to_string (cents) + " cents");
+                            + std::to_string (octave) + " is "
+                            + std::to_string (cents) + " cents, recorded as "
+                            + std::to_string (recorded[index]));
+                expect (cents > 500.0f,
+                        "the breathing branch stopped rising into octave "
+                            + std::to_string (octave));
             }
             previous = reported.breathingModeHz;
         }
@@ -931,11 +1335,11 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
         };
 
         const Corner corners[] = {
-            { 1.00f, 0.50f, 0.50f, 1.00f, 0.95f, 0.35f,  2, 215.2444f },
-            { 1.00f, 1.00f, 1.00f, 1.00f, 0.95f, 0.35f,  1, 167.8403f },
-            { 0.00f, 0.00f, 0.50f, 1.00f, 0.95f, 0.00f,  3, 525.0414f },
-            { 1.00f, 0.00f, 1.00f, 1.00f, 1.80f, 1.00f, -2,  14.3383f },
-            { 0.50f, 0.50f, 0.50f, 0.85f, 0.95f, 0.70f, -2,  13.4532f },
+            { 1.00f, 0.50f, 0.50f, 1.00f, 0.95f, 0.35f, 2, 215.2443f },
+            { 1.00f, 1.00f, 1.00f, 1.00f, 0.95f, 0.35f, 1, 167.8403f },
+            { 0.00f, 0.00f, 0.50f, 1.00f, 0.95f, 0.00f, 3, 525.0419f },
+            { 1.00f, 0.00f, 1.00f, 1.00f, 1.80f, 1.00f, 3, 458.8248f },
+            { 0.50f, 0.50f, 0.50f, 0.85f, 0.95f, 0.70f, 3, 430.5022f },
         };
 
         for (const auto& corner : corners)
@@ -1071,12 +1475,12 @@ void testTheCavityIsAColumnNotAnInfiniteSpring()
                                 }
                             }
 
-        expect (total == 16200, "the cavity scan did not cover what it says it does");
-        // Measured: 2130 of the 16200 land on the floor, every one of them a body
-        // shorter than a quarter of the wavelength of its own head - a 20 cm
-        // shell tuned to three and a half kilohertz, and the like. None of them
-        // is a taiko, and the point of recording the count is that a change
-        // which quietly decoupled the instrument would move it.
+        expect (total == 10800, "the cavity scan did not cover what it says it does");
+        // Every one that lands on the floor is a body shorter than a quarter of
+        // the wavelength of its own head - a 20 cm shell tuned to three and a
+        // half kilohertz, and the like. None of them is a taiko, and the point
+        // of recording the count is that a change which quietly decoupled the
+        // instrument would move it.
         expect (decoupled > 0 && decoupled < total / 4,
                 "the number of drums whose column has passed its quarter-wave "
                 "changed: " + std::to_string (decoupled) + " of "
@@ -1190,27 +1594,44 @@ void testTheDrumIsTunedByThePitchItSounds()
                     + std::to_string (body));
     }
 
-    // Octave Body has to keep its meaning. The solve moves along the axis the
-    // control already chose and not along the other one, so at Octave Body 0 the
-    // drum never changes size and at Octave Body 1 its tension never changes.
-    // These are what stop the solve buying an octave on an axis the control does
-    // not own.
-    for (int octave = taikor::lowestOctaveOffset; octave <= taikor::highestOctaveOffset;
-         ++octave)
+    // Octave Body has to keep its meaning. At 0 the four octaves are one drum
+    // retuned, so the size never moves and the whole octave comes out of the
+    // tension. At 1 each octave is the instrument the table describes, so the
+    // tension is that instrument's own to the last place: the residual tuning
+    // is taken as size there, which is what the control chose, and the solve is
+    // not free to buy any of it on the axis the control does not own.
+    //
+    // 5942.43 / 5536.91 / 8300.62 / 14799.36 N/m are the four drums' tensions as
+    // the table states them, mapped through the control's own geometric range.
+    // They are the numbers a maker would read off the instruments: the two
+    // tacked drums at much the same tension as each other and the two laced ones
+    // far above them.
     {
-        auto bySize = defaultParameters();
-        bySize.octaveBody = 1.0f;
-        auto byTension = defaultParameters();
-        byTension.octaveBody = 0.0f;
+        const float tensions[4] = { 5942.43f, 5536.91f, 8300.62f, 14799.36f };
 
-        expect (std::abs (measure (byTension, octave).radiusMetres - 0.4750f)
-                    < 1.0e-4f,
-                "octave body 0 changed the drum's size at octave "
-                    + std::to_string (octave));
-        expect (std::abs (measure (bySize, octave).tensionNewtonsPerMetre - 5942.4f)
-                    < 5942.4f * 1.0e-4f,
-                "octave body 1 changed the drum's tension at octave "
-                    + std::to_string (octave));
+        for (int octave = taikor::lowestOctaveOffset;
+             octave <= taikor::highestOctaveOffset; ++octave)
+        {
+            auto bySize = defaultParameters();
+            bySize.octaveBody = 1.0f;
+            auto byTension = defaultParameters();
+            byTension.octaveBody = 0.0f;
+
+            const auto index =
+                static_cast<std::size_t> (octave - taikor::lowestOctaveOffset);
+
+            expect (std::abs (measure (byTension, octave).radiusMetres - 0.4750f)
+                        < 1.0e-4f,
+                    "octave body 0 changed the drum's size at octave "
+                        + std::to_string (octave));
+            expect (std::abs (measure (bySize, octave).tensionNewtonsPerMetre
+                              - tensions[index])
+                        < tensions[index] * 1.0e-3f,
+                    "octave body 1 did not leave the drum on its own tension at "
+                    "octave " + std::to_string (octave) + ": "
+                        + std::to_string (
+                              measure (bySize, octave).tensionNewtonsPerMetre));
+        }
     }
 
     // A guard, and it says so: Pitch is head tension and does not touch the
@@ -1245,9 +1666,12 @@ void testTheDrumIsTunedByThePitchItSounds()
 
     // Do no harm: the reported fundamental has to be where the peak is. Twelve
     // per cent of a band around it, and the reported frequency may not be more
-    // than a third of a decibel under the strongest bin in it. This holds on
-    // both trees - the worst is 0.267 dB after and 0.262 before - so it is a
-    // do-no-harm clause and not a discriminator.
+    // than nine tenths of a decibel under the strongest bin in it. Measured
+    // 0.134 / 0.909 / 0.130 / 0.122 dB over the four drums; the chu-daiko is the
+    // one that costs the margin, and what costs it is the attack glide - the
+    // window opens fifty milliseconds after a stroke that starts the head sharp
+    // and the drum has not fully settled back, so the strongest bin sits
+    // thirteen cents above the pitch the drum is tuned to.
     for (int octave = taikor::lowestOctaveOffset; octave <= taikor::highestOctaveOffset;
          ++octave)
     {
@@ -1272,47 +1696,36 @@ void testTheDrumIsTunedByThePitchItSounds()
                                reported.loadedFundamentalHz * 0.0005, first, last),
             48000.0, first, last);
 
-        expect (atReported > peak * 0.9638, // -0.32 dB
+        expect (atReported > peak * 0.9000, // -0.92 dB
                 "the rendered fundamental is not at the reported one for octave "
                     + std::to_string (octave));
     }
 
-    // The clause that would actually have caught this, and the one the step is
-    // measured by: the strongest partial anywhere from 8 to 900 Hz, scanned
-    // without asking the engine where to look, an octave at a time.
+    // The clause that would actually have caught this: the strongest partial
+    // anywhere from 8 to 900 Hz, scanned without asking the engine where to
+    // look, an octave at a time.
     //
     // Measured, Don at velocity 0.92 fifty milliseconds after the strike over a
-    // 16384-sample window, factory settings with Humanise off, the six octaves
-    // C1 to C6:
+    // 16384-sample window, factory settings with Humanise off, the four drums
+    // C3 to C6:
     //
-    //   before   58.50 / 43.00 / 90.00 / 109.00 / 227.00 / 465.50 Hz
-    //   after    58.50 / 47.00 / 90.00 / 102.00 / 203.50 / 406.25 Hz
-    //
-    //   steps    before  -532.9 / +1278.7 /  +331.6 / +1270.0 / +1243.3 cents
-    //            after   -378.9 / +1124.7 /  +216.7 / +1195.8 / +1196.8
+    //   90.00 / 102.75 / 203.50 / 406.25 Hz
+    //   steps  +229.4 / +1183.1 / +1196.8 cents
     //
     // The top two boundaries are the discriminating ones and they are asserted
     // as octaves: there the strongest partial is the loaded fundamental at both
-    // ends, and the step takes them from 70 and 43 cents of error to 4 and 3.
-    // Both fail on the tree before the step.
+    // ends.
     //
-    // The bottom three are not a statement about the drum's tuning at all, and
-    // this test does not pretend otherwise. Below C4 the loudest partial is not
-    // the loaded fundamental: at C1 and C2 it belongs to neither axisymmetric
-    // branch, and at C3 it is 89.75 Hz, which is neither the reported
-    // fundamental (50.75) nor the reported breathing mode (84.12). A ratio
-    // between two octaves whose loudest partials are different modes measures
-    // which mode won, not what the drum is tuned to. They are recorded here as
-    // literals so that a change which moves them has to be looked at - and one
-    // of them did move the wrong way: the C3-to-C4 boundary goes from 331.6 to
-    // 216.7 cents, 115 cents further from an octave, because C4's loudest
-    // partial is the loaded fundamental and this step brought it down to where
-    // it belongs while C3's loudest partial is a different mode that did not
-    // move. Both readings are about nine hundred cents from an octave; neither
-    // is a keyboard, and what is wrong with them is gap 7's other half, which
-    // this step does not claim to close.
+    // The bottom one is not a statement about the drum's tuning at all, and this
+    // test does not pretend otherwise. On the o-daiko the loudest partial is not
+    // the loaded fundamental: it is 90.00 Hz, which is neither the reported
+    // fundamental (50.75) nor the reported breathing mode (84.12) but a mode
+    // with a circumferential order. A ratio between two drums whose loudest
+    // partials are different modes measures which mode won, not what the drum is
+    // tuned to. It is recorded here as a literal so that a change which moves it
+    // has to be looked at, and what is wrong with it is gap 7's other half.
     {
-        const double expected[5] = { -378.9, +1124.7, +216.7, +1195.8, +1196.8 };
+        const double expected[3] = { +229.4, +1183.1, +1196.8 };
         double previous = 0.0;
 
         auto offCentre = defaultParameters();
@@ -1333,6 +1746,7 @@ void testTheDrumIsTunedByThePitchItSounds()
                     static_cast<std::size_t> (octave - taikor::lowestOctaveOffset - 1);
                 const auto cents = 1200.0 * std::log2 (strongest / previous);
                 const bool isOctaveBoundary = octave >= 2;
+
 
                 expect (std::abs (cents - expected[index]) < 25.0,
                         "the strongest partial's step into octave "
@@ -1907,12 +2321,6 @@ void testStrikePositionShapesTheSpectrum()
                 < decayTime (open.mono(), 48000.0, -40.0) * 0.7,
             "a damped stroke must be much shorter than an open one");
 
-    // Stick on stick is not the drum at all, so it must leave no tail.
-    const auto sticks = strike (parameters, taikor::Articulation::Bachi, 0, 0.9f,
-                                48000.0, 48000);
-    expect (decayTime (sticks.mono(), 48000.0, -40.0) < 0.12,
-            "a stick-on-stick stroke must not ring like a drum");
-
     // The global strike-position control must move the vocabulary too.
     auto towardsRim = parameters;
     towardsRim.strikePosition = 1.0f;
@@ -1921,9 +2329,9 @@ void testStrikePositionShapesTheSpectrum()
     towardsCentre.strikePosition = -1.0f;
     towardsCentre.humanise = 0.0f;
 
-    const auto rimward = strike (towardsRim, taikor::Articulation::Su, 0, 0.9f,
+    const auto rimward = strike (towardsRim, taikor::Articulation::Don, 0, 0.9f,
                                  48000.0, 24000);
-    const auto centreward = strike (towardsCentre, taikor::Articulation::Su, 0, 0.9f,
+    const auto centreward = strike (towardsCentre, taikor::Articulation::Don, 0, 0.9f,
                                     48000.0, 24000);
     expect (upperIn (rimward.mono()) / std::max (fundamentalIn (rimward.mono()), 1.0e-9)
                 > upperIn (centreward.mono())
@@ -2308,8 +2716,7 @@ void testTheTackLineRattlesOnlyWhenItIsBeaten()
         const auto articulation = static_cast<taikor::Articulation> (index);
         const auto line = lineFor (base, articulation, 1.0f);
         const bool catchesHoop = articulation == taikor::Articulation::DonRim
-                              || articulation == taikor::Articulation::Ka
-                              || articulation == taikor::Articulation::Katsu;
+                              || articulation == taikor::Articulation::Ka;
         expect ((line.scale > 0.0f) == catchesHoop,
                 "only the strokes that catch the hoop may drive the tacks: "
                     + std::string (taikor::getArticulationDisplayName (articulation)));
@@ -2611,12 +3018,14 @@ void testTheAttackGlideComesFromTheHead()
     expect (slackGlide - 1.0f > (tightGlide - 1.0f) * 3.0f,
             "a slack head must bend far further than a tight one struck the same way");
 
-    // And it has to be the head doing it. A Katsu is the stick on the wooden
-    // body: it puts very little into the membrane, so it must stretch it very
-    // little, without that having to be written down anywhere as a rule.
-    const auto shellGlide = peakGlide (full, taikor::Articulation::Katsu, 1.0f);
-    expect (shellGlide - 1.0f < (hard - 1.0f) * 0.25f,
-            "a stroke on the shell must barely stretch the head");
+    // And it has to be the head being displaced doing it, without that having
+    // to be written down anywhere as a rule. A Ka lands at 0.91 of the radius,
+    // where J0 has all but crossed zero, so it barely moves the axisymmetric
+    // modes that carry most of the head's displacement - and it therefore
+    // barely stretches the head, however hard it is struck.
+    const auto edgeGlide = peakGlide (full, taikor::Articulation::Ka, 1.0f);
+    expect (edgeGlide - 1.0f < (hard - 1.0f) * 0.35f,
+            "a stroke out by the tacks must barely stretch the head");
 }
 
 // Shell Resonance is a continuous control and has to behave like one. It used
@@ -2626,20 +3035,28 @@ void testTheAttackGlideComesFromTheHead()
 // moment the control crossed that gate.
 void testShellResonanceHasNoStepInIt()
 {
-    const auto peakKatsu = [] (float shellResonance)
+    // Read off the wooden bank's own drive rather than off the finished audio.
+    // It used to be measured on a Katsu, which was the bachi on the bare shell
+    // and so was nearly all wood; with that stroke retired, no surviving stroke
+    // lets the body dominate a peak level - a Don Rim is loud because it is a
+    // rim shot on the head - and a level measurement would be reading the head.
+    // The bank's drive is the quantity the control actually sets, and it is the
+    // quantity the step being guarded against appeared in.
+    const auto shellDrive = [] (float shellResonance)
     {
         auto parameters = defaultParameters();
         parameters.shellResonance = shellResonance;
-        // A Katsu is the stick on the body, so the wooden bank is nearly the
-        // whole of what it produces and a gain step on that bank is measurable
-        // in the finished audio rather than only in the mode table.
-        return strike (parameters, taikor::Articulation::Katsu, 0, 0.9f, 48000.0,
-                       12000)
-            .peak;
+        parameters.humanise = 0.0f;
+
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (48000.0, defaultBlockSize);
+        engine.trigger (taikor::Articulation::Don, 0, 0.9f);
+        return taikor::TaikoEngineTestAccess::woodDrive (engine);
     };
 
-    double previous = peakKatsu (0.0f);
-    expect (previous > 0.0, "a Katsu must sound with the shell control at zero");
+    double previous = shellDrive (0.0f);
+    expect (previous > 0.0, "the body must still ring with the shell control at zero");
 
     // Fine steps across the gate that used to be there. A quarter of a per cent
     // of a control that spans nineteen decibels end to end cannot legitimately
@@ -2647,7 +3064,7 @@ void testShellResonanceHasNoStepInIt()
     for (float shellResonance = 0.0025f; shellResonance <= 0.0501f;
          shellResonance += 0.0025f)
     {
-        const auto level = peakKatsu (shellResonance);
+        const auto level = shellDrive (shellResonance);
         const auto step = std::abs (20.0 * std::log10 (level / previous));
         expect (step < 0.3,
                 "Shell Resonance stepped by " + std::to_string (step)
@@ -2657,7 +3074,7 @@ void testShellResonanceHasNoStepInIt()
 
     // And the control still has to do its job over its whole range, or the
     // check above would be satisfied by a control that does nothing at all.
-    expect (peakKatsu (1.0f) > peakKatsu (0.0f) * 2.0,
+    expect (shellDrive (1.0f) > shellDrive (0.0f) * 2.0,
             "Shell Resonance must still open the body up across its range");
 }
 
@@ -2787,18 +3204,6 @@ void testTheContinuumFollowsTheHead()
     auto parameters = defaultParameters();
     parameters.humanise = 0.0f;
 
-    // A press roll is eleven blows, and each bounce is a real one on the head.
-    {
-        const auto buzz = strike (parameters, taikor::Articulation::Buzz, 0, 1.0f,
-                                  48000.0, 96256).mono();
-        const auto first = highBand (buzz, 0u, 1200u);
-        const auto second = highBand (buzz, 1440u, 2640u);
-        expect (first > 0.0, "the press roll made no high-frequency sound");
-        expect (second > first * 0.2,
-                "each bounce of a press roll must relight the continuum rather "
-                "than living off the first contact's residue");
-    }
-
     // Pitch and the wheel are head tension, and the continuum is the head, so a
     // stroke that is already ringing has to be carried with the resolved bank
     // rather than left standing under it.
@@ -2852,22 +3257,20 @@ void testTheContinuumFollowsTheHead()
             return highBand (mono, 0u, 4800u) / std::max (low, 1.0e-9);
         };
 
-        // Su is a ghost stroke: much quieter than a Don, but struck the same way
-        // and so not fundamentally darker in proportion to itself.
-        expect (brightnessOf (taikor::Articulation::Su)
+        // A Ka is quieter than a Don and lands out by the tacks, where the
+        // short-wavelength shapes pile up, so in proportion to its own
+        // fundamental it must be far brighter rather than far darker.
+        expect (brightnessOf (taikor::Articulation::Ka)
                     > brightnessOf (taikor::Articulation::Don) * 1.5,
                 "a quiet articulation must not lose its continuum to a squared "
                 "head gain");
     }
 }
 
-// Caching must be invisible. The engine keeps a resolved drum and a resolved
-// pair of sticks per octave, and a parameter that feeds either of them but is
-// missing from the invalidation list freezes it at whatever value happened to be
-// set when the cache was first filled. That is how Bachi Hardness came to be
-// ignored: before the sticks were cached it only fed the per-stroke contact
-// solve, so its absence from the list was correct, and adding the cache made it
-// wrong without touching the list.
+// Caching must be invisible. The engine keeps one resolved drum per octave -
+// which is now one per instrument of the family - and a parameter that feeds it
+// but is missing from the invalidation list freezes it at whatever value
+// happened to be set when the cache was first filled.
 //
 // This sweeps every parameter rather than that one, so the next field to grow a
 // cached dependency is caught by the same test.
@@ -2914,8 +3317,8 @@ void testEveryParameterSurvivesTheCache()
 
     for (const auto& control : controls)
         for (const auto articulation : { taikor::Articulation::Don,
-                                         taikor::Articulation::Katsu,
-                                         taikor::Articulation::Bachi })
+                                         taikor::Articulation::Ka,
+                                         taikor::Articulation::DonRim })
         {
             auto before = base;
             auto after = base;
@@ -3160,121 +3563,6 @@ void testReportedModesAreActuallySounded()
                             > measurements.loadedFundamentalHz * 1.2f,
                         "a sealed body must still report the cavity split" + where);
         }
-}
-
-// The stick-on-stick stroke is two pieces of wood that never touch the drum, so
-// nothing about the drum may reach it. It used to build its bank by stretching
-// the shell's ring modes by a constant, which meant Shell Material moved the
-// click by two octaves, Head Diameter by an octave and a half, and Head Tension
-// changed its level by five decibels - all from an object the stick never met.
-void testStickStrokeIsIndependentOfTheDrum()
-{
-    const auto bankFor = [] (const taikor::EngineParameters& parameters, int octave)
-    {
-        taikor::TaikoEngine engine;
-        engine.setParameters (parameters);
-        engine.prepare (48000.0, defaultBlockSize);
-        engine.trigger (taikor::Articulation::Bachi, octave, 0.85f);
-        return std::pair { taikor::TaikoEngineTestAccess::woodFrequencies (engine),
-                           taikor::TaikoEngineTestAccess::woodDecays (engine) };
-    };
-
-    const auto reference = bankFor (defaultParameters(), 0);
-    expect (reference.first.size() >= 4,
-            "the stick must present a bank to compare against");
-
-    // Every control that describes the drum rather than the stick, at both ends
-    // of its range.
-    struct DrumControl
-    {
-        const char* name;
-        void (*apply) (taikor::EngineParameters&, float);
-    };
-    static const std::array<DrumControl, 7> controls {{
-        { "Head Diameter",   [] (taikor::EngineParameters& p, float v) { p.headDiameter = 0.20f + 1.00f * v; } },
-        { "Body Depth",      [] (taikor::EngineParameters& p, float v) { p.bodyDepth = v; } },
-        { "Head Tension",    [] (taikor::EngineParameters& p, float v) { p.tension = v; } },
-        { "Head Material",   [] (taikor::EngineParameters& p, float v) { p.headMaterial = v; } },
-        { "Shell Material",  [] (taikor::EngineParameters& p, float v) { p.shellMaterial = v; } },
-        { "Shell Resonance", [] (taikor::EngineParameters& p, float v) { p.shellResonance = v; } },
-        { "Cavity Coupling", [] (taikor::EngineParameters& p, float v) { p.cavityCoupling = v; } },
-    }};
-
-    for (const auto& control : controls)
-        for (float value : { 0.0f, 1.0f })
-        {
-            auto parameters = defaultParameters();
-            control.apply (parameters, value);
-            const auto bank = bankFor (parameters, 0);
-
-            expect (bank.first.size() == reference.first.size(),
-                    std::string ("the stick's bank changed size with ") + control.name);
-            if (bank.first.size() != reference.first.size())
-                continue;
-
-            for (std::size_t index = 0; index < bank.first.size(); ++index)
-            {
-                expect (std::abs (bank.first[index] - reference.first[index]) < 0.01f,
-                        std::string ("the stick's pitch followed ") + control.name);
-                expect (std::abs (bank.second[index] - reference.second[index]) < 0.01f,
-                        std::string ("the stick's decay followed ") + control.name);
-            }
-        }
-
-    // The contact is the other route the drum reached the stick through: the
-    // solver used to floor the contact time on the head's own impedance even
-    // for a stroke that never lands on the head.
-    const auto referenceContact = taikor::TaikoEngineTestAccess::contactSecondsFor (
-        defaultParameters(), taikor::Articulation::Bachi, 0, 0.85f);
-    for (const auto& control : controls)
-        for (float value : { 0.0f, 1.0f })
-        {
-            auto parameters = defaultParameters();
-            control.apply (parameters, value);
-            const auto contact = taikor::TaikoEngineTestAccess::contactSecondsFor (
-                parameters, taikor::Articulation::Bachi, 0, 0.85f);
-            expect (std::abs (contact - referenceContact) < 1.0e-9f,
-                    std::string ("the stick's contact time followed ") + control.name);
-        }
-
-    // A drum stroke must still hear all of it, or the test above would pass on
-    // an engine that had simply stopped responding to the controls.
-    const auto drumReference = [&]
-    {
-        taikor::TaikoEngine engine;
-        engine.setParameters (defaultParameters());
-        engine.prepare (48000.0, defaultBlockSize);
-        engine.trigger (taikor::Articulation::Katsu, 0, 0.85f);
-        return taikor::TaikoEngineTestAccess::woodFrequencies (engine);
-    }();
-    auto shifted = defaultParameters();
-    shifted.shellMaterial = 0.0f;
-    taikor::TaikoEngine drumEngine;
-    drumEngine.setParameters (shifted);
-    drumEngine.prepare (48000.0, defaultBlockSize);
-    drumEngine.trigger (taikor::Articulation::Katsu, 0, 0.85f);
-    const auto drumShifted = taikor::TaikoEngineTestAccess::woodFrequencies (drumEngine);
-    expect (! drumReference.empty() && ! drumShifted.empty()
-                && std::abs (drumShifted[0] - drumReference[0]) > 1.0f,
-            "Shell Material must still retune a stroke on the drum's own body");
-
-    // And the octave must raise the stick's pitch, monotonically. Stretching
-    // the shell's modes used to push them past Nyquist, which dropped the top
-    // of the bank and made the click fall in pitch over the last two octaves.
-    float previous = 0.0f;
-    for (int octave = taikor::lowestOctaveOffset; octave <= taikor::highestOctaveOffset;
-         ++octave)
-    {
-        const auto bank = bankFor (defaultParameters(), octave);
-        expect (! bank.first.empty(),
-                "every octave of the stick stroke must sound something");
-        if (bank.first.empty())
-            continue;
-
-        expect (bank.first[0] > previous * 1.5f,
-                "each octave of the stick stroke must be higher than the last");
-        previous = bank.first[0];
-    }
 }
 
 // Sixteen voices, and several strokes can land on the same sample. A voice that
@@ -3769,35 +4057,34 @@ void testControlEndpointsAndGestures()
         auto with = without;
         with.tensionModulation = 1.0f;
 
-        // A shell strike does run the glide - its depth is scaled by the
-        // stroke's own membrane gain, which is small but not zero - so what has
-        // to be true is that the glide moves only that small membrane share and
-        // leaves the wooden bank, which carries most of the stroke, alone.
-        const auto shellQuiet =
-            strike (without, taikor::Articulation::Katsu, 0, 0.95f, 48000.0, 24000);
-        const auto shellGlided =
-            strike (with, taikor::Articulation::Katsu, 0, 0.95f, 48000.0, 24000);
-        const auto shellChange =
-            maximumAbsoluteDifference (shellQuiet.left, shellGlided.left);
-        // Against the stroke's own level, because that is what the claim is
-        // about. A Katsu is mostly wood but not entirely: it puts a little into
-        // the head, and the head's continuum is part of the head, so it glides
-        // with the rest of it. That share used to be frozen - the glide moved
-        // where the continuum's bands sat but not how fast they emptied, which
-        // was a bug rather than a guarantee - and freezing it is what kept this
-        // difference under a thousandth in absolute terms. What has to be true
-        // is that the wooden bank is not being retuned, and forty decibels
-        // under the stroke it is not.
-        expect (shellChange < shellQuiet.peak * 0.02,
-                "the tension glide must not retune the wooden shell");
-        // Exactly, on the one stroke that is wood and nothing else: the stick
-        // bank never sees the head's tension at all.
-        const auto sticksQuiet =
-            strike (without, taikor::Articulation::Bachi, 0, 0.95f, 48000.0, 24000);
-        const auto sticksGlided =
-            strike (with, taikor::Articulation::Bachi, 0, 0.95f, 48000.0, 24000);
-        expect (maximumAbsoluteDifference (sticksQuiet.left, sticksGlided.left) == 0.0,
-                "the tension glide must not reach the stick bank at all");
+        // The wooden bank must not be retuned by the glide. Stated on the bank
+        // itself rather than on the finished audio: with the bachi-on-the-shell
+        // stroke retired there is no stroke left in which the body dominates
+        // what comes out, so an audio measurement of this would be a
+        // measurement of the head. Stretching a head does not stretch the body
+        // it is nailed to, and the assertion is exact.
+        {
+            taikor::TaikoEngine engine;
+            engine.setParameters (with);
+            engine.prepare (48000.0, defaultBlockSize);
+            engine.trigger (taikor::Articulation::DonRim, 0, 1.0f);
+
+            using Access = taikor::TaikoEngineTestAccess;
+            const auto woodBefore = Access::poles (engine, false);
+            const auto headBefore = Access::poles (engine, true);
+            expect (! woodBefore.empty(), "a rim shot must ring the body");
+
+            render (engine, 4800);
+
+            const auto woodAfter = Access::poles (engine, false);
+            const auto headAfter = Access::poles (engine, true);
+
+            expect (woodAfter == woodBefore,
+                    "the tension glide retuned the wooden shell");
+            expect (headAfter != headBefore,
+                    "the tension glide did not move the head at all, so the "
+                    "clause above is vacuous");
+        }
 
         // And it must still do its job on the head, which is many times larger
         // than anything the shell stroke is allowed to move by.
@@ -3808,8 +4095,6 @@ void testControlEndpointsAndGestures()
         const auto headChange =
             maximumAbsoluteDifference (openWithout.left, openWith.left);
         expect (headChange > 1.0e-2, "the tension glide must still bend the head");
-        expect (headChange > shellChange * 20.0,
-                "the glide must move the head far more than the body");
     }
 
     // Width multiplies the side signal, so automating it must not step the
@@ -3996,8 +4281,9 @@ void testControlEndpointsAndGestures()
     }
 
     // The Shell Resonance control is described as how much the drum's body
-    // colours a head stroke. A stick-on-stick stroke never touches the body,
-    // so the control must not reach it at all.
+    // colours a head stroke, so it has to reach every stroke that touches the
+    // drum and it has to reach a rim shot - which catches the hoop and the body
+    // together - hardest of all.
     {
         auto quiet = parameters;
         quiet.humanise = 0.0f;
@@ -4005,16 +4291,16 @@ void testControlEndpointsAndGestures()
         auto loud = quiet;
         loud.shellResonance = 1.0f;
 
-        const auto a = strike (quiet, taikor::Articulation::Bachi, 0, 0.95f, 48000.0, 24000);
-        const auto b = strike (loud, taikor::Articulation::Bachi, 0, 0.95f, 48000.0, 24000);
-        expect (maximumAbsoluteDifference (a.left, b.left) == 0.0,
-                "Shell Resonance changed a stick-on-stick stroke");
+        const auto a = strike (quiet, taikor::Articulation::Don, 0, 0.95f, 48000.0, 24000);
+        const auto b = strike (loud, taikor::Articulation::Don, 0, 0.95f, 48000.0, 24000);
+        const auto openChange = maximumAbsoluteDifference (a.left, b.left);
+        expect (openChange > 1.0e-4,
+                "Shell Resonance must colour an ordinary head stroke");
 
-        // It must still do its job on a stroke that is the body.
-        const auto c = strike (quiet, taikor::Articulation::Katsu, 0, 0.95f, 48000.0, 24000);
-        const auto d = strike (loud, taikor::Articulation::Katsu, 0, 0.95f, 48000.0, 24000);
-        expect (maximumAbsoluteDifference (c.left, d.left) > 1.0e-3,
-                "Shell Resonance must still change a stroke on the body");
+        const auto c = strike (quiet, taikor::Articulation::DonRim, 0, 0.95f, 48000.0, 24000);
+        const auto d = strike (loud, taikor::Articulation::DonRim, 0, 0.95f, 48000.0, 24000);
+        expect (maximumAbsoluteDifference (c.left, d.left) > openChange,
+                "Shell Resonance must reach a rim shot harder than an open stroke");
     }
 
     // Automating Pitch must retune a stroke that is already ringing, for the
@@ -4128,16 +4414,6 @@ void testControlEndpointsAndGestures()
                 "a hand on the head must damp everything the head is doing, "
                 "not only its resolved modes");
 
-        // The wooden shell is not what the hand is resting on, and two sticks
-        // clicked together above the drum have nothing to do with it at all.
-        const auto openSticks =
-            tailEnergy (taikor::Articulation::Bachi, false, 1200u, 9600u);
-        const auto dampedSticks =
-            tailEnergy (taikor::Articulation::Bachi, true, 1200u, 9600u);
-        expect (openSticks > 1.0e-5,
-                "the stick stroke's measurement window caught no signal");
-        expect (std::abs (dampedSticks - openSticks) < openSticks * 0.02,
-                "a hand on the head must not damp a stick-on-stick stroke");
     }
 
     // The tail readout has to describe the drum the fundamental readout
@@ -4164,13 +4440,16 @@ void testControlEndpointsAndGestures()
                 "the reported tail does not match the tail the drum actually has");
     }
 
-    // Later scheduled contacts must still find the bank they are meant to
-    // drive. A press roll bounces for a tenth of a second, and measuring mode
-    // lifetimes from the voice's start retired the bank out from under it: at
-    // high damping it reached its last bounce with nine of its thirty modes.
+    // Every stroke of the grid must still schedule its contact and keep its
+    // whole bank alive past it. This used to be stated on the press roll, which
+    // scheduled eleven contacts and reached its last bounce with nine of its
+    // thirty modes because lifetimes were measured from the voice's start; with
+    // that stroke retired the retirement offset is still what keeps a stroke's
+    // bank alive through its own contact, and this says so on all four.
     {
-        for (const auto articulation : { taikor::Articulation::Buzz })
+        for (std::size_t index = 0; index < taikor::articulationCount; ++index)
         {
+            const auto articulation = static_cast<taikor::Articulation> (index);
             for (const float damping : { 0.35f, 1.0f })
             {
                 auto tuned = parameters;
@@ -4184,16 +4463,16 @@ void testControlEndpointsAndGestures()
 
                 using Access = taikor::TaikoEngineTestAccess;
                 const auto atStart = Access::activeModeCount (engine);
-                const auto lastContact = Access::lastContactStart (engine);
+                const auto lastContact = Access::lastContactEnd (engine);
                 expect (lastContact > 0u,
-                        "a multi-contact stroke must schedule a later contact");
+                        "a stroke must schedule a contact");
 
                 render (engine, static_cast<int> (lastContact), 64);
                 const auto atLastContact = Access::activeModeCount (engine);
 
                 expect (atLastContact == atStart,
                         std::string (taikor::getArticulationDisplayName (articulation))
-                            + " lost modes before its last scheduled contact");
+                            + " lost modes before its contact finished");
             }
         }
     }
@@ -4304,6 +4583,9 @@ int main()
 {
     testArticulationMetadataAndMidiMapping();
     testOctavesRaisePitch();
+    testTheGridIsFourByFourAndTheRestIsSilent();
+    testTheFourDrumsAreFourInstruments();
+    testTheFourStrokesAreMutuallyDistinct();
     testTheCavityIsAColumnNotAnInfiniteSpring();
     testTheDrumIsTunedByThePitchItSounds();
     testEveryArticulationAndSampleRate();
@@ -4327,7 +4609,6 @@ int main()
     testEveryParameterSurvivesTheCache();
     testRadiationEfficiencyStaysFinite();
     testReportedModesAreActuallySounded();
-    testStickStrokeIsIndependentOfTheDrum();
     testSimultaneousStrokesDoNotShareOneVoice();
     testDeterminismAndBlockPartitioning();
     testPerformanceControls();

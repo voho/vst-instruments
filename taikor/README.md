@@ -12,10 +12,10 @@ material and the drum gets heavier, darker, and more strongly loaded by the air.
 Seal the body and the fundamental splits in two. None of that is scripted — it
 falls out of the same solve.
 
-> **Listen first.** Twenty-three [rendered demonstrations](Docs/audio/README.md)
-> cover the stroke vocabulary, all six octaves, three drums of the taiko family
-> and every physical control swept across its range. They are rendered by the
-> shipping engine, so they cannot drift from what the plug-in does.
+> **Listen first.** Twenty-five [rendered demonstrations](Docs/audio/README.md)
+> cover the four strokes, the four drums, the whole sixteen-note grid and every
+> physical control swept across its range. They are rendered by the shipping
+> engine, so they cannot drift from what the plug-in does.
 
 The project builds three products from one JUCE codebase:
 
@@ -31,70 +31,98 @@ The project builds three products from one JUCE codebase:
 
 ## How it is played
 
-**Within an octave, eight notes are eight different strokes, one per way of
-hitting the drum. Between octaves, the drum itself changes: higher octave,
-higher drum.**
+**Four drums, four strokes: a 4×4 grid. The octave chooses which drum, and the
+bottom four semitones of it choose what is done to that drum.**
 
-That is the whole mapping. There are no keyswitches and no articulation menu —
-the stroke is the pitch class and the drum is the octave. The octave stays
-twelve semitones, because that is what has to line up with the keyboard, so the
-four keys above the last stroke carry nothing and do not sound.
+That is the whole mapping. There are no keyswitches and no articulation menu.
+Sixteen notes, C3 to D♯6, and everything else on the keyboard is silent.
+
+| | C — Don | C♯ — Ka | D — Tsu | D♯ — Don Rim |
+| --- | --- | --- | --- | --- |
+| **C6** Shime-daiko | 84 | 85 | 86 | 87 |
+| **C5** Okedo-daiko | 72 | 73 | 74 | 75 |
+| **C4** Chū-daiko | 60 | 61 | 62 | 63 |
+| **C3** Ō-daiko | 48 | 49 | 50 | 51 |
+
+### The four drums
+
+Each octave is a **different instrument**, not the same drum at a different
+size. Every one of them has its own diameter, its own body depth, its own hide
+and its own shell, and those are the numbers a maker would read off the real
+drum — a stave-built okedo is light and rings, a carved ō-daiko is heavy and
+does not.
+
+| Note | Drum | Head | Body | Hide | Shell | Sounds at |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| C3 | **Ō-daiko** | 95 cm | 0.81 m, 0.85× wide | 0.96 mm cowhide | carved zelkova | 51 Hz |
+| C4 | **Chū-daiko** | 55 cm | 0.66 m, 1.20× wide | 0.67 mm cowhide | carved zelkova | 101 Hz |
+| C5 | **Okedo-daiko** | 40 cm | 0.50 m, 1.25× wide | 0.44 mm hide | stave-built, light | 203 Hz |
+| C6 | **Shime-daiko** | 30 cm | 0.21 m, 0.70× wide | 0.35 mm hide | carved, thick-walled | 406 Hz |
+
+The tensions follow from what each drum has to be brought to, which is how a
+drum's tension is decided in life: **5.9 / 5.5 / 8.3 / 14.8 kN/m**. The two
+*byō-uchi* drums — head nailed to the shell with iron tacks — sit at much the
+same tension as each other; the two rope-laced ones sit far above them, and the
+shime is held at two and a half times the ō-daiko on a head a third as
+thick. That is the difference between tacking a head on and lacing it with
+*shirabe* cord, and it is why a shime cracks where an ō-daiko booms.
+
+They are four instruments and not four sizes, and the difference is in the
+numbers no rescaling can move. A drum halved and its head tightened fourfold
+keeps every ratio it had; these four do not share one:
+
+| | Ō-daiko | Chū-daiko | Okedo | Shime |
+| --- | ---: | ---: | ---: | ---: |
+| Body depth ÷ diameter | 0.85 | 1.20 | 1.25 | 0.70 |
+| Breathing mode ÷ fundamental | 1.66 | 1.29 | 1.12 | 1.11 |
+| Head stiffness *B* (×10⁻⁴) | 2.19 | 2.41 | 0.90 | 0.45 |
+| Top of the modal bank, above ideal | 30 ¢ | 33 ¢ | 13 ¢ | 6 ¢ |
+| Ring, in cycles of its own fundamental | 169 | 251 | 295 | 780 |
+| Hide, kg/m² | 1.05 | 0.78 | 0.55 | 0.45 |
+
+Read that as sound. The ō-daiko's air splits its lowest pair by a sixth; the
+shime's shallow body barely splits it at all, so a shime is a much more nearly
+pure pitch. The ō-daiko's thick hide opens the top of its modal bank thirty
+cents wide; the shime's thin one opens it six, so a shime is far closer to an
+ideal membrane and reads as a *tone* where an ō-daiko reads as a *thud*. And
+the okedo dies away soonest of the four in absolute time, not because it is
+small but because a light stave shell absorbs two and a half times as much at
+the rim as a solid zelkova log does.
+
+### The four strokes
 
 | Note | Stroke | Spoken as | Where the stick lands | What it is |
 | --- | --- | --- | ---: | --- |
 | C | Don | *don* | 0.15 | Full open stroke, a hand's width in from the middle |
-| C♯ | Tsu | *tsu* | 0.20 | Damped centre, the free hand resting on the head |
-| D | Su | *su* | 0.46 | Ghost stroke, light and well out from the middle |
-| D♯ | Don Rim | *don* | 0.97 | Head and hoop struck together for a rim shot |
-| E | Ka | *ka* | 0.91 | Out on the head near the tacks, thin and cutting |
-| F | Katsu | *katsu* | 0.99 | Bachi on the wooden shell |
-| F♯ | Buzz | *zu* | 0.32 | Press roll: the stick stays on the head |
-| G | Bachi | *kata* | — | Stick against stick, with no drum at all |
+| C♯ | Ka | *ka* | 0.91 | Out on the head near the tacks, thin and cutting |
+| D | Tsu | *tsu* | 0.20 | Damped centre, the free hand resting on the head |
+| D♯ | Don Rim | *don* | 0.97 | Head and hoop struck together, the loud accent |
 
-Eight, and each of them is a different thing done to the drum rather than a
-different amount of the same thing. There were twelve, and four were duplicates:
-measured as band levels normalised to each stroke's own loudest band, Do sat
-1.3 dB from Don, Kara 1.3 dB from Don Rim, Flam 1.8 dB from Do and Ko 3.0 dB
-from Buzz — differences no listener can name, on keys a player has to remember.
-The closest pair now is Don and Tsu at 2.9 dB, and those are the same strike
-with and without a hand on the head, so they part company in time instead:
-Tsu's sustain is a fifth of Don's.
+Four, and each of them is a different thing done to the drum rather than a
+different amount of the same thing. They come in two pairs, and each pair is
+separated by a mechanism rather than by a distance. Don and Tsu land five
+centimetres apart on a 95 cm head and are nothing like each other, because one
+of them has the free hand resting on the hide: Tsu's sustain is half of Don's.
+Ka and Don Rim land six centimetres apart out by the tacks and are nothing like
+each other, because one is on the head and the other is on the head and the hoop
+at once — only Don Rim beats the preload holding the tack line down.
 
-Where the stick lands is why. It decides which modes the strike can reach at
-all, so two strokes a few centimetres apart are the same stroke however
-differently they are labelled — and the old set had three pairs inside four
-centimetres of each other. Ka and Don Rim are the exception that proves it: they
-sit close together out by the tacks and are still nothing like one another,
-because one is on the head and the other is on the head and the hoop at once.
-A difference of mechanism beats any amount of distance.
+Measured as band levels normalised to each stroke's own loudest band, so that
+level cannot stand in for timbre, the closest pair of the four is Don against
+Tsu at 4.5 dB and the widest is Tsu against Don Rim at 18.1 dB.
 
-These are not eight presets. Each one is a strike position, a contact stiffness
+These are not four presets. Each one is a strike position, a contact stiffness
 and a mute state fed into the same model. A Ka is bright because striking the
-head at 0.91 of its radius drives the modes that have a circumferential order and
-barely moves the axisymmetric ones — which is exactly why it is bright on a real
-taiko.
+head at 0.91 of its radius drives the modes that have a circumferential order
+and barely moves the axisymmetric ones — which is exactly why it is bright on a
+real taiko.
 
-| Octave | Notes | Drum | Fundamental |
-| --- | --- | --- | ---: |
-| C1 | 24–35 | Past the end of the family: felt rather than heard | 13 Hz |
-| C2 | 36–47 | Larger than anything ever actually built | 25 Hz |
-| **C3** | **48–59** | **The ō-daiko the controls describe, unscaled** | **51 Hz** |
-| C4 | 60–71 | Nagado-daiko: the everyday drum | 101 Hz |
-| C5 | 72–83 | Shime-daiko territory: tight, high and short | 203 Hz |
-| C6 | 84–95 | Smaller still | 406 Hz |
-
-Notes outside 24–95 are silent.
-
-Those are exact octaves of the reference drum, and they are the same numbers at
-every setting of Octave Body, because the octave transform is solved against the
-pitch the drum sounds rather than written down.
-
-The instrument opens on the big drum rather than on a middling one, because the
-big drum is the point of a taiko. That does put the bottom two octaves below
-where a drum can usefully be pitched — they are sub-bass, useful under something
-else rather than on their own. Turn Head Diameter down if you would rather have
-the family centred higher; the octave mapping scales with whatever drum the
-controls describe.
+There were eight. **Su** was a light Don, and velocity already covers it —
+33 dB of it at full Velocity Depth. **Katsu** (bachi on the bare shell),
+**Buzz** (press roll) and **Bachi** (stick against stick) were one technique
+each; a press roll and a flam are things a player does with the notes they have,
+and the demonstration audio plays both without a key of their own. The shell
+still sounds under every stroke, and the tack line a rim shot needs is untouched.
 
 **Velocity** sets the impact speed of the stick, from 0.12 m/s — a tip barely
 leaving the head — to 6 m/s. The timbre change that comes with it is not a
@@ -104,8 +132,8 @@ louder at once.
 
 The mapping is geometric and nothing shapes it, so equal steps of MIDI velocity
 are equal steps of decibels — which is what an arm does. At full Velocity Depth
-that is thirty-three decibels between a ghost stroke and a full blow on an open
-Don, and forty-two on the stick click. The single most common complaint about the
+that is 33.6 dB between a ghost stroke and a full blow on an open Don on the
+ō-daiko, and 39.1 dB on the shime. The single most common complaint about the
 sampled taiko libraries this competes with is that they have very little of
 that; it is not a limitation a model has any reason to inherit.
 
@@ -116,6 +144,11 @@ the head is open again. **The pitch wheel** presses the head, which raises its
 tension and bends the drum sharp; a stroke that is already ringing bends with
 it rather than waiting for the next one.
 
+The controls describe the ō-daiko at C3, and every control is carried across the
+family as a trim on all four drums: turn Head Diameter down and the whole set
+shrinks, keeping its proportions. **Octave Body** decides how much of the family
+there is at all — see below.
+
 ## Controls
 
 Twenty-two automatable parameters. Every one of them is a physical quantity, not
@@ -125,7 +158,7 @@ a voicing offset.
 
 | Control | Range | Default | What it changes |
 | --- | --- | --- | --- |
-| Head Diameter | 15–180 cm | 95 cm | The membrane radius. Pitch moves as 1/a, and the modal ratios open out as the drum gets smaller because the head's own stiffness stops being negligible. The default is an ō-daiko, so the instrument opens on its heaviest voice rather than asking you to go and find it |
+| Head Diameter | 15–180 cm | 95 cm | The ō-daiko's membrane radius, and a scale factor on the other three drums. Pitch moves as 1/a, and the modal ratios open out as the drum gets smaller because the head's own stiffness stops being negligible |
 | Body Depth | 0–100 % | 50 % | Enclosed volume. A shallow body is a stiffer air spring, so it splits the two heads further apart |
 | Head Tension | 0–100 % | 55 % | 1.2–22 kN/m. Wave speed is √(T/σ), and the tension is also what the head's stiffness has to compete with, so a slack head is more inharmonic than a tight one |
 | Head Material | 0–100 % | 75 % | Thin synthetic film → thick cowhide. Sets areal density, internal loss *and* bending stiffness, because all three come from the same piece of material |
@@ -146,7 +179,7 @@ a voicing offset.
 | Tension Mod | 0–100 % | 40 % | Depth of the attack pitch glide, which is the head stretching itself: a hard stroke displaces the hide, a displaced hide is a longer and therefore tighter one, and the drum starts sharp. At 0 the head is treated as linear |
 | Stick Noise | 0–100 % | 35 % | Broadband contact noise on the hide, and the rattle of the tack line when a stroke beats the preload holding the head down |
 | Humanise | 0–100 % | 40 % | Per-stroke variation in position, angle, speed and contact time. At 0 the drum is a machine and repeats exactly |
-| Octave Body | Tuned → Family | 70 % | How an octave is realised (see below) |
+| Octave Body | Tuned → Family | Family | What an octave changes: one drum retuned, or four instruments (see below) |
 
 ### The close pair and the output
 
@@ -161,13 +194,11 @@ a voicing offset.
 The default output is far quieter than a synthesizer's usually is, deliberately.
 A taiko is a very loud instrument with a very large crest factor, and this one
 models the whole of it: the loudest stroke it can make — a full-velocity rim
-shot on the largest drum — sits more than twenty decibels above unity, and the
-bottom of the range is a ghost stroke some thirty-three decibels below a full
-blow on the same drum. The default leaves everything short of that one extreme
-just under full scale rather than making a middling stroke as loud as possible:
-the hardest rim shot on the factory drum peaks around −5 dBFS, while the same
-stroke two octaves down reaches the safety limiter for about seven
-milliseconds.
+shot — sits about fifteen decibels above unity, and the bottom of the range is a
+ghost stroke thirty-three decibels below a full blow on the same drum. At the
+default the whole grid stays clear of the safety limiter: the hardest rim shot
+peaks at −4.8 dBFS on the ō-daiko and −3.4 dBFS on the okedo, which is the
+loudest of the sixteen keys.
 
 ## Sound engine
 
@@ -189,12 +220,14 @@ not constants of the geometry. They open out with the mode's order, and they
 open out further the smaller the drum and the thicker its hide.
 
 That single term is most of what separates a shime-daiko's spectrum from an
-ō-daiko's. On the factory drum two octaves down, the top of the resolved bank
-sits about ten cents above where an ideal membrane would put it; at the
-reference, twenty-seven; three octaves up, a hundred and twenty. Head Material
-moves it as hard again, because it is thickness as well as density and *D* goes
-as the cube of thickness: a thin synthetic film is an ideal membrane to within
-half a cent, and a thick hide stretches its top mode by well over a semitone.
+ō-daiko's, and on this instrument it is a measured difference between two of the
+four drums rather than a claim. The top of the resolved bank sits 30 cents above
+where an ideal membrane would put it on the ō-daiko, 33 on the chū-daiko, 13 on
+the okedo and 6 on the shime — because *B = D/(Ta²)* falls as the hide gets
+thinner (as the cube of its thickness) and as it is pulled tighter, and both of
+those go the same way up the family. Head Material moves it as hard again: a
+thin synthetic film is an ideal membrane to within half a cent, and a thick hide
+stretches its top mode by well over a semitone.
 
 The stretch is taken relative to the *(0,1)* mode rather than applied
 absolutely, because a drum is tuned by the pitch it sounds. A player brings the
@@ -242,30 +275,30 @@ the drum's volume — which is why a sealed taiko is heard higher than its
 membrane fundamental.
 
 The spring is a column and not an infinite one. *ρc²/L* is what a cavity is
-worth only while the wavelength runs away from the body, and this drum leaves
-that limit inside its own range: the body's first axial resonance is 212 Hz on
-the default drum and as low as 139 Hz at the deepest body. What each head
-actually drives is a rigidly terminated column of length *L/2* — the
-volume-changing motion is symmetric about the midplane, so that plane behaves
-like a wall — and its stiffness is *x cot x* times the lumped value, with
-*x = ωL/2c*. That is the same number at low frequency and less than it as the
-body gets deep against the wavelength: 0.87 on the default drum, 0.80 two
-octaves down, 0.71 two octaves down at full Body Depth. It has to be solved for
-rather than computed, because the stiffness depends on the frequency it sets, so
-the drum resolve bisects on it once per drum and the audio never sees the
-iteration. The model reports it for the same reason: it is an answer the drum
-has to converge on rather than an expression anything can write down.
+worth only while the wavelength runs away from the body, and this instrument
+leaves that limit inside its own range: the body's first axial resonance is
+212 Hz on the ō-daiko, 259 on the chū-daiko, 343 on the okedo and 819 on the
+shime, every one of them inside the resolved bank of the drum it belongs to.
+What each head actually drives is a rigidly terminated column of length *L/2* —
+the volume-changing motion is symmetric about the midplane, so that plane
+behaves like a wall — and its stiffness is *x cot x* times the lumped value,
+with *x = ωL/2c*. That is the same number at low frequency and less than it as
+the body gets deep against the wavelength: 0.87 on the ō-daiko, 0.78 on the
+chū-daiko, 0.61 on the okedo — the longest body in the family relative to its
+head — and 0.74 on the shime, falling to 0.33 there at full Body Depth. It has
+to be solved for rather than computed, because the stiffness depends on the
+frequency it sets, so the drum resolve bisects on it once per drum and the audio
+never sees the iteration. The model reports it for the same reason: it is an
+answer the drum has to converge on rather than an expression anything can write
+down.
 
-Musically this is what stops the biggest drums being air springs with a hide
-attached, and the size of it is worth stating plainly rather than generously.
-The breathing branch steps 509 / 611 / 776 / 956 / 1094 cents up the keyboard
-against the octave the drum is actually tuned to; with the air treated as a
-lumped spring, the same six drums give 451 / 570 / 748 / 937 / 1079. The column
-widens every one of the five boundaries, because a lumped spring stiffens as
-*1/L* while the drum grows in every dimension at once. It does not make them
-octaves. The two axisymmetric branches do not move together, and between the
-bottom two octaves of the keyboard the upper one still steps a fourth where the
-lower one steps an octave.
+Musically this is what stops a long-bodied drum being an air spring with a hide
+attached, and it is why the four drums split their lowest pair so differently:
+1.66, 1.29, 1.12 and 1.11 times the fundamental going up the family. The
+keyboard is an octave in the drum's own lowest mode and it is not an octave in
+the breathing branch, which steps 760 / 957 / 1182 cents — because the branch
+above the fundamental is lifted by a column whose length is a property of each
+instrument rather than of a scaling.
 
 Where the column passes its own quarter-wave the stiffness reaches zero and the
 two heads stop being tied together at all. Above that the air is mass-like
@@ -295,7 +328,10 @@ The wooden body's ring modes come from the standard thin-cylinder result, so
 the shell material moves their frequencies, their spacing and their Q together.
 It is driven through the same force-over-modal-mass path the head uses, so a
 heavy carved log genuinely refuses to move while a light laminated shell
-genuinely rings — audibly so on the Katsu stroke, which hits the body directly.
+genuinely rings — audibly so on a Don Rim, which catches the hoop and the body
+along with the head, and audibly so between the drums: the okedo's stave shell
+takes two and a half times as much out of the head at the rim as the ō-daiko's
+solid zelkova does, which is why it is the driest of the four.
 
 The body's Q is low, because a drum shell is a thick, short piece of wood
 clamped at both ends by the hoops rather than a free bar. That matters more than
@@ -354,7 +390,7 @@ follows the contact: a force pulse of duration *τ* has nothing much above *1/τ
 so a soft stroke — resting on the head nearly twice as long — cannot reach the
 top of it, while a full-arm stroke lights all of it. It follows the strike
 position, because the short-wavelength mode shapes pile up against the rim, so a
-Ka reaches into it far harder than a Don. And the two microphones hear the
+Ka reaches into it eleven decibels harder than a Don. And the two microphones hear the
 bottom of it in common and the top of it independently, because a wavelength
 long against their spacing arrives at both alike and a short one does not —
 which is why opening the pair now widens the drum's air and not merely its
@@ -412,13 +448,14 @@ size, which is a comparison and therefore scale-invariant. The corner tracks the
 radius, as every other frequency in the model already does. Pinned at a fixed
 55 Hz it did the opposite of what it describes — a bigger drum slid its whole
 modal set down through a shelf that did not move, so the stand ate more of the
-instrument the larger the instrument got, and the o-daiko end of the keyboard
-came out both the quietest and the shortest thing on it. Measured on the factory
-drum, from an octave above the reference down two octaves below it: 101 / 51 /
-25 / 13 Hz of sounding fundamental against 2.5 / 3.3 / 4.3 / 5.2 s of tail, and
-a full-velocity Don's 20–63 Hz band running −18 / 0 / +6 / +9 dB against the
-reference drum's. The drum gets bigger in every way that matters, rather than
-only in name.
+instrument the larger the instrument got, and the ō-daiko end of the keyboard
+came out both the quietest and the shortest thing on it. Measured across the
+four drums: 51 / 101 / 203 / 406 Hz of sounding fundamental against 3.3 / 2.5 /
+1.5 / 1.9 s of tail, and a full-velocity Don's 20–63 Hz band running 0 / −16.5 /
+−21.3 / −31.1 dB against the ō-daiko's. The big drum is bigger in every way that
+matters, rather than only in name — and the shime outlasts the okedo despite
+being smaller, because its dense carved body absorbs a third of what the okedo's
+staves do.
 
 ### The stick
 
@@ -448,10 +485,11 @@ stroke bends further than a light one because it pushes the head further — abo
 fifty-five cents against a couple at the factory setting. A slack head bends far
 more than a tight one, because the tension a given displacement adds is measured
 against the tension already there: the same full stroke bends about 140 cents at
-a quarter of the tension range and about 15 at four fifths of it. A Katsu barely
-bends the head at all, because a stick on the shell hardly moves the hide. And the depth is computed after the
-model's one output-level calibration has been divided out, so that constant
-cannot reach the drum's pitch.
+a quarter of the tension range and about 15 at four fifths of it. A Ka barely
+bends the head at all, because it lands at 0.91 of the radius where the modes
+that carry the head's displacement are all but nodal. And the depth is computed
+after the model's one output-level calibration has been divided out, so that
+constant cannot reach the drum's pitch.
 
 It is a first-order expansion, so it is applied through a form that agrees with
 it exactly while the displacement is small and saturates where the expansion
@@ -485,8 +523,10 @@ there is nothing. Raising Head Tension or Head Diameter raises the preload,
 because both raise the tension a single tack carries, so a tighter or a larger
 drum wants a harder stroke before it rattles. Stick Noise owns the level, since
 this is contact noise. And it is the one part of the instrument that does not
-scale with the drum: a byō is a nail, and the same nails go into a nagado and an
-ō-daiko, so the rattle keeps its own band across the whole family.
+scale with the drum: a byō is a nail, and the same nails go into a chū-daiko and
+an ō-daiko, so the rattle keeps its own band across the whole family. Only Don
+Rim beats the preload at ordinary velocities; a Ka reaches the hoop with a third
+of the force and leaves the tacks alone.
 
 ### A drum has one head
 
@@ -511,32 +551,6 @@ bit-identical to eight copies of one stroke added together offline; what they
 leave ringing afterwards is now more than three decibels under what that
 arithmetic predicts, while the strokes themselves are untouched. Round robins
 are an attempt to hide the fact that a sampler cannot do this at all.
-
-### Two sticks, and nothing else
-
-The eighth stroke claps the bachi together and never touches the drum, so it is
-modelled as an object in its own right rather than as a retuning of the body. A
-bachi is a plain wooden dowel, so it rings in the free-free bending modes of a
-solid cylinder, *f_n = (β_n L)² κ √(E/ρ) / (2πL²)* with *κ = r/2* and the *β_n L*
-the roots of *cos x cosh x = 1*. That series — 1 : 2.76 : 5.40 : 8.93 — is
-inharmonic, which is why a stick click reads as a clack and not as a note.
-
-Bachi Hardness moves the wood's stiffness, its density and its internal loss
-together, because they are three properties of one piece of material: a
-felt-wrapped beater at one end, seasoned kashi oak at the other. On top of the
-wood's own Q there is the hand, which is a resistance rather than a Q and so
-takes a fixed number of decibels per second out of every mode. Without that term
-the model is a *free* bar and the bottom octave rings for half a second, which is
-a marimba rather than two sticks.
-
-The octave picks a different pair: shortening a bar by √2 raises its bending
-modes by exactly an octave while leaving it the same thickness, which is both
-what a rack of bachi looks like and what keeps the stroke at a usable level.
-Nothing in this path reads the drum — not its shell material, its head diameter,
-its depth or its tension — and the collision is solved against the other stick's
-own bending impedance rather than against the head's. Sharing the shell's modes
-meant Shell Material moved the click by two octaves and, once the stretched modes
-ran past Nyquist, the click actually fell in pitch going up the keyboard.
 
 ### Two microphones, and where the stereo comes from
 
@@ -574,7 +588,7 @@ those modes hardest — come out of phase.
 
 Up to and including the default 50 % width — everything the microphones actually
 captured — no stroke ever inverts, anywhere in the microphone range: the worst
-case across all eight strokes, both microphone controls fully swept, is a
+case across all four strokes, both microphone controls fully swept, is a
 correlation of about +0.08, which is a decorrelated pair rather than an
 out-of-phase one. The regression suite sweeps that whole space. Past 50 % the
 width control exaggerates the side signal beyond the measurement, and with the
@@ -584,42 +598,34 @@ worth a phase check if the mix has to fold down.
 
 ### Octave Body
 
-An octave can be bought either by making the drum smaller or by tightening its
-head, and **Octave Body** chooses the mixture. They do not sound the same,
-because the air load, the cavity stiffness and the radiation efficiency all
-depend on the radius and none of them scale with the tension. At *Tuned* the
-same drum is retuned; at *Family* the whole taiko family sits under the hands at
-once, and a smaller drum sounds smaller rather than merely higher.
+The four octaves are four instruments, and **Octave Body** decides how much of
+that is true. At *Family* — the default — each octave resolves to the drum the
+table describes: its own diameter, body depth, hide and shell. At *Tuned* all
+four collapse onto the ō-daiko the controls describe and the keyboard is one drum
+retuned, which is what a sampler's pitch knob does. In between, the drum is
+blended from one towards the other.
 
-How much of the mixture an octave costs is solved rather than written down, and
-that is the same principle the head's stiffness already follows: a drum is tuned
-by the pitch it sounds. Halving the radius and quadrupling the tension are the
-octave of an *ideal* membrane, which is not a pitch anything ever hears — the
-air hanging off the head loads it as *ρ_air a/σ*, which does not scale with a
-transform that changes the radius. Written down, the transform left the keyboard
-out by up to 345 cents at *Family* and 210 at the factory setting. Solved
-against the lower axisymmetric branch — the drum's own lowest mode, by
-bisection on the share of the transform, at drum-resolve time and never in the
-render loop — every octave boundary on the keyboard reads 1200.0 cents at
-*Tuned*, at the factory 70 % and at *Family* alike, and the drum lands on
-12.69 / 25.37 / 50.75 / 101.49 / 202.99 / 405.98 Hz whichever of the three is
-chosen. So the control now changes only the body, which is what its name claims.
-What it costs is arithmetic: resolving six octaves takes 180 µs rather than 16,
-once per processed block at worst and never per sample.
+Both ends land on the same four pitches — 50.75 / 101.49 / 202.99 / 405.98 Hz —
+and they do not sound remotely alike, because the air load, the cavity stiffness
+and the radiation efficiency all depend on the radius and none of them scale
+with the tension.
 
-The tension no longer quadruples exactly and the radius no longer halves
-exactly, and that is the solve working rather than drifting. At *Tuned* the
-tension goes ×4.000 / 4.001 / 4.006 / 4.093 / 4.010 per octave up the keyboard;
-at *Family* the radius goes ×0.578 / 0.560 / 0.542 / 0.526 / 0.514. The two
-halves that are exact — the radius at *Tuned*, the tension at *Family* — are
-untouched, because the transform does not own those axes.
+How the keyboard is brought to those pitches is solved rather than written down,
+and that is the same principle the head's stiffness already follows: a drum is
+tuned by the pitch it sounds. A real okedo-daiko does not sit exactly an octave
+above a real chū-daiko, so each drum is tuned onto its key the way a drum is
+actually tuned — by moving one of the two things that set its pitch. At *Tuned*
+that is the head tension and it is the whole octave, because the drum has not
+changed: ×4.007 / ×4.093 / ×4.009 per octave up the keyboard. At *Family* it is
+the drum's own size and it is a couple of per cent, because the instruments were
+already chosen to sit an octave apart: the resolved diameters come out 95.0 /
+55.2 / 40.0 / 29.9 cm against the 95 / 55 / 40 / 30 the table states.
 
 It holds across the controls and not only at their defaults. Over a scan of
-eight controls crossed with the six octaves — 155,520 drums — the worst octave
-is 51 cents out and 102 of them miss by more than 20 cents, every one of those a
-drum whose air column has passed its quarter-wave or whose geometry has run into
-a clamp. Written down, the same scan was out by 1106 cents at worst and missed
-on 101,957 of them.
+eight controls crossed with the four octaves — 43,740 octave boundaries — the
+worst is 56 cents out and 81 of them miss by more than 20 cents, 0.19 %, every
+one of those a drum whose air column has passed its quarter-wave or whose
+geometry has run into a clamp.
 
 What is solved is the drum's own lowest mode, and only that. The breathing
 branch above it is not an octave, and this does not make it one.
@@ -629,8 +635,9 @@ branch above it is not an octave, and this does not make it one.
 The room, the player's body, the stand, and the far head's own radiation into
 the space behind the drum. The enclosed air carries the stiffness of a finite
 column but not its mass or its own resonances: above the body's first axial
-resonance — 212 Hz on the factory drum, and between 139 and 451 Hz across Body
-Depth — the column is treated as absent rather than as the mass it becomes.
+resonance — 212 Hz on the ō-daiko, 819 on the shime, and between 139 and 451 Hz
+across Body Depth on the ō-daiko — the column is treated as absent rather than
+as the mass it becomes.
 Nothing anywhere associates a loss with the enclosed air either, so Body Depth
 moves the pitch of the split and never the decay of either branch. That last one
 is an omission with a number behind it rather than an oversight: thermal
@@ -645,19 +652,19 @@ the drum's loudest resolved mode as a single flat gain. Mic Distance therefore
 moves the whole region's level correctly and its tilt not at all.
 
 Only the struck body rings. The contact force acts equally and oppositely on
-both bodies, and the engine carries a correct free-free bar model for a bachi —
-but that model is reached by the one stroke that is nothing but sticks. On the
-seven strokes that touch the drum, the stick that struck it is a force and not
-a sounding object. The modes for it are cheap; its level against the drum is
-not, because the engine describes a bachi in two places whose masses differ by
-1.6× to 3.2× across the keyboard, which is 4 to 10 dB of a component that would
-otherwise be drawn rather than derived.
+both bodies, but on all four strokes the stick that struck the drum is a force
+and not a sounding object: nothing here rings the bachi. The engine used to
+carry a free-free bar model for one, reached by the stick-against-stick stroke,
+and that stroke is no longer on the grid — so the model went with it rather than
+sitting unreachable. Building it back for the striker is cheap in modes and
+expensive in level, because what a bachi is worth against the drum it is hitting
+was only ever pinned by how the stick-against-stick stroke sounded.
 
-Six constants are calibrated rather than derived, and each of them sets the
+Five constants are calibrated rather than derived, and each of them sets the
 *depth* of a term whose shape is computed: the overall level of radiation
-damping and how efficiently the shell, the sticks and the airborne click reach
-the microphones — all four of which depend on how the drum is mounted and where
-the player is standing, neither of which this model describes; the weight of the
+damping and how efficiently the shell and the airborne click reach the
+microphones — all three of which depend on how the drum is mounted and where the
+player is standing, neither of which this model describes; the weight of the
 head's high-frequency continuum against its resolved bank, which is a time in
 seconds because what it multiplies is the head's receptance; and the shape
 factor of the attack pitch glide, which stands in for the difference between the
@@ -667,9 +674,10 @@ stroke is computed.
 
 ## Interface
 
-A resizable editor built around a drawing of the head itself. The eight stroke
-pads sit across the top with the note each one currently answers to; the octave
-strip below selects the drum. The head display shows where the last stroke
+A resizable editor built around a drawing of the head itself. The four stroke
+pads sit across the top with the note each one currently answers to; the drum
+strip below picks which of the four instruments they play. The head display
+shows where the last stroke
 landed, where the close pair is standing, and what the model says the drum is —
 its sounding fundamental, its breathing mode and its tail length — all read from
 the same solve the audio comes from.
@@ -715,10 +723,12 @@ cmake --build build-dsp --parallel
 ctest --test-dir build-dsp --output-on-failure
 ```
 
-The JUCE-free suite covers the stroke vocabulary and MIDI mapping, the octave
-contract at every Octave Body setting — including that the octave is an octave
-in the pitch the drum sounds, in the readout and in the rendered partial — all
-eight strokes at five sample rates, sample-rate and block-size invariance
+The JUCE-free suite covers the playing grid and its MIDI mapping — sixteen notes
+and exact silence everywhere else — the four drums being four instruments rather
+than one rescaled, the four strokes being mutually distinct, the octave contract
+at every Octave Body setting including that the octave is an octave in the pitch
+the drum sounds, in the readout and in the rendered partial, all four strokes at
+five sample rates, sample-rate and block-size invariance
 including the level of the head's continuum, bit-exact determinism, the velocity
 and contact-time laws, the instrument's dynamic range and the evenness of its
 velocity response, the head's bending stiffness and the modal ratios it opens
@@ -812,7 +822,7 @@ Tests/TaikoEngineTests.cpp  JUCE-free DSP and presentation regression suite
 Tests/PluginProcessorTests.cpp  JUCE processor and editor contract tests
 Tools/RenderDemos.cpp       Renders the committed demonstration WAVs
 ThirdParty/                 Vendored JUCE licence text, staged into every package
-Docs/audio/                 Twenty-three rendered demonstrations and their manifest
+Docs/audio/                 Twenty-five rendered demonstrations and their manifest
 Docs/best-in-class-plan.md  Competitive landscape, gap analysis and the work it drove
 Presets/                    Preset guidance and drum-building reference
 scripts/                    macOS build and packaging helpers

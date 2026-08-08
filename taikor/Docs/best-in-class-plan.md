@@ -327,9 +327,11 @@ octave in the drum's own lowest mode. Two of those have since gone as well. The
 glide went because the spray the step was written against is the leakage of a
 rectangular window rather than anything the engine emits; that correction is
 under gap 14. The striker went for a different reason — the mechanism is right
-and the level is not derivable, because the engine describes the bachi twice and
-the two descriptions are up to 10 dB apart in what the striker's ring would
-weigh against the drum. Both are with the rest of the rejects. What did not
+and the level is not derivable, because the constant that would set the level of
+the striker's ring against the drum is pinned by nothing: it can be moved six
+decibels either way without changing the one stroke it is calibrated on, and six
+decibels is the whole distance between a striker that damages the instrument and
+one that cannot be heard. Both are with the rest of the rejects. What did not
 survive review is everything that tried to shape the continuum band by band —
 its ceiling, its source size, its contact patch, its parametric pump. All four
 were prototyped on a scratch copy of the engine and measured, and all four moved
@@ -705,14 +707,22 @@ written with, the review's number stands and the difference is called out.
    1.018 ms and 1.193 ms respectively — a 17 % spread, corners 982 and 838 Hz.
    The engine cannot currently tell a stick what it hit.
    **Still open, and one thing is added to it.** The step written against this
-   gap was implemented and struck: the missing modes are easy and their level is
-   not, because `drumContactTerms` and `resolveStickFor` describe the same bachi
-   with masses 1.61× to 3.21× apart across the keyboard — 0.3282 kg against
-   0.1348 kg at octave 0 — and the striker's ring at the microphones is 4.1 to
-   10.1 dB louder or quieter depending on which is believed. So the gap is about
-   the level as much as about the modes, and the sentence above should be read
-   as: the engine cannot tell a stick what it hit, and it does not agree with
-   itself about what the stick is. The measurements are with the rejects.
+   gap was implemented and struck, twice and independently: the missing modes
+   are easy and their level is not. ~~because `drumContactTerms` and
+   `resolveStickFor` describe the same bachi with masses 1.61× to 3.21× apart
+   across the keyboard — 0.3282 kg against 0.1348 kg at octave 0 — and the
+   striker's ring at the microphones is 4.1 to 10.1 dB louder or quieter
+   depending on which is believed.~~ The two descriptions of the bachi do
+   disagree — by 3.52× to 5.67× against the mass that carries a mode's level,
+   re-measured — but that is not the binding constraint. The level of the
+   striker's ring is `stickCalibration`, which stands in for a directivity the
+   model does not have and which the Bachi stroke pins only at the bottom two
+   octaves of the keyboard, where it is degenerate with that stroke's own output
+   trim. So the gap is about the level as much as about the modes, and the
+   sentence above should be read as: the engine cannot tell a stick what it hit,
+   it does not agree with itself about what the stick is, and it has no
+   measurement anywhere that says how loud a stick is against a drum. The
+   measurements are with the rejects.
 
 7. **A keyboard octave is not an octave in the partial the drum sounds, and the
    defect is the Octave Body transform.** `:1047-1048` sets
@@ -1011,15 +1021,29 @@ leaving three. All five rejects are recorded with the rest below.
 - [ ] **3. Ring the striker as well as the struck. Struck.** The mechanism is
   right and the level is not derivable. A contact force does act equally and
   oppositely on both bodies, the engine does carry a correct free-free bar
-  model, and it is used on one stroke in eight — all of that stands. What
+  model, and it is used on one stroke in eight — all of that stands. ~~What
   killed the step is that the engine holds two mutually inconsistent
   descriptions of the bachi, 4.1 to 10.1 dB apart, and the striker's level
-  against the drum is whichever of them is picked. The reasoning, the
-  implementation and every number are moved to "considered and not planned"
-  below, the checkbox stays unticked, and the engine is unchanged: the tree
-  handed on is bit-identical to the tree step 2 left, verified by rendering all
-  eight strokes before and after. Gap 6 stays open and is now gated on
-  reconciling the two masses.
+  against the drum is whichever of them is picked.~~ What killed the step is
+  that the striker's level against the drum is `stickCalibration`, a constant
+  whose own comment admits it stands in for a directivity the model does not
+  have, and which the one stroke that reads it today does not pin: six decibels
+  of it can be traded against that stroke's output trim for four ten-thousandths
+  of a decibel of change in the stroke, and those same six decibels are the
+  difference between a striker that breaks two suite clauses and one that is
+  quieter than the step requires. The reasoning, the implementation and every
+  number are moved to "considered and not planned" below, the checkbox stays
+  unticked, and the engine is unchanged: the tree handed on is bit-identical to
+  the tree step 2 left, verified by rendering all eight strokes before and
+  after. Gap 6 stays open and is now gated on giving the wooden bank a radiation
+  term, not on reconciling the two masses.
+  *Re-measured*: the step was implemented and struck a second time,
+  independently, on the tree steps 1 and 2 left. The verdict holds and both of
+  the suite figures the entry below turns on reproduce to the fourth decimal,
+  but the mass table it gave as the reason does not reproduce at all and is
+  withdrawn there. One test landed with the strike,
+  `testTheStickBankIsOnlyCalibratedAtTheBottomOfTheKeyboard`, because the
+  measurement that actually kills the step is a render rather than a constant.
 
 - [x] **4. Give the enclosed air the impedance of a finite column instead of an
   infinite spring.** `ρc²/L` is the *ω → 0* limit of a cavity, and the README
@@ -1201,6 +1225,53 @@ leaving three. All five rejects are recorded with the rest below.
   48 kHz the factory Don's 40–200 Hz band falls **0.82 dB** (−19.90 to −20.72
   dB over the 85 ms window), which is the breathing mode moving down four hertz
   and out of the part of that band where it was loudest.
+  *Re-verified on the shipping tree, after step 5 landed.* Every figure above
+  that is taken at the reference octave still reads exactly as written: the
+  factory factor is 0.867519, the breathing mode 88.1024 → 84.1197 Hz (−4.52 %)
+  and the loaded fundamental 50.7490 → 50.7475 Hz. Every figure taken away from
+  the reference octave was superseded when step 5 landed, because step 5 changed
+  which drum sits at those octaves — a drum an octave down is now a different
+  size and tension, so its column is a different length. The claims are all
+  unchanged; the numbers they are measured against are not. Re-taken, each pair
+  being the lumped spring and the column on the *same* drum: octave −2 gives a
+  factor of **0.8003** and 48.8434 → 44.0626 Hz (−9.79 %); octave −2 at Body
+  Depth 1 gives **0.7082** and 40.1941 → 34.5117 Hz (−14.14 %); Body Depth 0 at
+  octave +3 gives **0.9442** and 458.2408 → 455.7300 Hz (−0.55 %); and the
+  breathing branch's five octave steps go from 451.0 / 570.2 / 747.8 / 936.7 /
+  1078.8 cents to **508.7 / 610.8 / 775.8 / 956.1 / 1093.7**, so the column
+  still widens every one of the five, from a smaller starting point than this
+  entry was written against. Over the same 16200-configuration scan **2064** land
+  on the floor rather than 2130, the cavity's whole authority over the lower
+  branch is **1.9086 %** rather than 1.95, the branches cross **zero** times, and
+  this step's own drift of the lower branch is at most **1.0542 %** — 24
+  configurations over 1 %, 17 of them at the floor — rather than the 1.1668 % in
+  79 measured before step 5. The draft corner (Body Depth 0, Head Material 0,
+  Octave Body 0, Air Coupling 0.2, octave +3) still converges to exactly zero and
+  still reports breathing = loaded, now at **564.6117 Hz** rather than 560.4384.
+  The test carries every one of these as its literal and says which are re-takes.
+  The revert was re-run on the shipping tree rather than trusted: forcing the
+  factor to one fails **thirteen** assertions, the twelve this entry names plus
+  one in step 5's test — the recorded literal for the strongest partial's step
+  into octave −1, which reads −36.4 cents against −378.9. That literal was taken
+  with this step in place, so it is collateral rather than a second
+  discriminator, and it is the plainest statement of how far into the audio this
+  step reaches. Every clause written as a guard still passes on the reverted
+  engine.
+  **What the single factor does not cover, measured.** `drum.cavityStiffness` is
+  solved on the (0,1) volume branch and is then what every axisymmetric mode
+  reads, so the modes above the pair are given a column stiffness evaluated at a
+  frequency that is not theirs. At the factory drum the (0,2) volume branch sits
+  at 133.428 Hz, where *x* = 0.987 and the column would ask 0.652 rather than
+  0.868, and (0,3) and (0,4) at 213.2 and 294.9 Hz are past the quarter-wave
+  entirely, where the exact column stiffness is zero. Solving each pair on its
+  own factor instead moves them by **−8.0, −3.6 and −1.0 cents** at the factory
+  drum and **+9.2, −5.7 and −4.0** at octave −2 — the sign flips because that
+  drum's (0,2) branch sits below its (0,1) one — and leaves the (0,1) pair, which
+  is what every clause here reads, untouched by construction. Nine cents on the
+  second axisymmetric mode is smaller than the step's own effect on the first by
+  more than an order of magnitude, nothing asks for it, and taking it would move
+  the resolved bank and add three more bisections to every drum resolve. It is
+  recorded rather than done.
 
 - [x] **5. Hold the drum's own fundamental on the keyboard, not the ideal
   membrane's.** The octave transform and the Pitch control both scale radius
@@ -1409,6 +1480,82 @@ leaving three. All five rejects are recorded with the rest below.
   pre-existing condition recorded under struck step 3 is slightly better and
   nothing new was pushed into it.
 
+  *Re-verified on the shipping tree, after the 4x4 playing grid landed.* The
+  mechanism above is intact and every clause it is verified by still holds. The
+  numbers were taken on a keyboard of six octaves of one drum rescaled, and that
+  keyboard no longer exists; the grid section below records which of them it
+  re-took, and this note records the rest, together with the revert, which was
+  re-run rather than carried over.
+
+  The clause the step is for is now exact. Every octave step at every one of
+  Octave Body 0.0 / 0.7 / 1.0 reads **1200.000 cents** across the four drums, and
+  the four sounding pitches are the same at all three settings — 50.7475 /
+  101.4949 / 202.9899 / 405.9798 Hz — so the emergent property this entry
+  recorded survived the change of keyboard: Octave Body changes the body and
+  never the pitch. Pitch ±12 st reads −1199.702 and +1198.540 cents, unmoved.
+
+  The anchor is exact, and it was checked as audio rather than as a readout. At
+  octave 0 the reported fundamental is **50.7475 Hz**, the radius 0.4750 m and
+  the tension 5942.4297 N/m at every Octave Body, and all four strokes render
+  **bit-identically** to the reverted engine over 19,200 samples. Every other
+  octave differs from it by up to 0.70 of full scale.
+
+  Two of the Octave Body clauses changed what they are able to say, because the
+  four octaves are now four instruments. At Octave Body 0 the radius still never
+  moves — 0.4750 m at all four octaves — and the tension still buys the whole
+  octave, now ×4.0068 / ×4.0926 / ×4.0094. At Octave Body 1 the tension is no
+  longer one number held fixed: it is each drum's own, 5942.43 / 5536.91 /
+  8300.62 / 14799.36 N/m, and that is what the test asserts, to a thousandth. The
+  radius there goes 0.4750 / 0.2761 / 0.2002 / 0.1496 m, which is not a halving
+  per octave and is not meant to be — it is the four diameters the table states
+  plus under half a per cent of residual tuning.
+
+  Re-taken over the same eight-control scan this entry used, now crossed with
+  four octaves instead of six: 25,920 configurations, 103,680 octave readings, of
+  which 25,920 are the reference octave and exact by construction. The worst
+  error is **+50.9 cents** (Octave Body 0.25, Body Depth 0.70, Air Coupling 1.00,
+  Head Diameter 1.80 m, Pitch +12 st) and **99** readings miss by more than ±20
+  cents, three of them by more than 50. On the reverted engine the worst is
+  **4213.2 cents** and **66,926** miss, which is worse than the −1106.3 this entry
+  measured before the grid because the transform written down is now applied on
+  top of a drum that has already changed.
+
+  Cost, re-measured: **143.1 µs** to resolve all four octaves against **10.6 µs**
+  reverted. The ratio the entry recorded stands and the absolute figure came down
+  with the two octaves that went.
+
+  The revert proof was re-run rather than trusted. Replacing the bisection with
+  `transformed (octave, drum)` — the transform written down, which is what this
+  step replaced — fails **32** assertions, **13** of them in this step's own test:
+  the six octave-ratio clauses at Octave Body 0.7 and 1.0 (+2145.9 / +2093.8 /
+  +2061.3 and +2532.4 / +2458.4 / +2401.6 cents against 1200 ± 20), the two
+  do-no-harm clauses at octaves 1 and 2, and the five strongest-partial clauses
+  (+1791.1 / +2195.2 / −8176.5 cents against the recorded +229.4 / +1183.1 /
+  +1196.8). The other nineteen are in the cavity test and the four-drums test,
+  which measure the drums this step puts on the keys. Two groups do *not* fail,
+  and that is the point of them: every clause at octave 0, because the transform
+  is the identity there on both trees, and the three octave steps at Octave Body
+  0, which read **+1198.5 / +1181.5 / +1196.7** cents reverted — the three figures
+  this step's own text quotes as the re-measurement, reproduced to the digit, and
+  the reason the step says the defect is entirely the Octave Body transform.
+
+  Three figures above are void rather than stale, because they name octaves that
+  no longer exist: the six-octave pitch list, the ×0.578-to-×0.514 radius ladder
+  at Octave Body 1, and "Don Rim at octave −2 renders 0.9907". Nothing is on the
+  limiter now — over the sixteen strokes of the grid at velocity 0.92 the loudest
+  render is Don Rim at C5 at **0.5651** of full scale.
+
+  The breathing branch is still short of an octave and neither step closes it: it
+  steps 759.6 / 956.6 / 1181.8 cents at the shipping default, 761.2 / 961.2 /
+  1144.8 at Octave Body 0.7 and 599.2 / 974.9 / 1151.0 at 0, and those are the
+  literals the cavity test now carries. The comparison this entry drew — that the
+  branch got *worse* by this step — cannot be drawn on the new keyboard, because
+  on the reverted engine the fundamental is not stepping an octave either (the
+  branch reads 1882.8 / 2308.7 / 2395.2 cents against the fundamental's 2532.4 /
+  2458.4 / 2401.6), so the two trees are not measuring the same interval. What
+  survives is the statement gap 7 needs: the drum's own lowest mode lands on the
+  key that names it, and the branch above it does not.
+
 ### Considered and not planned
 
 **Ringing the striker as well as the struck (gap 6). Struck on
@@ -1430,6 +1577,12 @@ Bachi stroke's stick bank peaks at `|drive · micLeft|` = 4.077e-05 against
 shell's six run 56.78 / 160.60 / 307.94 / 498.00 / 730.56 / 1005.52 Hz at Shell
 Material 0 and 176.67 / 499.69 / 958.11 / 1549.47 / 2273.05 / 3128.56 Hz at 1.
 `activeModeCount` is 29 / 30 / 30 for a Don, a Su and a Katsu.
+Re-taken on the finished tree, all of that stands except the three
+`|drive · micLeft|` figures, which read 3.782e-05, 2.319e-05 and 7.900e-06 —
+0.65, 0.04 and 2.58 dB from the values above. The frequencies, both shell sets,
+`contactReference` and `activeModeCount` are identical to every digit, so the
+three that moved are a difference of estimator or of tree rather than of engine,
+and none of them is load-bearing.
 
 **It was implemented, twice, and both implementations work.** The six stick
 slots stop sharing the shell's (`resonatorCount` 46 → 52, the `static_assert`
@@ -1444,56 +1597,131 @@ returns twelve entries, the stick's six unmoved between Shell Material 0 and 1
 while the shell's six move as tabulated above, and the summed membrane
 `audibleSamples / rate` came out **unchanged to every printed digit** —
 84.7068 / 69.7793 / 53.0711 s for a Don, a Su and a Katsu — with no membrane
-mode falling from a non-zero lifetime to zero.
+mode falling from a non-zero lifetime to zero. (Those three read
+84.3978 / 69.6241 / 52.8863 s on the finished tree, 0.3 % lower and flat in
+velocity to five digits. The difference is step 4, which landed afterwards and
+moved the axisymmetric pair: this entry was written before it.)
 
 **The level is the whole of it, and the engine cannot supply one.** The stick's
 level against the drum is `stickCalibration · radiatingArea / (modalMass · ω)`.
 `stickCalibration = 150` is an admitted stand-in — its own comment says the
 model has the stick's area and mass "but not the directivity of a small
 cylinder held over a drum" — and it was set on the one stroke where the stick
-is the entire sound. `modalMass` is worse: the engine describes the bachi
-twice, and the two disagree.
+is the entire sound. That, re-measured, is the whole of the problem, and the
+paragraph that follows blamed the wrong term for it: ~~`modalMass` is worse: the
+engine describes the bachi twice, and the two disagree.~~ The engine does
+describe the bachi twice and the two do disagree, but reconciling them would
+leave `stickCalibration` exactly as free as it is now.
 
-| octave | drum radius | `drumContactTerms` striker mass | `resolveStickFor` bar mass | ratio |
-|---|---|---|---|---|
-| −2 | 1.2535 m | 0.8661 kg | 0.2696 kg | 3.21 |
-| −1 | 0.7716 m | 0.5331 kg | 0.1907 kg | 2.80 |
-| 0 | 0.4750 m | 0.3282 kg | 0.1348 kg | 2.43 |
-| +1 | 0.2924 m | 0.2020 kg | 0.0953 kg | 2.12 |
-| +2 | 0.1800 m | 0.1244 kg | 0.0674 kg | 1.84 |
-| +3 | 0.1108 m | 0.0766 kg | 0.0477 kg | 1.61 |
+~~| octave | drum radius | `drumContactTerms` striker mass | `resolveStickFor` bar mass | ratio |~~
+~~|---|---|---|---|---|~~
+~~| −2 | 1.2535 m | 0.8661 kg | 0.2696 kg | 3.21 |~~
+~~| −1 | 0.7716 m | 0.5331 kg | 0.1907 kg | 2.80 |~~
+~~| 0 | 0.4750 m | 0.3282 kg | 0.1348 kg | 2.43 |~~
+~~| +1 | 0.2924 m | 0.2020 kg | 0.0953 kg | 2.12 |~~
+~~| +2 | 0.1800 m | 0.1244 kg | 0.0674 kg | 1.84 |~~
+~~| +3 | 0.1108 m | 0.0766 kg | 0.0477 kg | 1.61 |~~
 
-`bachiMass · a/a_ref` is a lumped striking mass that scales with the drum
-("nobody hits a shime-daiko with an odaiko club"); `resolveStickFor` is a
-24 mm × 400 mm dowel that scales with the octave. They are the same object in
-the same collision and they differ by 1.61× to 3.21×, which is **4.1 to 10.1 dB
-of the new component's level**. Nothing in the model chooses between them.
+**The table above does not reproduce and is withdrawn**; the re-measurement is
+below and the two masses are not what killed the step. `bachiMass · a/a_ref` is
+a lumped striking mass that scales with the drum ("nobody hits a shime-daiko
+with an odaiko club"); `resolveStickFor` is a 24 mm × 400 mm dowel that scales
+with the octave; they are the same object in the same collision and they do
+differ. But the size of the difference as written belongs to no state of this
+tree. Re-measured on the tree steps 1 and 2 left, Humanise 0:
 
-**Both choices were built and measured.** Taking the step at its word — "the
-stick's own modal mass", `resolveStickFor`'s — puts the striker 4.94 dB above a
-Don's loudest membrane mode at the microphones and **breaks three assertions in
-the suite**: the loudest single stroke reaches 0.9588 against the 0.95 the
-limiter clause allows (Don Rim), the brightness of a full-velocity stroke over
-a ghost note falls from 1.4196 to 1.3764 against a floor of 1.40, and Shell
-Resonance's authority over a Katsu falls from 2.4149× to 1.7364× against a
-floor of 2. Taking the mass the contact was actually solved with instead — half
-the reduced mass, which is `resolveStickFor`'s own convention evaluated for the
-stick the solver used, 7.7 dB quieter at octave 0 — leaves the suite green but
-only just: 1.4021 against the 1.40 brightness floor, 2.1440 against the 2×
-Shell Resonance floor, and it pushes the bottom of the keyboard into the
-limiter. At factory settings and full velocity, Katsu at octave −2 goes from
-0.8906 to 1.0000 and Don Rim at octave −1 from 0.9419 to 1.0000.
+| octave | drum radius | `drumContactTerms` striker mass | `resolveStickFor` bar mass | `stick.modalMass` | ratio to modal mass |
+|---|---|---|---|---|---|
+| −2 | 1.1058 m | 0.7640 kg | 0.2696 kg | 0.1348 kg | 5.67 |
+| −1 | 0.7296 m | 0.5041 kg | 0.1907 kg | 0.0953 kg | 5.29 |
+| 0 | 0.4750 m | 0.3282 kg | 0.1348 kg | 0.0674 kg | 4.87 |
+| +1 | 0.3052 m | 0.2109 kg | 0.0953 kg | 0.0477 kg | 4.42 |
+| +2 | 0.1937 m | 0.1338 kg | 0.0674 kg | 0.0337 kg | 3.97 |
+| +3 | 0.1215 m | 0.0840 kg | 0.0477 kg | 0.0238 kg | 3.52 |
 
-**And there is no safe level that is also audible.** Attenuating the quieter of
-the two derivations further, Don Rim at octave −1 only comes off the limiter at
-about 12 dB down (0.9930), and 12 dB down the step's own headline effect — a
-Katsu's summed level in four ±10 % bands around the first four stick
-frequencies over the first 10 ms — is **+0.86 dB against the 6 dB the step
-requires**. At 6 dB down it is +3.55 dB and octave −1 still limits. The window
-in which the striker is audible and the window in which it does not damage the
-instrument do not overlap. Shipping it means choosing a number by which the
-suite passes, which is the definition of drawing a curve, and this document
-already refuses that for the stand modes on weaker grounds.
+Two things were wrong. The radius column is a clean geometric series in 2^−0.7 —
+the exponent the factory Octave Body of 0.7 names — and `resolveDrumFor` does
+not produce one: the measured ratio between neighbouring octaves runs 0.660 at
+the bottom of the keyboard to 0.627 at the top, and only octave 0 agrees with
+the withdrawn table. The striking-mass column follows the radius, so it is wrong
+wherever the radius is. And the bar-mass column is right but is the wrong
+quantity: what sets a mode's level in this engine is `stick.modalMass`, half the
+bar's mass, and it is the column added above. Against the mass that actually
+carries the level the two descriptions are **3.52× to 5.67× apart, or 10.9 to
+15.1 dB**; against the bar as tabulated they are 1.76× to 2.83×, or 4.9 to
+9.0 dB. Neither is the 1.61× to 3.21× and 4.1 to 10.1 dB the entry gives.
+
+**It was implemented a second time, independently, and the verdict holds while
+the reason does not.** Built exactly as the step asks — `resonatorCount` 46 → 52
+so the stick stops sharing the shell's slots, the `static_assert` withdrawn, the
+stick's own frequencies, decays, radiating area and modal mass driven at unity
+gain for the seven strokes that touch the drum, `extraDamping` not reaching it,
+and the bank kept out of the `peakMagnitude` that sets mode retirement. Unity
+gain is not a choice: Newton's third law hands the stick the whole contact
+force, which is why the stick-on-stick stroke already drives this bank at unity,
+whereas `profile.shellGain` describes a path through the hoop that the stick has
+no equivalent of.
+
+It works, and it is far too loud. The step's headline effect — a stroke's summed
+level in four ±10 % bands around the first four stick frequencies (497.71,
+1371.95, 2689.56, 4445.99 Hz) over the first 10 ms, Hann-windowed, velocity
+1.00, octave 0, factory Shell Material — rises by **+10.95 dB on a Katsu, +14.76
+on a Su and +15.06 on a plain Don**, against the 6 dB the step required. The
+Bachi stroke is untouched at −37.83 dB, as it must be. Two suite clauses go red,
+and the two figures the previous entry gives for them reproduce to the fourth
+decimal: the loudest single stroke goes from 0.8056 to **0.9587** against the
+0.95 the limiter clause allows (Don Rim), and Shell Resonance's authority over a
+Katsu falls from 2.4168× to **1.7363×** against a floor of 2. The third failure
+that entry reports, the brightness of a full-velocity stroke over a ghost note,
+did not occur here.
+
+The audible verdict is worse than the two red clauses. A **Don** — an open head
+stroke a hand's width in from the middle of a 95 cm ō-daiko — gains 15.1 dB
+across 500 Hz to 4.4 kHz and 3.0 dB of peak (0.3631 → 0.5113), and at octave −2
+five further strokes that were nowhere near it are driven into the safety
+limiter: Don 0.5345 → 1.0000, Katsu 0.7757 → 1.0000, Ka 0.5721 → 1.0000, Tsu
+0.4238 → 1.0000, Buzz 0.3536 → 1.0000. That is not a bachi heard under a drum;
+it is the drum replaced by a woodblock.
+
+**The level is a free parameter, and this is what kills it.** The striker's
+level against the head is `stickCalibration · radiatingArea / (modalMass · ω)`,
+and `stickCalibration = 150` is the only term in it that is not derived — its
+own comment says the model has the stick's area and mass "but not the
+directivity of a small cylinder held over a drum". What pins it is that the
+Bachi stroke should sound right, and that stroke pins it almost nowhere.
+Measured by silencing the stick's own bank on a Bachi and comparing r.m.s., the
+bank is worth **33.85 dB of that stroke at octave −2, 18.39 dB at −1, 5.63 dB at
+0, and 0.26, −0.04 and 0.02 dB at +1, +2 and +3**. Above the reference octave
+the stick-on-stick stroke is its own airborne click and nothing else.
+
+And where it is pinned it is degenerate with an output trim. `excitationScale =
+peakForce · profile.levelScale` multiplies the whole bank, so halving
+`stickCalibration` to 75 and doubling the Bachi stroke's `levelScale` from 0.55
+to 1.10 leaves that stroke **unchanged at the octave where it is the stick**:
+peak 0.239505 against 0.239517 and r.m.s. 0.0232855 against 0.0233200, which is
+0.0004 dB and 0.013 dB, and 0.001 dB and 0.08 dB at octave −1. The same edit
+moves the striker on every drum stroke by exactly 6 dB and **takes both red
+clauses green** — 0.8648 against the limiter's 0.95 and 2.0478 against Shell
+Resonance's floor of 2, the same figures a plain 6 dB attenuation of the striker
+gives, on which the whole suite passes — while the Katsu's headline rise falls
+to +5.18 dB, under the 6 dB the step asks for. Attenuating by 12 dB instead
+leaves +1.12 dB.
+
+The trade is not exact everywhere, and the place it breaks is the second half of
+the argument rather than a hole in it. Above the reference octave the Bachi
+stroke does change under it, because `levelScale` scales that stroke's airborne
+click as well as its bank — but up there the bank is worth a quarter of a
+decibel of the stroke, so what is being compensated is the click's level, which
+is its own free constant. Wherever the stick is actually audible in the stroke
+that names it, the trade is silent.
+
+So the window in which the striker is audible and the window in which it does
+not damage the instrument do not overlap, and the number that decides which side
+of that boundary it lands on can be moved six decibels without changing the one
+stroke it is calibrated by anywhere that stroke is the stick. Shipping it means
+choosing a level so that the suite passes, which is the definition of drawing a
+curve, and this document already refuses that for the stand modes on weaker
+grounds.
 
 **Two clauses of the verification contract were wrong and are corrected here**,
 because whoever re-attempts this will start from them. `activeModeCount`
@@ -1520,17 +1748,47 @@ reads −24.19 / −34.53 and −40.92 / −37.59. Same phenomenon, up to 2.4 dB
 which is a further warning that this region is not measurable without pinning
 the render length as well as the window.
 
-**What has to be true before this can be re-attempted.** One bachi. Either
-`drumContactTerms` solves the contact against the stick `resolveStickFor`
-describes — which moves contact times and therefore level and brightness on all
-seven drum strokes, and is a step in its own right with the first pass's
-velocity calibration to re-establish — or `resolveStickFor` learns the drum's
-size the way the striking mass already does, which contradicts the reason that
-function exists. Until then the striker has a spectrum and no level, and gap 6
-is a gap about the level as much as about the modes. No test was added: unlike
-step 2, whose estimator finding would otherwise be re-derived, everything here
-is a fact about two constants that a reader of this entry can check in ten
-lines of source.
+**What has to be true before this can be re-attempted.** ~~One bachi.~~ The
+gate is radiation, not mass. Reconciling the two bachi descriptions is worth
+doing on its own account — either `drumContactTerms` solves the contact against
+the stick `resolveStickFor` describes, which moves contact times and therefore
+level and brightness on all seven drum strokes and is a step in its own right
+with the first pass's velocity calibration to re-establish, or `resolveStickFor`
+learns the drum's size the way the striking mass already does, which contradicts
+the reason that function exists — but it is not what stands between the engine
+and a striker. Even with one bachi the level would still be `stickCalibration`,
+and `stickCalibration` would still be free.
+
+What would fix that is the term the constant openly stands in for. Every
+membrane mode in this engine is radiated through `radiationEfficiency (order,
+ka)` at `:539`; the wooden bank is not, and takes a bare `radiatingArea`
+instead. The stick is the case where the difference is enormous: a 12 mm bar at
+its first bending mode of 497.71 Hz has *ka* = 0.109, which that same function
+puts at 0.0118, or 19.3 dB down, while at the fourth mode of 4446 Hz *ka* = 0.98
+and it is 3.1 dB down — a 16 dB tilt across exactly the region the step
+measures, on top of about 11 dB of level. A bachi is nearly silent at 500 Hz for
+the same reason a tuning fork is, and the head it is hitting is a piston. So the
+striker's level against the drum is derivable the moment the stick radiates
+through the same law the head does, and not before. That is a change to the
+wooden bank on all eight strokes, it moves the shell as well as the stick, and
+it belongs to whichever pass takes it on. Until then the striker has a spectrum
+and no level, and gap 6 is a gap about the level as much as about the modes.
+
+**One test was added**, where the previous entry says none was. Its reasoning
+was that everything here is a fact about two constants a reader can check in ten
+lines of source; that was true of the withdrawn mass table and is not true of
+what actually killed the step. How far `stickCalibration` is pinned by the
+stroke it is named for is a property of a render, not of a constant, and it is
+the first thing a re-attempt needs to know.
+`testTheStickBankIsOnlyCalibratedAtTheBottomOfTheKeyboard` measures the stick
+bank's share of the Bachi stroke over the keyboard, through a new
+`silenceWoodenBank` hook in `TaikoEngineTestAccess` that is the exact analogue
+of the `silenceContinuum` hook struck step 2 left behind, and requires it to be
+above 25 dB at octave −2, above 12 dB at −1, under 1 dB from +1 up, and
+monotonically falling. It is a guard and cannot fail today. It bites on both
+ends of what it pins: at twenty times the calibration it reads 17.92 dB at
+octave +1 and 6.40 dB at +2 against the 1 dB clause, and at zero it reads
+0.000000 dB against the 25 dB and 12 dB clauses.
 
 **Stopping the attack glide from spraying the top of the spectrum (gap 14).
 Struck on implementation.** It was step 2 of this pass. The mechanism it names
@@ -1901,17 +2159,23 @@ about the engine does. The finding is pinned in the suite on a synthetic sine,
 so the half of it that cannot rot is asserted rather than remembered.
 
 *Step 3, ringing the striker as well as the struck.* The mechanism is right, was
-implemented twice, and met every structural clause the step asked for. What
-killed it is that the engine describes one bachi twice — `drumContactTerms`'
-striker mass against `resolveStickFor`'s bar mass, 1.61× to 3.21× apart across
-the keyboard — which is 4.1 to 10.1 dB of the new component's level, chosen by
-nothing. The louder derivation breaks three assertions in the suite; the quieter
-one leaves it green and pushes the bottom of the keyboard onto the limiter; and
-12 dB below that, where the limiter is clear, the step's own headline effect is
-+0.86 dB against the 6 dB it requires. There is no level that is both audible
-and safe, so shipping it means picking the number by which the suite passes.
-Gap 6 stays open and is now gated on the engine agreeing with itself about what
-a bachi is.
+implemented three times across two independent attempts, and met every
+structural clause the step asked for. What killed it is that the new component's
+level is `stickCalibration`, a constant that stands in for the directivity of a
+small cylinder held over a drum and that nothing in the engine measures. At the
+level Newton's third law gives it — unity gain, which is what the stick-on-stick
+stroke already uses — the striker takes the loudest single stroke from 0.8056 to
+0.9587 against a 0.95 limiter clause, costs Shell Resonance a third of its
+authority over a Katsu, adds 15.1 dB across 500 Hz to 4.4 kHz and 3.0 dB of peak
+to a plain open Don, and drives five more strokes at the bottom octave into the
+limiter. Six decibels down the suite is green and the headline effect is +5.18
+dB against the 6 dB the step requires. Those same six decibels are invisible in
+the only stroke that calibrates the constant: halving it and doubling that
+stroke's output trim moves a Bachi at octave −2 by 0.0004 dB. So there is no
+level that is both audible and safe, and the boundary between them is a number
+chosen so that the suite passes. Gap 6 stays open and is now gated on giving the
+wooden bank the same radiation law the head already has, which is the term
+`stickCalibration` stands in for.
 
 **Where reality differed from the plan.** Every one of these is written out in
 full under the step it belongs to; this is the list.
@@ -1955,15 +2219,33 @@ full under the step it belongs to; this is the list.
   +3.24 / +7.38 / +8.28 reads +1.74 / +7.92 / +9.60. The striker step's
   preflight audio baselines are up to 2.4 dB from what the same estimator reads
   here, which is a warning that the four-band 10 ms measurement it used needs
-  the render length pinned as well as the window. Everything else quoted in this
+  the render length pinned as well as the window. And the striker step's own
+  mass table does not reproduce at all: its radius column is a pure geometric
+  series in 2^−0.7 that `resolveDrumFor` does not produce, agreeing only at
+  octave 0, so the striking-mass column that follows the radius is wrong
+  wherever the radius is, and the bar-mass column — right in itself — is not the
+  mass that carries a mode's level. The table is withdrawn with the rejects and
+  re-taken there. Everything else quoted in this
   pass reproduced to the digit, including all six stick frequencies, both sets of
-  shell frequencies, the contact-time pair and the Mic Distance sweep.
+  shell frequencies, `contactReference` at 1983.7157 and 582.2498, the
+  `activeModeCount` triple of 29 / 30 / 30, the contact-time pair and the Mic
+  Distance sweep — and, on the second striker implementation, the two suite
+  figures the strike turns on, 0.9587 and 1.7363.
 - *Two clauses of the striker step's verification contract are wrong* and are
   corrected with the rejects, because whoever re-attempts it will start from
   them: `activeModeCount` cannot stay at 29 / 30 / 30 (the invariant is the
   membrane's 23 / 24 / 24), and "Su's rise is the larger of the two" holds only
   at Shell Material 0.
-- *Two process facts the orchestrator should have.* The tree step 2 was picked
+- *Step 3 was worked twice.* The second agent handed step 3 found the strike
+  already written up here, with the checkbox unticked and the engine unchanged,
+  and re-did it from the source rather than ratifying it: the striker was built
+  again, measured again, and struck again. That was worth the duplicate work.
+  The verdict and the two suite figures it turns on survived, the mass table
+  given as the reason did not survive at all, and the argument that replaces it —
+  the calibration constant is degenerate with an output trim over six decibels —
+  is stronger than the one it replaces and could not have been reached by
+  reading the entry.
+- *Three process facts the orchestrator should have.* The tree step 2 was picked
   up on arrived red, carrying an undocumented complete draft of step 2 inside
   `applyTensionShift`; removing it is what took the suite green, and if that
   draft was deliberately committed then its removal is a revert of committed
@@ -2026,3 +2308,232 @@ direction; the ghost-to-full span and the factory rim shot's peak were re-taken;
 and the stick-on-stick section still called the Bachi stroke the twelfth of
 twelve. What is *not* in the README is anything about a striker that rings or a
 glide that sprays, because neither shipped.
+
+## The 4x4 playing grid — 2026-08-08
+
+A user-requested design change rather than a step out of the passes above, and
+it is the largest change the instrument has had to what a player touches. The
+keyboard was eight strokes over six octaves of one drum rescaled. It is now
+**four drums by four strokes**, and each of the four drums is its own instrument
+with its own physics.
+
+### What the keyboard is now
+
+Sixteen notes, C3 to D♯6, and exact silence everywhere else.
+
+| Octave | Note | Drum | Head | Body | Hide | Shell | Sounds at |
+| --- | ---: | --- | ---: | ---: | ---: | --- | ---: |
+| C3 | 48 | Ō-daiko | 95 cm | 0.81 m (0.85×) | 0.96 mm | carved zelkova | 50.75 Hz |
+| C4 | 60 | Chū-daiko | 55 cm | 0.66 m (1.20×) | 0.67 mm | carved zelkova | 101.49 Hz |
+| C5 | 72 | Okedo-daiko | 40 cm | 0.50 m (1.25×) | 0.44 mm | stave-built, light | 202.99 Hz |
+| C6 | 84 | Shime-daiko | 30 cm | 0.21 m (0.70×) | 0.35 mm | carved, thick-walled | 405.98 Hz |
+
+The bottom four semitones of each octave are C = Don, C♯ = Ka, D = Tsu,
+D♯ = Don Rim.
+
+### Where the four drums come from
+
+`drumDescriptionTable` in `Source/DSP/TaikoEngine.cpp` states each drum in the
+same control units the parameter block uses, and every column has a source.
+
+- **Diameter** is the instrument as built: a 3-shaku ō-daiko, a 1.8-shaku
+  nagado, a standing okedo, a tsuke-shime.
+- **Body depth** is the instrument's own proportion. The engine reads
+  *depth / diameter = 0.40 + 0.90 × control*, so the four rows are 0.85, 1.20,
+  1.25 and 0.70 diameters: a barrel about as deep as it is wide, a *nagado*
+  ("long body") at a fifth longer than wide, a stave tub longer still, and a
+  shime that is a shallow ring of wood.
+- **Head material** is the hide. The control maps geometrically onto 0.30–1.60
+  kg/m², and over a hide at about 1000 kg/m³ the four rows are 0.96, 0.67, 0.44
+  and 0.35 mm of skin — heavy cowhide, lighter cowhide, and the thin horse or
+  calf hide an okedo and a shime carry.
+- **Shell** sets the body's ring modes, their Q, the wall thickness and how much
+  the rim absorbs. The ō-daiko and the chū-daiko are both carved keyaki (0.80 and
+  0.74); the okedo is the outlier and has to be, at 0.20, because it is thin
+  cedar staves bound with hoops rather than a carved log; the shime is carved
+  keyaki again at 0.92, small and proportionally thick-walled.
+- **Tension** is the one column a player sets rather than a maker, because a
+  drum's tension is whatever brings it to the pitch it is wanted at. The four
+  come out at **5.94 / 5.54 / 8.30 / 14.80 kN/m**: the two *byō-uchi* drums at
+  much the same tension as each other, and the *shirabe*-laced ones far above
+  them, with the shime at 2.5× the ō-daiko on a head a third as thick.
+
+The o-daiko row is bit-identical to the shipping parameter defaults, so the
+reference drum did not move at all: 50.7475 Hz before and after.
+
+### That they are four instruments and not four sizes
+
+A similarity transform of one drum into another preserves every dimensionless
+ratio it has, and so does the octave transform to the extent that it is one. So
+the claim is made in ratios, measured at the shipping defaults:
+
+| | Ō-daiko | Chū-daiko | Okedo | Shime |
+| --- | ---: | ---: | ---: | ---: |
+| Depth ÷ diameter | 0.850 | 1.200 | 1.250 | 0.700 |
+| Breathing ÷ fundamental | 1.658 | 1.285 | 1.117 | 1.105 |
+| Head stiffness *B* (×10⁻⁴) | 2.186 | 2.405 | 0.898 | 0.449 |
+| Top of the resolved bank above ideal | 30.4 ¢ | 33.4 ¢ | 12.6 ¢ | 6.3 ¢ |
+| Tail × fundamental (cycles) | 169 | 251 | 295 | 780 |
+| Hide (kg/m²) | 1.053 | 0.780 | 0.550 | 0.450 |
+| Tail (s) | 3.32 | 2.47 | 1.45 | 1.92 |
+| Full Don, 20–63 Hz, vs the ō-daiko | 0 dB | −16.5 | −21.3 | −31.1 |
+
+Every pair of drums differs by more than a tenth in at least one of the first
+five, and by more than a sixth in the hide. The closest pair in the modal ratios
+is the ō-daiko against the chū-daiko (2.186 against 2.405, 10 %), because both
+are thick tacked cowhide, and they are 41 % apart in the shape of their bodies.
+The closest pair in the cavity split is the okedo against the shime (1.117
+against 1.105, 1 %), and they are a factor of two apart in head stiffness and
+79 % apart in body proportion.
+
+Two of those are worth reading as sound rather than as numbers. The shime's
+shallow body barely splits its axisymmetric pair, so it is a far more nearly
+pure pitch than the ō-daiko, whose air lifts the second branch by a sixth. And
+the okedo is the driest of the four in absolute time despite not being the
+smallest, because a light stave shell takes 1.656 s⁻¹ at the rim against the
+ō-daiko's 0.688 and the shime's 0.495 — a mechanism no rescaling has.
+
+### Octave Body kept its name and changed its job
+
+It used to choose whether an octave was bought by halving the drum or by
+quadrupling its tension. There is nothing left to buy that way, because the
+octave now selects a different instrument, so the control now chooses **how much
+of the family there is**: at *Tuned* all four octaves collapse onto the ō-daiko
+the controls describe and the keyboard is one drum retuned (which is bit-for-bit
+the old Octave Body 0 behaviour); at *Family* each octave is its own instrument.
+In between they are blended.
+
+It keeps its second job unchanged: the residual tuning that brings each drum
+onto its key is taken on the axis the control chose. At *Tuned* that is the head
+tension and it is the whole octave (×4.007 / ×4.093 / ×4.009). At *Family* it is
+the drum's size and it is under half a per cent — the resolved diameters are
+95.0 / 55.2 / 40.0 / 29.9 cm against a table that says 95 / 55 / 40 / 30.
+
+**The default moved from 0.7 to 1.0** (*Family*), because the point of the
+change is four drums.
+
+The octave is still exactly an octave in the drum's own lowest mode: 50.75 /
+101.49 / 202.99 / 405.98 Hz at every Octave Body. Over a scan of eight controls
+crossed with the four octaves — 43,740 boundaries — the worst error is 56.2
+cents and 81 (0.19 %) miss by more than ±20, every one of those a drum whose air
+column has passed its quarter-wave or whose geometry has hit a clamp.
+
+The solve itself changed in one place: the reference the transform is measured
+against used to be *this octave's own untransformed drum*, which was the right
+reference when every octave was one drum rescaled. It is now the drum the
+controls describe, resolved untransformed, because each octave's own drum is a
+different instrument and tuning each of them an octave above itself would have
+left the keyboard reading the family's intervals rather than octaves. The
+bracket now reaches both ways — a real drum can sound above the key it is put on
+as easily as below it — and runs 24 halvings of a bracket at least two octaves
+wide.
+
+### What was retired, and what was checked before retiring it
+
+**Four articulations came off the map.** Su, Katsu, Buzz and Bachi. Su was a
+light Don and velocity already covers it (33.6 dB on the ō-daiko at full
+Velocity Depth, 39.1 on the shime). The other three were one technique each.
+
+**The stick-on-stick model was retired with the Bachi stroke, and this is the
+one genuine deletion.** `StickState`, `resolveStickFor`, `stickCache_`,
+`StrikeProfile::usesDrumBody`, `stickResonatorCount`, `stickCalibration` and the
+nine stick constants are gone. It was checked first: `usesDrumBody` was read in
+exactly three places (`trigger`, `measureContact`, `dampRingingHeads`) and the
+stick bank in one (`buildVoiceModes`), and the only articulation that set
+`usesDrumBody = false` was Bachi. Nothing else in the engine, the plug-in, the
+editor or the demo renderer reads the stick. Two tests went with it —
+`testStickStrokeIsIndependentOfTheDrum` and
+`testTheStickBankIsOnlyCalibratedAtTheBottomOfTheKeyboard` — because both
+trigger an articulation that no longer exists. The consequence for gap 6 ("ring
+the striker as well as the struck") is that the free-free bar model would have
+to be built again; the second pass had already struck that step because
+`stickCalibration` was pinned by nothing but the Bachi stroke, so what is lost
+is code that could not be calibrated rather than a calibration.
+
+**The wooden shell bank stayed, and Katsu was not the only thing driving it.**
+Every stroke has a `shellGain` — Don 0.18, Ka 0.42, Tsu 0.12, Don Rim 0.82 —
+and Don Rim adds `rimGain × 0.35` on top, so the body is driven hardest by the
+stroke that catches the hoop. `shellDecayScale` is still used (Don Rim, 0.78).
+`shellFrequencyScale` is now unity on all four strokes; it was already unity on
+all eight and is left in place as a column of the profile.
+
+**The byō tack line is untouched.** Only Don Rim (`rimGain` 0.95) and Ka (0.30)
+reach the hoop, and only Don Rim beats the preload at ordinary velocities, which
+is the mechanism that separates that pair.
+
+**One mechanism is now dormant rather than deleted: the multi-contact
+schedule.** `scheduleContacts` still builds a train of bouncing contacts when a
+profile asks for more than one, and no surviving profile does — Buzz was the
+only one. It is kept because it is the same function that schedules the single
+contact every stroke has, and because `voice.retirementOffset`, the contact
+relight of the continuum and the mode-lifetime shift all exist to serve it. A
+press roll is now played rather than provided, and the demo renderer plays one.
+
+### Tests
+
+Three new tests in `Tests/TaikoEngineTests.cpp`, each proved to bite by
+reverting the change it guards, running, and restoring:
+
+- `testTheGridIsFourByFourAndTheRestIsSilent` — all 128 MIDI notes, the three
+  mapping functions agreed against each other, and each note rendered: exactly
+  16 sound and the other 112 are *exactly* zero. Reverting
+  `articulationForMidiNote` to wrap the pitch class produced 226 failures.
+- `testTheFourDrumsAreFourInstruments` — the resolved drums are the sizes,
+  shapes and hides the table names; four fundamentals an octave apart in the
+  readout *and* in the rendered partial; and every pair of drums separated in
+  the dimensionless ratios above. Reverting `parametersForOctave` to return the
+  parameter block unchanged — one drum rescaled — produced 33 failures.
+- `testTheFourStrokesAreMutuallyDistinct` — pairwise band-level signatures,
+  each normalised to its own loudest band so level cannot stand in for timbre,
+  with the closest pair at 4.5 dB (Don against Tsu) and the widest at 18.1 dB
+  (Tsu against Don Rim); plus Tsu's sustain at 49 % of Don's, and Don Rim
+  reaching the hoop 3.2× harder than Ka. Flattening the strike profiles to four
+  copies of one strike fired all three clauses.
+
+Six existing tests were re-taken rather than relaxed, because the drums they
+measured are different drums now: the cavity column test's shallow-body and
+deep-body cases (moved from octaves 3 and −2 onto the shime and the okedo, with
+the lumped-spring literals re-measured by forcing the column factor to one), the
+breathing-branch step floors, the corner table's two octave −2 rows, the scan
+count (16,200 → 10,800), Octave Body's tension clause, and the strongest-partial
+ladder.
+
+Two clauses changed the quantity they measure, and the reason is the same in
+both: with the bachi-on-the-shell stroke retired, no surviving stroke lets the
+wooden body dominate the finished audio, so an audio measurement of the shell
+would be a measurement of the head. "Shell Resonance has no step in it" now
+reads the wooden bank's own drive; "the glide must not retune the wooden shell"
+now reads the wooden modes' resonator coefficients and asserts exact equality,
+which is a stronger statement than the audio proxy it replaces.
+
+One clause was loosened with a measured reason rather than re-taken. The
+do-no-harm clause that the reported fundamental is where the rendered peak is
+went from −0.32 dB to −0.92 dB, because the chū-daiko costs 0.909 dB and what
+costs it is the attack glide: the analysis window opens 50 ms after a stroke
+that starts the head sharp, and the strongest bin sits 13 cents above the pitch
+the drum is tuned to. With Tension Mod at zero all four drums come in under
+0.01 dB.
+
+### The demonstration set
+
+Twenty-three takes became **twenty-five**, and `expected_demos` for Taikor is
+updated in both `.github/workflows/ci.yml` and `.github/workflows/nightly.yml`.
+The set is rebuilt around the grid: the four strokes on one drum, the four drums,
+the whole sixteen-note grid read out, two strokes taken across the drums, a
+phrase on each of the four instruments, and a rolls-and-flams take that plays a
+press roll and a flam from the notes the grid has. `20-octave-body.wav` is the
+one to hear the change in — the same four pitches played first as one drum
+retuned four times and then as the four instruments.
+
+The committed WAVs under `Docs/audio/` are stale until the nightly render
+refreshes them: this change was made under a brief that forbids running the
+renderer against that directory. The manifest's level table was taken from a
+render to a temporary directory and is exact.
+
+### What did not change
+
+The physics. No loss law, no radiation term, no cavity solve, no contact solve,
+no microphone geometry and no calibration constant moved, apart from
+`stickCalibration` being deleted with the model it belonged to. The reference
+drum at C3 is bit-identical. Every open gap recorded above is exactly as open as
+it was, and gap 6 is one deletion further from being closed.

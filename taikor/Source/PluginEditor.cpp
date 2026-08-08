@@ -60,23 +60,20 @@ juce::String octaveName (int octaveOffset)
     return "C" + juce::String (referenceOctaveNumber + octaveOffset);
 }
 
-// A short description of the drum an octave produces, so the octave row reads
-// as instruments rather than as numbers. The names mirror the README's octave
-// table around the default drum: octave 0 is the 95 cm odaiko the controls
-// describe, +1 is nagado-daiko territory, and -2 is past the end of the
-// family - sub-bass that is felt rather than heard.
+// The drum an octave plays, read straight off the engine's own table rather
+// than restated here. Each octave is a different instrument of the family, so
+// the octave row names instruments: there is nothing for the editor to have its
+// own opinion about.
 juce::String octaveDescription (int octaveOffset)
 {
-    switch (octaveOffset)
-    {
-        case -2: return "Sub";
-        case -1: return "Large";
-        case 0:  return "Odaiko";
-        case 1:  return "Nagado";
-        case 2:  return "Shime";
-        case 3:  return "Tiny";
-        default: return {};
-    }
+    const auto& name = taikor::getDrumDescription (octaveOffset).displayName;
+    return juce::String (name.data(), name.size());
+}
+
+juce::String octaveSummary (int octaveOffset)
+{
+    const auto& summary = taikor::getDrumDescription (octaveOffset).summary;
+    return juce::String (summary.data(), summary.size());
 }
 } // namespace
 
@@ -801,7 +798,7 @@ TaikorAudioProcessorEditor::TaikorAudioProcessorEditor (TaikorAudioProcessor& pr
         pads[index] = std::move (pad);
     }
 
-    octaveLabel.setText ("OCTAVE - THE DRUM'S PITCH", juce::dontSendNotification);
+    octaveLabel.setText ("THE DRUM - ONE PER OCTAVE", juce::dontSendNotification);
     octaveLabel.setFont (juce::Font (juce::FontOptions (11.0f).withStyle ("Bold")));
     octaveLabel.setColour (juce::Label::textColourId, mutedText);
     octaveLabel.setJustificationType (juce::Justification::centredLeft);
@@ -816,9 +813,9 @@ TaikorAudioProcessorEditor::TaikorAudioProcessorEditor (TaikorAudioProcessor& pr
         button->setColour (juce::TextButton::textColourOffId, textColour);
         button->setColour (juce::TextButton::textColourOnId, textColour);
         button->setClickingTogglesState (false);
-        button->setTooltip ("Play the " + octaveDescription (octave).toLowerCase()
-                            + " drum: every stroke moves to the "
-                            + octaveName (octave) + " octave");
+        button->setTooltip (octaveDescription (octave) + " - "
+                            + octaveSummary (octave) + ". Every stroke moves to "
+                            "the " + octaveName (octave) + " octave");
         button->onClick = [this, octave] { selectOctave (octave); };
         addAndMakeVisible (*button);
         octaveButtons[static_cast<std::size_t> (index)] = std::move (button);
@@ -884,9 +881,9 @@ TaikorAudioProcessorEditor::TaikorAudioProcessorEditor (TaikorAudioProcessor& pr
     addKnob (humaniseKnob, ids::humanise,
              "Per-stroke variation in position, angle, impact speed and contact time.");
     addKnob (octaveBodyKnob, ids::octaveBody,
-             "How an octave is realised: at zero the same drum is tuned up, at full "
-             "the drum itself halves in size. Both reach the same pitch and neither "
-             "sounds the same, because the air does not scale with the drum.");
+             "What an octave changes: at zero the same drum is retuned up the "
+             "keyboard, at full each octave is its own instrument of the family. "
+             "Both reach the same four pitches and neither sounds the same.");
 
     addKnob (micDistanceKnob, ids::micDistance,
              "How far the close pair stands off the head. Near in it reads the shape "
@@ -1035,8 +1032,8 @@ void TaikorAudioProcessorEditor::resized()
     statusDisplay.setBounds (header.removeFromRight (juce::jmin (190, header.getWidth()))
                                  .reduced (0, 8));
 
-    // The stroke pads in one row: the vocabulary reads left to right from the
-    // middle of the head out to the sticks alone.
+    // The stroke pads in one row: the vocabulary reads left to right in the
+    // order the bottom four semitones of an octave lay it out.
     const auto padArea = areas.pads;
     const auto padLayout = taikor::ui::rowLayout (
         padArea.getWidth(), static_cast<int> (taikor::articulationCount), 6,
