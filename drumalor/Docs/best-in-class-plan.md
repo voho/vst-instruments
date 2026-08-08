@@ -803,6 +803,22 @@ numbered for this pass; the first pass's gap numbers are unrelated.
    part of it that is modelled metal decays faster than the part of it that is a
    circuit, and the comment at `DrumEngine.cpp:2815` and the README both
    describe what the plate bank does rather than what the voice does.
+   **Corrected on implementation, 2026-08-08.** Every figure above reproduces,
+   and the conclusion drawn from them does not. Read as band shares rather than
+   as a centroid — each band's energy over its own 40 ms window's total, Open
+   Hat — the voice holds 6–10 kHz at −2.99 dB at 0 ms and −3.00 dB at 1000 ms,
+   10–16 kHz at −6.99 and −5.14, 16–20 kHz at −10.18 and −7.94, and 2–6 kHz at
+   −12.67 and −15.05, while 0.4–2 kHz falls from −8.30 dB to −34.17. Above
+   6 kHz the voice keeps its shape to within 2.3 dB for the whole ring. The
+   +3.44 semitones is the plate band going and almost nothing else, and a
+   hi-hat losing its body before its hiss is not a defect. What is left after
+   the plate is taken out of the statistic is a drift of the 8–16 kHz over
+   2–6 kHz ratio from 9.84 to 12.97 dB, three quarters of it inside the first
+   50 ms and three decibels of it the 2–6 kHz band losing share. The levels
+   matter too: those windows are 15.9 dB (167 ms), 44.6 dB (500 ms) and 87.2 dB
+   (1000 ms) below the strike, and the Closed Hat is bit-exactly zero from
+   120 ms. This gap is much smaller than it reads, and the step that was to
+   close it is struck.
 
 4. **Hi-hat and cymbal velocity moves 1.3 to 2.6 dB of timbre and 3 to 16 % of
    decay across the whole range.** The hat's `filterA` carries no
@@ -944,7 +960,16 @@ as their test. What was wrong in each case is recorded at the end of the step.
 The corrections came from two places: an external review of the plan, and the
 re-measurement done to check that review.
 
-- [ ] **1. Stop the hi-hat brightening as it rings.** A hat's top goes first: it
+**Implementation note, 2026-08-08.** Preflight was not enough for step 1. Its
+contract survived the question preflight asks — could a wrong implementation
+pass this? — and failed the one only implementation asks: can a right one? Step
+1 is struck, with the measurement, and four steps remain.
+
+- [ ] **1. Stop the hi-hat brightening as it rings.** **Struck on
+  implementation, 2026-08-08** — see the strike note at the end of the step and
+  the full entry under *considered and not planned*. The text below is what was
+  proposed, kept so the reasoning that was tried can be read against the
+  measurement that killed it. A hat's top goes first: it
   is the dense upper-mode region of a bronze plate, and that is the region
   radiation damping removes fastest. Drumalor's does the opposite, and the reason
   is not the one the audit gave. The part of the voice that is modelled metal —
@@ -1013,8 +1038,22 @@ re-measurement done to check that review.
   sign, which no implementation could fail; and the single 3.5 dB velocity floor
   was half a decibel above what this step's own arithmetic says the mechanism
   reaches on the Closed Hat, so the two hats now carry separate floors.
+  *Struck on implementation, 2026-08-08*: the rise this step removes is the
+  plate leaving, not the top surviving. Split into bands over 40 ms windows on
+  an Open Hat and read as each band's share of that window's own total, the
+  shipping engine holds 6–10 kHz at −2.99 dB at 0 ms and −3.00 dB at 1000 ms,
+  10–16 kHz at −6.99 and −5.14, and 16–20 kHz at −10.18 and −7.94, while
+  0.4–2 kHz falls from −8.30 dB to −34.17. Everything above 6 kHz keeps its
+  share to within 2.3 dB for the whole ring; the entire +3.4 semitones of
+  centroid is the plate band going. The measurement is in the *considered and
+  not planned* entry, along with the levels of the windows the contract reads
+  (the Open Hat's 1000 ms window is 87.2 dB below its strike, note 42's
+  120–160 ms window at pedal 0.85 is 89.5 dB below its own 20–60 ms window and
+  at pedal 1.00 is bit-exactly zero) and the search over the named mechanism
+  that failed to reach any of the four clauses. Nothing in the engine changed;
+  the note-on half of the mechanism is worth keeping and is recorded there.
 
-- [ ] **2. Put a contact time on both cymbal channels.** The 909 leg opens in
+- [x] **2. Put a contact time on both cymbal channels.** The 909 leg opens in
   three samples because `romEnvelope` and `clockPhase` both start at unity, and
   nothing anywhere on the cymbal path knows how fast the stick was travelling.
   A stick tip on a thin plate is the closest thing in the kit to a clean
@@ -1057,6 +1096,61 @@ re-measurement done to check that review.
   Crash's stepping in three samples passed the whole contract — the Crash's only
   onset assertion was at Machine 0.0, where nothing changes. Both cymbals are
   now named on both assertions.
+  *What actually shipped*: the step as written, with `tau0` at **46 µs**, so
+  the spectral corner `1/(2·tau)` is 10.87 kHz at v = 1.00 and 6.56 kHz at
+  v = 0.08, which is the softest hit the law is allowed to see — the velocity
+  is floored there before the −1/5 power so the corner cannot walk down into
+  the cymbal's body on a note-on of velocity 1. The tilt is one first-order
+  low-pass per machine, on each leg's own carrier ahead of its own envelope:
+  on the oscillator bank before the two 808 band-passes, and on the DAC's held
+  code before the OTA, so the quantization error is filtered with the word it
+  rode in on rather than after it. The digital leg's smoother is the analogue
+  leg's own trigger RC — 0.85 ms (Ride), 1.60 ms (Crash) — stretched by the
+  same `v^(-1/5)`, applied to the finished channel rather than to the address
+  lines, since what the RC delays is the envelope voltage reaching the VCA and
+  the counter is already running.
+  Measured at 48 kHz, Humanise 0, through the test's own estimators rather
+  than the section's FFT harness: a 0.05 ms rectifier for the onset, which
+  reads one sample high on the Crash's digital leg against gap 7's sample-wise
+  0.104 ms, and a twice-applied Butterworth pair for the brightness bands,
+  which reads 1.28 and 1.83 dB where gap 4's FFT reads 1.33 and 2.00.
+  Digital onset to −6 dB of peak at Machine 1.0: Ride **0.062 → 0.875 ms**,
+  Crash **0.125 → 1.542 ms**. At v = 0.10: Ride **3.313 ms** (3.79× the
+  accent's), Crash **2.688 ms** (1.74×) — both above the contract's 1.35× and
+  above the 1.585× the bare law predicts, because the OTA's control current
+  closes with velocity as well and the two are not separable. Brightness span
+  over v = 0.08..1.00, 8–16 kHz over 2–6 kHz across the first 60 ms at each
+  voice's own Machine default: Ride **1.28 → 3.11 dB**, Crash **1.83 →
+  3.84 dB**. The Machine 0.0 onsets held at 0.875 ms (Ride, unmoved to the
+  sample) and 3.396 ms (Crash, one sample later than 3.375), both inside the
+  0.05 ms the contract allows. The tilt costs 0.69 dB (Ride) and 1.12 dB
+  (Crash) of the quality probe's rms and takes its 5–14 kHz air share from
+  0.376 to 0.308 and from 0.561 to 0.491; every `analyseCymbalPreset` bound
+  and the whole rest of the suite stayed green.
+  Two things the step text got wrong, both corrected here. The clause
+  requiring the velocity ratio to be **measured with the spectral low-pass
+  bypassed** is unnecessary and the test does not implement it: the contact
+  corner's group delay is 14.6 µs at v = 1.00 and 23.2 µs at the velocity
+  floor, so the whole quantity the bypass was to remove is 8.6 µs against
+  onsets of 0.875 and 3.313 ms — two tenths of one per cent of the ratio.
+  Adding a bypass hook to the engine to remove it would have been a test-only
+  branch in the audio path for nothing. And the **1.35× ratio clause does not
+  bite on the Crash**: on the unchanged engine that cymbal already reads
+  0.271 ms against 0.125 ms, a ratio of 2.17, because with no smoother at all
+  both figures are two or three samples of detector rise and their quotient is
+  arbitrary. On the Ride it does bite, at 1.333 against the required 1.35 —
+  narrowly. What actually catches a Crash left stepping is the absolute onset
+  window preflight added, 0.125 ms against a required 0.40–4.0 ms, which is
+  the assertion the preflight correction was really buying.
+  *Repaired while landing this step*: `testCymbalQualityContract`'s two
+  air-share assertions were found written as `expect (false, ...)`, which no
+  engine can satisfy and which had the suite red when this step began, on the
+  unchanged engine as well as on the changed one. When they were replaced is
+  not established here, and the constants they carried are not recoverable
+  from anything in the tree. They are
+  restored as the bounds their own messages describe — Ride air share at least
+  0.20, Crash air share between 0.25 and 0.80 — chosen to hold both with the
+  contact tilt and without it, and both are green on either engine.
 
 - [ ] **3. Make the membrane glide's depth follow the strike.** A head is stiff
   because it is stretched, so the pitch rise follows the energy actually in the
@@ -1329,6 +1423,75 @@ re-measurement done to check that review.
 
 ### Considered and not planned
 
+- **Struck on implementation: a falling low-pass in front of the hi-hat's hiss
+  path (this pass's step 1).** The engine was changed, measured and changed
+  back; nothing shipped. Four findings, in the order they arrived, all at 48 kHz
+  and Humanise 0 with an FFT band analysis on Hann-windowed 40 ms segments. The
+  section's own figures for this gap reproduce on that harness to within 2 %:
+  Open Hat centroid over 400 Hz–20 kHz of 8823 Hz at 0 ms, 9906 at 50, 10702 at
+  167, 10866 at 333, 10915 at 500 and 11115 at 1000, a rise of 4.00 semitones
+  against the section's 3.44; Closed Hat 9447 → 10915 Hz, 2.50 semitones against
+  the section's 2.59; velocity brightness spans of 1.96 dB (Closed) and 2.76 dB
+  (Open) against the preflight's 2.045 and 2.586.
+  1. **The rise is the plate leaving, not the top surviving.** Broken into bands
+     and read as each band's share of its own window's total, the Open Hat holds
+     6–10 kHz at −2.99 dB at 0 ms and −3.00 dB at 1000 ms, 10–16 kHz at −6.99
+     and −5.14, 16–20 kHz at −10.18 and −7.94, and 2–6 kHz at −12.67 and −15.05.
+     The only band that moves is 0.4–2 kHz, from −8.30 dB to −34.17. Above 6 kHz
+     the voice keeps its shape to within 2.3 dB across a ring that spans 87 dB
+     of level: the top is not outlasting the middle, the body is leaving, and a
+     hi-hat's body dying before its hiss is what a hi-hat does. Gap 3 already
+     recorded that the hiss path's own centroid is flat to −0.02 semitones and
+     that "hiss and plate together reproduce +3.43 of the +3.44 semitones"; what
+     it did not do was take the plate out of the statistic and look at what was
+     left. There is a residue — the 8–16 kHz over 2–6 kHz ratio drifts from 9.84
+     to 12.97 dB over the whole ring, three quarters of it inside the first
+     50 ms — but three decibels of that is the 2–6 kHz band losing share, and
+     the largest band in the voice does not move at all.
+  2. **Most of the trajectory the contract measures is inaudible.** Open Hat rms
+     in the same 40 ms windows: 5.40e−02 at 0 ms, 2.86e−02 at 50, 8.61e−03 at
+     167 (−15.9 dB), 3.19e−04 at 500 (−44.6 dB) and 2.38e−06 at 1000
+     (−87.2 dB). The clause carrying this step's headline — 1000 ms at least
+     1.5 semitones below 167 ms — is an assertion about a window 87 dB under the
+     strike. The Closed Hat is shorter still: 1.83e−02 over 0–40 ms, 5.80e−04
+     over 20–60 (−30.0 dB), 5.41e−06 over 60–100 (−70.6 dB), and bit-exactly
+     zero from 120 ms.
+  3. **The pedal-rate clause reads numerical dust.** Note 42 at pedal 0.85 has
+     an rms of 2.21e−03 over 20–60 ms and 7.40e−08 over 120–160 ms, 89.5 dB
+     down; at pedal 1.00 the 120–160 ms window is exactly zero and its centroid
+     is therefore 0 Hz. A rate taken between those two windows is not a
+     measurement of the loss law at any pedal position. Preflight guarded the
+     clause's sign and left the window alone.
+  4. **The contract is unreachable by the mechanism it names.** About a hundred
+     configurations were built and measured: corner start 11–30 kHz, floor 0.05
+     to 0.35 of the start, time constant 4–90 ms in absolute time and 0.10–0.30
+     of the plate bank's own decay, fall exponent 0.5 to 1.0, holds of 0–200 ms,
+     with and without a band-power makeup that keeps the path's level while
+     tilting it. Best Open Hat 167→1000 ms fall: **−0.76 semitones** against the
+     required −1.5, and only with a makeup that puts the 500–600 ms tail 2.3 dB
+     *above* the present engine rather than the permitted 4 dB below. Best
+     Closed Hat 0→50 ms: **+0.46 semitones** against the required ≤ 0, from
+     +2.50 today. The pedal fall stays negative at both positions in every
+     configuration that is not reading dust. And the three are anti-correlated
+     with the velocity floors, which are met (3.3–6.7 dB Closed, 3.9–6.4 dB
+     Open) only where the centroid clauses are given up. Inside the step's own
+     4 dB tail guard the audible part of the rise — 0→167 ms, where the level
+     falls only 15.9 dB — goes from +3.34 semitones to +2.41 at a cost of
+     3.40 dB of the 500–600 ms tail, or to +1.92 at 4.74 dB, which is outside
+     the guard. Less than one semitone of the rise, for three decibels of tail
+     and a re-voicing of both hats.
+  **What is worth keeping is the note-on half, and it does not need the fall.**
+  Setting the corner from `reach` and leaving it there — no trajectory, no
+  pedal law, one filter configured at note-on — takes the velocity brightness
+  span from 1.96 to **4.65 dB** on the Closed Hat and from 2.76 to **5.37 dB**
+  on the Open Hat at a corner of `14000 · reach`, for **0.65 dB** of the
+  Open Hat's 500–600 ms tail, because at full velocity that corner sits at
+  19 kHz and is very nearly bypass. That is the whole of the hi-hat half of
+  gap 4 — a ghost hat starting duller as well as quieter — closed at a cost that
+  rounds to nothing, and it clears both of this step's velocity floors with
+  1.6 dB and 1.9 dB to spare. It is not this step, which is built on the falling
+  corner, and it is not written here as one: it re-voices both hats and belongs
+  in a step of its own with a listening check, next to the other hat work.
 - **Withdrawn in review: a contact time on Perc 1's plate path.** Proposed as
   Hertz's `tau(v) = tau0 · v^(-1/5)` weighting the `filterC` plate term by
   `contactSpectrum(f_plate, tau) / contactSpectrum(f_body, tau)` in place of the
@@ -1431,8 +1594,10 @@ re-measurement done to check that review.
   gives too little rattle while an inelastic collision gives the sloshy
   half-open sound — the same correction the first pass had to make to the bleed
   bed's wire law. It is the right mechanism and it is not cheap: it needs a
-  second plate bank and a per-sample displacement-gated contact between them,
-  and step 1 has already improved the half-open hat by a cheaper route. Revisit
+  second plate bank and a per-sample displacement-gated contact between them.
+  The cheaper route to the half-open hat was this pass's step 1, and that step
+  was struck on implementation, so nothing has been spent on the half-open hat
+  and this remains the only mechanism on the table for it. Revisit
   once the second bank exists for the two-head work above.
 - **Cymbal washer and stand dynamics, and stick rebound.** Samejima's extension[^samejima]
   is real and is the smallest effect on the list. It presupposes a cymbal plate,

@@ -255,6 +255,14 @@ private:
         Biquad highpassHigh {};
         // 909: the reconstruction filter after the DAC and its VCA.
         Biquad reconstruction {};
+        // The stick's own contact time, as a first-order tilt on each
+        // machine's carrier. A tip touches a plate for a finite time and
+        // cannot deliver force above about one cycle per contact, so this is
+        // a property of the excitation and sits ahead of both channels'
+        // envelopes rather than across the voice's output, where it would
+        // blur the onsets the smoothers below are there to shape.
+        Biquad contactAnalogue {};
+        Biquad contactDigital {};
 
         // 808 trigger path. The trigger pulse is not a step: it charges the
         // envelope capacitors through the attack smoother, so every band opens
@@ -278,6 +286,16 @@ private:
         // long as the voice does.
         std::uint64_t midActiveSamples { 0 };
         std::uint64_t highActiveSamples { 0 };
+
+        // 909 trigger path. The data path has no smoother of its own - the
+        // counter is reset by the trigger and the first address is read on the
+        // next clock - so without this the channel opens in three samples.
+        // What it opens through is the same trigger RC the analogue channel
+        // uses, and it is the only place on this leg where how fast the stick
+        // was travelling can reach the sound at all: the ROM is a recording and
+        // the address envelope is walked by the counter, so neither can move.
+        float digitalGate { 0.0f };
+        float digitalGateCoefficient { 1.0f };
 
         // 909 sample clock, as a phase increment per engine sample.
         float clockPhase { 1.0f };
@@ -422,17 +440,6 @@ private:
         // further than this damps the voice; one that opens again does not
         // bring it back, because a hat that has been shut has been shut.
         float hatAperture { 1.0f };
-        // The hat's top, leaving. A one-pole low-pass in front of the hiss
-        // path whose corner starts where the strike reached and then falls as
-        // the plate loses its upper modes. Everything here is in hertz and
-        // seconds so it reads the same at every sample rate; a start corner of
-        // zero disables the path, which is what every voice that is not a hat
-        // leaves it at.
-        float hissCornerStart { 0.0f };
-        float hissCornerFloor { 0.0f };
-        float hissCornerSeconds { 1.0f };
-        float hissLowpassCoefficient { 1.0f };
-        float hissLowpassState { 0.0f };
         float baseFrequency { 100.0f };
         float sweepAmount { 0.0f };
         float panLeft { 0.70710678f };
@@ -589,7 +596,6 @@ private:
     [[nodiscard]] float renderSnare (Voice& voice) noexcept;
     [[nodiscard]] float renderClap (Voice& voice) noexcept;
     [[nodiscard]] float renderHat (Voice& voice) noexcept;
-    [[nodiscard]] float tickHissLowpass (Voice& voice, float input) noexcept;
     [[nodiscard]] float renderRide (Voice& voice) noexcept;
     [[nodiscard]] float renderCrash (Voice& voice) noexcept;
     [[nodiscard]] float renderTom (Voice& voice) noexcept;
@@ -642,6 +648,10 @@ private:
     void configureHighpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureBandpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureLowpass (Biquad& filter, float frequency, float q) const noexcept;
+    // One pole, bilinear, in the same Biquad the two-pole sections use. A
+    // contact time is a first-order tilt rather than a corner, and it has to
+    // land on the same hertz at every host rate.
+    void configureOnePoleLowpass (Biquad& filter, float frequency) const noexcept;
     void configureResonator (Resonator& resonator, float frequency,
                              float decaySeconds) const noexcept;
 

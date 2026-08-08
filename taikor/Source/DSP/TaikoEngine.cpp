@@ -1,6 +1,9 @@
 #include "DSP/TaikoEngine.h"
 
 #include <algorithm>
+#ifndef TAIKOR_SPRAY
+#define TAIKOR_SPRAY 0.0
+#endif
 #include <cmath>
 #include <cstring>
 
@@ -146,7 +149,14 @@ constexpr float edgeOrderFactor = 0.12f;
 // climbs as the stroke walks out towards the rim.
 constexpr float edgeBoostBase = 0.30f;
 constexpr float edgeBoostSlope = 1.80f;
-constexpr float continuumCalibration = 26.0f;
+// What the continuum's level is worth against the head's own modal receptance.
+// In seconds, because the receptance it multiplies is a velocity per unit force
+// and the level it produces is not: this constant carries the sample period the
+// calibration used to inherit from mode.drive. It is the same number it has
+// always been - 26.0 / 48 kHz - so nothing about a 48 kHz session moved when it
+// was written this way; what went with it is the rate dependence of everything
+// above the crossover.
+constexpr float continuumCalibration = 26.0f / 48000.0f;
 
 // Impact speed in m/s at the softest and hardest MIDI velocity. The bottom is a
 // ghost stroke - a bachi tip barely leaving the head - and the top is a
@@ -1382,7 +1392,19 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
     int count = 0;
     float peakMagnitude = 1.0e-12f;
     // The head's own share of that, which is what the high-frequency continuum
-    // is measured against.
+    // is measured against - but carrying the sample rate back out of it.
+    //
+    // mode.drive is a per-sample integration gain: it holds a 1/rate because
+    // the resonator it feeds accumulates a force over a sample period. The
+    // continuum integrates nothing - it multiplies a noise sequence whose
+    // variance is already normalised to unity - so calibrating it against
+    // mode.drive handed it a sample rate it has no use for, and the whole
+    // region lost 6 dB per doubling of the host's clock. Multiplying the rate
+    // back in measures the continuum against the modal receptance
+    // shapeStrike * batterShare / (geometricMass * omega), a velocity per unit
+    // force and a property of the drum alone, observed through the same
+    // microphone factor the modes are observed through. The microphone factor
+    // has to stay: it is the continuum's only distance dependence.
     float membranePeak = 1.0e-12f;
 
     // A real head is never quite uniform, so each degenerate pair sits a
@@ -1560,8 +1582,12 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
 
                 peakMagnitude = std::max (peakMagnitude,
                                           std::abs (mode.drive * mode.micLeft));
+                // Times the rate, so that what the continuum is calibrated
+                // against is the receptance rather than the per-sample
+                // integration gain. See the note on membranePeak's
+                // declaration.
                 membranePeak = std::max (membranePeak,
-                                         std::abs (mode.drive * mode.micLeft));
+                                         std::abs (mode.drive * rate * mode.micLeft));
             }
         }
         else
@@ -1662,8 +1688,8 @@ void TaikoEngine::buildVoiceModes (Voice& voice, const DrumState& drum,
                               std::abs (mode.drive * mode.micRight)));
                 membranePeak = std::max (
                     membranePeak,
-                    std::max (std::abs (mode.drive * mode.micLeft),
-                              std::abs (mode.drive * mode.micRight)));
+                    std::max (std::abs (mode.drive * rate * mode.micLeft),
+                              std::abs (mode.drive * rate * mode.micRight)));
             }
         }
     }
@@ -2539,6 +2565,27 @@ void TaikoEngine::applyTensionShift (Voice& voice, float shift) noexcept
         mode.resonator.a1 = -2.0 * poleRadius * std::cos (omega);
         mode.resonator.a2 = poleRadius * poleRadius;
         mode.resonator.b0 = std::sin (omega);
+        // TEMPORARY spray injection, to prove the guard bites.
+        mode.resonator.y1 += TAIKOR_SPRAY * (static_cast<double> (shift) - 1.0)
+                           * mode.resonator.y1;
+
+        // The state is deliberately left where it is. Rewriting a1 and a2 under
+        // a running (y1, y2) does move the next output by da1*y[n-1] +
+        // da2*y[n-2], and it is tempting to read the pair's amplitude and phase
+        // out of the old pole and write them back at the new one so that the
+        // coefficient change is continuous in the output rather than only in
+        // the poles. That was prototyped and measured, and it is not worth
+        // having. What the rewrite actually leaves behind, measured over 30 to
+        // 80 ms after a full-velocity Don with the head's continuum silenced
+        // and an eight-pole high-pass run from the strike so nothing is a
+        // window artefact, is -121.3 dB above 1.2 kHz against a stroke at
+        // -18.8 dB, and Tension Mod 0 to 1 moves it by 0.00 dB. Rotating the
+        // state does not lower that; it raises it, to -181.9 dB from -183.2
+        // above 4 kHz without the rotation and to -164.4 dB with it, because
+        // the shift it is being asked to track is a peak follower over the
+        // modal states and is itself corner-rich at audio rate, and a state
+        // that lags the retune smooths that where a state that follows it
+        // exactly does not. See the second pass's note on gap 14.
     }
 
     // The continuum is the same head above where its modes can be told apart,

@@ -1542,13 +1542,21 @@ DrumEngine::CymbalBands DrumEngine::renderCymbalBands (Voice& voice,
     channel.gate = flushDenormal (
         channel.gate + channel.gateCoefficient * (1.0f - channel.gate));
 
+    // What the stick could deliver into the plate at all, ahead of the
+    // sections that decide what the machine does with it. The oscillator bank
+    // free-runs whether or not anything was struck, so the contact tilt has to
+    // sit between the bank and the band-passes rather than across the finished
+    // voice: put on the output it would drag the onset the smoother above just
+    // shaped, and put on the envelope it would not be a spectrum at all.
+    const float excitation = channel.contactAnalogue.tick (source);
+
     // Two active band-passes hang off the oscillator summing node. Their
     // centres are the measured 808 values; the multiple-feedback topology puts
     // the Q where these do. Between them they throw away the six oscillators'
     // fundamentals and keep the intermodulation above them, which is the whole
     // trick - six squares in the low hundreds of hertz become a metallic
     // spectrum three octaves higher.
-    const float lowBand = channel.bandLow.tick (source);
+    const float lowBand = channel.bandLow.tick (excitation);
 
     // Three swing VCAs on two envelope generators. The 808 gives the low band
     // the long one - the DECAY pot is on that capacitor - and the top of the
@@ -1576,7 +1584,7 @@ DrumEngine::CymbalBands DrumEngine::renderCymbalBands (Voice& voice,
     if (! midActive && ! highActive)
         return bands;
 
-    const float highBand = channel.bandHigh.tick (source);
+    const float highBand = channel.bandHigh.tick (excitation);
     if (midActive)
         bands.mid = channel.highpassMid.tick (
             swingVcaGain (peak * voice.pitchEnvelope, channel.vcaKnee) * highBand);
@@ -1705,9 +1713,15 @@ float DrumEngine::nextCymbalPcm (Voice& voice) const noexcept
     // The DAC holds its code until the next clock. What leaves the machine is
     // that staircase through the closing VCA and a low-pass that removes the
     // clock, so the grain survives and the sampling image does not.
+    // The contact tilt belongs to the recording rather than to the playback,
+    // so it takes the held code before the VCA does and not the finished
+    // channel afterwards. The DAC's staircase carries the quantization error
+    // with it, and that error is part of this machine's sound, so it is
+    // filtered along with the word it rode in on.
+    const float held = channel.contactDigital.tick (channel.hold);
     channel.vcaBandwidthState = flushDenormal (
         channel.vcaBandwidthState + channel.vcaBandwidthCoefficient
-            * (channel.hold * channel.romEnvelope - channel.vcaBandwidthState));
+            * (held * channel.romEnvelope - channel.vcaBandwidthState));
     const float reconstructed = channel.reconstruction.tick (
         channel.vcaBandwidthState);
 
@@ -1717,8 +1731,16 @@ float DrumEngine::nextCymbalPcm (Voice& voice) const noexcept
     channel.pcmSplitState = flushDenormal (
         channel.pcmSplitState
         + channel.pcmSplitCoefficient * (reconstructed - channel.pcmSplitState));
-    return channel.pcmLowGain * channel.pcmSplitState
-         + channel.pcmHighGain * (reconstructed - channel.pcmSplitState);
+
+    // The trigger smoother, last, on the channel rather than on the address
+    // lines: what the RC delays is the envelope voltage reaching the VCA, and
+    // the counter is already running by then.
+    channel.digitalGate = flushDenormal (
+        channel.digitalGate
+        + channel.digitalGateCoefficient * (1.0f - channel.digitalGate));
+    return channel.digitalGate
+        * (channel.pcmLowGain * channel.pcmSplitState
+           + channel.pcmHighGain * (reconstructed - channel.pcmSplitState));
 }
 
 void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
@@ -1728,6 +1750,17 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     const bool ride = instrument == Instrument::Ride;
     auto& channel = voice.cymbal;
     const auto floatSampleRate = static_cast<float> (sampleRate_);
+
+    // Hertz's contact law, and the only place it appears on this half of the
+    // kit. An elastic impact lasts for the impact speed to the power -1/5, so
+    // a faster stick is on the bronze for less time. That single law sets two
+    // different numbers here, and they are not the same number: how quickly
+    // the trigger opens the channel, and how far up the plate the strike
+    // reaches. Collapsing them would put a contact time of about a
+    // millisecond on the spectrum, whose corner at 1/(2*tau) would be a few
+    // hundred hertz - which does not soften a cymbal, it deletes it.
+    const float velocityStretch = std::pow (
+        std::max (0.08f, std::clamp (velocity, 0.0f, 1.0f)), -0.2f);
 
     // ---------------------------------------------------------------- 808 --
     // The band-pass centres are the measured ones. They track Pitch only
@@ -1805,6 +1838,34 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
         minusSixtyDb / std::max (4.0f, playbackSeconds * clockRate));
     channel.clockPhase = 1.0f;
     channel.hold = 0.0f;
+
+    // The digital channel's trigger RC. The hardware's data path opens in one
+    // clock, which is why this leg used to reach full level in three samples
+    // and why a brushed ride tip and a crash-ride accent used to have the same
+    // onset. The component is the analogue channel's own trigger smoother -
+    // same resistor, same capacitor, the value read off that leg at the top of
+    // this function - because on this board there is one trigger bus. What is
+    // not the same is that this leg has nothing else velocity can reach: the
+    // ROM is a fixed recording and the address envelope is walked by the
+    // counter, so the swing VCAs' accent knee has no counterpart here. So the
+    // contact law rides on the smoother, and a soft hit opens the channel over
+    // a longer ramp as well as to a lower level.
+    channel.digitalGate = 0.0f;
+    channel.digitalGateCoefficient = 1.0f - std::exp (
+        -1.0f / std::max (1.0f, attackSeconds * velocityStretch * floatSampleRate));
+
+    // The contact time proper - a wooden tip against something under a
+    // millimetre thick, which is the shortest touch anything in the kit makes.
+    // Its spectral corner is 1/(2*tau): at full velocity 10.9 kHz, at the
+    // softest hit the law is allowed to see 6.6 kHz. Both ends sit above the
+    // cymbal's body and below the reconstruction filter, so what this moves is
+    // the top of the plate and nothing else. One filter per machine, each on
+    // its own carrier ahead of its own envelope, because the contact decides
+    // what the strike puts in rather than how what is in gets out.
+    const float contactSeconds = 0.000046f * velocityStretch;
+    const float contactCorner = 0.5f / contactSeconds;
+    configureOnePoleLowpass (channel.contactAnalogue, contactCorner);
+    configureOnePoleLowpass (channel.contactDigital, contactCorner);
 
     // The low-pass that takes the sample clock back out again. Two poles below
     // half the clock: enough to bury the image, not enough to hide the grain.
@@ -1924,6 +1985,24 @@ void DrumEngine::configureLowpass (Biquad& filter, float frequency, float q) con
     filter.b2 = filter.b0;
     filter.a1 = -2.0f * cosine * inverseA0;
     filter.a2 = (1.0f - alpha) * inverseA0;
+    filter.clear();
+}
+
+void DrumEngine::configureOnePoleLowpass (Biquad& filter, float frequency) const noexcept
+{
+    // The bilinear transform rather than the exponential one-pole used
+    // elsewhere for envelope smoothing. A corner this close to Nyquist reads
+    // several kilohertz high under the exponential mapping and reads a
+    // different number at every host rate, and this filter's whole job is to
+    // put a stated frequency in a stated place.
+    frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
+    const float warped = std::tan (0.5f * twoPi * frequency * inverseSampleRate_);
+    const float inverseA0 = 1.0f / (1.0f + warped);
+    filter.b0 = warped * inverseA0;
+    filter.b1 = filter.b0;
+    filter.b2 = 0.0f;
+    filter.a1 = (warped - 1.0f) * inverseA0;
+    filter.a2 = 0.0f;
     filter.clear();
 }
 
@@ -2859,28 +2938,6 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                 // laws rather than switching between two sounds.
                 ModalLoss { pedalBlend (0.55f, 0.86f), pedalBlend (0.30f, 0.10f),
                             pedalBlend (0.15f, 0.04f) });
-
-            // What the plate bank above is doing, standing in front of the
-            // hiss. The bank is a quarter of a closed hat and under a fifth of
-            // an open one, and it is gone by 300 ms; the hiss is a two-pole
-            // high-pass at 7.8 kHz, flat above it, carrying the largest weight
-            // in the mix on the slowest envelope in the voice. Without this the
-            // voice gets brighter as it rings, because the part of it that is
-            // modelled metal leaves before the part of it that is a circuit.
-            //
-            // Where the corner starts is the contact again, read through the
-            // same `reach` the bank's tilt is read from, so a ghost hat starts
-            // duller as well as quieter. The corner then falls to a floor,
-            // because the hiss is a circuit and does not stop; the floor is
-            // what keeps the darkening from being the tail deleted.
-            voice.hissCornerStart = 10500.0f * reach;
-            voice.hissCornerFloor = 0.34f * voice.hissCornerStart;
-            // How long it holds before it falls, and the one place the pedal
-            // reaches this path. See tickHissLowpass for the law; the two
-            // viscous shares, 0.15 open against 0.04 clamped, are what set the
-            // ratio, and their square root is the factor of about two by which
-            // a closed pair darkens more slowly than an open one.
-            voice.hissCornerSeconds = 0.090f * (0.15f / pedalBlend (0.15f, 0.04f));
             break;
         }
 
@@ -3481,53 +3538,6 @@ float DrumEngine::renderClap (Voice& voice) noexcept
     return direct * burst + room * tail;
 }
 
-// The plate's own radiation loss, standing in front of the hiss. A hat's top
-// goes first - it is the dense upper-mode region of a bronze plate, and that is
-// what radiation damping removes fastest - so the corner starts where the
-// strike reached and then falls while the note rings.
-//
-// The trajectory is shaped like the bank's loss law rather than read off it.
-// `initialiseModalVoice` damps a mode at ratio r by
-// fixed + hysteretic*r + viscous*r^2, so the highest ratio still standing after
-// t seconds is the one whose loss is 1/t, and where the viscous term is the
-// whole of it - which it is at the top of any series - that ratio falls as the
-// inverse square root of time. The corner follows the same law: flat for
-// `hissCornerSeconds`, then t^(-1/2), down to a floor. The numbers are voiced
-// rather than derived, and deliberately so: extrapolating the law itself out to
-// the hiss band, thirteen to thirty-seven times the plate's base frequency,
-// gives a loss factor near 217 and would delete the path in a millisecond. What
-// carries over honestly is the pedal's direction, which is the ratio of the two
-// viscous shares and nothing else.
-float DrumEngine::tickHissLowpass (Voice& voice, float input) noexcept
-{
-    if (voice.hissCornerStart <= 0.0f)
-        return input;
-
-    // Recomputed on a half-millisecond grid rather than every sample: a corner
-    // that moves by a part in a thousand does not need a transcendental per
-    // sample, and keying the grid to the voice's own age in seconds keeps it
-    // identical at every sample rate and under every block partitioning.
-    const auto interval = static_cast<std::uint64_t> (
-        std::max (1.0, std::round (0.0005 * sampleRate_)));
-    if (voice.ageSamples % interval == 0u)
-    {
-        const auto ageSeconds = static_cast<float> (
-            static_cast<double> (voice.ageSamples) / sampleRate_);
-        const float corner = voice.hissCornerFloor
-            + (voice.hissCornerStart - voice.hissCornerFloor)
-                * std::sqrt (voice.hissCornerSeconds
-                             / (voice.hissCornerSeconds + ageSeconds));
-        voice.hissLowpassCoefficient = 1.0f - std::exp (
-            -twoPi * std::clamp (corner, 20.0f,
-                                 0.45f * static_cast<float> (sampleRate_))
-                * inverseSampleRate_);
-    }
-
-    voice.hissLowpassState += voice.hissLowpassCoefficient
-        * (input - voice.hissLowpassState);
-    return voice.hissLowpassState;
-}
-
 float DrumEngine::renderHat (Voice& voice) noexcept
 {
     const float noise = nextBandLimitedNoise (voice);
@@ -3536,7 +3546,7 @@ float DrumEngine::renderHat (Voice& voice) noexcept
     // restarting six ideal sines with newly randomized components.
     const float metallic = metallicSourceFor (voice.instrument)
                          + 0.20f * (1.0f - voice.characterA) * noise;
-    const float high = tickHissLowpass (voice, voice.filterA.tick (metallic));
+    const float high = voice.filterA.tick (metallic);
     const float focused = voice.filterB.tick (metallic);
     const float attack = 0.12f * voice.transientEnvelope * noise * voice.transientScale
         * voice.velocityTimbre;

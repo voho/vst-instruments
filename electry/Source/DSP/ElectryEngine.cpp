@@ -2132,6 +2132,58 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
                static_cast<float>(delayLineSize - 8)));
 }
 
+void ElectryEngine::drawStrokeVariation(Voice& voice) noexcept
+{
+    // A hand does not put the pick down twice in the same place. Four things
+    // about the contact move from stroke to stroke, and they are the four the
+    // excitation already reads: where along the string the pick lands, how hard
+    // it is pushed, at what angle it meets the string, and how much of its tip
+    // is touching. Nothing else in the attack is randomised - the pluck is
+    // still the same mechanism, differently placed.
+    //
+    // Every draw is a pure function of the note counter and the string, so
+    // `Identical MIDI always renders identical audio` survives it: the same
+    // sequence of note-ons produces the same sequence of draws. `startOrder`
+    // is taken rather than `noteSequence_` because a strummed chord's later
+    // strings excite several blocks after their note-on, by which time the
+    // counter has moved on.
+    std::uint32_t state = hash32(
+        static_cast<std::uint32_t>(voice.startOrder * 2654435761u)
+        ^ static_cast<std::uint32_t>(voice.stringIndex * 40503u)
+        ^ 0x5bf03635u);
+    // Three uniforms on [-1, 1] sum to unit variance and cannot leave +/-3
+    // sigma, which is the bound the physical quantities need: the contact
+    // cannot move further along the string than the plectrum's width lets the
+    // player feel, nor further than the heel of the hand anchored on the
+    // bridge allows.
+    const auto normal = [&state]
+    {
+        return bipolarNoise(state) + bipolarNoise(state) + bipolarNoise(state);
+    };
+
+    // Contact position. 4 mm of standard deviation along the string is the
+    // scale the plectrum's own width and the anchored hand bracket; at the
+    // default Pick Position it is about 5% of the pick-to-bridge distance, so
+    // it moves the pluck comb's first notch by about that much.
+    voice.strokeContactOffsetMetres = 0.004f * normal();
+    // Contact force. The stroke's level is meant to move by about 0.8 dB of
+    // standard deviation, but the contact patch below already carries 0.4 dB of
+    // that on its own - a longer contact injects more of the pick's work as
+    // well as less of its top end - so the force itself draws the remainder.
+    // It rides on the velocity profile rather than replacing it, so a written
+    // accent still reads as an accent.
+    voice.strokeForceGain = std::pow(10.0f, 0.6f * normal() / 20.0f);
+    // Attack angle. The pick meets the string a few degrees off the plane it
+    // nominally travels in; because the excitation is split between two
+    // polarisations, an angle is not a free parameter but exactly that split,
+    // so the jitter is applied as a rotation of the split vector in
+    // updateStyleWeights() and takes no energy with it.
+    voice.strokeAngleOffset = 6.0f * (pi / 180.0f) * normal();
+    // Contact patch. 8% of standard deviation on how much of the tip is
+    // touching, carried by the length of the release pulse.
+    voice.strokeWidthScale = clampf(1.0f + 0.08f * normal(), 0.6f, 1.4f);
+}
+
 void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) noexcept
 {
     (void) velocity; // The note-on velocity is cached in velocityProfile.
@@ -2144,11 +2196,13 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const float hardnessGain = lerp(0.98f, 1.26f, parameters.pickHardness);
 
     float amplitude = 0.48f * profile.amplitude * hardnessGain
-                    * lerp(1.0f, 0.90f, parameters.stringAge);
+                    * lerp(1.0f, 0.90f, parameters.stringAge)
+                    * voice.strokeForceGain;
     // The string leaves the pick in a fraction of a millisecond; the width
     // controls how much of the upper spectrum the release step carries.
     float pulseMs = lerp(1.15f, 0.10f, parameters.pickHardness)
-                  * lerp(1.55f, 0.48f, profile.releaseRate);
+                  * lerp(1.55f, 0.48f, profile.releaseRate)
+                  * voice.strokeWidthScale;
     float pulseCutoff = lerp(900.0f, 13000.0f, parameters.pickHardness);
     float pluckFraction = lerp(0.025f, 0.48f, parameters.pickPosition);
     const float pickControl = std::pow(parameters.pickNoise, 0.75f);
@@ -2392,8 +2446,16 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // at the twelfth fret is now picked at twice the relative distance, which
     // is what moves a high fretted note toward the hollow, mid-string comb of
     // a real guitar.
+    //
+    // The stroke's own contact offset is a distance along the string, so it is
+    // added to the open-string fraction before the fret stretch, exactly as the
+    // nominal position is: the hand is a few millimetres out of place, not a
+    // few millimetres of the sounding length out of place.
     const float fretStretch = std::exp2(static_cast<float>(voice.fret) / 12.0f);
-    const float combFraction = clampf(pluckFraction * fretStretch, 0.02f, 0.49f);
+    const float strokePluckFraction = pluckFraction
+        + voice.strokeContactOffsetMetres / scaleLengthMetres();
+    const float combFraction = clampf(strokePluckFraction * fretStretch,
+                                      0.02f, 0.49f);
     voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
 
     // Where the touching hand is, if either hand is touching. The natural
@@ -2606,6 +2668,24 @@ void ElectryEngine::updateStyleWeights(Voice& voice, bool legato) noexcept
         horizontalWeight *= 0.46f / 0.42f;
         makeup *= 1.06f;
     }
+    // The stroke's own attack angle. The split between the two polarisations
+    // *is* the angle at which the pick meets the string, so a few degrees of
+    // hand-to-hand variation is a rotation of that vector and nothing else: its
+    // length, which is how much of the pick's work reaches the string, does not
+    // move. This composes with the upstroke tilt above rather than replacing
+    // it, so an alternate-picked repeat varies on top of its up/down colouring
+    // instead of losing it. A hammered note has no plectrum to hold at an
+    // angle, on the same grounds the upstroke voicing skips it.
+    if (voice.playStyle != PlayStyle::Hammer && voice.strokeAngleOffset != 0.0f)
+    {
+        const float magnitude = std::sqrt(verticalWeight * verticalWeight
+                                          + horizontalWeight * horizontalWeight);
+        const float angle = clampf(
+            std::atan2(horizontalWeight, verticalWeight) + voice.strokeAngleOffset,
+            0.02f, 0.5f * pi - 0.02f);
+        verticalWeight = magnitude * std::cos(angle);
+        horizontalWeight = magnitude * std::sin(angle);
+    }
     voice.verticalWeight = verticalWeight;
     voice.horizontalWeight = horizontalWeight;
     voice.articulationMakeup = makeup;
@@ -2646,6 +2726,7 @@ void ElectryEngine::startVoice(Voice& voice, int midiNote, float velocity,
     voice.velocity = velocity;
     voice.velocityProfile = makeVelocityProfile(velocity);
     voice.startOrder = ++noteSequence_;
+    drawStrokeVariation(voice);
     voice.ageSamples = 0;
     // Per-note, for the same reason ageSamples is: the relax factor is
     // measured against this note's own peak. Carried over, a quiet note
@@ -2782,6 +2863,7 @@ void ElectryEngine::legatoRetarget(Voice& voice, int midiNote, float velocity,
     voice.sustained = false;
     voice.releasing = false;
     voice.startOrder = ++noteSequence_;
+    drawStrokeVariation(voice);
     voice.velocity = velocity;
     voice.velocityProfile = makeVelocityProfile(velocity);
     voice.releaseGain = 1.0f;

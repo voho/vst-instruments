@@ -831,7 +831,7 @@ Each step is a single commit. The DSP suite must be green before each one, and
 each lands with a test in `Tests/` that fails without it. Five steps survived
 review; three did not, and are recorded with the rest of the rejects below.
 
-- [ ] **1. Make the head's continuum independent of the host sample rate.**
+- [x] **1. Make the head's continuum independent of the host sample rate.**
   `mode.drive` is a per-sample integration gain and carries `1/rate` so that
   the resonator it feeds integrates a force; the continuum multiplies a
   variance-normalised noise sequence and integrates nothing, so calibrating it
@@ -874,6 +874,49 @@ review; three did not, and are recorded with the rest of the rejects below.
   on its own — `membranePeak`'s own `micLeft` is 0.3352 at the factory
   distance, so dropping it outright moves the 48 kHz level by 12.11 dB — but it
   only ever looks at one distance.
+  *What actually shipped*: the step as written, with the mechanism and both
+  constants unchanged. `membranePeak` is now taken from
+  `|mode.drive · rate · mode.micLeft|` at both accumulation sites
+  (`TaikoEngine.cpp:1587` and `:1688`) and `continuumCalibration` is written
+  `26.0f / 48000.0f` rather than `26.0f`, with the note at the declaration
+  saying what it is now in units of: seconds, because what it multiplies is a
+  receptance. Every baseline figure the step quotes reproduced to the digit —
+  4–10 kHz relative to 48 kHz at +0.60 / −5.26 / −6.05 / −8.13 dB across 44.1 /
+  88.2 / 96 / 192 kHz (and −9.78 at 384 kHz, where the step says −9.77), a
+  Bachi at −2.11 and −5.51 dB in the same band, 400 Hz–16 kHz at −4.43 dB for a
+  Don against −0.00 for a Katsu and +0.14 for a Bachi from 48 to 96 kHz, and
+  the Mic Distance sweep at 13.53 / 17.23 / 20.54 dB. After the change the four
+  rates measure +0.03 / 0.00 / −1.51 / −0.85 dB, exactly what the prototype
+  predicted.
+  Three numbers came out other than as written, all of them in the step's
+  favour and all of them recorded in the test. The 400 Hz–16 kHz spread is
+  **1.09 dB, not the prototyped 1.34**, so the 1.5 dB clause has more margin
+  than it was given. The 40–200 Hz spread across the four rates went from 0.24
+  to 0.29 dB, still well inside its 0.5 dB clause. And "no behaviour at 48 kHz
+  changes" is true to 0.0000 dB of band level but is **not bit-identity**:
+  re-anchoring a `float` constant by a power that is not a power of two rounds
+  differently, and a render of all twelve strokes at 48 kHz differs from the
+  pre-step one by 1.04e-07 against a peak of 0.443, which is 132.6 dB down. The
+  step did not ask for bit-identity and the difference is a mantissa away from
+  nothing, but it is not zero and is recorded rather than rounded away.
+  On the revert the test fails on two clauses and not on the other three: the
+  4–10 kHz spread reads 8.73 dB against its 2.0 dB limit and the 400 Hz–16 kHz
+  spread 6.63 dB against 1.5. The 40–200 Hz clause, the 48 kHz level clause and
+  the Mic Distance guard all pass on the unfixed engine, which is what they were
+  written to do — they are there to catch a fix that overshoots, not to detect
+  the defect.
+  **One hazard handed forward to step 2.** The 48 kHz level clause pins a
+  literal, −54.7339 dB, on a render at the factory Tension Mod of 0.4, and step
+  2 changes what the glide does to exactly this band. Measured so that the next
+  agent does not have to guess how much room it has: over this window the whole
+  glide is worth **0.68 dB** in 4–10 kHz (Tension Mod 0 reads −54.0569, 0.4 reads
+  −54.7339, 1.0 reads −54.4193, and the 40–200 Hz band moves 0.11 dB across the
+  three). That is far less than gap 14's 6 dB because gap 14 measures 30–80 ms,
+  past the attack, where the drum has almost nothing of its own left; an 85 ms
+  window that starts at the strike is dominated by content the glide does not
+  make. So step 2 can move this pin, but only within seven tenths of a decibel,
+  and if it does the honest repair is to re-take the literal on the tree step 2
+  lands on rather than to widen the clause.
 
 - [ ] **2. Stop the attack glide from spraying the top of the spectrum.**
   `applyTensionShift` rewrites each membrane resonator's coefficients in place

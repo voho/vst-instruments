@@ -595,6 +595,15 @@ private:
         std::uint64_t startOrder { 0 };
         std::uint32_t noiseState { 1u };
 
+        // What the picking hand did not repeat about this stroke. All four are
+        // drawn once per attack from the note counter, so identical MIDI still
+        // renders identical audio, and all four are neutral until an attack
+        // draws them.
+        float strokeContactOffsetMetres { 0.0f }; // along the string, from the nominal
+        float strokeForceGain { 1.0f };           // linear, on the pick's amplitude
+        float strokeAngleOffset { 0.0f };         // radians, on the attack's plane
+        float strokeWidthScale { 1.0f };          // on the contact's duration
+
         PolarisationLoop vertical {};
         PolarisationLoop horizontal {};
 
@@ -895,6 +904,7 @@ private:
     void configurePickupFilters() noexcept;
     [[nodiscard]] float bodyConductanceAt(float frequencyHz) const noexcept;
     void startExcitation(Voice& voice, float velocity, bool legato) noexcept;
+    void drawStrokeVariation(Voice& voice) noexcept;
     void startVoice(Voice& voice, int midiNote, float velocity,
                     PlayStyle playStyle, bool strokeIsUp,
                     int startDelaySamples) noexcept;

@@ -171,6 +171,23 @@ struct TaikoEngineTestAccess
         return result;
     }
 
+    // Silence the head's continuum on a voice that has already been triggered,
+    // leaving the resolved bank and the airborne click alone. There is no way
+    // to ask a question about what the glide does to the top of the spectrum
+    // through the public interface: the same glide retunes the continuum's band
+    // corners, which is deliberate, so a measurement with the continuum in it
+    // cannot separate the head moving from the resonators being rewritten.
+    //
+    // Safe to call after `trigger` and before the first block because it moves
+    // `level`, which is written once when the voice is built, and the relight
+    // every later contact performs moves `envelope`. A stroke that schedules one
+    // contact - a Don does - therefore stays silenced for the whole voice.
+    static void silenceContinuum (TaikoEngine& engine, int slot = 0) noexcept
+    {
+        for (auto& band : engine.voices_[static_cast<std::size_t> (slot)].continuum)
+            band.level = 0.0f;
+    }
+
     // The frequency multiplier the attack glide is currently applying to the
     // membrane. Read directly because the glide is a few tens of cents on a
     // partial that is gone in a second, which no window short enough to catch
@@ -376,6 +393,87 @@ double correlation (const std::vector<float>& a, const std::vector<float>& b)
     if (sumAA <= 0.0 || sumBB <= 0.0)
         return 1.0;
     return sumAB / std::sqrt (sumAA * sumBB);
+}
+
+// Mean-square level in a band, in decibels, taken by Parseval over the integer
+// DFT bins of the whole buffer.
+//
+// This is the one estimator in the suite that means the same thing at two
+// different sample rates, and it is used where a test has to compare them. A
+// time-domain root-mean-square through a filter of fixed corner does not: the
+// filter is designed per rate, its transition region moves, and what it lets
+// through is not the same slice of the spectrum twice. Integer bins of a window
+// of fixed duration are the same slice by construction - the bin spacing is one
+// over that duration whatever the clock is doing - so the only difference left
+// between two rates is the audio.
+double bandLevelDb (const std::vector<float>& samples, double sampleRate,
+                    double lowHz, double highHz)
+{
+    const auto count = static_cast<int> (samples.size());
+    if (count < 4)
+        return -300.0;
+
+    const double spacing = sampleRate / static_cast<double> (count);
+    const int firstBin = std::max (1, static_cast<int> (std::ceil (lowHz / spacing)));
+    const int lastBin =
+        std::min (count / 2, static_cast<int> (std::floor (highHz / spacing)));
+
+    double total = 0.0;
+    for (int bin = firstBin; bin <= lastBin; ++bin)
+    {
+        // Both halves of the spectrum, so the sum is the band's share of the
+        // buffer's energy rather than half of it.
+        const double magnitude = binMagnitude (
+            samples, static_cast<double> (bin) * spacing, sampleRate);
+        total += 2.0 * magnitude * magnitude;
+    }
+
+    const double meanSquare =
+        total / (static_cast<double> (count) * static_cast<double> (count));
+    return 10.0 * std::log10 (std::max (meanSquare, 1.0e-30));
+}
+
+// Root-mean-square of everything above a corner, over a window, with the filter
+// run from the first sample so that it is settled long before the window opens.
+//
+// This exists because `bandLevelDb` cannot answer a question about a quiet high
+// band sitting next to a loud low one. Its window is rectangular, and a
+// rectangular window's sidelobes fall only as one over the frequency offset, so
+// one strong low partial that is not exactly on a bin leaks across the whole
+// spectrum at a level that has nothing to do with what is there. Measured, and
+// asserted in testTheGlideDoesNotBrightenTheTopOfTheSpectrum below: a single
+// sinusoid at 1000.3 Hz reads -68.6 dB in the 4-10 kHz band through
+// `bandLevelDb` and -164.2 dB through the same sum with a Hann window over it.
+//
+// Eight one-pole stages, so the skirt is 48 dB per octave and a band two octaves
+// down is a hundred decibels away. Starting the filter inside the window instead
+// would substitute its own start-up transient for the leakage and measure that.
+double highPassedRms (const std::vector<float>& samples, double sampleRate,
+                      double cornerHz, std::size_t first, std::size_t last)
+{
+    const double coefficient =
+        1.0 - std::exp (-2.0 * analysisPi * cornerHz / sampleRate);
+    std::array<double, 8> state {};
+
+    double sum = 0.0;
+    std::size_t count = 0;
+    const auto end = std::min (last, samples.size());
+    for (std::size_t index = 0; index < end; ++index)
+    {
+        double value = static_cast<double> (samples[index]);
+        for (auto& stage : state)
+        {
+            stage += coefficient * (value - stage);
+            value -= stage;
+        }
+
+        if (index >= first)
+        {
+            sum += value * value;
+            ++count;
+        }
+    }
+    return count > 0 ? std::sqrt (sum / static_cast<double> (count)) : 0.0;
 }
 
 // Root-mean-square over a window, so a test can ask about the settled tail
@@ -713,6 +811,232 @@ void testSampleRateConsistency()
     engine.trigger (taikor::Articulation::Don, 0, 0.9f);
     const auto rendered = render (engine, 512, 64);
     expect (rendered.finite, "an absurd sample rate must not produce non-finite audio");
+}
+
+// The pitch staying put is not the whole of rate independence. Everything above
+// the crossover is the continuum, and the continuum used to be calibrated
+// against mode.drive - a per-sample integration gain carrying a 1/rate that a
+// band-passed noise sequence has no use for. A session moved from 48 to 96 kHz
+// came back six decibels darker above 4 kHz, and the two tests above it saw
+// nothing, because they ask about finiteness, level, clipping and pitch.
+void testTheContinuumDoesNotDependOnTheSampleRate()
+{
+    auto parameters = defaultParameters();
+    parameters.humanise = 0.0f;
+
+    // Eighty-five milliseconds, so the window holds the whole of the region in
+    // question and the bin spacing is 11.76 Hz at every rate.
+    constexpr double windowSeconds = 0.085;
+
+    struct Reading
+    {
+        double rate { 0.0 };
+        double high { 0.0 };
+        double low { 0.0 };
+        double wide { 0.0 };
+    };
+
+    std::vector<Reading> readings;
+    for (const double sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        const auto samples =
+            static_cast<int> (sampleRate * windowSeconds);
+        const auto mono = strike (parameters, taikor::Articulation::Don, 0, 0.92f,
+                                  sampleRate, samples)
+                              .mono();
+        readings.push_back ({ sampleRate,
+                              bandLevelDb (mono, sampleRate, 4000.0, 10000.0),
+                              bandLevelDb (mono, sampleRate, 40.0, 200.0),
+                              bandLevelDb (mono, sampleRate, 400.0, 16000.0) });
+    }
+
+    const auto spread = [&readings] (double Reading::* band)
+    {
+        double lowest = 1.0e30;
+        double highest = -1.0e30;
+        for (const auto& reading : readings)
+        {
+            lowest = std::min (lowest, reading.*band);
+            highest = std::max (highest, reading.*band);
+        }
+        return highest - lowest;
+    };
+
+    // Two decibels rather than one because the click and contact-noise path has
+    // a rate dependence of its own that this is not about: a Bachi, which
+    // carries no continuum at all, moves 2.11 dB in this band by 96 kHz and
+    // 5.51 dB by 192 kHz. What is being asserted is that the continuum has
+    // stopped contributing one. Before the fix the spread here was 8.73 dB.
+    expect (spread (&Reading::high) < 2.0,
+            "the 4-10 kHz band moved with the host sample rate, so the head's "
+            "continuum is still being calibrated against a per-sample gain");
+    // The resolved bank was already rate-independent and the fix must not have
+    // reached it.
+    expect (spread (&Reading::low) < 0.5,
+            "the fix to the continuum moved the resolved bank");
+    expect (spread (&Reading::wide) < 1.5,
+            "the drum's whole voice above 400 Hz moved with the host sample rate");
+
+    // What a 48 kHz session sounds like must not have changed at all. The
+    // calibration constant was re-anchored by exactly the sample period it used
+    // to inherit, so this is arithmetic rather than a tolerance.
+    //
+    // This is also the clause that stops the rate dependence being cured by
+    // dropping the microphone factor out of the reference: membranePeak's own
+    // micLeft is 0.3352 at the factory Mic Distance, so leaving it out moves
+    // this level by 12.11 dB.
+    //
+    // A literal, and it is taken at the factory Tension Mod of 0.4, so the
+    // attack glide is in it. The glide is worth 0.68 dB in this band over this
+    // window - Tension Mod 0 reads -54.0569 and 1.0 reads -54.4193 - so work on
+    // the glide can legitimately move this number by a few tenths. Re-take the
+    // literal if it does; do not widen the tolerance.
+    const double reference48k = -54.7339;
+    expect (std::abs (readings[1].high - reference48k) < 0.1,
+            "the 48 kHz level of the 4-10 kHz band moved, so this was not a "
+            "change of units");
+
+    // And the microphone factor has to still be the factory distance's rather
+    // than a constant standing in for it, which the clause above cannot see
+    // because it only ever looks at one distance. Backing the pair off from
+    // 3 cm to 40 cm takes 13.53 dB out of this band today. A guard, not a
+    // discriminator: nothing in this step moves it.
+    {
+        const auto samples = static_cast<int> (48000.0 * windowSeconds);
+        auto close = parameters;
+        close.micDistance = 0.0f;
+        auto distant = parameters;
+        distant.micDistance = 1.0f;
+
+        const auto near = bandLevelDb (strike (close, taikor::Articulation::Don, 0,
+                                               0.92f, 48000.0, samples)
+                                           .mono(),
+                                       48000.0, 4000.0, 10000.0);
+        const auto far = bandLevelDb (strike (distant, taikor::Articulation::Don, 0,
+                                              0.92f, 48000.0, samples)
+                                          .mono(),
+                                      48000.0, 4000.0, 10000.0);
+
+        expect (std::abs ((near - far) - 13.5) < 1.5,
+                "Mic Distance stopped moving the head's continuum, so the "
+                "reference it is calibrated against is no longer observed "
+                "through the microphone");
+    }
+}
+
+// The attack glide raises the head's tension while the head is ringing, and
+// `applyTensionShift` rewrites every membrane resonator's coefficients under a
+// running state to do it. That really does step the next output by
+// da1*y[n-1] + da2*y[n-2], and the second pass read that step as the largest
+// source of brightness the instrument has above 1 kHz thirty milliseconds after
+// a hard stroke - about six decibels of it at the factory Tension Mod, flat
+// from 1.2 to 20 kHz.
+//
+// It is not. The reading was the estimator. `bandLevelDb` takes a rectangular
+// window, a rectangular window's sidelobes fall as one over the frequency
+// offset, and the ratio of two renders of the same leakage is flat across every
+// band by construction - which is exactly the signature the pass took for
+// proof that the mechanism was not physical. The first block below pins that
+// down on a signal whose spectrum is known, so nobody derives it from the
+// instrument again; the rest measures the region the honest way and records
+// what is really there.
+//
+// This test is a guard. It passes on the shipping engine and it passed on the
+// engine before the glide was ever looked at. It is here so that the next pass
+// to work on this region - the one waiting to let the head's own stretching
+// pump the continuum - starts from a number rather than from an artefact.
+void testTheGlideDoesNotBrightenTheTopOfTheSpectrum()
+{
+    constexpr double sampleRate = 48000.0;
+
+    // One sinusoid, nothing above it, read through the suite's own band level.
+    {
+        std::vector<float> sine (2400);
+        for (std::size_t index = 0; index < sine.size(); ++index)
+            sine[index] = 0.3f
+                        * static_cast<float> (std::sin (2.0 * analysisPi * 1000.3
+                                                        * static_cast<double> (index)
+                                                        / sampleRate));
+
+        const double leaked = bandLevelDb (sine, sampleRate, 4000.0, 10000.0);
+        const double real = 20.0 * std::log10 (highPassedRms (sine, sampleRate, 4000.0,
+                                                              1200, sine.size())
+                                               + 1.0e-300);
+
+        expect (leaked > -80.0,
+                "a rectangular window stopped leaking, so the caution below is "
+                "no longer needed and this test can be simplified");
+        expect (leaked - real > 60.0,
+                "the gap between what a rectangular window reports above a lone "
+                "1 kHz partial and what is there stopped being enormous");
+    }
+
+    // The glide's own contribution, with the head's continuum silenced so that
+    // the continuum legitimately retuning with the head is not counted as the
+    // resonator rewrite. Thirty to eighty milliseconds after the strike, past
+    // the contact, where a Don at the reference octave has no modelled content
+    // above about 330 Hz at all.
+    const auto glideResidue = [] (float tensionModulation, bool silenced,
+                                  double cornerHz, double& broadbandDb)
+    {
+        auto parameters = defaultParameters();
+        parameters.humanise = 0.0f;
+        parameters.tensionModulation = tensionModulation;
+
+        taikor::TaikoEngine engine;
+        engine.setParameters (parameters);
+        engine.prepare (sampleRate, defaultBlockSize);
+        engine.reset();
+        engine.trigger (taikor::Articulation::Don, 0, 1.0f);
+        if (silenced)
+            taikor::TaikoEngineTestAccess::silenceContinuum (engine);
+
+        const auto rendered = render (engine, static_cast<int> (sampleRate * 0.085));
+        const auto mono = rendered.mono();
+        const auto first = static_cast<std::size_t> (sampleRate * 0.030);
+        const auto last = static_cast<std::size_t> (sampleRate * 0.080);
+
+        broadbandDb = 20.0 * std::log10 (windowedRms (mono, first, last) + 1.0e-300);
+        return 20.0 * std::log10 (
+            highPassedRms (mono, sampleRate, cornerHz, first, last) + 1.0e-300);
+    };
+
+    {
+        double quietBroadband = 0.0;
+        double loudBroadband = 0.0;
+        const double quiet = glideResidue (0.0f, true, 1200.0, quietBroadband);
+        const double loud = glideResidue (1.0f, true, 1200.0, loudBroadband);
+
+        // Measured -121.3 dB against a stroke at -18.8 dB, and Tension Mod
+        // moves it by 0.00 dB. The rectangular-window reading of the same two
+        // renders is -48.9 and -41.3 dB, a rise of 7.66 dB, and all of it is
+        // the leakage of the drum's own bottom two octaves.
+        std::cerr << "  [probe] silenced: broadband " << quietBroadband << " / "
+                  << loudBroadband << " dB, >1.2 kHz " << quiet << " -> " << loud
+                  << " dB, rise " << (loud - quiet) << " dB\n";
+        expect (quiet < quietBroadband - 80.0 && loud < loudBroadband - 80.0,
+                "the coefficient rewrite in applyTensionShift became audible "
+                "above 1.2 kHz on a drum that has no content there");
+        expect (std::abs (loud - quiet) < 2.0,
+                "the attack glide started spraying the top of the spectrum");
+    }
+
+    // And on the instrument as it ships, with the continuum in. Here Tension
+    // Mod does buy about a decibel above 1.2 kHz, which is the continuum's own
+    // bands moving up with the head rather than an artefact - the mechanism the
+    // engine means to have. What it does not buy is six.
+    for (const double corner : { 1200.0, 4000.0 })
+    {
+        double ignored = 0.0;
+        const double quiet = glideResidue (0.0f, false, corner, ignored);
+        const double loud = glideResidue (1.0f, false, corner, ignored);
+
+        std::cerr << "  [probe] shipping, >" << corner << " Hz: " << quiet
+                  << " -> " << loud << " dB, rise " << (loud - quiet) << " dB\n";
+        expect (loud - quiet < 3.0,
+                "Tension Mod moved the top of the spectrum by more than the "
+                "continuum retuning with the head accounts for");
+    }
 }
 
 // Velocity must change the timbre, not only the level, and it must do so
@@ -3365,6 +3689,8 @@ int main()
     testOctavesRaisePitch();
     testEveryArticulationAndSampleRate();
     testSampleRateConsistency();
+    testTheContinuumDoesNotDependOnTheSampleRate();
+    testTheGlideDoesNotBrightenTheTopOfTheSpectrum();
     testVelocitySensitivity();
     testPhysicalParameterInfluence();
     testStrikePositionShapesTheSpectrum();

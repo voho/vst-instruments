@@ -2140,6 +2140,170 @@ void testVelocityDynamicRange()
                + std::to_string(flatHigh - flatLow) + " dB)");
 }
 
+// A repeated note must not be a repeated render. The protocol deliberately
+// leaves 12 s between strokes so the string has decayed and the measurement
+// sees the excitation rather than the previous stroke's residual ring, and it
+// silences every noise control and the Artifacts detune so that what is
+// measured is the picking hand and nothing that already varied.
+void testPickingHandVariation()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int note = 40;
+    constexpr int strokeCount = 12;
+    constexpr int captureSamples = static_cast<int>(0.150 * sampleRate);
+
+    struct Repeats
+    {
+        std::vector<std::vector<float>> strokes;
+        std::vector<double> peaksDb;
+        std::vector<double> centroids;
+    };
+
+    const auto repeat = [&] (double gapSeconds, PickStyle pickStyle)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.artifactAmount = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.noteOn(pickKeyswitch(pickStyle), 1.0f);
+
+        Repeats result;
+        StereoBuffer gap(static_cast<int>(gapSeconds * sampleRate));
+        for (int stroke = 0; stroke < strokeCount; ++stroke)
+        {
+            engine.noteOn(note, 0.80f);
+            renderInto(engine, gap);
+            std::vector<float> attack(gap.left.begin(),
+                                      gap.left.begin() + captureSamples);
+            result.peaksDb.push_back(
+                decibels(std::max<double>(peakAbs(attack), 1.0e-12)));
+            result.centroids.push_back(spectralCentroid(
+                attack, 0, captureSamples, sampleRate, midiHz(note)));
+            result.strokes.push_back(std::move(attack));
+        }
+        return result;
+    };
+
+    // Energy of the difference between two strokes' attacks, against the energy
+    // of the earlier one.
+    const auto differenceDb = [] (const std::vector<float>& later,
+                                  const std::vector<float>& earlier)
+    {
+        double difference = 0.0;
+        double reference = 0.0;
+        for (std::size_t i = 0; i < later.size(); ++i)
+        {
+            const double d = static_cast<double>(later[i]) - earlier[i];
+            difference += d * d;
+            reference += static_cast<double>(earlier[i]) * earlier[i];
+        }
+        return 10.0 * std::log10(std::max(difference, 1.0e-30)
+                                 / std::max(reference, 1.0e-30));
+    };
+
+    const auto spreadOf = [] (const std::vector<double>& values)
+    {
+        const auto bounds = std::minmax_element(values.begin(), values.end());
+        return *bounds.second - *bounds.first;
+    };
+
+    // Successive strokes, or - under Alternate - strokes two apart, which hold
+    // the up/down colouring constant so what is left is the hand.
+    const auto pairDbs = [&] (const Repeats& repeats, int lag)
+    {
+        std::vector<double> result;
+        for (std::size_t i = 0; i + static_cast<std::size_t>(lag)
+                                    < repeats.strokes.size(); ++i)
+            result.push_back(differenceDb(
+                repeats.strokes[i + static_cast<std::size_t>(lag)],
+                repeats.strokes[i]));
+        return result;
+    };
+
+    const auto meanOf = [] (const std::vector<double>& values)
+    {
+        double total = 0.0;
+        for (const double value : values)
+            total += value;
+        return total / static_cast<double>(values.size());
+    };
+
+    const auto latched = repeat(12.0, PickStyle::Down);
+    const auto latchedPairs = pairDbs(latched, 1);
+    const double latchedMean = meanOf(latchedPairs);
+
+    // Without the per-stroke draws the successive pairs fall from -43.5 dB to
+    // -94.3 dB, a mean of -84.6 dB: the twelve strokes are the same stroke, and
+    // what little separates them is converging residual state. The band is
+    // scored on the mean because the draws are independent, so two consecutive
+    // strokes may land close by chance - one pair of the twelve reads -30.8 dB;
+    // every individual pair still has to stay under the band's top.
+    expect(latchedMean >= -24.0 && latchedMean <= -8.0,
+           "repeated strokes do not differ by a hand's worth (mean successive "
+               "difference " + std::to_string(latchedMean) + " dB)");
+    expect(*std::max_element(latchedPairs.begin(), latchedPairs.end()) <= -8.0,
+           "repeated strokes differ too much to be the same note (loudest "
+               "successive difference "
+               + std::to_string(*std::max_element(latchedPairs.begin(),
+                                                  latchedPairs.end())) + " dB)");
+
+    // The variation must be audible as a hand rather than as a level control.
+    // Without the draws, 0.0120 dB.
+    const double peakSpread = spreadOf(latched.peaksDb);
+    expect(peakSpread >= 0.6 && peakSpread <= 3.0,
+           "stroke-to-stroke level variation is outside a player's range ("
+               + std::to_string(peakSpread) + " dB across 12 strokes)");
+
+    // And it must move the tone, not only the level: without the draws, 0.380 Hz
+    // on a 456 Hz centroid.
+    const double centroidSpread = spreadOf(latched.centroids);
+    expect(centroidSpread >= 12.0,
+           "repeated strokes are spectrally identical (centroid spread "
+               + std::to_string(centroidSpread) + " Hz)");
+
+    // Alternate picking already varies stroke to stroke by more than the signal
+    // itself, so the hand's variation has to ride on top of the up/down
+    // colouring rather than replace it. Strokes two apart share a direction;
+    // without the draws they converge to a mean of -86.1 dB, exactly as the
+    // latched case does, so a change that only varies a latched Down fails
+    // here.
+    const auto alternating = repeat(12.0, PickStyle::Alternate);
+    const auto alternatingPairs = pairDbs(alternating, 2);
+    const double alternatingMean = meanOf(alternatingPairs);
+    expect(alternatingMean >= -24.0 && alternatingMean <= -8.0,
+           "alternate-picked repeats of the same stroke direction do not vary "
+               "(mean difference two apart " + std::to_string(alternatingMean)
+               + " dB)");
+    expect(*std::max_element(alternatingPairs.begin(), alternatingPairs.end())
+               <= -8.0,
+           "alternate-picked strokes two apart differ too much (loudest "
+               + std::to_string(*std::max_element(alternatingPairs.begin(),
+                                                  alternatingPairs.end()))
+               + " dB)");
+
+    // Half a second apart the string has not decayed, so each stroke lands on
+    // the previous one's ring and the difference between them is dominated by
+    // how far that residual state has converged. Without the draws it
+    // converges: the twelfth pair reads -27.3 dB against -94.3 dB on the 12 s
+    // protocol, 67 dB apart. With the excitation itself varying, the two
+    // protocols have to
+    // agree, because the difference is then a property of the stroke rather
+    // than of the state it lands on.
+    const auto rapid = repeat(0.5, PickStyle::Down);
+    const auto rapidPairs = pairDbs(rapid, 1);
+    const double lastRapid = rapidPairs.back();
+    const double lastLatched = latchedPairs.back();
+    expect(std::abs(lastRapid - lastLatched) <= 6.0,
+           "a repeated note still converges on itself (last pair "
+               + std::to_string(lastRapid) + " dB at 0.5 s against "
+               + std::to_string(lastLatched) + " dB at 12 s)");
+}
+
 void testVelocityExpression()
 {
     constexpr double sampleRate = 48000.0;
@@ -5557,6 +5721,7 @@ int main()
     testMonoStereoOutputField();
     testVelocityDynamicRange();
     testVelocityExpression();
+    testPickingHandVariation();
     testMaterialAndControlAudibility();
     testNoiseComponentsAndSilence();
     testStringAllocationAndPolyphony();
