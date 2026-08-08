@@ -832,65 +832,97 @@ each lands with a test in `Tests/` that fails without it. Five steps survived
 review; three did not, and are recorded with the rest of the rejects below.
 
 - [ ] **1. Make the head's continuum independent of the host sample rate.**
-  `mode.drive` is a per-sample integration gain and carries `1/rate` so that the
-  resonator it feeds integrates a force; the continuum multiplies a
+  `mode.drive` is a per-sample integration gain and carries `1/rate` so that
+  the resonator it feeds integrates a force; the continuum multiplies a
   variance-normalised noise sequence and integrates nothing, so calibrating it
-  against `membranePeak` hands it a sample rate it has no use for. The change is
-  to take `membranePeak` from `|mode.drive · rate · mode.micLeft|` rather than
-  from `|mode.drive · mode.micLeft|` — that is, to measure the continuum against
-  the rate-free modal receptance `shapeStrike · batterShare / (geometricMass ·
-  ω)`, a velocity per unit force, *observed through the same microphone factor
-  it is observed through today* — and to re-anchor `continuumCalibration` from
-  26.0 to 26.0 / 48 kHz = 5.42e-4 s, which is the same number in the units the
-  receptance now has. The microphone factor must stay: dropping it, which the
-  first draft of this step read as doing, would change the 48 kHz level and
-  would take the continuum's only distance dependence away with it. No
-  behaviour at 48 kHz changes; the rate dependence disappears. Closes gap 1.
-  *Verified by*: `testTheContinuumDoesNotDependOnTheSampleRate` renders a Don at
-  velocity 0.92, Humanise 0, at 44.1, 48, 96 and 192 kHz over a fixed 85 ms
-  window with the band level taken by Parseval over integer DFT bins of that
-  window — the same physical quantity at every rate, which a time-domain RMS
-  through a fixed-Hz filter is not — and requires the 4–10 kHz band to agree
-  across all four rates within **2.0 dB**; today the spread is 8.73 dB (+0.60 to
-  −8.13 relative to 48 kHz). The tolerance is 2.0 and not 1.0 because the step
-  was prototyped: with the change applied, the four rates measure
-  +0.03 / 0.00 / −1.51 / −0.85 dB, the residual being the click and
-  contact-noise path, which this step does not touch and which a Bachi shows on
-  its own at −2.11 dB by 96 kHz. It also requires the 40–200 Hz band to stay
-  within its present 0.5 dB, so the fix does not reach the resolved bank, the
-  400 Hz–16 kHz band to agree within 1.5 dB across the four rates (prototyped at
-  1.34), and the 48 kHz 4–10 kHz level to stay within 0.1 dB of its pre-step
-  value.
+  against `membranePeak` hands it a sample rate it has no use for. The change
+  is to take `membranePeak` from `|mode.drive · rate · mode.micLeft|` rather
+  than from `|mode.drive · mode.micLeft|` — that is, to measure the continuum
+  against the rate-free modal receptance `shapeStrike · batterShare /
+  (geometricMass · ω)`, a velocity per unit force, *observed through the same
+  microphone factor it is observed through today* — and to re-anchor
+  `continuumCalibration` from 26.0 to 26.0 / 48 kHz = 5.42e-4 s, which is the
+  same number in the units the receptance now has. The microphone factor must
+  stay: dropping it, which the first draft of this step read as doing, would
+  change the 48 kHz level and would take the continuum's only distance
+  dependence away with it. No behaviour at 48 kHz changes; the rate dependence
+  disappears. Closes gap 1. *Verified by*:
+  `testTheContinuumDoesNotDependOnTheSampleRate` renders a Don at velocity
+  0.92, Humanise 0, at 44.1, 48, 96 and 192 kHz over a fixed 85 ms window with
+  the band level taken by Parseval over integer DFT bins of that window — the
+  same physical quantity at every rate, which a time-domain RMS through a
+  fixed-Hz filter is not — and requires the 4–10 kHz band to agree across all
+  four rates within **2.0 dB**; today the spread is 8.73 dB (+0.60 to −8.13
+  relative to 48 kHz). The tolerance is 2.0 and not 1.0 because the step was
+  prototyped: with the change applied, the four rates measure +0.03 / 0.00 /
+  −1.51 / −0.85 dB, the residual being the click and contact-noise path, which
+  this step does not touch and which a Bachi shows on its own at −2.11 dB by 96
+  kHz. It also requires the 40–200 Hz band to stay within its present 0.5 dB,
+  so the fix does not reach the resolved bank, the 400 Hz–16 kHz band to agree
+  within 1.5 dB across the four rates (prototyped at 1.34), and the 48 kHz 4–10
+  kHz level to stay within 0.1 dB of its pre-step value.
+  One clause added in preflight, because the step's own prose names a failure
+  mode nothing was measuring. The microphone factor is what carries the
+  continuum's distance dependence, and an implementation that re-anchored the
+  calibration and replaced `mode.micLeft` with the constant it happens to take
+  at the factory Mic Distance would leave the 48 kHz level untouched and pass
+  every clause above. So the test also sweeps Mic Distance 0 → 1 (3 cm → 40 cm)
+  at 48 kHz and requires the 4–10 kHz band to keep falling by **13.5 ± 1.5
+  dB**, which is what it does today (13.53, against 17.23 dB at 400–1200 Hz and
+  20.54 dB at 40–125 Hz). This clause cannot fail today and is carried as a
+  guard, not as a discriminator. The 0.1 dB level clause does most of the work
+  on its own — `membranePeak`'s own `micLeft` is 0.3352 at the factory
+  distance, so dropping it outright moves the 48 kHz level by 12.11 dB — but it
+  only ever looks at one distance.
 
 - [ ] **2. Stop the attack glide from spraying the top of the spectrum.**
   `applyTensionShift` rewrites each membrane resonator's coefficients in place
   and leaves its state alone. In the continuous problem that is
   energy-conserving; in a two-pole difference equation it steps the output by
   `Δa1 · y[n−1] + Δa2 · y[n−2]` at every rewrite, and the glide rewrites on
-  every control period through the whole attack. The result is a step train, and
-  a step train is white. Rotate the state into the new tuning instead of leaving
-  it — the resonator's `(y1, y2)` pair is a sampled sinusoid whose phase and
-  amplitude are recoverable, and re-deriving `y2` for the new pole angle at the
-  same amplitude and phase makes the coefficient change continuous in the output
-  rather than only in the poles. The alternative — crossfading two resonators —
-  doubles the bank and is not worth it for a term that is a few tens of cents.
-  Nothing about the glide's size, shape or timing changes. Closes gap 14, and it
-  must come before anything else that measures this region, because at the
-  factory Tension Mod every band above 1 kHz is currently sitting on about 6 dB
-  of this.
+  every control period through the whole attack. The result is a step train,
+  and a step train is white. Rotate the state into the new tuning instead of
+  leaving it — the resonator's `(y1, y2)` pair is a sampled sinusoid whose
+  phase and amplitude are recoverable, and re-deriving `y2` for the new pole
+  angle at the same amplitude and phase makes the coefficient change continuous
+  in the output rather than only in the poles. The alternative — crossfading
+  two resonators — doubles the bank and is not worth it for a term that is a
+  few tens of cents. Nothing about the glide's size, shape or timing changes.
+  Closes gap 14, and it must come before anything else that measures this
+  region, because at the factory Tension Mod every band above 1 kHz is
+  currently sitting on about 6 dB of this.
   *Verified by*: `testTheGlideRetunesWithoutSplattering` renders a Don at
-  velocity 1.00, Humanise 0, at Tension Mod 0 and 1, and measures three bands
-  over 30–80 ms after the strike — past the contact entirely — where the drum at
-  C3 has no modelled content at all. Today those bands rise by +7.15 dB
-  (1.2–2.4 kHz), +7.23 (4–10 kHz) and +7.24 (12–20 kHz); after the change each
-  must rise by less than 1.5 dB, and the 12–20 kHz band, which no mechanism in
-  the instrument is entitled to reach, by less than 0.5 dB. The flatness is the
-  signature and the test asserts it as one: the spread between the three bands'
-  rises must not exceed 1.0 dB today (it is 0.09) and the test would be
-  meaningless without recording that, because a genuine mechanism would not be
-  flat. The 40–125 Hz band over the same window must move by less than 0.3 dB
-  (today Tension Mod 0 → 1 moves it +0.22 dB), and the pitch of the glide,
-  measured through `appliedTensionShift`, must be unchanged sample for sample.
+  velocity 1.00, Humanise 0, at Tension Mod 0 and 1, **with the voice's
+  continuum silenced** — a test-access hook that zeroes the voice's
+  `continuum[*].level` after `trigger` and before the first block, which holds
+  for a Don because a Don schedules one contact and the relight at
+  `:2758-2762` moves `band.envelope` and not `band.level` — and measures three
+  bands over 30–80 ms
+  after the strike, past the contact entirely, where the drum at C3 has no
+  modelled content at all. **Silencing the continuum is not optional and was
+  missing from the first draft of this clause, which preflight corrected.** The
+  +7.15 / +7.23 / +7.24 dB the pass recorded are the rises with the continuum
+  off; through an ordinary public render the same three bands rise by
+  +3.24 / +7.38 / +8.28 dB, so the flatness the assertion turns on is 5.04 dB
+  wide rather than 0.09 and the test would have failed on the tree it was
+  written against, before anybody touched the engine. With the continuum
+  silenced the figures reproduce exactly.
+  After the change each of the three must rise by less than 1.5 dB, and the
+  12–20 kHz band, which no mechanism in the instrument is entitled to reach, by
+  less than 0.5 dB. The flatness is the signature and the test asserts it as
+  one: the spread between the three bands' rises must not exceed 1.0 dB today
+  (it is 0.09) and the test would be meaningless without recording that,
+  because a genuine mechanism would not be flat. The 40–125 Hz band over the
+  same window must move by less than 0.3 dB (with the continuum silenced
+  Tension Mod 0 → 1 moves it −0.03 dB; the +0.22 dB the first draft quoted is
+  the same band with the continuum on, and the two must not be mixed inside one
+  test). The pitch of the glide, measured through `appliedTensionShift`, must
+  be unchanged sample for sample — which is what stops the rises being met by
+  widening the 1e-5 rewrite threshold at `:2730` or by disabling the glide
+  outright. And a Don at Tension Mod 0 must be **bit-identical** to before the
+  step: at Tension Mod 0 the shift never leaves 1.0, so `applyTensionShift` is
+  never called at all, and that identity is what stops the rises being met by
+  filtering the top off the instrument.
 
 - [ ] **3. Ring the striker as well as the struck.** A contact force acts
   equally and oppositely on both bodies (Chatziioannou and van Walstijn 2015),
@@ -907,50 +939,114 @@ review; three did not, and are recorded with the rest of the rejects below.
   octave 0 — is the one that makes a bachi sound like oak.
   And the claim that no shaping is needed, because "a soft long contact on hide
   barely drives a 2.9 kHz bending mode while a hard short one on oak drives all
-  four", is **false**: `drumContactTerms` returns the *head's* impedance for all
-  seven strokes, so a Katsu on the shell and a Su on the hide separate in
+  four", is **false**: `drumContactTerms` returns the *head's* impedance for
+  all seven strokes, so a Katsu on the shell and a Su on the hide separate in
   1.018 ms and 1.193 ms — corners 982 and 838 Hz, a 17 % spread, not a factor.
   The contact pulse cannot tell those two strokes apart and the step must not
   claim it does. What does separate them honestly is the excitation the stroke
-  already carries: Katsu's `peakForce · levelScale` is 10.7 dB above Su's, and
-  the stick, being driven by the contact force, inherits exactly that. The step
-  is that and nothing more. Closes gap 6.
-  *Verified by*: `testTheStrikerRingsAsWellAsTheStruck` measures the first 10 ms
-  of a Katsu in four ±10 % bands around the octave-0 bachi's **497.7 / 1371.9 /
-  2689.6 / 4446.0 Hz** — the frequencies `resolveStickFor` actually produces at
-  the factory Bachi Hardness, read from the engine rather than written down, so
-  that moving the hardness control moves the test with it. Their summed level
-  must rise by at least 6 dB against the pre-step render (today −25.36 dB at
-  Shell Material 0 and −36.12 at 1), and must agree within 1.5 dB between Shell
-  Material 0 and 1 while the shell's own first ring frequency reported by
-  `measure()` moves from 56.78 to 176.67 Hz across the same sweep — a component
-  that does not read the drum. The Su clause of the first draft is deleted: it
-  demanded that a Su rise by less than 1.5 dB in those bands, which the step's
-  own mechanism forbids, since a Su's existing content there is 23.3 dB below
-  Katsu's while its excitation is only 10.7 dB below. What replaces it is the
-  ratio: Katsu's and Su's rises, in decibels, must agree within 1.5 dB of each
-  other, because one contact force drives one stick. The Bachi stroke must be
-  bit-identical to before. And `TaikoEngineTestAccess::membraneT60s` must return
-  the same membrane modes as before the step, because `peakMagnitude`
-  (`:1383`, `:1747`, `:1950`) is taken over the whole bank including the wooden
-  slots, and a loud new stick would retire head modes as a side effect.
+  already carries: Katsu's `peakForce · levelScale` is 10.65 dB above Su's
+  (1983.7 against 582.2 at velocity 1.00 and octave 0, read from
+  `voice.contactReference`), and the stick, being driven by the contact force,
+  inherits exactly that. What the step *adds* is that and nothing more.
+  What it also has to **decide**, in the same commit, is where the new modes
+  sit in mode retirement: they must be kept out of the `peakMagnitude` that
+  sets it at `:1950`, or the reference must be taken per family. That quantity
+  is a maximum over the whole bank — membrane at `:1561` and `:1659`, wood at
+  `:1747` — and it is the denominator of the `relative` that becomes every
+  mode's `retirementLog` and `audibleSamples` at `:1954-1963`. Admitted at the
+  level the Bachi stroke already gives it, the stick bank's peak
+  `|drive · mic|` is 4.08e-05 at octave 0 and the factory Bachi Hardness,
+  against 2.31e-05 for a Don's loudest membrane mode and 1.07e-05 for a Su's:
+  that raises `peakMagnitude` by 4.94 dB on a Don and 11.65 dB on a Su and
+  takes 0.082 and 0.194 of each membrane mode's own T60 off its scheduled life,
+  and drops outright any mode already within that much of the 1e-7 retirement
+  floor. Closes gap 6.
+  *Verified by*: `testTheStrikerRingsAsWellAsTheStruck`. The two discriminating
+  assertions are read from the built bank rather than from the audio, because a
+  spectrum of the first ten milliseconds cannot separate the stick's
+  contribution from the shell's — they overlap in every one of these bands, and
+  which of them a band contains moves with Shell Material.
+  **Structure.** `TaikoEngineTestAccess::woodFrequencies` for a Katsu must
+  return **twelve** entries where it returns six today: the shell's six and the
+  stick's six at the frequencies `resolveStickFor` actually produces at the
+  factory Bachi Hardness — **497.71 / 1371.95 / 2689.56 / 4445.99 / 6641.54 /
+  9276.20 Hz** at octave 0 — read from the engine rather than written down, so
+  that moving the hardness control moves the test with it.
+  **Independence.** The six stick modes' `|drive · micLeft|` must agree within
+  0.1 dB between Shell Material 0 and 1, while the shell's six move their whole
+  set from 56.78 / 160.60 / 307.94 / 498.00 / 730.56 / 1005.52 Hz to 176.67 /
+  499.69 / 958.11 / 1549.47 / 2273.05 / 3128.56 Hz across the same sweep. That
+  is a component that does not read the drum. (The first draft asked for the
+  shell's first ring frequency "reported by `measure()`"; `DrumMeasurements`
+  reports no such quantity, and the seam that does is `woodFrequencies`.
+  Corrected in preflight.)
+  **One force.** The stick's modes must be identical between a Katsu and a Su,
+  so that the whole difference between the two strokes' stick components is
+  `voice.contactReference`: 1983.7 against 582.2, a ratio of **10.65 dB**,
+  which the test asserts to 0.2 dB.
+  **In audio**, a Katsu's summed level in four ±10 % bands around the first
+  four stick frequencies over the first 10 ms must rise by at least 6 dB
+  against the pre-step render, and the Bachi stroke must be bit-identical to
+  before. The window and its shape have to be pinned in the test and the
+  pre-step baselines re-taken with that estimator, the way this section already
+  insists for Bachi Hardness. The −25.36 dB at Shell Material 0 and −36.12 at 1
+  the first draft quoted were taken with an estimator the step did not record
+  and preflight could not reproduce: the same four bands read −24.07 and
+  −33.79 over a rectangular 10 ms, −24.02 and −36.26 over a rectangular 20 ms,
+  and −38.49 and −35.84 over a Hann-tapered 10 ms. Fourteen decibels of that
+  spread is the window alone.
+  **Two clauses of the first draft are struck, both corrected in preflight.**
+  It required Katsu's and Su's rises to agree within 1.5 dB, and the step's own
+  mechanism forbids that as surely as it forbade the clause that one replaced.
+  A Su's existing content in these bands is 18.0 dB below Katsu's at Shell
+  Material 0 over the first 10 ms (23.1 dB over 20 ms, which is where the
+  pass's 23.3 came from) while its stick excitation is only 10.65 dB below, so
+  if Katsu rises the required 6 dB the same two ratios put Su at about 12.4 dB.
+  What the two strokes share is the stick, not the rise, and the stick is
+  compared at the bank seam above; in audio the test asserts only the direction
+  those ratios force, that Su's rise is the larger of the two. It also required
+  the summed level to agree within 1.5 dB between Shell Material 0 and 1, which
+  is a statement about the shell as much as about the stick — it can only be
+  met by a stick loud enough to bury a shell that today differs by about 10 dB
+  between those two settings, and that is a level requirement nobody derived.
+  The stick's independence of the drum is asserted at the bank seam instead.
+  **The membrane-lifetime guard is replaced, and this is the one that could not
+  bite at all.** The first draft asked that
+  `TaikoEngineTestAccess::membraneT60s` return the same membrane modes as
+  before the step, and gave the right reason — a loud new stick would retire
+  head modes as a side effect. But `membraneT60s` returns
+  `6.9078 / mode.decayRate`, and `decayRate` comes from the head's loss model
+  and never from `peakMagnitude`, so the quantity is unchanged by construction
+  no matter how far the retirement is cut. Measured directly: moving Shell
+  Resonance 0 → 1 on a Katsu raises `peakMagnitude` by 7.78 dB and leaves the
+  summed
+  `membraneT60s` at 95.0102 s to every printed digit, while the summed
+  scheduled lifetime falls from 56.78 s to 49.51 s and `voice.maximumSamples`
+  from 4.065 s to 3.661 s. What the test must read instead is the schedule
+  itself: a new `TaikoEngineTestAccess::membraneAudibleSeconds`, returning each
+  membrane mode's `audibleSamples / rate`, together with `activeModeCount`. For
+  a Don, a Su and a Katsu at velocity 1.00 those must be unchanged within 2 %
+  of their pre-step values, no membrane mode may fall from a non-zero lifetime
+  to zero, and `activeModeCount` must stay at its present 29 / 30 / 30. Keep
+  the `membraneT60s` clause as well — it still guards `decayRate` — but it is
+  not the guard this paragraph is about.
 
 - [ ] **4. Give the enclosed air the impedance of a finite column instead of an
   infinite spring.** `ρc²/L` is the *ω → 0* limit of a cavity, and the README
   already records that the limit fails inside the drum's own range. The exact
-  input stiffness of a rigidly terminated column of length *ℓ* driven at one end
-  is *ρcω·cot(ωℓ/c)*; the volume-changing motion of a two-headed drum is
+  input stiffness of a rigidly terminated column of length *ℓ* driven at one
+  end is *ρcω·cot(ωℓ/c)*; the volume-changing motion of a two-headed drum is
   symmetric about the midplane, so each head sees *ℓ = L/2*, and the stiffness
   entering the two-by-two becomes *k(ω) = (ρc²/L)·x·cot x* with *x = ωL/2c*.
   That is exactly the present value at *x → 0* and falls away as the drum gets
   deep relative to the wavelength. It makes the eigenvalue problem implicit, so
-  solve it by damped fixed-point iteration from the lumped value at drum-resolve
-  time — never in the render loop. Solved that way to convergence, the factor is
-  0.868 at the factory drum (breathing 88.10 → 84.12 Hz, −4.5 %), 0.782 at
-  octave −2 (45.47 → 40.50 Hz, −10.9 %) and 0.688 at octave −2 with Body
-  Depth 1 (37.26 → 31.43 Hz, −15.7 %). It is *not* 0.31 anywhere: the iteration
-  is self-limiting, because lowering the stiffness lowers the frequency, which
-  lowers *x*, which raises the factor back.
+  solve it by damped fixed-point iteration from the lumped value at
+  drum-resolve time — never in the render loop. Solved that way to convergence,
+  the factor is 0.868 at the factory drum (breathing 88.10 → 84.12 Hz, −4.5 %),
+  0.782 at octave −2 (45.47 → 40.50 Hz, −10.9 %) and 0.688 at octave −2 with
+  Body Depth 1 (37.26 → 31.43 Hz, −15.7 %). It is *not* 0.31 anywhere: the
+  iteration is self-limiting, because lowering the stiffness lowers the
+  frequency, which lowers *x*, which raises the factor back.
   The clamp needs care and the first draft's was unsafe. Clamping *x* below
   *π/2* and letting the factor go to zero above it decouples the two heads, and
   a parameter scan (Body Depth × Head Material × Tension × Air Coupling ×
@@ -958,15 +1054,19 @@ review; three did not, and are recorded with the rest of the rejects below.
   point converges there: at Body Depth 0, Head Material 0, Octave Body 0, Air
   Coupling 0.2, octave +3 it converges to 0.0002, the breathing mode lands at
   560.4 Hz and the loaded fundamental at 562.8 — **the breathing branch falls
-  below the other one**, and `testOctavesRaisePitch`'s "the cavity must lift the
-  volume-changing mode above the other one" fails. Either the factor keeps a
-  floor, or that assertion and the `DrumMeasurements` contract behind it change
-  in the same commit. Deciding which is part of the step.
+  below the other one**, and `testOctavesRaisePitch`'s "the cavity must lift
+  the volume-changing mode above the other one" fails. Either the factor keeps
+  a floor, or that assertion and the `DrumMeasurements` contract behind it
+  change in the same commit. Deciding which is part of the step.
   This is the reactive half of gap 8: the biggest drums stop being air springs
   with a hide attached and their breathing branch comes down. It is *not* the
   physics half of gap 7 — see step 5.
-  *Verified by*: `testTheCavityIsAColumnNotAnInfiniteSpring` requires the
-  reported stiffness factor to be **within 8 % of 1** where the cavity is
+  *Verified by*: `testTheCavityIsAColumnNotAnInfiniteSpring`. The "reported
+  stiffness factor" it reads does not exist yet; the step adds it to
+  `DrumMeasurements` alongside the two branch frequencies, because the whole
+  point of the change is a number the drum resolve now has to converge on and
+  every assertion below is about it. It requires that factor to be **within 8 %
+  of 1** where the cavity is
   shortest against the wavelength (Body Depth 0, octave +3, otherwise factory:
   it is 0.941 there, so the first draft's 3 % could not be met), to fall below
   0.80 at octave −2 at factory Body Depth and below 0.72 at octave −2 with Body
@@ -982,18 +1082,30 @@ review; three did not, and are recorded with the rest of the rejects below.
   this pass was written with, and a test asserting 700 would fail. At Body
   Depth 0, octave +3 the breathing mode must move by less than 1 % (prototyped
   at 0.5 %), because a short cavity was already nearly right.
+  Two clauses added in preflight, because the step is the reactive half of one
+  branch and nothing was holding the other one still. First, the **lower**
+  branch: the reported loaded fundamental must move by less than 1 % anywhere
+  in the parameter scan, which is the step's own prototyped worst case of 0.47
+  % with room to spare. Without it an implementation that dragged both branches
+  down together would meet every breathing-mode clause above, and step 5 —
+  which solves the keyboard against that lower branch — would be built on a
+  moving quantity. Second, **convergence**: two identical `measure()` calls
+  must return bit-identical factors, and the factor must be monotone in Body
+  Depth at fixed octave. A damped fixed point that has not converged is a
+  function of its iteration count rather than of the drum, and every number
+  above would then be a number about the solver.
 
 - [ ] **5. Hold the drum's own fundamental on the keyboard, not the ideal
-  membrane's.** The octave transform and the Pitch control both scale radius and
-  tension so that `idealFundamentalHz` doubles, and that quantity is never
+  membrane's.** The octave transform and the Pitch control both scale radius
+  and tension so that `idealFundamentalHz` doubles, and that quantity is never
   audible on its own: the air load hangs off the real mode and depends on
   *ρ_air a / σ*, which does not scale with the transform. Solve the transform
-  against the loaded lower axisymmetric branch instead, by bisection on the same
-  size-and-tension mixture Octave Body already chooses (the branch is monotone
-  in both, so the solve is well posed and runs at drum-resolve time only). This
-  is the principle the head stiffness already follows and the README already
-  states — "a drum is tuned by the pitch it sounds" — applied to the term that
-  was left out of it.
+  against the loaded lower axisymmetric branch instead, by bisection on the
+  same size-and-tension mixture Octave Body already chooses (the branch is
+  monotone in both, so the solve is well posed and runs at drum-resolve time
+  only). This is the principle the head stiffness already follows and the
+  README already states — "a drum is tuned by the pitch it sounds" — applied to
+  the term that was left out of it.
   Two corrections to the reason the pass gave. The defect is **entirely** the
   Octave Body transform: at Octave Body 0 the octave steps are already 1199.9 /
   1199.7 / 1199.0 / 1196.2 / 1191.2 cents, and Pitch ±12 st is already good to
@@ -1004,26 +1116,51 @@ review; three did not, and are recorded with the rest of the rejects below.
   5.0 dB above the fundamental. What this step buys is precise and worth having
   on its own — the drum's own lowest mode lands on the key that names it, at
   every setting of Octave Body — and the step must claim that and not more.
-  It does not have to come last: the cavity moves the *upper* branch, and step 4
-  changes the loaded fundamental by 0.004 % at the factory drum and by at most
-  0.47 % anywhere measured. The two are independent and either order works.
-  *Verified by*: `testTheDrumIsTunedByThePitchItSounds` requires the reported
-  loaded fundamental to double within ±20 cents at every octave boundary from C1
-  to C6 at Octave Body 0, 0.7 and 1.0 — the worst error today is **345 cents**,
-  at Octave Body 1.0, not the 209 this pass was written with, which is the worst
-  at the factory 0.7 alone. It requires Pitch ±12 st to move it by 1200 ±
-  20 cents; that clause cannot fail today and is carried as a guard against the
-  bisection breaking it, which the test says in as many words so that nobody
-  reads it as a discriminator. In audio, the DFT magnitude at the reported
-  loaded fundamental must remain a local maximum within ±6 % at every octave,
-  and — the part that would actually have caught this — the ratio of the
-  strongest partial found by scanning 8–900 Hz between adjacent octaves must be
-  recorded at every boundary and must not get *worse* than today's −543.2 /
-  +1279.9 / +340.4 / +1272.4 / +1244.2 cents. `testOctavesRaisePitch`'s
-  assertion on `idealFundamentalHz` is replaced by this one, and its comment
-  recording that a wider audio sweep "reported the two as a fifth apart rather
-  than an octave" stays, because the two branches are still a fifth apart and
-  this step does not change that.
+  It does not have to come last: the cavity moves the *upper* branch, and step
+  4 changes the loaded fundamental by 0.004 % at the factory drum and by at
+  most 0.47 % anywhere measured. The two are independent and either order
+  works. *Verified by*: `testTheDrumIsTunedByThePitchItSounds` requires the
+  reported loaded fundamental to double within ±20 cents at every octave
+  boundary from C1 to C6 at Octave Body 0, 0.7 and 1.0 — the worst error today
+  is **345 cents**, at Octave Body 1.0, not the 209 this pass was written with,
+  which is the worst at the factory 0.7 alone. It requires Pitch ±12 st to move
+  it by 1200 ± 20 cents; that clause cannot fail today and is carried as a
+  guard against the bisection breaking it, which the test says in as many words
+  so that nobody reads it as a discriminator. In audio, the DFT magnitude at
+  the reported loaded fundamental must remain a local maximum within ±6 % at
+  every octave, and — the part that would actually have caught this — the ratio
+  of the strongest partial found by scanning 8–900 Hz between adjacent octaves
+  must be recorded at every boundary and must not get *worse* than today's
+  −543.2 / +1279.9 / +340.4 / +1272.4 / +1244.2 cents, **with 20 cents of
+  slack** — which strongest partial wins a scan can flip on a fraction of a
+  decibel, and without the slack this clause fails on jitter rather than on the
+  step. (The ±6 % local maximum holds today at every octave, to within 0.25 dB
+  of the peak inside that band, so it is a do-no-harm clause and the test
+  should say so.)
+  Two clauses added in preflight, because the assertions above are all about a
+  number the step is also free to redefine. **The anchor**: the octave transform
+  is the identity at octave 0 for every Octave Body — `radiusFactor` and
+  `tensionOctaveFactor` are both 1 there — so the reported loaded fundamental at
+  octave 0 must stay at today's **50.7490 Hz** and must be identical across
+  Octave Body 0, 0.7 and 1.0, as it is today. A bisection that met the octave
+  ratios by moving the whole keyboard would pass every other clause.
+  **Octave Body must keep its meaning**: the bisection runs on the mixture
+  Octave Body already chooses, so at Octave Body 0 the reported radius must stay
+  at 0.4750 m at every octave from C1 to C6 while the tension quadruples per
+  octave, and at Octave Body 1 the reported tension must stay at 5942.4 N/m
+  while the radius halves. Both hold today, and they are what stops the solve
+  buying an octave on an axis the control does not own.
+  `testOctavesRaisePitch`'s assertion on `idealFundamentalHz` is replaced by this
+  one, and its comment recording that a wider audio sweep "reported the two as a
+  fifth apart rather than an octave" stays, because the two branches are still a
+  fifth apart and this step does not change that. The suite's other uses of
+  `idealFundamentalHz` — the head diameter and tension controls, Pitch and the
+  wheel, and `testTheHeadIsAStiffMembrane`'s identity that it is the ideal
+  membrane frequency of the reported radius and wave speed — all survive,
+  because the step changes what the octave transform solves for and not what
+  the quantity means. `testOctavesRaisePitch`'s own "a higher octave must be a
+  smaller drum" at the factory Octave Body has to survive the bisection too, and
+  the test must be run to confirm it rather than assumed.
 
 ### Considered and not planned
 

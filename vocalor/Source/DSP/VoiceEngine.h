@@ -216,7 +216,6 @@ private:
         bool releasing { false };
         bool alternateCycle { false };
         bool controlInitialised { false };
-        bool onsetComplete { false };
         int rootMidi { -1 };
         int midiNote { 60 };
         int singer { 0 };
@@ -264,8 +263,6 @@ private:
         float panRight { 0.7071f };
         float panTargetLeft { 0.7071f };
         float panTargetRight { 0.7071f };
-        float onsetMix { 0.0f };
-        float onsetMixStep { 1.0f };
         // Nasal branch state: the two-sample memory of the series
         // anti-resonator, and the nasal cavity's own pole in parallel with the
         // oral formants.
@@ -276,7 +273,6 @@ private:
         Resonator nasal {};
         std::array<float, formantCount> formantHz {};
         std::array<Resonator, formantCount> tract {};
-        std::array<Resonator, 2> early {};
     };
 
     EngineParameters snapshotParameters() const noexcept;
@@ -345,6 +341,18 @@ private:
     float releaseMultiplier_ { 0.0f };
     float airReleaseMultiplier_ { 0.0f };
     float onsetAirMultiplier_ { 0.0f };
+    // How far below the block's tension the glottal source starts at a note-on,
+    // as a fraction of it. The folds begin abducted and lax and adduct over the
+    // first tens of milliseconds, so the note starts at a higher open quotient
+    // and firms up onto the block's tension on the onset time constant while
+    // the tract stays put. 0.60 puts the first pulse of a Tension 0.90 patch at
+    // an open quotient of 0.665 against the 0.49 it settles on, which is the
+    // range voice onsets are measured over; going all the way to the lax
+    // prototype raises the first-2 ms peak 5 dB on a lax female patch, because
+    // that prototype carries a much larger fundamental.
+    // Not const: the tests force it to zero to separate what the ramp is worth
+    // from what the tract is worth.
+    float sourceTensionRampDepth_ { 0.60f };
     float scoopMultiplier_ { 0.0f };
     float shimmerDepth_ { 0.0f };
     // Every one of these used to be a bare per-sample or per-control-period
@@ -382,9 +390,6 @@ private:
     std::array<float, formantCount> chunkPoleScale_ {};
     std::array<float, formantCount> chunkA2_ {};
     std::array<float, formantCount> chunkRadius_ {};
-    std::array<float, 2> earlyPoleScale_ {};
-    std::array<float, 2> earlyA2_ {};
-    std::array<float, 2> earlyRadius_ {};
     // Vowel targets, formant shift and bandwidth scale the tract was last
     // resolved from. Resolving it costs more than the whole rest of the chunk
     // update, and on a sustained note none of these inputs move.

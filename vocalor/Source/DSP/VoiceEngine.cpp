@@ -785,11 +785,6 @@ void VoiceEngine::initialiseVoice(Voice& voice, int rootMidi, int soundingMidi, 
     const float delay = singerTotal == 1 ? 0.0f : singer.onsetOffset * p.humanize;
     voice.delaySamples = std::max(0, static_cast<int>(delay * static_cast<float>(sampleRate_)));
     voice.pitchScoop = -(7.0f + 19.0f * (0.5f + 0.5f * hashFloat(voice.noiseState + 23u))) * (0.25f + 0.75f * p.humanize);
-    const float onsetStart = 0.050f + 0.020f * (0.5f + 0.5f * hashFloat(voice.noiseState + 29u));
-    const float onsetEnd = onsetStart + 0.065f + 0.060f * (0.5f + 0.5f * hashFloat(voice.noiseState + 31u));
-    const float onsetSpan = std::max(0.001f, onsetEnd - onsetStart);
-    voice.onsetMix = -onsetStart / onsetSpan;
-    voice.onsetMixStep = inverseSampleRate_ / onsetSpan;
     voice.controlCountdown = 0;
     updateVoiceControl(voice, p);
     voice.phaseIncrement = voice.targetPhaseIncrement;
@@ -897,8 +892,6 @@ void VoiceEngine::silenceVoice(Voice& voice) noexcept
     voice.nasalY1 = voice.nasalY2 = 0.0f;
     voice.nasal.clear();
     for (auto& resonator : voice.tract)
-        resonator.clear();
-    for (auto& resonator : voice.early)
         resonator.clear();
 }
 
@@ -1018,15 +1011,6 @@ void VoiceEngine::updateChunkState(const EngineParameters& p, bool advanceSmooth
             chunkRadius_[index] = radius;
             chunkPoleScale_[index] = 2.0f * radius;
             chunkA2_[index] = -radius * radius;
-
-            if (formant < 2)
-            {
-                const float earlyBandwidth = std::clamp(bandwidth * 1.75f, 20.0f, maximumBandwidth);
-                const float earlyRadius = std::exp(-pi * earlyBandwidth * inverseSampleRate_);
-                earlyRadius_[index] = earlyRadius;
-                earlyPoleScale_[index] = 2.0f * earlyRadius;
-                earlyA2_[index] = -earlyRadius * earlyRadius;
-            }
         }
 
         // A vocal tract does not hand its formants independent amplitudes: they
@@ -1336,14 +1320,6 @@ void VoiceEngine::updateVoiceControl(Voice& voice, const EngineParameters& p)
         voice.tract[index].a1 = chunkPoleScale_[index] * trig.cosine;
         voice.tract[index].b0 = amplitude
             * formantResonatorGain(chunkRadius_[index], trig.sine);
-        // The early stage only exists for the onset crossfade, so once that has
-        // finished its coefficients are never read again.
-        if (formant < 2 && !voice.onsetComplete)
-        {
-            voice.early[index].a1 = earlyPoleScale_[index] * trig.cosine;
-            voice.early[index].b0 = amplitude
-                * formantResonatorGain(earlyRadius_[index], trig.sine);
-        }
     }
 
     // The nasal tract does not vary with the vowel or with the singer, so the
@@ -1481,14 +1457,19 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     float shimmer = voice.shimmer;
     float lastNoise = voice.lastNoise;
     float sourceTilt = voice.sourceTilt;
-    float onsetMix = voice.onsetMix;
     std::uint32_t noiseState = voice.noiseState;
     bool alternateCycle = voice.alternateCycle;
     std::uint64_t age = voice.ageSamples;
 
     float amplitude = voice.renderGain;
-    const float onsetMixStep = voice.onsetMixStep;
     const bool releasing = voice.releasing;
+    // What develops at a vocal onset is the source, not the filter: the folds
+    // start abducted and lax and adduct over the first tens of milliseconds.
+    // onsetAir is already that gesture, so the same exponential that gives the
+    // note its breathy puff pulls the glottal prototype toward its lax end and
+    // lets it firm up onto the block's tension. Re-read on every control update
+    // so a sustained note cannot drift onto a stale depth.
+    float tensionSag = sourceTensionRampDepth_;
 
     float incrementStep = voice.phaseIncrementStep;
     float tilt = voice.tiltCoefficient;
@@ -1530,6 +1511,7 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             panLeft = voice.panLeft;
             panRight = voice.panRight;
             level = voice.tableLevel;
+            tensionSag = sourceTensionRampDepth_;
         }
 
         phaseIncrement += incrementStep;
@@ -1552,7 +1534,9 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
         }
         onsetAir *= onsetAirMultiplier_;
 
-        float glottal = glottalPair(level, phase, tensionAt_[static_cast<std::size_t>(i)]);
+        const float sourceTension = tensionAt_[static_cast<std::size_t>(i)]
+            * (1.0f - tensionSag * onsetAir);
+        float glottal = glottalPair(level, phase, sourceTension);
         glottal *= 1.0f + (alternateCycle ? irregularity : -irregularity);
         sourceTilt += tilt * (glottal - sourceTilt);
 
@@ -1599,42 +1583,17 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
             source += nasalMix * (notched - source);
         }
 
+        // The tract is a fixed geometry with fixed poles. It is fully formed
+        // before the first pulse reaches it, so every formant including the
+        // singer's-formant cluster is present in the first cycle.
         float tract = 0.0f;
-        onsetMix += onsetMixStep;
-        if (!voice.onsetComplete && onsetMix < 1.0f)
+        for (int f = 0; f < formantCount; ++f)
         {
-            const float clamped = onsetMix > 0.0f ? onsetMix : 0.0f;
-            const float mix = clamped * clamped * (3.0f - 2.0f * clamped);
-            float early = 0.0f;
-            for (int f = 0; f < 2; ++f)
-            {
-                const auto index = static_cast<std::size_t>(f);
-                early += voice.early[index].tick(source, earlyA2_[index]);
-            }
-            float full = 0.0f;
-            for (int f = 0; f < formantCount; ++f)
-            {
-                const auto index = static_cast<std::size_t>(f);
-                full += voice.tract[index].tick(source, chunkA2_[index]);
-            }
-            if (nasalActive)
-                full += voice.nasal.tick(source, chunkNasalA2_);
-            tract = early + mix * (full - early);
+            const auto index = static_cast<std::size_t>(f);
+            tract += voice.tract[index].tick(source, chunkA2_[index]);
         }
-        else
-        {
-            // Age only grows within a note, so once the onset crossfade reaches
-            // its end the early stage cancels out of the mix exactly and its
-            // resonators can stop ticking for the rest of the note.
-            voice.onsetComplete = true;
-            for (int f = 0; f < formantCount; ++f)
-            {
-                const auto index = static_cast<std::size_t>(f);
-                tract += voice.tract[index].tick(source, chunkA2_[index]);
-            }
-            if (nasalActive)
-                tract += voice.nasal.tick(source, chunkNasalA2_);
-        }
+        if (nasalActive)
+            tract += voice.nasal.tick(source, chunkNasalA2_);
 
         const float output = amplitude * (tractLevel * tract + directAirLevel * highNoise * airDrive);
         mixLeft_[static_cast<std::size_t>(i)] += output * panLeft;
@@ -1657,7 +1616,6 @@ void VoiceEngine::renderVoice(Voice& voice, const EngineParameters& p, int count
     voice.shimmer = shimmer;
     voice.lastNoise = lastNoise;
     voice.sourceTilt = sourceTilt;
-    voice.onsetMix = onsetMix;
     voice.noiseState = noiseState;
     voice.alternateCycle = alternateCycle;
     voice.ageSamples = age;

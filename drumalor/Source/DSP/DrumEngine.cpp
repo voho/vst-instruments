@@ -2859,6 +2859,28 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                 // laws rather than switching between two sounds.
                 ModalLoss { pedalBlend (0.55f, 0.86f), pedalBlend (0.30f, 0.10f),
                             pedalBlend (0.15f, 0.04f) });
+
+            // What the plate bank above is doing, standing in front of the
+            // hiss. The bank is a quarter of a closed hat and under a fifth of
+            // an open one, and it is gone by 300 ms; the hiss is a two-pole
+            // high-pass at 7.8 kHz, flat above it, carrying the largest weight
+            // in the mix on the slowest envelope in the voice. Without this the
+            // voice gets brighter as it rings, because the part of it that is
+            // modelled metal leaves before the part of it that is a circuit.
+            //
+            // Where the corner starts is the contact again, read through the
+            // same `reach` the bank's tilt is read from, so a ghost hat starts
+            // duller as well as quieter. The corner then falls to a floor,
+            // because the hiss is a circuit and does not stop; the floor is
+            // what keeps the darkening from being the tail deleted.
+            voice.hissCornerStart = 10500.0f * reach;
+            voice.hissCornerFloor = 0.34f * voice.hissCornerStart;
+            // How long it holds before it falls, and the one place the pedal
+            // reaches this path. See tickHissLowpass for the law; the two
+            // viscous shares, 0.15 open against 0.04 clamped, are what set the
+            // ratio, and their square root is the factor of about two by which
+            // a closed pair darkens more slowly than an open one.
+            voice.hissCornerSeconds = 0.090f * (0.15f / pedalBlend (0.15f, 0.04f));
             break;
         }
 
@@ -3459,6 +3481,53 @@ float DrumEngine::renderClap (Voice& voice) noexcept
     return direct * burst + room * tail;
 }
 
+// The plate's own radiation loss, standing in front of the hiss. A hat's top
+// goes first - it is the dense upper-mode region of a bronze plate, and that is
+// what radiation damping removes fastest - so the corner starts where the
+// strike reached and then falls while the note rings.
+//
+// The trajectory is shaped like the bank's loss law rather than read off it.
+// `initialiseModalVoice` damps a mode at ratio r by
+// fixed + hysteretic*r + viscous*r^2, so the highest ratio still standing after
+// t seconds is the one whose loss is 1/t, and where the viscous term is the
+// whole of it - which it is at the top of any series - that ratio falls as the
+// inverse square root of time. The corner follows the same law: flat for
+// `hissCornerSeconds`, then t^(-1/2), down to a floor. The numbers are voiced
+// rather than derived, and deliberately so: extrapolating the law itself out to
+// the hiss band, thirteen to thirty-seven times the plate's base frequency,
+// gives a loss factor near 217 and would delete the path in a millisecond. What
+// carries over honestly is the pedal's direction, which is the ratio of the two
+// viscous shares and nothing else.
+float DrumEngine::tickHissLowpass (Voice& voice, float input) noexcept
+{
+    if (voice.hissCornerStart <= 0.0f)
+        return input;
+
+    // Recomputed on a half-millisecond grid rather than every sample: a corner
+    // that moves by a part in a thousand does not need a transcendental per
+    // sample, and keying the grid to the voice's own age in seconds keeps it
+    // identical at every sample rate and under every block partitioning.
+    const auto interval = static_cast<std::uint64_t> (
+        std::max (1.0, std::round (0.0005 * sampleRate_)));
+    if (voice.ageSamples % interval == 0u)
+    {
+        const auto ageSeconds = static_cast<float> (
+            static_cast<double> (voice.ageSamples) / sampleRate_);
+        const float corner = voice.hissCornerFloor
+            + (voice.hissCornerStart - voice.hissCornerFloor)
+                * std::sqrt (voice.hissCornerSeconds
+                             / (voice.hissCornerSeconds + ageSeconds));
+        voice.hissLowpassCoefficient = 1.0f - std::exp (
+            -twoPi * std::clamp (corner, 20.0f,
+                                 0.45f * static_cast<float> (sampleRate_))
+                * inverseSampleRate_);
+    }
+
+    voice.hissLowpassState += voice.hissLowpassCoefficient
+        * (input - voice.hissLowpassState);
+    return voice.hissLowpassState;
+}
+
 float DrumEngine::renderHat (Voice& voice) noexcept
 {
     const float noise = nextBandLimitedNoise (voice);
@@ -3467,7 +3536,7 @@ float DrumEngine::renderHat (Voice& voice) noexcept
     // restarting six ideal sines with newly randomized components.
     const float metallic = metallicSourceFor (voice.instrument)
                          + 0.20f * (1.0f - voice.characterA) * noise;
-    const float high = voice.filterA.tick (metallic);
+    const float high = tickHissLowpass (voice, voice.filterA.tick (metallic));
     const float focused = voice.filterB.tick (metallic);
     const float attack = 0.12f * voice.transientEnvelope * noise * voice.transientScale
         * voice.velocityTimbre;

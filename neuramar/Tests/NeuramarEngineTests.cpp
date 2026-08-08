@@ -609,6 +609,53 @@ void testShapePreservingSpectralInterpolation()
     return sample;
 }
 
+// Carries all three layers at once: a decaying harmonic series for the Core, a
+// strong high-passed noise bed for Air, and six steady inharmonic modes for
+// Bone. Rooted at 220 Hz so the fixture spans the same keyboard the register
+// balance measurement walks.
+[[nodiscard]] std::vector<float> makeRegisterBalanceSample(double sampleRate)
+{
+    constexpr double fundamentalHz = 220.0;
+    constexpr double durationSeconds = 1.10;
+    constexpr int harmonicCount = 40;
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    std::uint32_t noiseState = 0x6a09e667u;
+    float previousNoise = 0.0f;
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double envelope = 1.0 - std::exp(-time / 0.006);
+        double value = 0.0;
+        for (int harmonic = 1; harmonic <= harmonicCount; ++harmonic)
+        {
+            const double level = 0.42
+                / std::pow(static_cast<double>(harmonic), 0.82);
+            value += level * std::sin(
+                2.0 * pi * fundamentalHz * static_cast<double>(harmonic) * time
+                + 0.137 * static_cast<double>(harmonic * harmonic));
+        }
+        for (std::size_t mode = 0; mode < persistentBoneRatios.size(); ++mode)
+        {
+            value += 0.050 * std::sin(
+                2.0 * pi * fundamentalHz * persistentBoneRatios[mode] * time
+                + 0.43 * static_cast<double>(mode + 1));
+        }
+
+        noiseState ^= noiseState << 13;
+        noiseState ^= noiseState >> 17;
+        noiseState ^= noiseState << 5;
+        const float noise = static_cast<float>(noiseState)
+            * (2.0f / 4294967295.0f) - 1.0f;
+        const float highNoise = noise - 0.94f * previousNoise;
+        previousNoise = noise;
+        value += 0.085 * static_cast<double>(highNoise);
+        sample[index] = static_cast<float>(envelope * value);
+    }
+    return sample;
+}
+
 [[nodiscard]] std::vector<float> makePersistentBoneSample(double sampleRate)
 {
     constexpr double fundamentalHz = 187.5;
@@ -3607,6 +3654,163 @@ void testHighRegisterRenderThroughput(const neuramar::NeuralModel& model)
     return left;
 }
 
+// The register compensation normalises the Core: after it is applied the Core
+// carries referencePower, which barely depends on the played note. Air and Bone
+// are measured independently of the Core and are not normalised by anything, so
+// multiplying them by that same gain made the noise-to-tone and modal-to-tone
+// ratios A / sqrt(renderedPower) - every Core-only rendering artefact, the
+// anti-alias taper and the Body-Lock envelope running out of range, arriving in
+// the layer balance. Each layer is isolated by subtracting a render that
+// differs from the full one in exactly one parameter, so the difference is that
+// layer and nothing else.
+void testRegisterLayerBalance()
+{
+    constexpr double sampleRate = 48000.0;
+    const auto learned = neuramar::SampleLearner::learn(
+        makeRegisterBalanceSample(sampleRate), sampleRate);
+    expect(static_cast<bool>(learned),
+           "register balance fixture failed to learn: " + learned.error);
+    if (!learned)
+        return;
+    const neuramar::NeuralModel& model = *learned.model;
+
+    // A mode whose reliability is zero is gated to silence in the render, so a
+    // fixture that learned no Bone mode would satisfy the Bone assertion by
+    // measuring an empty layer.
+    bool anyBoneMode = false;
+    for (const float reliability : model.boneModeReliabilities())
+        anyBoneMode = anyBoneMode || reliability > 0.0f;
+    expect(anyBoneMode,
+           "register balance fixture learned no Bone mode, so the Bone "
+           "assertion would have passed on silence");
+
+    const auto render = [&model](int midiNote, bool bodyLocked, float air,
+                                 float bone)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        engine.setModel(&model);
+        // Everything except Body Lock and Register is left at the shipping
+        // default, so the second case below is the balance a player hears out
+        // of the box. Mutation is pinned off because its per-note Air seeds and
+        // detune would otherwise add a note-dependent term of their own.
+        neuramar::EngineParameters parameters;
+        parameters.air = air;
+        parameters.bone = bone;
+        parameters.mutation = 0.0f;
+        parameters.spread = 0.0f;
+        parameters.outputGain = 1.0f;
+        if (bodyLocked)
+        {
+            parameters.bodyLock = 1.0f;
+            parameters.registerTilt = 0.0f;
+        }
+        engine.setParameters(parameters);
+        // Skip the onset so the measurement describes the sustained balance.
+        auto audio = renderNote(engine, midiNote,
+                                static_cast<int>(0.30 * sampleRate));
+        audio.erase(audio.begin(),
+                    audio.begin() + static_cast<std::ptrdiff_t>(
+                        0.10 * sampleRate));
+        return audio;
+    };
+
+    struct Layers
+    {
+        float airDb { 0.0f };
+        float boneDb { 0.0f };
+        float coreDb { 0.0f };
+    };
+
+    const auto measure = [&render](int midiNote, bool bodyLocked)
+    {
+        const auto full = render(midiNote, bodyLocked, 0.35f, 0.30f);
+        const auto airMuted = render(midiNote, bodyLocked, 0.0f, 0.30f);
+        const auto boneMuted = render(midiNote, bodyLocked, 0.35f, 0.0f);
+        const auto coreOnly = render(midiNote, bodyLocked, 0.0f, 0.0f);
+        const auto layerDb = [&full](const std::vector<float>& muted)
+        {
+            std::vector<float> layer(full.size(), 0.0f);
+            for (std::size_t index = 0; index < full.size(); ++index)
+                layer[index] = full[index] - muted[index];
+            return 20.0f * std::log10(std::max(rms(layer), 1.0e-9f));
+        };
+        Layers layers;
+        layers.airDb = layerDb(airMuted);
+        layers.boneDb = layerDb(boneMuted);
+        layers.coreDb = 20.0f * std::log10(std::max(rms(coreOnly), 1.0e-9f));
+        return layers;
+    };
+
+    struct Spread
+    {
+        float lowest { 1.0e9f };
+        float highest { -1.0e9f };
+        void add(float value)
+        {
+            lowest = std::min(lowest, value);
+            highest = std::max(highest, value);
+        }
+        [[nodiscard]] float span() const { return highest - lowest; }
+    };
+
+    // Full Body Lock with Register at zero freezes the Air and Bone centre
+    // frequencies, so with Mutation off the register compensation is the only
+    // thing left that can vary either layer with the played note. That makes
+    // each layer's own level, rather than its ratio to the Core, the sharpest
+    // available gate: the Core is not flat here either, because its
+    // compensation saturates at its 4.0 ceiling on the top two notes.
+    Spread lockedAir;
+    Spread lockedBone;
+    Spread lockedCore;
+    for (int midiNote = 12; midiNote <= 108; midiNote += 12)
+    {
+        const Layers layers = measure(midiNote, true);
+        lockedAir.add(layers.airDb);
+        lockedBone.add(layers.boneDb);
+        lockedCore.add(layers.coreDb);
+    }
+    std::cout << "Register layer balance diagnostics: Body Lock 1 Air spread "
+              << lockedAir.span() << " dB, Bone spread " << lockedBone.span()
+              << " dB, Core spread " << lockedCore.span() << " dB\n";
+    expect(lockedAir.span() < 1.0f,
+           "the isolated Air layer's level drifted by "
+               + std::to_string(lockedAir.span())
+               + " dB across MIDI 12-108 at Body Lock 1, where its centres are "
+                 "frozen and nothing but the register compensation can move it");
+    expect(lockedBone.span() < 1.0f,
+           "the isolated Bone layer's level drifted by "
+               + std::to_string(lockedBone.span())
+               + " dB across MIDI 12-108 at Body Lock 1, where its centres are "
+                 "frozen and nothing but the register compensation can move it");
+    // The Core must keep its normalisation. Dropping it there as well takes
+    // this fixture's Core level spread from 3.0 dB to 26.3 dB.
+    expect(lockedCore.span() < 3.2f,
+           "the Core level spread across MIDI 12-108 at Body Lock 1 was "
+               + std::to_string(lockedCore.span())
+               + " dB, so the Core lost its register normalisation");
+
+    // At the shipping Body Lock of 0.65 the Air centres move with the played
+    // pitch, and above about MIDI 72 the top of the sixteen-band set crosses
+    // the filterbank's 18 kHz edge fade and is legitimately attenuated. That
+    // taper is a Body Lock property, not a balance error, so the shipping-
+    // default gate runs over the register in which every band is still in
+    // range and measures Air against Core, which is what a player hears.
+    Spread shippingAirToCore;
+    for (int midiNote = 12; midiNote <= 72; midiNote += 12)
+    {
+        const Layers layers = measure(midiNote, false);
+        shippingAirToCore.add(layers.airDb - layers.coreDb);
+    }
+    std::cout << "Register layer balance diagnostics: shipping defaults "
+                 "Air-to-Core spread over MIDI 12-72 "
+              << shippingAirToCore.span() << " dB\n";
+    expect(shippingAirToCore.span() < 3.0f,
+           "the Air-to-Core balance drifted by "
+               + std::to_string(shippingAirToCore.span())
+               + " dB across MIDI 12-72 at the shipping defaults");
+}
+
 // The instrument has to hold a usable level across the whole compass. Measuring
 // the register reference against the model's full bank instead of against the
 // partials a note actually renders saturated the compensator at its ceiling
@@ -4481,6 +4685,7 @@ int main()
     testBodyLayersAreSampleRateInvariant();
     testBoneCeilingIsAnchoredToTheAudibleBand();
     testKeyboardLevelFlatness();
+    testRegisterLayerBalance();
     testInputValidationAndCancellation();
     testAirFilterNormalisation();
     testRandomNeuralSeed();

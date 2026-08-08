@@ -1031,12 +1031,21 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             * std::clamp((airEdgeLimitHz_ - desiredFrequency)
                              / airEdgeFadeHz_,
                          0.0f, 1.0f);
-        // Air and Bone take the same register compensation as Core, so the
-        // balance between the tonal, noise, and modal layers is the one the
-        // source had at every point on the keyboard.
+        // Air and Bone deliberately do not take the register compensation.
+        // That gain does not scale the Core, it normalises it: after the loop
+        // above, Core power is referencePower, which barely depends on the
+        // played note. Multiplying an un-normalised layer by the same factor
+        // therefore makes the noise-to-tone ratio A / sqrt(renderedPower), so
+        // every Core-only rendering artefact - the anti-alias taper, the
+        // Body-Lock envelope running out of range - rides straight into the
+        // layer balance: 26.4 dB of Air-to-Core spread across MIDI 12-108 at
+        // full Body Lock, 8.9 dB at the shipping defaults. A compensation for
+        // partials the Core could not render is not evidence about how much
+        // breath noise the source had. The two are measured independently and
+        // stay independent here.
         targets[output] = std::clamp(frame.airAmplitudes[band]
-            * parameters.air * variation * edgeGain * touchAirGain
-            * registerGain, 0.0f, 2.0f);
+            * parameters.air * variation * edgeGain * touchAirGain,
+            0.0f, 2.0f);
         airCentresHz[band] = desiredFrequency;
         airSounding = airSounding || targets[output] > 0.0f
             || voice.amplitudes[output] > 0.0f;
@@ -1075,8 +1084,12 @@ void NeuramarEngine::updateVoiceControl(Voice& voice, const NeuralModel& model,
             * std::clamp((boneEdgeLimitHz_ - desiredFrequency)
                              / boneEdgeFadeHz_,
                          0.0f, 1.0f);
+        // No register compensation here either, for the reason given at the
+        // Air targets above: the modal ring the source had is measured
+        // independently of the Core and does not follow the Core's
+        // normalisation.
         targets[output] = std::clamp(frame.boneAmplitudes[mode]
-            * active * parameters.bone * edgeGain * registerGain, 0.0f, 2.0f);
+            * active * parameters.bone * edgeGain, 0.0f, 2.0f);
         const float boundedFrequency = std::clamp(desiredFrequency, 10.0f,
                                                   boneCeilingHz_);
         if (firstControlFrame)

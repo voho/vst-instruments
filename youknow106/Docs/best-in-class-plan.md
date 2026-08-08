@@ -1090,6 +1090,24 @@ three of the originals did not: step 3's null-frequency criterion already
 passed, step 4's 2 Hz bin already passed by 34 dB, and step 8 cited a render
 lock the suites do not contain. Those are replaced, not relaxed.
 
+**Verification contracts re-audited in preflight, 2026-08-07, before any code
+was written.** An external automated review of this pull request filed a finding
+against step 2's rendered A/B; it was checked against the source, reproduced by
+measurement, and **upheld**. Every other step was then put to the same question —
+*if this step were implemented wrongly, or not at all, would the stated test
+still pass?* — and **all six needed work**. Two contracts could not fail: step
+1's routing change touched two call sites no assertion reached, and step 2's
+centroid was confounded by two other resonance-dependent mechanisms. Two would
+have failed a **correct** implementation: step 6 promised a centroid span the
+mechanism cannot produce at the fixture it named, and step 3's duty-0.50 clause
+was two-sided where the fix must move the number. Two rested on figures that do
+not reproduce: step 5's host-rate claim, and step 3's DC and sub-audio levels.
+Two asked for "a reference render" of an engine that will not exist after the
+step lands. Each step below carries a *Contract corrected in preflight* note
+recording what was wrong. Corrected figures are marked **[re-measured
+2026-08-07 preflight]** or **[measured 2026-08-07 preflight]**. No engine change
+was made; nothing is ticked.
+
 - [ ] **1. Gate the PWM converter write with the LFO delay envelope.** The
   firmware computes one LFO value and one delay level, and the delay scales the
   value *before* the CPU distributes it — there is one attenuator in the
@@ -1106,17 +1124,42 @@ lock the suites do not contain. Those are replaced, not relaxed.
   service-note or firmware source in tree states whether DELAY reaches PWM. What
   it does settle is that the engine currently contradicts *itself*, including
   its own panel LFO display, which is already `lfoValue_ * lfoDelayLevel_`.
-  *Verified by*: a new engine-suite fixture holding a note with PWM SOURCE =
-  LFO, PWM depth 1.0, LFO RATE 0.75 and LFO DELAY 1.0, probing `voice.pulseDuty`
-  over a **200 ms** window (LFO RATE 0.75 is 7.4405 Hz, a 134.4 ms period, so
-  anything shorter than one full cycle reads an alignment-dependent span — the
-  original 83 ms window reads 0.4128 at t = 0.50 s but **0.2783 at t = 1.00 s**
-  at identical full depth). It asserts the duty span at t = 0.05 s is **below
-  0.005** (0.3498 today), that `lfoDelayLevel_` reads 0.0000 at that sample
-  point, and that the span over the 200 ms window at t = 6.00 s is **unchanged
-  from the pre-change engine to within 1%**, expressed as a comparison against a
-  reference render rather than against a hard-coded 0.4129. Reverting the
-  routing restores the 0.3498 span and fails the first assertion.
+  *Verified by*: a new engine-suite fixture holding a note with the saw off, the
+  pulse on, PWM SOURCE = LFO, PWM depth 1.0, LFO RATE 0.75, LFO DELAY 1.0,
+  CUTOFF 1.0 and Unit Character 0.0, probing `voice.pulseDuty` over a **200 ms**
+  window (LFO RATE 0.75 is 7.4405 Hz, a 134.4 ms period, so anything shorter
+  than one full cycle reads an alignment-dependent span — the 83 ms window reads
+  0.3574 at t = 0.05 s but 0.4130 at t = 6.00 s at identical full depth). It
+  asserts
+
+  1. the duty span at t = 0.05 s is **below 0.005** — **0.4166 today**
+     [re-measured 2026-08-07 preflight] — and that `lfoDelayLevel_` reads
+     0.000000 at that sample point;
+  2. that `lfoDelayLevel_` reads **exactly 1.0f** at t = 6.00 s and the span
+     over the 200 ms window there is **0.4166 ± 1%**, unchanged by the routing
+     because at delay level 1 the gated and raw values are the same float;
+  3. that the **idle-priming path** carries the gated value too: with every
+     voice released, the LFO advanced 30 ms so `lfoValue_` reads +1.000000 while
+     `lfoDelayLevel_` is still 0.000000, a silent `setParameters` must prime
+     `pwmVolts_` to the lfoGated = 0 value of **+3.300000 V**, where it primes
+     **+0.600000 V today**.
+
+  Reverting the routing restores the 0.4166 span at t = 0.05 s and fails (1).
+
+  *Contract corrected in preflight, 2026-08-07.* Three faults. The 0.3498 span
+  quoted against the 200 ms window was the 83 ms figure; measured over the
+  window the step actually names it is 0.4166. The t = 6.00 s assertion asked
+  for a comparison "against a reference render" of an engine that will not exist
+  once the step lands; measurement shows `lfoDelayLevel_` is bit-exactly 1.0
+  there, so the guard needs no reference at all and is stated against a recorded
+  constant instead. Most seriously, the step's own text changes the two
+  `updateSharedScan` call sites, and **nothing in the original contract reached
+  them**: a note-holding fixture exercises `performConverterWrite` only, so an
+  implementation that fixed the `ConverterDestination::Pwm` case and left both
+  `updateSharedScan` sites raw passed every assertion. The measured gap on that
+  path is the full PWM travel — +0.600000 V against +3.300000 V — which is the
+  first attack after a silent patch change landing at the wrong duty. Assertion
+  (3) is new and closes it.
 
 - [ ] **2. Drive the resonance frequency trim from the cascade's own
   limit-cycle amplitude instead of from loop gain.** The droop this trim
@@ -1194,9 +1237,34 @@ lock the suites do not contain. Those are replaced, not relaxed.
   pure-function form needs no divisor and fails today by exactly +0.0 / +8.76 /
   +32.24 / +80.17 / +116.25 cents. **(b)** the existing self-oscillation fixture
   still asserting 4.83 Vpp at 248.0 Hz inside its published ±0.48 V / ±4 Hz.
-  **(c)** a rendered A/B at RESONANCE 0.20 and 0.80, same CUTOFF, asserting the
-  spectral centroid moves by less than 15% where it moves 112.93 cents of corner
-  today. **(d)** `testCpuBudget` re-measured and republished, not relaxed.
+  **(c)** an engine-suite assertion at the **render seam**, so that a law
+  corrected in the pure function but never wired into audio still fails: with a
+  note held, every source off, Unit Character 0.0 and CUTOFF fixed, the corner
+  the render actually uses — `atan(voice.filterG) · internalRate / π`, the
+  `filterG` memo at `Source/DSP/YouKnow106Engine.cpp:3290-3298` — must agree
+  across RESONANCE **0.00 / 0.30 / 0.50 / 0.70 / 0.80** to within **±10 cents**,
+  at CUTOFF codes 3840, 6272 and 11520. Today it spreads **+0.00 / +8.70 /
+  +32.91 / +80.42 / +117.53 cents** at code 6272 and +0.00 / +8.55 / +32.33 /
+  +78.96 / +115.36 at code 11520 [measured 2026-08-07 preflight]. With no signal
+  in the cascade there is no droop to correct, so `1/N(a)` is 1 at every one of
+  these settings and the five must coincide; this is the wart
+  `Source/DSP/YouKnow106Engine.h:274-280` already states in words.
+  **(d)** `testCpuBudget` re-measured and republished, not relaxed.
+
+  *Contract corrected in preflight, 2026-08-07.* The external review's finding
+  against the original (c) — a rendered A/B at RESONANCE 0.20 and 0.80 asserting
+  the spectral centroid moves by less than 15% — holds, and measurement makes it
+  worse than the finding claimed. The 112.93 cents of corner is a 6.74%
+  frequency change, so the 15% bound was already slack; but the centroid of that
+  A/B is not a reading of the corner at all, because RESONANCE also moves Q and
+  `inputCompensation`. Measured on the shipping engine, the centroid between
+  RESONANCE 0.20 and 0.80 moves **−0.12% at CUTOFF 0.30, +4.97% at CUTOFF 0.50
+  and +113.96% at CUTOFF 0.70** — and the step did not state a CUTOFF. At the
+  first two the assertion cannot fail; at the third it fails today *and* after a
+  correct fix, because the 6.74% the trim contributes is buried under a 114%
+  swing the fix does not touch. The replacement measures the corner itself at
+  the seam the render consumes, where at fixed CUTOFF and Unit Character 0.0
+  nothing but `frequencyTrim` couples RESONANCE to `filterG`.
 
 - [ ] **3. Put C59 between the filter output and the VCA input.** Roland draws
   module pin 3 VCF OUT → **C59 1 µF/50 V NP** → the VR27/R108 network → pin 9
@@ -1219,25 +1287,47 @@ lock the suites do not contain. Those are replaced, not relaxed.
   (−25.8 dB)**, and the largest anywhere in the sweep is +0.129 V, always well
   *below* the AC. What is real is that this DC is multiplied by the envelope and
   arrives as a **duty-dependent sub-audio thump**: the peak of the output
-  low-passed at 20 Hz over a note-on/note-off cycle rises from **−43.33 dB
-  relative to broadband RMS at duty 0.50 to −18.06 dB at duty 0.95** — 25.3 dB
-  from PWM duty alone, and essentially unchanged at Unit Character 0.0
-  (−19.36 dB), so it is a property of the nominal calibrated model rather than a
-  tolerance mechanism.
+  through a four-pole 20 Hz low-pass, over a note-on/note-off cycle, rises from
+  **−41.65 dB relative to broadband RMS at duty 0.5043 to −10.27 dB at duty
+  0.9436** — **31.4 dB from PWM duty alone** [re-measured 2026-08-07 preflight;
+  the −43.33/−18.06 dB pair above it did not reproduce and the estimator that
+  produced it was not stated] — and it is essentially unchanged at Unit
+  Character 0.0, so it is a property of the nominal calibrated model rather than
+  a tolerance mechanism.
 
   *Verified by*: a new engine-suite fixture holding MIDI 48 on a pulse patch at
-  CUTOFF 0.30, RESONANCE 0.75, PWM panel 1.00 (duty **0.95**; panel 0.95 is duty
-  0.9275), Unit Character 1.0, ATTACK 0.45, released at 4.0 s of an 8 s render.
+  CUTOFF 0.30, RESONANCE 0.75, PWM SOURCE = MANUAL, Unit Character 1.0,
+  ATTACK 0.45, DECAY 1.0, SUSTAIN 1.0, RELEASE 0.30, released at 4.0 s of an 8 s
+  render, at PWM panel 1.00 (duty **0.9436**) and PWM panel 0.00 (duty 0.5043).
   It asserts **(a)** the mean of each active voice's filter-to-VCA input over the
-  settled 1.5–3.0 s window is **below 1.0e-3 V** (+0.0308 V today, and up to
-  +0.1292 V across the sweep); and **(b)** the peak of the output low-passed at
-  20 Hz is **at least 35 dB below broadband RMS** at duty 0.95 (−18.06 dB
-  today), while the same measure at duty 0.50 stays within 3 dB of its present
-  −43.33 dB. **The original assertion (b) — a 2 Hz DFT bin at least 40 dB below
-  RMS — is deleted because it passes today by 34 dB** (measured −73.56 dB): a
-  six-second bin averages a transient away, and a test that cannot fail proves
-  nothing. Removing the coupling restores the −18.06 dB figure and fails the new
-  (b).
+  settled 1.5–3.0 s window is **below 1.0e-3 V** — **+0.0791 V today** at panel
+  1.00, **+0.0510 V** at panel 0.00 and **+0.2015 V** at panel 0.50, which is
+  where the sweep's maximum actually sits [re-measured 2026-08-07 preflight];
+  and **(b)** the peak of the output through a **four-pole 20 Hz low-pass** (a
+  cascade of four one-pole sections, taken over the whole 8 s render including
+  the note-on and note-off transients) is **at least 35 dB below broadband RMS**
+  at duty 0.9436, where it is **−10.27 dB today**, while the same measure at
+  duty 0.5043 — **−41.65 dB today** — **does not rise**, allowing 3 dB of slack.
+  **The original assertion (b) — a 2 Hz DFT bin at least 40 dB below RMS — stays
+  deleted because it passes today by 34 dB** (measured −73.56 dB): a six-second
+  bin averages a transient away, and a test that cannot fail proves nothing.
+  Removing the coupling restores the −10.27 dB figure and fails the new (b).
+
+  *Contract corrected in preflight, 2026-08-07.* Three faults, none fatal to the
+  step. First, **(b)'s measurand was under-specified to the point of being
+  unreproducible**: "the peak of the output low-passed at 20 Hz" reads −9.87 dB
+  through one pole and −41.65 dB through four, on the same render at the same
+  duty. A 32 dB estimator dependence makes any threshold arbitrary, so the
+  order, the topology and the window are now stated. Second, the DC figures did
+  not reproduce — the settled filter output carries +0.0791 V at the fixture's
+  own top duty, not +0.0308 V, and the sweep maximum is +0.2015 V at a *middle*
+  duty rather than +0.129 V at an extreme. Assertion (a) bites either way, by a
+  factor of 51 rather than 31, but the numbers a later reader would check
+  against are now the measured ones. Third, the duty-0.50 clause was **two-sided
+  — "within 3 dB" — and a correct implementation would have failed it**: the
+  coupling removes DC *and* the sub-5 Hz part of the note gate, so that figure
+  must fall, and by design. It is now a one-sided ceiling. It cannot fail today
+  and is not meant to; (a) and (b)-at-top-duty are the assertions that bite.
 
 - [ ] **4. Set the BBD line noise from the MN3009's own noise specification.**
   `independentLineRandomAmplitude` is the last voiced quantity in an otherwise
@@ -1265,15 +1355,32 @@ lock the suites do not contain. Those are replaced, not relaxed.
   1 dB of it** (the "max" is an upper bound, so the assertion is one-sided by
   construction with a floor to catch an over-correction), plus a new
   engine-suite assertion that the idle plug-in output floor with **VOLUME 0.80,
-  VCA LEVEL 0.80 and CHORUS NOISE 1.0 pinned** drops by **14.4 dB ± 0.5 dB**
-  from its present value, expressed as a delta against a reference render rather
-  than as a hard dBFS number, because the dBFS figure scales with two panel
-  controls. **One target, not two:** the original's separate −76.2 dBFS (I) and
-  −75.5 dBFS (II) assert a 0.7 dB mode difference the code cannot produce —
+  VCA LEVEL 0.80, CHORUS NOISE 1.0 and CHORUS MODE I pinned**, measured as RMS
+  over 4 s after a 2 s settle, lands at **−77.85 dBFS ± 0.5 dB**, against
+  **−63.44 dBFS today** [re-measured 2026-08-07 preflight] — the same 14.4 dB
+  the wet-line assertion imposes. The two deltas must agree to within 0.5 dB:
+  with the chorus off the same fixture's output is **bit-exact zero** (measured,
+  peak 0.000e+00 over 2 s), so the BBD line noise is the *only* contributor to
+  this floor and any output-floor movement that does not match the wet-line
+  movement means something other than `independentLineRandomAmplitude` moved.
+  **One target, not two:** the original's separate −76.2 dBFS (I) and −75.5 dBFS
+  (II) assert a 0.7 dB mode difference the code cannot produce —
   `Chorus::settingsFor` gives modes I and II the same `lineGain` and the same
   sweep, differing only in rate, and `enableChorusRateNoise` is off by default;
-  measured, the two floors are **−63.55 and −63.56 dBFS**, 0.016 dB apart. The
-  existing MN3009 bandwidth and THD anchors must pass unchanged.
+  measured at the pinned controls above, the two floors are **−63.4413 and
+  −63.4504 dBFS, 0.0091 dB apart**. The existing MN3009 bandwidth and THD
+  anchors must pass unchanged.
+
+  *Contract corrected in preflight, 2026-08-07.* The floor assertion was written
+  as "a delta against a reference render", which is not buildable: once the
+  constant moves there is no pre-change engine left to render, so the reference
+  can only ever be a number recorded now. The reason given for avoiding a hard
+  dBFS figure — that it scales with two panel controls — does not apply once
+  those controls are pinned, which the same sentence already does. Measuring the
+  chorus-off floor settles it: it is bit-exact zero, so the pinned dBFS figure
+  is fully determined by the line-noise constant and is stated directly. The
+  requirement that the two deltas agree is new, and is what stops the second
+  assertion from being satisfied by moving a gain somewhere else.
 
 - [ ] **5. Make the warm-up clock a wall-clock accumulator neither a quality
   setting nor a host rate can move.** `thermalWarmupSeconds_` becomes a `double`
@@ -1282,26 +1389,51 @@ lock the suites do not contain. Those are replaced, not relaxed.
   `T(t) = 25 + 15(1 − e^{−t/900})` runs to completion. No constant, curve or
   time-scale changes; only the accumulator's precision does. Closes gap 8. The
   invariant restored is the one `Source/DSP/YouKnow106Engine.h:786-790` states in
-  words, and it is broken **more widely than the original said**: the freeze
-  point is a power-of-two boundary that depends on the *internal* rate, so
-  96 kHz HQ stalls at 26.0296 °C and 192 kHz HQ at 25.5240 °C — the host sample
-  rate moves the modelled physics too, not only the HQ switch.
+  words. The freeze point is a power-of-two boundary set by the **internal**
+  rate: the accumulator stops when `inverseOversampledRate_` falls below half an
+  ULP of the running total, which at a 192 kHz internal rate is exactly
+  **128.0000 s** and at a 48 kHz internal rate exactly **512.0000 s**.
 
   *Verified by*: a new engine-suite fixture running silence at **Unit Character
   1.0** (`getDisplayTemperatureC()` scales the rise by `calibration`, so the
-  targets below are meaningless at any other setting) and polling
-  `getDisplayTemperatureC()` at t = 128 s, 300 s and 900 s of audio. It asserts
-  **26.99 / 29.25 / 34.48 °C ± 0.05 °C** (frozen at 26.9886 °C today at 48 kHz
-  HQ), that the three readings **agree within 0.01 °C across 48 kHz HQ on,
-  48 kHz HQ off, 96 kHz HQ on and 192 kHz HQ on** (today 26.9886 / 31.5077 /
-  26.0296 / 25.5240 at their respective stalls — the four-way comparison is what
-  makes the assertion fail on the host-rate axis as well as the quality axis),
-  and that the modelled OTA headroom at 900 s is **6.5687 V ± 0.001 V**
-  (6.4087 V today at 48 kHz HQ, 6.3775 V at 192 kHz). Reverting the accumulator
-  to `float` fails all three. Because a 900 s render at 768 kHz internal is
-  expensive, the fixture may drive the accumulator directly through the test
-  friend rather than rendering, provided it also renders one short case to prove
-  the accumulator is the one the render loop advances.
+  targets below are meaningless at any other setting) with the **spatial thermal
+  gradient disabled** (it adds up to 4 °C on card 0 and would put the headroom
+  target out of reach), polling `getDisplayTemperatureC()` at t = 128 s, 300 s
+  and 900 s of audio. It asserts **26.9886 / 29.2520 / 34.4818 °C ± 0.05 °C**
+  (frozen at 26.9886 °C today at 48 kHz HQ), that the three readings **agree
+  within 0.01 °C across 48 kHz HQ on, 48 kHz HQ off, 96 kHz HQ on and 192 kHz HQ
+  on** — today **26.9886 / 31.5077 / 26.9886 / 26.9886** at their respective
+  stalls — and that the modelled OTA headroom at 900 s is **6.5687 V ± 0.001 V**
+  (**6.4087 V today at every HQ-on rate**, 6.5052 V at 48 kHz HQ off). Reverting
+  the accumulator to `float` fails all three.
+
+  Because a 900 s render at 192 kHz internal is expensive, the fixture may
+  advance the accumulator through the test friend rather than rendering — but
+  only by adding **the same `inverseOversampledRate_` increment the render loop
+  adds, once per internal sample, at the rate `prepare()` actually selected for
+  that configuration**, so the ULP behaviour is bit-for-bit what a render would
+  produce. It may skip the surrounding render work and nothing else. One short
+  rendered case must then be checked to agree with its driven counterpart to the
+  last bit over the same sample count, proving the accumulator is the one the
+  render loop advances.
+
+  *Contract corrected in preflight, 2026-08-07.* Two faults. **The host-rate
+  claim is withdrawn: it does not reproduce.** HQ does not multiply the host
+  rate by four, it targets an internal rate — measured, 48 kHz HQ, 96 kHz HQ and
+  192 kHz HQ all run the engine at **192000 Hz internal**, so all three freeze
+  at the identical 128.0000 s and read the identical 26.9886 °C. The stated
+  26.0296 °C and 25.5240 °C, and the 6.3775 V derived from the latter, are not
+  values this engine produces. The four-way comparison is kept because it still
+  fails today — 48 kHz HQ off stalls at 512 s and 31.5077 °C, which reproduces
+  exactly — but its justification is now the quality axis and the internal rate
+  it selects, not the host rate. Second, the licence to "drive the accumulator
+  directly" would have made the four-way comparison **vacuous**: a friend that
+  simply assigns the accumulator is rate-independent by construction, so the one
+  assertion specifically about rate dependence could be passed without ever
+  exercising it. The direct-drive path is now pinned to the render loop's own
+  increment. The 6.5687 V figure required the spatial gradient off, which the
+  fixture never said; with it on and card 0 the headroom is 6.6542 V and the
+  ±0.001 V tolerance is unreachable.
 
 - [ ] **6. Route the velocity extension through the envelope's own path to the
   filter.** Velocity stays an extension — the hardware has none, `velocityDepth`
@@ -1319,21 +1451,53 @@ lock the suites do not contain. Those are replaced, not relaxed.
   argument that stands is the internal one — this is the only envelope-to-cutoff
   path the instrument has, so using it adds no law.
 
-  *Verified by*: a new engine-suite fixture rendering one note at velocity
-  0.2 / 0.5 / 1.0 with `velocityDepth = 1.0`, CUTOFF 0.50, ENV depth 0.40,
-  RESONANCE 0.30, taking a 32768-point Blackman-Harris spectrum at t = 0.3 s and
-  computing the energy-weighted centroid **on a stated estimator: a 10 Hz grid
-  from 20 Hz to 8 kHz** (a centroid without a stated band and grid is not a
-  number — the same render reads 240.75 Hz on this estimator against the 470.1 Hz
-  originally printed). It asserts the centroid **rises monotonically with
-  velocity and spans at least 100 Hz across the three** (today 240.75 Hz at all
-  three, a span of 0.01 Hz), and that at `velocityDepth = 0.0` the render is
-  **bit-identical to a reference captured before the change**. That reference
-  has to be **built**: there is no FNV render lock in the CTest suites — the
-  `fnv1a64` hashes the original cited live only in
-  `Tools/RenderRealismComparison.cpp`, which is a report renderer, not a test.
-  Reverting the routing collapses the centroid span to 0.01 Hz and fails the
-  first assertion.
+  *Verified by*: a new engine-suite fixture rendering MIDI 48 at velocity
+  0.2 / 0.5 / 1.0 with `velocityDepth = 1.0`, **CUTOFF 0.30, ENV depth 0.30,
+  RESONANCE 0.30, ATTACK 0.0, DECAY 1.00, SUSTAIN 1.00, RELEASE 0.0, Unit
+  Character 0.0** — the envelope must be stated, because the measurement is
+  taken at t = 0.3 s and a decaying envelope would put the three velocities at
+  three different points of the decay rather than three different depths. It
+  asserts
+
+  1. **the audible one.** From a 32768-point Blackman-Harris spectrum at
+     t = 0.3 s on a stated estimator — a 10 Hz grid from 20 Hz to 8 kHz — the
+     fraction of energy **at or above 1 kHz** rises monotonically with velocity
+     and spans **at least 30 dB** across the three. Today it is identical at all
+     three velocities, a span of 0.00 dB; with the routing in place the measured
+     fraction is **−82.55 / −54.15 / −16.28 dB**, a span of **66.27 dB**
+     [measured 2026-08-07 preflight by driving `envDepth` to `0.30 · velocity`,
+     which is exactly what the proposed mechanism computes at
+     `velocityDepth = 1.0`].
+  2. **the seam one.** The corner the render actually uses,
+     `atan(voice.filterG) · internalRate / π`, read at t = 0.3 s, rises
+     monotonically and spans at least 3000 cents: **196.57 / 460.50 /
+     1995.00 Hz**, a span of 4004 cents, against **1995.00 Hz at all three
+     today**.
+  3. **the faithfulness one.** At `velocityDepth = 0.0` the render is
+     bit-identical to a reference. That reference has to be **built**: there is
+     no FNV render lock in the CTest suites — the `fnv1a64` hashes the original
+     cited live only in `Tools/RenderRealismComparison.cpp`, which is a report
+     renderer, not a test. It is captured as a hash constant from the pre-change
+     engine and hard-coded, since after the step lands there is no pre-change
+     engine to render against.
+
+  Reverting the routing collapses both spans to zero and fails (1) and (2).
+
+  *Contract corrected in preflight, 2026-08-07.* **The original assertion would
+  have failed a correct implementation.** At the fixture it named — CUTOFF 0.50,
+  ENV depth 0.40 — the realised corner at velocity 1.0 is **32.8 kHz**, far
+  outside the 20 Hz–8 kHz band the centroid is taken over, so the filter is
+  already fully open at velocity 0.5 and the audible spectrum saturates. The
+  measured centroid there is 169.51 / 230.67 / 238.13 Hz: monotone, but a span
+  of **68.62 Hz against the promised 100 Hz**. Push ENV depth up to reach 100 Hz
+  and the centroid stops being monotone — at CUTOFF 0.30 / ENV 1.00 it reads
+  151.73 / **247.62** / 236.59 Hz, velocity 0.5 above velocity 1.0, because once
+  the corner passes the strong harmonics the centroid is pulled back toward the
+  130.8 Hz fundamental. The centroid is the wrong measurand for this quantity
+  and is dropped. The replacement fixture keeps the corner inside the audio band
+  at every velocity, and the high-band energy fraction it measures is monotone
+  by construction of the mechanism with a 66 dB margin instead of a 69 Hz one.
+  The envelope and Unit Character, previously unstated, are now pinned.
 
 ### 9. Considered and not planned
 

@@ -786,9 +786,20 @@ list, not to the previous pass's.
    -39.8 dB at 0.20 and -39.7 dB at 0.90**, not the -68.2/-72.0/-56.4 dB first
    claimed. Those figures appear only in a decayed window: over 10-12 s the same
    ratio is -67.8/-66.8/-65.5 dB. So the two strings are **not** exactly
-   superposable while they are sounding; they already interact at about -40 dB
-   through the shared body, coil and output path, which is not floating-point
-   noise.
+   superposable while they are sounding; they already differ from their own sum
+   by about -40 dB, which is not floating-point noise.
+
+   **What that -40 dB is made of was established in preflight, and it is mostly
+   not the shared path.** With `pickNoise`, `fingerNoise` and `releaseNoise` at
+   zero the same residual drops to **-65.4 dB at velocity 0.02, -62.0 at 0.20
+   and -53.8 at 0.90** (`pf_additivity`). The missing 25 dB is the per-note
+   noise seed: `startExcitation` seeds it from `noteSequence_` (:2619-2625),
+   which advances per note-on, so the second note of a pair is seeded
+   differently than it is when rendered alone. What remains - the shared body
+   and coil path and the summing guard gain
+   `1 / sqrt(1 + 0.4356 * guardInput^2)` at :4137-4143 - grows with level, as a
+   cubic soft limit must. Step 7 is measured with those three controls at zero
+   for this reason.
 
    And at the **shipping** `sympatheticAmount = 0.20` - the setting the step
    below tests at - the same pair already measures **-36.1 dB over 0-1.5 s and
@@ -829,9 +840,10 @@ sweep with a locally-referenced >5 kHz peak-to-RMS at the static note's
 the engine is unconditionally stable today because the coupling graph is
 acyclic; step 7 removes that property on purpose and therefore carries its own
 bound and its own long-render test. It is *not* superposable today, at -40 dB
-during the note and -36 dB at the shipping resonance setting, so "superposition"
-is not one of the four strengths and the step below is measured against those
-two baselines rather than against silence.
+during the note and -36 dB at the shipping resonance setting - and -65 dB and
+-38 dB respectively once the three noise controls are taken out of the
+measurement - so "superposition" is not one of the four strengths and the step
+below is measured against those baselines rather than against silence.
 
 Two further bounds came out of the review and are new here. **No step may assert
 a threshold that the shipping engine already meets**; four assertions in the
@@ -884,10 +896,16 @@ engine first, and the measured baseline is quoted next to it.
   as necessary but not sufficient.
   *Closes gap 1.* **Verified by** `testVelocityDynamicRange`: at the shipping
   defaults on note 40, peak of the first 50 ms, fresh engine per velocity, the
-  span from v=1 to v=127 is **at least 18 dB** (today 5.218 dB; the amplitude
-  law alone reaches 17.87 dB, so this threshold cannot be met without (b)) and
+  span from v=1 to v=127 is **at least 18 dB** (today 5.218 dB) and
   from v=64 to v=127 **at least 4.0 dB** (today 1.487 dB; the amplitude law
-  alone reaches 1.686 dB, so this one *only* passes with (b)); the level is
+  alone reaches 1.686 dB, so this one *only* passes with (b), and it is the
+  assertion that separates (a) from (a)+(b)). **Corrected in preflight**: the
+  first draft claimed the 18 dB span separated them too, but the amplitude law
+  alone measures 17.87 dB against it - a margin of 0.13 dB, smaller than the
+  spread between window choices, and it cannot carry that claim. The 18 dB span
+  stays as the headline target, which the shipping engine fails by 12.8 dB, and
+  the v=64 to v=127 assertion is what attributes the difference to (b).
+  The level is
   **strictly monotone across 16 evenly spaced velocities**, which today passes
   and which the amplitude law alone breaks, so it is a regression guard rather
   than a target; v=127 stays **within 1.5 dB of -25.690 dBFS**; and at
@@ -948,12 +966,34 @@ engine first, and the measured baseline is quoted next to it.
   **between -24 dB and -8 dB** (today -84 dB and falling); peak spread across
   the 12 strokes is **between 0.6 dB and 3.0 dB** (today 0.0122 dB); spectral
   centroid spread is **at least 12 Hz** on a 401 Hz centroid (today 0.6 Hz).
+  **The `PickStyle::Alternate` requirement gets its own assertion, added in
+  preflight**, because the step states it and nothing above tested it: on the
+  same 12 s protocol under Alternate, strokes **two apart** - the same stroke
+  direction, so the up/down colouring is held constant - must show a relative
+  L2 in the same **-24 dB to -8 dB** band. Measured today (`pf_alternate`, the
+  same program with the Alternate keyswitch sent first) those pairs converge to
+  **-85.4, -95.3, -91.7, -98.6 dB and below**, indistinguishable from the
+  latched case, so an implementation that varies only a latched Down fails
+  here and passes everything else.
   Separately, and this is the assertion the first draft's protocol was
   accidentally testing: on the 500 ms protocol the successive difference must
-  **stop converging** - the last pair of 12 must be within 6 dB of the first
-  pair, where today it falls 22.4 dB from -4.65 to -27.02 dB. And the existing
-  `testDeterminism` still passes bit-exact, including that a `reset()` and
-  replay reproduces the first stroke sample for sample.
+  **stop converging** - the twelfth pair must be within **6 dB of the same
+  engine's twelfth pair on the 12 s protocol**, so that the variation is a
+  property of the excitation rather than of the residual state. Measured today
+  (`pf_repeat`, which reproduces this section's 500 ms and 12 s figures) the
+  two are **-27.02 dB and -98.37 dB, 71 dB apart**, and the 500 ms trajectory
+  falls monotonically - -4.65, -8.06, -10.77, -12.14, -14.33, -16.43, -18.88,
+  -21.13, -23.00, -25.18, -27.02 dB - with no plateau anywhere in it.
+  **This assertion was corrected in preflight.** It read "the last pair of 12
+  must be within 6 dB of the first pair, where today it falls 22.4 dB from
+  -4.65 to -27.02 dB". The first pair is the cold start - stroke 1 lands on
+  silence and stroke 2 on a fresh ring - so pinning the twelfth pair within
+  6 dB of it forces the excitation variation up to about -11 dB, near the top
+  of the -24 to -8 dB band the 12 s protocol allows, for no stated reason.
+  Comparing the two protocols' twelfth pairs tests the same property without
+  fighting the other assertion, and fails today by 71 dB rather than by 16.
+  And the existing `testDeterminism` still passes bit-exact, including that a
+  `reset()` and replay reproduces the first stroke sample for sample.
 
 - [ ] **3. The humbucker becomes two coils.** Replace the single 21 mm
   rectangular aperture with the sum of two taps 19 mm apart along the string,
@@ -994,12 +1034,25 @@ engine first, and the measured baseline is quoted next to it.
   records does not regress by more than 0.5 dB in the 60-85 Hz band on an open
   low E; and the alias floor on a full chord stays at least 150 dB below the
   spectral peak (today 155.1 dB). **And, new under review, the broadband
-  balance is bounded**: on an open low E at `pickupType = 0`, octave-band energy
-  from 4 to 16 kHz moves by **no more than 4 dB per band** against today, and
-  the 2-16 kHz to sub-500 Hz ratio on a full eight-string chord moves by **no
-  more than 3 dB**, so the humbucker stays the dark pickup of the pair. Without
-  those two, the notch assertion can be passed by a change that measurably
-  brightens the setting it is meant to correct.
+  balance is bounded**: at `pickupType = 0`, octave-band energy from 4 to
+  16 kHz moves by **no more than 4 dB per band** against today, and the
+  2-16 kHz to sub-500 Hz ratio on a full eight-string chord moves by **no more
+  than 3 dB**, so the humbucker stays the dark pickup of the pair. Without those
+  two, the notch assertion can be passed by a change that measurably brightens
+  the setting it is meant to correct.
+
+  Two details of this contract were corrected in preflight. The octave-band
+  bound was written to be measured on an open low E only, which is not where
+  this step's own numbers say the broadband change happens: the +2.7/+20.9/
+  +6.5/+18.2 dB figures above are on **string 2 (note 40)** and the
+  -3.9/-28.5 dB figures are on the **plain E4 (note 64)**, and a bound checked
+  on string 0 alone would not see either. It is therefore measured on notes 28,
+  40 and 64, and a 20.9 dB brightening at 6 kHz on string 2 fails it. And the
+  notch itself is measured on the pickup transfer evaluated in closed form at
+  the aperture seam, at each string's own wave speed `c = 2 L f_open`, the same
+  way `p5_pitch` evaluates both windows - not off a rendered spectrum, where a
+  null between two harmonics is sampled only as finely as the string's
+  fundamental spacing and its measured depth is an artefact of that spacing.
 
 - [ ] **4. Vibrato becomes a hand.** Four changes, three of them derived. (a)
   The pitch waveform is the *square* of the wrist's displacement, not the
@@ -1044,10 +1097,22 @@ engine first, and the measured baseline is quoted next to it.
   each cycle spent above half depth is **between 32% and 40%** - a raised cosine
   gives exactly 50% and measures 49.2% today, and its square gives **36.4%**,
   not the "about 39%" first written - which pins the `x^2` law from both sides
-  rather than only from above; two simultaneously fingered strings' phases
+  rather than only from above. **Corrected in preflight**: that fraction is
+  measured against **each cycle's own peak**, not against the run's maximum,
+  because (c) redraws the depth every cycle at a 15% sigma; referred to a
+  global maximum the same correct implementation reads several percent low, and
+  the band is only 3.6 percentage points wide either side of 36.4%. Two
+  simultaneously fingered strings' phases
   differ by **at least 0.08 cycles**; at maximum Vibrato Depth the peak is **at
   least 90 cents** and at minimum **at most 15 cents**; and zero aftertouch
-  remains bit-exact identical to no aftertouch. The rate assertions ("below
+  remains bit-exact identical to no aftertouch. **Change (d) gets its own
+  assertion, added in preflight**, because nothing above tested it and it could
+  have been skipped whole: at **10% of the time the vibrato takes to reach 90%
+  of its settled depth**, the depth is **at most 5% of settled**. A one-pole
+  reads **20.6%** there whatever its time constant, because it is steepest at
+  `t = 0`; the `smoothStep` reads **1.8%**. The measure is scale-free, so it
+  does not have to name an onset time the step has not fixed yet. The rate
+  assertions ("below
   5.2 Hz at maximum, above 6.2 Hz at minimum") are held back until the direction
   of the depth-rate coupling is settled, since as written they assert the
   reverse of the shipping calibration.
@@ -1064,15 +1129,21 @@ engine first, and the measured baseline is quoted next to it.
   which is not true in general.** The chord window is 35 ms
   (`chordWindowSamples_`, :789) and a `process()` block is typically 5-10 ms, so
   the note-ons of one chord routinely straddle several blocks and the
-  first-arriving voice has usually already started. There are two honest ways
-  out and the step must pick one before implementation: give the anchor voice
-  itself a pending delay of the full `7 x spread` so every voice can still be
-  pushed - which adds up to 84 ms of onset latency at the 12 ms spread and moves
-  the chord late against the beat - or restrict re-anchoring to note-ons that
-  land in the same block, which fixes quantised chords and leaves humanised ones
-  travelling from whichever note the host happened to send first. The second is
-  preferred, and the verification below tests the block-straddling case
-  explicitly rather than leaving it undefined. Removing the `abs()` is
+  first-arriving voice has usually already started. **Preflight replaced the
+  choice the first draft made here**, because the option it preferred cannot be
+  given a test that bites - see the note under the verification. The rule is a
+  **bounded re-anchor window `R`**: every voice of a new chord, including the
+  first, is given a pending pre-roll of `R`, and any note-on arriving within `R`
+  of the chord's first note-on may re-anchor and push the pending offsets. All
+  voices carry the pre-roll, so none has started during the window and the push
+  is always safe. `R` is **20 ms** - enough to cover a chord whose note-ons
+  straddle two or three typical blocks, against the 84 ms that giving the anchor
+  voice the full `7 x spread` would cost - and it is a fixed time rather than a
+  block count, so onsets do not depend on the host's buffer size. `R` is zero
+  when `strumSpreadSeconds` is zero, which keeps the block chord bit-exact.
+  Chords whose note-ons are spread wider than `R` still travel from the first
+  arrival, and that is the stated limit of the mechanism rather than an
+  undefined case. Removing the `abs()` is
   independent of that choice and stands either way, so a chord anchored on a
   middle string stops travelling outward in both directions at once. Second,
   spacing: the wrist accelerates through the
@@ -1094,14 +1165,46 @@ engine first, and the measured baseline is quoted next to it.
   7 x spread**; a chord whose first note-on is a middle string produces offsets
   that are all non-negative and monotone in string index (today D3-first gives
   24.0/12.0/0.0/12.0/24.0 ms); and at `strumSpreadSeconds = 0` every offset is
-  exactly 0, so the block chord stays bit-exact. **And, new under review, the
-  block-straddling case is pinned rather than left to chance**: the same chord
-  delivered with its note-ons split across three `process()` calls 8 ms apart -
-  inside the 35 ms chord window, across block boundaries - must produce offsets
-  that are still all non-negative and monotone in string index, and the
-  first-sounding voice's onset must not move by more than one block against the
-  single-block delivery of the same chord. That is the assertion that decides
-  between the two implementations above, and it fails silently without it.
+  exactly 0, so the block chord stays bit-exact. **The per-gap jitter this step
+  takes from step 2 gets its own assertion, added in preflight**, because
+  nothing above tested it: two successive strums of the same chord, 12 s apart,
+  must differ in at least one string's offset by at least one internal sample,
+  where today the offsets are a pure function of spread and string index and
+  the two strums are identical to the sample. **And the block-straddling case
+  is pinned in absolute onsets**: the same three-note chord delivered with its
+  note-ons split across three `process()` calls 8 ms apart - inside the 35 ms
+  chord window, across block boundaries - must produce **absolute onset sample
+  indices**, each event's arrival sample plus that voice's `startDelaySamples`
+  reduced to one clock, that are monotone in the stroke direction and that
+  **reverse between `PickStyle = Down` and `PickStyle = Up`**, exactly as in the
+  single-block delivery; the test runs it in both arrival orders, ascending and
+  descending in string index, and requires the same onset order from both. Two
+  latency bounds go with it: in the single-block delivery the first voice's
+  onset is **exactly `R` after its note-on**, which is the whole cost of the
+  pre-roll and is what the 20 ms is chosen against; and in the split-block
+  delivery the first-sounding voice's onset must not exceed the single-block
+  delivery's by more than the chord's own note-on arrival span - 16 ms here -
+  plus one control period, which is the most a re-anchor can push it. The
+  existing `testStrumSpread` assertion that the leading string of a strum is
+  delayed by exactly 0 is superseded by the first of those and must be restated
+  as `R`, not deleted.
+
+  **Preflight corrected this assertion and the choice it was meant to decide.**
+  As first written it compared relative `startDelaySamples` only, and the
+  audible onset is the event's arrival time plus that delay. Measured on the
+  shipping engine (`pf_strum`, notes 40/45/50 at a 12 ms spread, one note-on per
+  `process()` call 8 ms apart), the relative delays are 0/12/24 ms in *arrival*
+  order whichever way the chord is sent, so by string index they read
+  0/12/24 ms ascending and 24/12/0 ms descending - monotone both times, and the
+  assertion passes today with no change at all. The absolute onsets are
+  0/20/40 ms in arrival order in both cases: the chord travels in whatever order
+  the host sent it, which is the defect the step exists to remove. Reading the
+  onsets absolutely makes the descending-arrival case fail today, and it is
+  reachable only with a non-zero re-anchor window, which is why the mechanism
+  above was changed with it. The preferred rule of the first draft -
+  re-anchoring restricted to one block - cannot pass an absolute-onset
+  assertion at all: once the first note has sounded, no causal scheduler can
+  place a later-arriving string ahead of it.
 
 - [ ] **6. The attack blooms sharp.** Recalibrate the tension modulation against
   the same stretch law the previous steps use. For a string plucked to
@@ -1134,8 +1237,13 @@ engine first, and the measured baseline is quoted next to it.
   1.0 with `velocityAmount = 1.0`, the peak sharpness above the settled pitch is
   **between 6 and 20 cents** and occurs **within the first 30 ms** (today
   +0.180 cents at 183 ms); it falls **below 1.5 cents by 400 ms**; at velocity
-  0.25 the peak is **at most 1.5 cents** (today 0.0141 cents); and 3 s after the
-  attack the sounding pitch is **within 0.6 cents** of nominal on the
+  0.25 the peak is **between 0.3 and 1.5 cents** (today 0.0141 cents, so the
+  lower bound fails today - **corrected in preflight**, where this read "at most
+  1.5 cents" and so passed on the shipping engine and on any implementation that
+  scaled the bloom at full velocity only. The band is the `v^2` law's own
+  prediction: 8.7 cents at v = 1.0 puts v = 0.25 at 0.54 cents, and the asserted
+  6 to 20 cents at full velocity puts it between 0.375 and 1.25 cents); and 3 s
+  after the attack the sounding pitch is **within 0.6 cents** of nominal on the
   fundamental-only estimator, so the tuning strength survives.
   The two ratio assertions from the first draft - "the velocity peak ratio is
   between 8 and 24" and "at `stringGauge = 1.0` the peak is at most 0.7x the
@@ -1178,12 +1286,37 @@ engine first, and the measured baseline is quoted next to it.
   recalibration of the entire string model.
 
   The one-sample delay makes this an explicit Jacobi iteration, so the acyclic
-  guarantee is replaced by an explicit spectral-radius bound: with `N` strings
-  each injecting a fraction `g` of the bus and each loop's gain bounded by
-  `G < 1`, the worst round trip is `N g^2 G^2`, and `g` is bounded so that stays
-  **at or below 0.25** - 12 dB of margin - at every parameter setting including
-  maximum Resonance. `sympatheticAmount` continues to scale the coupling and
-  still switches it off completely at zero.
+  guarantee is replaced by an explicit spectral-radius bound. **The bound this
+  step was first written with is wrong by four orders of magnitude, and was
+  corrected in preflight.** It read: with `N` strings each injecting a fraction
+  `g` of the bus and each loop's gain bounded by `G < 1`, the worst round trip
+  is `N g^2 G^2`, held at or below 0.25. That quantity is not the loop gain of
+  this network. The coupling matrix has a zero diagonal - every voice subtracts
+  itself - and off-diagonal entries `g H_j`, where `H_j` is the transfer from
+  an injection into string `j`'s loop to that string's own output, which at the
+  string's resonance is `|H_j| = 1 / (1 - G_j)` and **not** the round-trip gain
+  `G_j`. The coherent common mode drives all `N - 1` other strings in phase, so
+  the safe bound is the row-sum norm
+
+      (N - 1) * g * max_j 1/(1 - G_j)  <=  0.25
+
+  - 12 dB of margin - at every parameter setting including maximum Resonance
+  with eight strings fingered. The measured loop gains on an eight-string open
+  chord (`pf_loopgain`, read through the voice seam) run from 0.993686 on
+  string 0 to 0.998289 on string 7, so `max_j 1/(1 - G_j)` is **584** and the
+  bound gives `g <= 6.1e-5`. Neither the struck expression nor the intermediate
+  `(N - 1) g G` is conservative against that: a direct simulation of the
+  network (`pf_stability`, eight comb loops at the same delays and decay times,
+  each reading the delayed bus minus itself) **diverges between `g = 0.001` and
+  `g = 0.002`**, where `N g^2 G^2` reads 3.2e-5 and `(N - 1) g G` reads 0.0136,
+  and both would certify it. For scale, the shipping sympathetic injection gain
+  is `0.0045 * effectiveSympathetic` (:861). It drives a bus in bridge-force
+  units rather than loop-output units, so it is not directly comparable, but it
+  is the same order as that divergence threshold: `g` for the active-voice path
+  is a new, separately calibrated number and must not be inherited from the
+  inactive-voice path, which is stable only because it is acyclic.
+  `sympatheticAmount` continues to scale the coupling and still switches it off
+  completely at zero.
 
   **The step's headline is smaller than it was written to be.** At the shipping
   `sympatheticAmount = 0.20` the two notes already interact at **-36.1 dB over
@@ -1192,23 +1325,79 @@ engine first, and the measured baseline is quoted next to it.
   coupling, not 42 dB on top of nothing. What genuinely has no path is a voicing
   that leaves nothing open, and that is the case the verification must lead with.
   *Closes gap 8.* Last because it is the only step that removes a structural
-  stability guarantee. **Verified by** `testFingeredStringsShareTheBridge`:
-  **first**, on a chord that fingers all eight strings, `||chord - sum of the
-  eight singles|| / ||sum||` is **at or above -26 dB**, which is the case with no
-  existing path at all; then, at `sympatheticAmount = 0.20`, notes 40 and 47
-  rendered separately and together give the same ratio **at or above -26 dB**
-  over 0-1.5 s at velocities 0.02, 0.20 and 0.90 (today -36.1, -36.0 and
-  -36.1 dB - **not** the -68.2/-72.0/-56.4 dB first recorded, which were
-  measured on a decayed 10-12 s window and on `sympatheticAmount = 0`); the same
-  ratio at 10-12 s is **no more than 3 dB above** the ratio over 0-1.5 s, so the
-  coupling is lossy rather than regenerative; **a single note at
-  `sympatheticAmount = 0.20` renders within 0.05 dB of today's, band by band and
-  in T60**, which is the assertion that catches the self-term and without which
-  this step can silently retune the whole instrument; an eight-string chord at
-  full velocity stays finite and inside the existing output bound over a 30 s
-  render; at `sympatheticAmount = 0` the two-note render is bit-identical to the
-  sum; and the alias floor above 12 kHz stays **at least 150 dB** below the
-  spectral peak (today 155.1 dB).
+  stability guarantee. **Three of this step's assertions were corrected in
+  preflight; the reasons follow the list.** **Verified by**
+  `testFingeredStringsShareTheBridge`, with `pickNoise`, `fingerNoise` and
+  `releaseNoise` at zero throughout so what is measured is the coupling and not
+  the per-note noise seed.
+  **First**, on a chord that fingers all eight open strings (28, 35, 40, 45,
+  50, 55, 59, 64), the render at `sympatheticAmount = 0.20` differs from the
+  render at `sympatheticAmount = 0` by a relative L2 of **at or above -20 dB**
+  over 0-1.5 s. Today those two renders are **bit-identical**, difference
+  exactly zero (`pf_chordref`), because with every voice active there is no
+  inactive string left to ring and `sympatheticAmount` has no path at all. That
+  is the case this step exists to close, and it is the assertion no
+  implementation can pass without closing it.
+  Then, at `sympatheticAmount = 0.20`, notes 40 and 47 rendered separately and
+  together give `||AB - (A+B)|| / ||A+B||` **at or above -26 dB** over 0-1.5 s
+  at velocities 0.02, 0.20 and 0.90 (today **-37.8, -37.9 and -38.0 dB** with
+  the noise controls at zero, and -36.1, -36.0 and -36.1 dB with them at their
+  defaults - **not** the -68.2/-72.0/-56.4 dB first recorded, which were
+  measured on a decayed 10-12 s window and on `sympatheticAmount = 0`).
+  The coupling is lossy rather than regenerative: the residual `AB - (A+B)`
+  falls by **at least 20 dB in RMS** from the 0-1.5 s window to the 10-12 s
+  window (today 31.9 to 33.8 dB, `pf_late`), and an eight-string chord at full
+  velocity and maximum Resonance has **strictly lower RMS in each successive
+  1 s window** over a 30 s render, which stays finite and inside the existing
+  output bound. The bound of the previous paragraph is asserted directly at the
+  voice seam: `(N - 1) * g * max_j 1/(1 - G_j)` over the active voices, with
+  `g` and each `loopGain` read through the existing snapshot, is **at or below
+  0.25** at every setting the test sweeps, including maximum Resonance with
+  eight strings fingered.
+  **A single note renders within 0.05 dB of today's, band by band and in T60,
+  at `sympatheticAmount = 0.20` and again at `sympatheticAmount = 1.0`** -
+  which is the assertion that catches the self-term and without which this step
+  can silently retune the whole instrument. With one voice active the bus is
+  that voice's own contribution, so `bus - own` is exactly zero and the
+  injection must be exactly zero; the maximum setting is included because that
+  is where an unsubtracted self-term is largest, and the shipping 0.20 alone is
+  too small a gain to show it.
+  **Off is off**: at `sympatheticAmount = 0` the two-note additivity residual
+  stays within **0.1 dB** of its shipping values, -37.8, -37.9 and -38.0 dB at
+  the three velocities with the noise controls at zero, so the new path
+  contributes nothing at zero. And the alias floor above 12 kHz stays **at
+  least 150 dB** below the spectral peak (today 155.1 dB).
+
+  **What preflight corrected here, and why.** The first assertion read "on a
+  chord that fingers all eight strings, `||chord - sum of the eight singles|| /
+  ||sum||` is at or above -26 dB, which is the case with no existing path at
+  all". Measured on the shipping engine (`pf_chord`), that ratio is already
+  **-24.70 dB** at velocity 0.20 and -24.97 dB at 0.90 with the shipping noise
+  controls, and -25.51 dB with them at zero: it passes today, and it passes for
+  a reason that has nothing to do with the step. Each of the eight single-note
+  renders has the other seven strings ringing sympathetically and the chord has
+  none, so the sum-of-singles reference carries 56 sympathetic strings the
+  chord does not, and that mismatch is most of the -24.7 dB. Comparing the same
+  chord at two `sympatheticAmount` settings removes both that confound and the
+  noise-seed confound below, and is bit-exact today.
+  The second is "at `sympatheticAmount = 0` the two-note render is bit-identical
+  to the sum", which is unreachable and contradicts this section's own gap-8
+  measurement. Superposition already fails at about -40 dB today
+  (`pf_additivity` reproduces -40.39/-39.83/-39.74 dB): the shared body and coil
+  path, the summing guard gain `1 / sqrt(1 + 0.4356 * guardInput^2)` at
+  :4137-4143, and - for about 25 dB of it - the per-note noise seed, which
+  advances with `noteSequence_` and therefore differs between one pair render
+  and two single renders. With the three noise controls at zero the same
+  residual is -65.4/-62.0/-53.8 dB, which is what identifies the seed as the
+  larger term and why every measurement above pins those controls at zero.
+  The third is "the same ratio at 10-12 s is no more than 3 dB above the ratio
+  over 0-1.5 s". Today that rise is **4.7 to 6.2 dB** (`pf_late`) with the
+  shipping noise controls and 6.3 to 8.0 dB without them, so the engine already
+  fails
+  it, and a correct implementation will not meet it either: the ratio grows
+  because the coupled content outlives the direct note, which is what coupling
+  does. The absolute residual decay above tests the property it was reaching
+  for.
 
 ### Considered and not planned
 

@@ -935,6 +935,15 @@ struck them. Every threshold below has been checked against what the mechanism
 can actually reach, not only against what would be nice to assert: a contract
 nobody can pass is a contract nobody will keep.
 
+**Preflight note, 2026-08-08.** Every contract below was re-checked before
+implementation began, against the same scratch harness the section's figures
+were measured with, asking one question of each: if this step were implemented
+wrongly, or not at all, would the stated test still pass? Four of the five
+needed correcting, and steps 3 and 4 needed their *mechanism* corrected as well
+as their test. What was wrong in each case is recorded at the end of the step.
+The corrections came from two places: an external review of the plan, and the
+re-measurement done to check that review.
+
 - [ ] **1. Stop the hi-hat brightening as it rings.** A hat's top goes first: it
   is the dense upper-mode region of a bronze plate, and that is the region
   radiation damping removes fastest. Drumalor's does the opposite, and the reason
@@ -976,21 +985,34 @@ nobody can pass is a contract nobody will keep.
   10385 → 10868 Hz); that the Closed Hat's 50 ms centroid does not exceed its
   0 ms value (9357 → 10870 Hz today); that the Open Hat's rms over 500–600 ms
   falls by no more than **4 dB** against the present engine, so the darkening is
-  not the tail being deleted; and that the brightness span across velocity is at
-  least **3.5 dB** on both hats (2.07 and 2.59 dB today — 4.0 dB is out of reach,
-  because the existing `reach` term only spans 2.29× over v = 0.08..1.00 and a
-  corner moving 2.29× is worth about 1.4 dB on this measure). Drop the audit's
+  not the tail being deleted; and that the brightness span across velocity —
+  the 8–16 kHz over 2–6 kHz ratio over the first 60 ms defined at gap 1, stated
+  again in the test — is at
+  least **3.0 dB** on the Closed Hat and **3.5 dB** on the Open Hat (2.05 and
+  2.59 dB today, re-measured in preflight; 4.0 dB is out of reach, because the
+  existing `reach` term only spans 2.29× over v = 0.08..1.00 and a corner moving
+  2.29× is worth about 1.4 dB on this measure — which also puts a single 3.5 dB
+  floor about half a decibel outside what the mechanism can reach on the Closed
+  Hat, and is why the two floors differ). Drop the audit's
   pedal-brightness clause: over the first 60 ms a closed hat has already stopped,
   so a pedal-1.0-against-pedal-0.0 comparison in that window measures decay, not
   the loss law, and today it reads 10.87 against 11.07 dB on note 42 with a
   non-monotone 11.70 dB in the middle of the travel. If the pedal's darkening is
-  to be asserted at all, assert it as a *rate*: the fall in centroid per unit
-  time between 20 and 120 ms at pedal 0.35 must be at least **1.5×** the same
-  figure at pedal 0.85. The existing assertions that pedal 1.0 reproduces the
+  to be asserted at all, assert it as a *rate*, and assert the sign before the
+  ratio: the fall in centroid per unit time between 20 and 120 ms must be
+  **positive at both pedal 0.35 and pedal 0.85**, and the figure at pedal 0.35
+  must then be at least **1.5×** the figure at pedal 0.85. Without the sign
+  clause the ratio cannot fail — a hat that still brightened at pedal 0.85 would
+  give a negative denominator, and every possible value at pedal 0.35 is then
+  "at least 1.5×" it. The existing assertions that pedal 1.0 reproduces the
   Closed Hat and pedal 0.0 the Open Hat sample for sample must stay green, which
   is what forces the change onto both voices identically, and the Closed Hat's
   0.28–0.46 dB sample-rate independence must hold, which means the corner has to
   be computed in seconds and hertz rather than in samples.
+  *Corrected in preflight*: the pedal-rate clause was a ratio with an unguarded
+  sign, which no implementation could fail; and the single 3.5 dB velocity floor
+  was half a decibel above what this step's own arithmetic says the mechanism
+  reaches on the Closed Hat, so the two hats now carry separate floors.
 
 - [ ] **2. Put a contact time on both cymbal channels.** The 909 leg opens in
   three samples because `romEnvelope` and `clockPhase` both start at unity, and
@@ -1012,17 +1034,29 @@ nobody can pass is a contract nobody will keep.
   stated. *Closes gap 7 and the cymbal half of gap 4.* *Verified by*: a cymbal
   onset-and-velocity contract asserting that the Ride's time from trigger to
   −6 dB of peak at Machine 1.0 and v = 1.0 lies between **0.40 and 2.0 ms** (it
-  is 0.062 ms today, three samples at 48 kHz); that the same measurement at
-  v = 0.10 is at least **1.35×** the v = 1.0 figure, where the −1/5 law predicts
+  is 0.062 ms today, three samples at 48 kHz); that the Crash's same measurement
+  at Machine 1.0 and v = 1.0 lies between **0.40 and 4.0 ms** (0.10 ms today —
+  the window is wider than the Ride's because the analogue leg it is matching is
+  a 1.60 ms constant reading 3.375 ms to −6 dB, against the Ride's 0.85 ms
+  reading 0.854 ms); that the same measurement at
+  v = 0.10 is at least **1.35×** the v = 1.0 figure **on both cymbals**, where
+  the −1/5 law predicts
   1.585×, and that this ratio is measured with the spectral low-pass bypassed so
   the onset test reads the smoother rather than the filter's own group delay;
   that the Machine 0.0 onset stays within **0.05 ms** of its present 0.854 ms
   (Ride) and 3.375 ms (Crash) so the 808 smoother is untouched; that the
-  brightness span across velocity reaches at least **3.0 dB** on both cymbals
+  brightness span across velocity — the same 8–16 kHz over 2–6 kHz ratio over
+  the first 60 ms, stated in the test — reaches at least **3.0 dB** on both
+  cymbals
   (1.33 and 2.00 dB today); and that `analyseCymbalPreset`'s existing
   `presenceShare`, `airShare`, `logBandEntropy` and Machine-level assertions in
   `testCymbalQualityContract` stay green, since a low-pass on the leg carrying
   86–90 % of the energy is exactly what those bounds exist to catch.
+  *Corrected in preflight*: the onset assertions named only the Ride at Machine
+  1.0, so an implementation that smoothed the Ride's digital leg and left the
+  Crash's stepping in three samples passed the whole contract — the Crash's only
+  onset assertion was at Machine 0.0, where nothing changes. Both cymbals are
+  now named on both assertions.
 
 - [ ] **3. Make the membrane glide's depth follow the strike.** A head is stiff
   because it is stretched, so the pitch rise follows the energy actually in the
@@ -1037,9 +1071,32 @@ nobody can pass is a contract nobody will keep.
   *drawn* sweep sitting beside them: `1 + sweepAmount · pitchEnvelope` at `3550`,
   where `sweepAmount` is a panel knob, and on the Kick
   `1 + sweepAmount · triggerSweep · pitchEnvelope` at `3295`, where `triggerSweep`
-  spans only 0.84 to 1.00. Give the drawn sweep an energy-proportional depth of
-  the same bounded form: `1 + sweepAmount · min(1, kappa · modalEnergy)`,
-  normalised so that v = 1.00 lands where it lands today.
+  spans only 0.84 to 1.00. Give the drawn sweep an energy-proportional *depth*
+  and keep its existing *shape*: `1 + sweepAmount · strikeDepth · pitchEnvelope`,
+  where `strikeDepth = min(1, kappa · strikeEnergy)` is latched at note-on from
+  the quantities that are already known there — the velocity and
+  `excitationScale` — and `kappa` is chosen so the depth saturates at v = 0.85,
+  which leaves every accent exactly where it is today.
+  `voice.modalEnergy` must **not** be used as the sweep itself. It is a follower,
+  not a latch: traced through the shipping engine it sits between 2e−05 and
+  1e−04 at the strike sample against a peak of order one, reaches that peak at
+  1.15 ms (Mid Tom), 1.67 (Low Tom) and 2.40 (Kick), is at 1/e
+  of it by 7.0–8.4 ms and at one per cent of it by 33–49 ms. Substituted
+  for `pitchEnvelope` it would therefore start the note at its settled pitch,
+  bend it *upward* over the first two milliseconds, and still be holding
+  0.19 % of full depth at 60 ms where the existing 30 ms pitch envelope is at
+  0.025 % — eleven cents of residual bend on the Kick against one and a half.
+  That is
+  the opposite of the trajectory this step exists to preserve, and a direct
+  contradiction of the same step's requirement that the full-velocity glide stay
+  where it is. Multiplying the existing envelope by a latched depth is measured:
+  with the depth saturating at v = 0.85 a v = 1.00 render is bit-identical to
+  the present engine (−320 dB difference), the traced glide is unchanged at
+  25.728 (Kick), 10.440, 10.484 and 9.934 semitones, and the v = 0.08 glide
+  falls to 0.262, 0.444, 0.480 and 0.510 semitones, which is 1.0 % to 5.1 % of
+  the accent's. The whole shipping regression suite was run green against that
+  prototype in preflight, at saturation velocities of both 0.85 and 1.00, so the
+  "stays green" clauses below are measured rather than assumed.
   Do **not** carry `applyTension`'s 6 % ceiling across, as the audit proposed.
   That ceiling is a statement about how far a stretched head can go — about a
   semitone — and the sweep it would be applied to is a factor of 4.42 at the
@@ -1047,23 +1104,56 @@ nobody can pass is a contract nobody will keep.
   one, which is not the redistribution this step claims to be and would take the
   deep-analogue-kick contract with it. The ceiling here is the present sweep
   depth; the strike decides how much of it is used.
-  *Closes gap 5.* *Verified by*: extending the pitch-glide contract with an
-  estimator stated in the test, because the estimator is what produced the
-  audit's wrong numbers. Take the oscillator's frequency where the test can see
-  it — interpolated positive-going zero crossings of the render low-passed below
-  the m = 1 mode, with the first complete period giving the start and the median
-  over 350–500 ms the settled value — and apply it identically at both
-  velocities, so the assertion is on the *ratio* and cannot be moved by which
-  partials the band admits. Assert that the v = 0.08 glide is at most **35 %** of
-  the v = 1.00 glide on the Kick and all three Toms (it is 91.7 %, 99.2 %, 99.1 %
-  and 99.0 % today, traced from the engine's own oscillator frequency); that the
+  *Closes gap 5.* *Verified by*: extending the pitch-glide contract, measured at
+  the seam the section's own figures were measured at. The step adds a read-only
+  accessor for the newest voice's oscillator-0 frequency — the same trace the
+  re-measurement used, alongside the existing `getInstrumentLevel` and
+  `getBusGain` metering accessors — because **no zero-crossing estimator of the
+  render can see this sweep**, and a contract that quotes the traced numbers has
+  to measure the traced quantity. The estimator this step previously prescribed —
+  interpolated positive-going zero crossings of the render low-passed below the
+  m = 1 mode, first complete period against the median over 350–500 ms — was
+  built in preflight. With the corner anywhere below the m = 1 mode it reads
+  1.5–7.9 semitones on the Kick against the traced 25.73, 0.78–1.16 on the Low
+  Tom against 10.44, 2.9–3.5 on the Mid Tom against 10.48 and 2.5–3.1 on the
+  High Tom against 9.93. Moving the corner up does not converge on the traced
+  figure either, it only adds instability: the Low Tom jumps from 0.46 to 12.0
+  semitones between analysis corners of 220 and 300 Hz, where the second partial
+  enters the band, and the High Tom returns negative
+  glides above 300 Hz. The reason is structural rather than a
+  bad corner: the whole sweep collapses inside one period of the settled note —
+  the Kick's pitch envelope is at 1/e in 7.2 ms and its settled period is
+  20.4 ms — and a period-length estimator averages over exactly that interval.
+  On the trace, assert that the v = 0.08 glide is at most **35 %** of the
+  v = 1.00 glide on the Kick and all three Toms (it is 91.7 %, 99.2 %, 99.1 %
+  and 99.0 % today, and 1.0 % to 5.1 % with the latched depth); and that the
   v = 1.00 glide stays within **±15 %** of its present traced value (Kick 25.73,
   Low Tom 10.44, Mid Tom 10.48, High Tom 9.93 semitones) so this is a
-  redistribution and not a reduction; that the first pass's settled-pitch
-  assertion — the same partial within 5 cents at both velocities once the energy
-  has gone — stays green; and that `testDeepAnalogKickContract` stays green,
+  redistribution and not a reduction.
+  On the render, assert that the Kick's early band balance — the energy in
+  1.8 to 5 times the settled fundamental over the energy in 0.6 to 1.4 times it,
+  first 25 ms, both bands named in the test — falls by at least **6 dB** at
+  v = 0.08 against the present engine (it moves from 0.04 to −10.70 dB with the
+  latched depth) and stays within **0.5 dB** of the present engine at v = 1.00.
+  Only the Kick carries this clause: on the three Toms the same change moves that
+  balance by 0.3 to 1.7 dB, because in `renderTom` the head bank and the skin
+  noise dominate the first 25 ms, even though the whole render decorrelates
+  (the difference against the present engine is +1.2 to +3.9 dB of the render's
+  own level at v = 0.08 and v = 0.50). Assert also that the first pass's
+  settled-pitch assertion — the same partial within 5 cents at both velocities
+  once the energy has gone — stays green; that `testMembraneTensionModulation`'s
+  sharpening floors and decay range stay green; and that
+  `testDeepAnalogKickContract` stays green,
   since the Kick's sweep is its Punch knob and this step is rewriting how that
-  knob is applied.
+  knob is applied — it renders at v = 0.95, where a depth saturating at v = 0.85
+  leaves the sweep untouched.
+  *Corrected in preflight*: the mechanism replaced `pitchEnvelope` with the
+  `modalEnergy` follower, which starts at zero and outlasts the envelope by an
+  order of magnitude, so it would have inverted the early trajectory and broken
+  this step's own full-velocity clause; and the verification quoted numbers from
+  an oscillator trace while prescribing an estimator that reads three to
+  thirteen times lower, so the ±15 % clause could not be met by any
+  implementation.
 
 - [ ] **4. Split the degenerate mode pairs, and let Humanise move the strike
   azimuth.** Every m > 0 mode of an ideal circular head is a doubly degenerate
@@ -1071,14 +1161,30 @@ nobody can pass is a contract nobody will keep.
   close frequencies; Worland shows that ordinary non-uniform lug tension is
   enough, and drummers hear the result as the warble in a decay. Emit both
   members where `buildHeadBank` currently emits one (`DrumEngine.cpp:2320`),
-  separated by a relative split `delta` fixed per instrument from the unit's own
-  seed and in the range a cleared head shows — the beat rate is `f·delta`, and
+  separated by a relative split `delta` fixed per instrument — hashed from the
+  instrument index, so it is a property of the drum and reproduces after a reset
+  — and in the range a cleared head shows. The beat rate is `f·delta`, and
   the kit's m = 1 modes sit at 78 Hz (Kick), 117 (Low Tom), 195 (Mid) and 234
-  (High), so a 0.5 % to 2.5 % split puts every one of them between 0.4 and
-  5.9 Hz, inside the band the contract below measures. The two
+  (High), so a **1.5 % to 2.5 %** split puts every one of them between 1.2 and
+  5.9 Hz. The bottom of that range is set by the measurement rather than by the
+  physics: a 0.5 % split on the Kick beats at 0.39 Hz, which is outside the
+  0.5–12 Hz band the contract measures in and is a 2.6 s period against a tail
+  that lasts 0.93 s at Decay 0.85, so it would be untestable as well as
+  inaudible. The two
   members are orthogonal in azimuth, so their excitation balance is
-  `cos(m·phi)` and `sin(m·phi)` for a strike at azimuth `phi`; take `phi` from
-  the voice's per-hit seed, scaled by Humanise. That is the first deviation
+  `cos(m·phi)` and `sin(m·phi)` for a strike at azimuth `phi`. Take `phi` as a
+  **fixed nominal 25 degrees plus a per-hit perturbation of up to ±8 degrees
+  scaled by Humanise**. The nominal is not decoration and must not be dropped:
+  `humaniseDepth` is `2 · humanise` and multiplies every variation field
+  (`DrumEngine.cpp:3167–3197`), so an azimuth drawn only from the per-hit seed
+  and scaled by Humanise is exactly zero at Humanise 0 — `cos(m·0) = 1`,
+  `sin(m·0) = 0` — and only one member of each pair would ever be struck at the
+  setting every measurement in this section is taken at. There would be no beat
+  to measure. Twenty-five degrees also keeps `m·phi` off every multiple of
+  90 degrees for the six circumferential orders the table carries, so no pair is
+  silently reduced to one member; on m = 1 it puts the two members at 0.906 and
+  0.423, which is about 8.8 dB of beat depth. The perturbation is the first
+  deviation
   Humanise has ever made to the strike rather than to a control, and it closes
   the first pass's gap 4 along a different axis from the one that was withdrawn.
   Splitting needs slots: raise `resonatorCount` from 12 to 18
@@ -1094,24 +1200,52 @@ nobody can pass is a contract nobody will keep.
   −26 dB (Low Tom) and −22.5 dB (Snare). That is a re-voicing of the whole
   membrane half of the kit, small but real, and it belongs in the commit message
   and in a listening check rather than being discovered later.
-  *Closes gap 6.* *Verified by*: a membrane-tail contract that band-passes each
-  membrane around its m = 1 mode, takes a 10 ms envelope, removes the exponential
-  trend by fitting a line in dB, **band-limits the detrended residual to
-  0.5–12 Hz**, and only then asserts a peak-to-peak ripple of at least **1.5 dB**.
-  The band-limiting is the whole test: unfiltered, the detrended residual is
-  already 2.76 dB on the Kick, 3.53 on the Low Tom, 1.94 on the Mid Tom and 1.32
-  on the High Tom, all of it the analysis band-pass admitting neighbouring modes
-  and the settling oscillator, and all of it running at 85–137 Hz — so an
-  amplitude-only assertion passes today, on three of the four, for a reason that
-  has nothing to do with split pairs. Assert also that the ripple rate lies
-  between **0.5 and 12 Hz**; that two hits at Humanise 0 give the same rate within
+  *Closes gap 6.* *Verified by*: a membrane-tail contract that sets **Decay to
+  0.85** — as `testMembraneTensionModulation` already does, and for the same
+  reason — band-passes each membrane around its m = 1 mode at a **Q of 12**,
+  takes a sliding
+  10 ms envelope in dB, removes the trend by fitting a line in dB over a window
+  running from 30 ms to the point where that band falls 45 dB below its own peak
+  (**930 ms** Kick, 1190 Low Tom, 860 Mid Tom, 650 High Tom, all measured), and
+  band-limits the detrended residual to **0.5–12 Hz**.
+  The window, the Q and the Decay setting are part of the contract, not analysis
+  housekeeping: at the default Decay the same statistic read over the same
+  windows returns 15 to 27 dB on the Low Tom and the Mid Tom, all of it artefact,
+  because the window has run past
+  the tail into the noise floor.
+  What is then asserted is the **periodicity**, because the amplitude on its own
+  does not bite. Measured on the present, unsplit engine at Decay 0.85, the
+  band-limited detrended residual is already **3.46 dB** on the Kick, 1.89 on the
+  Low Tom, 1.29 on the Mid Tom and 1.10 on the High Tom — so the proposed 1.5 dB
+  floor passes today on two of the four, for the same reason the unfiltered
+  version passed on three: the residual is the slow curvature of a multi-mode
+  decay, not a beat. Band-limiting narrows that artefact; it does not remove it.
+  A beat is periodic and the curvature is not, which is what separates them:
+  today the residual makes **0 or 1** upward zero crossings inside the window on
+  the Kick, Mid Tom and High Tom, and 3 irregular ones on the Low Tom, with the
+  intervals between them spread by 40 %. So assert that the residual makes at
+  least **three** upward zero crossings inside the window with the intervals
+  between them agreeing within **15 %**; that the rate they imply lies between
+  **1.0 and 8.0 Hz** and matches `f·delta` for that drum within 10 %; that the
+  peak-to-peak depth is at least **6 dB** on the Kick and **4 dB** on each Tom,
+  both floors set above today's readings rather than beside them; that two hits
+  at Humanise 0 give the same rate within
   **2 %**, because a lug pattern is a property of the drum and not of the hit;
-  that the ripple depth over eight hits spreads by at least **0.8 dB** at
-  Humanise 1.0 and by at most **0.05 dB** at Humanise 0; and that the first pass's
+  that the ripple depth over eight hits spreads by at least **2.5 dB** at
+  Humanise 1.0 and by at most **0.10 dB** at Humanise 0 (today those spreads are
+  1.34 dB and 0.021 dB on the Kick, so the 0.8 dB the step first asked for was
+  another figure the present engine already clears, while the Humanise-0 bound is
+  reachable with room to spare); and that the first pass's
   settled-pitch, decay-range and dense-stress contracts stay green. Run the tail
   test on the Kick and the three Toms only: the Snare's m = 1 band stays within
   45 dB of its own peak for 72 ms, which is not a tail, and asserting a
   sub-12 Hz beat inside 72 ms asserts less than a tenth of a cycle.
+  *Corrected in preflight*: the azimuth was taken from the per-hit seed alone and
+  scaled by Humanise, which excites one member of each pair and no beat at all at
+  Humanise 0, where the whole contract is measured; the split range reached below
+  what the contract's own band and the tail's own length can resolve; and the
+  1.5 dB ripple floor and the 0.8 dB Humanise-1.0 spread were both measured, on
+  the present engine with no split in it, to pass already.
 
 - [ ] **5. Answer the notes and messages a drummer's kit actually sends.** Four
   articulations a drummer plays are unreachable, one the engine does make is
@@ -1152,17 +1286,28 @@ nobody can pass is a contract nobody will keep.
   *Verified by*: a MIDI-surface contract — which must define its level-matched
   third-octave residual in the test, for the reason given at the head of this
   section, and should use the audible-band form, restricted to bands within 40 dB
-  of the loudest — asserting that note 44 and note 42 at
+  of the loudest — and which must render each note on a fresh engine at
+  Humanise 0, since the per-hit seed still moves the noise layers between two
+  successive strikes of the same voice and every floor below is a floor on the
+  difference between two notes. The contract asserts that note 44 and note 42 at
   v = 0.9 differ by a level-matched third-octave residual of at least **6 dB**
   (they are the same trigger today) and that note 44's 8–16 kHz energy over the
   first 30 ms is at most **0.45×** note 42's; that note 53 and note 51 at v = 0.8
   differ by at least **6 dB** level-matched with the bell's decay to −20 dB at
   least **1.4×** the bow's; that notes 52 and 55 each differ from note 49 by at
-  least **4 dB** level-matched rather than being silent; that channel aftertouch
+  least **4 dB** level-matched **and each puts its first 60 ms within 6 dB of
+  note 49's**, because a level-matched residual against a silent render is not a
+  small number and the difference clause on its own is passed by leaving both
+  notes exactly as silent as they are today; that channel aftertouch
   127 after a crash puts the window 30 ms later at least **20 dB** below the
   unchoked one, with aftertouch 48 landing at least **6 dB** clear of both; and
-  that CC 88 values 0 and 127 ahead of the same velocity byte give peak levels at
-  least **0.02 dB** apart in the right order, while a note-on with no preceding
+  that CC 88 values 0 and 127 ahead of **velocity byte 64 on note 49** give peak
+  levels at
+  least **0.02 dB** apart in the right order — the note and the byte are part of
+  the assertion, since the low seven bits are worth 0.77 % of full velocity and
+  what that is worth in decibels depends entirely on which voice's velocity law
+  it lands in; on the Crash, whose `channel.peak` is `0.58 + 0.42·velocity`, it
+  is about 0.036 dB — while a note-on with no preceding
   CC 88 stays bit-identical to the present engine — which means the un-prefixed
   path must keep dividing by 127 rather than folding into the 14-bit
   `(msb·128 + lsb)/16383` scaling, since the two disagree by 0.07 dB at full
@@ -1177,6 +1322,10 @@ nobody can pass is a contract nobody will keep.
   at 40 ms must leave at least **10 dB** more energy in the 150–400 ms window
   than CC 4 held at 76, and at least **15 dB less** than no pedal move at all, so
   the splash is a release of damping and not a restoration of the note.
+  *Corrected in preflight*: the china and splash clause asserted only that notes
+  52 and 55 differ from note 49, which silence satisfies, and the CC 88 clause
+  asserted 0.02 dB without naming the note or the velocity byte it is 0.02 dB
+  on. Both now name what they measure.
 
 ### Considered and not planned
 

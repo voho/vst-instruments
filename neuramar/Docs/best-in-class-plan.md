@@ -913,9 +913,31 @@ planned*.
   0.10 dB and the shipping engine measures 21.55 dB. At shipping defaults, where
   the Air centres do move with pitch and are edge-limited near Nyquist, it
   asserts the same spread is **below 9.0 dB**, against 6.77 dB for the change and
-  19.20 dB today. A third assertion guards the Core: `testKeyboardLevelFlatness`
-  must stay green unchanged, and the Core-only level spread across MIDI 12-108 at
-  Body Lock 1 must move by less than 0.2 dB (measured: 0.14 dB against 0.07 dB).
+  19.20 dB today. A third assertion covers **Bone**, isolated the same way by
+  subtracting a Bone-muted render from a full one: at Body Lock 1 and Register 0
+  the isolated Bone layer's own level spread across those nine notes must be
+  **below 1.0 dB**. At that setting the Bone target depends on the played note
+  through `registerGain` and through nothing else — the Bone centres are frozen,
+  `frame.boneAmplitudes` does not depend on the played note, and Mutation is 0 —
+  so this is the sharpest form the gate can take. The test asserts first that at
+  least one Bone mode carries non-zero reliability, since `:1069` gates a
+  zero-reliability mode to silence and a silent layer would pass by default. A
+  fourth assertion guards the Core: `testKeyboardLevelFlatness` must stay green
+  unchanged, and the Core-only level spread across MIDI 12-108 at Body Lock 1
+  must move by less than 0.2 dB (measured: 0.14 dB against 0.07 dB).
+  *Contract corrected in preflight.* Every assertion first written here measured
+  Air or Core, so an implementation that deleted `* registerGain` from the Air
+  expression and left the Bone one alone satisfied the whole contract while
+  leaving half the defect in place. Preflight measured the missing half on a
+  scratch build of this change against a noise-bed fixture rooted at 220 Hz: the
+  isolated Bone layer's level spread across MIDI 12-108 at Body Lock 1 goes from
+  22.2 dB to 0.000 dB, and its ratio to Core from 24.40 dB to 2.16 dB, which is
+  that fixture's whole Core spread. The 9.0 dB bound on the shipping-default Air
+  case is fixture-sensitive in the other direction — the same scratch build
+  measures 13.5 dB after the change on a fixture rooted at 220 Hz, because the
+  moving Air centres run into the edge limit near Nyquist at the top of the
+  keyboard — so that bound must be re-measured on the fixture the test actually
+  builds before it is written down.
 
 - [ ] **2. Pan by pitch, fixed at note-on, instead of by chord rank.**
   `refreshVoicePans()` at `NeuramarEngine.cpp:656-685` recomputes every sounding
@@ -946,15 +968,27 @@ planned*.
   fundamental over 0.30-0.45 s, strikes MIDI 76 at 0.50 s, and asserts the held
   note's L-R difference over 0.51-0.60 s and again over 0.70-0.90 s changes by
   less than 0.05 dB, where it changes by 5.736 dB and 5.769 dB today. A second
-  assertion renders {57, 64, 71} in the six possible note orders and requires the
-  six buffers to agree to **better than -120 dB** relative RMS — not bit for bit.
+  assertion renders {57, 64, 71} in the six possible note orders **at Mutation
+  0** and requires the six buffers to agree to **better than -120 dB** relative
+  RMS — not bit for bit.
   Bit-identity is unreachable and the test must not ask for it: voices sum in
   voice-slot order, note order decides which slot a note lands in, and float
   addition is not associative, so with every pan already equal the six orders
   still differ by -146.7 dB and only 68% of samples match exactly. Today the same
   six differ by -6.0 to -13.5 dB, so -120 dB separates the two cases by 130 dB.
-  A third assertion renders a single note at Spread 0 and Mutation 0.12 and
-  requires L and R identical to within 1e-7, which fails today.
+  A third assertion renders a single note at Spread 0 and Mutation 0.12 —
+  deliberately at the shipping Mutation, because this one exists to catch the pan
+  jitter — and requires L and R identical to within 1e-7, which fails today.
+  *Contract corrected in preflight.* The six-order assertion did not say what
+  Mutation it ran at, and at any non-zero setting it cannot be met by a correct
+  implementation. `mutationOffset` is drawn at note-on from a hash of `midiNote`
+  and the order-dependent `ageStamp` (`NeuramarEngine.cpp:494-518`) and then
+  fixes the detune at `:703-705`, the harmonic and Air variation phases at
+  `:523-529`, the sixteen Air noise seeds at `:505-516` and the model-clock start
+  offset at `:731-734`, so permuting the note-ons changes the rendered audio for
+  reasons that have nothing to do with panning. Preflight measured the six orders
+  with the rank pan already removed (Spread 0): -145.9 dB at Mutation 0, -4.1 dB
+  at 0.10 and -2.9 dB at 0.12.
 
 - [ ] **3. Make Orbit a forward, level-continuous, non-repeating sustain.**
   The triangle fold at `NeuramarEngine.cpp:723-734` gives a held note an envelope
@@ -964,7 +998,17 @@ planned*.
   negative-damping segment, which is the one thing a passive resonator cannot
   produce, and no acoustic sustain repeats exactly. Replace the fold with three
   changes. Traverse the loop forward only, wrapping `loopEnd` back to `loopStart`
-  with an equal-power crossfade of one control period, so no leg runs backwards.
+  with an **equal-gain** crossfade of one control period — the two sides blended
+  linearly, weights summing to 1 — so no leg runs backwards. The crossfade acts
+  on the control-rate amplitude targets, not on two independent audio streams:
+  `voice.harmonicPhases` advance from `phaseStep` alone (`:1296-1308`) and never
+  consult the model clock, so both sides of the wrap drive the *same* oscillators
+  at the *same* phases and are perfectly correlated. Blending two equal
+  amplitudes with equal-power weights of `1/sqrt(2)` would therefore raise the
+  level 3.01 dB at the midpoint of every wrap, which is a wrap-rate pumping
+  artefact of exactly the kind this step exists to remove. Equal-gain is also
+  what the existing target ramp already does for free: `:1126-1128` steps each
+  amplitude linearly from its old value to its new one over one control period.
   Advance the wrap point each pass by `(phi - 1) = 0.6180339887` of the loop
   length, keeping the read segment inside `[loopStart, loopEnd]` and wrapping the
   offset modulo the loop length, so successive passes read a different part of the
@@ -984,20 +1028,47 @@ planned*.
   *Verified by*: `testOrbitSustainIsNotPeriodic` holds a note for 6 s at shipping
   defaults on the *decay* fixture with Air and Bone muted — muted because the Air
   noise stream is what blurs the envelope and the test must measure the
-  trajectory, not the noise — takes a 20 ms short-time RMS envelope, and asserts
-  over t in [2, 6] s that the envelope's **peak-to-peak spread is below 1.5 dB**,
-  against 2.99 dB today and 4.68 dB on the percussive fixture. That bound, not an
-  autocorrelation, is the primary gate, because it is the one that stays
+  trajectory, not the noise — takes a short-time RMS envelope over frames of a
+  **whole number of played-fundamental periods** (11 periods, 50.0 ms at the
+  220 Hz fixture), and asserts over t in [2, 6] s that the envelope's
+  **peak-to-peak spread is below 1.5 dB**, against 2.56 dB today at that frame
+  length and 4.68 dB on the percussive fixture. That bound, not
+  an autocorrelation, is the primary gate, because it is the one that stays
   well-posed after the fix: a normalised autocorrelation of a mean-removed
   near-constant envelope is 0/0, and the shipping engine already scores above 0.98
   at *every* lag on the sustained fixture, whose envelope only moves 0.56 dB — the
   metric proposed in the first draft cannot tell a pumping sustain from a steady
-  one. Two supporting assertions: the largest rise between consecutive 20 ms
-  frames after t = 2 s must be below 0.25 dB, which is a direct test that no leg
-  runs backwards on a monotonically decaying trajectory; and, guarded by a check
-  that the envelope's spread exceeds 0.5 dB so the statistic is meaningful, the
-  normalised autocorrelation at the old ping-pong period `2 * loopLength` must be
-  below 0.60, against 0.979 today.
+  one. Three supporting assertions. The largest rise between consecutive frames
+  after t = 2 s must be below 0.25 dB, which is a direct test that no leg runs
+  backwards on a monotonically decaying trajectory: today it is 0.52 dB, and a
+  frozen model clock — the stationary control — gives exactly 0.00 dB. The
+  sustain must still be **moving**: the per-frame spectral centroid over the same
+  span must have a peak-to-peak spread of at least 1% of its own mean, which is
+  3.35% for the traversing clock today and 0.002% for a frozen one. And the
+  sustain must not **repeat**: the normalised autocorrelation of the mean-removed
+  per-frame centroid must be below 0.60 both at the new forward period
+  `loopLength` and at the old ping-pong period `2 * loopLength`, against 0.88 and
+  0.86 today.
+  *Contract corrected in preflight.* Three things were wrong, all measured on the
+  shipping engine by a scratch program against a decay fixture (32 partials,
+  `tau_1` 0.9 s, `p` 0.75, root 220.01 Hz at MIDI 57, learned loop
+  [1.0082, 1.2859] s, so `loopLength` is 0.2777 s). First, the 20 ms
+  envelope frame first specified here is 4.4 periods of a 220 Hz fundamental, so
+  its RMS ripples by 0.335 dB peak to peak and 0.333 dB frame to frame on a
+  *perfectly stationary* render — the 0.25 dB rise bound could not be met by any
+  correct implementation. At a whole number of periods the same stationary render
+  measures 0.0000 dB and the bound is well-posed. Second, both remaining
+  assertions were stated on the level envelope, which this step's own detrending
+  is designed to flatten: an implementation that simply froze the clock at
+  `loopEnd`, and one that wrapped forward from a *fixed* point and so repeated
+  exactly at `loopLength`, both passed the spread and rise gates and both had the
+  autocorrelation gate skipped by its "spread exceeds 0.5 dB" guard. Moving the
+  non-repetition test onto the per-frame spectral centroid fixes both: detrending
+  does not touch it, a frozen clock collapses it to 0.002% of its mean, and a
+  fixed wrap point is caught at lag `loopLength`. Third, the autocorrelation gate
+  was stated only at `2 * loopLength`, which the golden-ratio advance is not the
+  only way to defeat; testing `loopLength` as well is what makes the advance
+  load-bearing.
 
 - [ ] **4. Damp the release by frequency, using the source's own damping law as
   the shape.** Release is one scalar on the summed output
@@ -1015,7 +1086,16 @@ planned*.
   the panel's number keeps its meaning, and with the *ratio* `tau_rel(1) /
   tau_rel(k)` additionally clamped to at most 12 so that a badly-conditioned fit
   cannot turn Dissolve into a brickwall on the top of the spectrum. Air bands and
-  Bone modes take the same law at their own centre frequencies.
+  Bone modes take the same law at their own centre frequencies, and the law is
+  clamped on the slow side as well: `tau_rel(k)` is never allowed to exceed
+  `tau_rel(1)`. That second clamp is not cosmetic. `f_1` is the *played*
+  fundamental while the Air centres are the model's own 94 Hz to 13.6 kHz grid
+  and the Bone centres are `rootFrequencyHz * ratio`, so slots below the played
+  fundamental are routine rather than exotic: at the root note itself, three of
+  sixteen Air bands sit below `f_1` and the lowest of them would take a time
+  constant 1.89 times partial 1's, and at MIDI 108 at Body Lock 1 twelve of
+  sixteen do, the lowest at 17.2 times. Without the clamp those slots outlive the
+  slot the voice retires on and are cut mid-release.
   Be honest about what the exponent is: `p` is fitted from the source's *free*
   decay and applied to a *damper*, which is an analogy and not a derivation — the
   claim this step can defend is that the release should be frequency-dependent,
@@ -1026,22 +1106,26 @@ planned*.
   into the control-rate amplitude targets rather than the per-sample loop, which
   is one multiply per slot per 192 samples, but it needs a 284-float per-voice
   release-gain array (about 73 KB across 16 voices) and 284 `pow()` calls at
-  note-off. Voice retirement stays on partial 1, which is the slowest slot, so no
-  note is cut short. Closes gap 1 and supplies the exponent step 5 needs.
+  note-off. Voice retirement stays on partial 1, which the slow-side clamp above
+  makes the slowest slot again, so no note is cut short. Closes gap 1 and
+  supplies the exponent step 5 needs.
   *Verified by*: `testReleaseDarkensTail` learns the fixture whose per-partial
   decay is `tau_h = tau_1 h^-0.75`, renders it twice at Dissolve 0.65 s — held,
   and released at t = 0.30 s — and measures each partial's least-squares sinusoid
-  amplitude at 0.32 s and 0.47 s in both, subtracting the held drop from the
-  released drop so that the model's own decay is cancelled and only the release
-  is left. It asserts partial 1 loses `100 dB * 0.150/0.65 = 23.08 dB` to within
-  0.5 dB (unchanged calibration; measured -23.077 dB today), that partial 32 loses
-  between 10 dB and 260 dB more than partial 1 — a two-sided window, because
-  `32^-0.75` alone predicts 287 dB of excess and an unbounded assertion would
-  accept a release that simply deletes the top of the spectrum — and that the
-  released tail's spectral centroid at 150 ms after note-off is at least 20% below
-  the held note's, against **0.02%** today. The load-bearing assertion is the
+  amplitude in both, subtracting the held drop from the released drop so that the
+  model's own decay is cancelled and only the release is left. It asserts partial
+  1 loses `100 dB * 0.150/0.65 = 23.08 dB` over 0.32 s to 0.47 s to within 0.5 dB
+  (unchanged calibration; measured -23.077 dB today). The frequency-dependence
+  assertion is taken over a **40 ms** release interval, 0.32 s to 0.36 s, with an
+  analysis half-window of 10 ms: partial 8 must lose between **15 dB and 30 dB**
+  more than partial 1 — `6.15 * (8^0.75 - 1)` predicts 23.1 dB — and the excess
+  must increase monotonically over partials 1, 2, 4 and 8. The window is
+  two-sided because an unbounded assertion would accept a release that simply
+  deletes the top of the spectrum. A third assertion is that the released tail's
+  spectral centroid at 150 ms after note-off is at least 20% below the held
+  note's, against **0.02%** today. The load-bearing assertion is the
   fourth: the same test learns a **control fixture with frequency-independent
-  decay** (`tau_h = tau_1`, `p = 0`) and requires its partial-32 excess to stay
+  decay** (`tau_h = tau_1`, `p = 0`) and requires its partial-8 excess to stay
   below 1.0 dB and its fitted `p` below 0.10. Without that control, a hard-coded
   exponent passes every other assertion in this step. Measured on scratch fits of
   the model's own trajectories: `p` recovers as 0.734 on the `p = 0.75` fixture,
@@ -1049,7 +1133,30 @@ planned*.
   root-mean-square residual in `log tau` at 0.006, 0.001 and 0.013 respectively
   against 0.332 on a sustained source and 0.551 on a struck body — so the residual
   is also the fallback signal, and a fit above about 0.15 should fall back to
-  `p = 0` rather than key-track on noise.
+  `p = 0` rather than key-track on noise. A fifth assertion covers retirement,
+  which no assertion in the first draft touched: at Body Lock 1, at root+24 and
+  root+51 semitones, the isolated Air layer and the isolated Bone layer must each
+  sit at least 60 dB below their own level at note-off over the last 5 ms before
+  `getActiveVoiceCount()` reaches 0. That one passes today — the single release
+  scalar takes every layer down together — and exists to catch the specific way
+  this step can break retirement: without the slow-side clamp, the slowest Air
+  band at root+24 has fallen only 30.9 dB and at root+51 only 5.8 dB when the
+  voice built on partial 1 retires underneath it.
+  *Contract corrected in preflight.* Two things were wrong. The excess assertion
+  was stated on partial 32 over the 150 ms interval, where the arithmetic puts it
+  out of reach of any measurement: with the ratio clamped at 12, partial 32's
+  release drop over 150 ms is 254 dB, which on this fixture lands it near
+  -290 dBFS. A release that deletes the top of the spectrum outright measures the
+  same floor-limited number as the correct one, so the 260 dB upper bound could
+  never bind. Partial 8 over 40 ms keeps both ends of the window on real signal:
+  preflight measured the released partial at -71.8 dBFS there. The analysis
+  window matters too — the existing `windowedSinusoidAmplitude` uses a fixed
+  40 ms half-window, which smears a 40 ms interval and reports partial 1 losing
+  6.042 dB where the true figure is 6.154 dB; at a 10 ms half-window it reports
+  6.153 dB. And retirement had no assertion at all while the step asserted in
+  prose that partial 1 is the slowest slot, which the sub-fundamental Air and
+  Bone slots make false; the slow-side clamp and the fifth assertion above are
+  what make that sentence true.
 
 - [ ] **5. Key-track the model clock by the same fitted damping exponent.**
   `NeuramarEngine.cpp:1379` advances the model clock at `evolutionRate /
@@ -1061,9 +1168,13 @@ planned*.
   transposition ratio `r` has fundamental `f_1 r` and a consistent decay time
   `tau_1 r^-p`, which means the model clock should advance at
   `evolutionRate * r^p`, clamped to [0.25, 4] so a badly-fitted exponent cannot
-  make a note vanish. At the root `r = 1` and the render is bit-identical. Apply
-  the same `r^p` to the release time constant of step 4, so the top of the
-  keyboard also damps faster than the bottom. This is the mechanism, not a taste
+  make a note vanish. At the root `r = 1` and the render is bit-identical.
+  **Divide** step 4's release time constants by the same `r^p` — equivalently,
+  multiply their decay rates by it — so the top of the keyboard also damps faster
+  than the bottom. The direction matters and is easy to get backwards: `r^p` is a
+  clock *rate*, so it multiplies the model clock, and a time constant is the
+  reciprocal of a rate, so it is divided. `tau_rel(1) = releaseSeconds * r^-p` is
+  the same `tau_1 r^-p` the derivation above starts from. This is the mechanism, not a taste
   control: the exponent comes from the sound the user dropped in, so a source with
   frequency-independent damping keeps `p = 0` and keeps a pitch-invariant decay.
   Three costs the first draft did not name, all of which have to be decided before
@@ -1094,6 +1205,29 @@ planned*.
   frequency-independent decay must keep both ratios within [0.90, 1.10], which
   fails on any implementation that key-tracks by a constant rather than by the
   fitted exponent.
+  The release side needs its own assertion, because every T20 above is measured
+  on a held note and none of them involves a note-off at all. The same test
+  renders MIDI 45, 57 and 81 with a note-off at t = 0.30 s at Dissolve 0.65 s,
+  Orbit 0, Air and Bone muted, and measures the played fundamental's
+  **release-only** drop over 0.32 s to 0.36 s the way step 4 does — released
+  minus held, 10 ms analysis half-window. The drop must scale as `r^p`: it
+  asserts `drop(81)/drop(57)` lies in [2.4, 3.3] against a predicted
+  `4^0.75 = 2.83`, and `drop(45)/drop(57)` in [0.50, 0.70] against a predicted
+  `0.5^0.75 = 0.595`. Preflight measured the shipping engine at -6.177 dB at
+  MIDI 45, -6.153 dB at 57 and -6.154 dB at 81, ratios 1.000 and 1.004, and a
+  retirement
+  0.6480 s after note-off at every key, so the assertion bites hard on a
+  missing implementation. It also bites on a reversed one: multiplying the time
+  constant by `r^p` instead of dividing puts the ratios at 0.354 and 1.68, on the
+  wrong side of both windows. The `p = 0` control fixture must hold both release
+  ratios within [0.95, 1.05].
+  *Contract corrected in preflight.* This step said "apply the same `r^p` to the
+  release time constant", which for `p > 0` and a note above the root
+  *lengthens* the release — the opposite of the sentence it justifies and of the
+  `tau_1 r^-p` the paragraph derives two lines earlier. The T20 assertions could
+  not catch it, because they exercise the model trajectory of a held note and
+  never release one. The mechanism and the missing release assertion are both
+  fixed above.
 
 - [ ] **6. Vary excitation strength between notes instead of skipping into the
   attack.** Delete the start-time offset at `NeuramarEngine.cpp:731-734`, whose
@@ -1128,10 +1262,31 @@ planned*.
   take's first-10 ms energy relative to its own peak is within 0.5 dB of the
   Mutation-0 render's, so no take loses transient, against 0.624 dB spread today.
   And it asserts that at Mutation 0 twelve takes are bit-identical, which they are
-  today and which any replacement mechanism must preserve. The `|mean - median|`
+  today and which any replacement mechanism must preserve. A fourth assertion is
+  what makes the step's physical claim testable rather than decorative: the same
+  twelve takes are re-rendered at **Touch 0.35**, the shipping value, and the
+  takes' peak levels and spectral centroids must rank-correlate at **0.9 or
+  better** (Spearman), with the loudest take's centroid at least **1%** above the
+  quietest take's. That is the "level and brightness co-vary" claim stated as a
+  number. Routing the jitter through `voice.velocity` produces it by
+  construction, because `velocityGain` at `:519` and `touchTilt` at `:770-774`
+  are both monotone in the same velocity; a per-take output gain, which passes
+  all three of the assertions above, produces exactly zero of it. The 1% floor is
+  conservative: scaling gap 7's measured +26.2% centroid movement for a velocity
+  span of 0.95 down to the +/-0.066 this jitter draws at Mutation 0.12 predicts
+  about 3.6%, or about 5% at a coefficient of 0.75, and the exact figure is
+  fixture-dependent and has to be re-measured on the *percussive* fixture the
+  test builds. The `|mean - median|`
   assertion proposed in the first draft is dropped: it is 0.015 dB today at
   Mutation 0.12 and 0.119 dB at Mutation 0.50, so it passes before the change and
   proves nothing. The peak distribution is not measurably bimodal.
+  *Contract corrected in preflight.* The three assertions first written here
+  measure peak-level spread, transient retention and exact determinism at
+  Mutation 0, and a per-note random *output gain* satisfies all three — a pure
+  gain cancels out of "first-10 ms energy relative to its own peak", so it scores
+  0.0 dB there. The step's whole argument is that the variation must travel
+  through the excitation path so level and timbre move together, and nothing
+  tested that. The rank-correlation assertion does.
 
 ### Considered and not planned
 

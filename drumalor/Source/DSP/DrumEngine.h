@@ -422,6 +422,17 @@ private:
         // further than this damps the voice; one that opens again does not
         // bring it back, because a hat that has been shut has been shut.
         float hatAperture { 1.0f };
+        // The hat's top, leaving. A one-pole low-pass in front of the hiss
+        // path whose corner starts where the strike reached and then falls as
+        // the plate loses its upper modes. Everything here is in hertz and
+        // seconds so it reads the same at every sample rate; a start corner of
+        // zero disables the path, which is what every voice that is not a hat
+        // leaves it at.
+        float hissCornerStart { 0.0f };
+        float hissCornerFloor { 0.0f };
+        float hissCornerSeconds { 1.0f };
+        float hissLowpassCoefficient { 1.0f };
+        float hissLowpassState { 0.0f };
         float baseFrequency { 100.0f };
         float sweepAmount { 0.0f };
         float panLeft { 0.70710678f };
@@ -578,6 +589,7 @@ private:
     [[nodiscard]] float renderSnare (Voice& voice) noexcept;
     [[nodiscard]] float renderClap (Voice& voice) noexcept;
     [[nodiscard]] float renderHat (Voice& voice) noexcept;
+    [[nodiscard]] float tickHissLowpass (Voice& voice, float input) noexcept;
     [[nodiscard]] float renderRide (Voice& voice) noexcept;
     [[nodiscard]] float renderCrash (Voice& voice) noexcept;
     [[nodiscard]] float renderTom (Voice& voice) noexcept;
