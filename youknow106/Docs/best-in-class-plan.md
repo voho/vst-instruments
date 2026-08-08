@@ -775,7 +775,11 @@ bandwidth (−3 dB at 12 kHz) and distortion (0.3% at 0.78 Vrms, 2.5% at
 1.5 Vrms) also specifies **noise 0.2 mVrms max** A-weighted and S/N 88 dB typ.
 Driving `Chorus` directly at 192 kHz with silence and recovering the wet line
 through the known gain chain gives **1.061 mVrms full band, 1.047 mVrms
-A-weighted** at the BBD node in the model's own 2.6 V coordinate — **+14.4 dB**
+A-weighted** at the BBD node in the model's own 2.6 V coordinate
+[re-measured on implementation, 2026-08-08: **1.0611 mVrms full band** to the
+digit, and **1.0488 mVrms A-weighted** — the A-weighted figure refines by
+0.015 dB when both channels and both modes are averaged over a window long
+enough to converge] — **+14.4 dB**
 against the datasheet maximum and +24.9 dB against the ~59.7 µVrms implied by
 S/N 88 dB at the 1.5 Vrms maximum input. Chorus is the instrument's signature
 and this is the tell that survives every other fidelity gain. Audibility: clear.
@@ -1603,7 +1607,7 @@ Restored, the full run is green: 6/6, 224.8 s.
   now reads only a step a real gate leaves, not DC the model manufactures, which
   is the stronger position.
 
-- [ ] **4. Set the BBD line noise from the MN3009's own noise specification.**
+- [x] **4. Set the BBD line noise from the MN3009's own noise specification.**
   `independentLineRandomAmplitude` is the last voiced quantity in an otherwise
   anchored part model: the same datasheet already fixes the −3 dB bandwidth at
   12 kHz and the distortion at 0.3% / 2.5%. Stated plainly, this is *not* a fit
@@ -1624,26 +1628,59 @@ Restored, the full run is green: 6/6, 224.8 s.
   the research contract that the datasheet also supports a figure 10.5 dB lower,
   so a later pass has the bracket rather than a rediscovered contradiction.
 
-  *Verified by*: an extension of `testChorusNoiseComponents` asserting the
-  recovered wet-line A-weighted noise is **at or below 0.200 mVrms, and within
-  1 dB of it** (the "max" is an upper bound, so the assertion is one-sided by
-  construction with a floor to catch an over-correction), plus a new
-  engine-suite assertion that the idle plug-in output floor with **VOLUME 0.80,
-  VCA LEVEL 0.80, CHORUS NOISE 1.0 and CHORUS MODE I pinned**, measured as RMS
-  over 4 s after a 2 s settle, lands at **−77.85 dBFS ± 0.5 dB**, against
-  **−63.44 dBFS today** [re-measured 2026-08-07 preflight] — the same 14.4 dB
-  the wet-line assertion imposes. The two deltas must agree to within 0.5 dB:
-  with the chorus off the same fixture's output is **bit-exact zero** (measured,
+  *Verified by*: a new circuit-suite check beside `testChorusNoiseComponents`
+  asserting the recovered wet-line A-weighted noise is **at or below 0.200 mVrms
+  (allowing 0.05 dB for the estimator's own repeatability, see below), and
+  within 1 dB of it** (the "max" is an upper bound, so the assertion is
+  one-sided by construction with a floor to catch an over-correction), plus a
+  new engine-suite assertion that the idle plug-in output floor with **VOLUME
+  0.80, VCA LEVEL 0.80, CHORUS NOISE 1.0 and CHORUS MODE I pinned**, measured as
+  RMS over 4 s after a 2 s settle, lands at **−77.85 dBFS ± 0.5 dB**, against
+  **−63.44 dBFS today** [re-measured 2026-08-07 preflight; the shipped fixture
+  reproduces it at **−63.4413 dBFS**, to the digit] — the same 14.4 dB the
+  wet-line assertion imposes. The two deltas must agree to within 0.5 dB: with
+  the chorus off the same fixture's output is **bit-exact zero** (measured,
   peak 0.000e+00 over 2 s), so the BBD line noise is the *only* contributor to
-  this floor and any output-floor movement that does not match the wet-line
-  movement means something other than `independentLineRandomAmplitude` moved.
+  this floor and any
+  output-floor movement that does not match the wet-line movement means
+  something other than `independentLineRandomAmplitude` moved.
   **One target, not two:** the original's separate −76.2 dBFS (I) and −75.5 dBFS
   (II) assert a 0.7 dB mode difference the code cannot produce —
   `Chorus::settingsFor` gives modes I and II the same `lineGain` and the same
   sweep, differing only in rate, and `enableChorusRateNoise` is off by default;
   measured at the pinned controls above, the two floors are **−63.4413 and
-  −63.4504 dBFS, 0.0091 dB apart**. The existing MN3009 bandwidth and THD
-  anchors must pass unchanged.
+  −63.4504 dBFS, 0.0091 dB apart** [reproduced on implementation: the shipped
+  fixture reads −63.4413 dBFS for mode I exactly, and a separate harness reads
+  −63.4409 / −63.4508, 0.0099 dB apart — the fourth decimal moves with the
+  measurement window and nothing else does]. The existing MN3009 bandwidth and
+  THD anchors must pass unchanged.
+
+  **The measurand needs a rate and a window, and the upper bound needs a
+  tolerance** [corrected on implementation, 2026-08-08]. Two things the contract
+  above left unstated turn out to decide whether it can be met at all.
+
+  *It is rate dependent.* A coarser numerical grid folds more of the held noise
+  sequence back into the reconstruction band, so the recovered figure is not one
+  number: the same measure reads **0.40338 at 192 kHz, 0.40795 at 96 kHz,
+  0.42238 at 48 kHz and 0.42486 at 44.1 kHz** in transfer terms — so with HQ
+  switched off the recovered figure reads **0.40 dB high at a 48 kHz host,
+  0.45 dB high at 44.1 kHz and 0.10 dB high at 96 kHz**. Gap 3's 192 kHz is
+  therefore part of the measurand and not an incidental fixture choice. Across
+  HQ the choice does not bite: `minimumHqProcessingRate` is 176400, so HQ
+  targets 176.4 kHz from the 44.1 kHz host-rate family and 192 kHz from the
+  48 kHz family, and the two read 0.005 dB apart.
+
+  *A bound placed exactly on 0.200 mVrms is decided by the estimator, not by the
+  constant.* This is a finite-window estimate of a random process's power and
+  does not converge better than about ±0.1%: over windows of 4 s to 256 s in
+  both modes the pre-change estimate spans **1.04657–1.04968 mVrms** about a
+  **1.04878 mVrms** long run, and a 1 s window reaches 1.05429. Scaled onto the
+  0.200 mVrms target that is a ±0.02 dB coin flip against a strictly one-sided
+  bound. The upper bound therefore carries **0.05 dB** — about four times the
+  estimator's measured 0.026 dB peak-to-peak spread over that window range, and
+  negligible against the datasheet's own 10.5 dB bracket. The lower
+  fence stays at the step's 1 dB, because a maximum is a maximum and 1 dB only
+  has to catch a gross over-correction.
 
   *Contract corrected in preflight, 2026-08-07.* The floor assertion was written
   as "a delta against a reference render", which is not buildable: once the
@@ -1655,6 +1692,54 @@ Restored, the full run is green: 6/6, 224.8 s.
   is fully determined by the line-noise constant and is stated directly. The
   requirement that the two deltas agree is new, and is what stops the second
   assertion from being satisfied by moving a gain somewhere else.
+
+  *What actually shipped.* The step, with the measurand pinned down as above.
+  `independentLineRandomAmplitude` is no longer a literal: it is
+  `mn3009OutputNoiseAWeightedVrms / (nodeVoltsPerUnit ·
+  lineNoiseAWeightedTransfer)` = **1.90687e-4**, down 14.39 dB from the 1.0e-3
+  compatibility level, and all three terms are published on `Chorus` so the
+  suite can re-solve the equation rather than re-assert the answer. The middle
+  term is new and is the part the step's text does not name: the datasheet row
+  bounds a noise *voltage at the part's output*, so referring it to the
+  amplitude the line writes at each clock edge needs the whole chain from the
+  injection point — hold, tap-summing pole, both reconstruction sections, wet
+  output coupling — under the datasheet's own A weighting. That transfer is
+  **0.4034**, which is 1/√3 (a uniform sequence's own RMS) times 0.6987, and the
+  second factor is dominated by the hold: at the sweep's 20.0–91.4 kHz clock the
+  held sequence's sinc-shaped density puts roughly half its power inside the
+  10 kHz reconstruction band. It is a measured property of this model's own
+  linear filters, not a fit to any recording, and the assertion re-measures it
+  from the render, so a change to the reconstruction sections that left it stale
+  would fail.
+
+  Both gap-3 figures reproduce: **1.0611 mVrms full band** to the digit, and
+  **1.0488 mVrms A-weighted** against the gap's 1.047 — a 0.015 dB refinement
+  from averaging both channels and both modes over a long window rather than
+  one channel over a short one. The gap's text is corrected accordingly.
+
+  Everything the step predicted landed. Recovered A-weighted wet line after the
+  change: **0.19978 mVrms (I) and 0.20016 mVrms (II)** at the suite's 16 s
+  window, 0.19997 / 0.20001 in the long run. Idle output floor at the pinned
+  controls: **−77.8342 dBFS (I)** on the shipped fixture, and −77.8345 /
+  −77.8444 dBFS (I / II) on the separate harness, against the step's predicted
+  −77.85 ± 0.5 dB — 0.016 dB from the prediction. The two deltas agree: the
+  constant moved **−14.3929 dB** exactly, the idle floor moved −14.3929 dB and
+  the recovered wet line −14.3922 dB, which is what a path that is linear from
+  the injection point onwards has to do. The MN3009 bandwidth and THD anchors
+  pass unchanged, as does everything else in the suite.
+
+  One existing check needed a one-line change and is stronger for it.
+  `testBbdOutputPolyBlepSeparatesPhysicalAndNumericalAliases` re-derived the
+  expected held sample with a literal `1.0e-3f`. It is a bit-exactness check on
+  the BLEP path, not a level check, so it now reads
+  `Chorus::independentLineRandomAmplitude` and no longer has an opinion about
+  what that value is.
+
+  Two small notes. The 2.6 V node coordinate had to be named inside `Chorus` to
+  refer the datasheet's volts to model units; the engine `static_assert`s it
+  equal to `internalVoltsPerUnit` so the two files cannot drift apart. And gap 7
+  predicted this: with the chorus wet path 14.4 dB quieter, the dry path's own
+  bit-exact silence between notes is now that much more exposed.
 
 - [ ] **5. Make the warm-up clock a wall-clock accumulator neither a quality
   setting nor a host rate can move.** `thermalWarmupSeconds_` becomes a `double`

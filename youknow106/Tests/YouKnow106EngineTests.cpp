@@ -4310,6 +4310,124 @@ void testChorusNoiseIsPresentAndDefeatable()
            "the delay lines still hiss with their noise switched out");
 }
 
+void testIdleOutputFloorCarriesTheMn3009NoiseRow()
+{
+    // What the line-noise constant is worth at the jacks. The circuit suite
+    // fences the recovered wet line against the MN3009's 0.2 mVrms row; this
+    // one fences the number a listener meets, and ties the two together so
+    // neither can be satisfied on its own.
+    //
+    // The fixture is pinned rather than derived from plainPatch(), because the
+    // floor scales with two panel controls and with nothing else: VOLUME 0.80,
+    // VCA LEVEL 0.80, CHORUS NOISE 1.0, Unit Character 1.0, no note ever
+    // played, HQ on at a 48 kHz host rate so the chorus runs at its 192 kHz
+    // internal rate. RMS of both channels over 4 s after a 2 s settle.
+    constexpr double sampleRate = 48000.0;
+
+    const auto idleFloorDbfs = [&](ChorusMode mode) {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        EngineParameters parameters;
+        parameters.volume = 0.80f;
+        parameters.vcaLevel = 0.80f;
+        parameters.chorusNoise = 1.0f;
+        parameters.calibration = 1.0f;
+        parameters.chorus = mode;
+        engine.setParameters(parameters);
+        render(engine, static_cast<int>(sampleRate * 2.0));
+        const auto rendered = render(engine, static_cast<int>(sampleRate * 4.0));
+        double energy = 0.0;
+        for (std::size_t index = 0; index < rendered.left.size(); ++index)
+            energy += static_cast<double>(rendered.left[index]) * rendered.left[index]
+                    + static_cast<double>(rendered.right[index]) * rendered.right[index];
+        const double meanSquare =
+            energy / static_cast<double>(rendered.left.size() * 2);
+        return 10.0 * std::log10(meanSquare + 1.0e-40);
+    };
+
+    // With the chorus switched out this fixture renders bit-exact zero, so the
+    // BBD line noise is the only thing in the floor below and the figure is
+    // fully determined by `independentLineRandomAmplitude`.
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, blockSize, true);
+        EngineParameters parameters;
+        parameters.volume = 0.80f;
+        parameters.vcaLevel = 0.80f;
+        parameters.chorusNoise = 1.0f;
+        parameters.calibration = 1.0f;
+        parameters.chorus = ChorusMode::Off;
+        engine.setParameters(parameters);
+        const auto rendered = render(engine, static_cast<int>(sampleRate * 2.0));
+        double peak = 0.0;
+        for (std::size_t index = 0; index < rendered.left.size(); ++index)
+            peak = std::max({ peak,
+                              static_cast<double>(std::abs(rendered.left[index])),
+                              static_cast<double>(std::abs(rendered.right[index])) });
+        expect(peak == 0.0,
+               "the idle fixture is no longer silent with the chorus switched "
+               "out, so its floor is not the BBD line noise alone (peak "
+                   + std::to_string(peak) + ")");
+    }
+
+    const double floorOne = idleFloorDbfs(ChorusMode::One);
+    const double floorTwo = idleFloorDbfs(ChorusMode::Two);
+    expectNear(floorOne, -77.85, 0.5,
+               "the idle output floor left the MN3009 noise row");
+
+    // One target, not two. `settingsFor` gives modes I and II the same wet gain
+    // and the same sweep -- only the rate differs, and the rate-proportional
+    // noise candidate is off by default -- so a floor that differed by mode
+    // would mean something other than the line noise had moved.
+    expectNear(floorTwo, floorOne, 0.1,
+               "chorus I and II no longer render the same idle floor");
+
+    // The two measurements have to move together. Both are compared against
+    // what this engine rendered before the constant was derived, which is a
+    // recorded number and not a reference render: once the constant moves
+    // there is no pre-change engine left to render against. If a gain were
+    // moved somewhere in the output path instead of the line noise, the floor
+    // would land and the wet line would not.
+    constexpr double floorBeforeDbfs = -63.4409;
+    constexpr double wetLineBeforeVrms = 1.0611e-3;
+
+    constexpr double lineRate = 192000.0;
+    Chorus chorus;
+    chorus.prepare(lineRate);
+    const double recover = static_cast<double>(Chorus::nodeVoltsPerUnit)
+        / (static_cast<double>(Chorus::dryMixGain)
+           * static_cast<double>(Chorus::wetToDryGain));
+    for (int index = 0; index < static_cast<int>(lineRate * 0.5); ++index)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        chorus.process(0.0f, ChorusMode::One, 1.0f, left, right);
+    }
+    double lineEnergy = 0.0;
+    const int lineWindow = static_cast<int>(lineRate * 2.0);
+    for (int index = 0; index < lineWindow; ++index)
+    {
+        float left = 0.0f;
+        float right = 0.0f;
+        chorus.process(0.0f, ChorusMode::One, 1.0f, left, right);
+        const double a = static_cast<double>(left) * recover;
+        const double b = static_cast<double>(right) * recover;
+        lineEnergy += a * a + b * b;
+    }
+    // Broadband rather than A-weighted: the circuit suite owns the weighted
+    // figure, and the whole path from the injection point is linear, so the
+    // two read the same delta to the digit.
+    const double wetLineNow =
+        std::sqrt(lineEnergy / static_cast<double>(lineWindow * 2));
+
+    const double floorDelta = floorOne - floorBeforeDbfs;
+    const double lineDelta = 20.0 * std::log10(wetLineNow / wetLineBeforeVrms);
+    expectNear(floorDelta, lineDelta, 0.5,
+               "the idle floor moved " + std::to_string(floorDelta)
+                   + " dB while the wet line moved " + std::to_string(lineDelta)
+                   + " dB, so something other than the BBD line noise moved");
+}
+
 void testMainNoiseDensityIsProcessingRateInvariant()
 {
     // The hardware noise source has a continuous-time spectral density. A
@@ -5289,6 +5407,7 @@ int main()
     testGlideKeepsTheRampContinuous();
     testChorusSweepTrajectoryDefault();
     testChorusNoiseIsPresentAndDefeatable();
+    testIdleOutputFloorCarriesTheMn3009NoiseRow();
     testChorusRateNoiseReproducesTheMeasuredModeDelta();
     testMainNoiseDensityIsProcessingRateInvariant();
     testSampleRateAndOversamplingConsistency();

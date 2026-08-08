@@ -447,6 +447,10 @@ public:
     // to drive the chorus. Choosing this provisional reference makes the new
     // -18 dBFS RMS boundary exactly unity and therefore preserves sessions.
     static constexpr float internalVoltsPerUnit = 2.6f;
+    // The chorus refers its BBD noise row to the same coordinate and has to
+    // name it locally, so the two cannot be allowed to drift apart.
+    static_assert(Chorus::nodeVoltsPerUnit == internalVoltsPerUnit,
+                  "the chorus and the engine disagree about the node volt scale");
     static constexpr float minus18DbfsAmplitude = 0.125892541f;
     static constexpr float compatibilityOutputReferenceRmsVolts =
         internalVoltsPerUnit * minus18DbfsAmplitude;

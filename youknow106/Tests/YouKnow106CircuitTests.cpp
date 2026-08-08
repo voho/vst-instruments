@@ -2547,6 +2547,180 @@ void testJuno60FallbackBucketBrigadeTiming()
     expect(difference > 1.0, "the two delay lines are producing the same signal");
 }
 
+// IEC 61672 A-weighting. The engine has none -- nothing it renders is
+// weighted -- so this is the suite's own, and it is spelled out rather than
+// named because the datasheet row checked below is an A-weighted figure and
+// the weighting is therefore part of the measurand. The analogue prototype is
+//
+//   H(s) = K s^4 / ((s + w1)^2 (s + w2)(s + w3)(s + w4)^2),
+//
+// with f1 = 20.598997, f2 = 107.65265, f3 = 737.86223 and f4 = 12194.217 Hz,
+// discretised by the plain bilinear transform and normalised to unity at
+// 1 kHz. At the 192 kHz rate this suite uses it reads -39.57, -19.14, 0.00,
+// +0.96 and -4.38 dB at 31.5 Hz, 100 Hz, 1 kHz, 4 kHz and 12.5 kHz, against
+// the standard's -39.4, -19.1, 0.0, +1.0 and -4.3 dB.
+class AWeightingFilter
+{
+public:
+    explicit AWeightingFilter(double sampleRate) noexcept
+    {
+        const double w1 = 2.0 * pi * 20.598997;
+        const double w2 = 2.0 * pi * 107.65265;
+        const double w3 = 2.0 * pi * 737.86223;
+        const double w4 = 2.0 * pi * 12194.217;
+        const double k = 2.0 * sampleRate;
+        const auto section = [&](double wa, double wb, bool zeroAtDc,
+                                 Section& out) {
+            const double a0 = k * k + k * (wa + wb) + wa * wb;
+            out.a1 = 2.0 * (wa * wb - k * k) / a0;
+            out.a2 = (k * k - k * (wa + wb) + wa * wb) / a0;
+            out.b0 = (zeroAtDc ? k * k : 1.0) / a0;
+            out.b1 = (zeroAtDc ? -2.0 * k * k : 2.0) / a0;
+            out.b2 = (zeroAtDc ? k * k : 1.0) / a0;
+        };
+        section(w1, w1, true, first_);
+        section(w2, w3, true, second_);
+        section(w4, w4, false, third_);
+
+        const double w = 2.0 * pi * 1000.0 / sampleRate;
+        gain_ = 1.0 / std::abs(first_.response(w) * second_.response(w)
+                             * third_.response(w));
+    }
+
+    double step(double input) noexcept
+    {
+        return gain_ * third_.step(second_.step(first_.step(input)));
+    }
+
+private:
+    struct Section
+    {
+        double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+        double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
+
+        double step(double x) noexcept
+        {
+            const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+            x2 = x1; x1 = x; y2 = y1; y1 = y;
+            return y;
+        }
+
+        [[nodiscard]] std::complex<double> response(double w) const noexcept
+        {
+            const std::complex<double> z =
+                std::exp(std::complex<double>(0.0, -w));
+            return (b0 + b1 * z + b2 * z * z) / (1.0 + a1 * z + a2 * z * z);
+        }
+    };
+
+    Section first_, second_, third_;
+    double gain_ = 1.0;
+};
+
+void testChorusLineNoiseMatchesTheMn3009NoiseRow()
+{
+    // The MN3009's noise row is 0.2 mVrms max, A-weighted, from the same
+    // datasheet whose 12 kHz bandwidth and 0.3%/2.5% distortion rows this
+    // model already treats as anchored. `independentLineRandomAmplitude` is
+    // derived from it, and this is the assertion the derivation answers to.
+    //
+    // The measurand, stated in full because every part of it moves the number:
+    //
+    //  * 192 kHz: what HQ targets from the 48 kHz host-rate family, and the
+    //    engine's `noiseReferenceRateHz`. A coarser grid folds more of the
+    //    held sequence back into the band and reads high, so the rate is part
+    //    of the measurand and not an incidental fixture choice. Across HQ it
+    //    does not matter -- 176.4 kHz, the other internal rate HQ reaches,
+    //    reads 0.005 dB apart -- but with HQ switched out the same measure
+    //    reads 0.40 dB high at 48 kHz and 0.45 dB high at 44.1 kHz.
+    //  * Silence in. Both output channels. The wet line is recovered by
+    //    undoing IC6's dry and wet summing gains only, and referred to volts
+    //    through the 2.6 V node coordinate: the reconstruction sections stay
+    //    in, because what the datasheet row bounds is what the part delivers
+    //    to the board, and they are the board.
+    //  * A 0.5 s settle for the wet-mute glide and the support filters, then a
+    //    16 s window. Both modes, because the clock programme differs.
+    //
+    // The upper bound carries 0.05 dB. This is a finite-window estimate of a
+    // random process's power and does not converge to better than about
+    // +/-0.1%: over windows of 4 s to 256 s in both modes the estimate spans
+    // 0.199568-0.200161 mVrms, so a bound placed exactly on 0.200 mVrms would
+    // be decided by the estimator's own spread rather than by the constant.
+    // 0.05 dB is about four times that spread (0.026 dB peak to peak) and is
+    // negligible against the datasheet's own 10.5 dB bracket between its max
+    // and typical rows. The lower fence is the wide one: 0.2 mVrms is a
+    // *maximum*, so being under it is not an error, and 1 dB only has to catch
+    // a gross over-correction.
+    constexpr double sampleRate = 192000.0;
+    constexpr double target = 0.200e-3;
+    constexpr double upperBound = 0.200e-3 * 1.0057900;  // +0.05 dB
+    constexpr double lowerBound = 0.200e-3 * 0.8912509;  // -1.00 dB
+
+    for (const auto mode : { ChorusMode::One, ChorusMode::Two })
+    {
+        Chorus chorus;
+        chorus.prepare(sampleRate);
+        AWeightingFilter weightLeft(sampleRate);
+        AWeightingFilter weightRight(sampleRate);
+        // process() returns dryMixGain * (input + wet * wetToDryGain) on each
+        // side, so with silence in this recovers the line's own output.
+        const double recover = static_cast<double>(Chorus::nodeVoltsPerUnit)
+            / (static_cast<double>(Chorus::dryMixGain)
+               * static_cast<double>(Chorus::wetToDryGain));
+
+        const auto advance = [&](long long samples, double* sum) {
+            for (long long index = 0; index < samples; ++index)
+            {
+                float left = 0.0f;
+                float right = 0.0f;
+                chorus.process(0.0f, mode, 1.0f, left, right);
+                const double weightedLeft =
+                    weightLeft.step(static_cast<double>(left) * recover);
+                const double weightedRight =
+                    weightRight.step(static_cast<double>(right) * recover);
+                if (sum != nullptr)
+                    *sum += weightedLeft * weightedLeft
+                          + weightedRight * weightedRight;
+            }
+        };
+
+        const auto settle = static_cast<long long>(sampleRate * 0.5);
+        const auto window = static_cast<long long>(sampleRate * 16.0);
+        advance(settle, nullptr);
+        double sum = 0.0;
+        advance(window, &sum);
+        const double recovered =
+            std::sqrt(sum / static_cast<double>(window * 2));
+
+        const std::string label = mode == ChorusMode::One ? "I" : "II";
+        expect(recovered <= upperBound,
+               "chorus " + label + " wet-line noise is "
+                   + std::to_string(recovered * 1000.0)
+                   + " mVrms A-weighted, above the MN3009's 0.200 mVrms max");
+        expect(recovered >= lowerBound,
+               "chorus " + label + " wet-line noise is "
+                   + std::to_string(recovered * 1000.0)
+                   + " mVrms A-weighted, more than 1 dB under the MN3009's "
+                     "0.200 mVrms max");
+        expect(std::abs(20.0 * std::log10(recovered / target)) < 1.0,
+               "chorus " + label + " wet-line noise left the datasheet row by "
+                   + std::to_string(20.0 * std::log10(recovered / target))
+                   + " dB");
+    }
+
+    // The derivation is one equation and the header publishes every term of
+    // it. Re-solving it here stops the amplitude from being edited to a number
+    // that no longer answers to the datasheet row it cites -- the render
+    // assertions above would still pass if the transfer were quietly retuned
+    // to match a hand-picked amplitude, and this one would not.
+    expectNear(static_cast<double>(Chorus::independentLineRandomAmplitude)
+                   * static_cast<double>(Chorus::nodeVoltsPerUnit)
+                   * static_cast<double>(Chorus::lineNoiseAWeightedTransfer),
+               static_cast<double>(Chorus::mn3009OutputNoiseAWeightedVrms),
+               1.0e-9,
+               "the line-noise amplitude no longer solves its own derivation");
+}
+
 void testChorusNoiseComponents()
 {
     constexpr float sampleRate = 48000.0f;
@@ -3206,7 +3380,8 @@ void testBbdOutputPolyBlepReferenceAndBounds()
         const auto state = YouKnow106TestAccess::bbdCorePhysicalState(noiseOnly);
         const float expectedNoise =
             (static_cast<float>(expectedNoiseState & 0xffffffu)
-                 * (2.0f / 16777215.0f) - 1.0f) * 1.0e-3f;
+                 * (2.0f / 16777215.0f) - 1.0f)
+            * Chorus::independentLineRandomAmplitude;
         expect(output == state.held && state.held == expectedNoise,
                "deterministic BBD BLEP coloured or rerounded held line noise");
         expect(state.transferState == 0.0f,
@@ -3993,6 +4168,7 @@ int main()
     testComparatorEdgesSitOnOneThreshold();
     testChorusIsAtItsSettingFromTheFirstSample();
     testJuno60FallbackBucketBrigadeTiming();
+    testChorusLineNoiseMatchesTheMn3009NoiseRow();
     testChorusNoiseComponents();
     testChorusBypassStateAndWetMuteTiming();
     testChorusRateChangePreservesPhysicalState();
