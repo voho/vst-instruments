@@ -2275,6 +2275,17 @@ void ElectryEngine::configureSympatheticString(Voice& voice) noexcept
                static_cast<float>(delayLineSize - 8)));
 }
 
+// Whether the plectrum meets the string on this attack. A hammer-on or tap is
+// the fretting hand landing on the fingerboard and a legato slide is a finger
+// already down that simply moves, so on neither of them is there a pick to
+// colour the contact, to hold at an angle, or to put down out of place. Both
+// the excitation's own plectrum terms and the picking hand's stroke-to-stroke
+// variation are read from this one predicate so they cannot disagree.
+bool ElectryEngine::plectrumContacts(PlayStyle style, bool legato) noexcept
+{
+    return ! (style == PlayStyle::Hammer || (style == PlayStyle::Slide && legato));
+}
+
 void ElectryEngine::drawStrokeVariation(Voice& voice) noexcept
 {
     // A hand does not put the pick down twice in the same place. Four things
@@ -2481,14 +2492,32 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // amplitude range here as well turned Pick Hardness into a level control.
     const float hardnessGain = lerp(0.98f, 1.26f, parameters.pickHardness);
 
+    // Whether the plectrum touches this string at all. Hammer-ons and taps are
+    // the fretting hand landing on the fingerboard, and a legato slide is a
+    // finger already down that simply moves, so neither of them has a pick in
+    // the stroke - which is why the switch below turns the plectrum's own
+    // hardness off for them. The picking hand's stroke-to-stroke variation is
+    // read from the same fact and has to be decided here, before the four
+    // quantities it moves are built.
+    const bool plectrumContact = plectrumContacts(voice.playStyle, legato);
+    // How far out of place the hand put the pick this stroke. A fingered note
+    // has no pick to put out of place, so it draws no variation: leaving these
+    // live gave repeated hammer-ons and slides a picking hand's spread of
+    // level, pulse width and contact position despite the engine's own claim
+    // that there is no plectrum on them.
+    const float strokeForceGain = plectrumContact ? voice.strokeForceGain : 1.0f;
+    const float strokeWidthScale = plectrumContact ? voice.strokeWidthScale : 1.0f;
+    const float strokeContactOffsetMetres =
+        plectrumContact ? voice.strokeContactOffsetMetres : 0.0f;
+
     float amplitude = 0.48f * profile.amplitude * hardnessGain
                     * lerp(1.0f, 0.90f, parameters.stringAge)
-                    * voice.strokeForceGain;
+                    * strokeForceGain;
     // The string leaves the pick in a fraction of a millisecond; the width
     // controls how much of the upper spectrum the release step carries.
     float pulseMs = lerp(1.15f, 0.10f, parameters.pickHardness)
                   * lerp(1.55f, 0.48f, profile.releaseRate)
-                  * voice.strokeWidthScale;
+                  * strokeWidthScale;
     float pulseCutoff = lerp(900.0f, 13000.0f, parameters.pickHardness);
     float pluckFraction = lerp(0.025f, 0.48f, parameters.pickPosition);
     const float pickControl = std::pow(parameters.pickNoise, 0.75f);
@@ -2500,9 +2529,6 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     const auto& spec = stringSpecs()[static_cast<std::size_t>(voice.stringIndex)];
     float noiseCutoff = spec.wound ? 2100.0f : 4800.0f;
     float modalBrightness = 1.0f;
-    // Hammer-ons and taps are fingered: their contact noise is a fingertip on
-    // the fingerboard, so the plectrum's hardness must not colour it.
-    bool plectrumContact = true;
     voice.excitationPolarity = 1.0f;
 
     const auto applyUpstrokeVoicing = [&]
@@ -2540,7 +2566,6 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                        * (0.10f + 0.30f * profile.noise);
             noiseMs = 1.6f;
             noiseCutoff = 185.0f;
-            plectrumContact = false;
             modalBrightness *= 0.25f;
             break;
         case PlayStyle::Harmonics:
@@ -2585,7 +2610,6 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
                 pulseMs *= 1.9f;
                 pulseCutoff *= 0.42f;
                 noiseLevel = 0.0f;
-                plectrumContact = false;
                 modalBrightness *= 0.25f;
             }
             break;
@@ -2739,7 +2763,7 @@ void ElectryEngine::startExcitation(Voice& voice, float velocity, bool legato) n
     // few millimetres of the sounding length out of place.
     const float fretStretch = std::exp2(static_cast<float>(voice.fret) / 12.0f);
     const float strokePluckFraction = pluckFraction
-        + voice.strokeContactOffsetMetres / scaleLengthMetres();
+        + strokeContactOffsetMetres / scaleLengthMetres();
     const float combFraction = clampf(strokePluckFraction * fretStretch,
                                       0.02f, 0.49f);
     voice.excitationCombDelay = combFraction * voice.vertical.targetDelay;
@@ -2960,9 +2984,11 @@ void ElectryEngine::updateStyleWeights(Voice& voice, bool legato) noexcept
     // length, which is how much of the pick's work reaches the string, does not
     // move. This composes with the upstroke tilt above rather than replacing
     // it, so an alternate-picked repeat varies on top of its up/down colouring
-    // instead of losing it. A hammered note has no plectrum to hold at an
-    // angle, on the same grounds the upstroke voicing skips it.
-    if (voice.playStyle != PlayStyle::Hammer && voice.strokeAngleOffset != 0.0f)
+    // instead of losing it. A note played without a plectrum has none to hold
+    // at an angle, on the same grounds the upstroke voicing skips it - and that
+    // is the legato slide as well as the hammer-on, which is why the predicate
+    // is asked rather than the style compared.
+    if (plectrumContacts(voice.playStyle, legato) && voice.strokeAngleOffset != 0.0f)
     {
         const float magnitude = std::sqrt(verticalWeight * verticalWeight
                                           + horizontalWeight * horizontalWeight);

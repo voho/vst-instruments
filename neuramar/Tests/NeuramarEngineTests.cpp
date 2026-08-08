@@ -4364,6 +4364,50 @@ void testLoopRegionAvoidsTheAttack(const LearnedFixture& fixture)
     return sample;
 }
 
+// Two layers on very different clocks: a harmonic Core that dies over about a
+// third of a second and a high-passed noise bed for Air that barely dies at
+// all. What the Orbit detrend has to divide out is the trend of the mix the
+// renderer is producing, and on a source like this the Core's trend and the
+// all-layers trend are nothing like each other - so a fit that ignores the Air
+// control answers a question about a signal nobody is listening to.
+[[nodiscard]] std::vector<float> makeDivergentLayerSample(double sampleRate)
+{
+    constexpr double fundamentalHz = 220.0;
+    constexpr double durationSeconds = 1.60;
+    const auto sampleCount = static_cast<std::size_t>(
+        std::llround(sampleRate * durationSeconds));
+    std::vector<float> sample(sampleCount, 0.0f);
+    std::uint32_t noiseState = 0x9e3779b9u;
+    float previousNoise = 0.0f;
+    for (std::size_t index = 0; index < sample.size(); ++index)
+    {
+        const double time = static_cast<double>(index) / sampleRate;
+        const double attack = 1.0 - std::exp(-time / 0.004);
+        // The Core, gone inside the fixture.
+        double value = 0.0;
+        for (int partial = 1; partial <= 28; ++partial)
+        {
+            const double number = static_cast<double>(partial);
+            const double tau = 0.34 * std::pow(number, -0.6);
+            value += std::pow(number, -1.1) * std::exp(-time / tau)
+                * std::sin(2.0 * pi * fundamentalHz * number * time
+                           + 0.31 * number);
+        }
+        // The Air, still there at the end of it.
+        noiseState ^= noiseState << 13;
+        noiseState ^= noiseState >> 17;
+        noiseState ^= noiseState << 5;
+        const float noise = static_cast<float>(noiseState)
+            * (2.0f / 4294967295.0f) - 1.0f;
+        const float highNoise = noise - 0.94f * previousNoise;
+        previousNoise = noise;
+        value += 0.90 * std::exp(-time / 9.0)
+            * static_cast<double>(highNoise);
+        sample[index] = static_cast<float>(0.55 * attack * value);
+    }
+    return sample;
+}
+
 // Magnitude-weighted spectral centroid of one analysis frame, taken over the
 // partials of the played fundamental with a Hann window across exactly the
 // frame. It is deliberately not measured through windowedSinusoidAmplitude(),
@@ -4575,6 +4619,144 @@ void testOrbitSustainIsNotPeriodic()
            "the Orbit sustain repeated at twice the loop length (centroid "
                "autocorrelation "
                + std::to_string(pingPongCorrelation) + ")");
+}
+
+// ... and it stays a sustain when the layer controls move.
+//
+// The detrend divides out the loop region's own level trend, and which trend
+// that is depends on what is being rendered: the renderer weights Air and Bone
+// by their controls and drops every Bone mode the analysis could not vouch for.
+// Fitting all three layers at unity regardless answers a question about a
+// signal nobody is listening to, and on a source whose layers decay at
+// different rates the two answers are nothing alike - so moving either control
+// left the wrap corrected by the wrong amount and put the level step back.
+//
+// The fixture is built for exactly that: a Core gone in a third of a second
+// under an Air bed that is still there at the end of the sample. Rendered with
+// Air open it is mostly noise and barely decays; rendered with Air shut it is
+// the Core alone and decays steeply. The same two level bounds the sustain test
+// uses are applied at both settings, because a correction fitted to one of them
+// is wrong for the other whichever one it was fitted to.
+void testOrbitDetrendFollowsTheLayersBeingRendered()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr double fundamentalHz = 220.01;
+    const auto source = makeDivergentLayerSample(sampleRate);
+    const auto learned = neuramar::SampleLearner::learn(source, sampleRate);
+    expect(static_cast<bool>(learned),
+           "the divergent-layer fixture failed to learn: " + learned.error);
+    if (!learned.model)
+        return;
+    const auto& metadata = learned.model->metadata();
+
+    // The trend the detrend is dividing out, read straight off the engine. This
+    // is the primary gate: the step a wrong trend leaves is a fraction of a
+    // decibel per pass against a residual several times that, so the rendered
+    // level is a weak instrument for it and the fitted number is an exact one.
+    const auto fittedSlope = [&] (float air, float bone)
+    {
+        neuramar::NeuramarEngine engine;
+        engine.prepare(sampleRate, 128);
+        neuramar::EngineParameters parameters;
+        parameters.air = air;
+        parameters.bone = bone;
+        parameters.orbit = 1.0f;
+        engine.setParameters(parameters);
+        engine.setModel(learned.model.get());
+        // A block with no note sounding is enough: the fit follows the block's
+        // parameters and does no decoder work.
+        std::vector<float> left(128, 0.0f);
+        std::vector<float> right(128, 0.0f);
+        engine.process(left.data(), right.data(), 128);
+        return engine.loopLevelSlopePerSecond();
+    };
+
+    const float coreOnly = fittedSlope(0.0f, 0.0f);
+    const float withAir = fittedSlope(1.0f, 0.0f);
+    std::cout << "Orbit detrend slope: Core alone " << coreOnly
+              << " Np/s, with Air " << withAir << " Np/s\n";
+    expect(coreOnly < -0.05f,
+           "the divergent-layer fixture's Core carries no trend to divide out, "
+           "so this fixture measures nothing (" + std::to_string(coreOnly)
+               + " Np/s)");
+    // The Core dies in a third of a second under an Air bed that is still there
+    // at the end of the sample, so shutting Air has to steepen the trend by a
+    // long way: measured 1.65 times. Fitting all three layers at unity returns
+    // the same number at both settings whatever the renderer is doing, which is
+    // a ratio of exactly 1.
+    const double steepening = static_cast<double>(coreOnly)
+        / std::min(static_cast<double>(withAir), -1.0e-6);
+    std::cout << "Orbit detrend: shutting Air steepens the trend " << steepening
+              << " times\n";
+    expect(steepening > 1.35,
+           "shutting Air barely changed the trend the Orbit detrend divides "
+           "out (Core alone " + std::to_string(coreOnly) + " Np/s against "
+               + std::to_string(withAir) + " Np/s with Air open, a factor of "
+               + std::to_string(steepening)
+               + "), so the fit is still taken over layers that are not being "
+                 "rendered");
+
+    const auto levelSwingDb = [&] (float air)
+    {
+        neuramar::EngineParameters parameters;
+        parameters.imprint = 1.0f;
+        parameters.bodyLock = 0.52f;
+        parameters.air = air;
+        parameters.bone = 0.0f;
+        parameters.brightness = 0.5f;
+        parameters.evolutionRate = 1.0f;
+        parameters.orbit = 1.0f;
+        parameters.mutation = 0.0f;
+        parameters.attackSeconds = 0.0f;
+        parameters.releaseSeconds = 0.65f;
+        parameters.spread = 0.0f;
+        parameters.outputGain = 0.72f;
+        const auto rendered = renderWithParameters(
+            *learned.model, metadata.rootMidiNote, 0.8f, parameters,
+            static_cast<int>(std::llround(6.5 * sampleRate)));
+
+        // The same whole number of played-fundamental periods per frame the
+        // sustain test uses, for the same reason.
+        const double frameSeconds = 11.0 / fundamentalHz;
+        const auto frameSamples = static_cast<std::size_t>(
+            std::llround(frameSeconds * sampleRate));
+        std::vector<double> frameDb;
+        for (double time = 2.0; time + frameSeconds <= 6.0 + 1.0e-9;
+             time += frameSeconds)
+        {
+            const auto first = static_cast<std::size_t>(
+                std::llround(time * sampleRate));
+            if (first + frameSamples > rendered.size())
+                break;
+            double power = 0.0;
+            for (std::size_t index = 0; index < frameSamples; ++index)
+                power += static_cast<double>(rendered[first + index])
+                    * rendered[first + index];
+            frameDb.push_back(10.0 * std::log10(std::max(
+                power / static_cast<double>(frameSamples), 1.0e-30)));
+        }
+        expect(frameDb.size() > 60,
+               "the layer-weighted detrend analysis produced too few frames at "
+               "Air " + std::to_string(air));
+        if (frameDb.size() <= 60)
+            return 0.0;
+        const double lowest = *std::min_element(frameDb.begin(), frameDb.end());
+        const double highest = *std::max_element(frameDb.begin(), frameDb.end());
+        std::cout << "Orbit detrend at Air " << air << ": level spread "
+                  << (highest - lowest) << " dB\n";
+        return highest - lowest;
+    };
+
+    // And the rendered consequence of getting it wrong. Air shut is the case
+    // the old fit answered with the wrong trend: it fitted a mix carrying a
+    // sustained noise bed and applied the answer to a Core that decays far
+    // faster, leaving the wrap under-corrected. Measured 1.24 dB against the
+    // 1.62 dB the unweighted fit leaves, on a residual whose own tremolo and
+    // frame ripple account for most of the 1.24 - which is exactly why the
+    // fitted trend above and not this is the primary gate.
+    expect(levelSwingDb(0.0f) < 1.40,
+           "a held note under Orbit with Air shut pumped its level, so the "
+           "detrend is still fitted to a mix that is not being rendered");
 }
 
 // The same tau(h) = tau_1 h^-0.75 partials with a resonant body on top: six
@@ -6137,6 +6319,7 @@ int main()
     testTransientAirResolution();
     testInharmonicPartialSeries();
     testOrbitSustainIsNotPeriodic();
+    testOrbitDetrendFollowsTheLayersBeingRendered();
     testReleaseDarkensTail();
     testDecayKeyTracking();
     testRepeatedNotesVaryInStrength();

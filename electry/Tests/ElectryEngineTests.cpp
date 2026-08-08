@@ -50,6 +50,9 @@ struct ElectryEngineTestAccess
         float sympatheticEnergy { 0.0f };
         float excitationCombDelay { 0.0f };
         float excitationCombWidth { 0.0f };
+        // The two the picking hand's force and contact patch reach.
+        float excitationAmplitude { 0.0f };
+        int excitationLength { 0 };
         float excitationLoadScale { 0.0f };
         float excitationSlipScale { 0.0f };
         float loopDampingCoefficient { 0.0f };
@@ -90,6 +93,8 @@ struct ElectryEngineTestAccess
         result.sympatheticEnergy = voice.sympatheticEnergy;
         result.excitationCombDelay = voice.excitationCombDelay;
         result.excitationCombWidth = voice.excitationCombWidth;
+        result.excitationAmplitude = voice.excitationAmplitude;
+        result.excitationLength = voice.excitationLength;
         result.excitationLoadScale = voice.excitationLoadScale;
         result.excitationSlipScale = voice.excitationSlipScale;
         result.loopDampingCoefficient = voice.vertical.loopDampingCoefficient;
@@ -1519,6 +1524,111 @@ void testStyleAndStrokeCombinations()
                                      PickStyle::Up);
     expect(hammerDown.left == hammerUp.left,
            "the latched picking style changed a hammered note");
+}
+
+/** A note played without a plectrum draws no picking-hand variation.
+
+    Every attack draws four numbers describing where the hand put the pick this
+    stroke: how hard, how wide the contact patch, at what angle, and how far
+    along the string. They are a pure function of the note counter, so two
+    otherwise identical notes at different points in a sequence get different
+    draws - which is the point of them, on a picked note.
+
+    A hammer-on is the fretting hand landing on the fingerboard and a legato
+    slide is a finger already down that simply moves. The engine says so itself:
+    both clear the plectrum's own contact terms. The draw used to be applied to
+    them anyway, so repeated hammer-ons and slides carried a picking hand's
+    spread of level, pulse length and comb position with no pick in the stroke.
+
+    The two engines below differ only in that one has already played a note, so
+    the note under test is drawn at a different point in the sequence. The
+    picked case is asserted in the other direction, because an engine that had
+    simply deleted the variation would satisfy the fingered clause alone. */
+void testFingeredNotesDrawNoPickingHandVariation()
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int hammered = 45;
+    constexpr int earlier = 64;   // a different string, so the draw is all that moves
+
+    // The state of the string under test after a note-on, at two different
+    // points in the stroke sequence.
+    const auto attackAt = [&] (PlayStyle style, bool afterAnotherNote)
+    {
+        ElectryEngine engine;
+        engine.prepare(sampleRate, 512);
+        EngineParameters parameters;
+        parameters.pickNoise = 0.0f;
+        parameters.fingerNoise = 0.0f;
+        parameters.releaseNoise = 0.0f;
+        parameters.artifactAmount = 0.0f;
+        parameters.strumSpreadSeconds = 0.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+
+        if (afterAnotherNote)
+        {
+            engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+            engine.noteOn(earlier, 0.85f);
+        }
+        // A slide is only legato once it lands on a string that is already
+        // sounding; starting a phrase on the Slide keyswitch with nothing to
+        // slide from is an ordinary pick stroke, and rightly draws a stroke.
+        if (style == PlayStyle::Slide)
+        {
+            engine.noteOn(styleKeyswitch(PlayStyle::Sustain), 1.0f);
+            engine.noteOn(hammered - 2, 0.85f);
+        }
+        engine.noteOn(styleKeyswitch(style), 1.0f);
+        engine.noteOn(hammered, 0.85f);
+
+        TestAccess::VoiceSnapshot found;
+        for (int string = 0; string < ElectryEngine::stringCount; ++string)
+        {
+            const auto voice = TestAccess::snapshot(engine, string);
+            if (voice.active && voice.midiNote == hammered)
+                found = voice;
+        }
+        return found;
+    };
+
+    for (const auto style : { PlayStyle::Hammer, PlayStyle::Slide })
+    {
+        const auto first = attackAt(style, false);
+        const auto later = attackAt(style, true);
+        const auto name = style == PlayStyle::Hammer ? std::string("a hammer-on")
+                                                     : std::string("a slide");
+        expect(first.valid && later.valid,
+               name + " did not sound on the string it was played on");
+        if (! (first.valid && later.valid))
+            continue;
+
+        expect(first.excitationAmplitude == later.excitationAmplitude,
+               name + " changed level with the note counter, so a picking hand's "
+                      "contact force is being drawn for a fingered note ("
+                   + std::to_string(first.excitationAmplitude) + " against "
+                   + std::to_string(later.excitationAmplitude) + ")");
+        expect(first.excitationLength == later.excitationLength,
+               name + " changed pulse length with the note counter, so a picking "
+                      "hand's contact patch is being drawn for a fingered note ("
+                   + std::to_string(first.excitationLength) + " against "
+                   + std::to_string(later.excitationLength) + ")");
+        expect(first.excitationCombDelay == later.excitationCombDelay,
+               name + " changed comb position with the note counter, so a picking "
+                      "hand's contact offset is being drawn for a fingered note ("
+                   + std::to_string(first.excitationCombDelay) + " against "
+                   + std::to_string(later.excitationCombDelay) + ")");
+    }
+
+    // ... and a picked note still varies, or the clause above is vacuous.
+    const auto pickedFirst = attackAt(PlayStyle::Sustain, false);
+    const auto pickedLater = attackAt(PlayStyle::Sustain, true);
+    expect(pickedFirst.valid && pickedLater.valid,
+           "the picked control note did not sound");
+    expect(pickedFirst.excitationAmplitude != pickedLater.excitationAmplitude
+               || pickedFirst.excitationLength != pickedLater.excitationLength
+               || pickedFirst.excitationCombDelay != pickedLater.excitationCombDelay,
+           "two picked notes at different points in the sequence got the same "
+           "stroke, so the picking-hand variation has gone altogether");
 }
 
 void testPitchWheelPerStringSensitivity()
@@ -6988,6 +7098,7 @@ int main()
     testAlternateStrokeSequence();
     testArticulationsSoundDistinct();
     testStyleAndStrokeCombinations();
+    testFingeredNotesDrawNoPickingHandVariation();
     testPitchWheelPerStringSensitivity();
     testPitchWheelGlideFollowsBendTime();
     testPitchWheelBendsSympatheticStrings();

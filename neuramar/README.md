@@ -379,7 +379,15 @@ end-to-end through a differentiable renderer:
   centroid autocorrelation at the loop length falls from 0.88 to 0.32 — steady
   in trend, still moving in detail, and no longer repeating. Detrending rather
   than flattening is what keeps any tremolo, breath pulsing, or beating the
-  loop region carries;
+  loop region carries. The trend divided out is the trend of the mix actually
+  being rendered, so it follows the Air and Bone controls and ignores the Bone
+  modes the analysis could not vouch for: on a source whose layers decay at
+  different rates the trend of the Core alone and the trend of all three
+  together are different numbers — 1.65 times apart on the suite's fixture —
+  and correcting a wrap by the wrong one puts the level step back. The three
+  layers' trajectories are sampled once per model and the line refitted from
+  them whenever a layer control moves, so following the controls costs no
+  decoder work;
 - the final output uses the host's floating-point headroom and remains linear
   at ordinary operating levels; only a pathological ±7.95 guard is
   retained, avoiding the folded high-register harmonics produced by an

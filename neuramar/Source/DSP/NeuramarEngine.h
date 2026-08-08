@@ -83,6 +83,19 @@ public:
         return dampingExponent_;
     }
 
+    // The loop region's own log-amplitude trend, in nepers per second of model
+    // time, which Orbit divides out so a wrap is level-continuous. It is the
+    // trend of the mix the renderer is *producing*, so it follows the Air and
+    // Bone controls: on a source whose layers decay at different rates, the
+    // trend of the Core alone and the trend of all three together are different
+    // numbers, and correcting a wrap by the wrong one puts the level step back.
+    // Published so the suite can read it directly, because the step it prevents
+    // is a fraction of a decibel against a residual several times that.
+    [[nodiscard]] float loopLevelSlopePerSecond() const noexcept
+    {
+        return loopLevelSlopePerSecond_;
+    }
+
 private:
     // The neural controller remains a compact 64-partial model. A larger,
     // engine-only bank lets Body Lock resample that observed spectrum onto the
@@ -263,8 +276,14 @@ private:
     void refreshHarmonicStretch(float inharmonicity) noexcept;
     void updateVoiceControl(Voice& voice, const NeuralModel& model,
                             const EngineParameters& parameters) noexcept;
-    [[nodiscard]] static float fitLoopLevelSlope(
-        const NeuralModel& model) noexcept;
+    // Samples the three layers' power across the loop region into the arrays
+    // below, once per model. Costs the decoder evaluations the single fit it
+    // replaces already cost.
+    void sampleLoopLevelTrajectory(const NeuralModel& model) noexcept;
+    // Least-squares slope of the mix those samples make at the given layer
+    // gains. No decoder work, so it is cheap enough to redo whenever Air or
+    // Bone moves.
+    void refreshLoopLevelSlope(float air, float bone) noexcept;
     [[nodiscard]] static float fitDampingExponent(
         const NeuralModel& model) noexcept;
     void buildReleaseShape(
@@ -296,6 +315,27 @@ private:
     // tremolo, breath pulsing or beating the region carries is a residual
     // about this line and survives untouched.
     float loopLevelSlopePerSecond_ { 0.0f };
+    // The three layers' own power trajectories across the loop region, sampled
+    // once per model by setModel() at the points the fit above uses.
+    //
+    // The slope has to be the slope of the mix that is *rendered*, and the
+    // renderer does not render the three layers at full strength: Air and Bone
+    // carry their own controls, and Bone drops every mode the analysis could
+    // not vouch for. On a source whose layers decay at different rates a fit
+    // taken over all three at unity is a fit of a signal nobody is listening
+    // to, so moving either control left the correction based on one trend and
+    // the wrap on another. Keeping the samples lets the fit be redone from them
+    // whenever those controls move, at no decoder cost.
+    static constexpr int loopFitPoints = 32;
+    std::array<float, loopFitPoints> loopFitSeconds_ {};
+    std::array<float, loopFitPoints> loopFitCorePower_ {};
+    std::array<float, loopFitPoints> loopFitAirPower_ {};
+    std::array<float, loopFitPoints> loopFitBonePower_ {};
+    float loopFitLengthSeconds_ { 0.0f };
+    // The layer gains the stored slope was last fitted at, so a block that did
+    // not move them does no work.
+    float loopFitAir_ { -1.0f };
+    float loopFitBone_ { -1.0f };
     // The published model's own damping exponent p, fitted once per model by
     // setModel() and bounded to [0, 1.5]. It is the shape the release borrows:
     // a source whose partials all decayed at the same rate fits zero and keeps

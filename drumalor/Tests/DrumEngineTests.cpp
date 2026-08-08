@@ -4271,6 +4271,151 @@ void testHiHatPedal()
             "a non-finite pedal position was accepted");
     engine.setHiHatPedal (14.0f);
     expect (engine.getHiHatPedal() <= 1.0f, "an out-of-range pedal position was accepted");
+
+    // A hat that is opened while it rings keeps ringing for as long as its new
+    // decay law says, bank included.
+    //
+    // The bank stops being evaluated once its slowest mode has passed 2.6 of
+    // its own decays, and that deadline is computed at note-on. Opening the
+    // pedal retunes the plate modes to the open plate's much longer loss law
+    // but used to leave the deadline where the note-on put it, so renderHat()
+    // stopped evaluating the bank partway through the splash and cut the plate
+    // out from under it.
+    //
+    // Read in 300-2500 Hz, which is the plate's own register: the circuit bank
+    // that carries the rest of a hat is high-passed at 3.4 kHz and above, so
+    // this band is very nearly the plate alone. The reference is the same note
+    // struck with the pedal already open, which is the deadline the reopened
+    // hat should have ended up with. The reopened one is legitimately quieter -
+    // it was struck against a clamped pair, which puts less into the plate -
+    // so what is asserted is that the two decay *together* rather than that
+    // they are equal.
+    {
+        constexpr int tailSamples = static_cast<int> (1.40 * sampleRate);
+        const auto splash = [&] (bool openAtNoteOn)
+        {
+            drumalor::DrumEngine engine;
+            engine.prepare (sampleRate, defaultBlockSize);
+            drumalor::KitParameters kit;
+            kit.humanise = 0.0f;
+            engine.setKitParameters (kit);
+            // The two laws set as far apart as the panel allows, which is where
+            // a deadline built from the wrong one is furthest wrong.
+            drumalor::InstrumentParameters openHat;
+            openHat.decay = 1.0f;
+            engine.setInstrumentParameters (drumalor::Instrument::OpenHat, openHat);
+            drumalor::InstrumentParameters closedHat;
+            closedHat.decay = 0.0f;
+            engine.setInstrumentParameters (drumalor::Instrument::ClosedHat, closedHat);
+
+            engine.setHiHatPedal (openAtNoteOn ? 0.0f : 1.0f);
+            expect (engine.triggerMidi (46, 0.90f), "note 46 did not trigger");
+            std::vector<float> mono;
+            const auto append = [&] (double seconds)
+            {
+                const auto count = static_cast<int> (std::ceil (seconds * sampleRate));
+                const auto interleaved = renderInterleaved (engine, count, defaultBlockSize);
+                for (int sample = 0; sample < count; ++sample)
+                {
+                    const auto index = static_cast<std::size_t> (sample) * 2u;
+                    mono.push_back (0.5f * (interleaved[index] + interleaved[index + 1u]));
+                }
+            };
+            // Two milliseconds clamped, then the foot comes off. Early enough
+            // that the plate still has nearly all of its energy when the longer
+            // law arrives, which is the case the old deadline truncated.
+            append (0.002);
+            if (! openAtNoteOn)
+                engine.setHiHatPedal (0.0f);
+            append (1.40);
+            mono.resize (static_cast<std::size_t> (tailSamples), 0.0f);
+            return mono;
+        };
+
+        const auto reopened = splash (false);
+        const auto bornOpen = splash (true);
+        const auto plateGap = [&] (double from, double to)
+        {
+            return 10.0 * std::log10 (
+                std::max (1.0e-30, bandPowerInRange (reopened, sampleRate,
+                                                     300.0, 2500.0, from, to))
+                / std::max (1.0e-30, bandPowerInRange (bornOpen, sampleRate,
+                                                       300.0, 2500.0, from, to)));
+        };
+
+        const double early = plateGap (0.050, 0.200);
+        const double late = plateGap (1.100, 1.250);
+        // Measured -8.2 dB early and -7.0 dB late: a constant offset, which is
+        // two plates ringing down side by side. With the note-on deadline left
+        // in place the bank is already gone by 40 ms, the band measures the
+        // circuit's bleed into it instead, and the pair reads -15.2 dB early
+        // closing to -8.5 dB late as that bleed outlives the plate.
+        expect (early >= -11.0,
+                "the reopened hat's plate is " + std::to_string (early)
+                    + " dB under a hat that was open when it was struck, so the "
+                      "modal bank is being cut off at the note-on deadline");
+        expect (std::abs (late - early) <= 3.5,
+                "the reopened hat's plate did not decay alongside an open hat's: "
+                "the gap moved " + std::to_string (late - early)
+                    + " dB between 50 ms and 1.1 s, which is a bank that stopped "
+                      "rather than one that decayed");
+    }
+
+    // A foot that shuts the pair makes the sound a foot makes. The engine
+    // generates that stroke itself when the controller crosses the threshold,
+    // and it used to generate it through the two-argument trigger(), whose
+    // default articulation is Head - so its own pedal chick took the stick
+    // path: it kept the wooden tip's broadband scuff, missed the shorter
+    // clamped decay, the six-times longer plate-on-plate contact and the
+    // blunt-contact filtering, and came out as a quiet closed hat.
+    //
+    // Asserted as an identity against GM note 44, which is the same stroke
+    // arriving by the other route. Humanise is 0 and both engines are fresh, so
+    // the two triggers draw the same per-hit seed and nothing but the
+    // articulation can separate them.
+    {
+        constexpr int chickSamples = static_cast<int> (0.60 * sampleRate);
+        const auto renderChick = [&] (bool fromPedal, int midiNote)
+        {
+            drumalor::DrumEngine engine2;
+            engine2.prepare (sampleRate, defaultBlockSize);
+            drumalor::KitParameters kit;
+            kit.humanise = 0.0f;
+            engine2.setKitParameters (kit);
+            if (fromPedal)
+            {
+                // Open, then shut in one move: travel 1.0, so the generated
+                // velocity saturates at 1.0 and matches the note below.
+                engine2.setHiHatPedal (0.0f);
+                engine2.setHiHatPedal (1.0f);
+            }
+            else
+            {
+                engine2.setHiHatPedal (0.0f);
+                engine2.setHiHatPedal (1.0f);
+                engine2.allSoundsOff();
+                drumalor::DrumEngine fresh;
+                fresh.prepare (sampleRate, defaultBlockSize);
+                fresh.setKitParameters (kit);
+                expect (fresh.triggerMidi (midiNote, 1.0f),
+                        "note " + std::to_string (midiNote) + " did not trigger");
+                return renderInterleaved (fresh, chickSamples, defaultBlockSize);
+            }
+            return renderInterleaved (engine2, chickSamples, defaultBlockSize);
+        };
+
+        const auto pedalChick = renderChick (true, 0);
+        const auto note44 = renderChick (false, 44);
+        const auto note42 = renderChick (false, 42);
+        expect (pedalChick == note44,
+                "the pedal-generated chick is not the same stroke as GM note 44, "
+                "so setHiHatPedal() is still triggering it as a stick hit");
+        // ... and note 44 is not merely note 42 under another name, or the
+        // identity above would hold whatever articulation the pedal used.
+        expect (note44 != note42,
+                "a foot chick and a stick-struck closed hat render identically, "
+                "so the clause above is vacuous");
+    }
 }
 
 // The notes and messages a drummer's kit actually sends. Four articulations
@@ -4511,6 +4656,82 @@ void testMidiSurfaceContract()
         expect (std::abs (chokedCrash (48.0f / 127.0f, true) - held)
                     <= 1.0e-6 * std::max (1.0, held),
                 "polyphonic aftertouch did not match the channel form");
+        // A hand lands on one cymbal, and two cymbals can be ringing on one
+        // instrument: Crash 49 shares a channel strip with China 52, as Ride 51
+        // does with Bell 53. Matching the instrument alone made the note form
+        // of aftertouch channel-wide inside it, so grabbing the china took the
+        // crash with it and the per-note choke was not observable at all.
+        //
+        // Written as a comparison against the channel form on the same pair, in
+        // the same order, on the same engine settings - so the two runs draw
+        // identical per-hit seeds and the only thing that can separate them is
+        // which voices the pressure reached.
+        const auto chokedPair = [&] (const std::vector<int>& notes, bool channel)
+        {
+            drumalor::DrumEngine engine;
+            engine.prepare (sampleRate, defaultBlockSize);
+            drumalor::KitParameters kit;
+            kit.humanise = 0.0f;
+            engine.setKitParameters (kit);
+            expect (engine.triggerMidi (49, 0.90f), "note 49 did not trigger");
+            expect (engine.triggerMidi (52, 0.90f), "note 52 did not trigger");
+            renderInterleaved (engine, static_cast<int> (0.100 * sampleRate),
+                               defaultBlockSize);
+            for (const int note : notes)
+                expect (engine.applyAftertouch (note, 1.0f),
+                        "polyphonic aftertouch on note " + std::to_string (note)
+                            + " was refused");
+            if (channel)
+                engine.applyAftertouch (1.0f);
+            renderInterleaved (engine, static_cast<int> (0.030 * sampleRate),
+                               defaultBlockSize);
+            const auto interleaved = renderInterleaved (
+                engine, static_cast<int> (0.060 * sampleRate), defaultBlockSize);
+            return metricsForInterleaved (interleaved).rms();
+        };
+
+        const double pairRinging = chokedPair ({}, false);
+        const double pairChannel = chokedPair ({}, true);
+        const double pairCrashOnly = chokedPair ({ 49 }, false);
+        const double pairChinaOnly = chokedPair ({ 52 }, false);
+        const double pairBothNotes = chokedPair ({ 49, 52 }, false);
+        expect (decibels (pairChannel, pairRinging) <= -20.0,
+                "channel aftertouch did not choke the crash and the china "
+                "together (" + std::to_string (decibels (pairChannel, pairRinging))
+                    + " dB)");
+        // The clause the per-note choke lives or dies on: each note has to
+        // leave the other cymbal ringing, which is exactly what the channel
+        // form takes away. Asserted in both directions, so an implementation
+        // that quietly ignored one of the two notes cannot pass it. With the
+        // instrument alone as the key both of these sit on the channel form.
+        for (const auto& entry : { std::pair { pairCrashOnly, 49 },
+                                   std::pair { pairChinaOnly, 52 } })
+            expect (decibels (entry.first, pairChannel) >= 12.0,
+                    "polyphonic aftertouch on note " + std::to_string (entry.second)
+                        + " silenced the other cymbal on the same instrument as "
+                          "well, so the note form is still channel-wide ("
+                        + std::to_string (decibels (entry.first, pairChannel))
+                        + " dB over the channel form)");
+        // Which cymbal survives depends on which note was pressed, and the two
+        // survivors are not the same sound: the china left behind by a grab on
+        // 49 measures 2.6 dB under the crash left behind by a grab on 52. The
+        // bound is set well inside that rather than at it, because the pair's
+        // relative level is a voicing decision and not part of this contract -
+        // what this clause is here to exclude is the exactly-zero an
+        // instrument-keyed implementation produces.
+        expect (decibels (pairChinaOnly, pairCrashOnly) >= 1.0,
+                "grabbing the crash and grabbing the china left the same amount "
+                "of cymbal ringing, so the note is not deciding which one ("
+                    + std::to_string (decibels (pairChinaOnly, pairCrashOnly))
+                    + " dB apart)");
+        // And between them the two notes reach everything the channel form
+        // does, so nothing on the instrument is left un-chokeable by note.
+        expect (std::abs (decibels (pairBothNotes, pairChannel)) <= 1.0,
+                "grabbing both notes did not match the channel form, so some of "
+                "the instrument answers only to channel pressure ("
+                    + std::to_string (decibels (pairBothNotes, pairChannel))
+                    + " dB apart)");
+
         // Pressure zero is what a controller sends when the hand comes off, and
         // nothing here can put a cymbal back, so it must do nothing at all.
         drumalor::DrumEngine engine;
@@ -4550,6 +4771,82 @@ void testMidiSurfaceContract()
         expect (difference >= 0.02,
                 "CC 88 0 and 127 ahead of velocity byte 64 on note 49 are the same hit ("
                     + std::to_string (difference) + " dB)");
+
+        // The prefix as the plug-in has to book-keep it. CC 88 is a channel
+        // message and a prefix for the next note event on *its own* channel, so
+        // a single pending value for the whole port is wrong twice over: it
+        // hands one channel's fine bits to another channel's note, and it
+        // clears them before the channel they were meant for gets to use them.
+        //
+        // The bookkeeping lives here rather than in the processor so it can be
+        // checked without a plug-in host; the processor keys every read and
+        // write on the status nibble and does nothing else with it.
+        {
+            drumalor::HighResolutionVelocityPrefix prefixes;
+
+            // A prefix on one channel is invisible to every other channel, and
+            // does not survive that channel's own note.
+            prefixes.set (0, 100);
+            expect (! prefixes.take (1).has_value(),
+                    "a CC 88 on channel 1 was handed to a note on channel 2");
+            const auto own = prefixes.take (0);
+            expect (own.has_value() && *own == 100,
+                    "a CC 88 did not reach the next note on its own channel");
+            expect (! prefixes.take (0).has_value(),
+                    "a CC 88 prefix was reused by a second note on its channel");
+
+            // Sixteen channels each holding their own, taken in a different
+            // order than they were set: no channel may see another's.
+            for (int channel = 0; channel < 16; ++channel)
+                prefixes.set (channel, channel * 8);
+            for (int channel = 15; channel >= 0; --channel)
+            {
+                const auto taken = prefixes.take (channel);
+                expect (taken.has_value() && *taken == channel * 8,
+                        "channel " + std::to_string (channel)
+                            + " took the wrong CC 88 prefix");
+            }
+
+            // CC 120 and CC 123 are channel messages, so each discards its own
+            // channel's prefix and leaves the other fifteen alone.
+            prefixes.set (3, 64);
+            prefixes.set (4, 65);
+            prefixes.clear (3);
+            expect (! prefixes.take (3).has_value(),
+                    "an all-notes-off did not discard its channel's CC 88 prefix");
+            const auto untouched = prefixes.take (4);
+            expect (untouched.has_value() && *untouched == 65,
+                    "an all-notes-off on one channel discarded another channel's "
+                    "CC 88 prefix");
+
+            // A stop, a re-prepare or a panic ends the stream the prefix
+            // belonged to, so it must not survive into the next one.
+            for (int channel = 0; channel < 16; ++channel)
+                prefixes.set (channel, 127);
+            prefixes.clearAll();
+            for (int channel = 0; channel < 16; ++channel)
+                expect (! prefixes.take (channel).has_value(),
+                        "a CC 88 prefix on channel " + std::to_string (channel)
+                            + " survived a reset");
+
+            // Out-of-range channels are ignored rather than trusted.
+            prefixes.set (-1, 40);
+            prefixes.set (16, 40);
+            expect (! prefixes.take (-1).has_value() && ! prefixes.take (16).has_value(),
+                    "an out-of-range MIDI channel was accepted");
+
+            // And what a taken prefix is worth: the fourteen-bit scaling for
+            // the note that consumed it, and the untouched seven-bit scaling
+            // for the next note on the same channel, which has none.
+            prefixes.set (5, 127);
+            expect (drumalor::velocityFromMidi (64, prefixes.take (5))
+                        > drumalor::velocityFromMidi (64),
+                    "a prefixed note-on did not read louder than an unprefixed one");
+            expect (drumalor::velocityFromMidi (64, prefixes.take (5))
+                        == 64.0f / 127.0f,
+                    "the note after a prefixed one reused the spent CC 88 value "
+                    "instead of falling back to the seven-bit scaling");
+        }
     }
 
     // ------------------------------------------------------ the foot splash --

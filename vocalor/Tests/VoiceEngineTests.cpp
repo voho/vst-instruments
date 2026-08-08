@@ -366,6 +366,32 @@ struct VoiceEngineTestAccess
         return result;
     }
 
+    /** The longest direct-or-image path the placement can delay a singer by,
+        in samples. Once a singer stops, her line is fed silence, so nothing of
+        hers can reach the listener more than this far after her last sample. */
+    static int placementMaximumSamples (const VoiceEngine& engine) noexcept
+    {
+        return engine.placementMaximumSamples_;
+    }
+
+    /** How long after the note-off each held voice waits before it starts to
+        release, in samples, ordered by singer identity. A section does not let
+        go on one sample any more than it enters on one, and a stagger built
+        only from per-singer decay rates would leave every envelope turning at
+        the same instant. */
+    static std::vector<int> releaseDelays (const VoiceEngine& engine)
+    {
+        std::vector<std::pair<int, int>> byIdentity;
+        for (const auto& voice : engine.voices_)
+            if (voice.active && voice.releasing)
+                byIdentity.emplace_back (voice.singer, voice.releaseDelaySamples);
+        std::sort (byIdentity.begin(), byIdentity.end());
+        std::vector<int> result;
+        for (const auto& entry : byIdentity)
+            result.push_back (entry.second);
+        return result;
+    }
+
     /** The entry delay of every held voice, in samples, ordered by singer
         identity rather than by voice slot so repeats of the same note can be
         compared entry by entry. */
@@ -1553,6 +1579,105 @@ void testSingerPlacement()
               << worstCents << " cents\n";
     expect (worstCents < 1.0,
             "sweeping Spread or Size bent the pitch, so a delay is following a knob");
+}
+
+/** A singer who has stopped singing stays stopped.
+
+    Each singer owns a placement delay line, and the line is kept running for a
+    hold after her last voice ends so the sound already inside it can finish
+    arriving. What goes into the line during that hold is her chunk bus, and the
+    bus is only cleared for singers who are about to write to it - so a bus left
+    uncleared still holds the final chunk of the note that has just ended, and
+    feeding it back into the line once per chunk repeats the end of the note for
+    as long as the hold lasts.
+
+    The seam is the length of the tail. Nothing of a singer's can reach the
+    listener later than the longest path the placement gives her, so once her
+    last voice has gone the output has to be silent within that many samples.
+    An engine that recycles the stale bus keeps sounding for the whole hold and
+    then flushes that, which is about twice as long again. Room is pinned at 0
+    so the reverb's own tail is not what is being measured. */
+void testPlacementDoesNotRepeatASilencedSinger()
+{
+    constexpr auto sampleRate = 48000.0;
+    constexpr int poll = 64;   // one chunk, so the seam is located exactly
+
+    auto parameters = makeParameters (1, 0, 0, 0);   // Choir
+    parameters.choirSize = 12;
+    parameters.humanize = 0.0f;
+    parameters.room = 0.0f;
+    parameters.roomSize = 0.5f;
+    parameters.spread = 1.0f;
+
+    vocalor::VoiceEngine engine;
+    engine.prepare (sampleRate, poll);
+    engine.reset();
+    engine.setParameters (parameters);
+
+    const auto maximumDelay =
+        vocalor::VoiceEngineTestAccess::placementMaximumSamples (engine);
+    expect (maximumDelay > 0,
+            "the placement reports no delay at all, so this fixture measures nothing");
+
+    engine.noteOn (60, 0.85f);
+    std::vector<float> left (poll, 0.0f);
+    std::vector<float> right (poll, 0.0f);
+    const auto step = [&]
+    {
+        std::fill (left.begin(), left.end(), 0.0f);
+        std::fill (right.begin(), right.end(), 0.0f);
+        engine.process (left.data(), right.data(), poll);
+    };
+
+    for (int i = 0; i < static_cast<int> (sampleRate * 0.6) / poll; ++i)
+        step();
+    engine.noteOff (60);
+
+    // Run to the block at which the last voice stops writing to a bus, then
+    // keep going. Everything past the longest path is measured: with the buses
+    // cleared it is the first-order allpass states ringing down as
+    // denormal-scale dust, and with a stale bus recycled it is the end of the
+    // note being played again at its own level.
+    long long position = 0;
+    long long lastVoiceEnded = -1;
+    double soundingPeak = 0.0;
+    double tailPeak = 0.0;
+    const auto limit = static_cast<long long> (sampleRate * 12.0);
+    while (position < limit)
+    {
+        step();
+        for (int i = 0; i < poll; ++i)
+        {
+            const auto magnitude = std::max (
+                std::abs (static_cast<double> (left[static_cast<std::size_t> (i)])),
+                std::abs (static_cast<double> (right[static_cast<std::size_t> (i)])));
+            if (lastVoiceEnded < 0)
+                soundingPeak = std::max (soundingPeak, magnitude);
+            else if (position + i > lastVoiceEnded + maximumDelay + poll)
+                tailPeak = std::max (tailPeak, magnitude);
+        }
+        position += poll;
+        if (lastVoiceEnded < 0 && engine.getActiveVoiceCount() == 0)
+            lastVoiceEnded = position;
+        else if (lastVoiceEnded >= 0 && position > lastVoiceEnded + 4 * maximumDelay)
+            break;
+    }
+
+    expect (lastVoiceEnded >= 0, "the choir never finished releasing");
+    expect (soundingPeak > 1.0e-3, "the choir never sounded at all");
+    if (lastVoiceEnded < 0)
+        return;
+
+    std::cout << "placement tail past the longest path: peak " << std::scientific
+              << tailPeak << " against " << soundingPeak << " while sounding\n"
+              << std::fixed;
+    // -180 dB absolute. The dust measures about 1e-35 and the repeat about
+    // 1e-6, so anything in between separates them; this sits twenty-six orders
+    // of magnitude above the one and three below the other.
+    expect (tailPeak < 1.0e-9,
+            "the placement was still sounding at " + std::to_string (tailPeak)
+                + " more than its longest path after the last voice ended, so a "
+                  "silenced singer's bus is being repeated into her delay line");
 }
 
 /** The arrivals in one singer's impulse response after the direct wavefront has
@@ -3093,12 +3218,93 @@ void testVelocityShapesOnset()
     std::cout << "velocity 0.05 -> 1.00:\n";
     const auto ratio = presenceRatio (renderAt (0.05f), renderAt (1.00f), sampleRate);
     // 1.066 before this step: velocity was a fader with a very slight tilt on
-    // it. Measured 1.53. Two cascaded first-order shelves cannot reach the 2.0
-    // Sundberg measures across these two bands -- see the plan's note on the
-    // 6 dB per octave per stage ceiling -- so the bound is set where the
-    // mechanism actually lands with margin rather than at the physiology.
+    // it. Measured 1.48. Two cascaded first-order shelves cannot reach the 2.0
+    // Sundberg measures across these two bands -- 2-5 kHz is inside the shelf's
+    // own transition, not its plateau, so this reading understates the law by
+    // construction; testTheSourceShelfAppliesItsGainOnce measures it where the
+    // plateau has been reached. The bound is set where the mechanism actually
+    // lands with margin rather than at the physiology.
     expect (ratio >= 1.40,
             "velocity still moves the presence band no faster than the level");
+}
+
+/** ... and it applies that gain once, not once per shelf stage.
+
+    The law is Sundberg's: the partials above 1 kHz fall by twice as many
+    decibels as the level does, so the shelf's own plateau has to be the note's
+    broadband gain exactly once - the level carries the first factor and the
+    shelf the second. The shelf is two cascaded first-order stages, and it is
+    there for the slope, because one stage cannot move 3 kHz far enough from
+    450 Hz. A stage that carried the whole gain would put the square of it above
+    the corner and make the band fall three times as fast, not twice. At
+    velocity 0.05 that is a plateau of -57.2 dB against the -28.6 the law asks
+    for.
+
+    The reading is taken high enough that the shelf has reached its plateau -
+    8-16 kHz against a corner at 850 Hz - and referred to the fundamental rather
+    than to a 150-800 Hz band, because the shelf is only unity at DC and a band
+    that reaches 800 Hz is already inside its transition. Tension sits at 1.00
+    and the two velocities are 0.60 and 1.00 so that the source tilt, which is
+    the other velocity-dependent brightness term, stays near its own ceiling and
+    contributes under a decibel of the reading. */
+void testTheSourceShelfAppliesItsGainOnce()
+{
+    constexpr auto sampleRate = 48000.0;
+
+    const auto renderAt = [&] (float velocity)
+    {
+        vocalor::VoiceEngine engine;
+        engine.prepare (sampleRate, blockSize);
+        engine.reset();
+        auto parameters = dynamicProtocolParameters();
+        parameters.breath = 0.0f;
+        parameters.vibrato = 0.0f;
+        parameters.humanize = 0.0f;
+        parameters.room = 0.0f;
+        parameters.tension = 1.0f;
+        parameters.dynamics = 1.0f;
+        engine.setParameters (parameters);
+        engine.noteOn (60, velocity);
+        return renderMono (engine, static_cast<int> (sampleRate * 1.3));
+    };
+
+    // Four first-order differences before the high reading is taken. It is
+    // taken thirty harmonics above the fundamental and a hundred decibels under
+    // it, which is where the Blackman-Harris window sustainBandDb uses stops
+    // measuring the signal and starts measuring itself: its sidelobes are flat
+    // at -92 dB rather than rolling off, so at that separation the leakage from
+    // the fundamental sits about 10 dB *above* a soft note's own 8-16 kHz
+    // content and floors the reading. Differencing tilts the spectrum 24 dB per
+    // octave before the window sees it, putting a 261 Hz fundamental 129 dB
+    // under 12 kHz. Both renders get the same filter, so every difference
+    // between them survives it unchanged.
+    const auto preEmphasised = [] (std::vector<float> samples)
+    {
+        for (int pass = 0; pass < 4; ++pass)
+            for (std::size_t i = samples.size(); i-- > 1;)
+                samples[i] -= samples[i - 1];
+        return samples;
+    };
+
+    const auto soft = renderAt (0.60f);
+    const auto loud = renderAt (1.00f);
+    const auto level = sustainBandDb (loud, sampleRate, 200.0, 330.0)
+                     - sustainBandDb (soft, sampleRate, 200.0, 330.0);
+    const auto plateau = sustainBandDb (preEmphasised (loud), sampleRate, 8000.0, 16000.0)
+                       - sustainBandDb (preEmphasised (soft), sampleRate, 8000.0, 16000.0);
+    const auto law = plateau / level;
+    std::cout << "shelf law, velocity 0.60 -> 1.00: fundamental " << std::fixed
+              << std::setprecision (2) << level << " dB, 8-16 kHz " << plateau
+              << " dB, ratio " << law << '\n';
+
+    // Measured 2.05. With the gain applied once per stage it is 2.95, which is
+    // the cube the two-stage cascade produces and the number this bound exists
+    // to exclude.
+    expect (law > 1.70 && law < 2.40,
+            "the band above the shelf corner falls " + std::to_string (law)
+                + " times as fast as the fundamental, against the 2 the source's"
+                  " own loudness law asks for: the shelf is not applying the"
+                  " note's broadband gain exactly once");
 }
 
 /** The dynamic control has to cover a singer's range, and stay a spectrum
@@ -3143,7 +3349,7 @@ void testDynamicRange()
     const auto shipped = spanAt (0.28f);
     const auto breathy = spanAt (0.60f);
 
-    // Measured 33.19, 33.04 and 32.41 dB, against 18.10 / 18.10 / 18.09 before.
+    // Measured 34.02, 33.86 and 33.22 dB, against 18.10 / 18.10 / 18.09 before.
     expect (shipped >= 28.0,
             "the dynamic control does not cover a singer's range");
     // Pinned at the shipping breath, because the aspiration is what would take
@@ -3152,7 +3358,8 @@ void testDynamicRange()
             "the aspiration is flooring the bottom of the dynamic range");
 
     // And the dynamic has to be a spectrum control across that whole span, not
-    // a 30 dB fader. 1.195 before this step; measured 1.53.
+    // a 30 dB fader. 1.195 before this step; measured 1.53. Read in the shelf's
+    // transition region for the same reason the velocity ratio above is.
     const auto renderAt = [&] (float dynamics)
     {
         vocalor::VoiceEngine engine;
@@ -4229,6 +4436,33 @@ void testReleaseStagger()
         const auto atNoteOff = vocalor::VoiceEngineTestAccess::envelopesBySinger (engine);
         engine.noteOff (60);
 
+        // When each voice *starts* letting go, read before the countdowns are
+        // spent. The threshold crossing below is not enough on its own: an
+        // engine that gave every singer her own release time constant but
+        // started all twelve of them on the same sample would spread the -40 dB
+        // crossings exactly as required and still cut the section off as one,
+        // which is the thing this step exists to remove.
+        const auto starts = vocalor::VoiceEngineTestAccess::releaseDelays (engine);
+        expect (starts.size() == 12,
+                "the twelve-singer choir did not put twelve voices into release");
+        if (starts.size() == 12)
+        {
+            const auto first = *std::min_element (starts.begin(), starts.end());
+            const auto last = *std::max_element (starts.begin(), starts.end());
+            std::cout << "release starts at Humanize " << std::fixed
+                      << std::setprecision (1) << humanize << ": " << first
+                      << " to " << last << " samples after the note-off\n";
+            if (humanize > 0.0f)
+                expect (last > first,
+                        "every singer began releasing on the same sample, so the "
+                        "stagger is time constants alone and the section still "
+                        "lets go together");
+            else
+                expect (last == 0,
+                        "Humanize 0 no longer starts the whole section's release "
+                        "on the note-off");
+        }
+
         std::array<double, 12> crossed {};
         crossed.fill (-1.0);
         std::vector<float> left (poll, 0.0f);
@@ -4848,6 +5082,7 @@ int main()
     testGlideAndLegato();
     testRoomSizeGeometry();
     testSingerPlacement();
+    testPlacementDoesNotRepeatASilencedSinger();
     testRoomEarlyReflections();
     testSampleRateInvariance();
     testHumanisationDepthIsRateInvariant();
@@ -4868,6 +5103,7 @@ int main()
     testNasalBranch();
     testOnsetSpectrum();
     testVelocityShapesOnset();
+    testTheSourceShelfAppliesItsGainOnce();
     testDynamicRange();
     testReleaseAerodynamics();
     testAspirationIsPitchSynchronous();

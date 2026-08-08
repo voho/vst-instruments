@@ -392,6 +392,8 @@ private:
         // slope, and the shelf gain itself. See sourcePresenceCoefficient_.
         float sourceSlow { 0.0f };
         float sourceSlower { 0.0f };
+        // What *one* stage applies: the square root of the note's broadband
+        // gain, so the cascade's plateau is that gain exactly once.
         float presence { 1.0f };
         // Laryngeal amplitude modulation on the vibrato cycle, as a gain on the
         // voiced source and on the presence shelf. Both carry it, which is what
@@ -404,6 +406,12 @@ private:
         // permanent sidebands 3 kHz either side of every partial.
         float vibratoGain { 1.0f };
         float vibratoGainStep { 0.0f };
+        // The same modulation as it reaches one shelf stage: its square root,
+        // because the two stages cascade and the pair between them must deliver
+        // the modulation once. Ramped on its own rather than derived per sample
+        // from vibratoGain, which would put a square root in the voice loop.
+        float shelfVibrato { 1.0f };
+        float shelfVibratoStep { 0.0f };
         // Velocity as the singer's own output, normalised to what the same note
         // reaches at velocity 1: the level term of amplitudeGain without the
         // ensemble trim. Constant for the note, so it is resolved at note-on.
