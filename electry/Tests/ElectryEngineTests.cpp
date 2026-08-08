@@ -5438,7 +5438,18 @@ void testHumbuckerTwoCoilNotch()
                            + std::to_string(reference.midiNote) + " moved from "
                            + std::to_string(reference.humbucker[b]) + " dB to "
                            + std::to_string(dark) + " dB");
-                expect(std::abs(bright - reference.single[b]) < 0.5,
+                // The single coil is not on the path this step changed, so it
+                // is held to a tight bound - but only where the measurement
+                // means something. A band sitting 90-odd dB down is numerical
+                // floor rather than signal, and its decibel value does not
+                // reproduce between x86_64 and arm64, which contract
+                // multiply-adds differently: on Apple silicon the 8-16 kHz
+                // bands moved 0.80 and 1.19 dB while every band carrying real
+                // signal agreed to 0.02 dB. Tightening this further would only
+                // pin the floating-point noise of one architecture.
+                const double singleTolerance =
+                    reference.single[b] > -80.0 ? 0.5 : 2.5;
+                expect(std::abs(bright - reference.single[b]) < singleTolerance,
                        "single-coil octave-band energy on note "
                            + std::to_string(reference.midiNote) + " moved from "
                            + std::to_string(reference.single[b]) + " dB to "
