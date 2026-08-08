@@ -168,10 +168,17 @@ if(BUILD_TESTING)
     # Sanitizer instrumentation slows the multi-rate render matrix by roughly
     # an order of magnitude; keep the normal runaway guard tight while
     # retaining full coverage under instrumentation.
+    # The unsanitized bound was 60 s. The picking-hand variation fixture added
+    # in the 2026-08-07 pass renders two sets of twelve strokes separated by
+    # twelve-second gaps, plus a rapid set, which put the suite at 54 s on a
+    # loaded four-core Linux box and past 60 s on slower runners — so the guard
+    # had started firing on ordinary growth rather than on the runaway it is
+    # for. Raised to 300 s, keeping roughly the same margin over the real
+    # runtime that the 60 s bound gave when it was chosen.
     if(CMAKE_CXX_FLAGS MATCHES "fsanitize")
         set(ELECTRY_ENGINE_TEST_TIMEOUT 600)
     else()
-        set(ELECTRY_ENGINE_TEST_TIMEOUT 60)
+        set(ELECTRY_ENGINE_TEST_TIMEOUT 300)
     endif()
     set_tests_properties(Electry.ElectryEngine PROPERTIES
         TIMEOUT ${ELECTRY_ENGINE_TEST_TIMEOUT})

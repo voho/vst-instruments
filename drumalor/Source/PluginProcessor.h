@@ -7,6 +7,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <optional>
 
 namespace drumalor::parameters
 {
@@ -134,6 +135,12 @@ private:
     std::atomic<std::uint32_t> uiQueueGeneration { 1 };
 
     std::array<std::atomic<std::uint32_t>, drumalor::instrumentCount> triggerCounters {};
+
+    // MIDI 1.0's High Resolution Velocity Prefix: CC 88 immediately ahead of a
+    // note-on carries the low seven bits of that note's fourteen-bit velocity.
+    // It is consumed by the next note-on and by nothing else, so a stray CC 88
+    // with no note behind it cannot change a later stroke.
+    std::optional<int> pendingHighResolutionVelocity {};
 
     drumalor::DrumEngine engine;
     std::atomic<bool> panicRequested { false };

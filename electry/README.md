@@ -7,12 +7,15 @@ pitch glide, a fretting hand with a position and a reach that decides where
 each note is played, a point-touch model that produces natural and pinch
 harmonics as the string's own mode shapes rather than as transpositions,
 slides whose length is a distance over a hand speed and whose squeak is the
-winding passing under the finger, a pitch wheel that bends every string like a
-vibrato bar, channel pressure that is the fretting hand's own one-sided
-vibrato on the strings it is actually stopping, a resonance wheel that can push a distorted tone into self-sustaining
-amplifier feedback, one-way bridge coupling into
-the strings you are *not* fingering, and a published pickup signal
-structure (position comb, finite magnetic aperture, nonlinear flux, induced
+winding passing under the finger, a picking hand that never puts the plectrum
+down in exactly the same place twice, a pitch wheel that bends every string like
+a vibrato bar, channel pressure that is the fretting hand's own one-sided
+vibrato with a separate finger on each string it is actually stopping, a
+resonance wheel that can push a distorted tone into self-sustaining
+amplifier feedback, one bridge shared by all eight strings — the ones you are
+not fingering ring off it and the ones you are exchange energy through it — and
+a published pickup signal structure (position comb, two coils for the humbucker
+and one for the single coil, finite magnetic aperture, nonlinear flux, induced
 EMF, and loaded coil resonance). The performance is selected with two
 independent banks of latching keyswitches below the playable range - one for
 the picking style, one for the play style - so any stroke can drive any
@@ -143,8 +146,11 @@ wheel over the Bend Time parameter rather than snapping. Channel pressure is
 the other half of that distinction: it is a finger rather than the bar, so it
 leans only into the strings the hand is stopping, pushes them sharp and never
 flat, and leaves an open string exactly where it is — nothing is holding an
-open string down for the hand to rock, and reaching it would need the bar.
-The modulation wheel (CC 1) is the
+open string down for the hand to rock, and reaching it would need the bar. It
+is a hand rather than an oscillator: every stopped string gets its own finger,
+with its own phase and its own rate and excursion redrawn each cycle, and the
+hand leans into and out of the gesture from rest instead of at full slew (see
+**Fretting-hand vibrato** below). The modulation wheel (CC 1) is the
 performance resonance: it raises the sympathetic coupling from the
 Sympathetic Ring parameter toward total and opens an acoustic feedback path
 from the amplified output back into the strings, scaled by the Resonance
@@ -207,6 +213,26 @@ All Sound Off and All Notes Off.
   window are smoothsteps, so its area is exactly what the symmetric raised
   cosine it replaced had, and the asymmetry changes the attack's spectrum
   without changing how hard the note lands.
+- **Stroke-to-stroke variation:** a hand does not put the plectrum down twice in
+  the same place, and four quantities are drawn fresh for every attack: where
+  along the string the pick lands (4 mm of standard deviation, about 5% of the
+  pick-to-bridge distance at the default Pick Position, so the pluck comb's
+  first notch moves by about as much), how hard it is driven (0.6 dB), how far
+  off the plane it is held (6 degrees, which is not a free parameter but exactly
+  the split between the two polarisations, so it is applied as a rotation of
+  that split and takes no energy with it), and how much of the tip is touching
+  (8%, carried by the release pulse length). Each draw is three summed uniforms,
+  so it has unit variance exactly and cannot leave ±3 sigma — the bound the
+  plectrum's own width and the hand anchored on the bridge set. The variation
+  rides on top of the up/down stroke colouring rather than replacing it, so
+  alternate picking gets it too, and the angle alone is skipped for a hammer-on,
+  which has no plectrum to hold at an angle. Measured on twelve identical note-ons twelve
+  seconds apart with the noise controls and Artifacts at zero, successive
+  strokes differ over their first 150 ms by -16.5 dB on the mean where they
+  differed by -84.6 dB before, peak level spreads 2.49 dB where it spread
+  0.012 dB, and the attack's spectral centroid spreads 17.2 Hz on a 456 Hz
+  centroid where it spread 0.38 Hz. Every draw is a pure function of the note's
+  index and the string, so identical MIDI still renders identical audio.
 - **Touch harmonics:** a light finger on the string is a point loss, and mode
   `n`'s displacement under it goes as `sin(n pi p)`, so the energy the contact
   removes per round trip goes as `sin^2(n pi p)`. Condensed into the single
@@ -252,10 +278,41 @@ All Sound Off and All Notes Off.
   decaying fret-collision window on hard-picked notes that soft-limits
   displacement and re-radiates deterministic rattle. Hammer-ons retarget a
   sounding loop without clearing its state.
-- **Tension modulation:** a string-energy envelope shortens the loop delay,
-  so hard attacks start audibly sharp and relax over hundreds of
-  milliseconds. The pitch wheel moves the same delay target along the Bend
-  Time glide, each string by its own compliance.
+- **Tension modulation:** a string-energy envelope shortens the loop delay, so a
+  hard attack starts fractionally sharp and relaxes as the string decays, deeper
+  on the thinner strings and with the square of the pick's force. It is far
+  smaller than a real string's own stretch and it is documented rather than
+  advertised: on the open E2 at full velocity with Velocity Response at 100%
+  the peak deviation is +0.16 cents and it arrives 184 ms after the attack,
+  which is both well under the pitch a player hears and later than the attack it
+  belongs to. Recalibrating it against the stretch law the rest of the model
+  uses was scheduled and struck; the measurements and the reason — the suite's
+  fixed-bin spectral estimators cannot score a signal whose pitch moves during
+  the attack — are in the
+  [plan](Docs/best-in-class-plan.md#considered-and-not-planned). The pitch wheel
+  moves the same delay target along the Bend Time glide, each string by its own
+  compliance.
+- **Fretting-hand vibrato:** channel pressure rocks the finger, and the pitch
+  follows the *square* of the finger's displacement, because rocking a stopped
+  string sideways by `x` lengthens its path by `k x^2` — the same `dL/L`
+  relation the pitch wheel's per-string compliance is solved from. That is not a
+  flat-topped wave: the note dwells at the fretted pitch between excursions and
+  the excursions themselves are briefer and sharper-cornered than the rock that
+  makes them, so each cycle spends 36.4% of itself above half its own peak where
+  a raised cosine spends 50%. Every stopped string carries its own finger — its
+  own phase, drawn at note-on and deliberately not redrawn by a hammer-on or a
+  slide, which are the same finger arriving somewhere else, and its own rate and
+  excursion redrawn once per cycle at 12% and 15% of standard deviation. So a
+  double stop's two strings drift apart instead of moving in lockstep (mean
+  phase separation 0.19 cycles, exactly zero before) and the cycle period varies
+  by 14.2% of its mean where the single shared oscillator this replaced repeated
+  to 0.05%. The pressure ramps at a bounded rate and is then shaped by a
+  smoothstep, so the hand leaves rest with zero slope instead of at its
+  steepest: at a tenth of the time it takes to reach 90% of settled depth the
+  excursion is 1.9% of settled, where a one-pole sits at 20.6% whatever its time
+  constant, and 90% of settled still arrives at 207 ms. The nominal excursion is
+  40 cents with the per-cycle draw riding on top of it, so the widest cycles
+  reach about 55 cents. Zero pressure is bit-exact identical to no pressure.
 - **Low-register voicing:** the wound strings' decay law and the plectrum's
   release spectrum are calibrated against a dry electric low-E reference
   recording. A solid-body electric's low strings ring for tens of seconds while
@@ -272,27 +329,70 @@ All Sound Off and All Notes Off.
   see the position comb below. Scored on half-octave bands against the same
   references, the mean error is now 4.31 dB where it was 5.55 dB, and the
   60-85 Hz error on an open attack is 0.7 dB where it was 5.4 dB.
-- **Velocity:** one coherent response profile drives attack level, pulse
-  width and brightness, the string-scaled modal release, contact noise,
-  tension glide, and collision likelihood. The principal release passes two
+- **Velocity:** level is the plectrum's deflection. A pick holding the string at
+  fraction `p` of its length needs a lateral force `F = T y0 / (p (1-p) L)` to
+  hold it at `y0`, so the deflection is linear in the hand's force and a pickup,
+  which senses displacement, is linear in the deflection. MIDI velocity is read
+  as that force — `0.05 + 0.95 v`, the floor being the lightest stroke that
+  still slips off the pick — and Velocity Response is the *exponent* on it, so
+  the control scales the decibel range linearly and is an exact no-op at zero,
+  where `F^0` is one for every stroke. Force and contact spectrum are then two
+  axes rather than one, and separating them is what un-flattened the top of the
+  keyboard: force decides how far the string swings, and thence how hard it
+  meets the frets and how far it stretches itself sharp, while what the pick
+  puts into the string is set by its slip time `t_s = Z d / F + Z / k` — the
+  string leaves at the kink velocity `F / Z` over a grip depth the stroke does
+  not change plus the pick tip's own elastic recoil. That second term is a floor
+  no amount of force gets under, which is the sense in which the plectrum's
+  stiffness and not the hand bounds the contact spectrum: a 0.73 mm celluloid
+  medium recoils about 0.8 mm past a grip depth near 0.2 mm, so four fifths of
+  the slip at full force is the pick letting go of itself. Measured on the open
+  E2 at the shipping default, the peak of the first 50 ms spans 18.2 dB from
+  velocity 1 to 127 and 3.5 dB across the top half of the keyboard alone,
+  where the blend this replaced spanned 5.2 dB and 1.5 dB and turned over above
+  velocity 110 instead of staying monotone. A hard stroke is still the brighter
+  one — the attack's spectral centroid rises 7% from a soft stroke to a hard one
+  at full response — but the brightness no longer eats the accent. The response
+  also drives pulse width, the string-scaled modal release, contact noise and
+  collision likelihood. The principal release passes two
   low-pass stages whose time scale follows the string period, approximating
   the `1/n^2` modal falloff of a triangular pluck displacement; for ordinary
   sustained pick styles, a much smaller broadband component preserves the
   pick edge. Their delay-line projection is normalised against open E4, so
   equal player effort does not lose tens of decibels on the much longer E1
-  loop. At 0% response those
-  dimensions are velocity-invariant; at 100% they span soft finger-light
-  notes through aggressive metal attacks.
+  loop. At 0% response every velocity renders bit-identically; at 100% the
+  response spans soft finger-light notes through aggressive metal attacks.
 - **Pickups and coils:** per-string position combs at morphing
   bridge/neck distances, whose delayed tap is weighted below unity so the
   notch is about 12 dB deep rather than infinite - a real pickup senses through
   an aperture, sums two coils at two distances and sits in a three-dimensional
   field, so its taps never cancel exactly, and making them cancel exactly was
   costing the fundamental most. Correcting it recovered nearly 5 dB in the
-  60-85 Hz band and is what removed the last of the hollowness. Then a
-  wave-speed-scaled finite rectangular magnetic
-  aperture with its exact sinc response (wide humbucker window to narrow
-  single-coil window), a bounded second-order-dominant flux nonlinearity,
+  60-85 Hz band and is what removed the last of the hollowness. Then the coil
+  pair: a humbucker is two coils, so each pickup sums a second tap 19 mm further
+  along the string, weighted at 0.60 so the pair dips by `(1-b)/(1+b)` = 12 dB
+  rather than nulling infinitely — the screw coil sits further from the string
+  than the slug coil and reads quieter for it, and no real pickup is a pair of
+  point sensors reading one plane of motion. The dip lands at `c / 2d` with the
+  string's own transverse wave speed `c = 2 L f_open`: 3046 Hz on the E2
+  string and 4066 Hz on the A2 string, against Lemme's measured 3000 Hz and
+  4000 Hz, where the single wide rectangular window this replaced first nulled
+  at 5507 Hz and 7351 Hz — most of an octave too high, because a rectangle of
+  width `W` nulls at `c / W` and a two-point sum at `c / 2d`. The two coils need
+  only one position comb: for coils at `centre ± d/2` the sum factors exactly
+  into the centre-anchored comb above times the two-point sum, so the pair costs
+  one extra fractional read per pickup rather than a second comb. Pickup type
+  closes the spacing to exactly zero, at which point the stage reports itself
+  unpaired and returns its input untouched, so the single coil is structurally
+  one coil and not a cancelled pair — its measured partials move by at most
+  0.008 dB. The magnetic aperture is then the same wave-speed-scaled 4.8 mm
+  finite rectangular window with its exact sinc response for both types, because
+  it is one bobbin either way. Putting the notch where it belongs also rebalances
+  the humbucker across the string set, since the wide window was throwing away
+  top octave on the wound strings and keeping it on the plain ones; on a full
+  chord the corrected pickup comes out 0.86 dB darker overall, so it stays the
+  dark pickup of the pair. After the aperture come a bounded
+  second-order-dominant flux nonlinearity,
   induced-EMF differentiation with an oversampled ultrasonic guard, and one
   loaded resonant coil filter per pickup (2.0 kHz / Q 1.0 humbucker anchor to 6.0 kHz /
   Q 2.4 single-coil anchor). A bounded string-mass/pole-balance calibration
@@ -310,7 +410,7 @@ All Sound Off and All Notes Off.
   positive, bounded modal bridge conductance also drains string energy when a
   fundamental or strong partial meets a body mode, so the build changes
   sustain as well as timbre. Solid-body coupling, not an acoustic radiator.
-- **Sympathetic bridge coupling:** every string you are not fingering is a
+- **Bridge coupling:** every string you are not fingering is a
   real waveguide, not a resonator bank. The plucked strings' bridge force is
   summed into a one-sample-delayed bus that drives the idle strings' own loops
   at their open pitch, with their own bridge pickup tap and with their loop
@@ -327,13 +427,43 @@ All Sound Off and All Notes Off.
   the strings - the high-frequency target is bisected back toward the
   fundamental's until the pair fits, so a coupled string always decays at the
   rate its steel says and only the top of the tilt is given up.
-  Only played voices write to the bus and only idle voices read it, so the
-  coupling graph is acyclic and unconditionally stable at any coupling gain;
-  each coupled loop additionally carries a bounded soft limit. The bridge hand
-  that mutes a palm-muted passage covers every string, so the style damps and
-  starves the coupled strings automatically and a Drop-E
+  The strings you *are* fingering terminate on that same saddle, so they read
+  the bus as well - each one minus its own contribution to it, which is what
+  reciprocity of a passive junction requires and what stops a string driving its
+  own bridge termination a second time, since the model already carries that
+  termination in the body conductance. Every decay target, T60 and timbre
+  calibration in the instrument sits downstream of that subtraction, so it is
+  made exact rather than approximate: with one voice sounding the bus is that
+  voice's own contribution, the difference is identically zero, and a single note
+  renders bit-identically at every setting of the control. Closing the graph
+  costs the acyclic stability guarantee the one-way path had, and an explicit
+  bound replaces it. The one-sample publication delay makes the network a Jacobi
+  iteration whose diagonal is exactly zero, and its row-sum norm
+  `(N - 1) g max_j 1/(1 - G_j)` - written in the *receiving* string's loop
+  amplification `1/(1 - G)`, which on an eight-string open chord reaches 584 -
+  is held at or below 0.25, 12 dB of margin. That is not a calibration hope: the
+  gain is re-solved against the sounding voices at every control tick and every
+  note-on, so the bound holds at every parameter setting rather than only where a
+  test looks. Each coupled loop additionally carries a bounded soft limit.
+  What this buys is a structural absence closed rather than a loud effect, and
+  the honest measurement is the one worth quoting: a chord that fingers all eight
+  strings leaves no idle string to ring and until now had no coupling path at
+  all, and it now differs from the same chord at Resonance 0 by -60.1 dB at the
+  20% default and -50.5 dB at maximum over the first 1.5 s, and by -45.3 dB and
+  -35.7 dB over 10-12 s - the effect grows in the tail, where coupling belongs.
+  It does not get louder than that: the difference is exactly linear in the
+  injection gain, and rendering the same chord with the cap lifted, the network
+  stops being a filter and diverges at roughly twenty times the gain the bound
+  permits. The alias floor
+  is 158.6 dB below the spectral peak, 7.3 dB better than before, because the
+  injection is one more lossy path into loops that already low-pass. The bridge
+  hand that mutes a palm-muted passage covers every string, so the style damps
+  and starves both the coupled strings and the played strings' share of the bus
+  automatically, and a Drop-E
   chug stays tight. At 0% the coupled loops are never configured, rendered or
-  injected into, so the control is an exact bypass and not a small residue.
+  injected into, the played strings' injection gain is exactly zero, and an
+  eight-string chord is bit-identical to what it was before the path existed, so
+  the control is an exact bypass and not a small residue.
   Coupled strings reuse the idle voice's own delay line, so the feature costs
   no extra memory, and they retire as soon as they fall below audibility. The
   CC 1 resonance raises the coupling live toward total and opens the
@@ -382,10 +512,42 @@ All Sound Off and All Notes Off.
   plectrum edge. Zero pressure is a
   mathematical no-op. MIDI CC 2 adds to it live.
 - **Strum travel:** simultaneous note-ons inside a 35 ms window are one pick
-  stroke. The first string the pick meets fires immediately and every further
-  string is offset by the Strum Spread travel time per string crossed, so a
-  chord sweeps instead of landing as a block and its stacked initial peak drops.
-  At 0 ms chords are exactly simultaneous, as before.
+  stroke, and the stroke decides which edge of the chord the pick starts from -
+  a downstroke from its lowest string, an upstroke from its highest - rather
+  than whichever note-on the host happened to send first. Because a chord's
+  note-ons routinely arrive across several `process()` blocks, every voice of a
+  chord is held back by a fixed 20 ms pre-roll: inside that window a
+  later-arriving string can still turn out to be where the stroke began, and
+  re-anchoring reschedules the voices that have not sounded against the chord's
+  own clock. That is what makes a chord's onsets identical whichever order the
+  host sends its notes in, and it is a fixed time rather than a block count, so
+  they do not depend on the host's buffer size either. A note-on cannot know
+  whether the rest of a chord is still coming, so the pre-roll is charged
+  whenever Strum Spread is non-zero — including to a note that turns out to be
+  alone, which therefore sounds 20 ms after its note-on. Chords whose note-ons
+  are
+  spread wider than the pre-roll travel from their first arrival, which is the
+  stated limit of the mechanism rather than an undefined case. Under alternate
+  picking the direction is captured at the chord's first note-on and holds for
+  the whole chord, so one strum is not asked to travel both ways; the per-string
+  up/down colouring still alternates exactly as before.
+  The wrist also accelerates through the strings instead of sweeping at a
+  constant speed: entering the string plane at `v0`, `v(x) = sqrt(v0^2 + 2 a x)`
+  and the crossing intervals compress as `1 / v(x)`, with the acceleration set
+  so the last of seven crossings takes 0.70 of the first. The seven gaps are
+  then rescaled to sum to seven times Strum Spread, so the control states the
+  *mean* crossing time and keeps its meaning: a short chord at the edge the
+  stroke starts from is spread a little wider than the knob says (1.21 times it
+  on the first crossing) and one at the far end a little narrower (0.85 on the
+  last), because the pick is still speeding up. At a 12 ms spread the eight
+  strings sound 20.0, 34.7, 48.1, 60.7, 72.4, 83.5, 93.9 and 104.0 ms after the
+  chord's first note-on - 84.0 ms of travel, in gaps falling from 14.7 to
+  10.1 ms. The acceleration is drawn once per chord (15% of standard deviation)
+  with a small per-crossing draw on top (0.5%), so no two strums lay down the
+  same ramp, and a chord anchored on a middle string no longer travels outward
+  in both directions at once. A chord therefore sweeps instead of landing as a
+  block, and its stacked initial peak drops. At 0 ms no pre-roll is charged and no draw
+  is made: chords are exactly simultaneous and the engine is bit-unchanged.
 - **Play noise:** deterministic seeded plectrum scrape, finger contact,
   and release damping noise, band-shaped per string (wound
   versus plain) with independent level controls. Identical MIDI always
@@ -409,7 +571,12 @@ All Sound Off and All Notes Off.
   the node touch, its decay, and the slide's friction - all of which are false
   for an ordinary note: measured best of five against the same fixture, the
   default configuration moved about five per cent and the worst case stayed
-  inside the run-to-run spread. A pickup the
+  inside the run-to-run spread. The bridge coupling between played strings is
+  one subtract, one multiply and two adds per voice per sample and leaves the
+  CPU guardrail unmoved; the humbucker's second coil is one fractional read per
+  pickup per voice; and the picking hand's per-attack draws, the vibrato's
+  per-cycle draws and the strum's ramp solve are once per note, per cycle and
+  per chord rather than per sample. A pickup the
   selector has
   faded out is skipped outright, including its two fractional reads, aperture
   window, flux polynomial and induced-EMF guard. Mono runs one shared coil, DC
@@ -525,7 +692,7 @@ Scale length is widened for the Drop-E instrument and defaults to 27.63":
 | Body shape | Carved single-cut pattern | Flat slab pattern |
 | Construction | Set neck + stopbar | Bolt-on + through-body |
 | Scale length | 25.5 in conventional electric | 28 in baritone / 8-string |
-| Pickup type | Humbucker | Narrow single coil |
+| Pickup type | Humbucker, two coils 19 mm apart | Single coil, one bobbin |
 
 ## Exact 31-parameter contract
 
@@ -563,7 +730,7 @@ crossfade over roughly 4 ms.
 | 16 | `releaseNoise` | Release noise | 0..100%, default 40% |
 | 17 | `muteDamping` | Mute damping | 0..100%, default 55% |
 | 18 | `bendTime` | Bend time | pitch-wheel travel time, 40 ms..2 s, default 280 ms |
-| 19 | `velocity` | Velocity response | 0..100% multi-dimensional response, default 65% |
+| 19 | `velocity` | Velocity response | 0..100% exponent on the pick's force (0% is velocity-invariant), default 85% |
 | 20 | `output` | Output level | -24..+6 dB, default -6 dB |
 | 21 | `artifacts` | Artifacts | clean bypass..ring/contact/saddle detail, default 18% |
 | 22 | `outputMode` | Output field | **Mono** / Stereo divided-pickup field |
@@ -572,9 +739,9 @@ crossfade over roughly 4 ms.
 | 25 | `compressor` | Compressor | dry..fast rhythm levelling, default 0% |
 | 26 | `delay` | Delay | dry..360 ms lead delay, default 0% |
 | 27 | `room` | Room | dry..compact stereo ambience, default 0% |
-| 28 | `sympathetic` | Sympathetic ring | exact bypass..full bridge coupling into the unfingered strings, default 20% |
+| 28 | `sympathetic` | Sympathetic ring | exact bypass..full bridge coupling, into the unfingered strings and between the fingered ones, default 20% |
 | 29 | `palmMute` | Palm mute | 0..100% continuous bridge-hand damping for every play style (adds to MIDI CC 2), default 0% |
-| 30 | `strumSpread` | Strum spread | 0..40 ms of pick travel per string crossed, default 0 ms (block chord) |
+| 30 | `strumSpread` | Strum spread | 0..40 ms mean pick travel per string crossed, plus a 20 ms pre-roll whenever it is non-zero, default 0 ms (block chord) |
 | 31 | `vibratoDepth` | Resonance depth | 0..100% full-scale reach of the CC 1 resonance (coupling lift and amplifier feedback), default 35% |
 
 ## Build products

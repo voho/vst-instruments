@@ -88,6 +88,22 @@ constexpr std::array<int, 12> membraneModeOrders {{
     0, 1, 2, 0, 3, 1, 4, 2, 0, 5, 3, 6
 }};
 
+// Where a player aims around the hoop, in radians, before Humanise moves it.
+// Every m > 0 mode of a circular head is two modes at right angles to each
+// other, and a strike at azimuth phi drives them as cos(m phi) and sin(m phi),
+// so the aim decides the balance of every pair - and an aim of zero would
+// strike one member of each pair and leave the other silent, which is a head
+// with no warble in it at all.
+//
+// Twenty-five degrees is not decoration. It keeps m*phi off every multiple of
+// ninety degrees for all six circumferential orders the mode table carries, so
+// no pair is silently reduced to one member; on m = 1 it puts the two members
+// at 0.906 and 0.423, which is about 8.8 dB of beat depth in the tail. It also
+// has to be a fixed nominal rather than a Humanise-scaled draw, because
+// Humanise scales its deviations to nothing at zero and that is the setting
+// every measurement of this engine is taken at.
+constexpr float nominalStrikeAzimuth = 25.0f * (pi / 180.0f);
+
 // The zeros themselves. The ratios above are these divided by the first one,
 // but the air between two heads couples to a mode through its shape rather than
 // its pitch, so the undivided value is needed too.
@@ -139,6 +155,27 @@ float coefficientForTime (float seconds, float sampleRate) noexcept
 {
     return std::exp (minusSixtyDb / std::max (1.0f, seconds * sampleRate));
 }
+
+// MIDI velocity as the analogue front end sees it. Named because two things
+// need it: the voice being built, and the strike depth below, which has to
+// evaluate the same two curves at a velocity that is not the one being played.
+float accentVoltage (float velocity) noexcept
+{
+    return velocity * (0.68f + 0.32f * std::sqrt (velocity));
+}
+
+float excitationScaleFor (float velocity) noexcept
+{
+    return 0.74f + 0.26f * std::sqrt (velocity);
+}
+
+// Where the drawn pitch sweep is fully used. A head is stiff because it is
+// stretched, so the amount the pitch bends follows the energy the strike put
+// into it (Avanzini and Marogna) rather than the panel knob alone - but a knob
+// that only reached its marked value on a velocity-127 hit would be a knob
+// nobody could set, so the depth saturates a little below the top of the range
+// and every accent keeps the sweep it has today.
+constexpr float sweepSaturationVelocity = 0.85f;
 
 // Ascending series for J_m. Every argument this engine asks for is a Bessel
 // zero times a fraction of the head's radius, so nothing above about four ever
@@ -398,6 +435,20 @@ AnalogCurve analogCurveFor (Instrument instrument, float characterB) noexcept
         return { 0.205f, 0.165f, 1.0f + 0.42f * characterB };
     return {};
 }
+
+// How fast a hand takes a cymbal down, from how hard it is pressing. A choke
+// is a contact damper: what it removes per cycle goes with the area in contact
+// and the force behind it, and both of those rise together as the hand closes,
+// so the time constant falls roughly as the square of the pressure rather than
+// linearly. A full grab is six milliseconds, which is a cymbal stopping; a
+// finger laid on the edge is nearly half a second, which is a cymbal being
+// shortened.
+float chokeSecondsForPressure (float pressure) noexcept
+{
+    const float grip = std::clamp (pressure, 0.0f, 1.0f);
+    const float slack = 1.0f - grip;
+    return 0.006f + 0.46f * slack * slack;
+}
 } // namespace
 
 const InstrumentMetadata& getInstrumentMetadata (Instrument instrument) noexcept
@@ -444,10 +495,19 @@ std::optional<MidiTrigger> midiTriggerForNote (int midiNote) noexcept
         case 40: return MidiTrigger { Instrument::Snare, Articulation::Rimshot };
         case 37: return MidiTrigger { Instrument::Snare, Articulation::CrossStick };
         case 39: return MidiTrigger { Instrument::Clap, Articulation::Head };
-        case 42: case 44: return MidiTrigger { Instrument::ClosedHat, Articulation::Head };
+        case 42: return MidiTrigger { Instrument::ClosedHat, Articulation::Head };
+        // General MIDI 44 is Pedal Hi-Hat, which is a foot chick and not a
+        // stick hit. It used to be a second name for note 42, which is the same
+        // class of mis-alias notes 37 and 40 used to carry.
+        case 44: return MidiTrigger { Instrument::ClosedHat, Articulation::FootChick };
         case 46: return MidiTrigger { Instrument::OpenHat, Articulation::Head };
-        case 51: case 53: case 59: return MidiTrigger { Instrument::Ride, Articulation::Head };
+        case 51: case 59: return MidiTrigger { Instrument::Ride, Articulation::Head };
+        // 53 is Ride Bell, 52 Chinese Cymbal and 55 Splash Cymbal. 53 used to
+        // be a third name for a plain bow strike; 52 and 55 were silent.
+        case 53: return MidiTrigger { Instrument::Ride, Articulation::Bell };
         case 49: case 57: return MidiTrigger { Instrument::Crash, Articulation::Head };
+        case 52: return MidiTrigger { Instrument::Crash, Articulation::China };
+        case 55: return MidiTrigger { Instrument::Crash, Articulation::Splash };
         case 41: case 43: case 45: return MidiTrigger { Instrument::LowTom, Articulation::Head };
         case 47: case 48: return MidiTrigger { Instrument::MidTom, Articulation::Head };
         case 50: return MidiTrigger { Instrument::HighTom, Articulation::Head };
@@ -463,6 +523,15 @@ std::optional<Instrument> instrumentForMidiNote (int midiNote) noexcept
     const auto trigger = midiTriggerForNote (midiNote);
     return trigger.has_value() ? std::optional<Instrument> { trigger->instrument }
                                : std::nullopt;
+}
+
+float velocityFromMidi (int velocityByte, std::optional<int> highResolutionLsb) noexcept
+{
+    const int coarse = std::clamp (velocityByte, 0, 127);
+    if (! highResolutionLsb.has_value())
+        return static_cast<float> (coarse) / 127.0f;
+    const int fine = std::clamp (*highResolutionLsb, 0, 127);
+    return static_cast<float> (coarse * 128 + fine) / 16383.0f;
 }
 
 float DrumEngine::Biquad::tick (float input) noexcept
@@ -842,6 +911,11 @@ float DrumEngine::getInstrumentLevel (Instrument instrument) const noexcept
 float DrumEngine::getBusGain() const noexcept
 {
     return busGainMeter_.load (std::memory_order_relaxed);
+}
+
+float DrumEngine::getNewestVoicePitchHz() const noexcept
+{
+    return newestVoicePitch_.load (std::memory_order_relaxed);
 }
 
 InstrumentParameters DrumEngine::snapshotParameters (Instrument instrument) const noexcept
@@ -1542,13 +1616,21 @@ DrumEngine::CymbalBands DrumEngine::renderCymbalBands (Voice& voice,
     channel.gate = flushDenormal (
         channel.gate + channel.gateCoefficient * (1.0f - channel.gate));
 
+    // What the stick could deliver into the plate at all, ahead of the
+    // sections that decide what the machine does with it. The oscillator bank
+    // free-runs whether or not anything was struck, so the contact tilt has to
+    // sit between the bank and the band-passes rather than across the finished
+    // voice: put on the output it would drag the onset the smoother above just
+    // shaped, and put on the envelope it would not be a spectrum at all.
+    const float excitation = channel.contactAnalogue.tick (source);
+
     // Two active band-passes hang off the oscillator summing node. Their
     // centres are the measured 808 values; the multiple-feedback topology puts
     // the Q where these do. Between them they throw away the six oscillators'
     // fundamentals and keep the intermodulation above them, which is the whole
     // trick - six squares in the low hundreds of hertz become a metallic
     // spectrum three octaves higher.
-    const float lowBand = channel.bandLow.tick (source);
+    const float lowBand = channel.bandLow.tick (excitation);
 
     // Three swing VCAs on two envelope generators. The 808 gives the low band
     // the long one - the DECAY pot is on that capacitor - and the top of the
@@ -1576,7 +1658,7 @@ DrumEngine::CymbalBands DrumEngine::renderCymbalBands (Voice& voice,
     if (! midActive && ! highActive)
         return bands;
 
-    const float highBand = channel.bandHigh.tick (source);
+    const float highBand = channel.bandHigh.tick (excitation);
     if (midActive)
         bands.mid = channel.highpassMid.tick (
             swingVcaGain (peak * voice.pitchEnvelope, channel.vcaKnee) * highBand);
@@ -1705,9 +1787,15 @@ float DrumEngine::nextCymbalPcm (Voice& voice) const noexcept
     // The DAC holds its code until the next clock. What leaves the machine is
     // that staircase through the closing VCA and a low-pass that removes the
     // clock, so the grain survives and the sampling image does not.
+    // The contact tilt belongs to the recording rather than to the playback,
+    // so it takes the held code before the VCA does and not the finished
+    // channel afterwards. The DAC's staircase carries the quantization error
+    // with it, and that error is part of this machine's sound, so it is
+    // filtered along with the word it rode in on.
+    const float held = channel.contactDigital.tick (channel.hold);
     channel.vcaBandwidthState = flushDenormal (
         channel.vcaBandwidthState + channel.vcaBandwidthCoefficient
-            * (channel.hold * channel.romEnvelope - channel.vcaBandwidthState));
+            * (held * channel.romEnvelope - channel.vcaBandwidthState));
     const float reconstructed = channel.reconstruction.tick (
         channel.vcaBandwidthState);
 
@@ -1717,17 +1805,90 @@ float DrumEngine::nextCymbalPcm (Voice& voice) const noexcept
     channel.pcmSplitState = flushDenormal (
         channel.pcmSplitState
         + channel.pcmSplitCoefficient * (reconstructed - channel.pcmSplitState));
-    return channel.pcmLowGain * channel.pcmSplitState
-         + channel.pcmHighGain * (reconstructed - channel.pcmSplitState);
+
+    // The trigger smoother, last, on the channel rather than on the address
+    // lines: what the RC delays is the envelope voltage reaching the VCA, and
+    // the counter is already running by then.
+    channel.digitalGate = flushDenormal (
+        channel.digitalGate
+        + channel.digitalGateCoefficient * (1.0f - channel.digitalGate));
+    return channel.digitalGate
+        * (channel.pcmLowGain * channel.pcmSplitState
+           + channel.pcmHighGain * (reconstructed - channel.pcmSplitState));
 }
 
 void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
                                          float velocity,
-                                         float machineSelect) noexcept
+                                         float machineSelect,
+                                         Articulation articulation) noexcept
 {
     const bool ride = instrument == Instrument::Ride;
     auto& channel = voice.cymbal;
     const auto floatSampleRate = static_cast<float> (sampleRate_);
+
+    // The three voiced variants. Neither machine has a modal bank, so none of
+    // these can be a strike position: what a cymbal note can honestly change
+    // here is what the two machines are set to, and that is what these do.
+    //
+    // A bell is the thick, stiff, doubly-curved dome at the middle of a ride.
+    // It is a stiffer radiator than the bow around it, so it sits higher, it
+    // holds a far narrower band, and - having very little area to lose energy
+    // through - it rings longer than the bow it grew out of. On this channel
+    // that is a faster sample clock, the band gains pulled up onto the top
+    // sections, and a longer recording.
+    //
+    // A china is a crash with its edge turned up. The reversed flange spoils
+    // the plate's own symmetry, which is what makes it trashy rather than
+    // pitched: broader and lower at the bottom, and gone much sooner.
+    //
+    // A splash is simply a small crash - ten inches against sixteen - so it is
+    // brighter and very much shorter, and there is very little of it below the
+    // top two sections.
+    struct CymbalVoicing
+    {
+        float clockRatio { 1.0f };     // how much faster the counter runs
+        float decayRatio { 1.0f };     // how long the recording is
+        float contactRatio { 1.0f };   // how long the tip is on the bronze
+        float lowTilt { 1.0f };        // the 3.44 kHz section
+        float midTilt { 1.0f };        // the 7.1 kHz section
+        float highTilt { 1.0f };       // above both
+        // Where the digital leg's one crossover sits. That leg is 86 % of a
+        // crash and 90 % of a ride at the shipping Machine defaults, so the
+        // corner between its two gains is the largest tone control either
+        // cymbal has, and it is the one that decides where a plate's weight
+        // sits rather than only how much of it there is.
+        float splitCorner { 3000.0f };
+    };
+    const CymbalVoicing voicing =
+        articulation == Articulation::Bell
+            ? CymbalVoicing { 1.46f, 1.85f, 0.68f, 0.24f, 1.14f, 1.66f, 5200.0f }
+        : articulation == Articulation::China
+            ? CymbalVoicing { 0.74f, 0.42f, 1.35f, 1.86f, 1.24f, 0.52f, 1500.0f }
+        : articulation == Articulation::Splash
+            ? CymbalVoicing { 1.40f, 0.14f, 0.74f, 0.20f, 0.92f, 1.86f, 6400.0f }
+            : CymbalVoicing {};
+    // Applied to the voice's own decay rather than to the recording alone, so
+    // the analogue channel's three envelopes, the digital channel's address
+    // envelope and the band retirement ages all follow one number. This runs
+    // ahead of everything in initialiseVoice that reads decaySeconds.
+    // The ceiling is the Decay control's own top of range for this instrument.
+    // A bell rings longer than the bow it grew out of, but not longer than the
+    // longest thing this cymbal is allowed to be: past that the voice would be
+    // finished by the engine's eight-second tail bound instead of by its own
+    // envelope, which is a fade rather than a decay.
+    voice.decaySeconds = std::min (voice.decaySeconds * voicing.decayRatio,
+                                   decaySecondsFor (instrument, 1.0f));
+
+    // Hertz's contact law, and the only place it appears on this half of the
+    // kit. An elastic impact lasts for the impact speed to the power -1/5, so
+    // a faster stick is on the bronze for less time. That single law sets two
+    // different numbers here, and they are not the same number: how quickly
+    // the trigger opens the channel, and how far up the plate the strike
+    // reaches. Collapsing them would put a contact time of about a
+    // millisecond on the spectrum, whose corner at 1/(2*tau) would be a few
+    // hundred hertz - which does not soften a cymbal, it deletes it.
+    const float velocityStretch = std::pow (
+        std::max (0.08f, std::clamp (velocity, 0.0f, 1.0f)), -0.2f);
 
     // ---------------------------------------------------------------- 808 --
     // The band-pass centres are the measured ones. They track Pitch only
@@ -1777,7 +1938,8 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     // clock; TUNE moves it, and moving it is the only pitch control the
     // machine's cymbals have. Below a host rate that cannot carry it the clock
     // is necessarily limited to the host rate.
-    const float nominalClockRate = (ride ? 30000.0f : 31000.0f) * voice.pitchRatio;
+    const float nominalClockRate = (ride ? 30000.0f : 31000.0f) * voice.pitchRatio
+        * voicing.clockRatio;
     channel.clockIncrement = std::clamp (
         nominalClockRate * inverseSampleRate_, 1.0e-4f, 1.0f);
     const float clockRate = channel.clockIncrement * floatSampleRate;
@@ -1797,7 +1959,13 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     // identical but decay differently. Pitch and tail move together or neither
     // does - that is the whole point of taking the envelope off the address
     // lines - so the ceiling has to apply to both.
-    const float effectiveClockRatio = clockRate / (ride ? 30000.0f : 31000.0f);
+    // The variant's own clock offset divides out here: a bell is a different
+    // plate rather than a transposed one, so the rate it is nominally read at
+    // is its own nominal rate and its recording is not shortened for being a
+    // bell. What is left in this ratio is the Pitch control, which is a
+    // transposition and does shorten the tail.
+    const float effectiveClockRatio = clockRate
+        / ((ride ? 30000.0f : 31000.0f) * voicing.clockRatio);
     const float playbackSeconds = std::clamp (
         recordedSeconds / std::max (0.20f, effectiveClockRatio), 0.04f, 7.0f);
     channel.romEnvelope = 1.0f;
@@ -1805,6 +1973,34 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
         minusSixtyDb / std::max (4.0f, playbackSeconds * clockRate));
     channel.clockPhase = 1.0f;
     channel.hold = 0.0f;
+
+    // The digital channel's trigger RC. The hardware's data path opens in one
+    // clock, which is why this leg used to reach full level in three samples
+    // and why a brushed ride tip and a crash-ride accent used to have the same
+    // onset. The component is the analogue channel's own trigger smoother -
+    // same resistor, same capacitor, the value read off that leg at the top of
+    // this function - because on this board there is one trigger bus. What is
+    // not the same is that this leg has nothing else velocity can reach: the
+    // ROM is a fixed recording and the address envelope is walked by the
+    // counter, so the swing VCAs' accent knee has no counterpart here. So the
+    // contact law rides on the smoother, and a soft hit opens the channel over
+    // a longer ramp as well as to a lower level.
+    channel.digitalGate = 0.0f;
+    channel.digitalGateCoefficient = 1.0f - std::exp (
+        -1.0f / std::max (1.0f, attackSeconds * velocityStretch * floatSampleRate));
+
+    // The contact time proper - a wooden tip against something under a
+    // millimetre thick, which is the shortest touch anything in the kit makes.
+    // Its spectral corner is 1/(2*tau): at full velocity 10.9 kHz, at the
+    // softest hit the law is allowed to see 6.6 kHz. Both ends sit above the
+    // cymbal's body and below the reconstruction filter, so what this moves is
+    // the top of the plate and nothing else. One filter per machine, each on
+    // its own carrier ahead of its own envelope, because the contact decides
+    // what the strike puts in rather than how what is in gets out.
+    const float contactSeconds = 0.000046f * velocityStretch * voicing.contactRatio;
+    const float contactCorner = 0.5f / contactSeconds;
+    configureOnePoleLowpass (channel.contactAnalogue, contactCorner);
+    configureOnePoleLowpass (channel.contactDigital, contactCorner);
 
     // The low-pass that takes the sample clock back out again. Two poles below
     // half the clock: enough to bury the image, not enough to hide the grain.
@@ -1840,7 +2036,8 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
     // filters - so their powers add and a linear fade would sag in the middle.
     channel.pcmSplitState = 0.0f;
     channel.pcmSplitCoefficient = std::clamp (
-        1.0f - std::exp (-twoPi * 3000.0f * inverseSampleRate_), 1.0e-4f, 1.0f);
+        1.0f - std::exp (-twoPi * voicing.splitCorner * inverseSampleRate_),
+        1.0e-4f, 1.0f);
 
     const float machine = std::clamp (machineSelect, 0.0f, 1.0f);
     const float analogueMix = std::cos (0.25f * twoPi * machine);
@@ -1859,11 +2056,11 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
         // The 808 never had a ride, so at the analogue end this is that
         // machine's cymbal channel tuned up and given the shorter decay a ride
         // pattern needs, not an imitation of a ride cymbal.
-        channel.lowGain = analogueMix * (1.24f - 0.70f * tone);
-        channel.midGain = analogueMix * (0.34f + 1.06f * tone);
-        channel.highGain = analogueMix * (0.06f + 1.36f * tone);
-        channel.pcmLowGain = digitalMix * (1.34f - 1.12f * tone);
-        channel.pcmHighGain = digitalMix * (0.20f + 1.78f * tone);
+        channel.lowGain = analogueMix * (1.24f - 0.70f * tone) * voicing.lowTilt;
+        channel.midGain = analogueMix * (0.34f + 1.06f * tone) * voicing.midTilt;
+        channel.highGain = analogueMix * (0.06f + 1.36f * tone) * voicing.highTilt;
+        channel.pcmLowGain = digitalMix * (1.34f - 1.12f * tone) * voicing.lowTilt;
+        channel.pcmHighGain = digitalMix * (0.20f + 1.78f * tone) * voicing.highTilt;
     }
     else
     {
@@ -1871,11 +2068,11 @@ void DrumEngine::configureCymbalChannel (Voice& voice, Instrument instrument,
         // what leaves it comes off the 7.1 kHz section, and weighting the two
         // top VCAs below the 3.44 kHz one is what made this read as dull.
         const float brightness = voice.characterB;
-        channel.lowGain = analogueMix * (1.02f - 0.44f * brightness);
-        channel.midGain = analogueMix * (0.40f + 1.16f * brightness);
-        channel.highGain = analogueMix * (0.20f + 1.72f * brightness);
-        channel.pcmLowGain = digitalMix * (1.22f - 0.98f * brightness);
-        channel.pcmHighGain = digitalMix * (0.28f + 1.46f * brightness);
+        channel.lowGain = analogueMix * (1.02f - 0.44f * brightness) * voicing.lowTilt;
+        channel.midGain = analogueMix * (0.40f + 1.16f * brightness) * voicing.midTilt;
+        channel.highGain = analogueMix * (0.20f + 1.72f * brightness) * voicing.highTilt;
+        channel.pcmLowGain = digitalMix * (1.22f - 0.98f * brightness) * voicing.lowTilt;
+        channel.pcmHighGain = digitalMix * (0.28f + 1.46f * brightness) * voicing.highTilt;
     }
 }
 
@@ -1927,6 +2124,24 @@ void DrumEngine::configureLowpass (Biquad& filter, float frequency, float q) con
     filter.clear();
 }
 
+void DrumEngine::configureOnePoleLowpass (Biquad& filter, float frequency) const noexcept
+{
+    // The bilinear transform rather than the exponential one-pole used
+    // elsewhere for envelope smoothing. A corner this close to Nyquist reads
+    // several kilohertz high under the exponential mapping and reads a
+    // different number at every host rate, and this filter's whole job is to
+    // put a stated frequency in a stated place.
+    frequency = std::clamp (frequency, 10.0f, 0.45f * static_cast<float> (sampleRate_));
+    const float warped = std::tan (0.5f * twoPi * frequency * inverseSampleRate_);
+    const float inverseA0 = 1.0f / (1.0f + warped);
+    filter.b0 = warped * inverseA0;
+    filter.b1 = filter.b0;
+    filter.b2 = 0.0f;
+    filter.a1 = (warped - 1.0f) * inverseA0;
+    filter.a2 = 0.0f;
+    filter.clear();
+}
+
 void DrumEngine::configureResonator (Resonator& resonator, float frequency,
                                      float decaySeconds) const noexcept
 {
@@ -1954,6 +2169,32 @@ void DrumEngine::configureResonator (Resonator& resonator, float frequency,
     // its scale is the mode's own geometry and carries no sample rate with it.
     resonator.strikeGain = std::sin (omega) / std::max (1.0e-4f, radius);
     resonator.clear();
+}
+
+void DrumEngine::retuneResonatorDecay (Resonator& resonator,
+                                       float decaySeconds) const noexcept
+{
+    // a1 is 2 r cos(theta) and a2 is -r^2, so the pole the mode is currently
+    // ringing on gives back both its radius and its angle exactly. Rebuilding
+    // the coefficients at a new radius and the same angle changes how fast the
+    // mode dies and nothing else - the frequency is preserved to the last bit,
+    // and y1/y2 are left alone, which is what makes this a change of law on a
+    // note that is still sounding rather than a new note.
+    const float previousRadius = std::sqrt (std::max (0.0f, -resonator.a2));
+    if (previousRadius <= 1.0e-6f)
+        return;
+    const float cosine = std::clamp (
+        resonator.a1 / (2.0f * previousRadius), -1.0f, 1.0f);
+    const float radius = coefficientForTime (std::max (0.005f, decaySeconds),
+                                             static_cast<float> (sampleRate_));
+    const float sine = std::sqrt (std::max (0.0f, 1.0f - cosine * cosine));
+    resonator.a1 = 2.0f * radius * cosine;
+    resonator.a2 = -radius * radius;
+    resonator.nominalA1 = resonator.a1;
+    // omega is the pole angle, which is acos(cosine); the slope only needs the
+    // product r*omega*sin(omega), and sin(omega) is the sine above.
+    resonator.tensionSlope = -2.0f * radius * std::acos (cosine) * sine;
+    resonator.poleDiameter = 2.0f * radius;
 }
 
 int DrumEngine::findVoiceSlot() const noexcept
@@ -2043,6 +2284,36 @@ bool DrumEngine::isHiHat (Instrument instrument) noexcept
     return instrument == Instrument::ClosedHat || instrument == Instrument::OpenHat;
 }
 
+bool DrumEngine::isCymbal (Instrument instrument) noexcept
+{
+    return instrument == Instrument::Ride || instrument == Instrument::Crash;
+}
+
+void DrumEngine::applyAftertouch (float pressure) noexcept
+{
+    if (! std::isfinite (pressure) || pressure <= 0.0f)
+        return;
+    for (auto* pool : { &voices_, &retiringVoices_ })
+        for (auto& voice : *pool)
+            if (voice.active && isCymbal (voice.instrument))
+                beginChoke (voice, chokeSecondsForPressure (pressure));
+}
+
+bool DrumEngine::applyAftertouch (int midiNote, float pressure) noexcept
+{
+    const auto mapping = midiTriggerForNote (midiNote);
+    if (! mapping.has_value() || ! isCymbal (mapping->instrument))
+        return false;
+    if (! std::isfinite (pressure) || pressure <= 0.0f)
+        return true;
+    const float seconds = chokeSecondsForPressure (pressure);
+    for (auto* pool : { &voices_, &retiringVoices_ })
+        for (auto& voice : *pool)
+            if (voice.active && voice.instrument == mapping->instrument)
+                beginChoke (voice, seconds);
+    return true;
+}
+
 // How far apart the two plates are, from 0 (clamped) to 1 (free). Before any
 // controller has touched the pedal the two notes are the two endpoints, exactly
 // as they always were; afterwards the pedal decides and the note only chooses
@@ -2057,6 +2328,72 @@ float DrumEngine::hiHatAperture (Instrument instrument) const noexcept
 float DrumEngine::getHiHatPedal() const noexcept
 {
     return hiHatPedalActive_ ? hiHatPedal_ : 0.0f;
+}
+
+float DrumEngine::hatDecaySecondsFor (float aperture,
+                                      float decayVariation) const noexcept
+{
+    // How long the pair rings is the pedal's business, and the two channels'
+    // own Decay settings are its endpoints. The interpolation is geometric
+    // because the control is logarithmic in seconds, so half a pedal is half
+    // the travel a listener hears rather than half the number. Both ends are
+    // guarded rather than trusted to arrive there: `open + (closed - open) * 1`
+    // is not bit-identical to `closed` in float.
+    const float closedSeconds = decaySecondsFor (
+        Instrument::ClosedHat, snapshotParameters (Instrument::ClosedHat).decay);
+    const float openSeconds = decaySecondsFor (
+        Instrument::OpenHat, snapshotParameters (Instrument::OpenHat).decay);
+    const float clamped = 1.0f - aperture;
+    return (clamped >= 1.0f ? closedSeconds
+            : clamped <= 0.0f ? openSeconds
+            : closedSeconds * std::pow (openSeconds / closedSeconds, aperture))
+        * decayVariation;
+}
+
+void DrumEngine::applyHatAperture (Voice& voice, float aperture) noexcept
+{
+    aperture = std::clamp (aperture, 0.0f, 1.0f);
+    const float clamped = 1.0f - aperture;
+    const auto pedalBlend = [clamped] (float openValue, float closedValue)
+    {
+        return clamped <= 0.0f ? openValue
+             : clamped >= 1.0f ? closedValue
+             : openValue + (closedValue - openValue) * clamped;
+    };
+    const auto floatSampleRate = static_cast<float> (sampleRate_);
+
+    voice.hatAperture = aperture;
+    voice.decaySeconds = hatDecaySecondsFor (aperture, voice.decayVariation);
+    voice.envelopeMultiplier = coefficientForTime (voice.decaySeconds, floatSampleRate);
+    voice.auxiliaryMultiplier = coefficientForTime (
+        voice.decaySeconds * pedalBlend (0.42f, 0.78f), floatSampleRate);
+    voice.transientMultiplier = coefficientForTime (
+        pedalBlend (0.006f, 0.0025f), floatSampleRate);
+
+    // The plate bank follows the same two loss laws the note-on path uses. Only
+    // the damping moves: the modes keep the frequencies they are ringing at,
+    // because retuning them would be the pair changing pitch under the note
+    // rather than changing how fast it dies, and a foot lifting off does not
+    // retune a plate that is already moving.
+    const ModalLoss loss { pedalBlend (0.55f, 0.86f), pedalBlend (0.30f, 0.10f),
+                           pedalBlend (0.15f, 0.04f), 0.0f };
+    const float plateSeconds = voice.decaySeconds * pedalBlend (0.70f, 0.85f);
+    for (int mode = 0; mode < voice.modeCount; ++mode)
+    {
+        auto& resonator = voice.resonators[static_cast<std::size_t> (mode)];
+        const float radius = std::sqrt (std::max (0.0f, -resonator.a2));
+        if (radius <= 1.0e-6f)
+            continue;
+        const float angle = std::acos (
+            std::clamp (resonator.a1 / (2.0f * radius), -1.0f, 1.0f));
+        const float frequency = angle * floatSampleRate / twoPi;
+        const float relative = std::max (
+            1.0f, frequency / std::max (1.0f, voice.baseFrequency));
+        const float lossFactor = std::max (
+            0.05f, loss.fixed + loss.hysteretic * relative
+                       + loss.viscous * relative * relative);
+        retuneResonatorDecay (resonator, plateSeconds / lossFactor);
+    }
 }
 
 void DrumEngine::setHiHatPedal (float position) noexcept
@@ -2074,16 +2411,38 @@ void DrumEngine::setHiHatPedal (float position) noexcept
     // plates come together over the travel of the foot and the friction between
     // their faces takes the sound out of the pair as they meet, so a pedal all
     // the way down cuts a hat in a few milliseconds and one that only half
-    // closes leaves it ringing, shorter and duller than it was. A pedal that
-    // opens again does not undo it: the energy has already gone.
+    // closes leaves it ringing, shorter and duller than it was.
+    //
+    // A pedal that opens again does not undo it: the energy friction took has
+    // gone, and nothing here puts it back. What opening does do is stop the
+    // friction, and hand what is left back to the open plate's own loss law -
+    // which is what a foot splash is. Both directions therefore re-derive the
+    // ringing voice's decay at the new aperture; only the closing direction
+    // adds the friction on top, and only the opening direction takes it away.
     for (auto* pool : { &voices_, &retiringVoices_ })
         for (auto& voice : *pool)
         {
             if (! voice.active || ! isHiHat (voice.instrument)
-                || aperture >= voice.hatAperture - 0.02f)
+                || std::abs (aperture - voice.hatAperture) < 0.02f)
                 continue;
-            beginChoke (voice, 0.004f + 0.36f * aperture);
-            voice.hatAperture = aperture;
+            const bool closing = aperture < voice.hatAperture;
+            applyHatAperture (voice, aperture);
+            if (closing)
+            {
+                const float frictionSeconds = 0.004f + 0.36f * aperture;
+                beginChoke (voice, frictionSeconds);
+                voice.pedalFrictionMultiplier = std::clamp (
+                    coefficientForTime (std::max (0.0005f, frictionSeconds),
+                                        static_cast<float> (sampleRate_)),
+                    0.0f, 1.0f);
+            }
+            else if (voice.choking
+                     && voice.chokeMultiplier == voice.pedalFrictionMultiplier)
+            {
+                voice.choking = false;
+                voice.chokeMultiplier = 1.0f;
+                voice.pedalFrictionMultiplier = 0.0f;
+            }
         }
 
     // A foot coming down hard enough to shut the pair makes its own sound, and
@@ -2188,13 +2547,23 @@ void DrumEngine::updateActiveVoiceCount() noexcept
     // to be tracked inside the per-sample loop.
     int count = 0;
     std::array<float, instrumentCount> levels {};
-    const auto observe = [&count, &levels] (const Voice& voice)
+    // The same pass carries the newest voice's drawn pitch out to the same
+    // place. Voices are numbered as they are triggered, so the newest sounding
+    // one is the highest generation in either pool.
+    std::uint64_t newestGeneration = 0u;
+    float newestPitch = 0.0f;
+    const auto observe = [&count, &levels, &newestGeneration, &newestPitch] (const Voice& voice)
     {
         if (! voice.active)
             return;
         ++count;
         auto& level = levels[indexFor (voice.instrument)];
         level = std::max (level, voice.recentPeak * voice.chokeGain);
+        if (voice.generation >= newestGeneration)
+        {
+            newestGeneration = voice.generation;
+            newestPitch = voice.oscillatorFrequency;
+        }
     };
     for (const auto& voice : voices_)
         observe (voice);
@@ -2203,6 +2572,7 @@ void DrumEngine::updateActiveVoiceCount() noexcept
     for (std::size_t index = 0; index < instrumentCount; ++index)
         instrumentLevels_[index].store (levels[index], std::memory_order_relaxed);
     activeVoiceCount_.store (count, std::memory_order_relaxed);
+    newestVoicePitch_.store (newestPitch, std::memory_order_relaxed);
 }
 
 int DrumEngine::getActiveVoiceCount() const noexcept
@@ -2247,6 +2617,11 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
     float ratios[resonatorCount] {};
     float excitation[resonatorCount] {};
     float decays[resonatorCount] {};
+    // The circumferential order each emitted slot came from, and zero for the
+    // slots that are not a member of a degenerate pair. Only the m > 0 modes
+    // are degenerate: an axisymmetric mode has no azimuth to rotate about, so
+    // there is nothing for an uneven hoop to lift apart.
+    int orders[resonatorCount] {};
     int count = 0;
 
     // Air loading is added mass, and a mode that ripples finely across the head
@@ -2314,6 +2689,9 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
             decays[count] = decaySeconds * referenceLoss / modeLoss;
             excitation[count] = shape * weight * heard
                 * contactSpectrum (frequency, head.contactSeconds);
+            // Zero for the axisymmetric family, whose two branches above are
+            // the air spring's doing and not a degeneracy.
+            orders[count] = order;
             ++count;
         };
 
@@ -2352,9 +2730,102 @@ int DrumEngine::buildHeadBank (Voice& voice, float fundamental,
         emit (ideal * std::sqrt (1.0f + 2.0f * stiffness), 0, 1.0f);
     }
 
+    const float tilt = -1.30f + 1.05f * brightness;
+
+    // Every mode above the axisymmetric family is two modes, not one. An ideal
+    // circular head has a rotational symmetry, so for each m > 0 there are two
+    // shapes at the same frequency - cos(m theta) and sin(m theta), one rotated
+    // half a lobe from the other - and any departure from that symmetry lifts
+    // them apart. Worland measured that ordinary non-uniform lug tension is
+    // enough to do it, and a drummer hears the result as the warble that a real
+    // head's decay has and a single pole pair cannot produce: two close
+    // frequencies sounding together beat at their difference.
+    //
+    // How far apart is a property of this drum and of nobody's playing - a
+    // tuning key was turned once and the head has been that shape ever since -
+    // so the split is hashed from the instrument rather than from the hit, and
+    // reproduces after a reset. The range is what a cleared head shows, floored
+    // at the point where the beat is slower than the tail it has to appear in:
+    // 1.5 % on the Kick's m = 1 mode is 1.3 Hz against a 0.93 s tail, and half
+    // a per cent would be a 2.6 s period inside that same tail, which is not a
+    // warble anybody could hear.
+    const float split = 0.020f + 0.005f * signedUnitFromHash (
+        static_cast<std::uint32_t> ((indexFor (voice.instrument) + 1u) * 0x9e3779b9u)
+        ^ 0x51ed270bu);
+
+    // Splitting costs a slot each time, so the loudest pairs get the slots that
+    // are left once the table has been emitted. Gain here is the same product
+    // the normalisation below uses, so "loudest" means loudest as heard and not
+    // loudest as struck.
+    const auto gainOf = [&] (int slot)
+    {
+        const auto index = static_cast<std::size_t> (slot);
+        return std::pow (std::max (1.0f, ratios[index]), tilt)
+            * std::abs (excitation[index]);
+    };
+
+    const float renderable = 0.44f * static_cast<float> (sampleRate_);
+    while (count < resonatorCount)
+    {
+        int best = -1;
+        float bestGain = 0.0f;
+        for (int slot = 0; slot < count; ++slot)
+        {
+            // Zero is the axisymmetric family and negative marks a slot that is
+            // already one member of a pair. Splitting a member again would be
+            // inventing a degeneracy that is not there.
+            if (orders[slot] <= 0)
+                continue;
+            // The upper member has to be a mode the rate can still render, on
+            // the same terms the emission above applies.
+            const float upper = ratios[static_cast<std::size_t> (slot)]
+                * (1.0f + 0.5f * split);
+            if (fundamental * upper >= renderable)
+                continue;
+            const float gain = gainOf (slot);
+            if (gain > bestGain)
+            {
+                bestGain = gain;
+                best = slot;
+            }
+        }
+        if (best < 0)
+            break;
+
+        const auto lower = static_cast<std::size_t> (best);
+        const auto upper = static_cast<std::size_t> (count);
+        const int order = orders[lower];
+        // The two members lie at right angles to each other around the head, so
+        // a strike at azimuth phi drives them as cos(m phi) and sin(m phi).
+        // Squared those sum to one, so the pair carries exactly the energy the
+        // single mode carried and the split is a redistribution rather than a
+        // gain: what changes is that the energy now arrives at two frequencies
+        // instead of one.
+        const float excited = excitation[lower];
+        const float lowerRatio = ratios[lower] * (1.0f - 0.5f * split);
+        const float upperRatio = ratios[lower] * (1.0f + 0.5f * split);
+        const auto decayFor = [&] (float ratio)
+        {
+            return decaySeconds * referenceLoss
+                / std::max (1.0e-3f, lossPerSecond (fundamental * ratio, order));
+        };
+
+        ratios[lower] = lowerRatio;
+        excitation[lower] = excited * std::cos (static_cast<float> (order)
+                                                * voice.strikeAzimuth);
+        decays[lower] = decayFor (lowerRatio);
+        ratios[upper] = upperRatio;
+        excitation[upper] = excited * std::sin (static_cast<float> (order)
+                                                * voice.strikeAzimuth);
+        decays[upper] = decayFor (upperRatio);
+        // Both members are spoken for now, so neither is a candidate again.
+        orders[lower] = -order;
+        orders[upper] = -order;
+        ++count;
+    }
+
     // Level and spectral tilt, then the resonators themselves.
     voice.modeCount = count;
-    const float tilt = -1.30f + 1.05f * brightness;
     float gainSum = 0.0f;
     for (int mode = 0; mode < count; ++mode)
     {
@@ -2455,7 +2926,7 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     voice.chokeGroup = std::clamp (values.chokeGroup, 0, chokeGroupCount);
     voice.generation = ++generation_;
     voice.noiseState = seed == 0u ? 1u : seed;
-    voice.velocity = velocity * (0.68f + 0.32f * std::sqrt (velocity));
+    voice.velocity = accentVoltage (velocity);
     voice.recentPeak = voice.velocity;
     voice.characterA = std::clamp (values.characterA + variation.characterAOffset,
                                    0.0f, 1.0f);
@@ -2464,11 +2935,34 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
     voice.pitchRatio = std::exp2 ((values.pitch + 0.01f * variation.pitchCents) / 12.0f);
     voice.decaySeconds = decaySecondsFor (instrument, values.decay)
         * variation.decayScale;
+    voice.decayVariation = variation.decayScale;
     voice.transientScale = variation.transientScale;
+    // The nominal aim, moved by whatever this stroke's Humanise draw was. Only
+    // buildHeadBank reads it, so the voices with no head do no work for it.
+    voice.strikeAzimuth = nominalStrikeAzimuth
+        + variation.strikeAzimuthDegrees * (pi / 180.0f);
     // Treat MIDI velocity as trigger/accent voltage as well as final VCA
     // loudness. The deliberately narrow range preserves the established gain
     // curve while making hard hits inject more energy into the physical core.
-    voice.excitationScale = 0.74f + 0.26f * std::sqrt (velocity);
+    voice.excitationScale = excitationScaleFor (velocity);
+
+    // How much of the drawn sweep this strike gets, latched here rather than
+    // followed. The displacement the strike leaves in the head is the accent
+    // voltage times the excitation scale - the same product the modal bank is
+    // struck with - and the energy stored in a stretched head goes as the
+    // square of it, so that square, normalized at the saturation velocity, is
+    // the depth. voice.modalEnergy is deliberately not used: it is a follower,
+    // two orders of magnitude below its own peak at the strike sample, still
+    // holding 0.19 % of it at 60 ms where the pitch envelope is at 0.025 %, so
+    // driving the sweep with it would start the note at settled pitch, bend it
+    // upward over the first two milliseconds and leave eleven cents of residual
+    // bend on the Kick against one and a half. The shape of the sweep is the
+    // pitch envelope's, unchanged; only its depth is the strike's.
+    const float saturationAmplitude = accentVoltage (sweepSaturationVelocity)
+        * excitationScaleFor (sweepSaturationVelocity);
+    const float strikeAmplitude = voice.velocity * voice.excitationScale;
+    voice.strikeDepth = std::min (1.0f, (strikeAmplitude * strikeAmplitude)
+        / (saturationAmplitude * saturationAmplitude));
     // A softly struck head, cymbal or shaker radiates a darker spectrum than a
     // hard strike, because less energy reaches the high, heavily damped modes.
     // The curve is unity at full velocity, so the loud end of the existing
@@ -2778,7 +3272,12 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // `closed` in float, and a hat that changed in the last place of
             // its decay constant when nobody had touched the pedal would be a
             // silly thing to ship.
-            voice.hatAperture = hiHatAperture (instrument);
+            // A foot chick is played with the pair already clamped, whatever
+            // the pedal was doing a moment earlier: the stroke *is* the plates
+            // arriving against each other, so there is no aperture left to read
+            // off the controller.
+            const bool footChick = articulation == Articulation::FootChick;
+            voice.hatAperture = footChick ? 0.0f : hiHatAperture (instrument);
             const float clamped = 1.0f - voice.hatAperture;
             const auto pedalBlend = [clamped] (float openValue, float closedValue)
             {
@@ -2787,20 +3286,13 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
                      : openValue + (closedValue - openValue) * clamped;
             };
 
-            // How long the pair rings is the pedal's business, and the two
-            // channels' own Decay settings are its endpoints. The interpolation
-            // is geometric because the control is logarithmic in seconds, so
-            // half a pedal is half the travel a listener hears rather than half
-            // the number.
-            const float closedSeconds = decaySecondsFor (
-                Instrument::ClosedHat, snapshotParameters (Instrument::ClosedHat).decay);
-            const float openSeconds = decaySecondsFor (
-                Instrument::OpenHat, snapshotParameters (Instrument::OpenHat).decay);
-            voice.decaySeconds = (clamped >= 1.0f ? closedSeconds
-                                  : clamped <= 0.0f ? openSeconds
-                                  : closedSeconds * std::pow (
-                                        openSeconds / closedSeconds, voice.hatAperture))
-                * variation.decayScale;
+            voice.decaySeconds = hatDecaySecondsFor (voice.hatAperture,
+                                                     variation.decayScale)
+                // Two plate faces meeting flat carry far more contact area than
+                // a tip does, and the pair is damped by that contact for the
+                // whole of the stroke rather than struck through it, so a chick
+                // is shorter than the shortest stick hit the same pair makes.
+                * (footChick ? 0.42f : 1.0f);
             voice.envelopeMultiplier = coefficientForTime (
                 voice.decaySeconds, static_cast<float> (sampleRate_));
 
@@ -2830,8 +3322,22 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // A wooden tip on a thin plate: the shortest contact in the kit,
             // which is why a hat has the sharpest edge of anything in it, and
             // why a soft hat is duller and not merely quieter.
+            //
+            // A foot chick is the one stroke where the thing arriving is not a
+            // tip. Two plate faces meet over the whole of their overlap, and a
+            // contact that broad and that compliant lasts far longer than a
+            // point one - so by the same reach law below it puts much less at
+            // the top of the series. That is the whole difference between a
+            // chick and a quiet closed hat, and it is why the step's word for
+            // this contact is "blunter": under this engine's own reach law a
+            // blunt contact is a long one, not a short one.
             voice.contactSeconds = (0.00042f - 0.00022f * voice.characterA)
-                * std::pow (std::max (0.08f, velocity), -0.35f);
+                * std::pow (std::max (0.08f, velocity), -0.35f)
+                * (footChick ? 6.0f : 1.0f);
+            // And there is no stick, so there is no stick noise: the broadband
+            // burst renderHat lays in front of the plate is a wooden tip
+            // scuffing bronze, and nothing scuffs anything here.
+            voice.strikeNoise = footChick ? 0.0f : 1.0f;
             // Clamping the pair is a boundary the modes did not have, so the
             // whole plate stiffens as the pedal comes down.
             voice.baseFrequency = pedalBlend (540.0f, 610.0f)
@@ -2848,6 +3354,26 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // arrived faster or because the tip is harder.
             const float reach = std::clamp (
                 0.00042f / std::max (1.0e-5f, voice.contactSeconds), 0.30f, 1.60f);
+            // On a stick hit the reach is carried as a tilt on the modal bank
+            // and nowhere else, which is right, because the bank is the only
+            // part of the voice whose modes the engine knows individually. A
+            // foot chick has no bank of its own to tilt into: the pair is
+            // clamped and its plate modes are the shortest things in the voice,
+            // so what the blunt contact has to reach - or fail to reach - is
+            // the circuit source that carries most of what a hat radiates. One
+            // pole at 14 kHz scaled by the same contact ratio the reach above
+            // is read from does that: at a stick's own contact it would sit at
+            // 19 kHz and be very nearly bypass, and at the chick's six-times
+            // longer one it is at 3.2 kHz. It is unclamped, because the clamp
+            // on the reach exists to keep a bank's tilt sane rather than to
+            // bound a corner. It is deliberately applied to
+            // this articulation alone. Putting it on the two stick-struck hats
+            // as well would re-voice both of them, which is a change that has
+            // to be judged by ear rather than measured into a step about MIDI.
+            if (footChick)
+                configureOnePoleLowpass (
+                    voice.filterC,
+                    14000.0f * 0.00042f / std::max (1.0e-5f, voice.contactSeconds));
             initialiseModalVoice (
                 voice, hatRatios, 12, voice.baseFrequency,
                 voice.decaySeconds * pedalBlend (0.70f, 0.85f),
@@ -2874,7 +3400,8 @@ void DrumEngine::initialiseVoice (Voice& voice, Instrument instrument, float vel
             // per-hit tolerance move it would mean a hit set to one circuit
             // occasionally arriving with a few percent of the other one mixed
             // in, which is not something any tolerance does.
-            configureCymbalChannel (voice, instrument, velocity, values.characterA);
+            configureCymbalChannel (voice, instrument, velocity, values.characterA,
+                                    articulation);
 
             // The 808's three VCAs run off two envelope generators, and the
             // third band is the same capacitor read through a different
@@ -3195,6 +3722,14 @@ void DrumEngine::trigger (Instrument instrument, float velocity,
         + 0.012f * boardDrift);
     variation.phaseOffset = humaniseDepth * (0.018f * drift
         + 0.022f * signedUnitFromHash (seed ^ 0xc2b2ae35u));
+    // Where the stick landed, as a deviation from the nominal aim. Neither
+    // drift term appears: see HitVariation. Four degrees at the calibrated
+    // unit, eight at the top of the control, which on the m = 1 members of a
+    // split pair is the difference between about 5 dB and about 13 dB of beat
+    // depth in the tail - a stroke that lands closer to a nodal line rings a
+    // deeper warble than one that splits the pair evenly.
+    variation.strikeAzimuthDegrees = humaniseDepth * 4.0f
+        * signedUnitFromHash (seed ^ 0x27d4eb2fu);
     auto& voice = voices_[static_cast<std::size_t> (findVoiceSlot())];
     if (voice.active && voice.ageSamples != 0u)
         retireVoice (voice);
@@ -3287,14 +3822,20 @@ float DrumEngine::renderKick (Voice& voice) noexcept
         1.5f, 1.27323954f * std::sqrt (
             voice.kickStateX * voice.kickStateX
             + voice.kickStateY * voice.kickStateY));
-    const float triggerSweep = 0.84f + 0.16f * voice.velocity;
     const float amplitudePitch = 1.0f
         + 0.016f * voice.characterB * stateMagnitude;
+    // Punch draws the sweep; the beater decides how much of it this hit uses.
+    // The former trigger-voltage term here spanned 0.84 to 1.00 over the whole
+    // velocity range, which is a hundredth of the sweep it multiplied, so a
+    // ghost stroke and an accent glided the same fourth-and-a-half. It read
+    // exactly 1.00 at full velocity, which is what strikeDepth reads at and
+    // above its saturation velocity, so a hard hit is unchanged to the bit.
     const float frequency = std::clamp (
         voice.baseFrequency
-            * (1.0f + voice.sweepAmount * triggerSweep * voice.pitchEnvelope)
+            * (1.0f + voice.sweepAmount * voice.strikeDepth * voice.pitchEnvelope)
             * amplitudePitch,
         4.0f, 0.18f * static_cast<float> (sampleRate_));
+    voice.oscillatorFrequency = frequency;
 
     const float angle = twoPi * frequency * inverseSampleRate_;
     const float angleSquared = angle * angle;
@@ -3465,12 +4006,19 @@ float DrumEngine::renderHat (Voice& voice) noexcept
     // The persistent Schmitt/RC bank is evaluated once per engine sample, so
     // overlapping hits hear the same free-running hardware source instead of
     // restarting six ideal sines with newly randomized components.
-    const float metallic = metallicSourceFor (voice.instrument)
-                         + 0.20f * (1.0f - voice.characterA) * noise;
+    float metallic = metallicSourceFor (voice.instrument)
+                   + 0.20f * (1.0f - voice.characterA) * noise;
+    // The blunt contact of a foot chick, ahead of the two channel filters
+    // rather than after them, because a contact decides what the strike puts
+    // in and not how what is in gets out. filterC is unused on a stick-struck
+    // hat and untouched by it, so this costs the other two articulations
+    // nothing but the branch.
+    if (voice.articulation == Articulation::FootChick)
+        metallic = voice.filterC.tick (metallic);
     const float high = voice.filterA.tick (metallic);
     const float focused = voice.filterB.tick (metallic);
     const float attack = 0.12f * voice.transientEnvelope * noise * voice.transientScale
-        * voice.velocityTimbre;
+        * voice.velocityTimbre * voice.strikeNoise;
 
     // The plates, struck once and then left. The circuit bank above is the
     // hat's hiss and its clank; this is the metal it comes out of.
@@ -3546,9 +4094,13 @@ float DrumEngine::renderTom (Voice& voice) noexcept
     const float tension = 1.0f
         + (0.006f + 0.052f * voice.characterB) * voice.excitationScale
               * voice.envelope * voice.envelope;
+    // The drawn sweep beside it had no strike term at all, so its depth is now
+    // the strike's as well: same shape, same ceiling, but only an accent
+    // reaches the top of it.
     const float frequency = voice.baseFrequency
-        * (1.0f + voice.sweepAmount * voice.pitchEnvelope)
+        * (1.0f + voice.sweepAmount * voice.strikeDepth * voice.pitchEnvelope)
         * tension;
+    voice.oscillatorFrequency = frequency;
     voice.phaseIncrements[0] = std::min (0.45f, frequency * inverseSampleRate_);
     const float fundamental = oscillator (voice, 0);
     const float shell = oscillator (voice, 1);

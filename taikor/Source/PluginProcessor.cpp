@@ -221,13 +221,14 @@ TaikorAudioProcessor::createParameterLayout()
 
     result.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { ids::octaveBody, 1 }, "Octave Body",
-        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.001f }, 0.7f,
+        juce::NormalisableRange<float> { 0.0f, 1.0f, 0.001f }, 1.0f,
         juce::AudioParameterFloatAttributes()
             .withLabel ("%")
             .withStringFromValueFunction ([] (float value, int)
             {
                 // The two ends are different instruments, not different
-                // amounts of one, so the readout says which.
+                // amounts of one, so the readout says which. Family is the
+                // default: the keyboard's four octaves are four drums.
                 if (value <= 0.02f)
                     return juce::String ("Tuned");
                 if (value >= 0.98f)

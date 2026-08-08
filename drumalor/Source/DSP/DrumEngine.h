@@ -37,7 +37,21 @@ enum class Articulation : std::uint8_t
 {
     Head,
     Rimshot,
-    CrossStick
+    CrossStick,
+    // The one stroke on a kit played without a stick. The plates are already
+    // clamped when it happens and what strikes them is the other plate, so it
+    // is neither a closed hat nor a quiet one: no stick noise, a contact patch
+    // a hundred times the area of a wooden tip, and the shortest thing the
+    // pair can ring.
+    FootChick,
+    // Three voicings of the two cymbal channels. Neither channel has a modal
+    // bank, so none of these is a strike position: they are the machine's own
+    // controls - band gains, sample clock, contact time, decay - set to what
+    // each cymbal is. That is voicing and not geometry, and it is what the
+    // General MIDI notes for these instruments can honestly be given here.
+    Bell,
+    China,
+    Splash
 };
 
 struct MidiTrigger
@@ -101,6 +115,20 @@ struct InstrumentMetadata
 [[nodiscard]] std::optional<Instrument> instrumentForMidiNote (int midiNote) noexcept;
 [[nodiscard]] std::optional<MidiTrigger> midiTriggerForNote (int midiNote) noexcept;
 
+// What a note-on's velocity byte is worth, with MIDI 1.0's High Resolution
+// Velocity Prefix taken into account when the controller sent one. CC 88
+// immediately ahead of a note-on carries the low seven bits of a fourteen-bit
+// velocity; every electronic kit that resolves finer than 127 steps over MIDI
+// 1.0 sends it this way.
+//
+// The two paths are deliberately not the same arithmetic. Without a prefix the
+// byte is divided by 127, exactly as it always was, so an ordinary note-on is
+// bit-identical to what the engine produced before this existed; folding it
+// into the fourteen-bit scaling instead would read a full-velocity note as
+// 16256/16383, which is 0.07 dB low and would move every existing session.
+[[nodiscard]] float velocityFromMidi (
+    int velocityByte, std::optional<int> highResolutionLsb = std::nullopt) noexcept;
+
 class DrumEngine
 {
 public:
@@ -123,6 +151,15 @@ public:
     void trigger (Instrument instrument, float velocity,
                   Articulation articulation = Articulation::Head) noexcept;
     [[nodiscard]] bool triggerMidi (int midiNote, float velocity) noexcept;
+    // A hand closing on ringing bronze, as aftertouch. Pressure 0 does nothing
+    // - a controller sends it when the hand comes off, and nothing on this
+    // engine can put a cymbal back - and every value above it damps harder,
+    // over a time constant rather than as a switch, so a grab that tightens
+    // over a few controller messages is a grab that tightens. The channel form
+    // takes every ringing cymbal; the note form takes only the cymbal that
+    // note plays, which is what polyphonic aftertouch from a pad means.
+    void applyAftertouch (float pressure) noexcept;
+    bool applyAftertouch (int midiNote, float pressure) noexcept;
     void allSoundsOff() noexcept;
     void process (float* left, float* right, int numSamples) noexcept;
     // Includes short fade-only tails retained to make voice stealing click-free.
@@ -136,12 +173,29 @@ public:
     // Linear gain currently applied by the bus compressor; 1.0 means no
     // reduction and the stage may be bypassed entirely.
     [[nodiscard]] float getBusGain() const noexcept;
+    // What the drawn oscillator of the most recently triggered voice was
+    // running at, in hertz, over the last processed sample; zero when the
+    // newest voice does not have one. Published with the meters above and read
+    // the same way. It exists because the pitch sweep on a membrane collapses
+    // inside one period of the settled note - the Kick's envelope is at 1/e in
+    // 7.2 ms against a settled period of 20.4 ms - so no estimator of the
+    // rendered output can see the sweep, and the only honest way to assert what
+    // the sweep does is to ask the oscillator.
+    [[nodiscard]] float getNewestVoicePitchHz() const noexcept;
 
 private:
     static constexpr int maxVoices = 64;
     static constexpr int retiringVoiceCount = maxVoices;
     static constexpr int oscillatorCount = 8;
-    static constexpr int resonatorCount = 12;
+    // Twelve was the size of the mode table. Eighteen is the size of the table
+    // with every m > 0 mode allowed to be the pair it physically is: an ideal
+    // circular head's m > 0 modes are doubly degenerate, and buildHeadBank now
+    // splits the loudest of them into their two members. Six extra slots is
+    // what the table's tail plus that splitting needs. The cost is time, and it
+    // is small but not nothing: measured against a reverted build, the suite's
+    // dense thirteen-voice stress render goes from 0.86 s to 0.95 s, a 9 %
+    // increase against a 20 s guardrail.
+    static constexpr int resonatorCount = 18;
     static constexpr int metallicBankCount = 5;
     static constexpr int metallicOscillatorCount = 6;
     static constexpr int maximumMetallicDecimatorTaps = 401;
@@ -255,6 +309,14 @@ private:
         Biquad highpassHigh {};
         // 909: the reconstruction filter after the DAC and its VCA.
         Biquad reconstruction {};
+        // The stick's own contact time, as a first-order tilt on each
+        // machine's carrier. A tip touches a plate for a finite time and
+        // cannot deliver force above about one cycle per contact, so this is
+        // a property of the excitation and sits ahead of both channels'
+        // envelopes rather than across the voice's output, where it would
+        // blur the onsets the smoothers below are there to shape.
+        Biquad contactAnalogue {};
+        Biquad contactDigital {};
 
         // 808 trigger path. The trigger pulse is not a step: it charges the
         // envelope capacitors through the attack smoother, so every band opens
@@ -278,6 +340,16 @@ private:
         // long as the voice does.
         std::uint64_t midActiveSamples { 0 };
         std::uint64_t highActiveSamples { 0 };
+
+        // 909 trigger path. The data path has no smoother of its own - the
+        // counter is reset by the trigger and the first address is read on the
+        // next clock - so without this the channel opens in three samples.
+        // What it opens through is the same trigger RC the analogue channel
+        // uses, and it is the only place on this leg where how fast the stick
+        // was travelling can reach the sound at all: the ROM is a recording and
+        // the address envelope is walked by the counter, so neither can move.
+        float digitalGate { 0.0f };
+        float digitalGateCoefficient { 1.0f };
 
         // 909 sample clock, as a phase increment per engine sample.
         float clockPhase { 1.0f };
@@ -332,6 +404,14 @@ private:
         float circuitDriveOffset { 0.0f };
         float circuitBias { 0.0f };
         float phaseOffset { 0.0f };
+        // Where around the head this particular stroke landed, in degrees away
+        // from the nominal aim. This is the first deviation Humanise has ever
+        // made to the strike itself rather than to a control, and it is the
+        // only field here with no component-drift term in it: a supply rail and
+        // an ambient temperature do not decide where a stick lands, and two
+        // drums struck a moment apart have no reason to be hit in the same
+        // place. It is per-hit and nothing else.
+        float strikeAzimuthDegrees { 0.0f };
     };
 
     struct Voice
@@ -418,12 +498,46 @@ private:
         float bodyScale { 1.0f };
         float wireScale { 1.0f };
         float rimLevel { 0.0f };
-        // How open the pair was when this hat was struck. A pedal that closes
-        // further than this damps the voice; one that opens again does not
-        // bring it back, because a hat that has been shut has been shut.
+        // How much of the strike is the stick. A wooden tip landing on bronze
+        // puts a burst of broadband noise in before the plate answers at all;
+        // a plate landing on a plate does not, because there is no tip.
+        float strikeNoise { 1.0f };
+        // How open the pair was when this hat was struck, and what its decay
+        // law was derived at. A pedal that moves re-derives that law at the new
+        // aperture: closing adds the friction between two faces on top, and
+        // opening again takes the friction away and leaves whatever is still
+        // ringing to decay at the open plate's own rate. Opening does not bring
+        // the note back - the energy that friction took has gone - which is
+        // exactly what a foot splash is.
         float hatAperture { 1.0f };
+        // This hit's Humanise draw on the decay, kept so the aperture can be
+        // re-derived later without the tolerance drifting each time.
+        float decayVariation { 1.0f };
+        // The per-sample multiplier the pedal's friction is currently taking
+        // out of this voice, or zero if the pedal is not damping it. Lifting
+        // the foot releases the choke only while this is still the tightest
+        // thing acting on the voice: a mute group or a panic that arrived
+        // afterwards is not friction and a pedal must not undo it.
+        float pedalFrictionMultiplier { 0.0f };
         float baseFrequency { 100.0f };
+        // Where the strike landed around the head, in radians. The head
+        // geometry says how far out from the middle the stick was, which is
+        // what decides which modes it can reach at all; this says where around
+        // the hoop, which is what decides the balance between the two members
+        // of every split pair. Read only by buildHeadBank.
+        float strikeAzimuth { 0.0f };
         float sweepAmount { 0.0f };
+        // How much of the drawn sweep this strike is allowed to use. Latched at
+        // note-on from the energy the strike put into the drum, because a head
+        // is stiff only because it is stretched, so a ghost stroke bends the
+        // pitch hardly at all where an accent bends it a fourth. Unity for
+        // everything at or above the velocity where it saturates, which leaves
+        // every accent exactly where it was.
+        float strikeDepth { 1.0f };
+        // What the drawn oscillator ran at over the last rendered sample, in
+        // hertz. Written by the voices that have one and read only by the
+        // metering pass; nothing in the audio path consumes it.
+        float oscillatorFrequency { 0.0f };
         float panLeft { 0.70710678f };
         float panRight { 0.70710678f };
         std::array<float, oscillatorCount> phases {};
@@ -553,7 +667,20 @@ private:
     void chokeGroup (int group) noexcept;
     [[nodiscard]] static bool isStruckMembrane (Instrument instrument) noexcept;
     [[nodiscard]] static bool isHiHat (Instrument instrument) noexcept;
+    [[nodiscard]] static bool isCymbal (Instrument instrument) noexcept;
     [[nodiscard]] float hiHatAperture (Instrument instrument) const noexcept;
+    // How long the pair rings at a given aperture, and the loss law that goes
+    // with it. Both are read at note-on and again whenever the pedal moves on
+    // a hat that is still sounding, so one place decides what an aperture is.
+    [[nodiscard]] float hatDecaySecondsFor (float aperture,
+                                            float decayVariation) const noexcept;
+    void applyHatAperture (Voice& voice, float aperture) noexcept;
+    // Move a ringing mode's pole radius without touching its state. The pole
+    // angle is recovered from the coefficients the mode already has, so the
+    // frequency it is ringing at is preserved exactly and only how fast it
+    // dies changes. configureResonator cannot be used for this: it clears the
+    // resonator, which on a ringing plate is the note stopping.
+    void retuneResonatorDecay (Resonator& resonator, float decaySeconds) const noexcept;
     void dampRingingMembrane (Instrument instrument, float velocity) noexcept;
     void beginChoke (Voice& voice, float seconds) noexcept;
     void beginFadeToSilence (Voice& voice, float multiplier) noexcept;
@@ -605,7 +732,8 @@ private:
     // cymbal voices run both; only the balance and the tuning differ, and all
     // of that is resolved into the voice at note-on.
     void configureCymbalChannel (Voice& voice, Instrument instrument,
-                                 float velocity, float machineSelect) noexcept;
+                                 float velocity, float machineSelect,
+                                 Articulation articulation) noexcept;
     [[nodiscard]] static float swingVcaGain (float control, float knee) noexcept;
     struct CymbalBands
     {
@@ -630,6 +758,10 @@ private:
     void configureHighpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureBandpass (Biquad& filter, float frequency, float q) const noexcept;
     void configureLowpass (Biquad& filter, float frequency, float q) const noexcept;
+    // One pole, bilinear, in the same Biquad the two-pole sections use. A
+    // contact time is a first-order tilt rather than a corner, and it has to
+    // land on the same hertz at every host rate.
+    void configureOnePoleLowpass (Biquad& filter, float frequency) const noexcept;
     void configureResonator (Resonator& resonator, float frequency,
                              float decaySeconds) const noexcept;
 
@@ -671,6 +803,7 @@ private:
     std::atomic<float> outputLevelLeft_ { 0.0f };
     std::atomic<float> outputLevelRight_ { 0.0f };
     std::atomic<float> busGainMeter_ { 1.0f };
+    std::atomic<float> newestVoicePitch_ { 0.0f };
     std::atomic<int> activeVoiceCount_ { 0 };
     double sampleRate_ { 48000.0 };
     float inverseSampleRate_ { 1.0f / 48000.0f };

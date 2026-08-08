@@ -221,7 +221,8 @@ EngineParameters defaultVoicing()
 // The takes
 // ---------------------------------------------------------------------------
 
-// Every stroke in the vocabulary, in the order the keyboard lays them out.
+// Every stroke of the vocabulary on one drum, in the order the keyboard lays
+// them out: Don, Ka, Tsu, Don Rim.
 Take renderVocabulary()
 {
     Take take (defaultVoicing());
@@ -232,9 +233,9 @@ Take renderVocabulary()
     return take;
 }
 
-// The pitch ladder: the same stroke on every octave, which is the same
-// vocabulary played on a different drum each time.
-Take renderOctaveLadder (Articulation articulation, double gap, double tail)
+// The pitch ladder: the same stroke on each of the four drums, which is the
+// same technique played on a different instrument each time.
+Take renderDrumLadder (Articulation articulation, double gap, double tail)
 {
     Take take (defaultVoicing());
     take.rest (0.10);
@@ -245,20 +246,42 @@ Take renderOctaveLadder (Articulation articulation, double gap, double tail)
     return take;
 }
 
-// A phrase on one drum of the family, so each size can be heard being played
-// rather than only being struck once.
+// The whole playing grid, read the way it is laid out: each drum in turn, and
+// on each of them all four strokes.
+Take renderGrid()
+{
+    Take take (defaultVoicing());
+    take.rest (0.10);
+
+    for (int octave = taikor::lowestOctaveOffset; octave <= taikor::highestOctaveOffset;
+         ++octave)
+    {
+        // The small drums speak and empty faster, so they are given less room.
+        const double gap = 0.62 / std::pow (1.35, static_cast<double> (octave));
+        for (std::size_t index = 0; index < taikor::articulationCount; ++index)
+            take.hit (static_cast<Articulation> (index), octave, 0.92f, gap);
+        take.rest (gap);
+    }
+
+    take.rest (1.6);
+    return take;
+}
+
+// A phrase on one drum of the family, so each instrument can be heard being
+// played rather than only being struck once.
 Take renderFamilyPhrase (int octave, double beat, double tail)
 {
     Take take (defaultVoicing());
     take.rest (0.08);
 
-    // A plain kumi-daiko figure: open strokes on the beat, edge strokes off it.
+    // A plain kumi-daiko figure: open strokes on the beat, edge strokes off it,
+    // a damped centre where the phrase turns and a rim shot for the accent.
     const std::array<std::pair<Articulation, float>, 16> figure {{
         { Articulation::Don, 1.00f },  { Articulation::Ka, 0.55f },
         { Articulation::Don, 0.80f },  { Articulation::Ka, 0.50f },
-        { Articulation::Don, 0.95f },  { Articulation::Su, 0.45f },
+        { Articulation::Don, 0.95f },  { Articulation::Tsu, 0.45f },
         { Articulation::Ka, 0.60f },   { Articulation::Ka, 0.55f },
-        { Articulation::Don, 1.00f },  { Articulation::Su, 0.35f },
+        { Articulation::Don, 1.00f },  { Articulation::Tsu, 0.35f },
         { Articulation::Don, 0.75f },  { Articulation::Ka, 0.55f },
         { Articulation::DonRim, 0.95f }, { Articulation::Ka, 0.50f },
         { Articulation::Don, 0.85f },  { Articulation::Tsu, 0.50f },
@@ -317,13 +340,13 @@ Take renderHandDamping()
     Take take (defaultVoicing());
     take.rest (0.08);
 
-    take.hit (Articulation::Don, -1, 0.95f, 2.2);   // left to ring out
+    take.hit (Articulation::Don, 0, 0.95f, 2.2);   // left to ring out
     take.handDamping (0.0f);
-    take.hit (Articulation::Don, -1, 0.95f, 0.45);
-    take.handDamping (1.0f);                        // hand goes down
+    take.hit (Articulation::Don, 0, 0.95f, 0.45);
+    take.handDamping (1.0f);                       // hand goes down
     take.rest (1.2);
     take.handDamping (0.0f);
-    take.hit (Articulation::Don, -1, 0.95f, 0.30);
+    take.hit (Articulation::Don, 0, 0.95f, 0.30);
     take.handDamping (0.55f);                       // a lighter touch
     take.rest (1.8);
 
@@ -352,81 +375,90 @@ Take renderPitchBend()
     return take;
 }
 
-// Rolls, flams and ghost strokes: the parts of the vocabulary that are about
-// what the sticks do rather than where they land.
+// Rolls, flams and press rolls, played rather than provided. None of these is
+// a key on the grid, and none of them needs to be: a flam is two notes and a
+// roll is a lot of them, and what makes either one sound like a drum being
+// played rather than like a sample repeating is that a stick landing on a
+// moving head takes energy back out of it.
 Take renderRollsAndPresses()
 {
     Take take (defaultVoicing());
     take.rest (0.08);
 
-    take.hit (Articulation::Buzz, 0, 0.80f, 0.75);
-    take.hit (Articulation::Buzz, 0, 0.95f, 0.75);
-    // A flam, played rather than provided: a grace note a thirty-second ahead
-    // of the stroke it leans into. Two notes on a grid is all one is, which is
-    // why the instrument no longer spends a key on it.
-    take.hit (Articulation::Su, 0, 0.42f, 0.032);
+    // A press roll: the stick pushed into the head and left to bounce, which is
+    // a train of contacts falling in level and spacing.
+    for (int repeat = 0; repeat < 2; ++repeat)
+    {
+        double gap = 0.019;
+        float velocity = 0.80f;
+        for (int bounce = 0; bounce < 11; ++bounce)
+        {
+            take.hit (Articulation::Tsu, 0, velocity, gap);
+            gap *= 0.82;
+            velocity *= 0.86f;
+        }
+        take.rest (0.55);
+    }
+
+    // A flam: a grace note a thirty-second ahead of the stroke it leans into.
+    take.hit (Articulation::Don, 0, 0.42f, 0.032);
     take.hit (Articulation::Don, 0, 0.90f, 0.67);
-    take.hit (Articulation::Su, 0, 0.38f, 0.032);
+    take.hit (Articulation::Ka, 0, 0.38f, 0.032);
     take.hit (Articulation::Don, 0, 0.75f, 0.67);
 
-    // A hand-played roll: alternating strokes accelerating into a Don.
+    // A hand-played roll: alternating strokes accelerating into a rim shot.
     double gap = 0.155;
     for (int stroke = 0; stroke < 14; ++stroke)
     {
-        take.hit (stroke % 2 == 0 ? Articulation::Ka : Articulation::Su, 0,
+        take.hit (stroke % 2 == 0 ? Articulation::Ka : Articulation::Tsu, 0,
                   0.38f + 0.035f * static_cast<float> (stroke), gap);
         gap *= 0.90;
     }
-    take.hit (Articulation::Don, 0, 1.0f, 0.9);
-
-    take.hit (Articulation::Bachi, 0, 0.85f, 0.30);
-    take.hit (Articulation::Bachi, 0, 0.85f, 0.30);
-    take.hit (Articulation::Katsu, 0, 0.90f, 0.55);
-    take.rest (1.4);
+    take.hit (Articulation::DonRim, 0, 1.0f, 1.4);
 
     return take;
 }
 
-// A longer piece moving between three drums of the family, so the octave
-// mapping can be heard as an ensemble rather than as a ladder.
+// A longer piece moving between all four drums, so the grid can be heard as an
+// ensemble rather than as a ladder.
 Take renderEnsemblePiece()
 {
     Take take (defaultVoicing());
     take.rest (0.08);
 
     constexpr double beat = 0.30;
-    const auto bar = [&take] (int octave, double unit)
+    const auto bar = [&take] (int low, int high, double unit)
     {
-        take.hit (Articulation::Don, octave, 1.00f, unit);
-        take.hit (Articulation::Ka, octave + 1, 0.55f, unit * 0.5);
-        take.hit (Articulation::Ka, octave + 1, 0.50f, unit * 0.5);
-        take.hit (Articulation::Don, octave, 0.85f, unit);
-        take.hit (Articulation::Su, octave + 1, 0.45f, unit * 0.5);
-        take.hit (Articulation::Ka, octave + 1, 0.55f, unit * 0.5);
+        take.hit (Articulation::Don, low, 1.00f, unit);
+        take.hit (Articulation::Ka, high, 0.55f, unit * 0.5);
+        take.hit (Articulation::Ka, high, 0.50f, unit * 0.5);
+        take.hit (Articulation::Don, low, 0.85f, unit);
+        take.hit (Articulation::Tsu, high, 0.45f, unit * 0.5);
+        take.hit (Articulation::Ka, high, 0.55f, unit * 0.5);
     };
 
-    // Odaiko underneath, mid drum on top.
+    // O-daiko underneath, chu-daiko on top.
     for (int repeat = 0; repeat < 2; ++repeat)
     {
-        take.hit (Articulation::Don, -2, 1.0f, beat * 0.02);
-        bar (-1, beat);
-        bar (-1, beat);
+        take.hit (Articulation::Don, 0, 1.0f, beat * 0.02);
+        bar (0, 1, beat);
+        bar (0, 1, beat);
     }
 
-    // The small drum answers.
+    // The okedo and the shime answer.
     for (int repeat = 0; repeat < 2; ++repeat)
     {
-        take.hit (Articulation::Don, -2, 0.9f, beat * 0.02);
-        bar (1, beat * 0.75);
+        take.hit (Articulation::Don, 0, 0.9f, beat * 0.02);
+        bar (2, 3, beat * 0.75);
     }
 
     // Everything together.
-    take.hit (Articulation::Don, -2, 1.0f, 0.02);
-    take.hit (Articulation::Don, -1, 1.0f, 0.02);
-    take.hit (Articulation::Don, 0, 0.95f, 0.02);
-    take.hit (Articulation::Don, 1, 0.90f, beat * 2.0);
-    take.hit (Articulation::DonRim, 0, 1.0f, 0.02);
-    take.hit (Articulation::Don, -2, 1.0f, 3.0);
+    take.hit (Articulation::Don, 0, 1.0f, 0.02);
+    take.hit (Articulation::Don, 1, 1.0f, 0.02);
+    take.hit (Articulation::Don, 2, 0.95f, 0.02);
+    take.hit (Articulation::Don, 3, 0.90f, beat * 2.0);
+    take.hit (Articulation::DonRim, 1, 1.0f, 0.02);
+    take.hit (Articulation::Don, 0, 1.0f, 3.0);
 
     return take;
 }
@@ -442,13 +474,14 @@ struct Demo
     Take (*render)();
 };
 
-Take renderOctavesDon() { return renderOctaveLadder (Articulation::Don, 0.95, 2.4); }
-Take renderOctavesKa() { return renderOctaveLadder (Articulation::Ka, 0.60, 1.4); }
-Take renderOctavesRim() { return renderOctaveLadder (Articulation::DonRim, 0.80, 1.8); }
+Take renderDrumsDon() { return renderDrumLadder (Articulation::Don, 0.95, 2.4); }
+Take renderDrumsKa() { return renderDrumLadder (Articulation::Ka, 0.60, 1.4); }
+Take renderDrumsRim() { return renderDrumLadder (Articulation::DonRim, 0.80, 1.8); }
 
-Take renderOdaiko() { return renderFamilyPhrase (-2, 0.42, 3.2); }
-Take renderNagado() { return renderFamilyPhrase (0, 0.30, 1.8); }
-Take renderShime() { return renderFamilyPhrase (2, 0.20, 0.9); }
+Take renderOdaiko() { return renderFamilyPhrase (0, 0.42, 3.2); }
+Take renderChudaiko() { return renderFamilyPhrase (1, 0.30, 1.8); }
+Take renderOkedo() { return renderFamilyPhrase (2, 0.24, 1.2); }
+Take renderShime() { return renderFamilyPhrase (3, 0.20, 0.9); }
 
 Take renderBachiHardness()
 {
@@ -461,7 +494,7 @@ Take renderStrikePositionSweep()
 {
     return renderParameterSweep (&EngineParameters::strikePosition,
                                  { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f },
-                                 Articulation::Su, 0, 0.60, 1.5);
+                                 Articulation::Don, 0, 0.60, 1.5);
 }
 
 Take renderTensionSweep()
@@ -480,9 +513,11 @@ Take renderHeadMaterialSweep()
 
 Take renderShellMaterialSweep()
 {
+    // A rim shot, because it is the stroke that catches the hoop and the body
+    // with the head and so drives the wooden bank hardest.
     return renderParameterSweep (&EngineParameters::shellMaterial,
                                  { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f },
-                                 Articulation::Katsu, 0, 0.60, 1.4, 0.04f);
+                                 Articulation::DonRim, 0, 0.70, 1.8, 0.012f);
 }
 
 Take renderCavitySweep()
@@ -508,7 +543,9 @@ Take renderHeadDampingSweep()
 
 Take renderOctaveBodySweep()
 {
-    // The same two octaves realised as a tuned drum and as a smaller drum.
+    // The keyboard twice over: first as one drum retuned four times, then as
+    // the four instruments of the family. Both land on the same four pitches,
+    // and they do not sound remotely alike.
     auto parameters = defaultVoicing();
     Take take (parameters);
     take.rest (0.10);
@@ -517,7 +554,8 @@ Take renderOctaveBodySweep()
     {
         parameters.octaveBody = body;
         take.setParameters (parameters);
-        for (const int octave : { -1, 0, 1, 2 })
+        for (int octave = taikor::lowestOctaveOffset;
+             octave <= taikor::highestOctaveOffset; ++octave)
             take.hit (Articulation::Don, octave, 0.92f, 0.66);
         take.rest (0.5);
     }
@@ -540,56 +578,59 @@ Take renderMicSpreadSweep()
                                  Articulation::Ka, 0, 0.60, 1.4);
 }
 
-const std::array<Demo, 23>& demos()
+const std::array<Demo, 25>& demos()
 {
-    static const std::array<Demo, 23> table {{
+    static const std::array<Demo, 25> table {{
         { "01-stroke-vocabulary.wav",
-          "All eight strokes on the reference drum, in keyboard order",
+          "All four strokes on the o-daiko, in keyboard order",
           renderVocabulary },
-        { "02-octaves-don.wav",
-          "A Don on each of the six octaves: the pitch ladder", renderOctavesDon },
-        { "03-octaves-ka.wav", "An edge Ka on each of the six octaves",
-          renderOctavesKa },
-        { "04-octaves-rim-shot.wav", "A rim shot on each of the six octaves",
-          renderOctavesRim },
-        { "05-odaiko-phrase.wav", "A phrase on the largest drum", renderOdaiko },
-        { "06-nagado-phrase.wav", "The same phrase on the reference drum",
-          renderNagado },
-        { "07-shime-phrase.wav", "The same phrase on a small tight drum",
-          renderShime },
-        { "08-velocity-dynamics.wav",
+        { "02-the-four-drums.wav",
+          "A Don on each of the four drums: o-daiko, chu-daiko, okedo, shime",
+          renderDrumsDon },
+        { "03-the-playing-grid.wav",
+          "The whole grid: four strokes on each of the four drums", renderGrid },
+        { "04-drums-ka.wav", "An edge Ka on each of the four drums", renderDrumsKa },
+        { "05-drums-rim-shot.wav", "A rim shot on each of the four drums",
+          renderDrumsRim },
+        { "06-odaiko-phrase.wav", "A phrase on the o-daiko", renderOdaiko },
+        { "07-chudaiko-phrase.wav", "The same phrase on the chu-daiko",
+          renderChudaiko },
+        { "08-okedo-phrase.wav", "The same phrase on the okedo-daiko", renderOkedo },
+        { "09-shime-phrase.wav", "The same phrase on the shime-daiko", renderShime },
+        { "10-velocity-dynamics.wav",
           "One stroke from a ghost note to a full-arm hit", renderVelocityDynamics },
-        { "09-bachi-hardness.wav", "Felt beater through to a hard oak bachi",
-          renderBachiHardness },
-        { "10-strike-position.wav", "The same stroke walked from centre to rim",
-          renderStrikePositionSweep },
-        { "11-head-tension.wav", "Slack head through to fully tacked",
-          renderTensionSweep },
-        { "12-head-material.wav", "Thin synthetic film through to thick cowhide",
-          renderHeadMaterialSweep },
-        { "13-shell-material.wav",
-          "Light laminated ply through to dense carved zelkova, struck on the body",
-          renderShellMaterialSweep },
-        { "14-air-coupling.wav", "Open body through to a fully sealed one",
-          renderCavitySweep },
-        { "15-body-depth.wav", "Shallow body through to deep", renderBodyDepthSweep },
-        { "16-head-damping.wav", "Open head through to heavily damped",
-          renderHeadDampingSweep },
-        { "17-octave-body.wav",
-          "Four octaves as a tuned drum, then the same four as smaller drums",
-          renderOctaveBodySweep },
-        { "18-mic-distance.wav", "The close pair from 3 cm out to 40 cm",
-          renderMicDistanceSweep },
-        { "19-mic-spread.wav", "The close pair from coincident to fully opened",
-          renderMicSpreadSweep },
-        { "20-hand-damping.wav", "A hand laid on a ringing head, from MIDI CC1",
-          renderHandDamping },
-        { "21-pitch-wheel.wav", "The wheel pressing the head sharp and flat",
-          renderPitchBend },
-        { "22-rolls-and-presses.wav", "Press rolls, a played flam, stick clicks and a shell hit",
+        { "11-rolls-and-presses.wav",
+          "Press rolls, a played flam and a roll accelerating into a rim shot",
           renderRollsAndPresses },
-        { "23-ensemble-piece.wav",
-          "A longer piece moving between three drums of the family",
+        { "12-bachi-hardness.wav", "Felt beater through to a hard oak bachi",
+          renderBachiHardness },
+        { "13-strike-position.wav", "The same stroke walked from centre to rim",
+          renderStrikePositionSweep },
+        { "14-head-tension.wav", "Slack head through to fully tacked",
+          renderTensionSweep },
+        { "15-head-material.wav", "Thin synthetic film through to thick cowhide",
+          renderHeadMaterialSweep },
+        { "16-shell-material.wav",
+          "Light laminated staves through to dense carved zelkova, on a rim shot",
+          renderShellMaterialSweep },
+        { "17-air-coupling.wav", "Open body through to a fully sealed one",
+          renderCavitySweep },
+        { "18-body-depth.wav", "Shallow body through to deep", renderBodyDepthSweep },
+        { "19-head-damping.wav", "Open head through to heavily damped",
+          renderHeadDampingSweep },
+        { "20-octave-body.wav",
+          "The keyboard as one drum retuned four times, then as the four drums",
+          renderOctaveBodySweep },
+        { "21-mic-distance.wav", "The close pair from 3 cm out to 40 cm",
+          renderMicDistanceSweep },
+        { "22-mic-spread.wav", "The close pair from coincident to fully opened",
+          renderMicSpreadSweep },
+        { "23-hand-damping.wav", "A hand laid on a ringing head, from MIDI CC1",
+          renderHandDamping },
+        { "24-pitch-wheel.wav", "The wheel pressing the head sharp and flat",
+          renderPitchBend },
+        { "25-ensemble-piece.wav",
+          "A longer piece moving between all four drums of the grid",
           renderEnsemblePiece },
     }};
     return table;

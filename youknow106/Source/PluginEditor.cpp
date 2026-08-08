@@ -1358,8 +1358,10 @@ void YouKnow106AudioProcessorEditor::buildUtilityStrip()
         "filter key tracking, including notes already held. This is a plug-in extension.",
         "Fine-tunes every oscillator by up to 50 cents. This is a plug-in "
         "extension around the calibrated hardware pitch.",
-        "Adds MIDI-velocity response to each voice amplifier. Zero matches the "
-        "hardware's fixed velocity; 100% gives full dynamic response.",
+        "Adds MIDI-velocity response to each voice amplifier and to the "
+        "envelope amount reaching its filter, so quieter notes are darker. "
+        "Zero matches the hardware's fixed velocity; 100% gives full dynamic "
+        "response.",
         "Scales every modeled component tolerance, trimmer residual, thermal "
         "wander and inherent circuit non-linearity. Zero is the calibrated "
         "digital reference; 100% matches real hardware; values above that "

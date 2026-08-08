@@ -51,7 +51,7 @@ jobs:
             "drumalor:DrumalorRenderDemos:7"
             "neuramar:NeuramarRenderDemos:8"
             "electry:ElectryRenderDemos:14"
-            "taikor:TaikorRenderDemos:23"
+            "taikor:TaikorRenderDemos:25"
             "youknow106:YouKnow106RenderDemos:10"
           )
 

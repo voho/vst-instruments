@@ -32,7 +32,11 @@ audio with the chorus off and 1.36 with chorus II and the whole mixer engaged,
 against 1.11 and 2.38 before; with the 4× internal oversampling switched off
 the same chorus patch costs 0.45. The full table, the profile behind it and
 what a one-machine figure can and cannot support are in the comparative
-assessment.
+assessment. The sound work since then left that table standing: it added one
+first-order section per voice and tabulated one correction that used to be a
+closed form, and both moved the CPU-budget fixture's patch by less than its
+own run-to-run spread (1.2351 to 1.2442, and 1.2455 to 1.2543 CPU seconds per
+second of audio).
 
 > **Listen first.** Ten [rendered demonstrations](Docs/audio/README.md) cover
 > the classic pad and PWM strings, the 16' bass, the self-oscillating filter,
@@ -63,6 +67,19 @@ assessment.
   hold constants remain open; a phase-zero profile exists only for diagnostics.
   MIDI assignment itself never writes an analogue hold: a retrigger retains the
   live capacitor state until that destination's scheduled converter slot.
+- **There is one LFO, one delay envelope, and one gated value for every
+  destination.** The firmware scales the LFO by its delay envelope before the
+  CPU distributes it, so DELAY holds the vibrato, the filter sweep and the
+  pulse width together and releases them together. The pulse-width converter
+  write used to read the ungated LFO instead: at LFO RATE 0.75 (7.4405 Hz),
+  DELAY 1.0 and PWM SOURCE = LFO, the duty swept its full 0.4166 span over a
+  200 ms window 50 ms into the note while the delay envelope still read
+  0.000000 and the pitch and filter were correctly flat. That write now reads
+  the same gated product the panel LFO display has always shown, so the span
+  there is 0.0000 at a duty pinned to 0.7250, and it is unchanged at 0.4166
+  once the delay has released. Nothing in tree states whether the hardware's
+  DELAY reaches PWM; what is settled is that the engine used to contradict
+  itself, including its own LFO readout.
 - **The envelope attacks in a straight line and falls exponentially, into a
   quasi-linear amplifier.** Its 14-bit recurrence, `128b` sustain mapping,
   coefficient selection, rounding, physical `E>>2` 12-bit DAC truncation and
@@ -93,13 +110,42 @@ assessment.
   dividers, one off VCF IN and one off VCF OUT, so the direction is settled.
   The magnitude of that compensation, and the shape of the panel-to-loop-gain
   curve, remain OQ-09 targets.
+- **Raising resonance does not move the corner.** Below the oscillation
+  threshold the cascade carries no limit cycle, so there is no compression
+  droop to correct, and the frequency correction is identically 1.000000 at
+  every resonance panel byte up to 114; it first departs at byte 115, by
+  13.2 cents. A fitted quadratic in loop gain used to lift the corner at every
+  setting — +8.76 cents at panel 0.30, +32.24 at 0.50, +80.17 at 0.70 and
+  +116.25 at 0.80 — which made RESONANCE a second, hidden CUTOFF slider. The
+  suite now fences the corner the render actually consumes at three converter
+  codes, and the control law behind it across all 128 panel bytes below the
+  threshold, so a correction that was fixed in the law but never wired into
+  audio would still fail.
 - **Self-oscillation is trimmed where the service manual trims it.** The
   ADJUSTMENT table sets every card, at BANK 3 with C4 held, to a 4.8 Vp-p sine
   at 248 Hz, and the two are coupled — a bigger limit cycle compresses the
-  transconductor and pulls the pitch flat, so loop gain and the frequency
-  correction are solved together against both. The engine renders 4.83 Vp-p at
-  248.0 Hz, and C6 oscillates at exactly four times C4, which is what makes
-  full keyboard tracking 1.00 rather than approximately so.
+  transconductor and pulls the pitch flat. That coupling used to be absorbed by
+  the fitted quadratic above; it is now derived, from a harmonic balance of the
+  two nonlinearities the model already has, each on its own headroom: the
+  sinusoidal-input describing function of the four stage differential pairs at
+  6.3663 V, which sets the frequency, and of the resonance return at 3.4667 V,
+  which sets the amplitude. Both headrooms were already in the profile, so no
+  constant was added and one — the trim amount — was deleted. That leaves the
+  maximum loop gain as the single fitted quantity, 4.504, answering to the
+  amplitude anchor alone: the engine renders 4.8009 Vp-p, and 248 Hz becomes a
+  *prediction* rather than a second fit. It lands at 247.90 Hz, 0.67 cents
+  under, and stays inside ±0.81 cents at every loop gain in the oscillating
+  range, where before only the one fitted point sat on the anchor. The
+  derivation is checked against the cascade it describes: at loop gain 4.51 it
+  predicts a droop of 0.88968 and a 4.849 Vp-p limit cycle where the rendered
+  cascade measures 0.88915 and 4.828 Vp-p. C6 still oscillates at exactly four
+  times C4, which is what makes full keyboard tracking 1.00 rather than
+  approximately so. One consequence is recorded and not acted on: the service
+  trim and OQ-18's measured code-to-frequency table both read 248 Hz at
+  converter code 6272, which is a real card declining to droop where this
+  cascade droops 203 cents — so either something upstream of the correction is
+  over-compressed or the two readings are not the same measurement. OQ-09 owns
+  it, and the correction is right either way.
 - **The key assigner drops notes rather than stealing them**, because that is
   what the hardware does with seven keys held on six voices.
 - **POLY 1 + POLY 2 is Solo Unison.** All six DCOs receive the same divider
@@ -127,7 +173,22 @@ assessment.
   voiced curve. Initial idle host-snapshot priming remains an explicit startup
   policy, not a circuit claim.
 - **The chorus has no compander**, so it hisses — the hiss is modelled, and
-  there is a control to defeat it that the hardware does not have. The final
+  there is a control to defeat it that the hardware does not have. Its level
+  is the MN3009's own noise row rather than a chosen one: the datasheet that
+  already fixes this part's bandwidth and distortion in the model also
+  specifies noise 0.2 mVrms max A-weighted. The amplitude each line writes at
+  its clock edges is that row referred back through the model's own measured
+  A-weighted transfer from the injection point to the wet output — 0.4034,
+  through the hold, the tap-summing pole, both reconstruction sections and the
+  wet coupling — and through the 2.6 V node coordinate, so the suite re-solves
+  the equation instead of re-asserting the answer. That moved the wet line down
+  14.39 dB, from 1.0488 mVrms A-weighted (1.0611 full band) to 0.19978 mVrms
+  in mode I and 0.20016 in mode II, and the idle output floor with it. The
+  datasheet's own two noise figures disagree by 10.5 dB — 0.2 mVrms max against
+  the ~59.7 µVrms implied by S/N 88 dB typ — so landing on the guaranteed
+  maximum is a choice inside that bracket rather than a derivation from it, and
+  where a real card sits in that bracket is still a measurement nobody here has
+  made. The final
   mixer gains dry by `100/47` and wet by `100/39`, putting wet at `47/39` of
   dry (+1.62 dB; the p. 15 designator read places dry on R71/R73 47 kΩ and
   wet on R72/R74 39 kΩ). Those absolute gains occur after the BBDs, so they
@@ -166,12 +227,29 @@ assessment.
   engine solves the actual corner/gain against shaft position and fixed wiper
   loads while retaining independent capacitor states. This removes the large
   DC offset an asymmetric manual-PWM patch would otherwise send to a host.
-- **The common signal path now includes all three established coupling
-  boundaries.** C14/R39 couples the six-voice sum into the selected HPF leg;
-  C12/R36 couples that result into the common uPC1252H2 VCA; C17/C20 couple the
-  complete stereo IC6 outputs into VR1. C12/R36 is 0.482288 Hz. C14 is
-  0.820915 Hz in Boost/Flat (`33k || 47k`) and 0.482288 Hz at the sub-hertz
+- **Every established coupling boundary is now in the signal path, inside the
+  voice card as well as on the common bus.** On the card, C56/C50 couples the
+  summed WAVE node into pin 1 VCF IN at 0.482288 Hz, and C59 couples pin 3 VCF
+  OUT into pin 9 VCA IN at 4.822877 Hz — 1 µF against a voiced 33 kΩ pin-9
+  load, bracketed 33–100 kΩ because neither R108 nor VR27's setting is in tree,
+  which puts the pole between 4.82 and 1.59 Hz and far below the lowest note
+  either way. On the bus, C14/R39 couples the six-voice sum into the selected
+  HPF leg; C12/R36 couples that result into the common uPC1252H2 VCA; C17/C20
+  couple the complete stereo IC6 outputs into VR1. C12/R36 is 0.482288 Hz. C14
+  is 0.820915 Hz in Boost/Flat (`33k || 47k`) and 0.482288 Hz at the sub-hertz
   asymptote of Cut I/II, where their series cut capacitors are open.
+- **The envelope multiplies an AC node, so PWM duty no longer thumps.** C59 is
+  the boundary that matters most, because the pulse comparator's mean walks
+  with duty and the transconductor cascade carries no DC-blocking term of its
+  own: the voice amplifier was multiplying the filter's own offset. On the
+  fixture the suite holds, the mean at pin 9 falls from +0.042768 / +0.024289 /
+  +0.029798 V to −0.000033 / −0.000166 / −0.000118 V at PWM panel 0.00 / 0.50 /
+  1.00, and the sub-20 Hz peak against broadband RMS falls from −42.49 / −25.10
+  / −17.55 dB to −54.59 / −28.53 / −30.25 dB. The remaining duty dependence in
+  that last measure is the attack ramp, which has one of its own; what the
+  capacitor removes is the offset, and at every duty the amplifier now
+  multiplies a node whose mean is under 0.2 mV. Roland's own procedure trims
+  VR30/25/20/15/10/5 through 2.2 MΩ for minimum thump on this exact node.
 - **Main VOLUME follows the marked part.** Service documentation identifies
   VR1 as `10KB×2`; Panasonic's later JIS/EIAJ table maps plain `B` to the
   nominal-linear `1B` group (40–60% at mid-travel), so the engine uses linear
@@ -188,6 +266,30 @@ assessment.
   than internal sample count. A quality change still waits for voices and
   musical tails; a block-size-independent 5 ms fade hides the unavoidable
   rate-dependent rebuild while preserving the host-rate output-capacitor state.
+- **Neither does the modelled warm-up.** The chassis law
+  `T(t) = 25 + 15(1 − e^−t/900)` is advanced once per internal sample, and its
+  accumulator is wall-clock seconds in double precision, so the increment
+  cannot round away against the total. It used to be a float, where a 5.208 µs
+  increment fell below half an ULP the moment the total passed 128.0: the
+  modelled chassis froze at 26.99 °C with HQ on and 31.51 °C with it off
+  instead of running the law out to 34.4818 °C, and a quality setting therefore
+  changed what the supply does. At full Unit Character the temperature now reads 26.988573 /
+  29.252031 / 34.481808 °C at 128 / 300 / 900 s and the OTA headroom it drives
+  reaches 6.568748 V, identically at 44.1, 48, 96 and 192 kHz and with HQ on or
+  off. The rise scales with Unit Character, so at zero the cards stay at
+  ambient and the thermometer says so.
+- **Two modelled mechanisms are enabled and measurably inert, and are reported
+  rather than quietly tuned into audibility.** The polyphonic rail sag is real
+  arithmetic on a real node and it does nothing: on a held six-voice chord it
+  measures 0.000522 V at one voice against 0.003356 V at six, which is −0.0192
+  to −0.1233 cents of cutoff, so the entire one-to-six-voice load change is
+  0.104 cents and a chord has the same filter as a single note. The TA75558S
+  slew limiter cannot engage at all — at a 192 kHz internal rate its per-sample
+  cap is 3.405 engine units against a band-limited signal that cannot exceed
+  about 1.6, and switching it off changes a full chorus render by −171.48 dB
+  relative to signal. Making either audible would take the M5230L output
+  impedance and reservoir ESR that are not in tree, or a part the instrument
+  does not contain.
 - **The shared noise is band-shaped by its own circuit, not flat.** The p. 13
   designators draw C42 1 µF into the level OTA's 4.7 kΩ input bias (33.9 Hz
   high-pass) and C41 100 pF against R79 330 kΩ on its output (4.82 kHz pole),
@@ -213,16 +315,16 @@ remain external-validation debts, is the
 | Stage | Same as the hardware / evidence-fixed | Approximated, guessed/voiced or product-only |
 | --- | --- | --- |
 | Patch memory and selection | All 128 locations are in hardware order A11…A88, then B11…B88. Each tone is the exact 16 continuous bytes plus two packed switch bytes used by the hardware, decoded by the SysEx path. Program Change 0…127 maps directly to those slots. | The hardware stores no names; displayed names are archival metadata. A host preset also restores plug-in/performance controls, while hardware Program Change and SysEx correctly restore tone memory only. |
-| Key assigner and POLY modes | Six-card allocation, POLY 1/POLY 2, note dropping instead of stealing, held-key rescans and Solo Unison behavior are ROM-resolved for the stated A-5 image. The physical keybed is represented as 61 keys. | Velocity, more than six voices and host notes beyond the drawn keybed are extensions. The mouse Shift-click gesture is a UI equivalent for pressing both momentary POLY contacts. |
-| Shared digital control generator | Envelope recurrence, sustain mapping, DAC truncation, LFO/delay arithmetic and portamento are ROM-resolved for the stated B-2 image. The 23 converter destinations, their ownership and the 4.2 ms pass are anchored. VCF and voice-VCA hold constants are component-derived, as is the common VCA LEVEL path's 9.08249 ms post-S/H C7 pole. | Writes retain the exact logical order but use normalized sub-pass spacing; exact timestamps and jitter remain open. The remaining sample-and-hold slews are voiced, and initial idle host-snapshot priming is product policy. |
+| Key assigner and POLY modes | Six-card allocation, POLY 1/POLY 2, note dropping instead of stealing, held-key rescans and Solo Unison behavior are ROM-resolved for the stated A-5 image. The physical keybed is represented as 61 keys. | Velocity, more than six voices and host notes beyond the drawn keybed are extensions. Velocity defaults to zero depth and is then exactly inert; turned up, it scales the voice amplifier's control and the ENV amount into that voice's filter by the same `1 − depth·(1 − velocity)`, so it rides the two paths the panel already has and adds no curve of its own. The mouse Shift-click gesture is a UI equivalent for pressing both momentary POLY contacts. |
+| Shared digital control generator | Envelope recurrence, sustain mapping, DAC truncation, LFO/delay arithmetic and portamento are ROM-resolved for the stated B-2 image. The 23 converter destinations, their ownership and the 4.2 ms pass are anchored. VCF and voice-VCA hold constants are component-derived, as is the common VCA LEVEL path's 9.08249 ms post-S/H C7 pole. | Writes retain the exact logical order but use normalized sub-pass spacing; exact timestamps and jitter remain open. The remaining sample-and-hold slews are voiced, and initial idle host-snapshot priming is product policy — which now primes the PWM hold from the same gated LFO the pass distributes. The delay envelope gating the PWM write alongside the pitch and filter writes is internal consistency with the firmware's one attenuator and one LFO, not a documented statement that DELAY reaches PWM. |
 | DCO, ramp, pulse, sub and mixer | The 8 MHz master reference, integer timer division, range clocks, pitch quantization, constant-current ramp, PWM comparator and divide-by-two sub topology are anchored/derived. A changed-pitch write occurs at that card’s converter slot. The moving-threshold solver prevents a digital-only missed PWM edge and full-cycle blip. | BLEP/BLAMP repairs are transparent digital antialiasing. Exact restart electrical state, loaded saw/pulse/sub/noise levels, filter-drive budget and live waveform-switch transients remain approximated or open. Pulse currently uses a provisional instantaneous audio gate; no invented anti-click envelope is presented as hardware behavior. |
-| Per-voice VCF | Four IR3109/BA662 transconductor stages, the 68 kΩ/560 Ω attenuation, 240 pF stages, per-card cutoff trims and service calibration anchors are hardware-fixed. Cutoff modulation is summed in converter counts before the exponential law. The upper knee is the transconductor's own control-current saturation near 64 kHz, and the converter's R-2R carry error rides on the code it produces. | A topology-preserving implicit Newton solve is the numerical realization; each stage's tanh is averaged exactly along its inter-sample drive path (the divided difference of ln cosh), which leaves the linear response and the calibrated limit cycle measured identical while holding the hot resonant case's folded lines below −60 dBc — a fold-back the analogue cascade never had. Resonance byte-to-loop gain, input compensation, feedback saturation and frequency trim are voiced pending measurements. The saturation exponent and the carry sizes are fitted to a third-party measured card, not to a Roland document. |
-| Per-voice VCA | One BA662 follows each VCF. Roland shows VCF OUT pin 3 AC-coupled by C59 to VCA IN pin 9; the separate R106/C58/R105/Tr20 branch drives VCA CONT pin 11; VCA OUT pin 10 reaches TP8–TP13 and the 33 kΩ summer inputs. The service procedure trims VR30/25/20/15/10/5 through 2.2 MΩ for minimum thump and sets a 6 Vpp gain endpoint. | The current quasi-linear gain/onset/knee/deadband law is schematic-informed compatibility, not a measured BA662 transfer. The nominal model adds no residual feedthrough: Unit Character's control-hold offset is not the VR30 signal-input null, and post-calibration thump magnitude/polarity/spectrum remain unmeasured. Velocity is an optional extension. |
+| Per-voice VCF | Four IR3109/BA662 transconductor stages, the 68 kΩ/560 Ω attenuation, 240 pF stages, per-card cutoff trims and service calibration anchors are hardware-fixed. Cutoff modulation is summed in converter counts before the exponential law. The upper knee is the transconductor's own control-current saturation near 64 kHz, and the converter's R-2R carry error rides on the code it produces. | A topology-preserving implicit Newton solve is the numerical realization; each stage's tanh is averaged exactly along its inter-sample drive path (the divided difference of ln cosh), which leaves the linear response and the calibrated limit cycle measured identical while holding the hot resonant case's folded lines below −60 dBc — a fold-back the analogue cascade never had. Resonance byte-to-loop gain, input compensation and feedback saturation are voiced pending measurements; the oscillation frequency correction is no longer among them, having become the reciprocal of the droop the cascade's own limit cycle imposes on itself — a harmonic balance of the model's two existing nonlinearities on their two existing headrooms, identically 1 below the threshold and predicting the 248 Hz anchor to within a cent. The maximum loop gain (4.504) is the one quantity still fitted, to the 4.8 Vp-p amplitude anchor alone. The saturation exponent and the carry sizes are fitted to a third-party measured card, not to a Roland document. |
+| Per-voice VCA | One BA662 follows each VCF. Roland shows VCF OUT pin 3 AC-coupled by C59 1 µF/50 V NP to VCA IN pin 9, and that capacitor is now in the signal path ahead of the gain multiply; the separate R106/C58/R105/Tr20 branch drives VCA CONT pin 11; VCA OUT pin 10 reaches TP8–TP13 and the 33 kΩ summer inputs. The service procedure trims VR30/25/20/15/10/5 through 2.2 MΩ for minimum thump and sets a 6 Vpp gain endpoint. | The current quasi-linear gain/onset/knee/deadband law is schematic-informed compatibility, not a measured BA662 transfer. C59's capacitance is the designator read; the pin-9 load it works against is voiced at 33 kΩ and bracketed 33–100 kΩ (4.82–1.59 Hz), because neither R108 nor VR27's setting is in tree — OQ-19 owns it, and the pole's job is insensitive to the choice inside the bracket. The nominal model adds no residual feedthrough: Unit Character's control-hold offset is not the VR30 signal-input null, and post-calibration thump magnitude/polarity/spectrum remain unmeasured. Velocity is an optional extension, inert at its default zero. |
 | Voice sum, coupling, HPF and common VCA LEVEL | Six card outputs sum through 33 kΩ into 3.3 kΩ feedback (0.1 each). C14 precedes the shared four-position HPF; C12 then feeds the one common uPC1252H2 controlled by stored VCA LEVEL. Service Notes pp. 8 and 15, the ROM-resolved `d=b<<5` code and NEC's −5.9 mV/dB typical constant derive the nominal common-VCA law and C7 settling. | The complete coupled switched-HPF network and its switching memory are approximated; the bass-boost shelf itself is derived from the p. 15 branch (+10.50 dB DC, +1.41 dB high band, 59.41 Hz pole, within 0.016 dB of the exact two-zero/two-pole solve). The ideal 12-bit R-2R transfer assumes division by 4096; R32 now reads unambiguously as 1.5 kΩ in the complete scan, and real resistor/capacitor tolerance, rail error and uPC1252 variation still need an installed-unit sweep. |
-| BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. The mode rates are derived from the JUNO-106 timing network as 0.5532934/0.8982608 Hz. BBD write nonlinearity is fitted to its datasheet test points. At the raw held node, upstream of numerical output reconstruction, the explicit zero-order hold plus fixed per-shift residual coefficient is −3.000 dB versus DC at 12 kHz/40 kHz, or −2.972 dB versus the datasheet's 1 kHz reference. | Sweep endpoints retain a calibrated sibling measurement of the shared clock driver; hiss level/correlation, loaded support impedances and the wet-mute transient are voiced. The emitted waveform is no longer the literal raw rectangle: a deterministic-only polyBLEP after transfer loss reduces host-grid aliases before the tap pole. It is a numerical product mechanism, not MN3009 circuitry, and does not close the open physical transfer questions. Panasonic's low-resolution typical curves at 10/40/100 kHz are real evidence but have not yet been quantitatively extracted or confirmed on an installed unit. Loaded IC6 clipping remains unknown. |
+| BBD chorus and IC6 mix | Two uncompanded 256-stage MN3009 lines, anti-phase modulation, continuously running bypass, support-filter parts, coupling capacitors and IC6 dry/wet resistor gains are anchored/derived. The mode rates are derived from the JUNO-106 timing network as 0.5532934/0.8982608 Hz. BBD write nonlinearity is fitted to its datasheet test points. At the raw held node, upstream of numerical output reconstruction, the explicit zero-order hold plus fixed per-shift residual coefficient is −3.000 dB versus DC at 12 kHz/40 kHz, or −2.972 dB versus the datasheet's 1 kHz reference. The per-line hiss amplitude is the same datasheet's noise row, 0.2 mVrms max A-weighted, referred back to the injection point through the model's own measured 0.4034 A-weighted transfer. | Sweep endpoints retain a calibrated sibling measurement of the shared clock driver; loaded support impedances and the wet-mute transient are voiced, as are stereo correlation and the optional common/hum/spur layer. The hiss level is anchored to the part but sits inside a bracket the part's own datasheet leaves open: its two noise figures disagree by 10.5 dB, and the guaranteed maximum is the end this model takes (OQ-03). The 0.4034 transfer is a property of these filters at the 192 kHz HQ internal rate and reads 0.40 dB higher at 48 kHz with HQ off. The emitted waveform is no longer the literal raw rectangle: a deterministic-only polyBLEP after transfer loss reduces host-grid aliases before the tap pole. It is a numerical product mechanism, not MN3009 circuitry, and does not close the open physical transfer questions. Panasonic's low-resolution typical curves at 10/40/100 kHz are real evidence but have not yet been quantitatively extracted or confirmed on an installed unit. Loaded IC6 clipping remains unknown. |
 | VOLUME and output boundary | C17/C20, R54/R57, the nominal-linear 10KB×2 tracks and fixed internal wiper loading are component-derived, with independent left/right capacitor state. | Dual-gang tracking, selector/jack normaling, external loads and headphone transfer remain open. The fixed −18 dBFS RMS mapping and provisional physical reference are product policy, not an analogue circuit claim. |
 | Numerical cost | The implicit cascade takes `tanh` and `ln cosh` from one shared exponential, evaluates each stage's path-start antiderivative once per call rather than once per Newton iteration, and stops iterating when its step reaches single precision's own floor on volt-scale states rather than at an absolute threshold that floor can never cross. Settled per-card constants — the chassis gradient, the chassis-wide warm-up fraction, the counts-to-coefficient chain — leave the per-sample loops. | None of it is a hardware claim, and no constant, level, corner or law moves. The kernels are fenced against the standard library at one float ULP and the solve's residual is bounded independently; the loop-invariant work is bit-identical. The cost figures are in the [comparative assessment](Docs/comparative-assessment.md). |
-| Antialiasing, HQ and safety | These preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, Kaiser half-band decimation flat to 20 kHz at both common host rates, and state-preserving rate changes. For the chorus, BBD-generated aliasing (BGA) means the physical-model images at `k*Fclock ± f`; simulation-generated aliasing (SGA) means the extra folds created by the internal sample grid. The bounded polyBLEP scheduler has 54 slots and uses at most 50 in the tested worst case, including multiple BBD edges in one internal sample. | They have no hardware counterpart. The BBD reconstruction is deterministic-only, leaves noise uncorrected, and clears its grid-specific correction slots on an internal-rate change while physical BBD and RNG state survive. It strongly reduces SGA; it does not preserve every BGA component exactly at LQ, so the measured HQ/LQ limits are reported rather than hidden behind a generic “transparent” claim. The idle-only quality change and short safety fades are product mechanisms. |
+| Antialiasing, HQ and safety | These preserve the modeled circuit’s behavior at host sample rates: bandlimited discontinuities, optional oversampling, Kaiser half-band decimation flat to 20 kHz at both common host rates, and state-preserving rate changes. Nothing the quality switch selects is allowed to move a modelled physical quantity: noise density is normalized to elapsed time, and the warm-up clock accumulates wall-clock seconds in double precision so it reads the same at every supported rate and in both quality settings. The one measured exception is reported rather than claimed away: the BBD line hiss is written at the line's own clock edges and held, so a coarser grid folds more of that held sequence back into the band and the recovered wet-line level reads 0.40 dB higher at 48 kHz with HQ switched off. For the chorus, BBD-generated aliasing (BGA) means the physical-model images at `k*Fclock ± f`; simulation-generated aliasing (SGA) means the extra folds created by the internal sample grid. The bounded polyBLEP scheduler has 54 slots and uses at most 50 in the tested worst case, including multiple BBD edges in one internal sample. | They have no hardware counterpart. The BBD reconstruction is deterministic-only, leaves noise uncorrected, and clears its grid-specific correction slots on an internal-rate change while physical BBD and RNG state survive. It strongly reduces SGA; it does not preserve every BGA component exactly at LQ, so the measured HQ/LQ limits are reported rather than hidden behind a generic “transparent” claim. The idle-only quality change and short safety fades are product mechanisms. |
 
 The strict [BBD transfer/clock-law
 comparison](Docs/audio/realism-comparisons/bbd-transfer-clock-law/README.md)
@@ -278,7 +380,7 @@ fixed-seed voiced profile enables these full-scale mechanisms:
 | Slow cutoff wander | d = 0.9992d + 0.004noise at 375 Hz; contributes 40d converter counts |
 | VCF stage input offsets | up to ±1.5 mV per transconductor stage |
 | VCF stage capacitor tolerance | up to ±2% per stage, staggering the four poles |
-| Spatial thermal gradient — card temperature | up to +4 °C across the six cards, plus a +15 °C warm-up over ~900 s, raising the OTA thermal voltage and its headroom |
+| Spatial thermal gradient — card temperature | up to +4 °C across the six cards, plus a +15 °C warm-up on the law `25 + 15(1 − e^−t/900)`, raising the OTA thermal voltage and its headroom. The curve runs to completion: 34.481808 °C and 6.568748 V of headroom at 900 s, the same at every host rate and in both quality settings |
 | Spatial thermal gradient — cutoff | up to ±0.6% on each card's integrator gain (±10 cents), from the same exponential card profile as the temperature above |
 | Cutoff converter carry error | −4.6, +23.3 and −4.5 cents at the three top bit boundaries |
 
@@ -379,6 +481,18 @@ remain unmeasured. The other extension defaults are inert or hardware-aligned:
 velocity does nothing, polyphony is six voices, and the delay lines retain their
 modeled noise floor.
 
+VELOCITY, when it is turned up, is a dynamics control rather than a second
+output trim. The one gain `1 − depth·(1 − velocity)` now scales the ENV amount
+reaching that voice's filter as well as its amplifier control, so a quieter
+note is a note whose filter envelope opened less far. At full depth, on the
+patch the suite fixes — CUTOFF 0.30, ENV 0.30, RESONANCE 0.30, a held sustain
+and Unit Character 0 — the corner the cascade actually runs on reads
+189.97 / 458.19 / 1985.03 Hz at velocity 0.2 / 0.5 / 1.0, a span of
+4062 cents, where the three used to be the same 1985.03 Hz. It remains an
+extension in both paths: at depth zero, and at velocity 1.0 whatever the depth,
+the gain is exactly 1.0 and the render is bit-identical to the hardware-faithful
+one, which is what the suite asserts rather than a recorded hash.
+
 The masthead patch bar recalls the factory bank with a stepper, name list,
 RELOAD and EDITED lamp. It shows the same program as the host and the controls
 are synchronised to the complete selected program on the first editor frame,
@@ -454,7 +568,11 @@ back when released; it does not emit MIDI. YouKnow106 also receives external
 pitch bend, modulation (CC 1), hold (CC 64), all-notes-off and the reference
 instrument's Patch Selection Program Changes. CC 1 and the vector lever's
 upward axis drive the same LFO trigger path; BENDER LFO determines its depth.
-The keyboard sends no velocity, and MIDI has no continuous controller
+The modelled keybed is not velocity sensitive, so incoming note velocity
+reaches the engine through the VELOCITY extension and nowhere else: at its
+default zero every note plays at the hardware's fixed value, and turned up it
+scales both that voice's amplifier control and the ENV amount into its filter.
+MIDI has no continuous controller
 assignments for the synthesis panel. Host automation reaches every stored
 parameter through the plug-in's own parameter list.
 
@@ -544,7 +662,11 @@ There are six JUCE-free suites, plus the plug-in suite when JUCE is enabled:
   its part's datasheet delay range. It also holds the cascade's two elementary
   functions to one float ULP of the standard library, and bounds the residual
   the implicit solve leaves behind — measured by quadrature on `std::tanh`,
-  which shares no code with the solver's own divided difference.
+  which shares no code with the solver's own divided difference. It also sweeps
+  all 128 resonance panel bytes below the oscillation threshold to prove the
+  frequency correction is identically one there and continuous across it, and
+  re-solves the chorus line-noise amplitude from the MN3009 noise row rather
+  than re-asserting the constant.
 - **`YouKnow106.Engine`** checks what the instrument does when it is played:
   that RANGE transposes by octaves, that the sub is an octave down, that the
   alias floor stays below −55 dB, that the ramp's harmonics follow `1/n`, that a
@@ -554,9 +676,16 @@ There are six JUCE-free suites, plus the plug-in suite when JUCE is enabled:
   of host rate and of oversampling, that final PWM DC is removed, that an HQ
   transition cannot expose a chorus-state reset, that the engine is
   deterministic and exactly silent when idle, and that hostile automation
-  cannot produce a non-finite sample. It also renders every historical factory
-  tone without per-preset normalization and rejects non-finite or runaway
-  output.
+  cannot produce a non-finite sample. It fences this pass's six corrections in
+  the same terms: that LFO DELAY holds pulse width as well as pitch and cutoff,
+  including through the idle-priming path; that resonance leaves the rendered
+  corner alone at three converter codes; that the node the amplifier multiplies
+  carries no duty-dependent offset; that the idle output floor sits on the
+  MN3009 noise row; that the warm-up clock reaches 900 s at every rate and in
+  both quality settings; and that velocity moves the corner monotonically while
+  its two exact identities stay bit-identical. It also renders every historical
+  factory tone without per-preset normalization and rejects non-finite or
+  runaway output.
 - **`YouKnow106.PluginProcessor`** (macOS/plug-in builds only) checks the
   parameter contract, state round-tripping and migration, controller transport,
   legacy/modern automation ordering, exact patch reload, all 128 incoming

@@ -64,6 +64,24 @@ struct DynamicResponse
 /** Resolves the dynamic response for a normalised dynamic level 0..1. */
 [[nodiscard]] DynamicResponse dynamicResponse (float dynamics) noexcept;
 
+/** Extent the Vibrato knob reaches at the top of its travel, in cents.
+    Sundberg's definition of a sung vibrato is 5-7 Hz at an extent "of about
+    +/-1 semitone". */
+inline constexpr float kVibratoReachCents = 100.0f;
+
+/** How wide an extent an ensemble singer settles at, in cents. The 2022
+    systematic review records that "vibrato extent tended to be higher in solo
+    singing compared to group singing", and twelve voices at solo extent smear
+    into a chorus rather than reading as a section. */
+inline constexpr float kSectionVibratoCents = 40.0f;
+
+/** Vibrato extent in cents for a normalised knob position.
+
+    @c sectionLimitCents is the extent the singer's own section tolerates, or 0
+    for a soloist, whom nothing limits.
+*/
+[[nodiscard]] float vibratoExtentCents (float vibrato, float sectionLimitCents) noexcept;
+
 /** First formant after the singer's own resonance strategy.
 
     A speech tract keeps F1 where the vowel puts it. A singer cannot: once the

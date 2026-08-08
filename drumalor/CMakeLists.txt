@@ -163,7 +163,12 @@ if(BUILD_TESTING)
     endif()
 
     add_test(NAME Drumalor.DrumEngine COMMAND DrumalorDrumEngineTests)
-    set_tests_properties(Drumalor.DrumEngine PROPERTIES TIMEOUT 30)
+    # The bound was 30 s, chosen when the suite ran in about 23 s. The
+    # render-heavy fixtures added in the 2026-08-07 pass take it to roughly
+    # 28.5 s run alone, and past the bound when it shares a machine with
+    # another CTest job, so it had started firing on ordinary growth rather
+    # than on the runaway it is for.
+    set_tests_properties(Drumalor.DrumEngine PROPERTIES TIMEOUT 120)
 
     if(DRUMALOR_BUILD_TOOLS)
         # Guards the renderer that produces the committed demonstration WAVs:

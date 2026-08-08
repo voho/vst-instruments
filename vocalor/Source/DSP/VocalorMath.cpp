@@ -141,8 +141,11 @@ DynamicResponse dynamicResponse (float dynamics) noexcept
     const float below = 1.0f - clampUnit (dynamics);
     DynamicResponse response;
     // Level is linear in dB, which is how a dynamic layer is expected to behave
-    // under a controller: an empty wheel is 18.1 dB down on the voiced source.
-    response.voicedGain = std::exp2 (-3.00f * below);
+    // under a controller. The span is what a singer covers between pianissimo
+    // and fortissimo -- roughly 30-40 dB -- rather than the 18.1 dB a mixing
+    // fader would give: an empty wheel is exactly 30.00 dB down on the voiced
+    // source.
+    response.voicedGain = std::exp2 (-4.9829f * below);
     // Aspiration only loses 7.2 dB over the same span. The glottis leaks a
     // larger share of the flow at low effort, so a soft note is breathier as
     // well as quieter rather than being the same sound turned down.
@@ -156,6 +159,38 @@ DynamicResponse dynamicResponse (float dynamics) noexcept
     response.sourceTensionScale = 1.0f - 0.75f * below;
     response.vibratoScale = 1.0f - 0.55f * below;
     return response;
+}
+
+float vibratoExtentCents (float vibrato, float sectionLimitCents) noexcept
+{
+    const float knob = clampUnit (vibrato);
+    if (! (knob > 0.0f))
+        return 0.0f;
+
+    // The knob's top is the definition: +/-1 semitone. What is not free is the
+    // exponent, because the bank already ships between 18 and 46 % and the
+    // engine's own default is 42 %. A linear scale would take every one of
+    // those to 41-46 cents, which is a soloist's full vibrato on a patch that
+    // asked for a third of the knob. 1.75 is the exponent that puts the
+    // default at 21.9 cents -- comfortably above the roughly 10 cents below
+    // which a vibrato is heard as unsteadiness rather than as vibrato, and
+    // well under the maximum the top of the knob still reaches.
+    float cents = kVibratoReachCents * std::pow (knob, 1.75f);
+    // A section member does not sing a soloist's extent. What the section
+    // imposes is a limit rather than a scale: she sings the gesture she would
+    // sing alone until it is wider than the section tolerates, which is why
+    // the same knob position means the same thing in every mode until it is
+    // wide enough to smear. The knee sits at half the limit, where a
+    // hyperbolic limiter is exact and continuous in its first derivative, and
+    // the limit is approached rather than reached so the top of the knob keeps
+    // moving instead of going dead.
+    if (sectionLimitCents > 0.0f)
+    {
+        const float knee = 0.5f * sectionLimitCents;
+        if (cents > knee)
+            cents = sectionLimitCents - knee * knee / cents;
+    }
+    return cents;
 }
 
 float tunedFirstFormant (float baseHz, float fundamentalHz, float ceilingHz) noexcept

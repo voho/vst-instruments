@@ -227,7 +227,7 @@ void testParameterLayoutAndDefaults()
         { pids::bachiHardness, 0.7f },   { pids::strikePosition, 0.0f },
         { pids::velocityDepth, 0.75f },  { pids::tensionModulation, 0.4f },
         { pids::strikeNoise, 0.35f },    { pids::humanise, 0.4f },
-        { pids::octaveBody, 0.7f },      { pids::micDistance, 16.0f },
+        { pids::octaveBody, 1.0f },      { pids::micDistance, 16.0f },
         { pids::micSpread, 0.55f },      { pids::stereoWidth, 0.5f },
         { pids::drive, 0.0f },           { pids::output, -20.0f },
     }};
@@ -291,8 +291,8 @@ void testNoteMappingAndRendering()
     // Within an octave, every pitch class that carries a stroke is a different
     // stroke, and the ones past the last stroke carry nothing. The octave stays
     // twelve semitones because that is what chooses the drum and it has to line
-    // up with the keyboard, so the vocabulary being eight strokes long leaves
-    // the top four keys empty on purpose - and empty has to mean silent, not a
+    // up with the keyboard, so the vocabulary being four strokes long leaves the
+    // top eight keys empty on purpose - and empty has to mean silent, not a
     // pitch class cast into an enum that does not have it.
     for (int pitchClass = 0; pitchClass < 12; ++pitchClass)
     {
@@ -337,8 +337,9 @@ void testNoteMappingAndRendering()
     processor.releaseResources();
 }
 
-// Higher octave, higher drum: the instrument's central promise, checked through
-// the plug-in rather than through the engine.
+// Higher octave, higher drum - and a different drum, not the same one rescaled.
+// The instrument's central promise, checked through the plug-in rather than
+// through the engine.
 void testOctavesRaisePitchThroughThePlugin()
 {
     TaikorAudioProcessor processor;
@@ -352,14 +353,25 @@ void testOctavesRaisePitchThroughThePlugin()
         expect (measurements.loadedFundamentalHz > previous,
                 "octave " + std::to_string (octave) + " did not raise the pitch");
         previous = measurements.loadedFundamentalHz;
+
+        // And a different drum, not the same one rescaled: the plug-in's half
+        // of the DSP suite's clause. Each octave must resolve to the instrument
+        // the engine's own table names, to within the tuning the keyboard asks
+        // of it.
+        const auto& drum = taikor::getDrumDescription (octave);
+        expect (std::abs (2.0f * measurements.radiusMetres - drum.headDiameterMetres)
+                    < drum.headDiameterMetres * 0.02f,
+                "octave " + std::to_string (octave) + " is not the "
+                    + std::string (drum.displayName.data(), drum.displayName.size())
+                    + " it is labelled as");
     }
 
     // Every note that carries a stroke must sound, and every note that does not
     // must stay silent. The octave is twelve semitones because that is what
-    // picks the drum, and there are eight strokes in it, so the top four keys of
+    // picks the drum, and there are four strokes in it, so the top eight keys of
     // each octave are deliberately empty - a gap is only a design if nothing
     // creeps into it, and casting a pitch class straight to the enum would have
-    // let all four play a Don.
+    // let all eight play a Don.
     for (int note = taikor::lowestPlayableNote; note <= taikor::highestPlayableNote;
          ++note)
     {
@@ -736,7 +748,7 @@ void testUiQueueAndLifecycle()
 // A pad's spoken description has to follow the octave strip. It used to be
 // composed once, when the accessibility handler was built, so a reader was told
 // whichever note the pad played at the moment it first asked - and after that
-// the announcement and the sound disagreed for five of the six octaves.
+// the announcement and the sound disagreed for three of the four drums.
 void testPadAnnouncesTheNoteItCurrentlyPlays()
 {
     TaikorPad pad { taikor::Articulation::Don };

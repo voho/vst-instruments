@@ -58,7 +58,7 @@ constexpr std::array<ParameterExpectation, 31> expectedParameters {{
     { electry::parameters::releaseNoise,   0.4f,  1.0e-5f },
     { electry::parameters::muteDamping,    0.55f, 1.0e-5f },
     { electry::parameters::bendTime,       0.28f, 1.0e-4f },
-    { electry::parameters::velocity,       0.65f, 1.0e-5f },
+    { electry::parameters::velocity,       0.85f, 1.0e-5f },
     { electry::parameters::output,        -6.0f,  1.0e-5f },
     { electry::parameters::artifacts,      0.18f, 1.0e-5f },
     { electry::parameters::outputMode,     0.0f,  1.0e-5f },

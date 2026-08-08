@@ -390,9 +390,33 @@ implementation change, not an original unit.
 ### Task definition
 
 Characterise the in-circuit noise of a healthy JUNO-106 chorus in Off, I and II.
-No compander exists in this circuit, so a noise model is structurally required,
-but the current per-line floor is voiced. A noise voltage without a same-path
-reference tone, bandwidth and weighting does not establish SNR.
+No compander exists in this circuit, so a noise model is structurally required.
+A noise voltage without a same-path reference tone, bandwidth and weighting does
+not establish SNR.
+
+*Implementation note, 2026-08-08:* the per-line floor is **no longer voiced**.
+It is the MN3009's own noise row — 0.2 mVrms max, A-weighted — from the same
+datasheet this model already treats as anchored for bandwidth and distortion,
+and the recovered wet line now measures 0.19978 mVrms (I) / 0.20016 mVrms (II)
+against it where it previously measured 1.0488 mVrms, 14.39 dB hot. Three things
+this does **not** settle, all of which the capture below still owns.
+
+1. **The datasheet brackets rather than fixes the figure.** Its two noise rows
+   disagree by **10.5 dB**: 0.2 mVrms *max* A-weighted against the ~59.7 µVrms
+   implied by S/N 88 dB *typ* at the 1.5 Vrms maximum input. The guaranteed
+   maximum ships, because it is the guaranteed figure and because anything near
+   the other end is close to indistinguishable from the dry path's bit-exact
+   zero — but that is a choice inside the bracket, not a derivation from it. A
+   calibrated capture would say where in the 10.5 dB a real card sits.
+2. **The node the row is landed on is a reading.** The figure is placed on the
+   recovered wet line as it arrives at IC6, i.e. after the board's
+   reconstruction sections; the injection node's own unweighted RMS is 3.12 dB
+   above that. Which node a BBD datasheet's noise row denotes depends on its
+   test circuit, which is not in tree.
+3. **Only the amplitude moved.** The mechanism is still one edge-held uniform
+   random per line, and the optional common/correlated, hum and clock-spur
+   layers are still zero-amplitude hypotheses. Nothing here bears on the 3.95 dB
+   II−I delta below, which the settled topology still cannot produce.
 
 *Implementation note, 2026-08-07:* the rate-proportional candidate for the
 measured 3.95 dB II−I delta, named under the 2026-08-07 numerical lead below,
@@ -1254,6 +1278,20 @@ and VCA gain, producing unsupported control². The nominal model now adds no
 residual until the measurement below exists. This is not the downstream shared
 stored-VCA validation in OQ-02; population spread remains OQ-10.
 
+**C59 itself is modelled as of 2026-08-08**, as a per-voice first-order coupling
+between the cascade output and the VCA multiply — until then the envelope
+multiplied whatever DC the filter core made, which on a wide-duty pulse patch
+was tens of millivolts and arrived as a duty-dependent sub-audio thump. It adds
+one new voiced quantity, and this entry owns it: the capacitance is the anchored
+read, but the pin-9 load is not, so its 33 kΩ is **voiced and bracketed** at
+33–100 kΩ (4.82–1.59 Hz) in the same way `moduleCouplingResistanceOhms` is for
+C56/C50. Reading R108 and VR27's installed setting off pp. 18–19, or measuring
+the pin-9 termination directly, would settle it, and is a small addition to the
+capture below. Nothing audible turns on the choice inside that bracket — the
+content is the DC block, not the corner — and an independent implementation
+(Ultramaster KR-106 v2.5.13) places its own post-VCF, pre-VCA blocker at
+1.59 Hz, the other end of the same bracket.
+
 ### Needed output (for LLM)
 
 - A dense simultaneous sweep of control-node voltage, BA662 control current if
@@ -2017,6 +2055,47 @@ The ADJUSTMENT table's own numbers, taken seriously for the first time.
   slightly below the oscillation threshold where there is no droop to correct.
   Closing that needs the measured frequency-response-versus-resonance family
   this task already asks for.
+
+  *The wart is closed, 2026-08-08, and it did not need the measured family.*
+  `frequencyTrimAmount` is deleted. The correction is now derived from the
+  cascade's own harmonic balance — the sinusoidal-input describing function of
+  `tanh` on the four stage pairs at their own `2Vt/stageAttenuation` headroom
+  and on the resonance return at its own `2Vt·(100/1.5)` = 3.4667 V, solved for the limit
+  cycle each loop gain sustains — so it is identically **1** below the
+  oscillation threshold, which the same balance places at a loop gain of
+  exactly 4, the profile's own `nominalOscillationFeedback`. That removes the
+  hidden cutoff lift the wart named: +8.76 / +32.24 / +80.17 / +116.25 cents
+  at resonance panel 0.30 / 0.50 / 0.70 / 0.80 became +0.00 at all four.
+
+  With the correction derived, the two anchors are no longer a joint fit.
+  `maximumFeedback` was re-solved against the amplitude anchor alone and moved
+  4.51 → **4.504**, landing **4.80 Vp-p** where the joint solve had landed
+  4.83. The 248 Hz anchor is then a *prediction*: the rendered oscillation
+  reads **247.90 Hz**, 0.67 cents under it, and stays inside ±0.81 cents at
+  every loop gain in the oscillating range, so it constrains no constant any
+  more. Two independent readings of the same 248 Hz now agree — the service
+  self-oscillation trim and, at resonance 0, OQ-18's measured
+  code-to-frequency table — which is what a cancelled droop is supposed to
+  deliver. What OQ-09's measured family still owns is the *shape* of
+  `loopGain()` and `inputCompensation()` between the ends.
+
+  *One finding this raised, filed here and not acted on.* Those two readings
+  of 248 Hz agreeing is equivalent to saying the real card's self-oscillation
+  does **not** sit flat of its own small-signal corner, while this cascade's
+  sits 203 cents flat of it. A four-pole loop oscillating at its own corner
+  carries √2 more amplitude at every step back towards the input, so the model
+  drives its first stage to `a = 1.01` on a 6.37 V headroom while its output
+  is only at 2.40 V peak. Either the hardware's limit cycle really is that
+  undrooped — in which case something upstream is too compressed, the stage
+  headroom or the internal amplitudes it implies — or the two 248 Hz readings
+  are not the same measurement, the service trim being read on an oscillating
+  card and the table on a swept one. Nothing in tree settles it. The
+  correction is right either way, because it is exactly what reconciles the
+  model with both anchors at once; what is open is whether the droop it
+  cancels should have been that large. The measured
+  response-versus-resonance family this task asks for would settle it, since
+  it fixes the corner at each resonance setting independently of either
+  endpoint.
 
 - **The VCF WIDTH anchor is asserted.** `BANK 3, hold C6 → 992 Hz` against
   `hold C4 → 248 Hz` is exactly two octaves of cutoff for two octaves of
