@@ -642,6 +642,11 @@ public:
     // designator-level read; the resistance it works against is not, so the
     // corner itself is voiced -- see the constant's note in the .cpp.
     [[nodiscard]] static float moduleCouplingCornerHz() noexcept;
+    // C59 1 uF/50 V NP, the per-voice coupling from pin 3 VCF OUT into the
+    // VR27/R108 network and pin 9 VCA IN (module board pp. 18-19). The
+    // capacitor is anchored; the load it works against is not, so the corner
+    // is voiced and bracketed -- see the constant's note in the .cpp.
+    [[nodiscard]] static float vcaInputCouplingCornerHz() noexcept;
     // The shared noise generator's own support circuit, module board p. 13:
     // Tr21's collector noise crosses C42 1 uF into the BA662 level OTA's
     // 4.7 kOhm input bias (high-pass), and the OTA's output is loaded by
@@ -1081,6 +1086,17 @@ private:
         // summed WAVE node and pin 1 VCF IN, so no mixer DC reaches the
         // filter core or the voice VCA behind it.
         HighPass moduleCoupling {};
+        // C59, the per-voice coupling out of pin 3 VCF OUT and into pin 9
+        // VCA IN. The filter core makes DC of its own -- stage offsets and the
+        // duty-asymmetric pulse the cascade only partly removes -- and this is
+        // the capacitor that stops the envelope from multiplying it.
+        HighPass vcaInputCoupling {};
+        // The pin 9 node itself, held after each internal sample: the value
+        // the voice VCA multiplies, in volts. It is what the service
+        // procedure's VR30/R112 null is adjusted against, and the DC
+        // regression reads it here rather than inferring it from the mix,
+        // where three further couplings have already removed any DC.
+        float vcaInputVolts { 0.0f };
     };
 
     static EngineParameters sanitise(const EngineParameters& parameters) noexcept;
@@ -1380,6 +1396,10 @@ private:
     // Shared by all six cards: one part number, one nominal corner. The state
     // is per voice because each card has its own capacitor.
     float moduleCouplingG_ { 0.0001f };
+    // C59/VR27, between each card's filter output and its own amplifier. Same
+    // arrangement as the module input above: one nominal corner, one state per
+    // voice, because each card carries its own capacitor.
+    float vcaInputCouplingG_ { 0.0001f };
     HighPass highPass_ {};
     float highPassG_ { 0.01f };
     float highPassShelf_ { 1.0f };

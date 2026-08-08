@@ -483,7 +483,10 @@ verified this session):
   before the VCA, plus master pre-HPF stage (0.35 Hz) — mirrors hardware
   AC-coupling cascade, eliminates duty-dependent DC excursions on extreme-PWM
   patches". YouKnow106 has no post-VCF, pre-VCA high-pass at all. Gap 6 below
-  measures what that costs here.
+  measures what that costs here. *[Closed 2026-08-08 by step 3: C59 now sits
+  between the filter output and the VCA input at 4.82 Hz, against this
+  competitor's 1.59 Hz for the same stage. The post-DCO stage it also names is
+  this engine's own C56/C50 at 0.48 Hz, already modelled.]*
 - v2.5.13: "Chorus: per-channel ClickRing low-frequency resonance modeled
   (Chamberlin SVF, ~30 Hz / Q=18) excited by every click event". That is
   OQ-20's territory, still open here; a competitor has now put a shape and a
@@ -849,9 +852,10 @@ velocityDepth 1.0 is **14.65 dB**: −41.58 / −33.11 / −26.93 dBFS at veloci
 
 **Gap 6 — there is no AC coupling between the filter output and the VCA input,
 so the model manufactures DC and then multiplies it by the envelope.**
-`Source/DSP/YouKnow106Engine.cpp:3725-3741` (`renderVoice`:
+`Source/DSP/YouKnow106Engine.cpp` (`renderVoice`:
 `output = filtered * voice.vca * voltsToSample`, with no high-pass between
-them). Roland draws VCF OUT pin 3 through **C59 1 µF/50 V NP** and the
+them). *[Closed 2026-08-08 by step 3; the multiply now reads a `vcaInput` that
+has been through C59.]* Roland draws VCF OUT pin 3 through **C59 1 µF/50 V NP** and the
 VR27/R108 network to VCA IN pin 9 — already stated in this project's own README
 ledger and research contract as hardware topology — and the service procedure
 trims VR30/25/20/15/10/5 through 2.2 MΩ for **minimum thump**, which is
@@ -860,7 +864,7 @@ sits only at the *module input* (`moduleCoupling`, C56/C50); every remaining
 coupling stage is on the shared bus (`voiceBusCoupling_`,
 `commonVcaInputCoupling_`, `outputCouplingLeft_/Right_`), all downstream of the
 multiply. The topology claim is solid: C59 is recorded as **anchored** in the
-research contract's voice-module VCA row and in `Docs/open-questions.md:1785-1795`,
+research contract's voice-module VCA row and in `Docs/open-questions.md:1799-1809`,
 and the VR30/R112 2.2 MΩ null exists precisely to hold that node at zero.
 
 **[re-measured 2026-08-08] — the mechanism is real, the stated magnitude is
@@ -902,6 +906,16 @@ cycle and taking the peak excursion relative to broadband RMS:
 | 0.0 | 0.95 | −19.36 dB |
 | 1.0 | 0.50 | **−43.33 dB** |
 | 1.0 | 0.95, RES 0.10 | −14.30 dB |
+
+**[re-measured again 2026-08-08, at implementation.]** The table above is
+pre-step-2 and no longer reproduces: at RESONANCE 0.75 the loop gain is 2.9413,
+where the deleted `frequencyTrimAmount` was raising the corner 5.30 %, so
+removing it moved every reading taken through the filter. On today's tree the
+same estimator over the same 8 s cycle reads **−42.49 dB at duty 0.5043** and
+**−17.55 dB at duty 0.9436** at Character 1.0, and −58.23 / −19.14 dB at
+Character 0.0. The rise is **24.9 dB**, not 25.3, and the conclusions below are
+unchanged: the mechanism is duty-driven and it survives at Character 0.0. Step 3
+carries the full before/after table.
 
 That is a **25.3 dB rise in sub-audio excursion driven by PWM duty alone**, at
 otherwise identical settings — the duty-dependent DC excursion KR-106 v2.5.13
@@ -1429,11 +1443,11 @@ was made; nothing is ticked.
   fails on the reverted build, which is what makes those 21 the new tests'
   own. Full CTest run after restoring the change: **6/6 passed, 214.79 s**.
 
-- [ ] **3. Put C59 between the filter output and the VCA input.** Roland draws
+- [x] **3. Put C59 between the filter output and the VCA input.** Roland draws
   module pin 3 VCF OUT → **C59 1 µF/50 V NP** → the VR27/R108 network → pin 9
   VCA IN, and adjusts VR30/25/20/15/10/5 through 2.2 MΩ for minimum thump
   (Service Notes pp. 18–19; recorded as **anchored** in the research contract's
-  voice-module VCA row and at `Docs/open-questions.md:1785-1795`). `renderVoice`
+  voice-module VCA row and at `Docs/open-questions.md:1799-1809`). `renderVoice`
   gains a per-voice first-order high-pass between `filtered` and the
   `* voice.vca` multiply, using the same `HighPass` the module input already
   uses. The corner is `1/(2π·C59·R_pin9)`; R108 and VR27 are not in-tree, so the
@@ -1446,35 +1460,40 @@ was made; nothing is ticked.
   **The step survives review, but for a different reason than the original
   gave.** The original's headline — "+187.7 mV of DC against 60.4 mVrms of AC,
   9.9 dB above the signal" — does not reproduce and is withdrawn; measured on
-  the settled sustain, the filter output's DC is **+0.0308 V against 0.596 Vrms
-  (−25.8 dB)**, and the largest anywhere in the sweep is +0.129 V, always well
-  *below* the AC. What is real is that this DC is multiplied by the envelope and
-  arrives as a **duty-dependent sub-audio thump**: the peak of the output
-  through a four-pole 20 Hz low-pass, over a note-on/note-off cycle, rises from
-  **−41.65 dB relative to broadband RMS at duty 0.5043 to −10.27 dB at duty
-  0.9436** — **31.4 dB from PWM duty alone** [re-measured 2026-08-07 preflight;
-  the −43.33/−18.06 dB pair above it did not reproduce and the estimator that
-  produced it was not stated] — and it is essentially unchanged at Unit
-  Character 0.0, so it is a property of the nominal calibrated model rather than
-  a tolerance mechanism.
+  the settled sustain, the filter output's DC is a few tens of millivolts and is
+  always well *below* the AC it rides on. What is real is that this DC is
+  multiplied by the envelope and arrives as a **duty-dependent sub-audio
+  thump**: the peak of the output through a four-pole 20 Hz low-pass, over a
+  note-on/note-off cycle, rises from **−42.49 dB relative to broadband RMS at
+  duty 0.5043 to −17.55 dB at duty 0.9436** — **24.9 dB from PWM duty alone**
+  [re-measured 2026-08-08 at implementation; the preflight's −41.65/−10.27 dB
+  pair was taken before step 2 of this same pass landed, which is why it no
+  longer reproduces — see the correction note below]. At Unit Character 0.0 the
+  same measure reads −58.23 / −24.97 / −19.14 dB across the same three panels,
+  so the mechanism is a property of the **nominal calibrated model** — the
+  cascade rectifying an asymmetric pulse — and not a tolerance artefact. At
+  Character 0.0 and panel 0.00 the duty is exactly 0.5000 and the pin 9 mean is
+  **+0.000085 V**: a symmetric pulse makes no offset, which is the mechanism
+  stating itself.
 
   *Verified by*: a new engine-suite fixture holding MIDI 48 on a pulse patch at
   CUTOFF 0.30, RESONANCE 0.75, PWM SOURCE = MANUAL, Unit Character 1.0,
   ATTACK 0.45, DECAY 1.0, SUSTAIN 1.0, RELEASE 0.30, released at 4.0 s of an 8 s
-  render, at PWM panel 1.00 (duty **0.9436**) and PWM panel 0.00 (duty 0.5043).
-  It asserts **(a)** the mean of each active voice's filter-to-VCA input over the
-  settled 1.5–3.0 s window is **below 1.0e-3 V** — **+0.0791 V today** at panel
-  1.00, **+0.0510 V** at panel 0.00 and **+0.2015 V** at panel 0.50, which is
-  where the sweep's maximum actually sits [re-measured 2026-08-07 preflight];
+  render, at PWM panel 1.00 (duty **0.9436**), panel 0.50 (duty 0.7224) and
+  panel 0.00 (duty 0.5043). It asserts **(a)** the **Hann-weighted** mean of the
+  sounding voice's filter-to-VCA input over the settled 1.5–3.0 s window is
+  **below 1.0e-3 V** — **+0.029799 V today** at panel 1.00, **+0.042769 V** at
+  panel 0.00, which is where the sweep's maximum actually sits, and
+  **+0.024291 V** at panel 0.50 [re-measured 2026-08-08 at implementation];
   and **(b)** the peak of the output through a **four-pole 20 Hz low-pass** (a
   cascade of four one-pole sections, taken over the whole 8 s render including
-  the note-on and note-off transients) is **at least 35 dB below broadband RMS**
-  at duty 0.9436, where it is **−10.27 dB today**, while the same measure at
-  duty 0.5043 — **−41.65 dB today** — **does not rise**, allowing 3 dB of slack.
+  the note-on and note-off transients) is **at least 25 dB below broadband RMS**
+  at duty 0.9436, where it is **−17.55 dB today**, while the same measure at
+  duty 0.5043 — **−42.49 dB today** — **does not rise**, allowing 3 dB of slack.
   **The original assertion (b) — a 2 Hz DFT bin at least 40 dB below RMS — stays
   deleted because it passes today by 34 dB** (measured −73.56 dB): a six-second
   bin averages a transient away, and a test that cannot fail proves nothing.
-  Removing the coupling restores the −10.27 dB figure and fails the new (b).
+  Removing the coupling restores the −17.55 dB figure and fails the new (b).
 
   *Contract corrected in preflight, 2026-08-07.* Three faults, none fatal to the
   step. First, **(b)'s measurand was under-specified to the point of being
@@ -1484,13 +1503,105 @@ was made; nothing is ticked.
   order, the topology and the window are now stated. Second, the DC figures did
   not reproduce — the settled filter output carries +0.0791 V at the fixture's
   own top duty, not +0.0308 V, and the sweep maximum is +0.2015 V at a *middle*
-  duty rather than +0.129 V at an extreme. Assertion (a) bites either way, by a
-  factor of 51 rather than 31, but the numbers a later reader would check
-  against are now the measured ones. Third, the duty-0.50 clause was **two-sided
-  — "within 3 dB" — and a correct implementation would have failed it**: the
-  coupling removes DC *and* the sub-5 Hz part of the note gate, so that figure
-  must fall, and by design. It is now a one-sided ceiling. It cannot fail today
-  and is not meant to; (a) and (b)-at-top-duty are the assertions that bite.
+  duty rather than +0.129 V at an extreme. Assertion (a) bites either way, but
+  the numbers a later reader would check against are now the measured ones.
+  Third, the duty-0.50 clause was **two-sided — "within 3 dB" — and a correct
+  implementation would have failed it**: the coupling removes DC *and* the
+  sub-5 Hz part of the note gate, so that figure must fall, and by design. It is
+  now a one-sided ceiling. It cannot fail today and is not meant to; (a) and
+  (b)-at-top-duty are the assertions that bite. *(The preflight's own DC
+  figures are themselves superseded — see immediately below. Its three
+  structural corrections all stand; only its arithmetic moved.)*
+
+  *Contract corrected again at implementation, 2026-08-08.* Three more faults,
+  again none fatal. First, **none of the preflight's numbers reproduce on this
+  tree, and the reason is step 2 of this same pass.** The fixture sits at
+  RESONANCE 0.75, where the loop gain is **k = 2.9413**; the deleted
+  `frequencyTrimAmount` used to multiply cutoff by `1 + 0.098·(k/4)²` = **1.0530**
+  there, and the derived trim that replaced it is identically 1.000000 below a
+  loop gain of 4. The fixture's corner therefore fell by **5.30 %** when step 2
+  landed, and every figure taken through it moved with it. Measured on today's tree with the
+  fixture fully pinned, the pin 9 mean is **+0.042769 / +0.024291 / +0.029799 V**
+  at panel 0.00 / 0.50 / 1.00 — the sweep maximum is at panel **0.00**, not at a
+  middle duty, and the assertion bites by a factor of 43 rather than 51. Second,
+  **(a)'s estimator was under-specified in the same way (b)'s was.** A plain
+  rectangular mean over 1.5–3.0 s is not an integer number of periods of a
+  130.8 Hz note, and the leakage it leaves — up to **2.7e-3 V**, larger than the
+  1.0e-3 V bound and entirely independent of the coupling — would fail the
+  assertion after a correct fix. On the same render the Hann-weighted mean of
+  that node reads **1.7e-4 V**, and at the quietest panel the two estimators
+  differ by a factor of nineteen (−6.1e-4 V plain against −3.2e-5 V weighted);
+  the window is now part of the measurand. Third, the
+  **35 dB fence in (b) is unreachable and is lowered to 25 dB.** With C59 in
+  place the same measure reads **−30.25 dB** at duty 0.9436. What remains is not
+  DC: it is the attack's own amplitude ramp, which at roughly 2 Hz is *below*
+  the coupling's 4.82 Hz corner and so is only about 8 dB attenuated by it, and
+  which is a real property of a note that starts. 25 dB leaves the fence failing
+  by 7.5 dB before the change and clearing by 5.3 dB after it.
+
+  *What actually shipped, 2026-08-08.* The mechanism as written, with the
+  bracketed load as written. Two constants in
+  `Source/DSP/YouKnow106Engine.cpp` — `vcaInputCouplingCapacitanceF = 1 µF`
+  (C59, anchored) and `vcaInputCouplingResistanceOhms = 33 kΩ` (voiced, OQ-19)
+  — give `vcaInputCouplingCornerHz()` = **4.822877 Hz**, and `renderVoice` runs
+  the filter output through one more `HighPass` before the `* voice.vca`
+  multiply. The capacitor is advanced ahead of the inactive-voice early return,
+  because it is a physical node on a card that stays powered. No new law and no
+  fitted quantity: the corner is `1/(2π·C·R)` and the stage is the same
+  topology-preserving one-pole the module input already uses. It costs one more
+  one-pole per voice per internal sample against a four-stage OTA solve:
+  `testCpuBudget`'s patch measures **1.2351x realtime before and 1.2442x after**
+  (best of five), which is 0.7 % and inside the run-to-run spread.
+
+  Independent corroboration of the bracket, from a source section 6 already
+  reads: Ultramaster KR-106 v2.5.13's changelog gives its own post-VCF,
+  pre-VCA DC blocker as **1.59 Hz** — the 100 kΩ end of this step's declared
+  33–100 kΩ bracket. Two implementations that never saw each other's code land
+  inside the same octave-and-a-half, which is what "insensitive to the choice
+  inside the bracket" is supposed to mean.
+
+  Measured effect, on the fixture the test uses:
+
+  | PWM panel | duty | pin 9 mean before | after | sub-20 Hz peak / RMS before | after |
+  |---|---|---|---|---|---|
+  | 0.00 | 0.5043 | +0.042769 V | −0.000032 V | −42.49 dB | −54.59 dB |
+  | 0.50 | 0.7224 | +0.024291 V | −0.000167 V | −25.10 dB | −28.53 dB |
+  | 1.00 | 0.9436 | +0.029799 V | −0.000120 V | −17.55 dB | −30.25 dB |
+
+  The DC falls by a factor of 145 to 1340, and the duty-driven spread in the
+  audible measure falls from 24.9 dB to 26.1 dB — that is, it does *not* fall,
+  because the residual at wide duty is now the attack ramp rather than the
+  offset, and the ramp has its own duty dependence. What the step promised, and
+  what the change delivers, is the offset: at every duty the amplifier now
+  multiplies a node whose mean is under 0.2 mV.
+
+  *Test:* `testFilterToVcaCouplingRemovesTheDutyDependentThump` in
+  `Tests/YouKnow106EngineTests.cpp`, with two new `YouKnow106TestAccess` probes.
+  One of them reads a new `Voice::vcaInputVolts`, a per-internal-sample hold of
+  the pin 9 node: the value cannot be inferred from the mix, because
+  `voiceBusCoupling_`, `commonVcaInputCoupling_` and `outputCouplingLeft_/Right_`
+  all sit on the far side of the multiply and remove any DC that survives it.
+  *Proved to bite:* with only the `renderVoice` line reverted to
+  `const float vcaInput = filtered;`, the suite fails four assertions —
+  `the voice amplifier is multiplying filter DC again at duty 0.504347
+  (pin 9 mean 0.042769 V)`, the same at duty 0.722353 (0.024291 V) and duty
+  0.943640 (0.029799 V), and `the sub-20 Hz thump at duty 0.9436 is back above
+  25 dB under RMS (got -17.550660 dB)`, and nothing else in the suite moves.
+Restored, the full run is green: 6/6, 224.8 s.
+
+  **One existing test needed updating, and the reason is the change itself.**
+  `testQualityChangePreservesOutputCouplingTail` guards that an HQ rebuild does
+  not clear C17/C20's charge, and it needs a real tail to guard. Its comment
+  already records losing one DC path when C56/C50 were modelled; it has now lost
+  the second. What used to charge the final capacitor was each card's own
+  0.48 Hz module coupling passing the note-on duty step as a slow transient, six
+  of them summing to 0.026 — and C59 removes exactly that before the VCA. The
+  tail is now **0.0037**, the gate closure's own step, so the fixture guard moves
+  from `> 0.005` to `> 0.002`. The assertion that matters is untouched: the
+  quality change must displace the preserved tail by less than 5.0e-4, which is
+  still seven times under the tail it would move if C17/C20 were reset. The test
+  now reads only a step a real gate leaves, not DC the model manufactures, which
+  is the stronger position.
 
 - [ ] **4. Set the BBD line noise from the MN3009's own noise specification.**
   `independentLineRandomAmplitude` is the last voiced quantity in an otherwise

@@ -66,6 +66,26 @@ constexpr float voiceBusCouplingResistanceOhms = 33000.0f;
 constexpr float moduleCouplingCapacitanceF = 10.0e-6f;      // C56 / C50
 constexpr float moduleCouplingResistanceOhms = 33000.0f;    // voiced, OQ-15
 
+// Per-voice coupling out of the filter and into the amplifier, module board
+// pp. 18-19: pin 3 VCF OUT reaches pin 9 VCA IN only through C59 1 uF/50 V NP
+// and the VR27/R108 network. The capacitor is anchored -- it is in the voice
+// module's VCA row of the research contract and in OQ-19's own topology
+// listing -- and Roland's service procedure trims VR30/25/20/15/10/5 through
+// R112 2.2 MOhm at this same node for minimum thump, which is the factory
+// saying in a procedure that pin 9 is meant to sit at zero.
+//
+// As with C56/C50 above, the capacitor is the read part and the resistance it
+// works against is not: neither R108 nor VR27's setting is in tree, so the
+// load is voiced and bracketed rather than claimed. 33 kOhm gives 4.82 Hz and
+// 100 kOhm gives 1.59 Hz; both are far below the lowest note the instrument
+// plays, so what this pole does -- block the DC the pulse comparator's duty
+// asymmetry leaves on the filter output, before the envelope multiplies it --
+// is insensitive to the choice inside the bracket. 33 kOhm is taken by the
+// same analogy the module input uses, with the settled 33 kOhm loads
+// downstream (C14/R39, C12/R36).
+constexpr float vcaInputCouplingCapacitanceF = 1.0e-6f;     // C59
+constexpr float vcaInputCouplingResistanceOhms = 33000.0f;  // voiced, OQ-19
+
 // Manufacturer application input for IC5/uPC1252H2, populated by Roland as
 // C12 10 uF NP followed by R36 33 kOhm.
 constexpr float commonVcaInputCapacitanceF = 10.0e-6f;
@@ -1258,6 +1278,12 @@ float YouKnow106Engine::moduleCouplingCornerHz() noexcept
                    * moduleCouplingResistanceOhms);
 }
 
+float YouKnow106Engine::vcaInputCouplingCornerHz() noexcept
+{
+    return 1.0f / (twoPi * vcaInputCouplingCapacitanceF
+                   * vcaInputCouplingResistanceOhms);
+}
+
 float YouKnow106Engine::noiseSourceHighPassHz() noexcept
 {
     return 1.0f / (twoPi * noiseCouplingCapacitanceF * noiseCouplingLoadOhms);
@@ -2168,6 +2194,8 @@ void YouKnow106Engine::updateProcessingRate(bool preserveFreeRunningState) noexc
         pi * voiceBusCouplingCornerHz() * inverseOversampledRate_);
     moduleCouplingG_ = std::tan(
         pi * moduleCouplingCornerHz() * inverseOversampledRate_);
+    vcaInputCouplingG_ = std::tan(
+        pi * vcaInputCouplingCornerHz() * inverseOversampledRate_);
     commonVcaInputCouplingG_ = std::tan(
         pi * commonVcaInputCouplingCornerHz() * inverseOversampledRate_);
     noiseSourceHighPassG_ = std::tan(
@@ -2393,6 +2421,8 @@ void YouKnow106Engine::reset()
         voice.dco.reset();
         voice.filter.reset();
         voice.moduleCoupling.reset();
+        voice.vcaInputCoupling.reset();
+        voice.vcaInputVolts = 0.0f;
         voice.envelope.reset();
     }
     for (int index = 0; index < maxVoices; ++index)
@@ -2907,6 +2937,8 @@ void YouKnow106Engine::silenceVoice(Voice& voice) noexcept
         voice.pulseDutyPrimed = false;
         voice.filter.reset();
         voice.moduleCoupling.reset();
+        voice.vcaInputCoupling.reset();
+        voice.vcaInputVolts = 0.0f;
         voice.noiseState = hash32(
             static_cast<std::uint32_t>(voice.cardIndex) * 2246822519u + 1u) | 1u;
     }
@@ -3965,6 +3997,20 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
                                                 parameters.enableVcfEarlyEffect,
                                                 parameters.calibration);
 
+    // C59 stands between pin 3 VCF OUT and pin 9 VCA IN, so the amplifier
+    // never sees the filter's DC. The cascade makes DC of its own: the stage
+    // offsets sit inside the loop, and an enabled pulse arrives duty
+    // asymmetric, so the filter output's mean walks with PWM. Passed straight
+    // through, that mean would be multiplied by the envelope and leave a
+    // duty-dependent thump at every note-on and note-off -- which is what the
+    // service procedure's VR30/R112 null exists to remove, and what the
+    // module's own capacitor removes before it. The capacitor is a physical
+    // node, so it is advanced for an inactive card too, ahead of the early
+    // return below.
+    const float vcaInput = voice.vcaInputCoupling.process(
+        filtered, vcaInputCouplingG_, 0.0f, 1.0f);
+    voice.vcaInputVolts = vcaInput;
+
     if (!voice.active)
         return 0.0f;
 
@@ -3975,7 +4021,7 @@ float YouKnow106Engine::renderVoice(Voice& voice, const EngineParameters& parame
     // multiplied by control and VCA gain, producing an unsupported
     // control-squared pulse. Do not invent a residual until a calibrated
     // TP8--TP13 capture establishes its distribution.
-    const float output = filtered * voice.vca * voltsToSample;
+    const float output = vcaInput * voice.vca * voltsToSample;
 
     voice.energy += voiceEnergyFollower_ * (std::abs(output) - voice.energy);
     return std::isfinite(output) ? output : 0.0f;

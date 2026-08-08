@@ -1254,6 +1254,20 @@ and VCA gain, producing unsupported control². The nominal model now adds no
 residual until the measurement below exists. This is not the downstream shared
 stored-VCA validation in OQ-02; population spread remains OQ-10.
 
+**C59 itself is modelled as of 2026-08-08**, as a per-voice first-order coupling
+between the cascade output and the VCA multiply — until then the envelope
+multiplied whatever DC the filter core made, which on a wide-duty pulse patch
+was tens of millivolts and arrived as a duty-dependent sub-audio thump. It adds
+one new voiced quantity, and this entry owns it: the capacitance is the anchored
+read, but the pin-9 load is not, so its 33 kΩ is **voiced and bracketed** at
+33–100 kΩ (4.82–1.59 Hz) in the same way `moduleCouplingResistanceOhms` is for
+C56/C50. Reading R108 and VR27's installed setting off pp. 18–19, or measuring
+the pin-9 termination directly, would settle it, and is a small addition to the
+capture below. Nothing audible turns on the choice inside that bracket — the
+content is the DC block, not the corner — and an independent implementation
+(Ultramaster KR-106 v2.5.13) places its own post-VCF, pre-VCA blocker at
+1.59 Hz, the other end of the same bracket.
+
 ### Needed output (for LLM)
 
 - A dense simultaneous sweep of control-node voltage, BA662 control current if

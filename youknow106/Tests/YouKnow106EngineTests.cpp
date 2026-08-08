@@ -233,6 +233,21 @@ struct YouKnow106TestAccess
         return engine.voices_[static_cast<std::size_t>(slot)].filter.voltage[3];
     }
 
+    // Pin 9 VCA IN: the filter output after C59, which is the value the voice
+    // amplifier multiplies. Reading it here rather than in the mix is the only
+    // way to see this node's DC at all -- three further couplings downstream
+    // of the multiply remove any that survives it.
+    static float vcaInputVolts(const YouKnow106Engine& engine,
+                               int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].vcaInputVolts;
+    }
+
+    static bool voiceActive(const YouKnow106Engine& engine, int slot) noexcept
+    {
+        return engine.voices_[static_cast<std::size_t>(slot)].active;
+    }
+
     static void setFilterState(YouKnow106Engine& engine, int slot,
                                const std::array<float, 4>& state) noexcept
     {
@@ -3415,13 +3430,18 @@ void testQualityChangePreservesOutputCouplingTail()
     // decimator wait. Rebuilding HQ must not clear that rate-independent
     // state; an earlier implementation made a roughly -19 dBFS step here.
     //
-    // Six cards at full VCA LEVEL, not one at 99. Until C56/C50 were modelled
-    // this fixture leaned on the mixer's raw PWM DC reaching C17/C20 intact,
-    // which the real instrument's per-voice module-input coupling does not
-    // allow. What still charges the final capacitor is legitimate: each card's
-    // own 0.48 Hz coupling passes the note-on duty step as a slow transient,
-    // and the six sum. The single-voice residual (0.0025) no longer clears the
-    // guard below; the six-card sum leaves 0.026, five times it.
+    // Six cards at full VCA LEVEL, not one at 99. This fixture has now lost
+    // two DC paths to two modelled capacitors, and both losses were the point
+    // of modelling them. It first leaned on the mixer's raw PWM DC reaching
+    // C17/C20 intact, which C56/C50 stopped; it then leaned on each card's own
+    // 0.48 Hz module coupling passing the note-on duty step as a slow
+    // transient, six of them summing to 0.026, which C59 stops as well -- no
+    // per-voice offset of any kind now survives to the voice VCA. What is left
+    // charging the final capacitor is the gate closure itself: the Gate VCA
+    // shuts on a waveform that is not at zero, and the six cards' steps sum to
+    // 0.0037 at 100-120 ms, seven times the bound below. That is the smallest
+    // this fixture can legitimately get, because it is no longer reading any
+    // DC the model manufactures -- only the step a real gate leaves.
     constexpr double sampleRate = 48000.0;
     YouKnow106Engine switched;
     YouKnow106Engine reference;
@@ -3462,7 +3482,7 @@ void testQualityChangePreservesOutputCouplingTail()
            "the coupling-tail quality change never completed");
     const std::size_t compareFrom = changed.left.size()
                                   - static_cast<std::size_t>(sampleRate * 0.02);
-    expect(peakOf(unchanged.left, compareFrom) > 0.005,
+    expect(peakOf(unchanged.left, compareFrom) > 0.002,
            "the asymmetric-PWM fixture produced no coupling tail to preserve");
     double difference = 0.0;
     for (std::size_t index = compareFrom; index < changed.left.size(); ++index)
@@ -3478,7 +3498,7 @@ void testQualityChangePreservesOutputCouplingTail()
     }
     // C14/C12 and the switched HPF continue at the new internal rate, so the
     // complete tail need not be sample-identical to the unchanged reference.
-    // Resetting C17/C20 would move it by the reference tail itself (>0.005);
+    // Resetting C17/C20 would move it by the reference tail itself (>0.002);
     // this narrow bound still distinguishes preservation from a reset.
     expect(difference < 5.0e-4,
            "an HQ rebuild displaced the preserved analogue/output-coupling tail by "
@@ -3602,6 +3622,193 @@ void testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca()
                    + std::to_string(depth));
         previousRatio = ratio;
     }
+}
+
+void testFilterToVcaCouplingRemovesTheDutyDependentThump()
+{
+    // Module board pp. 18-19: pin 3 VCF OUT reaches pin 9 VCA IN only through
+    // C59 1 uF/50 V NP and the VR27/R108 network, and the service procedure
+    // trims VR30/25/20/15/10/5 through R112 2.2 MOhm at that same node for
+    // minimum thump. The filter core makes DC of its own -- the stage offsets
+    // sit inside the loop and an enabled pulse arrives duty asymmetric -- so
+    // without the capacitor the envelope multiplies a standing offset and
+    // leaves a sub-audio bump whose size walks with PWM duty.
+    //
+    // The capacitor is anchored; the load is not (R108 and VR27's setting are
+    // not in tree), so what is fenced here is the declared bracket rather than
+    // a value: 100 kOhm gives 1.59 Hz and 33 kOhm gives 4.82 Hz, both far
+    // enough below the lowest note that the audible consequence is the DC
+    // block itself and not the corner.
+    const double corner = YouKnow106Engine::vcaInputCouplingCornerHz();
+    expect(corner >= 1.59 && corner <= 4.83,
+           "the filter-to-VCA coupling corner left its declared 33-100 kOhm "
+           "bracket (got " + std::to_string(corner) + " Hz)");
+
+    constexpr double sampleRate = 48000.0;
+    constexpr int probeBlock = 64;
+    constexpr double renderSeconds = 8.0;
+    constexpr double releaseSeconds = 4.0;
+    // A cascade of four one-pole low-pass sections. The order is part of the
+    // measurand and not an implementation detail: on the same render at the
+    // same duty this engine reads -9.68 dB through one pole and -42.49 dB
+    // through four, so a "20 Hz low-pass" that does not say how steep says
+    // nothing.
+    struct SubAudioLowPass
+    {
+        std::array<double, 4> state {};
+        double process(double input, double g) noexcept
+        {
+            double signal = input;
+            for (auto& section : state)
+            {
+                const double v = (signal - section) * g / (1.0 + g);
+                const double low = v + section;
+                section = low + v;
+                signal = low;
+            }
+            return signal;
+        }
+    };
+
+    struct CouplingRun
+    {
+        float duty { 0.0f };
+        double vcaInputDcVolts { 0.0 };
+        double subAudioDb { 0.0 };
+    };
+
+    const auto measure = [&](float pwmPanel)
+    {
+        YouKnow106Engine engine;
+        engine.prepare(sampleRate, probeBlock, true);
+
+        EngineParameters parameters;
+        parameters.sawEnabled = false;
+        parameters.pulseEnabled = true;
+        parameters.subLevel = 0.0f;
+        parameters.noiseLevel = 0.0f;
+        parameters.pwmSource = PwmSource::Manual;
+        parameters.pwmDepth = pwmPanel;
+        parameters.highPass = HighPassMode::One;
+        parameters.cutoff = 0.30f;
+        parameters.resonance = 0.75f;
+        parameters.envDepth = 0.35f;
+        parameters.keyFollow = 0.50f;
+        parameters.vcaMode = VcaMode::Envelope;
+        parameters.vcaLevel = 0.80f;
+        parameters.attack = 0.45f;
+        parameters.decay = 1.0f;
+        parameters.sustain = 1.0f;
+        parameters.release = 0.30f;
+        parameters.volume = 0.80f;
+        parameters.chorus = ChorusMode::Off;
+        // Unit Character 1.0 deliberately: the point of the fixture is that
+        // this DC is a property of the nominal calibrated model, and the card
+        // spread is left on so the assertion holds with it too.
+        parameters.calibration = 1.0f;
+        engine.setParameters(parameters);
+        engine.reset();
+        engine.setParameters(parameters);
+        engine.noteOn(48, 1.0f);
+
+        const int total = static_cast<int>(sampleRate * renderSeconds);
+        const int releaseAt = static_cast<int>(sampleRate * releaseSeconds);
+        std::array<float, probeBlock> left {};
+        std::array<float, probeBlock> right {};
+
+        SubAudioLowPass lowPass;
+        const double g = std::tan(pi * 20.0 / sampleRate);
+        double sumOfSquares = 0.0;
+        double subAudioPeak = 0.0;
+        // A rectangular mean of the pin 9 node over the sustain window leaves
+        // up to 2.7 mV of the 130 Hz note behind, because the window is not an
+        // integer number of its periods -- more than the 1 mV the DC assertion
+        // is worth stating, and enough to fail it after a correct fix. A Hann
+        // weight over the same window reads 0.17 mV there, and leaves a real
+        // offset alone.
+        double weightedSum = 0.0;
+        double weight = 0.0;
+        bool sustained = true;
+        bool released = false;
+        for (int offset = 0; offset < total; offset += probeBlock)
+        {
+            if (!released && offset >= releaseAt)
+            {
+                engine.noteOff(48);
+                released = true;
+            }
+            engine.process(left.data(), right.data(), probeBlock);
+            for (int index = 0; index < probeBlock; ++index)
+            {
+                const double sample = left[static_cast<std::size_t>(index)];
+                sumOfSquares += sample * sample;
+                subAudioPeak = std::max(
+                    subAudioPeak, std::abs(lowPass.process(sample, g)));
+            }
+            const double seconds = static_cast<double>(offset) / sampleRate;
+            if (seconds >= 1.5 && seconds <= 3.0)
+            {
+                const double phase = (seconds - 1.5) / 1.5;
+                const double hann = 0.5 - 0.5 * std::cos(2.0 * pi * phase);
+                weightedSum +=
+                    hann * YouKnow106TestAccess::vcaInputVolts(engine, 0);
+                weight += hann;
+                sustained = sustained
+                         && YouKnow106TestAccess::voiceActive(engine, 0);
+            }
+        }
+        expect(sustained,
+               "the coupling fixture's voice stopped sounding inside the "
+               "1.5-3.0 s window, so the DC below is not a sustained node");
+        const double rms = std::sqrt(sumOfSquares / static_cast<double>(total));
+        expect(rms > 0.005,
+               "the filter-to-VCA coupling fixture produced no tone at panel "
+                   + std::to_string(pwmPanel));
+
+        CouplingRun run;
+        run.duty = YouKnow106TestAccess::pulseDuty(engine, 0);
+        run.vcaInputDcVolts = weightedSum / weight;
+        run.subAudioDb = 20.0 * std::log10(subAudioPeak / rms);
+        return run;
+    };
+
+    // (a) The node the amplifier multiplies carries no standing offset. This
+    // is the assertion that isolates the capacitor: every downstream coupling
+    // is on the far side of the multiply, so it cannot flatter this reading.
+    // Without C59 the same window reads +0.0428 V at panel 0.00, +0.0244 V at
+    // panel 0.50 and +0.0298 V at panel 1.00 -- 24 to 43 times the bound.
+    const CouplingRun open = measure(0.00f);
+    const CouplingRun middle = measure(0.50f);
+    const CouplingRun narrow = measure(1.00f);
+    expectNear(open.duty, 0.5043, 1.0e-3,
+               "the coupling fixture's PWM panel 0.00 left its 0.5043 duty");
+    expectNear(narrow.duty, 0.9436, 1.0e-3,
+               "the coupling fixture's PWM panel 1.00 left its 0.9436 duty");
+    for (const auto& run : { open, middle, narrow })
+    {
+        expect(std::abs(run.vcaInputDcVolts) < 1.0e-3,
+               "the voice amplifier is multiplying filter DC again at duty "
+                   + std::to_string(run.duty) + " (pin 9 mean "
+                   + std::to_string(run.vcaInputDcVolts) + " V)");
+    }
+
+    // (b) The audible consequence, at the duty that carries the most of it.
+    // The bump is an envelope-shaped excursion, so it is read as the peak of
+    // the whole render -- note-on and note-off transients included -- against
+    // broadband RMS. Without C59 this is -17.55 dB; with it, -30.25 dB. The
+    // remainder is not DC: it is the attack's own amplitude ramp, which is
+    // slower than the coupling's 4.82 Hz corner and is a real property of a
+    // note that starts, so the fence sits at 25 dB rather than at the 35 dB
+    // the plan first asked for, which no correct implementation reaches.
+    expect(narrow.subAudioDb <= -25.0,
+           "the sub-20 Hz thump at duty 0.9436 is back above 25 dB under RMS "
+           "(got " + std::to_string(narrow.subAudioDb) + " dB)");
+    // One-sided, and it does not bite today: blocking DC also removes the
+    // sub-5 Hz part of the note gate, so this figure must fall. It guards
+    // only against a coupling that trades the narrow duty for the wide one.
+    expect(open.subAudioDb <= -39.5,
+           "the sub-20 Hz thump at duty 0.5043 rose above its uncoupled "
+           "-42.49 dB (got " + std::to_string(open.subAudioDb) + " dB)");
 }
 
 void testFinalOutputCouplingRemovesManualPwmDc()
@@ -5066,6 +5273,7 @@ int main()
     testQualityChangePreservesOutputCouplingTail();
     testQualityChangePreservesFreeRunningClocks();
     testModuleInputCouplingKeepsMixerDcOutOfTheVoiceVca();
+    testFilterToVcaCouplingRemovesTheDutyDependentThump();
     testFinalOutputCouplingRemovesManualPwmDc();
     testHardStopSilencesTheWholeOutputPath();
     testComponentDriftRateIsIndependentOfOversampling();
